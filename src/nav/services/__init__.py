@@ -14,11 +14,10 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-__all__ = ["GoalService", "MapService", "create_planner_service"]
+__all__ = ["GoalService", "create_planner_service"]
 
 _EXPORTS = {
     "GoalService": "nav.services.goals",
-    "MapService": "nav.services.maps",
     "create_planner_service": "nav.services.plan.factory",
 }
 

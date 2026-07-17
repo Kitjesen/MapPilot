@@ -30,6 +30,10 @@ def test_thunder_field_dds_contract_covers_runtime_boundary_topics() -> None:
         TOPICS.odometry,
         TOPICS.registered_cloud,
         TOPICS.map_cloud,
+        TOPICS.nav_command_request,
+        TOPICS.nav_command_ack,
+        TOPICS.inspection_evidence_request,
+        TOPICS.inspection_evidence_result,
         TOPICS.global_path,
         TOPICS.local_path,
         TOPICS.cmd_vel,
@@ -38,10 +42,11 @@ def test_thunder_field_dds_contract_covers_runtime_boundary_topics() -> None:
     assert expected_required <= set(THUNDER_FIELD_DDS_CONTRACT.required_topics)
     assert TOPICS.goal_pose in THUNDER_FIELD_DDS_CONTRACT.topics
     assert TOPICS.cancel in THUNDER_FIELD_DDS_CONTRACT.topics
-    assert TOPICS.semantic_instruction in THUNDER_FIELD_DDS_CONTRACT.topics
+    assert TOPICS.semantic_instruction not in THUNDER_FIELD_DDS_CONTRACT.topics
     assert TOPICS.goal_pose not in THUNDER_FIELD_DDS_CONTRACT.required_topics
     assert TOPICS.cancel not in THUNDER_FIELD_DDS_CONTRACT.required_topics
-    assert TOPICS.semantic_instruction not in THUNDER_FIELD_DDS_CONTRACT.required_topics
+    assert TOPICS.teleop_cmd_vel in THUNDER_FIELD_DDS_CONTRACT.topics
+    assert TOPICS.teleop_cmd_vel not in THUNDER_FIELD_DDS_CONTRACT.required_topics
     assert TOPICS.nav_way_point in THUNDER_FIELD_DDS_CONTRACT.topics
     assert TOPICS.nav_way_point not in THUNDER_FIELD_DDS_CONTRACT.required_topics
     assert TOPICS.localization_health in THUNDER_FIELD_DDS_CONTRACT.topics
@@ -65,27 +70,51 @@ def test_dds_contract_preserves_runtime_frame_expectations() -> None:
     cmd = binding_for_topic(THUNDER_FIELD_DDS_CONTRACT.name, TOPICS.cmd_vel)
     assert cmd.direction == "lingtu_to_endpoint"
     assert cmd.frame_ids == ("body",)
+    assert cmd.idl_type == "lingtu.dds.FinalVelocityCommand"
 
     waypoint = binding_for_topic(THUNDER_FIELD_DDS_CONTRACT.name, TOPICS.nav_way_point)
     assert waypoint.direction == "lingtu_to_endpoint"
     assert waypoint.frame_ids == ("map", "odom")
     assert waypoint.required is False
 
+    request = binding_for_topic(
+        THUNDER_FIELD_DDS_CONTRACT.name,
+        TOPICS.nav_command_request,
+    )
+    assert request.direction == "lingtu_to_endpoint"
+    assert request.frame_ids == ("map", "body")
+
+    ack = binding_for_topic(
+        THUNDER_FIELD_DDS_CONTRACT.name,
+        TOPICS.nav_command_ack,
+    )
+    assert ack.direction == "endpoint_to_lingtu"
+    assert ack.frame_ids == ("map",)
+
+    evidence_request = binding_for_topic(
+        THUNDER_FIELD_DDS_CONTRACT.name,
+        TOPICS.inspection_evidence_request,
+    )
+    assert evidence_request.direction == "endpoint_to_lingtu"
+    assert evidence_request.idl_type == "lingtu.dds.InspectionEvidenceRequest"
+    assert evidence_request.frame_ids == ("map",)
+
+    evidence_result = binding_for_topic(
+        THUNDER_FIELD_DDS_CONTRACT.name,
+        TOPICS.inspection_evidence_result,
+    )
+    assert evidence_result.direction == "lingtu_to_endpoint"
+    assert evidence_result.idl_type == "lingtu.dds.InspectionEvidenceResult"
+    assert evidence_result.frame_ids == ("map",)
+
     goal = binding_for_topic(THUNDER_FIELD_DDS_CONTRACT.name, TOPICS.goal_pose)
-    assert goal.direction == "endpoint_to_lingtu"
+    assert goal.direction == "lingtu_to_endpoint"
     assert goal.frame_ids == ("map", "odom")
     assert goal.required is False
 
     cancel = binding_for_topic(THUNDER_FIELD_DDS_CONTRACT.name, TOPICS.cancel)
-    assert cancel.direction == "endpoint_to_lingtu"
+    assert cancel.direction == "lingtu_to_endpoint"
     assert cancel.required is False
-
-    instruction = binding_for_topic(
-        THUNDER_FIELD_DDS_CONTRACT.name,
-        TOPICS.semantic_instruction,
-    )
-    assert instruction.direction == "endpoint_to_lingtu"
-    assert instruction.required is False
 
     odom = binding_for_topic(THUNDER_FIELD_DDS_CONTRACT.name, TOPICS.odometry)
     assert odom.direction == "endpoint_to_lingtu"

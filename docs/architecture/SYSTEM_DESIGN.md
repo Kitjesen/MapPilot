@@ -108,9 +108,9 @@ GlobalPlanResult:
   report
 ```
 
-OctoPlanner3D is the default map-backed algorithm backend. PCT remains a legacy
-or experimental backend. Direct path planning is used only for explicit mapless
-or fallback modes.
+OctoPlanner3D is the default map-backed algorithm backend. PCT/tomogram is
+retired from the product runtime. Direct path planning is used only for
+explicit mapless modes.
 
 ## 6. Mapping and Planning Artifacts
 
@@ -123,9 +123,9 @@ sensor streams -> SLAM/map manager -> saved map artifacts
                 -> local planner/path follower
 ```
 
-Planning code may consume occupancy, tomogram, voxel, or OctoPlanner3D-native
-artifacts through the planner service boundary. Conversion and validation belong
-to map lifecycle or planner setup, not every planning tick.
+Planning code consumes occupancy, voxel, or OctoPlanner3D-native artifacts
+through the planner service boundary. Conversion and validation belong to map
+lifecycle or planner setup, not every planning tick.
 
 ## 7. Transport Strategy
 

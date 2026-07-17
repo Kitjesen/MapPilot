@@ -1,44 +1,81 @@
 /* Topbar component styles */
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(280px, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
   height: var(--topbar-h);
-  padding: 0 var(--s-4);
-  background: transparent;
+  padding: 8px 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.018)),
+    rgba(9, 10, 15, 0.78);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 10px 32px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
   flex-shrink: 0;
-  gap: var(--s-3);
   z-index: 10;
   overflow: hidden;
 }
 
-.left {
+.logo {
   display: flex;
   align-items: center;
   gap: var(--s-2);
   min-width: 0;
-  flex: 1 1 auto;
+  font-family: var(--font-ui);
+  font-size: 18px;
+  font-weight: 740;
+  letter-spacing: 0;
+  color: var(--t-title-color);
+  white-space: nowrap;
+}
+
+.logoIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.045));
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: var(--r-md);
+  color: #ffffff;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 1px 8px rgba(0, 0, 0, 0.34);
+}
+
+.middle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
   overflow: hidden;
 }
 
-.sep {
-  width: 1px;
-  height: 16px;
-  background: var(--border);
-  margin: 0 var(--s-1);
-  flex-shrink: 0;
-}
-
 .tabs {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 2px;
-  flex: 1 1 auto;
+  width: max-content;
+  max-width: 100%;
   min-width: 0;
-  max-width: min(560px, 48vw);
+  padding: 3px;
   overflow-x: auto;
   scrollbar-width: none;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: var(--r-md);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 1px 12px rgba(0, 0, 0, 0.18);
 }
 
 .tabs::-webkit-scrollbar {
@@ -47,93 +84,71 @@
 
 .tab,
 .tabActive {
-  padding: 4px 9px;
-  border-radius: var(--r-sm);
+  flex: 0 0 auto;
+  padding: 6px 11px;
+  border-radius: 6px;
   font-family: var(--font-ui);
-  font-size: var(--t-label-size);
-  font-weight: var(--t-label-weight);
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 610;
   border: none;
   cursor: pointer;
-  transition: background 0.15s var(--ease-out), color 0.15s var(--ease-out);
+  transition:
+    background 0.16s var(--ease-out),
+    color 0.16s var(--ease-out),
+    box-shadow 0.16s var(--ease-out),
+    transform 0.12s var(--ease-out);
   white-space: nowrap;
 }
 
 .tab {
   background: transparent;
-  color: var(--t-label-color);
+  color: rgba(228, 228, 232, 0.62);
 }
 
 .tab:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
+  color: rgba(228, 228, 232, 0.95);
 }
 
 .tabActive {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--t-body-em-color);
-  font-size: var(--t-label-size);
-  font-weight: var(--t-body-em-weight);
-}
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: var(--s-2);
-  font-family: var(--font-ui);
-  font-size: var(--t-title-size);
-  font-weight: var(--t-title-weight);
-  letter-spacing: var(--t-title-track);
-  color: var(--t-title-color);
-}
-
-.logoIcon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--r-md);
-  color: #FFFFFF;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.075));
+  color: var(--text);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 1px 3px rgba(0, 0, 0, 0.3);
+    inset 0 1px 0 rgba(255, 255, 255, 0.13),
+    0 1px 10px rgba(0, 0, 0, 0.28);
 }
 
-.right {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
+.tab:active,
+.tabActive:active {
+  transform: translateY(1px) scale(0.98);
 }
 
-.badge {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  padding: 2px 8px;
-  border-radius: var(--r-full);
-  font-variant-numeric: tabular-nums;
-  transition: background 0.4s var(--ease-out), color 0.4s var(--ease-out), border-color 0.4s var(--ease-out);
-}
-
-/* badge — low-chroma neutral chip; only a tiny status dot carries colour */
-.badgeOnline,
-.badgeOffline {
-  composes: badge;
+.badge,
+.miniPip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: var(--glass-lo);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  color: rgba(228, 228, 232, 0.68);
+}
+
+.badgeOnline,
+.badgeOffline {
+  composes: badge;
+  padding: 4px 7px;
 }
 
 .badgeOnline::before,
-.badgeOffline::before {
+.badgeOffline::before,
+.miniPip::before {
   content: "";
   width: 6px;
   height: 6px;
@@ -143,195 +158,195 @@
 
 .badgeOnline::before {
   background: var(--accent);
-  box-shadow: 0 0 6px var(--accent-glow);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 
 .badgeOffline::before {
   background: var(--red);
 }
 
-/* mini pip — per-sensor health chip (SLAM / point cloud) */
 .miniPip {
-  composes: badge;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--glass-lo);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 11px;
-  padding: 2px 7px;
+  padding: 4px 6px;
   cursor: help;
-}
-
-.miniPip::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
 }
 
 .pipGood::before {
   background: var(--accent);
-  box-shadow: 0 0 6px var(--accent-glow);
+  box-shadow: 0 0 8px var(--accent-glow);
 }
 
 .pipWarn::before {
   background: #f5a524;
-  box-shadow: 0 0 6px rgba(245, 165, 36, 0.6);
+  box-shadow: 0 0 8px rgba(245, 165, 36, 0.45);
 }
 
 .pipBad::before {
   background: var(--red);
 }
 
-.center {
-  display: flex;
-  align-items: center;
-  gap: clamp(6px, 0.75vw, var(--s-3));
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: min(760px, 42vw);
-  overflow: hidden;
-  justify-content: flex-end;
-}
-
-.stat {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  flex: 0 0 auto;
-  min-width: max-content;
-  white-space: nowrap;
-}
-
-.statLabel {
-  font-size: var(--t-overline-size);
-  font-weight: var(--t-overline-weight);
-  color: var(--t-overline-color);
-  text-transform: uppercase;
-  letter-spacing: var(--t-overline-track);
-  white-space: nowrap;
-}
-
-.statValue {
-  font-family: var(--font-mono);
-  font-size: var(--t-value-size);
-  font-weight: var(--t-value-weight);
-  color: var(--t-value-color);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: var(--t-value-track);
-  white-space: nowrap;
-}
-
-.mapValue {
-  display: inline-block;
-  max-width: clamp(72px, 8vw, 140px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: bottom;
-}
-
-.navExecuting { color: var(--accent); }
-.navFailed    { color: var(--red); }
-.navPlanning  { color: var(--warn); }
-
-/* ICP critical pulse — only runs when ICP > 0.3 (drift watchdog will
-   auto-recover, but the user should see something is off). Use opacity
-   instead of color change to avoid re-rendering layout every beat. */
-.icpPulse {
-  animation: icp-pulse 0.9s ease-in-out infinite;
-}
-@keyframes icp-pulse {
-  0%   { opacity: 1.0; text-shadow: 0 0 4px var(--red); }
-  50%  { opacity: 0.45; text-shadow: 0 0 8px var(--red); }
-  100% { opacity: 1.0; text-shadow: 0 0 4px var(--red); }
-}
-
-.divider {
-  width: 1px;
-  height: 14px;
-  background: var(--border);
-  flex: 0 0 auto;
-}
-
 .estop {
   font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
   color: var(--red);
   animation: blink-red 0.6s step-end infinite;
+  white-space: nowrap;
 }
 
 @keyframes blink-red {
   0%, 100% { opacity: 1; }
-  50%       { opacity: 0.2; }
+  50% { opacity: 0.28; }
 }
 
 .right {
-  display: flex;
+  justify-self: end;
+  display: inline-flex;
   align-items: center;
-  gap: var(--s-2);
-  flex: 0 0 auto;
+  gap: 4px;
+  max-width: 34vw;
   min-width: 0;
-  justify-content: flex-end;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: var(--r-md);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    0 1px 12px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
 }
 
 .btnIcon {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.075);
   color: var(--text-dim);
-  border-radius: var(--r-md);
+  border-radius: 7px;
   cursor: pointer;
   width: 30px;
   height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s var(--ease-out);
+  transition:
+    background 0.16s var(--ease-out),
+    color 0.16s var(--ease-out),
+    border-color 0.16s var(--ease-out),
+    transform 0.12s var(--ease-out);
 }
 
 .btnIcon:hover {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
   border-color: var(--border-hi);
 }
 
 .btnIcon:focus-visible {
   outline: none;
   color: var(--text);
-  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.55);
+  box-shadow: 0 0 0 2px rgba(94, 234, 212, 0.35);
 }
 
 .btnIcon:active {
-  transform: scale(0.94);
-  transition-duration: 0.08s;
+  transform: translateY(1px) scale(0.96);
 }
 
-/* SLAM mode colors in topbar */
-.slamFastlio2  { color: var(--warn); }
-.slamLocalizer { color: var(--accent); }
-.slamStop      { color: var(--text-faint); }
+:global(html[data-theme="light"]) .topbar {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(245, 245, 242, 0.78)),
+    rgba(247, 247, 245, 0.92);
+  border-bottom-color: rgba(28, 28, 28, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 8px 24px rgba(0, 0, 0, 0.06);
+}
 
-@media (max-width: 1180px) {
-  .center {
+:global(html[data-theme="light"]) .logoIcon,
+:global(html[data-theme="light"]) .tabs,
+:global(html[data-theme="light"]) .right,
+:global(html[data-theme="light"]) .btnIcon {
+  background: rgba(255, 255, 255, 0.68);
+  border-color: rgba(28, 28, 28, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.76),
+    0 1px 8px rgba(0, 0, 0, 0.04);
+}
+
+:global(html[data-theme="light"]) .tab {
+  color: rgba(31, 31, 31, 0.58);
+}
+
+:global(html[data-theme="light"]) .tab:hover {
+  background: rgba(31, 31, 31, 0.055);
+  color: rgba(31, 31, 31, 0.92);
+}
+
+:global(html[data-theme="light"]) .tabActive {
+  color: rgba(31, 31, 31, 0.96);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(237, 237, 234, 0.86));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 8px rgba(0, 0, 0, 0.08);
+}
+
+:global(html[data-theme="light"]) .badge,
+:global(html[data-theme="light"]) .miniPip {
+  color: rgba(31, 31, 31, 0.62);
+}
+
+:global(html[data-theme="light"]) .btnIcon:hover {
+  color: rgba(31, 31, 31, 0.92);
+  background: rgba(255, 255, 255, 0.92);
+}
+
+@media (max-width: 1060px) {
+  .badgeOnline,
+  .badgeOffline {
     display: none;
   }
 
-  .tabs {
-    max-width: none;
+  .tab,
+  .tabActive {
+    padding-inline: 9px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .miniPip {
+    display: none;
   }
 }
 
 @media (max-width: 900px) {
-  .miniPip,
-  .sep {
-    display: none;
+  .topbar {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    padding-inline: 10px;
   }
 
   .logo {
-    font-size: 15px;
+    font-size: 0;
+    gap: 0;
+  }
+
+  .miniPip {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    gap: 6px;
+    padding-inline: 8px;
+  }
+
+  .tabs {
+    border-radius: 7px;
+  }
+
+  .tab,
+  .tabActive {
+    padding: 6px 8px;
+    font-size: 12px;
   }
 }

@@ -10,8 +10,19 @@ function fmt(v: number | undefined, dec: number, unit: string, fallback = '--') 
   return typeof v === 'number' ? `${v.toFixed(dec)} ${unit}` : fallback
 }
 
+function numericMetric(data: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = data?.[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
 export function CameraHud({ sseState }: CameraHudProps) {
   const slam = sseState.slamStatus
+  const slamDiag = sseState.slamDiag?.data
   const robot = sseState.robotStatus
   const odom = sseState.odometry
   const [now, setNow] = useState(0)
@@ -26,7 +37,8 @@ export function CameraHud({ sseState }: CameraHudProps) {
     ? Math.max(0, now - sseState.lastHeartbeat)
     : null
 
-  const slamHz = typeof slam?.slam_hz === 'number' ? `${slam.slam_hz.toFixed(0)} Hz` : '--'
+  const displayScanHz = numericMetric(slamDiag, 'processed_scan_hz') ?? slam?.slam_hz
+  const scanHz = typeof displayScanHz === 'number' ? `${displayScanHz.toFixed(0)} Hz` : '--'
   const battery = typeof robot?.battery === 'number'
     ? `${robot.battery.toFixed(0)}%`
     : '--'
@@ -40,23 +52,23 @@ export function CameraHud({ sseState }: CameraHudProps) {
   return (
     <div className={styles.hud}>
       <div className={styles.row}>
-        <span className={styles.key}>SLAM</span>
-        <span className={styles.val}>{slamHz}</span>
+        <span className={styles.key}>定位</span>
+        <span className={styles.val}>{scanHz}</span>
       </div>
       <div className={styles.row}>
-        <span className={styles.key}>SPD</span>
+        <span className={styles.key}>速度</span>
         <span className={styles.val}>{speed}</span>
       </div>
       <div className={styles.row}>
-        <span className={styles.key}>BAT</span>
+        <span className={styles.key}>电量</span>
         <span className={batteryLow ? styles.valWarn : styles.val}>{battery}</span>
       </div>
       <div className={styles.row}>
-        <span className={styles.key}>TMP</span>
+        <span className={styles.key}>温度</span>
         <span className={tempHigh ? styles.valWarn : styles.val}>{temp}</span>
       </div>
       <div className={styles.row}>
-        <span className={styles.key}>LAT</span>
+        <span className={styles.key}>延迟</span>
         <span className={styles.val}>{latency}</span>
       </div>
     </div>

@@ -1,7 +1,7 @@
 """Runtime endpoint catalog.
 
 Profiles define what Thunder should do. Endpoints define where data and
-commands come from: real robot, MuJoCo, Gazebo, replay, or CMU Unity.
+commands come from: real robot, MuJoCo, Gazebo, or CMU Unity.
 """
 
 from __future__ import annotations
@@ -18,9 +18,8 @@ from runtime.profiles.catalog.endpoint_adapter_configs import (
     MUJOCO_LIVE_CONFIG,
 )
 from runtime.profiles.catalog.runtime_paths import (
-    _resolve_octoplanner3d_map,
-    _resolve_tomogram,
     RUNTIME_ODOM_FRAME_ID,
+    _resolve_octoplanner3d_map,
 )
 from runtime.runtime_interface import (
     THUNDER_FIELD_RUNTIME_CONTRACT,
@@ -30,12 +29,12 @@ PRODUCT_PROFILE_ENDPOINTS: dict[str, tuple[str, ...]] = {
     "lite": ("thunder_lite",),
     "teleop": ("thunder_field",),
     "teleop_avoid": ("thunder_field",),
-    "map": ("thunder_field", "mujoco_live", "replay"),
-    "tracking": ("thunder_field", "replay"),
-    "nav": ("thunder_field", "replay"),
-    "inspection": ("thunder_field", "replay"),
-    "explore": ("thunder_field", "mujoco_live", "replay", "gazebo"),
-    "tare_explore": ("thunder_field", "mujoco_live", "replay", "cmu_unity"),
+    "map": ("thunder_field", "mujoco_live"),
+    "tracking": ("thunder_field",),
+    "nav": ("thunder_field",),
+    "inspection": ("thunder_field",),
+    "explore": ("thunder_field", "mujoco_live", "gazebo"),
+    "tare_explore": ("thunder_field", "mujoco_live", "cmu_unity"),
     "super_lio": ("thunder_field",),
     "super_lio_relocation": ("thunder_field",),
 }
@@ -68,8 +67,7 @@ class RuntimeEndpointSpec:
         if profile not in self.supported_profiles:
             supported = ", ".join(self.supported_profiles)
             raise RuntimeEndpointError(
-                f"endpoint '{self.name}' does not support profile '{profile}' "
-                f"(supported: {supported})"
+                f"endpoint '{self.name}' does not support profile '{profile}' (supported: {supported})"
             )
 
     def config_for_profile(self, profile: str) -> dict[str, Any]:
@@ -88,6 +86,7 @@ class RuntimeRunSpec:
     module_transport: str
     endpoint_transport: str
     endpoint_contract: str | None
+    route_contract: str | None
     simulation_only: bool
     command_sink: str
     slam_source: str
@@ -105,8 +104,6 @@ class RuntimeRunSpec:
     env: Mapping[str, str]
     product_semantic_overrides: tuple[Mapping[str, Any], ...] = ()
     localization_adapter: str | None = None
-    nav_in_adapter: str | None = None
-    nav_out_adapter: str | None = None
     global_planner: str | None = None
     fallback_global_planners: tuple[str, ...] = ()
     planner_latency_budget_ms: int | None = None
@@ -131,7 +128,7 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
         simulation_only=False,
         runtime_contract="thunder_lite_local",
         config_overrides={
-            "enable_device_manager": False,
+            "enable_hw": False,
         },
     ),
     "thunder_field": RuntimeEndpointSpec(
@@ -158,22 +155,23 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
         endpoint_contract="thunder_field_dds_v1",
         runtime_contract=THUNDER_FIELD_RUNTIME_CONTRACT,
         config_overrides={
-            "enable_device_manager": False,
+            "enable_hw": False,
             "enable_robot_driver": False,
             "enable_lidar": False,
+            "enable_imu": False,
             "command_output_mode": "endpoint_only",
-            "hardware_control_boundary": "dds_endpoint_source",
+            "hardware_control_boundary": "driver",
             "localization_adapter": "cpp_slam_status",
             "native_navigation_endpoint": "lingtu-nav-dds",
             "manage_session_services": False,
-            # Field DDS is owned by C++ services. Python nav/map DDS adapters
-            # remain compatibility tools only; enabling them here creates
-            # duplicate goal/path/map writers.
-            "enable_nav_in": False,
-            "enable_nav_out": False,
+            # Field navigation DDS is owned exclusively by C++ services.
+            # Python navigation adapters have been removed.
             "enable_map_out": False,
+            # Field camera hardware is owned by lingtu-camera-dds.service.
+            # The runtime camera role consumes DDS and must not open Orbbec
+            # directly, otherwise two processes compete for the same device.
             "enable_camera": True,
-            "camera_backend": "orbbec_native",
+            "camera_backend": "dds",
         },
         profile_overrides={},
     ),
@@ -188,7 +186,6 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "tare_explore",
             "sim_mujoco_live",
             "sim_mujoco_octo_live",
-            "sim_mujoco_pct_live",
         ),
         simulation_only=True,
         external_launcher="sim/scripts/mujoco/launch_fastlio2_live.sh",
@@ -208,7 +205,7 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             },
             "tare_explore": {
                 "planner": "octoplanner3d",
-                "tomogram": _resolve_octoplanner3d_map(),
+                "map_path": _resolve_octoplanner3d_map(),
                 "plan_safety_policy": "reject",
                 "fallback_planner_name": "",
                 "enable_frontier": False,
@@ -224,7 +221,6 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
                 "planning_frame_id": RUNTIME_ODOM_FRAME_ID,
                 "occupancy_frame_id": RUNTIME_ODOM_FRAME_ID,
                 "enable_map_out": False,
-                "enable_nav_out": False,
             },
             "sim_mujoco_live": {
                 "enable_frontier": True,
@@ -236,19 +232,7 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "sim_mujoco_octo_live": {
                 "planner": "octoplanner3d",
                 "planner_backend": "octoplanner3d",
-                "tomogram": _resolve_octoplanner3d_map(),
-                "plan_safety_policy": "reject",
-                "fallback_planner_name": "",
-                "enable_frontier": False,
-                "enable_traversable_frontier": False,
-                "exploration_backend": "none",
-                "local_planner_allow_direct_track_fallback": False,
-                "local_planner_ignore_near_field_stop": False,
-            },
-            "sim_mujoco_pct_live": {
-                "planner": "pct",
-                "planner_backend": "pct",
-                "tomogram": _resolve_tomogram(),
+                "map_path": _resolve_octoplanner3d_map(),
                 "plan_safety_policy": "reject",
                 "fallback_planner_name": "",
                 "enable_frontier": False,
@@ -264,7 +248,6 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "tare_explore": ("tare",),
             "sim_mujoco_live": ("gate",),
             "sim_mujoco_octo_live": ("octo-moving-obstacle-video",),
-            "sim_mujoco_pct_live": ("pct-moving-obstacle-video",),
         },
         record_actions={
             "map": ("video",),
@@ -272,34 +255,6 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "tare_explore": ("tare-video",),
             "sim_mujoco_live": ("video",),
             "sim_mujoco_octo_live": ("octo-moving-obstacle-video",),
-            "sim_mujoco_pct_live": ("pct-moving-obstacle-video",),
-        },
-    ),
-    "replay": RuntimeEndpointSpec(
-        name="replay",
-        description="No-actuation rosbag/log replay endpoint.",
-        data_source="rosbag_fastlio2_replay",
-        robot_preset="sim_endpoint",
-        supported_profiles=("map", "tracking", "nav", "inspection", "explore", "tare_explore"),
-        simulation_only=True,
-        external_launcher="sim/scripts/fastlio2_rosbag_replay_gate.py",
-        runtime_contract="rosbag_fastlio2_replay",
-        config_overrides=MUJOCO_LIVE_CONFIG,
-        default_actions={
-            "map": ("gate",),
-            "tracking": ("gate",),
-            "nav": ("gate",),
-            "inspection": ("gate",),
-            "explore": ("gate",),
-            "tare_explore": ("gate",),
-        },
-        record_actions={
-            "map": ("report",),
-            "tracking": ("report",),
-            "nav": ("report",),
-            "inspection": ("report",),
-            "explore": ("report",),
-            "tare_explore": ("report",),
         },
     ),
     "gazebo": RuntimeEndpointSpec(

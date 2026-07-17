@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Camera, StopCircle, RefreshCw } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
-import { useWebRTC } from '../hooks/useWebRTC'
 import { useWHEP } from '../hooks/useWHEP'
 import { CameraHud } from './CameraHud'
 import type { SSEState } from '../types'
@@ -13,17 +12,15 @@ interface CameraFeedProps {
   sseState: SSEState
 }
 
-type Source = 'whep' | 'rtc' | 'jpeg'
+type Source = 'whep' | 'jpeg'
 type CameraHealth = 'live' | 'degraded' | 'connecting' | 'offline'
 const STREAM_TIMEOUT_MS = 8_000
 
 export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
-  // Three-tier fallback, fastest-first:
+  // Two-tier fallback, fastest-first:
   //   1. go2rtc WHEP sidecar (native Go, ~30–60 ms LAN)
-  //   2. aiortc Python WebRTC (~80–150 ms LAN, same protocol)
-  //   3. JPEG-over-WebSocket (~250 ms, universal fallback)
-  // Each hook idles (no WS / no PC) until the previous tier fails or times out,
-  // so we avoid opening every transport at once while still escaping ICE stalls.
+  //   2. JPEG-over-WebSocket (~250 ms, universal fallback)
+  // The JPEG hook idles until WHEP fails or times out.
   const whep = useWHEP()
   const [whepTimedOut, setWhepTimedOut] = useState(false)
   const whepDone = whep.connected || whep.stream || whep.error
@@ -34,29 +31,12 @@ export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
   }, [whepDone])
 
   const whepFailed = whep.error != null || (!whepDone && whepTimedOut)
-  const rtc = useWebRTC(whepFailed ? '/api/v1/webrtc/offer' : '')
-  const [rtcTimedOut, setRtcTimedOut] = useState(false)
-  const rtcDone = rtc.connected || rtc.stream || rtc.error
-  useEffect(() => {
-    if (!whepFailed || rtcDone) return
-    const t = setTimeout(() => setRtcTimedOut(true), STREAM_TIMEOUT_MS)
-    return () => clearTimeout(t)
-  }, [whepFailed, rtcDone])
+  const jpeg = useCamera(whepFailed ? '/ws/camera' : '')
 
-  const rtcFailed = rtc.error != null || (!rtcDone && rtcTimedOut)
-  const jpeg = useCamera(whepFailed && rtcFailed ? '/ws/camera' : '')
-
-  // Pick the tier that is actually producing video. WHEP/RTC connection stalls
-  // are treated as soft failures after STREAM_TIMEOUT_MS, then the next tier
-  // starts without tearing down the earlier hook until React naturally idles it.
-  let source: Source
-  if (whep.stream) source = 'whep'
-  else if (whepFailed && rtc.stream) source = 'rtc'
-  else if (whepFailed && rtcFailed) source = 'jpeg'
-  else source = whepFailed ? 'rtc' : 'whep'
+  const source: Source = whepFailed ? 'jpeg' : 'whep'
 
   const videoRef = useRef<HTMLVideoElement>(null)
-  const liveStream = source === 'whep' ? whep.stream : source === 'rtc' ? rtc.stream : null
+  const liveStream = source === 'whep' ? whep.stream : null
   useEffect(() => {
     if (!videoRef.current) return
     if (liveStream && videoRef.current.srcObject !== liveStream) {
@@ -66,15 +46,12 @@ export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
 
   const hasVideo =
     source === 'whep' ? whep.connected :
-    source === 'rtc'  ? rtc.connected  :
     jpeg.imgSrc != null
   const isConnected =
     source === 'whep' ? whep.connected :
-    source === 'rtc'  ? rtc.connected  :
     jpeg.connected
   const onReconnect =
     source === 'whep' ? whep.reconnect :
-    source === 'rtc'  ? rtc.reconnect  :
     jpeg.reconnect
 
   const cameraHealth: CameraHealth = hasVideo
@@ -87,32 +64,26 @@ export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
     styles.camBadgeOff
   const cameraHealthLabel =
     cameraHealth === 'live' ? '直播' :
-    cameraHealth === 'degraded' ? (source === 'rtc' ? '降级 RTC' : '降级 MJPEG') :
-    cameraHealth === 'connecting' ? '恢复中' :
-    '离线'
+    cameraHealth === 'degraded' ? '降级 MJPEG' :
+    cameraHealth === 'connecting' ? '图传恢复中' :
+    '图传离线'
 
   let sourceLabel: string
   if (source === 'jpeg') {
     sourceLabel = jpeg.lastFrameAt ? 'MJPEG 降级流 · 已恢复' : 'MJPEG 降级流 · 等待帧'
   } else if (source === 'whep') {
     sourceLabel = whep.connected ? '图传 · Go2RTC · H.264' : '图传 · Go2RTC (建立中…)'
-  } else if (rtc.stats && rtc.stats.active_peers > 0) {
-    const mbps = (rtc.stats.bitrate_bps / 1_000_000).toFixed(2)
-    const fps  = rtc.stats.fps.toFixed(0)
-    const enc  = rtc.stats.encode_avg_ms
-    const encStr = typeof enc === 'number' ? ` · ${enc.toFixed(0)}ms enc` : ''
-    sourceLabel = `aiortc 降级流 · H.264 · ${fps}fps · ${mbps} Mbit/s${encStr}`
   } else {
-    sourceLabel = 'aiortc 降级流 · WebRTC (建立中…)'
+    sourceLabel = '图传 · Go2RTC (建立中…)'
   }
 
   return (
     <div className={styles.cameraFeed}>
       <div className={styles.viewport}>
-        {(source === 'whep' || source === 'rtc') ? (
+        {source === 'whep' ? (
           <video
             ref={videoRef}
-            className={styles.img}
+            className={`${styles.img} ${styles.imgWhep}`}
             autoPlay
             muted
             playsInline
@@ -125,7 +96,7 @@ export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
           <div className={styles.placeholder}>
             <Camera size={48} strokeWidth={1} className={styles.placeholderIcon} />
             <span className={styles.placeholderLabel}>
-              {isConnected ? '等待画面帧…' : '无相机画面'}
+              {isConnected ? '等待图传画面帧…' : '无相机画面'}
             </span>
             {!isConnected && (
               <button className={styles.reconnectBtn} onClick={onReconnect}>

@@ -19,10 +19,11 @@ from runtime.msgs.nav import Odometry
 # Navigation
 # ============================================================================
 
-class TestNavigation(unittest.TestCase):
 
+class TestNavigation(unittest.TestCase):
     def _make(self, **kw):
-        from nav.mission.navigation import Navigation
+        from nav.navigation import Navigation
+
         return Navigation(planner="astar", **kw)
 
     def test_ports_in(self):
@@ -57,8 +58,8 @@ class TestNavigation(unittest.TestCase):
         self.assertEqual(missions[-1]["phase_reason"], "operator goal accepted")
 
     def test_mission_state_is_enum_but_published_as_string(self):
-        from nav.mission.model.state import MissionState
-        from nav.mission.model.status import MissionStatus
+        from nav.model.state import MissionState
+        from nav.model.status import MissionStatus
 
         m = self._make()
         missions = []
@@ -177,7 +178,7 @@ class TestNavigation(unittest.TestCase):
         m = self._make()
         m._state = "EXECUTING"
 
-        with patch("nav.mission.navigation.time.sleep", side_effect=AssertionError("blocking sleep")):
+        with patch("nav.runtime.recovery.time.sleep", side_effect=AssertionError("blocking sleep")):
             m._execute_recovery_motion(post_action="none")
             m._request_recovery_stop()
 
@@ -205,17 +206,17 @@ class TestNavigation(unittest.TestCase):
         events = []
         m.adapter_status._add_callback(events.append)
 
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(1, 2, 0)),
-            frame_id="odom",
-            ts=time.time(),
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(1, 2, 0)),
+                frame_id="odom",
+                ts=time.time(),
+            )
+        )
 
         self.assertEqual(m._odom_frame_id, "odom")
         np.testing.assert_array_equal(m._robot_pos, np.zeros(3))
-        self.assertTrue(
-            any(event.get("event") == "frame_mismatch" for event in events)
-        )
+        self.assertTrue(any(event.get("event") == "frame_mismatch" for event in events))
 
     def test_on_odom_rejects_non_contract_frame(self):
         m = self._make()
@@ -223,11 +224,13 @@ class TestNavigation(unittest.TestCase):
         m.adapter_status._add_callback(events.append)
         m._state = "EXECUTING"
 
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(1, 2, 0)),
-            frame_id="camera_link",
-            ts=time.time(),
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(1, 2, 0)),
+                frame_id="camera_link",
+                ts=time.time(),
+            )
+        )
 
         self.assertEqual(m._state, "FAILED")
         self.assertEqual(events[-1]["event"], "navigation_blocked")
@@ -236,7 +239,7 @@ class TestNavigation(unittest.TestCase):
         self.assertEqual(events[-1]["received_frame"], "camera_link")
 
     def test_on_odom_updates_yaw_and_tracker(self):
-        from nav.mission.tracking.waypoint_tracker import TrackerStatus
+        from nav.tracking.waypoint_tracker import TrackerStatus
 
         m = self._make()
         m._state = "EXECUTING"
@@ -256,8 +259,9 @@ class TestNavigation(unittest.TestCase):
         self.assertAlmostEqual(m._robot_yaw, yaw)
         m._tracker.update.assert_called_once()
         self.assertAlmostEqual(m._tracker.update.call_args.args[1], yaw)
-        status = json.loads(m.get_navigation_status())
-        self.assertAlmostEqual(status["position"]["yaw"], round(yaw, 3))
+        # get_navigation_status moved to NavigationSkillsModule;
+        # verify yaw stored directly on Navigation
+        self.assertAlmostEqual(m._robot_yaw, yaw)
 
     def test_repeated_patrol_goals_do_not_reset_active_exploration_path(self):
         m = self._make()
@@ -319,9 +323,7 @@ class TestNavigation(unittest.TestCase):
         self.assertEqual(len(global_paths[-1]), 4)
         self.assertAlmostEqual(global_paths[-1][0][0], 0.0)
         self.assertAlmostEqual(waypoints[-1].pose.position.x, 1.0)
-        self.assertTrue(
-            any(e.get("event") == "external_strategy_path_control" for e in events)
-        )
+        self.assertTrue(any(e.get("event") == "external_strategy_path_control" for e in events))
 
     def test_external_strategy_path_control_does_not_replan_on_costmap(self):
         m = self._make(
@@ -329,23 +331,27 @@ class TestNavigation(unittest.TestCase):
             waypoint_threshold=0.2,
             final_waypoint_threshold=0.2,
         )
-        m._on_patrol_goals([
-            {"x": 1.0, "y": 0.0, "z": 0.0},
-            {"x": 2.0, "y": 0.0, "z": 0.0},
-        ])
+        m._on_patrol_goals(
+            [
+                {"x": 1.0, "y": 0.0, "z": 0.0},
+                {"x": 2.0, "y": 0.0, "z": 0.0},
+            ]
+        )
         m._plan = MagicMock()
         m._last_costmap_replan_time = 0.0
 
-        m._on_costmap({
-            "grid": np.zeros((5, 5), dtype=np.float32),
-            "resolution": 0.2,
-            "origin": [0.0, 0.0],
-        })
+        m._on_costmap(
+            {
+                "grid": np.zeros((5, 5), dtype=np.float32),
+                "resolution": 0.2,
+                "origin": [0.0, 0.0],
+            }
+        )
 
         m._plan.assert_not_called()
 
     def test_external_strategy_path_control_does_not_replan_on_stuck(self):
-        from nav.mission.tracking.waypoint_tracker import EV_STUCK, TrackerStatus
+        from nav.tracking.waypoint_tracker import EV_STUCK, TrackerStatus
 
         m = self._make(
             external_strategy_path_control=True,
@@ -359,26 +365,28 @@ class TestNavigation(unittest.TestCase):
         m.adapter_status._add_callback(events.append)
         m.global_path._add_callback(global_paths.append)
         m.waypoint._add_callback(waypoints.append)
-        m._on_patrol_goals([
-            {"x": 1.0, "y": 0.0, "z": 0.0},
-            {"x": 2.0, "y": 0.0, "z": 0.0},
-            {"x": 3.0, "y": 0.0, "z": 0.0},
-        ])
+        m._on_patrol_goals(
+            [
+                {"x": 1.0, "y": 0.0, "z": 0.0},
+                {"x": 2.0, "y": 0.0, "z": 0.0},
+                {"x": 3.0, "y": 0.0, "z": 0.0},
+            ]
+        )
         m._plan = MagicMock()
         # Mock _execute_recovery_motion to call _finish_recovery_motion directly
         # (which publishes the event), instead of starting a long-running thread.
         m._execute_recovery_motion = MagicMock(
             side_effect=lambda post_action: m._finish_recovery_motion(post_action, "stuck")
         )
-        m._tracker.update = MagicMock(
-            return_value=TrackerStatus(0, 3, event=EV_STUCK)
-        )
+        m._tracker.update = MagicMock(return_value=TrackerStatus(0, 3, event=EV_STUCK))
 
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
-            frame_id="map",
-            ts=time.time(),
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         m._execute_recovery_motion.assert_called_once()
         m._plan.assert_not_called()
@@ -386,12 +394,7 @@ class TestNavigation(unittest.TestCase):
         self.assertTrue(m._using_external_strategy_path)
         self.assertEqual(len(global_paths[-1]), 4)
         self.assertAlmostEqual(waypoints[-1].pose.position.x, 1.0)
-        self.assertTrue(
-            any(
-                e.get("event") == "external_strategy_path_stuck_recovery"
-                for e in events
-            )
-        )
+        self.assertTrue(any(e.get("event") == "external_strategy_path_stuck_recovery" for e in events))
 
     def test_external_strategy_path_reports_strategy_not_stale_pct(self):
         m = self._make(
@@ -407,10 +410,12 @@ class TestNavigation(unittest.TestCase):
         statuses = []
         m.mission_status._add_callback(statuses.append)
 
-        m._on_patrol_goals([
-            {"x": 1.0, "y": 0.0, "z": 0.0},
-            {"x": 2.0, "y": 0.0, "z": 0.0},
-        ])
+        m._on_patrol_goals(
+            [
+                {"x": 1.0, "y": 0.0, "z": 0.0},
+                {"x": 2.0, "y": 0.0, "z": 0.0},
+            ]
+        )
 
         report = statuses[-1]["last_plan_report"]
         self.assertEqual(report["primary_planner"], "external_strategy_path")
@@ -441,10 +446,13 @@ class TestNavigation(unittest.TestCase):
         statuses = []
         m.adapter_status._add_callback(statuses.append)
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         self.assertEqual(m._state, "FAILED")
         self.assertIn("empty path", m._failure_reason)
@@ -462,16 +470,20 @@ class TestNavigation(unittest.TestCase):
         m._planner_svc._backend = _MappedBackend()
         m._robot_pos = np.array([0.0, 0.0, 0.0])
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         self.assertEqual(m._state, "FAILED")
         self.assertIn("empty path", m._failure_reason)
 
     def test_empty_path_with_map_can_use_explicit_direct_goal_fallback(self):
-        m = self._make(allow_direct_goal_fallback=True,
+        m = self._make(
+            allow_direct_goal_fallback=True,
             direct_goal_fallback_on_planner_failure=True,
         )
 
@@ -490,10 +502,13 @@ class TestNavigation(unittest.TestCase):
         m.adapter_status._add_callback(statuses.append)
         m.mission_status._add_callback(missions.append)
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         self.assertEqual(m._state, "EXECUTING")
         self.assertEqual(len(waypoints), 1)
@@ -520,7 +535,8 @@ class TestNavigation(unittest.TestCase):
 
         pose = PoseStamped(
             pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
+            frame_id="map",
+            ts=time.time(),
         )
         m._on_goal(pose)
         first_path_len = m._tracker.path_length
@@ -545,16 +561,22 @@ class TestNavigation(unittest.TestCase):
         events = []
         m.adapter_status._add_callback(events.append)
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
         events.clear()
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(4.0, 2.0, 3.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(4.0, 2.0, 3.0), orientation=Quaternion()),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         self.assertAlmostEqual(m._goal[2], 3.0)
         self.assertFalse(any(e.get("event") == "goal_update_ignored" for e in events))
@@ -571,11 +593,13 @@ class TestNavigation(unittest.TestCase):
 
     def test_navigate_to_skill_defaults_z_to_current_floor(self):
         m = self._make(allow_direct_goal_fallback=True)
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(1.0, 2.0, 1.75)),
-            frame_id="map",
-            ts=time.time(),
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(1.0, 2.0, 1.75)),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         result = json.loads(m.navigate_to(4.0, 5.0))
 
@@ -599,10 +623,13 @@ class TestNavigation(unittest.TestCase):
         m.mission_status._add_callback(statuses.append)
         m.waypoint._add_callback(waypoints.append)
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
-            frame_id="odom", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(4.0, 2.0, 0.0), orientation=Quaternion()),
+                frame_id="odom",
+                ts=time.time(),
+            )
+        )
 
         self.assertIsNone(m._goal)
         self.assertEqual(m._state, "IDLE")
@@ -625,10 +652,13 @@ class TestNavigation(unittest.TestCase):
         m.mission_status._add_callback(statuses.append)
         m.waypoint._add_callback(waypoints.append)
 
-        m._on_goal(PoseStamped(
-            pose=Pose(position=Vector3(float("nan"), 2.0, 0.0), orientation=Quaternion()),
-            frame_id="map", ts=time.time(),
-        ))
+        m._on_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(float("nan"), 2.0, 0.0), orientation=Quaternion()),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
 
         self.assertIsNone(m._goal)
         self.assertEqual(m._state, "IDLE")
@@ -643,11 +673,13 @@ class TestNavigation(unittest.TestCase):
         statuses = []
         m.mission_status._add_callback(statuses.append)
 
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(1, 2, 0)),
-            frame_id="map",
-            ts=time.time(),
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(1, 2, 0)),
+                frame_id="map",
+                ts=time.time(),
+            )
+        )
         m._set_state("IDLE")
 
         self.assertEqual(statuses[-1]["planning_frame_id"], "map")
@@ -658,10 +690,11 @@ class TestNavigation(unittest.TestCase):
 # SafetyRing
 # ============================================================================
 
-class TestSafetyRing(unittest.TestCase):
 
+class TestSafetyRing(unittest.TestCase):
     def _make(self):
         from nav.services.safety.safety_ring import SafetyRing
+
         return SafetyRing()
 
     def test_ports_in(self):
@@ -706,10 +739,11 @@ class TestSafetyRing(unittest.TestCase):
 # Terrain / LocalPlanner / PathFollower
 # ============================================================================
 
-class TestTerrain(unittest.TestCase):
 
+class TestTerrain(unittest.TestCase):
     def test_ports(self):
         from nav.local.terrain import Terrain
+
         m = Terrain(backend="simple")
         self.assertIn("odometry", m.ports_in)
         self.assertIn("map_cloud", m.ports_in)
@@ -719,11 +753,13 @@ class TestTerrain(unittest.TestCase):
 
     def test_layer(self):
         from nav.local.terrain import Terrain
+
         m = Terrain(backend="simple")
         self.assertEqual(m.layer, 2)
 
     def test_health(self):
         from nav.local.terrain import Terrain
+
         m = Terrain(backend="simple")
         h = m.health()
         self.assertIn("terrain", h)
@@ -731,9 +767,9 @@ class TestTerrain(unittest.TestCase):
 
 
 class TestLocalPlanner(unittest.TestCase):
-
     def test_ports(self):
         from nav.services.plan.local_planner.service import LocalPlanner
+
         m = LocalPlanner(backend="simple")
         self.assertIn("odometry", m.ports_in)
         self.assertIn("terrain_map", m.ports_in)
@@ -745,11 +781,13 @@ class TestLocalPlanner(unittest.TestCase):
 
     def test_layer(self):
         from nav.services.plan.local_planner.service import LocalPlanner
+
         m = LocalPlanner(backend="simple")
         self.assertEqual(m.layer, 2)
 
     def test_storage_inputs_keep_latest_only(self):
         from nav.services.plan.local_planner.service import LocalPlanner
+
         m = LocalPlanner(backend="simple")
         m.setup()
 
@@ -783,16 +821,20 @@ class TestLocalPlanner(unittest.TestCase):
         paths = []
         m.local_path._add_callback(paths.append)
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
-        m._on_global_path([
-            np.array([0.0, 0.0, 0.0]),
-            np.array([0.0, 3.0, 0.0]),
-            np.array([3.0, 3.0, 0.0]),
-        ])
+        m._on_global_path(
+            [
+                np.array([0.0, 0.0, 0.0]),
+                np.array([0.0, 3.0, 0.0]),
+                np.array([3.0, 3.0, 0.0]),
+            ]
+        )
 
-        m._on_waypoint(PoseStamped(
-            pose=Pose(position=Vector3(3.0, 3.0, 0.0)),
-            frame_id="odom",
-        ))
+        m._on_waypoint(
+            PoseStamped(
+                pose=Pose(position=Vector3(3.0, 3.0, 0.0)),
+                frame_id="odom",
+            )
+        )
 
         self.assertEqual(paths[-1].frame_id, "odom")
         last = paths[-1].poses[-1]
@@ -992,9 +1034,9 @@ class TestLocalPlanner(unittest.TestCase):
 
 
 class TestPathFollower(unittest.TestCase):
-
     def test_ports(self):
         from nav.local.path_follower import PathFollower
+
         m = PathFollower(backend="pid")
         self.assertIn("odometry", m.ports_in)
         self.assertIn("local_path", m.ports_in)
@@ -1003,6 +1045,7 @@ class TestPathFollower(unittest.TestCase):
 
     def test_layer(self):
         from nav.local.path_follower import PathFollower
+
         m = PathFollower(backend="pid")
         self.assertEqual(m.layer, 2)
 
@@ -1011,14 +1054,15 @@ class TestPathFollower(unittest.TestCase):
 # GatewayModule
 # ============================================================================
 
+
 @unittest.skipUnless(
     __import__("importlib").util.find_spec("pydantic"),
     "pydantic not installed",
 )
 class TestGatewayModule(unittest.TestCase):
-
     def _make(self):
         from gateway.gateway_module import GatewayModule
+
         return GatewayModule(port=5050)
 
     def test_ports_in(self):
@@ -1075,10 +1119,11 @@ class TestGatewayModule(unittest.TestCase):
 # MCPServerModule
 # ============================================================================
 
-class TestMCPServerModule(unittest.TestCase):
 
+class TestMCPServerModule(unittest.TestCase):
     def _make(self):
         from gateway.mcp_server import MCPServerModule
+
         return MCPServerModule(port=8090)
 
     def test_ports_in(self):
@@ -1120,6 +1165,7 @@ class TestMCPServerModule(unittest.TestCase):
 
     def test_stop_via_skill(self):
         import json
+
         m = self._make()
         stops = []
         m.stop_cmd._add_callback(stops.append)
@@ -1127,14 +1173,32 @@ class TestMCPServerModule(unittest.TestCase):
         self.assertEqual(result["status"], "emergency_stopped")
         self.assertEqual(stops, [2])
 
+    def test_legacy_stop_alias_uses_non_latching_native_stop(self):
+        import json
+        from unittest.mock import patch
+
+        m = self._make()
+        with (
+            patch("gateway.mcp_server.native_stop", return_value=True) as stop,
+            patch("gateway.mcp_server.native_estop") as estop,
+        ):
+            result = json.loads(m._legacy_stop_tool())
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["control_boundary"], "native_stop")
+        stop.assert_called_once_with("mcp_stop")
+        estop.assert_not_called()
+
     def test_get_position_no_odom(self):
         import json
+
         m = self._make()
         result = json.loads(m.get_robot_position())
         self.assertIn("error", result)
 
     def test_get_position_with_odom(self):
         import json
+
         m = self._make()
         m._odom = {"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.5}
         result = json.loads(m.get_robot_position())
@@ -1144,6 +1208,7 @@ class TestMCPServerModule(unittest.TestCase):
         import json
 
         from memory.modules.tagged_locations_module import TaggedLocationsModule
+
         m = self._make()
         m._odom = {"x": 5.0, "y": 3.0, "z": 0.0}
         tl = TaggedLocationsModule()
@@ -1180,12 +1245,14 @@ class TestMCPServerModule(unittest.TestCase):
 
     def test_set_mode_via_skill(self):
         import json
+
         m = self._make()
         result = json.loads(m.set_mode("autonomous"))
         self.assertEqual(result["mode"], "autonomous")
 
     def test_set_mode_estop_publishes_stop_and_zero_twist(self):
         import json
+
         m = self._make()
         result = json.loads(m.set_mode("estop"))
         self.assertEqual(result["mode"], "estop")
@@ -1195,6 +1262,7 @@ class TestMCPServerModule(unittest.TestCase):
 
     def test_set_mode_invalid(self):
         import json
+
         m = self._make()
         result = json.loads(m.set_mode("unknown"))
         self.assertIn("error", result)
@@ -1212,13 +1280,15 @@ class TestMCPServerModule(unittest.TestCase):
                         "labels": "backpack",
                         "score": 0.95,
                     },
-                    "results": [{
-                        "x": 1.0,
-                        "y": 2.0,
-                        "labels": "backpack",
-                        "score": 0.95,
-                        "navigable": False,
-                    }],
+                    "results": [
+                        {
+                            "x": 1.0,
+                            "y": 2.0,
+                            "labels": "backpack",
+                            "score": 0.95,
+                            "navigable": False,
+                        }
+                    ],
                     "encoder_type": "lexical_hash",
                     "semantic_encoder_ready": False,
                     "degraded": True,
@@ -1236,6 +1306,7 @@ class TestMCPServerModule(unittest.TestCase):
 
     def test_get_health_no_handle(self):
         import json
+
         m = self._make()
         result = json.loads(m.get_health())
         self.assertIn("error", result)
@@ -1253,10 +1324,11 @@ class TestMCPServerModule(unittest.TestCase):
 # RerunModule
 # ============================================================================
 
-class TestRerunModule(unittest.TestCase):
 
+class TestRerunModule(unittest.TestCase):
     def _make(self):
         from runtime.rerun_module import RerunModule
+
         return RerunModule(web_port=9090)
 
     def test_ports_in(self):
@@ -1267,6 +1339,7 @@ class TestRerunModule(unittest.TestCase):
         self.assertIn("safety_state", m.ports_in)
         self.assertIn("waypoint", m.ports_in)
         self.assertIn("cmd_vel", m.ports_in)
+        self.assertIn("map_cloud", m.ports_in)
 
     def test_trajectory_empty_initially(self):
         m = self._make()
@@ -1282,18 +1355,50 @@ class TestRerunModule(unittest.TestCase):
         self.assertIn("rerun", h)
         self.assertEqual(h["rerun"]["trajectory_len"], 0)
 
+    def test_map_cloud_logs_points3d(self):
+        import numpy as np
+
+        import runtime.rerun_module as rerun_module
+        from runtime.msgs.sensor import PointCloud2
+
+        class FakeRerun:
+            def __init__(self):
+                self.calls = []
+
+            def Points3D(self, *args, **kwargs):
+                return ("Points3D", args, kwargs)
+
+            def log(self, path, payload):
+                self.calls.append((path, payload))
+
+        old_rr = rerun_module.rr
+        fake = FakeRerun()
+        try:
+            rerun_module.rr = fake
+            m = rerun_module.RerunModule(max_cloud_fps=1000, max_cloud_points=10)
+            cloud = PointCloud2(points=np.array([[0, 0, 0], [1, 2, 0.5]], dtype=np.float32))
+            m._on_cloud(cloud)
+        finally:
+            rerun_module.rr = old_rr
+
+        self.assertEqual(len(fake.calls), 1)
+        self.assertEqual(fake.calls[0][0], "world/map/points")
+        self.assertEqual(fake.calls[0][1][0], "Points3D")
+
 
 # ============================================================================
 # SemanticPlannerModule
 # ============================================================================
 
-class TestSemanticPlannerModule(unittest.TestCase):
 
+class TestSemanticPlannerModule(unittest.TestCase):
     def _make(self):
         import os
         import sys
+
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "semantic", "planner"))
-        from decision.modules.semantic_planner_module import SemanticPlannerModule
+        from decision.modules.semantic_planner import SemanticPlannerModule
+
         return SemanticPlannerModule()
 
     def test_ports_in(self):
@@ -1339,6 +1444,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
     def test_lera_triggers_on_stuck(self):
         """STUCK state must publish RECOVERING and increment lera_count."""
         import time as _time
+
         m = self._make()
         statuses = []
         m.planner_status._add_callback(statuses.append)
@@ -1381,7 +1487,8 @@ class TestSemanticPlannerModule(unittest.TestCase):
         m.goal_pose._add_callback(goals.append)
         pose = PoseStamped(
             pose=Pose(position=Vector3(3, 4, 0), orientation=Quaternion(0, 0, 0, 1)),
-            frame_id="map", ts=0.0,
+            frame_id="map",
+            ts=0.0,
         )
         m._current_goal_pose = pose
         m._dispatch_recovery("retry_different_path")
@@ -1414,7 +1521,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
             target_x = 16.25
             target_y = 2.9
             target_z = 0.937
-            frame_id = 'map'
+            frame_id = "map"
 
         class _Resolver:
             def maybe_reload_kg(self):
@@ -1427,7 +1534,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
         goals = []
         m.goal_pose._add_callback(goals.append)
 
-        m._try_resolve('find the stairs', '{"objects": []}')
+        m._try_resolve("find the stairs", '{"objects": []}')
 
         self.assertEqual(len(goals), 1)
         self.assertAlmostEqual(goals[0].pose.position.x, 16.25)
@@ -1645,6 +1752,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
     def test_scene_graph_stored_as_object(self):
         """_on_scene_graph must persist the SceneGraph object, not just JSON."""
         from runtime.msgs.semantic import Detection3D, SceneGraph
+
         m = self._make()
         sg = SceneGraph(objects=[Detection3D(label="chair", confidence=0.9)])
         m._on_scene_graph(sg)
@@ -1656,12 +1764,13 @@ class TestSemanticPlannerModule(unittest.TestCase):
 # MissionLoggerModule
 # ============================================================================
 
-class TestMissionLoggerModule(unittest.TestCase):
 
+class TestMissionLoggerModule(unittest.TestCase):
     def _make(self, tmp_path=None):
         import tempfile
 
         from memory.modules.mission_logger_module import MissionLoggerModule
+
         log_dir = tmp_path or tempfile.mkdtemp(prefix="lingtu_test_missions_")
         return MissionLoggerModule(log_dir=log_dir)
 
@@ -1673,6 +1782,7 @@ class TestMissionLoggerModule(unittest.TestCase):
 
     def test_empty_list(self):
         import json
+
         m = self._make()
         # @skill list_missions returns JSON str
         result = json.loads(m.list_missions())
@@ -1696,6 +1806,7 @@ class TestMissionLoggerModule(unittest.TestCase):
 
     def test_mission_lifecycle_saved(self):
         import tempfile
+
         tmp = tempfile.mkdtemp(prefix="lingtu_test_missions_")
         m = self._make(tmp_path=tmp)
 
@@ -1704,8 +1815,10 @@ class TestMissionLoggerModule(unittest.TestCase):
         self.assertEqual(m._current["goal"], "kitchen")
 
         from runtime.msgs.geometry import Pose, Vector3
+
         def _odom(x, y):
             return Odometry(pose=Pose(position=Vector3(x=x, y=y, z=0.0)))
+
         m._on_odom(_odom(1.0, 2.0))
         odom2 = _odom(4.0, 6.0)
         m._on_odom(odom2)
@@ -1714,9 +1827,11 @@ class TestMissionLoggerModule(unittest.TestCase):
         self.assertIsNone(m._current)
 
         from pathlib import Path as PPath
+
         files = list(PPath(tmp).glob("*.json"))
         self.assertEqual(len(files), 1)
         import json
+
         data = json.loads(files[0].read_text())
         self.assertEqual(data["result"], "SUCCESS")
         self.assertEqual(data["goal"], "kitchen")
@@ -1724,6 +1839,7 @@ class TestMissionLoggerModule(unittest.TestCase):
 
     def test_list_and_stats_after_missions(self):
         import tempfile
+
         tmp = tempfile.mkdtemp(prefix="lingtu_test_missions_")
         m = self._make(tmp_path=tmp)
 
@@ -1732,6 +1848,7 @@ class TestMissionLoggerModule(unittest.TestCase):
             m._on_mission_status({"state": result})
 
         import json
+
         missions_raw = m._list_missions_raw()
         self.assertEqual(len(missions_raw), 3)
         # @skill JSON path
@@ -1744,6 +1861,7 @@ class TestMissionLoggerModule(unittest.TestCase):
 
     def test_replan_count_tracked(self):
         import tempfile
+
         tmp = tempfile.mkdtemp(prefix="lingtu_test_missions_")
         m = self._make(tmp_path=tmp)
 
@@ -1753,6 +1871,7 @@ class TestMissionLoggerModule(unittest.TestCase):
         m._on_mission_status({"state": "SUCCESS"})
 
         import json
+
         missions = m._list_missions_raw()
         self.assertEqual(missions[0]["replan_count"], 2)
         # also verify via @skill JSON path

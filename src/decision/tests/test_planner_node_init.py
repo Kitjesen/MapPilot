@@ -1,19 +1,4 @@
-"""test_planner_node_init.py — SemanticPlannerModule init and port regression tests
-
-The original test_planner_node_init.py tested the deleted ROS2 SemanticPlannerNode.
-This file has been rewritten to test the Module-First SemanticPlannerModule.
-
-Coverage:
-  - __init__ parameter defaults
-  - In/Out port declarations
-  - setup() does not crash
-  - stop() cleans up correctly
-  - instruction → goal_pose end-to-end routing (under mock LLM)
-  - agent_instruction triggers AgentLoop path
-  - planner_status output
-  - mission_status triggers LERa recovery
-  - health() structure
-"""
+"""Decision module."""
 
 import asyncio
 import os
@@ -23,25 +8,27 @@ import time
 _here = os.path.dirname(os.path.abspath(__file__))
 _repo = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
 _src = os.path.join(_repo, "src")
-for _p in [_repo, _src,
-           
-           
-           ]:
+for _p in [
+    _repo,
+    _src,
+]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
 
+from decision.modules.agent_planner import AgentPlannerModule
+from decision.modules.semantic_planner import SemanticPlannerModule
+from decision.tasks.agent import AGENT_TOOLS, AgentLoop
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import Detection3D, SceneGraph
 from runtime.stream import In, Out
-from decision.tasking.agent_loop import AGENT_TOOLS, AgentLoop
-from decision.modules.semantic_planner_module import SemanticPlannerModule
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_module(**kw) -> SemanticPlannerModule:
     mod = SemanticPlannerModule(**kw)
@@ -51,16 +38,14 @@ def _make_module(**kw) -> SemanticPlannerModule:
 
 def _make_odom(x=0.0, y=0.0):
     from runtime.msgs.geometry import Pose, Vector3
+
     od = Odometry()
     od.pose = Pose(position=Vector3(x, y, 0.0))
     return od
 
 
 def _make_scene_graph(labels=("chair", "door")):
-    objs = [
-        Detection3D(id=str(i), label=lbl, position=Vector3(float(i), 0.0, 0.0))
-        for i, lbl in enumerate(labels)
-    ]
+    objs = [Detection3D(id=str(i), label=lbl, position=Vector3(float(i), 0.0, 0.0)) for i, lbl in enumerate(labels)]
     return SceneGraph(objects=objs, regions=[])
 
 
@@ -78,6 +63,7 @@ def _collect(port_out, n=1, timeout=0.5):
 # 1. Init / port declarations
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticPlannerInit:
     def test_layer(self):
         assert SemanticPlannerModule._layer == 4
@@ -85,7 +71,6 @@ class TestSemanticPlannerInit:
     def test_in_ports(self):
         mod = SemanticPlannerModule()
         assert isinstance(mod.instruction, In)
-        assert isinstance(mod.agent_instruction, In)
         assert isinstance(mod.scene_graph, In)
         assert isinstance(mod.odometry, In)
         assert isinstance(mod.detections, In)
@@ -139,6 +124,7 @@ class TestSemanticPlannerInit:
 # 2. State updates
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticPlannerStateUpdate:
     def setup_method(self):
         self.mod = _make_module()
@@ -159,7 +145,7 @@ class TestSemanticPlannerStateUpdate:
 
     def test_detections_cached(self):
         dets = [Detection3D(id="99", label="box", position=Vector3(1, 1, 0))]
-        # _on_detections accepts a list — just verify it does not crash
+
         self.mod._on_detections(dets)
 
     def test_scene_graph_does_not_republish_same_goal(self):
@@ -188,8 +174,9 @@ class TestSemanticPlannerStateUpdate:
 
 
 # ---------------------------------------------------------------------------
-# 3. instruction → planner_status flow (fast path, no LLM dependency)
+
 # ---------------------------------------------------------------------------
+
 
 class TestSemanticPlannerInstruction:
     def setup_method(self):
@@ -203,7 +190,7 @@ class TestSemanticPlannerInstruction:
         self.mod.stop()
 
     def test_instruction_triggers_status(self):
-        """After an instruction, planner_status must be published (success or failure — not silent)."""
+        """Test instruction triggers status."""
         statuses = []
         self.mod.planner_status._add_callback(lambda s: statuses.append(s))
         self.mod._on_instruction("go to chair")
@@ -224,6 +211,7 @@ class TestSemanticPlannerInstruction:
 # 4. mission_status LERa cooldown
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticPlannerRecovery:
     def test_recovering_triggers_lera_if_instruction_active(self):
         """RECOVERING with an active instruction must trigger LERa."""
@@ -234,7 +222,7 @@ class TestSemanticPlannerRecovery:
         mod._current_instruction = "find the coffee machine"
         # Deliver the new mission lifecycle state.
         mod._on_mission_status({"state": "RECOVERING"})
-        # LERa runs in a background thread — just verify no crash
+
         time.sleep(0.05)
         mod.stop()
 
@@ -251,21 +239,9 @@ class TestSemanticPlannerRecovery:
 
 
 # ---------------------------------------------------------------------------
-# 5. health()
-# ---------------------------------------------------------------------------
-
-class TestSemanticPlannerHealth:
-    def test_health_structure(self):
-        mod = _make_module()
-        h = mod.health()
-        assert isinstance(h, dict)
-        assert "planner" in h or "goal_resolver" in h or "instruction" in str(h)
-        mod.stop()
-
-
-# ---------------------------------------------------------------------------
 # 6. agent loop wiring
 # ---------------------------------------------------------------------------
+
 
 class _FakeSkillModule(Module):
     @skill
@@ -304,14 +280,16 @@ class TestAgentLoopTools:
 
     def test_llm_fallback_receives_runtime_tool_list(self):
         llm = _RecordingLLM(['{"tool":"hello","args":{"name":"codex"}}'])
-        tool_list = [{
-            "name": "hello",
-            "description": "[FakeSkill] Return a greeting",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"name": {"type": "string"}},
-            },
-        }]
+        tool_list = [
+            {
+                "name": "hello",
+                "description": "[FakeSkill] Return a greeting",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"name": {"type": "string"}},
+                },
+            }
+        ]
         agent = AgentLoop(
             llm_client=llm,
             tool_registry={"hello": lambda name="robot": f"hello {name}"},
@@ -325,10 +303,14 @@ class TestAgentLoopTools:
                 "camera_available": False,
             },
         )
-        response = asyncio.run(agent._llm_call([
-            {"role": "system", "content": "test"},
-            {"role": "user", "content": "say hello"},
-        ]))
+        response = asyncio.run(
+            agent._llm_call(
+                [
+                    {"role": "system", "content": "test"},
+                    {"role": "user", "content": "say hello"},
+                ]
+            )
+        )
         assert response["tool_calls"][0]["function"]["name"] == "hello"
         assert llm.messages is not None
         assert "hello" in llm.messages[0]["content"]
@@ -336,39 +318,38 @@ class TestAgentLoopTools:
 
 class TestSemanticPlannerAgentLoop:
     def test_on_system_modules_discovers_agent_skills(self):
-        mod = SemanticPlannerModule()
+        mod = AgentPlannerModule(llm_backend="mock")
         tool_mod = _FakeSkillModule()
         unsafe_mod = _UnsafeSkillModule()
-        mod.on_system_modules({
-            "SemanticPlannerModule": mod,
-            "FakeSkillModule": tool_mod,
-            "UnsafeSkillModule": unsafe_mod,
-        })
+        mod.on_system_modules(
+            {
+                "AgentPlannerModule": mod,
+                "FakeSkillModule": tool_mod,
+                "UnsafeSkillModule": unsafe_mod,
+            }
+        )
 
         assert "hello" in mod._agent_tool_registry
         assert any(t["name"] == "hello" for t in mod._agent_tool_list)
         assert "emergency_stop" not in mod._agent_tool_registry
 
     def test_run_agent_loop_uses_discovered_skills(self):
-        mod = SemanticPlannerModule()
-        mod.on_system_modules({
-            "SemanticPlannerModule": mod,
-            "FakeSkillModule": _FakeSkillModule(),
-        })
-        mod._goal_resolver = type(
-            "_Resolver",
-            (),
+        mod = AgentPlannerModule(llm_backend="mock")
+        mod.on_system_modules(
             {
-                "_primary": _RecordingLLM([
-                    '{"tool":"hello","args":{"name":"lingtu"}}',
-                    '{"tool":"done","args":{"summary":"ok"}}',
-                ]),
-            },
-        )()
+                "AgentPlannerModule": mod,
+                "FakeSkillModule": _FakeSkillModule(),
+            }
+        )
+        mod._llm_client = _RecordingLLM(
+            [
+                '{"tool":"hello","args":{"name":"lingtu"}}',
+                '{"tool":"done","args":{"summary":"ok"}}',
+            ]
+        )
 
         state = asyncio.run(mod._run_agent_loop("greet the operator"))
 
         assert state.completed
         assert state.summary == "ok"
-        assert any(m.get("role") == "tool" and "hello lingtu" in m.get("content", "")
-                   for m in state.messages)
+        assert any(m.get("role") == "tool" and "hello lingtu" in m.get("content", "") for m in state.messages)

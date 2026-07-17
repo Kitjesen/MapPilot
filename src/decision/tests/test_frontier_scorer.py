@@ -1,24 +1,16 @@
-"""
-test_frontier_scorer.py — Frontier 评分器单元测试
-
-覆盖:
-  - Costmap 更新
-  - Frontier 提取
-  - 评分 (距离、新颖度、语言、grounding_potential)
-  - 辅助方法
-"""
+"""Decision module."""
 
 import math
 import unittest
 
 import numpy as np
 
-from decision.exploration.frontier_scorer import (
+from decision.frontiers.scorer import (
     FREE_CELL,
     UNKNOWN_CELL,
     FrontierScorer,
 )
-from decision.exploration.frontier_types import (
+from decision.frontiers.types import (
     angle_diff,
     angle_to_label,
     cooccurrence_score,
@@ -26,7 +18,7 @@ from decision.exploration.frontier_types import (
 
 
 class TestCostmapUpdate(unittest.TestCase):
-    """Costmap 更新测试。"""
+    """Test Costmap Update."""
 
     def test_update_stores_params(self):
         scorer = FrontierScorer()
@@ -37,12 +29,12 @@ class TestCostmapUpdate(unittest.TestCase):
 
 
 class TestFrontierExtraction(unittest.TestCase):
-    """Frontier 提取测试。"""
+    """Test Frontier Extraction."""
 
     def _make_grid(self, rows=20, cols=20):
-        """创建一个上半部 free, 下半部 unknown 的栅格。"""
+        """Make grid."""
         grid = np.full((rows, cols), UNKNOWN_CELL, dtype=np.int8)
-        grid[:rows // 2, :] = FREE_CELL
+        grid[: rows // 2, :] = FREE_CELL
         return grid
 
     def test_extract_finds_frontiers(self):
@@ -51,7 +43,7 @@ class TestFrontierExtraction(unittest.TestCase):
         scorer.update_costmap(grid, resolution=0.1, origin_x=0.0, origin_y=0.0)
         frontiers = scorer.extract_frontiers(np.array([0.5, 0.5]))
         self.assertGreater(len(frontiers), 0)
-        # frontier 中心应在 free/unknown 交界处
+
         for f in frontiers:
             self.assertGreater(f.size, 0)
             self.assertGreater(f.distance, 0)
@@ -77,7 +69,7 @@ class TestFrontierExtraction(unittest.TestCase):
 
 
 class TestFrontierScoring(unittest.TestCase):
-    """Frontier 评分测试。"""
+    """Test Frontier Scoring."""
 
     def _make_scorer_with_frontiers(self):
         scorer = FrontierScorer(min_frontier_size=3)
@@ -103,20 +95,20 @@ class TestFrontierScoring(unittest.TestCase):
         if not scorer._frontiers:
             self.skipTest("No frontiers extracted")
 
-        # 无物体
         scored_no_obj = scorer.score_frontiers(
             instruction="find door",
             robot_position=np.array([0.5, 0.5]),
         )
         max_score_no_obj = max(f.score for f in scored_no_obj)
 
-        # 在 frontier 附近有 "door" 物体
         door_pos = scored_no_obj[0].center_world
-        scene_objects = [{
-            "id": 0,
-            "label": "door",
-            "position": {"x": float(door_pos[0]), "y": float(door_pos[1])},
-        }]
+        scene_objects = [
+            {
+                "id": 0,
+                "label": "door",
+                "position": {"x": float(door_pos[0]), "y": float(door_pos[1])},
+            }
+        ]
         scored_with_obj = scorer.score_frontiers(
             instruction="find door",
             robot_position=np.array([0.5, 0.5]),
@@ -135,13 +127,11 @@ class TestFrontierScoring(unittest.TestCase):
 
 
 class TestHelperMethods(unittest.TestCase):
-    """辅助方法测试。"""
+    """Test Helper Methods."""
 
     def test_angle_diff(self):
         self.assertAlmostEqual(angle_diff(0, 0), 0)
-        self.assertAlmostEqual(
-            angle_diff(math.pi, -math.pi), 0, places=5
-        )
+        self.assertAlmostEqual(angle_diff(math.pi, -math.pi), 0, places=5)
         diff = angle_diff(0.1, -0.1)
         self.assertAlmostEqual(diff, 0.2, places=5)
 
@@ -150,15 +140,14 @@ class TestHelperMethods(unittest.TestCase):
         self.assertEqual(angle_to_label(math.pi / 2), "north")
 
     def test_cooccurrence_score(self):
-        score = cooccurrence_score(
-            {"fire extinguisher", "find"}, "door"
-        )
+        score = cooccurrence_score({"fire extinguisher", "find"}, "door")
         self.assertGreater(score, 0)
         score_none = cooccurrence_score({"cat", "find"}, "door")
         self.assertEqual(score_none, 0.0)
 
     def test_frontiers_summary_json(self):
         import json
+
         scorer = FrontierScorer(min_frontier_size=3)
         grid = np.full((20, 20), UNKNOWN_CELL, dtype=np.int8)
         grid[:10, :] = FREE_CELL
@@ -171,7 +160,7 @@ class TestHelperMethods(unittest.TestCase):
 
 
 class TestFailureMemory(unittest.TestCase):
-    """P0: Frontier 失败记忆测试。"""
+    """Test Failure Memory."""
 
     def _make_scorer_with_frontiers(self):
         scorer = FrontierScorer(min_frontier_size=3)
@@ -197,7 +186,6 @@ class TestFailureMemory(unittest.TestCase):
         scorer.record_frontier_failure(scored_before[0].center_world)
         self.assertEqual(len(scorer._failed_positions), 1)
 
-        # Score again — the failed frontier should be penalized
         scored_after = scorer.score_frontiers(
             instruction="find door",
             robot_position=np.array([0.5, 0.5]),
@@ -218,7 +206,7 @@ class TestFailureMemory(unittest.TestCase):
 
     def test_failure_penalty_far_away_no_effect(self):
         scorer = FrontierScorer()
-        # Failure at (100, 100), frontier at (0, 0) — far away, no penalty
+
         scorer.record_frontier_failure(np.array([100.0, 100.0]))
         penalty = scorer._compute_failure_penalty(np.array([0.0, 0.0]))
         self.assertAlmostEqual(penalty, 0.0)
@@ -232,7 +220,7 @@ class TestFailureMemory(unittest.TestCase):
 
 
 class TestKGRoomScore(unittest.TestCase):
-    """P2: KG 目标-房间概率评分测试。"""
+    """Test K G Room Score."""
 
     def test_kg_room_score_with_kg(self):
         from memory.knowledge.room_object_kg import RoomObjectKG
@@ -246,7 +234,6 @@ class TestKGRoomScore(unittest.TestCase):
         scorer = FrontierScorer()
         scorer.set_room_object_kg(kg)
 
-        # "找冰箱" → 附近有 "sink" → KG 推断 kitchen → 冰箱在 kitchen 概率高
         score = scorer._compute_kg_room_score(
             inst_keywords={"refrigerator", "冰箱"},
             nearby_labels=["sink"],

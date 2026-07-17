@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import math
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -160,7 +160,7 @@ def test_readiness_snapshot_blocks_lost_robot_localization():
     from gateway.services.readiness import build_readiness_snapshot
 
     gateway = GatewayModule()
-    gateway._all_modules = {"SlamBridgeModule": _HealthyModule()}
+    gateway._all_modules = {"SlamAdapterModule": _HealthyModule()}
     with gateway._state_lock:
         gateway._odom = {"x": 0.0}
         gateway._localization_status = {
@@ -225,7 +225,7 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     monkeypatch.setenv("LINGTU_ENDPOINT", "mujoco_live")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
+    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
 
     gateway = GatewayModule()
@@ -256,23 +256,15 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
     assert "runtime_blocked:runtime_contract_data_source_mismatch" in payload["reasons"]
     assert "runtime_blocked:command_sink_mismatch" in payload["reasons"]
     assert payload["runtime"]["boundary"]["ok"] is False
-    assert payload["runtime"]["boundary"]["expected_command_sink"] == (
-        "mujoco_velocity_adapter"
-    )
-    assert payload["runtime"]["boundary"]["frames"]["axis_convention"] == (
-        "x_forward_y_left_z_up"
-    )
+    assert payload["runtime"]["boundary"]["expected_command_sink"] == ("mujoco_velocity_adapter")
+    assert payload["runtime"]["boundary"]["frames"]["axis_convention"] == ("x_forward_y_left_z_up")
     assert payload["runtime"]["boundary"]["frame_links"]["body_to_lidar"] == {
         "parent": "body",
         "child": "lidar_link",
         "required": True,
     }
-    assert payload["runtime"]["boundary"]["topic_allowed_frame_ids"][
-        "/slam/map_cloud"
-    ] == ["map"]
-    assert payload["runtime"]["boundary"]["topic_default_frame_ids"][
-        "/slam/map_cloud"
-    ] == "map"
+    assert payload["runtime"]["boundary"]["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
+    assert payload["runtime"]["boundary"]["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
     assert payload["runtime"]["boundary"]["required_topic_frame_ids"] == [
         "/lidar/raw_frame",
         "/imu/raw",
@@ -287,17 +279,11 @@ def test_readiness_snapshot_includes_runtime_boundary_blockers(monkeypatch):
         "/lidar/raw_frame",
         "/imu/raw",
     ]
-    flow = {
-        stage["name"]: stage
-        for stage in payload["runtime"]["boundary"]["resolved_runtime_data_flow"]
-    }
+    flow = {stage["name"]: stage for stage in payload["runtime"]["boundary"]["resolved_runtime_data_flow"]}
     assert flow["endpoint_adapter"]["inputs"] == ["/lidar/raw_frame", "/imu/raw"]
     assert flow["command_boundary"]["outputs"] == ["mujoco_velocity_adapter"]
-    assert payload["runtime"]["boundary"][
-        "runtime_data_flow_stage_algorithm_interfaces"
-    ]["global_planning"] == [
+    assert payload["runtime"]["boundary"]["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] == [
         "global_planning",
-        "pct_global_planning",
         "octoplanner3d_global_planning",
     ]
     assert payload["runtime"]["summary"]["data_blockers"] == [
@@ -314,7 +300,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
     monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
+    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
     gateway = GatewayModule()
@@ -346,10 +332,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
 
     assert status_code == 503
     assert "navigation_blocked:frame_mismatch_odometry" in payload["reasons"]
-    assert (
-        "navigation_blocked:real_runtime_evidence_missing_or_stale"
-        in payload["reasons"]
-    )
+    assert "navigation_blocked:real_runtime_evidence_missing_or_stale" in payload["reasons"]
     localization = payload["runtime"]["localization"]
     assert localization["runtime_contract"] == "thunder_field"
     assert localization["topic_default_frame_ids"]["/slam/map_cloud"] == "map"
@@ -364,9 +347,7 @@ def test_readiness_snapshot_includes_localization_frame_contract(monkeypatch):
         "/nav/cmd_vel",
     ]
     assert "/slam/odometry" in localization["runtime_data_flow_topics"]
-    assert localization["runtime_data_flow_stage_algorithm_interfaces"][
-        "local_planning_and_following"
-    ] == [
+    assert localization["runtime_data_flow_stage_algorithm_interfaces"]["local_planning_and_following"] == [
         "local_planning_and_following",
     ]
     frames = localization["frames"]

@@ -95,7 +95,7 @@ Environment overrides:
   LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z=0.45
   LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START=0.0
   LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE=1.0
-  LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME=15000
+  LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME=20000
   LINGTU_MUJOCO_LIVE_LOCALIZATION_BACKEND=  # no default; portable_lio was removed
   LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_FILTER_NUM=4
   LINGTU_MUJOCO_LIVE_FASTLIO_SCAN_RESOLUTION=0.15
@@ -473,7 +473,7 @@ run_gate() {
     "--inspection-path-yaw-rate-gain" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN:-$inspection_path_yaw_rate_gain_default}"
     "--inspection-path-stop-yaw-rate-gain" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_STOP_YAW_RATE_GAIN:-$inspection_path_stop_yaw_rate_gain_default}"
     "--inspection-path-dir-diff-thre" "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-$inspection_path_dir_diff_thre_default}"
-    "--mid360-samples-per-frame" "${LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME:-15000}"
+    "--mid360-samples-per-frame" "${LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME:-20000}"
     "--localization-backend" "${LINGTU_MUJOCO_LIVE_LOCALIZATION_BACKEND:-}"
     "--fastlio-lidar-input" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-livox_custom_msg}"
     "--fastlio-lidar-filter-num" "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_FILTER_NUM:-4}"
@@ -828,8 +828,8 @@ run_native_dds_sensors() {
     "--drive-vy" "${LINGTU_MUJOCO_NATIVE_DDS_DRIVE_VY:-0.0}"
     "--drive-wz" "${LINGTU_MUJOCO_NATIVE_DDS_DRIVE_WZ:-0.04}"
     "--n-rays" "${LINGTU_MUJOCO_NATIVE_DDS_N_RAYS:-6400}"
-    "--mid360-samples-per-frame" "${LINGTU_MUJOCO_NATIVE_DDS_MID360_SAMPLES_PER_FRAME:-15000}"
-    "--max-points" "${LINGTU_MUJOCO_NATIVE_DDS_MAX_POINTS:-15000}"
+    "--mid360-samples-per-frame" "${LINGTU_MUJOCO_NATIVE_DDS_MID360_SAMPLES_PER_FRAME:-20000}"
+    "--max-points" "${LINGTU_MUJOCO_NATIVE_DDS_MAX_POINTS:-20000}"
     "--json-out" "$run_dir/report.json"
   )
   if [[ "$require_slam" == "1" || "$require_slam" == "true" || "$require_slam" == "yes" ]]; then

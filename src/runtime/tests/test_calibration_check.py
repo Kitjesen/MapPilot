@@ -1,9 +1,9 @@
 """Tests for runtime.utils.calibration_check — startup calibration validation."""
 
+import math
 import unittest
 from dataclasses import dataclass
 from unittest.mock import patch
-
 
 
 # Minimal config stubs for testing (avoid importing real config)
@@ -62,6 +62,7 @@ class TestCalibrationCheck(unittest.TestCase):
 
     def _run(self, config=None, **kw):
         from runtime.utils.calibration_check import run_calibration_check
+
         return run_calibration_check(config=config or MockRobotConfig(), **kw)
 
     def test_default_config_passes(self):
@@ -99,20 +100,18 @@ class TestCalibrationCheck(unittest.TestCase):
 
 
 class TestCameraExtrinsics(unittest.TestCase):
-
     def _run(self, config, **kw):
         from runtime.utils.calibration_check import run_calibration_check
+
         return run_calibration_check(config=config, **kw)
 
     def test_all_zero_position_warns(self):
-        cfg = MockRobotConfig(camera=MockCameraConfig(
-            position_x=0, position_y=0, position_z=0))
+        cfg = MockRobotConfig(camera=MockCameraConfig(position_x=0, position_y=0, position_z=0))
         report = self._run(cfg)
         self.assertTrue(any("zeros" in w.lower() for w in report.warnings))
 
     def test_all_zero_position_errors_when_required(self):
-        cfg = MockRobotConfig(camera=MockCameraConfig(
-            position_x=0, position_y=0, position_z=0))
+        cfg = MockRobotConfig(camera=MockCameraConfig(position_x=0, position_y=0, position_z=0))
         report = self._run(cfg, require_camera=True)
         self.assertFalse(report.ok)
         self.assertTrue(any("zeros" in e.lower() for e in report.errors))
@@ -134,27 +133,24 @@ class TestCameraExtrinsics(unittest.TestCase):
         self.assertFalse(any("identity" in w.lower() for w in report.warnings))
 
     def test_large_rotation_warns(self):
-        cfg = MockRobotConfig(camera=MockCameraConfig(
-            roll=2.0, pitch=2.0, yaw=2.0))
+        cfg = MockRobotConfig(camera=MockCameraConfig(roll=2.0, pitch=2.0, yaw=2.0))
         report = self._run(cfg)
         self.assertTrue(any("very large" in w.lower() for w in report.warnings))
 
 
 class TestLidarExtrinsics(unittest.TestCase):
-
     def _run(self, config):
         from runtime.utils.calibration_check import run_calibration_check
+
         return run_calibration_check(config=config)
 
     def test_near_zero_lidar_offset_warns(self):
-        cfg = MockRobotConfig(lidar=MockLidarConfig(
-            offset_x=0, offset_y=0, offset_z=0))
+        cfg = MockRobotConfig(lidar=MockLidarConfig(offset_x=0, offset_y=0, offset_z=0))
         report = self._run(cfg)
         self.assertTrue(any("near zero" in w.lower() for w in report.warnings))
 
     def test_large_lidar_offset_warns(self):
-        cfg = MockRobotConfig(lidar=MockLidarConfig(
-            offset_x=1.0, offset_y=0, offset_z=0))
+        cfg = MockRobotConfig(lidar=MockLidarConfig(offset_x=1.0, offset_y=0, offset_z=0))
         report = self._run(cfg)
         self.assertTrue(any("large" in w.lower() for w in report.warnings))
 
@@ -163,11 +159,64 @@ class TestLidarExtrinsics(unittest.TestCase):
         report = self._run(cfg)
         self.assertTrue(any("lidar offset" in i.lower() for i in report.info))
 
+    def test_product_fastlio_config_path_exists(self):
+        from runtime.utils import calibration_check as cc
+
+        self.assertTrue(cc.FASTLIO2_CONFIG.is_file(), cc.FASTLIO2_CONFIG)
+        self.assertEqual(cc.FASTLIO2_CONFIG.name, "mid360_s100p.yaml")
+        self.assertIn("src/localization/fastlio2/config", cc.FASTLIO2_CONFIG.as_posix())
+
+    def test_v4_body_lidar_transform_matches_fastlio_runtime(self):
+        cfg = MockRobotConfig(
+            lidar=MockLidarConfig(
+                offset_x=0.402876074867229,
+                offset_y=0.0,
+                offset_z=0.0582019450665819,
+                roll=-math.pi,
+                pitch=-math.pi / 4.0,
+                yaw=0.0,
+            )
+        )
+
+        report = self._run(cfg)
+
+        self.assertTrue(report.ok, report.errors)
+        self.assertFalse(
+            any("lidar mount" in warning.lower() for warning in report.warnings),
+            report.warnings,
+        )
+        self.assertTrue(
+            any("body-to-lidar" in item.lower() for item in report.info),
+            report.info,
+        )
+
+    def test_v4_body_lidar_rotation_mismatch_is_error_when_slam_required(self):
+        cfg = MockRobotConfig(
+            lidar=MockLidarConfig(
+                offset_x=0.402876074867229,
+                offset_y=0.0,
+                offset_z=0.0582019450665819,
+                roll=0.0,
+                pitch=0.0,
+                yaw=0.0,
+            )
+        )
+
+        from runtime.utils.calibration_check import run_calibration_check
+
+        report = run_calibration_check(config=cfg, require_slam=True)
+
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any("lidar mount rotation mismatch" in error.lower() for error in report.errors),
+            report.errors,
+        )
+
 
 class TestDepthScale(unittest.TestCase):
-
     def _run(self, config):
         from runtime.utils.calibration_check import run_calibration_check
+
         return run_calibration_check(config=config)
 
     def test_negative_depth_scale_is_error(self):
@@ -193,24 +242,27 @@ class TestDepthScale(unittest.TestCase):
 
 
 class TestCalibrationReport(unittest.TestCase):
-
     def test_report_ok_when_no_errors(self):
         from runtime.utils.calibration_check import CalibrationReport
+
         r = CalibrationReport()
         self.assertTrue(r.ok)
 
     def test_report_not_ok_with_error(self):
         from runtime.utils.calibration_check import CalibrationReport
+
         r = CalibrationReport(errors=["bad"])
         self.assertFalse(r.ok)
 
     def test_summary_all_pass(self):
         from runtime.utils.calibration_check import CalibrationReport
+
         r = CalibrationReport()
         self.assertIn("passed", r.summary())
 
     def test_summary_with_errors(self):
         from runtime.utils.calibration_check import CalibrationReport
+
         r = CalibrationReport(errors=["e1", "e2"], warnings=["w1"])
         s = r.summary()
         self.assertIn("2 ERROR", s)
@@ -230,6 +282,7 @@ class TestTimeOffset(unittest.TestCase):
             from io import StringIO
 
             import yaml as _y
+
             payload = {}
             if str(path) == str(cc.FASTLIO2_CONFIG) and lio_offset is not None:
                 payload = {"time_diff_lidar_to_imu": lio_offset}
@@ -237,8 +290,7 @@ class TestTimeOffset(unittest.TestCase):
                 payload = {"time_diff_lidar_to_imu": pointlio_offset}
             return StringIO(_y.dump(payload))
 
-        with patch("pathlib.Path.exists", return_value=True), \
-             patch("builtins.open", side_effect=fake_open):
+        with patch("pathlib.Path.exists", return_value=True), patch("builtins.open", side_effect=fake_open):
             cc._check_time_offset(report, required=required)
         return report
 

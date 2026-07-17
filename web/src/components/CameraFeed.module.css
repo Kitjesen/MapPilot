@@ -17,22 +17,20 @@
 }
 
 .img {
-  /* Camera mounted sideways — rotate 90° CW to correct orientation.
-     After rotation the intrinsic 640×480 becomes 480×640, so we swap
-     width/height to fill the viewport without clipping. */
-  height: 100vw;
   width: 100%;
-  max-height: 100%;
-  max-width: 100%;
+  height: 100%;
   object-fit: contain;
   display: block;
   cursor: pointer;
-  transform: rotate(90deg);
 }
 
 .imgContain {
   composes: img;
   object-fit: contain;
+}
+
+.imgWhep {
+  transform: rotate(180deg);
 }
 
 .placeholder {
@@ -231,4 +229,12 @@
 .reconnectBtn {
   composes: btnGhost;
   margin-top: 4px;
+}
+
+:global(html[data-theme="light"]) .viewport {
+  background: radial-gradient(ellipse at center, #ffffff 0%, #ededeb 100%);
+}
+
+:global(html[data-theme="light"]) .controls {
+  background: rgba(255, 255, 255, 0.68);
 }

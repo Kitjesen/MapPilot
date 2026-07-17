@@ -1,10 +1,12 @@
-"""Unit tests for the Device Registry framework."""
+"""Unit tests for the hardware device framework."""
+
 from __future__ import annotations
 
 import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 _SRC = Path(__file__).resolve().parent.parent.parent
 if str(_SRC) not in sys.path:
@@ -14,6 +16,7 @@ from runtime.devices import (
     DeviceManager,
     DeviceStatus,
     DeviceType,
+    Hw,
     decoder_registry,
     load_device_specs,
 )
@@ -24,6 +27,7 @@ from runtime.devices.drivers.serial_nmea0183 import (
 )
 from runtime.devices.spec import DeviceSpec
 from runtime.msgs.gnss import GnssFixType
+from runtime.registry import get
 
 # ═══════════════════════════════════════════════════════════════════
 # Spec loading
@@ -41,6 +45,39 @@ class TestDeviceSpec:
         assert len(specs) >= 1
         ids = {s.id for s in specs}
         assert "wtrtk980_main" in ids
+
+    def test_devices_yaml_is_inventory_not_sensor_wiring(self):
+        repo = _SRC.parent
+        path = repo / "config" / "devices.yaml"
+        if not path.exists():
+            pytest.skip("config/devices.yaml not found")
+        text = path.read_text(encoding="utf-8")
+        assert "physical hardware inventory" in text
+        assert "must not decide runtime sensor wiring" in text
+        assert "DeviceManager" not in text
+        raw = yaml.safe_load(text)
+        wiring_keys = {
+            "publish_topics",
+            "subscribe_topics",
+            "topics",
+            "wires",
+            "inputs",
+            "outputs",
+            "enable_camera",
+            "enable_lidar",
+            "enable_imu",
+            "enable_gnss",
+            "camera_backend",
+            "lidar_backend",
+            "imu_backend",
+            "gnss_backend",
+        }
+
+        for device in raw.get("devices", []):
+            assert wiring_keys.isdisjoint(device), device["id"]
+            config = device.get("config", {})
+            if isinstance(config, dict):
+                assert wiring_keys.isdisjoint(config), device["id"]
 
     def test_spec_from_dict(self):
         d = {
@@ -76,8 +113,7 @@ class TestNmeaDecoder:
     def test_dgps_fix(self):
         d = NmeaDecoder()
         # Real-world DGPS sample with valid checksum
-        s = (b"$GPGGA,134658.00,5106.9792,N,11402.3003,W,2,09,1.0,1048.47,M,"
-             b"-16.27,M,08,AAAA*60\r\n")
+        s = b"$GPGGA,134658.00,5106.9792,N,11402.3003,W,2,09,1.0,1048.47,M,-16.27,M,08,AAAA*60\r\n"
         out = list(d.decode(s))
         assert len(out) == 1
         assert out[0].fix_type == GnssFixType.DGPS
@@ -115,8 +151,11 @@ class TestNmeaDecoder:
 class TestSerialNmea0183Device:
     def _spec(self, **over):
         base = dict(
-            id="test_dev", type="gnss", driver="serial_nmea0183",
-            enabled=True, serial={"device": "/dev/null", "baud": 115200},
+            id="test_dev",
+            type="gnss",
+            driver="serial_nmea0183",
+            enabled=True,
+            serial={"device": "/dev/null", "baud": 115200},
         )
         base.update(over)
         return DeviceSpec(**base)
@@ -155,7 +194,7 @@ class TestRegistries:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# DeviceManager
+# Hw
 # ═══════════════════════════════════════════════════════════════════
 
 
@@ -167,7 +206,20 @@ class _FakePort:
         self.items.append(v)
 
 
-class TestDeviceManager:
+class TestHw:
+    def test_hw_short_role_and_device_manager_alias_resolve_same_module(self):
+        assert DeviceManager is Hw
+        assert get("hw", "default") is Hw
+        assert get("device_manager", "default") is Hw
+
+    def test_blueprint_stack_exports_hw_not_device_manager(self):
+        import runtime.blueprints.stacks as stacks
+        from runtime.blueprints.stacks.system import device_manager, hw
+
+        assert "hw" in stacks.__all__
+        assert "device_manager" not in stacks.__all__
+        assert [entry.name for entry in hw()._entries] == [entry.name for entry in device_manager()._entries]
+
     def _make(self, tmp_path):
         cfg = tmp_path / "devices.yaml"
         cfg.write_text(
@@ -190,7 +242,7 @@ devices:
 """,
             encoding="utf-8",
         )
-        m = DeviceManager(config_path=str(cfg), enable_hotplug=False)
+        m = Hw(config_path=str(cfg), enable_hotplug=False)
         m.device_status = _FakePort()
         m.device_event = _FakePort()
         m.alive = _FakePort()
@@ -222,5 +274,9 @@ devices:
         m = self._make(tmp_path)
         m.setup()
         h = m.health()
+        assert h["role"] == "hw"
+        assert h["backend"] == "inventory"
+        assert h["sensor_streams"] is False
+        assert h["scope"] == "hardware inventory/status only"
         assert h["spec_count"] == 2
         assert h["opened_count"] == 1  # test1 created (open failed but device exists)

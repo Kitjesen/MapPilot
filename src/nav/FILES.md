@@ -12,12 +12,12 @@ registration, tests, and external deployments may import them directly.
 | Field native navigation data flow | `../message/idl/`, `services/endpoint/cpp/`, `services/plan/cpp/`, `kernel/include/nav_kernel/` |
 | Module/sim goal-to-motion flow | `mission/navigation.py` -> `services/plan/global_planner/service.py` -> `mission/tracking/waypoint_tracker.py` |
 | Why a plan is accepted or rejected | `services/plan/global_planner/service.py`, `services/safety/plan_safety.py`, `services/plan/global_planner/path_feasibility.py` |
-| What map artifact is loaded or saved | `services/maps.py`, `services/map_layers/map_artifact_builder.py` |
-| Live map layers | `services/map_layers/occupancy_grid_module.py`, `services/map_layers/voxel_grid_module.py`, `services/map_layers/esdf_module.py`, `services/map_layers/elevation_map_module.py`, `services/map_layers/traversability_cost_module.py` |
+| What map artifact is loaded or saved | `services/maps.py`, `services/map/layers/artifacts.py` |
+| Live map layers | `services/map/layers/occupancy.py`, `services/map/layers/voxel_grid.py`, `services/map/layers/esdf.py`, `services/map/layers/elevation.py`, `services/map/layers/traversability.py` |
 | Safety stop or velocity ownership | `services/safety/safety_ring.py`, `services/safety/velocity_mux.py`, `services/geofence.py` |
 | Frontier exploration | `exploration/frontier_explorer_module.py`, `exploration/traversable_frontier_module.py` |
 | Thunder Lite / mapless navigation | `services/plan/factory.py`, `services/plan/compat/direct.py`, `services/plan/compat/direct_path.py` |
-| C++ map/local planning hot paths | `kernel/include/nav_kernel/map_layers_core.hpp`, `services/plan/local_planner/cpp/`, `kernel/bindings/bindings.cpp` |
+| C++ local planning hot paths | `services/plan/local_planner/cpp/`, `kernel/bindings/bindings.cpp`; map-layer algorithms live in `src/maps/include/lingtu/maps/layers/` |
 
 ## Main runtime chains
 
@@ -37,7 +37,8 @@ The Python Module chain below remains for simulation, local-driver, tests, and
 compatibility profiles. Its Module chain and internal planner call are separate:
 
 ```text
-Gateway/MCP/CLI
+MCP/Agent/CLI
+  -> NavSkills
   -> GoalService
   -> Navigation
   -> LocalPlanner
@@ -53,8 +54,9 @@ Navigation._plan()
 
 | Piece | File |
 | --- | --- |
+| NavSkills | `skills/skills_module.py` |
 | GoalService | `services/goals.py` |
-| Navigation | `mission/navigation.py` |
+| Navigation | `navigation.py` |
 | PlannerService contract | `services/plan/contracts.py` |
 | Planner service factory | `services/plan/factory.py` |
 | GlobalPlanner | `services/plan/global_planner/service.py` |
@@ -108,7 +110,7 @@ Navigation._plan()
 | `mission/model/status.py` | Mission status payload builder and typed status schema. |
 | `mission/model/geometry.py` | Small geometry helpers shared by mission code. |
 
-## services/map_layers/
+## services/map/layers/
 
 Realtime map-layer Modules. This is L2 spatial state, not mission logic and
 not the saved-map lifecycle service. Mission consumes these outputs through
@@ -116,13 +118,13 @@ wires such as `TraversabilityCostModule.fused_cost`.
 
 | File | Role |
 | --- | --- |
-| `services/map_layers/occupancy_grid_module.py` | Builds 2D occupancy and exploration grids from point clouds. |
-| `services/map_layers/voxel_grid_module.py` | Builds and queries a 3D voxel map from point clouds. |
-| `services/map_layers/cpp_backend.py` | Thin adapter between Module payloads and `lingtu_nav_kernel` map-layer C++ types. |
-| `services/map_layers/esdf_module.py` | Builds a 2D distance field from occupancy; uses `nav_kernel` when available. |
-| `services/map_layers/elevation_map_module.py` | Builds elevation statistics from point clouds; uses `nav_kernel` when available. |
-| `services/map_layers/traversability_cost_module.py` | Fuses occupancy, ESDF, elevation slope/step/roughness, and terrain risk into navigation cost. |
-| `services/map_layers/map_artifact_builder.py` | Builds or reuses OctoMap artifacts and writes same-source metadata. |
+| `services/map/layers/occupancy.py` | Builds 2D occupancy and exploration grids from point clouds. |
+| `services/map/layers/voxel_grid.py` | Builds and queries a 3D voxel map from point clouds. |
+| `services/map/layers/cpp_backend.py` | Thin adapter between Module payloads and `lingtu_nav_kernel` map-layer C++ types. |
+| `services/map/layers/esdf.py` | Builds a 2D distance field from occupancy; uses `nav_kernel` when available. |
+| `services/map/layers/elevation.py` | Builds elevation statistics from point clouds; uses `nav_kernel` when available. |
+| `services/map/layers/traversability.py` | Fuses occupancy, ESDF, elevation slope/step/roughness, and terrain risk into navigation cost. |
+| `services/map/layers/artifacts.py` | Builds or reuses OctoMap artifacts and writes same-source metadata. |
 
 ## kernel/
 
@@ -131,7 +133,6 @@ ROS-free C++ algorithm kernels. Python Modules call these through
 
 | File | Role |
 | --- | --- |
-| `kernel/include/nav_kernel/map_layers_core.hpp` | Elevation grid, exact 2D ESDF, slope/step/roughness terrain risk, and fused traversability cost. |
 | `kernel/include/nav_kernel/path_follower_core.hpp` | Path follower control math. |
 | `kernel/include/nav_kernel/terrain_core.hpp` | Local terrain analysis from point clouds. |
 | `kernel/bindings/bindings.cpp` | Nanobind bridge exposing the C++ kernels as `lingtu_nav_kernel`. |
@@ -166,7 +167,7 @@ Safety services own reflex stop, plan safety, and velocity arbitration.
 | File | Role |
 | --- | --- |
 | `services/maps.py` | Saved-map lifecycle: save, list, use, delete, build tomogram/occupancy/octomap artifacts, expose map MCP skills. |
-| `services/map/` | Internal helpers for `MapService`: storage, records, command routing, runtime snapshot bridge, and artifact build pipeline. |
+| `services/map/` | Internal helpers for `MapsModule`: storage, records, command routing, runtime snapshot bridge, and artifact build pipeline. |
 | `services/goals.py` | Map-frame goal entry. Converts JSON/Gateway/MCP goal requests into `goal_pose`, `patrol_goals`, or `cancel`. |
 | `services/geofence.py` | Polygon geofence monitor and hard-stop source. |
 | `services/patrol.py` | Stores patrol routes and emits patrol waypoint sequences. |

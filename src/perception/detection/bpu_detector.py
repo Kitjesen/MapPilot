@@ -8,7 +8,8 @@ Supported model families:
   - YOLO v8n/11n/11s/12n/12s detection models
   - YOLO 11s segmentation models
   - YOLOE end-to-end segmentation format
-  - COCO-80 prompt filtering through text_prompt
+  - YOLOE prompt-free 4585-class segmentation models
+  - COCO/custom-vocabulary prompt filtering through text_prompt
 """
 
 import logging
@@ -27,25 +28,94 @@ def _require_cv2():
     e.g. unit test CI that mocks BPUDetector entirely.
     """
     import cv2
+
     return cv2
+
 
 logger = logging.getLogger(__name__)
 
 # COCO 80 class names used by Ultralytics-compatible YOLO models.
 COCO_NAMES = [
-    "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train",
-    "truck", "boat", "traffic light", "fire hydrant", "stop sign",
-    "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep",
-    "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella",
-    "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard",
-    "sports ball", "kite", "baseball bat", "baseball glove", "skateboard",
-    "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork",
-    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
-    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
-    "couch", "potted plant", "bed", "dining table", "toilet", "tv",
-    "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave",
-    "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase",
-    "scissors", "teddy bear", "hair drier", "toothbrush",
+    "person",
+    "bicycle",
+    "car",
+    "motorcycle",
+    "airplane",
+    "bus",
+    "train",
+    "truck",
+    "boat",
+    "traffic light",
+    "fire hydrant",
+    "stop sign",
+    "parking meter",
+    "bench",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "backpack",
+    "umbrella",
+    "handbag",
+    "tie",
+    "suitcase",
+    "frisbee",
+    "skis",
+    "snowboard",
+    "sports ball",
+    "kite",
+    "baseball bat",
+    "baseball glove",
+    "skateboard",
+    "surfboard",
+    "tennis racket",
+    "bottle",
+    "wine glass",
+    "cup",
+    "fork",
+    "knife",
+    "spoon",
+    "bowl",
+    "banana",
+    "apple",
+    "sandwich",
+    "orange",
+    "broccoli",
+    "carrot",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "chair",
+    "couch",
+    "potted plant",
+    "bed",
+    "dining table",
+    "toilet",
+    "tv",
+    "laptop",
+    "mouse",
+    "remote",
+    "keyboard",
+    "cell phone",
+    "microwave",
+    "oven",
+    "toaster",
+    "sink",
+    "refrigerator",
+    "book",
+    "clock",
+    "vase",
+    "scissors",
+    "teddy bear",
+    "hair drier",
+    "toothbrush",
 ]
 
 # COCO class-name to class-id lookup.
@@ -100,6 +170,7 @@ class BPUDetector(DetectorBase):
 
     MODEL_CANDIDATES = [
         "/home/sunrise/models/yoloe26s_seg_nav125_nashe_640x640_nv12.hbm",
+        "/opt/hobot/model/s100/basic/yoloe_11s_seg_pf_nashe_640x640_nv12.hbm",
         "/home/sunrise/models/yolo11s_seg_nashe_640x640_nv12.hbm",
         "/home/sunrise/models/yolo12s_detect_nashe_640x640_nv12.hbm",
         "/home/sunrise/models/yolo12n_detect_nashe_640x640_nv12.hbm",
@@ -109,6 +180,7 @@ class BPUDetector(DetectorBase):
     ]
     INPUT_SIZE = 640
     STRIDES = [8, 16, 32]
+    SYSTEM_YOLOE_VOCAB = "/app/res/labels/coco_extended.names"
 
     def __init__(
         self,
@@ -152,32 +224,13 @@ class BPUDetector(DetectorBase):
                     path = pattern
                     break
             if path is None:
-                raise FileNotFoundError(
-                    f"No BPU YOLO model found. Searched: {self.MODEL_CANDIDATES}"
-                )
+                raise FileNotFoundError(f"No BPU YOLO model found. Searched: {self.MODEL_CANDIDATES}")
 
-        self._custom_vocab = None
-        vocab_pattern = path.replace(".hbm", "").replace("_nashe_640x640_nv12", "") + "*_vocab.json"
-        vocab_matches = _glob.glob(vocab_pattern)
-        if not vocab_matches:
-            model_dir = os.path.dirname(path)
-            vocab_matches = _glob.glob(os.path.join(model_dir, "*_vocab.json"))
-        if vocab_matches:
-            import json
-            try:
-                with open(vocab_matches[0], encoding="utf-8") as f:
-                    vdata = json.load(f)
-                names = vdata.get("names", {})
-                self._custom_vocab = {int(k): v for k, v in names.items()}
-                print(f"[BPU] Custom vocabulary loaded: {len(self._custom_vocab)} classes from {vocab_matches[0]}")
-            except Exception as e:
-                print(f"[BPU] Failed to load vocab: {e}, using COCO-80")
+        self._custom_vocab = self._load_custom_vocab(path, _glob)
 
         base = os.path.basename(path)
         self._model_name_short = (
-            base.replace("_nashe_640x640_nv12.hbm", "")
-            .replace("_detect", "")
-            .replace("_seg", "-seg")
+            base.replace("_nashe_640x640_nv12.hbm", "").replace("_detect", "").replace("_seg", "-seg")
         )
         self.has_seg = "_seg_" in base
 
@@ -185,9 +238,7 @@ class BPUDetector(DetectorBase):
         self._mname = self._rt.model_names[0]
 
         y = np.zeros((1, self.INPUT_SIZE, self.INPUT_SIZE, 1), dtype=np.uint8)
-        uv = np.zeros(
-            (1, self.INPUT_SIZE // 2, self.INPUT_SIZE // 2, 2), dtype=np.uint8
-        )
+        uv = np.zeros((1, self.INPUT_SIZE // 2, self.INPUT_SIZE // 2, 2), dtype=np.uint8)
         dummy_out = self._rt.run({"images_y": y, "images_uv": uv})[self._mname]
 
         _candidate_cls_ch = set()
@@ -261,9 +312,41 @@ class BPUDetector(DetectorBase):
             pass
 
         seg_info = f", proto={self._proto_name}" if self._proto_name else ""
-        print(
-            f"[BPU] {self._model_name_short} loaded (seg={self.has_seg}{seg_info})"
-        )
+        print(f"[BPU] {self._model_name_short} loaded (seg={self.has_seg}{seg_info})")
+
+    def _load_custom_vocab(self, model_path: str, glob_module) -> dict[int, str] | None:
+        """Load a model-aligned JSON or newline-delimited vocabulary."""
+        import json
+
+        model_stem = model_path.replace(".hbm", "").replace("_nashe_640x640_nv12", "")
+        candidates = list(glob_module.glob(model_stem + "*_vocab.json"))
+        if "yoloe_11s_seg_pf" in os.path.basename(model_path):
+            candidates.append(self.SYSTEM_YOLOE_VOCAB)
+        if not candidates:
+            model_dir = os.path.dirname(model_path)
+            candidates.extend(glob_module.glob(os.path.join(model_dir, "*_vocab.json")))
+
+        for vocab_path in dict.fromkeys(candidates):
+            if not os.path.isfile(vocab_path):
+                continue
+            try:
+                if vocab_path.endswith(".json"):
+                    with open(vocab_path, encoding="utf-8") as f:
+                        raw_names = json.load(f).get("names", {})
+                    if isinstance(raw_names, list):
+                        vocab = {i: str(name) for i, name in enumerate(raw_names)}
+                    else:
+                        vocab = {int(key): str(name) for key, name in raw_names.items()}
+                else:
+                    with open(vocab_path, encoding="utf-8") as f:
+                        names = [line.strip() for line in f if line.strip()]
+                    vocab = {i: name for i, name in enumerate(names)}
+                if vocab:
+                    print(f"[BPU] Custom vocabulary loaded: {len(vocab)} classes from {vocab_path}")
+                    return vocab
+            except (OSError, ValueError, TypeError, AttributeError) as exc:
+                logger.warning("Failed to load BPU vocabulary %s: %s", vocab_path, exc)
+        return None
 
     def detect(self, rgb: np.ndarray, text_prompt: str) -> list[Detection2D]:
         """Run BPU inference and return filtered detections.
@@ -285,9 +368,7 @@ class BPUDetector(DetectorBase):
 
         y_plane, uv_plane, scale, pad_x, pad_y = self._preprocess(bgr)
 
-        outputs = self._rt.run({"images_y": y_plane, "images_uv": uv_plane})[
-            self._mname
-        ]
+        outputs = self._rt.run({"images_y": y_plane, "images_uv": uv_plane})[self._mname]
 
         if self._is_yoloe:
             return self._detect_yoloe(outputs, allowed, scale, pad_x, pad_y, h0, w0)
@@ -320,9 +401,7 @@ class BPUDetector(DetectorBase):
                 ix2 = min(w0, mx + mw)
                 iy2 = min(h0, my + mh)
                 if ix2 > ix1 and iy2 > iy1:
-                    full_mask[iy1:iy2, ix1:ix2] = mask_crop[
-                        iy1 - my : iy2 - my, ix1 - mx : ix2 - mx
-                    ]
+                    full_mask[iy1:iy2, ix1:ix2] = mask_crop[iy1 - my : iy2 - my, ix1 - mx : ix2 - mx]
                 mask = full_mask
 
             if self._custom_vocab and cid in self._custom_vocab:
@@ -441,15 +520,18 @@ class BPUDetector(DetectorBase):
                             full_mask[iy1:iy2, ix1:ix2] = mask_resized[:mh, :mw] > 0.5
                             mask = full_mask
 
-            results.append(Detection2D(
-                bbox=np.array([x1, y1, x2, y2], dtype=np.float32),
-                score=score,
-                label=label,
-                class_id=cid,
-                mask=mask,
-            ))
+            results.append(
+                Detection2D(
+                    bbox=np.array([x1, y1, x2, y2], dtype=np.float32),
+                    score=score,
+                    label=label,
+                    class_id=cid,
+                    mask=mask,
+                )
+            )
 
         return self._limit_detection_results(results)
+
     def _parse_prompt(self, text_prompt: str) -> set:
         """Parse a dot-separated prompt into allowed class ids.
 
@@ -671,7 +753,8 @@ class BPUDetector(DetectorBase):
         if proto.shape[-1] != kept_mc.shape[-1]:
             logger.error(
                 "BPUDetector._generate_masks: proto channels=%d != kept_mc channels=%d",
-                proto.shape[-1], kept_mc.shape[-1],
+                proto.shape[-1],
+                kept_mc.shape[-1],
             )
             return masks_list
 
@@ -697,8 +780,10 @@ class BPUDetector(DetectorBase):
             else:
                 try:
                     import cv2 as _cv2
+
                     mask_resized = _cv2.resize(
-                        crop.astype(np.float32), (cw, ch),
+                        crop.astype(np.float32),
+                        (cw, ch),
                         interpolation=_cv2.INTER_LINEAR,
                     )
                 except ImportError:

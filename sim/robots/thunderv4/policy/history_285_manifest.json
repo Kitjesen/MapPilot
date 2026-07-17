@@ -1,0 +1,25 @@
+{
+  "schema_version": "lingtu.sim_policy_manifest.v1",
+  "asset": "history_285.onnx",
+  "sha256": "5f349203dddf4ad5fa2dc74d5f4cc2bf6ff392ca1b219fdef38734ab7c6fc233",
+  "format": "onnx",
+  "onnx": {
+    "input_name": "obs_history",
+    "input_shape": [1, 285],
+    "output_name": "actions",
+    "output_shape": [1, 16]
+  },
+  "contract": {
+    "observation_frame_dim": 57,
+    "history_frames": 5,
+    "action_dim": 16,
+    "hip_action_scale": 0.125,
+    "thigh_calf_action_scale": 0.25,
+    "wheel_action_scale": 5.0,
+    "wheel_torque_limit_nm": 60.0,
+    "run_policy_at_idle": false
+  },
+  "source": "D:/inovxio/shared/assets/model-exports/policy_260106_fixed.onnx",
+  "simulation_only": true,
+  "real_robot_motion": false
+}

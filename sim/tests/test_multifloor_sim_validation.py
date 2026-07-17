@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import pickle
 
@@ -11,17 +11,17 @@ np = import_numpy_or_skip()
 
 pytestmark = [pytest.mark.sim]
 
+import sim.scripts.multifloor_nav_validation as multifloor_nav_validation
 from nav.services.plan.global_planner.algorithm.pct.runtime.api import prepare_tomogram_for_pct
 from sim.engine.scenarios.multifloor_assets import build_multifloor_assets
-import sim.scripts.multifloor_nav_validation as multifloor_nav_validation
 from sim.scripts.multifloor_nav_validation import (
     ROUTE_CASES,
-    _native_pct_gate,
     _frontier_probe_costmap,
-    _pct_runtime_evidence,
+    _native_pct_gate,
     _nav_path_from_points,
     _odom_at_path_start,
     _path_initial_yaw,
+    _pct_runtime_evidence,
     _pose_stamped,
     _prepare_local_path_for_follower,
     _required_planner_ok,
@@ -64,7 +64,7 @@ def test_multifloor_assets_have_floor_transition_gateway(tmp_path):
 
 
 def test_multifloor_assets_publish_same_source_saved_map_metadata(tmp_path):
-    from runtime.same_source_map_artifacts import validate_saved_map_artifact_dir
+    from maps.artifacts import validate_saved_map_artifact_dir
 
     assets = build_multifloor_assets(tmp_path)
 
@@ -508,9 +508,7 @@ def test_pct_global_plan_reports_effective_planner_after_fallback(monkeypatch, t
                 "selected_planner": "astar",
                 "fallback_reason": "pct path_safety failed",
                 "policy": "fallback_astar",
-                "rejected_plans": [
-                    {"planner": self._planner_name, "reason": "unsafe_primary_path"}
-                ],
+                "rejected_plans": [{"planner": self._planner_name, "reason": "unsafe_primary_path"}],
                 "reached_goal": True,
                 "safe_goal": [float(goal[0]), float(goal[1]), 0.0],
             }
@@ -604,14 +602,16 @@ def test_multifloor_bridge_loop_splits_vertical_transition_segments():
 
 
 def test_bridge_path_preparation_removes_near_start_dense_points():
-    path = _nav_path_from_points([
-        [0.00, 0.0, 0.0],
-        [0.05, 0.0, 0.0],
-        [0.12, 0.0, 0.0],
-        [0.24, 0.0, 0.0],
-        [0.36, 0.0, 0.0],
-        [0.48, 0.0, 0.0],
-    ])
+    path = _nav_path_from_points(
+        [
+            [0.00, 0.0, 0.0],
+            [0.05, 0.0, 0.0],
+            [0.12, 0.0, 0.0],
+            [0.24, 0.0, 0.0],
+            [0.36, 0.0, 0.0],
+            [0.48, 0.0, 0.0],
+        ]
+    )
 
     prepared = _prepare_local_path_for_follower(
         path,
@@ -901,8 +901,11 @@ def test_cross_floor_gate_requires_transition_validation_and_native_segments():
 
     missing_transition_validation = dict(cross_floor_plan)
     missing_transition_validation.pop("transition_validation")
-    assert _required_planner_ok(
-        planners=["pct"],
-        planning=[missing_transition_validation],
-        case=case,
-    ) is False
+    assert (
+        _required_planner_ok(
+            planners=["pct"],
+            planning=[missing_transition_validation],
+            case=case,
+        )
+        is False
+    )

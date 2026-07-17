@@ -1,9 +1,12 @@
-"""SimPointCloudProvider generates PointCloud2 from MuJoCo XML scene geometry.
+"""Legacy SimPointCloudProvider generates PointCloud2 from MuJoCo XML geometry.
 
 Reads box geoms from a MuJoCo XML file, samples 3-D points on obstacle
 surfaces within the LiDAR height band, and publishes a static PointCloud2
 at a configurable rate.  This feeds OccupancyGridModule identically to
 real SLAM output, exercising the full navigation pipeline in pure Python.
+New MuJoCo sensor profiles should use the canonical ``lidar`` role with the
+``mujoco`` backend; this provider remains only for explicit legacy sim_nav
+and map-cloud-only tests.
 
 Ports:
   In:  odometry (Odometry) - robot position for periodic re-publish trigger
@@ -16,19 +19,20 @@ import logging
 import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
 
-from runtime.module import Module
-from runtime.msgs.numpy_compat import np
-from runtime.msgs.nav import Odometry
-from runtime.msgs.sensor import PointCloud2
-from runtime.registry import register
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
-from runtime.stream import In, Out
 from drivers.sim.mujoco.scene import (
     build_parent_map,
     geom_name_chain,
     geom_world_pose,
 )
+from runtime.module import Module
+from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import PointCloud2
+from runtime.registry import register
+from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,9 @@ class SimPointCloudProvider(Module, layer=1):
         self._cloud = PointCloud2(points=points, frame_id=SIM_POINTCLOUD_MAP_FRAME_ID)
         logger.info(
             "SimPointCloudProvider: %d points from %d geoms in %s",
-            len(points), self._geom_count, path.name,
+            len(points),
+            self._geom_count,
+            path.name,
         )
         self.odometry.subscribe(self._on_odom)
 
@@ -98,6 +104,18 @@ class SimPointCloudProvider(Module, layer=1):
             self.map_cloud.publish(self._cloud)
             self._last_pub = now
 
+    def health(self) -> dict[str, Any]:
+        info = super().port_summary()
+        info["sim_lidar"] = {
+            "legacy": True,
+            "canonical_role": "lidar",
+            "canonical_backend": "mujoco",
+            "map_cloud_only": True,
+            "scene_xml": self._scene_xml,
+            "has_cloud": self._cloud is not None,
+        }
+        return info
+
     # ------------------------------------------------------------------
     # XML parsing + point sampling
     # ------------------------------------------------------------------
@@ -115,11 +133,7 @@ class SimPointCloudProvider(Module, layer=1):
                 continue
             names = geom_name_chain(geom, parent_map)
             lowered_names = [name.lower() for name in names]
-            if any(
-                exc in name
-                for name in lowered_names
-                for exc in self._exclude
-            ):
+            if any(exc in name for name in lowered_names for exc in self._exclude):
                 continue
             size_str = geom.get("size")
             if not size_str:
@@ -214,7 +228,4 @@ class SimPointCloudProvider(Module, layer=1):
         if not points:
             return np.zeros((0, 3), dtype=np.float32)
         sampled = np.vstack(points)
-        return sampled[
-            (sampled[:, 2] >= self._z_min)
-            & (sampled[:, 2] <= self._z_max)
-        ]
+        return sampled[(sampled[:, 2] >= self._z_min) & (sampled[:, 2] <= self._z_max)]

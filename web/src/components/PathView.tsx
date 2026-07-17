@@ -48,6 +48,29 @@ function formatPlanSafetySummary(preview: PlanPreviewResponse | null | undefined
   ].filter((v): v is string => Boolean(v)).join(' | ')
 }
 
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const raw of values) {
+    const value = raw.trim()
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    out.push(value)
+  }
+  return out
+}
+
+function blockerLabel(value: string): string {
+  const labels: Record<string, string> = {
+    navigation_session_inactive: 'not in a navigation product session',
+    no_active_command_source: 'no active command source',
+    odometry_missing: 'odometry missing',
+    map_not_ready: 'map not ready',
+    localizer_not_ready: 'localizer not ready',
+  }
+  return labels[value] ?? value
+}
+
 function formatPlanPreviewFailure(
   preview: PlanPreviewResponse | null | undefined,
   reasons: string[] = [],
@@ -301,18 +324,18 @@ export function PathView({ sseState, showToast }: PathViewProps) {
     navigationStatus?.readiness?.can_accept_goal ??
     navigationStatus?.can_accept_goal ??
     false
-  const goalBlockers = [
+  const goalBlockers = uniqueStrings([
     ...(navigationStatus?.readiness?.blockers ?? []),
     ...(navigationStatus?.feedback?.blockers ?? []),
     activeCmdBlocksGoal
       ? `active command source: ${navigationStatus?.control?.active_source?.label ?? activeCmdSource}`
       : null,
     !odomValid ? 'no valid odometry' : null,
-  ].filter((v): v is string => Boolean(v))
+  ].filter((v): v is string => Boolean(v)))
   const goalDisabledReason =
     canAcceptGoal && !activeCmdBlocksGoal
       ? ''
-      : goalBlockers.slice(0, 4).join(' / ') || 'navigation is not ready'
+      : goalBlockers.map(blockerLabel).slice(0, 3).join(' / ') || 'navigation is not ready'
   const canSendGoal = goalDisabledReason === ''
   const pendingGoalPlanSummary = formatPlanSafetySummary(pendingGoalPreview)
 

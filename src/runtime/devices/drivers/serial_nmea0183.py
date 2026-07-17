@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 # ── Driver registry (small — drivers are typed not by string lookup ──
-# but by spec.driver string. The DeviceManager maps name → class here.)
+# but by spec.driver string. The hw module maps name -> class here.)
 
 _driver_registry: dict[str, type[Device]] = {}
 
@@ -28,6 +28,7 @@ def register_driver(name: str):
     def wrap(cls):
         _driver_registry[name] = cls
         return cls
+
     return wrap
 
 
@@ -79,16 +80,21 @@ class SerialNmea0183Device(Device):
             return False
         try:
             import serial
+
             self._serial = serial.Serial(self._port, self._baud, timeout=1.0)
             self._running = True
             self._thread = threading.Thread(
-                target=self._read_loop, daemon=True,
+                target=self._read_loop,
+                daemon=True,
                 name=f"dev-{self.id}",
             )
             self._thread.start()
             self._status = DeviceStatus.READY
             logger.info(
-                "Device %s: opened %s @ %d baud", self.id, self._port, self._baud,
+                "Device %s: opened %s @ %d baud",
+                self.id,
+                self._port,
+                self._baud,
             )
             return True
         except ImportError:

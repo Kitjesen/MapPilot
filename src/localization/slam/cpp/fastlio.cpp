@@ -4,20 +4,25 @@
 
 #include "map_builder/map_builder.h"
 #include "native_relocalizer.hpp"
+#include "relocalization_gate.hpp"
 
 #include <pcl/io/pcd_io.h>
 #include <yaml-cpp/yaml.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 
@@ -28,18 +33,40 @@ struct RuntimeConfig {
   double acc_scale = 1.0;
   double time_diff_lidar_to_imu = 0.0;
   double max_imu_gap_s = 0.25;
+  double max_sensor_time_jump_s = 5.0;
   double relocalization_max_fitness = 0.5;
+  int relocalization_min_inliers = 30;
+  double relocalization_max_pos_cov_trace = 1.0;
+  // A 100 m^2 position-covariance trace means aggregate 1-sigma uncertainty
+  // has reached 10 m. At that point local odometry is not safe to publish or
+  // to revive through a map-only relocalization result.
+  double fastlio_max_pos_cov_trace = 100.0;
   double relocalization_map_bounds_margin_m = 2.0;
+  double track_against_map_max_translation_m = 1.0;
+  double track_against_map_max_yaw_deg = 15.0;
+  double track_against_map_max_tilt_deg = 5.0;
+  bool track_against_map_require_degeneracy_metrics = true;
   bool odom_prior_enabled = false;
+  bool odom_prior_bypass_fastlio = false;
   double odom_prior_max_age_s = 0.20;
   double odom_prior_map_resolution = 0.20;
   double odom_prior_snap_translation_m = 0.25;
-  bool map_optimization_enabled = true;
+  std::size_t max_odom_prior_buffer = 4000;
+  // The current save-time closure heuristic has no independent geometric
+  // verification. Keep it opt-in until native place recognition and ICP/GICP
+  // constraints are wired into the pose graph.
+  bool map_optimization_enabled = false;
   double map_optimization_resolution = 0.20;
   double loop_closure_max_error_m = 1.25;
   double loop_closure_min_path_m = 4.0;
+  std::size_t max_patch_snapshots = 3000;
+  double patch_min_interval_s = 1.0;
+  double patch_min_translation_m = 0.20;
+  double patch_min_rotation_rad = 0.0872664626;
   std::size_t max_imu_buffer = 4000;
   std::size_t max_lidar_buffer = 64;
+  Eigen::Matrix3d navigation_body_from_imu_rotation = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d navigation_body_from_imu_translation = Eigen::Vector3d::Zero();
 };
 
 struct VoxelKey {
@@ -165,22 +192,62 @@ Status loadYamlConfig(
   readIfPresent(config, "acc_scale", runtime_config.acc_scale);
   readIfPresent(config, "time_diff_lidar_to_imu", runtime_config.time_diff_lidar_to_imu);
   readIfPresent(config, "max_imu_gap_s", runtime_config.max_imu_gap_s);
+  readIfPresent(config, "max_sensor_time_jump_s", runtime_config.max_sensor_time_jump_s);
   readIfPresent(config, "relocalization_max_fitness", runtime_config.relocalization_max_fitness);
+  readIfPresent(config, "relocalization_min_inliers", runtime_config.relocalization_min_inliers);
+  readIfPresent(
+      config,
+      "relocalization_max_pos_cov_trace",
+      runtime_config.relocalization_max_pos_cov_trace);
+  readIfPresent(
+      config,
+      "fastlio_max_pos_cov_trace",
+      runtime_config.fastlio_max_pos_cov_trace);
   readIfPresent(
       config,
       "relocalization_map_bounds_margin_m",
       runtime_config.relocalization_map_bounds_margin_m);
+  readIfPresent(
+      config,
+      "track_against_map_max_translation_m",
+      runtime_config.track_against_map_max_translation_m);
+  readIfPresent(
+      config,
+      "track_against_map_max_yaw_deg",
+      runtime_config.track_against_map_max_yaw_deg);
+  readIfPresent(
+      config,
+      "track_against_map_max_tilt_deg",
+      runtime_config.track_against_map_max_tilt_deg);
+  readIfPresent(
+      config,
+      "track_against_map_require_degeneracy_metrics",
+      runtime_config.track_against_map_require_degeneracy_metrics);
   readIfPresent(config, "odom_prior_enabled", runtime_config.odom_prior_enabled);
+  readIfPresent(
+      config,
+      "odom_prior_bypass_fastlio",
+      runtime_config.odom_prior_bypass_fastlio);
   readIfPresent(config, "odom_prior_max_age_s", runtime_config.odom_prior_max_age_s);
   readIfPresent(config, "odom_prior_map_resolution", runtime_config.odom_prior_map_resolution);
   readIfPresent(
       config,
       "odom_prior_snap_translation_m",
       runtime_config.odom_prior_snap_translation_m);
+  readIfPresent(
+      config,
+      "max_odom_prior_buffer",
+      runtime_config.max_odom_prior_buffer);
   readIfPresent(config, "map_optimization_enabled", runtime_config.map_optimization_enabled);
   readIfPresent(config, "map_optimization_resolution", runtime_config.map_optimization_resolution);
   readIfPresent(config, "loop_closure_max_error_m", runtime_config.loop_closure_max_error_m);
   readIfPresent(config, "loop_closure_min_path_m", runtime_config.loop_closure_min_path_m);
+  readIfPresent(config, "max_patch_snapshots", runtime_config.max_patch_snapshots);
+  readIfPresent(config, "patch_min_interval_s", runtime_config.patch_min_interval_s);
+  readIfPresent(config, "patch_min_translation_m", runtime_config.patch_min_translation_m);
+  readIfPresent(config, "patch_min_rotation_rad", runtime_config.patch_min_rotation_rad);
+  readIfPresent(config, "max_imu_buffer", runtime_config.max_imu_buffer);
+  readIfPresent(config, "max_lidar_buffer", runtime_config.max_lidar_buffer);
 
   readIfPresent(config, "lidar_filter_num", builder_config.lidar_filter_num);
   readIfPresent(config, "lidar_min_range", builder_config.lidar_min_range);
@@ -231,6 +298,21 @@ Status loadYamlConfig(
       return Status::Error("fastlio2_r_il_must_have_9_values");
     }
     builder_config.r_il << r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8];
+  }
+  if (config["navigation_body_from_imu_translation"]) {
+    const auto t = config["navigation_body_from_imu_translation"].as<std::vector<double>>();
+    if (t.size() != 3) {
+      return Status::Error("fastlio2_navigation_body_from_imu_translation_must_have_3_values");
+    }
+    runtime_config.navigation_body_from_imu_translation << t[0], t[1], t[2];
+  }
+  if (config["navigation_body_from_imu_rotation"]) {
+    const auto r = config["navigation_body_from_imu_rotation"].as<std::vector<double>>();
+    if (r.size() != 9) {
+      return Status::Error("fastlio2_navigation_body_from_imu_rotation_must_have_9_values");
+    }
+    runtime_config.navigation_body_from_imu_rotation <<
+        r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8];
   }
 
   return Status::Ok("fastlio2_config_loaded");
@@ -341,6 +423,94 @@ Pose3d composePoses(const Pose3d& lhs, const Pose3d& rhs) {
   return out;
 }
 
+Pose3d inversePose(const Pose3d& pose) {
+  Eigen::Quaterniond q(pose.qw, pose.qx, pose.qy, pose.qz);
+  if (!std::isfinite(q.norm()) || q.norm() <= 0.0) {
+    q = Eigen::Quaterniond::Identity();
+  }
+  q.normalize();
+  const Eigen::Quaterniond inverse_q = q.conjugate();
+  const Eigen::Vector3d inverse_t =
+      -(inverse_q * Eigen::Vector3d(pose.x, pose.y, pose.z));
+  Pose3d out;
+  out.x = inverse_t.x();
+  out.y = inverse_t.y();
+  out.z = inverse_t.z();
+  out.qx = inverse_q.x();
+  out.qy = inverse_q.y();
+  out.qz = inverse_q.z();
+  out.qw = inverse_q.w();
+  return out;
+}
+
+Pose3d navigationBodyFromImuTransform(const RuntimeConfig& config) {
+  Eigen::Quaterniond q(config.navigation_body_from_imu_rotation);
+  q.normalize();
+  Pose3d out;
+  out.x = config.navigation_body_from_imu_translation.x();
+  out.y = config.navigation_body_from_imu_translation.y();
+  out.z = config.navigation_body_from_imu_translation.z();
+  out.qx = q.x();
+  out.qy = q.y();
+  out.qz = q.z();
+  out.qw = q.w();
+  return out;
+}
+
+Pose3d navigationBodyPoseFromImuPose(
+    const Pose3d& odom_imu,
+    const RuntimeConfig& config) {
+  return composePoses(odom_imu, inversePose(navigationBodyFromImuTransform(config)));
+}
+
+Pose3d imuPoseFromNavigationBodyPose(
+    const Pose3d& odom_body,
+    const RuntimeConfig& config) {
+  return composePoses(odom_body, navigationBodyFromImuTransform(config));
+}
+
+void anchorInitialNavigationBodyFrame(
+    State& state,
+    const RuntimeConfig& config) {
+  const Pose3d initial_body =
+      navigationBodyPoseFromImuPose(poseFromState(state), config);
+  Eigen::Quaterniond q_wb(
+      initial_body.qw,
+      initial_body.qx,
+      initial_body.qy,
+      initial_body.qz);
+  if (!std::isfinite(q_wb.norm()) || q_wb.norm() <= 0.0) {
+    q_wb = Eigen::Quaterniond::Identity();
+  }
+  q_wb.normalize();
+  const Eigen::Matrix3d r_wb = q_wb.toRotationMatrix();
+  const double initial_yaw = std::atan2(r_wb(1, 0), r_wb(0, 0));
+  const Eigen::Matrix3d r_anchor =
+      Eigen::AngleAxisd(-initial_yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+  const Eigen::Vector3d t_wb(initial_body.x, initial_body.y, initial_body.z);
+  const Eigen::Vector3d t_anchor = -(r_anchor * t_wb);
+
+  // Re-express the just-initialized filter state in an odom frame whose
+  // origin and heading are the initial navigation body pose.  A yaw-only
+  // rotation preserves the gravity-aligned world Z axis.  This runs before
+  // MAP_INIT, while the state covariance is still the isotropic IMU-init
+  // covariance and before any map point is inserted.
+  state.r_wi = r_anchor * state.r_wi;
+  state.t_wi = r_anchor * state.t_wi + t_anchor;
+  state.v = r_anchor * state.v;
+}
+
+CloudType::Ptr transformLidarCloudToNavigationBody(
+    const CloudType::Ptr& cloud,
+    const Config& config,
+    const RuntimeConfig& runtime_config) {
+  const Eigen::Matrix3d r_bi = runtime_config.navigation_body_from_imu_rotation;
+  const Eigen::Vector3d t_bi = runtime_config.navigation_body_from_imu_translation;
+  const Eigen::Matrix3d r_bl = r_bi * config.r_il;
+  const Eigen::Vector3d t_bl = t_bi + r_bi * config.t_il;
+  return LidarProcessor::transformCloud(cloud, r_bl, t_bl);
+}
+
 void applyPose(State& state, const Pose3d& pose) {
   Eigen::Quaterniond q(pose.qw, pose.qx, pose.qy, pose.qz);
   q.normalize();
@@ -360,11 +530,16 @@ Eigen::Matrix3d rotationFromPose(const Pose3d& pose) {
 CloudType::Ptr transformLidarCloudWithBodyPose(
     const CloudType::Ptr& cloud,
     const Pose3d& body_pose,
-    const Config& config) {
+    const Config& config,
+    const RuntimeConfig& runtime_config) {
   const Eigen::Matrix3d r_wb = rotationFromPose(body_pose);
   const Eigen::Vector3d t_wb(body_pose.x, body_pose.y, body_pose.z);
-  const Eigen::Matrix3d r_wl = r_wb * config.r_il;
-  const Eigen::Vector3d t_wl = t_wb + r_wb * config.t_il;
+  const Eigen::Matrix3d r_bi = runtime_config.navigation_body_from_imu_rotation;
+  const Eigen::Vector3d t_bi = runtime_config.navigation_body_from_imu_translation;
+  const Eigen::Matrix3d r_bl = r_bi * config.r_il;
+  const Eigen::Vector3d t_bl = t_bi + r_bi * config.t_il;
+  const Eigen::Matrix3d r_wl = r_wb * r_bl;
+  const Eigen::Vector3d t_wl = t_wb + r_wb * t_bl;
   return LidarProcessor::transformCloud(cloud, r_wl, t_wl);
 }
 
@@ -519,6 +694,10 @@ double yawFromPose(const Pose3d& pose) {
   const Eigen::Quaterniond q(pose.qw, pose.qx, pose.qy, pose.qz);
   const Eigen::Vector3d ypr = q.normalized().toRotationMatrix().eulerAngles(2, 1, 0);
   return ypr[0];
+}
+
+double yawDistance(const Pose3d& a, const Pose3d& b) {
+  return std::abs(wrapAngle(yawFromPose(a) - yawFromPose(b)));
 }
 
 Pose3d poseWithYaw(const Pose3d& pose, double yaw) {
@@ -771,9 +950,25 @@ Status writeMapOptimizationMetadata(
   return Status::Ok("map_optimization_metadata_written");
 }
 
+struct AsyncRelocalizationComputeState {
+  NativeRelocalizationResult result;
+  std::atomic<bool> ready{false};
+};
+
+struct AsyncRelocalizationJob {
+  std::uint64_t job_sequence = 0U;
+  std::uint64_t map_epoch = 0U;
+  std::uint64_t alignment_sequence = 0U;
+  std::uint64_t observation_sequence = 0U;
+  bool map_alignment_update = false;
+  bool preserve_tracking_on_failure = false;
+  std::shared_ptr<AsyncRelocalizationComputeState> compute;
+};
+
 class FastLioBackend final : public ISlamBackend {
  public:
   Status configure(const SlamConfig& config) override {
+    advanceRelocalizationMapEpoch();
     config_ = config;
     config_.backend = "fastlio2";
     builder_config_ = Config{};
@@ -796,6 +991,7 @@ class FastLioBackend final : public ISlamBackend {
     mode_ = mode;
     map_path_ = map_path;
     if (mode_ == SlamMode::Mapping) {
+      advanceRelocalizationMapEpoch();
       map_loaded_ = false;
       map_bounds_ready_ = false;
     }
@@ -820,6 +1016,9 @@ class FastLioBackend final : public ISlamBackend {
       return Status::Error("invalid_imu_sample");
     }
     double timestamp = sample.stamp_s - runtime_config_.time_diff_lidar_to_imu;
+    if (isSensorTimeJump(last_imu_time_, timestamp)) {
+      handleSensorTimeJump(timestamp);
+    }
     if (timestamp < last_imu_time_) {
       dropped_imu_frames_ += static_cast<int>(imu_buffer_.size());
       imu_buffer_.clear();
@@ -848,6 +1047,9 @@ class FastLioBackend final : public ISlamBackend {
       ++dropped_lidar_frames_;
       return Status::Error("empty_lidar_frame");
     }
+    if (isSensorTimeJump(last_lidar_time_, frame.stamp_s)) {
+      handleSensorTimeJump(frame.stamp_s);
+    }
     if (frame.stamp_s < last_lidar_time_) {
       dropped_lidar_frames_ += static_cast<int>(lidar_buffer_.size());
       lidar_buffer_.clear();
@@ -875,7 +1077,25 @@ class FastLioBackend final : public ISlamBackend {
       return Status::Error("invalid_visual_odom");
     }
     if (runtime_config_.odom_prior_enabled) {
-      latest_odom_prior_ = sample;
+      const auto insert_at = std::lower_bound(
+          odom_prior_buffer_.begin(),
+          odom_prior_buffer_.end(),
+          sample.stamp_s,
+          [](const OdomSample& buffered, double stamp_s) {
+            return buffered.stamp_s < stamp_s;
+          });
+      if (insert_at != odom_prior_buffer_.end() &&
+          std::abs(insert_at->stamp_s - sample.stamp_s) <= 1e-9) {
+        *insert_at = sample;
+      } else {
+        odom_prior_buffer_.insert(insert_at, sample);
+      }
+      const std::size_t max_buffer =
+          std::max<std::size_t>(1, runtime_config_.max_odom_prior_buffer);
+      while (odom_prior_buffer_.size() > max_buffer) {
+        odom_prior_buffer_.pop_front();
+      }
+      latest_odom_prior_ = odom_prior_buffer_.back();
       odom_prior_age_s_ = 0.0;
       reason_ = "odom_prior_accepted";
       return Status::Ok(reason_);
@@ -891,7 +1111,7 @@ class FastLioBackend final : public ISlamBackend {
     if (!validPose(pose) || !kf_) {
       return Status::Error("invalid_initial_pose");
     }
-    applyPose(kf_->x(), pose);
+    applyPose(kf_->x(), imuPoseFromNavigationBodyPose(pose, runtime_config_));
     odometry_odom_body_ = pose;
     state_estimation_at_scan_ = pose;
     pose_history_.push_back(OdomSample{last_stamp_s_, pose});
@@ -914,94 +1134,178 @@ class FastLioBackend final : public ISlamBackend {
       return Status::Ok(reason_);
     }
 
+    abandonAsyncRelocalization();
     relocalization_state_ = "requested";
     const bool preserve_tracking_on_relocalization_failure =
         state_ == SlamState::Tracking && has_map_odom_pose_ && odometry_odom_body_.has_value();
     const bool map_alignment_update =
         !guess.has_value() && has_map_odom_pose_ && odometry_odom_body_.has_value();
     const std::string reason_before_relocalization = reason_;
-    auto fail_relocalization = [&](
-        const std::string& relocalization_state,
-        const std::string& message,
-        bool preserve_tracking) {
-      relocalization_state_ = preserve_tracking ? "tracking" : relocalization_state;
-      last_relocalization_message_ = message;
-      if (preserve_tracking) {
-        reason_ = reason_before_relocalization.empty() ? "tracking" : reason_before_relocalization;
-      } else {
-        state_ = SlamState::Lost;
-        reason_ = message;
-      }
-      return Status::Error(message);
-    };
     if (!map_loaded_ || !relocalizer_ || !relocalizer_->hasMap()) {
-      return fail_relocalization("map_not_loaded", "map_not_loaded", false);
+      return failRelocalization(
+          "map_not_loaded", "map_not_loaded", false, reason_before_relocalization);
     }
     std::optional<Pose3d> effective_guess = guess;
     if (!effective_guess.has_value() && has_map_odom_pose_ && odometry_odom_body_.has_value()) {
       effective_guess = composePoses(map_odom_pose_, *odometry_odom_body_);
     }
     if (!effective_guess.has_value() && !relocalizer_->supportsGlobalRelocalization()) {
-      return fail_relocalization("initial_pose_required", "initial_pose_required", false);
+      return failRelocalization(
+          "initial_pose_required", "initial_pose_required", false, reason_before_relocalization);
     }
     if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
-      return fail_relocalization(
+      return failRelocalization(
           "waiting_for_scan",
           "registered_cloud_unavailable",
-          preserve_tracking_on_relocalization_failure);
+          preserve_tracking_on_relocalization_failure,
+          reason_before_relocalization);
     }
     if (!odometry_odom_body_.has_value()) {
-      return fail_relocalization("waiting_for_odometry", "odometry_unavailable", false);
+      return failRelocalization(
+          "waiting_for_odometry", "odometry_unavailable", false, reason_before_relocalization);
     }
 
     const NativeRelocalizationResult result = effective_guess.has_value()
         ? relocalizer_->relocalize(*registered_cloud_body_, *effective_guess, *odometry_odom_body_)
         : relocalizer_->globalRelocalize(*registered_cloud_body_, *odometry_odom_body_);
-    relocalization_quality_ = result.quality;
-    last_relocalization_message_ = result.message;
-    if (!result.success) {
-      return fail_relocalization(
-          "failed",
-          result.message,
-          preserve_tracking_on_relocalization_failure);
+    return applyRelocalizationResult(
+        result,
+        map_alignment_update,
+        preserve_tracking_on_relocalization_failure,
+        reason_before_relocalization);
+  }
+
+  Status startRelocalizeAsync(const std::optional<Pose3d>& guess) override {
+    if (mode_ != SlamMode::Localization) {
+      return Status::Error("localization_mode_required");
     }
-    if (result.quality >= 0.0 && result.quality > runtime_config_.relocalization_max_fitness) {
-      return fail_relocalization(
-          "rejected",
-          "relocalization_fitness_rejected",
-          preserve_tracking_on_relocalization_failure);
+    if (async_relocalization_job_.has_value()) {
+      return Status::Error("async_relocalization_in_progress");
     }
-    if (!poseInsideMapBounds(result.map_body)) {
-      return fail_relocalization(
-          "rejected",
-          "relocalization_outside_map_bounds",
-          preserve_tracking_on_relocalization_failure);
+    const bool preserve_tracking_on_failure =
+        state_ == SlamState::Tracking && has_map_odom_pose_ && odometry_odom_body_.has_value();
+    const bool map_alignment_update =
+        !guess.has_value() && has_map_odom_pose_ && odometry_odom_body_.has_value();
+    const std::string reason_before_relocalization = reason_;
+    if (!map_loaded_ || !relocalizer_ || !relocalizer_->hasMap()) {
+      return failRelocalization(
+          "map_not_loaded", "map_not_loaded", false, reason_before_relocalization);
+    }
+    std::optional<Pose3d> effective_guess = guess;
+    if (!effective_guess.has_value() && has_map_odom_pose_ && odometry_odom_body_.has_value()) {
+      effective_guess = composePoses(map_odom_pose_, *odometry_odom_body_);
+    }
+    if (!effective_guess.has_value() && !relocalizer_->supportsGlobalRelocalization()) {
+      return failRelocalization(
+          "initial_pose_required", "initial_pose_required", false, reason_before_relocalization);
+    }
+    if (!registered_cloud_body_.has_value() || registered_cloud_body_->points.empty()) {
+      return failRelocalization(
+          "waiting_for_scan",
+          "registered_cloud_unavailable",
+          preserve_tracking_on_failure,
+          reason_before_relocalization);
+    }
+    if (!odometry_odom_body_.has_value()) {
+      return failRelocalization(
+          "waiting_for_odometry", "odometry_unavailable", false, reason_before_relocalization);
     }
 
-    if (map_alignment_update) {
-      // Periodic map tracking refines map->odom; resetting Fast-LIO would make
-      // odometry briefly drop through INITIALIZING on every correction.
-      state_estimation_at_scan_ = odometry_odom_body_;
-    } else {
-      resetTrackingCoreAtPose(*odometry_odom_body_);
+    const Cloud scan = *registered_cloud_body_;
+    const Pose3d odom_body = *odometry_odom_body_;
+    const auto relocalizer = relocalizer_;
+    const auto compute = std::make_shared<AsyncRelocalizationComputeState>();
+    AsyncRelocalizationJob job;
+    job.job_sequence = ++async_relocalization_sequence_;
+    job.map_epoch = relocalization_map_epoch_;
+    job.alignment_sequence = map_frame_jump_sequence_;
+    job.observation_sequence = observation_sequence_;
+    job.map_alignment_update = map_alignment_update;
+    job.preserve_tracking_on_failure = preserve_tracking_on_failure;
+    job.compute = compute;
+
+    try {
+      std::thread worker([
+          compute,
+          relocalizer,
+          scan,
+          effective_guess,
+          odom_body]() mutable {
+        try {
+          compute->result = effective_guess.has_value()
+              ? relocalizer->relocalize(scan, *effective_guess, odom_body)
+              : relocalizer->globalRelocalize(scan, odom_body);
+        } catch (const std::exception& error) {
+          compute->result.message =
+              std::string("async_relocalization_exception: ") + error.what();
+        } catch (...) {
+          compute->result.message = "async_relocalization_unknown_exception";
+        }
+        compute->ready.store(true, std::memory_order_release);
+      });
+      worker.detach();
+    } catch (const std::exception& error) {
+      return Status::Error(
+          std::string("async_relocalization_start_failed: ") + error.what());
     }
-    map_odom_pose_ = result.map_odom;
-    map_body_pose_at_relocalization_ = result.map_body;
-    relocalization_refine_backend_ = result.refine_backend;
-    relocalization_refine_iterations_ = result.refine_iterations;
-    relocalization_refine_inliers_ = result.refine_inliers;
-    relocalization_refine_converged_ = result.refine_converged;
-    relocalization_refine_pos_cov_trace_ = result.refine_pos_cov_trace;
-    has_map_odom_pose_ = true;
-    map_frame_jump_ = true;
-    confidence_ = result.quality >= 0.0
-        ? std::max(0.0, std::min(1.0, 1.0 - result.quality))
-        : confidence_;
-    localization_quality_ = confidence_;
-    state_ = SlamState::Tracking;
-    relocalization_state_ = "completed";
-    reason_ = "relocalized";
-    return Status::Ok(reason_);
+
+    async_relocalization_job_ = std::move(job);
+    relocalization_state_ = preserve_tracking_on_failure ? "tracking" : "running";
+    last_relocalization_message_ = "async_relocalization_running";
+    return Status::Ok("async_relocalization_started");
+  }
+
+  std::optional<Status> pollRelocalizeAsync() override {
+    if (!async_relocalization_job_.has_value()) {
+      return std::nullopt;
+    }
+    const auto& pending = *async_relocalization_job_;
+    if (!pending.compute->ready.load(std::memory_order_acquire)) {
+      return std::nullopt;
+    }
+    AsyncRelocalizationJob completed = std::move(*async_relocalization_job_);
+    async_relocalization_job_.reset();
+    const bool preserve_tracking =
+        completed.preserve_tracking_on_failure ||
+        (state_ == SlamState::Tracking && has_map_odom_pose_ && odometry_odom_body_.has_value());
+    const std::string reason_before_relocalization = reason_;
+    if (completed.job_sequence != async_relocalization_sequence_) {
+      return failRelocalization(
+          "rejected",
+          "async_relocalization_sequence_stale",
+          preserve_tracking,
+          reason_before_relocalization);
+    }
+    if (completed.map_epoch != relocalization_map_epoch_) {
+      return failRelocalization(
+          "rejected",
+          "async_relocalization_map_changed",
+          preserve_tracking,
+          reason_before_relocalization);
+    }
+    if (completed.alignment_sequence != map_frame_jump_sequence_) {
+      return failRelocalization(
+          "rejected",
+          "async_relocalization_alignment_stale",
+          preserve_tracking,
+          reason_before_relocalization);
+    }
+    if (completed.observation_sequence == 0U) {
+      return failRelocalization(
+          "rejected",
+          "async_relocalization_observation_invalid",
+          preserve_tracking,
+          reason_before_relocalization);
+    }
+    return applyRelocalizationResult(
+        completed.compute->result,
+        completed.map_alignment_update,
+        preserve_tracking,
+        reason_before_relocalization);
+  }
+
+  bool relocalizeAsyncInFlight() const override {
+    return async_relocalization_job_.has_value();
   }
 
   Status tick() override {
@@ -1010,33 +1314,101 @@ class FastLioBackend final : public ISlamBackend {
       reason_ = "not_configured";
       return Status::Error(reason_);
     }
+    // Relocalization publishes the jump in the same runtime cycle. Clear it
+    // before processing the next cycle so consumers observe an event, not a
+    // permanently latched state.
+    map_frame_jump_ = false;
+    if (catastrophic_health_fault_latched_ && mode_ == SlamMode::Mapping) {
+      enforceCatastrophicHealthFault();
+      return Status::Ok(reason_);
+    }
     if (!prepareFastLioPackage()) {
       updateWaitingReason();
       return Status::Ok(reason_);
     }
 
-    // Fast-LIO2 core: IMU init/propagation, point undistortion, and map update.
-    builder_->process(package_);
-    last_stamp_s_ = package_.cloud_end_time;
-    if (builder_->status() != BuilderStatus::MAPPING) {
-      updateBuilderState();
+    std::optional<OdomSample> odom_prior = freshOdomPrior(package_.cloud_end_time);
+    if (runtime_config_.odom_prior_bypass_fastlio) {
+      if (odom_prior.has_value()) {
+        return processOdomPriorPackage(*odom_prior);
+      }
+      reason_ = "waiting_for_time_aligned_odom_prior";
       return Status::Ok(reason_);
     }
 
-    const Pose3d fastlio_pose = poseFromState(kf_->x());
-    odometry_odom_body_ = fastlio_pose;
-    state_estimation_at_scan_ = odometry_odom_body_;
+    // Fast-LIO2 core: IMU init/propagation, point undistortion, and map update.
+    const BuilderStatus builder_status_before = builder_->status();
+    builder_->process(package_);
+    if (mode_ == SlamMode::Mapping &&
+        builder_status_before == BuilderStatus::IMU_INIT &&
+        builder_->status() == BuilderStatus::MAP_INIT) {
+      anchorInitialNavigationBodyFrame(kf_->x(), runtime_config_);
+    }
+    last_stamp_s_ = package_.cloud_end_time;
+    if (builder_->status() != BuilderStatus::MAPPING) {
+      updateBuilderState();
+      if (relocalization_required_after_time_jump_) {
+        state_ = SlamState::Lost;
+        confidence_ = 0.0;
+        localization_quality_ = 0.0;
+        reason_ = "sensor_time_jump_relocalization_required";
+      }
+      return Status::Ok(reason_);
+    }
 
-    std::optional<OdomSample> odom_prior = freshOdomPrior(package_.cloud_end_time);
+    const Pose3d fastlio_pose =
+        navigationBodyPoseFromImuPose(poseFromState(kf_->x()), runtime_config_);
     if (odom_prior.has_value()) {
-      odom_prior_error_xy_m_ = planarDistance(fastlio_pose, odom_prior->odom_body);
-      applyPose(kf_->x(), odom_prior->odom_body);
-      if (odom_prior->has_velocity &&
-          finite(odom_prior->vx) && finite(odom_prior->vy) && finite(odom_prior->vz)) {
+      if (!validPose(odom_prior->odom_body)) {
+        setFastLioHealthFault(SlamState::Lost, "fastlio_state_nonfinite", true);
+        return Status::Ok(reason_);
+      }
+      if (odom_prior->has_velocity) {
+        const V3D prior_velocity(odom_prior->vx, odom_prior->vy, odom_prior->vz);
+        if (!prior_velocity.allFinite()) {
+          setFastLioHealthFault(SlamState::Lost, "fastlio_state_nonfinite", true);
+          return Status::Ok(reason_);
+        }
+        if (velocityOutOfBounds(prior_velocity)) {
+          setFastLioHealthFault(SlamState::Lost, "fastlio_velocity_out_of_bounds", true);
+          return Status::Ok(reason_);
+        }
+      }
+    } else {
+      const std::string numeric_fault = fastLioNumericHealthFaultReason();
+      if (!numeric_fault.empty()) {
+        setFastLioHealthFault(SlamState::Lost, numeric_fault, true);
+        return Status::Ok(reason_);
+      }
+    }
+    if (!odom_prior.has_value() &&
+        builder_->lastLidarUpdateAttempted() && !builder_->lastLidarUpdateAccepted()) {
+      const bool repeated = builder_->consecutiveLidarUpdateRejections() >= 2U;
+      setFastLioHealthFault(
+          repeated ? SlamState::Lost : SlamState::Degraded,
+          repeated
+              ? "fastlio_lidar_update_rejected_streak"
+              : "fastlio_lidar_update_rejected");
+      return Status::Ok(reason_);
+    }
+
+    if (odom_prior.has_value()) {
+      odom_prior_error_xy_m_ = validPose(fastlio_pose)
+          ? planarDistance(fastlio_pose, odom_prior->odom_body)
+          : -1.0;
+      applyPose(
+          kf_->x(),
+          imuPoseFromNavigationBodyPose(odom_prior->odom_body, runtime_config_));
+      if (odom_prior->has_velocity) {
         kf_->x().v = V3D(odom_prior->vx, odom_prior->vy, odom_prior->vz);
+      } else if (!kf_->x().v.allFinite() || velocityOutOfBounds(kf_->x().v)) {
+        kf_->x().v.setZero();
       }
       odometry_odom_body_ = odom_prior->odom_body;
       state_estimation_at_scan_ = odom_prior->odom_body;
+    } else {
+      odometry_odom_body_ = fastlio_pose;
+      state_estimation_at_scan_ = odometry_odom_body_;
     }
 
     pose_history_.push_back(OdomSample{package_.cloud_end_time, *odometry_odom_body_});
@@ -1044,13 +1416,18 @@ class FastLioBackend final : public ISlamBackend {
       pose_history_.erase(pose_history_.begin());
     }
 
-    auto body_cloud = LidarProcessor::transformCloud(
-        package_.cloud, kf_->x().r_il, kf_->x().t_il);
+    auto body_cloud = transformLidarCloudToNavigationBody(
+        package_.cloud, builder_config_, runtime_config_);
     registered_cloud_body_ =
         toContractCloud(body_cloud, package_.cloud_end_time, config_.body_frame);
+    ++observation_sequence_;
 
     auto world_cloud = odom_prior.has_value()
-        ? transformLidarCloudWithBodyPose(package_.cloud, odom_prior->odom_body, builder_config_)
+        ? transformLidarCloudWithBodyPose(
+            package_.cloud,
+            odom_prior->odom_body,
+            builder_config_,
+            runtime_config_)
         : LidarProcessor::transformCloud(
             package_.cloud,
             builder_->lidar_processor()->r_wl(),
@@ -1063,6 +1440,18 @@ class FastLioBackend final : public ISlamBackend {
 
     recordPatchSnapshot();
 
+    if (catastrophic_health_fault_latched_) {
+      enforceCatastrophicHealthFault();
+      return Status::Ok(reason_);
+    }
+    fastlio_health_fault_active_ = false;
+    if (relocalization_required_after_time_jump_) {
+      state_ = SlamState::Lost;
+      confidence_ = 0.0;
+      localization_quality_ = 0.0;
+      reason_ = "sensor_time_jump_relocalization_required";
+      return Status::Ok(reason_);
+    }
     state_ = SlamState::Tracking;
     confidence_ = std::max(0.0, std::min(1.0, kf_->degeneracy().effective_ratio));
     localization_quality_ = confidence_;
@@ -1163,10 +1552,14 @@ class FastLioBackend final : public ISlamBackend {
     map_loaded_ = true;
     last_map_path_ = pcd.string();
     if (!relocalizer_) {
-      relocalizer_ = std::make_unique<NativeRelocalizer>();
+      relocalizer_ = std::make_shared<NativeRelocalizer>();
     }
     std::string relocalizer_message;
-    relocalizer_->loadMap(pcd.string(), &relocalizer_message);
+    const bool relocalizer_loaded =
+        relocalizer_->loadMap(pcd.string(), &relocalizer_message);
+    if (relocalizer_loaded) {
+      advanceRelocalizationMapEpoch();
+    }
     last_relocalization_message_ = relocalizer_message;
     relocalization_state_ = relocalizer_->hasMap() ? "idle" : "map_load_failed";
     reason_ = "map_saved";
@@ -1184,7 +1577,7 @@ class FastLioBackend final : public ISlamBackend {
     }
     updateMapBounds(cloud);
     if (!relocalizer_) {
-      relocalizer_ = std::make_unique<NativeRelocalizer>();
+      relocalizer_ = std::make_shared<NativeRelocalizer>();
     }
     std::string relocalizer_message;
     if (!relocalizer_->loadMap(pcd.string(), &relocalizer_message)) {
@@ -1192,6 +1585,7 @@ class FastLioBackend final : public ISlamBackend {
       last_relocalization_message_ = relocalizer_message;
       return Status::Error(relocalizer_message);
     }
+    advanceRelocalizationMapEpoch();
     saved_map_cloud_map_.reset();
     saved_map_points_ = static_cast<int>(cloud.size());
     map_loaded_ = true;
@@ -1208,19 +1602,26 @@ class FastLioBackend final : public ISlamBackend {
     out.stamp_s = last_stamp_s_;
     out.confidence = confidence_;
     out.reason = reason_;
-    out.odometry_odom_body = odometry_odom_body_;
-    out.state_estimation_at_scan = state_estimation_at_scan_;
-    out.registered_cloud_body = registered_cloud_body_;
-    out.map_cloud_map = map_cloud_map_;
+    if (!fastlio_health_fault_active_ && !relocalization_required_after_time_jump_) {
+      out.odometry_odom_body = odometry_odom_body_;
+      out.state_estimation_at_scan = state_estimation_at_scan_;
+      out.registered_cloud_body = registered_cloud_body_;
+      out.map_cloud_map = map_cloud_map_;
+    }
     out.saved_map_cloud_map = saved_map_cloud_map_;
-    out.map_odom_tf = Transform3d{
-        config_.map_frame,
-        config_.odom_frame,
-        has_map_odom_pose_ ? map_odom_pose_ : Pose3d{}};
+    if (mode_ != SlamMode::Localization || has_map_odom_pose_) {
+      out.map_odom_tf = Transform3d{
+          config_.map_frame,
+          config_.odom_frame,
+          has_map_odom_pose_ ? map_odom_pose_ : Pose3d{}};
+    }
+    out.observation_sequence = observation_sequence_;
+    out.source_epoch = source_epoch_;
     out.saved_map_points = saved_map_points_;
     out.alive = alive_;
     out.map_loaded = map_loaded_;
     out.map_frame_jump = map_frame_jump_;
+    out.map_frame_jump_sequence = map_frame_jump_sequence_;
     out.relocalization_supported = relocalizer_ &&
         (relocalizer_->supportsSeededRelocalization() ||
          relocalizer_->supportsGlobalRelocalization());
@@ -1291,6 +1692,10 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   Status reset() override {
+    const bool preserve_catastrophic_fault =
+        mode_ == SlamMode::Localization && catastrophic_health_fault_latched_;
+    const std::string preserved_catastrophic_reason = catastrophic_health_fault_reason_;
+    advanceRelocalizationMapEpoch();
     resetCore();
     alive_ = true;
     map_loaded_ = false;
@@ -1313,14 +1718,258 @@ class FastLioBackend final : public ISlamBackend {
     last_relocalization_message_ = "reset";
     reason_ = "reset";
     state_ = SlamState::Initializing;
+    if (preserve_catastrophic_fault) {
+      catastrophic_health_fault_latched_ = true;
+      catastrophic_health_fault_reason_ = preserved_catastrophic_reason;
+      relocalization_state_ = "required";
+      last_relocalization_message_ = "catastrophic_health_fault_relocalization_required";
+      enforceCatastrophicHealthFault();
+    }
     return Status::Ok(reason_);
   }
 
  private:
+  void invalidateAsyncRelocalization() {
+    ++async_relocalization_sequence_;
+  }
+
+  void abandonAsyncRelocalization() {
+    invalidateAsyncRelocalization();
+    async_relocalization_job_.reset();
+  }
+
+  void advanceRelocalizationMapEpoch() {
+    ++relocalization_map_epoch_;
+    abandonAsyncRelocalization();
+  }
+
+  Status failRelocalization(
+      const std::string& relocalization_state,
+      const std::string& message,
+      bool preserve_tracking,
+      const std::string& reason_before_relocalization) {
+    last_relocalization_message_ = message;
+    if (catastrophic_health_fault_latched_) {
+      relocalization_state_ = relocalization_state;
+      enforceCatastrophicHealthFault();
+      return Status::Error(message);
+    }
+    relocalization_state_ = preserve_tracking ? "tracking" : relocalization_state;
+    if (preserve_tracking) {
+      reason_ = reason_before_relocalization.empty() ? "tracking" : reason_before_relocalization;
+    } else {
+      state_ = SlamState::Lost;
+      reason_ = message;
+    }
+    return Status::Error(message);
+  }
+
+  Status applyRelocalizationResult(
+      const NativeRelocalizationResult& result,
+      bool map_alignment_update,
+      bool preserve_tracking_on_failure,
+      const std::string& reason_before_relocalization) {
+    relocalization_quality_ = result.quality;
+    last_relocalization_message_ = result.message;
+    relocalization_refine_backend_ = result.refine_backend;
+    relocalization_refine_iterations_ = result.refine_iterations;
+    relocalization_refine_inliers_ = result.refine_inliers;
+    relocalization_refine_converged_ = result.refine_converged;
+    relocalization_refine_pos_cov_trace_ = result.refine_pos_cov_trace;
+    if (!result.success) {
+      return failRelocalization(
+          "failed",
+          result.message,
+          preserve_tracking_on_failure,
+          reason_before_relocalization);
+    }
+    if (!poseInsideMapBounds(result.map_body)) {
+      return failRelocalization(
+          "rejected",
+          "relocalization_outside_map_bounds",
+          preserve_tracking_on_failure,
+          reason_before_relocalization);
+    }
+
+    RelocalizationGateConfig gate_config;
+    gate_config.max_fitness = runtime_config_.relocalization_max_fitness;
+    gate_config.min_inliers = runtime_config_.relocalization_min_inliers;
+    gate_config.max_pos_cov_trace = runtime_config_.relocalization_max_pos_cov_trace;
+    gate_config.max_alignment_translation_m =
+        runtime_config_.track_against_map_max_translation_m;
+    gate_config.max_alignment_yaw_rad =
+        runtime_config_.track_against_map_max_yaw_deg * 3.14159265358979323846 / 180.0;
+    gate_config.max_alignment_tilt_rad =
+        runtime_config_.track_against_map_max_tilt_deg * 3.14159265358979323846 / 180.0;
+    gate_config.require_alignment_degeneracy_metrics =
+        runtime_config_.track_against_map_require_degeneracy_metrics;
+    RelocalizationGateInput gate_input;
+    gate_input.converged = result.refine_converged;
+    gate_input.fitness = result.quality;
+    gate_input.inliers = result.refine_inliers;
+    gate_input.pos_cov_trace = result.refine_pos_cov_trace;
+    gate_input.alignment_update = map_alignment_update;
+    gate_input.current_map_odom = map_odom_pose_;
+    gate_input.candidate_map_odom = result.map_odom;
+    const RelocalizationGateDecision gate =
+        EvaluateRelocalizationGate(gate_config, gate_input);
+    if (!gate.accepted) {
+      return failRelocalization(
+          "rejected", gate.reason, preserve_tracking_on_failure, reason_before_relocalization);
+    }
+
+    const std::string numeric_fault = fastLioNumericHealthFaultReason();
+    if (!numeric_fault.empty()) {
+      setFastLioHealthFault(SlamState::Lost, numeric_fault, true);
+      relocalization_state_ = "rejected";
+      last_relocalization_message_ = "fastlio_numeric_health_unrecovered";
+      return Status::Error(last_relocalization_message_);
+    }
+
+    // Only the owning runtime thread reaches this commit. Fast-LIO odometry
+    // stays continuous while the independently computed map alignment changes.
+    constexpr double kPathInvalidatingTranslationM = 0.05;
+    constexpr double kPathInvalidatingYawRad = 0.017453292519943295;
+    const bool path_invalidating_jump =
+        !has_map_odom_pose_ || !map_alignment_update ||
+        gate.correction_translation_m > kPathInvalidatingTranslationM ||
+        gate.correction_yaw_rad > kPathInvalidatingYawRad;
+    state_estimation_at_scan_ = odometry_odom_body_;
+    map_odom_pose_ = result.map_odom;
+    map_body_pose_at_relocalization_ = result.map_body;
+    has_map_odom_pose_ = true;
+    map_frame_jump_ = path_invalidating_jump;
+    if (path_invalidating_jump) {
+      ++map_frame_jump_sequence_;
+    }
+    confidence_ = result.quality >= 0.0
+        ? std::max(0.0, std::min(1.0, 1.0 - result.quality))
+        : confidence_;
+    localization_quality_ = confidence_;
+    fastlio_health_fault_active_ = false;
+    catastrophic_health_fault_latched_ = false;
+    catastrophic_health_fault_reason_.clear();
+    relocalization_required_after_time_jump_ = false;
+    state_ = SlamState::Tracking;
+    relocalization_state_ = "completed";
+    reason_ = "relocalized";
+    return Status::Ok(reason_);
+  }
+
+  bool isSensorTimeJump(double previous_s, double current_s) const {
+    return runtime_config_.max_sensor_time_jump_s > 0.0 && previous_s >= 0.0 &&
+           current_s - previous_s > runtime_config_.max_sensor_time_jump_s;
+  }
+
+  bool velocityOutOfBounds(const V3D& velocity) const {
+    return builder_config_.max_update_velocity_mps > 0.0 &&
+           velocity.norm() > builder_config_.max_update_velocity_mps;
+  }
+
+  std::string fastLioNumericHealthFaultReason() const {
+    if (!kf_) {
+      return "fastlio_state_unavailable";
+    }
+    const auto& state = kf_->x();
+    if (!state.r_wi.allFinite() || !state.t_wi.allFinite() ||
+        !state.r_il.allFinite() || !state.t_il.allFinite() ||
+        !state.v.allFinite() || !state.bg.allFinite() ||
+        !state.ba.allFinite() || !state.g.allFinite()) {
+      return "fastlio_state_nonfinite";
+    }
+    const Pose3d pose =
+        navigationBodyPoseFromImuPose(poseFromState(state), runtime_config_);
+    if (!validPose(pose)) {
+      return "fastlio_state_nonfinite";
+    }
+    if (velocityOutOfBounds(state.v)) {
+      return "fastlio_velocity_out_of_bounds";
+    }
+    const auto& covariance = kf_->P();
+    if (!covariance.allFinite()) {
+      return "fastlio_covariance_nonfinite";
+    }
+    const double pos_cov_trace = covariance.diagonal().segment<3>(3).sum();
+    if (!finite(pos_cov_trace) || pos_cov_trace < 0.0) {
+      return "fastlio_covariance_nonfinite";
+    }
+    if (runtime_config_.fastlio_max_pos_cov_trace > 0.0 &&
+        pos_cov_trace > runtime_config_.fastlio_max_pos_cov_trace) {
+      return "fastlio_position_covariance_out_of_bounds";
+    }
+    return {};
+  }
+
+  void enforceCatastrophicHealthFault() {
+    fastlio_health_fault_active_ = true;
+    state_ = SlamState::Lost;
+    confidence_ = 0.0;
+    localization_quality_ = 0.0;
+    reason_ = catastrophic_health_fault_reason_.empty()
+        ? "fastlio_catastrophic_health_fault"
+        : catastrophic_health_fault_reason_;
+  }
+
+  void setFastLioHealthFault(
+      SlamState state,
+      const std::string& reason,
+      bool catastrophic = false) {
+    if (catastrophic && !catastrophic_health_fault_latched_) {
+      catastrophic_health_fault_latched_ = true;
+      catastrophic_health_fault_reason_ = reason;
+    }
+    if (catastrophic_health_fault_latched_) {
+      enforceCatastrophicHealthFault();
+      return;
+    }
+    fastlio_health_fault_active_ = true;
+    state_ = state;
+    confidence_ = 0.0;
+    localization_quality_ = 0.0;
+    reason_ = reason;
+  }
+
+  void handleSensorTimeJump(double new_timestamp_s) {
+    if (mode_ == SlamMode::Mapping) {
+      reset();
+      last_stamp_s_ = new_timestamp_s;
+      state_ = SlamState::Initializing;
+      confidence_ = 0.0;
+      localization_quality_ = 0.0;
+      reason_ = "sensor_time_jump_reset_mapping";
+      return;
+    }
+
+    advanceRelocalizationMapEpoch();
+    const bool preserve_catastrophic_fault = catastrophic_health_fault_latched_;
+    const std::string preserved_catastrophic_reason = catastrophic_health_fault_reason_;
+    const auto saved_relocalizer = relocalizer_;
+    resetCore();
+    relocalizer_ = saved_relocalizer;
+    last_stamp_s_ = new_timestamp_s;
+    has_map_odom_pose_ = false;
+    map_body_pose_at_relocalization_.reset();
+    map_frame_jump_ = false;
+    confidence_ = 0.0;
+    localization_quality_ = 0.0;
+    relocalization_state_ = "required";
+    last_relocalization_message_ = "sensor_time_jump_relocalization_required";
+    relocalization_required_after_time_jump_ = true;
+    if (preserve_catastrophic_fault) {
+      catastrophic_health_fault_latched_ = true;
+      catastrophic_health_fault_reason_ = preserved_catastrophic_reason;
+      enforceCatastrophicHealthFault();
+      return;
+    }
+    state_ = SlamState::Lost;
+    reason_ = "sensor_time_jump_relocalization_required";
+  }
+
   void resetCore() {
+    ++source_epoch_;
     kf_ = std::make_shared<IESKF>();
     builder_ = std::make_unique<MapBuilder>(builder_config_, kf_);
-    relocalizer_ = std::make_unique<NativeRelocalizer>();
+    relocalizer_ = std::make_shared<NativeRelocalizer>();
     imu_buffer_.clear();
     lidar_buffer_.clear();
     lidar_pushed_ = false;
@@ -1339,11 +1988,13 @@ class FastLioBackend final : public ISlamBackend {
     odometry_odom_body_.reset();
     state_estimation_at_scan_.reset();
     registered_cloud_body_.reset();
+    observation_sequence_ = 0U;
     map_cloud_map_.reset();
     saved_map_cloud_map_.reset();
     pose_history_.clear();
     patch_history_.clear();
     latest_odom_prior_.reset();
+    odom_prior_buffer_.clear();
     odom_prior_active_ = false;
     odom_prior_age_s_ = -1.0;
     odom_prior_error_xy_m_ = -1.0;
@@ -1351,12 +2002,16 @@ class FastLioBackend final : public ISlamBackend {
     patch_sequence_ = 0;
     last_patch_stamp_s_ = 0.0;
     has_last_patch_pose_ = false;
+    fastlio_health_fault_active_ = false;
+    catastrophic_health_fault_latched_ = false;
+    catastrophic_health_fault_reason_.clear();
+    relocalization_required_after_time_jump_ = false;
   }
 
   void resetTrackingCoreAtPose(const Pose3d& pose) {
     kf_ = std::make_shared<IESKF>();
     builder_ = std::make_unique<MapBuilder>(builder_config_, kf_);
-    applyPose(kf_->x(), pose);
+    applyPose(kf_->x(), imuPoseFromNavigationBodyPose(pose, runtime_config_));
     imu_buffer_.clear();
     lidar_buffer_.clear();
     lidar_pushed_ = false;
@@ -1375,6 +2030,7 @@ class FastLioBackend final : public ISlamBackend {
     pose_history_.push_back(OdomSample{last_stamp_s_, pose});
     patch_history_.clear();
     latest_odom_prior_.reset();
+    odom_prior_buffer_.clear();
     odom_prior_active_ = false;
     odom_prior_age_s_ = -1.0;
     odom_prior_error_xy_m_ = -1.0;
@@ -1466,7 +2122,92 @@ class FastLioBackend final : public ISlamBackend {
     return true;
   }
 
+  Status processOdomPriorPackage(const OdomSample& odom_prior) {
+    if (!validPose(odom_prior.odom_body)) {
+      setFastLioHealthFault(SlamState::Lost, "fastlio_state_nonfinite", true);
+      return Status::Ok(reason_);
+    }
+    if (odom_prior.has_velocity) {
+      const V3D prior_velocity(odom_prior.vx, odom_prior.vy, odom_prior.vz);
+      if (!prior_velocity.allFinite()) {
+        setFastLioHealthFault(SlamState::Lost, "fastlio_state_nonfinite", true);
+        return Status::Ok(reason_);
+      }
+      if (velocityOutOfBounds(prior_velocity)) {
+        setFastLioHealthFault(SlamState::Lost, "fastlio_velocity_out_of_bounds", true);
+        return Status::Ok(reason_);
+      }
+    }
+
+    last_stamp_s_ = package_.cloud_end_time;
+    odom_prior_error_xy_m_ = -1.0;
+    applyPose(
+        kf_->x(),
+        imuPoseFromNavigationBodyPose(odom_prior.odom_body, runtime_config_));
+    if (odom_prior.has_velocity) {
+      kf_->x().v = V3D(odom_prior.vx, odom_prior.vy, odom_prior.vz);
+    } else {
+      kf_->x().v.setZero();
+    }
+    odometry_odom_body_ = odom_prior.odom_body;
+    state_estimation_at_scan_ = odom_prior.odom_body;
+    pose_history_.push_back(OdomSample{package_.cloud_end_time, odom_prior.odom_body});
+    if (pose_history_.size() > 10000) {
+      pose_history_.erase(pose_history_.begin());
+    }
+
+    auto body_cloud = transformLidarCloudToNavigationBody(
+        package_.cloud, builder_config_, runtime_config_);
+    registered_cloud_body_ =
+        toContractCloud(body_cloud, package_.cloud_end_time, config_.body_frame);
+    ++observation_sequence_;
+    auto world_cloud = transformLidarCloudWithBodyPose(
+        package_.cloud,
+        odom_prior.odom_body,
+        builder_config_,
+        runtime_config_);
+    map_cloud_map_ =
+        toContractCloud(world_cloud, package_.cloud_end_time, config_.map_frame);
+    addOdomPriorMapCloud(world_cloud);
+    recordPatchSnapshot();
+
+    if (catastrophic_health_fault_latched_) {
+      enforceCatastrophicHealthFault();
+      return Status::Ok(reason_);
+    }
+    if (relocalization_required_after_time_jump_) {
+      state_ = SlamState::Lost;
+      confidence_ = 0.0;
+      localization_quality_ = 0.0;
+      reason_ = "sensor_time_jump_relocalization_required";
+      return Status::Ok(reason_);
+    }
+    fastlio_health_fault_active_ = false;
+    state_ = SlamState::Tracking;
+    confidence_ = 1.0;
+    localization_quality_ = 1.0;
+    reason_ = "tracking_with_odom_prior_bypass";
+    return Status::Ok(reason_);
+  }
+
   void updateWaitingReason() {
+    if (catastrophic_health_fault_latched_) {
+      enforceCatastrophicHealthFault();
+      return;
+    }
+    if (fastlio_health_fault_active_ || relocalization_required_after_time_jump_) {
+      return;
+    }
+    if (runtime_config_.odom_prior_bypass_fastlio &&
+        odom_prior_active_ &&
+        state_ == SlamState::Tracking &&
+        odometry_odom_body_.has_value() &&
+        map_cloud_map_.has_value()) {
+      confidence_ = 1.0;
+      localization_quality_ = 1.0;
+      reason_ = "tracking_with_odom_prior_bypass";
+      return;
+    }
     if (state_ == SlamState::Tracking &&
         odometry_odom_body_.has_value() &&
         map_cloud_map_.has_value()) {
@@ -1495,12 +2236,22 @@ class FastLioBackend final : public ISlamBackend {
         ? registered_cloud_body_->stamp_s
         : last_stamp_s_;
     const Pose3d pose = *odometry_odom_body_;
+    const double min_interval_s = std::max(0.0, runtime_config_.patch_min_interval_s);
+    const double min_translation_m = std::max(0.0, runtime_config_.patch_min_translation_m);
+    const double min_rotation_rad = std::max(0.0, runtime_config_.patch_min_rotation_rad);
     const bool time_ready =
-        last_patch_stamp_s_ <= 0.0 || (stamp - last_patch_stamp_s_) >= 1.0;
+        last_patch_stamp_s_ <= 0.0 || (stamp - last_patch_stamp_s_) >= min_interval_s;
     const bool motion_ready =
-        !has_last_patch_pose_ || planarDistance(pose, last_patch_pose_) >= 0.20;
-    if (!patch_history_.empty() && !time_ready && !motion_ready) {
-      return;
+        !has_last_patch_pose_ || planarDistance(pose, last_patch_pose_) >= min_translation_m;
+    const bool rotation_ready =
+        !has_last_patch_pose_ || yawDistance(pose, last_patch_pose_) >= min_rotation_rad;
+    if (!patch_history_.empty()) {
+      if (!time_ready) {
+        return;
+      }
+      if (!motion_ready && !rotation_ready) {
+        return;
+      }
     }
 
     PatchSnapshot patch;
@@ -1509,7 +2260,9 @@ class FastLioBackend final : public ISlamBackend {
     patch.pose = pose;
     patch.cloud = *registered_cloud_body_;
     patch_history_.push_back(std::move(patch));
-    while (patch_history_.size() > 300) {
+    const std::size_t max_snapshots =
+        std::max<std::size_t>(1, runtime_config_.max_patch_snapshots);
+    while (patch_history_.size() > max_snapshots) {
       patch_history_.pop_front();
     }
     last_patch_stamp_s_ = stamp;
@@ -1520,17 +2273,34 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<OdomSample> freshOdomPrior(double stamp_s) {
     odom_prior_active_ = false;
     odom_prior_age_s_ = -1.0;
-    if (!runtime_config_.odom_prior_enabled || !latest_odom_prior_.has_value()) {
+    if (!runtime_config_.odom_prior_enabled || odom_prior_buffer_.empty()) {
       return std::nullopt;
     }
-    const double age_s = std::abs(stamp_s - latest_odom_prior_->stamp_s);
+    auto after = std::lower_bound(
+        odom_prior_buffer_.begin(),
+        odom_prior_buffer_.end(),
+        stamp_s,
+        [](const OdomSample& buffered, double requested_stamp_s) {
+          return buffered.stamp_s < requested_stamp_s;
+        });
+    auto selected = after;
+    if (after == odom_prior_buffer_.end()) {
+      selected = std::prev(odom_prior_buffer_.end());
+    } else if (after != odom_prior_buffer_.begin()) {
+      const auto before = std::prev(after);
+      if (std::abs(before->stamp_s - stamp_s) <=
+          std::abs(after->stamp_s - stamp_s)) {
+        selected = before;
+      }
+    }
+    const double age_s = std::abs(stamp_s - selected->stamp_s);
     odom_prior_age_s_ = age_s;
     if (runtime_config_.odom_prior_max_age_s >= 0.0 &&
         age_s > runtime_config_.odom_prior_max_age_s) {
       return std::nullopt;
     }
     odom_prior_active_ = true;
-    return latest_odom_prior_;
+    return *selected;
   }
 
   void addOdomPriorMapCloud(const CloudType::Ptr& world_cloud) {
@@ -1605,7 +2375,10 @@ class FastLioBackend final : public ISlamBackend {
   double map_max_z_ = 0.0;
   std::shared_ptr<IESKF> kf_;
   std::unique_ptr<MapBuilder> builder_;
-  std::unique_ptr<NativeRelocalizer> relocalizer_;
+  std::shared_ptr<NativeRelocalizer> relocalizer_;
+  std::optional<AsyncRelocalizationJob> async_relocalization_job_;
+  std::uint64_t async_relocalization_sequence_ = 0U;
+  std::uint64_t relocalization_map_epoch_ = 0U;
   std::deque<IMUData> imu_buffer_;
   std::deque<LidarFrame> lidar_buffer_;
   bool lidar_pushed_ = false;
@@ -1618,6 +2391,11 @@ class FastLioBackend final : public ISlamBackend {
   bool alive_ = false;
   bool map_loaded_ = false;
   bool map_frame_jump_ = false;
+  bool fastlio_health_fault_active_ = false;
+  bool catastrophic_health_fault_latched_ = false;
+  std::string catastrophic_health_fault_reason_;
+  bool relocalization_required_after_time_jump_ = false;
+  std::uint64_t map_frame_jump_sequence_ = 0U;
   bool has_map_odom_pose_ = false;
   Pose3d map_odom_pose_;
   std::optional<Pose3d> map_body_pose_at_relocalization_;
@@ -1640,11 +2418,14 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<Pose3d> odometry_odom_body_;
   std::optional<Pose3d> state_estimation_at_scan_;
   std::optional<Cloud> registered_cloud_body_;
+  std::uint64_t observation_sequence_ = 0U;
+  std::uint64_t source_epoch_ = 0U;
   std::optional<Cloud> map_cloud_map_;
   std::optional<Cloud> saved_map_cloud_map_;
   int saved_map_points_ = 0;
   MapOptimizationReport last_map_optimization_;
   std::optional<OdomSample> latest_odom_prior_;
+  std::deque<OdomSample> odom_prior_buffer_;
   bool odom_prior_active_ = false;
   double odom_prior_age_s_ = -1.0;
   double odom_prior_error_xy_m_ = -1.0;

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
-
 
 pytest.importorskip("fastapi")
 
@@ -145,10 +145,10 @@ def test_scene_graph_route_degrades_invalid_json_to_empty_structured_payload():
 
 
 def test_path_route_accepts_core_path_messages_without_dropping_points():
-    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-    from runtime.msgs.nav import Path
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import PathResponse
+    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+    from runtime.msgs.nav import Path
 
     gateway = GatewayModule()
     gateway.setup()
@@ -276,9 +276,83 @@ def test_navigation_dds_snapshot_reads_native_endpoint_status(monkeypatch, tmp_p
     assert snapshot.source == "gateway_navigation_cache+native_status"
 
 
+def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import NavigationDdsSnapshotResponse
+
+    nav_status = tmp_path / "nav_endpoint_status.json"
+    nav_status.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.nav.endpoint.status.v1",
+                "stamp_s": time.time(),
+                "control_mode": "teleop",
+                "publish_cmd_vel": True,
+                "final_cmd_vel": {"vx": 0.25, "vy": -0.05, "wz": 0.3},
+                "teleop": {"fresh": True, "published": True},
+                "last_local": {"cmd_vel": {"vx": 0.0, "vy": 0.0, "wz": 0.0}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(nav_status))
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "30")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/navigation/dds_snapshot")())
+    snapshot = NavigationDdsSnapshotResponse.model_validate(payload)
+
+    assert snapshot.cmd_vel is not None
+    assert snapshot.cmd_vel.linear["x"] == 0.25
+    assert snapshot.cmd_vel.linear["y"] == -0.05
+    assert snapshot.cmd_vel.angular["z"] == 0.3
+    assert snapshot.cmd_vel.active_source == "native_teleop"
+    assert gateway._teleop_active is True
+
+
+def test_native_autonomy_takeover_is_reported_as_active_teleop(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.gateway_module import GatewayModule
+
+    nav_status = tmp_path / "nav_endpoint_status.json"
+    nav_status.write_text(
+        json.dumps(
+            {
+                "schema_version": "lingtu.nav.endpoint.status.v1",
+                "stamp_s": time.time(),
+                "control_mode": "autonomy",
+                "active_cmd_source": "teleop",
+                "publish_cmd_vel": True,
+                "control_authority": {
+                    "operator_takeover_latched": True,
+                    "resume_required": True,
+                },
+                "final_cmd_vel": {"vx": 0.1, "vy": 0.0, "wz": 0.0},
+                "teleop": {"fresh": True, "published": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(nav_status))
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "30")
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    assert gateway._teleop_active is True
+
+
 def test_velocity_mux_health_includes_latest_driver_command():
-    from runtime.msgs.geometry import Twist, Vector3
     from nav.services.safety.velocity_mux import VelocityMux
+    from runtime.msgs.geometry import Twist, Vector3
 
     mux = VelocityMux()
     mux.setup()

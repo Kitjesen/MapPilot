@@ -1,17 +1,17 @@
-"""Planner service factory for nav.mission."""
+"""Planner service factory for nav.navigation."""
 
 from __future__ import annotations
 
 from typing import Any
 
-from runtime.profiles.planner_backends import normalize_planner_name
 from nav.services.plan.contracts import PlannerService
+from runtime.profiles.planner_backends import normalize_planner_name
 
 
 def create_planner_service(
     *,
     planner_name: str = "octoplanner3d",
-    tomogram: str = "",
+    map_path: str = "",
     obstacle_thr: float = 49.9,
     downsample_dist: float = 2.0,
     plan_safety_policy: str = "observe",
@@ -31,7 +31,7 @@ def create_planner_service(
 
         return MaplessDirectPlannerService(
             planner_name=canonical_planner_name,
-            tomogram=tomogram,
+            map_path=map_path,
             obstacle_thr=obstacle_thr,
             downsample_dist=downsample_dist,
             plan_safety_policy=plan_safety_policy,
@@ -43,7 +43,7 @@ def create_planner_service(
 
     return GlobalPlanner(
         planner_name=canonical_planner_name,
-        tomogram=tomogram,
+        map_path=map_path,
         obstacle_thr=obstacle_thr,
         downsample_dist=downsample_dist,
         plan_safety_policy=plan_safety_policy,

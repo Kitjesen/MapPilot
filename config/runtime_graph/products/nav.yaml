@@ -1,21 +1,48 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: nav
-summary: Navigate against a saved map using native localization and command output.
+summary: Saved-map autonomous navigation through native localization, native DDS SLAM, OctoPlanner3D, C++ LocalPlanner, and gated command output.
+data_plane: typed_dds
+control_owner: autonomy
+autonomy_owner: native_nav_endpoint
 required_topics:
+  - /tf
   - /slam/odometry
+  - /slam/registered_cloud
   - /slam/map_cloud
   - /slam/localization_health
-  - /nav/goal_pose
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/traversability
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
   - /nav/cmd_vel
 required_capabilities:
   - saved_map_relocalization
-  - global_planning
-  - local_planning
-  - cmd_vel_mux
-  - driver_command_output
+  - octoplanner3d_global_planning
+  - local_planner_collision_and_traversability_scoring
+  - path_follower_pre_command_output
+  - final_cmd_vel_single_writer
+  - operator_teleop_takeover_with_safety_veto
+  - operator_assisted_local_planner_takeover
 forbidden_modules:
   - SimEndpointDriverModule
-  - SlamBridgeModule
+  - nav.local_planner
+  - nav.path_follower
 forbidden_claims:
   - module_sim_real_equivalence
   - ros2_bridge_required
+transport_rules:
+  product_bus: typed_dds
+  same_process_algorithms: direct_function_calls
+  lcm_allowed: false
+target_chain:
+  - Gateway coordinate requests and GoalService use the persistent C++ client for typed /nav/command/request and wait for /nav/command/ack.
+  - Natural-language Gateway/MCP instructions first resolve through SemanticPlanner; only the resulting map-frame goal enters DDS.
+  - Native nav endpoint reads /slam/odometry, /slam/registered_cloud, and /nav/traversability.
+  - Native nav endpoint loads active octomap.ot by file path for OctoPlanner3D global planning.
+  - OctoPlanner3D, LocalPlanner, and PathFollower run as C++ function calls in the endpoint process.
+  - Native nav endpoint publishes /nav/global_path, /nav/local_path telemetry, /nav/way_point, and final /nav/cmd_vel.
+  - Native driver consumes /nav/cmd_vel and sends fail-closed Brainstem Walk commands.
+  - A deliberate non-zero operator command may latch manual takeover; explicit resume only re-enables fresh goal/path submission and never restores the old path.
+  - During takeover, joystick translation is planned locally around obstacles; pure rotation remains under direct swept safety, and no local path produces zero velocity.

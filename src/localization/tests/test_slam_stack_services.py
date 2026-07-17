@@ -105,11 +105,12 @@ def test_full_stack_treats_explicit_super_lio_relocation_as_external_lidar_owner
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        localization_adapter="ros2_slam_bridge",
+        localization_adapter="cpp_slam_status",
         manage_external_services=False,
         run_startup_checks=False,
     )
 
     modules = repr(bp)
-    assert "SlamBridgeModule" in modules
+    assert "SlamAdapterModule" in modules
+    assert "SlamBridgeModule" not in modules
     assert "LidarModule" not in modules

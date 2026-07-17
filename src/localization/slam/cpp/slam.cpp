@@ -218,6 +218,7 @@ class ContractBackend final : public ISlamBackend {
     registered.frame_id = config_.body_frame;
     registered.points = frame.points;
     registered_cloud_body_ = registered;
+    ++observation_sequence_;
 
     Cloud map_cloud;
     map_cloud.stamp_s = frame.stamp_s;
@@ -360,6 +361,7 @@ class ContractBackend final : public ISlamBackend {
     out.map_cloud_map = map_cloud_map_;
     out.saved_map_cloud_map = saved_map_cloud_map_;
     out.map_odom_tf = Transform3d{config_.map_frame, config_.odom_frame, Pose3d{}};
+    out.observation_sequence = observation_sequence_;
     out.saved_map_points = saved_map_points_;
     out.alive = alive_;
     out.map_loaded = map_loaded_;
@@ -415,6 +417,7 @@ class ContractBackend final : public ISlamBackend {
   int lidar_rollback_count_ = 0;
   int imu_buffer_ = 0;
   int lidar_buffer_ = 0;
+  std::uint64_t observation_sequence_ = 0U;
   int dropped_lidar_frames_ = 0;
   int dropped_imu_frames_ = 0;
   std::optional<Pose3d> odometry_odom_body_;

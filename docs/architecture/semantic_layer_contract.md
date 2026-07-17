@@ -66,3 +66,42 @@ encoder internals.
 - Do not place memory modules under perception. Memory consumes scene context;
   it does not produce the live scene graph.
 - Do not introduce ROS 2 coupling into normal semantic modules.
+
+## Multifloor Semantic Navigation Contract
+
+The desired goal is not a bare coordinate. A building-scale semantic target
+must resolve to stable spatial identity:
+
+```text
+building_id / map_id / floor_id / room_id / connector_id / poi_id
+```
+
+The execution hierarchy is:
+
+```text
+natural-language instruction
+  -> object/room/POI candidates
+  -> select target floor and active map
+  -> building topology route through stair/ramp/elevator portals
+  -> current-floor global plan
+  -> local planner + PathFollower
+  -> connector transition and localization verification
+  -> target-floor global/local plan
+```
+
+The tracker already computes hierarchical `floors`, `rooms`, and
+`topology_edges`, and object/tagged-location goals can preserve XYZ. A ROS-free
+building mission core now exists under `src/nav/building/`, including explicit
+lift transition, active-map switching, native relocalization, and target-floor
+verification gates. The current production `SceneGraph` boundary and
+semantic-memory topology still do not preserve and route the complete
+floor/connector model, and no site lift adapter is configured. Therefore
+instructions such as "go to the second-floor meeting room" are still not an
+enabled product capability today.
+
+Before enabling such missions, the runtime message boundary must retain room
+centers, floor IDs, floor ranges, topology edges, and connector endpoints; the
+MapGraph route must then be consumed by building mission orchestration rather
+than stored only as metadata. The existing transition executor must be bound to
+a real lift infrastructure adapter and site transition geometry. Detection
+labels for `stairs` or `elevator` alone are not an infrastructure adapter.

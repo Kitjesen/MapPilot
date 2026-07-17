@@ -4,18 +4,21 @@ gRPC 接口集成测试
 测试所有关键 RPC 端点的功能和性能
 """
 
-import grpc
+import pytest
+
+pytest.importorskip("grpc", reason="gRPC integration test — requires grpc")
+
 import sys
 import time
 from typing import List, Tuple
 
+import grpc
+
 # 添加 proto 路径
-sys.path.insert(0, 'src/robot_proto/python')
+sys.path.insert(0, "src/robot_proto/python")
 
 try:
-    from robot.v1 import system_pb2, system_pb2_grpc
-    from robot.v1 import control_pb2, control_pb2_grpc
-    from robot.v1 import data_pb2, data_pb2_grpc
+    from robot.v1 import control_pb2, control_pb2_grpc, data_pb2, data_pb2_grpc, system_pb2, system_pb2_grpc
 except ImportError:
     print("❌ 无法导入 proto 存根")
     print("   提示: 请先生成 Python proto 代码")
@@ -25,17 +28,18 @@ except ImportError:
 
 class Colors:
     """终端颜色"""
-    GREEN = '\033[0;32m'
-    RED = '\033[0;31m'
-    YELLOW = '\033[1;33m'
-    BLUE = '\033[0;34m'
-    NC = '\033[0m'
+
+    GREEN = "\033[0;32m"
+    RED = "\033[0;31m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[0;34m"
+    NC = "\033[0m"
 
 
 class GrpcTester:
     """gRPC 测试器"""
 
-    def __init__(self, host='localhost:50051'):
+    def __init__(self, host="localhost:50051"):
         self.host = host
         self.channel = None
         self.system_client = None
@@ -87,14 +91,10 @@ class GrpcTester:
         """测试 AcquireLease 和 ReleaseLease RPC"""
         try:
             # 获取租约
-            acquire_req = system_pb2.AcquireLeaseRequest(
-                client_id="test_client",
-                duration_seconds=60
-            )
+            acquire_req = system_pb2.AcquireLeaseRequest(client_id="test_client", duration_seconds=60)
             acquire_resp = self.system_client.AcquireLease(acquire_req, timeout=5.0)
 
-            assert acquire_resp.error_code == system_pb2.ERROR_CODE_SUCCESS, \
-                f"获取租约失败: {acquire_resp.error_code}"
+            assert acquire_resp.error_code == system_pb2.ERROR_CODE_SUCCESS, f"获取租约失败: {acquire_resp.error_code}"
 
             lease_id = acquire_resp.lease_id
             print(f"{Colors.GREEN}✓{Colors.NC} AcquireLease 测试通过")
@@ -104,8 +104,7 @@ class GrpcTester:
             release_req = system_pb2.ReleaseLeaseRequest(lease_id=lease_id)
             release_resp = self.system_client.ReleaseLease(release_req, timeout=5.0)
 
-            assert release_resp.error_code == system_pb2.ERROR_CODE_SUCCESS, \
-                f"释放租约失败: {release_resp.error_code}"
+            assert release_resp.error_code == system_pb2.ERROR_CODE_SUCCESS, f"释放租约失败: {release_resp.error_code}"
 
             print(f"{Colors.GREEN}✓{Colors.NC} ReleaseLease 测试通过")
             return True
@@ -138,7 +137,7 @@ class GrpcTester:
             print(f"  地图数量: {len(response.maps)}")
 
             for i, map_info in enumerate(response.maps[:3]):
-                print(f"    {i+1}. {map_info.name} ({map_info.size_bytes} bytes)")
+                print(f"    {i + 1}. {map_info.name} ({map_info.size_bytes} bytes)")
 
             if len(response.maps) > 3:
                 print(f"    ... 还有 {len(response.maps) - 3} 个地图")
@@ -200,7 +199,7 @@ class GrpcTester:
             print(f"{Colors.RED}✗{Colors.NC} 性能测试失败: {e}")
             return False
 
-    def run_all_tests(self) -> Tuple[int, int]:
+    def run_all_tests(self) -> tuple[int, int]:
         """运行所有测试"""
         tests = [
             ("GetSystemInfo", self.test_get_system_info),
@@ -268,5 +267,5 @@ def main():
     sys.exit(0 if failed == 0 else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

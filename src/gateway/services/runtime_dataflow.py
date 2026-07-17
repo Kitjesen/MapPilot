@@ -2,27 +2,18 @@
 
 from __future__ import annotations
 
-import os
-import hashlib
 import json
 import math
+import os
 import time
 from collections.abc import Mapping
 from contextlib import nullcontext
-from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from runtime.runtime_interface import ARTIFACT_FORMATS
-from runtime.runtime_interface import TOPICS
-from runtime.runtime_interface import runtime_contract_manifest
-from runtime.runtime_interface import runtime_data_flow_topics
-from gateway.services.map_paths import active_map_link
-from gateway.services.map_paths import active_map_name
-from gateway.services.map_paths import map_dir_for
-from gateway.services.map_paths import nav_map_root
+from gateway.services.map_service import active_map, validate_map_artifacts
 from gateway.services.runtime_status import _runtime_boundary_status
-
+from runtime.runtime_interface import TOPICS, runtime_contract_manifest, runtime_data_flow_topics
 
 RUNTIME_DATAFLOW_SCHEMA_VERSION = 1
 LIVE_MODULE_SAMPLE_STALE_MS = 2000.0
@@ -65,7 +56,8 @@ _GATEWAY_TOPIC_CHANNELS: dict[str, list[dict[str, Any]]] = {
     ],
     TOPICS.map_cloud: [
         {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "map_cloud"},
-        {"transport": "gateway_ws", "path": "/ws/cloud", "payload": "binary_point_cloud"},
+        {"transport": "gateway_ws", "path": "/ws/cloud", "payload": "binary_accumulated_point_cloud"},
+        {"transport": "gateway_ws", "path": "/ws/scan", "payload": "binary_current_scan_point_cloud"},
         {"transport": "gateway_rest", "path": "/api/v1/map/points", "payload": "point_sample"},
     ],
     TOPICS.saved_map_cloud: [
@@ -229,7 +221,7 @@ _COMMAND_INTERFACES: tuple[dict[str, Any], ...] = (
 
 
 _ARTIFACT_GATEWAY_CHANNELS: dict[str, list[dict[str, Any]]] = {
-    "tomogram": [
+    "octomap": [
         {
             "transport": "gateway_rest",
             "path": "/api/v1/diagnostics/field-check",
@@ -242,13 +234,13 @@ _ARTIFACT_GATEWAY_CHANNELS: dict[str, list[dict[str, Any]]] = {
         },
         {
             "transport": "gateway_cli",
-            "command": "python lingtu.py saved-map-artifact-gate --require-tomogram",
+            "command": "python lingtu.py saved-map-artifact-gate --require-octomap",
         },
     ],
 }
 
 _ARTIFACT_TOKEN_REQUIRED_FORMATS: dict[str, tuple[str, ...]] = {
-    "tomogram": ("map_pcd", "tomogram"),
+    "octomap": ("map_pcd", "octomap"),
 }
 
 
@@ -400,11 +392,11 @@ def _latest_payload_for_topic(gw: Any, topic: str) -> Any | None:
         TOPICS.frontier_candidate: "_last_frontier_candidate",
     }
     if topic == TOPICS.odometry:
-        with (getattr(gw, "_state_lock", None) or nullcontext()):
+        with getattr(gw, "_state_lock", None) or nullcontext():
             value = getattr(gw, "_odom", None)
         return None if value is None else _json_payload(value)
     if topic == TOPICS.global_path:
-        with (getattr(gw, "_state_lock", None) or nullcontext()):
+        with getattr(gw, "_state_lock", None) or nullcontext():
             path = list(getattr(gw, "_last_path", []) or [])
         return {
             "frame_id": "map",
@@ -414,7 +406,7 @@ def _latest_payload_for_topic(gw: Any, topic: str) -> Any | None:
             "source": "gateway_cache",
         }
     if topic == TOPICS.local_path:
-        with (getattr(gw, "_state_lock", None) or nullcontext()):
+        with getattr(gw, "_state_lock", None) or nullcontext():
             path = list(getattr(gw, "_last_local_path", []) or [])
         return {
             "frame_id": "body",
@@ -424,13 +416,7 @@ def _latest_payload_for_topic(gw: Any, topic: str) -> Any | None:
             "source": "gateway_cache",
         }
     if topic == TOPICS.map_cloud:
-        lock = getattr(gw, "_map_cloud_lock", None)
-        if lock is None:
-            points = getattr(gw, "_map_points", None)
-        else:
-            with lock:
-                points = getattr(gw, "_map_points", None)
-        count = _sequence_len(points) or 0
+        count = gw._cloud_viewer.cache_point_count()
         return {
             "frame_id": "map",
             "count": count,
@@ -449,56 +435,13 @@ def _latest_payload_for_topic(gw: Any, topic: str) -> Any | None:
     return None if value is None else _json_payload(value)
 
 
-def _sha256_file(path: Path) -> str | None:
-    try:
-        digest = hashlib.sha256()
-        with path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-    except OSError:
-        return None
-
-
-def _active_map_artifact_dir() -> tuple[Path | None, str | None, Path]:
-    root = nav_map_root()
-    active_name = active_map_name(root)
-    if active_name:
-        candidate = map_dir_for(active_name, root)
-        if candidate.is_dir():
-            return candidate, active_name, root
-
-    active_dir = active_map_link(root)
-    if active_dir.is_dir():
-        return active_dir, active_name or "active", root
-    return None, active_name, root
-
-
-def _artifact_metadata_path(map_dir: Path) -> Path:
-    return map_dir / str(ARTIFACT_FORMATS["metadata"].path)
-
-
-def _artifact_file_path(map_dir: Path, artifact_name: str, entry: Mapping[str, Any]) -> Path:
-    default_path = ARTIFACT_FORMATS[artifact_name].path
-    raw_path = str(entry.get("path") or default_path)
-    path = Path(raw_path)
-    return path if path.is_absolute() else map_dir / path
-
-
-def _missing_required_fields(
-    value: Mapping[str, Any],
-    required_fields: tuple[str, ...],
-) -> list[str]:
-    return [field for field in required_fields if value.get(field) in (None, "")]
-
-
-def _artifact_gate(token: str) -> dict[str, Any]:
+def _artifact_gate(gw: Any, token: str) -> dict[str, Any]:
     artifact_name = token.split(":", 1)[1]
     required_formats = _ARTIFACT_TOKEN_REQUIRED_FORMATS.get(
         artifact_name,
         (artifact_name,),
     )
-    map_dir, active_name, map_root = _active_map_artifact_dir()
+    active_name = active_map(gw)
     gate: dict[str, Any] = {
         "schema_version": "lingtu.runtime_dataflow_artifact_gate.v1",
         "token": token,
@@ -507,8 +450,8 @@ def _artifact_gate(token: str) -> dict[str, Any]:
         "endpoint_topic_required": False,
         "ros2_topic_required": False,
         "transport": "saved_map_artifact",
-        "map_root": str(map_root),
-        "map_dir": str(map_dir) if map_dir is not None else None,
+        "map_root": None,
+        "map_dir": None,
         "active_map": active_name,
         "checked_required_artifacts": list(required_formats),
         "metadata": {},
@@ -516,110 +459,31 @@ def _artifact_gate(token: str) -> dict[str, Any]:
         "blockers": [],
     }
     blockers: list[str] = gate["blockers"]
-
-    if artifact_name not in ARTIFACT_FORMATS:
+    supported = {"map_pcd", "octomap", "occupancy_grid"}
+    if artifact_name not in supported:
         blockers.append(f"{artifact_name} artifact format not registered")
         return gate
 
-    if map_dir is None:
-        blockers.append("active map artifact directory missing")
+    if not active_name:
+        blockers.append("active map unavailable from maps service")
         return gate
 
-    metadata_path = _artifact_metadata_path(map_dir)
-    gate["metadata"] = {
-        "path": str(metadata_path),
-        "exists": metadata_path.is_file(),
-        "ok": False,
-        "missing_required_fields": [],
-    }
-    if not metadata_path.is_file():
-        blockers.append("metadata.json missing")
-        return gate
-
-    try:
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        blockers.append(f"metadata.json unreadable: {exc}")
-        return gate
-
-    if not isinstance(metadata, Mapping):
-        blockers.append("metadata.json must contain an object")
-        return gate
-
-    metadata_required = ARTIFACT_FORMATS["metadata"].required_fields
-    missing_metadata_fields = _missing_required_fields(metadata, metadata_required)
-    gate["metadata"].update(
-        {
-            "ok": not missing_metadata_fields,
-            "source_profile": metadata.get("source_profile"),
-            "data_source": metadata.get("data_source"),
-            "slam_source": metadata.get("slam_source"),
-            "localization_source": metadata.get("localization_source"),
-            "mapping_source": metadata.get("mapping_source"),
-            "frame_id": metadata.get("frame_id"),
-            "missing_required_fields": missing_metadata_fields,
-        }
+    validation_resp = validate_map_artifacts(
+        gw,
+        active_name,
+        require_octomap="octomap" in required_formats,
+        require_occupancy="occupancy_grid" in required_formats,
     )
-    if missing_metadata_fields:
-        blockers.append(
-            "metadata missing required fields: " + ", ".join(missing_metadata_fields)
-        )
-
-    artifact_metadata = _mapping(metadata.get("artifacts"))
-    actual_shas: dict[str, str | None] = {}
-    for required_name in required_formats:
-        if required_name not in ARTIFACT_FORMATS:
-            blockers.append(f"{required_name} artifact format not registered")
-            continue
-
-        fmt = ARTIFACT_FORMATS[required_name]
-        entry = _mapping(artifact_metadata.get(required_name))
-        path = _artifact_file_path(map_dir, required_name, entry)
-        exists = path.is_file()
-        actual_sha = _sha256_file(path) if exists else None
-        actual_shas[required_name] = actual_sha
-        declared_sha = entry.get("sha256")
-        missing_entry_fields = _missing_required_fields(entry, fmt.required_metadata)
-        info: dict[str, Any] = {
-            "path": str(path),
-            "exists": exists,
-            "metadata_present": bool(entry),
-            "declared_sha256": declared_sha,
-            "actual_sha256": actual_sha,
-            "sha256_ok": bool(declared_sha and actual_sha == declared_sha),
-            "missing_required_metadata": missing_entry_fields,
-            "frame_id": entry.get("frame_id"),
-            "source_profile": entry.get("source_profile"),
-            "data_source": entry.get("data_source"),
-        }
-        if required_name == "tomogram":
-            source_map_sha = entry.get("source_map_sha256")
-            info["source_map_sha256"] = source_map_sha
-            info["source_map_sha256_matches_map"] = bool(
-                source_map_sha and source_map_sha == actual_shas.get("map_pcd")
-            )
-        gate["artifacts"][required_name] = info
-
-        if not entry:
-            blockers.append(f"{required_name} metadata missing")
-        if missing_entry_fields:
-            blockers.append(
-                f"{required_name} metadata missing required fields: "
-                + ", ".join(missing_entry_fields)
-            )
-        if not exists:
-            blockers.append(f"{required_name} file missing")
-        if not declared_sha:
-            blockers.append(f"{required_name} sha256 missing")
-        elif actual_sha != declared_sha:
-            blockers.append(f"{required_name} sha256 does not match file")
-        if (
-            required_name == "tomogram"
-            and not info["source_map_sha256_matches_map"]
-        ):
-            blockers.append("tomogram source_map_sha256 does not match map_pcd")
-
-    gate["ok"] = not blockers
+    if validation_resp is None:
+        blockers.append("maps service artifact validation unavailable")
+        return gate
+    validation = dict(validation_resp.get("gate") or {})
+    gate["map_dir"] = validation_resp.get("map_dir")
+    gate["metadata"] = dict(validation.get("metadata") or {})
+    gate["artifacts"] = dict(validation.get("artifacts") or {})
+    gate["checked_required_artifacts"] = list(validation.get("checked_required_artifacts") or required_formats)
+    blockers.extend(str(item) for item in validation.get("blockers") or ())
+    gate["ok"] = validation.get("ok") is True
     return gate
 
 
@@ -681,9 +545,7 @@ def _module_port_snapshot(gw: Any) -> dict[str, Any]:
                     continue
                 latest_summary = _latest_payload_summary(latest)
                 if latest_summary:
-                    snapshot[str(name)]["ports_in"][port_name][
-                        "latest_summary"
-                    ] = latest_summary
+                    snapshot[str(name)]["ports_in"][port_name]["latest_summary"] = latest_summary
     return snapshot
 
 
@@ -704,9 +566,7 @@ def _topic_module_ports(
     for module_name, module_summary in module_ports.items():
         for direction_key in ("ports_in", "ports_out"):
             direction = "in" if direction_key == "ports_in" else "out"
-            for port_name, port_summary in _mapping(
-                _mapping(module_summary).get(direction_key)
-            ).items():
+            for port_name, port_summary in _mapping(_mapping(module_summary).get(direction_key)).items():
                 if port_name not in hints:
                     continue
                 stats = _mapping(port_summary)
@@ -795,33 +655,19 @@ def _stage_source(
     manifest: Mapping[str, Any],
     runtime_contract: str | None,
 ) -> list[dict[str, Any]]:
-    resolved_flow = _mapping(manifest.get("resolved_runtime_data_flow")).get(
-        runtime_contract or ""
-    )
+    resolved_flow = _mapping(manifest.get("resolved_runtime_data_flow")).get(runtime_contract or "")
     if isinstance(resolved_flow, list) and resolved_flow:
         return [dict(stage) for stage in resolved_flow if isinstance(stage, Mapping)]
-    return [
-        dict(stage)
-        for stage in (manifest.get("runtime_data_flow") or [])
-        if isinstance(stage, Mapping)
-    ]
+    return [dict(stage) for stage in (manifest.get("runtime_data_flow") or []) if isinstance(stage, Mapping)]
 
 
 def _topic_communication(topic: str) -> dict[str, Any]:
-    commands = [
-        command
-        for command in _COMMAND_INTERFACES
-        if topic in tuple(command.get("publishes") or ())
-    ]
+    commands = [command for command in _COMMAND_INTERFACES if topic in tuple(command.get("publishes") or ())]
     return {
         "allowed": bool(commands),
         "interfaces": commands,
         "arbitrary_publish_supported": False,
-        "policy": (
-            "command_whitelist_only"
-            if commands
-            else "read_only_observation_or_endpoint_adapter_owned"
-        ),
+        "policy": ("command_whitelist_only" if commands else "read_only_observation_or_endpoint_adapter_owned"),
     }
 
 
@@ -834,19 +680,12 @@ def _topic_inspection(
     observability = _mapping(topic_summary.get("observability"))
     communication = _mapping(topic_summary.get("communication"))
     gateway_channels = [
-        dict(channel)
-        for channel in (observability.get("gateway_channels") or ())
-        if isinstance(channel, Mapping)
+        dict(channel) for channel in (observability.get("gateway_channels") or ()) if isinstance(channel, Mapping)
     ]
     module_ports = [
-        dict(port)
-        for port in (observability.get("module_port_candidates") or ())
-        if isinstance(port, Mapping)
+        dict(port) for port in (observability.get("module_port_candidates") or ()) if isinstance(port, Mapping)
     ]
-    live = bool(
-        observability.get("has_fresh_module_sample")
-        or observability.get("live_module_samples")
-    )
+    live = bool(observability.get("has_fresh_module_sample") or observability.get("live_module_samples"))
     payload_available = bool(gateway_channels)
     communication_allowed = bool(communication.get("allowed"))
     if live:
@@ -908,18 +747,12 @@ def _observability_summary(
     module_ports: list[dict[str, Any]],
     gateway_channels: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    observed_module_ports = [
-        port
-        for port in module_ports
-        if _has_fresh_module_sample(port)
-    ]
+    observed_module_ports = [port for port in module_ports if _has_fresh_module_sample(port)]
     via = []
     if module_ports:
         via.append("module_port_bus")
     if gateway_channels:
-        via.extend(
-            sorted({str(channel.get("transport")) for channel in gateway_channels})
-        )
+        via.extend(sorted({str(channel.get("transport")) for channel in gateway_channels}))
     return {
         "observable": bool(module_ports or gateway_channels),
         "observable_via": sorted(via),
@@ -949,6 +782,7 @@ def _has_fresh_module_sample(port: Mapping[str, Any]) -> bool:
 
 
 def _token_evidence(
+    gw: Any,
     token: str,
     module_ports: Mapping[str, Any],
     runtime_boundary: Mapping[str, Any],
@@ -997,23 +831,16 @@ def _token_evidence(
 
     if token.startswith("artifact:"):
         artifact_name = token.split(":", 1)[1]
-        artifact_gate = _artifact_gate(token)
+        artifact_gate = _artifact_gate(gw, token)
         observable = bool(artifact_gate.get("ok"))
         return {
             "token": token,
             "kind": "artifact",
             "observable": observable,
             "live": False,
-            "reason": (
-                "saved_map_artifact_ok"
-                if observable
-                else "saved_map_artifact_missing_or_invalid"
-            ),
+            "reason": ("saved_map_artifact_ok" if observable else "saved_map_artifact_missing_or_invalid"),
             "module_ports": [],
-            "gateway_channels": [
-                dict(item)
-                for item in _ARTIFACT_GATEWAY_CHANNELS.get(artifact_name, [])
-            ],
+            "gateway_channels": [dict(item) for item in _ARTIFACT_GATEWAY_CHANNELS.get(artifact_name, [])],
             "artifact_gate": artifact_gate,
         }
 
@@ -1043,6 +870,7 @@ def _token_evidence(
 
 
 def _runtime_stage_evidence(
+    gw: Any,
     manifest: Mapping[str, Any],
     module_ports: Mapping[str, Any],
     runtime_contract: str | None,
@@ -1055,43 +883,30 @@ def _runtime_stage_evidence(
     ):
         inputs = [str(item) for item in (stage.get("inputs") or [])]
         outputs = [str(item) for item in (stage.get("outputs") or [])]
-        input_evidence = [
-            _token_evidence(token, module_ports, runtime_boundary)
-            for token in inputs
-        ]
-        output_evidence = [
-            _token_evidence(token, module_ports, runtime_boundary)
-            for token in outputs
-        ]
+        input_evidence = [_token_evidence(gw, token, module_ports, runtime_boundary) for token in inputs]
+        output_evidence = [_token_evidence(gw, token, module_ports, runtime_boundary) for token in outputs]
         missing_inputs = [
             item["token"]
             for item in input_evidence
-            if item["kind"] in {"topic", "artifact", "module_port"}
-            and not item["observable"]
+            if item["kind"] in {"topic", "artifact", "module_port"} and not item["observable"]
         ]
         missing_outputs = [
             item["token"]
             for item in output_evidence
-            if item["kind"] in {"topic", "artifact", "module_port"}
-            and not item["observable"]
+            if item["kind"] in {"topic", "artifact", "module_port"} and not item["observable"]
         ]
         not_live_inputs = [
             item["token"]
             for item in input_evidence
-            if item["kind"] in {"topic", "module_port"}
-            and item["observable"]
-            and not item["live"]
+            if item["kind"] in {"topic", "module_port"} and item["observable"] and not item["live"]
         ]
         not_live_outputs = [
             item["token"]
             for item in output_evidence
-            if item["kind"] in {"topic", "module_port"}
-            and item["observable"]
-            and not item["live"]
+            if item["kind"] in {"topic", "module_port"} and item["observable"] and not item["live"]
         ]
         live = any(
-            item["kind"] in {"topic", "module_port"} and item["live"]
-            for item in (*input_evidence, *output_evidence)
+            item["kind"] in {"topic", "module_port"} and item["live"] for item in (*input_evidence, *output_evidence)
         )
         observable = not missing_inputs and not missing_outputs
         if live:
@@ -1145,9 +960,7 @@ def _topic_summaries(
         for topic in interface.get("publishes", [])
         if isinstance(topic, str) and topic.startswith("/")
     ]
-    topics = list(
-        dict.fromkeys([*topics, *_PRODUCT_OBSERVABILITY_TOPICS, *command_topics])
-    )
+    topics = list(dict.fromkeys([*topics, *_PRODUCT_OBSERVABILITY_TOPICS, *command_topics]))
 
     allowed_frames = _mapping(manifest.get("topic_allowed_frame_ids"))
     default_frames = _mapping(manifest.get("topic_default_frame_ids"))
@@ -1192,17 +1005,11 @@ def _transport_layers() -> dict[str, Any]:
         },
         "endpoint_adapter": {
             "primary": False,
-            "description": (
-                "Runtime endpoint bridge normalizes external sources into "
-                "canonical LingTu streams."
-            ),
+            "description": ("Runtime endpoint bridge normalizes external sources into canonical LingTu streams."),
         },
         "ros2_adapter": {
             "primary": False,
-            "description": (
-                "Compatibility alias for ROS2-backed endpoint transports; "
-                "not the product boundary."
-            ),
+            "description": ("Compatibility alias for ROS2-backed endpoint transports; not the product boundary."),
             "deprecated_by": "endpoint_adapter",
         },
     }
@@ -1237,6 +1044,7 @@ def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
         "module_ports": module_ports,
         "topics": _topic_summaries(manifest, module_ports, runtime_contract, gw),
         "stage_evidence": _runtime_stage_evidence(
+            gw,
             manifest,
             module_ports,
             runtime_contract,
@@ -1246,6 +1054,7 @@ def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
         "links": {
             "events": "/api/v1/events",
             "cloud_ws": "/ws/cloud",
+            "scan_ws": "/ws/scan",
             "state": "/api/v1/state",
             "navigation_status": "/api/v1/navigation/status",
             "localization_status": "/api/v1/localization/status",
@@ -1284,15 +1093,10 @@ def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any
     matches = [
         dict(topic)
         for topic in snapshot.get("topics", [])
-        if isinstance(topic, Mapping)
-        and _topic_selector_matches(selector, str(topic.get("topic", "")))
+        if isinstance(topic, Mapping) and _topic_selector_matches(selector, str(topic.get("topic", "")))
     ]
     if matches:
-        exact = [
-            item
-            for item in matches
-            if str(item.get("topic", "")) == selector.strip()
-        ]
+        exact = [item for item in matches if str(item.get("topic", "")) == selector.strip()]
         topic_summary = exact[0] if exact else matches[0]
 
     if topic_summary is None:
@@ -1316,9 +1120,7 @@ def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any
             },
             "error": "runtime_topic_not_found",
             "available_topics": [
-                str(item.get("topic"))
-                for item in snapshot.get("topics", [])
-                if isinstance(item, Mapping)
+                str(item.get("topic")) for item in snapshot.get("topics", []) if isinstance(item, Mapping)
             ],
             "links": snapshot.get("links", {}),
         }
@@ -1346,11 +1148,7 @@ def build_runtime_dataflow_subscription(gw: Any, request: Any) -> dict[str, Any]
     selector = str(getattr(request, "selector", "") or "").strip()
     transport = str(getattr(request, "transport", "gateway_sse") or "gateway_sse")
     detail = build_runtime_dataflow_topic_detail(gw, selector)
-    inspection = (
-        detail.get("inspection")
-        if isinstance(detail.get("inspection"), Mapping)
-        else {}
-    )
+    inspection = detail.get("inspection") if isinstance(detail.get("inspection"), Mapping) else {}
     stream_interfaces = [
         dict(item)
         for item in (inspection.get("stream_interfaces") or [])
@@ -1359,17 +1157,9 @@ def build_runtime_dataflow_subscription(gw: Any, request: Any) -> dict[str, Any]
         and item.get("path")
         and item.get("event_type")
     ]
-    topic_summary = (
-        detail.get("topic") if isinstance(detail.get("topic"), Mapping) else {}
-    )
+    topic_summary = detail.get("topic") if isinstance(detail.get("topic"), Mapping) else {}
     topic = str(topic_summary.get("topic") or "") if topic_summary else None
-    event_types = sorted(
-        {
-            str(item.get("event_type"))
-            for item in stream_interfaces
-            if item.get("event_type")
-        }
-    )
+    event_types = sorted({str(item.get("event_type")) for item in stream_interfaces if item.get("event_type")})
     blockers: list[str] = []
     if detail.get("ok") is not True:
         blockers.append(str(detail.get("error") or "runtime_topic_not_found"))
@@ -1377,11 +1167,7 @@ def build_runtime_dataflow_subscription(gw: Any, request: Any) -> dict[str, Any]
         blockers.append("no_gateway_sse_stream")
     stream_url = ""
     if topic and stream_interfaces:
-        stream_url = (
-            str(stream_interfaces[0].get("path") or "/api/v1/events")
-            + "?topic="
-            + quote(topic, safe="")
-        )
+        stream_url = str(stream_interfaces[0].get("path") or "/api/v1/events") + "?topic=" + quote(topic, safe="")
     return {
         "schema_version": "lingtu.runtime_dataflow_subscription.v1",
         "ok": not blockers,

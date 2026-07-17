@@ -101,6 +101,39 @@ python calibration/apply_calibration.py \
 | Camera model | `plumb_bob` | Standard pinhole + Brown-Conrady |
 | Integration mode | Static (default) | No `-d` flag for Livox |
 
+## Alternative Tools
+
+### livox_camera_calib (HKU-MARS)
+
+[livox_camera_calib](https://github.com/hku-mars/livox_camera_calib) is a
+**targetless** extrinsic calibration tool specifically optimized for **Livox**
+high-resolution LiDARs. It uses edge information in the scene and supports
+both single-scene and multi-scene calibration.
+
+- **Prerequisites**: ROS1 (Kinetic/Melodic), Ceres, PCL, Eigen
+- **Strengths**: Pixel-level accuracy, no calibration target, Livox-optimized
+- **Note**: Requires ROS1; use rosbag replay or a ROS1 bridge
+
+### livox_camera_lidar_calibration (Livox-SDK Official)
+
+[livox_camera_lidar_calibration](https://github.com/Livox-SDK/livox_camera_lidar_calibration)
+is **Livox's official** calibration solution. It uses a **target-based** approach
+(calibration board corners) and has been verified on Mid-40, Horizon, and Tele-15.
+
+- **Prerequisites**: ROS1, Livox SDK, PCL, Ceres
+- **Strengths**: Official Livox support, includes camera intrinsic calibration,
+  point cloud projection and coloring tools
+- **Note**: Requires physical calibration board (1x1.5m recommended)
+
+### mlcc (HKU-MARS — Multi-LiDAR/Camera)
+
+[mlcc](https://github.com/hku-mars/mlcc) provides targetless extrinsic
+calibration for **multiple LiDARs and cameras** using adaptive voxelization.
+
+- **Use case**: If S100P is upgraded with additional LiDARs or cameras
+- **Supports**: Multi-LiDAR extrinsic, multi-LiDAR-camera extrinsic, single LiDAR-camera
+- **Prerequisites**: ROS1, Ceres, OpenCV, PCL, Eigen
+
 ## Important Notes
 
 - **Static integrator**: Livox Mid-360 is non-repetitive scan. Robot must be **stationary**

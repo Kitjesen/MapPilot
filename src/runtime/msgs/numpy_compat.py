@@ -21,7 +21,9 @@ class LazyNumpy:
         if not numpy_import_is_safe():
             raise ImportError("NumPy import is unsafe in this host interpreter")
         module = importlib.import_module("numpy")
-        return getattr(module, name)
+        value = getattr(module, name)
+        setattr(self, name, value)
+        return value
 
 
 np = LazyNumpy()
@@ -35,11 +37,7 @@ def is_numpy_array(value: Any) -> bool:
     if ndarray is not None:
         return isinstance(value, ndarray)
     cls = value.__class__
-    return (
-        cls.__module__.startswith("numpy")
-        and hasattr(value, "shape")
-        and hasattr(value, "dtype")
-    )
+    return cls.__module__.startswith("numpy") and hasattr(value, "shape") and hasattr(value, "dtype")
 
 
 @lru_cache(maxsize=1)

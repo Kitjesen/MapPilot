@@ -24,7 +24,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 for item in (ROOT, SRC):
@@ -382,10 +381,7 @@ class LidarOccupancyGrid:
                     self.grid[row, col] = 100
 
     def _inside_room(self, x: float, y: float) -> bool:
-        return (
-            self.room_min_x <= x <= self.room_max_x
-            and self.room_min_y <= y <= self.room_max_y
-        )
+        return self.room_min_x <= x <= self.room_max_x and self.room_min_y <= y <= self.room_max_y
 
     def out_of_room_distance(self, x: float, y: float) -> float:
         dx = max(self.room_min_x - x, 0.0, x - self.room_max_x)
@@ -503,11 +499,7 @@ class LidarOccupancyGrid:
         assert self.grid is not None
         changed = 0
         for row, col in self._robot_free_cells:
-            if (
-                0 <= row < self.height
-                and 0 <= col < self.width
-                and self.grid[row, col] != 0
-            ):
+            if 0 <= row < self.height and 0 <= col < self.width and self.grid[row, col] != 0:
                 self.grid[row, col] = 0
                 changed += 1
         return changed
@@ -671,14 +663,15 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
     import rclpy
     from geometry_msgs.msg import PoseStamped, TwistStamped
     from nav_msgs.msg import OccupancyGrid as ROSOccupancyGrid
-    from nav_msgs.msg import Odometry, Path as ROSPath
+    from nav_msgs.msg import Odometry
+    from nav_msgs.msg import Path as ROSPath
     from rclpy.node import Node
     from sensor_msgs.msg import PointCloud2
     from sensor_msgs_py import point_cloud2
 
+    from explore.frontier import WavefrontFrontierExplorer
     from runtime.msgs.geometry import Pose as CorePose
     from runtime.msgs.nav import Odometry as CoreOdometry
-    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
 
     rclpy.init(args=None)
     node = Node("lingtu_gazebo_frontier_exploration_smoke")
@@ -748,9 +741,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
     cumulative_step_count = 0
     registered_unique_counts: list[int] = []
     static_obstacle_rois = _static_obstacle_rois(args.static_roi_preset)
-    static_centroids: dict[str, list[tuple[float, float, float]]] = {
-        name: [] for name in static_obstacle_rois
-    }
+    static_centroids: dict[str, list[tuple[float, float, float]]] = {name: [] for name in static_obstacle_rois}
     map_artifact_points: dict[tuple[int, int, int], tuple[float, float, float]] = {}
     initial_sensor_map_recorded = False
 
@@ -806,9 +797,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             selected = [
                 (x, y, z)
                 for x, y, z in points
-                if abs(x - cx) <= sx / 2.0
-                and abs(y - cy) <= sy / 2.0
-                and abs(z - cz) <= sz / 2.0
+                if abs(x - cx) <= sx / 2.0 and abs(y - cy) <= sy / 2.0 and abs(z - cz) <= sz / 2.0
             ]
             if len(selected) < args.min_static_roi_points:
                 continue
@@ -826,11 +815,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         window = centroids[-max(2, int(args.static_drift_window_samples)) :]
         first = window[0]
         return max(
-            math.sqrt(
-                (item[0] - first[0]) ** 2
-                + (item[1] - first[1]) ** 2
-                + (item[2] - first[2]) ** 2
-            )
+            math.sqrt((item[0] - first[0]) ** 2 + (item[1] - first[1]) ** 2 + (item[2] - first[2]) ** 2)
             for item in window[1:]
         )
 
@@ -840,20 +825,10 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         final_points = cumulative_point_counts[-1] if cumulative_point_counts else 0
         initial_voxels = cumulative_unique_counts[0] if cumulative_unique_counts else 0
         final_voxels = cumulative_unique_counts[-1] if cumulative_unique_counts else 0
-        point_growth_ratio = (
-            float(final_points) / float(initial_points)
-            if initial_points > 0
-            else 0.0
-        )
-        voxel_growth_ratio = (
-            float(final_voxels) / float(initial_voxels)
-            if initial_voxels > 0
-            else 0.0
-        )
+        point_growth_ratio = float(final_points) / float(initial_points) if initial_points > 0 else 0.0
+        voxel_growth_ratio = float(final_voxels) / float(initial_voxels) if initial_voxels > 0 else 0.0
         growth_step_ratio = (
-            float(cumulative_growth_steps) / float(cumulative_step_count)
-            if cumulative_step_count > 0
-            else 0.0
+            float(cumulative_growth_steps) / float(cumulative_step_count) if cumulative_step_count > 0 else 0.0
         )
         retention_min = min(cumulative_retention_ratios) if cumulative_retention_ratios else 0.0
         static_report = {
@@ -885,8 +860,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             for name, item in static_report.items()
             if isinstance(item, dict)
             and int(item.get("samples") or 0) >= 2
-            and float(item.get("centroid_drift_max_m") or 0.0)
-            <= args.max_static_centroid_drift_m
+            and float(item.get("centroid_drift_max_m") or 0.0) <= args.max_static_centroid_drift_m
         ]
         median_registered = 0
         if registered_unique_counts:
@@ -923,17 +897,17 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             return False
         if float(stats.get("retention_min") or 0.0) < args.min_cumulative_retention_ratio:
             return False
-        if (
-            float(registered.get("map_vs_registered_voxel_ratio") or 0.0)
-            < args.min_map_vs_registered_voxel_ratio
-        ):
+        if float(registered.get("map_vs_registered_voxel_ratio") or 0.0) < args.min_map_vs_registered_voxel_ratio:
             return False
-        return sum(
-            isinstance(item, dict)
-            and int(item.get("samples") or 0) >= 2
-            and float(item.get("centroid_drift_max_m") or 0.0) <= args.max_static_centroid_drift_m
-            for item in static.values()
-        ) >= args.min_stable_static_rois
+        return (
+            sum(
+                isinstance(item, dict)
+                and int(item.get("samples") or 0) >= 2
+                and float(item.get("centroid_drift_max_m") or 0.0) <= args.max_static_centroid_drift_m
+                for item in static.values()
+            )
+            >= args.min_stable_static_rois
+        )
 
     def _skew_stats(values: list[float]) -> dict:
         if not values:
@@ -1004,9 +978,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             return
         if args.map_artifact_source == "occupancy_grid":
             obstacle_heights = tuple(
-                float(item)
-                for item in str(args.map_artifact_obstacle_heights_m).split(",")
-                if item.strip()
+                float(item) for item in str(args.map_artifact_obstacle_heights_m).split(",") if item.strip()
             )
             points = occupancy.navigation_artifact_points(
                 free_z_m=args.map_artifact_free_z_m,
@@ -1036,10 +1008,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         }
         if len(points) < args.min_map_artifact_points:
             result.map_artifacts = artifacts
-            result.errors.append(
-                "explored map artifact point count "
-                f"{len(points)} < {args.min_map_artifact_points}"
-            )
+            result.errors.append(f"explored map artifact point count {len(points)} < {args.min_map_artifact_points}")
             return
         pcd_path = Path(args.pcd_out) if args.pcd_out else None
         tomogram_path = Path(args.tomogram_out) if args.tomogram_out else None
@@ -1063,10 +1032,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
                         args=args,
                     )
                 except Exception as exc:
-                    result.errors.append(
-                        "explored map tomogram build failed: "
-                        f"{type(exc).__name__}: {exc}"
-                    )
+                    result.errors.append(f"explored map tomogram build failed: {type(exc).__name__}: {exc}")
         result.map_artifacts = artifacts
 
     def terrain_topics_ready() -> bool:
@@ -1106,9 +1072,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             if value is not None:
                 clearance_candidates.append(float(value))
         min_clearance = min(clearance_candidates) if clearance_candidates else None
-        start_distance_latest = (
-            local_path_start_distances[-1] if local_path_start_distances else None
-        )
+        start_distance_latest = local_path_start_distances[-1] if local_path_start_distances else None
         tracking_p95 = _percentile(local_path_tracking_errors, 95.0)
         alignment_min = min(local_path_goal_alignments) if local_path_goal_alignments else 0.0
         alignment_median = _percentile(local_path_goal_alignments, 50.0)
@@ -1122,17 +1086,12 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             ),
             "path_length_ratio": ratio <= args.max_odom_path_length_ratio if ratio > 0.0 else False,
             "lateral_bounds": float(trajectory_state["max_abs_y_m"]) <= args.max_trajectory_abs_y_m,
-            "obstacle_clearance": (
-                min_clearance is not None
-                and min_clearance >= args.min_obstacle_clearance_m
-            ),
+            "obstacle_clearance": (min_clearance is not None and min_clearance >= args.min_obstacle_clearance_m),
             "local_path_start": (
-                start_distance_latest is not None
-                and start_distance_latest <= args.max_local_path_start_distance_m
+                start_distance_latest is not None and start_distance_latest <= args.max_local_path_start_distance_m
             ),
             "local_path_tracking": (
-                bool(local_path_tracking_errors)
-                and tracking_p95 <= args.max_local_path_tracking_p95_m
+                bool(local_path_tracking_errors) and tracking_p95 <= args.max_local_path_tracking_p95_m
             ),
             "local_path_cells": (
                 local_path_worst_occupied <= args.max_local_path_occupied_overlap_count
@@ -1140,8 +1099,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
                 and local_path_worst_unknown_ratio <= args.max_local_path_unknown_ratio
             ),
             "local_path_goal_alignment": (
-                bool(local_path_goal_alignments)
-                and alignment_sustained >= args.min_local_path_goal_alignment
+                bool(local_path_goal_alignments) and alignment_sustained >= args.min_local_path_goal_alignment
             ),
         }
         result.odom_path_length_m = round(path_length, 4)
@@ -1182,10 +1140,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             return [], None
         step = max(1, int(math.ceil(len(poses) / limit)))
         zs = [float(p.pose.position.z) for p in poses]
-        points = [
-            (float(p.pose.position.x), float(p.pose.position.y))
-            for p in poses[::step]
-        ]
+        points = [(float(p.pose.position.x), float(p.pose.position.y)) for p in poses[::step]]
         return points, (min(zs), max(zs))
 
     def room_forward_gate_ready() -> bool:
@@ -1198,10 +1153,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         if result.odom_last_xy is None:
             return False
         x, y = result.odom_last_xy
-        return (
-            occupancy._inside_room(x, y)
-            and result.odom_delta_x_m >= args.min_frontier_odom_delta_x_m
-        )
+        return occupancy._inside_room(x, y) and result.odom_delta_x_m >= args.min_frontier_odom_delta_x_m
 
     def publish_occupancy_grid() -> None:
         occupancy_pub.publish(
@@ -1215,9 +1167,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         if current_pose is None:
             return
         x, y, yaw = current_pose
-        explorer.odometry._deliver(
-            CoreOdometry(pose=CorePose(x, y, 0.0, yaw=yaw), frame_id="map")
-        )
+        explorer.odometry._deliver(CoreOdometry(pose=CorePose(x, y, 0.0, yaw=yaw), frame_id="map"))
         explorer.costmap._deliver(occupancy.as_costmap())
         publish_occupancy_grid()
 
@@ -1395,9 +1345,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         raw_points, z_range = path_points(msg)
         current_local_path_frame = frame_id
         current_local_path = (
-            _path_points_in_world(raw_points, frame_id=frame_id, pose=current_pose)
-            if len(raw_points) >= 2
-            else []
+            _path_points_in_world(raw_points, frame_id=frame_id, pose=current_pose) if len(raw_points) >= 2 else []
         )
         if z_range is not None:
             result.local_path_z_range = z_range
@@ -1510,8 +1458,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
                 cumulative_growth_steps += 1
             if cumulative_prev_voxels:
                 cumulative_retention_ratios.append(
-                    len(cumulative_prev_voxels.intersection(voxels))
-                    / float(len(cumulative_prev_voxels))
+                    len(cumulative_prev_voxels.intersection(voxels)) / float(len(cumulative_prev_voxels))
                 )
         cumulative_prev_voxels = voxels
         for name, centroid in roi_centroids(points).items():
@@ -1640,9 +1587,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
     if result.costmap_source != "gazebo_lidar_derived":
         result.errors.append(f"frontier costmap source is not Gazebo LiDAR: {result.costmap_source}")
     if result.lidar_map_updates < args.min_lidar_map_updates:
-        result.errors.append(
-            f"LiDAR occupancy updates {result.lidar_map_updates} < {args.min_lidar_map_updates}"
-        )
+        result.errors.append(f"LiDAR occupancy updates {result.lidar_map_updates} < {args.min_lidar_map_updates}")
     if result.raytrace_updates <= 0:
         result.errors.append("Gazebo LiDAR raytracing did not update the occupancy grid")
     update_cumulative_report()
@@ -1656,9 +1601,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         for topic in ("/nav/terrain_map", "/nav/terrain_map_ext"):
             samples = int(result.samples.get(topic) or 0)
             if samples < args.min_terrain_map_samples:
-                result.errors.append(
-                    f"{topic} samples {samples} < {args.min_terrain_map_samples}"
-                )
+                result.errors.append(f"{topic} samples {samples} < {args.min_terrain_map_samples}")
         frames = result.topic_sync.get("frames") or {}
         if "odom" not in set(frames.get("terrain_map") or []):
             result.errors.append("/nav/terrain_map frame_id did not include odom")
@@ -1683,31 +1626,18 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             result.errors.append("/slam/cumulative_map_cloud was not observed")
         if int(stats.get("samples") or 0) < args.min_cumulative_samples:
             result.errors.append(
-                "/slam/cumulative_map_cloud samples "
-                f"{int(stats.get('samples') or 0)} < {args.min_cumulative_samples}"
+                f"/slam/cumulative_map_cloud samples {int(stats.get('samples') or 0)} < {args.min_cumulative_samples}"
             )
         if "odom" not in set(stats.get("frame_ids") or []):
             result.errors.append("/slam/cumulative_map_cloud frame_id did not include odom")
         point_delta = int(stats.get("point_count_delta") or 0)
         point_ratio = float(stats.get("point_growth_ratio") or 0.0)
-        if (
-            point_delta < args.min_cumulative_point_delta
-            and point_ratio < args.min_cumulative_point_growth_ratio
-        ):
-            result.errors.append(
-                "cumulative map point growth too small: "
-                f"delta={point_delta}, ratio={point_ratio:.3f}"
-            )
+        if point_delta < args.min_cumulative_point_delta and point_ratio < args.min_cumulative_point_growth_ratio:
+            result.errors.append(f"cumulative map point growth too small: delta={point_delta}, ratio={point_ratio:.3f}")
         voxel_delta = int(stats.get("unique_voxels_delta") or 0)
         voxel_ratio = float(stats.get("unique_voxel_growth_ratio") or 0.0)
-        if (
-            voxel_delta < args.min_cumulative_voxel_delta
-            and voxel_ratio < args.min_cumulative_voxel_growth_ratio
-        ):
-            result.errors.append(
-                "cumulative map voxel growth too small: "
-                f"delta={voxel_delta}, ratio={voxel_ratio:.3f}"
-            )
+        if voxel_delta < args.min_cumulative_voxel_delta and voxel_ratio < args.min_cumulative_voxel_growth_ratio:
+            result.errors.append(f"cumulative map voxel growth too small: delta={voxel_delta}, ratio={voxel_ratio:.3f}")
         if float(stats.get("growth_step_ratio") or 0.0) < args.min_cumulative_growth_step_ratio:
             result.errors.append(
                 "cumulative map growth step ratio "
@@ -1722,10 +1652,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             )
         if int(registered.get("samples") or 0) <= 0:
             result.errors.append("/slam/registered_cloud was not observed for negative control")
-        elif (
-            float(registered.get("map_vs_registered_voxel_ratio") or 0.0)
-            < args.min_map_vs_registered_voxel_ratio
-        ):
+        elif float(registered.get("map_vs_registered_voxel_ratio") or 0.0) < args.min_map_vs_registered_voxel_ratio:
             result.errors.append(
                 "cumulative map did not exceed registered single-frame cloud: "
                 f"ratio={float(registered.get('map_vs_registered_voxel_ratio') or 0.0):.3f}"
@@ -1735,13 +1662,11 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             for name, item in static.items()
             if isinstance(item, dict)
             and int(item.get("samples") or 0) >= 2
-            and float(item.get("centroid_drift_max_m") or 0.0)
-            <= args.max_static_centroid_drift_m
+            and float(item.get("centroid_drift_max_m") or 0.0) <= args.max_static_centroid_drift_m
         ]
         if len(stable_static) < args.min_stable_static_rois:
             result.errors.append(
-                "stable cumulative-map static obstacle ROIs "
-                f"{len(stable_static)} < {args.min_stable_static_rois}"
+                f"stable cumulative-map static obstacle ROIs {len(stable_static)} < {args.min_stable_static_rois}"
             )
     if not result.global_path_seen:
         result.errors.append("/nav/global_path with poses was not observed")
@@ -1753,8 +1678,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         result.errors.append("/nav/cmd_vel never became non-zero")
     if result.odom_delta_m < args.min_odom_delta_m:
         result.errors.append(
-            f"/slam/odometry moved {result.odom_delta_m:.3f} m, "
-            f"expected >= {args.min_odom_delta_m:.3f} m"
+            f"/slam/odometry moved {result.odom_delta_m:.3f} m, expected >= {args.min_odom_delta_m:.3f} m"
         )
     if result.explored_area_delta_m2 < args.min_explored_area_delta_m2:
         result.errors.append(
@@ -1762,27 +1686,19 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             f"expected >= {args.min_explored_area_delta_m2:.3f} m^2"
         )
     if result.free_cells_final < args.min_free_cells:
-        result.errors.append(
-            f"free occupancy cells {result.free_cells_final} < {args.min_free_cells}"
-        )
+        result.errors.append(f"free occupancy cells {result.free_cells_final} < {args.min_free_cells}")
     if result.occupied_cells_final < args.min_occupied_cells:
-        result.errors.append(
-            f"occupied occupancy cells {result.occupied_cells_final} < {args.min_occupied_cells}"
-        )
+        result.errors.append(f"occupied occupancy cells {result.occupied_cells_final} < {args.min_occupied_cells}")
     if result.frontier_count_max <= 0:
         result.errors.append("frontier candidates were not observed")
     if result.frontier_goal_count < args.min_frontier_goal_count:
-        result.errors.append(
-            f"frontier goals {result.frontier_goal_count} < {args.min_frontier_goal_count}"
-        )
+        result.errors.append(f"frontier goals {result.frontier_goal_count} < {args.min_frontier_goal_count}")
     if args.require_room_forward_exploration:
         if result.frontier_goal is None:
             result.errors.append("frontier goal missing for room-forward gate")
         else:
             if not result.frontier_goal_in_room:
-                result.errors.append(
-                    f"frontier goal {result.frontier_goal} is outside the Gazebo room bounds"
-                )
+                result.errors.append(f"frontier goal {result.frontier_goal} is outside the Gazebo room bounds")
             if result.frontier_goal[0] < args.min_frontier_goal_x:
                 result.errors.append(
                     "frontier goal did not target the forward room: "
@@ -1791,9 +1707,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
         if result.odom_last_xy is not None:
             x, y = result.odom_last_xy
             if not occupancy._inside_room(x, y):
-                result.errors.append(
-                    f"frontier odom ({x:.3f}, {y:.3f}) left Gazebo room bounds"
-                )
+                result.errors.append(f"frontier odom ({x:.3f}, {y:.3f}) left Gazebo room bounds")
         if result.odom_delta_x_m < args.min_frontier_odom_delta_x_m:
             result.errors.append(
                 "frontier odom did not make forward x progress: "
@@ -1808,9 +1722,7 @@ def run_smoke(args: argparse.Namespace) -> GazeboFrontierExplorationResult:
             continue
         z_abs = max(abs(float(z_range[0])), abs(float(z_range[1])))
         if z_abs > args.max_path_abs_z_m:
-            result.errors.append(
-                f"{label} z range {z_range} exceeds {args.max_path_abs_z_m:.3f} m"
-            )
+            result.errors.append(f"{label} z range {z_range} exceeds {args.max_path_abs_z_m:.3f} m")
     write_map_artifacts()
     result.ok = not result.errors
     if args.trace_out:

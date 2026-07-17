@@ -1,5 +1,5 @@
-﻿#!/usr/bin/env python3
-"""Validate saved map artifact provenance for map.pcd/tomogram/occupancy."""
+#!/usr/bin/env python3
+"""Validate saved map artifact provenance for map.pcd/octomap/occupancy."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -24,7 +23,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         description="Validate saved-map metadata.json and artifact checksums.",
     )
     parser.add_argument("map_dir", type=Path, help="Directory containing metadata.json")
-    parser.add_argument("--require-tomogram", action="store_true")
+    parser.add_argument("--require-octomap", action="store_true")
     parser.add_argument("--require-occupancy", action="store_true")
     parser.add_argument("--expected-data-source")
     parser.add_argument("--expected-source-profile")
@@ -38,15 +37,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
     _ensure_import_path()
 
-    from runtime.same_source_map_artifacts import (
+    from cli.runtime_display import format_saved_map_artifact_gate_payload
+    from diagnostics.field.gates import runtime_validation_gates
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
-    from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
-    from cli.runtime_display import format_saved_map_artifact_gate_payload
 
     payload = validate_saved_map_artifact_dir(
         args.map_dir,
-        require_tomogram=args.require_tomogram,
+        require_octomap=args.require_octomap,
         require_occupancy=args.require_occupancy,
         expected_data_source=args.expected_data_source,
         expected_source_profile=args.expected_source_profile,

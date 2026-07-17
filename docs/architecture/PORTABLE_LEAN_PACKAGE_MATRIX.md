@@ -71,7 +71,7 @@ Observed from a local import scan over `src`, `cli`, `sim`, `scripts`, and `tool
 | Family | Files with imports | Important examples | Migration direction |
 | --- | ---: | --- | --- |
 | ROS2 | 71 | `src/*/adapters/ros2/*`, `src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/*`, `src/localization/*`, launch files | Keep under `ros-compat`; default package excludes. |
-| Gateway | 20 | `src/gateway/*`, `scripts/manager/manager.py`, `sim/scripts/gateway_goal_dry_run_gate.py` | Gateway feature pack only. |
+| Gateway | 20 | `src/gateway/*`, `sim/scripts/gateway_goal_dry_run_gate.py` | Gateway feature pack only. |
 | Vision/OpenCV/PIL | 36 | `src/runtime/msgs/sensor.py` lazy file load, `src/runtime/utils/validation.py` lazy resize, semantic/sim video tools | Lazy helpers can stay; package dependency is optional. |
 | ML/LLM/vector/perception | 22+ | `src/semantic/*`, `src/memory/*`, `tools/perception/*` | Heavy feature packs only. |
 | Vendor hardware | 9 | `src/drivers/real/thunder/*`, gateway status, manager, generated proto tools | `lingtu-robot-thunder` only. |

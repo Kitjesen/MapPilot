@@ -53,12 +53,12 @@ class TeleopModule(Module, layer=6):
 
     # -- Inputs --
     color_image: In[Image]
-    joy_input:   In[dict]      # {"lx": float, "ly": float, "az": float}
-    scene_graph: In[SceneGraph] # detection overlay (optional, from PerceptionModule)
+    joy_input: In[dict]  # {"lx": float, "ly": float, "az": float}
+    scene_graph: In[SceneGraph]  # detection overlay (optional, from PerceptionModule)
 
     # -- Outputs --
-    cmd_vel:        Out[Twist]
-    teleop_active:  Out[bool]   # True = joystick active, False = released
+    cmd_vel: Out[Twist]
+    teleop_active: Out[bool]  # True = joystick active, False = released
 
     def __init__(
         self,
@@ -93,6 +93,7 @@ class TeleopModule(Module, layer=6):
         # Camera rotation from config (degrees: 0/90/180/270)
         try:
             from runtime.config import get_config
+
             self._cam_rotate = int(get_config().raw.get("camera", {}).get("rotate", 0))
         except (KeyError, TypeError, ValueError):
             self._cam_rotate = 0
@@ -118,13 +119,9 @@ class TeleopModule(Module, layer=6):
     def start(self) -> None:
         super().start()
         self._running = True
-        self._encode_thread = threading.Thread(
-            target=self._encode_loop, name="teleop-encode", daemon=True
-        )
+        self._encode_thread = threading.Thread(target=self._encode_loop, name="teleop-encode", daemon=True)
         self._encode_thread.start()
-        self._idle_thread = threading.Thread(
-            target=self._idle_check_loop, name="teleop-idle", daemon=True
-        )
+        self._idle_thread = threading.Thread(target=self._idle_check_loop, name="teleop-idle", daemon=True)
         self._idle_thread.start()
         logger.info("TeleopModule started (JPEG encoder + idle checker active)")
 
@@ -156,10 +153,7 @@ class TeleopModule(Module, layer=6):
             gw._teleop_module = self
             logger.info("TeleopModule: wired into GatewayModule")
         else:
-            logger.warning(
-                "TeleopModule: GatewayModule not found 鈥?"
-                "teleop WebSocket will not be available"
-            )
+            logger.warning("TeleopModule: GatewayModule not found 鈥?teleop WebSocket will not be available")
 
     # -- joystick handling --------------------------------------------------
 
@@ -222,8 +216,7 @@ class TeleopModule(Module, layer=6):
         beyond the release timeout. Pulled out of the loop so tests can
         invoke a single tick deterministically.
         """
-        if (self._active
-                and time.monotonic() - self._last_joy_time > self._release_timeout):
+        if self._active and time.monotonic() - self._last_joy_time > self._release_timeout:
             self._release()
 
     def _idle_check_loop(self) -> None:
@@ -240,7 +233,7 @@ class TeleopModule(Module, layer=6):
             with self._det_lock:
                 self._latest_detections = list(sg.objects) if sg.objects else []
         except (AttributeError, TypeError):
-                logger.debug("TeleopModule: scene graph callback error", exc_info=True)
+            logger.debug("TeleopModule: scene graph callback error", exc_info=True)
 
     def _draw_detections(self, frame, cv2):
         """Draw bounding boxes + labels on the frame (in-place)."""
@@ -279,7 +272,7 @@ class TeleopModule(Module, layer=6):
         # frame (instead of waiting ~33ms for the next camera tick and seeing
         # the Dashboard flash "offline / reconnect" initially).
         with self._raw_lock:
-            self._latest_raw = img.data
+            self._latest_raw = img.to_bgr().data
         # Only wake the encoder thread when a client is connected 鈥?skipping
         # the JPEG encode step keeps CPU usage low in idle state.
         if self._clients + self._camera_clients > 0:
@@ -325,6 +318,7 @@ class TeleopModule(Module, layer=6):
         """Dedicated thread: encode raw frames to JPEG at stream_fps."""
         try:
             import cv2
+
             have_cv2 = True
         except ImportError:
             have_cv2 = False
@@ -353,7 +347,8 @@ class TeleopModule(Module, layer=6):
                     if self._cam_rotate in _rot_map:
                         frame = cv2.rotate(frame, _rot_map[self._cam_rotate])
                     ok, buf = cv2.imencode(
-                        ".jpg", frame,
+                        ".jpg",
+                        frame,
                         [cv2.IMWRITE_JPEG_QUALITY, self._jpeg_quality],
                     )
                     if ok:
@@ -367,9 +362,9 @@ class TeleopModule(Module, layer=6):
         info["clients"] = self._clients
         info["camera_clients"] = self._camera_clients
         info["stream_clients"] = self._clients + self._camera_clients
-        info["last_joy_age_ms"] = round(
-            (time.monotonic() - self._last_joy_time) * 1000
-        ) if self._last_joy_time > 0 else None
+        info["last_joy_age_ms"] = (
+            round((time.monotonic() - self._last_joy_time) * 1000) if self._last_joy_time > 0 else None
+        )
         return info
 
     # -- @skill methods (REPL / MCP) ----------------------------------------
@@ -378,16 +373,19 @@ class TeleopModule(Module, layer=6):
     def get_teleop_status(self) -> str:
         """Return current teleop status."""
         import json
-        return json.dumps({
-            "active": self._active,
-            "clients": self._clients,
-            "camera_clients": self._camera_clients,
-            "stream_clients": self._clients + self._camera_clients,
-            "port": self._port,
-            "last_joy_age_ms": round(
-                (time.monotonic() - self._last_joy_time) * 1000
-            ) if self._last_joy_time > 0 else None,
-        })
+
+        return json.dumps(
+            {
+                "active": self._active,
+                "clients": self._clients,
+                "camera_clients": self._camera_clients,
+                "stream_clients": self._clients + self._camera_clients,
+                "port": self._port,
+                "last_joy_age_ms": round((time.monotonic() - self._last_joy_time) * 1000)
+                if self._last_joy_time > 0
+                else None,
+            }
+        )
 
     @skill
     def force_release(self) -> str:

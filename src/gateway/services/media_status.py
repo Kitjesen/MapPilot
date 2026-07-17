@@ -6,6 +6,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from runtime.contracts import CAMERA_COMPAT_ALIAS, CAMERA_ROLE
 
 MEDIA_STATUS_SCHEMA_VERSION = 1
 CAMERA_STREAM_STALE_MS = 5000.0
@@ -38,6 +39,14 @@ def _find_module(gw: Any, token: str) -> Any | None:
         if token_l in module.__class__.__name__.lower():
             return module
     return None
+
+
+def _find_camera(gw: Any) -> Any | None:
+    modules = getattr(gw, "_all_modules", {}) or {}
+    for name in (CAMERA_ROLE, "CameraModule", CAMERA_COMPAT_ALIAS):
+        if name in modules:
+            return modules[name]
+    return _find_module(gw, CAMERA_COMPAT_ALIAS) or _find_module(gw, CAMERA_ROLE)
 
 
 def _safe_health(module: Any) -> tuple[dict[str, Any], str | None]:
@@ -78,11 +87,7 @@ def _camera_status_from_health(health: Mapping[str, Any]) -> dict[str, Any]:
     color_stale_ms = _stale_ms(color)
     depth_stale_ms = _stale_ms(depth)
 
-    color_fresh = (
-        color_frames > 0
-        and color_stale_ms is not None
-        and color_stale_ms <= CAMERA_STREAM_STALE_MS
-    )
+    color_fresh = color_frames > 0 and color_stale_ms is not None and color_stale_ms <= CAMERA_STREAM_STALE_MS
     if color_fresh:
         status = "streaming"
         reason = None
@@ -122,9 +127,7 @@ def _camera_status_from_health(health: Mapping[str, Any]) -> dict[str, Any]:
         },
         "reconnect_count": _int(health.get("reconnect_count")),
         "service_recovery_allowed": bool(health.get("service_recovery_allowed", False)),
-        "service_recovery_suppressed": bool(
-            health.get("service_recovery_suppressed", False)
-        ),
+        "service_recovery_suppressed": bool(health.get("service_recovery_suppressed", False)),
     }
 
 
@@ -148,13 +151,14 @@ def _teleop_stream_clients(gw: Any) -> int:
 
 def build_camera_status(gw: Any) -> dict[str, Any]:
     """Return a stable camera status without probing systemd, ROS, or hardware."""
-    camera = _find_module(gw, "CameraBridge")
+    camera = _find_camera(gw)
     if camera is None:
         return {
             "schema_version": MEDIA_STATUS_SCHEMA_VERSION,
+            "role": CAMERA_ROLE,
             "available": False,
             "status": "not_loaded",
-            "reason": "camera_bridge_not_loaded",
+            "reason": "camera_not_loaded",
             "fps": 0.0,
             "frames": 0,
             "color": {"frames": 0, "fps": 0.0, "stale_ms": None},
@@ -177,6 +181,7 @@ def build_camera_status(gw: Any) -> dict[str, Any]:
     if error is not None:
         status = {
             "schema_version": MEDIA_STATUS_SCHEMA_VERSION,
+            "role": CAMERA_ROLE,
             "available": False,
             "status": "error",
             "reason": "camera_health_error",
@@ -198,6 +203,7 @@ def build_camera_status(gw: Any) -> dict[str, Any]:
     else:
         status = _camera_status_from_health(health)
 
+    status.setdefault("role", CAMERA_ROLE)
     status["jpeg"] = _jpeg_status(gw)
     status["teleop_stream_clients"] = _teleop_stream_clients(gw)
     status["ts"] = time.time()
@@ -212,7 +218,7 @@ def build_media_status(gw: Any) -> dict[str, Any]:
 
 
 class _NullLock:
-    def __enter__(self) -> "_NullLock":
+    def __enter__(self) -> _NullLock:
         return self
 
     def __exit__(self, *args: Any) -> None:

@@ -9,55 +9,66 @@ from __future__ import annotations
 
 import logging
 
+from runtime.adapters.perception_gateway import camera_module
 from runtime.blueprint import Blueprint
 from runtime.blueprints.stacks._registry import (
     optional_fallback_module,
     optional_stack_module,
     stack_module,
 )
-from runtime.adapters.perception_gateway import camera_bridge_module
+from runtime.contracts import (
+    CAMERA_BACKEND_ORBBEC,
+    CAMERA_BACKEND_SIM,
+    CAMERA_COMPAT_CONFIG_FORCE,
+    CAMERA_CONFIG_FORCE,
+    CAMERA_ROLE,
+)
 
 logger = logging.getLogger(__name__)
-_NATIVE_CAMERA_DRIVERS = {"MujocoDriverModule"}  # Only MuJoCo has built-in camera
 
 
-def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -> Blueprint:
-    """RGB-D scene perception plus optional reconstruction and standalone tools."""
+def camera(**config) -> Blueprint:
+    """Build only the canonical camera source for non-semantic products."""
     bp = Blueprint()
-    if config.get("manage_services", True):
-        logger.debug(
-            "perception(manage_services=True) is ignored; external camera "
-            "startup is handled by runtime.blueprints.stacks.system.external_services"
-        )
-
     drv_name = config.get("_driver_cls_name", "")
     camera_enabled = bool(config.get("enable_camera", True))
-    needs_camera_bridge = camera_enabled and (
-        bool(config.get("force_camera_bridge"))
-        or (
-            drv_name not in _NATIVE_CAMERA_DRIVERS
-            and not bool(config.get("use_driver_camera", False))
-        )
-    )
+    force_camera = bool(config.get(CAMERA_CONFIG_FORCE, config.get(CAMERA_COMPAT_CONFIG_FORCE)))
+    use_driver_camera = bool(config.get("use_driver_camera", False))
+    needs_camera = camera_enabled and (force_camera or not use_driver_camera)
 
-    if needs_camera_bridge:
+    if needs_camera:
         try:
-            CameraBridgeModule = camera_bridge_module(
-                enable_ros2=bool(config.get("enable_ros2_camera_bridge", False))
+            default_backend = CAMERA_BACKEND_SIM if drv_name == "MujocoDriverModule" else CAMERA_BACKEND_ORBBEC
+            CameraModule = camera_module(
+                enable_ros2=bool(config.get("enable_ros2_camera_bridge", False)),
+                backend=str(config.get("camera_backend", default_backend)),
             )
-            if CameraBridgeModule is None:
-                raise ImportError("no registered camera bridge adapter")
+            if CameraModule is None:
+                raise ImportError("no registered camera adapter")
             # Read camera rotation from robot_config.yaml
             cam_rotate = config.get("camera_rotate", 0)
             if cam_rotate == 0:
                 try:
                     from runtime.config import get_config
+
                     cam_rotate = get_config().raw.get("camera", {}).get("rotate", 0)
                 except Exception:
                     pass
-            bp.add(CameraBridgeModule, alias="CameraBridgeModule", rotate=int(cam_rotate))
+            bp.add(CameraModule, alias=CAMERA_ROLE, rotate=int(cam_rotate))
         except ImportError:
             pass
+
+    return bp
+
+
+def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -> Blueprint:
+    """RGB-D scene perception plus optional reconstruction and standalone tools."""
+    bp = camera(**config)
+    if config.get("manage_services", True):
+        logger.debug(
+            "perception(manage_services=True) is ignored; external camera "
+            "startup is handled by runtime.blueprints.stacks.system.external_services"
+        )
 
     try:
         PerceptionModule = stack_module(
@@ -115,6 +126,24 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
         else:
             logger.warning("Standalone encoder module not available")
 
+    if config.get("enable_inspection_evidence", False):
+        InspectionEvidenceModule = optional_stack_module(
+            "inspection_evidence",
+            "native_bridge",
+            seed_group="perception",
+            fallback="perception.inspection.bridge_module.InspectionEvidenceModule",
+        )
+        if InspectionEvidenceModule is not None:
+            bp.add(
+                InspectionEvidenceModule,
+                alias="InspectionEvidenceModule",
+                domain_id=int(config.get("dds_domain_id", config.get("domain_id", 0))),
+                evidence_root=config.get("inspection_evidence_root"),
+                status_file=config.get("inspection_evidence_status_file"),
+            )
+        else:
+            logger.warning("Inspection evidence module not available")
+
     ReconstructionModule = optional_fallback_module(
         "reconstruction",
         "default",
@@ -131,10 +160,7 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
             "reconstruction",
             "dataset_recorder",
             seed_group="reconstruction",
-            fallback=(
-                "perception.reconstruction.dataset_recorder_module."
-                "DatasetRecorderModule"
-            ),
+            fallback=("perception.reconstruction.dataset_recorder_module.DatasetRecorderModule"),
         )
         if DatasetRecorderModule is not None:
             bp.add(
@@ -157,10 +183,7 @@ def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -
             "reconstruction",
             "keyframe_exporter",
             seed_group="reconstruction",
-            fallback=(
-                "perception.reconstruction.keyframe_exporter_module."
-                "ReconKeyframeExporterModule"
-            ),
+            fallback=("perception.reconstruction.keyframe_exporter_module.ReconKeyframeExporterModule"),
         )
         if ReconKeyframeExporterModule is not None:
             bp.add(

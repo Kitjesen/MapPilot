@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Summarize one live navigation run as a compact dataflow verdict."""
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from runtime.diagnostics.dimos_runtime_dataflow import resolve_report_path
-from runtime.diagnostics.dimos_runtime_dataflow import summarize_live_report as summarize_report
+from sim.diagnostics.dataflow_report import resolve_report_path
+from sim.diagnostics.dataflow_report import summarize_live_report as summarize_report
 
 
 def main(argv: list[str] | None = None) -> int:

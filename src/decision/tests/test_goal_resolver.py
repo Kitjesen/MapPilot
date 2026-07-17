@@ -1,17 +1,12 @@
-"""
-test_goal_resolver.py — 目标解析器单元测试
-
-注: LLM 调用使用 mock, 不发起真实 API 请求。
-"""
+"""Decision module."""
 
 import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-
-from decision.goal_resolution.goal_resolver import GoalResolver
-from decision.llm.llm_client import (
+from decision.goals.resolver import GoalResolver
+from decision.llm.client import (
     ClaudeClient,
     LLMConfig,
     LLMError,
@@ -19,14 +14,14 @@ from decision.llm.llm_client import (
     QwenClient,
     create_llm_client,
 )
-from decision.llm.prompt_templates import (
+from decision.llm.prompts import (
     build_exploration_prompt,
     build_goal_resolution_prompt,
 )
 
 
 class TestLLMClientFactory(unittest.TestCase):
-    """LLM 客户端工厂测试。"""
+    """Test L L M Client Factory."""
 
     def test_create_openai_client(self):
         config = LLMConfig(backend="openai")
@@ -50,7 +45,7 @@ class TestLLMClientFactory(unittest.TestCase):
 
 
 class TestPromptTemplates(unittest.TestCase):
-    """Prompt 模板测试。"""
+    """Test Prompt Templates."""
 
     def test_goal_resolution_prompt_zh(self):
         messages = build_goal_resolution_prompt(
@@ -87,7 +82,7 @@ class TestPromptTemplates(unittest.TestCase):
 
 
 class TestGoalResolver(unittest.TestCase):
-    """目标解析器测试。"""
+    """Test Goal Resolver."""
 
     def setUp(self):
         self.config = LLMConfig(backend="openai", model="test")
@@ -97,15 +92,17 @@ class TestGoalResolver(unittest.TestCase):
         self.loop.close()
 
     def test_parse_navigate_response(self):
-        """应正确解析 navigate 响应。"""
+        """Test parse navigate response."""
         resolver = GoalResolver(self.config)
-        response_text = json.dumps({
-            "action": "navigate",
-            "target": {"x": 3.2, "y": 1.5, "z": 0.0},
-            "target_label": "红色灭火器",
-            "confidence": 0.85,
-            "reasoning": "场景图中有一个红色灭火器",
-        })
+        response_text = json.dumps(
+            {
+                "action": "navigate",
+                "target": {"x": 3.2, "y": 1.5, "z": 0.0},
+                "target_label": "红色灭火器",
+                "confidence": 0.85,
+                "reasoning": "场景图中有一个红色灭火器",
+            }
+        )
         result = resolver._parse_llm_response(response_text)
         self.assertTrue(result.is_valid)
         self.assertEqual(result.action, "navigate")
@@ -115,22 +112,24 @@ class TestGoalResolver(unittest.TestCase):
         self.assertAlmostEqual(result.confidence, 0.85)
 
     def test_parse_explore_response(self):
-        """应正确解析 explore 响应。"""
+        """Test parse explore response."""
         resolver = GoalResolver(self.config)
-        response_text = json.dumps({
-            "action": "explore",
-            "target": {"x": 5.0, "y": 0.0, "z": 0.0},
-            "target_label": "",
-            "confidence": 0.3,
-            "reasoning": "目标不在场景图中",
-        })
+        response_text = json.dumps(
+            {
+                "action": "explore",
+                "target": {"x": 5.0, "y": 0.0, "z": 0.0},
+                "target_label": "",
+                "confidence": 0.3,
+                "reasoning": "目标不在场景图中",
+            }
+        )
         result = resolver._parse_llm_response(response_text)
         self.assertTrue(result.is_valid)
         self.assertEqual(result.action, "explore")
         self.assertAlmostEqual(result.confidence, 0.3)
 
     def test_parse_markdown_json(self):
-        """应能从 markdown 代码块中提取 JSON。"""
+        """Test parse markdown json."""
         resolver = GoalResolver(self.config)
         response_text = """Here's the plan:
 ```json
@@ -147,14 +146,14 @@ class TestGoalResolver(unittest.TestCase):
         self.assertEqual(result.action, "navigate")
 
     def test_parse_invalid_response(self):
-        """无效响应应标记 is_valid=False。"""
+        """Test parse invalid response."""
         resolver = GoalResolver(self.config)
         result = resolver._parse_llm_response("this is not json at all")
         self.assertFalse(result.is_valid)
         self.assertEqual(result.action, "error")
 
     def test_reset_exploration(self):
-        """重置探索状态。"""
+        """Test reset exploration."""
         resolver = GoalResolver(self.config)
         resolver._explored_directions.append({"x": 1.0, "y": 2.0})
         resolver._explore_step_count = 5
@@ -163,15 +162,17 @@ class TestGoalResolver(unittest.TestCase):
         self.assertEqual(resolver._explore_step_count, 0)
 
     def test_resolve_with_mock_llm(self):
-        """使用 mock LLM 测试完整解析流程。"""
+        """Test resolve with mock llm."""
         resolver = GoalResolver(self.config)
-        mock_response = json.dumps({
-            "action": "navigate",
-            "target": {"x": 5.0, "y": 3.0, "z": 0.0},
-            "target_label": "chair",
-            "confidence": 0.92,
-            "reasoning": "Found a chair in scene graph",
-        })
+        mock_response = json.dumps(
+            {
+                "action": "navigate",
+                "target": {"x": 5.0, "y": 3.0, "z": 0.0},
+                "target_label": "chair",
+                "confidence": 0.92,
+                "reasoning": "Found a chair in scene graph",
+            }
+        )
         resolver._primary = MagicMock()
         resolver._primary.is_available.return_value = True
         resolver._primary.chat = AsyncMock(return_value=mock_response)
@@ -189,17 +190,19 @@ class TestGoalResolver(unittest.TestCase):
         self.assertAlmostEqual(result.target_x, 5.0)
 
     def test_fallback_on_primary_failure(self):
-        """主 LLM 失败时应切换到备用。"""
+        """Test fallback on primary failure."""
         fallback_config = LLMConfig(backend="qwen", model="test")
         resolver = GoalResolver(self.config, fallback_config=fallback_config)
 
-        mock_response = json.dumps({
-            "action": "navigate",
-            "target": {"x": 1.0, "y": 1.0, "z": 0.0},
-            "target_label": "door",
-            "confidence": 0.8,
-            "reasoning": "Fallback found it",
-        })
+        mock_response = json.dumps(
+            {
+                "action": "navigate",
+                "target": {"x": 1.0, "y": 1.0, "z": 0.0},
+                "target_label": "door",
+                "confidence": 0.8,
+                "reasoning": "Fallback found it",
+            }
+        )
 
         resolver._primary = MagicMock()
         resolver._primary.is_available.return_value = True

@@ -37,11 +37,11 @@ _SRC = str(_PROJECT_ROOT / "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from runtime.utils.sanitize import sanitize_position, safe_json_loads
-from perception.tracking.projection import Detection3D
+from decision.goals.resolver import GoalResolver, GoalResult
+from decision.llm.client import LLMConfig
 from perception.tracking.instance_tracker import InstanceTracker
-from decision.goal_resolver import GoalResolver, GoalResult
-from decision.llm_client import LLMConfig
+from perception.tracking.projection import Detection3D
+from runtime.utils.sanitize import safe_json_loads, sanitize_position
 
 logger = logging.getLogger(__name__)
 
@@ -111,50 +111,51 @@ CATEGORY_ALIASES = {
 }
 
 # CLIP 鐩镐技搴﹂槇鍊?
-CLIP_STOP_THRESHOLD = 0.23      # 涓績瑁佸壀鐩镐技搴?鈫?鑰冭檻鍋滄 (v15: 0.26鈫?.23 瑕嗙洊 toilet/couch)
-CLIP_DETECT_THRESHOLD = 0.26    # 灞€閮?patch 鐩镐技搴?鈫?鍒涘缓 Detection3D
+CLIP_STOP_THRESHOLD = 0.23  # 涓績瑁佸壀鐩镐技搴?鈫?鑰冭檻鍋滄 (v15: 0.26鈫?.23 瑕嗙洊 toilet/couch)
+CLIP_DETECT_THRESHOLD = 0.26  # 灞€閮?patch 鐩镐技搴?鈫?鍒涘缓 Detection3D
 # 灏忓瀷/闅捐瘑鍒被鍒娇鐢ㄦ洿浣庨槇鍊?(potted_plant 瀵?ViT-B/32 杈冮毦)
-_CLIP_STOP_THRESHOLD_BY_CAT: Dict[str, float] = {
+_CLIP_STOP_THRESHOLD_BY_CAT: dict[str, float] = {
     "potted_plant": 0.18,
 }
-PROXIMITY_GUARD_DIST = 3.0      # 杩戠洰鏍囧畧鍗窛绂?(m); v14=5.0 鈫?v15=3.0 鍑忓皯鍋囬槼鎬?
+PROXIMITY_GUARD_DIST = 3.0  # 杩戠洰鏍囧畧鍗窛绂?(m); v14=5.0 鈫?v15=3.0 鍑忓皯鍋囬槼鎬?
 # CLIP patch 妫€娴嬪緱鍒嗕笂闄? 鍏佽瓒冲楂樹互瑙﹀彂 Fast Path (confidence_threshold=0.6)
 CLIP_PATCH_SCORE_MAX = 0.85
-CLIP_MIN_DEPTH = 0.8            # 妫€娴嬬墿浣撴渶灏忔繁搴?(m) 鈥?杩囨护璐村璇
-CLIP_CALL_INTERVAL = 3          # 姣?N 姝ヨ皟鐢ㄤ竴娆?CLIP (骞宠　閫熷害涓庡搷搴?
-MIN_EXPLORE_STEPS = 100         # 鑷冲皯鎺㈢储 N 姝ュ啀鍏佽 YOLO/CLIP STOP (閬垮厤鍦ㄨ捣鐐硅鍋?
-CLIP_STOP_MIN_STREAK = 1        # 1 甯у嵆鍙? 閬垮厤婕忔帀鐭殏鎺ヨ繎鐩爣鐨勬満浼?
+CLIP_MIN_DEPTH = 0.8  # 妫€娴嬬墿浣撴渶灏忔繁搴?(m) 鈥?杩囨护璐村璇
+CLIP_CALL_INTERVAL = 3  # 姣?N 姝ヨ皟鐢ㄤ竴娆?CLIP (骞宠　閫熷害涓庡搷搴?
+MIN_EXPLORE_STEPS = 100  # 鑷冲皯鎺㈢储 N 姝ュ啀鍏佽 YOLO/CLIP STOP (閬垮厤鍦ㄨ捣鐐硅鍋?
+CLIP_STOP_MIN_STREAK = 1  # 1 甯у嵆鍙? 閬垮厤婕忔帀鐭殏鎺ヨ繎鐩爣鐨勬満浼?
 
 # 鈹€鈹€ YOLO11 妫€娴嬪櫒 (鏇挎崲 CLIP patch 妫€娴? 鈹€鈹€
 try:
     from ultralytics import YOLO as _YOLO
+
     _YOLO_AVAILABLE = True
 except ImportError:
     _YOLO_AVAILABLE = False
 
 # HM3D 6澶х被 鈫?COCO class id 鏄犲皠
 YOLO_COCO_IDS = {
-    "chair":        {56},
-    "couch":        {57},
-    "bed":          {59},
-    "toilet":       {61},
+    "chair": {56},
+    "couch": {57},
+    "bed": {59},
+    "toilet": {61},
     "potted_plant": {58},
-    "tv_monitor":   {62, 63},
+    "tv_monitor": {62, 63},
 }
-YOLO_STOP_CONF   = 0.55   # 妫€娴嬬疆淇″害 鈫?瑙﹀彂 STOP
-YOLO_DETECT_CONF = 0.25   # 妫€娴嬬疆淇″害 鈫?鍔犲叆鍦烘櫙鍥?
-YOLO_CALL_INTERVAL = 1    # 姣忔閮借窇 YOLO (GPU ~15ms)
-DEPTH_MAX = 10.0                # Habitat depth sensor 鏈€澶ч噺绋?(m); 瑙傛祴鍊煎凡褰掍竴鍖栧埌 [0,1]
+YOLO_STOP_CONF = 0.55  # 妫€娴嬬疆淇″害 鈫?瑙﹀彂 STOP
+YOLO_DETECT_CONF = 0.25  # 妫€娴嬬疆淇″害 鈫?鍔犲叆鍦烘櫙鍥?
+YOLO_CALL_INTERVAL = 1  # 姣忔閮借窇 YOLO (GPU ~15ms)
+DEPTH_MAX = 10.0  # Habitat depth sensor 鏈€澶ч噺绋?(m); 瑙傛祴鍊煎凡褰掍竴鍖栧埌 [0,1]
 
 # YOLO 鐗╀綋鍏卞瓨璇箟 bonus (鎺㈢储鏃嬭浆鎵弿鏃朵娇鐢?
 # 鏍煎紡: {鐩爣绫诲埆: {鍏卞瓨 COCO class_id: bonus鍒唥}
-YOLO_COOCCUR_BONUS: "Dict[str, Dict[int, float]]" = {
-    "chair":        {57: 2.0, 60: 1.5},            # couch(57), dining table(60) 鈫?鍚屼竴鐢熸椿绌洪棿
-    "couch":        {56: 1.5, 62: 2.5, 63: 2.0},   # chair(56), tv(62), monitor(63) 鈫?瀹㈠巺
-    "bed":          {59: 3.0},                      # 鍙︿竴寮犲簥(59) 鈫?鍗у纭
-    "toilet":       {56: 0.5},                      # chair(56) 鈫?鏈夊鍏锋埧闂?寮卞厛楠?
-    "potted_plant": {57: 2.0, 60: 1.5, 56: 1.0},   # couch, table, chair 鈫?瀹㈠巺/椁愬巺
-    "tv_monitor":   {57: 3.5, 56: 1.5, 60: 1.0},   # couch(57) 鈫?寮篢V鎸囩ず
+YOLO_COOCCUR_BONUS: "dict[str, dict[int, float]]" = {
+    "chair": {57: 2.0, 60: 1.5},  # couch(57), dining table(60) 鈫?鍚屼竴鐢熸椿绌洪棿
+    "couch": {56: 1.5, 62: 2.5, 63: 2.0},  # chair(56), tv(62), monitor(63) 鈫?瀹㈠巺
+    "bed": {59: 3.0},  # 鍙︿竴寮犲簥(59) 鈫?鍗у纭
+    "toilet": {56: 0.5},  # chair(56) 鈫?鏈夊鍏锋埧闂?寮卞厛楠?
+    "potted_plant": {57: 2.0, 60: 1.5, 56: 1.0},  # couch, table, chair 鈫?瀹㈠巺/椁愬巺
+    "tv_monitor": {57: 3.5, 56: 1.5, 60: 1.0},  # couch(57) 鈫?寮篢V鎸囩ず
 }
 
 
@@ -169,6 +170,7 @@ def _normalize_category(label: str) -> str:
 @dataclass
 class AgentState:
     """Compatibility helper."""
+
     position: np.ndarray = field(default_factory=lambda: np.zeros(3))
     heading: float = 0.0
     step_count: int = 0
@@ -178,19 +180,19 @@ class AgentState:
     target_forward_steps: int = 8
     best_frontier_angle: float = 0.0
     goal_found: bool = False
-    goal_position: Optional[np.ndarray] = None
+    goal_position: np.ndarray | None = None
     navigating_to_goal: bool = False
     navigate_steps: int = 0
     prev_position: np.ndarray = field(default_factory=lambda: np.zeros(3))
     stuck_counter: int = 0
-    visited_cells: Set[Tuple[int, int]] = field(default_factory=set)
-    blocked_headings: List[float] = field(default_factory=list)  # 鍗′綇鏂瑰悜璁板綍 鈫?frontier 鎯╃綒
+    visited_cells: set[tuple[int, int]] = field(default_factory=set)
+    blocked_headings: list[float] = field(default_factory=list)  # 鍗′綇鏂瑰悜璁板綍 鈫?frontier 鎯╃綒
     # CLIP 缂撳瓨
     last_clip_step: int = -999
     last_clip_sim: float = 0.0
-    clip_stop_streak: int = 0   # 杩炵画婊¤冻鍋滄鏉′欢鐨勫抚鏁?
+    clip_stop_streak: int = 0  # 杩炵画婊¤冻鍋滄鏉′欢鐨勫抚鏁?
     last_yolo_depth: float = 999.0  # 褰撳墠甯?YOLO 妫€娴嬪埌鐩爣鐨勬渶杩戞繁搴?(m)
-    last_yolo_step: int = -999       # 涓婃 YOLO 妫€娴嬫鏁?
+    last_yolo_step: int = -999  # 涓婃 YOLO 妫€娴嬫鏁?
 
 
 class NaviMindAgent:
@@ -203,7 +205,7 @@ class NaviMindAgent:
     鎺㈢储: 娣卞害鎰熺煡 frontier 鎺㈢储 (novelty + depth score)
     """
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: dict | None = None):
         if config is None:
             config_path = Path(__file__).parent / "config" / "habitat_eval.yaml"
             if config_path.exists():
@@ -239,9 +241,7 @@ class NaviMindAgent:
 
         # 鈹€鈹€ 鎺㈢储鍙傛暟 鈹€鈹€
         self._rotate_steps_per_scan = explore_cfg.get("rotate_steps", 12)
-        self._frontier_forward = int(
-            explore_cfg.get("frontier_distance", 2.5) / 0.25
-        )
+        self._frontier_forward = int(explore_cfg.get("frontier_distance", 2.5) / 0.25)
         self._cell_size = explore_cfg.get("cell_size", 0.5)
 
         # 鈹€鈹€ 浼犳劅鍣ㄥ弬鏁?鈹€鈹€
@@ -292,8 +292,8 @@ class NaviMindAgent:
     def _load_clip(self, model_path: str) -> None:
         """Compatibility helper."""
         try:
-            from transformers import CLIPModel, CLIPProcessor
             import torch
+            from transformers import CLIPModel, CLIPProcessor
 
             if not os.path.exists(model_path):
                 logger.warning("CLIP model not found at %s 鈥?depth-only mode", model_path)
@@ -320,15 +320,11 @@ class NaviMindAgent:
             from PIL import Image
 
             img = Image.fromarray(rgb.astype(np.uint8))
-            inputs = self._clip_processor(
-                text=[prompt], images=img, return_tensors="pt", padding=True
-            )
+            inputs = self._clip_processor(text=[prompt], images=img, return_tensors="pt", padding=True)
             inputs = {k: v.to(self._clip_device) for k, v in inputs.items()}
 
             with torch.no_grad():
-                img_feat = self._clip_model.get_image_features(
-                    pixel_values=inputs["pixel_values"]
-                )
+                img_feat = self._clip_model.get_image_features(pixel_values=inputs["pixel_values"])
                 txt_feat = self._clip_model.get_text_features(
                     input_ids=inputs["input_ids"],
                     attention_mask=inputs["attention_mask"],
@@ -364,19 +360,12 @@ class NaviMindAgent:
         self._yolo_target_ids = YOLO_COCO_IDS.get(norm_cat, set())
         """Compatibility helper."""
         self._target_category = _normalize_category(category)
-        self._instruction = OBJECTNAV_CATEGORIES.get(
-            self._target_category, f"鎵惧埌{category}"
-        )
-        self._clip_prompt = CLIP_PROMPTS.get(
-            self._target_category,
-            f"a photo of a {category.replace('_', ' ')}"
-        )
+        self._instruction = OBJECTNAV_CATEGORIES.get(self._target_category, f"鎵惧埌{category}")
+        self._clip_prompt = CLIP_PROMPTS.get(self._target_category, f"a photo of a {category.replace('_', ' ')}")
         # 绫诲埆涓撳睘 CLIP 鍋滄闃堝€?(v15: potted_plant 闅捐瘑鍒?鈫?闄嶅埌 0.18)
-        self._clip_stop_threshold = _CLIP_STOP_THRESHOLD_BY_CAT.get(
-            self._target_category, CLIP_STOP_THRESHOLD
-        )
+        self._clip_stop_threshold = _CLIP_STOP_THRESHOLD_BY_CAT.get(self._target_category, CLIP_STOP_THRESHOLD)
 
-    def act(self, observations: Dict[str, Any]) -> int:
+    def act(self, observations: dict[str, Any]) -> int:
         """
         涓诲喅绛栧嚱鏁般€?
 
@@ -394,7 +383,10 @@ class NaviMindAgent:
             if h != self._img_h or w != self._img_w:
                 logger.info(
                     "浼犳劅鍣ㄥ垎杈ㄧ巼鏍℃: config %dx%d 鈫?actual %dx%d",
-                    self._img_h, self._img_w, h, w,
+                    self._img_h,
+                    self._img_w,
+                    h,
+                    w,
                 )
                 self._img_h, self._img_w = h, w
                 self._fx = w / (2.0 * math.tan(math.radians(self._hfov_deg / 2.0)))
@@ -412,9 +404,13 @@ class NaviMindAgent:
         # 3. 鏇存柊鍦烘櫙鍥?(BA-HSG)
         camera_pos = self._state.position.copy()
         heading = self._state.heading
-        camera_forward = np.array([
-            -math.sin(heading), 0.0, math.cos(heading)  # heading=0 鈫?facing +z
-        ])
+        camera_forward = np.array(
+            [
+                -math.sin(heading),
+                0.0,
+                math.cos(heading),  # heading=0 鈫?facing +z
+            ]
+        )
 
         if self._no_fov:
             self._tracker.update(detections, intrinsics_fx=self._fx)
@@ -428,11 +424,12 @@ class NaviMindAgent:
 
         # 4. 鏇存柊鍏ㄥ抚 CLIP 鐩镐技搴?(蹇呴』鍦?stop 妫€娴嬩箣鍓? 纭繚褰撳墠甯ф暟鎹?
         step = self._state.step_count
-        if (self._clip_model is not None and "rgb" in observations
-                and step - self._state.last_clip_step >= CLIP_CALL_INTERVAL):
-            self._state.last_clip_sim = self._clip_similarity(
-                observations["rgb"], self._clip_prompt
-            )
+        if (
+            self._clip_model is not None
+            and "rgb" in observations
+            and step - self._state.last_clip_step >= CLIP_CALL_INTERVAL
+        ):
+            self._state.last_clip_sim = self._clip_similarity(observations["rgb"], self._clip_prompt)
             self._state.last_clip_step = step
 
         # 杩戠洰鏍囧垽鏂?(渚?5a/5b 鍏变韩): 鍦ㄤ换鎰忕洰鏍囪川蹇?5m 鍐呮墠鍏佽 STOP
@@ -440,25 +437,21 @@ class NaviMindAgent:
         _goal_pos_v11 = observations.get("_goal_positions", [])
         _near_goal = True
         if _agent_pos_v11 is not None and _goal_pos_v11:
-            _min_dist_to_goal = float(min(
-                np.linalg.norm(_agent_pos_v11 - gp) for gp in _goal_pos_v11
-            ))
-            _near_goal = (_min_dist_to_goal < PROXIMITY_GUARD_DIST)
+            _min_dist_to_goal = float(min(np.linalg.norm(_agent_pos_v11 - gp) for gp in _goal_pos_v11))
+            _near_goal = _min_dist_to_goal < PROXIMITY_GUARD_DIST
 
         # 5a. YOLO 鍋滄妫€娴?(浼樺厛, MIN_EXPLORE_STEPS 姝ュ悗鍚敤)
         if self._state.step_count >= MIN_EXPLORE_STEPS and self._yolo is not None:
             self._update_yolo_state(observations)
             if _near_goal and self._state.last_yolo_depth <= 1.5:  # 1.5m 瀹藉闃堝€?
                 self._clip_stops += 1
-                logger.info('YOLO STOP @ %.2fm step=%d',
-                            self._state.last_yolo_depth, self._state.step_count)
+                logger.info("YOLO STOP @ %.2fm step=%d", self._state.last_yolo_depth, self._state.step_count)
                 return HABITAT_STOP
             # YOLO 鐪嬪埌鐩爣浣嗚窛绂?> 1.5m 鈫?瀵艰埅杩囧幓
-            if (self._state.last_yolo_depth < 5.0
-                    and not self._state.navigating_to_goal):
+            if self._state.last_yolo_depth < 5.0 and not self._state.navigating_to_goal:
                 self._state.navigating_to_goal = True
                 self._state.navigate_steps = 0
-                logger.info('YOLO->NAV @ %.2fm', self._state.last_yolo_depth)
+                logger.info("YOLO->NAV @ %.2fm", self._state.last_yolo_depth)
 
         # 5b. CLIP 鍋滄妫€娴?(YOLO 涓嶅彲鐢ㄦ椂鍥為€€)
         if self._yolo is None and self._state.step_count >= MIN_EXPLORE_STEPS:
@@ -485,20 +478,25 @@ class NaviMindAgent:
         _gt_agent_pos = observations.get("_agent_world_pos", None)
         _view_points = observations.get("_view_points", [])
         _spf_nav_targets = _view_points if _view_points else _gt_goals
-        if (_spf_action is not None and _spf_action != 0  # 0=SPF auto-stop, 鐢?CLIP 浠ｆ浛
-                and _spf_nav_targets and _gt_agent_pos is not None
-                and self._state.step_count >= MIN_EXPLORE_STEPS):
-            _nearest_vp = min(_spf_nav_targets,
-                               key=lambda v: np.linalg.norm(_gt_agent_pos - v))
+        if (
+            _spf_action is not None
+            and _spf_action != 0  # 0=SPF auto-stop, 鐢?CLIP 浠ｆ浛
+            and _spf_nav_targets
+            and _gt_agent_pos is not None
+            and self._state.step_count >= MIN_EXPLORE_STEPS
+        ):
+            _nearest_vp = min(_spf_nav_targets, key=lambda v: np.linalg.norm(_gt_agent_pos - v))
             _dist_to_vp = float(np.linalg.norm(_gt_agent_pos - _nearest_vp))
             if _dist_to_vp > 1.0:  # >1m: SPF 瀵艰埅; 鈮?m: 瑙嗚妫€娴?5a/5b)鎺ョ
                 return _spf_action  # FWD=1, L=2, R=3 (缁曡繃闅忔満鎺㈢储)
 
         # 7. 瀵艰埅 or 鎺㈢储
         # MIN_EXPLORE_STEPS 姝ュ墠寮哄埗鎺㈢储; 涔嬪悗濡傛灉鏈夌洰鏍囧垯瀵艰埅
-        if (self._state.step_count >= MIN_EXPLORE_STEPS
-                and self._state.navigating_to_goal
-                and self._state.goal_position is not None):
+        if (
+            self._state.step_count >= MIN_EXPLORE_STEPS
+            and self._state.navigating_to_goal
+            and self._state.goal_position is not None
+        ):
             self._state.navigate_steps += 1
             if self._state.navigate_steps > self._max_navigate_steps:
                 # 瓒呮椂: 鏀惧純褰撳墠鐩爣, 缁х画鎺㈢储
@@ -512,7 +510,7 @@ class NaviMindAgent:
 
     # 鈹€鈹€ 鎰熺煡 鈹€鈹€
 
-    def _build_detections(self, obs: Dict[str, Any]) -> List[Detection3D]:
+    def _build_detections(self, obs: dict[str, Any]) -> list[Detection3D]:
         """
         鏋勫缓 Detection3D 鍒楄〃銆?
         浼樺厛椤哄簭: GLB璐ㄥ績浣嶇疆GT 鈫?瑙嗚GT sensor 鈫?YOLO 鈫?CLIP
@@ -547,15 +545,15 @@ class NaviMindAgent:
     def _positional_detections(
         self,
         agent_pos: "np.ndarray",
-        goal_positions: List["np.ndarray"],
-    ) -> List[Detection3D]:
+        goal_positions: list["np.ndarray"],
+    ) -> list[Detection3D]:
         """
         鍩轰簬 episode.goals world positions 鐢熸垚 Detection3D銆?
         绛夋晥浜?GT semantic sensor: 8m 浠ュ唴鐨勭洰鏍囧疄渚嬪垱寤烘娴嬨€?
         """
         goal = self._target_category
         max_range = 8.0
-        dets: List[Detection3D] = []
+        dets: list[Detection3D] = []
 
         for gpos in goal_positions:
             dist = float(np.linalg.norm(agent_pos - gpos))
@@ -574,7 +572,7 @@ class NaviMindAgent:
 
         return dets
 
-    def _semantic_to_detections(self, obs: Dict[str, Any]) -> List[Detection3D]:
+    def _semantic_to_detections(self, obs: dict[str, Any]) -> list[Detection3D]:
         """Compatibility helper."""
         if "semantic" not in obs or "depth" not in obs:
             return []
@@ -612,19 +610,19 @@ class NaviMindAgent:
                 continue
             med_d = float(np.median(valid_depth)) * DEPTH_MAX  # 鈫?meters
 
-            position = self._pixel_to_world(
-                (x1 + x2) / 2.0, (y1 + y2) / 2.0, med_d
-            )
+            position = self._pixel_to_world((x1 + x2) / 2.0, (y1 + y2) / 2.0, med_d)
             score = 0.95 if not self._no_belief else 0.70
 
-            detections.append(Detection3D(
-                position=position,
-                label=label,
-                score=score,
-                bbox_2d=np.array([x1, y1, x2, y2], dtype=np.float32),
-                depth=med_d,
-                features=np.array([]),
-            ))
+            detections.append(
+                Detection3D(
+                    position=position,
+                    label=label,
+                    score=score,
+                    bbox_2d=np.array([x1, y1, x2, y2], dtype=np.float32),
+                    depth=med_d,
+                    features=np.array([]),
+                )
+            )
 
         return detections
 
@@ -635,6 +633,7 @@ class NaviMindAgent:
             return
         try:
             import torch
+
             self._yolo = _YOLO("yolo11s.pt")
             device = "cpu"
             if torch.cuda.is_available():
@@ -651,7 +650,7 @@ class NaviMindAgent:
             logger.warning("YOLO11s 鍔犺浇澶辫触: %s", exc)
             self._yolo = None
 
-    def _yolo_to_detections(self, obs: "Dict[str, Any]") -> "List[Detection3D]":
+    def _yolo_to_detections(self, obs: "dict[str, Any]") -> "list[Detection3D]":
         """Compatibility helper."""
         if self._yolo is None or not self._yolo_target_ids:
             return []
@@ -673,8 +672,10 @@ class NaviMindAgent:
             cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
             H, W = depth.shape[:2]
             # bbox 鍖哄煙涓綅娣卞害 (姣斿崟鍍忕礌鏇撮瞾妫?
-            bx1 = int(max(0, x1)); bx2 = int(min(W, x2))
-            by1 = int(max(0, y1)); by2 = int(min(H, y2))
+            bx1 = int(max(0, x1))
+            bx2 = int(min(W, x2))
+            by1 = int(max(0, y1))
+            by2 = int(min(H, y2))
             bbox_depth = depth[by1:by2, bx1:bx2]
             valid_d = bbox_depth[(bbox_depth > 0.015) & (bbox_depth < 0.99)]
             if len(valid_d) < 5:
@@ -686,17 +687,19 @@ class NaviMindAgent:
             score = min(0.92, conf * 1.1)
             if self._no_belief:
                 score *= 0.75
-            detections.append(Detection3D(
-                position=position,
-                label=self._target_category,
-                score=score,
-                bbox_2d=np.array([x1, y1, x2, y2], dtype=np.float32),
-                depth=d_m,
-                features=np.array([]),
-            ))
+            detections.append(
+                Detection3D(
+                    position=position,
+                    label=self._target_category,
+                    score=score,
+                    bbox_2d=np.array([x1, y1, x2, y2], dtype=np.float32),
+                    depth=d_m,
+                    features=np.array([]),
+                )
+            )
         return detections
 
-    def _yolo_detect_coco_ids(self, obs: "Dict[str, Any]") -> "Set[int]":
+    def _yolo_detect_coco_ids(self, obs: "dict[str, Any]") -> "set[int]":
         """Compatibility helper."""
         if self._yolo is None:
             return set()
@@ -706,7 +709,7 @@ class NaviMindAgent:
         results = self._yolo(rgb, verbose=False, conf=YOLO_DETECT_CONF, imgsz=256)
         return {int(box.cls[0].item()) for box in results[0].boxes}
 
-    def _update_yolo_state(self, obs: "Dict[str, Any]") -> None:
+    def _update_yolo_state(self, obs: "dict[str, Any]") -> None:
         """Compatibility helper."""
         step = self._state.step_count
         if step - self._state.last_yolo_step < YOLO_CALL_INTERVAL:
@@ -717,9 +720,7 @@ class NaviMindAgent:
             # 楂樼疆淇″害妫€娴嬬敤浜庡仠姝㈠垽瀹?
             high_conf = [d for d in dets if d.score >= YOLO_STOP_CONF]
             # 鍋滄娣卞害: 浣跨敤楂樼疆淇″害妫€娴嬩腑鏈€杩戠殑; 濡傛棤鍒欑敤 999
-            self._state.last_yolo_depth = (
-                min(d.depth for d in high_conf) if high_conf else 999.0
-            )
+            self._state.last_yolo_depth = min(d.depth for d in high_conf) if high_conf else 999.0
             # 瀵艰埅鐩爣: 浣跨敤鎵€鏈夋娴嬩腑鏈€杩戠殑 (鍏佽杈冧綆 conf 寮曞鎺㈢储)
             if dets:
                 nearest = min(dets, key=lambda d: d.depth)
@@ -729,7 +730,7 @@ class NaviMindAgent:
         else:
             self._state.last_yolo_depth = 999.0
 
-    def _clip_to_detections(self, obs: Dict[str, Any]) -> List[Detection3D]:
+    def _clip_to_detections(self, obs: dict[str, Any]) -> list[Detection3D]:
         """
         CLIP patch 妫€娴?鈫?Detection3D銆?
         灏?RGB 鍒嗘垚 2脳2 缃戞牸, 瀵规瘡涓?patch 璁＄畻 CLIP 鐩镐技搴︺€?
@@ -777,18 +778,20 @@ class NaviMindAgent:
                 if self._no_belief:
                     score *= 0.75
 
-                detections.append(Detection3D(
-                    position=position,
-                    label=self._target_category,
-                    score=score,
-                    bbox_2d=np.array([c1, r1, c2, r2], dtype=np.float32),
-                    depth=med_d,
-                    features=np.array([]),
-                ))
+                detections.append(
+                    Detection3D(
+                        position=position,
+                        label=self._target_category,
+                        score=score,
+                        bbox_2d=np.array([c1, r1, c2, r2], dtype=np.float32),
+                        depth=med_d,
+                        features=np.array([]),
+                    )
+                )
 
         return detections
 
-    def _check_clip_stop(self, obs: Dict[str, Any]) -> bool:
+    def _check_clip_stop(self, obs: dict[str, Any]) -> bool:
         """
         CLIP 鍋滄鍒ゆ嵁:
         涓績瑁佸壀鐩镐技搴?> CLIP_STOP_THRESHOLD AND 涓績鍓嶆柟娣卞害 < success_distance銆?
@@ -804,7 +807,7 @@ class NaviMindAgent:
 
         # 涓績瑁佸壀 (H/4..3H/4, W/4..3W/4): 鐩爣闇€濉厖鐢婚潰涓績鎵嶈Е鍙?
         H, W = rgb.shape[:2]
-        center_rgb = rgb[H // 4: 3 * H // 4, W // 4: 3 * W // 4]
+        center_rgb = rgb[H // 4 : 3 * H // 4, W // 4 : 3 * W // 4]
         center_sim = self._clip_similarity(center_rgb, self._clip_prompt)
 
         if center_sim < self._clip_stop_threshold:
@@ -818,7 +821,7 @@ class NaviMindAgent:
         if depth.ndim == 3:
             depth = depth[:, :, 0]
 
-        center_depth = depth[H // 4: 3 * H // 4, W // 4: 3 * W // 4]
+        center_depth = depth[H // 4 : 3 * H // 4, W // 4 : 3 * W // 4]
         valid = center_depth[(center_depth > 0.03) & (center_depth < 0.98)]
         if len(valid) < 10:
             return False
@@ -870,11 +873,14 @@ class NaviMindAgent:
         """Compatibility helper."""
         try:
             sg = json.loads(sg_json)
-            return json.dumps({
-                "objects": sg.get("objects", []),
-                "relations": [],
-                "regions": [],
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "objects": sg.get("objects", []),
+                    "relations": [],
+                    "regions": [],
+                },
+                ensure_ascii=False,
+            )
         except (json.JSONDecodeError, TypeError):
             return sg_json
 
@@ -897,7 +903,7 @@ class NaviMindAgent:
             return HABITAT_TURN_LEFT
 
         # 鈹€鈹€ 璐績瀵艰埅 鈹€鈹€
-        escape_remaining = getattr(self._state, '_nav_escape_remaining', 0)
+        escape_remaining = getattr(self._state, "_nav_escape_remaining", 0)
         if escape_remaining > 0:
             self._state._nav_escape_remaining = escape_remaining - 1
             self._state.forward_steps += 1
@@ -922,7 +928,7 @@ class NaviMindAgent:
             self._state.forward_steps += 1
             return HABITAT_MOVE_FORWARD
 
-    def _explore(self, observations: Dict[str, Any]) -> int:
+    def _explore(self, observations: dict[str, Any]) -> int:
         """Compatibility helper."""
         if self._state.stuck_counter > 3:
             self._state.stuck_counter = 0
@@ -943,7 +949,7 @@ class NaviMindAgent:
                 if depth.ndim == 3:
                     depth = depth[:, :, 0]
                 h, w = depth.shape
-                strip = depth[h // 3: 2 * h // 3, w // 4: 3 * w // 4]
+                strip = depth[h // 3 : 2 * h // 3, w // 4 : 3 * w // 4]
                 # normalized [0,1]: 0.03~0.99 = 0.3m~9.9m
                 valid = strip[(strip > 0.03) & (strip < 0.99)]
                 avg_depth = float(np.mean(valid)) if len(valid) > 0 else 0.0
@@ -999,10 +1005,7 @@ class NaviMindAgent:
 
         # 鍓嶈繘闃舵
         if self._state.forward_steps == 0:
-            angle_diff = (
-                (self._state.best_frontier_angle - self._state.heading + math.pi)
-                % (2 * math.pi) - math.pi
-            )
+            angle_diff = (self._state.best_frontier_angle - self._state.heading + math.pi) % (2 * math.pi) - math.pi
             if abs(angle_diff) > math.radians(20):
                 return HABITAT_TURN_LEFT if angle_diff > 0 else HABITAT_TURN_RIGHT
 
@@ -1025,7 +1028,7 @@ class NaviMindAgent:
         world_z = self._state.position[2] + (cos_h * depth_m + sin_h * cam_x)
         return np.array([world_x, world_y, world_z], dtype=np.float64)
 
-    def _update_pose(self, obs: Dict[str, Any]) -> None:
+    def _update_pose(self, obs: dict[str, Any]) -> None:
         self._state.prev_position = self._state.position.copy()
         if "gps" in obs:
             gps = obs["gps"]
@@ -1057,7 +1060,7 @@ class NaviMindAgent:
             self._state.stuck_counter = 0
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         return {
             "fast_path_hits": self._fast_path_hits,
             "total_resolves": self._total_resolves,

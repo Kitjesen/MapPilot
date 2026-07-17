@@ -6,15 +6,9 @@ from runtime.blueprints.products.thunder import thunder_blueprint
 
 
 def test_sim_blueprint_wires_real_semantic_pipeline():
-    # MuJoCo driver has a built-in camera, publishes camera_image directly.
-    # The previous bridged-camera case (a non-native-camera sim driver wired
-    # through CameraBridgeModule) used ROS2SimDriverModule, which was retired
-    # with the ROS2 sim driver preset; the native CameraBridgeModule backend
-    # also does not resolve on a machine without the real camera SDK
-    # installed, so that scenario is not currently representable here.
     robot = "sim_mujoco"
     driver_name = "MujocoDriverModule"
-    camera_source = "MujocoDriverModule"
+    camera_source = "camera"
 
     system = thunder_blueprint(
         robot=robot,
@@ -26,6 +20,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
     ).build()
 
     assert driver_name in system.modules
+    assert camera_source in system.modules
     assert "PerceptionModule" in system.modules
     assert "EncoderModule" not in system.modules
     assert "VisualServoModule" in system.modules
@@ -35,10 +30,7 @@ def test_sim_blueprint_wires_real_semantic_pipeline():
 
     def has_conn(src_mod: str, dst_mod: str, dst_port: str) -> bool:
         """Check if any connection exists from src_mod to dst_mod.dst_port."""
-        return any(
-            c[0] == src_mod and c[2] == dst_mod and c[3] == dst_port
-            for c in connections
-        )
+        return any(c[0] == src_mod and c[2] == dst_mod and c[3] == dst_port for c in connections)
 
     assert has_conn(camera_source, "PerceptionModule", "color_image")
     assert has_conn(camera_source, "PerceptionModule", "depth_image")
@@ -65,6 +57,37 @@ def test_sim_mujoco_blueprint_enables_camera_for_semantics():
 
     driver = system.get_module("MujocoDriverModule")
     assert driver._enable_camera is True
+    assert driver._publish_camera is False
+    assert driver._publish_lidar is False
+    assert driver._publish_imu is False
+    assert "camera" in system.modules
+    assert "lidar" not in system.modules
+
+    connections = set(system.connections)
+    assert (
+        "MujocoDriverModule",
+        "camera_image",
+        "PerceptionModule",
+        "color_image",
+    ) not in connections
+    assert (
+        "MujocoDriverModule",
+        "camera_image",
+        "VisualServoModule",
+        "color_image",
+    ) not in connections
+    assert (
+        "camera",
+        "color_image",
+        "PerceptionModule",
+        "color_image",
+    ) in connections
+    assert (
+        "camera",
+        "camera_info",
+        "VisualServoModule",
+        "camera_info",
+    ) in connections
 
 
 def test_semantic_blueprint_can_opt_into_standalone_encoder():

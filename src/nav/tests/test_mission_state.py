@@ -1,4 +1,4 @@
-from nav.mission.model.state import (
+from nav.model.state import (
     MissionEvent,
     MissionMode,
     MissionState,

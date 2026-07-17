@@ -1,4 +1,4 @@
-﻿"""Diagnostic export routes for GatewayModule."""
+"""Diagnostic export routes for GatewayModule."""
 
 from __future__ import annotations
 
@@ -10,27 +10,28 @@ import subprocess
 import tarfile
 import tempfile
 import time
-from datetime import datetime
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
-from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from runtime.algorithm_gates import INSPECTION_MVP_REQUIRED_GATES
-from runtime.diagnostics.dimos_gap import build_dimos_gap_report
-from runtime.diagnostics.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
-from gateway.schemas import AlgorithmBenchmarkLatestResponse
-from gateway.schemas import InspectionAcceptanceRequest
-from gateway.schemas import InspectionAcceptanceResponse
-from gateway.schemas import ProductFieldCheckRequest
-from gateway.schemas import ProductFieldCheckResponse
-from gateway.schemas import RealRuntimeEvidenceLatestResponse
-from gateway.schemas import RoutecheckLatestResponse
-from gateway.schemas import RuntimeContractResponse
+from sim.diagnostics.dataflow_report import build_runtime_dataflow_from_summary
+from sim.diagnostics.gap_report import build_dimos_gap_report
 
+from gateway.schemas import (
+    AlgorithmBenchmarkLatestResponse,
+    InspectionAcceptanceRequest,
+    InspectionAcceptanceResponse,
+    ProductFieldCheckRequest,
+    ProductFieldCheckResponse,
+    RealRuntimeEvidenceLatestResponse,
+    RoutecheckLatestResponse,
+    RuntimeContractResponse,
+)
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES, INSPECTION_MVP_REQUIRED_GATES
 
 # Simple TTL cache for expensive diagnostic builders.
 # Cache key: function name; cache value: (timestamp, result).
-# TTL is 5 seconds 鈥?diagnostics are read-only and stale-by-seconds is acceptable.
+# TTL is 5 seconds; diagnostics are read-only and stale-by-seconds is acceptable.
 _CACHE: dict[str, tuple[float, Any]] = {}
 _CACHE_TTL = 5.0
 
@@ -113,45 +114,49 @@ def _snapshot_or_error(name: str, builder) -> dict[str, Any]:
 
 
 def _maps_snapshot(gw: Any) -> dict[str, Any]:
-    from gateway.services.map_paths import active_map_name, nav_map_root_str
+    from maps.paths import nav_map_root_str
 
     root = pathlib.Path(nav_map_root_str())
-    maps: list[dict[str, Any]] = []
-    if root.is_dir():
-        for entry in sorted(root.iterdir()):
-            if not entry.is_dir() or entry.name == "active":
-                continue
-            pcd = entry / "map.pcd"
-            patches = entry / "patches"
-            maps.append(
-                {
-                    "name": entry.name,
-                    "has_pcd": pcd.is_file(),
-                    "has_tomogram": (entry / "tomogram.pickle").is_file(),
-                    "has_occupancy": (entry / "occupancy.npz").is_file(),
-                    "patch_count": (
-                        len(list(patches.iterdir())) if patches.is_dir() else 0
-                    ),
-                    "size_mb": (
-                        round(pcd.stat().st_size / 1024 / 1024, 1)
-                        if pcd.is_file()
-                        else None
-                    ),
-                }
-            )
 
     manager_snapshot: dict[str, Any] | None = None
     manager = getattr(gw, "_map_mgr", None)
-    if manager is not None and callable(getattr(manager, "_map_list", None)):
-        manager_snapshot = manager._map_list()
+    if manager is not None and callable(getattr(manager, "list_maps", None)):
+        manager_snapshot = manager.list_maps()
+        source = "maps_module"
+    else:
+        source = "native_maps_service"
+        try:
+            from maps.adapters.python.service import NativeMapsService
+
+            native = NativeMapsService(root)
+            try:
+                manager_snapshot = native.list_maps()
+            finally:
+                native.close()
+        except Exception as exc:
+            manager_snapshot = {
+                "action": "list",
+                "success": False,
+                "message": str(exc),
+                "maps": [],
+                "active": "",
+            }
+
+    maps = (
+        manager_snapshot.get("maps")
+        if isinstance(manager_snapshot, dict) and isinstance(manager_snapshot.get("maps"), list)
+        else []
+    )
+    active = str(manager_snapshot.get("active") or "") if isinstance(manager_snapshot, dict) else ""
 
     return {
         "schema_version": 1,
         "map_dir": str(root),
-        "active": active_map_name() or "",
+        "active": active,
         "maps": maps,
         "count": len(maps),
         "has_manager": manager is not None,
+        "source": source,
         "manager": manager_snapshot,
         "ts": time.time(),
     }
@@ -212,16 +217,15 @@ def _is_backend_status_payload(value: Mapping[str, Any]) -> bool:
 
 
 def _backend_status_payload(value: Mapping[str, Any]) -> dict[str, Any]:
-    payload = {
-        str(key): _json_ready(raw_value)
-        for key, raw_value in value.items()
-    }
-    payload.update({
-        "configured_backend": _json_ready(value.get("configured_backend")),
-        "backend": _json_ready(value.get("backend")),
-        "degraded": bool(value.get("degraded")),
-        "degraded_reason": str(value.get("degraded_reason") or ""),
-    })
+    payload = {str(key): _json_ready(raw_value) for key, raw_value in value.items()}
+    payload.update(
+        {
+            "configured_backend": _json_ready(value.get("configured_backend")),
+            "backend": _json_ready(value.get("backend")),
+            "degraded": bool(value.get("degraded")),
+            "degraded_reason": str(value.get("degraded_reason") or ""),
+        }
+    )
     return payload
 
 
@@ -506,12 +510,9 @@ def _missing_algorithm_benchmark_summary(reason: str) -> dict[str, Any]:
             "flow_ok": False,
             "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
             "validation_flow": [],
-            "gate_categories": {
-                gate: ["artifact_contract"]
-                for gate in DIMOS_BENCHMARK_REQUIRED_GATES
-            },
+            "gate_categories": {gate: ["artifact_contract"] for gate in DIMOS_BENCHMARK_REQUIRED_GATES},
             "claim_boundary": {
-                "global_planning_source": "static_saved_map_tomogram",
+                "global_planning_source": "static_saved_map_octomap",
                 "live_costmap_role": "local_planning_and_safety_only",
                 "simulation_only": True,
                 "field_readiness": False,
@@ -619,13 +620,9 @@ def build_algorithm_benchmark_latest_summary(
         "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
         "validation_flow": [],
         "claim_boundary": {},
-        "product_profiles": _algorithm_profile_unavailable(
-            "algorithm benchmark summary not found"
-        ),
+        "product_profiles": _algorithm_profile_unavailable("algorithm benchmark summary not found"),
         "dimos_gap": build_dimos_gap_report(
-            _missing_algorithm_benchmark_summary(
-                "algorithm benchmark summary not found"
-            ),
+            _missing_algorithm_benchmark_summary("algorithm benchmark summary not found"),
             source="algorithm_benchmark_report_not_found",
             include_summary=False,
         ),
@@ -644,15 +641,11 @@ def build_algorithm_benchmark_latest_summary(
     report_age_s = max(0.0, now - report_mtime)
     validation = latest.get("algorithm_validation")
     validation = validation if isinstance(validation, dict) else {}
-    missing_or_failed = [
-        str(item) for item in latest.get("missing_or_failed") or [] if item
-    ]
+    missing_or_failed = [str(item) for item in latest.get("missing_or_failed") or [] if item]
     required_sequence = [
         str(item)
         for item in (
-            validation.get("required_gate_sequence")
-            or latest.get("required")
-            or DIMOS_BENCHMARK_REQUIRED_GATES
+            validation.get("required_gate_sequence") or latest.get("required") or DIMOS_BENCHMARK_REQUIRED_GATES
         )
         if item
     ]
@@ -666,23 +659,16 @@ def build_algorithm_benchmark_latest_summary(
     if claim_allowed is not True:
         blockers.append("algorithm validation claim_allowed is not true")
     if missing_or_failed:
-        blockers.append(
-            "algorithm benchmark missing_or_failed: "
-            + ",".join(missing_or_failed)
-        )
+        blockers.append("algorithm benchmark missing_or_failed: " + ",".join(missing_or_failed))
     if set(DIMOS_BENCHMARK_REQUIRED_GATES) - set(required_sequence):
         blockers.append("algorithm benchmark required gate set is incomplete")
     if (
-        claim_boundary.get("live_costmap_role")
-        != "local_planning_and_safety_only"
+        claim_boundary.get("live_costmap_role") != "local_planning_and_safety_only"
         or claim_boundary.get("global_planning_source") == "live_costmap"
     ):
-        blockers.append(
-            "algorithm claim boundary must keep live_costmap local-only"
-        )
+        blockers.append("algorithm claim boundary must keep live_costmap local-only")
     claim_boundary_ok = (
-        claim_boundary.get("live_costmap_role")
-        == "local_planning_and_safety_only"
+        claim_boundary.get("live_costmap_role") == "local_planning_and_safety_only"
         and claim_boundary.get("global_planning_source") != "live_costmap"
     )
     runtime_dataflow = build_runtime_dataflow_from_summary(
@@ -696,11 +682,7 @@ def build_algorithm_benchmark_latest_summary(
             "fresh": report_age_s <= freshness,
             "report_age_s": report_age_s,
             "max_age_s": freshness,
-            "blocker": (
-                "algorithm benchmark summary is stale"
-                if report_age_s > freshness
-                else ""
-            ),
+            "blocker": ("algorithm benchmark summary is stale" if report_age_s > freshness else ""),
         },
         runtime_dataflow=runtime_dataflow,
         include_summary=False,
@@ -720,11 +702,7 @@ def build_algorithm_benchmark_latest_summary(
     }
     reason = None
     if blockers:
-        reason = (
-            "algorithm_benchmark_report_stale"
-            if report_age_s > freshness
-            else "algorithm_benchmark_not_passing"
-        )
+        reason = "algorithm_benchmark_report_stale" if report_age_s > freshness else "algorithm_benchmark_not_passing"
 
     return {
         **base,
@@ -812,9 +790,7 @@ def _real_runtime_preflight_blockers(
     if not validation:
         blockers.append("real-runtime-evidence validation payload missing")
     if contract_name != REAL_RUNTIME_CONTRACT:
-        blockers.append(
-            f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}"
-        )
+        blockers.append(f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}")
     if report.get("simulation_only") is not False:
         blockers.append("real-runtime-evidence simulation_only is not false")
     if age_s > max_age_s:
@@ -871,9 +847,7 @@ def _real_runtime_evidence_summary_from_report(
     runtime_contract = report.get("runtime_contract")
     runtime_contract = runtime_contract if isinstance(runtime_contract, dict) else {}
     contract_name = (
-        runtime_contract.get("name")
-        or validation.get("expected_contract")
-        or validation.get("runtime_contract")
+        runtime_contract.get("name") or validation.get("expected_contract") or validation.get("runtime_contract")
     )
     real_motion = validation.get("checked_real_motion_evidence")
     real_motion = real_motion if isinstance(real_motion, dict) else {}
@@ -890,9 +864,7 @@ def _real_runtime_evidence_summary_from_report(
         blockers.append("real-runtime-evidence gate did not pass")
         blockers.extend(str(item) for item in (validation.get("blockers") or []) if item)
     if contract_name != REAL_RUNTIME_CONTRACT:
-        blockers.append(
-            f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}"
-        )
+        blockers.append(f"real-runtime-evidence contract is not {REAL_RUNTIME_CONTRACT}")
     if report.get("simulation_only") is not False:
         blockers.append("real-runtime-evidence simulation_only is not false")
     if report.get("real_robot_motion") is not True:
@@ -1024,11 +996,7 @@ def _runtime_contract_snapshot() -> dict[str, Any]:
 def _load_topic_contract() -> dict[str, Any]:
     from runtime.yaml_helpers import load_yaml
 
-    path = (
-        pathlib.Path(__file__).resolve().parents[3]
-        / "config"
-        / "topic_contract.yaml"
-    )
+    path = pathlib.Path(__file__).resolve().parents[3] / "config" / "topic_contract.yaml"
     data = load_yaml(path, default={})
     if not isinstance(data, dict):
         data = {}
@@ -1056,8 +1024,8 @@ def _first_path_frame(path: Any) -> str | None:
 
 
 def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
-    from runtime.runtime_interface import runtime_contract_manifest
     from gateway.services.runtime_status import build_navigation_status
+    from runtime.runtime_interface import runtime_contract_manifest
 
     manifest = runtime_contract_manifest()
     runtime_frames = manifest.get("frames", {})
@@ -1081,19 +1049,13 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
     if not isinstance(runtime_boundary, dict):
         runtime_boundary = {}
     frame_tree = getattr(gw, "_frame_tree", None)
-    frame_tree_snapshot = (
-        frame_tree.snapshot()
-        if frame_tree is not None and hasattr(frame_tree, "snapshot")
-        else None
-    )
+    frame_tree_snapshot = frame_tree.snapshot() if frame_tree is not None and hasattr(frame_tree, "snapshot") else None
 
     with gw._state_lock:
         odom = dict(gw._odom) if isinstance(gw._odom, dict) else gw._odom
         mission = dict(gw._mission) if isinstance(gw._mission, dict) else gw._mission
         localization = (
-            dict(gw._localization_status)
-            if isinstance(gw._localization_status, dict)
-            else gw._localization_status
+            dict(gw._localization_status) if isinstance(gw._localization_status, dict) else gw._localization_status
         )
         path = list(gw._last_path or [])
 
@@ -1111,36 +1073,16 @@ def _frame_contract_snapshot(gw: Any) -> dict[str, Any]:
             "links": links,
         },
         "observed": {
-            "odometry_frame_id": (
-                odom.get("frame_id") if isinstance(odom, dict) else None
-            ),
-            "odometry_child_frame_id": (
-                odom.get("child_frame_id") if isinstance(odom, dict) else None
-            ),
-            "mission_frame_id": (
-                mission.get("frame_id") if isinstance(mission, dict) else None
-            ),
-            "mission_planning_frame_id": (
-                mission.get("planning_frame_id")
-                if isinstance(mission, dict)
-                else None
-            ),
-            "mission_odom_frame_id": (
-                mission.get("odom_frame_id") if isinstance(mission, dict) else None
-            ),
+            "odometry_frame_id": (odom.get("frame_id") if isinstance(odom, dict) else None),
+            "odometry_child_frame_id": (odom.get("child_frame_id") if isinstance(odom, dict) else None),
+            "mission_frame_id": (mission.get("frame_id") if isinstance(mission, dict) else None),
+            "mission_planning_frame_id": (mission.get("planning_frame_id") if isinstance(mission, dict) else None),
+            "mission_odom_frame_id": (mission.get("odom_frame_id") if isinstance(mission, dict) else None),
             "path_frame_id": _first_path_frame(path),
             "path_point_count": len(path),
             "has_map_odom_tf": bool(getattr(gw, "_has_map_odom_tf", False)),
-            "localization_backend": (
-                localization.get("backend")
-                if isinstance(localization, dict)
-                else None
-            ),
-            "localization_state": (
-                localization.get("state")
-                if isinstance(localization, dict)
-                else None
-            ),
+            "localization_backend": (localization.get("backend") if isinstance(localization, dict) else None),
+            "localization_state": (localization.get("state") if isinstance(localization, dict) else None),
         },
         "navigation_frames": frames,
         "frame_tree": _json_payload(frame_tree_snapshot),
@@ -1268,36 +1210,48 @@ def _gateway_acceptance_snapshots(gw: Any) -> dict[str, dict[str, Any]]:
     }
 
 
-def _inspection_map_gate(body: Any) -> dict[str, Any] | None:
+def _inspection_map_gate(gw: Any, body: Any) -> dict[str, Any] | None:
     map_dir = getattr(body, "map_dir", None)
     if not map_dir:
-        from gateway.services.map_paths import (
-            active_map_link,
-            active_map_name,
-            map_dir_for,
-            nav_map_root,
+        from gateway.services.map_service import (
+            active_map,
+            ensure_maps_service,
+            validate_map_artifacts,
         )
 
-        root = nav_map_root()
-        active_name = active_map_name(root)
-        if active_name:
-            candidate = map_dir_for(active_name, root)
-            if candidate.is_dir():
-                map_dir = str(candidate)
-        if not map_dir:
-            active_dir = active_map_link(root)
-            if active_dir.is_dir():
-                map_dir = str(active_dir)
+        try:
+            ensure_maps_service(gw)
+        except Exception:
+            return None
+        active_name = active_map(gw)
+        if not active_name:
+            return None
+        response = validate_map_artifacts(
+            gw,
+            active_name,
+            require_octomap=bool(getattr(body, "require_octomap", False)),
+            require_occupancy=bool(getattr(body, "require_occupancy", False)),
+            expected_data_source=getattr(body, "expected_data_source", None),
+            expected_source_profile=getattr(body, "expected_source_profile", None),
+            expected_frame_id=getattr(body, "expected_frame_id", None),
+        )
+        if response is None:
+            return None
+        gate = dict(response.get("gate") or {})
+        from diagnostics.field.gates import runtime_validation_gates
+
+        gate["validation_gate"] = runtime_validation_gates()["saved_map_artifact_gate"]
+        return gate
     if not map_dir:
         return None
-    from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
-    from runtime.same_source_map_artifacts import (
+    from diagnostics.field.gates import runtime_validation_gates
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
 
     gate = validate_saved_map_artifact_dir(
         pathlib.Path(str(map_dir)),
-        require_tomogram=bool(getattr(body, "require_tomogram", False)),
+        require_octomap=bool(getattr(body, "require_octomap", False)),
         require_occupancy=bool(getattr(body, "require_occupancy", False)),
         expected_data_source=getattr(body, "expected_data_source", None),
         expected_source_profile=getattr(body, "expected_source_profile", None),
@@ -1308,7 +1262,7 @@ def _inspection_map_gate(body: Any) -> dict[str, Any] | None:
 
 
 def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> dict[str, Any]:
-    from runtime.diagnostics.inspection_acceptance import goal_candidate_body_for_target
+    from diagnostics.field.inspection import goal_candidate_body_for_target
     from gateway.schemas import GoalCandidateRequest
     from gateway.services.control_commands import ControlCommandService
     from gateway.services.goal_builder import construct_goal_from_request
@@ -1347,10 +1301,7 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
             default_source=body.source,
             default_target_type=body.target_type,
         )
-        preview = (
-            ControlCommandService(gw)
-            .preview_navigation_plan(goal.preview_request(client_id=body.client_id))
-        )
+        preview = ControlCommandService(gw).preview_navigation_plan(goal.preview_request(client_id=body.client_id))
     except Exception as exc:
         return {
             "schema_version": 1,
@@ -1367,11 +1318,7 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
     return {
         "schema_version": 1,
         "ok": True,
-        "status": (
-            "preview_feasible"
-            if bool(preview.get("feasible", False))
-            else "preview_infeasible"
-        ),
+        "status": ("preview_feasible" if bool(preview.get("feasible", False)) else "preview_infeasible"),
         "target": goal.target_payload(ts=ts),
         "preview": preview,
         "reasons": reasons,
@@ -1381,8 +1328,8 @@ def _inspection_candidate(gw: Any, target: dict[str, Any], client_id: str) -> di
 
 
 def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
-    from runtime.diagnostics.gateway_runtime_acceptance import evaluate_gateway_runtime_acceptance
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
+    from diagnostics.field.gateway_acceptance import evaluate_gateway_runtime_acceptance
 
     gateway_acceptance = evaluate_gateway_runtime_acceptance(
         _gateway_acceptance_snapshots(gw),
@@ -1390,13 +1337,13 @@ def build_product_field_check_gateway_summary(gw: Any, body: Any) -> dict[str, A
     )
     return build_product_field_check(
         gateway_acceptance,
-        map_gate=_inspection_map_gate(body),
+        map_gate=_inspection_map_gate(gw, body),
         algorithm_gate=build_algorithm_benchmark_latest_summary(),
     )
 
 
 def build_inspection_acceptance_gateway_summary(gw: Any, body: Any) -> dict[str, Any]:
-    from runtime.diagnostics.inspection_acceptance import (
+    from diagnostics.field.inspection import (
         build_inspection_acceptance,
         inspection_targets_from_payload,
     )
@@ -1409,10 +1356,7 @@ def build_inspection_acceptance_gateway_summary(gw: Any, body: Any) -> dict[str,
         points=list(getattr(body, "points", None) or []),
         tag=getattr(body, "tag", None),
     )
-    candidates = [
-        _inspection_candidate(gw, target, str(getattr(body, "client_id", "unknown")))
-        for target in targets
-    ]
+    candidates = [_inspection_candidate(gw, target, str(getattr(body, "client_id", "unknown"))) for target in targets]
     return build_inspection_acceptance(
         field_check=field_check,
         targets=targets,
@@ -1474,9 +1418,7 @@ def register_diagnostic_routes(app, gw) -> None:
         summary="Run read-only product field readiness check",
     )
     async def product_field_check(
-        body: ProductFieldCheckRequest = Body(
-            default_factory=ProductFieldCheckRequest
-        ),
+        body: ProductFieldCheckRequest = Body(default_factory=ProductFieldCheckRequest),
     ):
         return build_product_field_check_gateway_summary(gw, body)
 
@@ -1486,9 +1428,7 @@ def register_diagnostic_routes(app, gw) -> None:
         summary="Run read-only inspection acceptance without publishing motion commands",
     )
     async def inspection_acceptance(
-        body: InspectionAcceptanceRequest = Body(
-            default_factory=InspectionAcceptanceRequest
-        ),
+        body: InspectionAcceptanceRequest = Body(default_factory=InspectionAcceptanceRequest),
     ):
         return build_inspection_acceptance_gateway_summary(
             gw,
@@ -1498,15 +1438,7 @@ def register_diagnostic_routes(app, gw) -> None:
     @app.get(
         "/api/v1/diagnostic_pack",
         summary="Export diagnostic tarball",
-        responses={
-            200: {
-                "content": {
-                    "application/gzip": {
-                        "schema": {"type": "string", "format": "binary"}
-                    }
-                }
-            }
-        },
+        responses={200: {"content": {"application/gzip": {"schema": {"type": "string", "format": "binary"}}}}},
     )
     async def diagnostic_pack():
         repo_root = pathlib.Path(__file__).resolve().parents[3]
@@ -1546,12 +1478,8 @@ def register_diagnostic_routes(app, gw) -> None:
                 "diag/health.json",
                 json.dumps(
                     {
-                        "modules_ok": sum(
-                            1 for v in modules_info.values() if "error" not in v
-                        ),
-                        "modules_fail": sum(
-                            1 for v in modules_info.values() if "error" in v
-                        ),
+                        "modules_ok": sum(1 for v in modules_info.values() if "error" not in v),
+                        "modules_fail": sum(1 for v in modules_info.values() if "error" in v),
                         "count": len(modules_info),
                     },
                     indent=2,
@@ -1561,12 +1489,16 @@ def register_diagnostic_routes(app, gw) -> None:
             )
 
             try:
-                git_out = subprocess.check_output(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=repo_root,
-                    stderr=subprocess.DEVNULL,
-                    timeout=3,
-                ).decode().strip()
+                git_out = (
+                    subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=repo_root,
+                        stderr=subprocess.DEVNULL,
+                        timeout=3,
+                    )
+                    .decode()
+                    .strip()
+                )
                 short = git_out[:12]
             except Exception:
                 git_out, short = "unknown", "unknown"

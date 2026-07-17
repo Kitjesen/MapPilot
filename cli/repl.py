@@ -9,7 +9,6 @@ import sys
 import time
 
 from . import term as T
-from .paths import project_root
 from .term import IS_TTY, c
 
 
@@ -27,23 +26,13 @@ class LingTuREPL(cmd.Cmd):
         try:
             return self._system.get_module(name)
         except KeyError:
-            if name == "SlamBridgeModule":
-                try:
-                    return self._system.get_module("SlamAdapterModule")
-                except KeyError:
-                    pass
-                try:
-                    return self._system.get_module("SlamModule")
-                except KeyError:
-                    return None
             return None
 
     def _get_slam_module(self):
-        return (
-            self._get_module("SlamAdapterModule")
-            or self._get_module("SlamModule")
-            or self._get_module("SlamBridgeModule")
-        )
+        return self._get_module("SlamAdapterModule") or self._get_module("SlamModule")
+
+    def _nav_commands(self):
+        return self._get_module("nav.skills") or self._get_module("nav.mission")
 
     def do_navigate(self, arg):
         """Send navigation goal: navigate <x> <y> [z]"""
@@ -58,21 +47,11 @@ class LingTuREPL(cmd.Cmd):
             print("  Error: coordinates must be numbers")
             return
 
-        nav = self._get_module("nav.mission")
-        if not nav or not hasattr(nav, "goal_pose"):
+        nav = self._nav_commands()
+        if not nav or not hasattr(nav, "navigate_to"):
             print("  Navigation not available")
             return
-
-        from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-
-        goal = PoseStamped(
-            pose=Pose(
-                position=Vector3(x=x, y=y, z=z),
-                orientation=Quaternion(x=0, y=0, z=0, w=1),
-            )
-        )
-        nav.goal_pose._deliver(goal)
-        print(f"  Goal -> ({x:.1f}, {y:.1f}, {z:.1f})")
+        print(f"  {nav.navigate_to(x, y, z=z)}")
 
     do_nav = do_navigate
 
@@ -81,15 +60,22 @@ class LingTuREPL(cmd.Cmd):
         if not arg:
             print("  Usage: go <instruction>  (e.g. go find the table)")
             return
-        nav = self._get_module("nav.mission")
-        if not nav or not hasattr(nav, "instruction"):
-            print("  Navigation not available")
+        planner = self._get_module("SemanticPlannerModule")
+        if not planner:
+            print("  Semantic planner not available")
             return
-        nav.instruction._deliver(arg)
-        print(f"  Instruction -> {arg}")
+        if hasattr(planner, "send_instruction"):
+            print(f"  {planner.send_instruction(arg)}")
+        else:
+            planner.instruction._deliver(arg)
+            print(f"  Instruction -> {arg}")
 
     def do_stop(self, arg):
         """Emergency stop -> halt all motion immediately."""
+        safety = self._get_module("nav.safety")
+        if safety and hasattr(safety, "emergency_stop"):
+            print(f"  {safety.emergency_stop()}")
+            return
         count = 0
         for _name, mod in self._system.modules.items():
             if hasattr(mod, "stop_signal") and hasattr(mod.stop_signal, "_deliver"):
@@ -99,12 +85,11 @@ class LingTuREPL(cmd.Cmd):
 
     def do_cancel(self, arg):
         """Cancel current navigation mission."""
-        nav = self._get_module("nav.mission")
-        if not nav or not hasattr(nav, "cancel"):
+        nav = self._nav_commands()
+        if not nav or not hasattr(nav, "cancel_mission"):
             print("  Navigation not available")
             return
-        nav.cancel._deliver("user")
-        print("  Mission cancelled")
+        print(f"  {nav.cancel_mission('user')}")
 
     def do_map(self, arg):
         """Map management: map list | save <name> | use <name> | build <name> | delete <name> | rename <old> <new>"""
@@ -114,7 +99,7 @@ class LingTuREPL(cmd.Cmd):
             return
 
         subcmd = parts[0]
-        name  = parts[1] if len(parts) > 1 else ""
+        name = parts[1] if len(parts) > 1 else ""
         name2 = parts[2] if len(parts) > 2 else ""
 
         if subcmd == "list":
@@ -125,8 +110,8 @@ class LingTuREPL(cmd.Cmd):
         elif subcmd == "use" and name:
             self._map_cmd({"action": "set_active", "name": name})
         elif subcmd == "build" and name:
-            print(f"  Building tomogram for '{name}'...")
-            self._map_cmd({"action": "build_tomogram", "name": name})
+            print(f"  Building OctoPlanner3D octomap for '{name}'...")
+            self._map_cmd({"action": "build_octomap", "name": name})
         elif subcmd == "delete" and name:
             self._map_cmd({"action": "delete", "name": name})
         elif subcmd == "rename" and name and name2:
@@ -135,40 +120,26 @@ class LingTuREPL(cmd.Cmd):
             print("  Usage: map list | save <name> | use <name> | build <name> | delete <name> | rename <old> <new>")
 
     def _map_cmd(self, cmd: dict) -> None:
-        """Send a command to MapService and print the result.
+        """Send a command to MapsModule and print the result.
 
-        Routes through the Module port when MapService is running.
-        Falls back to direct filesystem operations for list/use/delete
-        when the module is not in the blueprint (e.g. stub profile).
+        Persistent map reads and mutations always go through maps.service.
         """
-        import json as _json
+        from runtime.msgs.map import MapControlRequest
 
-        mod = self._get_module("nav.maps")
+        mod = self._get_module("maps.service")
         if mod is not None:
-            # Collect response via a one-shot callback
-            result_holder: list = []
-            # Temporarily subscribe a capture callback
-            mod.map_response._add_callback(result_holder.append)
-            try:
-                mod.map_command._deliver(_json.dumps(cmd))
-            finally:
-                # Remove our callback -> port stores list of callbacks
-                try:
-                    cbs = mod.map_response._callbacks
-                    if result_holder.append in cbs:
-                        cbs.remove(result_holder.append)
-                except Exception:
-                    pass
-
-            resp = result_holder[0] if result_holder else {"success": False, "message": "no response"}
+            execute = getattr(mod, "execute", None)
+            if not callable(execute):
+                print(f"  {T.red('Error')}: maps.service has no typed control endpoint")
+                return
+            resp = execute(MapControlRequest.from_mapping(cmd))
             self._map_print_response(cmd.get("action", ""), resp)
             return
 
-        # --- Fallback: no MapService (stub/dev) ---
-        self._map_fallback(cmd)
+        print(f"  {T.red('Error')}: maps.service is unavailable; start a map-enabled profile")
 
     def _map_print_response(self, action: str, resp: dict) -> None:
-        """Render a MapService response to the terminal."""
+        """Render a MapsModule response to the terminal."""
         if not resp.get("success"):
             print(f"  {T.red('Error')}: {resp.get('message', '?')}")
             return
@@ -185,40 +156,36 @@ class LingTuREPL(cmd.Cmd):
                 parts = []
                 if m.get("has_pcd"):
                     parts.append("pcd")
-                if m.get("has_tomogram"):
-                    parts.append("tomogram")
+                if m.get("has_octomap"):
+                    parts.append("octomap")
+                if m.get("has_occupancy"):
+                    parts.append("occupancy")
                 print(f"  {name}{marker}  [{', '.join(parts) or 'empty'}]")
 
         elif action == "save":
             pcd = resp.get("pcd", "?")
-            tomo_ok = resp.get("tomogram_ok", False)
             print(f"  Saved: {pcd}")
-            if tomo_ok:
-                print(f"  Tomogram: {resp.get('tomogram', '?')}")
+            if resp.get("octomap_ok"):
+                print(f"  Octomap: {resp.get('octomap', '?')}")
             else:
-                print(f"  {T.yellow('Tomogram build failed')} -> run: map build <name>")
+                print(f"  {T.yellow('Octomap build failed')} -> run: map build <name>")
             # Offer to set as active
             name = os.path.basename(os.path.dirname(pcd))
             print(f"  Tip: run  {T.bold(f'map use {name}')}  to activate this map")
 
         elif action == "set_active":
             name = resp.get("active", "?")
-            tomogram = resp.get("tomogram", "")
+            octomap = resp.get("octomap", "")
             nav = self._get_module("nav.mission")
-            if (
-                nav
-                and tomogram
-                and os.path.exists(tomogram)
-                and hasattr(nav, "reload_planner_tomogram")
-            ):
-                self._reload_planner_tomogram(nav, tomogram, name)
+            if nav and octomap and os.path.exists(octomap) and hasattr(nav, "reload_planner_map"):
+                self._reload_planner_map(nav, octomap, name)
             else:
                 print(f"  Active map: {T.green(name)}")
-                if tomogram and not os.path.exists(tomogram):
-                    print(f"  {T.yellow('No tomogram')} -> run: map build {name}")
+                if octomap and not os.path.exists(octomap):
+                    print(f"  {T.yellow('No octomap')} -> run: map build {name}")
 
-        elif action == "build_tomogram":
-            print(f"  Tomogram: {resp.get('tomogram', '?')}")
+        elif action in {"build_octomap", "build_octomap_artifact"}:
+            print(f"  Octomap: {resp.get('octomap', '?')}")
 
         elif action == "delete":
             print(f"  {resp.get('message', 'deleted')}")
@@ -229,114 +196,19 @@ class LingTuREPL(cmd.Cmd):
         else:
             print(f"  {resp}")
 
-    def _reload_planner_tomogram(self, nav, tomogram: str, name: str) -> None:
-        """Hot-reload the planner's tomogram after map switch."""
-        reload_planner_tomogram = getattr(nav, "reload_planner_tomogram", None)
-        if callable(reload_planner_tomogram):
-            result = reload_planner_tomogram(tomogram)
+    def _reload_planner_map(self, nav, map_path: str, name: str) -> None:
+        """Hot-reload the planner's saved-map artifact after map switch."""
+        reload_planner_map = getattr(nav, "reload_planner_map", None)
+        if callable(reload_planner_map):
+            result = reload_planner_map(map_path)
             if result.get("ok"):
-                mode = result.get("mode", "tomogram")
-                suffix = "costmap reloaded" if mode == "costmap" else "tomogram hot-reloaded"
+                mode = result.get("mode", "map")
+                suffix = "costmap reloaded" if mode == "costmap" else "map hot-reloaded"
                 print(f"  Active map: {T.green(name)} ({suffix})")
             else:
-                print(f"  Active map: {T.green(name)} (restart required to apply new tomogram)")
+                print(f"  Active map: {T.green(name)} (restart required to apply new map artifact)")
         else:
-            print(f"  Active map: {T.green(name)} (restart required to apply new tomogram)")
-
-    def _map_fallback(self, cmd: dict) -> None:
-        """Direct filesystem fallback when MapService is not running."""
-        import shutil
-
-        from cli.profiles_data import _default_map_dir
-        action = cmd.get("action", "")
-        map_dir = _default_map_dir()
-
-        if action == "list":
-            if not os.path.isdir(map_dir):
-                print(f"  No maps directory: {map_dir}")
-                return
-            active_link = os.path.join(map_dir, "active")
-            active_name = os.path.basename(os.readlink(active_link)) if os.path.islink(active_link) else ""
-            maps = sorted(d for d in os.listdir(map_dir)
-                          if os.path.isdir(os.path.join(map_dir, d)) and d != "active")
-            if not maps:
-                print("  No maps found")
-                return
-            for m in maps:
-                marker = T.green(" *") if m == active_name else ""
-                parts = []
-                if os.path.exists(os.path.join(map_dir, m, "map.pcd")):
-                    parts.append("pcd")
-                if os.path.exists(os.path.join(map_dir, m, "tomogram.pickle")):
-                    parts.append("tomogram")
-                print(f"  {m}{marker}  [{', '.join(parts) or 'empty'}]")
-
-        elif action == "set_active":
-            name = cmd.get("name", "")
-            map_path = os.path.join(map_dir, name)
-            if not os.path.isdir(map_path):
-                print(f"  Map not found: {name}")
-                return
-            active_link = os.path.join(map_dir, "active")
-            if os.path.islink(active_link):
-                os.unlink(active_link)
-            elif os.path.exists(active_link):
-                shutil.rmtree(active_link)
-            os.symlink(map_path, active_link)
-            tomogram = os.path.join(map_path, "tomogram.pickle")
-            nav = self._get_module("nav.mission")
-            if nav and os.path.exists(tomogram):
-                self._reload_planner_tomogram(nav, tomogram, name)
-            else:
-                msg = "" if os.path.exists(tomogram) else f" (no tomogram -> run: map build {name})"
-                print(f"  Active map: {T.green(name)}{msg}")
-
-        elif action == "build_tomogram":
-            import sys
-            name = cmd.get("name", "")
-            pcd_path = os.path.join(map_dir, name, "map.pcd")
-            tomogram_path = os.path.join(map_dir, name, "tomogram.pickle")
-            if not os.path.exists(pcd_path):
-                print(f"  No PCD file: {pcd_path}")
-                return
-            print(f"  Building tomogram from {pcd_path}...")
-            try:
-                tomo_dir = (
-                    project_root()
-                    / "src"
-                    / "nav"
-                    / "planning"
-                    / "vendor"
-                    / "pct_planner"
-                    / "tomography"
-                    / "scripts"
-                )
-                tds = str(tomo_dir)
-                if tds not in sys.path:
-                    sys.path.insert(0, tds)
-                from nav.services.plan.global_planner.algorithm.pct.vendor.pct_planner.tomography.scripts.build_tomogram import (
-                    build_tomogram_from_pcd,
-                )
-                build_tomogram_from_pcd(pcd_path, tomogram_path)
-                print(f"  Tomogram: {tomogram_path}")
-            except Exception as e:
-                print(f"  Build failed: {e}")
-
-        elif action == "delete":
-            name = cmd.get("name", "")
-            map_path = os.path.join(map_dir, name)
-            if not os.path.isdir(map_path):
-                print(f"  Map not found: {name}")
-                return
-            shutil.rmtree(map_path)
-            print(f"  Deleted: {name}")
-
-        elif action == "save":
-            print("  MapService not running -> cannot call map-save adapter")
-            print("  Start with a map-enabled profile (e.g. lingtu map)")
-
-        else:
-            print(f"  MapService not running (action: {action})")
+            print(f"  Active map: {T.green(name)} (restart required to apply new map artifact)")
 
     # -鈧?鈧?SLAM hot-switch -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?
     def do_slam(self, arg):
@@ -381,6 +253,7 @@ class LingTuREPL(cmd.Cmd):
     def _slam_status(self):
         try:
             from runtime.service_manager import get_service_manager
+
             svc = get_service_manager()
             st = svc.status(
                 "lidar",
@@ -431,6 +304,7 @@ class LingTuREPL(cmd.Cmd):
     def _slam_switch(self, profile: str):
         try:
             from runtime.service_manager import get_service_manager
+
             svc = get_service_manager()
         except Exception as e:
             print(f"  ServiceManager not available: {e}")
@@ -485,12 +359,13 @@ class LingTuREPL(cmd.Cmd):
             print(f"  Warning: services not ready after 10s: {', '.join(wait_services)}")
 
         # Update config
-        if hasattr(self, '_cfg') and self._cfg:
+        if hasattr(self, "_cfg") and self._cfg:
             self._cfg["slam_profile"] = profile
 
     def _slam_stop(self):
         try:
             from runtime.service_manager import get_service_manager
+
             svc = get_service_manager()
             svc.stop("super_lio_relocation", "super_lio", "slam_pgo", "localizer", "slam")
             print("  All SLAM services stopped")
@@ -714,7 +589,8 @@ class LingTuREPL(cmd.Cmd):
 
         def _context():
             ctx = {
-                "robot_x": 0.0, "robot_y": 0.0,
+                "robot_x": 0.0,
+                "robot_y": 0.0,
                 "visible_objects": "none",
                 "nav_status": "IDLE",
                 "memory_context": "none",
@@ -743,15 +619,18 @@ class LingTuREPL(cmd.Cmd):
         def _navigate_to(x, y, z=None, **_):
             if nav and hasattr(nav, "goal_pose"):
                 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+
                 if z is None:
                     try:
                         z = float(nav._robot_pos[2])
                     except Exception:
                         z = 0.0
-                goal = PoseStamped(pose=Pose(
-                    position=Vector3(x=float(x), y=float(y), z=float(z)),
-                    orientation=Quaternion(x=0, y=0, z=0, w=1),
-                ))
+                goal = PoseStamped(
+                    pose=Pose(
+                        position=Vector3(x=float(x), y=float(y), z=float(z)),
+                        orientation=Quaternion(x=0, y=0, z=0, w=1),
+                    )
+                )
                 nav.goal_pose._deliver(goal)
                 return f"Navigating to ({float(x):.1f}, {float(y):.1f}, {float(z):.1f})"
             return "Navigation not available"
@@ -787,10 +666,7 @@ class LingTuREPL(cmd.Cmd):
                                 f"coordinates withheld (encoder={r.get('encoder_type', 'unknown')})"
                             )
                         results = r.get("results", [])[:3]
-                        return "; ".join(
-                            f"({x['x']:.1f},{x['y']:.1f}) score={x['score']:.2f}"
-                            for x in results
-                        )
+                        return "; ".join(f"({x['x']:.1f},{x['y']:.1f}) score={x['score']:.2f}" for x in results)
                     return "No matching memory"
                 except Exception as e:
                     return f"Memory query error: {e}"
@@ -830,7 +706,7 @@ class LingTuREPL(cmd.Cmd):
 
         # Patch AgentLoop to print each step live
         try:
-            from decision.tasking.agent_loop import AgentLoop
+            from decision.tasks.agent import AgentLoop
         except ImportError:
             print("  AgentLoop not available -> check semantic stack is enabled")
             return
@@ -841,6 +717,7 @@ class LingTuREPL(cmd.Cmd):
                 name = fn.get("name", "")
                 try:
                     import json as _json
+
                     args = _json.loads(fn.get("arguments", "{}"))
                 except Exception:
                     args = {}
@@ -958,9 +835,7 @@ class LingTuREPL(cmd.Cmd):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                resp = loop.run_until_complete(
-                    llm_client.chat(arg.strip(), system_prompt=system_prompt)
-                )
+                resp = loop.run_until_complete(llm_client.chat(arg.strip(), system_prompt=system_prompt))
                 result_holder["response"] = resp
             except Exception as e:
                 result_holder["error"] = str(e)
@@ -968,6 +843,7 @@ class LingTuREPL(cmd.Cmd):
                 loop.close()
 
         import threading
+
         t = threading.Thread(target=_run, daemon=True)
         t.start()
         try:
@@ -1005,16 +881,17 @@ class LingTuREPL(cmd.Cmd):
             return
 
         if subcmd in ("", "status"):
-            backend  = getattr(llm_mod, "_backend", "?")
-            model    = getattr(llm_mod, "_model",   "?")
-            client   = getattr(llm_mod, "_client",  None)
-            req_cnt  = llm_mod.request.msg_count  if hasattr(llm_mod, "request")  else 0
+            backend = getattr(llm_mod, "_backend", "?")
+            model = getattr(llm_mod, "_model", "?")
+            client = getattr(llm_mod, "_client", None)
+            req_cnt = llm_mod.request.msg_count if hasattr(llm_mod, "request") else 0
             resp_cnt = llm_mod.response.msg_count if hasattr(llm_mod, "response") else 0
 
-            key_env  = getattr(getattr(client, "config", None), "api_key_env", "?")
+            key_env = getattr(getattr(client, "config", None), "api_key_env", "?")
             import os
-            key_set  = bool(os.environ.get(key_env, ""))
-            key_str  = T.green("set") if key_set else T.red("not set")
+
+            key_set = bool(os.environ.get(key_env, ""))
+            key_str = T.green("set") if key_set else T.red("not set")
 
             print(f"\n  LLM backend:  {T.bold(backend)}")
             print(f"  Model:        {model or T.dim('(default)')}")
@@ -1049,8 +926,9 @@ class LingTuREPL(cmd.Cmd):
                 asyncio.set_event_loop(loop)
                 try:
                     resp = loop.run_until_complete(
-                        client.chat("Reply with exactly: OK",
-                                    system_prompt="You are a test assistant. Reply only with 'OK'.")
+                        client.chat(
+                            "Reply with exactly: OK", system_prompt="You are a test assistant. Reply only with 'OK'."
+                        )
                     )
                     result_holder["response"] = resp
                 except Exception as e:
@@ -1074,13 +952,14 @@ class LingTuREPL(cmd.Cmd):
         elif subcmd == "backends":
             print("\n  Available LLM backends:\n")
             backends = [
-                ("kimi",   "MOONSHOT_API_KEY",  "Kimi K2 (Moonshot AI, China-direct, recommended)"),
-                ("qwen",   "DASHSCOPE_API_KEY", "Qwen (Alibaba, China-direct fallback)"),
-                ("openai", "OPENAI_API_KEY",    "GPT-4o (OpenAI, needs VPN in China)"),
+                ("kimi", "MOONSHOT_API_KEY", "Kimi K2 (Moonshot AI, China-direct, recommended)"),
+                ("qwen", "DASHSCOPE_API_KEY", "Qwen (Alibaba, China-direct fallback)"),
+                ("openai", "OPENAI_API_KEY", "GPT-4o (OpenAI, needs VPN in China)"),
                 ("claude", "ANTHROPIC_API_KEY", "Claude (Anthropic, needs VPN in China)"),
-                ("mock",   "",                  "Mock (offline testing, no real LLM)"),
+                ("mock", "", "Mock (offline testing, no real LLM)"),
             ]
             import os
+
             current = getattr(llm_mod, "_backend", "?")
             for name, env, desc in backends:
                 key_ok = bool(os.environ.get(env)) if env else True
@@ -1109,9 +988,7 @@ class LingTuREPL(cmd.Cmd):
                 return
             for r in result.get("results", []):
                 bar = "#" * int(r["score"] * 20)
-                print(
-                    f"    ({r['x']:6.1f}, {r['y']:6.1f})  {bar} {r['score']:.2f}  {r.get('labels', '')[:40]}"
-                )
+                print(f"    ({r['x']:6.1f}, {r['y']:6.1f})  {bar} {r['score']:.2f}  {r.get('labels', '')[:40]}")
         elif subcmd == "stats":
             s = mod.get_memory_stats()
             print(f"  Backend:  {s['backend']}")
@@ -1190,9 +1067,9 @@ class LingTuREPL(cmd.Cmd):
         n_mods = len(s.modules)
         n_conn = len(s.connections)
         active = sum(
-            1 for mod in s.modules.values()
-            if sum(p.msg_count for p in list(mod.ports_in.values()) +
-                   list(mod.ports_out.values())) > 0
+            1
+            for mod in s.modules.values()
+            if sum(p.msg_count for p in list(mod.ports_in.values()) + list(mod.ports_out.values())) > 0
         )
         print(f"  Startup    {n_mods} modules loaded, {n_conn} connections")
         print(f"             {active} modules have received/sent data")
@@ -1200,9 +1077,9 @@ class LingTuREPL(cmd.Cmd):
         # SLAM / localization
         slam = self._get_slam_module()
         if slam:
-            odom_n  = slam.odometry.msg_count  if hasattr(slam, "odometry")  else 0
+            odom_n = slam.odometry.msg_count if hasattr(slam, "odometry") else 0
             cloud_n = slam.map_cloud.msg_count if hasattr(slam, "map_cloud") else 0
-            odom_ok  = T.green("flowing") if odom_n  > 0 else T.yellow("no data yet")
+            odom_ok = T.green("flowing") if odom_n > 0 else T.yellow("no data yet")
             cloud_ok = T.green("flowing") if cloud_n > 0 else T.yellow("no data yet")
             print("\n  SLAM")
             print(f"    odometry   {odom_ok}  ({odom_n} msgs)")
@@ -1236,8 +1113,8 @@ class LingTuREPL(cmd.Cmd):
 
         # -鈧?鈧?C++ backends -鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?鈧?        terrain = self._get_module("nav.terrain")
         terrain = self._get_module("nav.terrain")
-        lp      = self._get_module("nav.local_planner")
-        pf      = self._get_module("nav.path_follower")
+        lp = self._get_module("nav.local_planner")
+        pf = self._get_module("nav.path_follower")
         if terrain or lp or pf:
             print("\n  C++ backends")
             if terrain:
@@ -1388,11 +1265,7 @@ class LingTuREPL(cmd.Cmd):
 
                 if nav:
                     state = nav._state
-                    wp = (
-                        f"{nav._tracker.wp_index}/{nav._tracker.path_length}"
-                        if hasattr(nav, "_tracker")
-                        else "-"
-                    )
+                    wp = f"{nav._tracker.wp_index}/{nav._tracker.path_length}" if hasattr(nav, "_tracker") else "-"
                     color = T.green if state in ("IDLE", "SUCCESS") else T.yellow if state == "EXECUTING" else T.red
                     print(f"  NAV:   {color(state)}  waypoint {wp}")
 
@@ -1471,18 +1344,12 @@ class LingTuREPL(cmd.Cmd):
             print("  Inputs:")
             for pname, port in mod.ports_in.items():
                 policy = getattr(port, "_policy_name", "all")
-                print(
-                    f"    {pname}: {port.msg_type.__name__}  "
-                    f"count={port.msg_count}  policy={policy}"
-                )
+                print(f"    {pname}: {port.msg_type.__name__}  count={port.msg_count}  policy={policy}")
         if mod.ports_out:
             print("  Outputs:")
             for pname, port in mod.ports_out.items():
                 n_subs = len(getattr(port, "_callbacks", []))
-                print(
-                    f"    {pname}: {port.msg_type.__name__}  "
-                    f"count={port.msg_count}  subs={n_subs}"
-                )
+                print(f"    {pname}: {port.msg_type.__name__}  count={port.msg_count}  subs={n_subs}")
         print()
 
     do_m = do_module

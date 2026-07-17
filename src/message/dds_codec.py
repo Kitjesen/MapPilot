@@ -17,7 +17,7 @@ from runtime.msgs.geometry import (
 )
 from runtime.msgs.nav import OccupancyGrid, Odometry
 from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import Imu, PointCloud2
+from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, Imu, PointCloud2
 from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
 from runtime.tf import TF_STATIC_TOPIC, TF_TOPIC, tf_message_from_any
 
@@ -35,11 +35,21 @@ def to_dds_message(topic: str, msg: Any) -> Any:
         return to_dds_livox_custom_msg(msg)
     if topic in {TOPICS.registered_cloud, TOPICS.map_cloud, TOPICS.saved_map_cloud}:
         return to_dds_pointcloud2(msg)
+    if topic in {TOPICS.camera_color, TOPICS.camera_depth}:
+        return to_dds_image(msg)
+    if topic == TOPICS.camera_info:
+        return to_dds_camera_info(msg)
+    if topic == TOPICS.gnss_fix:
+        return to_dds_gnss_fix(msg)
+    if topic == TOPICS.gnss_status:
+        return to_dds_gnss_status(msg)
+    if topic == TOPICS.gnss_odom:
+        return to_dds_odometry(msg)
     if topic == TOPICS.traversability:
         return to_dds_occupancy_grid(msg)
     if topic == TOPICS.odometry:
         return to_dds_odometry(msg)
-    if topic == TOPICS.imu:
+    if topic in {TOPICS.imu, TOPICS.raw_imu}:
         return to_dds_imu(msg)
     if topic == TOPICS.localization_quality:
         return to_dds_float32(msg)
@@ -47,6 +57,10 @@ def to_dds_message(topic: str, msg: Any) -> Any:
         return to_dds_text(json.dumps(dict(msg), ensure_ascii=True, sort_keys=True))
     if topic == TOPICS.goal_pose:
         return to_dds_pose_stamped(msg)
+    if topic == TOPICS.cmd_vel:
+        return to_dds_final_velocity_command(msg)
+    if topic == TOPICS.teleop_cmd_vel:
+        return to_dds_twist_stamped(msg, topic_default_frame_id(topic))
     if topic in {TOPICS.cancel, TOPICS.semantic_instruction}:
         return to_dds_string(msg)
     raise ValueError(f"DDS endpoint publisher for {topic} is not implemented")
@@ -61,7 +75,7 @@ def from_dds_message(topic: str, msg: Any) -> Any:
         return msg
     if topic == TOPICS.nav_way_point:
         return from_dds_pose_stamped(msg, topic_default_frame_id(TOPICS.nav_way_point))
-    if topic == TOPICS.cmd_vel:
+    if topic in {TOPICS.cmd_vel, TOPICS.teleop_cmd_vel}:
         return from_dds_twist_stamped(msg)
     if topic == TOPICS.goal_pose:
         return from_dds_pose_stamped(msg, topic_default_frame_id(TOPICS.goal_pose))
@@ -69,8 +83,20 @@ def from_dds_message(topic: str, msg: Any) -> Any:
         return from_dds_string(msg)
     if topic == TOPICS.odometry:
         return from_dds_odometry(msg)
+    if topic in {TOPICS.imu, TOPICS.raw_imu}:
+        return from_dds_imu(msg)
     if topic in {TOPICS.registered_cloud, TOPICS.map_cloud, TOPICS.saved_map_cloud}:
         return from_dds_pointcloud2(msg)
+    if topic in {TOPICS.camera_color, TOPICS.camera_depth}:
+        return from_dds_image(msg)
+    if topic == TOPICS.camera_info:
+        return from_dds_camera_info(msg)
+    if topic == TOPICS.gnss_fix:
+        return from_dds_gnss_fix(msg)
+    if topic == TOPICS.gnss_status:
+        return from_dds_gnss_status(msg)
+    if topic == TOPICS.gnss_odom:
+        return from_dds_odometry(msg)
     if topic == TOPICS.traversability:
         return from_dds_occupancy_grid(msg)
     return msg
@@ -153,15 +179,133 @@ def to_dds_pointcloud2(cloud: PointCloud2) -> Any:
     )
 
 
+def _image_encoding(fmt: ImageFormat) -> str:
+    return {
+        ImageFormat.BGR: "bgr8",
+        ImageFormat.RGB: "rgb8",
+        ImageFormat.RGBA: "rgba8",
+        ImageFormat.GRAY: "mono8",
+        ImageFormat.DEPTH_F32: "32FC1",
+        ImageFormat.DEPTH_U16: "16UC1",
+    }.get(fmt, str(getattr(fmt, "value", fmt)))
+
+
+def _image_format(encoding: str) -> ImageFormat:
+    return {
+        "bgr8": ImageFormat.BGR,
+        "rgb8": ImageFormat.RGB,
+        "rgba8": ImageFormat.RGBA,
+        "mono8": ImageFormat.GRAY,
+        "8UC1": ImageFormat.GRAY,
+        "32FC1": ImageFormat.DEPTH_F32,
+        "16UC1": ImageFormat.DEPTH_U16,
+    }.get(str(encoding), ImageFormat.BGR)
+
+
+def to_dds_image(image: Image) -> Any:
+    arr = np.asarray(image.data)
+    if arr.ndim == 2:
+        height, width = arr.shape
+    else:
+        height, width = arr.shape[:2]
+    payload = np.ascontiguousarray(arr).view(np.uint8).reshape(-1)
+    return _dds().DDS_Image(
+        header=to_dds_header(image.frame_id, image.ts),
+        height=int(height),
+        width=int(width),
+        encoding=_image_encoding(image.format),
+        is_bigendian=bool(getattr(image, "is_bigendian", False)),
+        step=int(payload.size // max(int(height), 1)),
+        data=payload.tolist(),
+    )
+
+
+def to_dds_camera_info(info: CameraIntrinsics) -> Any:
+    k = [
+        float(info.fx),
+        0.0,
+        float(info.cx),
+        0.0,
+        float(info.fy),
+        float(info.cy),
+        0.0,
+        0.0,
+        1.0,
+    ]
+    p = [
+        float(info.fx),
+        0.0,
+        float(info.cx),
+        0.0,
+        0.0,
+        float(info.fy),
+        float(info.cy),
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+    ]
+    return _dds().DDS_CameraInfo(
+        header=to_dds_header(getattr(info, "frame_id", None) or "camera_link", getattr(info, "ts", None)),
+        height=int(info.height),
+        width=int(info.width),
+        depth_scale=float(getattr(info, "depth_scale", 1.0)),
+        distortion_model="plumb_bob",
+        d=[
+            float(getattr(info, "dist_k1", 0.0)),
+            float(getattr(info, "dist_k2", 0.0)),
+            float(getattr(info, "dist_p1", 0.0)),
+            float(getattr(info, "dist_p2", 0.0)),
+            float(getattr(info, "dist_k3", 0.0)),
+        ],
+        k=k,
+        r=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        p=p,
+    )
+
+
+def to_dds_gnss_fix(fix: Any) -> Any:
+    covariance = list(getattr(fix, "covariance", [0.0] * 9))
+    if len(covariance) != 9:
+        covariance = [0.0] * 9
+    return _dds().DDS_GnssFix(
+        header=to_dds_header(getattr(fix, "frame_id", None) or "gnss_antenna", getattr(fix, "ts", None)),
+        latitude=float(getattr(fix, "lat", getattr(fix, "latitude", 0.0))),
+        longitude=float(getattr(fix, "lon", getattr(fix, "longitude", 0.0))),
+        altitude=float(getattr(fix, "alt", getattr(fix, "altitude", 0.0))),
+        fix_type=int(getattr(fix, "fix_type", 0)),
+        position_covariance=[float(value) for value in covariance],
+        num_sat=int(getattr(fix, "num_sat", 0)),
+        num_sat_used=int(getattr(fix, "num_sat_used", 0)),
+        hdop=float(getattr(fix, "hdop", getattr(fix, "hdop_estimate", 99.9))),
+        rtcm_age_s=float(getattr(fix, "rtcm_age_s", 99.9)),
+    )
+
+
+def to_dds_gnss_status(status: Any) -> Any:
+    fix_type = int(getattr(status, "fix_type", 0))
+    return _dds().DDS_GnssStatus(
+        header=to_dds_header("gnss_antenna", getattr(status, "ts", None)),
+        device=str(getattr(status, "receiver", getattr(status, "device", "WTRTK-980"))),
+        fix_type=fix_type,
+        link_ok=bool(getattr(status, "link_ok", False)),
+        rtk=fix_type in {4, 5},
+        num_sat=int(getattr(status, "num_sat", 0)),
+        num_sat_used=int(getattr(status, "num_sat_used", 0)),
+        hdop=float(getattr(status, "hdop", 99.9)),
+        rtcm_age_s=float(getattr(status, "rtcm_age_s", 99.9)),
+        error=str(getattr(status, "error", "")),
+    )
+
+
 def to_dds_occupancy_grid(grid: OccupancyGrid | Mapping[str, Any]) -> Any:
     if isinstance(grid, OccupancyGrid):
         payload = grid.to_dict()
     elif isinstance(grid, Mapping):
         payload = dict(grid)
     else:
-        raise TypeError(
-            f"traversability expects OccupancyGrid or dict, got {type(grid).__name__}"
-        )
+        raise TypeError(f"traversability expects OccupancyGrid or dict, got {type(grid).__name__}")
 
     values = np.asarray(payload.get("grid"), dtype=np.int16)
     if values.ndim != 2:
@@ -216,9 +360,7 @@ def to_dds_livox_custom_msg(scan: Any) -> Any:
     if hasattr(scan, "timestamp_ns") and hasattr(scan, "points"):
         return _dds().livox_frame_to_msg(scan)
     if not isinstance(scan, PointCloud2):
-        raise TypeError(
-            f"lidar_scan expects LivoxCustomMsg or PointCloud2, got {type(scan).__name__}"
-        )
+        raise TypeError(f"lidar_scan expects LivoxCustomMsg or PointCloud2, got {type(scan).__name__}")
 
     points = np.asarray(scan.points, dtype=np.float32)
     if points.ndim != 2 or points.shape[1] not in (3, 4):
@@ -285,10 +427,65 @@ def to_dds_float32(value: Any) -> Any:
     return _dds().DDS_Float32(data=float(value))
 
 
+def to_dds_twist_stamped(value: Twist, frame_id: str | None = None) -> Any:
+    return _dds().DDS_TwistStamped(
+        header=to_dds_header(frame_id or body_frame_id(), getattr(value, "ts", None)),
+        twist=_dds().DDS_Twist(
+            linear=to_dds_vector(value.linear),
+            angular=to_dds_vector(value.angular),
+        ),
+    )
+
+
+def _required_positive_uint64(value: Any, field: str) -> int:
+    parsed = int(value)
+    if parsed <= 0 or parsed > 0xFFFF_FFFF_FFFF_FFFF:
+        raise ValueError(f"{field} must be within uint64 positive range")
+    return parsed
+
+
+def to_dds_final_velocity_command(value: Any) -> Any:
+    required = (
+        "host_boot_id",
+        "producer_boot_id",
+        "output_seq",
+        "source_boottime_ns",
+        "source_wall_ns",
+        "twist",
+    )
+    if not all(hasattr(value, field) for field in required):
+        raise ValueError(
+            "final /nav/cmd_vel publication requires a "
+            "FinalVelocityCommand envelope from the native endpoint"
+        )
+    host_boot_id = str(value.host_boot_id or "")
+    producer_boot_id = str(value.producer_boot_id or "")
+    if not host_boot_id or not producer_boot_id:
+        raise ValueError(
+            "FinalVelocityCommand envelope requires non-empty boot ids"
+        )
+    twist = value.twist
+    return _dds().DDS_FinalVelocityCommand(
+        host_boot_id=host_boot_id,
+        producer_boot_id=producer_boot_id,
+        output_seq=_required_positive_uint64(value.output_seq, "output_seq"),
+        source_boottime_ns=_required_positive_uint64(
+            value.source_boottime_ns,
+            "source_boottime_ns",
+        ),
+        source_wall_ns=_required_positive_uint64(
+            value.source_wall_ns,
+            "source_wall_ns",
+        ),
+        twist=_dds().DDS_Twist(
+            linear=to_dds_vector(twist.linear),
+            angular=to_dds_vector(twist.angular),
+        ),
+    )
+
+
 def from_dds_time(stamp: Any) -> float:
-    return float(getattr(stamp, "sec", 0.0)) + float(
-        getattr(stamp, "nanosec", 0.0)
-    ) * 1e-9
+    return float(getattr(stamp, "sec", 0.0)) + float(getattr(stamp, "nanosec", 0.0)) * 1e-9
 
 
 def from_dds_pose_stamped(msg: Any, frame_id: str) -> PoseStamped:
@@ -296,7 +493,7 @@ def from_dds_pose_stamped(msg: Any, frame_id: str) -> PoseStamped:
     pose = getattr(msg, "pose", None)
     if pose is None:
         raise TypeError("DDS PoseStamped missing pose")
-    position = getattr(pose, "position")
+    position = pose.position
     orientation = getattr(pose, "orientation", None)
     return PoseStamped(
         pose=Pose(
@@ -389,10 +586,7 @@ def from_dds_pointcloud2(msg: Any) -> PointCloud2:
     if step < 12:
         raise ValueError(f"PointCloud2 point_step too small: {step}")
     raw = np.frombuffer(bytes(getattr(msg, "data", b"")), dtype=np.uint8).reshape(n, step)
-    fields = {
-        str(getattr(field, "name", "")): int(getattr(field, "offset", 0))
-        for field in getattr(msg, "fields", [])
-    }
+    fields = {str(getattr(field, "name", "")): int(getattr(field, "offset", 0)) for field in getattr(msg, "fields", [])}
     x_off = fields.get("x", 0)
     y_off = fields.get("y", 4)
     z_off = fields.get("z", 8)
@@ -413,6 +607,84 @@ def from_dds_pointcloud2(msg: Any) -> PointCloud2:
         width=int(getattr(msg, "width", n) or n),
         is_bigendian=bool(getattr(msg, "is_bigendian", False)),
         is_dense=bool(getattr(msg, "is_dense", True)),
+    )
+
+
+def from_dds_image(msg: Any) -> Image:
+    encoding = str(getattr(msg, "encoding", "") or "bgr8")
+    fmt = _image_format(encoding)
+    height = int(getattr(msg, "height", 0))
+    width = int(getattr(msg, "width", 0))
+    raw = np.frombuffer(bytes(getattr(msg, "data", b"")), dtype=np.uint8)
+    if encoding == "16UC1":
+        arr = raw.view(np.uint16).reshape(height, width)
+    elif encoding == "32FC1":
+        arr = raw.view(np.float32).reshape(height, width)
+    else:
+        channels = 4 if encoding == "rgba8" else 1 if encoding in {"mono8", "8UC1"} else 3
+        arr = raw.reshape(height, width, channels) if channels > 1 else raw.reshape(height, width)
+    return Image(
+        data=arr.copy(),
+        format=fmt,
+        ts=from_dds_time(getattr(msg.header, "stamp", None)),
+        frame_id=frame_id(msg, default="camera_link"),
+    )
+
+
+def from_dds_camera_info(msg: Any) -> CameraIntrinsics:
+    k = list(getattr(msg, "k", []) or [])
+    d = list(getattr(msg, "d", []) or [])
+    fx = float(k[0]) if len(k) > 0 else 0.0
+    fy = float(k[4]) if len(k) > 4 else 0.0
+    cx = float(k[2]) if len(k) > 2 else 0.0
+    cy = float(k[5]) if len(k) > 5 else 0.0
+    return CameraIntrinsics(
+        fx=fx,
+        fy=fy,
+        cx=cx,
+        cy=cy,
+        width=int(getattr(msg, "width", 0)),
+        height=int(getattr(msg, "height", 0)),
+        depth_scale=float(getattr(msg, "depth_scale", 1.0) or 1.0),
+        dist_k1=float(d[0]) if len(d) > 0 else 0.0,
+        dist_k2=float(d[1]) if len(d) > 1 else 0.0,
+        dist_p1=float(d[2]) if len(d) > 2 else 0.0,
+        dist_p2=float(d[3]) if len(d) > 3 else 0.0,
+        dist_k3=float(d[4]) if len(d) > 4 else 0.0,
+        ts=from_dds_time(getattr(msg.header, "stamp", None)),
+        frame_id=frame_id(msg, default="camera_link"),
+    )
+
+
+def from_dds_gnss_fix(msg: Any) -> Any:
+    from runtime.msgs.gnss import GnssFix, GnssFixType
+
+    return GnssFix(
+        lat=float(getattr(msg, "latitude", 0.0)),
+        lon=float(getattr(msg, "longitude", 0.0)),
+        alt=float(getattr(msg, "altitude", 0.0)),
+        fix_type=GnssFixType(int(getattr(msg, "fix_type", 0))),
+        covariance=tuple(float(value) for value in getattr(msg, "position_covariance", [0.0] * 9)),
+        num_sat=int(getattr(msg, "num_sat", 0)),
+        num_sat_used=int(getattr(msg, "num_sat_used", 0)),
+        ts=from_dds_time(getattr(msg.header, "stamp", None)),
+        frame_id=frame_id(msg, default="gnss_antenna"),
+    )
+
+
+def from_dds_gnss_status(msg: Any) -> Any:
+    from runtime.msgs.gnss import GnssFixType, GnssStatus
+
+    return GnssStatus(
+        fix_type=GnssFixType(int(getattr(msg, "fix_type", 0))),
+        num_sat=int(getattr(msg, "num_sat", 0)),
+        num_sat_used=int(getattr(msg, "num_sat_used", 0)),
+        hdop=float(getattr(msg, "hdop", 99.9)),
+        age_s=0.0,
+        rtcm_age_s=float(getattr(msg, "rtcm_age_s", 99.9)),
+        receiver=str(getattr(msg, "device", "") or "WTRTK-980"),
+        link_ok=bool(getattr(msg, "link_ok", False)),
+        ts=from_dds_time(getattr(msg.header, "stamp", None)),
     )
 
 

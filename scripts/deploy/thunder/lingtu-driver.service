@@ -1,0 +1,34 @@
+[Unit]
+Description=LingTu native Thunder driver
+After=network-online.target lingtu-nav-dds.service
+Wants=network-online.target lingtu-nav-dds.service
+Conflicts=lingtu-thunder-dds-endpoint.service thunder-dds-endpoint.service dds-endpoint.service lingtu-thunder-lite.service driver.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+WatchdogSec=6s
+WatchdogSignal=SIGTERM
+KillMode=control-group
+User=sunrise
+Group=sunrise
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_DRIVER_BIN=/opt/lingtu/current/build/driver/lingtu_driver
+Environment=LINGTU_DDS_DOMAIN_ID=0
+EnvironmentFile=/opt/lingtu/config/brainstem.env
+Environment=LINGTU_DRIVER_MAX_LINEAR_MPS=1.0
+Environment=LINGTU_DRIVER_MAX_ANGULAR_RPS=1.0
+Environment=LINGTU_DRIVER_CMD_TIMEOUT_MS=200
+Environment=LINGTU_DRIVER_POLL_HZ=100
+Environment=LINGTU_DRIVER_RPC_TIMEOUT_MS=100
+Environment=LINGTU_DRIVER_RECONNECT_MS=1000
+Environment=LINGTU_DRIVER_STATUS_FILE=/dev/shm/lingtu/driver_status.json
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_status_file_watchdog.sh --status-file ${LINGTU_DRIVER_STATUS_FILE} --startup-timeout-s 30 --poll-interval-s 0.5 -- /bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_driver.sh --require-remote
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

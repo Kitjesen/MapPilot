@@ -89,8 +89,8 @@
   --s-6:  24px;
 
   /* ── Typography ── */
-  --font-ui:      'Inter', 'Noto Sans SC', 'PingFang SC', system-ui, -apple-system, sans-serif;
-  --font-mono:    'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  --font-ui:      'Inter', 'Geist', 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Geist Mono', 'SF Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
   --font-serif:   'Source Serif 4', 'Noto Serif SC', Georgia, serif;
 
   /* Type scale — follows 1.25 modular ratio (Minor Third) */
@@ -127,31 +127,31 @@
   --t-body-size:        14px;
   --t-body-weight:      400;
   --t-body-color:       var(--text-dim);
-  --t-body-track:       -0.006em;
+  --t-body-track:       0;
 
   /* body-em: emphasized body / active states */
   --t-body-em-size:     15px;
   --t-body-em-weight:   600;
   --t-body-em-color:    var(--text);
-  --t-body-em-track:    -0.01em;
+  --t-body-em-track:    0;
 
   /* value: monospace numeric/data — bigger than body, always brightest */
   --t-value-size:       16px;
   --t-value-weight:     600;
   --t-value-color:      var(--text);
-  --t-value-track:      -0.015em;
+  --t-value-track:      0;
 
   /* value-lg: large stat display numbers (SLAM panel / GPS card) */
   --t-value-lg-size:    26px;
   --t-value-lg-weight:  700;
   --t-value-lg-color:   var(--text);
-  --t-value-lg-track:   -0.025em;
+  --t-value-lg-track:   0;
 
   /* title: panel/section headers */
   --t-title-size:       17px;
   --t-title-weight:     700;
   --t-title-color:      var(--text);
-  --t-title-track:      -0.02em;
+  --t-title-track:      0;
 
   /* ── Motion ── */
   --ease-out:    cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -159,8 +159,73 @@
   --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* ── Layout ── */
-  --topbar-h:    48px;
+  --topbar-h:    56px;
   --statusbar-h: 28px;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:          #f7f7f5;
+  --bg-layer-1:  #ffffff;
+  --bg-layer-2:  #f0f0ee;
+  --bg-layer-3:  #e8e8e5;
+
+  --glass:       rgba(255, 255, 255, 0.72);
+  --glass-hi:    rgba(255, 255, 255, 0.92);
+  --glass-lo:    rgba(255, 255, 255, 0.54);
+
+  --border:      rgba(28, 28, 28, 0.11);
+  --border-hi:   rgba(28, 28, 28, 0.18);
+  --border-focus: rgba(255, 122, 42, 0.44);
+  --inner-hi:    inset 0 1px 0 rgba(255, 255, 255, 0.86);
+
+  --text:        #1f1f1f;
+  --text-dim:    #666661;
+  --text-faint:  #8b8b86;
+  --text-mute:   #b5b5ae;
+
+  --brand-1:     #1f1f1f;
+  --brand-2:     #1f1f1f;
+  --brand-3:     #1f1f1f;
+  --brand-4:     #1f1f1f;
+
+  --gradient-brand: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(238, 238, 235, 0.86) 100%);
+
+  --gradient-brand-soft: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.78) 0%,
+    rgba(238, 238, 235, 0.58) 100%);
+
+  --accent:       #0d9488;
+  --accent-dim:   #0f766e;
+  --accent-glow:  rgba(13, 148, 136, 0.16);
+
+  --warn:         #b7791f;
+  --warn-glow:    rgba(183, 121, 31, 0.16);
+
+  --red:          #dc2626;
+  --red-dim:      #b91c1c;
+  --red-glow:     rgba(220, 38, 38, 0.16);
+
+  --blue:         #2563eb;
+  --blue-glow:    rgba(37, 99, 235, 0.14);
+
+  --shadow-sm:    0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md:
+    0 1px 2px rgba(0, 0, 0, 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.08),
+    var(--inner-hi);
+  --shadow-lg:
+    0 2px 6px rgba(0, 0, 0, 0.08),
+    0 20px 48px rgba(0, 0, 0, 0.12),
+    var(--inner-hi);
+  --shadow-glow: 0 0 38px rgba(255, 122, 42, 0.08);
 }
 
 /* ── Global animations ── */
@@ -221,7 +286,7 @@ body {
   font-family: var(--font-ui);
   font-size: var(--fs-base);
   line-height: 1.55;
-  letter-spacing: -0.006em;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: 'cv11', 'ss01', 'ss03';
@@ -235,6 +300,20 @@ body {
   height: 100vh;
   background: var(--bg);
   overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.app input,
+.app textarea,
+.app select,
+.app option,
+.app pre,
+.app code,
+.app [contenteditable="true"],
+.app .selectable {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Ambient background — no colored orbs, just a very subtle
@@ -275,13 +354,85 @@ body {
   .main-content { animation: none; }
 }
 
-/* ===== Console canvas (floating widget workspace) ===== */
+/* ===== Console dashboard workspace ===== */
 
 .console-canvas {
   position: relative;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  padding: 12px;
+}
+
+html[data-theme="light"] .app::before {
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.8), transparent 34%),
+    radial-gradient(ellipse at 50% 100%, rgba(223, 223, 218, 0.58), transparent 58%);
+}
+
+.console-grid {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(560px, 1.42fr) minmax(360px, 0.76fr) minmax(400px, 0.82fr);
+  grid-template-rows: minmax(360px, 0.64fr) minmax(240px, 0.36fr);
+  grid-template-areas:
+    "camera localization mode"
+    "camera localization chat";
+  gap: 12px;
+}
+
+.console-camera,
+.console-localization,
+.console-mode,
+.console-chat {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.console-camera { grid-area: camera; }
+.console-localization { grid-area: localization; }
+.console-mode { grid-area: mode; }
+.console-chat { grid-area: chat; }
+
+.console-camera > *,
+.console-localization > *,
+.console-mode > *,
+.console-chat > * {
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 1460px) {
+  .console-canvas {
+    overflow: auto;
+  }
+
+  .console-grid {
+    grid-template-columns: minmax(460px, 1.25fr) minmax(360px, 0.9fr);
+    grid-template-rows: minmax(380px, 0.96fr) minmax(280px, 0.62fr) minmax(300px, 0.72fr);
+    grid-template-areas:
+      "camera localization"
+      "camera mode"
+      "chat chat";
+  }
+}
+
+@media (max-width: 980px) {
+  .console-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows:
+      minmax(360px, 48vh)
+      minmax(280px, auto)
+      minmax(300px, auto)
+      minmax(320px, auto);
+    grid-template-areas:
+      "camera"
+      "mode"
+      "localization"
+      "chat";
+  }
 }
 
 .reset-layout-btn {
@@ -301,7 +452,7 @@ body {
   font-family: var(--font-ui);
   font-size: 11px;
   font-weight: 500;
-  letter-spacing: -0.005em;
+  letter-spacing: 0;
   cursor: pointer;
   transition: all 0.2s var(--ease-out);
   z-index: 5;

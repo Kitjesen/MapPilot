@@ -53,9 +53,7 @@ class TestLoadConfigFromYAML:
     """load_config() reads the actual repo config/robot_config.yaml."""
 
     def test_reads_real_config(self):
-        repo_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "..", "..")
-        )
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
         real_path = os.path.join(repo_root, "config", "robot_config.yaml")
         if not os.path.isfile(real_path):
             pytest.skip("config/robot_config.yaml not found")
@@ -66,7 +64,7 @@ class TestLoadConfigFromYAML:
         assert cfg.geometry.vehicle_width == 0.6
         assert cfg.driver.dog_host == "127.0.0.1"
         assert cfg.safety.obstacle_height_thre == 0.2
-        assert cfg.lidar.lidar_ip == "192.168.1.115"
+        assert cfg.lidar.lidar_ip == "192.168.1.178"
         assert cfg.lidar.host_ip == "192.168.1.5"
         assert "robot" in cfg.raw  # raw dict contains full YAML
 

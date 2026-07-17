@@ -11,7 +11,6 @@ from runtime.profiles.catalog.robots import ROBOT_PRESETS
 from runtime.profiles.catalog.runtime_paths import (
     RUNTIME_MAP_FRAME_ID,
     _default_map_dir,
-    _resolve_tomogram,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "ROBOT_PRESETS",
     "RUNTIME_MAP_FRAME_ID",
     "_default_map_dir",
-    "_resolve_tomogram",
 ]

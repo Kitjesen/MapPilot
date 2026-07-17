@@ -1107,3 +1107,48 @@ Current status:
 Domain constraint: keep isolated MuJoCo gates on CycloneDDS domains **`200–232`**
 (default **`231`**). Domain **234** fails on sunrise with multicast port out of
 range. Production robot SLAM remains on domain **`0`**.
+## 2026-07-11 Native DDS MuJoCo Navigation Closure
+
+The current canonical closure report is:
+
+```text
+artifacts/mujoco_native_navigation_acceptance_final_v7/report.json
+```
+
+It supersedes the earlier MuJoCo notes in this file that described the native
+sensor path as alive but not yet suitable for complete navigation evidence.
+The accepted chain is now:
+
+```text
+MuJoCo MID-360/IMU
+-> C++ Livox typed DDS publisher
+-> C++ Fast-LIO2 localization + continuous saved-map alignment
+-> C++ traversability DDS
+-> C++ native nav endpoint
+   -> OctoPlanner3D
+   -> LocalPlannerCore
+   -> embedded PathFollower
+   -> final command safety
+-> typed DDS /nav/cmd_vel
+-> ThunderV4 ONNX policy
+```
+
+Both phases passed against a newly generated 536,904-point MuJoCo MID-360 map;
+the run did not reuse an untracked map artifact. No-motion produced a 5-point
+global path and 101-point local path while publishing no final speed. Motion
+produced 121 nonzero final speed samples, moved 1.121 m along the executed path,
+reduced goal distance by 0.996 m, and held map-frame XY localization error to
+0.035 m. Continuous map tracking completed 38 accepted PCL GICP updates with
+zero rejections. PCL GICP
+now reports real inlier and position-covariance diagnostics; missing metrics no
+longer disable `track_against_map` on systems without small_gicp.
+
+Raw odometry remains a local frame and is reported separately. The navigation
+accuracy gate uses `map->odom * odom->body`, rejects stale/invalid map tracking,
+and stops TF publication if repeated map-alignment failures disable tracking.
+
+The LiDAR replay boundary uses C++ `--restamp-stdin-records`: the WSL-native
+publisher rebases the first simulated record to its own system clock while
+preserving LiDAR/IMU relative timing and point offsets. This removes the
+Windows/WSL epoch skew that previously made startup intermittently reject fresh
+clouds as stale.

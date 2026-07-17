@@ -2,11 +2,8 @@
 # scripts/webrtc/install_go2rtc.sh 鈥?install go2rtc sidecar on S100P (aarch64).
 #
 # Why a sidecar?
-#   Python aiortc has ~10-20 ms fixed overhead in its Python SRTP/RTP
-#   layers.  go2rtc is a single ~8 MB Go binary that handles the media
-#   hotpath natively, typically 30-60 ms glass-to-glass on LAN vs our
-#   current 80-150 ms.  See src/gateway/media/README.md 搂 鍥句紶妯″紡 for the full
-#   architecture rationale.
+#   go2rtc is a single Go binary that handles the media hot path natively
+#   and exposes the WHEP endpoint used by the dashboard.
 #
 # Usage:
 #   sudo bash scripts/webrtc/install_go2rtc.sh           # systemd mode
@@ -139,7 +136,7 @@ Next steps:
      Run `v4l2-ctl --list-devices` to discover the right path.
   2. Restart the service:  sudo systemctl restart go2rtc
   3. Open the LingTu dashboard; CameraFeed will auto-detect go2rtc
-     and switch from aiortc 鈫?WHEP.  HUD should show "Go2RTC" label.
+     and use WHEP. If unavailable, it falls back to the Gateway JPEG stream.
   4. Benchmark: see src/gateway/media/README.md 搂 3 for the绉掕〃/webrtc-internals
      measurement protocol.
 POST

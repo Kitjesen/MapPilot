@@ -40,7 +40,7 @@ REQUIRE_OCTOMAP_CONVERTER="${LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER:-$REQUIRE_
 REQUIRE_ROS2_COMPAT="${LINGTU_RELEASE_REQUIRE_ROS2_COMPAT:-0}"
 RESTART_ROS2_COMPAT="${LINGTU_RELEASE_RESTART_ROS2_COMPAT:-$REQUIRE_ROS2_COMPAT}"
 
-ROS2_COMPAT_PKGS="fastlio2 genz_icp hba interface livox_ros_driver2 localizer nav_services pgo pointlio perception decision wtrtk980_ros2_reader"
+ROS2_COMPAT_PKGS="fastlio2 genz_icp hba interface livox_ros_driver2 localizer nav_services pgo pointlio perception decision wtrtk980_reader"
 
 find_nav_kernel_artifact() {
     find -L "$DEV_DIR/src" "$DEV_DIR/src/nav/kernel/build_nb" \

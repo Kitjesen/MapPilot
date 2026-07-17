@@ -43,6 +43,19 @@ class TwistStamped(IdlStruct, typename="lingtu::dds::TwistStamped"):
 
 
 @dataclass
+class FinalVelocityCommand(
+    IdlStruct,
+    typename="lingtu::dds::FinalVelocityCommand",
+):
+    host_boot_id: str
+    producer_boot_id: str
+    output_seq: types.uint64
+    source_boottime_ns: types.uint64
+    source_wall_ns: types.uint64
+    twist: Twist
+
+
+@dataclass
 class Transform(IdlStruct, typename="lingtu::dds::Transform"):
     translation: Vector3
     rotation: Quaternion
@@ -66,6 +79,7 @@ DDS_Twist = Twist
 DDS_TwistWithCovariance = TwistWithCovariance
 DDS_PoseStamped = PoseStamped
 DDS_TwistStamped = TwistStamped
+DDS_FinalVelocityCommand = FinalVelocityCommand
 DDS_Transform = Transform
 DDS_TransformStamped = TransformStamped
 DDS_TFMessage = TFMessage

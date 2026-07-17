@@ -11,7 +11,6 @@ from typing import Any
 
 from runtime.runtime_interface import map_frame_id
 
-
 TELEMETRY_MAP_FRAME_ID = map_frame_id()
 
 
@@ -69,6 +68,18 @@ def _string_or_none(value: Any) -> str | None:
 def _metadata(value: Any) -> dict[str, Any]:
     raw = _mapping(value)
     return raw if raw else {}
+
+
+def _nonnegative_int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+    return None
 
 
 def _coerce_sequence(value: Any) -> list[Any]:
@@ -293,6 +304,15 @@ def build_locations_response(entries: Any) -> dict[str, Any]:
             tags = [tags]
         elif not isinstance(tags, Sequence):
             tags = []
+        metadata = _metadata(raw.get("metadata"))
+        map_id = _string_or_none(metadata.get("map_id", raw.get("map_id")))
+        if map_id is not None:
+            map_id = map_id.strip() or None
+        map_version = _nonnegative_int_or_none(
+            metadata.get("map_version", raw.get("map_version"))
+        )
+        frame_id = _string_or_none(metadata.get("frame_id", raw.get("frame_id")))
+        frame_id = frame_id.strip() if frame_id else TELEMETRY_MAP_FRAME_ID
         locations.append(
             {
                 "name": str(name),
@@ -303,7 +323,10 @@ def build_locations_response(entries: Any) -> dict[str, Any]:
                 "tags": [str(tag) for tag in tags],
                 "source": _string_or_none(raw.get("source")),
                 "ts": _finite_float(raw.get("ts")),
-                "metadata": _metadata(raw.get("metadata")),
+                "map_id": map_id,
+                "map_version": map_version,
+                "frame_id": frame_id,
+                "metadata": metadata,
             }
         )
     return {

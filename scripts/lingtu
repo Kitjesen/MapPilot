@@ -506,7 +506,7 @@ except Exception: print('- - -')
     esac
     printf "${B}[6] Ctrl${N}      teleop=%s(%s)  safety=%b\n" "$TELE" "$TELE_N" "$SC"
 
-    local LATEST NAME MTIME PCD BAK PAT DUFO CLEAN DIRTY DROP PCT MAP_SAVE_SOURCE MAP_EXTRA
+    local LATEST NAME MTIME PCD BAK BAK_FILE PAT CLEAN_TAG CLEAN DIRTY DROP PCT MAP_SAVE_SOURCE MAP_EXTRA
     MAP_SAVE_SOURCE=$(pjson "$LOCJ" 'print(d.get("map_save_source") or "-")')
     [ "$MAP_SAVE_SOURCE" = "-" ] && MAP_SAVE_SOURCE=$(pjson "$SESS" 'print(d.get("map_save_source") or "-")')
     MAP_EXTRA=""
@@ -515,28 +515,30 @@ except Exception: print('- - -')
     if [ -n "$LATEST" ]; then
         NAME=$(basename "$LATEST")
         MTIME=$(stat -c '%y' "$LATEST" 2>/dev/null | cut -d' ' -f2 | cut -d. -f1)
-        PCD="-"; BAK="-"; PAT="-"; DUFO=""
+        PCD="-"; BAK="-"; BAK_FILE=""; PAT="-"; CLEAN_TAG=""
         [ -f "$LATEST/map.pcd" ]         && PCD=$(du -h "$LATEST/map.pcd" | cut -f1)
-        [ -f "$LATEST/map.pcd.predufo" ] && BAK=$(du -h "$LATEST/map.pcd.predufo" | cut -f1)
+        [ -f "$LATEST/map.pcd.preclean" ] && BAK_FILE="$LATEST/map.pcd.preclean"
+        [ -z "$BAK_FILE" ] && [ -f "$LATEST/map.pcd.predufo" ] && BAK_FILE="$LATEST/map.pcd.predufo"
+        [ -n "$BAK_FILE" ] && BAK=$(du -h "$BAK_FILE" | cut -f1)
         [ -d "$LATEST/patches" ]         && PAT=$(ls "$LATEST/patches" 2>/dev/null | wc -l)
-        if [ -f "$LATEST/map.pcd" ] && [ -f "$LATEST/map.pcd.predufo" ]; then
+        if [ -f "$LATEST/map.pcd" ] && [ -n "$BAK_FILE" ]; then
             CLEAN=$(stat -c %s "$LATEST/map.pcd" | awk '{printf "%d",$1/16}')
-            DIRTY=$(stat -c %s "$LATEST/map.pcd.predufo" | awk '{printf "%d",$1/16}')
+            DIRTY=$(stat -c %s "$BAK_FILE" | awk '{printf "%d",$1/16}')
             DROP=$((DIRTY-CLEAN))
             [ "$DIRTY" -gt 0 ] && PCT=$(awk -v d=$DROP -v t=$DIRTY 'BEGIN{printf "%.1f",100*d/t}') || PCT=0
-            DUFO="${G}dufo -${DROP}pts (${PCT}%)${N}"
+            CLEAN_TAG="${G}clean -${DROP}pts (${PCT}%)${N}"
         fi
-        printf "${B}[7] Map${N}       %s ${D}@%s${N}  map=%s  bak=%s  patches=%s%s  %b\n" "$NAME" "$MTIME" "$PCD" "$BAK" "$PAT" "$MAP_EXTRA" "$DUFO"
+        printf "${B}[7] Map${N}       %s ${D}@%s${N}  map=%s  bak=%s  patches=%s%s  %b\n" "$NAME" "$MTIME" "$PCD" "$BAK" "$PAT" "$MAP_EXTRA" "$CLEAN_TAG"
     else
         printf "${B}[7] Map${N}       ${D}(no maps)${N}%s\n" "$MAP_EXTRA"
     fi
 
     local LOG
     LOG=$(journalctl -u lingtu.service --since '10 min ago' --no-pager 2>/dev/null \
-        | grep -iE 'drift_watchdog|dufomap|dynamic_filter|\[ERROR\]' \
+        | grep -iE 'drift_watchdog|dufomap|static_cleaner|dynamic_filter|\[ERROR\]' \
         | grep -vE 'VectorMemory|sentence_trans|webrtc.*dispose' | tail -3)
     if [ -n "$LOG" ]; then
-        printf "${B}[8] Log${N}       ${D}(recent drift/dufomap/error)${N}\n"
+        printf "${B}[8] Log${N}       ${D}(recent drift/cleanup/error)${N}\n"
         echo "$LOG" | sed "s/^/             /"
     fi
 }
@@ -766,15 +768,119 @@ mode_profile_dropin() {
     sudo systemctl daemon-reload || return 1
 }
 
+mode_nav_endpoint_dropin() {
+    local profile="$1" control_mode="autonomy" check_obstacle=1 use_traversability=1
+    local allow_teleop_takeover=0 teleop_local_planner=0
+    local override_dir="/etc/systemd/system/lingtu-nav-dds.service.d"
+    case "$profile" in
+        teleop|map)
+            control_mode="teleop"
+            check_obstacle=0
+            use_traversability=0
+            allow_teleop_takeover=0 ;;
+        teleop_avoid)
+            control_mode="teleop_avoid"
+            allow_teleop_takeover=0
+            teleop_local_planner=1 ;;
+        tracking|nav|inspection|tare_explore)
+            allow_teleop_takeover=1
+            teleop_local_planner=1 ;;
+    esac
+    sudo mkdir -p "$override_dir" || return 1
+    {
+        echo "[Service]"
+        echo "Environment=LINGTU_NAV_CONTROL_MODE=$control_mode"
+        echo "Environment=LINGTU_NAV_CHECK_OBSTACLE=$check_obstacle"
+        echo "Environment=LINGTU_NAV_USE_TRAVERSABILITY_COST=$use_traversability"
+        echo "Environment=LINGTU_NAV_ALLOW_TELEOP_TAKEOVER=$allow_teleop_takeover"
+        echo "Environment=LINGTU_TELEOP_LOCAL_PLANNER=$teleop_local_planner"
+    } | sudo tee "$override_dir/product-mode.conf" >/dev/null || return 1
+    sudo systemctl daemon-reload || return 1
+}
+
 mode_stop_motion_and_session() {
     curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
-        -d '{"reason":"product_mode_switch"}' "$GW/api/v1/stop" >/dev/null 2>&1 || true
+        -d '{"reason":"product_mode_switch"}' "$GW/api/v1/navigation/cancel" >/dev/null 2>&1 || true
     curl -s --max-time 10 -X POST "$GW/api/v1/session/end" >/dev/null 2>&1 || true
+}
+
+mode_activate_saved_map_for_nav() {
+    local map_name="$1" raw ok active
+    raw=$(curl -s --max-time 20 -X POST -H "Content-Type: application/json" \
+        -d "{\"name\":\"$map_name\"}" "$GW/api/v1/map/activate" 2>/dev/null || echo '{}')
+    printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+    ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+    active=$(pjson "$raw" 'print(d.get("active") or d.get("name") or "")')
+    if [ "$ok" != "true" ]; then
+        echo -e "${R}FAIL${N}: could not activate navigation map before endpoint restart: $map_name" >&2
+        return 1
+    fi
+    if [ -n "$active" ] && [ "$active" != "$map_name" ]; then
+        echo -e "${R}FAIL${N}: active map mismatch after activation: requested=$map_name active=$active" >&2
+        return 1
+    fi
 }
 
 mode_unit_available() {
     systemctl list-unit-files "$1" --no-legend 2>/dev/null \
         | awk '{print $1}' | grep -qx "$1"
+}
+
+mode_set_unit_boot_enabled() {
+    local unit="$1" enabled="$2" action="disable"
+    mode_unit_available "$unit" || return 0
+    [ "$enabled" = "1" ] && action="enable"
+    sudo systemctl "$action" "$unit" >/dev/null || {
+        echo "Failed to $action product unit: $unit" >&2
+        return 1
+    }
+}
+
+mode_persist_product_boot_ownership() {
+    local target="$1" lidar=1 slam=1 traversability=1 nav=1 explore=0 camera=0
+    local legacy_unit
+    case "$target" in
+        teleop)
+            lidar=0
+            slam=0
+            traversability=0 ;;
+        map)
+            traversability=0 ;;
+        inspection)
+            camera=1 ;;
+        tare_explore)
+            explore=1 ;;
+    esac
+
+    mode_set_unit_boot_enabled lingtu-livox-dds.service "$lidar" || return 1
+    mode_set_unit_boot_enabled lingtu-slam-dds.service "$slam" || return 1
+    mode_set_unit_boot_enabled lingtu-traversability-dds.service "$traversability" || return 1
+    mode_set_unit_boot_enabled lingtu-nav-dds.service "$nav" || return 1
+    mode_set_unit_boot_enabled lingtu-explore-dds.service "$explore" || return 1
+    mode_set_unit_boot_enabled lingtu-teleop-dds.service 0 || return 1
+    mode_set_unit_boot_enabled lingtu-camera-dds.service "$camera" || return 1
+    for legacy_unit in \
+        robot-super-lio-relocation.service \
+        robot-super-lio.service \
+        robot-hba.service \
+        robot-genz-icp.service \
+        robot-localizer.service \
+        robot-fastlio2.service \
+        robot-lidar.service \
+        lidar.service \
+        localization.service \
+        slam.service \
+        traversability-dds.service \
+        traversability.service \
+        nav-dds.service \
+        nav.service \
+        explore-dds.service \
+        explore.service \
+        lingtu-thunder-dds-endpoint.service \
+        thunder-dds-endpoint.service
+    do
+        mode_set_unit_boot_enabled "$legacy_unit" 0 || return 1
+    done
 }
 
 mode_start_unit_if_available() {
@@ -787,6 +893,62 @@ mode_start_unit_if_available() {
     }
 }
 
+mode_wait_nav_control_mode() {
+    local profile="$1" timeout_s="${2:-10}" expected="autonomy"
+    local status_file="${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}"
+    local deadline actual unit_environment
+    case "$profile" in
+        teleop|map) expected="teleop" ;;
+        teleop_avoid) expected="teleop_avoid" ;;
+    esac
+    deadline=$((SECONDS + timeout_s))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        actual=$(python3 - "$status_file" <<'PY' 2>/dev/null || true
+import json
+import sys
+import time
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        status = json.load(handle)
+    age_s = time.time() - float(status.get("stamp_s"))
+    if -0.05 <= age_s <= 1.0:
+        print(str(status.get("control_mode") or "__status_fresh_without_control_mode__"))
+except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    pass
+PY
+)
+        if [ "$actual" = "$expected" ]; then
+            return 0
+        fi
+        if [ "$actual" = "__status_fresh_without_control_mode__" ]; then
+            unit_environment=$(systemctl show lingtu-nav-dds.service --property=Environment --value 2>/dev/null || true)
+            case " $unit_environment " in
+                *" LINGTU_NAV_CONTROL_MODE=$expected "*)
+                    echo "Native navigation endpoint status is fresh; control mode verified from systemd environment: $expected"
+                    return 0 ;;
+            esac
+        fi
+        sleep 0.2
+    done
+    echo "Native navigation endpoint control mode did not become $expected" >&2
+    [ -f "$status_file" ] && cat "$status_file" >&2 || true
+    return 1
+}
+
+mode_abort_product_switch() {
+    echo "Product mode switch failed; stopping motion and partially started services..." >&2
+    mode_stop_motion_and_session
+    svc_force_stop_unit lingtu.service
+    svc_force_stop_unit lingtu-camera-dds.service
+    svc_force_stop_unit lingtu-explore-dds.service
+    svc_force_stop_unit lingtu-teleop-dds.service
+    svc_force_stop_unit lingtu-nav-dds.service
+    svc_force_stop_unit lingtu-traversability-dds.service
+    svc_force_stop_unit lingtu-slam-dds.service
+    svc_force_stop_unit lingtu-livox-dds.service
+}
+
 mode_restart_product_stack() {
     local target="$1"
     echo "Stopping product runtime before mode switch..."
@@ -795,33 +957,73 @@ mode_restart_product_stack() {
     svc_force_stop_unit robot-super-lio.service
     svc_force_stop_unit robot-hba.service
     svc_force_stop_unit robot-genz-icp.service
+    svc_force_stop_unit lingtu-explore-dds.service
+    svc_force_stop_unit lingtu-teleop-dds.service
+    svc_force_stop_unit lingtu-traversability-dds.service
     svc_force_stop_unit lingtu-nav-dds.service
     svc_force_stop_unit lingtu-slam-dds.service
     svc_force_stop_unit lingtu-livox-dds.service
+    svc_force_stop_unit lingtu-camera-dds.service
     svc_force_stop_unit robot-localizer.service
     svc_force_stop_unit robot-fastlio2.service
     svc_force_stop_unit robot-lidar.service
+    svc_force_stop_unit lidar.service
+    svc_force_stop_unit localization.service
+    svc_force_stop_unit slam.service
+    svc_force_stop_unit traversability-dds.service
+    svc_force_stop_unit traversability.service
+    svc_force_stop_unit nav-dds.service
+    svc_force_stop_unit nav.service
+    svc_force_stop_unit explore-dds.service
+    svc_force_stop_unit explore.service
+    svc_force_stop_unit lingtu-thunder-dds-endpoint.service
+    svc_force_stop_unit thunder-dds-endpoint.service
+    sudo rm -f "${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}" || return 1
 
     case "$target" in
         teleop)
             echo "Starting command endpoint for teleop..."
-            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1 ;;
+            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1
+            mode_wait_nav_control_mode "$target" 10 || return 1 ;;
+        map)
+            echo "Starting native Livox DDS..."
+            svc_restart_lidar_chain || return 1
+            echo "Starting native SLAM DDS..."
+            mode_start_unit_if_available lingtu-slam-dds.service 35 || return 1
+            echo "Starting native command endpoint for mapping teleop..."
+            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1
+            mode_wait_nav_control_mode "$target" 10 || return 1 ;;
         *)
             echo "Starting native Livox DDS..."
             svc_restart_lidar_chain || return 1
             echo "Starting native SLAM DDS..."
             mode_start_unit_if_available lingtu-slam-dds.service 35 || return 1
+            echo "Starting native traversability DDS..."
+            mode_start_unit_if_available lingtu-traversability-dds.service 20 || return 1
             echo "Starting native navigation DDS endpoint..."
-            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1 ;;
+            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1
+            mode_wait_nav_control_mode "$target" 10 || return 1
+            if [ "$target" = "inspection" ]; then
+                mode_unit_available lingtu-camera-dds.service || {
+                    echo "Inspection mode requires lingtu-camera-dds.service" >&2
+                    return 1
+                }
+                echo "Starting native camera DDS for inspection evidence..."
+                mode_start_unit_if_available lingtu-camera-dds.service 20 || return 1
+            fi
+            if [ "$target" = "tare_explore" ]; then
+                echo "Starting native exploration DDS endpoint..."
+                mode_start_unit_if_available lingtu-explore-dds.service 20 || return 1
+            fi ;;
     esac
 
     echo "Starting LingTu runtime profile: $target"
     svc_start_unit lingtu.service || return 1
-    if svc_wait_gateway_ready 45; then
-        echo "LingTu runtime is ready for product mode: $target"
+    if svc_wait_gateway_available 45; then
+        echo "LingTu Gateway is available for product mode session setup: $target"
         return 0
     fi
-    echo "LingTu started but /ready did not become true in time" >&2
+    echo "LingTu started but Gateway /health did not become available in time" >&2
     journalctl -u lingtu.service -n 60 --no-pager >&2 || true
     return 1
 }
@@ -902,6 +1104,48 @@ mode_start_session_for_target() {
     esac
 }
 
+mode_wait_navigation_ready() {
+    local expected_map="$1" timeout_s="${2:-45}"
+    local deadline navj sessionj can active_map blockers state native_reason
+    deadline=$((SECONDS + timeout_s))
+    navj='{}'
+    sessionj='{}'
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        navj=$(curl -s --max-time 3 "$GW/api/v1/navigation/status" 2>/dev/null || echo '{}')
+        sessionj=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
+        can=$(pjson "$navj" 'r=d.get("readiness") or {}; print(str(bool(r.get("can_accept_goal", d.get("can_accept_goal", False)))).lower())')
+        active_map=$(pjson "$sessionj" 'print(d.get("active_map") or d.get("saved_active_map") or "")')
+        if [ "$can" = "true" ] && [ "$active_map" = "$expected_map" ]; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    state=$(pjson "$navj" 'print(d.get("state") or "unknown")')
+    blockers=$(pjson "$navj" 'r=d.get("readiness") or {}; b=r.get("blockers") or []; print(",".join(map(str,b)) if isinstance(b,list) else str(b or ""))')
+    native_reason=$(pjson "$navj" 'r=d.get("readiness") or {}; n=r.get("native_endpoint") or {}; g=n.get("input_gate") or {}; print(g.get("reason") or "")')
+    echo -e "${R}FAIL${N}: navigation never became ready (state=$state map=${active_map:-none} blockers=${blockers:-unknown} native=${native_reason:-unknown})" >&2
+    printf '%s\n' "$navj" | python3 -m json.tool >&2 2>/dev/null || true
+    return 1
+}
+
+mode_wait_inspection_evidence_ready() {
+    local timeout_s="${1:-45}" deadline evidence ready reason
+    deadline=$((SECONDS + timeout_s))
+    evidence='{}'
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        evidence=$(curl -s --max-time 3 "$GW/api/v1/inspection/status" 2>/dev/null || echo '{}')
+        ready=$(pjson "$evidence" 's=d.get("status") or {}; w=s.get("evidence_worker") or {}; print(str(bool(w.get("ready", False))).lower())')
+        if [ "$ready" = "true" ]; then
+            return 0
+        fi
+        sleep 0.25
+    done
+    reason=$(pjson "$evidence" 's=d.get("status") or {}; w=s.get("evidence_worker") or {}; print(w.get("reason") or w.get("readiness_reason") or "unknown")')
+    echo -e "${R}FAIL${N}: inspection evidence never became ready (reason=${reason:-unknown})" >&2
+    printf '%s\n' "$evidence" | python3 -m json.tool >&2 2>/dev/null || true
+    return 1
+}
+
 cmd_mode() {
     local action="${1:-}"
     case "$action" in
@@ -964,9 +1208,14 @@ cmd_mode() {
             echo -e "${B}=== Product mode switch: $current -> $target ===${N}"
             echo "Endpoint: $endpoint"
             [ -n "$map_name" ] && echo "Map: $map_name"
-            mode_switch_preflight "$current" "$target" "$endpoint" || return 1
             mode_stop_motion_and_session
+            mode_switch_preflight "$current" "$target" "$endpoint" || return 1
+            case "$target" in
+                teleop_avoid|tracking|nav|inspection)
+                    mode_activate_saved_map_for_nav "$map_name" || return 1 ;;
+            esac
             mode_profile_dropin "$target" "$endpoint" || return 1
+            mode_nav_endpoint_dropin "$target" || return 1
 
             case "$target" in
                 map)
@@ -979,7 +1228,11 @@ cmd_mode() {
                     slam_dds_set_mode localization "$map_pcd" || return 1 ;;
             esac
 
-            mode_restart_product_stack "$target" || return 1
+            mode_persist_product_boot_ownership "$target" || return 1
+            if ! mode_restart_product_stack "$target"; then
+                mode_abort_product_switch
+                return 1
+            fi
             case "$target" in
                 map)
                     slam_dds_wait_status mapping 0 35 || return 1 ;;
@@ -988,7 +1241,26 @@ cmd_mode() {
                 teleop_avoid|tracking|nav|inspection)
                     slam_dds_wait_status localization 1 35 || return 1 ;;
             esac
-            mode_start_session_for_target "$target" "$map_name" "$relocalize" "$initial_explicit" "$initial_x" "$initial_y" "$initial_yaw" || return 1
+            if ! mode_start_session_for_target "$target" "$map_name" "$relocalize" "$initial_explicit" "$initial_x" "$initial_y" "$initial_yaw"; then
+                case "$target" in
+                    teleop_avoid|tracking|nav|inspection)
+                        mode_stop_motion_and_session ;;
+                esac
+                return 1
+            fi
+            case "$target" in
+                teleop_avoid|tracking|nav|inspection)
+                    mode_wait_navigation_ready "$map_name" 45 || {
+                        mode_stop_motion_and_session
+                        return 1
+                    } ;;
+            esac
+            if [ "$target" = "inspection" ]; then
+                mode_wait_inspection_evidence_ready 45 || {
+                    mode_stop_motion_and_session
+                    return 1
+                }
+            fi
             echo -e "${G}PASS${N}: product mode is active: $target" ;;
         -h|--help|"")
             mode_switch_usage ;;
@@ -1003,14 +1275,11 @@ cmd_map() {
     local action="${1:-}"
     case "$action" in
         start)
-            slam_dds_set_mode mapping "" || exit 1
-            curl -s -X POST -H "Content-Type: application/json" \
-                -d '{"mode":"mapping","profile":"map","product_session":"mapping"}' \
-                "$GW/api/v1/session/start" | python3 -m json.tool ;;
+            cmd_mode switch map ;;
         save)
             local name="${2:-}"
             [ -z "$name" ] && { echo "Usage: lingtu map save <name>"; exit 1; }
-            echo -e "${D}Saving MapManager artifacts (PGO + DUFOMap + tomogram + occupancy)...${N}"
+            echo -e "${D}Saving MapManager artifacts (PGO + cleanup + tomogram + occupancy)...${N}"
             curl -s -X POST -H "Content-Type: application/json" -d "{\"action\":\"save\",\"name\":\"$name\"}" \
                 "$GW/api/v1/maps" | python3 -m json.tool ;;
         end|stop)
@@ -1062,14 +1331,14 @@ cmd_map() {
         restore)
             local name="${2:-}"
             [ -z "$name" ] && { echo "Usage: lingtu map restore <name>"; exit 1; }
-            echo -e "${D}Restoring map.pcd from DUFOMap pre-filter backup...${N}"
+            echo -e "${D}Restoring map.pcd from pre-clean backup...${N}"
             local restore_json restore_ok rebuild_action rebuild_json rebuild_ok
             restore_json=$(curl -s -X POST -H "Content-Type: application/json" -d "{\"name\":\"$name\"}" \
                 "$GW/api/v1/map/restore_predufo" 2>/dev/null || echo '{}')
             echo "$restore_json" | python3 -m json.tool 2>/dev/null || echo "$restore_json"
             restore_ok=$(pjson "$restore_json" 'print(str(d.get("success", False)).lower())')
             [ "$restore_ok" = "true" ] || { echo -e "${R}FAIL${N}: restore_predufo failed"; exit 1; }
-            for rebuild_action in build_tomogram build_occupancy; do
+            for rebuild_action in build_octomap build_occupancy; do
                 echo -e "${D}Rebuilding ${rebuild_action#build_} for $name...${N}"
                 rebuild_json=$(curl -s -X POST -H "Content-Type: application/json" \
                     -d "{\"action\":\"$rebuild_action\",\"name\":\"$name\"}" \
@@ -1142,15 +1411,24 @@ cmd_nav() {
             fi
             if [ "$relocalize" = "1" ]; then
                 if [ "$initial_pose_explicit" = "1" ]; then
-                    nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || exit 1
+                    nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || {
+                        mode_stop_motion_and_session
+                        exit 1
+                    }
                 else
-                    nav_global_relocalize_saved_map "$map" || exit 1
+                    nav_global_relocalize_saved_map "$map" || {
+                        mode_stop_motion_and_session
+                        exit 1
+                    }
                 fi
             elif nav_relocalization_ready_without_request "$map"; then
                 echo "Reusing current TRACKING localization for $map."
             else
                 echo "Current localization is not reusable; trying global saved-map relocalization..."
-                nav_global_relocalize_saved_map "$map" || exit 1
+                nav_global_relocalize_saved_map "$map" || {
+                    mode_stop_motion_and_session
+                    exit 1
+                }
             fi ;;
         smoke|motion-smoke|motioncheck)
             local map="${2:-}" forward="0.08" goal_x="" goal_y="" goal_yaw="" timeout="25" evidence_duration="12" min_motion_m="0.01" allow_motion=0
@@ -1226,7 +1504,10 @@ svc_unit() {
                     echo "lingtu-livox-dds.service" ;;
         nav_dds|nav-dds|native_nav|lingtu-nav-dds|lingtu-nav-dds.service)
                     echo "lingtu-nav-dds.service" ;;
-        camera)     echo "robot-camera.service" ;;
+        explore_dds|explore-dds|native_explore|native-explore|lingtu-explore-dds|lingtu-explore-dds.service)
+                    echo "lingtu-explore-dds.service" ;;
+        camera|camera_dds|camera-dds|lingtu-camera-dds|lingtu-camera-dds.service)
+                    echo "lingtu-camera-dds.service" ;;
         brainstem)  echo "robot-brainstem.service" ;;
         slam|fastlio2|localization|localizer|slam_dds|native_slam|lingtu-slam-dds|lingtu-slam-dds.service)
                     echo "lingtu-slam-dds.service" ;;
@@ -1343,6 +1624,18 @@ svc_wait_gateway_ready() {
     return 1
 }
 
+svc_wait_gateway_available() {
+    local timeout_s="${1:-30}" i
+    for i in $(seq 1 "$timeout_s"); do
+        if curl -fsS --max-time 2 "$GW/health" 2>/dev/null \
+            | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("status") == "ok" else 1)' 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
+}
+
 svc_wait_unit_active() {
     local unit="$1" timeout_s="${2:-20}" i
     for i in $(seq 1 "$timeout_s"); do
@@ -1351,6 +1644,36 @@ svc_wait_unit_active() {
         fi
         sleep 1
     done
+    return 1
+}
+
+svc_wait_native_input_gate_ready() {
+    local timeout_s="${1:-20}"
+    local status_file="${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}"
+    local deadline=$((SECONDS + timeout_s))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if python3 - "$status_file" <<'PY' 2>/dev/null
+import json
+import sys
+import time
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        status = json.load(handle)
+    age_s = time.time() - float(status.get("stamp_s"))
+    gate = status.get("input_gate") or {}
+    raise SystemExit(0 if -0.05 <= age_s <= 1.0 and gate.get("ready") is True else 1)
+except (OSError, TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+PY
+        then
+            echo "native navigation input gate is ready"
+            return 0
+        fi
+        sleep 0.2
+    done
+    echo "native navigation input gate did not recover in time" >&2
+    [ -f "$status_file" ] && cat "$status_file" >&2 || true
     return 1
 }
 
@@ -1423,6 +1746,7 @@ svc_restart_robot_stack() {
     svc_force_stop_unit robot-hba.service
     svc_force_stop_unit robot-genz-icp.service
     svc_force_stop_unit lingtu-nav-dds.service
+    svc_force_stop_unit lingtu-traversability-dds.service
     svc_force_stop_unit lingtu-slam-dds.service
     svc_force_stop_unit lingtu-livox-dds.service
     svc_force_stop_unit robot-localizer.service
@@ -1441,6 +1765,14 @@ svc_restart_robot_stack() {
             return 1
         fi
 
+        echo "Starting native traversability DDS..."
+        svc_start_unit lingtu-traversability-dds.service
+        if ! svc_wait_unit_active lingtu-traversability-dds.service 20; then
+            echo "lingtu-traversability-dds.service did not become active in time" >&2
+            journalctl -u lingtu-traversability-dds.service -n 40 --no-pager >&2 || true
+            return 1
+        fi
+
         echo "Starting native navigation DDS endpoint..."
         svc_start_unit lingtu-nav-dds.service
         if ! svc_wait_unit_active lingtu-nav-dds.service 20; then
@@ -1448,6 +1780,7 @@ svc_restart_robot_stack() {
             journalctl -u lingtu-nav-dds.service -n 40 --no-pager >&2 || true
             return 1
         fi
+        svc_wait_native_input_gate_ready 20 || return 1
     else
         echo "native SLAM DDS service is not installed: lingtu-slam-dds.service" >&2
         echo "Install native services with: bash scripts/deploy/thunder/install_services.sh field-cpp" >&2
@@ -1458,7 +1791,7 @@ svc_restart_robot_stack() {
     echo "Starting LingTu Gateway/runtime..."
     svc_start_unit lingtu.service
     if svc_wait_gateway_ready 45; then
-        echo "native Livox + SLAM + Nav DDS + lingtu restarted; /ready is true"
+        echo "native Livox + SLAM + traversability + Nav DDS + lingtu restarted; input gate and /ready are true"
         return 0
     fi
     echo "LingTu started but /ready did not become true in time" >&2
@@ -1473,7 +1806,8 @@ cmd_svc() {
             print_service_row lingtu-livox-dds.service lidar
             print_service_row lingtu-slam-dds.service slam
             print_service_row lingtu-nav-dds.service nav_dds
-            print_service_row robot-camera.service camera
+            print_service_row lingtu-explore-dds.service explore_dds
+            print_service_row lingtu-camera-dds.service camera
             print_service_row robot-brainstem.service brainstem
             print_service_row lingtu.service lingtu
             warn_legacy_services ;;
@@ -1481,7 +1815,8 @@ cmd_svc() {
             print_service_row lingtu-livox-dds.service lidar
             print_service_row lingtu-slam-dds.service slam
             print_service_row lingtu-nav-dds.service nav_dds
-            print_service_row robot-camera.service camera
+            print_service_row lingtu-explore-dds.service explore_dds
+            print_service_row lingtu-camera-dds.service camera
             print_service_row robot-brainstem.service brainstem
             print_service_row robot-lidar.service legacy_lidar
             print_service_row robot-fastlio2.service legacy_fastlio2
@@ -1501,18 +1836,18 @@ cmd_svc() {
                         svc_restart_localization_chain ;;
                 *)
                         local unit
-                        unit=$(svc_unit "$target") || { echo "Usage: lingtu svc restart [lidar|slam|localization|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
+                        unit=$(svc_unit "$target") || { echo "Usage: lingtu svc restart [lidar|slam|localization|localizer|nav_dds|explore_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
                         sudo systemctl restart "$unit"
                         echo "$unit restarted" ;;
             esac ;;
         stop)
             local target="${2:-all}"
             case "$target" in
-                all) sudo systemctl stop lingtu.service lingtu-nav-dds.service lingtu-slam-dds.service lingtu-livox-dds.service robot-super-lio-relocation.service robot-super-lio.service robot-hba.service robot-genz-icp.service robot-localizer.service robot-fastlio2.service robot-lidar.service
-                     echo "native Livox + SLAM + Nav DDS, legacy SLAM/LiDAR, experimental backends, and lingtu stopped" ;;
+                all) sudo systemctl stop lingtu.service lingtu-explore-dds.service lingtu-nav-dds.service lingtu-slam-dds.service lingtu-livox-dds.service robot-super-lio-relocation.service robot-super-lio.service robot-hba.service robot-genz-icp.service robot-localizer.service robot-fastlio2.service robot-lidar.service
+                     echo "native Livox + SLAM + Nav/Explore DDS, legacy SLAM/LiDAR, experimental backends, and lingtu stopped" ;;
                 *)
                     local unit
-                    unit=$(svc_unit "$target") || { echo "Usage: lingtu svc stop [lidar|slam|localization|localizer|nav_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
+                    unit=$(svc_unit "$target") || { echo "Usage: lingtu svc stop [lidar|slam|localization|localizer|nav_dds|explore_dds|genz_icp|hba|super_lio|super_lio_relocation|lingtu|camera|brainstem|legacy_lidar|legacy_fastlio2|legacy_localizer|all]"; exit 1; }
                     sudo systemctl stop "$unit"; echo "$unit stopped" ;;
             esac ;;
         *) echo "Usage: lingtu svc [status|status-legacy|restart <target>|stop <target>]"; exit 1 ;;
@@ -1537,7 +1872,9 @@ cmd_doctor_json() {
 import asyncio
 import glob
 import json
+import math
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -1671,6 +2008,71 @@ def as_bool(value):
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "ok", "ready", "active"}
     return bool(value)
+
+
+def planning_pose_from_state(state_payload):
+    odom = state_payload.get("odometry") if isinstance(state_payload, dict) else None
+    if not isinstance(odom, dict):
+        return None, None, None, {"reason": "odometry_unavailable"}
+    x = as_float(odom.get("x"))
+    y = as_float(odom.get("y"))
+    z = as_float(odom.get("z"))
+    if x is None or y is None:
+        return None, None, None, {"reason": "odometry_position_unavailable"}
+    if z is None:
+        z = 0.0
+    source_frame = str(odom.get("frame_id") or "").strip().lstrip("/")
+    if source_frame in {"", "map"}:
+        return x, y, z, {
+            "reason": "already_in_map" if source_frame == "map" else "legacy_assumed_map",
+            "source_frame": source_frame or None,
+            "target_frame": "map",
+            "transformed": False,
+        }
+    localization = state_payload.get("localization") or {}
+    tf = localization.get("map_odom_tf") if isinstance(localization, dict) else None
+    if not isinstance(tf, dict) or tf.get("valid") is False:
+        return None, None, None, {
+            "reason": "map_odom_tf_unavailable",
+            "source_frame": source_frame,
+            "target_frame": "map",
+        }
+    parent = str(tf.get("frame_id") or "").strip().lstrip("/")
+    child = str(tf.get("child_frame_id") or "").strip().lstrip("/")
+    if parent != "map" or child != source_frame:
+        return None, None, None, {
+            "reason": "map_odom_tf_frame_mismatch",
+            "source_frame": source_frame,
+            "target_frame": "map",
+            "tf_parent": parent,
+            "tf_child": child,
+        }
+    values = [as_float(tf.get(key)) for key in ("tx", "ty", "tz", "qx", "qy", "qz", "qw")]
+    if any(value is None or not math.isfinite(value) for value in values):
+        return None, None, None, {
+            "reason": "map_odom_tf_invalid",
+            "source_frame": source_frame,
+            "target_frame": "map",
+        }
+    tx, ty, tz, qx, qy, qz, qw = values
+    norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+    if norm <= 1e-12:
+        return None, None, None, {
+            "reason": "map_odom_tf_zero_quaternion",
+            "source_frame": source_frame,
+            "target_frame": "map",
+        }
+    qx, qy, qz, qw = qx / norm, qy / norm, qz / norm, qw / norm
+    rx = (1.0 - 2.0 * (qy * qy + qz * qz)) * x + 2.0 * (qx * qy - qz * qw) * y + 2.0 * (qx * qz + qy * qw) * z
+    ry = 2.0 * (qx * qy + qz * qw) * x + (1.0 - 2.0 * (qx * qx + qz * qz)) * y + 2.0 * (qy * qz - qx * qw) * z
+    rz = 2.0 * (qx * qz - qy * qw) * x + 2.0 * (qy * qz + qx * qw) * y + (1.0 - 2.0 * (qx * qx + qy * qy)) * z
+    return tx + rx, ty + ry, tz + rz, {
+        "reason": "map_odom_tf",
+        "source_frame": source_frame,
+        "target_frame": "map",
+        "transformed": True,
+        "tf_ts": tf.get("ts"),
+    }
 
 
 def command_source_name(control):
@@ -1930,6 +2332,25 @@ def netdev_state(name):
     return evidence
 
 
+def systemd_environment(service):
+    rc, out, err = run(
+        ["systemctl", "show", service, "-p", "Environment", "--value"],
+        timeout=2,
+    )
+    values = {}
+    if rc == 0 and out:
+        try:
+            entries = shlex.split(out)
+        except ValueError:
+            entries = out.split()
+        for entry in entries:
+            if "=" not in entry:
+                continue
+            key, value = entry.split("=", 1)
+            values[key] = value
+    return values, {"returncode": rc, "stderr": err}
+
+
 def add(check_id, status, level, message, evidence=None):
     checks.append(
         {
@@ -1947,14 +2368,14 @@ canonical_services = [
     "lingtu-slam-dds.service",
     "lingtu-nav-dds.service",
     "lingtu.service",
-    "robot-camera.service",
+    "lingtu-camera-dds.service",
 ]
 for svc in canonical_services:
     rc, out, err = run(["systemctl", "is-active", svc], timeout=2)
     active = out.splitlines()[0] if out else "unknown"
     if active == "active":
         add(f"service.{svc}", "pass", "p0", f"{svc} is active", {"active": active})
-    elif svc == "robot-camera.service":
+    elif svc == "lingtu-camera-dds.service":
         add(f"service.{svc}", "warn", "p1", f"{svc} is not active", {"active": active, "stderr": err})
     else:
         add(f"service.{svc}", "fail", "p0", f"{svc} is not active", {"active": active, "stderr": err})
@@ -1990,13 +2411,26 @@ if active_legacy:
 else:
     add("service.legacy_conflicts", "pass", "p0", "no active legacy localization services")
 
-eth0 = netdev_state(os.environ.get("LINGTU_LIDAR_NETDEV", "eth0"))
-if eth0.get("carrier") == "1":
-    add("livox.netdev_carrier", "pass", "p0", "LiDAR network interface has carrier", eth0)
-elif "carrier" in eth0:
-    add("livox.netdev_carrier", "fail", "p0", "LiDAR network interface has no carrier", eth0)
+livox_service_env, livox_service_env_evidence = systemd_environment("lingtu-livox-dds.service")
+lidar_netdev_name = (
+    os.environ.get("LINGTU_LIDAR_NETDEV")
+    or os.environ.get("LINGTU_LIVOX_NET_IFACE")
+    or livox_service_env.get("LINGTU_LIVOX_NET_IFACE")
+    or "eth0"
+)
+lidar_netdev = netdev_state(lidar_netdev_name)
+lidar_netdev["selection"] = {
+    "LINGTU_LIDAR_NETDEV": os.environ.get("LINGTU_LIDAR_NETDEV"),
+    "LINGTU_LIVOX_NET_IFACE": os.environ.get("LINGTU_LIVOX_NET_IFACE"),
+    "service_environment": livox_service_env.get("LINGTU_LIVOX_NET_IFACE"),
+    "service_environment_probe": livox_service_env_evidence,
+}
+if lidar_netdev.get("carrier") == "1":
+    add("livox.netdev_carrier", "pass", "p0", "LiDAR network interface has carrier", lidar_netdev)
+elif "carrier" in lidar_netdev:
+    add("livox.netdev_carrier", "fail", "p0", "LiDAR network interface has no carrier", lidar_netdev)
 else:
-    add("livox.netdev_carrier", "warn", "p1", "could not inspect LiDAR network interface carrier", eth0)
+    add("livox.netdev_carrier", "warn", "p1", "could not inspect LiDAR network interface carrier", lidar_netdev)
 
 livox_event, livox_evidence = latest_livox_sdk_event()
 if livox_event == "success":
@@ -2378,12 +2812,7 @@ else:
     )
 
 if non_motion:
-    odom = state_payload.get("odometry") if isinstance(state_payload, dict) else None
-    x = as_float((odom or {}).get("x"))
-    y = as_float((odom or {}).get("y"))
-    z = as_float((odom or {}).get("z"))
-    if z is None:
-        z = 0.0
+    x, y, z, preview_origin = planning_pose_from_state(state_payload)
     attempts = []
     preview_ok = False
     preview_feasible = False
@@ -2392,8 +2821,12 @@ if non_motion:
             "gateway.navigation_plan_preview",
             "warn",
             "p1",
-            "navigation plan preview skipped because odometry is unavailable",
-            {"http_status": state_code, "state_error": state_err},
+            "navigation plan preview skipped because the map-frame robot pose is unavailable",
+            {
+                "http_status": state_code,
+                "state_error": state_err,
+                "preview_origin": preview_origin,
+            },
         )
     else:
         offsets = [
@@ -2458,6 +2891,7 @@ if non_motion:
             message,
             {
                 "offset_m": PLAN_PREVIEW_OFFSET_M,
+                "preview_origin": preview_origin,
                 "attempts": attempts,
                 "active_cmd_source_after": active_after,
                 "state_after": state_after,
@@ -3122,7 +3556,9 @@ cmd_slamcheck() {
     local maps_root
     maps_root="$(lingtu_maps_root)"
     if [ "$target" = "super_lio_relocation" ] && [ -z "$map_name" ]; then
-        map_name=$(readlink "$maps_root/active" 2>/dev/null || true)
+        local active_maps_json
+        active_maps_json=$(curl -s --max-time 4 "$GW/api/v1/maps" 2>/dev/null || echo '{}')
+        map_name=$(pjson "$active_maps_json" 'print(d.get("active") or "")')
     fi
 
     local prev_status prev_mode rollback_profile switch_json switch_ok result=0
@@ -3162,7 +3598,15 @@ cmd_slamcheck() {
             echo -e "${R}FAIL${N}: map.pcd not found: $map_dir/map.pcd"
             return 1
         fi
-        ln -sfn "$map_name" "$maps_root/active"
+        local activate_json activate_ok
+        activate_json=$(curl -s --max-time 15 -X POST -H "Content-Type: application/json" \
+            -d "{\"name\":\"$map_name\"}" "$GW/api/v1/map/activate" 2>/dev/null || echo '{}')
+        activate_ok=$(pjson "$activate_json" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+        if [ "$activate_ok" != "true" ]; then
+            echo -e "${R}FAIL${N}: maps.service could not activate $map_name"
+            echo "$activate_json" | python3 -m json.tool 2>/dev/null || echo "$activate_json"
+            return 1
+        fi
         sudo mkdir -p /run/lingtu
         {
             echo "SUPER_LIO_RELOCATION_MAP_DIR=$maps_root/active"
@@ -4621,7 +5065,7 @@ cmd_log() {
                 | grep -i 'drift_watchdog' | tail -20 ;;
         dufomap)
             journalctl -u lingtu.service --since '1 hour ago' --no-pager 2>/dev/null \
-                | grep -iE 'dufomap|dynamic_filter|map/save.*filter' | tail -20 ;;
+                | grep -iE 'dufomap|static_cleaner|dynamic_filter|map/save.*filter' | tail -20 ;;
         error)
             journalctl -u lingtu.service --since '30 min ago' --no-pager 2>/dev/null \
                 | grep -iE '\[ERROR\]|traceback|exception' \

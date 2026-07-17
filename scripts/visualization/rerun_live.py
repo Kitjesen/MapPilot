@@ -30,8 +30,14 @@ Usage:
     python3 scripts/visualization/rerun_live.py                          # on S100P
     rerun --connect rerun+http://192.168.66.190:9877/proxy # on local PC
 """
-import sys, os, time, math, argparse
+
+import argparse
+import math
+import os
+import sys
+import time
 from pathlib import Path
+
 
 def find_repo_root(start: Path) -> Path:
     for path in (start, *start.parents):
@@ -39,9 +45,11 @@ def find_repo_root(start: Path) -> Path:
             return path
     raise RuntimeError(f"Could not find repository root from {start}")
 
+
 REPO_ROOT = find_repo_root(Path(__file__).resolve().parent)
 sys.path.insert(0, str(REPO_ROOT / "src"))
 import logging
+
 logging.basicConfig(level=logging.WARNING)
 import numpy as np
 
@@ -50,9 +58,6 @@ parser.add_argument("--native", action="store_true", help="Launch native desktop
 parser.add_argument("--web-port", type=int, default=9090)
 parser.add_argument("--grpc-port", type=int, default=9877)
 _args = parser.parse_args()
-
-from runtime.adapters.ros2.context import ensure_rclpy, get_shared_executor, shutdown_shared_executor
-ensure_rclpy()
 
 import rerun as rr
 import rerun.blueprint as rrb
@@ -88,20 +93,20 @@ if blueprint:
     except Exception:
         pass
 
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy
-from nav_msgs.msg import Odometry, OccupancyGrid, Path
-from sensor_msgs.msg import PointCloud2, Image
-from visualization_msgs.msg import MarkerArray
-from tf2_msgs.msg import TFMessage
-
-node = Node("rerun_viz")
-qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=5)
-qos_best = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, depth=5)
+# Native CycloneDDS subscriptions (no rclpy/ROS2 dependency). The DDS IDL types
+# mirror the ROS2 message field layout, so the callbacks below are unchanged.
+from runtime.adapters.dds.reader import (
+    DDS_Image,
+    DDS_OccupancyGrid,
+    DDS_Odometry,
+    DDS_Path,
+    DDS_PointCloud2,
+    DDS_TFMessage,
+    DDSReader,
+)
 
 trajectory = []
-counts = {"odom": 0, "cloud": 0, "color": 0, "depth": 0,
-          "costmap": 0, "det": 0, "path": 0, "tf": 0}
+counts = {"odom": 0, "cloud": 0, "color": 0, "depth": 0, "costmap": 0, "det": 0, "path": 0, "tf": 0}
 _last_odom_t = 0.0
 
 # Robot body dimensions (half-sizes in meters) 鈥?Thunder quadruped
@@ -149,6 +154,7 @@ def on_cloud(msg):
         keys = list(_map_voxels.keys())
         if len(keys) > _MAP_MAX:
             import random
+
             keys = random.sample(keys, _MAP_MAX)
 
         centers = np.array(keys, dtype=np.float32) * vs + vs * 0.5
@@ -174,30 +180,39 @@ def on_odom(msg):
     x, y, z = p.x, p.y, p.z
 
     # Robot body 鈥?wireframe box
-    rr.log("world/robot", rr.Boxes3D(
-        centers=[[x, y, z + ROBOT_HALF[2]]],
-        half_sizes=[ROBOT_HALF],
-        colors=[[0, 255, 127]],
-        fill_mode="MajorWireframe",
-    ))
+    rr.log(
+        "world/robot",
+        rr.Boxes3D(
+            centers=[[x, y, z + ROBOT_HALF[2]]],
+            half_sizes=[ROBOT_HALF],
+            colors=[[0, 255, 127]],
+            fill_mode="MajorWireframe",
+        ),
+    )
 
     # Orientation arrow
     yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
     dx, dy = math.cos(yaw) * 0.8, math.sin(yaw) * 0.8
-    rr.log("world/heading", rr.Arrows3D(
-        origins=[[x, y, z + 0.3]],
-        vectors=[[dx, dy, 0]],
-        colors=[[255, 255, 0]],
-        radii=0.05,
-    ))
+    rr.log(
+        "world/heading",
+        rr.Arrows3D(
+            origins=[[x, y, z + 0.3]],
+            vectors=[[dx, dy, 0]],
+            colors=[[255, 255, 0]],
+            radii=0.05,
+        ),
+    )
 
     # Trajectory
     trajectory.append([x, y, z])
     if len(trajectory) > 2:
-        rr.log("world/trajectory", rr.LineStrips3D(
-            [trajectory[-1000:]],
-            colors=[[0, 100, 255]],
-        ))
+        rr.log(
+            "world/trajectory",
+            rr.LineStrips3D(
+                [trajectory[-1000:]],
+                colors=[[0, 100, 255]],
+            ),
+        )
 
     # SLAM Hz metric
     now = time.time()
@@ -216,10 +231,13 @@ def on_tf(msg):
             child = tf.child_frame_id.lstrip("/")
             t = tf.transform.translation
             q = tf.transform.rotation
-            rr.log(f"world/tf/{child}", rr.Transform3D(
-                translation=[t.x, t.y, t.z],
-                rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
-            ))
+            rr.log(
+                f"world/tf/{child}",
+                rr.Transform3D(
+                    translation=[t.x, t.y, t.z],
+                    rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
+                ),
+            )
     except Exception:
         pass
 
@@ -231,10 +249,14 @@ def on_tf_static(msg):
             child = tf.child_frame_id.lstrip("/")
             t = tf.transform.translation
             q = tf.transform.rotation
-            rr.log(f"world/tf/{child}", rr.Transform3D(
-                translation=[t.x, t.y, t.z],
-                rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
-            ), static=True)
+            rr.log(
+                f"world/tf/{child}",
+                rr.Transform3D(
+                    translation=[t.x, t.y, t.z],
+                    rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
+                ),
+                static=True,
+            )
     except Exception:
         pass
 
@@ -255,31 +277,44 @@ def on_costmap(msg):
 
         # Build colored image
         img = np.zeros((h, w, 3), dtype=np.uint8)
-        img[grid == 0] = [40, 80, 40]           # dark green = free
-        img[grid > 50] = [200, 50, 50]           # red = occupied
-        img[grid < 0] = [60, 60, 60]             # gray = unknown
+        img[grid == 0] = [40, 80, 40]  # dark green = free
+        img[grid > 50] = [200, 50, 50]  # red = occupied
+        img[grid < 0] = [60, 60, 60]  # gray = unknown
         inflate_mask = (grid > 0) & (grid <= 50)
-        img[inflate_mask] = [180, 160, 40]        # yellow = inflation
+        img[inflate_mask] = [180, 160, 40]  # yellow = inflation
 
         # Flat ground mesh
         x0, y0 = ox, oy
         x1, y1 = ox + w * res, oy + h * res
-        vertices = np.array([
-            [x0, y0, 0.01], [x1, y0, 0.01],
-            [x1, y1, 0.01], [x0, y1, 0.01],
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [x0, y0, 0.01],
+                [x1, y0, 0.01],
+                [x1, y1, 0.01],
+                [x0, y1, 0.01],
+            ],
+            dtype=np.float32,
+        )
         triangles = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
-        texcoords = np.array([
-            [0.0, 1.0], [1.0, 1.0],
-            [1.0, 0.0], [0.0, 0.0],
-        ], dtype=np.float32)
+        texcoords = np.array(
+            [
+                [0.0, 1.0],
+                [1.0, 1.0],
+                [1.0, 0.0],
+                [0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
 
-        rr.log("world/costmap", rr.Mesh3D(
-            vertex_positions=vertices,
-            triangle_indices=triangles,
-            vertex_texcoords=texcoords,
-            albedo_texture=img,
-        ))
+        rr.log(
+            "world/costmap",
+            rr.Mesh3D(
+                vertex_positions=vertices,
+                triangle_indices=triangles,
+                vertex_texcoords=texcoords,
+                albedo_texture=img,
+            ),
+        )
     except Exception:
         pass
 
@@ -308,9 +343,15 @@ def on_detections(msg):
             colors.append([max(r, 50), max(g, 50), max(b, 50)])
 
         if positions:
-            rr.log("world/detections", rr.Points3D(
-                positions, labels=labels, colors=colors, radii=0.12,
-            ))
+            rr.log(
+                "world/detections",
+                rr.Points3D(
+                    positions,
+                    labels=labels,
+                    colors=colors,
+                    radii=0.12,
+                ),
+            )
             rr.log("metrics/det_count", rr.Scalars(len(positions)))
     except Exception:
         pass
@@ -320,12 +361,16 @@ def on_detections(msg):
 def on_nav_path(msg):
     counts["path"] += 1
     try:
-        pts = [[ps.pose.position.x, ps.pose.position.y, ps.pose.position.z]
-               for ps in msg.poses]
+        pts = [[ps.pose.position.x, ps.pose.position.y, ps.pose.position.z] for ps in msg.poses]
         if len(pts) > 1:
-            rr.log("world/nav_path", rr.LineStrips3D(
-                [pts], colors=[[0, 255, 100]], radii=0.04,
-            ))
+            rr.log(
+                "world/nav_path",
+                rr.LineStrips3D(
+                    [pts],
+                    colors=[[0, 255, 100]],
+                    radii=0.04,
+                ),
+            )
     except Exception:
         pass
 
@@ -370,8 +415,9 @@ def _crop_square(img):
     h, w = img.shape[:2]
     if h > w:
         margin = (h - w) // 2
-        return img[margin:margin + w]
+        return img[margin : margin + w]
     return img
+
 
 def _downsample(img, max_dim=320):
     """Downsample image so longest side <= max_dim."""
@@ -384,6 +430,7 @@ def _downsample(img, max_dim=320):
     row_idx = (np.arange(new_h) * h // new_h).astype(int)
     col_idx = (np.arange(new_w) * w // new_w).astype(int)
     return img[np.ix_(row_idx, col_idx)]
+
 
 def on_color(msg):
     counts["color"] += 1
@@ -420,7 +467,7 @@ def on_depth(msg):
             # Downsample depth (nearest neighbor to preserve values)
             if max(img.shape) > 320:
                 scale = 320 / max(img.shape)
-                nh, nw = int(img.shape[0]*scale), int(img.shape[1]*scale)
+                nh, nw = int(img.shape[0] * scale), int(img.shape[1] * scale)
                 row_idx = (np.arange(nh) * img.shape[0] // nh).astype(int)
                 col_idx = (np.arange(nw) * img.shape[1] // nw).astype(int)
                 img = img[np.ix_(row_idx, col_idx)]
@@ -430,7 +477,7 @@ def on_depth(msg):
             img = _crop_square(np.rot90(img, k=1))
             if max(img.shape) > 320:
                 scale = 320 / max(img.shape)
-                nh, nw = int(img.shape[0]*scale), int(img.shape[1]*scale)
+                nh, nw = int(img.shape[0] * scale), int(img.shape[1] * scale)
                 row_idx = (np.arange(nh) * img.shape[0] // nh).astype(int)
                 col_idx = (np.arange(nw) * img.shape[1] // nw).astype(int)
                 img = img[np.ix_(row_idx, col_idx)]
@@ -440,29 +487,39 @@ def on_depth(msg):
 
 
 # 鈹€鈹€ Subscribe 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-node.create_subscription(Odometry, "/slam/odometry", on_odom, qos)
-node.create_subscription(PointCloud2, "/slam/map_cloud", on_cloud, qos)
-node.create_subscription(Image, "/camera/color/image_raw", on_color, qos)
-node.create_subscription(Image, "/camera/depth/image_raw", on_depth, qos)
-node.create_subscription(OccupancyGrid, "/nav/costmap", on_costmap, qos_best)
-node.create_subscription(MarkerArray, "/nav/detections", on_detections, qos_best)
-node.create_subscription(Path, "/nav/path", on_nav_path, qos_best)
-node.create_subscription(TFMessage, "/tf", on_tf, qos_best)
-node.create_subscription(TFMessage, "/tf_static", on_tf_static, qos_best)
-node.create_subscription(PointCloud2, "/nav/terrain_map_ext", on_terrain, qos_best)
-get_shared_executor().add_node(node)
+reader = DDSReader()
+reader.subscribe("/slam/odometry", DDS_Odometry, on_odom)
+reader.subscribe("/slam/map_cloud", DDS_PointCloud2, on_cloud)
+reader.subscribe("/camera/color/image_raw", DDS_Image, on_color)
+reader.subscribe("/camera/depth/image_raw", DDS_Image, on_depth)
+reader.subscribe("/nav/costmap", DDS_OccupancyGrid, on_costmap)
+reader.subscribe("/nav/path", DDS_Path, on_nav_path)
+reader.subscribe("/tf", DDS_TFMessage, on_tf)
+reader.subscribe("/tf_static", DDS_TFMessage, on_tf_static)
+reader.subscribe("/nav/terrain_map_ext", DDS_PointCloud2, on_terrain)
+# NOTE: /nav/detections (visualization_msgs/MarkerArray) skipped -- no DDS IDL type.
+reader.spin_background()
 
 print("Streaming: map + robot + trajectory + TF + costmap + terrain + detections + nav_path + camera")
 print("Ctrl+C to stop.")
 try:
     while True:
         time.sleep(2)
-        print("odom=%d cloud=%d color=%d depth=%d costmap=%d det=%d path=%d tf=%d" % (
-            counts["odom"], counts["cloud"], counts["color"], counts["depth"],
-            counts["costmap"], counts["det"], counts["path"], counts["tf"]))
+        print(
+            "odom=%d cloud=%d color=%d depth=%d costmap=%d det=%d path=%d tf=%d"
+            % (
+                counts["odom"],
+                counts["cloud"],
+                counts["color"],
+                counts["depth"],
+                counts["costmap"],
+                counts["det"],
+                counts["path"],
+                counts["tf"],
+            )
+        )
 except KeyboardInterrupt:
     pass
 
-node.destroy_node()
-shutdown_shared_executor()
+reader.stop()
 print("Done.")

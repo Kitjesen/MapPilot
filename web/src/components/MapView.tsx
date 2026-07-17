@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Map, FolderOpen, Trash2, Star, RefreshCw, Save, Pencil } from 'lucide-react'
+import { Map, FolderOpen, Trash2, Star, RefreshCw, Save, Pencil, Navigation } from 'lucide-react'
 import type { MapInfo, ToastKind } from '../types'
 import * as api from '../services/api'
+import { mapIsNavigationReady, navigationRuntimeReady } from '../services/mapReadiness'
 import { PointCloudViewer, type PointCloudPick } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
+import { text, type Locale } from '../i18n'
 import styles from './MapView.module.css'
 
 interface MapViewProps {
   showToast: (msg: string, kind?: ToastKind) => void
+  locale: Locale
 }
 // ── Map type classification ────────────────────────────────────
 // 可导航地图 — has PCD + OctoMap artifact (OctoPlanner3D ready)
@@ -21,12 +24,12 @@ function groupMaps(maps: MapInfo[]): Group[] {
     {
       label: '可导航地图',
       hint: '含 OctoMap，可用于 OctoPlanner3D 规划',
-      maps: maps.filter(m => m.has_pcd && (m.navigation_ready === true || m.has_octomap === true)),
+      maps: maps.filter(mapIsNavigationReady),
     },
     {
       label: '三维点云',
       hint: '原始 LiDAR 点云，需构建 OctoMap 后才能导航',
-      maps: maps.filter(m => m.has_pcd && !(m.navigation_ready === true || m.has_octomap === true)),
+      maps: maps.filter(m => m.has_pcd && !mapIsNavigationReady(m)),
     },
     {
       label: '空地图',
@@ -40,28 +43,81 @@ function groupMaps(maps: MapInfo[]): Group[] {
 function formatSaveMapSummary(r: api.SaveMapResult): string {
   const source = r.map_save_source ?? r.source ?? 'unknown'
   const savedMapReloc = r.saved_map_relocalization_supported ?? r.relocalization_supported
-  const relocText = savedMapReloc === undefined ? 'unknown' : savedMapReloc ? 'yes' : 'no'
+  const relocText = savedMapReloc === undefined ? '未知' : savedMapReloc ? '支持' : '不支持'
   const recovery = r.restart_recovery_supported === undefined
     ? (r.recovery_method ?? 'unknown')
     : `${r.restart_recovery_supported ? 'restart' : 'no-restart'}${r.recovery_method ? `/${r.recovery_method}` : ''}`
   const warnings = r.warnings?.filter(Boolean) ?? []
   return [
-    `source=${source}`,
-    `saved-map relocalize=${relocText}`,
-    `recovery=${recovery}`,
-    warnings.length > 0 ? `warnings=${warnings.join('; ')}` : null,
+    `来源：${source === 'unknown' ? '未知' : source}`,
+    `保存地图重定位：${relocText}`,
+    `恢复方式：${recovery === 'unknown' ? '未知' : recovery}`,
+    warnings.length > 0 ? `警告：${warnings.join('; ')}` : null,
   ].filter((v): v is string => Boolean(v)).join(' | ')
+}
+
+interface SaveStatus {
+  name: string
+  state: 'saving' | 'saved' | 'failed'
+  detail: string
+  location?: string | null
+  summary?: string | null
+}
+
+function saveMapStringField(r: api.SaveMapResult, keys: string[]): string | null {
+  const record = r as unknown as Record<string, unknown>
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return null
+}
+
+function formatSaveMapLocation(r: api.SaveMapResult, name: string): string {
+  return saveMapStringField(r, [
+    'path',
+    'map_path',
+    'map_dir',
+    'save_dir',
+    'directory',
+    'pcd_path',
+    'pcd',
+  ]) ?? `网关地图目录 / ${name}`
+}
+
+function formatSaveMapDetail(r: api.SaveMapResult): string {
+  const parts: string[] = []
+  const opt = r.map_optimization
+  if (opt && typeof opt === 'object') {
+    const strategy = String(opt.strategy ?? 'map').toUpperCase()
+    const status = String(opt.status ?? '')
+    if (status === 'ok') parts.push(`${strategy} 已优化`)
+    else if (status === 'unavailable') parts.push(`${strategy} 未安装`)
+    else if (status === 'skipped') parts.push(`${strategy} 已跳过`)
+    else if (status === 'failed') parts.push(`${strategy} 失败`)
+  }
+  const df = r.dynamic_filter
+  if (df && df.success && typeof df.dropped === 'number' && typeof df.orig_count === 'number' && df.orig_count > 0) {
+    const pct = (100 * df.dropped / df.orig_count).toFixed(1)
+    parts.push(`动态点清理 ${df.dropped}/${df.orig_count} (${pct}%)`)
+  }
+  if (r.size) parts.push(`大小 ${r.size}`)
+  if (r.saved_map_relocalization_supported ?? r.relocalization_supported) {
+    parts.push('支持重定位')
+  }
+  return parts.length ? parts.join(' · ') : '已写入地图列表，可在右侧选择加载。'
 }
 
 interface CardProps {
   m: MapInfo
   selected: boolean
   onPreview:  (name: string) => void
+  onNavigate: (name: string) => void
   onActivate: (name: string) => void
   onRename:   (name: string) => void
   onDelete:   (name: string) => void
 }
-function MapCard({ m, selected, onPreview, onActivate, onRename, onDelete }: CardProps) {
+function MapCard({ m, selected, onPreview, onNavigate, onActivate, onRename, onDelete }: CardProps) {
   return (
     <div className={[
       m.is_active ? styles.cardActive : styles.card,
@@ -81,6 +137,15 @@ function MapCard({ m, selected, onPreview, onActivate, onRename, onDelete }: Car
         </span>
       </div>
       <div className={styles.cardActions}>
+        {mapIsNavigationReady(m) && (
+          <button
+            className={styles.btnTinyAccent}
+            onClick={() => onNavigate(m.name)}
+            title="切换到导航模式并重定位"
+          >
+            <Navigation size={11} /> 导航
+          </button>
+        )}
         {m.has_pcd && (
           <button
             className={selected ? styles.btnTinyActive : styles.btnTiny}
@@ -105,7 +170,7 @@ function MapCard({ m, selected, onPreview, onActivate, onRename, onDelete }: Car
 }
 
 // ── Main ───────────────────────────────────────────────────────
-export function MapView({ showToast }: MapViewProps) {
+export function MapView({ showToast, locale }: MapViewProps) {
   const [maps,        setMaps       ] = useState<MapInfo[]>([])
   const [loading,     setLoading    ] = useState(true)
   const [error,       setError      ] = useState('')
@@ -116,9 +181,11 @@ export function MapView({ showToast }: MapViewProps) {
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
   const [activateFrom, setActivateFrom] = useState<string | null>(null)
+  const [navigateFrom, setNavigateFrom] = useState<string | null>(null)
+  const [navigationPendingMap, setNavigationPendingMap] = useState<string | null>(null)
   const [renameFrom, setRenameFrom] = useState<string | null>(null)
   const [deleteFrom, setDeleteFrom] = useState<string | null>(null)
-  const [lastSaveSummary, setLastSaveSummary] = useState<string | null>(null)
+  const [saveStatus, setSaveStatus] = useState<SaveStatus | null>(null)
 
   // Resizable divider
   const containerRef    = useRef<HTMLDivElement>(null)
@@ -168,6 +235,7 @@ export function MapView({ showToast }: MapViewProps) {
   useEffect(() => { setPickedPoint(null) }, [selectedMap])
 
   const handleActivate = (name: string) => setActivateFrom(name)
+  const handleNavigate = (name: string) => setNavigateFrom(name)
   const handleDelete = (name: string) => setDeleteFrom(name)
   const handleRename = (name: string) => setRenameFrom(name)
   const handleSave = () => setSaveOpen(true)
@@ -182,6 +250,69 @@ export function MapView({ showToast }: MapViewProps) {
       loadMaps()
     } catch {
       showToast(`激活失败: ${name}`, 'error')
+    }
+  }
+
+  const ensureNavigationSession = async (mapName: string) => {
+    const [session, navigation] = await Promise.all([
+      api.fetchSession(),
+      api.fetchNavigationStatus(),
+    ])
+    if (!navigationRuntimeReady(session, navigation, mapName)) {
+      const blockers = navigation.readiness?.blockers?.join(', ')
+      throw new Error(
+        blockers || `地图 ${mapName} 尚未完成导航切换和重定位`,
+      )
+    }
+  }
+
+  const waitForNavigationSession = async (mapName: string) => {
+    const deadline = Date.now() + 60_000
+    let lastError = ''
+    while (Date.now() < deadline) {
+      try {
+        const [session, navigation] = await Promise.all([
+          api.fetchSession(),
+          api.fetchNavigationStatus(),
+        ])
+        if (navigationRuntimeReady(session, navigation, mapName)) return
+        lastError = navigation.readiness?.blockers?.join(', ')
+          || session.error
+          || session.relocalization_state
+          || session.mode
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error)
+      }
+      await new Promise(resolve => window.setTimeout(resolve, 1_000))
+    }
+    throw new Error(lastError || '导航运行时在 60 秒内未就绪')
+  }
+
+  const confirmNavigate = async () => {
+    const name = navigateFrom
+    setNavigateFrom(null)
+    if (!name || navigationPendingMap) return
+    setNavigationPendingMap(name)
+    try {
+      const [currentSession, currentNavigation] = await Promise.all([
+        api.fetchSession(),
+        api.fetchNavigationStatus(),
+      ])
+      if (!navigationRuntimeReady(currentSession, currentNavigation, name)) {
+        const result = await api.switchProductSession('navigating', {
+          currentProfile: currentSession.product_profile,
+          mapName: name,
+        })
+        showToast(`导航切换已受理，等待服务重启和重定位：${result.status}`, 'info')
+        await waitForNavigationSession(name)
+      }
+      setSelectedMap(name)
+      showToast(`导航已就绪：${name}`, 'success')
+      await loadMaps()
+    } catch (error) {
+      showToast(`导航切换失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+    } finally {
+      setNavigationPendingMap(null)
     }
   }
 
@@ -205,22 +336,39 @@ export function MapView({ showToast }: MapViewProps) {
   }
   const confirmSave = async (name: string) => {
     setSaveOpen(false)
+    setSaveStatus({
+      name,
+      state: 'saving',
+      detail: '正在写入点云、清理动态点并生成导航地图。完成后会显示保存位置。',
+    })
     try {
       const r = await api.saveMap(name)
       const summary = formatSaveMapSummary(r)
-      setLastSaveSummary(summary)
-      showToast(`Saved ${name}. ${summary}`, r.warnings?.length ? 'info' : 'success')
+      setSaveStatus({
+        name,
+        state: 'saved',
+        detail: formatSaveMapDetail(r),
+        location: formatSaveMapLocation(r, name),
+        summary,
+      })
+      showToast(`已保存 ${name}。${summary}`, r.warnings?.length ? 'info' : 'success')
       loadMaps()
     }
-    catch {
-      setLastSaveSummary(null)
-      showToast('Save failed', 'error')
+    catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e)
+      setSaveStatus({
+        name,
+        state: 'failed',
+        detail: message || '保存失败，请检查 Gateway 日志。',
+      })
+      showToast('保存失败', 'error')
     }
   }
 
   const confirmPickedGoal = async () => {
-    if (!pickedPoint) return
+    if (!pickedPoint || !selectedMap) return
     try {
+      await ensureNavigationSession(selectedMap)
       const res = await api.navigateClick(pickedPoint.x, pickedPoint.y, {
         z: pickedPoint.z,
         source: 'map_click',
@@ -234,7 +382,7 @@ export function MapView({ showToast }: MapViewProps) {
       )
       setPickedPoint(null)
     } catch (e: unknown) {
-      showToast(api.formatCommandError(e, '3D point goal failed'), 'error')
+      showToast(api.formatCommandError(e, '3D 点目标失败'), 'error')
     }
   }
 
@@ -266,7 +414,7 @@ export function MapView({ showToast }: MapViewProps) {
       {/* Right: categorized map list */}
       <div className={styles.listPanel}>
         <div className={styles.listHeader}>
-          <h2 className={styles.listTitle}><Map size={15} /> 地图管理</h2>
+          <h2 className={styles.listTitle}><Map size={15} /> {text(locale, 'Map Management', '地图管理')}</h2>
           <div className={styles.listActions}>
             <button className={styles.btnSmallAccent} onClick={handleSave}>
               <Save size={13} /> 保存当前地图
@@ -277,9 +425,34 @@ export function MapView({ showToast }: MapViewProps) {
           </div>
         </div>
 
-        {lastSaveSummary && (
-          <div className={styles.stateMsg} title={lastSaveSummary}>
-            Last save: {lastSaveSummary}
+        {saveStatus && (
+          <div
+            className={[
+              styles.saveStatusCard,
+              saveStatus.state === 'saving' ? styles.saveStatusBusy : '',
+              saveStatus.state === 'failed' ? styles.saveStatusError : '',
+            ].filter(Boolean).join(' ')}
+            title={saveStatus.summary ?? saveStatus.detail}
+          >
+            <div className={styles.saveStatusHeader}>
+              <span>{saveStatus.state === 'saving' ? '保存进度' : saveStatus.state === 'saved' ? '保存结果' : '保存失败'}</span>
+              <span className={styles.saveStatusName}>{saveStatus.name}</span>
+            </div>
+            <div className={styles.saveStatusDetail}>{saveStatus.detail}</div>
+            {saveStatus.state === 'saving' && (
+              <div className={styles.saveProgressBar} aria-label="保存进行中">
+                <span />
+              </div>
+            )}
+            {saveStatus.location && (
+              <div className={styles.saveLocation}>
+                <span>位置</span>
+                <code>{saveStatus.location}</code>
+              </div>
+            )}
+            {saveStatus.summary && (
+              <div className={styles.saveSummary}>{saveStatus.summary}</div>
+            )}
           </div>
         )}
 
@@ -326,7 +499,7 @@ export function MapView({ showToast }: MapViewProps) {
                 {g.maps.map(m => (
                   <MapCard
                     key={m.name} m={m} selected={selectedMap === m.name}
-                    onPreview={togglePreview} onActivate={handleActivate}
+                    onPreview={togglePreview} onNavigate={handleNavigate} onActivate={handleActivate}
                     onRename={handleRename}   onDelete={handleDelete}
                   />
                 ))}
@@ -339,7 +512,7 @@ export function MapView({ showToast }: MapViewProps) {
       <PromptModal
         open={saveOpen}
         title="保存当前地图"
-        message="保存当前 SLAM 建图结果。系统会自动生成导航所需的 OctoMap 和 occupancy 数据。"
+        message="保存当前 SLAM 建图结果。完成后会出现在地图列表，并在“保存结果”显示保存位置和处理摘要。"
         placeholder="例如 building_2f"
         confirmLabel="保存"
         icon={<Save size={18} />}
@@ -359,6 +532,15 @@ export function MapView({ showToast }: MapViewProps) {
         validate={nameValidator}
         onConfirm={confirmRename}
         onCancel={() => setRenameFrom(null)}
+      />
+
+      <ConfirmModal
+        open={navigateFrom != null}
+        title="进入导航模式"
+        message={`将使用“${navigateFrom ?? ''}”执行完整导航切换：重启产品服务、加载 OctoMap 并进行保存地图重定位。切换成功本身不会移动机器人，发送目标后才会运动。`}
+        confirmLabel="切换并重定位"
+        onConfirm={confirmNavigate}
+        onCancel={() => setNavigateFrom(null)}
       />
 
       <ConfirmModal

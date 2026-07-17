@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from runtime.contracts import CAMERA_BACKEND_SIM
 
 EXPLORATION_CONFIG_KEYS = (
     "way_point_topic",
@@ -46,12 +47,29 @@ def driver_stack_config(
         driver_config.setdefault("map_cloud_frame_id", frame_id)
     if enable_semantic and driver_module == "MujocoDriverModule":
         driver_config.setdefault("enable_camera", True)
+        driver_config.setdefault(
+            "publish_camera",
+            bool(driver_config.get("use_driver_camera", False)),
+        )
+    if driver_module == "MujocoDriverModule":
+        driver_config.setdefault(
+            "publish_lidar",
+            bool(driver_config.get("use_driver_lidar", False)),
+        )
+        driver_config.setdefault(
+            "publish_imu",
+            bool(driver_config.get("use_driver_imu", False)),
+        )
     return driver_config
 
 
 def perception_stack_config(config: dict[str, Any], *, driver_module: str) -> dict[str, Any]:
     perception_config = dict(config)
     perception_config["_driver_cls_name"] = driver_module
+    if driver_module == "MujocoDriverModule":
+        perception_config.setdefault("enable_camera", True)
+        perception_config.setdefault("camera_backend", CAMERA_BACKEND_SIM)
+        perception_config.setdefault("use_driver_camera", False)
     return perception_config
 
 

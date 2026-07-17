@@ -8,7 +8,6 @@ from typing import Any
 
 from runtime.msgs.numpy_compat import np
 
-
 SUPPORTED_MAP_FORMATS = (
     {
         "extension": ".bt",
@@ -42,12 +41,18 @@ SUPPORTED_MAP_FORMATS = (
 SUPPORTED_MAP_EXTENSIONS = tuple(item["extension"] for item in SUPPORTED_MAP_FORMATS)
 DEFAULT_PLANNER_CONSTRAINTS: dict[str, Any] = {
     "robot_radius": 0.25,
+    "body_clearance_below_m": 0.0,
+    "body_clearance_above_m": 0.0,
     "max_iterations": 500000,
     "snap_search_radius_cells": 12,
     "require_ground_support": True,
     "strict_direct_ground_support": False,
-    "ground_support_xy_radius_cells": 1,
+    "ground_support_xy_radius_cells": 2,
     "ground_support_depth_cells": 1,
+    "support_height_m": 0.0,
+    "support_height_tolerance_m": 0.0,
+    "support_patch_radius_cells": 0,
+    "support_patch_min_samples": 0,
     "enable_preblocked_costmap": True,
     "preblocked_costmap_radius_cells": 3,
     "preblocked_costmap_weight": 2.5,
@@ -60,22 +65,34 @@ DEFAULT_PLANNER_CONSTRAINTS: dict[str, Any] = {
     "max_same_floor_z_excursion": 2.0,
     "obstacle_clearance_radius_cells": 4,
     "obstacle_clearance_weight": 2.0,
+    "terminal_goal_tolerance_m": 0.5,
+    "terminal_goal_xy_tolerance_m": 0.6,
+    "terminal_goal_z_tolerance_m": 0.75,
 }
 FLOAT_CONSTRAINT_KEYS = {
     "robot_radius",
+    "body_clearance_below_m",
+    "body_clearance_above_m",
     "preblocked_costmap_weight",
+    "support_height_m",
+    "support_height_tolerance_m",
     "floor_change_penalty",
     "max_step_height",
     "max_slope",
     "same_floor_z_tolerance",
     "max_same_floor_z_excursion",
     "obstacle_clearance_weight",
+    "terminal_goal_tolerance_m",
+    "terminal_goal_xy_tolerance_m",
+    "terminal_goal_z_tolerance_m",
 }
 INT_CONSTRAINT_KEYS = {
     "max_iterations",
     "snap_search_radius_cells",
     "ground_support_xy_radius_cells",
     "ground_support_depth_cells",
+    "support_patch_radius_cells",
+    "support_patch_min_samples",
     "preblocked_costmap_radius_cells",
     "obstacle_clearance_radius_cells",
 }
@@ -152,12 +169,18 @@ PLANNER_INPUT_SCHEMA = {
             "planner_family": "octoplanner3d_constrained_global_planner",
             "search_algorithm": "octomap_3d_astar",
             "robot_radius": "Bounding-cylinder radius in meters used by OctoPlanner3D collision checks.",
+            "body_clearance_below_m": "Collision envelope below the path reference point; 0 preserves the legacy upper hemisphere.",
+            "body_clearance_above_m": "Collision envelope above the path reference point; used with body_clearance_below_m as a cylinder.",
             "max_iterations": "A* expansion budget.",
             "snap_search_radius_cells": "Grid-cell radius for snapping start/goal to traversable cells.",
             "require_ground_support": "Require occupied/support cells below traversable states.",
             "strict_direct_ground_support": "Require direct support below the body center.",
             "ground_support_xy_radius_cells": "Horizontal support search radius in cells.",
             "ground_support_depth_cells": "Vertical support search depth in cells.",
+            "support_height_m": "Expected vertical distance from the path reference point to its supporting surface; 0 disables the metric band.",
+            "support_height_tolerance_m": "Allowed deviation around support_height_m.",
+            "support_patch_radius_cells": "Cardinal sampling radius used to reject narrow rails and wall tops as support; 0 disables.",
+            "support_patch_min_samples": "Minimum occupied samples among center and four cardinal support checks.",
             "enable_preblocked_costmap": "Penalize cells above or near blocked support.",
             "preblocked_costmap_radius_cells": "Preblocked risk dilation radius in cells.",
             "preblocked_costmap_weight": "Additional cost weight for preblocked-risk cells.",
@@ -170,6 +193,9 @@ PLANNER_INPUT_SCHEMA = {
             "max_same_floor_z_excursion": "Reject same-floor plans whose z range exceeds this value.",
             "obstacle_clearance_radius_cells": "Cells around occupied voxels used to create a soft clearance cost.",
             "obstacle_clearance_weight": "Additional cost weight for the soft obstacle-clearance costmap.",
+            "terminal_goal_tolerance_m": "3D terminal distance accepted as goal reached.",
+            "terminal_goal_xy_tolerance_m": "Horizontal terminal distance accepted when the endpoint is snapped to a supported layer.",
+            "terminal_goal_z_tolerance_m": "Vertical terminal distance accepted when the endpoint is snapped to a supported layer.",
         },
     },
 }
@@ -182,7 +208,10 @@ PLANNER_OUTPUT_SCHEMA = {
         "frame": "LingTu planning/map frame",
         "description": "Global path waypoints [x, y, z] in meters",
     },
-    "reached_goal": {"type": "bool", "description": "Whether final path point is within C++ goal tolerance"},
+    "reached_goal": {
+        "type": "bool",
+        "description": "Whether final path point is within the C++ 3D or XY/Z terminal goal tolerance",
+    },
     "diagnostics": {
         "type": "object",
         "description": "C++ planner details such as path point count, goal error, elapsed time, map source, build capabilities, and failure reason",

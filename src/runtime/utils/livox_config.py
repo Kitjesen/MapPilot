@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+from ipaddress import ip_address, ip_interface
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,54 @@ def _env_text(name: str) -> str | None:
     return value or None
 
 
+def select_livox_host_ip(
+    cfg: RobotConfig,
+    interface_addresses: list[str] | tuple[str, ...],
+    *,
+    host_ip: str | None = None,
+    lidar_ip: str | None = None,
+) -> str:
+    """Select the host IP used in the Livox SDK2 config.
+
+    ``robot_config.yaml`` is the source of truth. Interface probing is only a
+    fallback for incomplete field configs, and prefers an address on the same
+    subnet as the configured LiDAR.
+    """
+
+    configured_host = str(host_ip or cfg.lidar.host_ip or "").strip()
+    if configured_host:
+        return configured_host
+
+    resolved_lidar_ip = str(lidar_ip or cfg.lidar.lidar_ip or "").strip()
+    lidar_addr = None
+    if resolved_lidar_ip:
+        try:
+            lidar_addr = ip_address(resolved_lidar_ip)
+        except ValueError:
+            lidar_addr = None
+
+    parsed_interfaces = [addr for raw in interface_addresses if (addr := _parse_interface_address(raw)) is not None]
+    if lidar_addr is not None:
+        for iface in parsed_interfaces:
+            if iface.version == lidar_addr.version and lidar_addr in iface.network:
+                return str(iface.ip)
+    if parsed_interfaces:
+        return str(parsed_interfaces[0].ip)
+    return ""
+
+
+def _parse_interface_address(raw: str):
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    if "/" not in text:
+        text = f"{text}/32"
+    try:
+        return ip_interface(text)
+    except ValueError:
+        return None
+
+
 def build_mid360_config_dict(
     cfg: RobotConfig,
     *,
@@ -51,14 +100,10 @@ def build_mid360_config_dict(
     raw_lidar = (cfg.raw or {}).get("lidar", {})
     ports = raw_lidar.get("livox_ports", {}) if isinstance(raw_lidar, dict) else {}
     resolved_multicast_ip = (
-        multicast_ip
-        if multicast_ip is not None
-        else str(raw_lidar.get("livox_multicast_ip", "224.1.1.5"))
+        multicast_ip if multicast_ip is not None else str(raw_lidar.get("livox_multicast_ip", "224.1.1.5"))
     )
     resolved_bind_lidar_ip = (
-        bool(raw_lidar.get("livox_bind_lidar_ip", False))
-        if bind_lidar_ip is None
-        else bool(bind_lidar_ip)
+        bool(raw_lidar.get("livox_bind_lidar_ip", False)) if bind_lidar_ip is None else bool(bind_lidar_ip)
     )
 
     def p(name: str, default: int) -> int:
@@ -118,11 +163,7 @@ def build_mid360_config_dict(
 
 def ensure_mid360_config_file(cfg: RobotConfig, out_dir: str | None = None) -> str:
     """Write a generated MID360_config.json and return its absolute path."""
-    base = (
-        Path(out_dir).expanduser()
-        if out_dir
-        else Path(os.path.expanduser("~/.lingtu/generated/livox"))
-    )
+    base = Path(out_dir).expanduser() if out_dir else Path(os.path.expanduser("~/.lingtu/generated/livox"))
     base.mkdir(parents=True, exist_ok=True)
 
     path = base / "MID360_config.json"
@@ -135,4 +176,3 @@ def ensure_mid360_config_file(cfg: RobotConfig, out_dir: str | None = None) -> s
     )
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return str(path)
-

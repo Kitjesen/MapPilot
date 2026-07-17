@@ -144,11 +144,14 @@ struct SlamOutputs {
   std::optional<Cloud> map_cloud_map;
   std::optional<Cloud> saved_map_cloud_map;
   std::optional<Transform3d> map_odom_tf;
+  std::uint64_t observation_sequence = 0U;
+  std::uint64_t source_epoch = 0U;
 
   int saved_map_points = 0;
   bool alive = false;
   bool map_loaded = false;
   bool map_frame_jump = false;
+  std::uint64_t map_frame_jump_sequence = 0U;
   bool relocalization_supported = false;
   bool saved_map_relocalization_supported = false;
   std::string relocalization_state = "unsupported";
@@ -230,6 +233,16 @@ class ISlamBackend {
 
   virtual Status setInitialPose(const Pose3d&) = 0;
   virtual Status relocalize(const std::optional<Pose3d>& guess) = 0;
+
+  // Periodic saved-map tracking must not run ICP on the sensor/tick thread.
+  // Backends that support it snapshot their inputs in startRelocalizeAsync(),
+  // perform only the independent registration work off-thread, and commit a
+  // completed result from pollRelocalizeAsync() on the owning runtime thread.
+  virtual Status startRelocalizeAsync(const std::optional<Pose3d>&) {
+    return Status::Error("async_relocalization_unsupported");
+  }
+  virtual std::optional<Status> pollRelocalizeAsync() { return std::nullopt; }
+  virtual bool relocalizeAsyncInFlight() const { return false; }
 
   virtual Status tick() = 0;
   virtual Status saveMap(const std::string& pcd_path) = 0;

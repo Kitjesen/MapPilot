@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,8 @@ def _restore_import_state(module_names: set[str], before: set[str]) -> None:
 
 
 def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
-    from runtime.plugin_seed import registered_plugin_catalog_names
     from lingtu.plugin_seed import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
+    from runtime.plugin_seed import registered_plugin_catalog_names
 
     assert "lingtu_builtin" in registered_plugin_catalog_names()
 
@@ -39,17 +40,14 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
                 "driver_sim",
                 "lidar",
                 "map",
-                "map_ros2",
                 "planner_backend",
                 "navigation",
-                "navigation_ros2",
                 "autonomy",
                 "slam",
-                "slam_ros2",
                 "exploration",
-                "exploration_ros2",
                 "perception",
                 "reconstruction",
+                "decision",
                 "llm",
             ),
             reload_loaded=True,
@@ -61,17 +59,14 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "driver_sim",
             "lidar",
             "map",
-            "map_ros2",
             "planner_backend",
             "navigation",
-            "navigation_ros2",
-                "autonomy",
-                "slam",
-                "slam_ros2",
-                "exploration",
-            "exploration_ros2",
+            "autonomy",
+            "slam",
+            "exploration",
             "perception",
             "reconstruction",
+            "decision",
             "llm",
         }
         assert set(report) == {"loaded", "failed"}
@@ -91,26 +86,13 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "esdf",
             "elevation",
             "traversability_cost",
-            "ros2_map_output",
             "manager",
         } <= set(list_plugins("map"))
         assert list_plugins("planner_backend") == ["octoplanner3d"]
         assert {"nanobind", "simple"} <= set(list_plugins("terrain"))
-        assert {"nanobind", "cmu_py", "simple"} <= set(
-            list_plugins("local_planner")
-        )
-        assert {"nav_kernel", "pid"} <= set(
-            list_plugins("path_follower")
-        )
-        assert {"fastlio2", "pointlio", "localizer", "genz"} <= set(
-            list_plugins("slam")
-        )
-        assert {"ros2_slam_bridge"} <= set(list_plugins("localization_adapter"))
-        assert {"default"} <= set(list_plugins("slam_bridge"))
-        assert get("localization_adapter", "ros2_slam_bridge") is get(
-            "slam_bridge",
-            "default",
-        )
+        assert {"nanobind", "cmu_py", "simple"} <= set(list_plugins("local_planner"))
+        assert {"nav_kernel", "pid"} <= set(list_plugins("path_follower"))
+        assert {"fastlio2", "pointlio", "localizer", "genz"} <= set(list_plugins("slam"))
         assert {"depth"} <= set(list_plugins("visual_odom"))
         seed_builtin_plugins(groups=("sim_lidar",), reload_loaded=True)
         assert {"pointcloud"} <= set(list_plugins("sim_lidar"))
@@ -118,22 +100,16 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
         assert {
             "default",
             "traversable_frontier",
-            "ros2_nav_input",
-            "ros2_nav_output",
         } <= set(list_plugins("navigation"))
         assert {"wavefront_frontier"} <= set(list_plugins("exploration"))
         assert {"scene"} <= set(list_plugins("perception"))
         assert {"pluggable"} <= set(list_plugins("encoder"))
-        assert {"default", "dataset_recorder", "keyframe_exporter"} <= set(
-            list_plugins("reconstruction")
-        )
-        assert {"yoloe", "yolo_world", "bpu", "sim_scene"} <= set(
-            list_plugins("detector")
-        )
+        assert {"default", "dataset_recorder", "keyframe_exporter"} <= set(list_plugins("reconstruction"))
+        assert {"yoloe", "yolo_world", "bpu", "sim_scene"} <= set(list_plugins("detector"))
         assert {"clip", "mobileclip"} <= set(list_plugins("encoder"))
-        assert {"openai", "claude", "qwen", "moonshot", "mock"} <= set(
-            list_plugins("llm_client")
-        )
+        assert {"default"} <= set(list_plugins("semantic_planner"))
+        assert {"default"} <= set(list_plugins("visual_servo"))
+        assert {"openai", "claude", "qwen", "moonshot", "mock"} <= set(list_plugins("llm_client"))
     finally:
         restore(saved)
         _restore_import_state(seed_modules, modules_before)
@@ -174,9 +150,7 @@ def test_builtin_plugin_seed_preserves_preexisting_plugin_registrations():
         seed_builtin_plugins(groups=("map",), reload_loaded=True)
 
         assert get("map", "occupancy_grid") is FakeOccupancyGrid
-        assert {"voxel", "esdf", "elevation", "traversability_cost"} <= set(
-            list_plugins("map")
-        )
+        assert {"voxel", "esdf", "elevation", "traversability_cost"} <= set(list_plugins("map"))
     finally:
         restore(saved)
         _restore_import_state(seed_modules, modules_before)
@@ -278,11 +252,33 @@ def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
         assert list_plugins("map_save_adapter") == []
         assert list_plugins("planner_backend") == ["octoplanner3d"]
         assert {"ring", "cmd_vel_mux", "geofence"} <= set(list_plugins("safety"))
+        assert list_plugins("semantic_planner") == ["default"]
+        assert list_plugins("visual_servo") == ["default"]
         assert list_plugins("gateway") == []
         assert list_plugins("webrtc") == []
     finally:
         restore(saved)
         _restore_import_state(seed_modules, modules_before)
+
+
+def test_legacy_ros2_environment_flags_do_not_restore_removed_plugins(monkeypatch):
+    import lingtu.plugin_seed as plugin_seed
+
+    monkeypatch.delenv("LINGTU_ENABLE_ROS2_COMPAT", raising=False)
+    monkeypatch.delenv("LINGTU_ENABLE_LEGACY_ROS2_SERVICES", raising=False)
+    plugin_seed = importlib.reload(plugin_seed)
+    assert "map_ros2" not in plugin_seed.BUILTIN_PLUGIN_MODULES
+    assert "slam_ros2" not in plugin_seed.BUILTIN_PLUGIN_MODULES
+
+    monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
+    plugin_seed = importlib.reload(plugin_seed)
+    assert "map_ros2" not in plugin_seed.BUILTIN_PLUGIN_MODULES
+    assert "navigation_ros2" not in plugin_seed.BUILTIN_PLUGIN_MODULES
+    assert "slam_ros2" not in plugin_seed.BUILTIN_PLUGIN_MODULES
+
+    monkeypatch.delenv("LINGTU_ENABLE_ROS2_COMPAT", raising=False)
+    monkeypatch.delenv("LINGTU_ENABLE_LEGACY_ROS2_SERVICES", raising=False)
+    importlib.reload(plugin_seed)
 
 
 def test_core_plugin_seed_has_no_lingtu_product_catalog() -> None:
@@ -294,7 +290,7 @@ def test_core_plugin_seed_has_no_lingtu_product_catalog() -> None:
     assert "lingtu" not in source
     assert "runtime.adapters.ros2" not in source
     assert "drivers.real.thunder" not in source
-    assert "nav.services.map_layers.occupancy_grid_module" not in source
+    assert "maps.modules.occupancy" not in source
     assert hasattr(plugin_seed, "seed_plugin_modules")
 
 
@@ -302,13 +298,13 @@ def test_optional_map_save_seed_reports_unavailable_for_lite_catalog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import runtime.plugin_seed as plugin_seed
-    from runtime.map_save import (
+    from maps.map_save import (
         MapSaveUnavailable,
         seed_default_map_save_adapter_plugins,
     )
 
-    ros2_map_save_module = sys.modules.pop("runtime.adapters.ros2.map_save", None)
-    had_ros2_map_save_module = ros2_map_save_module is not None
+    native_map_save_module = sys.modules.pop("maps.adapters.native.map_save", None)
+    had_native_map_save_module = native_map_save_module is not None
     monkeypatch.setattr(
         plugin_seed,
         "_REGISTERED_PLUGIN_CATALOGS",
@@ -325,15 +321,15 @@ def test_optional_map_save_seed_reports_unavailable_for_lite_catalog(
         with pytest.raises(MapSaveUnavailable, match="Map-save adapter plugin group"):
             seed_default_map_save_adapter_plugins()
 
-        assert "runtime.adapters.ros2.map_save" not in sys.modules
+        assert "maps.adapters.native.map_save" not in sys.modules
     finally:
-        if had_ros2_map_save_module:
-            sys.modules["runtime.adapters.ros2.map_save"] = ros2_map_save_module
+        if had_native_map_save_module:
+            sys.modules["maps.adapters.native.map_save"] = native_map_save_module
 
 
 def test_map_save_adapter_seed_prefers_native_slam_by_default() -> None:
     from lingtu.plugin_seed import BUILTIN_PLUGIN_MODULES, seed_builtin_plugins
-    from runtime.map_save import default_map_save_adapter
+    from maps.map_save import default_map_save_adapter
 
     saved = snapshot()
     seed_modules = {module for modules in BUILTIN_PLUGIN_MODULES.values() for module in modules}
@@ -345,6 +341,7 @@ def test_map_save_adapter_seed_prefers_native_slam_by_default() -> None:
 
         assert {"native_slam"} <= set(list_plugins("map_save_adapter"))
         adapter = default_map_save_adapter()
+        assert type(adapter).__module__ == "maps.adapters.native.map_save"
         assert type(adapter).__name__ == "NativeSlamMapSaveAdapter"
         assert callable(adapter.save_slam_map)
     finally:

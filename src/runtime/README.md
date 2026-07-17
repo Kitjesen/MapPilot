@@ -18,8 +18,7 @@ node logic.
 | find shared messages | `msgs/`, `contracts/` |
 | find topic, frame, or runtime contract names | `runtime_interface.py` |
 | register or resolve a backend | `registry.py` |
-| inspect runtime diagnostics and acceptance evidence | `diagnostics/` |
-| understand every file in this folder | `FILES.md` |
+| inspect runtime diagnostics and acceptance evidence | `../diagnostics/field/` |
 
 ## Mental Model
 
@@ -28,6 +27,7 @@ Module      = one runtime unit
 In / Out    = typed input and output ports
 WireSpec    = one declared data-flow connection
 Blueprint   = a module graph before it starts
+Route       = runtime contract (metadata) and optional routed delivery mode
 SystemHandle = the running graph
 ```
 
@@ -68,6 +68,50 @@ lingtu-livox-dds
 In that mode `src/runtime` still assembles Gateway, mission/status, map, and
 business modules, but it must not load Python `nav.terrain`,
 `nav.local_planner`, or `nav.path_follower` as the product control loop.
+
+## Runtime Routes
+
+Routes choose the runtime path. Built-in presets live in `runtime.routes`:
+
+- `robot()`: physical robot route, typed DDS for sensor, SLAM, navigation,
+  and command boundaries.
+- `replay()`: replay/development route, typed LCM bindings where declared.
+- `sim()`: in-process simulation route.
+
+Blueprints can:
+
+- record the external route contract for boundary validation and topic naming
+- opt-in to explicit routed internal delivery for matching topics
+
+Use `route_contract` for metadata-only boundary contracts:
+
+```python
+from runtime.routes import robot
+
+system = (
+    Blueprint("nav")
+    .route_contract(robot())
+    .build()
+)
+```
+This does not change Module-to-Module wiring.
+
+Use `routed_delivery` when selected topics should be carried by route transports:
+
+```python
+from runtime.routes import robot
+
+system = (
+    Blueprint("nav")
+    .routed_delivery(robot())
+    .build()
+)
+```
+
+DDS itself is started by systemd services on real hardware (for example
+`lingtu-livox-dds.service`, `lingtu-slam-dds.service`, and
+`lingtu-nav-dds.service`). Internal validators still check DDS topic/type
+contracts against `src/message/dds.py` and C++ topic constants.
 
 ## Minimal Example
 
@@ -118,30 +162,30 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 | --- | --- |
 | core runtime | should stay here |
 | product assembly and runtime catalog | should stay here, but keep it declarative |
-| audit and evidence helpers | `diagnostics/`; useful today, but not part of the clean kernel |
+| audit and evidence helpers | moved to `src/diagnostics/field/` |
 | legacy compatibility helpers | isolated files or adapter packages; do not add product behavior there |
 
 Known compatibility candidates include:
 
-- `native_module.py`, `native_install.py`: legacy native/ROS process helpers
+- `adapters/ros2/native_module.py`, `adapters/ros2/native_install.py`:
+  legacy native/ROS process helpers
 - `adapters/ros2/`: ROS 2 compatibility boundary only
-- `dds.py`, `adapters/dds/*`: Python DDS utilities that must not become the
-  Thunder field control loop while the native C++ DDS endpoints own that path
+- `adapters/dds/reader.py`: Python CycloneDDS reader utility for diagnostics,
+  LiDAR/GNSS compatibility, and ROS2-DDS topic interop. It is a DDS adapter,
+  not a ROS2 compatibility module.
 
-Audit and evidence tooling now lives in `diagnostics/`:
+Audit and evidence tooling now lives outside `src/runtime`, in
+`src/diagnostics/field/`:
 
-- `diagnostics/dimos_*.py`
-- `diagnostics/runtime_evidence.py`
-- `diagnostics/runtime_validation_gates.py`
-- `diagnostics/gateway_runtime_acceptance.py`
-- `diagnostics/inspection_acceptance.py`
-- `diagnostics/product_field_check.py`
-- `diagnostics/migration_catalog.py`
-- `diagnostics/efficiency_status.py`
+- `runtime_evidence.py`
+- `runtime_validation_gates.py`
+- `gateway_runtime_acceptance.py`
+- `inspection_acceptance.py`
+- `product_field_check.py`
 
-Do not delete these just because they look old. Some are still used by tests,
-deployment checks, or status commands. Move them only after replacing imports
-and validating the affected entry points.
+Simulation diagnostics live in `sim/diagnostics/`, migration planning helpers in
+`tools/migration/`, and benchmark-only status helpers in `tests/benchmark/`.
+Keep field diagnostics focused on operator acceptance evidence.
 
 ## Quick Checks
 

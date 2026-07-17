@@ -4,11 +4,11 @@
 import os
 import sys
 
-sys.path.insert(0, 'src')
-for d in ['src/perception', 'src/decision']:
+sys.path.insert(0, "src")
+for d in ["src/perception", "src/decision"]:
     if os.path.isdir(d):
         sys.path.insert(0, d)
-for k in ['MOONSHOT_API_KEY','OPENAI_API_KEY','ANTHROPIC_API_KEY','DASHSCOPE_API_KEY']:
+for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY"]:
     os.environ.pop(k, None)
 import logging
 
@@ -22,6 +22,7 @@ import traceback
 import numpy as np
 
 results = []
+
 
 def run_test(name, fn):
     """Run a test function, catch exceptions, record PASS/FAIL."""
@@ -45,9 +46,9 @@ def run_test(name, fn):
 # Test 31: SemanticMapper persistence
 # =========================================================================
 def test_31_semantic_mapper_persistence():
+    from memory.modules.semantic_mapper_module import SemanticMapperModule
     from runtime.msgs.geometry import Vector3
     from runtime.msgs.semantic import Detection3D, Region, SceneGraph
-    from memory.modules.semantic_mapper_module import SemanticMapperModule
 
     tmpdir = tempfile.mkdtemp(prefix="test_persist_smap_")
     try:
@@ -56,12 +57,9 @@ def test_31_semantic_mapper_persistence():
         mod1.setup()
 
         # Build a SceneGraph with a region referencing objects
-        obj1 = Detection3D(id="obj_1", label="desk", confidence=0.9,
-                           position=Vector3(1.0, 2.0, 0.0))
-        obj2 = Detection3D(id="obj_2", label="chair", confidence=0.85,
-                           position=Vector3(1.5, 2.5, 0.0))
-        region = Region(name="office", object_ids=["obj_1", "obj_2"],
-                        center=Vector3(1.25, 2.25, 0.0))
+        obj1 = Detection3D(id="obj_1", label="desk", confidence=0.9, position=Vector3(1.0, 2.0, 0.0))
+        obj2 = Detection3D(id="obj_2", label="chair", confidence=0.85, position=Vector3(1.5, 2.5, 0.0))
+        region = Region(name="office", object_ids=["obj_1", "obj_2"], center=Vector3(1.25, 2.25, 0.0))
         sg = SceneGraph(objects=[obj1, obj2], regions=[region])
 
         # Feed the scene graph directly
@@ -86,9 +84,9 @@ def test_31_semantic_mapper_persistence():
 # Test 32: VectorMemory numpy fallback (in-memory)
 # =========================================================================
 def test_32_vector_memory_numpy():
+    from memory.modules.vector_memory_module import VectorMemoryModule
     from runtime.msgs.geometry import Pose, Vector3
     from runtime.msgs.nav import Odometry
-    from memory.modules.vector_memory_module import VectorMemoryModule
 
     mod = VectorMemoryModule(persist_dir="/tmp/test_vmem_np", store_interval=0.0)
     mod.setup()
@@ -114,12 +112,11 @@ def test_32_vector_memory_numpy():
 
 
 # =========================================================================
-# Test 33: No API key startup éˆ?system.build() succeeds
+# Test 33: No API key startup ï¿½?system.build() succeeds
 # =========================================================================
 def test_33_no_api_key_startup():
     # Double-check all API keys are removed
-    for k in ['MOONSHOT_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY',
-              'DASHSCOPE_API_KEY']:
+    for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY"]:
         os.environ.pop(k, None)
 
     from runtime.blueprints.products.thunder import thunder_blueprint
@@ -157,14 +154,15 @@ def test_33_no_api_key_startup():
 
 
 # =========================================================================
-# Test 34: No CLIP startup éˆ?EncoderModule doesn't crash
+# Test 34: No CLIP startup ï¿½?EncoderModule doesn't crash
 # =========================================================================
 def test_34_no_clip_startup():
-    from runtime.blueprints.products.thunder import thunder_blueprint
-    from perception.encoding.encoder_module import EncoderModule
     from unittest.mock import patch
 
-    # Build dev profile éˆ?on Windows, open_clip is typically not installed.
+    from perception.encoding.encoder_module import EncoderModule
+    from runtime.blueprints.products.thunder import thunder_blueprint
+
+    # Build dev profile ï¿½?on Windows, open_clip is typically not installed.
     # EncoderModule should catch ImportError and set _backend = None.
     class MissingClipBackend:
         def load_model(self):
@@ -203,11 +201,11 @@ def test_34_no_clip_startup():
 
 
 # =========================================================================
-# Test 35: Empty SceneGraph éˆ?no crash, no goal_pose published
+# Test 35: Empty SceneGraph ï¿½?no crash, no goal_pose published
 # =========================================================================
 def test_35_empty_scene_graph():
+    from decision.modules.semantic_planner import SemanticPlannerModule
     from runtime.msgs.semantic import SceneGraph
-    from decision.modules.semantic_planner_module import SemanticPlannerModule
 
     mod = SemanticPlannerModule()
     mod.setup()
@@ -240,11 +238,11 @@ def test_35_empty_scene_graph():
 # Test 36: WaypointTracker stuck detection
 # =========================================================================
 def test_36_waypoint_tracker_stuck():
-    from nav.mission.tracking.waypoint_tracker import EV_STUCK, EV_STUCK_WARN, WaypointTracker
+    from nav.tracking.waypoint_tracker import EV_STUCK, EV_STUCK_WARN, WaypointTracker
 
     tracker = WaypointTracker(
         threshold=1.5,
-        stuck_timeout=0.1,   # very short for testing
+        stuck_timeout=0.1,  # very short for testing
         stuck_dist=0.15,
     )
 
@@ -253,7 +251,7 @@ def test_36_waypoint_tracker_stuck():
     robot_pos = np.array([0.0, 0.0, 0.0])
     tracker.reset(path, robot_pos)
 
-    # Update with same position repeatedly éˆ?should trigger stuck
+    # Update with same position repeatedly ï¿½?should trigger stuck
     events_seen = []
     deadline = time.time() + 2.0  # safety timeout
     while time.time() < deadline:

@@ -83,21 +83,3 @@ else:
 
     def pytest_ignore_collect(path, config):
         return _pytest_ignore_collect_impl(path)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """Release shared ROS2 resources created by mixed module-level smoke tests."""
-    try:
-        from runtime.adapters.ros2.context import shutdown_shared_executor
-
-        shutdown_shared_executor()
-    except Exception:
-        pass
-
-    try:
-        import rclpy
-
-        if rclpy.ok():
-            rclpy.shutdown()
-    except Exception:
-        pass

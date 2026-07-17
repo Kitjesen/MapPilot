@@ -6,10 +6,15 @@ from typing import Any
 class _FakeBlueprint:
     def __init__(self) -> None:
         self.build_transport = "not-called"
+        self.route_contract_name = None
 
     def build(self, transport=None) -> str:
         self.build_transport = transport
         return "system"
+
+    def route_contract(self, name: str):
+        self.route_contract_name = name
+        return self
 
 
 class _FakeBackend:
@@ -39,8 +44,8 @@ def test_nonlocal_module_transport_is_wrapped_for_module_ports(monkeypatch) -> N
 
     calls: list[str] = []
 
-    def fake_create_transport(strategy: str, ros_node=None) -> _FakeBackend:
-        del ros_node
+    def fake_create_transport(strategy: str, ros_node=None, **kwargs) -> _FakeBackend:
+        del ros_node, kwargs
         calls.append(strategy)
         return _FakeBackend()
 
@@ -61,6 +66,49 @@ def test_lcm_module_transport_is_not_supported() -> None:
         assert "Unknown strategy: zmq" in str(exc)
     else:  # pragma: no cover - defensive assertion
         raise AssertionError("unsupported module_transport must stay outside ModulePort")
+
+
+def test_resolved_endpoint_route_contract_is_boundary_metadata() -> None:
+    from runtime.blueprints.profile_builder import (
+        route_contract_name_for_resolved_config,
+        validate_route_contract_for_resolved_config,
+    )
+
+    config = {
+        "_runtime_endpoint": "thunder_field",
+        "_endpoint_transport": "dds",
+        "_endpoint_contract": "thunder_field_dds_v1",
+    }
+
+    assert route_contract_name_for_resolved_config(config) == "robot"
+    validate_route_contract_for_resolved_config(config)
+
+
+def test_build_system_from_resolved_profile_attaches_route_contract(monkeypatch) -> None:
+    import runtime.blueprints.profile_builder as builder_mod
+
+    fake_bp = _FakeBlueprint()
+    monkeypatch.setattr(
+        builder_mod,
+        "blueprint_for_resolved_profile",
+        lambda profile, config: fake_bp,
+    )
+    monkeypatch.setattr(
+        builder_mod,
+        "module_transport_for_resolved_config",
+        lambda config: None,
+    )
+
+    builder_mod.build_system_from_resolved_profile(
+        "nav",
+        {
+            "_runtime_endpoint": "thunder_field",
+            "_endpoint_transport": "dds",
+            "_endpoint_contract": "thunder_field_dds_v1",
+        },
+    )
+
+    assert fake_bp.route_contract_name == "robot"
 
 
 def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch) -> None:

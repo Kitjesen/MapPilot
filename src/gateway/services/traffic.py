@@ -8,7 +8,6 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-
 DEFAULT_SSE_QUEUE_MAXSIZE = 128
 DEFAULT_CLOUD_QUEUE_MAXSIZE = 2
 SSE_EVENT_SCHEMA_VERSION = 1
@@ -129,3 +128,29 @@ def format_sse_message(
         parts.append(f"id: {resolved_id}")
     parts.append(f"data: {json.dumps(dict(event), separators=(',', ':'))}")
     return "\n".join(parts) + "\n\n"
+
+
+def snapshot(gw: Any) -> dict[str, Any]:
+    """Return one consistent traffic snapshot across SSE and binary streams."""
+    with gw._sse_lock:
+        queue_depths = [queue.qsize() for queue in gw._sse_queues]
+        sse = {
+            "clients": len(gw._sse_queues),
+            "queue_maxsize": gw._sse_queue_maxsize,
+            "queue_depths": queue_depths,
+            "max_depth_seen": gw._sse_max_depth_seen,
+            "latest_event_id": gw._sse_event_seq,
+            "published_events": gw._sse_published_events,
+            "dropped_events": gw._sse_dropped_events,
+            "suppressed_events": dict(gw._sse_suppressed_events),
+            "raster_min_interval_s": gw._sse_raster_min_interval_s,
+            "slope_grid_inline": gw._sse_slope_payload_enabled,
+            "drop_policy": DROP_OLDEST_POLICY,
+        }
+    realtime = gw._cloud_viewer.traffic_snapshot()
+    return {
+        "sse": sse,
+        "cloud": realtime["cloud"],
+        "scan": realtime["scan"],
+        "recommended_client_rates_hz": dict(RECOMMENDED_CLIENT_RATES_HZ),
+    }

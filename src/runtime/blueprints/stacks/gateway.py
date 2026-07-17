@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import logging
 
-from runtime.blueprint import Blueprint
 from runtime.adapters.perception_gateway import rerun_bridge_module
+from runtime.blueprint import Blueprint
 from runtime.blueprints.stacks._registry import optional_stack_module, stack_module
 
 logger = logging.getLogger(__name__)
@@ -73,21 +73,6 @@ def gateway(
                 alias="TeleopModule",
                 port=port,
             )  # informational â€?same port as Gateway
-        # WebRTC module: shares the camera stream with TeleopModule but
-        # encodes it as H.264 and speaks SDP on /api/v1/webrtc/offer for
-        # ~100 ms glass-to-glass latency.  Imports are wrapped because
-        # aiortc is an optional dependency on development machines.
-        WebRTCStreamModule = optional_stack_module(
-            "webrtc",
-            "aiortc",
-            seed_group="webrtc",
-            fallback="gateway.media.webrtc_stream.WebRTCStreamModule",
-        )
-        if WebRTCStreamModule is not None:
-            bp.add(WebRTCStreamModule, alias="WebRTCStreamModule")
-        else:
-            logger.info("WebRTCStreamModule unavailable (aiortc not installed)")
-
     if enable_rerun:
         RerunBridgeModule = rerun_bridge_module(enable_ros2=enable_ros2_rerun_bridge)
         if RerunBridgeModule is not None:

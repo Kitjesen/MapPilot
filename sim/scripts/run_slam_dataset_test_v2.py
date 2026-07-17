@@ -5,13 +5,15 @@ Robot: 192.168.66.190, user: sunrise
 
 v2: 使用 nohup 后台执行，轮询结果文件
 """
-import paramiko
+import os
 import sys
 import time
 
+import paramiko
+
 ROBOT_IP = "192.168.66.190"
 ROBOT_USER = "sunrise"
-ROBOT_PASS = "sunrise"
+ROBOT_PASS = os.environ.get("S100P_PASSWORD", "")
 
 SCRIPT_CONTENT = r'''#!/bin/bash
 set -e
@@ -241,6 +243,8 @@ def ssh_exec(ssh, cmd, timeout=30):
 
 
 def main():
+    if not ROBOT_PASS:
+        raise SystemExit("S100P_PASSWORD is required")
     print(f"[LOCAL] 连接机器人 {ROBOT_IP}...")
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())

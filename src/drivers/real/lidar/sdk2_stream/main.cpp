@@ -1,12 +1,18 @@
 #include "livox_lidar_api.h"
 #include "livox_lidar_def.h"
+#include "fallback_timestamp_clock.hpp"
+#include "native/module.hpp"
+#include "packet_timestamp_clock.hpp"
+#include "replay_deadline_restamper.hpp"
+#include "single_lidar_handle_guard.hpp"
+#include "stream_exit_state.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <array>
 #include <chrono>
 #include <csignal>
 #include <cmath>
-#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,14 +24,13 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
 
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
-#include "dds/dds.h"
-#include "lingtu_slam.h"
-#include "message/cpp/dds_topics.hpp"
+#include "native/dds_module.hpp"
 #endif
 
 #ifdef _WIN32
@@ -35,10 +40,20 @@
 
 namespace {
 
+namespace lidar = lingtu::drivers::lidar;
+using lidar::CliConfig;
+using lidar::ImuSample;
+using lidar::OdomPrior;
+using lidar::Point;
+using WireImu = ImuSample;
+using WireOdomPrior = OdomPrior;
+using WirePoint = Point;
+
 constexpr char kMagic[4] = {'L', 'T', 'U', '1'};
 constexpr uint8_t kRecordCloud = 1;
 constexpr uint8_t kRecordImu = 2;
 constexpr uint8_t kRecordOdomPrior = 3;
+constexpr uint8_t kRecordRegisteredCloud = 4;
 constexpr uint8_t kLineNumberDefault = 1;
 constexpr uint8_t kLineNumberMid360 = 4;
 constexpr uint8_t kLineNumberHap = 6;
@@ -56,71 +71,20 @@ struct RecordHeader {
   uint32_t count;
   uint32_t payload_bytes;
 };
-
-struct WirePoint {
-  float x;
-  float y;
-  float z;
-  float intensity;
-  uint32_t offset_time_ns;
-  uint8_t tag;
-  uint8_t line;
-  uint16_t flags;
-};
-
-struct WireImu {
-  float gyro_x;
-  float gyro_y;
-  float gyro_z;
-  float acc_x;
-  float acc_y;
-  float acc_z;
-};
-
-struct WireOdomPrior {
-  double x;
-  double y;
-  double z;
-  double qx;
-  double qy;
-  double qz;
-  double qw;
-  double vx;
-  double vy;
-  double vz;
-  uint8_t has_velocity;
-  uint8_t reserved[7];
-};
 #pragma pack(pop)
 
 static_assert(sizeof(RecordHeader) == 28, "unexpected record header size");
-static_assert(sizeof(WirePoint) == 24, "unexpected point record size");
-static_assert(sizeof(WireImu) == 24, "unexpected imu record size");
-static_assert(sizeof(WireOdomPrior) == 88, "unexpected odom prior record size");
 
 std::mutex g_stdout_mutex;
-std::condition_variable g_quit_cv;
-std::mutex g_quit_mutex;
-std::atomic<bool> g_quit{false};
 std::atomic<uint32_t> g_sequence{0};
+std::atomic<uint64_t> g_imu_min_interval_ns{0};
+std::atomic<uint64_t> g_last_imu_emit_ns{0};
+lidar::FallbackTimestampClock<> g_fallback_timestamp_clock;
+lidar::PacketTimestampClock g_packet_timestamp_clock;
+lidar::SingleLidarHandleGuard g_lidar_handle_guard;
+lidar::StreamExitState g_exit_state;
 char g_work_mode_command[] = "work_mode";
 char g_enable_imu_command[] = "enable_imu";
-
-struct CliConfig {
-  bool dds = false;
-  bool stdin_records = false;
-  int domain_id = 0;
-  double scan_window_s = 0.1;
-  std::string lidar_frame = "livox_frame";
-  std::string imu_frame = "imu_link";
-  std::string config_path;
-};
-
-uint64_t now_ns() {
-  const auto now = std::chrono::system_clock::now().time_since_epoch();
-  return static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(now).count());
-}
 
 uint64_t read_le_u64(const uint8_t bytes[8]) {
   uint64_t out = 0;
@@ -131,15 +95,50 @@ uint64_t read_le_u64(const uint8_t bytes[8]) {
   return out;
 }
 
-uint64_t packet_timestamp_ns(const LivoxLidarEthernetPacket* data) {
-  if (data == nullptr) {
-    return now_ns();
+void request_timestamp_fault(std::string_view reason) {
+  const bool first = g_exit_state.request_timestamp_fault();
+  if (first) {
+    std::fprintf(
+        stderr,
+        "livox_sdk2_stream fatal timestamp fault: %.*s\n",
+        static_cast<int>(reason.size()),
+        reason.data());
   }
-  if (data->time_type == kTimestampTypeGptpOrPtp ||
-      data->time_type == kTimestampTypeGps) {
-    return read_le_u64(data->timestamp);
+}
+
+bool accept_lidar_handle(uint32_t handle) {
+  if (g_lidar_handle_guard.accept(handle)) {
+    return true;
   }
-  return now_ns();
+  request_timestamp_fault("multiple_lidar_devices_unsupported");
+  return false;
+}
+
+std::optional<uint64_t> packet_timestamp_ns(
+    lidar::PacketTimestampStream stream,
+    const LivoxLidarEthernetPacket* data) {
+  const uint64_t fallback_ns = g_fallback_timestamp_clock.now_ns();
+  lidar::PacketTimestampSource source = lidar::PacketTimestampSource::Invalid;
+  uint64_t device_ns = 0U;
+  if (data == nullptr || data->time_type == kTimestampTypeNoSync) {
+    source = lidar::PacketTimestampSource::Fallback;
+  } else if (data->time_type == kTimestampTypeGptpOrPtp) {
+    source = lidar::PacketTimestampSource::Ptp;
+    device_ns = read_le_u64(data->timestamp);
+  } else if (data->time_type == kTimestampTypeGps) {
+    source = lidar::PacketTimestampSource::Gps;
+    device_ns = read_le_u64(data->timestamp);
+  }
+
+  const auto mapped =
+      g_packet_timestamp_clock.map(stream, source, device_ns, fallback_ns);
+  if (mapped.publish()) {
+    return mapped.stamp_ns;
+  }
+  if (mapped.action == lidar::PacketTimestampAction::Fatal) {
+    request_timestamp_fault(mapped.reason);
+  }
+  return std::nullopt;
 }
 
 uint8_t line_count_for_device(uint8_t dev_type) {
@@ -191,196 +190,30 @@ bool read_exact(void* dst, std::size_t bytes) {
   return true;
 }
 
+bool should_emit_imu(uint64_t timestamp_ns) {
+  const uint64_t min_interval = g_imu_min_interval_ns.load(std::memory_order_relaxed);
+  if (min_interval == 0) {
+    return true;
+  }
+  uint64_t previous = g_last_imu_emit_ns.load(std::memory_order_relaxed);
+  while (true) {
+    if (previous != 0) {
+      if (timestamp_ns <= previous) {
+        return false;
+      }
+      if (timestamp_ns - previous < min_interval) {
+        return false;
+      }
+    }
+    if (g_last_imu_emit_ns.compare_exchange_weak(
+            previous, timestamp_ns, std::memory_order_relaxed)) {
+      return true;
+    }
+  }
+}
+
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
-class DdsPublisher {
- public:
-  DdsPublisher(int domain_id, std::string lidar_frame, std::string imu_frame)
-      : lidar_frame_(std::move(lidar_frame)),
-        imu_frame_(std::move(imu_frame)) {
-    participant_ = checked(
-        dds_create_participant(static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
-        "dds_create_participant");
-    publisher_ = checked(dds_create_publisher(participant_, nullptr, nullptr),
-                         "dds_create_publisher");
-    lidar_topic_ = checked(
-        dds_create_topic(
-            participant_,
-            &lingtu_dds_LivoxFrame_desc,
-            lingtu::message::kLidarRawFrame.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(lidar)");
-    raw_packet_topic_ = checked(
-        dds_create_topic(
-            participant_,
-            &lingtu_dds_LivoxFrame_desc,
-            lingtu::message::kLidarRawPacket.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(raw_packet)");
-    imu_topic_ = checked(
-        dds_create_topic(
-            participant_,
-            &lingtu_dds_Imu_desc,
-            lingtu::message::kImuRaw.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(imu)");
-    odom_prior_topic_ = checked(
-        dds_create_topic(
-            participant_,
-            &lingtu_dds_Odometry_desc,
-            lingtu::message::kSlamOdomPrior.dds_topic.data(),
-            nullptr,
-            nullptr),
-        "dds_create_topic(odom_prior)");
-    auto sensor_qos = sensor_qos_profile();
-    lidar_writer_ = checked(
-        dds_create_writer(publisher_, lidar_topic_, sensor_qos.get(), nullptr),
-        "dds_create_writer(lidar)");
-    raw_packet_writer_ = checked(
-        dds_create_writer(publisher_, raw_packet_topic_, sensor_qos.get(), nullptr),
-        "dds_create_writer(raw_packet)");
-    imu_writer_ = checked(
-        dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr),
-        "dds_create_writer(imu)");
-    odom_prior_writer_ = checked(
-        dds_create_writer(publisher_, odom_prior_topic_, sensor_qos.get(), nullptr),
-        "dds_create_writer(odom_prior)");
-  }
-
-  ~DdsPublisher() {
-    if (participant_ > 0) {
-      dds_delete(participant_);
-    }
-  }
-
-  DdsPublisher(const DdsPublisher&) = delete;
-  DdsPublisher& operator=(const DdsPublisher&) = delete;
-
-  void publish_cloud(uint8_t lidar_id,
-                     uint64_t timestamp_ns,
-                     const std::vector<WirePoint>& points) {
-    publish_cloud_to(lidar_writer_, lidar_id, timestamp_ns, points);
-  }
-
-  void publish_raw_packet(uint8_t lidar_id,
-                          uint64_t timestamp_ns,
-                          const std::vector<WirePoint>& points) {
-    publish_cloud_to(raw_packet_writer_, lidar_id, timestamp_ns, points);
-  }
-
-  void publish_imu(uint64_t timestamp_ns, const WireImu& imu) {
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    lingtu_dds_Imu msg{};
-    fill_header(msg.header, timestamp_ns, imu_frame_);
-    msg.orientation.w = 1.0;
-    msg.angular_velocity.x = imu.gyro_x;
-    msg.angular_velocity.y = imu.gyro_y;
-    msg.angular_velocity.z = imu.gyro_z;
-    msg.linear_acceleration.x = imu.acc_x;
-    msg.linear_acceleration.y = imu.acc_y;
-    msg.linear_acceleration.z = imu.acc_z;
-    checked(dds_write(imu_writer_, &msg), "dds_write(imu)");
-  }
-
-  void publish_odom_prior(uint64_t timestamp_ns, const WireOdomPrior& prior) {
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    lingtu_dds_Odometry msg{};
-    fill_header(msg.header, timestamp_ns, odom_frame_);
-    msg.child_frame_id = const_cast<char*>(body_frame_.c_str());
-    msg.pose.pose.position.x = prior.x;
-    msg.pose.pose.position.y = prior.y;
-    msg.pose.pose.position.z = prior.z;
-    msg.pose.pose.orientation.x = prior.qx;
-    msg.pose.pose.orientation.y = prior.qy;
-    msg.pose.pose.orientation.z = prior.qz;
-    msg.pose.pose.orientation.w = prior.qw;
-    if (prior.has_velocity != 0) {
-      msg.twist.twist.linear.x = prior.vx;
-      msg.twist.twist.linear.y = prior.vy;
-      msg.twist.twist.linear.z = prior.vz;
-    }
-    checked(dds_write(odom_prior_writer_, &msg), "dds_write(odom_prior)");
-  }
-
- private:
-  void publish_cloud_to(dds_entity_t writer,
-                        uint8_t lidar_id,
-                        uint64_t timestamp_ns,
-                        const std::vector<WirePoint>& points) {
-    std::vector<lingtu_dds_LivoxPoint> dds_points;
-    dds_points.reserve(points.size());
-    for (const auto& point : points) {
-      lingtu_dds_LivoxPoint out{};
-      out.offset_time = point.offset_time_ns;
-      out.x = point.x;
-      out.y = point.y;
-      out.z = point.z;
-      out.reflectivity = static_cast<std::uint8_t>(point.intensity);
-      out.tag = point.tag;
-      out.line = point.line;
-      dds_points.push_back(out);
-    }
-    std::lock_guard<std::mutex> lock(write_mutex_);
-    lingtu_dds_LivoxFrame msg{};
-    fill_header(msg.header, timestamp_ns, lidar_frame_);
-    msg.timebase = timestamp_ns;
-    msg.point_num = static_cast<std::uint32_t>(dds_points.size());
-    msg.lidar_id = lidar_id;
-    msg.points._maximum = msg.point_num;
-    msg.points._length = msg.point_num;
-    msg.points._buffer = dds_points.data();
-    msg.points._release = false;
-    checked(dds_write(writer, &msg), "dds_write(livox)");
-  }
-
-  static dds_entity_t checked(dds_return_t value, const char* what) {
-    if (value < 0) {
-      throw std::runtime_error(
-          std::string(what) + ": " + dds_strretcode(-value));
-    }
-    return static_cast<dds_entity_t>(value);
-  }
-
-  static void fill_header(
-      lingtu_dds_Header& header,
-      uint64_t timestamp_ns,
-      const std::string& frame_id) {
-    header.stamp.sec = static_cast<std::int32_t>(timestamp_ns / 1000000000ULL);
-    header.stamp.nanosec = static_cast<std::uint32_t>(timestamp_ns % 1000000000ULL);
-    header.frame_id = const_cast<char*>(frame_id.c_str());
-  }
-
-  static std::unique_ptr<dds_qos_t, decltype(&dds_delete_qos)> sensor_qos_profile() {
-    std::unique_ptr<dds_qos_t, decltype(&dds_delete_qos)> qos(
-        dds_create_qos(), dds_delete_qos);
-    if (!qos) {
-      throw std::runtime_error("dds_create_qos failed");
-    }
-    dds_qset_reliability(qos.get(), DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
-    dds_qset_history(qos.get(), DDS_HISTORY_KEEP_LAST, 256);
-    return qos;
-  }
-
-  std::string lidar_frame_;
-  std::string imu_frame_;
-  std::string odom_frame_ = "odom";
-  std::string body_frame_ = "body";
-  dds_entity_t participant_ = DDS_RETCODE_ERROR;
-  dds_entity_t publisher_ = DDS_RETCODE_ERROR;
-  dds_entity_t lidar_topic_ = DDS_RETCODE_ERROR;
-  dds_entity_t raw_packet_topic_ = DDS_RETCODE_ERROR;
-  dds_entity_t imu_topic_ = DDS_RETCODE_ERROR;
-  dds_entity_t odom_prior_topic_ = DDS_RETCODE_ERROR;
-  dds_entity_t lidar_writer_ = DDS_RETCODE_ERROR;
-  dds_entity_t raw_packet_writer_ = DDS_RETCODE_ERROR;
-  dds_entity_t imu_writer_ = DDS_RETCODE_ERROR;
-  dds_entity_t odom_prior_writer_ = DDS_RETCODE_ERROR;
-  std::mutex write_mutex_;
-};
-
-std::unique_ptr<DdsPublisher> g_dds_publisher;
+std::unique_ptr<lidar::DdsModule> g_dds_publisher;
 #endif
 
 bool emit_cloud(uint8_t lidar_id,
@@ -434,6 +267,21 @@ bool emit_odom_prior(uint64_t timestamp_ns, const WireOdomPrior& prior) {
   }
 #endif
   return write_record(kRecordOdomPrior, timestamp_ns, 1, &prior, sizeof(prior));
+}
+
+bool emit_registered_cloud(
+    uint64_t timestamp_ns,
+    const std::vector<WirePoint>& points) {
+#if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
+  if (g_dds_publisher) {
+    g_dds_publisher->publish_registered_cloud(timestamp_ns, points);
+    return true;
+  }
+#else
+  (void)timestamp_ns;
+  (void)points;
+#endif
+  return false;
 }
 
 struct CloudBatch {
@@ -495,7 +343,9 @@ class ScanAccumulator {
     for (const auto& point : points) {
       max_offset_ns = std::max<uint64_t>(max_offset_ns, point.offset_time_ns);
     }
-    return timestamp_ns + max_offset_ns;
+    return max_offset_ns > std::numeric_limits<uint64_t>::max() - timestamp_ns
+        ? std::numeric_limits<uint64_t>::max()
+        : timestamp_ns + max_offset_ns;
   }
 
   void append_locked(uint64_t timestamp_ns, const std::vector<WirePoint>& points) {
@@ -504,7 +354,11 @@ class ScanAccumulator {
     points_.reserve(points_.size() + points.size());
     for (const auto& point : points) {
       WirePoint merged = point;
-      const uint64_t offset = base_offset + point.offset_time_ns;
+      const uint64_t offset =
+          point.offset_time_ns >
+                  std::numeric_limits<uint64_t>::max() - base_offset
+              ? std::numeric_limits<uint64_t>::max()
+              : base_offset + point.offset_time_ns;
       merged.offset_time_ns = static_cast<uint32_t>(
           std::min<uint64_t>(offset, std::numeric_limits<uint32_t>::max()));
       points_.push_back(merged);
@@ -545,61 +399,163 @@ void emit_lidar_packet(uint8_t lidar_id,
   }
 }
 
-int run_stdin_records() {
-  while (!g_quit.load(std::memory_order_relaxed)) {
+int run_stdin_records(
+    double replay_rate,
+    bool validate_only,
+    bool restamp_records,
+    bool navigation_fixture) {
+  constexpr std::uint32_t kMaxReplayPayloadBytes = 256U * 1024U * 1024U;
+  std::optional<std::uint64_t> first_timestamp_ns;
+  lidar::ReplayDeadlineRestamper<> replay_restamper;
+  std::chrono::steady_clock::time_point replay_start;
+  std::uint64_t cloud_records = 0U;
+  std::uint64_t imu_records = 0U;
+  std::uint64_t odom_records = 0U;
+  std::uint64_t registered_cloud_records = 0U;
+  auto finish = [&](int code) {
+    std::fprintf(
+        stderr,
+        "stdin records: clouds=%llu imu=%llu odom=%llu registered_clouds=%llu mode=%s\n",
+        static_cast<unsigned long long>(cloud_records),
+        static_cast<unsigned long long>(imu_records),
+        static_cast<unsigned long long>(odom_records),
+        static_cast<unsigned long long>(registered_cloud_records),
+        validate_only ? "validate" : "replay");
+    return code;
+  };
+  auto output_timestamp = [&](std::uint64_t source_timestamp_ns,
+                              std::chrono::steady_clock::time_point target_deadline) {
+    if (!restamp_records) {
+      return source_timestamp_ns;
+    }
+    if (navigation_fixture) {
+      // The MuJoCo producer is already wall-paced and the pipe provides
+      // backpressure. Windows and WSL steady clocks can run at measurably
+      // different rates, so treating their elapsed time as one replay clock
+      // creates false lateness. Stamp at native receipt for this simulation-
+      // only state fixture; an actual dropout still ages the last DDS sample
+      // and closes the endpoint input gate.
+      return replay_restamper.stamp_ns(
+          source_timestamp_ns, std::chrono::steady_clock::now());
+    }
+    // Re-evaluate the realtime/steady offset for every source timestamp. WSL
+    // can slew or step CLOCK_REALTIME while the replay is running; retaining a
+    // single startup offset makes correctly paced samples appear to come from
+    // the future. Steady-clock lateness is subtracted so a genuinely queued or
+    // delayed sample remains stale and the navigation fail-safe still closes.
+    return replay_restamper.stamp_ns(source_timestamp_ns, target_deadline);
+  };
+  while (!g_exit_state.quit_requested()) {
     RecordHeader header{};
     if (!read_exact(&header, sizeof(header))) {
-      return std::feof(stdin) ? 0 : 1;
+      return finish(std::feof(stdin) ? 0 : 1);
     }
     if (std::memcmp(header.magic, kMagic, sizeof(header.magic)) != 0) {
       std::fprintf(stderr, "stdin record has bad magic\n");
-      return 2;
+      return finish(2);
+    }
+    if (header.payload_bytes > kMaxReplayPayloadBytes) {
+      std::fprintf(stderr, "stdin record payload exceeds safety limit\n");
+      return finish(2);
+    }
+    if (!first_timestamp_ns.has_value()) {
+      first_timestamp_ns = header.timestamp_ns;
+      replay_start = std::chrono::steady_clock::now();
+    }
+    const std::uint64_t relative_ns = header.timestamp_ns >= *first_timestamp_ns
+        ? header.timestamp_ns - *first_timestamp_ns
+        : 0U;
+    const double timeline_rate = replay_rate > 0.0 ? replay_rate : 1.0;
+    const long double scaled_relative_ns =
+        static_cast<long double>(relative_ns) / timeline_rate;
+    if (scaled_relative_ns >
+        static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+      std::fprintf(stderr, "stdin record replay timeline overflows steady clock\n");
+      return finish(2);
+    }
+    const auto target_offset = std::chrono::nanoseconds(
+        static_cast<std::int64_t>(scaled_relative_ns));
+    const auto target_deadline = replay_start + target_offset;
+    if (replay_rate > 0.0 && !navigation_fixture) {
+      std::this_thread::sleep_until(target_deadline);
     }
     if (header.record_type == kRecordCloud) {
       if (header.payload_bytes != header.count * sizeof(WirePoint)) {
         std::fprintf(stderr, "stdin cloud payload size mismatch\n");
-        return 2;
+        return finish(2);
       }
       std::vector<WirePoint> points(header.count);
       if (!read_exact(points.data(), header.payload_bytes)) {
         std::fprintf(stderr, "stdin cloud payload truncated\n");
-        return 1;
+        return finish(1);
       }
-      if (!emit_cloud(0, header.timestamp_ns, points)) {
-        return 1;
+      ++cloud_records;
+      const std::uint64_t output_timestamp_ns =
+          output_timestamp(header.timestamp_ns, target_deadline);
+      if (!validate_only && !emit_cloud(0, output_timestamp_ns, points)) {
+        return finish(1);
       }
     } else if (header.record_type == kRecordImu) {
       if (header.count != 1 || header.payload_bytes != sizeof(WireImu)) {
         std::fprintf(stderr, "stdin imu payload size mismatch\n");
-        return 2;
+        return finish(2);
       }
       WireImu imu{};
       if (!read_exact(&imu, sizeof(imu))) {
         std::fprintf(stderr, "stdin imu payload truncated\n");
-        return 1;
+        return finish(1);
       }
-      if (!emit_imu(header.timestamp_ns, imu)) {
-        return 1;
+      ++imu_records;
+      const std::uint64_t output_timestamp_ns =
+          output_timestamp(header.timestamp_ns, target_deadline);
+      if (!validate_only && !emit_imu(output_timestamp_ns, imu)) {
+        return finish(1);
       }
     } else if (header.record_type == kRecordOdomPrior) {
       if (header.count != 1 || header.payload_bytes != sizeof(WireOdomPrior)) {
         std::fprintf(stderr, "stdin odom prior payload size mismatch\n");
-        return 2;
+        return finish(2);
       }
       WireOdomPrior prior{};
       if (!read_exact(&prior, sizeof(prior))) {
         std::fprintf(stderr, "stdin odom prior payload truncated\n");
-        return 1;
+        return finish(1);
       }
-      if (!emit_odom_prior(header.timestamp_ns, prior)) {
-        return 1;
+      ++odom_records;
+      const std::uint64_t output_timestamp_ns =
+          output_timestamp(header.timestamp_ns, target_deadline);
+      if (!validate_only && !emit_odom_prior(output_timestamp_ns, prior)) {
+        return finish(1);
+      }
+    } else if (header.record_type == kRecordRegisteredCloud) {
+      if (header.payload_bytes != header.count * sizeof(WirePoint)) {
+        std::fprintf(stderr, "stdin registered cloud payload size mismatch\n");
+        return finish(2);
+      }
+      std::vector<WirePoint> points(header.count);
+      if (!read_exact(points.data(), header.payload_bytes)) {
+        std::fprintf(stderr, "stdin registered cloud payload truncated\n");
+        return finish(1);
+      }
+      ++registered_cloud_records;
+      if (!validate_only && !navigation_fixture) {
+        std::fprintf(
+            stderr,
+            "stdin registered cloud requires --navigation-fixture\n");
+        return finish(2);
+      }
+      const std::uint64_t output_timestamp_ns =
+          output_timestamp(header.timestamp_ns, target_deadline);
+      if (!validate_only &&
+          !emit_registered_cloud(output_timestamp_ns, points)) {
+        return finish(1);
       }
     } else {
       std::fprintf(stderr, "stdin record has unknown type: %u\n", header.record_type);
-      return 2;
+      return finish(2);
     }
   }
-  return 0;
+  return finish(0);
 }
 
 void handle_high_points(uint8_t dev_type,
@@ -686,34 +642,39 @@ void handle_spherical_points(uint8_t dev_type,
   emit_lidar_packet(dev_type, base_time_ns, points);
 }
 
-void point_cloud_callback(uint32_t /*handle*/,
-                          const uint8_t dev_type,
-                          LivoxLidarEthernetPacket* data,
-                          void* /*client_data*/) {
-  if (data == nullptr) {
+void point_cloud_callback(uint32_t handle,
+                           const uint8_t dev_type,
+                           LivoxLidarEthernetPacket* data,
+                           void* /*client_data*/) {
+  if (data == nullptr || !accept_lidar_handle(handle)) {
     return;
   }
-  const uint64_t base_time_ns = packet_timestamp_ns(data);
+  const auto base_time_ns = packet_timestamp_ns(
+      lidar::PacketTimestampStream::Lidar, data);
+  if (!base_time_ns.has_value()) {
+    return;
+  }
   switch (data->data_type) {
     case kLivoxLidarCartesianCoordinateHighData:
-      handle_high_points(dev_type, data, base_time_ns);
+      handle_high_points(dev_type, data, *base_time_ns);
       break;
     case kLivoxLidarCartesianCoordinateLowData:
-      handle_low_points(dev_type, data, base_time_ns);
+      handle_low_points(dev_type, data, *base_time_ns);
       break;
     case kLivoxLidarSphericalCoordinateData:
-      handle_spherical_points(dev_type, data, base_time_ns);
+      handle_spherical_points(dev_type, data, *base_time_ns);
       break;
     default:
       break;
   }
 }
 
-void imu_callback(uint32_t /*handle*/,
-                  const uint8_t /*dev_type*/,
-                  LivoxLidarEthernetPacket* data,
-                  void* /*client_data*/) {
-  if (data == nullptr || data->data_type != kLivoxLidarImuData) {
+void imu_callback(uint32_t handle,
+                   const uint8_t /*dev_type*/,
+                   LivoxLidarEthernetPacket* data,
+                   void* /*client_data*/) {
+  if (data == nullptr || data->data_type != kLivoxLidarImuData ||
+      !accept_lidar_handle(handle)) {
     return;
   }
   const auto* raw = reinterpret_cast<const LivoxLidarImuRawPoint*>(data->data);
@@ -724,7 +685,11 @@ void imu_callback(uint32_t /*handle*/,
   imu.acc_x = raw->acc_x;
   imu.acc_y = raw->acc_y;
   imu.acc_z = raw->acc_z;
-  emit_imu(packet_timestamp_ns(data), imu);
+  const auto timestamp_ns = packet_timestamp_ns(
+      lidar::PacketTimestampStream::Imu, data);
+  if (timestamp_ns.has_value() && should_emit_imu(*timestamp_ns)) {
+    emit_imu(*timestamp_ns, imu);
+  }
 }
 
 void command_callback(livox_status status,
@@ -742,9 +707,9 @@ void command_callback(livox_status status,
 }
 
 void info_change_callback(const uint32_t handle,
-                          const LivoxLidarInfo* info,
-                          void* /*client_data*/) {
-  if (info == nullptr) {
+                           const LivoxLidarInfo* info,
+                           void* /*client_data*/) {
+  if (info == nullptr || !accept_lidar_handle(handle)) {
     return;
   }
   std::fprintf(stderr,
@@ -759,8 +724,7 @@ void info_change_callback(const uint32_t handle,
 }
 
 void signal_stop(int /*signal*/) {
-  g_quit.store(true, std::memory_order_relaxed);
-  g_quit_cv.notify_all();
+  g_exit_state.request_signal_stop();
 }
 
 CliConfig parse_args(int argc, const char* argv[]) {
@@ -777,6 +741,15 @@ CliConfig parse_args(int argc, const char* argv[]) {
       config.dds = true;
     } else if (arg == "--stdin-records") {
       config.stdin_records = true;
+    } else if (arg == "--validate-records") {
+      config.stdin_records = true;
+      config.validate_records = true;
+    } else if (arg == "--restamp-stdin-records") {
+      config.restamp_stdin_records = true;
+    } else if (arg == "--navigation-fixture") {
+      config.navigation_fixture = true;
+    } else if (arg == "--replay-rate") {
+      config.replay_rate = std::stod(next());
     } else if (arg == "--domain-id") {
       config.domain_id = std::stoi(next());
     } else if (arg == "--scan-window") {
@@ -787,14 +760,23 @@ CliConfig parse_args(int argc, const char* argv[]) {
         throw std::runtime_error("--publish-freq must be positive");
       }
       config.scan_window_s = 1.0 / hz;
+    } else if (arg == "--imu-publish-freq") {
+      const double hz = std::stod(next());
+      if (hz < 0.0) {
+        throw std::runtime_error("--imu-publish-freq must be non-negative");
+      }
+      config.imu_publish_hz = hz;
     } else if (arg == "--lidar-frame") {
       config.lidar_frame = next();
     } else if (arg == "--imu-frame") {
       config.imu_frame = next();
     } else if (arg == "--help" || arg == "-h") {
       throw std::runtime_error(
-          "usage: livox_sdk2_stream [--dds] [--stdin-records] [--domain-id N] "
+          "usage: livox_sdk2_stream [--dds] [--stdin-records|--validate-records] "
+          "[--restamp-stdin-records] [--navigation-fixture] "
+          "[--replay-rate RATE] [--domain-id N] "
           "[--publish-freq HZ|--scan-window SEC] "
+          "[--imu-publish-freq HZ] "
           "[--lidar-frame FRAME] [--imu-frame FRAME] [<MID360_config.json>]");
     } else if (config.config_path.empty()) {
       config.config_path = arg;
@@ -802,13 +784,22 @@ CliConfig parse_args(int argc, const char* argv[]) {
       throw std::runtime_error("unexpected argument: " + arg);
     }
   }
-  if (config.stdin_records && !config.dds) {
+  if (!std::isfinite(config.replay_rate) || config.replay_rate < 0.0) {
+    throw std::runtime_error("--replay-rate must be finite and non-negative");
+  }
+  if (config.stdin_records && !config.dds && !config.validate_records) {
     throw std::runtime_error("--stdin-records requires --dds");
+  }
+  if (config.navigation_fixture && !config.stdin_records) {
+    throw std::runtime_error("--navigation-fixture requires --stdin-records");
   }
   if (!config.stdin_records && config.config_path.empty()) {
     throw std::runtime_error(
-        "usage: livox_sdk2_stream [--dds] [--stdin-records] [--domain-id N] "
+        "usage: livox_sdk2_stream [--dds] [--stdin-records|--validate-records] "
+        "[--restamp-stdin-records] [--navigation-fixture] "
+        "[--replay-rate RATE] [--domain-id N] "
         "[--publish-freq HZ|--scan-window SEC] "
+        "[--imu-publish-freq HZ] "
         "[--lidar-frame FRAME] [--imu-frame FRAME] [<MID360_config.json>]");
   }
   return config;
@@ -833,8 +824,11 @@ int main(int argc, const char* argv[]) {
 #if defined(LINGTU_LIVOX_SDK2_STREAM_HAS_DDS) && LINGTU_LIVOX_SDK2_STREAM_HAS_DDS
   if (cli.dds) {
     try {
-      g_dds_publisher = std::make_unique<DdsPublisher>(
-          cli.domain_id, cli.lidar_frame, cli.imu_frame);
+      g_dds_publisher = std::make_unique<lidar::DdsModule>(
+          cli.domain_id,
+          cli.lidar_frame,
+          cli.imu_frame,
+          cli.navigation_fixture);
     } catch (const std::exception& exc) {
       std::fprintf(stderr, "livox_sdk2_stream DDS init failed: %s\n", exc.what());
       return 1;
@@ -847,12 +841,21 @@ int main(int argc, const char* argv[]) {
   }
 #endif
   g_scan_accumulator = std::make_unique<ScanAccumulator>(cli.scan_window_s);
+  g_imu_min_interval_ns.store(
+      cli.imu_publish_hz > 0.0
+          ? static_cast<uint64_t>(1000000000.0 / cli.imu_publish_hz)
+          : 0ULL,
+      std::memory_order_relaxed);
 
   std::signal(SIGINT, signal_stop);
   std::signal(SIGTERM, signal_stop);
 
   if (cli.stdin_records) {
-    return run_stdin_records();
+    return run_stdin_records(
+        cli.validate_records ? 0.0 : cli.replay_rate,
+        cli.validate_records,
+        cli.restamp_stdin_records,
+        cli.navigation_fixture);
   }
 
   DisableLivoxSdkConsoleLogger();
@@ -873,11 +876,9 @@ int main(int argc, const char* argv[]) {
   }
 
   std::fprintf(stderr, "livox_sdk2_stream started\n");
-  {
-    std::unique_lock<std::mutex> lock(g_quit_mutex);
-    g_quit_cv.wait(lock, [] { return g_quit.load(std::memory_order_relaxed); });
-  }
-  if (g_scan_accumulator) {
+  g_exit_state.wait_for_stop();
+  const auto exit_decision = g_exit_state.snapshot_exit_decision();
+  if (exit_decision.flush_final_batch && g_scan_accumulator) {
     if (auto batch = g_scan_accumulator->flush()) {
       emit_cloud(batch->lidar_id, batch->timestamp_ns, batch->points);
     }
@@ -888,5 +889,5 @@ int main(int argc, const char* argv[]) {
   g_dds_publisher.reset();
 #endif
   std::fprintf(stderr, "livox_sdk2_stream stopped\n");
-  return 0;
+  return exit_decision.return_code;
 }

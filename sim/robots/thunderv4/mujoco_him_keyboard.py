@@ -4,34 +4,91 @@ from collections import defaultdict
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import mujoco
+import mujoco.viewer
 import numpy as np
 import torch
 from pynput import keyboard as pynput_keyboard
 from scipy.spatial.transform import Rotation as R
 
-import mujoco
-import mujoco.viewer
-
 ASSET_DIR = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH = ASSET_DIR / "mjcf" / "thunderv4.xml"
 DEFAULT_POLICY_PATH = ASSET_DIR / "policy" / "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
 
-# DOF configuration
-# set like this be
-# FR_hip_joint, FR_thigh_joint, FR_calf_joint,
-# FL_hip_joint, FL_thigh_joint, FL_calf_joint,
-# RR_hip_joint, RR_thigh_joint, RR_calf_joint,
-# RL_hip_joint, RL_thigh_joint, RL_calf_joint,
-# FR_foot_joint, FL_foot_joint, RR_foot_joint, RL_foot_joint
+ACTUATOR_JOINTS = (
+    "FR_hip_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "FL_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "RR_hip_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint",
+    "RL_hip_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint",
+    "FR_foot_joint",
+    "FL_foot_joint",
+    "RR_foot_joint",
+    "RL_foot_joint",
+)
+HARDWARE_VELOCITY_NUMERIC = "hardware_joint_velocity_limit_rad_s"
 
-dof_vel = [6, 7, 8, 10, 11, 12, 14, 15, 16, 18, 19, 20, 9, 13, 17, 21]
-# set like this:
-# FR_hip_joint, FR_thigh_joint, FR_calf_joint,
-# FL_hip_joint, FL_thigh_joint, FL_calf_joint,
-# RR_hip_joint, RR_thigh_joint, RR_calf_joint,
-# RL_hip_joint, RL_thigh_joint, RL_calf_joint,
-# FR_foot_joint, FL_foot_joint, RR_foot_joint, RL_foot_joint
-dof_ids = [7, 8, 9, 11, 12, 13, 15, 16, 17, 19, 20, 21, 10, 14, 18, 22]
+
+def resolve_joint_addresses(model):
+    """Resolve state and control addresses from names, not XML tree order."""
+    joint_ids = []
+    actuator_ids = []
+    for name in ACTUATOR_JOINTS:
+        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+        actuator_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)
+        if joint_id < 0 or actuator_id < 0:
+            raise RuntimeError(f"Thunder V4 MJCF is missing required joint or actuator: {name}")
+        joint_ids.append(joint_id)
+        actuator_ids.append(actuator_id)
+
+    actuator_names = tuple(
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_ACTUATOR, actuator_id) for actuator_id in range(model.nu)
+    )
+    if actuator_names != ACTUATOR_JOINTS:
+        raise RuntimeError(
+            "Thunder V4 policy action order does not match the loaded MJCF. "
+            f"Expected {ACTUATOR_JOINTS}, got {actuator_names}."
+        )
+
+    joint_ids = np.asarray(joint_ids, dtype=np.int32)
+    return (
+        model.jnt_qposadr[joint_ids].astype(np.int32),
+        model.jnt_dofadr[joint_ids].astype(np.int32),
+        np.asarray(actuator_ids, dtype=np.int32),
+    )
+
+
+def resolve_hardware_velocity_limits(model):
+    """Load per-joint speed limits generated from the V4 source URDF."""
+    numeric_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_NUMERIC, HARDWARE_VELOCITY_NUMERIC)
+    if numeric_id < 0:
+        raise RuntimeError(
+            "Thunder V4 MJCF is missing hardware_joint_velocity_limit_rad_s. "
+            "Regenerate it with generate_thunderv4_mjcf.py."
+        )
+    start = model.numeric_adr[numeric_id]
+    size = model.numeric_size[numeric_id]
+    limits = np.asarray(model.numeric_data[start : start + size], dtype=np.float64)
+    if limits.shape != (len(ACTUATOR_JOINTS),) or np.any(limits <= 0.0):
+        raise RuntimeError(f"Invalid Thunder V4 joint velocity limits: {limits}")
+    return limits
+
+
+def attenuate_overspeed_torque(tau, qvel, velocity_limits):
+    """Remove same-direction drive torque from 90% of the hardware speed limit."""
+    speed_ratio = np.abs(qvel) / velocity_limits
+    rolloff = np.clip((1.0 - speed_ratio) / 0.10, 0.0, 1.0)
+    accelerated = tau * qvel > 0.0
+    guarded_tau = tau.copy()
+    guarded_tau[accelerated] *= rolloff[accelerated]
+    return guarded_tau
 
 
 class SimConfig:
@@ -119,10 +176,10 @@ class RobotConfig:
             "FL_calf_joint": 120.0,
             "RR_calf_joint": 120.0,
             "RL_calf_joint": 120.0,
-            "FR_foot_joint": 60.0,
-            "FL_foot_joint": 60.0,
-            "RR_foot_joint": 60.0,
-            "RL_foot_joint": 60.0,
+            "FR_foot_joint": 17.0,
+            "FL_foot_joint": 17.0,
+            "RR_foot_joint": 17.0,
+            "RL_foot_joint": 17.0,
         }
 
         # Action scaling
@@ -137,23 +194,17 @@ class RobotConfig:
         # Convert dicts to arrays (ordered by joint_names)
         self.kp_array = np.array([self.kp[name] for name in self.joint_names])
         self.kd_array = np.array([self.kd[name] for name in self.joint_names])
-        self.tau_limit_array = np.array(
-            [self.tau_limit[name] for name in self.joint_names]
-        )
+        self.tau_limit_array = np.array([self.tau_limit[name] for name in self.joint_names])
 
     def print_parameters(self):
         """Print all PD control parameters for verification"""
         print("\n" + "=" * 70)
         print("PD Control Parameters Configuration")
         print("=" * 70)
-        print(
-            f"{'Joint Name':<20} {'Kp [Nm/rad]':>12} {'Kd [Nm·s/rad]':>15} {'τ_limit [Nm]':>15}"
-        )
+        print(f"{'Joint Name':<20} {'Kp [Nm/rad]':>12} {'Kd [Nm·s/rad]':>15} {'τ_limit [Nm]':>15}")
         print("-" * 70)
         for name in self.joint_names:
-            print(
-                f"{name:<20} {self.kp[name]:>12.1f} {self.kd[name]:>15.1f} {self.tau_limit[name]:>15.1f}"
-            )
+            print(f"{name:<20} {self.kp[name]:>12.1f} {self.kd[name]:>15.1f} {self.tau_limit[name]:>15.1f}")
         print("=" * 70 + "\n")
 
 
@@ -186,24 +237,24 @@ default_joint_angles = {
 }
 
 # Define the two poses
-POSE_A_ANGLES = default_joint_angles.copy()  # Current (Knee-to-Knee)
+POSE_A_ANGLES = default_joint_angles.copy()  # Legacy policy observation reference.
 
 # 定义中间过渡姿态 (Mid Pose)
 # 取 Pose A 和 Pose B 的中间值，用于缓冲
 POSE_MID_ANGLES = {
     # 中间姿态 (Mid Pose)
     "FR_hip_joint": -0.1,
-    "FR_thigh_joint": -1.5,
-    "FR_calf_joint": 3.1,
+    "FR_thigh_joint": -1.0,
+    "FR_calf_joint": 2.35,
     "FL_hip_joint": 0.1,
-    "FL_thigh_joint": 1.5,
-    "FL_calf_joint": -3.1,
+    "FL_thigh_joint": 1.0,
+    "FL_calf_joint": -2.35,
     "RR_hip_joint": 0.1,
-    "RR_thigh_joint": 1.5,
-    "RR_calf_joint": -3.1,
+    "RR_thigh_joint": 1.0,
+    "RR_calf_joint": -2.35,
     "RL_hip_joint": -0.1,
-    "RL_thigh_joint": -1.5,
-    "RL_calf_joint": 3.1,
+    "RL_thigh_joint": -1.0,
+    "RL_calf_joint": 2.35,
     "FR_foot_joint": 0.0,
     "FL_foot_joint": 0.0,
     "RR_foot_joint": 0.0,
@@ -214,17 +265,17 @@ POSE_B_ANGLES = {
     # 站高姿态 (High Stand)：用户实测参数
     # 增大 Thigh 和 Calf 的绝对值以实现站高
     "FR_hip_joint": -0.1,
-    "FR_thigh_joint": -1.05,
-    "FR_calf_joint": 2.2,
+    "FR_thigh_joint": -1.2,
+    "FR_calf_joint": 2.7,
     "FL_hip_joint": 0.1,
-    "FL_thigh_joint": 1.05,
-    "FL_calf_joint": -2.2,
+    "FL_thigh_joint": 1.2,
+    "FL_calf_joint": -2.7,
     "RR_hip_joint": 0.1,
-    "RR_thigh_joint": 2.05,
-    "RR_calf_joint": -4.14,
+    "RR_thigh_joint": 1.2,
+    "RR_calf_joint": -2.7,
     "RL_hip_joint": -0.1,
-    "RL_thigh_joint": -2.05,
-    "RL_calf_joint": 4.14,
+    "RL_thigh_joint": -1.2,
+    "RL_calf_joint": 2.7,
     "FR_foot_joint": 0.0,
     "FL_foot_joint": 0.0,
     "RR_foot_joint": 0.0,
@@ -439,14 +490,10 @@ def start_keyboard_listener():
         # Speed adjustment (Gear Shift)
         elif k == "u":
             vel_cmd.speed_up()
-            print(
-                f" Speed UP: Vx={vel_cmd.target_vx:.1f}, Vy={vel_cmd.target_vy:.1f}, Yaw={vel_cmd.target_dyaw:.1f}"
-            )
+            print(f" Speed UP: Vx={vel_cmd.target_vx:.1f}, Vy={vel_cmd.target_vy:.1f}, Yaw={vel_cmd.target_dyaw:.1f}")
         elif k == "j":
             vel_cmd.speed_down()
-            print(
-                f" Speed DOWN: Vx={vel_cmd.target_vx:.1f}, Vy={vel_cmd.target_vy:.1f}, Yaw={vel_cmd.target_dyaw:.1f}"
-            )
+            print(f" Speed DOWN: Vx={vel_cmd.target_vx:.1f}, Vy={vel_cmd.target_vy:.1f}, Yaw={vel_cmd.target_dyaw:.1f}")
 
         # Pose Toggle
         elif k == "p":
@@ -454,17 +501,13 @@ def start_keyboard_listener():
             if current_pose_name == "A":
                 print("Switching to Pose B (via Mid)...")
                 # 路径: A -> Mid -> B
-                transition_pose(
-                    [POSE_MID_ANGLES, POSE_B_ANGLES], duration=0.5, pause=0.1
-                )
+                transition_pose([POSE_MID_ANGLES, POSE_B_ANGLES], duration=0.5, pause=0.1)
                 current_pose_name = "B"
             else:
                 print("Switching to Pose A (via Mid)...")
                 # 路径: B -> Mid -> A
                 # 关键点：pause=1.0 给足时间稳定，防止下蹲过快摔倒
-                transition_pose(
-                    [POSE_MID_ANGLES, POSE_A_ANGLES], duration=0.5, pause=0.1
-                )
+                transition_pose([POSE_MID_ANGLES, POSE_A_ANGLES], duration=0.5, pause=0.1)
                 current_pose_name = "A"
 
         if key == pynput_keyboard.Key.space:
@@ -496,11 +539,11 @@ def start_keyboard_listener():
     listener.start()
 
 
-def get_obs(data, vel_cmd, last_action, debug=False):
-    q = data.qpos[dof_ids].astype(np.double) - default_angle
+def get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=False):
+    q = data.qpos[qpos_ids].astype(np.double) - default_angle
     q += np.random.uniform(-0.01, 0.01, q.shape)
 
-    dq = data.qvel[dof_vel].astype(np.double) * 0.05
+    dq = data.qvel[qvel_ids].astype(np.double) * 0.05
     q[-4:] = 0.0  # zero wheel joints
 
     imu_quat = data.sensor("orientation").data[[1, 2, 3, 0]].astype(np.double)
@@ -579,9 +622,7 @@ def plot_joint_data(plot_data):
 
     # Figure 1: Target vs Actual
     fig1, axes1 = plt.subplots(4, 4, figsize=(16, 12))
-    fig1.suptitle(
-        "Target vs Actual (Position/Velocity)", fontsize=16, fontweight="bold"
-    )
+    fig1.suptitle("Target vs Actual (Position/Velocity)", fontsize=16, fontweight="bold")
 
     for i in range(16):
         row = i // 4
@@ -609,7 +650,7 @@ def plot_joint_data(plot_data):
 
     plt.tight_layout()
     fig1.savefig("joint_tracking.png", dpi=150, bbox_inches="tight")
-    print(f"✓ Figure 1 saved: joint_tracking.png")
+    print("✓ Figure 1 saved: joint_tracking.png")
 
     # Figure 2: Error vs Torque
     fig2, axes2 = plt.subplots(4, 4, figsize=(16, 12))
@@ -644,7 +685,7 @@ def plot_joint_data(plot_data):
 
     plt.tight_layout()
     fig2.savefig("joint_error_torque.png", dpi=150, bbox_inches="tight")
-    print(f"✓ Figure 2 saved: joint_error_torque.png")
+    print("✓ Figure 2 saved: joint_error_torque.png")
 
     plt.show()
 
@@ -661,6 +702,8 @@ def run_mujoco(
 ):
     model = mujoco.MjModel.from_xml_path(mujoco_model_path)
     model.opt.timestep = dt
+    qpos_ids, qvel_ids, actuator_ids = resolve_joint_addresses(model)
+    velocity_limits = resolve_hardware_velocity_limits(model)
     data = mujoco.MjData(model)
     mujoco.mj_step(model, data)
     viewer = mujoco.viewer.launch_passive(model, data)
@@ -671,7 +714,7 @@ def run_mujoco(
     # Set initial state
     data.qpos[:3] = [0, 0, cfg.robot_config.init_height]
     data.qpos[3:7] = [1, 0, 0, 0]  # quaternion [w, x, y, z]
-    data.qpos[dof_ids] = default_angle.copy()
+    data.qpos[qpos_ids] = default_angle.copy()
     data.qvel[:] = 0.0
 
     target_q = default_angle.copy()
@@ -698,13 +741,11 @@ def run_mujoco(
     try:
         for step in range(steps):
             if step % decimation == 0:
-                obs = get_obs(data, vel_cmd, last_action, debug=debug)
+                obs = get_obs(data, vel_cmd, last_action, qpos_ids, qvel_ids, debug=debug)
 
                 # Dynamic Policy Switching
                 # Select policy based on current pose state
-                current_policy = policies.get(
-                    current_pose_name, policies["A"]
-                )  # Default to A if not found
+                current_policy = policies.get(current_pose_name, policies["A"])  # Default to A if not found
 
                 with torch.inference_mode():
                     obs_tensor = torch.from_numpy(obs).unsqueeze(0).to(dtype=torch.float32)
@@ -716,24 +757,24 @@ def run_mujoco(
                 if step > 100:
                     scaled_action = scale_action(action, cfg)
                     target_q = scaled_action + default_angle
+                    target_q[12:] = np.clip(target_q[12:], -velocity_limits[12:], velocity_limits[12:])
                 else:
                     target_q = default_angle
                 last_action = action.copy()
 
-            q = data.qpos[dof_ids]
-            dq = data.qvel[dof_vel]
+            q = data.qpos[qpos_ids]
+            dq = data.qvel[qvel_ids]
 
             tau = np.zeros(16)
 
             # Leg joints (0-11): position control
-            tau[:12] = kp_array[:12] * (target_q[:12] - q[:12]) + kd_array[:12] * (
-                0 - dq[:12]
-            )
+            tau[:12] = kp_array[:12] * (target_q[:12] - q[:12]) + kd_array[:12] * (0 - dq[:12])
 
             # Wheel joints (12-15): velocity control (target_q stores target velocity for wheels)
             tau[12:] = kd_array[12:] * (target_q[12:] - dq[12:])
 
             tau = np.clip(tau, -tau_limit_array, tau_limit_array)
+            tau = attenuate_overspeed_torque(tau, dq, velocity_limits)
 
             # Record data for plotting (every decimation steps)
             if plot and step % decimation == 0:
@@ -756,7 +797,8 @@ def run_mujoco(
             #     pass
 
             # Apply computed torques to actuators
-            data.ctrl[:] = tau
+            data.ctrl[:] = 0.0
+            data.ctrl[actuator_ids] = tau
             mujoco.mj_step(model, data)
 
             if step % render_every == 0:
@@ -799,21 +841,11 @@ if __name__ == "__main__":
     parser.add_argument("--dt", type=float, default=0.001)
     parser.add_argument("--decimation", type=int, default=10)
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument(
-        "--vx", type=float, default=0.0, help="Forward velocity command [-4.5, 4.5] m/s"
-    )
-    parser.add_argument(
-        "--vy", type=float, default=0.0, help="Lateral velocity command [-1.5, 1.5] m/s"
-    )
-    parser.add_argument(
-        "--vyaw", type=float, default=0.0, help="Yaw velocity command [-1.0, 1.0] rad/s"
-    )
-    parser.add_argument(
-        "--plot", action="store_true", help="Generate plots of joint errors and torques"
-    )
-    parser.add_argument(
-        "--keyboard", action="store_true", help="Enable keyboard control (WASD/QE)"
-    )
+    parser.add_argument("--vx", type=float, default=0.0, help="Forward velocity command [-4.5, 4.5] m/s")
+    parser.add_argument("--vy", type=float, default=0.0, help="Lateral velocity command [-1.5, 1.5] m/s")
+    parser.add_argument("--vyaw", type=float, default=0.0, help="Yaw velocity command [-1.0, 1.0] rad/s")
+    parser.add_argument("--plot", action="store_true", help="Generate plots of joint errors and torques")
+    parser.add_argument("--keyboard", action="store_true", help="Enable keyboard control (WASD/QE)")
 
     args = parser.parse_args()
 
@@ -839,14 +871,10 @@ if __name__ == "__main__":
 
     policies = {"A": policy_a, "B": policy_b}
 
-    print(
-        f"Velocity command: vx={vel_cmd.vx:.2f}, vy={vel_cmd.vy:.2f}, vyaw={vel_cmd.dyaw:.2f}"
-    )
+    print(f"Velocity command: vx={vel_cmd.vx:.2f}, vy={vel_cmd.vy:.2f}, vyaw={vel_cmd.dyaw:.2f}")
     if args.keyboard:
         start_keyboard_listener()
-        print(
-            "Keyboard control enabled: W/S (vx), A/D (vy), Q/E (yaw), space to stop, P to toggle Pose/Policy"
-        )
+        print("Keyboard control enabled: W/S (vx), A/D (vy), Q/E (yaw), space to stop, P to toggle Pose/Policy")
     if args.plot:
         print("Plot mode enabled: will generate joint_analysis.png after simulation\n")
 

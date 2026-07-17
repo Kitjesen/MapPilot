@@ -33,6 +33,11 @@ are legacy ROS2 compatibility units. They are useful for fallback or comparison
 work, but they are not the product default and should not run beside the native
 DDS chain unless a specific compatibility test requires it.
 
+Runtime plugin registration follows the same rule: ROS2 adapter groups such as
+`ros2_slam_bridge` and `ros2_map_output` are not part of the product plugin
+catalog unless `LINGTU_ENABLE_ROS2_COMPAT=1` or
+`LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` is set before startup.
+
 There is no standalone `lingtu-gateway.service`: Gateway runs inside
 `lingtu.service` and exposes HTTP `:5050` plus MCP `:8090` from the same
 process.
@@ -94,8 +99,14 @@ bash scripts/build/build_octoplanner3d.sh --require-pcl
 # 2. Optional ROS2 compatibility workspace, only when explicitly needed
 bash scripts/build/build_ros_workspace.sh
 
-# 3. Install native field services
-bash scripts/deploy/thunder/install_services.sh field-cpp
+# 3. Install native field services. Brainstem is on a separate computer;
+#    loopback or a missing endpoint is rejected.
+LINGTU_BRAINSTEM_HOST=<remote-brainstem-ip> \
+LINGTU_BRAINSTEM_PORT=13145 \
+LINGTU_BRAINSTEM_TLS_CA_FILE=/opt/lingtu/config/tls/brainstem-ca.crt \
+LINGTU_BRAINSTEM_TLS_CERT_FILE=/opt/lingtu/config/tls/lingtu-driver.crt \
+LINGTU_BRAINSTEM_TLS_KEY_FILE=/opt/lingtu/config/tls/lingtu-driver.key \
+  bash scripts/deploy/thunder/install_services.sh field-cpp
 
 # 4. Start native DDS + LingTu
 sudo systemctl start lingtu-livox-dds.service lingtu-slam-dds.service lingtu-nav-dds.service lingtu.service
@@ -103,6 +114,23 @@ sudo systemctl start lingtu-livox-dds.service lingtu-slam-dds.service lingtu-nav
 
 The legacy installer under `docs/04-deployment/services/install.sh` is guarded by
 `LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` and should not be used for new installs.
+
+The driver installer persists the remote endpoint to
+`/opt/lingtu/config/brainstem.env`. The remote Brainstem must support the
+lease-and-ack v1 RPCs documented in
+`src/drivers/real/thunder/native/README.md`; a legacy `Walk`-only server remains
+fail-closed and cannot make `lingtu-driver` ready.
+
+On the Brainstem computer, explicitly allow the LingTu host's source IP (for
+the current field network, `192.168.114.23`) with
+`HAN_DOG_LINGTU_ALLOWED_IPS`. The default is empty and rejects every remote
+motion caller. This allowlist only permits lease-aware motion; motor enable,
+posture, zeroing, and fault-clear RPCs remain loopback-only.
+
+The Brainstem hardware service must also configure
+`HAN_DOG_GRPC_TLS_CERT_FILE`, `HAN_DOG_GRPC_TLS_KEY_FILE`, and
+`HAN_DOG_GRPC_TLS_CLIENT_CA_FILE`. A remote motion peer without a mutually
+authenticated TLS session is rejected even when its IP is allowlisted.
 
 ## Release Flow
 
@@ -194,7 +222,7 @@ failed localization gate even if the SLAM process is alive.
 The compatibility path remains available for field comparison:
 
 ```bash
-LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1 bash scripts/deploy/s100p/install_services.sh
+LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1 bash scripts/deploy/thunder/install_services.sh ros-compat
 bash scripts/lingtu svc restart legacy_lidar
 bash scripts/lingtu svc restart legacy_fastlio2
 bash scripts/lingtu svc restart legacy_localizer

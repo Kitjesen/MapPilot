@@ -1,0 +1,63 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: inspection
+summary: Semantic or scheduled inspection tasks over saved-map native navigation.
+data_plane: typed_dds
+control_owner: autonomy
+autonomy_owner: semantic_planner
+required_topics:
+  - /tf
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/inspection/command
+  - /nav/inspection/ack
+  - /nav/inspection/status
+  - /nav/inspection/evidence/request
+  - /nav/inspection/evidence/result
+  - /nav/traversability
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
+  - /nav/cmd_vel
+required_capabilities:
+  - saved_map_relocalization
+  - semantic_or_scheduled_goal_source
+  - octoplanner3d_global_planning
+  - local_planner_collision_and_traversability_scoring
+  - final_cmd_vel_single_writer
+  - operator_teleop_takeover_with_safety_veto
+  - operator_assisted_local_planner_takeover
+  - inspection_evidence_capture_and_result_ack
+forbidden_modules:
+  - SimEndpointDriverModule
+  - nav.local_planner
+  - nav.path_follower
+forbidden_claims:
+  - module_sim_real_equivalence
+  - ros2_bridge_required
+transport_rules:
+  product_bus: typed_dds
+  same_process_algorithms: direct_function_calls
+  lcm_allowed: false
+inspection_command_boundary:
+  request: /nav/inspection/command
+  ack: /nav/inspection/ack
+  status: /nav/inspection/status
+  client_completion: business_ack_required
+inspection_evidence_boundary:
+  request: /nav/inspection/evidence/request
+  result: /nav/inspection/evidence/result
+  client_completion: matching_persisted_result_required
+target_chain:
+  - SemanticPlanner/TaskScheduler selects inspection goals.
+  - Gateway and GoalService send route lifecycle requests through the persistent C++ client on /nav/inspection/command and wait for /nav/inspection/ack.
+  - Native nav endpoint publishes current run and route-point progress on /nav/inspection/status.
+  - Native nav endpoint requests point evidence on /nav/inspection/evidence/request and waits for the perception worker result on /nav/inspection/evidence/result.
+  - Direct goals and operator motion intents continue to use /nav/command/request and /nav/command/ack.
+  - Native nav endpoint runs OctoPlanner3D, LocalPlanner, and PathFollower as C++ calls.
+  - Native nav endpoint publishes path state and final /nav/cmd_vel.
+  - Operator takeover pauses motion without restarting the inspection runtime; release holds zero until explicit resume and a fresh inspection goal.
+  - Assisted takeover routes joystick translation through native LocalPlanner and PathFollower without automatic recovery rotation or backing up.

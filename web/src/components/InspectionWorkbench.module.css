@@ -1,0 +1,568 @@
+.page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text);
+}
+
+.header,
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.eyebrow,
+.sectionTitle,
+.statusBand span,
+.formGrid span {
+  font-size: var(--t-overline-size);
+  font-weight: var(--t-overline-weight);
+  letter-spacing: var(--t-overline-track);
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.title {
+  margin: 2px 0 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.primaryButton,
+.iconButton,
+.deleteButton,
+.runControls button,
+.locationList button,
+.orderButtons button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--glass-hi);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.primaryButton {
+  padding: 0 12px;
+  color: var(--accent);
+  border-color: rgba(60, 214, 164, 0.38);
+}
+
+.iconButton {
+  width: 32px;
+  padding: 0;
+}
+
+.primaryButton:hover:not(:disabled),
+.iconButton:hover:not(:disabled),
+.deleteButton:hover:not(:disabled),
+.runControls button:hover:not(:disabled),
+.locationList button:hover {
+  color: var(--text);
+}
+
+.primaryButton:disabled,
+.iconButton:disabled,
+.deleteButton:disabled,
+.runControls button:disabled,
+.orderButtons button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.statusBand {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--border);
+}
+
+.statusBand > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 11px 12px;
+  background: var(--glass-hi);
+}
+
+.statusBand strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.workerReady {
+  color: var(--accent);
+}
+
+.workerUnavailable {
+  color: var(--warn);
+}
+
+.evidencePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--glass-hi);
+}
+
+.evidenceHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.evidenceHeader p {
+  margin: 4px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.evidenceCount,
+.evidenceWarning {
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid rgba(60, 214, 164, 0.25);
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(60, 214, 164, 0.08);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.evidenceWarning {
+  border-color: rgba(251, 191, 36, 0.32);
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.evidenceGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 8px;
+  max-height: 268px;
+  overflow: auto;
+}
+
+.evidenceCard {
+  min-width: 0;
+  min-height: 116px;
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--glass-lo);
+}
+
+.evidencePreview,
+.evidencePlaceholder {
+  min-height: 116px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  color: var(--text-faint);
+  background: rgba(0, 0, 0, 0.22);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.evidencePreview img {
+  width: 100%;
+  height: 100%;
+  min-height: 116px;
+  object-fit: cover;
+  transition: transform 160ms ease;
+}
+
+.evidencePreview:hover img {
+  transform: scale(1.025);
+}
+
+.evidenceBody {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+}
+
+.evidenceIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.evidenceIdentity strong,
+.evidenceIdentity span,
+.evidenceAction {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.evidenceIdentity strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.evidenceIdentity span,
+.evidenceAction,
+.evidenceMeta,
+.evidenceLinks {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.evidenceAction {
+  color: var(--text-dim);
+}
+
+.evidenceMeta,
+.evidenceLinks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.evidenceMeta time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verdictAlert,
+.verdictNeutral {
+  flex: none;
+  color: var(--red);
+}
+
+.verdictNeutral {
+  color: var(--accent);
+}
+
+.evidenceLinks {
+  justify-content: flex-start;
+  margin-top: auto;
+}
+
+.evidenceLinks a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.evidenceLinks a:hover {
+  text-decoration: underline;
+}
+
+.evidenceGrid > .empty {
+  grid-column: 1 / -1;
+}
+
+.alert {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  border-radius: var(--r-sm);
+  color: var(--red);
+  background: rgba(255, 107, 107, 0.08);
+}
+
+.capabilityNotice {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: var(--r-sm);
+  color: var(--warn);
+  background: rgba(251, 191, 36, 0.08);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.42fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.routesPane,
+.editorPane,
+.locationPane,
+.pointPane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--glass-hi);
+}
+
+.routesPane,
+.editorPane {
+  padding: 12px;
+}
+
+.routeList,
+.locationList,
+.pointRows {
+  min-height: 0;
+  overflow: auto;
+}
+
+.routeList {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.routeItem,
+.routeActive {
+  min-height: 50px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--glass-lo);
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+}
+
+.routeActive {
+  color: var(--accent);
+  border-color: rgba(60, 214, 164, 0.38);
+  background: rgba(60, 214, 164, 0.1);
+}
+
+.routeItem span,
+.routeActive span,
+.routeItem small,
+.routeActive small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.routeItem span,
+.routeActive span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.routeItem small,
+.routeActive small {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.runControls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.formGrid label,
+.pointRow label {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.formGrid input,
+.formGrid select,
+.pointRow input,
+.pointRow select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--glass-lo);
+  color: var(--text);
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.builder {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.34fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.locationPane,
+.pointPane {
+  padding: 10px;
+}
+
+.locationList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.locationList button {
+  justify-content: flex-start;
+  padding: 0 9px;
+}
+
+.locationList button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.locationList button span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.locationList button small {
+  flex: none;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.pointRows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pointRow {
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 58px minmax(120px, 1fr) 82px 82px minmax(110px, 0.7fr) 84px 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--glass-lo);
+}
+
+.pointRow strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.orderButtons {
+  display: grid;
+  grid-template-columns: repeat(2, 26px);
+  gap: 4px;
+}
+
+.orderButtons button {
+  width: 26px;
+  min-height: 26px;
+}
+
+.toggle {
+  align-items: center;
+  justify-content: center;
+}
+
+.toggle input {
+  width: 15px;
+  height: 15px;
+}
+
+.deleteButton {
+  align-self: flex-start;
+  padding: 0 11px;
+  color: var(--red);
+  border-color: rgba(255, 107, 107, 0.35);
+}
+
+.empty {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+@media (max-width: 1180px) {
+  .statusBand,
+  .content,
+  .builder {
+    grid-template-columns: 1fr;
+  }
+
+  .formGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pointRow {
+    grid-template-columns: 58px minmax(110px, 1fr) 80px 34px;
+  }
+
+  .pointRow label:nth-of-type(2),
+  .pointRow label:nth-of-type(3),
+  .pointRow .toggle {
+    display: none;
+  }
+}

@@ -13,11 +13,54 @@ Run commands from the repository root unless a script says otherwise.
 | `build_vendored_pcl.sh` | Build a repo-local PCL install for either the OctoPlanner3D converter subset or the broader SLAM-native profile. |
 | `build_3d_bbs.sh` | Build the CPU-only 3D-BBS global relocalization library under `third_party/3d_bbs/install`. |
 | `build_octoplanner3d.sh` | Build the optional OctoPlanner3D headless global-planner executable. |
-| `clone_orbbec_ros2.sh` | Restore the local OrbbecSDK ROS2 driver source under `src/drivers/real/camera/OrbbecSDK_ROS2`. |
-| `build_orbbec_native.sh` | Build the no-ROS Orbbec SDK RGB-D stream executable used by `OrbbecNativeCameraModule`. |
+| `clone_orbbec_ros2.sh` | Restore the local OrbbecSDK ROS2 driver source under `src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2`. |
+| `build_orbbec_native.sh` | Build the no-ROS RGB-D stream executable from LingTu camera service SDK + Orbbec adapter. |
 | `build_livox_sdk2_stream.sh` | Build the no-ROS Livox SDK2 stream executable used by `LidarModule(transport="sdk2")`. |
+| `build_pointcloud_codec.sh` / `build_pointcloud_codec.ps1` | Build the C++ PCLD encoder used by Gateway live point-cloud WebSocket frames. |
 | `build_slam_core.sh` | Build the C++ SLAM core, optional Python `_native` runner, and optional C++ DDS runtime. Uses `LINGTU_SLAM_FASTLIO2=ON` by default; set `OFF` only for contract tests. |
 | `build_nav_endpoint.sh` | Build the no-ROS C++ CycloneDDS navigation endpoint that bridges DDS goal/cancel/instruction and Gateway path/cmd output. |
+| `build_driver.sh` | Build and test the no-ROS C++ Thunder `driver` that consumes `rt/nav/cmd_vel` and calls Brainstem `Walk`. |
+| `build_native_runtime.sh` | Build `lt_native`, `lt_pgo`, `lt_hba`, and read-only `lt_loop_verify`; use `--install-user-bin` on robots to expose the commands. |
+| `build_prune.sh` | Build LingTu's clean-room C++ saved-map cleaner plus the ERASOR2 staging adapter. |
+| `build_map_cleaning.sh` | Compatibility wrapper for `build_prune.sh`. |
+| `build_erasor2_stage.sh` | Build LingTu's no-ROS C++ ERASOR2 staging adapter for saved-map cleanup experiments. |
+| `fetch_erasor2.sh` | Fetch the pinned GPLv3 ERASOR2 checkout under `third_party/research_nav/ERASOR2` for optional robot-side tests. |
+
+## Orbbec camera build
+
+The preferred dependency shape is the pure Orbbec SDK under:
+
+```text
+src/drivers/real/camera/deps/orbbec/OrbbecSDK
+```
+
+or an installed SDK selected with:
+
+```bash
+export LINGTU_ORBBEC_SDK_ROOT=/path/to/OrbbecSDK
+```
+
+The current ROS2 vendor package remains supported only as a fallback because it
+contains `orbbec_camera/SDK`.
+
+## Native Gateway point-cloud build
+
+Build the native Gateway point-cloud encoder when the browser live-cloud path
+must avoid Python-side packing:
+
+```bash
+bash scripts/build/build_pointcloud_codec.sh
+```
+
+On Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build/build_pointcloud_codec.ps1
+```
+
+The Python `runtime.utils.binary_codec` wrapper automatically loads the shared
+library from `src/kernels/gateway/pointcloud_codec/build` or from
+`LINGTU_POINTCLOUD_CODEC_LIB`.
 
 ## Native SLAM build
 
@@ -87,9 +130,85 @@ goals call OctoPlanner3D in-process, then the C++ navigation loop publishes
 Gateway-polling `lingtu_nav_cyclone_endpoint` target was removed; use
 `lingtu_nav_native_endpoint` for robot-side navigation.
 
+Build the native Thunder motion driver:
+
+```bash
+bash scripts/build/build_driver.sh
+```
+
+This produces `build/driver/lingtu_driver` and runs both the fail-closed safety
+core test and a typed DDS to Brainstem gRPC integration test. It uses the
+existing product dependencies `cyclonedds-dev`, `cyclonedds-tools`,
+`libgrpc++-dev`, `libprotobuf-dev`, and `protobuf-compiler-grpc`.
+
 The older `LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME=ON` target produces
 `lingtu_slam_dds_runtime`, which is C++ but still uses `rclcpp` and ROS 2
 message headers. Keep it only for compatibility tests.
+
+## Native runtime commands
+
+Build the no-ROS runtime command helpers used by product map-save
+optimization:
+
+```bash
+bash scripts/build/build_native_runtime.sh
+```
+
+On a robot image, install command symlinks into `~/.local/bin` so
+`lingtu.service` can discover `lt_pgo` and `lt_hba` through its normal PATH:
+
+```bash
+bash scripts/build/build_native_runtime.sh --install-user-bin
+```
+
+`lt_pgo` is the default save-time optimizer. `lt_hba` is available when the
+save request explicitly asks for the higher-density HBA variant.
+
+## Saved-map cleaning
+
+The product direction is LingTu's clean-room native C++ cleaner:
+
+```bash
+bash scripts/build/build_prune.sh
+```
+
+That produces `build/prune/prune`. It reads
+`map.pcd + patches/*.pcd + poses.txt`, removes low-support dynamic ghost
+candidates into `map.removed.pcd`, writes `map.clean.pcd`, and can apply the
+cleaned map in place with:
+
+```bash
+build/prune/prune \
+  --map-dir /home/sunrise/data/nova/maps/<map> \
+  --overwrite \
+  --apply
+```
+
+`--apply` backs up the original as `map.pcd.preclean` before replacing
+`map.pcd`. `maps.prune.runtime.apply_dynamic_filter_step1half()` uses this
+native command by default; set `LINGTU_MAP_CLEANER=dufomap` only for legacy
+comparison.
+
+ERASOR2 is GPLv3 and stays in `third_party/research_nav/ERASOR2` as reference
+or as a separately run optional tool. `build_prune.sh` also builds
+`erasor2_stage` for experiments, but that path is not the product
+default.
+
+Robot-side ERASOR2 optional backend check:
+
+```bash
+bash scripts/diagnostics/native/prune_check.sh
+bash scripts/diagnostics/native/prune_check.sh --fetch --build
+```
+
+The first command proves the default LingTu cleaner and ERASOR2 staging adapter
+on the robot. The second command also fetches the GPLv3 upstream checkout and
+attempts the optional ERASOR2 backend build. Missing Eigen/PCL/OpenCV/yaml-cpp
+is reported as a structured blocker.
+
+For S100P, the optional ERASOR2 build uses LingTu's no-op `rerun_sdk` stub by
+default. This avoids a robot-side GitHub download during CMake configure. Set
+`LINGTU_ERASOR2_USE_RERUN_STUB=OFF` only for a visualization build.
 
 Related root-level helpers:
 

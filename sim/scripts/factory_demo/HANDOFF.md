@@ -5,7 +5,7 @@
 ### 机器人 (S100P 四足狗)
 - **IP**: 192.168.66.190
 - **用户名**: sunrise
-- **密码**: sunrise
+- **密码**: 通过 `S100P_PASSWORD` 环境变量提供，禁止写入仓库
 - **平台**: 地瓜 S100P，RDK aarch64 (不是 Jetson)，Ubuntu 22.04，ROS2 Humble
 - **显示环境**: GNOME Wayland + Xwayland
   - `DISPLAY=:0`

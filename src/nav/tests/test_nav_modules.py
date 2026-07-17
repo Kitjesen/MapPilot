@@ -1,4 +1,4 @@
-﻿"""Tests for nav/ modules: WaypointTracker, GlobalPlanner,
+"""Tests for nav/ modules: WaypointTracker, GlobalPlanner,
 OccupancyGridModule, ElevationMapModule, ESDFModule, nav.services.safety.
 
 All tests are pure-Python, no ROS2 / hardware / MuJoCo required.
@@ -8,13 +8,10 @@ from __future__ import annotations
 
 import json
 import math
-import sys
 import tempfile
 import time
-import types
 import unittest
 from pathlib import Path as FilePath
-from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -23,30 +20,28 @@ pytestmark = [pytest.mark.sim]
 
 _scipy_available = True
 try:
-    import scipy.ndimage  # noqa: F401 -- availability check for skipUnless
+    import scipy.ndimage
 except ImportError:
     _scipy_available = False
-
-from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from runtime.msgs.nav import OccupancyGrid, Odometry, Path
-from runtime.msgs.sensor import PointCloud2
-from runtime.runtime_interface import (
-    TOPICS,
-    body_frame_id,
-    map_frame_id,
-    odom_frame_id,
-    topic_default_frame_id,
-)
 
 # ---------------------------------------------------------------------------
 # 1. WaypointTracker
 # ---------------------------------------------------------------------------
-from nav.mission.tracking.waypoint_tracker import (
+from nav.tracking.waypoint_tracker import (
     EV_PATH_COMPLETE,
     EV_STUCK,
     EV_STUCK_WARN,
     EV_WAYPOINT_REACHED,
     WaypointTracker,
+)
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import OccupancyGrid, Odometry, Path
+from runtime.msgs.sensor import PointCloud2
+from runtime.runtime_interface import (
+    TOPICS,
+    map_frame_id,
+    odom_frame_id,
+    topic_default_frame_id,
 )
 
 
@@ -317,8 +312,8 @@ class TestGlobalPlanner(unittest.TestCase):
         result = svc._find_safe_goal(np.array([0.0, 0.0, 0.0]))
         self.assertIsNone(result)
 
-    def test_pct_saved_map_artifact_gate_uses_configured_expected_frame(self):
-        from runtime.same_source_map_artifacts import (
+    def test_octoplanner3d_saved_map_gate_uses_configured_expected_frame(self):
+        from maps.artifacts import (
             build_saved_map_metadata,
             sha256_file,
         )
@@ -327,9 +322,9 @@ class TestGlobalPlanner(unittest.TestCase):
             artifact_dir = FilePath(temp_dir) / "same_source_map"
             artifact_dir.mkdir()
             map_pcd = artifact_dir / "map.pcd"
-            tomogram = artifact_dir / "tomogram.pickle"
+            octomap = artifact_dir / "octomap.ot"
             map_pcd.write_text("VERSION 0.7\nDATA ascii\n", encoding="ascii")
-            tomogram.write_bytes(b"tomogram")
+            octomap.write_bytes(b"octomap")
             map_sha = sha256_file(map_pcd)
             metadata = build_saved_map_metadata(
                 source_profile="mujoco_fastlio2_live_gate",
@@ -348,14 +343,13 @@ class TestGlobalPlanner(unittest.TestCase):
                         "slam_source": "fastlio2",
                         "frame_id": "odom",
                     },
-                    "tomogram": {
-                        "path": "tomogram.pickle",
-                        "sha256": sha256_file(tomogram),
+                    "octomap": {
+                        "path": "octomap.ot",
+                        "sha256": sha256_file(octomap),
                         "source_map_sha256": map_sha,
                         "source_profile": "mujoco_fastlio2_live_gate",
                         "data_source": "fastlio2",
                         "frame_id": "odom",
-                        "shape": [1, 1],
                     },
                 },
             )
@@ -363,20 +357,26 @@ class TestGlobalPlanner(unittest.TestCase):
                 json.dumps(metadata, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-
-            svc = GlobalPlanner(
-                planner_name="pct",
-                tomogram=str(tomogram),
-                expected_saved_map_frame_id="odom",
+            (FilePath(temp_dir) / "active_map.txt").write_text(
+                "same_source_map\n",
+                encoding="utf-8",
             )
 
-            gate = svc._validate_map_artifact_gate()
+            with pytest.MonkeyPatch.context() as monkeypatch:
+                monkeypatch.setenv("NAV_MAP_DIR", temp_dir)
+                svc = GlobalPlanner(
+                    planner_name="octoplanner3d",
+                    map_path=str(artifact_dir / "octomap.ot"),
+                    expected_saved_map_frame_id="odom",
+                )
+
+                gate = svc._validate_map_artifact_gate()
 
             self.assertTrue(gate["ok"], gate["blockers"])
             self.assertEqual(gate["expected_frame_id"], "odom")
 
     def test_navigation_can_separate_planning_and_saved_map_frames(self):
-        from nav.mission.navigation import Navigation
+        from nav.navigation import Navigation
 
         module = Navigation(
             planner="pct",
@@ -392,9 +392,14 @@ class TestGlobalPlanner(unittest.TestCase):
     def test_downsample_preserves_goal(self):
         """Last point of downsampled path is always the goal."""
         svc = GlobalPlanner(downsample_dist=2.0)
-        path = [np.array([0, 0, 0]), np.array([1, 0, 0]),
-                np.array([2, 0, 0]), np.array([3, 0, 0]),
-                np.array([5, 0, 0]), np.array([7, 0, 0])]
+        path = [
+            np.array([0, 0, 0]),
+            np.array([1, 0, 0]),
+            np.array([2, 0, 0]),
+            np.array([3, 0, 0]),
+            np.array([5, 0, 0]),
+            np.array([7, 0, 0]),
+        ]
         goal = np.array([7.0, 0.0, 0.0])
         from nav.services.plan.global_planner.postprocess import downsample_path
 
@@ -424,13 +429,13 @@ class TestGlobalPlanner(unittest.TestCase):
         # All interior segments should be >= 2.0
         for i in range(1, len(result) - 1):
             dist = np.linalg.norm(result[i] - result[i - 1])
-            self.assertGreaterEqual(dist, 2.0 - 1e-6,
-                                    f"Segment {i-1}->{i} too short: {dist}")
+            self.assertGreaterEqual(dist, 2.0 - 1e-6, f"Segment {i - 1}->{i} too short: {dist}")
 
 
 # ---------------------------------------------------------------------------
 # 3. PathFollower
 # ---------------------------------------------------------------------------
+
 
 class _FakeNavKernel:
     class Vec3:
@@ -464,10 +469,8 @@ class _FakeNavKernel:
 
 
 class TestPathFollower(unittest.TestCase):
-
     def test_nav_kernel_uses_configured_control_gains(self):
-        from nav.local import path_follower
-        from nav.local import path_follower_runtime
+        from nav.local import path_follower, path_follower_runtime
 
         class FakeNavKernelWithParams(_FakeNavKernel):
             class PathFollowerParams:
@@ -475,11 +478,9 @@ class TestPathFollower(unittest.TestCase):
 
         original = path_follower_runtime.create_nav_kernel_path_follower_adapter_from_tuning
         try:
-            path_follower_runtime.create_nav_kernel_path_follower_adapter_from_tuning = (
-                lambda **tuning: original(
-                    **tuning,
-                    importer=lambda *_args: FakeNavKernelWithParams,
-                )
+            path_follower_runtime.create_nav_kernel_path_follower_adapter_from_tuning = lambda **tuning: original(
+                **tuning,
+                importer=lambda *_args: FakeNavKernelWithParams,
             )
             module = path_follower.PathFollower(
                 backend="nav_kernel",
@@ -646,21 +647,27 @@ class TestPathFollower(unittest.TestCase):
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
-            frame_id="map",
-        ))
-        m._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
-            frame_id="map",
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        m._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
 
         self.assertAlmostEqual(outputs[-1].linear.x, 1.0)
         self.assertAlmostEqual(outputs[-1].angular.z, 0.4)
@@ -693,13 +700,15 @@ class TestPathFollower(unittest.TestCase):
 
         m._on_map_odom_tf(_identity_map_odom_tf())
         m._on_odom(Odometry(pose=Pose(position=Vector3(1.0, 0.0, 0.0)), ts=1.0))
-        m._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(1.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
+        m._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(1.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
 
         self.assertEqual(m._nc_state.vehicle_speed, 1.7)
         self.assertEqual(m._nc_state.nav_fwd, 0)
@@ -727,14 +736,17 @@ class TestPathFollower(unittest.TestCase):
 
         self.assertEqual(h["vehicle_speed"], 0.3)
         self.assertEqual(h["nav_fwd"], 1)
-        self.assertEqual(h["native_state"], {
-            "vehicle_speed": 0.3,
-            "path_point_id": 4,
-            "last_path_point_id": 5,
-            "last_path_size": 9,
-            "nav_fwd": 1,
-            "switch_time": 12.5,
-        })
+        self.assertEqual(
+            h["native_state"],
+            {
+                "vehicle_speed": 0.3,
+                "path_point_id": 4,
+                "last_path_point_id": 5,
+                "last_path_size": 9,
+                "nav_fwd": 1,
+                "switch_time": 12.5,
+            },
+        )
 
     def test_nav_kernel_applies_local_planner_control_hint(self):
         from nav.local.path_follower import PathFollower
@@ -758,13 +770,15 @@ class TestPathFollower(unittest.TestCase):
 
         m._on_map_odom_tf(_identity_map_odom_tf())
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), ts=1.0))
-        m._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
+        m._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
         m._on_control_hint({"slow_down": 2, "ts": time.time(), "reason": "test"})
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.1, 0.0, 0.0)), ts=1.1))
 
@@ -779,25 +793,29 @@ class TestPathFollower(unittest.TestCase):
         self.assertEqual(RecordingNavKernel.last_safety_stop, 0)
         self.assertGreater(outputs[-1].linear.x, 0.0)
 
-        m._on_control_hint({
-            "near_field_stop": True,
-            "safety_stop": False,
-            "ts": time.time(),
-            "reason": "near_field_ignored",
-        })
+        m._on_control_hint(
+            {
+                "near_field_stop": True,
+                "safety_stop": False,
+                "ts": time.time(),
+                "reason": "near_field_ignored",
+            }
+        )
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.2, 0.0, 0.0)), ts=1.2))
 
         self.assertEqual(RecordingNavKernel.last_safety_stop, 0)
         self.assertFalse(m.health()["path_follower"]["control_hint"]["safety_stop"])
         self.assertGreater(outputs[-1].linear.x, 0.0)
 
-        m._on_control_hint({
-            "near_field_stop": True,
-            "safety_stop": True,
-            "safety_stop_level": 2,
-            "ts": time.time(),
-            "reason": "near_field",
-        })
+        m._on_control_hint(
+            {
+                "near_field_stop": True,
+                "safety_stop": True,
+                "safety_stop_level": 2,
+                "ts": time.time(),
+                "reason": "near_field",
+            }
+        )
 
         self.assertEqual(outputs[-1].linear.x, 0.0)
         self.assertEqual(outputs[-1].angular.z, 0.0)
@@ -808,31 +826,37 @@ class TestPathFollower(unittest.TestCase):
         )
 
         for _ in range(2):
-            m._on_control_hint({
-                "safety_stop": False,
-                "safety_stop_level": 0,
-                "ts": time.time(),
-                "reason": "clear",
-            })
+            m._on_control_hint(
+                {
+                    "safety_stop": False,
+                    "safety_stop_level": 0,
+                    "ts": time.time(),
+                    "reason": "clear",
+                }
+            )
             self.assertEqual(
                 m.health()["path_follower"]["control_hint"]["safety_stop_level"],
                 2,
             )
 
-        m._on_control_hint({
-            "safety_stop": False,
-            "safety_stop_level": 0,
-            "ts": time.time(),
-            "reason": "clear",
-        })
+        m._on_control_hint(
+            {
+                "safety_stop": False,
+                "safety_stop_level": 0,
+                "ts": time.time(),
+                "reason": "clear",
+            }
+        )
         self.assertFalse(m.health()["path_follower"]["control_hint"]["safety_stop"])
 
-        m._on_control_hint({
-            "safety_stop": True,
-            "safety_stop_level": 1,
-            "ts": time.time(),
-            "reason": "linear_only_stop",
-        })
+        m._on_control_hint(
+            {
+                "safety_stop": True,
+                "safety_stop_level": 1,
+                "ts": time.time(),
+                "reason": "linear_only_stop",
+            }
+        )
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.3, 0.0, 0.0)), ts=1.3))
 
         self.assertEqual(RecordingNavKernel.last_safety_stop, 1)
@@ -869,29 +893,35 @@ class TestPathFollower(unittest.TestCase):
 
         m._on_map_odom_tf(_identity_map_odom_tf())
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0)), ts=1.0))
-        m._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
-            twist=Twist(angular=Vector3(1.0, 0.0, 0.0)),
-            ts=1.1,
-        ))
+        m._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
+                twist=Twist(angular=Vector3(1.0, 0.0, 0.0)),
+                ts=1.1,
+            )
+        )
 
         self.assertEqual(RecordingNavKernel.last_slow_factor, 0.25)
         self.assertGreater(outputs[-1].linear.x, 0.0)
 
-        m._on_odom(Odometry(
-            pose=Pose(
-                position=Vector3(0.2, 0.0, 0.0),
-                orientation=Quaternion.from_euler(math.radians(20.0), 0.0, 0.0),
-            ),
-            ts=1.2,
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(
+                    position=Vector3(0.2, 0.0, 0.0),
+                    orientation=Quaternion.from_euler(math.radians(20.0), 0.0, 0.0),
+                ),
+                ts=1.2,
+            )
+        )
 
         self.assertEqual(outputs[-1].linear.x, 0.0)
         self.assertEqual(outputs[-1].angular.z, 0.0)
@@ -907,21 +937,27 @@ class TestPathFollower(unittest.TestCase):
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
 
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
-            frame_id="map",
-        ))
-        m._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
-            frame_id="map",
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
+        m._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.1, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
 
         self.assertGreater(outputs[-1].linear.x, 0.0)
         m._nc_state.vehicle_speed = 2.0
@@ -972,11 +1008,13 @@ class TestPathFollower(unittest.TestCase):
             ],
             frame_id="map",
         )
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
-            frame_id="map",
-            ts=1.0,
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+                ts=1.0,
+            )
+        )
 
         m._on_path(path)
         self.assertEqual(outputs[-1].linear.x, 0.0)
@@ -991,18 +1029,22 @@ class TestPathFollower(unittest.TestCase):
         m = PathFollower(backend="pid")
         outputs = []
         m.cmd_vel._add_callback(outputs.append)
-        m._on_odom(Odometry(
-            pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
-            frame_id="map",
-        ))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
 
-        m._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
+        m._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
         self.assertGreater(outputs[-1].linear.x, 0.0)
 
         m._on_path(Path(poses=[PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0)))], frame_id="map"))
@@ -1019,16 +1061,20 @@ class TestPathFollower(unittest.TestCase):
 # 4. OccupancyGridModule
 # ---------------------------------------------------------------------------
 
-from nav.services.map_layers.occupancy_grid_module import OccupancyGridModule
+from maps.modules.occupancy import OccupancyGridModule
 
 
 @unittest.skipUnless(_scipy_available, "scipy not installed in this environment")
 class TestOccupancyGridModule(unittest.TestCase):
-
     def _make_module(self, **kw):
         defaults = dict(
-            resolution=0.2, map_radius=5.0, z_min=0.1, z_max=2.0,
-            inflation_radius=0.0, robot_clear_radius=0.0, publish_hz=100.0,
+            resolution=0.2,
+            map_radius=5.0,
+            z_min=0.1,
+            z_max=2.0,
+            inflation_radius=0.0,
+            robot_clear_radius=0.0,
+            publish_hz=100.0,
         )
         defaults.update(kw)
         m = OccupancyGridModule(**defaults)
@@ -1044,16 +1090,18 @@ class TestOccupancyGridModule(unittest.TestCase):
         """Deliver known XY points and verify occupied cells in costmap."""
         m = self._make_module()
         # Set robot position to origin
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)))
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
         # 3 points at known positions, height within z_min/z_max
-        pts = np.array([
-            [1.0, 1.0, 0.5],
-            [2.0, 2.0, 0.5],
-            [3.0, 3.0, 0.5],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [1.0, 1.0, 0.5],
+                [2.0, 2.0, 0.5],
+                [3.0, 3.0, 0.5],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         results = []
@@ -1070,10 +1118,13 @@ class TestOccupancyGridModule(unittest.TestCase):
     def test_projected_mode_accepts_default_robot_xy_before_odometry(self):
         """Point-cloud updates may arrive before the first odometry sample."""
         m = self._make_module()
-        pts = np.array([
-            [1.0, 0.0, 0.5],
-            [1.5, 0.5, 0.5],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [1.0, 0.0, 0.5],
+                [1.5, 0.5, 0.5],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         results = []
@@ -1086,15 +1137,17 @@ class TestOccupancyGridModule(unittest.TestCase):
     def test_height_filter(self):
         """Points outside z_min/z_max are ignored."""
         m = self._make_module(z_min=0.5, z_max=1.5)
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)))
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
         # All points below z_min
-        pts = np.array([
-            [1.0, 1.0, 0.1],
-            [2.0, 2.0, 0.2],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [1.0, 1.0, 0.1],
+                [2.0, 2.0, 0.2],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         results = []
@@ -1102,21 +1155,22 @@ class TestOccupancyGridModule(unittest.TestCase):
         m.map_cloud._deliver(cloud)
 
         # Should not publish because all points are filtered
-        self.assertEqual(len(results), 0,
-                         "Expected no costmap when all points are height-filtered")
+        self.assertEqual(len(results), 0, "Expected no costmap when all points are height-filtered")
 
     def test_robot_clear_radius(self):
         """Points within robot_clear_radius of robot are cleared."""
         m = self._make_module(robot_clear_radius=2.0, inflation_radius=0.0)
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)))
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
         # Points very close to robot - within clear radius
-        pts = np.array([
-            [0.1, 0.1, 0.5],
-            [0.2, 0.2, 0.5],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [0.1, 0.1, 0.5],
+                [0.2, 0.2, 0.5],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         results = []
@@ -1125,14 +1179,12 @@ class TestOccupancyGridModule(unittest.TestCase):
 
         # Points are within robot_clear_radius, so they get filtered
         # (the _on_cloud method filters near-body points before binning)
-        self.assertEqual(len(results), 0,
-                         "Expected no costmap when all points are within robot clear radius")
+        self.assertEqual(len(results), 0, "Expected no costmap when all points are within robot clear radius")
 
     def test_robot_clear_radius_keeps_points_outside_clear_disk(self):
         """Points outside robot_clear_radius remain available for occupancy."""
         m = self._make_module(robot_clear_radius=2.0, inflation_radius=0.0)
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)))
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
         pts = np.array([[2.2, 0.0, 0.5]], dtype=np.float32)
@@ -1143,8 +1195,7 @@ class TestOccupancyGridModule(unittest.TestCase):
         m.map_cloud._deliver(cloud)
 
         self.assertEqual(len(results), 1)
-        self.assertTrue(np.any(results[0]["grid"] == 100),
-                        "Expected outside-clear-radius point to stay occupied")
+        self.assertTrue(np.any(results[0]["grid"] == 100), "Expected outside-clear-radius point to stay occupied")
 
     def test_robot_clear_body_footprint_uses_odometry_yaw(self):
         """Body-frame footprint filtering removes near self returns outside the clear disk."""
@@ -1165,8 +1216,8 @@ class TestOccupancyGridModule(unittest.TestCase):
 
         pts = np.array(
             [
-                [0.0, 0.7, 0.5],   # body +x: inside clear footprint
-                [0.7, 0.0, 0.5],   # body -y: outside lateral footprint
+                [0.0, 0.7, 0.5],  # body +x: inside clear footprint
+                [0.7, 0.0, 0.5],  # body -y: outside lateral footprint
             ],
             dtype=np.float32,
         )
@@ -1197,16 +1248,17 @@ class TestOccupancyGridModule(unittest.TestCase):
             unknown_as_obstacle_for_costmap=True,
             raycast_max_rays=100,
         )
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)),
-                        frame_id="map")
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)), frame_id="map")
         m.odometry._deliver(odom)
 
-        pts = np.array([
-            [2.0, 0.0, 0.6],
-            [2.0, 1.0, 0.6],
-            [1.5, -1.0, 0.6],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [2.0, 0.0, 0.6],
+                [2.0, 1.0, 0.6],
+                [1.5, -1.0, 0.6],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         costmaps = []
@@ -1242,11 +1294,14 @@ class TestOccupancyGridModule(unittest.TestCase):
             unknown_as_obstacle_for_costmap=True,
             raycast_max_rays=100,
         )
-        pts = np.array([
-            [2.0, 0.0, 0.6],
-            [2.0, 1.0, 0.6],
-            [1.5, -1.0, 0.6],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [2.0, 0.0, 0.6],
+                [2.0, 1.0, 0.6],
+                [1.5, -1.0, 0.6],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         exploration = []
@@ -1269,15 +1324,16 @@ class TestOccupancyGridModule(unittest.TestCase):
                 raycast_max_rays=100,
                 raycast_free_inflation_radius=radius,
             )
-            odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                       orientation=Quaternion(0, 0, 0, 1)),
-                            frame_id="map")
+            odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)), frame_id="map")
             m.odometry._deliver(odom)
-            pts = np.array([
-                [2.0, 0.0, 0.6],
-                [2.0, 1.0, 0.6],
-                [1.5, -1.0, 0.6],
-            ], dtype=np.float32)
+            pts = np.array(
+                [
+                    [2.0, 0.0, 0.6],
+                    [2.0, 1.0, 0.6],
+                    [1.5, -1.0, 0.6],
+                ],
+                dtype=np.float32,
+            )
             cloud = PointCloud2.from_numpy(pts, frame_id="map")
             exploration = []
             m.exploration_grid._add_callback(lambda msg: exploration.append(msg))
@@ -1368,322 +1424,20 @@ class _FakeROSOccupancyGrid:
         self.data = []
 
 
-@pytest.mark.ros2
-class TestROS2NavInModule(unittest.TestCase):
-    def test_nav_in_converts_ros2_commands_to_lingtu_ports(self):
-        from nav.adapters.ros2.nav.nav_in import ROS2NavInModule
-
-        bridge = ROS2NavInModule(default_frame_id="map")
-        goals = []
-        cancels = []
-        instructions = []
-        bridge.goal_pose.subscribe(goals.append)
-        bridge.cancel.subscribe(cancels.append)
-        bridge.instruction.subscribe(instructions.append)
-
-        goal = _FakeROSPoseStamped()
-        goal.header.frame_id = "odom"
-        goal.header.stamp = _FakeROSStamp(12, 500_000_000)
-        goal.pose.position.x = 1.0
-        goal.pose.position.y = 2.0
-        goal.pose.position.z = 0.3
-        goal.pose.orientation.z = 0.1
-        goal.pose.orientation.w = 0.995
-
-        bridge._on_goal_pose(goal)
-        bridge._on_cancel(types.SimpleNamespace(data="operator_cancel"))
-        bridge._on_instruction(types.SimpleNamespace(data="inspect gate"))
-
-        self.assertEqual(goals[-1].frame_id, "odom")
-        self.assertEqual(goals[-1].ts, 12.5)
-        self.assertEqual(goals[-1].x, 1.0)
-        self.assertEqual(goals[-1].y, 2.0)
-        self.assertEqual(goals[-1].orientation.z, 0.1)
-        self.assertEqual(cancels, ["operator_cancel"])
-        self.assertEqual(instructions, ["inspect gate"])
-        self.assertEqual(
-            bridge.health()["message_counts"],
-            {
-                TOPICS.goal_pose: 1,
-                TOPICS.cancel: 1,
-                TOPICS.semantic_instruction: 1,
-            },
-        )
-
-    def test_nav_in_uses_runtime_default_frame_when_ros_frame_is_empty(self):
-        from nav.adapters.ros2.nav.nav_in import ROS2NavInModule
-
-        bridge = ROS2NavInModule(default_frame_id="map")
-        goal = _FakeROSPoseStamped()
-
-        converted = bridge._from_ros_pose_stamped(goal)
-
-        self.assertEqual(converted.frame_id, "map")
-        self.assertEqual(bridge._goal_pose_topic, TOPICS.goal_pose)
-        self.assertEqual(bridge._cancel_topic, TOPICS.cancel)
-        self.assertEqual(
-            bridge._instruction_topic,
-            TOPICS.semantic_instruction,
-        )
-
-
-@pytest.mark.ros2
-class TestROS2NavOutModule(unittest.TestCase):
-    def test_new_nav_out_name_exports_all_navigation_outputs(self):
-        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
-
-        fake_geometry_msgs = types.SimpleNamespace(
-            PoseStamped=_FakeROSPoseStamped,
-            TwistStamped=_FakeROSTwistStamped,
-        )
-        fake_modules = {
-            "geometry_msgs": types.SimpleNamespace(msg=fake_geometry_msgs),
-            "geometry_msgs.msg": fake_geometry_msgs,
-        }
-        bridge = ROS2NavOutModule(default_frame_id="map")
-
-        with patch.dict(sys.modules, fake_modules):
-            waypoint = bridge._to_ros_waypoint(
-                PoseStamped(pose=Pose(1.0, 2.0, 0.3), frame_id="map")
-            )
-            twist = bridge._to_ros_twist(
-                Twist(linear=Vector3(0.4, 0.0, 0.0), angular=Vector3(0.0, 0.0, 0.2))
-            )
-
-        self.assertEqual(waypoint.header.frame_id, "map")
-        self.assertEqual(waypoint.pose.position.x, 1.0)
-        self.assertEqual(waypoint.pose.position.y, 2.0)
-        self.assertEqual(twist.header.frame_id, body_frame_id())
-        self.assertEqual(twist.twist.linear.x, 0.4)
-        self.assertEqual(twist.twist.angular.z, 0.2)
-
-    def test_defaults_come_from_runtime_topic_contract(self):
-        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
-
-        bridge = ROS2NavOutModule()
-
-        self.assertEqual(bridge._global_path_topic, TOPICS.global_path)
-        self.assertEqual(bridge._local_path_topic, TOPICS.local_path)
-        self.assertEqual(
-            bridge._global_default_frame_id,
-            topic_default_frame_id(TOPICS.global_path),
-        )
-        self.assertEqual(
-            bridge._local_default_frame_id,
-            topic_default_frame_id(TOPICS.local_path),
-        )
-
-    def test_explicit_default_frame_applies_to_both_path_topics(self):
-        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
-
-        bridge = ROS2NavOutModule(default_frame_id="odom")
-
-        self.assertEqual(bridge._global_default_frame_id, "odom")
-        self.assertEqual(bridge._local_default_frame_id, "odom")
-
-    def test_global_path_conversion_uses_global_topic_frame_default(self):
-        from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
-
-        fake_nav_msgs = types.SimpleNamespace(Path=_FakeROSPath)
-        fake_geometry_msgs = types.SimpleNamespace(PoseStamped=_FakeROSPoseStamped)
-        fake_modules = {
-            "nav_msgs": types.SimpleNamespace(msg=fake_nav_msgs),
-            "nav_msgs.msg": fake_nav_msgs,
-            "geometry_msgs": types.SimpleNamespace(msg=fake_geometry_msgs),
-            "geometry_msgs.msg": fake_geometry_msgs,
-        }
-        bridge = ROS2NavOutModule()
-
-        with patch.dict(sys.modules, fake_modules):
-            msg = bridge._to_ros_path(
-                [(1.0, 2.0, 0.0)],
-                default_frame_id=bridge._global_default_frame_id,
-            )
-
-        self.assertEqual(msg.header.frame_id, topic_default_frame_id(TOPICS.global_path))
-        self.assertEqual(msg.poses[0].header.frame_id, msg.header.frame_id)
-        self.assertEqual(msg.poses[0].pose.position.x, 1.0)
-        self.assertEqual(msg.poses[0].pose.position.y, 2.0)
-
-
-@pytest.mark.ros2
-class TestROS2MapOutModule(unittest.TestCase):
-    def test_default_frame_comes_from_exploration_grid_contract(self):
-        from nav.adapters.ros2.nav.map_out import ROS2MapOutModule
-
-        bridge = ROS2MapOutModule()
-
-        self.assertEqual(bridge._exploration_grid_topic, TOPICS.exploration_grid)
-        self.assertEqual(
-            bridge._default_frame_id,
-            topic_default_frame_id(TOPICS.exploration_grid),
-        )
-
-    def test_grid_conversion_uses_contract_frame_when_input_lacks_frame(self):
-        from nav.adapters.ros2.nav.map_out import ROS2MapOutModule
-
-        fake_nav_msgs = types.SimpleNamespace(OccupancyGrid=_FakeROSOccupancyGrid)
-        fake_modules = {
-            "nav_msgs": types.SimpleNamespace(msg=fake_nav_msgs),
-            "nav_msgs.msg": fake_nav_msgs,
-        }
-        bridge = ROS2MapOutModule()
-        grid = {
-            "grid": np.array([[0, 100]], dtype=np.int16),
-            "resolution": 0.5,
-            "origin": (1.0, 2.0),
-        }
-
-        with patch.dict(sys.modules, fake_modules):
-            msg = bridge._to_ros_grid(grid)
-
-        self.assertEqual(
-            msg.header.frame_id,
-            topic_default_frame_id(TOPICS.exploration_grid),
-        )
-        self.assertEqual(msg.info.width, 2)
-        self.assertEqual(msg.info.height, 1)
-        self.assertEqual(msg.info.origin.position.x, 1.0)
-        self.assertEqual(msg.info.origin.position.y, 2.0)
-        self.assertEqual(msg.data, [0, 100])
-
-    def test_grid_conversion_preserves_explicit_input_frame(self):
-        from nav.adapters.ros2.nav.map_out import ROS2MapOutModule
-
-        fake_nav_msgs = types.SimpleNamespace(OccupancyGrid=_FakeROSOccupancyGrid)
-        fake_modules = {
-            "nav_msgs": types.SimpleNamespace(msg=fake_nav_msgs),
-            "nav_msgs.msg": fake_nav_msgs,
-        }
-        bridge = ROS2MapOutModule()
-        grid = {
-            "grid": np.array([[0]], dtype=np.int16),
-            "frame_id": "odom",
-        }
-
-        with patch.dict(sys.modules, fake_modules):
-            msg = bridge._to_ros_grid(grid)
-
-        self.assertEqual(msg.header.frame_id, "odom")
-
-
 # ---------------------------------------------------------------------------
-# 4. VoxelGridModule
+# 4. ElevationMapModule
 # ---------------------------------------------------------------------------
 
-from nav.services.map_layers.voxel_grid_module import VoxelGridModule
-
-
-class TestVoxelGridModule(unittest.TestCase):
-
-    def _make_module(self, **kw):
-        defaults = dict(
-            voxel_size=1.0,
-            max_range=10.0,
-            min_z=-1.0,
-            max_z=2.0,
-            decay_rate=0.0,
-            publish_interval=999.0,
-        )
-        defaults.update(kw)
-        m = VoxelGridModule(**defaults)
-        m.setup()
-        return m
-
-    def test_cloud_update_accumulates_unique_voxel_counts_and_filters(self):
-        m = self._make_module()
-        m.odometry._deliver(
-            Odometry(
-                pose=Pose(
-                    position=Vector3(0, 0, 0),
-                    orientation=Quaternion(0, 0, 0, 1),
-                )
-            )
-        )
-        pts = np.array(
-            [
-                [0.1, 0.1, 0.1],
-                [0.2, 0.2, 0.2],
-                [1.2, 0.1, 0.1],
-                [20.0, 0.0, 0.0],
-                [0.0, 0.0, 3.0],
-            ],
-            dtype=np.float32,
-        )
-
-        m.map_cloud._deliver(PointCloud2.from_numpy(pts, frame_id="map"))
-
-        self.assertEqual(json.loads(m.query_voxel(0.1, 0.1, 0.1))["count"], 2.0)
-        self.assertEqual(json.loads(m.query_voxel(1.2, 0.1, 0.1))["count"], 1.0)
-        self.assertFalse(json.loads(m.query_voxel(20.0, 0.0, 0.0))["occupied"])
-        self.assertFalse(json.loads(m.query_voxel(0.0, 0.0, 3.0))["occupied"])
-
-    def test_duplicate_heavy_cloud_updates_one_voxel_without_python_point_loop(self):
-        m = self._make_module()
-        pts = np.repeat(
-            np.array([[0.25, 0.25, 0.25]], dtype=np.float32),
-            repeats=1000,
-            axis=0,
-        )
-
-        m.map_cloud._deliver(PointCloud2.from_numpy(pts, frame_id="map"))
-
-        stats = json.loads(m.get_voxel_stats())
-        self.assertEqual(stats["total_voxels"], 1)
-        self.assertEqual(json.loads(m.query_voxel(0.25, 0.25, 0.25))["count"], 1000.0)
-
-    def test_decay_publish_prunes_and_reports_columns(self):
-        m = self._make_module(decay_rate=0.5)
-        with m._lock:
-            m._voxels = {
-                (0, 0, 0): 4.0,
-                (0, 0, 1): 2.0,
-                (1, 1, 0): 1.0,
-            }
-        stats_payloads = []
-        cloud_payloads = []
-        m.voxel_map._add_callback(stats_payloads.append)
-        m.voxel_cloud._add_callback(cloud_payloads.append)
-
-        m._decay_and_publish()
-
-        self.assertEqual(len(stats_payloads), 1)
-        self.assertEqual(len(cloud_payloads), 1)
-        self.assertEqual(stats_payloads[0]["total_voxels"], 2)
-        self.assertEqual(stats_payloads[0]["column_count"], 1)
-        self.assertEqual(stats_payloads[0]["frame_id"], topic_default_frame_id(TOPICS.map_cloud))
-        self.assertEqual(cloud_payloads[0].points.shape, (2, 3))
-        self.assertEqual(cloud_payloads[0].frame_id, topic_default_frame_id(TOPICS.map_cloud))
-        self.assertEqual(json.loads(m.query_voxel(1.1, 1.1, 0.1))["count"], 0.0)
-
-    def test_voxel_publish_uses_normalized_input_cloud_frame(self):
-        m = self._make_module(publish_interval=0.0)
-        stats_payloads = []
-        cloud_payloads = []
-        m.voxel_map._add_callback(stats_payloads.append)
-        m.voxel_cloud._add_callback(cloud_payloads.append)
-
-        pts = np.array([[0.25, 0.25, 0.25]], dtype=np.float32)
-        m.map_cloud._deliver(PointCloud2.from_numpy(pts, frame_id="/odom"))
-
-        self.assertEqual(len(stats_payloads), 1)
-        self.assertEqual(len(cloud_payloads), 1)
-        self.assertEqual(stats_payloads[0]["frame_id"], "odom")
-        self.assertEqual(cloud_payloads[0].frame_id, "odom")
-
-
-# ---------------------------------------------------------------------------
-# 5. ElevationMapModule
-# ---------------------------------------------------------------------------
-
-from nav.services.map_layers.elevation_map_module import ElevationMapModule
+from maps.modules.elevation import ElevationMapModule
 
 
 class TestElevationMapModule(unittest.TestCase):
-
     def _make_module(self, **kw):
         defaults = dict(
-            resolution=1.0, map_radius=5.0, z_floor=-10.0, z_ceil=10.0,
+            resolution=1.0,
+            map_radius=5.0,
+            z_floor=-10.0,
+            z_ceil=10.0,
             publish_hz=100.0,
         )
         defaults.update(kw)
@@ -1694,15 +1448,17 @@ class TestElevationMapModule(unittest.TestCase):
     def test_elevation_min_max(self):
         """Two points at same XY but different Z produce correct min_z/max_z."""
         m = self._make_module()
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)))
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
         # Two points at x=2, y=2 with z=1.0 and z=3.0
-        pts = np.array([
-            [2.0, 2.0, 1.0],
-            [2.0, 2.0, 3.0],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [2.0, 2.0, 1.0],
+                [2.0, 2.0, 3.0],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         results = []
@@ -1728,15 +1484,17 @@ class TestElevationMapModule(unittest.TestCase):
     def test_height_filter_applied(self):
         """Points below z_floor are filtered out."""
         m = self._make_module(z_floor=0.0, z_ceil=10.0)
-        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0),
-                                   orientation=Quaternion(0, 0, 0, 1)))
+        odom = Odometry(pose=Pose(position=Vector3(0, 0, 0), orientation=Quaternion(0, 0, 0, 1)))
         m.odometry._deliver(odom)
 
         # All points below z_floor
-        pts = np.array([
-            [1.0, 1.0, -1.0],
-            [2.0, 2.0, -2.0],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [1.0, 1.0, -1.0],
+                [2.0, 2.0, -2.0],
+            ],
+            dtype=np.float32,
+        )
         cloud = PointCloud2.from_numpy(pts, frame_id="map")
 
         results = []
@@ -1744,8 +1502,7 @@ class TestElevationMapModule(unittest.TestCase):
         m.map_cloud._deliver(cloud)
 
         # Should not publish because all points are filtered
-        self.assertEqual(len(results), 0,
-                         "Expected no elevation map when all points are below z_floor")
+        self.assertEqual(len(results), 0, "Expected no elevation map when all points are below z_floor")
 
     def test_elevation_map_uses_normalized_input_cloud_frame(self):
         m = self._make_module()
@@ -1796,11 +1553,10 @@ class TestElevationMapModule(unittest.TestCase):
 # 6. ESDFModule
 # ---------------------------------------------------------------------------
 
-from nav.services.map_layers.esdf_module import ESDFModule
+from maps.modules.esdf import ESDFModule
 
 
 class TestESDFModule(unittest.TestCase):
-
     def _make_module(self, **kw):
         defaults = dict(obstacle_threshold=50, publish_hz=100.0)
         defaults.update(kw)
@@ -1828,8 +1584,7 @@ class TestESDFModule(unittest.TestCase):
         self.assertEqual(len(results), 1)
         sdf = results[0]["distance_field"]
         # Free cell far from obstacle should have positive distance
-        self.assertGreater(sdf[0, 0], 0.0,
-                           "Free cell should have positive ESDF distance")
+        self.assertGreater(sdf[0, 0], 0.0, "Free cell should have positive ESDF distance")
 
     def test_esdf_negative_in_obstacle(self):
         """Obstacle cells have negative (or zero) distance."""
@@ -1851,8 +1606,7 @@ class TestESDFModule(unittest.TestCase):
         self.assertEqual(len(results), 1)
         sdf = results[0]["distance_field"]
         # Center of obstacle block should have negative distance
-        self.assertLess(sdf[5, 5], 0.0,
-                        "Interior obstacle cell should have negative ESDF distance")
+        self.assertLess(sdf[5, 5], 0.0, "Interior obstacle cell should have negative ESDF distance")
 
     def test_esdf_gradient_axes_match_xy(self):
         """Obstacle column on the left should produce an x-gradient, not y."""
@@ -1882,7 +1636,6 @@ from nav.services.safety.safety_ring import SafetyRing
 
 
 class TestSafetyRing(unittest.TestCase):
-
     def _make_module(self, **kw):
         defaults = dict(odom_timeout_ms=100.0, cmd_vel_timeout_ms=100.0)
         defaults.update(kw)
@@ -1921,8 +1674,7 @@ class TestSafetyRing(unittest.TestCase):
         time.sleep(0.06)
         m.localization_status._deliver({"state": "OK"})
 
-        self.assertIn(2, stop_cmds,
-                      f"Expected stop_cmd=2 for odom timeout, got {stop_cmds}")
+        self.assertIn(2, stop_cmds, f"Expected stop_cmd=2 for odom timeout, got {stop_cmds}")
 
     def test_safety_ring_times_out_without_new_callbacks(self):
         """The watchdog must fail closed even when no input callback fires."""
@@ -1995,8 +1747,7 @@ class TestSafetyRing(unittest.TestCase):
         # Report localization lost
         m.localization_status._deliver({"state": "LOST"})
 
-        self.assertIn(2, stop_cmds,
-                      f"Expected stop_cmd=2 for LOST localization, got {stop_cmds}")
+        self.assertIn(2, stop_cmds, f"Expected stop_cmd=2 for LOST localization, got {stop_cmds}")
 
     def test_cross_track_error_computation(self):
         """Set a path, deliver odom off-path, and verify CTE in ExecutionEval."""
@@ -2018,8 +1769,7 @@ class TestSafetyRing(unittest.TestCase):
 
         self.assertGreater(len(evals), 0, "Expected at least one ExecutionEval")
         cte = evals[-1].cross_track_error
-        self.assertAlmostEqual(cte, 3.0, places=1,
-                               msg=f"Expected CTE ~3.0, got {cte}")
+        self.assertAlmostEqual(cte, 3.0, places=1, msg=f"Expected CTE ~3.0, got {cte}")
 
     def test_safe_state_when_healthy(self):
         """Regular odom delivery keeps stop_cmd == 0."""
@@ -2035,8 +1785,7 @@ class TestSafetyRing(unittest.TestCase):
 
         # The only stop_cmd published should be 0 (SAFE)
         if stop_cmds:
-            self.assertEqual(stop_cmds[-1], 0,
-                             f"Expected stop_cmd=0, got {stop_cmds[-1]}")
+            self.assertEqual(stop_cmds[-1], 0, f"Expected stop_cmd=0, got {stop_cmds[-1]}")
 
     def test_idle_without_cmd_vel_remains_safe(self):
         """Idle robot should not warn only because no command stream is active."""

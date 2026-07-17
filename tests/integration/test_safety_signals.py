@@ -51,16 +51,18 @@ import sys
 import threading
 import time
 
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+import pytest
 
+pytest.importorskip("rclpy", reason="ROS2 integration test — requires rclpy")
+
+import rclpy
 from geometry_msgs.msg import PointStamped, TransformStamped, TwistStamped
 from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Float32, Int8
 from tf2_ros import TransformBroadcaster
-
 
 # ── QoS ──────────────────────────────────────────────────────────────────────
 SENSOR_QOS = QoSProfile(
@@ -70,7 +72,7 @@ SENSOR_QOS = QoSProfile(
 )
 
 
-def _make_pointcloud2(points_xyzi, stamp, frame_id='body'):
+def _make_pointcloud2(points_xyzi, stamp, frame_id="body"):
     """
     Build a PointCloud2 message from a list of (x, y, z, intensity) tuples.
 
@@ -91,12 +93,12 @@ def _make_pointcloud2(points_xyzi, stamp, frame_id='body'):
     msg.point_step = 16  # 4 x float32
     msg.row_step = msg.point_step * msg.width
     msg.fields = [
-        PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-        PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-        PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-        PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1),
+        PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+        PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+        PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
     ]
-    msg.data = b''.join(struct.pack('ffff', *p) for p in points_xyzi)
+    msg.data = b"".join(struct.pack("ffff", *p) for p in points_xyzi)
     return msg
 
 
@@ -114,7 +116,7 @@ def _make_flat_ground(stamp):
             points.append((x, y, 0.0, 0.0))
             y += 0.4
         x += 0.4
-    return _make_pointcloud2(points, stamp, frame_id='odom')
+    return _make_pointcloud2(points, stamp, frame_id="odom")
 
 
 def _make_ground_with_obstacle(stamp):
@@ -139,41 +141,38 @@ def _make_ground_with_obstacle(stamp):
             points.append((0.3, obs_y, obs_z, 100.0))
             obs_z += 0.1
         obs_y += 0.1
-    return _make_pointcloud2(points, stamp, frame_id='odom')
+    return _make_pointcloud2(points, stamp, frame_id="odom")
 
 
 class SafetySignalTestNode(Node):
     """Test node: publishes synthetic sensor data, observes stop/cmd_vel."""
 
     def __init__(self):
-        super().__init__('safety_signal_test')
+        super().__init__("safety_signal_test")
 
         # ── Publishers ──
-        self.pub_odom = self.create_publisher(Odometry, '/nav/odometry', 10)
-        self.pub_cloud = self.create_publisher(PointCloud2, '/nav/map_cloud', 10)
-        self.pub_waypoint = self.create_publisher(PointStamped, '/nav/way_point', 10)
+        self.pub_odom = self.create_publisher(Odometry, "/nav/odometry", 10)
+        self.pub_cloud = self.create_publisher(PointCloud2, "/nav/map_cloud", 10)
+        self.pub_waypoint = self.create_publisher(PointStamped, "/nav/way_point", 10)
         # The prerequisite localPlanner does NOT remap /stop or /speed,
         # so pathFollower subscribes on the raw internal name.
         # We publish stop=0 on BOTH in case someone uses the launch-file remapped name.
-        self.pub_stop_raw = self.create_publisher(Int8, '/stop', 10)
-        self.pub_stop_nav = self.create_publisher(Int8, '/nav/stop', 10)
-        self.pub_speed_raw = self.create_publisher(Float32, '/speed', 10)
-        self.pub_speed_nav = self.create_publisher(Float32, '/nav/speed', 10)
+        self.pub_stop_raw = self.create_publisher(Int8, "/stop", 10)
+        self.pub_stop_nav = self.create_publisher(Int8, "/nav/stop", 10)
+        self.pub_speed_raw = self.create_publisher(Float32, "/speed", 10)
+        self.pub_speed_nav = self.create_publisher(Float32, "/nav/speed", 10)
 
         self._tf_br = TransformBroadcaster(self)
 
         # ── Subscribers ──
         self._lock = threading.Lock()
-        self.cmd_vel_msgs = []    # TwistStamped from pathFollower
-        self.stop_raw_msgs = []   # Int8 from localPlanner on /stop
-        self.stop_nav_msgs = []   # Int8 from localPlanner on /nav/stop (if remapped)
+        self.cmd_vel_msgs = []  # TwistStamped from pathFollower
+        self.stop_raw_msgs = []  # Int8 from localPlanner on /stop
+        self.stop_nav_msgs = []  # Int8 from localPlanner on /nav/stop (if remapped)
 
-        self.create_subscription(
-            TwistStamped, '/nav/cmd_vel', self._on_cmd_vel, 10)
-        self.create_subscription(
-            Int8, '/stop', self._on_stop_raw, 10)
-        self.create_subscription(
-            Int8, '/nav/stop', self._on_stop_nav, 10)
+        self.create_subscription(TwistStamped, "/nav/cmd_vel", self._on_cmd_vel, 10)
+        self.create_subscription(Int8, "/stop", self._on_stop_raw, 10)
+        self.create_subscription(Int8, "/nav/stop", self._on_stop_nav, 10)
 
         # ── State ──
         self.odom_x = 0.0
@@ -211,21 +210,22 @@ class SafetySignalTestNode(Node):
         with self._lock:
             combined = []
             for m in self.stop_raw_msgs:
-                combined.append(('raw', m.data))
+                combined.append(("raw", m.data))
             for m in self.stop_nav_msgs:
-                combined.append(('nav', m.data))
+                combined.append(("nav", m.data))
             return combined
 
     def publish_tf(self):
         """Broadcast odom -> body TF (robot stays at fixed position)."""
         tf = TransformStamped()
         tf.header.stamp = self.get_clock().now().to_msg()
-        tf.header.frame_id = 'odom'
-        tf.child_frame_id = 'body'
+        tf.header.frame_id = "odom"
+        tf.child_frame_id = "body"
         tf.transform.translation.x = self.odom_x
         tf.transform.translation.y = self.odom_y
         tf.transform.translation.z = self.odom_z
         import math as _math
+
         cy = _math.cos(self.odom_yaw / 2.0)
         sy = _math.sin(self.odom_yaw / 2.0)
         tf.transform.rotation.x = 0.0
@@ -237,8 +237,8 @@ class SafetySignalTestNode(Node):
     def publish_odom(self):
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
-        msg.child_frame_id = 'body'
+        msg.header.frame_id = "odom"
+        msg.child_frame_id = "body"
         msg.pose.pose.position.x = self.odom_x
         msg.pose.pose.position.y = self.odom_y
         msg.pose.pose.position.z = self.odom_z
@@ -253,7 +253,7 @@ class SafetySignalTestNode(Node):
     def publish_waypoint(self, x, y, z=0.0):
         msg = PointStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
+        msg.header.frame_id = "odom"
         msg.point.x = float(x)
         msg.point.y = float(y)
         msg.point.z = float(z)
@@ -273,16 +273,16 @@ class SafetySignalTestNode(Node):
 
 
 def main():
-    print('=' * 60)
-    print('  Safety Signal Chain Integration Test')
-    print('  localPlanner -> pathFollower (/stop, /slow_down)')
-    print('=' * 60)
+    print("=" * 60)
+    print("  Safety Signal Chain Integration Test")
+    print("  localPlanner -> pathFollower (/stop, /slow_down)")
+    print("=" * 60)
 
     try:
         rclpy.init()
     except Exception as e:
-        print(f'[FATAL] ROS2 init failed: {e}')
-        print('  Please run: source /opt/ros/humble/setup.bash')
+        print(f"[FATAL] ROS2 init failed: {e}")
+        print("  Please run: source /opt/ros/humble/setup.bash")
         sys.exit(1)
 
     node = SafetySignalTestNode()
@@ -302,7 +302,7 @@ def main():
         # pathFollower needs 3 consecutive stop=0 to clear any residual
         # safetyStop.
         # ──────────────────────────────────────────────────────────────
-        print('\n[Warm-up] Initializing terrain + planner (10s)...')
+        print("\n[Warm-up] Initializing terrain + planner (10s)...")
         warmup_start = time.monotonic()
         while time.monotonic() - warmup_start < 10.0:
             stamp = node.get_clock().now().to_msg()
@@ -321,7 +321,7 @@ def main():
         #   - Expect cmd_vel.linear.x > 0 (robot moves forward)
         #   - Expect no stop=2 from localPlanner
         # ──────────────────────────────────────────────────────────────
-        print('\n[Phase 1] Normal operation — flat ground, waypoint at (5,0) (10s)...')
+        print("\n[Phase 1] Normal operation — flat ground, waypoint at (5,0) (10s)...")
         node.clear_cmd_vel()
         node.clear_stop()
 
@@ -340,12 +340,12 @@ def main():
         cvs = node.get_cmd_vel()
         stop_msgs = node.get_stop_msgs()
 
-        print(f'  Received {len(cvs)} cmd_vel messages')
-        print(f'  Received {len(stop_msgs)} stop messages')
+        print(f"  Received {len(cvs)} cmd_vel messages")
+        print(f"  Received {len(stop_msgs)} stop messages")
 
         if len(cvs) == 0:
-            print('  [FAIL] No cmd_vel received! Is pathFollower running?')
-            results['normal_cmd_vel_positive'] = False
+            print("  [FAIL] No cmd_vel received! Is pathFollower running?")
+            results["normal_cmd_vel_positive"] = False
         else:
             # Use second half of messages (after system stabilizes)
             half = max(len(cvs) // 2, 1)
@@ -358,10 +358,11 @@ def main():
             # terrain_analysis may produce transient ESTOPs during ground model init,
             # so avg_fwd can be low even when the pipeline is working correctly.
             normal_ok = max_fwd > 0.1
-            results['normal_cmd_vel_positive'] = normal_ok
-            status = 'PASS' if normal_ok else 'FAIL'
-            print(f'  [{status}] normal_cmd_vel_positive: '
-                  f'avg_fwd={avg_fwd:.4f}, max_fwd={max_fwd:.4f} (expect max >0.1)')
+            results["normal_cmd_vel_positive"] = normal_ok
+            status = "PASS" if normal_ok else "FAIL"
+            print(
+                f"  [{status}] normal_cmd_vel_positive: avg_fwd={avg_fwd:.4f}, max_fwd={max_fwd:.4f} (expect max >0.1)"
+            )
 
         # Check that no stop=2 was published by localPlanner during normal operation
         # (our own stop=0 will appear, so filter for value=2 from localPlanner)
@@ -370,9 +371,9 @@ def main():
         # This is informational — if terrain_analysis produces spurious obstacles
         # it may trigger, so we log but don't hard-fail
         if estop_in_phase1:
-            print(f'  [WARN] stop=2 detected during flat-ground phase (possible terrain transient)')
+            print("  [WARN] stop=2 detected during flat-ground phase (possible terrain transient)")
         else:
-            print(f'  [INFO] No stop=2 during normal operation (expected)')
+            print("  [INFO] No stop=2 during normal operation (expected)")
 
         # ──────────────────────────────────────────────────────────────
         # Transition gap (3s): Continue flat ground to ensure localPlanner
@@ -380,7 +381,7 @@ def main():
         # This prevents spurious transient ESTOPs from Phase 1 from
         # masking the Phase 2 obstacle detection.
         # ──────────────────────────────────────────────────────────────
-        print('\n[Transition] Clearing ESTOP state (3s)...')
+        print("\n[Transition] Clearing ESTOP state (3s)...")
         gap_start = time.monotonic()
         while time.monotonic() - gap_start < 3.0:
             stamp = node.get_clock().now().to_msg()
@@ -399,7 +400,7 @@ def main():
         #   - Expect localPlanner to publish stop=2
         #   - Expect pathFollower to zero out cmd_vel
         # ──────────────────────────────────────────────────────────────
-        print('\n[Phase 2] Near-field obstacle (10s)...')
+        print("\n[Phase 2] Near-field obstacle (10s)...")
         node.clear_cmd_vel()
         node.clear_stop()
 
@@ -428,25 +429,27 @@ def main():
                         break
 
         # Analyze Phase 2 — stop signal
-        results['obstacle_stop_signal'] = stop2_detected
-        status = 'PASS' if stop2_detected else 'FAIL'
-        print(f'  [{status}] obstacle_stop_signal: '
-              f'{"detected at " + f"{stop2_time:.1f}s" if stop2_detected else "NOT detected"}')
+        results["obstacle_stop_signal"] = stop2_detected
+        status = "PASS" if stop2_detected else "FAIL"
+        print(
+            f"  [{status}] obstacle_stop_signal: "
+            f"{'detected at ' + f'{stop2_time:.1f}s' if stop2_detected else 'NOT detected'}"
+        )
 
         # Analyze Phase 2 — cmd_vel should go to ~zero after stop=2
         cvs = node.get_cmd_vel()
-        print(f'  Received {len(cvs)} cmd_vel messages during obstacle phase')
+        print(f"  Received {len(cvs)} cmd_vel messages during obstacle phase")
 
         if len(cvs) == 0:
-            print('  [WARN] No cmd_vel received during Phase 2')
+            print("  [WARN] No cmd_vel received during Phase 2")
             # If pathFollower is running and has safetyStop=2, it still publishes
             # cmd_vel with zeroed values. No messages means pathFollower may not
             # have received a path yet.
-            results['obstacle_cmd_vel_zero'] = stop2_detected  # infer from stop
+            results["obstacle_cmd_vel_zero"] = stop2_detected  # infer from stop
         elif not stop2_detected:
             # stop=2 never arrived, can't evaluate cmd_vel response
-            print('  [WARN] stop=2 never detected; cmd_vel_zero check skipped (inferred False)')
-            results['obstacle_cmd_vel_zero'] = False
+            print("  [WARN] stop=2 never detected; cmd_vel_zero check skipped (inferred False)")
+            results["obstacle_cmd_vel_zero"] = False
         else:
             # Use only cmd_vel messages received AFTER stop=2 was detected.
             # stop2_time is relative to phase2_start; we estimate a cutoff index
@@ -458,17 +461,19 @@ def main():
             post_stop_cvs = cvs[cutoff:]
             if len(post_stop_cvs) == 0:
                 # stop came too late; not enough post-stop messages, infer from stop
-                print(f'  [WARN] stop=2 too late (t={stop2_time:.1f}s), not enough post-stop cmd_vel')
-                results['obstacle_cmd_vel_zero'] = True  # stop was detected, accept
+                print(f"  [WARN] stop=2 too late (t={stop2_time:.1f}s), not enough post-stop cmd_vel")
+                results["obstacle_cmd_vel_zero"] = True  # stop was detected, accept
             else:
                 fwd_speeds = [abs(m.twist.linear.x) for m in post_stop_cvs]
                 avg_abs_fwd = sum(fwd_speeds) / len(fwd_speeds) if fwd_speeds else 0.0
 
                 zero_ok = avg_abs_fwd < 0.05
-                results['obstacle_cmd_vel_zero'] = zero_ok
-                status = 'PASS' if zero_ok else 'FAIL'
-                print(f'  [{status}] obstacle_cmd_vel_zero (post-stop, n={len(post_stop_cvs)}): '
-                      f'avg_abs_fwd={avg_abs_fwd:.4f} (expect <0.05)')
+                results["obstacle_cmd_vel_zero"] = zero_ok
+                status = "PASS" if zero_ok else "FAIL"
+                print(
+                    f"  [{status}] obstacle_cmd_vel_zero (post-stop, n={len(post_stop_cvs)}): "
+                    f"avg_abs_fwd={avg_abs_fwd:.4f} (expect <0.05)"
+                )
 
         # ──────────────────────────────────────────────────────────────
         # Phase 3: Obstacle cleared (12s)
@@ -477,7 +482,7 @@ def main():
         #   - pathFollower needs 3 consecutive stop=0 to clear safetyStop
         #   - Expect cmd_vel.linear.x > 0 (recovery)
         # ──────────────────────────────────────────────────────────────
-        print('\n[Phase 3] Obstacle cleared — recovery (12s)...')
+        print("\n[Phase 3] Obstacle cleared — recovery (12s)...")
         node.clear_cmd_vel()
         node.clear_stop()
 
@@ -498,11 +503,11 @@ def main():
 
         # Analyze Phase 3 — cmd_vel should recover
         cvs = node.get_cmd_vel()
-        print(f'  Received {len(cvs)} cmd_vel messages during recovery phase')
+        print(f"  Received {len(cvs)} cmd_vel messages during recovery phase")
 
         if len(cvs) == 0:
-            print('  [FAIL] No cmd_vel received during recovery phase')
-            results['recovery_cmd_vel_positive'] = False
+            print("  [FAIL] No cmd_vel received during recovery phase")
+            results["recovery_cmd_vel_positive"] = False
         else:
             # Use the last quarter of messages — recovery may take a few seconds
             quarter = max(len(cvs) * 3 // 4, 1)
@@ -512,22 +517,23 @@ def main():
             max_fwd = max(fwd_speeds) if fwd_speeds else 0.0
 
             recovery_ok = max_fwd > 0.02
-            results['recovery_cmd_vel_positive'] = recovery_ok
-            status = 'PASS' if recovery_ok else 'FAIL'
-            print(f'  [{status}] recovery_cmd_vel_positive: '
-                  f'avg_fwd={avg_fwd:.4f}, max_fwd={max_fwd:.4f} (expect max >0.02)')
+            results["recovery_cmd_vel_positive"] = recovery_ok
+            status = "PASS" if recovery_ok else "FAIL"
+            print(
+                f"  [{status}] recovery_cmd_vel_positive: "
+                f"avg_fwd={avg_fwd:.4f}, max_fwd={max_fwd:.4f} (expect max >0.02)"
+            )
 
         # Check stop=0 was published during recovery
         stop_msgs = node.get_stop_msgs()
         stop0_count = sum(1 for _, val in stop_msgs if val == 0)
         if stop0_count > 0:
-            print(f'  [INFO] Received {stop0_count} stop=0 messages during recovery')
+            print(f"  [INFO] Received {stop0_count} stop=0 messages during recovery")
         else:
-            print(f'  [WARN] No stop=0 received during recovery '
-                  f'(localPlanner may not have cleared obstacle state)')
+            print("  [WARN] No stop=0 received during recovery (localPlanner may not have cleared obstacle state)")
 
     except KeyboardInterrupt:
-        print('\n[INTERRUPTED]')
+        print("\n[INTERRUPTED]")
     finally:
         executor.shutdown()
         node.destroy_node()
@@ -536,46 +542,46 @@ def main():
     # ──────────────────────────────────────────────────────────────
     # Summary
     # ──────────────────────────────────────────────────────────────
-    print('\n' + '=' * 60)
-    print('  Safety Signal Chain — Results Summary')
-    print('=' * 60)
+    print("\n" + "=" * 60)
+    print("  Safety Signal Chain — Results Summary")
+    print("=" * 60)
 
     all_pass = all(results.values()) if results else False
     passed = sum(1 for v in results.values() if v)
     failed = sum(1 for v in results.values() if not v)
 
     for check, ok in results.items():
-        tag = 'PASS' if ok else 'FAIL'
-        print(f'  [{tag}] {check}')
+        tag = "PASS" if ok else "FAIL"
+        print(f"  [{tag}] {check}")
 
-    print(f'\n  Passed: {passed}/{len(results)}   Failed: {failed}/{len(results)}')
+    print(f"\n  Passed: {passed}/{len(results)}   Failed: {failed}/{len(results)}")
 
     if all_pass:
-        print('\n  All safety signal checks passed.')
+        print("\n  All safety signal checks passed.")
     else:
-        print('\n  Some checks failed. Troubleshooting:')
-        if not results.get('normal_cmd_vel_positive', True):
-            print('    - Is pathFollower running and receiving /path from localPlanner?')
-            print('    - Does localPlanner have a valid pathFolder with pre-computed paths?')
-        if not results.get('obstacle_stop_signal', True):
-            print('    - Is localPlanner started with checkObstacle:=true?')
-            print('    - Is terrain_analysis running and producing /nav/terrain_map?')
-            print('    - The near-field obstacle may not exceed obstacleHeightThre (0.2m).')
-            print('      terrain_analysis computes obstacle height from ground; if the')
-            print('      synthetic cloud does not produce sufficient height contrast,')
-            print('      the near-field check will not trigger.')
-        if not results.get('obstacle_cmd_vel_zero', True):
-            print('    - stop=2 should zero all velocity components via safetyStop >= 2.')
-        if not results.get('recovery_cmd_vel_positive', True):
-            print('    - pathFollower needs 3 consecutive stop=0 to clear safetyStop.')
-            print('    - localPlanner must publish stop=0 when obstacle is gone.')
-            print('    - The test also sends stop=0 after 2s to assist clearance.')
+        print("\n  Some checks failed. Troubleshooting:")
+        if not results.get("normal_cmd_vel_positive", True):
+            print("    - Is pathFollower running and receiving /path from localPlanner?")
+            print("    - Does localPlanner have a valid pathFolder with pre-computed paths?")
+        if not results.get("obstacle_stop_signal", True):
+            print("    - Is localPlanner started with checkObstacle:=true?")
+            print("    - Is terrain_analysis running and producing /nav/terrain_map?")
+            print("    - The near-field obstacle may not exceed obstacleHeightThre (0.2m).")
+            print("      terrain_analysis computes obstacle height from ground; if the")
+            print("      synthetic cloud does not produce sufficient height contrast,")
+            print("      the near-field check will not trigger.")
+        if not results.get("obstacle_cmd_vel_zero", True):
+            print("    - stop=2 should zero all velocity components via safetyStop >= 2.")
+        if not results.get("recovery_cmd_vel_positive", True):
+            print("    - pathFollower needs 3 consecutive stop=0 to clear safetyStop.")
+            print("    - localPlanner must publish stop=0 when obstacle is gone.")
+            print("    - The test also sends stop=0 after 2s to assist clearance.")
 
-    print('\n[JSON]')
+    print("\n[JSON]")
     print(json.dumps(results, indent=2))
 
     sys.exit(0 if all_pass else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

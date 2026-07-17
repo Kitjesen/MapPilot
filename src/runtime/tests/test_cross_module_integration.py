@@ -21,6 +21,8 @@ import numpy as np
 # Capture warnings during build for test 30
 _build_warnings = []
 _orig_warn = logging.Logger.warning
+
+
 def _capture_warn(self, msg, *args, **kwargs):
     try:
         formatted = str(msg) % args if args else str(msg)
@@ -28,6 +30,8 @@ def _capture_warn(self, msg, *args, **kwargs):
         formatted = str(msg)
     _build_warnings.append(formatted)
     _orig_warn(self, msg, *args, **kwargs)
+
+
 logging.Logger.warning = _capture_warn
 
 # Patch server start methods to avoid port binding / blocking in CI
@@ -45,8 +49,16 @@ _mcp_mod.MCPServerModule.start = lambda self: None
 from runtime.blueprints.products.thunder import thunder_blueprint
 
 bp = thunder_blueprint(
-    robot="stub", slam_profile="none",
-    enable_native=False, enable_semantic=True, enable_gateway=True,
+    robot="stub",
+    slam_profile="none",
+    llm="mock",
+    planner="direct",
+    local_planner_backend="simple",
+    path_follower_backend="pid",
+    enable_native=False,
+    enable_semantic=True,
+    enable_gateway=True,
+    enable_map_modules=False,
 )
 system = bp.build()
 system.start()
@@ -57,6 +69,8 @@ _mcp_mod.MCPServerModule.start = _orig_mcp_start
 logging.Logger.warning = _orig_warn
 
 results = {}
+
+
 def test(num, name, passed, detail=""):
     tag = "PASS" if passed else "FAIL"
     results[num] = passed
@@ -65,37 +79,55 @@ def test(num, name, passed, detail=""):
         msg += "  [%s]" % detail
     print(msg, flush=True)
 
+
 # ==== Test 20: Non-native stack builds Python autonomy chain ====
 try:
     nav = system.get_module("nav.mission")
     lp = system.get_module("nav.local_planner")
     pf = system.get_module("nav.path_follower")
-    wp_conns = [c for c in system.connections
-                if c[0] == "nav.mission" and c[1] == "waypoint"
-                   and c[2] == "nav.local_planner" and c[3] == "waypoint"]
-    path_conns = [c for c in system.connections
-                  if c[0] == "nav.local_planner" and c[1] == "local_path"
-                     and c[2] == "nav.path_follower" and c[3] == "local_path"]
+    wp_conns = [
+        c
+        for c in system.connections
+        if c[0] == "nav.mission" and c[1] == "waypoint" and c[2] == "nav.local_planner" and c[3] == "waypoint"
+    ]
+    path_conns = [
+        c
+        for c in system.connections
+        if c[0] == "nav.local_planner" and c[1] == "local_path" and c[2] == "nav.path_follower" and c[3] == "local_path"
+    ]
     # cmd_vel now goes through VelocityMux for priority arbitration:
-    #   nav.path_follower.cmd_vel é—?VelocityMux.path_follower_cmd_vel
-    #   nav.velocity_mux.driver_cmd_vel   é—?StubDogModule.cmd_vel
-    cmd_conns_to_mux = [c for c in system.connections
-                        if c[0] == "nav.path_follower" and c[1] == "cmd_vel"
-                           and c[2] == "nav.velocity_mux"]
-    mux_to_driver = [c for c in system.connections
-                     if c[0] == "nav.velocity_mux" and c[1] == "driver_cmd_vel"
-                        and c[2] == "StubDogModule" and c[3] == "cmd_vel"]
+    #   nav.path_follower.cmd_vel -VelocityMux.path_follower_cmd_vel
+    #   nav.velocity_mux.driver_cmd_vel   -StubDogModule.cmd_vel
+    cmd_conns_to_mux = [
+        c
+        for c in system.connections
+        if c[0] == "nav.path_follower" and c[1] == "cmd_vel" and c[2] == "nav.velocity_mux"
+    ]
+    mux_to_driver = [
+        c
+        for c in system.connections
+        if c[0] == "nav.velocity_mux" and c[1] == "driver_cmd_vel" and c[2] == "StubDogModule" and c[3] == "cmd_vel"
+    ]
     cmd_conns = cmd_conns_to_mux if (cmd_conns_to_mux and mux_to_driver) else []
-    test(20, "Non-native stack uses Python autonomy chain",
-         not hasattr(nav, "_enable_ros2_bridge")
-         and lp._backend in ("nanobind", "cmu_py", "simple")
-         and pf._backend in ("nav_kernel", "pid")
-         and len(wp_conns) > 0
-         and len(path_conns) > 0
-         and len(cmd_conns) > 0,
-         "nav_has_ros2_attr=%s lp=%s pf=%s wires=%d/%d/%d" % (
-             hasattr(nav, "_enable_ros2_bridge"), lp._backend, pf._backend,
-             len(wp_conns), len(path_conns), len(cmd_conns)))
+    test(
+        20,
+        "Non-native stack uses Python autonomy chain",
+        not hasattr(nav, "_enable_ros2_bridge")
+        and lp._backend in ("nanobind", "cmu_py", "simple")
+        and pf._backend in ("nav_kernel", "pid")
+        and len(wp_conns) > 0
+        and len(path_conns) > 0
+        and len(cmd_conns) > 0,
+        "nav_has_ros2_attr=%s lp=%s pf=%s wires=%d/%d/%d"
+        % (
+            hasattr(nav, "_enable_ros2_bridge"),
+            lp._backend,
+            pf._backend,
+            len(wp_conns),
+            len(path_conns),
+            len(cmd_conns),
+        ),
+    )
 except Exception as e:
     test(20, "Non-native stack uses Python autonomy chain", False, str(e))
 
@@ -107,10 +139,10 @@ except Exception as e:
 try:
     from runtime.msgs.semantic import SceneGraph
     from runtime.stream import Out as OutPort
+
     sg = SceneGraph(objects=[], relations=[], regions=[])
 
-    expected_targets = {"SemanticPlannerModule", "SemanticMapperModule",
-                        "EpisodicMemoryModule", "VisualServoModule"}
+    expected_targets = {"SemanticPlannerModule", "SemanticMapperModule", "EpisodicMemoryModule", "VisualServoModule"}
     # Collect In ports
     target_ports = {}
     for tname in expected_targets:
@@ -133,10 +165,12 @@ try:
         if target_ports[tname].msg_count > bc:
             received += 1
 
-    test(21, "SceneGraph fan-out",
-         received >= 2 and len(target_ports) >= 2,
-         "delivered to %d/%d targets (%s)" % (received, len(target_ports),
-                                               list(target_ports.keys())))
+    test(
+        21,
+        "SceneGraph fan-out",
+        received >= 2 and len(target_ports) >= 2,
+        "delivered to %d/%d targets (%s)" % (received, len(target_ports), list(target_ports.keys())),
+    )
 except Exception as e:
     test(21, "SceneGraph fan-out", False, str(e))
 
@@ -144,6 +178,7 @@ except Exception as e:
 try:
     from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
     from runtime.msgs.nav import Odometry
+
     odom = Odometry(
         pose=Pose(position=Vector3(1.0, 2.0, 0.0), orientation=Quaternion(0, 0, 0, 1)),
         twist=Twist(linear=Vector3(0.1, 0, 0), angular=Vector3(0, 0, 0)),
@@ -167,8 +202,9 @@ try:
         for tname, bc in before.items():
             if system.modules[tname].ports_in["odometry"].msg_count > bc:
                 received += 1
-        test(22, "Odometry fan-out", received >= 2,
-             "received=%d/%d, targets=%s" % (received, len(before), odom_targets))
+        test(
+            22, "Odometry fan-out", received >= 2, "received=%d/%d, targets=%s" % (received, len(before), odom_targets)
+        )
     else:
         test(22, "Odometry fan-out", False, "No odometry source")
 except Exception as e:
@@ -178,17 +214,22 @@ except Exception as e:
 try:
     sp = system.get_module("SemanticPlannerModule")
     vm = system.get_module("VectorMemoryModule")
-    has_ref = sp._vector_memory is not None
-    is_vm = sp._vector_memory is vm
-    test(23, "on_system_modules: _vector_memory is VectorMemoryModule",
-         has_ref and is_vm, "has_ref=%s, is_vm=%s" % (has_ref, is_vm))
+    has_ref = sp._backends is not None and sp._backends.vector_memory is not None
+    is_vm = has_ref and sp._backends.vector_memory is vm
+    test(
+        23,
+        "on_system_modules: _vector_memory is VectorMemoryModule",
+        has_ref and is_vm,
+        "has_ref=%s, is_vm=%s" % (has_ref, is_vm),
+    )
 except Exception as e:
     test(23, "on_system_modules VectorMemory ref", False, str(e))
 
 # ==== Test 24: Costmap chain ====
 try:
+    from maps.modules.occupancy import OccupancyGridModule
     from runtime.msgs.sensor import PointCloud2
-    from nav.services.map_layers.occupancy_grid_module import OccupancyGridModule
+
     ogm = OccupancyGridModule(resolution=0.5, map_radius=5.0, z_min=0.1, z_max=2.0)
     ogm.setup()
     pts = np.array([[1.0, 1.0, 0.5], [1.5, 1.5, 0.8], [2.0, 2.0, 1.0], [-1.0, -1.0, 0.3]], dtype=np.float32)
@@ -196,20 +237,22 @@ try:
     before_cost = ogm.costmap.msg_count
     ogm._on_cloud(cloud)
     after_cost = ogm.costmap.msg_count
-    test(24, "Costmap chain: _on_cloud -> costmap published",
-         after_cost > before_cost, "before=%d, after=%d" % (before_cost, after_cost))
+    test(
+        24,
+        "Costmap chain: _on_cloud -> costmap published",
+        after_cost > before_cost,
+        "before=%d, after=%d" % (before_cost, after_cost),
+    )
 except Exception as e:
     test(24, "Costmap chain", False, str(e))
 
 # ==== Test 25: Safety stop wiring ====
 try:
-    stop_conns = [c for c in system.connections
-                  if c[0] == "nav.safety" and c[1] == "stop_cmd"]
+    stop_conns = [c for c in system.connections if c[0] == "nav.safety" and c[1] == "stop_cmd"]
     stop_targets = set(c[2] for c in stop_conns)
     has_driver = "StubDogModule" in stop_targets
     has_nav = "nav.mission" in stop_targets
-    test(25, "Safety stop: wired to driver + Navigation",
-         has_driver and has_nav, "targets=%s" % stop_targets)
+    test(25, "Safety stop: wired to driver + Navigation", has_driver and has_nav, "targets=%s" % stop_targets)
 except Exception as e:
     test(25, "Safety stop wiring", False, str(e))
 
@@ -227,10 +270,12 @@ try:
     # Prime SafetyRing into a healthy state first so the LOST update below is
     # the only STOP edge under test. The real full-stack wiring feeds
     # nav.velocity_mux.driver_cmd_vel back into nav.services.safety.cmd_vel for auditing.
-    safety._on_odom(Odometry(
-        pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0, 0, 0, 1)),
-        twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0, 0, 0)),
-    ))
+    safety._on_odom(
+        Odometry(
+            pose=Pose(position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0, 0, 0, 1)),
+            twist=Twist(linear=Vector3(0.0, 0.0, 0.0), angular=Vector3(0, 0, 0)),
+        )
+    )
     safety._on_cmdvel(Twist.zero())
     safety._on_localization_status({"state": "OK", "confidence": 1.0})
 
@@ -250,9 +295,12 @@ try:
 
     after_errors = sum(getattr(p, "_publish_errors", 0) for p in watched_ports)
     stop_delta = safety.stop_cmd.msg_count - before_stop_count
-    test(26, "Safety stop loop remains bounded",
-         after_errors == before_errors and 1 <= stop_delta <= 10,
-         "errors %d->%d, stop_delta=%d" % (before_errors, after_errors, stop_delta))
+    test(
+        26,
+        "Safety stop loop remains bounded",
+        after_errors == before_errors and 1 <= stop_delta <= 10,
+        "errors %d->%d, stop_delta=%d" % (before_errors, after_errors, stop_delta),
+    )
 except Exception as e:
     test(26, "Safety stop loop remains bounded", False, str(e))
 
@@ -267,30 +315,42 @@ try:
     teleop._last_joy_time = time.monotonic() - teleop._release_timeout - 1.0
     teleop._check_idle()
     released = not teleop._active
-    test(27, "Teleop priority: _on_joy active, check_idle releases",
-         active_after and released,
-         "active_after=%s, released=%s" % (active_after, released))
+    test(
+        27,
+        "Teleop priority: _on_joy active, check_idle releases",
+        active_after and released,
+        "active_after=%s, released=%s" % (active_after, released),
+    )
 except Exception as e:
     test(27, "Teleop priority", False, str(e))
 
 # ==== Test 28: Instruction fan-in ====
 try:
-    instr_conns = [c for c in system.connections
-                   if c[3] == "instruction" and c[2] == "SemanticPlannerModule"]
+    instr_conns = [c for c in system.connections if c[3] == "instruction" and c[2] == "SemanticPlannerModule"]
     instr_sources = set(c[0] for c in instr_conns)
     has_gw = "GatewayModule" in instr_sources
     has_mcp = "MCPServerModule" in instr_sources
-    test(28, "Instruction fan-in: Gateway + MCP -> SemanticPlanner",
-         has_gw and has_mcp, "sources=%s" % instr_sources)
+    test(28, "Instruction fan-in: Gateway + MCP -> SemanticPlanner", has_gw and has_mcp, "sources=%s" % instr_sources)
 except Exception as e:
     test(28, "Instruction fan-in", False, str(e))
 
 # ==== Test 29: goal_pose SemanticPlanner -> Navigation ====
 try:
     from runtime.msgs.geometry import PoseStamped
-    goal_conns = [c for c in system.connections
-                  if c[0] == "SemanticPlannerModule" and c[1] == "goal_pose"
-                     and c[2] == "nav.mission" and c[3] == "goal_pose"]
+
+    semantic_goal_conns = [
+        c
+        for c in system.connections
+        if c[0] == "SemanticPlannerModule"
+        and c[1] == "goal_pose"
+        and c[2] == "nav.goals"
+        and c[3] == "goal_request"
+    ]
+    mission_goal_conns = [
+        c
+        for c in system.connections
+        if c[0] == "nav.goals" and c[1] == "goal_pose" and c[2] == "nav.mission" and c[3] == "goal_pose"
+    ]
     nav = system.get_module("nav.mission")
     sp2 = system.get_module("SemanticPlannerModule")
     before_gp = nav.ports_in["goal_pose"].msg_count
@@ -301,9 +361,13 @@ try:
     sp2.goal_pose.publish(goal)
     time.sleep(0.05)
     after_gp = nav.ports_in["goal_pose"].msg_count
-    test(29, "goal_pose: SemanticPlanner -> Navigation",
-         after_gp > before_gp and len(goal_conns) > 0,
-         "wire=%d, before=%d, after=%d" % (len(goal_conns), before_gp, after_gp))
+    test(
+        29,
+        "goal_pose: SemanticPlanner -> GoalService -> Navigation",
+        after_gp > before_gp and len(semantic_goal_conns) > 0 and len(mission_goal_conns) > 0,
+        "wires=%d/%d, before=%d, after=%d"
+        % (len(semantic_goal_conns), len(mission_goal_conns), before_gp, after_gp),
+    )
 except Exception as e:
     test(29, "goal_pose fan-in", False, str(e))
 
@@ -314,17 +378,19 @@ try:
     # static TOOLS + _dynamic_tools). The list is populated in
     # on_system_modules() by walking @skill methods of all modules.
     tool_count = len(getattr(mcp, "_tool_list", []))
-    test(30, "@skill MCP discovery: tool count > 0",
-         tool_count > 0, "tool_list len=%d" % tool_count)
+    test(30, "@skill MCP discovery: tool count > 0", tool_count > 0, "tool_list len=%d" % tool_count)
 except Exception as e:
     test(30, "@skill MCP discovery", False, str(e))
 
 # ==== Test 31: Zero auto_wire ambiguity ====
 try:
     ambiguity_warnings = [w for w in _build_warnings if "ambiguity" in w.lower()]
-    test(31, "Zero auto_wire ambiguity warnings",
-         len(ambiguity_warnings) == 0,
-         "found %d: %s" % (len(ambiguity_warnings), ambiguity_warnings[:3]))
+    test(
+        31,
+        "Zero auto_wire ambiguity warnings",
+        len(ambiguity_warnings) == 0,
+        "found %d: %s" % (len(ambiguity_warnings), ambiguity_warnings[:3]),
+    )
 except Exception as e:
     test(31, "Zero auto_wire ambiguity", False, str(e))
 
@@ -341,9 +407,13 @@ print("=" * 60, flush=True)
 def test_cross_module_integration_all_pass() -> None:
     """Pytest entry point: assert that every numbered integration check passed."""
     failed_tests = {k: v for k, v in results.items() if not v}
-    assert not failed_tests, (
-        "%d/%d integration tests FAILED: %s" % (len(failed_tests), _total, sorted(failed_tests))
-    )
+    assert not failed_tests, "%d/%d integration tests FAILED: %s" % (len(failed_tests), _total, sorted(failed_tests))
+
+
+def teardown_module() -> None:
+    """Release module threads after pytest."""
+
+    system.stop()
 
 
 if __name__ == "__main__":

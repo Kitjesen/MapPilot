@@ -110,7 +110,9 @@ public:
 
     void predict(const Input &inp, double dt, const M12D &Q);
 
-    void update();
+    // Returns true only when a LiDAR correction was accepted. Callers must not
+    // integrate the current scan into the local map after a rejected update.
+    bool update();
 
     // Clamp P into a numerically valid covariance envelope.
     void clampCovariance();
@@ -164,6 +166,6 @@ private:
     double m_max_update_rotation_rad = 0.35;
     double m_max_update_velocity_mps = 3.0;
     double m_max_update_velocity_delta_mps = 1.0;
-    bool m_reject_nonconverged_update = true;
+    bool m_reject_nonconverged_update = false;
     bool m_reject_degenerate_nonconverged_update = true;
 };

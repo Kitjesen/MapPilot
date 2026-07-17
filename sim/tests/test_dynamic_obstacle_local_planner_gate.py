@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import subprocess
@@ -14,14 +14,13 @@ from runtime.msgs.nav import Path as NavPath
 from sim.scripts import dynamic_obstacle_local_planner_gate
 from sim.scripts.dynamic_obstacle_local_planner_gate import run_gate
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_dynamic_obstacle_local_planner_gate_blocks_unsupported_windows_host(
     monkeypatch,
 ):
-    monkeypatch.setattr(dynamic_obstacle_local_planner_gate, "nav.local_planner", None)
+    monkeypatch.setattr(dynamic_obstacle_local_planner_gate, "LocalPlanner", None)
 
     def fail_load_runtime():
         raise AssertionError("unsupported Windows guard should run before runtime import")
@@ -38,12 +37,8 @@ def test_dynamic_obstacle_local_planner_gate_blocks_unsupported_windows_host(
     assert report["backend_actual"] == ""
     assert report["environment"]["accepted_host"] is False
     assert report["environment"]["blocked_reason"] == "windows_mingw_numpy_not_accepted"
-    assert report["environment"]["claim_boundary"] == (
-        "environment_blocked_no_algorithm_claim"
-    )
-    assert report["environment"]["manual_diagnosis_flag"] == (
-        "--allow-unstable-windows-numpy"
-    )
+    assert report["environment"]["claim_boundary"] == ("environment_blocked_no_algorithm_claim")
+    assert report["environment"]["manual_diagnosis_flag"] == ("--allow-unstable-windows-numpy")
     assert any("Windows/MINGW NumPy" in item for item in report["errors"])
 
 
@@ -167,14 +162,13 @@ def test_dynamic_obstacle_local_planner_gate_reports_effective_backend_after_fal
                 y = 0.45
 
             poses = [
-                PoseStamped(pose=Pose(position=Vector3(float(x), y, 0.0)))
-                for x in [idx * 0.2 for idx in range(21)]
+                PoseStamped(pose=Pose(position=Vector3(float(x), y, 0.0))) for x in [idx * 0.2 for idx in range(21)]
             ]
             self.local_path.publish(NavPath(poses=poses, frame_id="map", ts=1.0))
 
     monkeypatch.setattr(
         dynamic_obstacle_local_planner_gate,
-        "nav.local_planner",
+        "LocalPlanner",
         FakeLocalPlanner,
     )
 

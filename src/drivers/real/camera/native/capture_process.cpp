@@ -21,7 +21,7 @@ using lingtu::drivers::orbbec::Frame;
 using lingtu::drivers::orbbec::Intrinsics;
 using lingtu::drivers::orbbec::PixelFormat;
 
-constexpr uint16_t kVersion = 1;
+constexpr uint16_t kVersion = 2;
 constexpr uint16_t kKindIntrinsics = 1;
 constexpr uint16_t kKindColor = 2;
 constexpr uint16_t kKindDepth = 3;
@@ -42,10 +42,15 @@ struct RecordHeader {
   double cy;
   double depth_scale_m;
   uint32_t payload_size;
+  double dist_k1;
+  double dist_k2;
+  double dist_p1;
+  double dist_p2;
+  double dist_k3;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(RecordHeader) == 76, "unexpected Orbbec stream header size");
+static_assert(sizeof(RecordHeader) == 116, "unexpected Orbbec stream header size");
 
 struct Options {
   std::string sdk_config_path;
@@ -62,6 +67,7 @@ struct Options {
   uint32_t depth_height = 480;
   uint32_t depth_fps = 30;
   uint32_t timeout_ms = 1000;
+  uint32_t startup_frame_timeout_ms = 10000;
   uint64_t max_frames = 0;
   bool enable_frame_sync = false;
   bool self_test = false;
@@ -125,6 +131,9 @@ Options parse_args(int argc, char **argv) {
       options.depth_fps = parse_u32(next(), options.depth_fps);
     } else if (arg == "--timeout-ms") {
       options.timeout_ms = parse_u32(next(), options.timeout_ms);
+    } else if (arg == "--startup-frame-timeout-ms") {
+      options.startup_frame_timeout_ms =
+          parse_u32(next(), options.startup_frame_timeout_ms);
     } else if (arg == "--connect-timeout-ms") {
       options.connect_timeout_ms = parse_u32(next(), options.connect_timeout_ms);
     } else if (arg == "--max-frames") {
@@ -152,6 +161,7 @@ Options parse_args(int argc, char **argv) {
           << "                            [--serial-number SN] [--uid UID|--usb-port UID]\n"
           << "                            [--product-id PID] [--device-index N]\n"
           << "                            [--connect-timeout-ms N] [--timeout-ms N]\n"
+          << "                            [--startup-frame-timeout-ms N]\n"
           << "                            [--max-frames N] [--enable-frame-sync]\n";
       std::exit(0);
     }
@@ -190,7 +200,12 @@ void write_record(
     double fy = 0.0,
     double cx = 0.0,
     double cy = 0.0,
-    double depth_scale_m = 0.001) {
+    double depth_scale_m = 0.001,
+    double dist_k1 = 0.0,
+    double dist_k2 = 0.0,
+    double dist_p1 = 0.0,
+    double dist_p2 = 0.0,
+    double dist_k3 = 0.0) {
   RecordHeader header{};
   std::memcpy(header.magic, "LTOB", 4);
   header.version = kVersion;
@@ -206,6 +221,11 @@ void write_record(
   header.cy = cy;
   header.depth_scale_m = depth_scale_m;
   header.payload_size = payload_size;
+  header.dist_k1 = dist_k1;
+  header.dist_k2 = dist_k2;
+  header.dist_p1 = dist_p1;
+  header.dist_p2 = dist_p2;
+  header.dist_k3 = dist_k3;
 
   std::cout.write(reinterpret_cast<const char *>(&header), sizeof(header));
   if (payload_size > 0 && payload != nullptr) {
@@ -227,7 +247,12 @@ void emit_intrinsics_record(const Intrinsics &intrinsics) {
       intrinsics.fy,
       intrinsics.cx,
       intrinsics.cy,
-      intrinsics.depth_scale_m);
+      intrinsics.depth_scale_m,
+      intrinsics.dist_k1,
+      intrinsics.dist_k2,
+      intrinsics.dist_p1,
+      intrinsics.dist_p2,
+      intrinsics.dist_k3);
 }
 
 void emit_color_record(const Frame &color) {
@@ -281,7 +306,12 @@ void emit_self_test() {
       500.0,
       1.0,
       1.0,
-      0.001);
+      0.001,
+      0.1,
+      0.2,
+      0.3,
+      0.4,
+      0.5);
   write_record(kKindColor, 2, 2, 3, PixelFormat::kRgb8, color, sizeof(color));
   write_record(kKindDepth, 2, 2, 1, PixelFormat::kDepthU16, depth, sizeof(depth));
 }
@@ -306,10 +336,17 @@ int main(int argc, char **argv) {
     double depth_scale_m = 0.001;
     bool emitted_intrinsics = false;
     uint64_t frame_count = 0;
+    const auto frame_start = std::chrono::steady_clock::now();
+    const auto startup_frame_timeout =
+        std::chrono::milliseconds(options.startup_frame_timeout_ms);
 
     while (options.max_frames == 0 || frame_count < options.max_frames) {
       auto frames = camera.read(options.timeout_ms);
       if (!frames.valid()) {
+        if (!emitted_intrinsics &&
+            std::chrono::steady_clock::now() - frame_start >= startup_frame_timeout) {
+          throw std::runtime_error("no valid Orbbec frames before startup timeout");
+        }
         continue;
       }
 

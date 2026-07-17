@@ -10,6 +10,7 @@ Usage:
     python sim\\scripts\\go1_indoor_nav.py
     python sim\\scripts\\go1_indoor_nav.py --headless   # no 3D render
 """
+
 from __future__ import annotations
 
 import argparse
@@ -35,20 +36,24 @@ sys.path.insert(0, str(_REPO_ROOT))
 
 import mujoco
 
-from runtime.module import Module
+from nav.local import LocalPlanner, PathFollower
+from nav.navigation import Navigation
 from runtime.blueprint import Blueprint
-from runtime.stream import In, Out
+from runtime.module import Module
 from runtime.msgs.geometry import (
-    Pose, PoseStamped, Quaternion, Twist, Vector3,
+    Pose,
+    PoseStamped,
+    Quaternion,
+    Twist,
+    Vector3,
 )
 from runtime.msgs.nav import Odometry
 from runtime.msgs.sensor import PointCloud
-from nav.mission.navigation import Navigation
-from nav.local import LocalPlanner, PathFollower
+from runtime.stream import In, Out
 
 # 鈹€鈹€ Go1 policy constants 鈹€鈹€
-_CTRL_DT = 0.02       # 50 Hz policy
-_ACTION_SCALE = 0.5   # MuJoCo Playground Go1: confirmed action_scale=0.5, Kp=35
+_CTRL_DT = 0.02  # 50 Hz policy
+_ACTION_SCALE = 0.5  # MuJoCo Playground Go1: confirmed action_scale=0.5, Kp=35
 _N_RAYS = 180
 _LIDAR_MIN = 0.2
 _LIDAR_MAX = 8.0
@@ -72,6 +77,7 @@ STEPS_PER_FRAME = int((1.0 / FPS) / 0.004)  # physics dt=0.004
 # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 class SensorRelay(Module, layer=1):
     """Publishes odometry and lidar from main loop into the Module port system."""
+
     odometry: Out[Odometry]
     lidar_cloud: Out[PointCloud]
 
@@ -123,11 +129,13 @@ class LiveMapper(Module, layer=3):
 
         self.scans += 1
         if self.scans % 3 == 0:
-            self.costmap_out.publish({
-                "grid": self.grid.copy(),
-                "resolution": res,
-                "origin": list(self.ORIGIN),
-            })
+            self.costmap_out.publish(
+                {
+                    "grid": self.grid.copy(),
+                    "resolution": res,
+                    "origin": list(self.ORIGIN),
+                }
+            )
 
 
 # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
@@ -136,8 +144,8 @@ class LiveMapper(Module, layer=3):
 class Go1Policy:
     def __init__(self, onnx_path: str):
         import onnxruntime as ort
-        self.sess = ort.InferenceSession(
-            onnx_path, providers=ort.get_available_providers())
+
+        self.sess = ort.InferenceSession(onnx_path, providers=ort.get_available_providers())
         self.out_name = self.sess.get_outputs()[0].name
         self.last_action = np.zeros(12, dtype=np.float32)
         self.default_angles: np.ndarray | None = None
@@ -156,9 +164,17 @@ class Go1Policy:
         jpos = (data.qpos[7:] - self.default_angles).astype(np.float32)
         jvel = data.qvel[6:].astype(np.float32)
 
-        obs = np.concatenate([
-            linvel, gyro, gravity, jpos, jvel, self.last_action, nav_cmd,
-        ]).reshape(1, -1)
+        obs = np.concatenate(
+            [
+                linvel,
+                gyro,
+                gravity,
+                jpos,
+                jvel,
+                self.last_action,
+                nav_cmd,
+            ]
+        ).reshape(1, -1)
 
         action = self.sess.run([self.out_name], {"obs": obs})[0][0]
         self.last_action = action.copy()
@@ -173,24 +189,23 @@ def scan_lidar(model, data, trunk_id: int) -> np.ndarray | None:
     pos[2] = max(pos[2], 0.15)
 
     q = data.qpos[3:7]
-    yaw = math.atan2(2.0 * (q[0]*q[3] + q[1]*q[2]),
-                     1.0 - 2.0 * (q[2]**2 + q[3]**2))
+    yaw = math.atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] ** 2 + q[3] ** 2))
     cy, sy = math.cos(yaw), math.sin(yaw)
 
-    angles = np.linspace(0, 2*math.pi, _N_RAYS, endpoint=False)
+    angles = np.linspace(0, 2 * math.pi, _N_RAYS, endpoint=False)
     dirs = np.zeros((_N_RAYS, 3), dtype=np.float64)
     for i, a in enumerate(angles):
         lx, ly = math.cos(a), math.sin(a)
-        dirs[i, 0] = lx*cy - ly*sy
-        dirs[i, 1] = lx*sy + ly*cy
+        dirs[i, 0] = lx * cy - ly * sy
+        dirs[i, 1] = lx * sy + ly * cy
 
     geomgroup = np.array([1, 1, 0, 0, 0, 0], dtype=np.uint8)
     dist_out = np.full(_N_RAYS, -1.0, dtype=np.float64)
     geomid_out = np.full(_N_RAYS, -1, dtype=np.int32)
 
-    mujoco.mj_multiRay(model, data, pos, dirs.flatten(),
-                       geomgroup, 1, trunk_id,
-                       geomid_out, dist_out, None, _N_RAYS, _LIDAR_MAX)
+    mujoco.mj_multiRay(
+        model, data, pos, dirs.flatten(), geomgroup, 1, trunk_id, geomid_out, dist_out, None, _N_RAYS, _LIDAR_MAX
+    )
 
     mask = (dist_out > _LIDAR_MIN) & (dist_out < _LIDAR_MAX)
     if not mask.any():
@@ -212,10 +227,14 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
             if idx >= scene.maxgeom - 10:
                 break
             p = lidar_pts[i]
-            mujoco.mjv_initGeom(scene.geoms[idx],
-                                mujoco.mjtGeom.mjGEOM_SPHERE, [0.02, 0, 0],
-                                p.astype(np.float64), np.eye(3).flatten(),
-                                np.array([1.0, 0.5, 0.1, 0.8]))
+            mujoco.mjv_initGeom(
+                scene.geoms[idx],
+                mujoco.mjtGeom.mjGEOM_SPHERE,
+                [0.02, 0, 0],
+                p.astype(np.float64),
+                np.eye(3).flatten(),
+                np.array([1.0, 0.5, 0.1, 0.8]),
+            )
             idx += 1
 
     # Global path 鈥?cyan spheres
@@ -226,10 +245,14 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
                 break
             wp = global_path[i]
             pos = np.array([wp[0], wp[1], 0.05], dtype=np.float64)
-            mujoco.mjv_initGeom(scene.geoms[idx],
-                                mujoco.mjtGeom.mjGEOM_SPHERE, [0.04, 0, 0],
-                                pos, np.eye(3).flatten(),
-                                np.array([0.0, 0.8, 0.8, 0.7]))
+            mujoco.mjv_initGeom(
+                scene.geoms[idx],
+                mujoco.mjtGeom.mjGEOM_SPHERE,
+                [0.04, 0, 0],
+                pos,
+                np.eye(3).flatten(),
+                np.array([0.0, 0.8, 0.8, 0.7]),
+            )
             idx += 1
 
     # Robot trail 鈥?blue spheres
@@ -238,19 +261,27 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
         if idx >= scene.maxgeom - 5:
             break
         pos = np.array([trail[i][0], trail[i][1], 0.03], dtype=np.float64)
-        mujoco.mjv_initGeom(scene.geoms[idx],
-                            mujoco.mjtGeom.mjGEOM_SPHERE, [0.03, 0, 0],
-                            pos, np.eye(3).flatten(),
-                            np.array([0.2, 0.4, 1.0, 0.6]))
+        mujoco.mjv_initGeom(
+            scene.geoms[idx],
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            [0.03, 0, 0],
+            pos,
+            np.eye(3).flatten(),
+            np.array([0.2, 0.4, 1.0, 0.6]),
+        )
         idx += 1
 
     # Goal 鈥?green sphere (larger)
     if idx < scene.maxgeom:
         gpos = np.array([goal[0], goal[1], 0.2], dtype=np.float64)
-        mujoco.mjv_initGeom(scene.geoms[idx],
-                            mujoco.mjtGeom.mjGEOM_SPHERE, [0.15, 0, 0],
-                            gpos, np.eye(3).flatten(),
-                            np.array([0.2, 0.9, 0.3, 0.7]))
+        mujoco.mjv_initGeom(
+            scene.geoms[idx],
+            mujoco.mjtGeom.mjGEOM_SPHERE,
+            [0.15, 0, 0],
+            gpos,
+            np.eye(3).flatten(),
+            np.array([0.2, 0.9, 0.3, 0.7]),
+        )
         idx += 1
 
     scene.ngeom = idx
@@ -259,8 +290,7 @@ def inject_markers(scene, lidar_pts, global_path, trail, goal):
 # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 # 2D minimap overlay
 # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
-def draw_minimap(frame, grid, origin, res, robot_pos, robot_yaw,
-                 lidar_pts, global_path, goal, size=200):
+def draw_minimap(frame, grid, origin, res, robot_pos, robot_yaw, lidar_pts, global_path, goal, size=200):
     h, w = frame.shape[:2]
     mx, my = w - size - 15, h - size - 15
 
@@ -295,7 +325,7 @@ def draw_minimap(frame, grid, origin, res, robot_pos, robot_yaw,
     if global_path and len(global_path) > 1:
         for i in range(len(global_path) - 1):
             p1 = w2m(global_path[i][0], global_path[i][1])
-            p2 = w2m(global_path[i+1][0], global_path[i+1][1])
+            p2 = w2m(global_path[i + 1][0], global_path[i + 1][1])
             cv2.line(minimap, p1, p2, (200, 200, 0), 1)
 
     # Goal
@@ -307,15 +337,15 @@ def draw_minimap(frame, grid, origin, res, robot_pos, robot_yaw,
     cv2.circle(minimap, rm, 4, (255, 100, 100), -1)
     dx = int(8 * math.cos(robot_yaw))
     dy = int(-8 * math.sin(robot_yaw))
-    cv2.arrowedLine(minimap, rm, (rm[0]+dx, rm[1]+dy), (255, 100, 100), 1)
+    cv2.arrowedLine(minimap, rm, (rm[0] + dx, rm[1] + dy), (255, 100, 100), 1)
 
     # Border
-    cv2.rectangle(minimap, (0, 0), (size-1, size-1), (100, 100, 100), 1)
+    cv2.rectangle(minimap, (0, 0), (size - 1, size - 1), (100, 100, 100), 1)
 
     # Paste onto frame with semi-transparent background
-    overlay = frame[my:my+size, mx:mx+size].copy()
+    overlay = frame[my : my + size, mx : mx + size].copy()
     blended = cv2.addWeighted(overlay, 0.3, minimap, 0.7, 0)
-    frame[my:my+size, mx:mx+size] = blended
+    frame[my : my + size, mx : mx + size] = blended
 
 
 def draw_info_panel(frame, t, pos, yaw_deg, dist, state, wp_idx, wp_total, scans):
@@ -331,10 +361,8 @@ def draw_info_panel(frame, t, pos, yaw_deg, dist, state, wp_idx, wp_total, scans
     y0 = 25
     for i, line in enumerate(lines):
         y = y0 + i * 22
-        cv2.putText(frame, line, (12, y+1), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (0, 0, 0), 2, cv2.LINE_AA)
-        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(frame, line, (12, y + 1), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.putText(frame, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
@@ -358,8 +386,7 @@ def build_odometry(data, ts: float) -> Odometry:
 
 def get_yaw(data) -> float:
     q = data.qpos[3:7]
-    return math.atan2(2.0*(q[0]*q[3] + q[1]*q[2]),
-                      1.0 - 2.0*(q[2]**2 + q[3]**2))
+    return math.atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] ** 2 + q[3] ** 2))
 
 
 # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
@@ -496,11 +523,13 @@ def main():
 
         # 2c. Send goal to nav module for A* path visualization
         if not goal_sent and mapper.scans >= 10:
-            mapper.goal_cmd.publish(PoseStamped(
-                pose=Pose(position=Vector3(GOAL[0], GOAL[1], 0.0),
-                          orientation=Quaternion(0, 0, 0, 1)),
-                frame_id="map", ts=elapsed,
-            ))
+            mapper.goal_cmd.publish(
+                PoseStamped(
+                    pose=Pose(position=Vector3(GOAL[0], GOAL[1], 0.0), orientation=Quaternion(0, 0, 0, 1)),
+                    frame_id="map",
+                    ts=elapsed,
+                )
+            )
             goal_sent = True
             print(f"Goal sent at t={elapsed:.1f}s after {mapper.scans} scans")
 
@@ -509,8 +538,10 @@ def main():
         gx, gy = GOAL
         bearing = math.atan2(gy - ry, gx - rx)
         yaw_err = bearing - ryaw
-        while yaw_err > math.pi: yaw_err -= 2 * math.pi
-        while yaw_err < -math.pi: yaw_err += 2 * math.pi
+        while yaw_err > math.pi:
+            yaw_err -= 2 * math.pi
+        while yaw_err < -math.pi:
+            yaw_err += 2 * math.pi
 
         if rz < 0.15:
             # Robot fell 鈥?zero command, let physics settle
@@ -532,18 +563,19 @@ def main():
             wp_idx = nav._wp_index
             wp_total = len(nav._path)
             if nav._path:
-                global_path = [(p.pose.position.x, p.pose.position.y)
-                               for p in nav._path]
+                global_path = [(p.pose.position.x, p.pose.position.y) for p in nav._path]
         except Exception:
             nav_state = "?"
             wp_idx = wp_total = 0
 
         # Status print (every 2s)
         if frame_i % (FPS * 2) == 0:
-            print(f"t={elapsed:.0f}s pos=({rx:.2f},{ry:.2f},z={rz:.2f}) "
-                  f"yaw={math.degrees(ryaw):.0f}deg "
-                  f"cmd=({nav_cmd[0]:.2f},{nav_cmd[2]:.2f}) "
-                  f"dist={dist:.1f} {nav_state}")
+            print(
+                f"t={elapsed:.0f}s pos=({rx:.2f},{ry:.2f},z={rz:.2f}) "
+                f"yaw={math.degrees(ryaw):.0f}deg "
+                f"cmd=({nav_cmd[0]:.2f},{nav_cmd[2]:.2f}) "
+                f"dist={dist:.1f} {nav_state}"
+            )
 
         # 5. Render 3D + overlay
         if renderer and video:
@@ -559,10 +591,10 @@ def main():
             rgb = renderer.render()
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-            draw_minimap(bgr, mapper.grid, mapper.ORIGIN, mapper.RESOLUTION,
-                         (rx, ry), ryaw, lidar_pts, global_path, GOAL)
-            draw_info_panel(bgr, elapsed, (rx, ry), math.degrees(ryaw),
-                            dist, nav_state, wp_idx, wp_total, mapper.scans)
+            draw_minimap(
+                bgr, mapper.grid, mapper.ORIGIN, mapper.RESOLUTION, (rx, ry), ryaw, lidar_pts, global_path, GOAL
+            )
+            draw_info_panel(bgr, elapsed, (rx, ry), math.degrees(ryaw), dist, nav_state, wp_idx, wp_total, mapper.scans)
             video.write(bgr)
 
         # Check success (distance-based, independent of nav module state)
@@ -575,8 +607,9 @@ def main():
                     renderer.update_scene(data, cam)
                     rgb = renderer.render()
                     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                    draw_info_panel(bgr, elapsed, (rx, ry), math.degrees(ryaw),
-                                    dist, "SUCCESS", wp_idx, wp_total, mapper.scans)
+                    draw_info_panel(
+                        bgr, elapsed, (rx, ry), math.degrees(ryaw), dist, "SUCCESS", wp_idx, wp_total, mapper.scans
+                    )
                     video.write(bgr)
             break
 

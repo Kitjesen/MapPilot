@@ -121,7 +121,7 @@ python lingtu.py nav --robot thunder --dog-host 192.168.66.190
 ```
 
 External runtime launchers and `lingtu status` print the resolved boundary:
-`Runtime`, `SLAM`, `Frames`, `Topic frames`, and `Flow`. This is the quick
+`Runtime`, `SLAM`, `Frames`, `Topic frames`, and `Path`. This is the quick
 operator check that the selected profile is using the expected data source,
 SLAM/localization/map owner, TF links, topic frame_id contract, and command
 sink. Use `switch-plan` when the full sim/replay/real diff is needed before
@@ -237,9 +237,8 @@ fields explicit:
 
 A valid diff changes the endpoint boundary without changing the product task
 semantics. Simulation and replay targets must never use
-`hardware_driver_after_cmd_vel_mux`. Real targets must use
-`hardware_driver_after_cmd_vel_mux` only through `CmdVelMux`; direct hardware
-actuation paths are outside the contract.
+`driver`. Module-owned targets must reach `driver` only through `CmdVelMux`;
+direct hardware actuation paths are outside the contract.
 
 Compatibility profiles are resolved back to their runtime endpoint in the
 switch plan. For example, `sim_mujoco_live -> explore` should report
@@ -282,7 +281,7 @@ For an actual endpoint, use `resolved_runtime_data_flow.<data_source>` or
 `resolved_runtime_data_flow(data_source)`. That expanded contract replaces
 template placeholders with concrete source topics and command sinks. Examples:
 `thunder_field` resolves to `/nav/lidar_scan + /nav/imu -> /nav/odometry +
-/nav/registered_cloud + /nav/map_cloud -> hardware_driver_after_cmd_vel_mux`;
+/nav/registered_cloud + /nav/map_cloud -> driver`;
 `mujoco_fastlio2_live` resolves to `/points_raw + /imu_raw -> Fast-LIO ->
 /nav/* -> mujoco_velocity_adapter`; `gazebo_industrial` resolves native Gazebo
 topics into `/nav/*` and ends at `/lingtu/gazebo/cmd_vel`.

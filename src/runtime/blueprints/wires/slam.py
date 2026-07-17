@@ -7,6 +7,7 @@ from runtime.runtime_interface import TOPICS
 from .context import (
     MAP_CLOUD_CONSUMERS,
     MAP_CLOUD_FRAME_CONSUMERS,
+    MAP_OBSERVATION_CONSUMERS,
     ODOMETRY_CONSUMERS,
     TOPIC_SLAM_LOCALIZATION_HEALTH,
     TOPIC_SLAM_LOCALIZATION_QUALITY,
@@ -16,12 +17,13 @@ from .context import (
 )
 from .types import WireSpec
 
-
 LOCALIZATION_STATUS_CONSUMERS = (
     "nav.safety",
     "nav.mission",
+    "nav.localization_monitor",
     "DepthVisualOdomModule",
     "GatewayModule",
+    "maps.service",
 )
 
 GNSS_FUSION_HEALTH_CONSUMERS = (
@@ -43,6 +45,11 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     if ctx.slam_module:
         if ctx.slam_module == "SlamModule":
             specs.extend(
+                WireSpec(ctx.slam_module, "map_observation", consumer, "map_observation")
+                for consumer in MAP_OBSERVATION_CONSUMERS
+                if consumer in ctx.names
+            )
+            specs.extend(
                 WireSpec(ctx.slam_module, "map_cloud_frame", consumer, "map_cloud_frame")
                 for consumer in MAP_CLOUD_FRAME_CONSUMERS
                 if consumer in ctx.names
@@ -50,12 +57,23 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             legacy_consumers = ("RerunBridgeModule", "GatewayModule")
         else:
             legacy_consumers = MAP_CLOUD_CONSUMERS
-            if "nav.maps" in ctx.names:
+            if ctx.slam_module == "SlamAdapterModule":
+                specs.extend(
+                    WireSpec(
+                        ctx.slam_module,
+                        "map_observation",
+                        consumer,
+                        "map_observation",
+                    )
+                    for consumer in MAP_OBSERVATION_CONSUMERS
+                    if consumer in ctx.names
+                )
+            if "maps.service" in ctx.names:
                 specs.append(
                     WireSpec(
                         ctx.slam_module,
                         "map_cloud",
-                        "nav.maps",
+                        "maps.service",
                         "map_cloud",
                         topic=TOPIC_SLAM_MAP_CLOUD,
                     )
@@ -77,13 +95,9 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             for consumer in MAP_CLOUD_CONSUMERS
             if consumer in ctx.names
         )
-        if "nav.maps" in ctx.names:
-            specs.append(
-                WireSpec("SimPointCloudProvider", "map_cloud", "nav.maps", "map_cloud")
-            )
-        specs.append(
-            WireSpec(ctx.driver_module, "odometry", "SimPointCloudProvider", "odometry")
-        )
+        if "maps.service" in ctx.names:
+            specs.append(WireSpec("SimPointCloudProvider", "map_cloud", "maps.service", "map_cloud"))
+        specs.append(WireSpec(ctx.driver_module, "odometry", "SimPointCloudProvider", "odometry"))
     elif ctx.driver_module in {
         "MujocoDriverModule",
         "SimEndpointDriverModule",
@@ -93,10 +107,8 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             for consumer in MAP_CLOUD_CONSUMERS
             if consumer in ctx.names
         )
-        if "nav.maps" in ctx.names:
-            specs.append(
-                WireSpec(ctx.driver_module, "map_cloud", "nav.maps", "map_cloud")
-            )
+        if "maps.service" in ctx.names:
+            specs.append(WireSpec(ctx.driver_module, "map_cloud", "maps.service", "map_cloud"))
     return tuple(specs)
 
 
@@ -104,9 +116,17 @@ def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     if ctx.slam_module != "SlamModule":
         return ()
     source = ""
-    if "LidarModule" in ctx.names:
+    if "lidar" in ctx.names:
+        source = "lidar"
+    # Backward-compat fallback: prefer the short "lidar" role above; only fall
+    # back to the legacy "LidarModule" name when an old blueprint still uses it.
+    elif "LidarModule" in ctx.names:
         source = "LidarModule"
-    elif ctx.driver_module == "MujocoDriverModule" and "MujocoDriverModule" in ctx.names:
+    elif (
+        ctx.legacy_driver_sensor_fallback
+        and ctx.driver_module == "MujocoDriverModule"
+        and "MujocoDriverModule" in ctx.names
+    ):
         source = "MujocoDriverModule"
     if not source:
         return ()
@@ -116,12 +136,68 @@ def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             "raw_scan",
             "SlamModule",
             "lidar_raw_scan",
+            transport="dds",
+            topic=TOPICS.raw_lidar_points,
         ),
         WireSpec(
             source,
             "imu",
             "SlamModule",
             "lidar_imu",
+            transport="dds",
+            topic=TOPICS.raw_imu,
+        ),
+    )
+
+
+def scan_view_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
+    """Wire the Gateway live scan overlay to the raw LiDAR role when present.
+
+    Field profiles do not instantiate a Python LiDAR owner. In that case the
+    native SLAM status adapter can expose the same scan as a file snapshot from
+    the C++ runtime without using cyclonedds-python in the robot process.
+    """
+    if "GatewayModule" not in ctx.names:
+        return ()
+    source = ""
+    source_port = "scan"
+    if "lidar" in ctx.names:
+        source = "lidar"
+    elif "LidarModule" in ctx.names:
+        source = "LidarModule"
+    elif ctx.slam_module and ctx.slam_module != "SlamModule":
+        source = ctx.slam_module
+        source_port = "lidar_scan"
+    if not source:
+        return ()
+    return (
+        WireSpec(
+            source,
+            source_port,
+            "GatewayModule",
+            "lidar_scan",
+            transport="local",
+            topic=TOPICS.lidar_scan,
+        ),
+    )
+
+
+def gnss_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
+    if not ctx.slam_module:
+        return ()
+    source = ""
+    if "gnss" in ctx.names:
+        source = "gnss"
+    elif "GnssModule" in ctx.names:
+        source = "GnssModule"
+    if not source:
+        return ()
+    return (
+        WireSpec(
+            source,
+            "gnss_odom",
+            ctx.slam_module,
+            "gnss_odom",
         ),
     )
 
@@ -179,8 +255,7 @@ def localization_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 def odometry_fanout_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     topic = TOPIC_SLAM_ODOMETRY if ctx.slam_module and ctx.nav_odom_src == ctx.slam_module else None
     specs = [
-        WireSpec(ctx.nav_odom_src, "odometry", consumer, "odometry", topic=topic)
-        for consumer in ODOMETRY_CONSUMERS
+        WireSpec(ctx.nav_odom_src, "odometry", consumer, "odometry", topic=topic) for consumer in ODOMETRY_CONSUMERS
     ]
     specs.append(WireSpec(ctx.nav_odom_src, "odometry", "GatewayModule", "odometry", topic=topic))
     return tuple(specs)

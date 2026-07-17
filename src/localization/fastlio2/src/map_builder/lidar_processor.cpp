@@ -1,6 +1,7 @@
 #include "lidar_processor.h"
 #include <pcl/io/pcd_io.h>
 #include <algorithm>
+#include <limits>
 
 LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf)
 {
@@ -225,7 +226,7 @@ void LidarProcessor::initCloudMap(PointVec &point_vec)
     m_ikdtree->Build(point_vec);
 }
 
-void LidarProcessor::process(SyncPackage &package)
+bool LidarProcessor::process(SyncPackage &package)
 {
     // m_kf->setLossFunction([&](State &s, SharedState &d)
     //                       { updateLossFunc(s, d); });
@@ -243,8 +244,18 @@ void LidarProcessor::process(SyncPackage &package)
         pcl::copyPointCloud(*package.cloud, *m_cloud_down_lidar);
     }
     trimCloudMap();
-    m_kf->update();
-    incrCloudMap();
+    m_last_update_attempted = true;
+    m_last_update_accepted = m_kf->update();
+    if (m_last_update_accepted)
+    {
+        m_consecutive_update_rejections = 0;
+        incrCloudMap();
+    }
+    else if (m_consecutive_update_rejections < std::numeric_limits<std::size_t>::max())
+    {
+        ++m_consecutive_update_rejections;
+    }
+    return m_last_update_accepted;
 }
 
 void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)

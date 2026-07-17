@@ -1,4 +1,4 @@
-"""Driver stack: robot connection + camera bridge (if needed).
+"""Driver stack: robot connection.
 
 Two resolution patterns are supported:
 
@@ -22,16 +22,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from runtime.blueprint import Blueprint
 from runtime.adapters.driver_runtime import (
     ensure_driver_runtime_registered,
     seed_driver_plugins_for_runtime,
 )
+from runtime.blueprint import Blueprint
+from runtime.config import get_config
 from runtime.profiles.catalog.robots import (
     ROBOT_DRIVER_PROFILES,
     robot_driver_profile_names,
 )
-from runtime.config import get_config
 from runtime.registry import auto_select, get
 
 logger = logging.getLogger(__name__)
@@ -40,8 +40,7 @@ logger = logging.getLogger(__name__)
 # Registry of known robot presets → (protocol, default params).
 # The catalog owns defaults; this local registry remains mutable for tests.
 _ROBOT_PROFILE_REGISTRY: dict[str, tuple[str, dict[str, Any]]] = {
-    name: (protocol, dict(params))
-    for name, (protocol, params) in ROBOT_DRIVER_PROFILES.items()
+    name: (protocol, dict(params)) for name, (protocol, params) in ROBOT_DRIVER_PROFILES.items()
 }
 
 
@@ -74,10 +73,7 @@ class RobotProfile:
         entry = _ROBOT_PROFILE_REGISTRY.get(name)
         if entry is None:
             valid = ", ".join(robot_driver_profile_names(include_compat=False))
-            raise KeyError(
-                f"Unknown RobotProfile '{name}'. "
-                f"Canonical presets: {valid}"
-            )
+            raise KeyError(f"Unknown RobotProfile '{name}'. Canonical presets: {valid}")
         self.protocol: str = entry[0]
         self.params: dict[str, Any] = dict(entry[1])
 
@@ -103,7 +99,7 @@ class RobotProfile:
 
 
 def driver(robot: str = "thunder", **config) -> Blueprint:
-    """Driver + optional camera bridge.
+    """Driver connection stack.
 
     ``robot`` is the legacy parameter — a registered "driver" name.
     ``config`` may contain ``profile=`` for the new RobotProfile pattern.
@@ -133,12 +129,15 @@ def driver(robot: str = "thunder", **config) -> Blueprint:
         driver_config = {**profile.params, **dict(config)}
         logger.debug(
             "Resolved profile=%s → protocol=%s, driver=%s",
-            profile_name, profile.protocol, DriverCls.__name__,
+            profile_name,
+            profile.protocol,
+            DriverCls.__name__,
         )
     # Legacy pattern: resolve robot string → driver registry
     else:
         if robot == "auto":
             import platform
+
             robot = auto_select("driver", platform=platform.machine().lower()) or "stub"
         driver_key = ensure_driver_runtime_registered("driver", robot)
         DriverCls = get("driver", driver_key)
@@ -150,7 +149,7 @@ def driver(robot: str = "thunder", **config) -> Blueprint:
     driver_config.setdefault("auto_standup", cfg.driver.auto_standup)
     bp.add(DriverCls, **driver_config)
 
-    # Camera bridge moved to perception() stack — only loaded when needed
+    # Camera is owned by perception() and loaded only when needed.
     return bp
 
 
@@ -159,20 +158,23 @@ def driver_name(robot: str) -> str:
     seed_driver_plugins_for_runtime(robot)
     if robot == "auto":
         import platform
+
         robot = auto_select("driver", platform=platform.machine().lower()) or "stub"
     driver_key = ensure_driver_runtime_registered("driver", robot)
     return get("driver", driver_key).__name__
 
 
 # Known driver class names (used by Blueprint as module names).
-_KNOWN_DRIVER_CLASSES = frozenset({
-    "ThunderDriver",
-    "StubDogModule",
-    "MujocoDriverModule",
-    "SimEndpointDriverModule",
-    "NovaDogConnection",
-    "StubConnection",
-})
+_KNOWN_DRIVER_CLASSES = frozenset(
+    {
+        "ThunderDriver",
+        "StubDogModule",
+        "MujocoDriverModule",
+        "SimEndpointDriverModule",
+        "NovaDogConnection",
+        "StubConnection",
+    }
+)
 
 
 def get_current_driver_name(system: Any) -> str:
@@ -187,7 +189,4 @@ def get_current_driver_name(system: Any) -> str:
     for name in system.modules:
         if name in _KNOWN_DRIVER_CLASSES:
             return name
-    raise KeyError(
-        f"No known driver module found in system. "
-        f"Available modules: {list(system.modules.keys())}"
-    )
+    raise KeyError(f"No known driver module found in system. Available modules: {list(system.modules.keys())}")

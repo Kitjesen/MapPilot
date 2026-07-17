@@ -25,7 +25,6 @@ _DEFAULT_LATENCY_BUDGET_MS = {
     "sim_nav": 150,
     "sim_mujoco_live": 250,
     "sim_mujoco_octo_live": 800,
-    "sim_mujoco_pct_live": 800,
     "sim_gazebo": 250,
     "sim_industrial": 250,
     "sim_cmu_tare": 1000,
@@ -73,13 +72,8 @@ def resolve_planner_runtime_profile(
     fallback_value = config.get("fallback_planners")
     if fallback_value is None:
         fallback_value = config.get("fallback_planner_name")
-    fallbacks = [
-        name for name in planner_fallback_chain(fallback_value) if name != primary
-    ]
-    latency_budget = int(
-        config.get("planner_latency_budget_ms")
-        or _DEFAULT_LATENCY_BUDGET_MS.get(profile, 500)
-    )
+    fallbacks = [name for name in planner_fallback_chain(fallback_value) if name != primary]
+    latency_budget = int(config.get("planner_latency_budget_ms") or _DEFAULT_LATENCY_BUDGET_MS.get(profile, 500))
     return {
         "schema_version": "lingtu.planner_runtime_profile.v1",
         "profile": profile,

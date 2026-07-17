@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -17,12 +18,15 @@ from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
 from runtime.profiles.resolver import canonical_profile_name
 
 RUNTIME_SWITCH_SCHEMA_VERSION = "lingtu.runtime_switch.v1"
-_MAP_REQUIRED_PROFILES = frozenset({
-    "teleop_avoid",
-    "tracking",
-    "nav",
-    "inspection",
-})
+_MAP_REQUIRED_PROFILES = frozenset(
+    {
+        "teleop_avoid",
+        "tracking",
+        "nav",
+        "inspection",
+    }
+)
+_RUNTIME_SWITCH_INFLIGHT_TTL_S = 300.0
 
 
 def _request_mapping(request: Any) -> dict[str, Any]:
@@ -88,20 +92,132 @@ def _resolve_active_map_name(gw: Any) -> str | None:
 
 def _log_path(command_id: str) -> Path:
     root = Path(
-        os.environ.get("LINGTU_RUNTIME_SWITCH_LOG_DIR")
-        or Path(tempfile.gettempdir()) / "lingtu_runtime_switch"
+        os.environ.get("LINGTU_RUNTIME_SWITCH_LOG_DIR") or Path(tempfile.gettempdir()) / "lingtu_runtime_switch"
     )
     root.mkdir(parents=True, exist_ok=True)
-    return root / f"{command_id}.log"
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", command_id).strip("-.")
+    return root / f"{safe_id[:96] or 'switch'}.log"
+
+
+def _requires_transient_unit() -> bool:
+    if os.name == "nt":
+        return False
+    return any(_clean_text(os.environ.get(name)) for name in ("INVOCATION_ID", "SYSTEMD_EXEC_PID"))
+
+
+def _transient_unit_name(command_id: str) -> str:
+    configured = _clean_text(os.environ.get("LINGTU_RUNTIME_SWITCH_UNIT"))
+    safe_base = (
+        re.sub(
+            r"[^A-Za-z0-9_.-]+",
+            "-",
+            configured or "lingtu-runtime-switch",
+        ).strip("-.")
+        or "lingtu-runtime-switch"
+    )
+    safe_id = re.sub(r"[^A-Za-z0-9_.-]+", "-", command_id).strip("-.")
+    unit_name = f"{safe_base}-{safe_id}" if safe_id else safe_base
+    return unit_name[:96].rstrip("-.") or "lingtu-runtime-switch"
+
+
+def _active_cold_switch(gw: Any) -> dict[str, Any] | None:
+    state = getattr(gw, "_runtime_switch_pending", None) if gw is not None else None
+    if not isinstance(state, Mapping):
+        return None
+    try:
+        age_s = time.monotonic() - float(state.get("started_monotonic"))
+    except (TypeError, ValueError):
+        age_s = _RUNTIME_SWITCH_INFLIGHT_TTL_S + 1.0
+    if 0.0 <= age_s <= _RUNTIME_SWITCH_INFLIGHT_TTL_S:
+        return dict(state)
+    gw._runtime_switch_pending = None
+    return None
+
+
+def runtime_switch_pending(gw: Any) -> bool:
+    """Return current cold-switch state while reaping expired in-memory state."""
+
+    return _active_cold_switch(gw) is not None
+
+
+def _begin_cold_switch(gw: Any, command_id: str) -> dict[str, Any] | None:
+    active = _active_cold_switch(gw)
+    if active is not None:
+        return active
+    if gw is not None:
+        gw._runtime_switch_pending = {"command_id": command_id, "started_monotonic": time.monotonic()}
+    return None
+
+
+def _finish_cold_switch(gw: Any, command_id: str) -> None:
+    state = getattr(gw, "_runtime_switch_pending", None) if gw is not None else None
+    if not isinstance(state, Mapping) or state.get("command_id") == command_id:
+        if gw is not None:
+            gw._runtime_switch_pending = None
+
+
+def _quiesce_for_cold_switch(gw: Any, command_id: str) -> list[str]:
+    if gw is None:
+        raise RuntimeError("gateway instance is required for a cold runtime switch")
+
+    from gateway.services.native_control import endpoint_only_enabled
+    from gateway.services.native_control import stop as native_stop
+
+    reason = "runtime_switch_pending"
+    wrote_native = native_stop(reason, request_id=command_id)
+    if wrote_native:
+        return ["native_navigation.stop_ack", "runtime_switch.pending"]
+    if endpoint_only_enabled():
+        raise RuntimeError("native navigation endpoint did not acknowledge stop")
+
+    gw.cancel.publish(reason)
+    gw.stop_cmd.publish(1)
+    gw.cmd_vel.publish(Twist())
+    return [
+        "navigation.cancel",
+        "safety.soft_stop",
+        "cmd_vel.zero",
+        "runtime_switch.pending",
+    ]
+
+
+def _systemd_run_command(
+    command: list[str],
+    *,
+    command_id: str,
+    log_path: Path,
+    env: Mapping[str, str],
+) -> list[str]:
+    unit_name = _transient_unit_name(command_id)
+    user = _clean_text(env.get("USER")) or _clean_text(os.environ.get("USER")) or "sunrise"
+    group = _clean_text(env.get("GROUP")) or _clean_text(os.environ.get("GROUP")) or user
+    home = _clean_text(env.get("HOME")) or ("/root" if user == "root" else f"/home/{user}")
+    return [
+        "sudo",
+        "-n",
+        "systemd-run",
+        f"--unit={unit_name}",
+        "--collect",
+        "--no-block",
+        "--service-type=exec",
+        f"--working-directory={_repo_root()}",
+        f"--property=User={user}",
+        f"--property=Group={group}",
+        f"--property=StandardOutput=append:{log_path}",
+        f"--property=StandardError=append:{log_path}",
+        "--",
+        "/usr/bin/env",
+        f"HOME={home}",
+        f"USER={user}",
+        f"LOGNAME={user}",
+        f"GW={env.get('GW', 'http://localhost:5050')}",
+        *command,
+    ]
 
 
 def _build_command(raw: Mapping[str, Any], target_profile: str) -> list[str]:
     script = _script_path()
-    endpoint = (
-        _clean_text(raw.get("target_endpoint"))
-        or _clean_text(raw.get("endpoint"))
-        or "thunder_field"
-    )
+    endpoint = _clean_text(raw.get("target_endpoint")) or _clean_text(raw.get("endpoint")) or "thunder_field"
     command = [
         "bash",
         str(script),
@@ -149,9 +265,7 @@ def _base_response(
     if isinstance(product_switch, Mapping):
         lifecycle = str(product_switch.get("required_lifecycle") or lifecycle)
     plan_inputs = plan.get("inputs") if isinstance(plan.get("inputs"), Mapping) else {}
-    current_profile = _clean_text(raw.get("current_profile")) or _clean_text(
-        plan_inputs.get("current_profile")
-    )
+    current_profile = _clean_text(raw.get("current_profile")) or _clean_text(plan_inputs.get("current_profile"))
     return {
         "schema_version": RUNTIME_SWITCH_SCHEMA_VERSION,
         "ts": time.time(),
@@ -168,9 +282,7 @@ def _base_response(
         "map_name": _clean_text(raw.get("map_name")),
         "relocalize": bool(raw.get("relocalize", True)),
         "plan": dict(plan),
-        "product_mode_switch": (
-            dict(product_switch) if isinstance(product_switch, Mapping) else None
-        ),
+        "product_mode_switch": (dict(product_switch) if isinstance(product_switch, Mapping) else None),
         "effects": list(effects or []),
         "command": list(command or []),
         "command_id": command_id,
@@ -270,18 +382,13 @@ def build_runtime_switch_response(
     target_profile = canonical_profile_name(str(raw.get("target_profile") or "nav"))
     raw["target_profile"] = target_profile
     raw["target_endpoint"] = (
-        _clean_text(raw.get("target_endpoint"))
-        or _clean_text(raw.get("endpoint"))
-        or "thunder_field"
+        _clean_text(raw.get("target_endpoint")) or _clean_text(raw.get("endpoint")) or "thunder_field"
     )
     raw["endpoint"] = raw["target_endpoint"]
     raw["strategy"] = str(raw.get("strategy") or "auto").strip().lower() or "auto"
     raw["execute"] = bool(raw.get("execute", False))
     active_map = _resolve_active_map_name(gw)
-    if (
-        target_profile in _MAP_REQUIRED_PROFILES
-        and not _clean_text(raw.get("map_name"))
-    ):
+    if target_profile in _MAP_REQUIRED_PROFILES and not _clean_text(raw.get("map_name")):
         if active_map:
             raw["map_name"] = active_map
 
@@ -289,10 +396,7 @@ def build_runtime_switch_response(
     blockers = list(plan.get("blockers") or [])
     if target_profile not in PRODUCT_MODE_CONTRACTS:
         blockers.append(f"unsupported product mode: {target_profile}")
-    if (
-        target_profile in _MAP_REQUIRED_PROFILES
-        and not _clean_text(raw.get("map_name"))
-    ):
+    if target_profile in _MAP_REQUIRED_PROFILES and not _clean_text(raw.get("map_name")):
         blockers.append(f"{target_profile} requires map_name")
     if not bool(plan.get("ok")):
         blockers.extend(str(item) for item in plan.get("blockers") or [])
@@ -370,23 +474,95 @@ def build_runtime_switch_response(
         )
 
     command_id = _clean_text(raw.get("request_id")) or uuid.uuid4().hex
+    active_switch = _begin_cold_switch(gw, command_id)
+    if active_switch is not None:
+        active_command_id = _clean_text(active_switch.get("command_id")) or "unknown"
+        return _base_response(
+            raw,
+            plan=plan,
+            status="rejected",
+            ok=False,
+            command=command,
+            command_id=command_id,
+            blockers=[f"runtime switch already in progress: {active_command_id}"],
+        )
+
     log_path = _log_path(command_id)
     env = os.environ.copy()
     env.setdefault("GW", "http://localhost:5050")
+    proc_pid: int | None = None
+    effects: list[str] = []
     try:
-        with log_path.open("ab") as log:
-            kwargs: dict[str, Any] = {
-                "cwd": str(_repo_root()),
-                "env": env,
-                "stdout": log,
-                "stderr": subprocess.STDOUT,
-                "stdin": subprocess.DEVNULL,
-                "close_fds": os.name != "nt",
-            }
-            if os.name != "nt":
-                kwargs["start_new_session"] = True
-            proc = subprocess.Popen(command, **kwargs)
+        effects = _quiesce_for_cold_switch(gw, command_id)
+        if _requires_transient_unit():
+            # systemd opens StandardOutput before ExecStart.  On the S100P image,
+            # reusing a caller-created file fails with status 209/STDOUT, while an
+            # absent path is created correctly by PID 1.
+            log_path.unlink(missing_ok=True)
+            sudo_check = subprocess.run(
+                ["sudo", "-n", "true"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5.0,
+            )
+            if sudo_check.returncode != 0:
+                detail = str(sudo_check.stderr or sudo_check.stdout or "").strip()
+                _finish_cold_switch(gw, command_id)
+                return _base_response(
+                    raw,
+                    plan=plan,
+                    status="rejected",
+                    ok=False,
+                    command=command,
+                    command_id=command_id,
+                    log_path=str(log_path),
+                    blockers=["non-interactive sudo is required for an independent runtime switch"],
+                    error=detail or "sudo -n preflight failed",
+                )
+            transient_command = _systemd_run_command(
+                command,
+                command_id=command_id,
+                log_path=log_path,
+                env=env,
+            )
+            launched = subprocess.run(
+                transient_command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            if launched.returncode != 0:
+                detail = str(launched.stderr or launched.stdout or "").strip()
+                _finish_cold_switch(gw, command_id)
+                return _base_response(
+                    raw,
+                    plan=plan,
+                    status="rejected",
+                    ok=False,
+                    command=command,
+                    command_id=command_id,
+                    log_path=str(log_path),
+                    blockers=["failed to create independent systemd runtime-switch unit"],
+                    error=detail or f"systemd-run exited {launched.returncode}",
+                )
+        else:
+            with log_path.open("ab") as log:
+                kwargs: dict[str, Any] = {
+                    "cwd": str(_repo_root()),
+                    "env": env,
+                    "stdout": log,
+                    "stderr": subprocess.STDOUT,
+                    "stdin": subprocess.DEVNULL,
+                    "close_fds": os.name != "nt",
+                }
+                if os.name != "nt":
+                    kwargs["start_new_session"] = True
+                proc = subprocess.Popen(command, **kwargs)
+                proc_pid = proc.pid
     except Exception as exc:
+        _finish_cold_switch(gw, command_id)
         return _base_response(
             raw,
             plan=plan,
@@ -407,6 +583,7 @@ def build_runtime_switch_response(
         accepted=True,
         command=command,
         command_id=command_id,
-        pid=proc.pid,
+        pid=proc_pid,
         log_path=str(log_path),
+        effects=effects,
     )

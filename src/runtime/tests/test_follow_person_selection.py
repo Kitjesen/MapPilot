@@ -11,14 +11,14 @@ import asyncio
 
 import numpy as np
 
-from decision.vision.person_tracker import PersonTracker
-from decision.modules.semantic_planner_module import SemanticPlannerModule
-from decision.modules.visual_servo_module import VisualServoModule
+from decision.modules.semantic_planner import SemanticPlannerModule
+from decision.modules.visual_servo import VisualServoModule
+from decision.vision.person import PersonTracker
 from runtime.msgs.geometry import Vector3
 from runtime.msgs.semantic import Detection3D, SceneGraph
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
+
 
 def _marker_crop(marker: int, size: int = 16) -> np.ndarray:
     """A crop whose every pixel equals `marker`, so a fake encoder can identify it."""
@@ -48,6 +48,7 @@ class _TextOnlyClip:
 
 # ── CLIPEncoder.encode_image (interface-gap fix) ──────────────────────────────
 
+
 def test_clip_encoder_has_encode_image():
     from perception.encoding.clip_encoder import CLIPEncoder
 
@@ -61,12 +62,15 @@ def test_clip_encoder_has_encode_image():
 
 # ── PersonTracker.select_by_clip ──────────────────────────────────────────────
 
+
 def test_select_by_clip_picks_matching_person():
     tracker = PersonTracker()
     tracker.set_clip_encoder(_FakeClip([1.0, 0.0], {1: [1.0, 0.0], 2: [0.0, 1.0]}))
     crops = [_marker_crop(1), _marker_crop(2)]
-    objs = [{"id": "red", "position": [1, 0, 0], "bbox": [0, 0, 10, 10]},
-            {"id": "blue", "position": [2, 0, 0], "bbox": [0, 0, 10, 10]}]
+    objs = [
+        {"id": "red", "position": [1, 0, 0], "bbox": [0, 0, 10, 10]},
+        {"id": "blue", "position": [2, 0, 0], "bbox": [0, 0, 10, 10]},
+    ]
 
     idx = tracker.select_by_clip("person in red", crops, objs)
     assert idx == 0
@@ -100,20 +104,21 @@ def test_select_by_clip_textonly_encoder_returns_minus1():
 
 # ── PersonTracker.select_target_with_vlm (multimodal) ─────────────────────────
 
+
 def test_select_target_with_vlm_picks_response():
     tracker = PersonTracker()
     crops = [_marker_crop(1), _marker_crop(2)]
-    objs = [{"id": "p1", "position": [1, 0, 0], "bbox": [0, 0, 10, 10]},
-            {"id": "p2", "position": [2, 0, 0], "bbox": [0, 0, 10, 10]}]
+    objs = [
+        {"id": "p1", "position": [1, 0, 0], "bbox": [0, 0, 10, 10]},
+        {"id": "p2", "position": [2, 0, 0], "bbox": [0, 0, 10, 10]},
+    ]
     captured = {}
 
     async def mock_vlm(messages):
         captured["messages"] = messages
         return "选 2 号"
 
-    idx = asyncio.run(
-        tracker.select_target_with_vlm("person in red", crops, objs, mock_vlm)
-    )
+    idx = asyncio.run(tracker.select_target_with_vlm("person in red", crops, objs, mock_vlm))
     assert idx == 1
     assert tracker._person is not None
     assert tracker._person.obj_id == "p2"
@@ -127,9 +132,7 @@ def test_select_target_with_vlm_picks_response():
 
 
 def test_build_vlm_select_messages_structure():
-    msgs = PersonTracker._build_vlm_select_messages(
-        "pick one", [_marker_crop(1), _marker_crop(2)]
-    )
+    msgs = PersonTracker._build_vlm_select_messages("pick one", [_marker_crop(1), _marker_crop(2)])
     assert len(msgs) == 1 and msgs[0]["role"] == "user"
     content = msgs[0]["content"]
     assert content[0] == {"type": "text", "text": "pick one"}
@@ -139,6 +142,7 @@ def test_build_vlm_select_messages_structure():
 
 
 # ── VisualServoModule injection + selection ───────────────────────────────────
+
 
 def test_vs_injects_image_capable_encoder():
     vs = VisualServoModule()
@@ -189,8 +193,7 @@ def test_vs_rejects_text_only_llm():
 
 
 def _person(obj_id, label, x, bbox):
-    return {"id": obj_id, "label": label, "position": [x, 0, 0],
-            "bbox": bbox, "confidence": 0.9}
+    return {"id": obj_id, "label": label, "position": [x, 0, 0], "bbox": bbox, "confidence": 0.9}
 
 
 def test_vs_try_select_follow_locks_via_clip():
@@ -204,7 +207,7 @@ def test_vs_try_select_follow_locks_via_clip():
     vs._follow_select_pending = True
 
     bgr = np.zeros((40, 40, 3), dtype=np.uint8)
-    bgr[0:20, 0:20] = 1   # "red" person region (marker 1)
+    bgr[0:20, 0:20] = 1  # "red" person region (marker 1)
     bgr[0:20, 20:40] = 2  # "blue" person region (marker 2)
     vs._latest_bgr = bgr
 
@@ -245,18 +248,17 @@ def test_vs_client_supports_vision():
     assert VisualServoModule._client_supports_vision(None) is False
 
     class Moonshot:
-        def chat(self):
-            ...
+        def chat(self): ...
 
     class OpenAI:
-        def chat(self):
-            ...
+        def chat(self): ...
 
     assert VisualServoModule._client_supports_vision(Moonshot()) is False
     assert VisualServoModule._client_supports_vision(OpenAI()) is True
 
 
 # ── SemanticPlanner follow-intent routing ─────────────────────────────────────
+
 
 def test_detect_follow_intent_positive():
     m = SemanticPlannerModule()
@@ -275,18 +277,22 @@ def test_detect_follow_intent_negative():
 
 # ── Follow re-selection after target lost ─────────────────────────────────────
 
+
 def _follow_sg():
-    return SceneGraph(objects=[
-        Detection3D(id="p", label="person", confidence=0.9,
-                    position=Vector3(1.0, 0.0, 0.0), bbox_2d=[0, 0, 10, 10]),
-    ])
+    return SceneGraph(
+        objects=[
+            Detection3D(
+                id="p", label="person", confidence=0.9, position=Vector3(1.0, 0.0, 0.0), bbox_2d=[0, 0, 10, 10]
+            ),
+        ]
+    )
 
 
 def test_vs_reselects_after_target_lost():
     """A previously locked target lost past Re-ID timeout re-arms selection."""
     vs = VisualServoModule()
     vs._target_label = "person in red"
-    vs._follow_select_method = "clip"      # already locked once
+    vs._follow_select_method = "clip"  # already locked once
     vs._follow_select_pending = False
     vs._person_tracker.needs_vlm_reselect = lambda: True  # simulate lost-too-long
 
@@ -300,8 +306,8 @@ def test_vs_reselects_after_target_lost():
 
     vs._tick_follow()
 
-    assert vs._follow_select_pending is True   # re-armed
-    assert len(calls) == 1                       # selection retried this frame
+    assert vs._follow_select_pending is True  # re-armed
+    assert len(calls) == 1  # selection retried this frame
 
 
 def test_vs_no_reselect_before_first_lock():

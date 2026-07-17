@@ -26,15 +26,7 @@ RUNTIME_MODULE = "nav.services.plan.global_planner.algorithm.octoplanner3d_runti
 REGISTRY_KEY = "octoplanner3d"
 REPO_ROOT = Path(__file__).resolve().parents[4]
 OCTO_NATIVE_DIR = (
-    REPO_ROOT
-    / "src"
-    / "nav"
-    / "services"
-    / "plan"
-    / "global_planner"
-    / "algorithm"
-    / "OctoPlanner3D"
-    / "runtime"
+    REPO_ROOT / "src" / "nav" / "services" / "plan" / "global_planner" / "algorithm" / "OctoPlanner3D" / "runtime"
 )
 
 
@@ -62,7 +54,7 @@ def _missing_backend(tmp_path):
     module = importlib.import_module(MODULE)
     missing_exe = tmp_path / "octoplanner3d_headless_missing"
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(_dummy_map(tmp_path)),
+        map_path=str(_dummy_map(tmp_path)),
         executable_path=str(missing_exe),
     )
     return backend, missing_exe
@@ -83,7 +75,7 @@ def test_seed_builtin_plugins_registers_octoplanner3d_backend(tmp_path):
     assert BackendCls.__module__ == MODULE
 
     instance = BackendCls(
-        tomogram_path=str(_dummy_map(tmp_path)),
+        map_path=str(_dummy_map(tmp_path)),
         executable_path=str(tmp_path / "missing-globalPlan"),
     )
     assert hasattr(instance, "available")
@@ -181,7 +173,7 @@ def test_missing_map_path_marks_backend_unavailable(tmp_path, monkeypatch):
     exe = tmp_path / "octoplanner3d_headless"
     exe.write_text("# fake executable\n", encoding="utf-8")
 
-    backend = module.OctoPlanner3DBackend(tomogram_path="", executable_path=str(exe))
+    backend = module.OctoPlanner3DBackend(map_path="", executable_path=str(exe))
 
     assert backend.available is False
     assert "OctoPlanner3D map path not configured" in backend._load_error
@@ -195,7 +187,7 @@ def test_unsupported_map_format_marks_backend_unavailable(tmp_path):
     pct_tomogram.write_bytes(b"not an octomap")
 
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(pct_tomogram),
+        map_path=str(pct_tomogram),
         executable_path=str(exe),
     )
 
@@ -203,14 +195,14 @@ def test_unsupported_map_format_marks_backend_unavailable(tmp_path):
     assert "OctoPlanner3D map format unsupported: .pickle" in backend._load_error
 
 
-def test_constructor_keeps_tomogram_path_compatibility():
+def test_constructor_keeps_map_path_compatibility():
     module = importlib.import_module(MODULE)
 
     signature = inspect.signature(module.OctoPlanner3DBackend.__init__)
     params = list(signature.parameters.values())
 
     assert params[0].name == "self"
-    assert params[1].name == "tomogram_path"
+    assert params[1].name == "map_path"
     assert params[1].default == ""
     assert params[2].name == "obstacle_thr"
     assert params[2].default == pytest.approx(49.9)
@@ -287,7 +279,7 @@ def test_plan_uses_headless_executable_json_protocol(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime_module.subprocess, "run", fake_run)
 
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(_dummy_map(tmp_path)),
+        map_path=str(_dummy_map(tmp_path)),
         executable_path=str(exe),
     )
     assert backend.available is True
@@ -340,10 +332,16 @@ def test_plan_uses_headless_executable_json_protocol(tmp_path, monkeypatch):
     assert payload["options"]["search_algorithm"] == "octomap_3d_astar"
     assert payload["options"]["constraint_model"] == "quadruped_bounding_cylinder_ground_support"
     assert payload["options"]["robot_radius"] == pytest.approx(0.25)
+    assert payload["options"]["body_clearance_below_m"] == pytest.approx(0.0)
+    assert payload["options"]["body_clearance_above_m"] == pytest.approx(0.0)
     assert payload["options"]["require_ground_support"] is True
     assert payload["options"]["strict_direct_ground_support"] is False
-    assert payload["options"]["ground_support_xy_radius_cells"] == 1
+    assert payload["options"]["ground_support_xy_radius_cells"] == 2
     assert payload["options"]["ground_support_depth_cells"] == 1
+    assert payload["options"]["support_height_m"] == pytest.approx(0.0)
+    assert payload["options"]["support_height_tolerance_m"] == pytest.approx(0.0)
+    assert payload["options"]["support_patch_radius_cells"] == 0
+    assert payload["options"]["support_patch_min_samples"] == 0
     assert payload["options"]["max_step_height"] == pytest.approx(0.45)
     assert payload["options"]["max_slope"] == pytest.approx(0.0)
     assert payload["start"] == [0.0, 0.0, 0.0]
@@ -394,14 +392,20 @@ def test_octoplanner3d_constraints_are_configurable_in_payload(tmp_path, monkeyp
     monkeypatch.setattr(runtime_module.subprocess, "run", fake_run)
 
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(_dummy_map(tmp_path)),
+        map_path=str(_dummy_map(tmp_path)),
         executable_path=str(exe),
     )
     backend.configure_constraints(
         {
             "robot_radius": 0.6,
+            "body_clearance_below_m": 0.45,
+            "body_clearance_above_m": 0.30,
             "strict_direct_ground_support": True,
             "ground_support_depth_cells": 2,
+            "support_height_m": 0.55,
+            "support_height_tolerance_m": 0.12,
+            "support_patch_radius_cells": 2,
+            "support_patch_min_samples": 4,
             "preblocked_costmap_weight": 4.0,
             "lowest_traversable_only": True,
             "floor_change_penalty": 6.0,
@@ -419,8 +423,14 @@ def test_octoplanner3d_constraints_are_configurable_in_payload(tmp_path, monkeyp
     payload = json.loads(calls[-1]["input"])
 
     assert payload["options"]["robot_radius"] == pytest.approx(0.6)
+    assert payload["options"]["body_clearance_below_m"] == pytest.approx(0.45)
+    assert payload["options"]["body_clearance_above_m"] == pytest.approx(0.30)
     assert payload["options"]["strict_direct_ground_support"] is True
     assert payload["options"]["ground_support_depth_cells"] == 2
+    assert payload["options"]["support_height_m"] == pytest.approx(0.55)
+    assert payload["options"]["support_height_tolerance_m"] == pytest.approx(0.12)
+    assert payload["options"]["support_patch_radius_cells"] == 2
+    assert payload["options"]["support_patch_min_samples"] == 4
     assert payload["options"]["preblocked_costmap_weight"] == pytest.approx(4.0)
     assert payload["options"]["lowest_traversable_only"] is True
     assert payload["options"]["floor_change_penalty"] == pytest.approx(6.0)
@@ -459,7 +469,7 @@ def test_octoplanner3d_rejects_same_floor_path_with_large_z_excursion(tmp_path, 
     monkeypatch.setattr(runtime_module.subprocess, "run", fake_run)
 
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(_dummy_map(tmp_path)),
+        map_path=str(_dummy_map(tmp_path)),
         executable_path=str(exe),
     )
 
@@ -489,7 +499,7 @@ def test_nonzero_headless_json_failure_preserves_cxx_diagnostics(tmp_path, monke
     monkeypatch.setattr(runtime_module.subprocess, "run", fake_run)
 
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(_dummy_map(tmp_path)),
+        map_path=str(_dummy_map(tmp_path)),
         executable_path=str(exe),
     )
     path = backend.plan([0.0, 0.0, 0.0], [1.0, 1.0, 0.0])
@@ -518,7 +528,7 @@ def test_wsl_executable_bridge_converts_map_path_and_command(tmp_path, monkeypat
     map_path = tmp_path / "building2_9.bt"
     map_path.write_bytes(b"dummy")
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(map_path),
+        map_path=str(map_path),
     )
 
     expected_map_path = runtime_module.OctoPlanner3DRuntime.to_wsl_path(str(map_path))
@@ -562,7 +572,7 @@ def test_default_wsl_build_output_is_auto_discovered(tmp_path, monkeypatch):
         staticmethod(lambda: [exe]),
     )
 
-    backend = module.OctoPlanner3DBackend(tomogram_path=str(map_path))
+    backend = module.OctoPlanner3DBackend(map_path=str(map_path))
 
     assert backend.executable_path == ""
     assert backend.available is True
@@ -600,7 +610,7 @@ def test_windows_extensionless_local_build_output_uses_wsl(tmp_path, monkeypatch
     map_path = tmp_path / "map.bt"
     map_path.write_bytes(b"dummy")
 
-    backend = module.OctoPlanner3DBackend(tomogram_path=str(map_path))
+    backend = module.OctoPlanner3DBackend(map_path=str(map_path))
 
     assert backend.executable_path == ""
     assert backend.available is True
@@ -631,7 +641,7 @@ def test_linux_home_executable_path_stays_native(tmp_path, monkeypatch):
     map_path.write_bytes(b"dummy")
 
     backend = module.OctoPlanner3DBackend(
-        tomogram_path=str(map_path),
+        map_path=str(map_path),
         executable_path=str(exe),
     )
 
@@ -642,18 +652,17 @@ def test_linux_home_executable_path_stays_native(tmp_path, monkeypatch):
     assert backend._runtime.command() == [str(exe)]
 
 
-def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
+def test_native_runtime_uses_generic_contract_and_public_octoplanner3d_adapter():
     source = (OCTO_NATIVE_DIR / "octoplanner3d_headless.cpp").read_text(encoding="utf-8")
     core = (OCTO_NATIVE_DIR / "octoplanner3d_core.cpp").read_text(encoding="utf-8")
     cmake = (OCTO_NATIVE_DIR / "CMakeLists.txt").read_text(encoding="utf-8")
     planner_header = (
-        REPO_ROOT
-        / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/include/global_planner.h"
+        REPO_ROOT / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/include/global_planner.h"
     ).read_text(encoding="utf-8")
     planner_core = (
-        REPO_ROOT
-        / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/src/global_planner.cpp"
+        REPO_ROOT / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/src/global_planner.cpp"
     ).read_text(encoding="utf-8")
+    contract = (REPO_ROOT / "src/nav/services/plan/cpp/global_planner_contract.hpp").read_text(encoding="utf-8")
     runtime_combined = source + "\n" + core + "\n" + cmake
 
     assert '#include "octoplanner3d_core.hpp"' in source
@@ -666,27 +675,32 @@ def test_headless_wrapper_is_a_non_ros2_octoplanner3d_core_adapter():
     assert "converter.setFreeEnvelopeDilationCells" in source + "\n" + core
     assert "OCTOPLANNER3D_ENABLE_PCD" in core
     assert "PCD input requires a headless build with PCL support" in core
-    assert "global_planner::GlobalPlanner planner" in core
-    assert "applyPlannerOptions(planner, request.options)" in core
-    assert "planner.robot_radius_ = options.robot_radius" in core
-    assert "planner.require_ground_support_ = options.require_ground_support" in core
-    assert "planner.strict_direct_ground_support_ = options.strict_direct_ground_support" in core
-    assert "product code does not patch imported source" in core
+    assert "struct GlobalPlanRequest" in contract
+    assert "using GlobalPlannerFunction" in contract
+    assert "global_planner::OctoPlanner3D planner" in core
+    assert "planner.setConfig(plannerConfig(request.options))" in core
+    assert "planner.setCancelCheck(cancel_check)" in core
+    assert "class OctoPlanner3D" in planner_header
+    assert "void setConfig(const PlannerConfig & config)" in planner_header
+    assert "#define private public" not in core
     assert "planner.setOctomap(map)" in core
     assert "planner.makePlan(start, goal)" in core
     assert "planner.getPlannerResults(native_path)" in core
     assert 'extractString(json, "map_path")' in source
     assert 'extractNumberArray(json, "start")' in source
     assert 'extractNumberArray(json, "goal")' in source
-    assert 'applyOptionsFromJson(request.options, json)' in source
+    assert "applyOptionsFromJson(request.options, json)" in source
     assert "RedirectStdoutToStderr redirect_logs" in source
     assert "duplicateTo(fileNo(stderr), fileNo(stdout))" in source
     assert '"max_same_floor_z_excursion"' in source
-    assert 'emitConstraints(result.options)' in source
+    assert '"same_floor_z_excursion"' in core
+    assert "result.failure_reason" in source
+    assert '"support_height_m"' in source
+    assert "emitConstraints(result.options)" in source
     assert '\\"path\\"' in source
     assert "bool hasDirectGroundSupport(" not in planner_header
-    assert "GridIndex below{idx.x, idx.y, idx.z - 1}" in planner_core
-    assert "if (!isCellTraversable(" in planner_core
+    assert "GridIndex below{idx.x, idx.y, idx.z - dz}" in planner_core
+    assert "if (!isPlanningCellTraversableDetailed(" in planner_core
     assert "max_slope_ = 0.0" in planner_header
 
     forbidden_ros2_terms = (
@@ -765,7 +779,7 @@ def test_headless_cmake_does_not_require_pcd_converter_for_octomap_inputs():
 
     forbidden = (
         'message(FATAL_ERROR "OCTOPLANNER3D_SOURCE_DIR must point to a checkout '
-        'with octomap/include/pcd2octomap_converter.h'
+        "with octomap/include/pcd2octomap_converter.h"
     )
 
     assert forbidden not in cmake
@@ -775,9 +789,7 @@ def test_headless_cmake_does_not_require_pcd_converter_for_octomap_inputs():
 
 
 def test_build_script_points_at_headless_cxx_wrapper_not_ros2_launch():
-    script = (REPO_ROOT / "scripts" / "build" / "build_octoplanner3d.sh").read_text(
-        encoding="utf-8"
-    )
+    script = (REPO_ROOT / "scripts" / "build" / "build_octoplanner3d.sh").read_text(encoding="utf-8")
 
     assert "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime" in script
     assert "octoplanner3d_headless" in script

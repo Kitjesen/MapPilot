@@ -1,0 +1,104 @@
+<!--
+  LingTu deterministic two-floor lift scene.
+
+  This scene is intentionally independent from Open-RMF and ROS. The named
+  slide joints form the simulator contract used by MuJoCoLiftCommandAdapter:
+    lift_cabin_z             0.0 m (floor-1) .. 3.5 m (floor-2)
+    lift_door_left_slide    -0.65 m (open) .. 0.0 m (closed)
+    lift_door_right_slide    0.0 m (closed) .. 0.65 m (open)
+
+  The scene validates lift/door mechanics and building orchestration. It does
+  not by itself prove ThunderV4 gait, localization, or a site PLC protocol.
+-->
+<mujoco model="lingtu_lift_building">
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
+
+  <visual>
+    <headlight diffuse="0.48 0.48 0.48" ambient="0.20 0.20 0.20" specular="0.03 0.03 0.03"/>
+    <rgba haze="0.10 0.13 0.16 1"/>
+    <global azimuth="-35" elevation="-22" fovy="52" offwidth="1280" offheight="960"/>
+  </visual>
+
+  <asset>
+    <material name="floor_mat" rgba="0.45 0.48 0.52 1"/>
+    <material name="wall_mat" rgba="0.62 0.65 0.70 1"/>
+    <material name="shaft_mat" rgba="0.20 0.24 0.29 0.48"/>
+    <material name="cabin_mat" rgba="0.34 0.43 0.54 0.72"/>
+    <material name="door_mat" rgba="0.18 0.24 0.30 1"/>
+    <material name="start_mat" rgba="0.10 0.78 0.28 0.85"/>
+    <material name="goal_mat" rgba="0.92 0.18 0.12 0.85"/>
+    <material name="robot_mat" rgba="0.12 0.35 0.72 1"/>
+  </asset>
+
+  <worldbody>
+    <light name="key" pos="2 -2 11" dir="0.35 0.45 -1" diffuse="0.62 0.60 0.56" castshadow="false"/>
+    <light name="upper_fill" pos="9 9 7" dir="-0.3 -0.2 -1" diffuse="0.30 0.33 0.38" castshadow="false"/>
+
+    <!-- Ground floor and simple lobby boundary. -->
+    <geom name="floor_1" type="box" pos="6 5 -0.05" size="6 5 0.05"
+          material="floor_mat" contype="1" conaffinity="1" condim="3" group="1"/>
+    <geom name="wall_1_west" type="box" pos="0.1 5 1.5" size="0.1 5 1.5"
+          material="wall_mat" contype="1" conaffinity="1" group="1"/>
+    <geom name="wall_1_east" type="box" pos="11.9 5 1.5" size="0.1 5 1.5"
+          material="wall_mat" contype="1" conaffinity="1" group="1"/>
+    <geom name="wall_1_south" type="box" pos="6 0.1 1.5" size="6 0.1 1.5"
+          material="wall_mat" contype="1" conaffinity="1" group="1"/>
+
+    <!-- Upper floor is split around the 2.6 m x 2.6 m shaft opening. -->
+    <geom name="floor_2_south" type="box" pos="6 2.35 3.45" size="6 2.35 0.05"
+          material="floor_mat" contype="1" conaffinity="1" condim="3" group="4"/>
+    <geom name="floor_2_north" type="box" pos="6 8.65 3.45" size="6 1.35 0.05"
+          material="floor_mat" contype="1" conaffinity="1" condim="3" group="4"/>
+    <geom name="floor_2_west" type="box" pos="2.35 6 3.45" size="2.35 1.3 0.05"
+          material="floor_mat" contype="1" conaffinity="1" condim="3" group="4"/>
+    <geom name="floor_2_east" type="box" pos="9.65 6 3.45" size="2.35 1.3 0.05"
+          material="floor_mat" contype="1" conaffinity="1" condim="3" group="4"/>
+
+    <!-- Shaft guards leave the south entrance open at both landings. -->
+    <geom name="shaft_left" type="box" pos="4.65 6.0 3.5" size="0.08 1.35 3.5"
+          material="shaft_mat" contype="1" conaffinity="1" group="3"/>
+    <geom name="shaft_right" type="box" pos="7.35 6.0 3.5" size="0.08 1.35 3.5"
+          material="shaft_mat" contype="1" conaffinity="1" group="3"/>
+    <geom name="shaft_rear" type="box" pos="6.0 7.35 3.5" size="1.35 0.08 3.5"
+          material="shaft_mat" contype="1" conaffinity="1" group="3"/>
+
+    <!-- Kinematically commanded cabin. Door panels are children of the cabin. -->
+    <body name="lift_cabin" pos="6 6 0" gravcomp="1">
+      <joint name="lift_cabin_z" type="slide" axis="0 0 1" range="0 3.5" damping="20"/>
+      <geom name="lift_cabin_floor" type="box" pos="0 0 0.06" size="1.10 1.10 0.06"
+            material="cabin_mat" contype="1" conaffinity="1" condim="3" group="1"/>
+      <geom name="lift_cabin_left_wall" type="box" pos="-1.05 0 1.15" size="0.05 1.10 1.15"
+            material="cabin_mat" contype="1" conaffinity="1" group="1"/>
+      <geom name="lift_cabin_right_wall" type="box" pos="1.05 0 1.15" size="0.05 1.10 1.15"
+            material="cabin_mat" contype="1" conaffinity="1" group="1"/>
+      <geom name="lift_cabin_rear_wall" type="box" pos="0 1.05 1.15" size="1.10 0.05 1.15"
+            material="cabin_mat" contype="1" conaffinity="1" group="1"/>
+      <geom name="lift_cabin_roof" type="box" pos="0 0 2.30" size="1.10 1.10 0.05"
+            material="cabin_mat" contype="1" conaffinity="1" group="1"/>
+
+      <body name="lift_door_left" pos="-0.325 -1.05 1.10">
+        <joint name="lift_door_left_slide" type="slide" axis="1 0 0" range="-0.65 0" damping="8"/>
+        <geom name="lift_door_left_panel" type="box" size="0.325 0.05 1.10"
+              material="door_mat" contype="1" conaffinity="1" group="1"/>
+      </body>
+      <body name="lift_door_right" pos="0.325 -1.05 1.10">
+        <joint name="lift_door_right_slide" type="slide" axis="1 0 0" range="0 0.65" damping="8"/>
+        <geom name="lift_door_right_panel" type="box" size="0.325 0.05 1.10"
+              material="door_mat" contype="1" conaffinity="1" group="1"/>
+      </body>
+    </body>
+
+    <geom name="start_disk" type="cylinder" pos="6 2.6 0.01" size="0.55 0.01"
+          material="start_mat" contype="0" conaffinity="0" group="2"/>
+    <geom name="goal_disk" type="cylinder" pos="2.5 3.2 3.51" size="0.55 0.01"
+          material="goal_mat" contype="0" conaffinity="0" group="2"/>
+
+    <!-- Replaced by the configured ThunderV4 model in MuJoCoEngine.load(). -->
+    <body name="robot_placeholder" pos="6 2.6 0.48">
+      <freejoint name="robot_root"/>
+      <geom name="robot_placeholder_chassis" type="box" size="0.42 0.28 0.10"
+            material="robot_mat" mass="22" contype="1" conaffinity="1"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -23,6 +23,14 @@ import type {
   HealthResponse,
   InspectionAcceptanceRequest,
   InspectionAcceptanceResponse,
+  InspectionCommandResponse,
+  InspectionEvidenceDetailResponse,
+  InspectionEvidenceListResponse,
+  InspectionRoute,
+  InspectionRouteListResponse,
+  InspectionRouteRequest,
+  InspectionRouteResponse,
+  InspectionStatusResponse,
   LeaseAction,
   LeaseResponse,
   LocationOperationResponse,
@@ -33,11 +41,13 @@ import type {
   MapListResponse,
   MapPointsResponse,
   NavigationStatusResponse,
+  NavigationDdsSnapshotResponse,
   PathResponse,
   PlanPreviewRequest,
   PlanPreviewResponse,
   ProductFieldCheckRequest,
   ProductFieldCheckResponse,
+  ProductModeProfile,
   ReadinessResponse,
   RealRuntimeEvidenceLatestResponse,
   RoutecheckLatestResponse,
@@ -54,6 +64,7 @@ import type {
   SessionTransitionResponse,
   SlamOperationResponse,
   SlamProfile,
+  SlamStatusResponse,
   StateResponse,
   VisualServoMode,
   VisualServoRequest,
@@ -62,6 +73,22 @@ import type {
 const WEB_CLIENT_ID = 'web-dashboard'
 
 type CommandResponse = ControlCommandResponse | LeaseResponse
+
+interface RestartSlamOptions {
+  currentProfile?: string | null
+  targetProfile?: ProductModeProfile
+  mapName?: string | null
+}
+
+export interface SavedMapPointCloud {
+  points: number[]
+  frameId: string
+  epoch: number | null
+  mapName: string
+  versionId: string | null
+  mapPcdSha256: string | null
+  timestamp: number
+}
 
 let clientLinks: ClientLinks = {}
 
@@ -174,14 +201,15 @@ function apiPath(linkName: keyof ClientLinks, fallback: string): string {
 function mapPointsPath(name: string): string {
   const encoded = encodeURIComponent(name)
   const template =
-    clientLinks.map_points ??
     clientLinks.saved_map_points ??
-    '/api/v1/maps/{name}/points?max_points=30000'
+    clientLinks.map_points ??
+    '/api/v1/maps/{name}/points?max_points=80000'
   const withName = template.includes('{name}')
     ? template.replace('{name}', encoded)
-    : `/api/v1/maps/${encoded}/points?max_points=30000`
+    : `/api/v1/maps/${encoded}/points?max_points=80000`
   const url = new URL(withName, window.location.origin)
-  return `${url.pathname}${url.search || '?max_points=30000'}`
+  url.searchParams.set('max_points', '80000')
+  return `${url.pathname}${url.search}`
 }
 
 function locationDetailPath(name: string): string {
@@ -190,6 +218,33 @@ function locationDetailPath(name: string): string {
   return template.includes('{name}')
     ? template.replace('{name}', encoded)
     : `/api/v1/locations/${encoded}`
+}
+
+function inspectionRouteDetailPath(routeId: string): string {
+  const encoded = encodeURIComponent(routeId)
+  const template = apiPath('inspection_route_detail', '/api/v1/inspection/routes/{route_id}')
+  return template.includes('{route_id}')
+    ? template.replace('{route_id}', encoded)
+    : `/api/v1/inspection/routes/${encoded}`
+}
+
+function inspectionRouteStartPath(routeId: string): string {
+  const encoded = encodeURIComponent(routeId)
+  const template = apiPath('inspection_route_start', '/api/v1/inspection/routes/{route_id}/start')
+  return template.includes('{route_id}')
+    ? template.replace('{route_id}', encoded)
+    : `/api/v1/inspection/routes/${encoded}/start`
+}
+
+function inspectionEvidenceDetailPath(evidenceId: string): string {
+  return `/api/v1/inspection/evidence/${encodeURIComponent(evidenceId)}`
+}
+
+export function inspectionEvidenceArtifactUrl(
+  evidenceId: string,
+  kind: 'rgb' | 'pose' | 'detections',
+): string {
+  return `${inspectionEvidenceDetailPath(evidenceId)}/artifacts/${encodeURIComponent(kind)}`
 }
 
 function mapNamedPath(linkName: keyof ClientLinks, fallback: string, name: string): string {
@@ -405,6 +460,12 @@ export async function fetchNavigationStatus(): Promise<NavigationStatusResponse>
   return fetchJson<NavigationStatusResponse>(apiPath('navigation_status', '/api/v1/navigation/status'))
 }
 
+export async function fetchNavigationDdsSnapshot(): Promise<NavigationDdsSnapshotResponse> {
+  return fetchJson<NavigationDdsSnapshotResponse>(
+    apiPath('navigation_dds_snapshot', '/api/v1/navigation/dds_snapshot'),
+  )
+}
+
 export async function fetchLocations(): Promise<LocationsResponse> {
   return fetchJson<LocationsResponse>(apiPath('locations', '/api/v1/locations'))
 }
@@ -420,6 +481,124 @@ export async function runInspectionAcceptance(
       ...request,
     },
   )
+}
+
+export async function fetchInspectionRoutes(mapId?: string | null): Promise<InspectionRouteListResponse> {
+  const path = apiPath('inspection_routes', '/api/v1/inspection/routes')
+  const query = mapId ? `?${new URLSearchParams({ map_id: mapId }).toString()}` : ''
+  const data = await fetchJson<InspectionRouteListResponse>(`${path}${query}`)
+  return {
+    ...data,
+    routes: data.routes.map(normalizeInspectionRoute),
+  }
+}
+
+export async function fetchInspectionRoute(
+  routeId: string,
+  mapId?: string | null,
+): Promise<InspectionRouteResponse> {
+  const path = inspectionRouteDetailPath(routeId)
+  const query = mapId ? `?${new URLSearchParams({ map_id: mapId }).toString()}` : ''
+  const data = await fetchJson<InspectionRouteResponse>(`${path}${query}`)
+  return {
+    ...data,
+    route: normalizeInspectionRoute(data.route),
+  }
+}
+
+export async function saveInspectionRoute(
+  request: InspectionRouteRequest,
+): Promise<InspectionRouteResponse> {
+  const data = await postJson<InspectionRouteResponse>(
+    apiPath('inspection_routes', '/api/v1/inspection/routes'),
+    request,
+  )
+  return {
+    ...data,
+    route: normalizeInspectionRoute(data.route),
+  }
+}
+
+export async function deleteInspectionRoute(
+  routeId: string,
+  mapId?: string | null,
+): Promise<InspectionCommandResponse> {
+  const path = inspectionRouteDetailPath(routeId)
+  const query = mapId ? `?${new URLSearchParams({ map_id: mapId }).toString()}` : ''
+  const res = await fetch(`${path}${query}`, { method: 'DELETE' })
+  return readJsonResponse<InspectionCommandResponse>(res)
+}
+
+export async function startInspectionRoute(
+  routeId: string,
+  options: { map_id?: string | null; revision?: number | null } = {},
+): Promise<InspectionCommandResponse> {
+  return postJson<InspectionCommandResponse>(
+    inspectionRouteStartPath(routeId),
+    {
+      map_id: options.map_id ?? null,
+      revision: options.revision ?? 0,
+      request_id: makeRequestId('inspection_start'),
+    },
+  )
+}
+
+export async function pauseInspectionRun(
+  mapId?: string | null,
+): Promise<InspectionCommandResponse> {
+  return postJson<InspectionCommandResponse>(
+    apiPath('inspection_pause', '/api/v1/inspection/run/pause'),
+    {
+      map_id: mapId ?? null,
+      reason: 'operator_pause',
+      request_id: makeRequestId('inspection_pause'),
+    },
+  )
+}
+
+export async function resumeInspectionRun(
+  mapId?: string | null,
+): Promise<InspectionCommandResponse> {
+  return postJson<InspectionCommandResponse>(
+    apiPath('inspection_resume', '/api/v1/inspection/run/resume'),
+    {
+      map_id: mapId ?? null,
+      reason: 'operator_resume',
+      request_id: makeRequestId('inspection_resume'),
+    },
+  )
+}
+
+export async function cancelInspectionRun(
+  mapId?: string | null,
+): Promise<InspectionCommandResponse> {
+  return postJson<InspectionCommandResponse>(
+    apiPath('inspection_cancel', '/api/v1/inspection/run/cancel'),
+    {
+      map_id: mapId ?? null,
+      reason: 'operator_cancel',
+      request_id: makeRequestId('inspection_cancel'),
+    },
+  )
+}
+
+export async function fetchInspectionStatus(): Promise<InspectionStatusResponse> {
+  return fetchJson<InspectionStatusResponse>(
+    apiPath('inspection_status', '/api/v1/inspection/status'),
+  )
+}
+
+export async function fetchInspectionEvidence(limit = 12): Promise<InspectionEvidenceListResponse> {
+  const boundedLimit = Math.min(100, Math.max(1, Math.trunc(limit)))
+  return fetchJson<InspectionEvidenceListResponse>(
+    `/api/v1/inspection/evidence?${new URLSearchParams({ limit: String(boundedLimit) }).toString()}`,
+  )
+}
+
+export async function fetchInspectionEvidenceDetail(
+  evidenceId: string,
+): Promise<InspectionEvidenceDetailResponse> {
+  return fetchJson<InspectionEvidenceDetailResponse>(inspectionEvidenceDetailPath(evidenceId))
 }
 
 export async function saveLocation(body: LocationUpsertRequest): Promise<LocationOperationResponse> {
@@ -579,6 +758,47 @@ export async function switchSlamMode(profile: SlamProfile): Promise<SlamOperatio
   return readSlamOperation(res)
 }
 
+export async function fetchSlamStatus(): Promise<SlamStatusResponse> {
+  return fetchJson<SlamStatusResponse>(apiPath('slam_status', '/api/v1/slam/status'))
+}
+
+export async function restartSlam(options: RestartSlamOptions = {}): Promise<SlamOperationResponse> {
+  const res = await fetch(apiPath('slam_restart', '/api/v1/slam/restart'), { method: 'POST' })
+  if (res.status === 404) {
+    if (!clientLinks.runtime_switch) {
+      throw new Error('Gateway does not expose the localization restart endpoint yet. Deploy the updated Gateway and retry.')
+    }
+    const targetProfile = options.targetProfile ?? (options.mapName ? 'nav' : 'map')
+    const switched = await runRuntimeSwitch({
+      current_profile: options.currentProfile ?? null,
+      target_profile: targetProfile,
+      map_name: targetProfile === 'nav' ? options.mapName ?? null : null,
+      relocalize: targetProfile === 'nav',
+      strategy: 'cold',
+      execute: true,
+      allow_restart: true,
+    })
+    if (!switched.ok && !switched.accepted) {
+      const blockers = switched.blockers?.filter(Boolean).join('；')
+      throw new Error(blockers || switched.error || switched.status || 'Runtime restart request was not accepted')
+    }
+    return {
+      schema_version: 1,
+      ok: true,
+      success: true,
+      profile: 'native_dds',
+      message: switched.accepted
+        ? 'Localization restart accepted'
+        : 'Localization pipeline restarted',
+      ts: Date.now() / 1000,
+      accepted: switched.accepted,
+      status: switched.status,
+      command_id: switched.command_id,
+    }
+  }
+  return readSlamOperation(res)
+}
+
 // --- Maps ---
 
 export async function fetchMapList(): Promise<MapListResponse> {
@@ -631,15 +851,17 @@ export interface SaveMapResult extends MapLifecycleResponse {
   recovery_method?: string | null
   warnings?: unknown[] | null
   dynamic_filter?: DynamicFilterResult | null
+  map_optimization?: Record<string, unknown> | null
+  map_optimization_ok?: boolean | null
 }
 
-export async function saveMap(name: string): Promise<SaveMapResult> {
-  // Save can take up to ~2 min on a busy robot because PGO + DUFOMap
+export async function saveMap(name: string, optimization?: 'pgo' | 'hba' | 'none'): Promise<SaveMapResult> {
+  // Save can take up to ~2 min on a busy robot because map optimization + DUFOMap
   // run synchronously. Default fetch has no timeout which is what we want.
   const res = await fetch(apiPath('map_save', '/api/v1/map/save'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, optimization }),
   })
   return readMapLifecycle(res) as Promise<SaveMapResult>
 }
@@ -710,6 +932,74 @@ export interface StartSessionOptions {
   slamProfile?: Exclude<SlamProfile, 'stop'>
 }
 
+function normalizeInspectionRoute(route: InspectionRoute): InspectionRoute {
+  return {
+    ...route,
+    points: (route.points ?? []).map(point => {
+      const raw = point as InspectionRoute['points'][number] & {
+        position_tolerance_m?: number
+        dwell_s?: number
+      }
+      return {
+        ...point,
+        tolerance: Number.isFinite(Number(raw.tolerance))
+          ? Number(raw.tolerance)
+          : Number(raw.position_tolerance_m ?? 0.35),
+        dwell: Number.isFinite(Number(raw.dwell))
+          ? Number(raw.dwell)
+          : Number(raw.dwell_s ?? 0),
+      }
+    }),
+  }
+}
+
+export async function resumeNavigation(): Promise<ControlCommandResponse> {
+  return postJson<ControlCommandResponse>(
+    apiPath('navigation_resume', '/api/v1/navigation/resume'),
+    commandBody('navigation_resume', {}),
+  )
+}
+
+export interface ProductSessionSwitchOptions {
+  currentProfile?: string | null
+  mapName?: string | null
+  initialPose?: [number, number, number] | null
+  endpoint?: string | null
+}
+
+const PRODUCT_PROFILE_BY_SESSION_MODE: Record<SessionMode, ProductModeProfile> = {
+  mapping: 'map',
+  navigating: 'nav',
+  exploring: 'tare_explore',
+}
+
+export async function switchProductSession(
+  mode: SessionMode,
+  options: ProductSessionSwitchOptions = {},
+): Promise<RuntimeSwitchResponse> {
+  const mapName = options.mapName?.trim() || null
+  if (mode === 'navigating' && !mapName) {
+    throw new Error('Navigation product switch requires a saved map')
+  }
+  const response = await runRuntimeSwitch({
+    current_profile: options.currentProfile ?? null,
+    target_profile: PRODUCT_PROFILE_BY_SESSION_MODE[mode],
+    target_endpoint: options.endpoint ?? 'thunder_field',
+    endpoint: options.endpoint ?? 'thunder_field',
+    map_name: mode === 'navigating' ? mapName : null,
+    relocalize: mode === 'navigating',
+    initial_pose: mode === 'navigating' ? options.initialPose : null,
+    strategy: 'cold',
+    execute: true,
+    allow_restart: true,
+  })
+  if (!response.ok || !response.accepted) {
+    const blocker = response.blockers?.filter(Boolean).join('; ')
+    throw new Error(blocker || response.error || response.status || 'Product mode switch was rejected')
+  }
+  return response
+}
+
 export async function fetchSession(): Promise<SessionState> {
   return fetchJson<SessionState>(apiPath('session', '/api/v1/session'))
 }
@@ -738,16 +1028,45 @@ export async function endSession(): Promise<SessionState> {
 
 export async function resetMapCloud(): Promise<MapLifecycleResponse> {
   const res = await fetch(apiPath('map_cloud_reset', '/api/v1/map_cloud/reset'), { method: 'POST' })
-  return readMapLifecycle(res)
+  const data = await readMapLifecycle(res)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('lingtu:cloud-reset'))
+  }
+  return data
 }
 
 export async function fetchSavedMapPointsResponse(name: string): Promise<MapPointsResponse> {
   return fetchJson<MapPointsResponse>(mapPointsPath(name))
 }
 
-export async function fetchSavedMapPoints(name: string): Promise<number[]> {
+export async function fetchSavedMapPointCloud(name: string): Promise<SavedMapPointCloud> {
   const data = await fetchSavedMapPointsResponse(name)
-  return flattenPointArray(data.points)
+  const frameId = String(data.frame_id || '').trim().replace(/^\/+/, '')
+  if (!frameId) throw new Error('Saved map response is missing frame_id')
+  let epoch: number | null = null
+  if (data.epoch != null) {
+    epoch = Number(data.epoch)
+    if (!Number.isInteger(epoch) || epoch < 1 || epoch > 0xffffffff) {
+      throw new Error('Saved map response is missing a valid scene epoch')
+    }
+  }
+  const mapName = String(data.name || name).trim()
+  if (mapName !== name) {
+    throw new Error(`Saved map response name mismatch: expected ${name}, got ${mapName}`)
+  }
+  return {
+    points: flattenPointArray(data.points),
+    frameId,
+    epoch,
+    mapName,
+    versionId: String(data.version_id || '').trim() || null,
+    mapPcdSha256: String(data.map_pcd_sha256 || '').trim() || null,
+    timestamp: Number(data.ts) || 0,
+  }
+}
+
+export async function fetchSavedMapPoints(name: string): Promise<number[]> {
+  return (await fetchSavedMapPointCloud(name)).points
 }
 
 export async function relocalize(

@@ -9,10 +9,10 @@ from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from runtime.runtime_interface import map_frame_id
 from gateway.schemas import PlanPreviewRequest
 from gateway.services.safety_status import safety_stop_active, safety_summary
-
+from runtime.adapters.native.navigation import NavigationClientError
+from runtime.runtime_interface import map_frame_id
 
 CONTROL_MAP_FRAME_ID = map_frame_id()
 
@@ -79,6 +79,24 @@ class ControlCommandService:
         command: str,
         body: Any,
     ) -> JSONResponse | None:
+        client_id = getattr(body, "client_id", "unknown")
+        lease = getattr(self._gw, "_lease", None)
+        if lease is not None and not lease.check(client_id):
+            return self.rejected_response(
+                command,
+                body,
+                error="control_lease",
+                message="Another operator currently owns motion control.",
+                detail=self.command_error_detail(
+                    reason_code="control_lease",
+                    reason="Another operator currently owns motion control.",
+                    source="control_lease",
+                    path="/api/v1/lease",
+                    blockers=["control_lease"],
+                    lease=lease.to_dict(),
+                ),
+                status_code=403,
+            )
         try:
             with self._gw._state_lock:
                 safety = getattr(self._gw, "_safety", None)
@@ -114,11 +132,7 @@ class ControlCommandService:
         status = build_navigation_status(self._gw)
         readiness = status.get("readiness", {})
         ignored = ignore_blockers or set()
-        blockers = [
-            str(blocker)
-            for blocker in (readiness.get("blockers") or [])
-            if str(blocker) not in ignored
-        ]
+        blockers = [str(blocker) for blocker in (readiness.get("blockers") or []) if str(blocker) not in ignored]
         if blockers or not bool(status.get("has_odometry", False)):
             reasons = ["navigation_not_ready", *blockers]
             if not bool(status.get("has_odometry", False)):
@@ -178,15 +192,34 @@ class ControlCommandService:
         rejection = self._goal_readiness_rejection(command, body)
         if rejection is not None:
             return rejection
+        rejection = self._goal_map_identity_rejection(command, body)
+        if rejection is not None:
+            return rejection
         rejection = self._goal_plan_preview_rejection(command, body)
         if rejection is not None:
             return rejection
 
+        try:
+            native_response = action()
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return self.rejected_response(
+                command,
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint rejected the command.",
+                detail=self.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
         response = self._gw._command_journal.accept(
             command,
             request_id,
             client_id,
-            action(),
+            native_response,
         )
         if hasattr(self._gw, "_publish_command_ack"):
             self._gw._publish_command_ack(response, status_code=200)
@@ -201,7 +234,22 @@ class ControlCommandService:
         rejection = self.motion_safety_rejection(command, body)
         if rejection is not None:
             return rejection
-        return self._gw._run_control_command(command, body, action)
+        try:
+            return self._gw._run_control_command(command, body, action)
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return self.rejected_response(
+                command,
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint rejected the command.",
+                detail=self.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
 
     def _goal_readiness_rejection(
         self,
@@ -231,6 +279,40 @@ class ControlCommandService:
                 has_odometry=status.get("has_odometry"),
                 session_mode=getattr(self._gw, "_session_mode", None),
                 localization=status.get("localization", {}),
+            ),
+        )
+
+    def _goal_map_identity_rejection(
+        self,
+        command: str,
+        body: Any,
+    ) -> JSONResponse | None:
+        metadata = getattr(body, "metadata", None)
+        if not isinstance(metadata, dict):
+            return None
+        requested_map = str(metadata.get("map_name") or "").strip()
+        if not requested_map:
+            return None
+
+        active_map = str(getattr(self._gw, "_session_map", None) or "").strip()
+        if not active_map:
+            active_map_name = getattr(self._gw, "_session_active_map_name", None)
+            if callable(active_map_name):
+                active_map = str(active_map_name() or "").strip()
+        if active_map == requested_map:
+            return None
+        return self.rejected_response(
+            command,
+            body,
+            error="active_map_mismatch",
+            message="The selected map does not match the active navigation map.",
+            detail=self.command_error_detail(
+                reason_code="active_map_mismatch",
+                reason="The selected map does not match the active navigation map.",
+                source="goal_metadata",
+                blockers=["active_map_mismatch"],
+                requested_map=requested_map,
+                active_map=active_map or None,
             ),
         )
 
@@ -341,9 +423,7 @@ class ControlCommandService:
         if not frame_id:
             header = odom.get("header")
             if isinstance(header, dict):
-                frame_id = str(
-                    header.get("frame_id") or header.get("frame") or ""
-                ).strip()
+                frame_id = str(header.get("frame_id") or header.get("frame") or "").strip()
         return _point_payload(x, y, z, ts=ts, frame_id=frame_id or CONTROL_MAP_FRAME_ID)
 
 

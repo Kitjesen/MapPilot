@@ -28,11 +28,16 @@ _DEFAULT_LOCAL_TRANSPORT = LocalTransport()
 def create_transport(
     strategy: TransportStrategy | str = TransportStrategy.LOCAL,
     ros_node=None,
+    *,
+    domain_id: int | None = None,
 ) -> Any:
     """Create a transport instance by strategy.
 
     ``ros_node`` is kept for old call sites. DDS transport currently uses the
     native CycloneDDS backend and does not require rclpy.
+
+    ``domain_id`` overrides the DDS domain (only relevant for DDS strategy).
+    When ``None`` the process-wide default is used.
     """
 
     strategy = _coerce_strategy(strategy)
@@ -48,7 +53,7 @@ def create_transport(
     if strategy == TransportStrategy.DDS:
         from .dds import DDSTransport
 
-        return DDSTransport()
+        return DDSTransport(domain_id=domain_id)
 
     if strategy == TransportStrategy.AUTO:
         from .shm import SHMTransport
@@ -61,7 +66,7 @@ def create_transport(
                 return _DEFAULT_LOCAL_TRANSPORT
             from .dds import DDSTransport
 
-            return DDSTransport()
+            return DDSTransport(domain_id=domain_id)
 
     raise ValueError(f"Unknown strategy: {strategy}")
 
@@ -69,11 +74,13 @@ def create_transport(
 def create_transport_adapter(
     strategy: TransportStrategy | str = TransportStrategy.LOCAL,
     ros_node=None,
+    *,
+    domain_id: int | None = None,
 ) -> Any:
     """Create a simple pub/sub adapter for a TransportABC backend."""
 
     strategy = _coerce_strategy(strategy)
-    transport = create_transport(strategy, ros_node)
+    transport = create_transport(strategy, ros_node, domain_id=domain_id)
     if hasattr(transport, "publish") and hasattr(transport, "subscribe"):
         return transport
 
@@ -94,6 +101,7 @@ def create_transport_adapter(
             from_dds_message,
             to_dds_message,
         )
+
         from .dds import RawMessage
         from .json_codec import dumps_topic_message, loads_message
 
@@ -108,6 +116,46 @@ def create_transport_adapter(
             forbidden_topics=frozenset(TOPIC_SPECS),
         )
     return TransportAdapter(transport)
+
+
+def create_route_transport_adapter(
+    strategy: TransportStrategy | str = TransportStrategy.LOCAL,
+    ros_node=None,
+    *,
+    domain_id: int | None = None,
+) -> Any:
+    """Create a transport adapter for a validated runtime route.
+
+    Unlike the legacy ``wire(transport="dds")`` path, route-selected DDS is
+    allowed to carry registered product topics because the route contract has
+    already declared the topic/backend pair.
+    """
+
+    strategy = _coerce_strategy(strategy)
+    if strategy == TransportStrategy.LOCAL:
+        return _DEFAULT_LOCAL_TRANSPORT
+    if strategy == TransportStrategy.SHM:
+        return create_transport_adapter(strategy, ros_node, domain_id=domain_id)
+    if strategy == TransportStrategy.DDS:
+        from message.dds import (
+            dds_type_for_topic,
+            from_dds_message,
+            to_dds_message,
+        )
+
+        from .dds import RawMessage
+        from .json_codec import dumps_topic_message, loads_message
+
+        return TransportAdapter(
+            create_transport(strategy, ros_node, domain_id=domain_id),
+            topic_serializer=dumps_topic_message,
+            deserializer=loads_message,
+            backend_msg_type=RawMessage,
+            topic_msg_type=dds_type_for_topic,
+            topic_encoder=to_dds_message,
+            topic_decoder=from_dds_message,
+        )
+    raise ValueError(f"Runtime route backend {strategy.value!r} is not supported")
 
 
 def create_publisher(

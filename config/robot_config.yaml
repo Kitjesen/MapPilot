@@ -61,13 +61,14 @@ lidar:
   publish_freq: 10.0          # Hz
   lidar_ip: "192.168.1.178"   # MID-360 device IP.
   host_ip: "192.168.1.5"      # Robot NIC IP on the Livox subnet.
-  # LiDAR mounting extrinsics (body->lidar TF, metres/radians).
-  # Used by static_transform_publisher and C++ coordinate transforms.
-  offset_x:  -0.011
-  offset_y:  -0.02329
-  offset_z:   0.04412
-  roll:       0.0
-  pitch:      0.0
+  # Thunder V4 front-nose lidar1 mounting pose (body->lidar TF, m/rad).
+  # Source: thunder_assets/thunder_v4/urdf/thunder_v4.urdf. Do not put the
+  # MID-360 internal LiDAR->IMU calibration (t_il) in these body mount fields.
+  offset_x:   0.402876074867229
+  offset_y:   0.0
+  offset_z:   0.0582019450665819
+  roll:      -3.141592653589793
+  pitch:     -0.7853981633974483
   yaw:        0.0
   # Camera Z offset relative to LiDAR for visualization TF.
   camera_offset_z: 0.0
@@ -75,16 +76,16 @@ lidar:
 # Camera sensor
 # Factory calibration defaults. Customers normally do not edit these.
 camera:
-  # Camera mounting extrinsics (body->camera static transform).
+  # Thunder V4 front camera1 mounting extrinsics (body->camera static transform).
   # position: camera position in body frame (m)
-  position_x:  0.15          # 15 cm forward
-  position_y:  0.00          # centerline
-  position_z:  0.45          # 45 cm above ground
+  position_x:  0.423358800364963
+  position_y: -0.000496202974186816
+  position_z:  0.11370714960317
   # rotation: 相机光轴相对于机体前向的旋转 (rad)
   # 默认: 相机朝前安装, 光学坐标 Z 轴 = 机体 X 轴(前)
-  roll:         0.0
+  roll:        -1.91986217719376
   pitch:        0.0
-  yaw:          0.0
+  yaw:         -1.57079632501758
   # 内参默认值 (ROS2 CameraInfo 到达后会覆盖)
   fx: 615.0
   fy: 615.0
@@ -94,7 +95,8 @@ camera:
   height: 480
   depth_scale: 0.001         # 原始深度值 → 米 (1mm 单位)
   # 相机安装旋转补偿 (度): 0=正装, 90=顺时针90°侧装, 180=倒装, 270=逆时针90°
-  rotate: 270
+  # The V4 front camera is mounted upside-down; preserve landscape dimensions.
+  rotate: 180
   # 畸变系数 (Brown-Conrady / plumb_bob 模型)
   dist_k1: 0.0
   dist_k2: 0.0
@@ -110,13 +112,11 @@ brainstem:
   host: "127.0.0.1"
   port: 13145              # Brainstem gRPC (运动控制)
 
-# ── GNSS (WTRTK-980) ──
-# 硬件: WitMotion WTRTK-980 (UM980 芯片, 单天线 RTK, 50Hz)
-# 驱动: 原生 GnssSerialDriver (pyserial + NMEA, 直读下方 device 指定的 UART) —
-#       这是默认路径, 不依赖任何 ROS2 systemd service。
-#       ROS2 wtrtk980_ros2_reader + DDS /gps/fix 仅作为兼容回退 (device 未配置或串口启动失败时),
-#       见 docs/architecture/ROS_ROLE_REPLACEMENT_MAP.md。
-# 融合: fastlio2_gnss backend (GTSAM PGO 全局约束)
+# GNSS (WTRTK-980)
+# Product owner: C++ native `lingtu_gnss_dds`.
+# It reads this serial device and publishes rt/gnss/fix, rt/gnss/status, and
+# optional rt/gnss/odom. Python and ROS2 readers are compatibility-only and
+# must not own the real product serial path.
 gnss:
   enabled: true                     # WTRTK-980 已接入
   model: "WTRTK-980"
@@ -129,7 +129,7 @@ gnss:
     y: 0.00                        # 左右
     z: 0.45                        # 离地高度
 
-  # DDS 兼容回退 topic (仅在原生串口路径不可用时使用; ROS2 wtrtk980_ros2_reader 兼容层发布)
+  # DDS 兼容回退 topic (仅用于 adapter/diagnostics; 产品路径由 C++ native DDS 发布)
   topic_fix: "/gps/fix"             # sensor_msgs/NavSatFix (50Hz)
   topic_odom: "/gps/odom"           # nav_msgs/Odometry (UTM, 50Hz)
   topic_vel: "/gps/vel"             # geometry_msgs/TwistStamped
@@ -166,7 +166,7 @@ gnss:
     factor_weight_float: 0.3       # RTK Float 权重
     factor_weight_single: 0.05     # Single 权重
 
-    # SlamBridgeModule 松耦合融合参数 (stacks/slam.py 读取)
+    # SLAM GNSS fusion parameters (read by stacks/slam.py)
     enabled: true                  # 融合总开关 (false 回到纯 LiDAR SLAM)
     alpha_healthy: 0.05            # SLAM 健康时 GNSS 每帧拉回权重
     alpha_degraded: 0.5            # SLAM 退化时 GNSS 每帧拉回权重
@@ -339,6 +339,63 @@ occupancy_grid:
   robot_clear_backward: 0.65    # body-frame self-filter behind base
   robot_clear_lateral: 0.55     # body-frame self-filter half width
   publish_hz: 2.0              # 发布频率 (Hz)
+
+# ── 感知 (perception) ──
+# Phase 4: tunables previously hard-coded in perception_module.py,
+# instance_tracker.py, clip_encoder.py, and reconstruction_module.py.
+# All defaults below mirror the old hard-coded values, so behavior is unchanged
+# when no override is present.
+perception:
+  default_classes: "door . window . stairs . elevator . exit sign . fire extinguisher . safety cone . barrier . chair . desk . table . shelf . cabinet . monitor . laptop . keyboard . phone . sink . toilet . refrigerator . trash can . bottle . cup . car . truck . bicycle . motorcycle . person . dog . cat . forklift . pallet . pipe . valve . control panel . switch . button . obstacle . rock . pole . backpack"
+  skip_frames: 1
+  max_depth: 6.0              # m
+  min_depth: 0.3              # m
+  depth_scale: 0.001          # raw depth -> metres
+  laplacian_threshold: 100.0  # blur-detection threshold
+  dynamic_labels:             # classes treated as dynamic in reconstruction
+    - person
+    - people
+    - pedestrian
+    - car
+    - vehicle
+    - truck
+    - bus
+    - bicycle
+    - motorcycle
+    - dog
+    - cat
+    - animal
+  tracking:
+    sem_threshold: 0.75       # USS-Nav semantic match threshold
+    geo_weak_threshold: 0.1
+    geo_strong_threshold: 0.5
+    geo_point_dist_tau: 0.05  # m
+    candidate_radius: 2.0     # m
+    fov_half_angle: 0.52      # rad (~30 deg)
+    fov_max_range: 5.0        # m
+    merge_distance: 0.5       # m
+    iou_threshold: 0.3
+    clip_threshold: 0.75
+    max_objects: 200
+    stale_timeout: 300.0      # s
+    max_views: 300
+    # Stage 1a matching improvements (gated, default OFF to preserve behavior)
+    use_hungarian_matching: false  # global-optimal Hungarian matching
+    enable_dedup_merge: false      # post-matching duplicate merge
+    dedup_distance: 0.3            # m
+    dedup_clip_threshold: 0.85     # CLIP cosine similarity
+    dedup_time_window: 5.0         # s
+  encoder:
+    clip_cache_size: 1000
+    clip_batch_size: 32
+    clip_model_name: "ViT-B/32"
+    clip_multi_scale: false
+  detector:
+    confidence_threshold: 0.3
+    iou_threshold: 0.45
+    max_detections: 64
+    min_box_size_px: 12
+    model_size: "l"
 
 # ── 健康监控 ──
 health:

@@ -27,6 +27,7 @@ import logging
 
 import numpy as np
 
+from runtime.config import get_config
 from runtime.utils.robustness import _try_empty_cuda_cache
 
 logger = logging.getLogger(__name__)
@@ -45,12 +46,12 @@ class CLIPEncoder:
 
     def __init__(
         self,
-        model_name: str = "ViT-B/32",
+        model_name: str | None = None,
         device: str = "auto",
         enable_cache: bool = True,
-        cache_size: int = 1000,
-        batch_size: int = 32,
-        multi_scale: bool = False,
+        cache_size: int | None = None,
+        batch_size: int | None = None,
+        multi_scale: bool | None = None,
     ):
         """
         初始化CLIP编码器
@@ -63,18 +64,21 @@ class CLIPEncoder:
             batch_size: 批处理大小
             multi_scale: 是否使用多尺度特征
         """
-        self._model_name = model_name
+        # Resolve tunable defaults from robot_config.yaml; explicit kwargs win.
+        cfg = get_config().perception.encoder
+        self._model_name = model_name if model_name is not None else cfg.clip_model_name
         if device == "auto":
             try:
                 import torch
+
                 device = "cuda" if torch.cuda.is_available() else "cpu"
             except ImportError:
                 device = "cpu"
         self._device = device
         self._enable_cache = enable_cache
-        self._cache_size = cache_size
-        self._batch_size = batch_size
-        self._multi_scale = multi_scale
+        self._cache_size = cache_size if cache_size is not None else cfg.clip_cache_size
+        self._batch_size = batch_size if batch_size is not None else cfg.clip_batch_size
+        self._multi_scale = multi_scale if multi_scale is not None else cfg.clip_multi_scale
 
         self._model = None
         self._preprocess = None
@@ -144,14 +148,15 @@ class CLIPEncoder:
 
             logger.info(
                 "CLIP loaded: %s, feature_dim=%d, device=%s, cache=%s, multi_scale=%s",
-                clip_model_name, self._feature_dim, self._device,
-                self._enable_cache, self._multi_scale
+                clip_model_name,
+                self._feature_dim,
+                self._device,
+                self._enable_cache,
+                self._multi_scale,
             )
 
         except ImportError:
-            logger.error(
-                "open-clip-torch not installed. Run: pip install open-clip-torch"
-            )
+            logger.error("open-clip-torch not installed. Run: pip install open-clip-torch")
             raise
         except RuntimeError as e:
             logger.error("CLIP GPU load failed: %s — falling back to CPU (10-100x slower)", e)
@@ -170,9 +175,7 @@ class CLIPEncoder:
                     dummy = torch.randn(1, 3, 224, 224)
                     feat = self._model.encode_image(dummy)
                     self._feature_dim = feat.shape[-1]
-                logger.info(
-                    "CLIP loaded on CPU fallback: feature_dim=%d", self._feature_dim
-                )
+                logger.info("CLIP loaded on CPU fallback: feature_dim=%d", self._feature_dim)
             except Exception as e2:
                 logger.error(f"CLIP CPU fallback also failed: {e2}")
                 raise
@@ -280,7 +283,7 @@ class CLIPEncoder:
             self._cache_misses += 1
 
             crop = rgb_image[y1:y2, x1:x2]
-            if crop.dtype.kind == 'f' and not np.isfinite(crop).all():
+            if crop.dtype.kind == "f" and not np.isfinite(crop).all():
                 logger.debug(f"Crop {i} contains NaN/inf, skipping")
                 results[i] = np.array([])
                 continue
@@ -294,9 +297,7 @@ class CLIPEncoder:
                 scales = [0.8, 1.0, 1.2]
                 multi_crops = []
                 for scale in scales:
-                    scaled_crop = pil_crop.resize(
-                        (int(pil_crop.width * scale), int(pil_crop.height * scale))
-                    )
+                    scaled_crop = pil_crop.resize((int(pil_crop.width * scale), int(pil_crop.height * scale)))
                     multi_crops.append(self._preprocess(scaled_crop))
                 crops.append(multi_crops)
             else:
@@ -338,11 +339,7 @@ class CLIPEncoder:
                 results[need_idx] = features[idx]
 
                 if use_cache and self._enable_cache and cache_keys[need_idx]:
-                    self._manage_cache(
-                        self._image_cache,
-                        cache_keys[need_idx],
-                        features[idx]
-                    )
+                    self._manage_cache(self._image_cache, cache_keys[need_idx], features[idx])
 
         # 填充空结果
         results = [r if r is not None else np.array([]) for r in results]
@@ -485,10 +482,7 @@ class CLIPEncoder:
         k_feats = self.encode_text(text_list)
         if k_feats.size == 0:
             return [0.0] * len(text_list)
-        similarities = [
-            float(max(0.0, np.dot(q_feat[0], k_feats[i])))
-            for i in range(len(text_list))
-        ]
+        similarities = [float(max(0.0, np.dot(q_feat[0], k_feats[i]))) for i in range(len(text_list))]
         return similarities
 
     def batch_text_image_similarity(
@@ -527,6 +521,7 @@ class CLIPEncoder:
         try:
             import torch
             from PIL import Image
+
             # BGR→RGB if needed (assume BGR input like cv2)
             rgb = rgb_bgr[:, :, ::-1].copy()
             pil_img = Image.fromarray(rgb)
@@ -623,8 +618,7 @@ class CLIPEncoder:
         Returns:
             统计字典
         """
-        avg_time = (self._total_encode_time / self._encode_count
-                   if self._encode_count > 0 else 0.0)
+        avg_time = self._total_encode_time / self._encode_count if self._encode_count > 0 else 0.0
 
         return {
             "encode_count": self._encode_count,

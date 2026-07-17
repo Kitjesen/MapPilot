@@ -36,12 +36,25 @@
 }
 
 .value {
+  display: inline-block;
   font-family: var(--font-mono);
   font-size: var(--t-value-size);
   font-weight: var(--t-value-weight);
   color: var(--t-value-color);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
   letter-spacing: var(--t-value-track);
+}
+
+.poseValue {
+  inline-size: 15ch;
+}
+
+.yawValue {
+  inline-size: 7ch;
+}
+
+.speedValue {
+  inline-size: 10ch;
 }
 
 .sep {

@@ -11,6 +11,7 @@ from typing import Any
 
 class DeviceType(str, Enum):
     """Supported hardware device types in the sensor/actuator suite."""
+
     GNSS = "gnss"
     LIDAR = "lidar"
     CAMERA = "camera"
@@ -23,17 +24,19 @@ class DeviceType(str, Enum):
 
 class DeviceStatus(str, Enum):
     """Lifecycle states for a hardware device from detection through streaming."""
-    OFFLINE = "offline"        # not detected
-    DETECTED = "detected"      # found but not opened
-    READY = "ready"            # opened, ready to read
-    STREAMING = "streaming"    # actively producing data
-    ERROR = "error"            # error state, needs retry
-    DISABLED = "disabled"      # marked enabled=false
+
+    OFFLINE = "offline"  # not detected
+    DETECTED = "detected"  # found but not opened
+    READY = "ready"  # opened, ready to read
+    STREAMING = "streaming"  # actively producing data
+    ERROR = "error"  # error state, needs retry
+    DISABLED = "disabled"  # marked enabled=false
 
 
 @dataclass
 class DeviceHealth:
     """Snapshot of a device's current health."""
+
     id: str
     type: DeviceType
     status: DeviceStatus
@@ -70,7 +73,7 @@ class DeviceHealth:
 class Device(ABC):
     """Hardware device base class.
 
-    Subclasses implement detect/open/read/close. The DeviceManager
+    Subclasses implement detect/open/read/close. The hw module
     coordinates lifecycle and publishes health to Dashboard.
     """
 

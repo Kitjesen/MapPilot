@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from decision.modules.llm import LLMModule
+from perception.perception_module import PerceptionModule
 from runtime.module import Module
 from runtime.registry import register
-from perception.perception_module import PerceptionModule
-from decision.modules.llm_module import LLMModule
 
 
 class _RuntimeSwitchDetector:
@@ -25,7 +25,7 @@ class _RuntimeSwitchEncoder:
 
 
 _PROBE_EVENTS: list[tuple[str, bool]] = []
-_PROBE_CREATED: dict[str, list["_RuntimeSwitchProbeBackend"]] = {
+_PROBE_CREATED: dict[str, list[_RuntimeSwitchProbeBackend]] = {
     "detector": [],
     "encoder": [],
 }
@@ -140,11 +140,10 @@ def test_motion_backend_reconfigure_is_unsupported_by_default():
 @pytest.mark.parametrize(
     ("module_path", "class_name", "category", "backend"),
     [
-        ("nav.mission.navigation", "nav.mission", "planner", "astar"),
-        ("nav.local.local_planner", "nav.local_planner", "local_planner", "cmu_py"),
-        ("nav.local.path_follower", "nav.path_follower", "path_follower", "pid"),
-        ("nav.local.terrain", "nav.terrain", "terrain", "simple"),
-        ("localization.bridge", "SlamBridgeModule", "slam", "bridge"),
+        ("nav.navigation", "Navigation", "planner", "astar"),
+        ("nav.local.local_planner", "LocalPlanner", "local_planner", "cmu_py"),
+        ("nav.local.path_follower", "PathFollower", "path_follower", "pid"),
+        ("nav.local.terrain", "Terrain", "terrain", "simple"),
     ],
 )
 def test_motion_modules_reconfigure_backend_fails_closed(module_path, class_name, category, backend):

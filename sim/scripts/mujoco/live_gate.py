@@ -25,28 +25,6 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from runtime.msgs.numpy_compat import np
-from runtime.runtime_interface import (
-    FRAME_LINKS,
-    TOPICS,
-    adapter_source_for_target,
-    lidar_extrinsic,
-    simulator_world_frame_id,
-    topic_default_frame_id,
-)
-from drivers.sim.mujoco.runtime import (
-    DEFAULT_MID360_PATTERN,
-    DEFAULT_MID360_SAMPLES_PER_FRAME,
-    build_engine as _build_engine,
-    parse_start as _parse_start,
-    resolve_mid360_pattern as _resolve_mid360_pattern,
-    resolve_world as _resolve_world,
-    scene_start as _scene_start,
-)
-from runtime.same_source_map_artifacts import (
-    add_points_to_voxel_store as _add_points_to_voxel_store,
-    write_same_source_map_artifacts as _write_same_source_map_artifacts,
-)
 from sim.scripts.mujoco_live.diag import (
     _aligned_motion_window,
     _degeneracy_detail_sample,
@@ -110,6 +88,41 @@ from sim.scripts.mujoco_live.video import (
     _write_stage_video,
 )
 
+from drivers.sim.mujoco.runtime import (
+    DEFAULT_MID360_PATTERN,
+    DEFAULT_MID360_SAMPLES_PER_FRAME,
+)
+from drivers.sim.mujoco.runtime import (
+    build_engine as _build_engine,
+)
+from drivers.sim.mujoco.runtime import (
+    parse_start as _parse_start,
+)
+from drivers.sim.mujoco.runtime import (
+    resolve_mid360_pattern as _resolve_mid360_pattern,
+)
+from drivers.sim.mujoco.runtime import (
+    resolve_world as _resolve_world,
+)
+from drivers.sim.mujoco.runtime import (
+    scene_start as _scene_start,
+)
+from maps.artifacts import (
+    add_points_to_voxel_store as _add_points_to_voxel_store,
+)
+from maps.artifacts import (
+    write_same_source_map_artifacts as _write_same_source_map_artifacts,
+)
+from runtime.msgs.numpy_compat import np
+from runtime.runtime_interface import (
+    FRAME_LINKS,
+    TOPICS,
+    adapter_source_for_target,
+    lidar_extrinsic,
+    simulator_world_frame_id,
+    topic_default_frame_id,
+)
+
 SIM_WORLD_FRAME_ID = simulator_world_frame_id()
 SIM_MAP_FRAME_ID = FRAME_LINKS["map_to_odom"].parent
 SIM_ODOM_FRAME_ID = FRAME_LINKS["map_to_odom"].child
@@ -138,136 +151,6 @@ def _pct_optimizer_enabled_from_env(env: dict[str, str] | None = None) -> bool:
     return str(raw).strip().lower() not in _FALSE_ENV_VALUES
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def _run_no_ros_portable_lio_gate(**cfg: Any) -> dict[str, Any]:
     """Removed portable LIO gate."""
 
@@ -294,11 +177,13 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
     """
 
     from sim.engine.core.engine import VelocityCommand
+
+    from explore.frontier import WavefrontFrontierExplorer
+    from explore.tare.policy import PortableTAREPolicy
+    from maps.modules.occupancy import OccupancyGridModule
     from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
     from runtime.msgs.nav import Odometry
     from runtime.msgs.sensor import PointCloud2
-    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
-    from nav.services.map_layers.occupancy_grid_module import OccupancyGridModule
 
     world = Path(cfg["world"])
     work_dir = Path(cfg["work_dir"])
@@ -313,8 +198,6 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
     require_goal_arrival = bool(cfg.get("require_goal_arrival"))
     goal_arrival_threshold = max(0.01, float(cfg.get("goal_arrival_threshold") or 0.30))
     remaining_gaps: list[str] = []
-    if run_tare:
-        remaining_gaps.append("tare_native_exploration_not_connected_in_ground_truth_gate")
     if run_inspection:
         remaining_gaps.append("inspection_not_connected_in_ground_truth_gate")
 
@@ -394,20 +277,21 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
         reachable_goal_radius=0.7,
         approach_max_target_distance_m=20.0 if require_goal_arrival else 4.0,
         approach_goal_max_distance_m=(
-            max(goal_arrival_threshold + 0.20, goal_arrival_threshold * 1.5)
-            if require_goal_arrival
-            else 8.0
+            max(goal_arrival_threshold + 0.20, goal_arrival_threshold * 1.5) if require_goal_arrival else 8.0
         ),
     )
     occupancy.costmap.subscribe(frontier._on_costmap)
     occupancy.exploration_grid.subscribe(frontier._on_exploration_grid)
+    tare_policy = PortableTAREPolicy() if run_tare else None
 
     voxel_store: dict[tuple[int, int, int], tuple[float, float, float]] = {}
     path_xy: list[tuple[float, float]] = []
     goal_trace: list[dict[str, Any]] = []
+    completed_goal_xy: list[tuple[float, float]] = []
     latest_frontiers: list[dict[str, Any]] = []
     explored_area_samples: list[float] = []
     active_goal_xy: tuple[float, float] | None = None
+    active_goal_started_wall_s: float | None = None
     goal_reached = False
     distance_to_goal_m: float | None = None
     goal_reached_at_sim_s: float | None = None
@@ -415,6 +299,8 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
     active_goal_type: str | None = None
     active_frontier_target_xy: tuple[float, float] | None = None
     last_goal_xy: tuple[float, float] | None = None
+    last_tare_reason = ""
+    last_tare_candidate_count = 0
     last_cmd = (0.0, 0.0, 0.0)
     scan_count = 0
     imu_sample_count = 0
@@ -481,8 +367,7 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
                 if isinstance(latest_grid, dict) and "grid" in latest_grid:
                     grid = np.asarray(latest_grid["grid"])
                     explored_area_samples.append(
-                        float((grid == 0).sum())
-                        * float(latest_grid.get("resolution", 0.0)) ** 2
+                        float((grid == 0).sum()) * float(latest_grid.get("resolution", 0.0)) ** 2
                     )
 
             gyro = np.asarray(getattr(state, "imu_gyro", []), dtype=np.float64)
@@ -495,6 +380,51 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
                 linear_y=float(cfg["drive_vy"]),
                 angular_z=float(cfg["drive_wz"]),
             )
+            if run_tare and elapsed >= float(cfg.get("tare_start_delay") or 0.0):
+                latest_grid = getattr(frontier, "_exploration_grid_data", None)
+                if (
+                    active_goal_xy is not None
+                    and active_goal_started_wall_s is not None
+                    and elapsed_wall - active_goal_started_wall_s > float(cfg.get("tare_goal_timeout") or 180.0)
+                ):
+                    completed_goal_xy.append(active_goal_xy)
+                    active_goal_xy = None
+                    active_goal_started_wall_s = None
+                    active_goal_type = None
+                if tare_policy is not None and isinstance(latest_grid, dict) and active_goal_xy is None:
+                    decision = tare_policy.select(
+                        grid_payload=latest_grid,
+                        robot_xy=(float(pos[0]), float(pos[1])),
+                        robot_yaw=yaw,
+                        visited_goals=completed_goal_xy,
+                    )
+                    last_tare_reason = str(decision.reason)
+                    last_tare_candidate_count = len(decision.candidates)
+                    if decision.goal is not None:
+                        goal_xy = (float(decision.goal[0]), float(decision.goal[1]))
+                        active_goal_xy = goal_xy
+                        active_goal_started_wall_s = elapsed_wall
+                        active_goal_type = "tare_viewpoint"
+                        if (
+                            last_goal_xy is None
+                            or math.hypot(
+                                goal_xy[0] - last_goal_xy[0],
+                                goal_xy[1] - last_goal_xy[1],
+                            )
+                            > 0.45
+                        ):
+                            goal_trace.append(
+                                {
+                                    "x": round(goal_xy[0], 3),
+                                    "y": round(goal_xy[1], 3),
+                                    "goal_type": "tare_viewpoint",
+                                    "reason": last_tare_reason,
+                                    "candidate_count": int(last_tare_candidate_count),
+                                    "elapsed_s": round(float(elapsed), 3),
+                                }
+                            )
+                            last_goal_xy = goal_xy
+
             if run_frontier and elapsed >= float(cfg.get("frontier_start_delay") or 0.0):
                 latest_frontiers = frontier._compute_frontier_clusters()
                 if latest_frontiers and (active_goal_xy is None or not require_goal_arrival):
@@ -518,17 +448,10 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
                     else:
                         target = latest_frontiers[0]
                     goal_xy = (float(target["cx"]), float(target["cy"]))
-                    goal_type = (
-                        "frontier_approach_goal"
-                        if bool(target.get("approach_goal"))
-                        else "frontier_goal"
-                    )
+                    goal_type = "frontier_approach_goal" if bool(target.get("approach_goal")) else "frontier_goal"
                     frontier_target_raw = target.get("frontier_target")
                     frontier_target_xy: tuple[float, float] | None = None
-                    if (
-                        isinstance(frontier_target_raw, (list, tuple))
-                        and len(frontier_target_raw) >= 2
-                    ):
+                    if isinstance(frontier_target_raw, (list, tuple)) and len(frontier_target_raw) >= 2:
                         frontier_target_xy = (
                             float(frontier_target_raw[0]),
                             float(frontier_target_raw[1]),
@@ -546,6 +469,7 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
                             )
                             goal_type = f"bounded_{goal_type}"
                     active_goal_xy = goal_xy
+                    active_goal_started_wall_s = elapsed_wall
                     active_goal_type = goal_type
                     active_frontier_target_xy = frontier_target_xy
                     if (
@@ -567,17 +491,22 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
                             ]
                         goal_trace.append(trace_item)
                         last_goal_xy = goal_xy
-                if active_goal_xy is not None:
-                    dx = active_goal_xy[0] - float(pos[0])
-                    dy = active_goal_xy[1] - float(pos[1])
-                    dist = math.hypot(dx, dy)
-                    distance_to_goal_m = float(dist)
-                    if dist <= goal_arrival_threshold:
-                        goal_reached = True
-                        goal_reached_at_sim_s = float(elapsed_sim)
-                        goal_reached_at_wall_s = float(elapsed_wall)
-                        if require_goal_arrival:
-                            break
+            if active_goal_xy is not None:
+                dx = active_goal_xy[0] - float(pos[0])
+                dy = active_goal_xy[1] - float(pos[1])
+                dist = math.hypot(dx, dy)
+                distance_to_goal_m = float(dist)
+                if dist <= goal_arrival_threshold:
+                    goal_reached = True
+                    goal_reached_at_sim_s = float(elapsed_sim)
+                    goal_reached_at_wall_s = float(elapsed_wall)
+                    completed_goal_xy.append(active_goal_xy)
+                    if require_goal_arrival:
+                        break
+                    active_goal_xy = None
+                    active_goal_started_wall_s = None
+                    active_goal_type = None
+                else:
                     yaw_err = _wrap_angle_rad(math.atan2(dy, dx) - yaw)
                     linear_limit = min(
                         float(cfg["cmd_vel_linear_limit"]),
@@ -652,29 +581,25 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
         "last": [round(float(v), 4) for v in last_cmd],
     }
     explored_area_growth_m2 = (
-        max(0.0, explored_area_samples[-1] - explored_area_samples[0])
-        if len(explored_area_samples) >= 2
-        else 0.0
+        max(0.0, explored_area_samples[-1] - explored_area_samples[0]) if len(explored_area_samples) >= 2 else 0.0
     )
     coverage_growth_ratio = (
-        explored_area_growth_m2 / max(explored_area_samples[-1], 1.0)
-        if explored_area_samples
-        else 0.0
+        explored_area_growth_m2 / max(explored_area_samples[-1], 1.0) if explored_area_samples else 0.0
     )
     lidar_backend_report = (
         engine.get_lidar_backend_report()
         if hasattr(engine, "get_lidar_backend_report")
         else {"backend": str(cfg["lidar_backend"]), "product_backend": False}
     )
-    product_lidar_backend_verified = bool(
-        lidar_backend_report.get("product_lidar_backend_verified")
-    )
+    product_lidar_backend_verified = bool(lidar_backend_report.get("product_lidar_backend_verified"))
     if not product_lidar_backend_verified:
         remaining_gaps.append("product_mujoco_lidar_backend_not_verified")
     if scan_count <= 0:
         remaining_gaps.append("no_lidar_scans")
     if run_frontier and len(goal_trace) < int(cfg["frontier_min_goals"]):
         remaining_gaps.append("frontier_goal_count_below_threshold")
+    if run_tare and len(goal_trace) < int(cfg["tare_min_goals"]):
+        remaining_gaps.append("tare_goal_count_below_threshold")
     if require_goal_arrival and not goal_reached:
         remaining_gaps.append("goal_arrival_not_reached")
     if bool(cfg.get("save_map_artifacts", True)) and not bool(map_artifacts.get("ok")):
@@ -685,9 +610,9 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
         and scan_count > 0
         and (not bool(cfg.get("save_map_artifacts", True)) or bool(map_artifacts.get("ok")))
         and (not run_frontier or len(goal_trace) >= int(cfg["frontier_min_goals"]))
+        and (not run_tare or len(goal_trace) >= int(cfg["tare_min_goals"]))
         and (not require_goal_arrival or goal_reached)
         and product_lidar_backend_verified
-        and not run_tare
         and not run_inspection
     )
     report: dict[str, Any] = {
@@ -710,11 +635,7 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
         "timing": {
             "elapsed_wall_s": round(float(sim_wall_time_s), 3),
             "elapsed_sim_s": round(float(elapsed_sim_s), 3),
-            "sim_realtime_factor": (
-                round(float(elapsed_sim_s / sim_wall_time_s), 3)
-                if sim_wall_time_s > 0
-                else 0.0
-            ),
+            "sim_realtime_factor": (round(float(elapsed_sim_s / sim_wall_time_s), 3) if sim_wall_time_s > 0 else 0.0),
             "timeout": bool(timeout),
         },
         "lidar_backend": lidar_backend_report,
@@ -730,21 +651,24 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
             "odom_path_length_m": round(float(odom_path_length_m), 4),
             "nonzero_cmd_count": int(nonzero_cmd_count),
             "applied_command": dict(applied_cmd_stats),
-            "final_pose": (
-                [round(float(path_xy[-1][0]), 4), round(float(path_xy[-1][1]), 4)]
-                if path_xy
-                else None
-            ),
+            "final_pose": ([round(float(path_xy[-1][0]), 4), round(float(path_xy[-1][1]), 4)] if path_xy else None),
         },
         "exploration": {
-            "mode": "frontier" if run_frontier else "fixed_drive",
+            "mode": "tare" if run_tare else ("frontier" if run_frontier else "fixed_drive"),
             "frontier_goal_count": int(len(goal_trace)),
             "frontier_goals": goal_trace[:20],
+            "tare_goal_count": int(len(goal_trace)) if run_tare else 0,
+            "tare_goals": goal_trace[:20] if run_tare else [],
+            "tare_last_reason": last_tare_reason,
+            "tare_last_candidate_count": int(last_tare_candidate_count),
+            "completed_goal_count": int(len(completed_goal_xy)),
             "latest_frontier_count": int(len(latest_frontiers)),
             "frontier_debug": dict(getattr(frontier, "_frontier_debug", {})),
             "explored_area_growth_m2": round(float(explored_area_growth_m2), 4),
             "coverage_growth_ratio": round(float(coverage_growth_ratio), 6),
-            "min_goal_threshold": int(cfg["frontier_min_goals"]) if run_frontier else 0,
+            "min_goal_threshold": (
+                int(cfg["tare_min_goals"]) if run_tare else (int(cfg["frontier_min_goals"]) if run_frontier else 0)
+            ),
         },
         "goal_arrival": {
             "required": bool(require_goal_arrival),
@@ -764,11 +688,7 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
                 if active_frontier_target_xy is not None
                 else None
             ),
-            "distance_to_goal_m": (
-                round(float(distance_to_goal_m), 4)
-                if distance_to_goal_m is not None
-                else None
-            ),
+            "distance_to_goal_m": (round(float(distance_to_goal_m), 4) if distance_to_goal_m is not None else None),
             "distance_to_frontier_target_m": (
                 round(
                     math.hypot(
@@ -798,9 +718,9 @@ def _run_mujoco_ground_truth_exploration_gate(**cfg: Any) -> dict[str, Any]:
             "raw_mujoco_lidar": scan_count > 0,
             "raw_mujoco_imu": imu_sample_count > 0,
             "same_source_map_artifact": bool(map_artifacts.get("ok")),
-            "frontier_or_exploration": bool(goal_trace) if run_frontier else True,
+            "frontier_or_exploration": (bool(goal_trace) if (run_frontier or run_tare) else True),
             "goal_arrival": bool(goal_reached),
-            "tare_native_exploration": False if run_tare else None,
+            "tare_native_exploration": bool(goal_trace) if run_tare else None,
             "no_ros_default_runtime": True,
             "no_ros_message_shim": True,
             "localization_odometry_and_map": True,
@@ -939,10 +859,7 @@ def run_gate(
         if enabled
     ]
     if len(selected_lingtu_modes) > 1:
-        raise ValueError(
-            "--run-lingtu-frontier, --run-lingtu-tare, and "
-            "--run-lingtu-inspection are mutually exclusive"
-        )
+        raise ValueError("--run-lingtu-frontier, --run-lingtu-tare, and --run-lingtu-inspection are mutually exclusive")
 
     if nav_data_source == "mujoco_ground_truth" and not str(localization_backend or "").strip():
         localization_backend = "mujoco_ground_truth"
@@ -955,9 +872,7 @@ def run_gate(
         pct_optimizer_defaulted = PCT_OPTIMIZE_TRAJECTORY_ENV not in os.environ
         os.environ.setdefault(PCT_OPTIMIZE_TRAJECTORY_ENV, "0")
     pct_optimizer_enabled = (
-        _pct_optimizer_enabled_from_env()
-        if run_lingtu_inspection and inspection_planner == "pct"
-        else None
+        _pct_optimizer_enabled_from_env() if run_lingtu_inspection and inspection_planner == "pct" else None
     )
 
     inspection_goal_list = _parse_inspection_goals(inspection_goals)
@@ -976,6 +891,7 @@ def run_gate(
     if nav_data_source == "mujoco_ground_truth":
         return _run_mujoco_ground_truth_exploration_gate(**locals())
     return _run_no_ros_portable_lio_gate(**locals())
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1031,8 +947,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=1.0,
         help=(
-            f"Scale LingTu {TOPICS.cmd_vel} angular velocity only when applying it "
-            "to the kinematic MuJoCo demo model."
+            f"Scale LingTu {TOPICS.cmd_vel} angular velocity only when applying it to the kinematic MuJoCo demo model."
         ),
     )
     parser.add_argument(
@@ -1097,10 +1012,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--inspection-downsample-dist",
         type=float,
         default=0.35,
-        help=(
-            "Global path waypoint spacing used by Navigation for "
-            "simulation-only inspection runs."
-        ),
+        help=("Global path waypoint spacing used by Navigation for simulation-only inspection runs."),
     )
     parser.add_argument(
         "--inspection-planner",
@@ -1122,19 +1034,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--inspection-waypoint-threshold",
         type=float,
         default=0.50,
-        help=(
-            "Navigation intermediate patrol waypoint radius for "
-            "simulation-only inspection runs."
-        ),
+        help=("Navigation intermediate patrol waypoint radius for simulation-only inspection runs."),
     )
     parser.add_argument(
         "--inspection-final-waypoint-threshold",
         type=float,
         default=0.50,
-        help=(
-            "Navigation final patrol waypoint radius for simulation-only "
-            "inspection runs."
-        ),
+        help=("Navigation final patrol waypoint radius for simulation-only inspection runs."),
     )
     parser.add_argument(
         "--inspection-complete-path-on-goal-proximity",
@@ -1183,19 +1089,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--inspection-path-stop-yaw-rate-gain",
         type=float,
         default=7.5,
-        help=(
-            "PathFollower yaw-rate gain used when nearly stopped for "
-            "simulation-only inspection runs."
-        ),
+        help=("PathFollower yaw-rate gain used when nearly stopped for simulation-only inspection runs."),
     )
     parser.add_argument(
         "--inspection-path-dir-diff-thre",
         type=float,
         default=0.1,
-        help=(
-            "PathFollower heading-error threshold for allowing acceleration "
-            "during simulation-only inspection runs."
-        ),
+        help=("PathFollower heading-error threshold for allowing acceleration during simulation-only inspection runs."),
     )
     parser.add_argument("--min-map-area-growth-m2", type=float, default=0.25)
     parser.add_argument("--min-explored-area-growth-m2", type=float, default=0.25)
@@ -1461,12 +1361,8 @@ def main() -> int:
             inspection_tomogram=args.inspection_tomogram,
             inspection_waypoint_threshold=args.inspection_waypoint_threshold,
             inspection_final_waypoint_threshold=args.inspection_final_waypoint_threshold,
-            inspection_complete_path_on_goal_proximity=(
-                args.inspection_complete_path_on_goal_proximity
-            ),
-            inspection_goal_proximity_completion_threshold=(
-                args.inspection_goal_proximity_completion_threshold
-            ),
+            inspection_complete_path_on_goal_proximity=(args.inspection_complete_path_on_goal_proximity),
+            inspection_goal_proximity_completion_threshold=(args.inspection_goal_proximity_completion_threshold),
             inspection_path_goal_tolerance=args.inspection_path_goal_tolerance,
             inspection_path_lookahead=args.inspection_path_lookahead,
             inspection_path_min_speed=args.inspection_path_min_speed,

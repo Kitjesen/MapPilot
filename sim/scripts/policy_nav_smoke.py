@@ -16,8 +16,12 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
+SCRIPT_DIR = Path(__file__).resolve().parent
+# Running this file directly puts sim/scripts at sys.path[0]. That directory
+# contains the LingTu sim.scripts.mujoco package, which shadows DeepMind's
+# top-level mujoco package and breaks MuJoCoEngine imports.
+sys.path = [p for p in sys.path if Path(p or ".").resolve() != SCRIPT_DIR]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 SRC = ROOT / "src"
@@ -25,7 +29,6 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from runtime.msgs.numpy_compat import np
-
 
 PRODUCTION_LOCAL_PLANNER_BACKEND = "nanobind"
 PRODUCTION_PATH_FOLLOWER_BACKEND = "nav_kernel"
@@ -124,13 +127,8 @@ def _contact_snapshot(engine: Any) -> dict[str, Any]:
             break
         geom_ids = (int(contact.geom1), int(contact.geom2))
         body_ids = [int(model.geom_bodyid[geom_id]) for geom_id in geom_ids]
-        body_names = [
-            _mujoco_name(mujoco, model, mujoco.mjtObj.mjOBJ_BODY, body_id)
-            for body_id in body_ids
-        ]
-        foot_names = [
-            body_name for body_name in body_names if body_name in _FOOT_BODY_NAMES
-        ]
+        body_names = [_mujoco_name(mujoco, model, mujoco.mjtObj.mjOBJ_BODY, body_id) for body_id in body_ids]
+        foot_names = [body_name for body_name in body_names if body_name in _FOOT_BODY_NAMES]
         touches_world = any(body_id == 0 for body_id in body_ids)
         if foot_names and touches_world:
             feet.update(foot_names)
@@ -141,10 +139,7 @@ def _contact_snapshot(engine: Any) -> dict[str, Any]:
             except Exception:
                 pass
         if touches_world and not foot_names:
-            robot_body_contacts = [
-                name for name, body_id in zip(body_names, body_ids)
-                if body_id != 0 and name
-            ]
+            robot_body_contacts = [name for name, body_id in zip(body_names, body_ids) if body_id != 0 and name]
             if robot_body_contacts:
                 non_foot_ground_contacts += 1
 
@@ -204,9 +199,7 @@ def _contact_summary(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "foot_contact_sample_count": foot_contact_sample_count,
         "unique_feet": sorted(unique_feet),
         "unique_feet_count": len(unique_feet),
-        "per_foot_contact_samples": {
-            key: value for key, value in sorted(per_foot.items()) if value > 0
-        },
+        "per_foot_contact_samples": {key: value for key, value in sorted(per_foot.items()) if value > 0},
         "support_count": _stats(support_counts),
         "max_support_count": int(max(support_counts)) if support_counts else 0,
         "non_foot_ground_contacts": non_foot_ground_contacts,
@@ -315,14 +308,8 @@ def _load_policy_metadata(policy_path: str) -> dict[str, Any]:
 
         sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
         meta["backend"] = "onnx"
-        meta["input"] = [
-            {"name": inp.name, "shape": list(inp.shape), "type": inp.type}
-            for inp in sess.get_inputs()
-        ]
-        meta["output"] = [
-            {"name": out.name, "shape": list(out.shape), "type": out.type}
-            for out in sess.get_outputs()
-        ]
+        meta["input"] = [{"name": inp.name, "shape": list(inp.shape), "type": inp.type} for inp in sess.get_inputs()]
+        meta["output"] = [{"name": out.name, "shape": list(out.shape), "type": out.type} for out in sess.get_outputs()]
     except Exception as exc:
         meta["onnx_error"] = str(exc)
     return meta
@@ -445,8 +432,9 @@ def run_direct_policy(
     direct_mode: str = "walk",
     policy_path: str = "",
 ) -> dict[str, Any]:
-    from drivers.sim.mujoco.driver import MujocoDriverModule
     from sim.engine.core.engine import VelocityCommand
+
+    from drivers.sim.mujoco.driver import MujocoDriverModule
 
     driver = MujocoDriverModule(
         world=world,
@@ -575,32 +563,35 @@ def run_full_stack_nav(
     from runtime.blueprints.profile_builder import build_system_for_profile
     from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-    system = build_system_for_profile("sim", dict(
-        robot="sim_mujoco",
-        world=world,
-        slam_profile="none",
-        detector="sim_scene",
-        llm="mock",
-        planner_backend=planner_backend,
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=False,
-        render=False,
-        python_autonomy_backend=local_planner_backend,
-        python_path_follower_backend=path_follower_backend,
-        drive_mode="policy",
-        policy_path=policy_path,
-        max_angular_vel=nav_max_angular_z,
-        path_follower_max_yaw_rate=nav_max_angular_z,
-        waypoint_threshold=waypoint_threshold,
-        final_waypoint_threshold=final_waypoint_threshold,
-        downsample_dist=downsample_dist,
-        path_follower_goal_tolerance=path_goal_tolerance,
-        path_follower_min_speed=path_min_speed,
-        path_follower_max_speed=path_max_speed,
-        safe_goal_tolerance=safe_goal_tolerance,
-        run_startup_checks=False,
-    ))
+    system = build_system_for_profile(
+        "sim",
+        dict(
+            robot="sim_mujoco",
+            world=world,
+            slam_profile="none",
+            detector="sim_scene",
+            llm="mock",
+            planner_backend=planner_backend,
+            enable_native=False,
+            enable_semantic=False,
+            enable_gateway=False,
+            render=False,
+            python_autonomy_backend=local_planner_backend,
+            python_path_follower_backend=path_follower_backend,
+            drive_mode="policy",
+            policy_path=policy_path,
+            max_angular_vel=nav_max_angular_z,
+            path_follower_max_yaw_rate=nav_max_angular_z,
+            waypoint_threshold=waypoint_threshold,
+            final_waypoint_threshold=final_waypoint_threshold,
+            downsample_dist=downsample_dist,
+            path_follower_goal_tolerance=path_goal_tolerance,
+            path_follower_min_speed=path_min_speed,
+            path_follower_max_speed=path_max_speed,
+            safe_goal_tolerance=safe_goal_tolerance,
+            run_startup_checks=False,
+        ),
+    )
 
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule")
@@ -678,9 +669,7 @@ def run_full_stack_nav(
         )
     )
     driver.odometry._add_callback(
-        lambda m: odom.append(
-            (float(m.pose.position.x), float(m.pose.position.y), float(m.pose.position.z))
-        )
+        lambda m: odom.append((float(m.pose.position.x), float(m.pose.position.y), float(m.pose.position.z)))
     )
 
     system.start()
@@ -790,9 +779,7 @@ def run_full_stack_nav(
             "dist_at_success_m": dist_at_success,
             "moved_at_success_m": moved_at_success,
             "success_end": [float(v) for v in success_pose[:3]] if success_pose else None,
-            "settled_dist_delta_m": (
-                float(dist_to_goal - dist_at_success) if dist_at_success is not None else None
-            ),
+            "settled_dist_delta_m": (float(dist_to_goal - dist_at_success) if dist_at_success is not None else None),
             "policy_loaded": bool(engine.has_policy) if engine is not None else False,
             "policy_path": str(driver._policy_path),
             "policy_backend": _policy_backend(
@@ -802,15 +789,11 @@ def run_full_stack_nav(
             "frames": {
                 "goal": "map",
                 "global_path": (
-                    str((global_path_summaries[-1] or {}).get("frame_id", ""))
-                    if global_path_summaries
-                    else ""
+                    str((global_path_summaries[-1] or {}).get("frame_id", "")) if global_path_summaries else ""
                 ),
                 "waypoint": "map",
                 "local_path": (
-                    str((local_path_summaries[-1] or {}).get("frame_id", ""))
-                    if local_path_summaries
-                    else ""
+                    str((local_path_summaries[-1] or {}).get("frame_id", "")) if local_path_summaries else ""
                 ),
                 "cmd_vel": "base_link",
                 "driver_cmd_vel": "base_link",
@@ -821,17 +804,11 @@ def run_full_stack_nav(
             "local_path_nonempty_count": sum(
                 1 for summary in local_path_summaries if int(summary.get("count") or 0) >= 2
             ),
-            "local_path_empty_count": sum(
-                1 for summary in local_path_summaries if int(summary.get("count") or 0) < 2
-            ),
+            "local_path_empty_count": sum(1 for summary in local_path_summaries if int(summary.get("count") or 0) < 2),
             "global_path": global_path_summaries[-1] if global_path_summaries else None,
             "last_waypoint": waypoint_points[-1] if waypoint_points else None,
             "last_nonempty_local_path": next(
-                (
-                    summary
-                    for summary in reversed(local_path_summaries)
-                    if int(summary.get("count") or 0) >= 2
-                ),
+                (summary for summary in reversed(local_path_summaries) if int(summary.get("count") or 0) >= 2),
                 None,
             ),
             "last_local_path": local_path_summaries[-1] if local_path_summaries else None,
@@ -897,9 +874,7 @@ def _passes_nav(result: dict[str, Any], min_motion: float, max_dist_to_goal: flo
     seen = result.get("seen", {})
     planner_status = result.get("global_planner_backend_status") or {}
     configured_planner = str(planner_status.get("configured_backend") or "")
-    map_ready = int(seen.get("costmap", 0)) > 0 or bool(
-        (result.get("costmap_readiness") or {}).get("planner_has_map")
-    )
+    map_ready = int(seen.get("costmap", 0)) > 0 or bool((result.get("costmap_readiness") or {}).get("planner_has_map"))
     dist_for_gate = result.get("dist_at_success_m")
     if dist_for_gate is None:
         dist_for_gate = result.get("dist_to_goal_m", 999.0)

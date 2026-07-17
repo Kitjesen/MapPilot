@@ -156,6 +156,7 @@ class TestSHMTransport:
 
     def test_pub_sub_bytes(self):
         from runtime.transport.shm import SHMTransport
+
         topic = TopicConfig(name="/test/shm_bytes", strategy=TransportStrategy.SHM, buffer_size=1024)
 
         transport = SHMTransport()
@@ -177,6 +178,7 @@ class TestSHMTransport:
 
     def test_pub_sub_pickle(self):
         from runtime.transport.shm import SHMTransport
+
         topic = TopicConfig(name="/test/shm_pickle", strategy=TransportStrategy.SHM, buffer_size=4096)
 
         transport = SHMTransport()
@@ -196,12 +198,14 @@ class TestSHMTransport:
 
     def test_shm_name_generation(self):
         from runtime.transport.shm import _shm_name
+
         assert _shm_name("/nav/odometry") == "lingtu_nav_odometry"
         assert _shm_name("simple") == "lingtu_simple"
 
     def test_buffer_overflow_raises(self):
         """Publishing data larger than buffer should raise ValueError."""
         from runtime.transport.shm import SHMTransport
+
         topic = TopicConfig(name="/test/shm_overflow", strategy=TransportStrategy.SHM, buffer_size=64)
 
         transport = SHMTransport()
@@ -242,9 +246,9 @@ class TestTransportAdapter:
 
         adapter = TransportAdapter(SHMTransport())
         # Must have publish, subscribe, close
-        assert hasattr(adapter, 'publish')
-        assert hasattr(adapter, 'subscribe')
-        assert hasattr(adapter, 'close')
+        assert hasattr(adapter, "publish")
+        assert hasattr(adapter, "subscribe")
+        assert hasattr(adapter, "close")
         adapter.close()
 
     def test_adapter_lazy_publisher_creation(self):
@@ -321,6 +325,7 @@ class TestJsonCodec:
 
     def test_json_codec_roundtrips_core_message(self):
         import json
+
         from runtime.msgs.geometry import Twist, Vector3
         from runtime.transport.json_codec import dumps_message, loads_message
 
@@ -332,7 +337,7 @@ class TestJsonCodec:
         assert encoded.startswith(b"{")
         assert b"lingtu.transport.json.v1" in encoded
         assert envelope["schema_version"] == 1
-        assert envelope["schema"] == "lingtu.geometry.twist.v1"
+        assert envelope["schema"] == "runtime.msgs.geometry.Twist"
         assert envelope["type"] == "runtime.msgs.geometry.Twist"
         assert envelope["topic"] == "/nav/cmd_vel"
         assert envelope["frame_id"] == "body"
@@ -343,9 +348,9 @@ class TestJsonCodec:
         assert decoded.angular.z == 0.5
 
     def test_shm_transport_adapter_uses_json_codec(self, monkeypatch):
+        import runtime.transport.factory as factory_mod
         from runtime.msgs.geometry import Twist, Vector3
         from runtime.transport.abc import TopicConfig
-        import runtime.transport.factory as factory_mod
 
         class BytesOnlyPublisher:
             def __init__(self):
@@ -377,7 +382,7 @@ class TestJsonCodec:
                 pass
 
         backend = CapturingBackend()
-        monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: backend)
+        monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None, **kwargs: backend)
 
         transport = factory_mod.create_transport_adapter("shm")
         received = []
@@ -402,10 +407,11 @@ class TestJsonCodec:
 
     def test_dds_backed_transport_adapter_uses_raw_json_envelope(self, monkeypatch):
         import json
+
+        import runtime.transport.factory as factory_mod
         from runtime.msgs.geometry import Twist, Vector3
         from runtime.transport.abc import TopicConfig
         from runtime.transport.dds import RawMessage
-        import runtime.transport.factory as factory_mod
 
         class CapturingPublisher:
             def __init__(self):
@@ -439,7 +445,7 @@ class TestJsonCodec:
                 pass
 
         backend = CapturingBackend()
-        monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: backend)
+        monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None, **kwargs: backend)
 
         transport = factory_mod.create_transport_adapter("dds")
         received = []
@@ -481,7 +487,9 @@ class TestJsonCodec:
             def close(self):
                 pass
 
-        monkeypatch.setattr(factory_mod, "create_transport", lambda strategy, ros_node=None: CapturingBackend())
+        monkeypatch.setattr(
+            factory_mod, "create_transport", lambda strategy, ros_node=None, **kwargs: CapturingBackend()
+        )
 
         transport = factory_mod.create_transport_adapter("dds")
         with pytest.raises(ValueError, match="registered product topic /nav/cmd_vel"):
@@ -499,8 +507,9 @@ def test_dds_transport_product_topic_uses_typed_contract(monkeypatch):
     class FakeWriter:
         instances = []
 
-        def __init__(self, _participant, _topic):
+        def __init__(self, _participant, _topic, qos=None):
             self.messages = []
+            self.qos = qos
             FakeWriter.instances.append(self)
 
         def write(self, msg):
@@ -514,7 +523,7 @@ def test_dds_transport_product_topic_uses_typed_contract(monkeypatch):
 
     created = {}
 
-    def fake_topic(_participant, name, msg_type):
+    def fake_topic(_participant, name, msg_type, qos=None):
         created["name"] = name
         created["msg_type"] = msg_type
         return name
@@ -549,6 +558,7 @@ class TestDDSTransport:
 
     def test_create_transport(self):
         from runtime.transport.dds import DDSTransport
+
         t = DDSTransport(domain_id=0)
         assert t.name == "dds"
         t.close()
@@ -598,6 +608,7 @@ class TestDDSTransport:
     def test_import_error_without_cyclonedds(self, monkeypatch):
         """DDSTransport raises ImportError with clear message when cyclonedds missing."""
         import runtime.transport.dds as dds_mod
+
         monkeypatch.setattr(dds_mod, "_CYCLONE_AVAILABLE", False)
         with pytest.raises(ImportError, match="cyclonedds-python is not installed"):
             dds_mod.DDSTransport()
@@ -609,6 +620,7 @@ class TestTransportFactory:
     def test_create_shm(self):
         from runtime.transport.factory import create_transport
         from runtime.transport.shm import SHMTransport
+
         t = create_transport(TransportStrategy.SHM)
         assert isinstance(t, SHMTransport)
         t.close()
@@ -616,6 +628,7 @@ class TestTransportFactory:
     def test_create_auto_returns_shm(self):
         from runtime.transport.factory import create_transport
         from runtime.transport.shm import SHMTransport
+
         # AUTO prefers SHM on same machine
         t = create_transport(TransportStrategy.AUTO)
         assert isinstance(t, SHMTransport)
@@ -625,6 +638,7 @@ class TestTransportFactory:
         pytest.importorskip("cyclonedds", reason="cyclonedds not installed")
         from runtime.transport.dds import DDSTransport
         from runtime.transport.factory import create_transport
+
         t = create_transport(TransportStrategy.DDS)
         assert isinstance(t, DDSTransport)
         t.close()

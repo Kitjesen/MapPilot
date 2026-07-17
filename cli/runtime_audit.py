@@ -11,17 +11,22 @@ from typing import Any, Mapping
 import yaml
 
 from cli.profiles_data import PROFILES
-from runtime.profiles.resolver import resolve_profile_config
-from runtime.profiles.endpoints import (
-    PRODUCT_PROFILE_ENDPOINTS,
-    RUNTIME_ENDPOINTS,
-    resolve_runtime_run_spec,
+from diagnostics.field.gates import (
+    RUNTIME_AUDIT_CHECKS,
+    runtime_validation_gates,
+    validate_runtime_validation_gates,
 )
 from runtime.profiles.binding_policy import ros2_runtime_binding_violations
 from runtime.profiles.catalog.products import (
     OPTIONAL_NATIVE_PRODUCT_PROFILES,
     PRODUCT_PROFILES,
 )
+from runtime.profiles.catalog.endpoints import PRODUCT_PROFILE_ENDPOINTS
+from runtime.profiles.endpoints import (
+    RUNTIME_ENDPOINTS,
+    resolve_runtime_run_spec,
+)
+from runtime.profiles.resolver import resolve_profile_config
 from runtime.runtime_interface import (
     DATA_SOURCE_CONTRACTS,
     FRAME_LINKS,
@@ -33,30 +38,20 @@ from runtime.runtime_interface import (
     normalize_algorithm_interface_contract,
     normalize_runtime_frames_contract,
     runtime_algorithm_interface_contract,
-    runtime_data_flow_topics,
     runtime_contract_manifest,
+    runtime_data_flow_topics,
     runtime_frames_contract,
     runtime_stage_algorithm_interface_contract,
     runtime_topic_allowed_frame_contract,
     runtime_topic_default_frame_contract,
 )
 from runtime.runtime_switch import validate_runtime_switch
-from runtime.diagnostics.runtime_validation_gates import (
-    RUNTIME_AUDIT_CHECKS,
-    runtime_validation_gates,
-    validate_runtime_validation_gates,
-)
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ROS_FRAME_CONTRACT_DOC = REPO_ROOT / "docs" / "architecture" / "ros_frame_contract.md"
 ROS_FREE_DEFAULT_PROFILES = frozenset(
     (
-        *(
-            profile
-            for profile in PRODUCT_PROFILES
-            if profile not in OPTIONAL_NATIVE_PRODUCT_PROFILES
-        ),
+        *(profile for profile in PRODUCT_PROFILES if profile not in OPTIONAL_NATIVE_PRODUCT_PROFILES),
         "stub",
         "dev",
         "sim_nav",
@@ -65,7 +60,7 @@ ROS_FREE_DEFAULT_PROFILES = frozenset(
     )
 )
 SOURCE_FRAME_CONTRACT_ROOTS = (
-    "src/drivers/real/lidar/lidar_module.py",
+    "src/drivers/real/lidar/module.py",
     "src/drivers/sim",
     "src/drivers/real/thunder/connection.py",
     "src/drivers/real/thunder/han_dog_module.py",
@@ -81,18 +76,15 @@ SOURCE_FRAME_CONTRACT_ROOTS = (
     "src/gateway/services/telemetry_normalizers.py",
     "src/gateway/services/readiness.py",
     "src/gateway/routes/diagnostics.py",
-    "src/decision/modules/semantic_planner_module.py",
-    "src/decision/goal_resolution/goal_resolver.py",
-    "src/decision/goal_resolution/fast_path.py",
-    "src/decision/goal_resolution/slow_path.py",
-    "src/decision/modules/frontier_module.py",
-    "src/decision/modules/action_executor_module.py",
-    "src/decision/modules/visual_servo_module.py",
-    "src/decision/tasking/action_executor.py",
+    "src/decision/modules/semantic_planner.py",
+    "src/decision/modules/visual_servo.py",
+    "src/decision/goals",
+    "src/decision/tasks",
+    "src/decision/frontiers",
     "src/perception/perception_module.py",
-    "src/perception/impl/instance_tracker.py",
+    "src/perception/tracking/instance_tracker.py",
     "cli/profiles_data.py",
-    "sim/scripts/mujoco_live_gate.py",
+    "sim/scripts/mujoco/live_gate.py",
     "sim/scripts/saved_map_relocalize_runtime_gate.py",
 )
 SOURCE_TOPIC_CONTRACT_ROOTS = (
@@ -182,19 +174,13 @@ def _as_tuple_stages(stages: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
 def _as_tuple_mapping(mapping: Mapping[str, Any] | None) -> dict[str, tuple[str, ...]]:
     if not isinstance(mapping, Mapping):
         return {}
-    return {
-        str(key): tuple(str(item) for item in (value or ()))
-        for key, value in mapping.items()
-    }
+    return {str(key): tuple(str(item) for item in (value or ())) for key, value in mapping.items()}
 
 
 def _as_str_mapping(mapping: Mapping[str, Any] | None) -> dict[str, str]:
     if not isinstance(mapping, Mapping):
         return {}
-    return {
-        str(key): str(value)
-        for key, value in mapping.items()
-    }
+    return {str(key): str(value) for key, value in mapping.items()}
 
 
 def _normalized_adapter_aliases(
@@ -211,12 +197,14 @@ def _normalized_adapter_aliases(
         for alias in aliases:
             if not isinstance(alias, Mapping):
                 continue
-            entries.append({
-                "source": str(alias.get("source") or ""),
-                "target": str(alias.get("target") or ""),
-                "msg_format": str(alias.get("msg_format") or ""),
-                "scope": str(alias.get("scope") or ""),
-            })
+            entries.append(
+                {
+                    "source": str(alias.get("source") or ""),
+                    "target": str(alias.get("target") or ""),
+                    "msg_format": str(alias.get("msg_format") or ""),
+                    "scope": str(alias.get("scope") or ""),
+                }
+            )
         normalized[str(surface)] = entries
     return normalized
 
@@ -244,19 +232,14 @@ def _check_yaml_manifest(
         if tf.get("links") != manifest["frame_links"]:
             blockers.append("tf.links does not mirror runtime frame_links")
 
-    if tuple(contract.get("required_nav_topics") or ()) != tuple(
-        manifest["core_required_topics"]
-    ):
+    if tuple(contract.get("required_nav_topics") or ()) != tuple(manifest["core_required_topics"]):
         blockers.append("required_nav_topics does not mirror core_required_topics")
 
-    if _as_tuple_stages(contract.get("runtime_data_flow") or []) != list(
-        manifest["runtime_data_flow"]
-    ):
+    if _as_tuple_stages(contract.get("runtime_data_flow") or []) != list(manifest["runtime_data_flow"]):
         blockers.append("runtime_data_flow does not mirror runtime manifest")
 
     yaml_resolved = {
-        name: _as_tuple_stages(stages)
-        for name, stages in (contract.get("resolved_runtime_data_flow") or {}).items()
+        name: _as_tuple_stages(stages) for name, stages in (contract.get("resolved_runtime_data_flow") or {}).items()
     }
     if yaml_resolved != manifest["resolved_runtime_data_flow"]:
         blockers.append(
@@ -270,9 +253,7 @@ def _check_yaml_manifest(
             "topic_allowed_frame_ids does not mirror runtime manifest",
         )
 
-    if _as_str_mapping(contract.get("topic_default_frame_ids")) != manifest[
-        "topic_default_frame_ids"
-    ]:
+    if _as_str_mapping(contract.get("topic_default_frame_ids")) != manifest["topic_default_frame_ids"]:
         blockers.append(
             "topic_default_frame_ids does not mirror runtime manifest",
         )
@@ -284,9 +265,10 @@ def _check_yaml_manifest(
             "real_runtime_topic_allowed_frame_ids does not mirror runtime manifest",
         )
 
-    if _as_str_mapping(contract.get("real_runtime_topic_default_frame_ids")) != manifest[
-        "real_runtime_topic_default_frame_ids"
-    ]:
+    if (
+        _as_str_mapping(contract.get("real_runtime_topic_default_frame_ids"))
+        != manifest["real_runtime_topic_default_frame_ids"]
+    ):
         blockers.append(
             "real_runtime_topic_default_frame_ids does not mirror runtime manifest",
         )
@@ -298,23 +280,19 @@ def _check_yaml_manifest(
             "real_runtime_required_topic_frame_ids does not mirror runtime manifest",
         )
 
-    if tuple(
-        contract.get("real_runtime_required_endpoint_input_topics") or ()
-    ) != tuple(manifest["real_runtime_required_endpoint_input_topics"]):
+    if tuple(contract.get("real_runtime_required_endpoint_input_topics") or ()) != tuple(
+        manifest["real_runtime_required_endpoint_input_topics"]
+    ):
         blockers.append(
             "real_runtime_required_endpoint_input_topics does not mirror runtime manifest",
         )
 
-    if _as_tuple_mapping(contract.get("runtime_data_flow_topics")) != manifest[
-        "runtime_data_flow_topics"
-    ]:
+    if _as_tuple_mapping(contract.get("runtime_data_flow_topics")) != manifest["runtime_data_flow_topics"]:
         blockers.append(
             "runtime_data_flow_topics does not mirror runtime manifest",
         )
 
-    if _as_tuple_mapping(
-        contract.get("runtime_data_flow_stage_algorithm_interfaces")
-    ) != _as_tuple_mapping(
+    if _as_tuple_mapping(contract.get("runtime_data_flow_stage_algorithm_interfaces")) != _as_tuple_mapping(
         manifest.get("runtime_data_flow_stage_algorithm_interfaces")
     ):
         blockers.append(
@@ -367,17 +345,11 @@ def _dedupe_tokens(tokens: tuple[Any, ...]) -> tuple[str, ...]:
 
 
 def _contains_unresolved_placeholder(token: str) -> bool:
-    return token.startswith("source:data_source.") or token.startswith(
-        "sink:data_source."
-    )
+    return token.startswith("source:data_source.") or token.startswith("sink:data_source.")
 
 
 def _format_is_declared(format_name: str, declared_formats: set[str]) -> bool:
-    return (
-        format_name in declared_formats
-        or format_name == "service"
-        or "/msg/" in format_name
-    )
+    return format_name in declared_formats or format_name == "service" or "/msg/" in format_name
 
 
 def _is_numeric(value: Any) -> bool:
@@ -414,10 +386,7 @@ def _append_endpoint_frame_override_blockers(
     for key in sorted(fixed_frame_keys & set(overrides)):
         frame_id = _normalized_runtime_frame(overrides.get(key))
         if frame_id not in fixed_frames:
-            blockers.append(
-                f"endpoint {endpoint_name} {section_name} {key} {frame_id} "
-                "is not a fixed runtime frame"
-            )
+            blockers.append(f"endpoint {endpoint_name} {section_name} {key} {frame_id} is not a fixed runtime frame")
 
 
 def _append_endpoint_topic_override_blockers(
@@ -432,15 +401,11 @@ def _append_endpoint_topic_override_blockers(
         topic = str(overrides.get(key) or "").strip()
         if not topic.startswith("/"):
             blockers.append(
-                f"endpoint {endpoint_name} {section_name} {key} "
-                f"{topic or '<empty>'} is not an absolute runtime topic"
+                f"endpoint {endpoint_name} {section_name} {key} {topic or '<empty>'} is not an absolute runtime topic"
             )
             continue
         if topic not in topic_formats:
-            blockers.append(
-                f"endpoint {endpoint_name} {section_name} {key} {topic} "
-                "has no topic format"
-            )
+            blockers.append(f"endpoint {endpoint_name} {section_name} {key} {topic} has no topic format")
 
 
 def _append_endpoint_file_override_blockers(
@@ -450,17 +415,14 @@ def _append_endpoint_file_override_blockers(
     section_name: str,
     overrides: Mapping[str, Any],
 ) -> None:
-    for key in ("tomogram",):
+    for key in ("planner_map", "map_path", "octomap"):
         path_value = str(overrides.get(key) or "").strip()
         if not path_value:
             continue
         path = Path(path_value)
         resolved_path = path if path.is_absolute() else REPO_ROOT / path
         if not resolved_path.is_file():
-            blockers.append(
-                f"endpoint {endpoint_name} {section_name} {key} path missing: "
-                f"{path_value}"
-            )
+            blockers.append(f"endpoint {endpoint_name} {section_name} {key} path missing: {path_value}")
 
 
 def _append_product_endpoint_matrix_blockers(blockers: list[str]) -> None:
@@ -477,39 +439,27 @@ def _append_product_endpoint_matrix_blockers(blockers: list[str]) -> None:
         missing = sorted(expected - actual)
         extra = sorted(actual - expected)
         if missing:
-            blockers.append(
-                f"product profile {profile} missing allowed endpoints: "
-                + ", ".join(missing)
-            )
+            blockers.append(f"product profile {profile} missing allowed endpoints: " + ", ".join(missing))
         if extra:
-            blockers.append(
-                f"product profile {profile} has undeclared endpoints: "
-                + ", ".join(extra)
-            )
+            blockers.append(f"product profile {profile} has undeclared endpoints: " + ", ".join(extra))
 
 
 def _append_product_planner_backend_blockers(blockers: list[str]) -> None:
     for profile in PRODUCT_PROFILES:
         if "planner_backend" in PROFILES.get(profile, {}):
-            blockers.append(
-                f"product profile {profile} must use planner, not planner_backend"
-            )
+            blockers.append(f"product profile {profile} must use planner, not planner_backend")
 
     product_profiles = set(PRODUCT_PROFILES)
     for endpoint_name, endpoint in RUNTIME_ENDPOINTS.items():
         supported_products = product_profiles & set(endpoint.supported_profiles)
         if supported_products and "planner_backend" in endpoint.config_overrides:
             blockers.append(
-                f"endpoint {endpoint_name} config_overrides must not set "
-                "planner_backend for product profiles"
+                f"endpoint {endpoint_name} config_overrides must not set planner_backend for product profiles"
             )
         for profile in sorted(product_profiles & set(endpoint.profile_overrides)):
             overrides = endpoint.profile_overrides[profile]
             if "planner_backend" in overrides:
-                blockers.append(
-                    f"endpoint {endpoint_name} profile_overrides.{profile} "
-                    "must not set planner_backend"
-                )
+                blockers.append(f"endpoint {endpoint_name} profile_overrides.{profile} must not set planner_backend")
 
 
 def _append_external_profile_metadata_blockers(
@@ -526,18 +476,13 @@ def _append_external_profile_metadata_blockers(
     if not launcher:
         blockers.append(f"profile {profile_name} external launcher missing")
     elif not (REPO_ROOT / launcher).is_file():
-        blockers.append(
-            f"profile {profile_name} external launcher missing: {launcher}"
-        )
+        blockers.append(f"profile {profile_name} external launcher missing: {launcher}")
 
     if not runtime_contract:
         blockers.append(f"profile {profile_name} external runtime contract missing")
         return
     if runtime_contract not in DATA_SOURCE_CONTRACTS:
-        blockers.append(
-            f"profile {profile_name} external runtime contract unknown: "
-            f"{runtime_contract}"
-        )
+        blockers.append(f"profile {profile_name} external runtime contract unknown: {runtime_contract}")
         return
 
     endpoint_matches = [
@@ -546,29 +491,19 @@ def _append_external_profile_metadata_blockers(
         if endpoint.runtime_contract == runtime_contract
     ]
     if not endpoint_matches:
-        blockers.append(
-            f"profile {profile_name} external runtime contract has no endpoint: "
-            f"{runtime_contract}"
-        )
+        blockers.append(f"profile {profile_name} external runtime contract has no endpoint: {runtime_contract}")
         return
     if len(endpoint_matches) > 1:
-        blockers.append(
-            f"profile {profile_name} external runtime contract has multiple endpoints: "
-            f"{runtime_contract}"
-        )
+        blockers.append(f"profile {profile_name} external runtime contract has multiple endpoints: {runtime_contract}")
         return
 
     endpoint_name, endpoint = endpoint_matches[0]
     if profile_name not in endpoint.supported_profiles:
         blockers.append(
-            f"profile {profile_name} external runtime contract endpoint "
-            f"{endpoint_name} does not support profile"
+            f"profile {profile_name} external runtime contract endpoint {endpoint_name} does not support profile"
         )
     if launcher and endpoint.external_launcher != launcher:
-        blockers.append(
-            f"profile {profile_name} external launcher does not match "
-            f"endpoint {endpoint_name}"
-        )
+        blockers.append(f"profile {profile_name} external launcher does not match endpoint {endpoint_name}")
     for field_name, action_name, action_table in (
         ("_external_default_args", "default", endpoint.default_actions),
         ("_external_record_args", "record", endpoint.record_actions),
@@ -577,24 +512,15 @@ def _append_external_profile_metadata_blockers(
             continue
         explicit_args = profile_data.get(field_name)
         if not isinstance(explicit_args, (list, tuple)):
-            blockers.append(
-                f"profile {profile_name} external {action_name} args "
-                "are not a list"
-            )
+            blockers.append(f"profile {profile_name} external {action_name} args are not a list")
             continue
         if profile_name not in action_table:
             blockers.append(
-                f"profile {profile_name} external {action_name} args have no "
-                f"endpoint action on {endpoint_name}"
+                f"profile {profile_name} external {action_name} args have no endpoint action on {endpoint_name}"
             )
             continue
-        if tuple(str(item) for item in explicit_args) != tuple(
-            str(item) for item in action_table[profile_name]
-        ):
-            blockers.append(
-                f"profile {profile_name} external {action_name} args do not "
-                f"match endpoint {endpoint_name}"
-            )
+        if tuple(str(item) for item in explicit_args) != tuple(str(item) for item in action_table[profile_name]):
+            blockers.append(f"profile {profile_name} external {action_name} args do not match endpoint {endpoint_name}")
 
 
 def _append_profile_binding_spec_blockers(
@@ -608,13 +534,9 @@ def _append_profile_binding_spec_blockers(
     if binding is None:
         return
     if spec.data_source != binding.data_source:
-        blockers.append(
-            f"{spec_label} data_source drifted from PROFILE_DATA_SOURCE_BINDINGS"
-        )
+        blockers.append(f"{spec_label} data_source drifted from PROFILE_DATA_SOURCE_BINDINGS")
     if spec.runtime_contract and spec.runtime_contract != binding.data_source:
-        blockers.append(
-            f"{spec_label} runtime contract drifted from PROFILE_DATA_SOURCE_BINDINGS"
-        )
+        blockers.append(f"{spec_label} runtime contract drifted from PROFILE_DATA_SOURCE_BINDINGS")
 
 
 def _append_ros2_runtime_binding_blockers(
@@ -623,10 +545,7 @@ def _append_ros2_runtime_binding_blockers(
     spec_label: str,
     config: Mapping[str, Any],
 ) -> None:
-    blockers.extend(
-        f"{spec_label}: {violation}"
-        for violation in _ros2_runtime_binding_violations_for_config(config)
-    )
+    blockers.extend(f"{spec_label}: {violation}" for violation in _ros2_runtime_binding_violations_for_config(config))
 
 
 def _ros2_runtime_binding_violations_for_config(
@@ -649,9 +568,7 @@ def _enforces_ros2_runtime_binding_audit(
         return False
     if endpoint is not None:
         return True
-    return profile in ROS_FREE_DEFAULT_PROFILES or _profile_has_external_contract(
-        profile
-    )
+    return profile in ROS_FREE_DEFAULT_PROFILES or _profile_has_external_contract(profile)
 
 
 def _ros2_runtime_binding_skip_reason(
@@ -667,9 +584,7 @@ def _ros2_runtime_binding_skip_reason(
 
 def _profile_has_external_contract(profile: str) -> bool:
     profile_data = PROFILES.get(profile, {})
-    return bool(
-        profile_data.get("_external_launcher") or profile_data.get("_runtime_contract")
-    )
+    return bool(profile_data.get("_external_launcher") or profile_data.get("_runtime_contract"))
 
 
 def _append_artifact_reference_blockers(
@@ -684,17 +599,11 @@ def _append_artifact_reference_blockers(
             continue
         artifact_name = token.split(":", 1)[1]
         if artifact_name not in declared_artifacts:
-            blockers.append(
-                f"{label} references undeclared artifact {artifact_name}"
-            )
+            blockers.append(f"{label} references undeclared artifact {artifact_name}")
 
 
 def _stage_map(stages: list[Mapping[str, Any]]) -> dict[str, Mapping[str, Any]]:
-    return {
-        str(stage.get("name")): stage
-        for stage in stages
-        if stage.get("name")
-    }
+    return {str(stage.get("name")): stage for stage in stages if stage.get("name")}
 
 
 def _required_mapping_section(
@@ -802,21 +711,15 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
         blockers,
     )
     real_required_frame_topics = tuple(
-        str(topic)
-        for topic in (manifest.get("real_runtime_required_topic_frame_ids") or ())
+        str(topic) for topic in (manifest.get("real_runtime_required_topic_frame_ids") or ())
     )
     if not real_required_frame_topics:
         blockers.append("real_runtime_required_topic_frame_ids section missing or empty")
     real_endpoint_input_topics = tuple(
-        str(topic)
-        for topic in (
-            manifest.get("real_runtime_required_endpoint_input_topics") or ()
-        )
+        str(topic) for topic in (manifest.get("real_runtime_required_endpoint_input_topics") or ())
     )
     if not real_endpoint_input_topics:
-        blockers.append(
-            "real_runtime_required_endpoint_input_topics section missing or empty"
-        )
+        blockers.append("real_runtime_required_endpoint_input_topics section missing or empty")
     message_format_map = _required_mapping_section(
         manifest,
         "message_formats",
@@ -835,11 +738,10 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
                 ros_type == "service"
                 or ros_type == "application/json"
                 or "/msg/" in ros_type
+                or ros_type.startswith("lingtu.dds.")
             ):
                 continue
-            blockers.append(
-                f"topic_ros_types {topic} references non-ROS payload type {ros_type}"
-            )
+            blockers.append(f"topic_ros_types {topic} references non-ROS payload type {ros_type}")
     artifact_format_map = _required_mapping_section(
         manifest,
         "artifact_formats",
@@ -873,6 +775,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
     canonical_body = str(frames.get("body") or "")
     canonical_lidar = str(frames.get("lidar") or "")
     canonical_camera = str(frames.get("camera") or "")
+    canonical_gnss = str(frames.get("gnss") or "")
     known_frames = set(
         expand_frame_id_aliases(
             (
@@ -881,6 +784,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
                 canonical_body,
                 canonical_lidar,
                 canonical_camera,
+                canonical_gnss,
             )
         )
     )
@@ -912,9 +816,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
         for format_name in tuple(formats or ()):
             format_name = str(format_name)
             if not _format_is_declared(format_name, declared_formats):
-                blockers.append(
-                    f"topic format {topic} references undeclared format {format_name}"
-                )
+                blockers.append(f"topic format {topic} references undeclared format {format_name}")
 
     for section_name, frame_rules in (
         ("topic_allowed_frame_ids", topic_allowed_frames),
@@ -928,9 +830,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
                 blockers.append(f"{section_name} topic {topic} has no allowed frames")
             for frame in frame_tuple:
                 if known_frames and frame not in known_frames:
-                    blockers.append(
-                        f"{section_name} topic {topic} allows unknown frame {frame}"
-                    )
+                    blockers.append(f"{section_name} topic {topic} allows unknown frame {frame}")
 
     for section_name, default_frames, allowed_section_name, frame_rules in (
         (
@@ -956,28 +856,19 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
             allowed = tuple(str(item) for item in (frame_rules.get(topic) or ()))
             if not frame:
                 blockers.append(f"{section_name} topic {topic} has no default frame")
-            elif not (
-                set(expand_frame_id_aliases((frame,)))
-                & set(expand_frame_id_aliases(allowed))
-            ):
-                blockers.append(
-                    f"{section_name} topic {topic} default frame {frame} is not allowed"
-                )
+            elif not (set(expand_frame_id_aliases((frame,))) & set(expand_frame_id_aliases(allowed))):
+                blockers.append(f"{section_name} topic {topic} default frame {frame} is not allowed")
 
     for topic, real_frames in real_topic_allowed_frames.items():
         base_frames = set(tuple(topic_allowed_frames.get(topic) or ()))
         if topic not in topic_allowed_frames:
-            blockers.append(
-                f"real_runtime_topic_allowed_frame_ids topic {topic} missing from "
-                "topic_allowed_frame_ids"
-            )
+            blockers.append(f"real_runtime_topic_allowed_frame_ids topic {topic} missing from topic_allowed_frame_ids")
             continue
         extra = sorted(set(tuple(real_frames or ())) - base_frames)
         if extra:
             blockers.append(
                 f"real_runtime_topic_allowed_frame_ids topic {topic} "
-                "allows frames outside topic_allowed_frame_ids: "
-                + ", ".join(extra)
+                "allows frames outside topic_allowed_frame_ids: " + ", ".join(extra)
             )
 
     real_flow_topics = set(tuple(runtime_flow_topics.get(REAL_RUNTIME_CONTRACT) or ()))
@@ -985,42 +876,31 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
     if missing_required_flow_topics:
         blockers.append(
             "real_runtime_required_topic_frame_ids missing from "
-            f"{REAL_RUNTIME_CONTRACT} data flow: "
-            + ", ".join(missing_required_flow_topics)
+            f"{REAL_RUNTIME_CONTRACT} data flow: " + ", ".join(missing_required_flow_topics)
         )
-    missing_required_frame_rules = sorted(
-        set(real_required_frame_topics) - set(real_topic_allowed_frames)
-    )
+    missing_required_frame_rules = sorted(set(real_required_frame_topics) - set(real_topic_allowed_frames))
     if missing_required_frame_rules:
         blockers.append(
-            "real_runtime_required_topic_frame_ids missing real frame rules: "
-            + ", ".join(missing_required_frame_rules)
+            "real_runtime_required_topic_frame_ids missing real frame rules: " + ", ".join(missing_required_frame_rules)
         )
     missing_required_formats = sorted(set(real_required_frame_topics) - topic_formats)
     if missing_required_formats:
         blockers.append(
-            "real_runtime_required_topic_frame_ids missing topic formats: "
-            + ", ".join(missing_required_formats)
+            "real_runtime_required_topic_frame_ids missing topic formats: " + ", ".join(missing_required_formats)
         )
     missing_endpoint_flow_topics = sorted(set(real_endpoint_input_topics) - real_flow_topics)
     if missing_endpoint_flow_topics:
         blockers.append(
             "real_runtime_required_endpoint_input_topics missing from "
-            f"{REAL_RUNTIME_CONTRACT} data flow: "
-            + ", ".join(missing_endpoint_flow_topics)
+            f"{REAL_RUNTIME_CONTRACT} data flow: " + ", ".join(missing_endpoint_flow_topics)
         )
-    missing_endpoint_frame_requirements = sorted(
-        set(real_endpoint_input_topics) - set(real_required_frame_topics)
-    )
+    missing_endpoint_frame_requirements = sorted(set(real_endpoint_input_topics) - set(real_required_frame_topics))
     if missing_endpoint_frame_requirements:
         blockers.append(
             "real_runtime_required_endpoint_input_topics missing required frame "
-            "evidence: "
-            + ", ".join(missing_endpoint_frame_requirements)
+            "evidence: " + ", ".join(missing_endpoint_frame_requirements)
         )
-    missing_endpoint_frame_rules = sorted(
-        set(real_endpoint_input_topics) - set(real_topic_allowed_frames)
-    )
+    missing_endpoint_frame_rules = sorted(set(real_endpoint_input_topics) - set(real_topic_allowed_frames))
     if missing_endpoint_frame_rules:
         blockers.append(
             "real_runtime_required_endpoint_input_topics missing real frame rules: "
@@ -1029,8 +909,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
     missing_endpoint_formats = sorted(set(real_endpoint_input_topics) - topic_formats)
     if missing_endpoint_formats:
         blockers.append(
-            "real_runtime_required_endpoint_input_topics missing topic formats: "
-            + ", ".join(missing_endpoint_formats)
+            "real_runtime_required_endpoint_input_topics missing topic formats: " + ", ".join(missing_endpoint_formats)
         )
 
     for stage in template_stages:
@@ -1059,15 +938,10 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
             blockers.append(f"lidar extrinsic {profile_name} is not a mapping")
             continue
         if canonical_body and transform.get("parent") != canonical_body:
-            blockers.append(
-                f"lidar extrinsic {profile_name} parent is not canonical body"
-            )
+            blockers.append(f"lidar extrinsic {profile_name} parent is not canonical body")
         child = str(transform.get("child") or "")
         if allowed_lidar_children and child not in allowed_lidar_children:
-            blockers.append(
-                f"lidar extrinsic {profile_name} child {child} "
-                "is not canonical lidar frame or alias"
-            )
+            blockers.append(f"lidar extrinsic {profile_name} child {child} is not canonical lidar frame or alias")
         for field in ("x", "y", "z", "roll", "pitch", "yaw"):
             if not _is_numeric(transform.get(field)):
                 blockers.append(f"lidar extrinsic {profile_name} {field} is not numeric")
@@ -1093,33 +967,23 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
             if token.startswith("artifact:") or not token.startswith("/"):
                 continue
             if token not in topic_formats:
-                blockers.append(
-                    f"algorithm interface {interface_name} "
-                    f"references topic without format {token}"
-                )
+                blockers.append(f"algorithm interface {interface_name} references topic without format {token}")
         algorithm_interface_tokens[str(interface_name)] = tokens
         if not any(
             set(interface_inputs) <= set(tuple(stage.get("inputs") or ()))
             and set(interface_outputs) <= set(tuple(stage.get("outputs") or ()))
             for stage in template_stages
         ):
-            blockers.append(
-                f"algorithm interface {interface_name} is not covered by "
-                "any runtime_data_flow stage"
-            )
+            blockers.append(f"algorithm interface {interface_name} is not covered by any runtime_data_flow stage")
 
     assigned_algorithm_interfaces: set[str] = set()
     for stage_name, interfaces in stage_algorithm_interfaces.items():
         stage_name = str(stage_name)
         if stage_name not in template_stage_by_name:
-            blockers.append(
-                f"runtime_data_flow_stage_algorithm_interfaces references unknown stage {stage_name}"
-            )
+            blockers.append(f"runtime_data_flow_stage_algorithm_interfaces references unknown stage {stage_name}")
             continue
         if not isinstance(interfaces, (list, tuple)) or not interfaces:
-            blockers.append(
-                f"runtime_data_flow_stage_algorithm_interfaces {stage_name} must list interfaces"
-            )
+            blockers.append(f"runtime_data_flow_stage_algorithm_interfaces {stage_name} must list interfaces")
             continue
         stage_tokens = set(_runtime_tokens([template_stage_by_name[stage_name]]))
         for interface_name in tuple(str(item) for item in interfaces):
@@ -1133,8 +997,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
             interface_tokens = set(algorithm_interface_tokens.get(interface_name, ()))
             if not interface_tokens <= stage_tokens:
                 blockers.append(
-                    f"runtime_data_flow stage {stage_name} does not cover "
-                    f"algorithm interface {interface_name}"
+                    f"runtime_data_flow stage {stage_name} does not cover algorithm interface {interface_name}"
                 )
     unassigned_algorithm_interfaces = sorted(
         set(str(name) for name in algorithm_interfaces) - assigned_algorithm_interfaces
@@ -1174,18 +1037,14 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
         if not data_source_name:
             blockers.append(f"{label} data_source missing")
         elif data_source_name not in data_sources:
-            blockers.append(
-                f"{label} references unknown data source {data_source_name}"
-            )
+            blockers.append(f"{label} references unknown data source {data_source_name}")
         elif expected_binding is not None and data_source_name != expected_binding.data_source:
             blockers.append(f"{label} data_source drifted from runtime binding")
         if not str(binding.get("mode") or "").strip():
             blockers.append(f"{label} mode missing")
         elif expected_binding is not None and binding.get("mode") != expected_binding.mode:
             blockers.append(f"{label} mode drifted from runtime binding")
-        if expected_binding is not None and (
-            str(binding.get("note") or "") != expected_binding.note
-        ):
+        if expected_binding is not None and (str(binding.get("note") or "") != expected_binding.note):
             blockers.append(f"{label} note drifted from runtime binding")
 
     for data_source_name, source in data_sources.items():
@@ -1194,9 +1053,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
 
         extrinsic_profile = source.get("lidar_extrinsic_profile")
         if extrinsic_profile and extrinsic_profile not in extrinsics:
-            blockers.append(
-                f"data source {data_source_name} lidar extrinsic profile missing"
-            )
+            blockers.append(f"data source {data_source_name} lidar extrinsic profile missing")
 
         stages = list(resolved_flows.get(data_source_name) or [])
         stage_names = [str(stage.get("name")) for stage in stages]
@@ -1219,9 +1076,7 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
             if template_stage is not None:
                 for field in stage_metadata_fields:
                     if stage.get(field) != template_stage.get(field):
-                        blockers.append(
-                            f"resolved {data_source_name} {stage_name} {field} drifted"
-                        )
+                        blockers.append(f"resolved {data_source_name} {stage_name} {field} drifted")
             _append_artifact_reference_blockers(
                 blockers,
                 label=f"resolved {data_source_name} {stage.get('name')}",
@@ -1229,19 +1084,12 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
                 declared_artifacts=declared_artifacts,
             )
 
-        unresolved = [
-            token
-            for token in _runtime_tokens(stages)
-            if _contains_unresolved_placeholder(token)
-        ]
+        unresolved = [token for token in _runtime_tokens(stages) if _contains_unresolved_placeholder(token)]
         if unresolved:
             for stage in stages:
                 stage_tokens = _runtime_tokens([stage])
                 if any(_contains_unresolved_placeholder(token) for token in stage_tokens):
-                    blockers.append(
-                        f"resolved {data_source_name} {stage.get('name')} "
-                        "contains unresolved placeholder"
-                    )
+                    blockers.append(f"resolved {data_source_name} {stage.get('name')} contains unresolved placeholder")
             continue
 
         by_name = _stage_map(stages)
@@ -1252,40 +1100,21 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
             outputs = tuple(command_boundary.get("outputs") or ())
             expected = (source.get("command_sink"),)
             if outputs != expected:
-                blockers.append(
-                    f"resolved {data_source_name} command_boundary does not match "
-                    "data source sink"
-                )
+                blockers.append(f"resolved {data_source_name} command_boundary does not match data source sink")
 
         endpoint_adapter = by_name.get("endpoint_adapter")
         if endpoint_adapter is not None:
-            if tuple(endpoint_adapter.get("inputs") or ()) != tuple(
-                source.get("source_outputs") or ()
-            ):
-                blockers.append(
-                    f"resolved {data_source_name} endpoint_adapter inputs drifted"
-                )
-            if tuple(endpoint_adapter.get("outputs") or ()) != tuple(
-                source.get("normalized_outputs") or ()
-            ):
-                blockers.append(
-                    f"resolved {data_source_name} endpoint_adapter outputs drifted"
-                )
+            if tuple(endpoint_adapter.get("inputs") or ()) != tuple(source.get("source_outputs") or ()):
+                blockers.append(f"resolved {data_source_name} endpoint_adapter inputs drifted")
+            if tuple(endpoint_adapter.get("outputs") or ()) != tuple(source.get("normalized_outputs") or ()):
+                blockers.append(f"resolved {data_source_name} endpoint_adapter outputs drifted")
 
         slam_stage = by_name.get("slam_or_relayed_localization_map")
         if slam_stage is not None:
-            if tuple(slam_stage.get("inputs") or ()) != tuple(
-                source.get("normalized_outputs") or ()
-            ):
-                blockers.append(
-                    f"resolved {data_source_name} slam inputs drifted"
-                )
-            if tuple(slam_stage.get("outputs") or ()) != tuple(
-                source.get("algorithm_entry_outputs") or ()
-            ):
-                blockers.append(
-                    f"resolved {data_source_name} algorithm entry outputs drifted"
-                )
+            if tuple(slam_stage.get("inputs") or ()) != tuple(source.get("normalized_outputs") or ()):
+                blockers.append(f"resolved {data_source_name} slam inputs drifted")
+            if tuple(slam_stage.get("outputs") or ()) != tuple(source.get("algorithm_entry_outputs") or ()):
+                blockers.append(f"resolved {data_source_name} algorithm entry outputs drifted")
 
         map_stage = by_name.get("map_layers_and_exploration")
         if map_stage is not None:
@@ -1302,13 +1131,9 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
                 )
             )
             if tuple(map_stage.get("inputs") or ()) != expected_map_inputs:
-                blockers.append(
-                    f"resolved {data_source_name} map layer inputs drifted"
-                )
+                blockers.append(f"resolved {data_source_name} map layer inputs drifted")
 
-        if command_boundary is not None and tuple(
-            command_boundary.get("inputs") or ()
-        ) != (TOPICS.cmd_vel,):
+        if command_boundary is not None and tuple(command_boundary.get("inputs") or ()) != (TOPICS.cmd_vel,):
             blockers.append(f"resolved {data_source_name} command input drifted")
 
         topic_tokens = {
@@ -1324,21 +1149,11 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
         }
         missing_topic_formats = sorted(topic_tokens - topic_formats)
         if missing_topic_formats:
-            blockers.append(
-                f"resolved {data_source_name} topic formats missing: "
-                + ", ".join(missing_topic_formats)
-            )
-        actual_flow_topics = _dedupe_tokens(
-            tuple(token for token in _runtime_tokens(stages) if token.startswith("/"))
-        )
-        declared_flow_topics = tuple(
-            str(topic) for topic in (runtime_flow_topics.get(data_source_name) or ())
-        )
+            blockers.append(f"resolved {data_source_name} topic formats missing: " + ", ".join(missing_topic_formats))
+        actual_flow_topics = _dedupe_tokens(tuple(token for token in _runtime_tokens(stages) if token.startswith("/")))
+        declared_flow_topics = tuple(str(topic) for topic in (runtime_flow_topics.get(data_source_name) or ()))
         if declared_flow_topics != actual_flow_topics:
-            blockers.append(
-                f"runtime_data_flow_topics {data_source_name} does not match "
-                "resolved data flow"
-            )
+            blockers.append(f"runtime_data_flow_topics {data_source_name} does not match resolved data flow")
 
     return {
         "ok": not blockers,
@@ -1353,18 +1168,12 @@ def _check_runtime_contract_integrity(manifest: Mapping[str, Any]) -> dict[str, 
         },
         "checked_profile_data_sources": sorted(profile_bindings),
         "checked_frame_links": sorted(frame_links),
-        "checked_topic_default_frame_ids": {
-            str(topic): str(frame)
-            for topic, frame in topic_default_frames.items()
-        },
+        "checked_topic_default_frame_ids": {str(topic): str(frame) for topic, frame in topic_default_frames.items()},
         "checked_real_runtime_topic_default_frame_ids": {
-            str(topic): str(frame)
-            for topic, frame in real_topic_default_frames.items()
+            str(topic): str(frame) for topic, frame in real_topic_default_frames.items()
         },
         "checked_real_required_topic_frame_ids": list(real_required_frame_topics),
-        "checked_real_required_endpoint_input_topics": list(
-            real_endpoint_input_topics
-        ),
+        "checked_real_required_endpoint_input_topics": list(real_endpoint_input_topics),
     }
 
 
@@ -1391,9 +1200,7 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
     for profile in PROFILES:
         checked_profiles.append(profile)
         profile_data = PROFILES[profile]
-        if profile_data.get("_external_launcher") or profile_data.get(
-            "_runtime_contract"
-        ):
+        if profile_data.get("_external_launcher") or profile_data.get("_runtime_contract"):
             checked_external_profiles.append(profile)
             _append_external_profile_metadata_blockers(
                 blockers,
@@ -1412,25 +1219,17 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
                     _append_profile_binding_spec_blockers(
                         blockers,
                         profile_name=profile,
-                        spec_label=(
-                            f"profile {profile} external {action_name} runtime spec"
-                        ),
+                        spec_label=(f"profile {profile} external {action_name} runtime spec"),
                         spec=external_spec,
                     )
-                    checked_profile_binding_specs.append(
-                        f"{profile}:external_{action_name}"
-                    )
+                    checked_profile_binding_specs.append(f"{profile}:external_{action_name}")
                     external_result = validate_runtime_switch(external_spec)
                 except Exception as exc:  # pragma: no cover - surfaced in audit payload
-                    blockers.append(
-                        f"profile {profile} external {action_name} runtime spec "
-                        f"failed: {exc}"
-                    )
+                    blockers.append(f"profile {profile} external {action_name} runtime spec failed: {exc}")
                     continue
                 if not external_result.ok:
                     blockers.extend(
-                        f"profile {profile} external {action_name} runtime spec: "
-                        f"{blocker}"
+                        f"profile {profile} external {action_name} runtime spec: {blocker}"
                         for blocker in external_result.blockers
                     )
         try:
@@ -1445,12 +1244,8 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
                 )
             else:
                 skipped_ros2_binding_specs.append(default_ros2_spec)
-                skipped_ros2_binding_reasons[default_ros2_spec] = (
-                    _ros2_runtime_binding_skip_reason(profile)
-                )
-                skipped_ros2_binding_violations[default_ros2_spec] = (
-                    _ros2_runtime_binding_violations_for_config(config)
-                )
+                skipped_ros2_binding_reasons[default_ros2_spec] = _ros2_runtime_binding_skip_reason(profile)
+                skipped_ros2_binding_violations[default_ros2_spec] = _ros2_runtime_binding_violations_for_config(config)
             spec = resolve_runtime_run_spec(profile, config)
             _append_profile_binding_spec_blockers(
                 blockers,
@@ -1476,32 +1271,21 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
             source = DATA_SOURCE_CONTRACTS[endpoint.data_source]
             expected_simulation_only = source.provider != "hardware"
             if endpoint.simulation_only is not expected_simulation_only:
-                blockers.append(
-                    f"endpoint {endpoint_name} simulation_only does not match "
-                    "data source provider"
-                )
+                blockers.append(f"endpoint {endpoint_name} simulation_only does not match data source provider")
             launcher = str(endpoint.external_launcher or "")
             if source.provider == "hardware" and launcher:
-                blockers.append(
-                    f"endpoint {endpoint_name} hardware endpoint must not declare "
-                    "external launcher"
-                )
+                blockers.append(f"endpoint {endpoint_name} hardware endpoint must not declare external launcher")
             elif launcher and not (REPO_ROOT / launcher).exists():
-                blockers.append(
-                    f"endpoint {endpoint_name} external launcher missing: {launcher}"
-                )
+                blockers.append(f"endpoint {endpoint_name} external launcher missing: {launcher}")
             elif endpoint.simulation_only and endpoint.default_actions and not launcher:
-                blockers.append(
-                    f"endpoint {endpoint_name} action endpoint missing external launcher"
-                )
+                blockers.append(f"endpoint {endpoint_name} action endpoint missing external launcher")
         if endpoint.runtime_contract != endpoint.data_source:
             blockers.append(f"endpoint {endpoint_name} runtime contract mismatch")
         supported_profiles = set(endpoint.supported_profiles)
         unknown_profiles = sorted(supported_profiles - set(PROFILES))
         if unknown_profiles:
             blockers.append(
-                f"endpoint {endpoint_name} references unknown supported profiles: "
-                + ", ".join(unknown_profiles)
+                f"endpoint {endpoint_name} references unknown supported profiles: " + ", ".join(unknown_profiles)
             )
         for table_name, table in (
             ("profile_overrides", endpoint.profile_overrides),
@@ -1510,17 +1294,11 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
         ):
             extra_profiles = sorted(set(table) - supported_profiles)
             for profile in extra_profiles:
-                blockers.append(
-                    f"endpoint {endpoint_name} {table_name} references "
-                    f"unsupported profile {profile}"
-                )
+                blockers.append(f"endpoint {endpoint_name} {table_name} references unsupported profile {profile}")
             if table_name in {"default_actions", "record_actions"} and table:
                 missing_profiles = sorted(supported_profiles - set(table))
                 for profile in missing_profiles:
-                    blockers.append(
-                        f"endpoint {endpoint_name} {table_name} missing "
-                        f"supported profile {profile}"
-                    )
+                    blockers.append(f"endpoint {endpoint_name} {table_name} missing supported profile {profile}")
         _append_endpoint_frame_override_blockers(
             blockers,
             endpoint_name=endpoint_name,
@@ -1571,32 +1349,24 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
                     checked_ros2_binding_specs.append(endpoint_ros2_spec)
                     _append_ros2_runtime_binding_blockers(
                         blockers,
-                        spec_label=(
-                            f"endpoint {endpoint_name} profile {profile} "
-                            "runtime bindings"
-                        ),
+                        spec_label=(f"endpoint {endpoint_name} profile {profile} runtime bindings"),
                         config=config,
                     )
                 else:
                     skipped_ros2_binding_specs.append(endpoint_ros2_spec)
-                    skipped_ros2_binding_reasons[endpoint_ros2_spec] = (
-                        _ros2_runtime_binding_skip_reason(profile, endpoint)
+                    skipped_ros2_binding_reasons[endpoint_ros2_spec] = _ros2_runtime_binding_skip_reason(
+                        profile, endpoint
                     )
-                    skipped_ros2_binding_violations[endpoint_ros2_spec] = (
-                        _ros2_runtime_binding_violations_for_config(config)
+                    skipped_ros2_binding_violations[endpoint_ros2_spec] = _ros2_runtime_binding_violations_for_config(
+                        config
                     )
                 spec = resolve_runtime_run_spec(profile, config)
                 result = validate_runtime_switch(spec)
             except Exception as exc:  # pragma: no cover - surfaced in audit payload
-                blockers.append(
-                    f"endpoint {endpoint_name} profile {profile} runtime spec failed: {exc}"
-                )
+                blockers.append(f"endpoint {endpoint_name} profile {profile} runtime spec failed: {exc}")
                 continue
             if not result.ok:
-                blockers.extend(
-                    f"endpoint {endpoint_name} profile {profile}: {blocker}"
-                    for blocker in result.blockers
-                )
+                blockers.extend(f"endpoint {endpoint_name} profile {profile}: {blocker}" for blocker in result.blockers)
 
     return {
         "ok": not blockers,
@@ -1611,8 +1381,7 @@ def _check_profile_runtime_specs() -> dict[str, Any]:
         "skipped_ros2_binding_violations": skipped_ros2_binding_violations,
         "checked_endpoint_profiles": checked_endpoint_profiles,
         "product_endpoint_matrix": {
-            profile: list(endpoints)
-            for profile, endpoints in PRODUCT_PROFILE_ENDPOINTS.items()
+            profile: list(endpoints) for profile, endpoints in PRODUCT_PROFILE_ENDPOINTS.items()
         },
     }
 
@@ -1638,17 +1407,13 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
     missing_topics = sorted(required_topics - observed_topics)
     if missing_topics:
         blockers.append(
-            f"real collector does not observe required {REAL_RUNTIME_CONTRACT} topics: "
-            + ", ".join(missing_topics)
+            f"real collector does not observe required {REAL_RUNTIME_CONTRACT} topics: " + ", ".join(missing_topics)
         )
 
     frame_evidence = collector.build_frame_evidence(
         {name: 1 for name in FRAME_LINKS},
     )
-    expected_frame_links = {
-        name: asdict(link)
-        for name, link in FRAME_LINKS.items()
-    }
+    expected_frame_links = {name: asdict(link) for name, link in FRAME_LINKS.items()}
     for name, link in expected_frame_links.items():
         entry = frame_evidence.get(name)
         if entry is None:
@@ -1657,16 +1422,10 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
         if entry.get("parent") != link["parent"] or entry.get("child") != link["child"]:
             blockers.append(f"real collector frame evidence mismatch for {name}")
 
-    expected_topic_frame_contract = _expected_real_required_topic_frame_contract(
-        manifest
-    )
-    collector_topic_frame_contract = collector.build_required_topic_frame_contract(
-        REAL_RUNTIME_CONTRACT
-    )
+    expected_topic_frame_contract = _expected_real_required_topic_frame_contract(manifest)
+    collector_topic_frame_contract = collector.build_required_topic_frame_contract(REAL_RUNTIME_CONTRACT)
     if collector_topic_frame_contract != expected_topic_frame_contract:
-        blockers.append(
-            "real collector required topic frame contract does not match runtime manifest"
-        )
+        blockers.append("real collector required topic frame contract does not match runtime manifest")
 
     collector_report_contract = collector.build_real_runtime_report(
         topic_evidence={},
@@ -1676,107 +1435,57 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
     )["runtime_contract"]
 
     expected_frames_contract = normalize_runtime_frames_contract(manifest.get("frames"))
-    collector_frames_contract = normalize_runtime_frames_contract(
-        collector_report_contract.get("frames")
-    )
+    collector_frames_contract = normalize_runtime_frames_contract(collector_report_contract.get("frames"))
     if collector_frames_contract != expected_frames_contract:
-        blockers.append(
-            "real collector runtime frames contract does not match runtime manifest"
-        )
+        blockers.append("real collector runtime frames contract does not match runtime manifest")
     if runtime_frames_contract() != expected_frames_contract:
         blockers.append("canonical runtime frames contract does not match manifest")
 
-    expected_topic_default_frame_contract = _as_str_mapping(
-        manifest.get("real_runtime_topic_default_frame_ids")
-    )
-    collector_topic_default_frame_contract = _as_str_mapping(
-        collector_report_contract.get("topic_default_frame_ids")
-    )
+    expected_topic_default_frame_contract = _as_str_mapping(manifest.get("real_runtime_topic_default_frame_ids"))
+    collector_topic_default_frame_contract = _as_str_mapping(collector_report_contract.get("topic_default_frame_ids"))
     if collector_topic_default_frame_contract != expected_topic_default_frame_contract:
-        blockers.append(
-            "real collector topic default frame contract does not match runtime manifest"
-        )
-    if (
-        runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT)
-        != expected_topic_default_frame_contract
-    ):
-        blockers.append(
-            "canonical topic default frame contract does not match runtime manifest"
-        )
+        blockers.append("real collector topic default frame contract does not match runtime manifest")
+    if runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT) != expected_topic_default_frame_contract:
+        blockers.append("canonical topic default frame contract does not match runtime manifest")
 
     expected_topic_allowed_frame_contract = {
         topic: list(frames)
-        for topic, frames in _as_tuple_mapping(
-            manifest.get("real_runtime_topic_allowed_frame_ids")
-        ).items()
+        for topic, frames in _as_tuple_mapping(manifest.get("real_runtime_topic_allowed_frame_ids")).items()
     }
     collector_topic_allowed_frame_contract = {
         topic: list(frames)
-        for topic, frames in _as_tuple_mapping(
-            collector_report_contract.get("topic_allowed_frame_ids")
-        ).items()
+        for topic, frames in _as_tuple_mapping(collector_report_contract.get("topic_allowed_frame_ids")).items()
     }
     if collector_topic_allowed_frame_contract != expected_topic_allowed_frame_contract:
-        blockers.append(
-            "real collector topic allowed frame contract does not match runtime manifest"
-        )
-    if (
-        runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT)
-        != expected_topic_allowed_frame_contract
-    ):
-        blockers.append(
-            "canonical topic allowed frame contract does not match runtime manifest"
-        )
+        blockers.append("real collector topic allowed frame contract does not match runtime manifest")
+    if runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT) != expected_topic_allowed_frame_contract:
+        blockers.append("canonical topic allowed frame contract does not match runtime manifest")
 
-    expected_algorithm_interface_contract = normalize_algorithm_interface_contract(
-        manifest.get("algorithm_interfaces")
-    )
+    expected_algorithm_interface_contract = normalize_algorithm_interface_contract(manifest.get("algorithm_interfaces"))
     collector_algorithm_interface_contract = normalize_algorithm_interface_contract(
         collector_report_contract.get("algorithm_interfaces")
     )
     if collector_algorithm_interface_contract != expected_algorithm_interface_contract:
-        blockers.append(
-            "real collector algorithm interface contract does not match runtime manifest"
-        )
+        blockers.append("real collector algorithm interface contract does not match runtime manifest")
     if runtime_algorithm_interface_contract() != expected_algorithm_interface_contract:
-        blockers.append(
-            "canonical algorithm interface contract does not match runtime manifest"
-        )
+        blockers.append("canonical algorithm interface contract does not match runtime manifest")
 
     expected_stage_algorithm_interface_contract = {
         stage: list(interfaces)
-        for stage, interfaces in _as_tuple_mapping(
-            manifest.get("runtime_data_flow_stage_algorithm_interfaces")
-        ).items()
+        for stage, interfaces in _as_tuple_mapping(manifest.get("runtime_data_flow_stage_algorithm_interfaces")).items()
     }
     collector_stage_algorithm_interface_contract = {
         stage: list(interfaces)
         for stage, interfaces in _as_tuple_mapping(
-            collector_report_contract.get(
-                "runtime_data_flow_stage_algorithm_interfaces"
-            )
+            collector_report_contract.get("runtime_data_flow_stage_algorithm_interfaces")
         ).items()
     }
-    if (
-        collector_stage_algorithm_interface_contract
-        != expected_stage_algorithm_interface_contract
-    ):
-        blockers.append(
-            "real collector runtime stage algorithm interface contract "
-            "does not match runtime manifest"
-        )
-    if (
-        runtime_stage_algorithm_interface_contract()
-        != expected_stage_algorithm_interface_contract
-    ):
-        blockers.append(
-            "canonical runtime stage algorithm interface contract "
-            "does not match runtime manifest"
-        )
+    if collector_stage_algorithm_interface_contract != expected_stage_algorithm_interface_contract:
+        blockers.append("real collector runtime stage algorithm interface contract does not match runtime manifest")
+    if runtime_stage_algorithm_interface_contract() != expected_stage_algorithm_interface_contract:
+        blockers.append("canonical runtime stage algorithm interface contract does not match runtime manifest")
 
-    source = (REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py").read_text(
-        encoding="utf-8"
-    )
+    source = (REPO_ROOT / "scripts" / "gates" / "real_runtime_evidence_collect.py").read_text(encoding="utf-8")
     if ".create_publisher(" in source or ".publish(" in source:
         blockers.append("real collector publishes a control-capable topic")
 
@@ -1791,9 +1500,7 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
         "topic_default_frame_ids": collector_topic_default_frame_contract,
         "topic_allowed_frame_ids": collector_topic_allowed_frame_contract,
         "algorithm_interfaces": collector_algorithm_interface_contract,
-        "runtime_data_flow_stage_algorithm_interfaces": (
-            collector_stage_algorithm_interface_contract
-        ),
+        "runtime_data_flow_stage_algorithm_interfaces": (collector_stage_algorithm_interface_contract),
         "required_topic_frame_contract": collector_topic_frame_contract,
     }
 
@@ -1801,16 +1508,9 @@ def _check_real_collector(manifest: Mapping[str, Any]) -> dict[str, Any]:
 def _expected_real_required_topic_frame_contract(
     manifest: Mapping[str, Any],
 ) -> dict[str, dict[str, Any]]:
-    required_topics = tuple(
-        str(topic)
-        for topic in (manifest.get("real_runtime_required_topic_frame_ids") or ())
-    )
-    default_frame_ids = _as_str_mapping(
-        manifest.get("real_runtime_topic_default_frame_ids")
-    )
-    allowed_frame_ids = _as_tuple_mapping(
-        manifest.get("real_runtime_topic_allowed_frame_ids")
-    )
+    required_topics = tuple(str(topic) for topic in (manifest.get("real_runtime_required_topic_frame_ids") or ()))
+    default_frame_ids = _as_str_mapping(manifest.get("real_runtime_topic_default_frame_ids"))
+    allowed_frame_ids = _as_tuple_mapping(manifest.get("real_runtime_topic_allowed_frame_ids"))
     return {
         topic: {
             "default_frame_id": default_frame_ids.get(topic),
@@ -1859,16 +1559,9 @@ def _check_ros_frame_contract_doc(
 
     doc = path.read_text(encoding="utf-8")
     general_allowed = _as_tuple_mapping(manifest.get("topic_allowed_frame_ids"))
-    real_allowed = _as_tuple_mapping(
-        manifest.get("real_runtime_topic_allowed_frame_ids")
-    )
-    real_defaults = _as_str_mapping(
-        manifest.get("real_runtime_topic_default_frame_ids")
-    )
-    required = {
-        str(topic)
-        for topic in (manifest.get("real_runtime_required_topic_frame_ids") or ())
-    }
+    real_allowed = _as_tuple_mapping(manifest.get("real_runtime_topic_allowed_frame_ids"))
+    real_defaults = _as_str_mapping(manifest.get("real_runtime_topic_default_frame_ids"))
+    required = {str(topic) for topic in (manifest.get("real_runtime_required_topic_frame_ids") or ())}
     checked_topics: list[str] = []
     for topic, real_frames in real_allowed.items():
         checked_topics.append(topic)
@@ -1888,9 +1581,7 @@ def _check_ros_frame_contract_doc(
         if expected_row not in doc:
             blockers.append(f"ros_frame_contract.md topic frame row drifted for {topic}")
 
-    required_phrase = (
-        f"{THUNDER_FIELD_EVIDENCE_LABEL} must reject `/slam/map_cloud` outside `map`"
-    )
+    required_phrase = f"{THUNDER_FIELD_EVIDENCE_LABEL} must reject `{TOPICS.map_cloud}` outside `map`"
     if required_phrase not in doc:
         blockers.append("ros_frame_contract.md missing real map_cloud rejection phrase")
 
@@ -1948,18 +1639,17 @@ def _check_source_patterns(
             for pattern_name, pattern in patterns:
                 if pattern.search(line) is None:
                     continue
-                matches.append({
-                    "file": relative_path,
-                    "line": line_number,
-                    "pattern": pattern_name,
-                    "text": line.strip(),
-                })
+                matches.append(
+                    {
+                        "file": relative_path,
+                        "line": line_number,
+                        "pattern": pattern_name,
+                        "text": line.strip(),
+                    }
+                )
 
     for match in matches:
-        blockers.append(
-            f"{violation_label} violation "
-            f"{match['file']}:{match['line']} {match['pattern']}"
-        )
+        blockers.append(f"{violation_label} violation {match['file']}:{match['line']} {match['pattern']}")
 
     return {
         "ok": not blockers,
@@ -2005,14 +1695,11 @@ def build_runtime_contract_audit(
     blockers: list[str] = []
     if tuple(checks) != RUNTIME_AUDIT_CHECKS:
         blockers.append(
-            "runtime_audit checks list drifted: "
-            f"expected={list(RUNTIME_AUDIT_CHECKS)} actual={list(checks)}"
+            f"runtime_audit checks list drifted: expected={list(RUNTIME_AUDIT_CHECKS)} actual={list(checks)}"
         )
-    blockers.extend([
-        f"{check_name}: {blocker}"
-        for check_name, check in checks.items()
-        for blocker in check["blockers"]
-    ])
+    blockers.extend(
+        [f"{check_name}: {blocker}" for check_name, check in checks.items() for blocker in check["blockers"]]
+    )
     return {
         "schema_version": "lingtu.runtime_contract_audit.v1",
         "ok": not blockers,

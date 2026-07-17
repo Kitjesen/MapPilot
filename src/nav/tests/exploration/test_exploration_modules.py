@@ -8,6 +8,7 @@ and supervisor state machine for:
 These are CONTRACT tests — they verify the module interface contract, not
 internal implementation details or algorithmic correctness.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -18,6 +19,7 @@ pytestmark = [pytest.mark.ros2]
 # =============================================================================
 # TAREExplorerModule
 # =============================================================================
+
 
 class TestTAREExplorerModule:
     """Contract tests for TAREExplorerModule (layer=5, TARE exploration bridge)."""
@@ -66,8 +68,7 @@ class TestTAREExplorerModule:
         for name, expected_type in expected_in.items():
             assert name in mod._ports_in, f"missing In port: {name}"
             assert mod._ports_in[name].msg_type is expected_type, (
-                f"In.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_in[name].msg_type.__name__}"
+                f"In.{name}: expected {expected_type.__name__}, got {mod._ports_in[name].msg_type.__name__}"
             )
 
         # -- Output ports --
@@ -84,8 +85,7 @@ class TestTAREExplorerModule:
         for name, expected_type in expected_out.items():
             assert name in mod._ports_out, f"missing Out port: {name}"
             assert mod._ports_out[name].msg_type is expected_type, (
-                f"Out.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_out[name].msg_type.__name__}"
+                f"Out.{name}: expected {expected_type.__name__}, got {mod._ports_out[name].msg_type.__name__}"
             )
 
     def test_preflight_returns_error_without_dds(self):
@@ -95,7 +95,7 @@ class TestTAREExplorerModule:
         mod = TAREExplorerModule(transport_mode="dds")
         result = mod.preflight()
         assert result is not None
-        assert "cyclonedds-python" in result
+        assert "lingtu_explore_kernel" in result
 
     def test_lifecycle(self):
         """setup() -> start() -> stop() transitions without error."""
@@ -144,14 +144,15 @@ class TestTAREExplorerModule:
 # ExplorationSupervisorModule
 # =============================================================================
 
+
 class TestExplorationSupervisorModule:
     """Contract tests for ExplorationSupervisorModule (layer=5, watchdog)."""
 
     def test_instantiation(self):
         """Creating an ExplorationSupervisorModule with default params should succeed."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_UNINIT,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule()
@@ -179,9 +180,7 @@ class TestExplorationSupervisorModule:
         # -- Input ports --
         assert "tare_stats" in mod._ports_in
         assert mod._ports_in["tare_stats"].msg_type is dict
-        assert len(mod._ports_in) == 1, (
-            f"expected 1 In port, got {list(mod._ports_in)}"
-        )
+        assert len(mod._ports_in) == 1, f"expected 1 In port, got {list(mod._ports_in)}"
 
         # -- Output ports --
         expected_out = {
@@ -194,8 +193,7 @@ class TestExplorationSupervisorModule:
         for name, expected_type in expected_out.items():
             assert name in mod._ports_out, f"missing Out port: {name}"
             assert mod._ports_out[name].msg_type is expected_type, (
-                f"Out.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_out[name].msg_type.__name__}"
+                f"Out.{name}: expected {expected_type.__name__}, got {mod._ports_out[name].msg_type.__name__}"
             )
 
     def test_lifecycle(self):
@@ -219,8 +217,8 @@ class TestExplorationSupervisorModule:
     def test_initial_mode_uninit(self):
         """Before receiving any tare_stats, mode must be 'uninit'."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_UNINIT,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule()
@@ -230,8 +228,8 @@ class TestExplorationSupervisorModule:
     def test_evaluate_no_stats(self):
         """_evaluate returns (uninit, ...) when no stats have been received."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_UNINIT,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule()
@@ -243,8 +241,8 @@ class TestExplorationSupervisorModule:
     def test_evaluate_finished(self):
         """_evaluate returns (finished, ...) when tare_stats says finished."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_FINISHED,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule()
@@ -256,8 +254,8 @@ class TestExplorationSupervisorModule:
     def test_evaluate_degraded_triggers_after_warn_timeout(self):
         """When waypoint_age_s exceeds warn_timeout_s, mode becomes 'degraded'."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_DEGRADED,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule(warn_timeout_s=5.0, fallback_timeout_s=30.0)
@@ -274,8 +272,8 @@ class TestExplorationSupervisorModule:
     def test_evaluate_fallback_triggers_after_fallback_timeout(self):
         """When waypoint_age_s exceeds fallback_timeout_s, mode becomes 'fallback'."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_FALLBACK,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule(warn_timeout_s=5.0, fallback_timeout_s=10.0)
@@ -291,8 +289,8 @@ class TestExplorationSupervisorModule:
     def test_evaluate_healthy(self):
         """When stats are fresh and healthy, mode must be 'healthy'."""
         from nav.exploration.tare.supervisor import (
-            ExplorationSupervisorModule,
             MODE_HEALTHY,
+            ExplorationSupervisorModule,
         )
 
         mod = ExplorationSupervisorModule(warn_timeout_s=20.0, fallback_timeout_s=60.0)
@@ -339,6 +337,7 @@ class TestExplorationSupervisorModule:
 # =============================================================================
 # Cross-module contract checks
 # =============================================================================
+
 
 def test_all_exploration_modules_have_alive_port():
     """Every exploration module must expose an alive Out[bool] port."""

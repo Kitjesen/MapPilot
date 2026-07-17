@@ -341,6 +341,14 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     return;
   }
   options.robot_radius = optionalDouble(body, "robot_radius", options.robot_radius);
+  options.body_clearance_below_m = optionalDouble(
+    body,
+    "body_clearance_below_m",
+    options.body_clearance_below_m);
+  options.body_clearance_above_m = optionalDouble(
+    body,
+    "body_clearance_above_m",
+    options.body_clearance_above_m);
   options.max_iterations = optionalInt(body, "max_iterations", options.max_iterations);
   options.snap_search_radius_cells = optionalInt(
     body,
@@ -362,6 +370,22 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     body,
     "ground_support_depth_cells",
     options.ground_support_depth_cells);
+  options.support_height_m = optionalDouble(
+    body,
+    "support_height_m",
+    options.support_height_m);
+  options.support_height_tolerance_m = optionalDouble(
+    body,
+    "support_height_tolerance_m",
+    options.support_height_tolerance_m);
+  options.support_patch_radius_cells = optionalInt(
+    body,
+    "support_patch_radius_cells",
+    options.support_patch_radius_cells);
+  options.support_patch_min_samples = optionalInt(
+    body,
+    "support_patch_min_samples",
+    options.support_patch_min_samples);
   options.enable_preblocked_costmap = optionalBool(
     body,
     "enable_preblocked_costmap",
@@ -410,6 +434,18 @@ void applyOptionsFromJson(PlannerOptions & options, const std::string & json)
     body,
     "obstacle_clearance_weight",
     options.obstacle_clearance_weight);
+  options.terminal_goal_tolerance_m = optionalDouble(
+    body,
+    "terminal_goal_tolerance_m",
+    options.terminal_goal_tolerance_m);
+  options.terminal_goal_xy_tolerance_m = optionalDouble(
+    body,
+    "terminal_goal_xy_tolerance_m",
+    options.terminal_goal_xy_tolerance_m);
+  options.terminal_goal_z_tolerance_m = optionalDouble(
+    body,
+    "terminal_goal_z_tolerance_m",
+    options.terminal_goal_z_tolerance_m);
 }
 
 PlanRequest parseRequest(const std::string & json)
@@ -429,6 +465,8 @@ void emitConstraints(const PlannerOptions & options)
 {
   std::cout << "\"constraints\":{"
             << "\"robot_radius\":" << options.robot_radius << ','
+            << "\"body_clearance_below_m\":" << options.body_clearance_below_m << ','
+            << "\"body_clearance_above_m\":" << options.body_clearance_above_m << ','
             << "\"max_iterations\":" << options.max_iterations << ','
             << "\"snap_search_radius_cells\":" << options.snap_search_radius_cells << ','
             << "\"require_ground_support\":"
@@ -439,6 +477,13 @@ void emitConstraints(const PlannerOptions & options)
             << options.ground_support_xy_radius_cells << ','
             << "\"ground_support_depth_cells\":"
             << options.ground_support_depth_cells << ','
+            << "\"support_height_m\":" << options.support_height_m << ','
+            << "\"support_height_tolerance_m\":"
+            << options.support_height_tolerance_m << ','
+            << "\"support_patch_radius_cells\":"
+            << options.support_patch_radius_cells << ','
+            << "\"support_patch_min_samples\":"
+            << options.support_patch_min_samples << ','
             << "\"enable_preblocked_costmap\":"
             << (options.enable_preblocked_costmap ? "true" : "false") << ','
             << "\"preblocked_costmap_radius_cells\":"
@@ -457,7 +502,10 @@ void emitConstraints(const PlannerOptions & options)
             << options.max_same_floor_z_excursion << ','
             << "\"obstacle_clearance_radius_cells\":"
             << options.obstacle_clearance_radius_cells << ','
-            << "\"obstacle_clearance_weight\":" << options.obstacle_clearance_weight
+            << "\"obstacle_clearance_weight\":" << options.obstacle_clearance_weight << ','
+            << "\"terminal_goal_tolerance_m\":" << options.terminal_goal_tolerance_m << ','
+            << "\"terminal_goal_xy_tolerance_m\":" << options.terminal_goal_xy_tolerance_m << ','
+            << "\"terminal_goal_z_tolerance_m\":" << options.terminal_goal_z_tolerance_m
             << '}';
 }
 
@@ -481,7 +529,8 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
   std::cout << "{\"planner\":\"octoplanner3d\",\"protocol_version\":1,"
             << "\"ok\":" << (result.ok ? "true" : "false") << ",";
   if (!result.ok) {
-    std::cout << "\"error\":\"empty path\",";
+    const std::string error = result.failure_reason.empty() ? "empty_path" : result.failure_reason;
+    std::cout << "\"error\":\"" << error << "\",";
   }
   std::cout << "\"path\":[";
   for (std::size_t i = 0; i < result.path.size(); ++i) {
@@ -498,6 +547,8 @@ void emitSuccess(const octoplanner3d::runtime::PlanResult & result)
             << "\"octomap_file\":true,"
             << "\"path_points\":" << result.path.size() << ','
             << "\"goal_error_m\":" << result.goal_error_m << ','
+            << "\"goal_xy_error_m\":" << result.goal_xy_error_m << ','
+            << "\"goal_z_error_m\":" << result.goal_z_error_m << ','
             << "\"elapsed_ms\":" << result.elapsed_ms << ',';
   emitConstraints(result.options);
   std::cout << "}}" << std::endl;

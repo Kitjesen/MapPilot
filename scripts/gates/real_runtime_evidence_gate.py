@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Validate a Thunder field runtime evidence report.
 
 This script is intentionally read-only. It does not publish goals, cmd_vel, or
@@ -15,7 +15,6 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -40,7 +39,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("report", type=Path, help="Path to the collected report JSON")
     _ensure_import_path()
-    from runtime.diagnostics.runtime_evidence import REAL_RUNTIME_CONTRACT
+    from diagnostics.field.evidence import REAL_RUNTIME_CONTRACT
 
     parser.add_argument("--expected-contract", default=REAL_RUNTIME_CONTRACT)
     parser.add_argument("--allow-missing-paths", action="store_true")
@@ -51,10 +50,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--json-out", type=Path, help="Optional path for validation JSON")
     args = parser.parse_args(argv)
     if args.expected_contract != REAL_RUNTIME_CONTRACT:
-        parser.error(
-            f"real runtime evidence only supports expected contract "
-            f"{REAL_RUNTIME_CONTRACT}"
-        )
+        parser.error(f"real runtime evidence only supports expected contract {REAL_RUNTIME_CONTRACT}")
     return args
 
 
@@ -62,11 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
     _ensure_import_path()
 
-    from runtime.diagnostics.runtime_evidence import (
+    from diagnostics.field.evidence import (
         real_runtime_evidence_payload,
         validate_real_runtime_evidence,
     )
-    from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
+    from diagnostics.field.gates import runtime_validation_gates
 
     report = _load_report(args.report)
     result = validate_real_runtime_evidence(

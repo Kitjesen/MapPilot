@@ -15,9 +15,9 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+from nav.navigation import Navigation
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
-from nav.mission.navigation import Navigation
 
 
 def _parse_xyz(value: str) -> tuple[float, float, float]:
@@ -81,11 +81,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
     nav._on_odom(_odom(args.goal))
     final_state = nav._get_state().value
 
-    status_has_reason = all(
-        bool(item.get("phase_reason"))
-        for item in mission_statuses
-        if item.get("state")
-    )
+    status_has_reason = all(bool(item.get("phase_reason")) for item in mission_statuses if item.get("state"))
     checks = {
         "entered_planning": "PLANNING" in states,
         "entered_executing": "EXECUTING" in states,
@@ -94,8 +90,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
         "completed_after_goal_odom": final_state == "SUCCESS",
         "mission_status_has_phase_reason": status_has_reason,
         "no_illegal_transition": not any(
-            event.get("event") == "mission_state_transition_rejected"
-            for event in adapter_events
+            event.get("event") == "mission_state_transition_rejected" for event in adapter_events
         ),
     }
     return {

@@ -1,6 +1,4 @@
-"""
-test_room_object_kg.py — 持久化房间-物体知识图谱单元测试
-"""
+"""Decision module."""
 
 import json
 import os
@@ -14,7 +12,7 @@ from memory.knowledge.room_object_kg import (
 
 
 class TestRoomObjectKGBasic(unittest.TestCase):
-    """基本功能测试。"""
+    """Test Room Object K G Basic."""
 
     def test_observe_and_query(self):
         kg = RoomObjectKG()
@@ -29,7 +27,6 @@ class TestRoomObjectKGBasic(unittest.TestCase):
         self.assertIn("chair", priors["office"])
         self.assertIn("refrigerator", priors["kitchen"])
 
-        # desk observed 2/2 visits → high probability
         self.assertGreater(priors["office"]["desk"], 0.6)
 
     def test_observe_filters_unknown(self):
@@ -48,7 +45,7 @@ class TestRoomObjectKGBasic(unittest.TestCase):
 
         rooms = kg.get_object_rooms("fire extinguisher")
         self.assertEqual(len(rooms), 2)
-        # corridor has more visits → should rank higher
+
         self.assertEqual(rooms[0][0], "corridor")
 
     def test_observe_adjacency(self):
@@ -81,7 +78,7 @@ class TestRoomObjectKGBasic(unittest.TestCase):
 
 
 class TestRoomObjectKGPersistence(unittest.TestCase):
-    """持久化测试。"""
+    """Test Room Object K G Persistence."""
 
     def test_save_and_load(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -152,20 +149,22 @@ class TestRoomObjectKGPersistence(unittest.TestCase):
 
 
 class TestExtractRoomObjects(unittest.TestCase):
-    """场景图提取测试。"""
+    """Test Extract Room Objects."""
 
     def test_extract_with_regions(self):
-        sg = json.dumps({
-            "objects": [
-                {"id": 1, "label": "desk", "confidence": 0.9, "region_id": 0},
-                {"id": 2, "label": "chair", "confidence": 0.85, "region_id": 0},
-                {"id": 3, "label": "refrigerator", "confidence": 0.88, "region_id": 1},
-            ],
-            "regions": [
-                {"name": "office", "object_ids": [1, 2]},
-                {"name": "kitchen", "object_ids": [3]},
-            ],
-        })
+        sg = json.dumps(
+            {
+                "objects": [
+                    {"id": 1, "label": "desk", "confidence": 0.9, "region_id": 0},
+                    {"id": 2, "label": "chair", "confidence": 0.85, "region_id": 0},
+                    {"id": 3, "label": "refrigerator", "confidence": 0.88, "region_id": 1},
+                ],
+                "regions": [
+                    {"name": "office", "object_ids": [1, 2]},
+                    {"name": "kitchen", "object_ids": [3]},
+                ],
+            }
+        )
 
         result = extract_room_objects_from_scene_graph(sg)
         self.assertEqual(len(result), 2)
@@ -174,12 +173,14 @@ class TestExtractRoomObjects(unittest.TestCase):
         self.assertIn("kitchen", room_types)
 
     def test_extract_flat_format(self):
-        sg = json.dumps({
-            "objects": [
-                {"id": 1, "label": "desk", "confidence": 0.9, "region_id": 0},
-                {"id": 2, "label": "chair", "confidence": 0.85, "region_id": 0},
-            ],
-        })
+        sg = json.dumps(
+            {
+                "objects": [
+                    {"id": 1, "label": "desk", "confidence": 0.9, "region_id": 0},
+                    {"id": 2, "label": "chair", "confidence": 0.85, "region_id": 0},
+                ],
+            }
+        )
 
         result = extract_room_objects_from_scene_graph(sg)
         # Should group by region_id and infer room type
@@ -195,7 +196,7 @@ class TestExtractRoomObjects(unittest.TestCase):
 
 
 class TestSemanticPriorIntegration(unittest.TestCase):
-    """SemanticPriorEngine 与 KG 集成测试。"""
+    """Test Semantic Prior Integration."""
 
     def test_load_learned_priors(self):
         from memory.knowledge.semantic_prior import SemanticPriorEngine
@@ -249,17 +250,16 @@ class TestSemanticPriorIntegration(unittest.TestCase):
 
 
 class TestKGBackedRoomPrediction(unittest.TestCase):
-    """P1: KG-backed 房间邻接预测测试。"""
+    """Test K G Backed Room Prediction."""
 
     def test_predict_adjacent_with_kg(self):
-        """有 KG 邻接数据时, 应使用学习到的邻接关系。"""
-        from decision.goal_resolution.goal_resolver import GoalResolver
-        from decision.llm.llm_client import LLMConfig
+        """Test predict adjacent with kg."""
+        from decision.goals.resolver import GoalResolver
+        from decision.llm.client import LLMConfig
 
         config = LLMConfig(backend="openai", model="gpt-4o-mini")
         resolver = GoalResolver(config)
 
-        # 构建 KG 邻接: corridor ↔ lab (高频), corridor ↔ office (低频)
         kg = RoomObjectKG()
         for _ in range(10):
             kg.observe_adjacency("corridor", "lab", "door")
@@ -268,31 +268,28 @@ class TestKGBackedRoomPrediction(unittest.TestCase):
 
         resolver.set_room_object_kg(kg)
 
-        # corridor 的邻接预测应该返回 lab (最高频次)
         predicted = resolver._predict_adjacent_room_type("corridor")
         self.assertEqual(predicted, "lab")
 
     def test_predict_adjacent_without_kg_uses_hardcoded(self):
-        """无 KG 时回退到 hand-coded 邻接。"""
-        from decision.goal_resolution.goal_resolver import GoalResolver
-        from decision.llm.llm_client import LLMConfig
+        """Test predict adjacent without kg uses hardcoded."""
+        from decision.goals.resolver import GoalResolver
+        from decision.llm.client import LLMConfig
 
         config = LLMConfig(backend="openai", model="gpt-4o-mini")
         resolver = GoalResolver(config)
 
-        # 无 KG → hand-coded: office → corridor
         predicted = resolver._predict_adjacent_room_type("office")
         self.assertEqual(predicted, "corridor")
 
     def test_predict_adjacent_kg_empty_uses_hardcoded(self):
-        """KG 存在但该房间类型无邻接数据时, 回退到 hand-coded。"""
-        from decision.goal_resolution.goal_resolver import GoalResolver
-        from decision.llm.llm_client import LLMConfig
+        """Test predict adjacent kg empty uses hardcoded."""
+        from decision.goals.resolver import GoalResolver
+        from decision.llm.client import LLMConfig
 
         config = LLMConfig(backend="openai", model="gpt-4o-mini")
         resolver = GoalResolver(config)
 
-        # KG 只有 corridor ↔ lab, 查询 bathroom 应回退到 hand-coded
         kg = RoomObjectKG()
         kg.observe_adjacency("corridor", "lab", "door")
         resolver.set_room_object_kg(kg)
@@ -302,7 +299,7 @@ class TestKGBackedRoomPrediction(unittest.TestCase):
 
 
 class TestTopologicalMemoryPersistence(unittest.TestCase):
-    """拓扑记忆持久化测试。"""
+    """Test Topological Memory Persistence."""
 
     def test_save_and_load(self):
         import numpy as np
@@ -316,12 +313,14 @@ class TestTopologicalMemoryPersistence(unittest.TestCase):
             mem1.update_position(
                 np.array([0.0, 0.0, 0.0]),
                 visible_labels=["door", "sign"],
-                room_id=0, room_name="corridor",
+                room_id=0,
+                room_name="corridor",
             )
             mem1.update_position(
                 np.array([5.0, 0.0, 0.0]),
                 visible_labels=["desk", "chair"],
-                room_id=1, room_name="office",
+                room_id=1,
+                room_name="office",
             )
             self.assertTrue(mem1.save_to_file(path))
 

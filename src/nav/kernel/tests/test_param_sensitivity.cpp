@@ -78,7 +78,8 @@ TEST(PathFollower, DirDiffThreVariation) {
     PathFollowerParams p;
     p.dirDiffThre      = 1.6;   // 92掳 > 90掳 鈫?鍏佽杈硅蛋杈硅浆
     p.maxSpeed         = 1.0;
-    p.maxAccel         = 10.0;  // step=0.1, threshold=0.1; 2娆¤皟鐢ㄥ悗 speed=0.2 > 0.1
+    p.maxAccel         = 10.0;
+    p.nominalDt        = 0.01;
     p.baseLookAheadDis = 0.3;
     p.lookAheadRatio   = 0.5;
     p.stopDisThre      = 0.2;
@@ -88,9 +89,9 @@ TEST(PathFollower, DirDiffThreVariation) {
     p.noRotAtGoal      = false;
 
     PathFollowerState state;
-    // 璋冧袱娆¤ vehicleSpeed 绉垎 > maxAccel/100 闃堝€?
+    // Two 10 ms updates integrate speed to 0.2 m/s at 10 m/s^2.
     computeControl(robot, yawDiff, path, 1.0, 0.0, 1.0, 0, p, state);
-    auto out = computeControl(robot, yawDiff, path, 1.0, 0.0, 1.0, 0, p, state);
+    auto out = computeControl(robot, yawDiff, path, 1.0, 0.01, 1.0, 0, p, state);
 
     // 90掳 鈮?1.571 rad < 1.6 rad 鈫?canAccel = true (鍏佽杈硅蛋杈硅浆)
     EXPECT_TRUE(out.canAccel)

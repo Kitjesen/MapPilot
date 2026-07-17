@@ -6,6 +6,37 @@ Use this file when deciding which document is authoritative.
 
 For cleanup decisions and archive candidates, see `DOCS_TRIAGE.md`.
 
+## Curated Documentation Entry Points
+
+The pages below are task-oriented navigation aids. They do not supersede the
+contracts and references listed later in this file.
+
+| Need | Curated entry point |
+| --- | --- |
+| Choose a local, simulation, or field starting path | `01-getting-started/README.md` |
+| Learn Module-First concepts | `02-concepts/README.md` |
+| Find the owning development surface | `03-development/README.md` |
+| Build a REST, SDK, MCP, SSE, or teleoperation integration | `09-integrations/README.md` |
+| Map, navigate, use semantic goals, or explore | `05-guides/README.md` |
+| Operate and diagnose a running system | `06-operations/README.md` |
+| Understand control ownership, stop/recovery, and movement boundaries | `10-safety/README.md` |
+| Prepare a field target without target-specific addresses or credentials | `04-deployment/WEB_GUIDE.md` |
+| Select a local, simulation, or no-motion field validation gate | `07-testing/WEB_GUIDE.md` |
+| Find CLI, REST, MCP, and configuration references | `08-reference/README.md` |
+
+The root `README.md` is the public documentation home. Keep plans, dated audit
+reports, and field-run evidence out of its primary reading paths.
+
+## Status Terms
+
+| Label | Meaning | How to use it |
+| --- | --- | --- |
+| Current | Describes the supported product behavior or an active contract. | It may be used as an implementation or operator reference. |
+| Reference | Lists stable interfaces, commands, configuration, or generated inventory. | Check its scope and generation date before relying on an individual entry. |
+| Evidence | Records the result of a dated test, simulation run, or field session. | It supports only the named claim and environment. |
+| Plan | Describes intended work, not shipped behavior. | Do not cite it as a runtime contract. |
+| Historical | Retained context that requires revalidation before reuse. | Prefer a current replacement or git history. |
+
 ## Authoritative Now
 
 | Topic | Source of truth |
@@ -19,6 +50,8 @@ For cleanup decisions and archive candidates, see `DOCS_TRIAGE.md`.
 | Frame contract | `docs/architecture/ros_frame_contract.md` |
 | Repository placement | `docs/REPO_LAYOUT.md` |
 | Runtime quickstart | `docs/QUICKSTART.md` |
+| SDK, REST, MCP, SSE, and teleoperation integration usage | `docs/09-integrations/README.md` |
+| Software control ownership, motion gate, and stop/recovery usage | `docs/10-safety/README.md` |
 | Known product gaps | `docs/known_gaps.md` |
 
 ## Not Authoritative By Default

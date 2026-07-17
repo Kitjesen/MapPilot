@@ -9,8 +9,27 @@
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { PathPoint, CostmapEvent, SlopeGridEvent, SceneGraphEvent } from '../types'
+import type { PathPoint, CostmapEvent, SlopeGridEvent, SceneGraphEvent, MapSceneEvent, NavigationDdsSnapshotResponse } from '../types'
 import type { BinaryCloud } from '../hooks/useBinaryCloud'
+import {
+  cloudFrameSharesSavedMapFrame,
+  cloudFramesShareCoordinateEpoch,
+} from '../workers/cloudDecoderCore.ts'
+import { createCostmapLayer } from './scene3d/layers/costmapLayer'
+import { disposeLiveCloudLayer, upsertLiveCloudLayer } from './scene3d/layers/liveCloudLayer'
+import {
+  createSavedMapLayer,
+  SAVED_MAP_Z_CEIL,
+  SAVED_MAP_Z_FLOOR,
+  updateSavedMapPointSize,
+} from './scene3d/layers/savedMapLayer'
+import { createSlopeLayer } from './scene3d/layers/slopeLayer'
+import { disposeGroupedMesh, type GroupedMesh } from './scene3d/layers/layerUtils'
+import { createThunderV4Model } from './scene3d/robot/thunderV4Model'
+import {
+  createLocalPlannerDiagnosticLayer,
+  disposeLocalPlannerDiagnosticLayer,
+} from './scene3d/layers/localPlannerLayer'
 
 export interface Scene3DHandle {
   resetCamera(): void
@@ -25,20 +44,27 @@ interface Layers {
   robot:   boolean
   costmap: boolean
   slope:   boolean
+  localPlanner: boolean
 }
 
 interface Scene3DProps {
   cloud:        BinaryCloud
+  scanCloud?:   BinaryCloud | null
   savedMapFlat?: number[]
+  savedMapFrameId?: string | null
+  savedMapEpoch?: number | null
+  mapScene?:    MapSceneEvent | null
   costmap:      CostmapEvent | null
   slopeGrid:    SlopeGridEvent | null
   sceneGraph:   SceneGraphEvent | null
   robotX:       number
   robotY:       number
+  robotValid:   boolean
   yaw:          number
   trail:        Array<[number, number]>
   path:         PathPoint[]
   localPath:    PathPoint[]
+  localPlannerSnapshot?: NavigationDdsSnapshotResponse | null
   layers:       Layers
   pointSize:    number
   onPendingGoal: (x: number, y: number) => void
@@ -46,10 +72,9 @@ interface Scene3DProps {
   pendingGoal?:  { x: number; y: number } | null
 }
 
-const Z_FLOOR   = -0.2  // include floor-level scan points
-const Z_CEIL    = 2.8   // ignore points above ceiling (m)
-// The worker still owns binary decode and filtering. Scene3D projects a sampled
-// live cloud onto a 2D overlay so points remain visible across WebGL drivers.
+const LIVE_SCAN_COLOR = 0x68f7e1
+// The worker owns binary decode, filtering, color mapping, and coordinate
+// conversion. Scene3D consumes those typed arrays as a true 3D Points layer.
 
 function removeFrom(scene: THREE.Scene, obj: THREE.Object3D | undefined | null) {
   if (!obj) return
@@ -61,19 +86,24 @@ function removeFrom(scene: THREE.Scene, obj: THREE.Object3D | undefined | null) 
 }
 
 export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
-  { cloud, savedMapFlat, costmap, slopeGrid, sceneGraph, robotX, robotY, yaw, trail, path, localPath, layers, pointSize, onPendingGoal, onRelocalize, pendingGoal },
+  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, costmap, slopeGrid, sceneGraph, robotX, robotY, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, layers, pointSize, onPendingGoal, onRelocalize, pendingGoal },
   ref,
 ) {
   const mountRef   = useRef<HTMLDivElement>(null)
   const sceneRef   = useRef<THREE.Scene | null>(null)
   const cameraRef  = useRef<THREE.PerspectiveCamera | null>(null)
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null)
-  const cloudOverlayRef = useRef<HTMLCanvasElement | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
   const rafRef     = useRef(0)
-  const latestCloudRef = useRef(cloud)
-  const cloudVisibleRef = useRef(layers.cloud)
-  const pointSizeRef = useRef(pointSize)
+  const scanFrameAligned = scanCloud != null
+    && cloudFramesShareCoordinateEpoch(cloud, scanCloud)
+  const savedMapFrameAligned = cloudFrameSharesSavedMapFrame(
+    cloud,
+    savedMapFrameId,
+    savedMapEpoch,
+  )
+  const hasSavedMap = savedMapFlat !== undefined && savedMapFlat.length >= 3
+  const liveCloudFrameAllowed = !hasSavedMap || savedMapFrameAligned
 
   // Scene objects — recreated on data change
   const trailLineRef = useRef<THREE.Line | null>(null)
@@ -82,18 +112,18 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const robotRef   = useRef<THREE.Group | null>(null)
   const goalRef        = useRef<THREE.Mesh | null>(null)
   const pendingGoalRef = useRef<THREE.Mesh | null>(null)
-  const costmapMeshRef = useRef<THREE.Mesh | null>(null)
-  const slopeMeshRef   = useRef<THREE.Mesh | null>(null)
+  const costmapMeshRef = useRef<GroupedMesh | null>(null)
+  const slopeMeshRef   = useRef<GroupedMesh | null>(null)
+  const localPlannerRef = useRef<THREE.Group | null>(null)
   const gridRef        = useRef<THREE.GridHelper | null>(null)
   const floorRef   = useRef<THREE.Mesh | null>(null)
+  const liveCloudRef   = useRef<THREE.Points | null>(null)
+  const scanCloudRef   = useRef<THREE.Points | null>(null)
   const savedMapRef    = useRef<THREE.Points | null>(null)
+  const pointSizeRef   = useRef(pointSize)
   const sgGroupRef     = useRef<THREE.Group | null>(null)
   const raycaster  = useRef(new THREE.Raycaster())
   const robotPosRef = useRef({ x: 0, y: 0 })
-
-  useEffect(() => { latestCloudRef.current = cloud }, [cloud])
-  useEffect(() => { cloudVisibleRef.current = layers.cloud }, [layers.cloud])
-  useEffect(() => { pointSizeRef.current = pointSize }, [pointSize])
 
   // ── Expose resetCamera ──────────────────────────────────────────
   useImperativeHandle(ref, () => ({
@@ -127,51 +157,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     mount.appendChild(renderer.domElement)
     rendererRef.current = renderer
 
-    const cloudOverlay = document.createElement('canvas')
-    cloudOverlay.style.position = 'absolute'
-    cloudOverlay.style.inset = '0'
-    cloudOverlay.style.width = '100%'
-    cloudOverlay.style.height = '100%'
-    cloudOverlay.style.pointerEvents = 'none'
-    cloudOverlay.style.zIndex = '1'
-    mount.appendChild(cloudOverlay)
-    cloudOverlayRef.current = cloudOverlay
-
-    const resizeOverlay = (nw: number, nh: number) => {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      cloudOverlay.width = Math.max(1, Math.floor(nw * dpr))
-      cloudOverlay.height = Math.max(1, Math.floor(nh * dpr))
-    }
-    resizeOverlay(w, h)
-
-    const drawCloudOverlay = () => {
-      const overlay = cloudOverlayRef.current
-      if (!overlay) return
-      const ctx = overlay.getContext('2d')
-      if (!ctx) return
-      const width = overlay.width
-      const height = overlay.height
-      ctx.clearRect(0, 0, width, height)
-      const live = latestCloudRef.current
-      if (!cloudVisibleRef.current || live.count <= 0) return
-      const stride = Math.max(1, Math.ceil(live.count / 2500))
-      const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      const size = Math.max(2, pointSizeRef.current * 10) * dpr
-      const half = size / 2
-      const p = new THREE.Vector3()
-      ctx.fillStyle = 'rgba(94, 234, 255, 0.88)'
-      for (let src = 0; src < live.count; src += stride) {
-        const off = src * 3
-        p.set(live.positions[off], live.positions[off + 1], live.positions[off + 2])
-        p.project(camera)
-        if (p.z < -1 || p.z > 1) continue
-        const sx = (p.x * 0.5 + 0.5) * width
-        const sy = (-p.y * 0.5 + 0.5) * height
-        if (sx < -size || sx > width + size || sy < -size || sy > height + size) continue
-        ctx.fillRect(sx - half, sy - half, size, size)
-      }
-    }
-
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping  = true
     controls.dampingFactor  = 0.1
@@ -203,7 +188,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       rafRef.current = requestAnimationFrame(animate)
       controls.update()
       renderer.render(scene, camera)
-      drawCloudOverlay()
     }
     animate()
 
@@ -212,7 +196,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       camera.aspect = nw / nh
       camera.updateProjectionMatrix()
       renderer.setSize(nw, nh)
-      resizeOverlay(nw, nh)
     })
     ro.observe(mount)
 
@@ -222,10 +205,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       controls.dispose()
       renderer.dispose()
       if (mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement)
-      if (cloudOverlayRef.current && mount.contains(cloudOverlayRef.current)) {
-        mount.removeChild(cloudOverlayRef.current)
-      }
-      cloudOverlayRef.current = null
     }
   }, [])
 
@@ -233,6 +212,49 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   useEffect(() => {
     if (gridRef.current) gridRef.current.visible = layers.grid
   }, [layers.grid])
+
+  // Live point cloud, Rerun-style: one 3D layer with positions and colors.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+
+    if (!layers.cloud || !liveCloudFrameAllowed) {
+      if (liveCloudRef.current) {
+        disposeLiveCloudLayer(scene, liveCloudRef.current)
+        liveCloudRef.current = null
+      }
+      if (scanCloudRef.current) {
+        disposeLiveCloudLayer(scene, scanCloudRef.current)
+        scanCloudRef.current = null
+      }
+      return
+    }
+
+    liveCloudRef.current = upsertLiveCloudLayer(scene, liveCloudRef.current, cloud, pointSize, {
+      opacity: 0.64,
+      pointSizeScale: 0.9,
+      renderOrder: 6,
+      vertexColors: true,
+    })
+  }, [cloud, layers.cloud, liveCloudFrameAllowed, pointSize])
+
+  // Current scan overlay.  This is intentionally separate from the accumulated
+  // map cloud so mapping mode can be stable and still show live sensor motion.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+    if (!layers.cloud || !liveCloudFrameAllowed || !scanCloud || !scanFrameAligned) {
+      if (scanCloudRef.current) scanCloudRef.current.visible = false
+      return
+    }
+    scanCloudRef.current = upsertLiveCloudLayer(scene, scanCloudRef.current, scanCloud, pointSize, {
+      color: LIVE_SCAN_COLOR,
+      opacity: 0.92,
+      pointSizeScale: 1.18,
+      renderOrder: 12,
+      vertexColors: false,
+    })
+  }, [scanCloud, scanFrameAligned, layers.cloud, liveCloudFrameAllowed, pointSize])
 
   // ── Trail ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -290,69 +312,22 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // ── Robot model ─────────────────────────────────────────────────
   useEffect(() => {
-    robotPosRef.current = { x: robotX, y: robotY }
+    if (robotValid) robotPosRef.current = { x: robotX, y: robotY }
     const scene = sceneRef.current
     if (!scene) return
 
     if (!robotRef.current) {
-      const g = new THREE.Group()
-
-      // Body wireframe box
-      g.add(new THREE.LineSegments(
-        new THREE.EdgesGeometry(new THREE.BoxGeometry(0.68, 0.22, 0.34)),
-        new THREE.LineBasicMaterial({ color: 0xf472b6 }),
-      ))
-
-      // Heading arrow
-      g.add(new THREE.ArrowHelper(
-        new THREE.Vector3(1, 0, 0),
-        new THREE.Vector3(0.3, 0.11, 0),
-        0.55, 0xffffff, 0.18, 0.1,
-      ))
-
-      // Four leg dots (foot contact points)
-      const legGeo = new THREE.SphereGeometry(0.04, 5, 5)
-      const legMat = new THREE.MeshBasicMaterial({ color: 0xe2e8f0 });
-      ([
-        [0.28, -0.11,  0.18],
-        [-0.28, -0.11, 0.18],
-        [0.28, -0.11, -0.18],
-        [-0.28, -0.11, -0.18],
-      ] as [number, number, number][]).forEach(([x, y, z]) => {
-        const m = new THREE.Mesh(legGeo, legMat)
-        m.position.set(x, y, z)
-        g.add(m)
-      })
-
-      // Camera frustum (sky-blue wireframe pyramid)
-      const fp = [
-        new THREE.Vector3(0.35, 0.11, 0),     // apex
-        new THREE.Vector3(0.9,  0.48, 0.38),  // TL
-        new THREE.Vector3(0.9,  0.48, -0.38), // TR
-        new THREE.Vector3(0.9, -0.08, 0.38),  // BL
-        new THREE.Vector3(0.9, -0.08, -0.38), // BR
-      ]
-      const edges = [[0,1],[0,2],[0,3],[0,4],[1,2],[2,4],[4,3],[3,1]]
-      const fPos: number[] = []
-      edges.forEach(([a, b]) => {
-        fPos.push(fp[a].x, fp[a].y, fp[a].z, fp[b].x, fp[b].y, fp[b].z)
-      })
-      const fGeo = new THREE.BufferGeometry()
-      fGeo.setAttribute('position', new THREE.Float32BufferAttribute(fPos, 3))
-      g.add(new THREE.LineSegments(fGeo, new THREE.LineBasicMaterial({
-        color: 0x38bdf8, transparent: true, opacity: 0.55,
-      })))
-
+      const g = createThunderV4Model()
       scene.add(g)
       robotRef.current = g
     }
 
-    robotRef.current.visible = layers.robot
-    if (layers.robot) {
+    robotRef.current.visible = layers.robot && robotValid
+    if (layers.robot && robotValid) {
       robotRef.current.position.set(robotX, 0, -robotY)
       robotRef.current.rotation.y = yaw
     }
-  }, [robotX, robotY, yaw, layers.robot])
+  }, [robotX, robotY, robotValid, yaw, layers.robot])
 
   // ── Goal marker ─────────────────────────────────────────────────
   useEffect(() => {
@@ -388,226 +363,71 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     pendingGoalRef.current = ring
   }, [pendingGoal])
 
-  // ── Costmap overlay ────────────────────────────────────────────
+  // Costmap overlay
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
 
-    if (costmapMeshRef.current) {
-      const m = costmapMeshRef.current as THREE.Mesh & { _group?: THREE.Group }
-      const parent = m._group ?? m
-      scene.remove(parent)
-      m.geometry.dispose()
-      ;(m.material as THREE.MeshBasicMaterial).map?.dispose()
-      ;(m.material as THREE.Material).dispose()
-      costmapMeshRef.current = null
-    }
+    disposeGroupedMesh(scene, costmapMeshRef.current)
+    costmapMeshRef.current = null
 
     if (!costmap || !layers.costmap) return
 
-    const { grid_b64, cols, resolution, origin } = costmap
-    const bytes = Uint8Array.from(atob(grid_b64), c => c.charCodeAt(0))
-    // Prefer explicit rows from backend; fall back to byte-length inference
-    // for older events that only carry cols.
-    const rows  = costmap.rows ?? Math.round(bytes.length / cols)
-    if (rows <= 0 || cols <= 0) return
-
-    // Draw costmap to an offscreen canvas
-    const canvas = document.createElement('canvas')
-    canvas.width  = cols
-    canvas.height = rows
-    const ctx = canvas.getContext('2d')!
-    const img = ctx.createImageData(cols, rows)
-
-    // VGSwarm (ICRA 2024) style continuous gradient: 5-stop palette on
-    // cost ∈ [0,100]. Stops are in sRGB — smooth in perceptual space
-    // rather than HSL to avoid rainbow banding.
-    //   0   fully transparent (free)
-    //   20  cool teal     rgb( 46,196,182)  — traversable margin
-    //   40  warm yellow   rgb(255,214, 90)  — soft edge
-    //   60  saturated orange rgb(255,133, 38) — danger ring
-    //   80  deep red      rgb(231, 72, 72)   — imminent collision
-    //   100 lethal crimson rgb(183, 28, 28)  — wall / lethal
-    // Keep alpha modest so this diagnostic layer does not bury live cloud points.
-    const STOPS: Array<[number, number, number, number, number]> = [
-      [  0,  46, 196, 182,   0],
-      [ 20,  46, 196, 182,  44],
-      [ 40, 255, 214,  90,  74],
-      [ 60, 255, 133,  38, 108],
-      [ 80, 231,  72,  72, 138],
-      [100, 183,  28,  28, 162],
-    ]
-    const interp = (v: number): [number, number, number, number] => {
-      for (let i = 0; i < STOPS.length - 1; i++) {
-        const [a, ar, ag, ab, aa] = STOPS[i]
-        const [b, br, bg, bb, ba] = STOPS[i + 1]
-        if (v <= b) {
-          const t = (v - a) / Math.max(1e-6, b - a)
-          return [
-            Math.round(ar + (br - ar) * t),
-            Math.round(ag + (bg - ag) * t),
-            Math.round(ab + (bb - ab) * t),
-            Math.round(aa + (ba - aa) * t),
-          ]
-        }
-      }
-      return [STOPS[STOPS.length - 1][1], STOPS[STOPS.length - 1][2],
-              STOPS[STOPS.length - 1][3], STOPS[STOPS.length - 1][4]]
-    }
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const val  = bytes[r * cols + c]
-        const o    = (r * cols + c) * 4
-        if (val === 0) {
-          img.data[o] = img.data[o+1] = img.data[o+2] = img.data[o+3] = 0
-          continue
-        }
-        const [R, G, B, A] = interp(val)
-        img.data[o]     = R
-        img.data[o + 1] = G
-        img.data[o + 2] = B
-        img.data[o + 3] = A
-      }
-    }
-    ctx.putImageData(img, 0, 0)
-
-    const tex = new THREE.CanvasTexture(canvas)
-    tex.flipY = false  // grid[iy,ix] row0=Y_min — no flip needed
-    tex.minFilter = THREE.LinearFilter
-    tex.magFilter = THREE.NearestFilter
-
-    const sizeX = cols * resolution
-    const sizeY = rows * resolution
-    const geo   = new THREE.PlaneGeometry(sizeX, sizeY)
-    const mat   = new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthWrite: false,
-    })
-    // Grid origin = bottom-left corner in *map* world coords (backend has
-    // already composed T_map_odom translation). `yaw` is the map→odom yaw
-    // in map frame (CCW around world Z). We rotate the center offset in
-    // world XY to get the true mesh center. Three.js uses (worldX, Z_up,
-    // -worldY), so positive world-yaw maps to NEGATIVE rotation around
-    // Three's up axis — that's the symptom森哥 saw (mirror flip).
-    const yaw = (costmap as { yaw?: number }).yaw ?? 0
-    const hx = sizeX / 2, hy = sizeY / 2
-    const cosY = Math.cos(yaw), sinY = Math.sin(yaw)
-    const cx = origin[0] + cosY * hx - sinY * hy
-    const cy = origin[1] + sinY * hx + cosY * hy
-    // Two-layer transform so the yaw stays in world space and doesn't get
-    // entangled with the plane's -PI/2 X-rotation:
-    //   Group: world-space yaw + translation (CCW yaw in map frame maps to
-    //          negative rotation around Three's Y because we mirror world
-    //          Y to -Z in scene coords).
-    //   Mesh:  lies flat on world XZ (x-rotation only).
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.rotation.x = -Math.PI / 2
-    mesh.renderOrder = 5
-    const group = new THREE.Group()
-    group.renderOrder = 5
-    // Derivation: plane local (mx, my) after x-rotation → Three (mx, 0, -my).
-    // World CCW yaw in map frame composes with the y-mirror into +yaw around
-    // Three Y. Don't negate.
-    group.rotation.y = yaw
-    group.position.set(cx, 0.01, -cy)
-    group.add(mesh)
-    scene.add(group)
+    const mesh = createCostmapLayer(costmap)
+    if (!mesh) return
+    scene.add(mesh._group ?? mesh)
     costmapMeshRef.current = mesh
-    ;(mesh as THREE.Mesh & { _group?: THREE.Group })._group = group
   }, [costmap, layers.costmap])
+
 
   // ── Costmap visibility toggle ──────────────────────────────────
   useEffect(() => {
     if (costmapMeshRef.current) costmapMeshRef.current.visible = layers.costmap
   }, [layers.costmap])
 
-  // ── Slope grid overlay (green→yellow→red) ──────────────────────
+  // Slope grid overlay
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
 
-    if (slopeMeshRef.current) {
-      const m = slopeMeshRef.current as THREE.Mesh & { _group?: THREE.Group }
-      scene.remove(m._group ?? m)
-      m.geometry.dispose()
-      ;(m.material as THREE.MeshBasicMaterial).map?.dispose()
-      ;(m.material as THREE.Material).dispose()
-      slopeMeshRef.current = null
-    }
+    disposeGroupedMesh(scene, slopeMeshRef.current)
+    slopeMeshRef.current = null
 
-    if (!slopeGrid || !layers.slope || !slopeGrid.grid_b64) return
+    if (!slopeGrid || !layers.slope) return
 
-    const { grid_b64, cols, resolution, origin } = slopeGrid
-    const bytes = Uint8Array.from(atob(grid_b64), c => c.charCodeAt(0))
-    const rows = Math.round(bytes.length / cols)
-    if (rows <= 0 || cols <= 0) return
-
-    const canvas = document.createElement('canvas')
-    canvas.width = cols
-    canvas.height = rows
-    const ctx = canvas.getContext('2d')!
-    const img = ctx.createImageData(cols, rows)
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const raw = bytes[r * cols + c]  // no manual flip — CanvasTexture.flipY handles it
-        const deg = raw * (90.0 / 255.0)
-        const o = (r * cols + c) * 4
-        if (deg < 3) {
-          // flat — fully transparent
-          img.data[o] = img.data[o+1] = img.data[o+2] = img.data[o+3] = 0
-        } else if (deg < 15) {
-          // mild slope — green
-          const t = (deg - 3) / 12
-          img.data[o]     = Math.round(40 * t)
-          img.data[o + 1] = Math.round(180 + 40 * t)
-          img.data[o + 2] = Math.round(60 * t)
-          img.data[o + 3] = Math.round(30 + 50 * t)
-        } else if (deg < 25) {
-          // moderate slope — yellow
-          const t = (deg - 15) / 10
-          img.data[o]     = Math.round(200 + 55 * t)
-          img.data[o + 1] = Math.round(200 - 60 * t)
-          img.data[o + 2] = 30
-          img.data[o + 3] = Math.round(80 + 40 * t)
-        } else {
-          // steep slope — red
-          img.data[o]     = 240
-          img.data[o + 1] = 50
-          img.data[o + 2] = 50
-          img.data[o + 3] = 140
-        }
-      }
-    }
-    ctx.putImageData(img, 0, 0)
-
-    const tex = new THREE.CanvasTexture(canvas)
-    tex.flipY = false  // grid[iy,ix] row0=Y_min — no flip needed
-    tex.minFilter = THREE.LinearFilter
-    tex.magFilter = THREE.NearestFilter
-
-    const sizeX = cols * resolution
-    const sizeY = rows * resolution
-    const geo = new THREE.PlaneGeometry(sizeX, sizeY)
-    const mat = new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthWrite: false,
-    })
-    const sYaw = (slopeGrid as { yaw?: number }).yaw ?? 0
-    const hxS = sizeX / 2, hyS = sizeY / 2
-    const cosS = Math.cos(sYaw), sinS = Math.sin(sYaw)
-    const cxS = origin[0] + cosS * hxS - sinS * hyS
-    const cyS = origin[1] + sinS * hxS + cosS * hyS
-    const mesh = new THREE.Mesh(geo, mat)
-    mesh.rotation.x = -Math.PI / 2
-    const groupS = new THREE.Group()
-    groupS.rotation.y = sYaw
-    groupS.position.set(cxS, 0.02, -cyS)
-    groupS.add(mesh)
-    ;(mesh as THREE.Mesh & { _group?: THREE.Group })._group = groupS
-    scene.add(groupS)
+    const mesh = createSlopeLayer(slopeGrid)
+    if (!mesh) return
+    scene.add(mesh._group ?? mesh)
     slopeMeshRef.current = mesh
   }, [slopeGrid, layers.slope])
 
-  // ── Saved map cloud (gray, background layer) ───────────────────
+  // Native endpoint diagnostics are read-only and have no path back into
+  // planning or control. Rebuild only at the explicitly enabled low poll rate.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+
+    disposeLocalPlannerDiagnosticLayer(scene, localPlannerRef.current)
+    localPlannerRef.current = null
+    if (!layers.localPlanner) return
+
+    const group = createLocalPlannerDiagnosticLayer(localPlannerSnapshot)
+    if (!group) return
+    scene.add(group)
+    localPlannerRef.current = group
+
+    return () => {
+      if (localPlannerRef.current === group) {
+        disposeLocalPlannerDiagnosticLayer(scene, group)
+        localPlannerRef.current = null
+      }
+    }
+  }, [localPlannerSnapshot, layers.localPlanner])
+
+
+  // Saved map cloud. Live map_scene labels have an independent lifecycle and
+  // point ordering, so they cannot safely recolor or rebind this static PCD.
+  // Height coloring stays stable until an identity-bound semantic artifact exists.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
@@ -617,27 +437,24 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       ;(savedMapRef.current.material as THREE.Material).dispose()
       savedMapRef.current = null
     }
-    if (!savedMapFlat || savedMapFlat.length < 3) return
-    // 防御：底图点数特别大时，取步长采样避免 GPU 崩溃
-    const MAX_SAVED_PTS = 80_000
-    const totalTriples = Math.floor(savedMapFlat.length / 3)
-    const stride = totalTriples > MAX_SAVED_PTS ? Math.ceil(totalTriples / MAX_SAVED_PTS) : 1
-    const positions: number[] = []
-    const step = stride * 3
-    for (let i = 0; i + 2 < savedMapFlat.length; i += step) {
-      const wx = savedMapFlat[i], wy = savedMapFlat[i + 1], wz = savedMapFlat[i + 2]
-      if (wz < Z_FLOOR || wz > Z_CEIL) continue
-      positions.push(wx, wz, -wy)
-    }
-    if (positions.length === 0) return
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-    // 底图：暗蓝灰，作 reference；实时扫描会以暖色叠在上面
-    const mat = new THREE.PointsMaterial({ size: 0.05, color: 0x334466, sizeAttenuation: true, opacity: 0.55, transparent: true })
-    const pts = new THREE.Points(geo, mat)
-    scene.add(pts)
-    savedMapRef.current = pts
+
+    const points = createSavedMapLayer(
+      savedMapFlat,
+      SAVED_MAP_Z_FLOOR,
+      SAVED_MAP_Z_CEIL,
+      undefined,
+      pointSizeRef.current,
+    )
+    if (!points) return
+    scene.add(points)
+    savedMapRef.current = points
   }, [savedMapFlat])
+
+  useEffect(() => {
+    pointSizeRef.current = pointSize
+    updateSavedMapPointSize(savedMapRef.current, pointSize)
+  }, [pointSize])
+
 
   // ── Semantic scene graph (objects + labels) ────────────────────
   useEffect(() => {

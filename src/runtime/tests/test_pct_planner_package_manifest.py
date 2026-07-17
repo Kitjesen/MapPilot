@@ -4,27 +4,9 @@ from pathlib import Path
 def test_nav_planning_has_no_legacy_ros_package_entrypoints() -> None:
     repo = Path(__file__).resolve().parents[3]
     pct_root = (
-        repo
-        / "src"
-        / "nav"
-        / "services"
-        / "plan"
-        / "global_planner"
-        / "algorithm"
-        / "pct"
-        / "vendor"
-        / "pct_planner"
+        repo / "src" / "nav" / "services" / "plan" / "global_planner" / "algorithm" / "pct" / "vendor" / "pct_planner"
     )
-    adapters_root = (
-        repo
-        / "src"
-        / "nav"
-        / "services"
-        / "plan"
-        / "global_planner"
-        / "backends"
-        / "pct_adapters"
-    )
+    adapters_root = repo / "src" / "nav" / "services" / "plan" / "global_planner" / "backends" / "pct_adapters"
 
     forbidden = {
         pct_root: [
@@ -44,24 +26,15 @@ def test_nav_planning_has_no_legacy_ros_package_entrypoints() -> None:
         ],
     }
 
-    assert [
-        str(root / rel)
-        for root, rels in forbidden.items()
-        for rel in rels
-        if (root / rel).exists()
-    ] == []
+    assert [str(root / rel) for root, rels in forbidden.items() for rel in rels if (root / rel).exists()] == []
 
 
 def test_global_planning_does_not_need_ros_compat_boundary() -> None:
-    from runtime.adapters.ros2.manifest import (
-        ROS_COMPAT_IMPORT_BOUNDARIES,
+    from tools.validate.validate_architecture_boundaries import (
         ROS_SCAN_EXCLUDED_PREFIXES,
     )
 
-    assert all(
-        not boundary.prefix.startswith("nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/")
-        for boundary in ROS_COMPAT_IMPORT_BOUNDARIES
-    )
+    assert not (Path("src/runtime/adapters/ros2/manifest.py")).exists()
     assert all(
         not prefix.startswith("nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/launch/")
         for prefix in ROS_SCAN_EXCLUDED_PREFIXES

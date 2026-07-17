@@ -102,7 +102,19 @@ void IESKF::injectZUPT(double sigma_v, double sigma_pos)
     Eigen::Matrix3d S = H_zupt * m_P * H_zupt.transpose() + R_zupt;
     Eigen::Matrix<double, 21, 3> K = m_P * H_zupt.transpose() * S.inverse();
 
-    m_x += K * innov;
+    V21D correction = K * innov;
+    // A zero-velocity observation contains no absolute position measurement.
+    // Position/velocity covariance can become strongly correlated after long
+    // prediction or rejected LiDAR updates; applying that cross term to the
+    // state lets ZUPT teleport t_wi even though the robot is stationary.
+    correction.segment<3>(3).setZero();
+    if (!correction.allFinite())
+    {
+        m_x.v.setZero();
+        clampCovariance();
+        return;
+    }
+    m_x += correction;
     m_P = (M21D::Identity() - K * H_zupt) * m_P;
 
     // Tighten position covariance when robot is confirmed stationary
@@ -133,7 +145,7 @@ void IESKF::injectVerticalVelocityConstraint(double sigma_v)
     clampCovariance();
 }
 
-void IESKF::update()
+bool IESKF::update()
 {
     State predict_x = m_x;
     M21D P_prior = m_P;  // snapshot predict-time covariance for degenerate-DOF retention
@@ -146,6 +158,7 @@ void IESKF::update()
 
     // Observability-Constrained state — populated on first iteration
     bool has_degeneracy = false;
+    bool has_valid_measurement = false;
     bool pathological = false;  // condition_number explodes or all 6 DOF degenerate
     Eigen::Matrix<double, 6, 6> saved_evecs = Eigen::Matrix<double, 6, 6>::Identity();
     Eigen::Matrix<double, 6, 1> saved_mask  = Eigen::Matrix<double, 6, 1>::Ones();
@@ -155,6 +168,7 @@ void IESKF::update()
         m_loss_func(m_x, shared_data);
         if (!shared_data.valid)
             break;
+        has_valid_measurement = true;
         H.setZero();
         b.setZero();
         delta = m_x - predict_x;
@@ -300,7 +314,8 @@ void IESKF::update()
 
     // Pathological degeneracy: revert to IMU prediction entirely (eigenbasis
     // is numerically unreliable so OC projection cannot be trusted either).
-    if (pathological
+    if (!has_valid_measurement
+        || pathological
         || update_translation_too_large
         || update_rotation_too_large
         || velocity_too_large
@@ -313,7 +328,7 @@ void IESKF::update()
         m_x = predict_x;
         clampCovariance();
         m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
-        return;
+        return false;
     }
 
     M21D L = M21D::Identity();
@@ -326,7 +341,7 @@ void IESKF::update()
         m_P = P_prior;
         clampCovariance();
         m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
-        return;
+        return false;
     }
     M21D P_candidate = L * H_ldlt.solve(L.transpose());  // P = L * H^{-1} * L^T
     P_candidate = (0.5 * (P_candidate + P_candidate.transpose())).eval();
@@ -337,7 +352,7 @@ void IESKF::update()
         m_P = P_prior;
         clampCovariance();
         m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
-        return;
+        return false;
     }
     m_P = P_candidate;
 
@@ -369,9 +384,10 @@ void IESKF::update()
         m_P = P_prior;
         clampCovariance();
         m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
-        return;
+        return false;
     }
 
     clampCovariance();
     m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
+    return true;
 }

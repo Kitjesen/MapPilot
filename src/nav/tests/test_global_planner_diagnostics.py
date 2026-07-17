@@ -7,9 +7,9 @@ from typing import Any
 import numpy as np
 import pytest
 
+from maps.artifacts import build_saved_map_metadata, sha256_file
 from nav.services.plan.global_planner.service import GlobalPlanner
 from runtime.runtime_interface import TOPICS, topic_default_frame_id
-from runtime.same_source_map_artifacts import build_saved_map_metadata, sha256_file
 
 
 class _EmptyPctBackend:
@@ -86,14 +86,20 @@ def _write_minimal_pcd(path: Path) -> None:
     )
 
 
-def _write_active_octomap_map(tmp_path: Path, *, occupancy: bool = True) -> Path:
+def _write_active_octomap_map(
+    tmp_path: Path,
+    *,
+    occupancy: bool = True,
+    map_name: str = "active",
+    activate: bool = True,
+) -> Path:
     maps_dir = tmp_path / "maps"
-    active_dir = maps_dir / "active"
-    active_dir.mkdir(parents=True)
+    active_dir = maps_dir / map_name
+    active_dir.mkdir(parents=True, exist_ok=True)
     pcd = active_dir / "map.pcd"
     octomap = active_dir / "octomap.ot"
     _write_minimal_pcd(pcd)
-    octomap.write_bytes(b"# OctoMap OcTree binary placeholder")
+    octomap.write_bytes(f"# OctoMap OcTree binary placeholder: {map_name}".encode())
 
     frame_id = topic_default_frame_id(TOPICS.saved_map_cloud)
     source_profile = "unit_test"
@@ -144,6 +150,8 @@ def _write_active_octomap_map(tmp_path: Path, *, occupancy: bool = True) -> Path
         artifacts=artifacts,
     )
     (active_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+    if activate:
+        (maps_dir / "active_map.txt").write_text(f"{map_name}\n", encoding="utf-8")
     return maps_dir
 
 
@@ -231,9 +239,7 @@ def test_global_planner_status_reports_unavailable_octoplanner3d_without_fallbac
     assert status["backend"] == "octoplanner3d"
     assert status["fallback_backend"] == "direct"
     assert status["degraded"] is True
-    assert status["degraded_reason"] == (
-        "OctoPlanner3D headless executable not configured"
-    )
+    assert status["degraded_reason"] == ("OctoPlanner3D headless executable not configured")
 
 
 def test_global_planner_pct_falls_back_when_primary_returns_empty_path():
@@ -264,9 +270,7 @@ def test_global_planner_pct_falls_back_when_primary_returns_empty_path():
     assert report["selected_planner"] == "direct"
     assert report["fallback_reason"] == "pct native plan raised exception"
     assert report["rejected_plans"][0]["planner"] == "pct"
-    assert report["rejected_plans"][0]["planner_diagnostics"]["stage"] == (
-        "native_plan_exception"
-    )
+    assert report["rejected_plans"][0]["planner_diagnostics"]["stage"] == ("native_plan_exception")
     status = svc.backend_status()
     assert status["backend"] == "direct"
     assert status["degraded"] is True
@@ -315,6 +319,7 @@ def test_octoplanner3d_does_not_fallback_to_legacy_planner_when_primary_fails():
         planner_name="octoplanner3d",
         plan_safety_policy="fallback_astar",
         fallback_planner_name="direct",
+        map_artifact_gate_required=False,
     )
     svc._backend = _EmptyPctBackend()
     svc._map_artifact_gate = {
@@ -347,7 +352,7 @@ def test_octoplanner3d_resolves_active_octomap_and_requires_metadata_gate(
 
     svc = GlobalPlanner(planner_name="octoplanner3d")
 
-    assert svc._resolve_tomogram_path().endswith("octomap.ot")
+    assert svc._resolve_map_artifact_path().endswith("octomap.ot")
     gate = svc._validate_map_artifact_gate()
     assert gate["required"] is True
     assert gate["ok"] is True, gate
@@ -367,3 +372,106 @@ def test_octoplanner3d_active_gate_rejects_missing_octomap(tmp_path, monkeypatch
     assert gate["required"] is True
     assert gate["ok"] is False
     assert any("octomap" in blocker for blocker in gate["blockers"])
+
+
+def test_octoplanner3d_active_gate_rejects_octomap_from_stale_pointcloud(
+    tmp_path,
+    monkeypatch,
+):
+    maps_dir = _write_active_octomap_map(tmp_path)
+    pcd = maps_dir / "active" / "map.pcd"
+    pcd.write_text(
+        pcd.read_text(encoding="utf-8").replace(
+            "0.0 0.0 0.0\n",
+            "1.0 0.0 0.0\n",
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
+
+    svc = GlobalPlanner(planner_name="octoplanner3d")
+
+    gate = svc._validate_map_artifact_gate()
+    assert gate["required"] is True
+    assert gate["ok"] is False
+    assert any("sha256" in blocker or "source_map_sha256" in blocker for blocker in gate["blockers"]), gate
+
+
+def test_octoplanner3d_active_gate_rejects_tampered_octomap(tmp_path, monkeypatch):
+    maps_dir = _write_active_octomap_map(tmp_path)
+    (maps_dir / "active" / "octomap.ot").write_bytes(b"tampered octomap")
+    monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
+
+    svc = GlobalPlanner(planner_name="octoplanner3d")
+
+    gate = svc._validate_map_artifact_gate()
+    assert gate["required"] is True
+    assert gate["ok"] is False
+    assert any("octomap" in blocker and "sha256" in blocker for blocker in gate["blockers"]), gate
+
+
+@pytest.mark.parametrize("map_only", [False, True])
+def test_octoplanner3d_revalidates_artifacts_before_every_plan(
+    tmp_path,
+    monkeypatch,
+    map_only,
+):
+    maps_dir = _write_active_octomap_map(tmp_path)
+    monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
+    backend = _FallbackDirectBackend()
+    svc = GlobalPlanner(planner_name="octoplanner3d", plan_safety_policy="off")
+    svc._backend = backend
+    svc._map_artifact_gate = svc._validate_map_artifact_gate()
+    assert svc._map_artifact_gate["ok"] is True
+
+    (maps_dir / "active" / "octomap.ot").write_bytes(b"tampered after setup")
+
+    plan_call = svc.plan_map_only if map_only else svc.plan
+    with pytest.raises(RuntimeError, match="saved map artifact gate failed"):
+        plan_call(
+            np.asarray([0.0, 0.0, 0.0], dtype=float),
+            np.asarray([1.0, 0.0, 0.0], dtype=float),
+        )
+
+    assert backend.calls == 0
+
+
+@pytest.mark.parametrize("map_only", [False, True])
+def test_octoplanner3d_rejects_plan_when_backend_is_bound_to_previous_active_map(
+    tmp_path,
+    monkeypatch,
+    map_only,
+):
+    maps_dir = _write_active_octomap_map(tmp_path, map_name="map_a")
+    _write_active_octomap_map(
+        tmp_path,
+        map_name="map_b",
+        activate=False,
+    )
+    monkeypatch.setenv("NAV_MAP_DIR", str(maps_dir))
+
+    backend = _FallbackDirectBackend()
+    loaded_paths: list[str] = []
+
+    def create_backend(_name, map_path, _obstacle_thr, **_kwargs):
+        loaded_paths.append(str(Path(map_path).resolve()))
+        return backend
+
+    monkeypatch.setattr(
+        "nav.services.plan.global_planner.service.create_planner_backend",
+        create_backend,
+    )
+    svc = GlobalPlanner(planner_name="octoplanner3d", plan_safety_policy="off")
+    svc.setup()
+    assert loaded_paths == [str((maps_dir / "map_a" / "octomap.ot").resolve())]
+
+    (maps_dir / "active_map.txt").write_text("map_b\n", encoding="utf-8")
+
+    plan_call = svc.plan_map_only if map_only else svc.plan
+    with pytest.raises(RuntimeError, match="reload"):
+        plan_call(
+            np.asarray([0.0, 0.0, 0.0], dtype=float),
+            np.asarray([1.0, 0.0, 0.0], dtype=float),
+        )
+
+    assert backend.calls == 0

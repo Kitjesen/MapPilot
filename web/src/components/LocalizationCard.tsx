@@ -82,10 +82,18 @@ export function LocalizationCard({ sseState }: LocalizationCardProps) {
 
 function labelFor(t: TabKey): string {
   switch (t) {
-    case 'slam':   return 'SLAM'
-    case 'gnss':   return 'GNSS'
+    case 'slam':   return '定位'
+    case 'gnss':   return '卫星'
     case 'fusion': return '融合'
   }
+}
+
+function modeLabel(mode: string): string {
+  if (mode === 'native_dds' || mode === 'cpp_slam_status') return '原生定位'
+  if (mode === 'fastlio2') return '建图'
+  if (mode === 'localizer') return '地图定位'
+  if (mode.includes('ros2')) return '兼容桥'
+  return mode
 }
 
 /* ─── SLAM panel ───────────────────────────────────────────────── */
@@ -103,7 +111,7 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
   const vx = fmt(odom?.vx, 2)
   const mode = slam?.mode ?? '离线'
   const hasFix = connected && odom != null
-  const slamHz = slam?.slam_hz ?? num(diag, 'status_target_hz')
+  const processedHz = num(diag, 'processed_scan_hz') ?? slam?.slam_hz
   const lidarHz = num(diag, 'lidar_input_hz')
   const imuHz = num(diag, 'imu_input_hz')
   const tickHz = num(diag, 'slam_tick_hz')
@@ -120,32 +128,38 @@ function SlamPanel({ sseState }: { sseState: SSEState }) {
   const mapFrameJump = bool(diag, 'map_frame_jump')
   const tf = object(diag, 'map_odom_tf')
   const hasTf = bool(diag, 'has_map_odom_tf') ?? bool(tf, 'valid') ?? false
+  const icpQuality = sseState.session?.icp_quality
+  const icpText = typeof icpQuality === 'number' && Number.isFinite(icpQuality)
+    ? icpQuality.toFixed(3)
+    : '--'
+  const icpGood = typeof icpQuality === 'number' && icpQuality > 0 && icpQuality < 0.3
 
   return (
     <>
-      <Header title="SLAM 里程计" live={hasFix} status={hasFix ? '已锁定' : '未锁定'} />
+      <Header title="定位里程计" live={hasFix} status={hasFix ? '已锁定' : '未锁定'} />
 
       <div className={styles.grid}>
         <Field label="X · Y" value={`${posX}, ${posY}`} unit="m" />
         <Field label="航向" value={yawDeg} unit="°" />
         <Field label="线速度" value={vx} unit="m/s" />
-        <Field label="模式" value={mode} dim />
+        <Field label="链路" value={modeLabel(mode)} dim title={mode} />
       </div>
       <div className={styles.grid}>
-        <Field label="SLAM Hz" value={fmt(slamHz, 1)} unit="Hz" />
-        <Field label="Target Hz" value={fmt(targetHz, 1)} unit="Hz" dim />
-        <Field label="LiDAR In" value={fmt(lidarHz, 1)} unit="Hz" />
-        <Field label="IMU In" value={fmt(imuHz, 1)} unit="Hz" />
-        <Field label="Tick" value={fmt(tickHz, 1)} unit="Hz" dim />
-        <Field label="Map TF" value={hasTf ? 'OK' : 'MISSING'} dim={!hasTf} />
-        <Field label="Reg Points" value={fmtInt(registeredPoints)} />
-        <Field label="Map Points" value={fmtInt(mapPoints)} />
-        <Field label="Buffers" value={`${fmtInt(imuBuffer)} / ${fmtInt(lidarBuffer)}`} unit="I/L" dim />
-        <Field label="Drops" value={`${fmtInt(droppedImu)} / ${fmtInt(droppedLidar)}`} unit="I/L" dim />
-        <Field label="Sync Wait" value={fmtInt(syncWait)} dim />
-        <Field label="Scene" value={sceneMode} dim />
-        <Field label="Map Loaded" value={mapLoaded ? 'YES' : 'NO'} dim={!mapLoaded} />
-        <Field label="Frame Jump" value={mapFrameJump ? 'YES' : 'NO'} dim={!mapFrameJump} />
+        <Field label="处理频率" value={fmt(processedHz, 1)} unit="Hz" title="定位输出频率；和雷达原始输入不是同一个计数窗口。" />
+        <Field label="目标频率" value={fmt(targetHz, 1)} unit="Hz" dim title="配置目标频率，不是实测雷达吞吐。" />
+        <Field label="雷达输入" value={fmt(lidarHz, 1)} unit="Hz" title="原生运行时报告的雷达输入频率。" />
+        <Field label="IMU 输入" value={fmt(imuHz, 1)} unit="Hz" />
+        <Field label="匹配质量" value={icpText} dim={!icpGood} title="越低越好；大于 0.3 需要重定位或重新建图。" />
+        <Field label="内部时钟" value={fmt(tickHz, 1)} unit="Hz" dim />
+        <Field label="地图变换" value={hasTf ? '正常' : '缺失'} dim={!hasTf} />
+        <Field label="匹配点数" value={fmtInt(registeredPoints)} />
+        <Field label="地图点数" value={fmtInt(mapPoints)} />
+        <Field label="缓存" value={`${fmtInt(imuBuffer)} / ${fmtInt(lidarBuffer)}`} unit="I/L" dim />
+        <Field label="丢帧" value={`${fmtInt(droppedImu)} / ${fmtInt(droppedLidar)}`} unit="I/L" dim />
+        <Field label="同步等待" value={fmtInt(syncWait)} dim />
+        <Field label="场景" value={sceneMode} dim />
+        <Field label="地图加载" value={mapLoaded ? '是' : '否'} dim={!mapLoaded} />
+        <Field label="坐标跳变" value={mapFrameJump ? '是' : '否'} dim={!mapFrameJump} />
       </div>
     </>
   )
@@ -239,7 +253,7 @@ function FusionPanel({ sseState }: { sseState: SSEState }) {
   if (!hasData) {
     return (
       <>
-        <Header title="SLAM ↔ GNSS" live={false} status="关闭" />
+        <Header title="定位 ↔ 卫星" live={false} status="关闭" />
         <Empty
           text="融合未启用"
           hint={<>设置 <code>slam.gnss_fusion: true</code></>}
@@ -251,7 +265,7 @@ function FusionPanel({ sseState }: { sseState: SSEState }) {
   return (
     <>
       <Header
-        title="SLAM ↔ GNSS"
+        title="定位 ↔ 卫星"
         live={aligned}
         status={aligned ? '已对齐' : '等待对齐'}
       />
@@ -286,15 +300,16 @@ function Header({ title, live, status }: {
 }
 
 function Field({
-  label, value, unit, dim,
+  label, value, unit, dim, title,
 }: {
   label: string
   value: string
   unit?: string
   dim?: boolean
+  title?: string
 }) {
   return (
-    <div className={styles.field}>
+    <div className={styles.field} title={title}>
       <span className={styles.fieldLabel}>{label}</span>
       <span className={dim ? styles.fieldValueDim : styles.fieldValue}>
         {value}

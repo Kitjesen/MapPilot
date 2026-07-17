@@ -67,12 +67,35 @@ protected:
 
 TEST_F(PathFollowerStraight, CanAccelForward) {
   Vec3 robot{0.0, 0.0, 0.0};
-  // 调用两次让速度积分超过 maxAccel/100 阈值
+  // Use two updates so the command passes the minimum non-zero speed threshold.
   computeControl(robot, 0.0, path, 1.0, 0.0, 1.0, 0, p, state);
-  auto out = computeControl(robot, 0.0, path, 1.0, 0.0, 1.0, 0, p, state);
+  auto out = computeControl(robot, 0.0, path, 1.0, 0.05, 1.0, 0, p, state);
   EXPECT_TRUE(out.canAccel);
   EXPECT_GT(out.cmd.vx, 0.0);
   EXPECT_NEAR(out.dirDiff, 0.0, 0.01);
+}
+
+TEST_F(PathFollowerStraight, AccelerationUsesElapsedControlTime) {
+  Vec3 robot{0.0, 0.0, 0.0};
+  p.nominalDt = 0.05;  // 20 Hz fallback for the first control sample.
+  const auto first = computeControl(robot, 0.0, path, 1.0, 10.0, 1.0, 0, p, state);
+  const auto second = computeControl(robot, 0.0, path, 1.0, 10.05, 1.0, 0, p, state);
+
+  EXPECT_NEAR(state.vehicleSpeed, 0.10, 1e-6);
+  EXPECT_NEAR(first.cmd.vx, 0.05, 1e-6);
+  EXPECT_NEAR(second.cmd.vx, 0.10, 1e-6);
+}
+
+TEST_F(PathFollowerStraight, AccelerationClampsLongControlGap) {
+  Vec3 robot{0.0, 0.0, 0.0};
+  p.nominalDt = 0.05;
+  p.maxDt = 0.10;
+  computeControl(robot, 0.0, path, 1.0, 10.0, 1.0, 0, p, state);
+  const auto after_stall =
+      computeControl(robot, 0.0, path, 1.0, 10.5, 1.0, 0, p, state);
+
+  EXPECT_NEAR(state.vehicleSpeed, 0.15, 1e-6);
+  EXPECT_NEAR(after_stall.cmd.vx, 0.15, 1e-6);
 }
 
 TEST_F(PathFollowerStraight, PersistsTargetIndexAndTracksPathSize) {
@@ -194,7 +217,7 @@ TEST(PathFollowerOmni, VelocityDecomposition) {
 
   auto out = computeControl(robot, yawDiff, path, 1.0, 0.0, 1.0, 0, p, state);
   // omni: vx = cos(dirDiff)*speed, vy = -sin(dirDiff)*speed
-  if (std::fabs(state.vehicleSpeed) > p.maxAccel / 100.0) {
+  if (std::fabs(state.vehicleSpeed) > 1e-4) {
     EXPECT_NEAR(out.cmd.vx, std::cos(out.dirDiff) * state.vehicleSpeed, 0.01);
     EXPECT_NEAR(out.cmd.vy, -std::sin(out.dirDiff) * state.vehicleSpeed, 0.01);
   }

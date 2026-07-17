@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.registry import list_plugins, register, restore, snapshot
-from decision.llm.llm_client import (
+from decision.llm.client import (
     LLMConfig,
     MockLLMClient,
     available_llm_backends,
     create_llm_client,
     resolve_llm_backend,
 )
+from runtime.registry import list_plugins, register, restore, snapshot
 
 
 def test_llm_client_registry_names_and_aliases_are_visible():
-    assert {"openai", "claude", "qwen", "moonshot", "mock"} <= set(
-        list_plugins("llm_client")
-    )
+    assert {"openai", "claude", "qwen", "moonshot", "mock"} <= set(list_plugins("llm_client"))
     assert resolve_llm_backend("kimi") == "moonshot"
     assert resolve_llm_backend("offline") == "mock"
     assert "kimi" in available_llm_backends()
@@ -26,6 +24,7 @@ def test_create_llm_client_uses_registered_provider():
     created = object()
 
     try:
+
         @register("llm_client", "fake")
         class FakeLLMProvider:
             @staticmethod

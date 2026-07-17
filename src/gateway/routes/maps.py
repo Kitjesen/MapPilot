@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import math
 import os
 import pathlib
-import shutil
-import struct
+import re
 import time
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
 from fastapi.responses import FileResponse, JSONResponse
-from starlette.responses import HTMLResponse
 
 from gateway.schemas import (
     MapLifecycleResponse,
@@ -26,33 +25,38 @@ from gateway.schemas import (
     MapSaveRequest,
     PlanPreviewRequest,
 )
-from gateway.services.map_paths import active_map_name, nav_map_root_str
-from gateway.services.map_safety import (
-    safe_map_name,
-)
 from gateway.services.control_commands import ControlCommandService
-from runtime.msgs.numpy_compat import is_numpy_array, np
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
-from runtime.same_source_map_artifacts import (
-    validate_saved_map_artifact_dir,
-)
+from gateway.services.map_service import artifact_path, map_service_command
+from maps.paths import map_import_root, resolve_exchange_path
+from maps.services.storage import safe_map_name
+from runtime.runtime_interface import TOPICS, normalize_frame_id, topic_default_frame_id
+from runtime.runtime_policy import backend_capability_defaults
 from runtime.utils.sanitize import sanitize_dict
 
 logger = logging.getLogger(__name__)
 MAX_EXECUTABLE_START_SNAP_M = 0.5
+MAP_VIEWER_TEMPLATE = pathlib.Path(__file__).resolve().parents[1] / "templates" / "map_viewer.html"
+SAVE_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,127}$")
 
 
-def _apply_dynamic_filter_step1half(*args: Any, **kwargs: Any) -> Any:
-    from runtime.dynamic_filter import apply_dynamic_filter_step1half
+def _robot_mesh_path(filename: str) -> pathlib.Path | None:
+    """Resolve a robot mesh, preferring the field Thunder V4 asset set."""
 
-    return apply_dynamic_filter_step1half(*args, **kwargs)
-
-
-apply_dynamic_filter_step1half = _apply_dynamic_filter_step1half
-
-
-def _map_dir() -> str:
-    return nav_map_root_str()
+    safe_name = os.path.basename(filename)
+    configured = os.environ.get("DOG_MESH_DIR")
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    candidates = [
+        pathlib.Path(configured).expanduser() if configured else None,
+        repo_root / "sim" / "robots" / "thunderv4" / "meshes",
+        repo_root / "products" / "quadruped_ws" / "dog_arm" / "meshes",
+    ]
+    for mesh_dir in candidates:
+        if mesh_dir is None:
+            continue
+        path = mesh_dir / safe_name
+        if path.is_file():
+            return path
+    return None
 
 
 def _body_mapping(body: Any) -> dict[str, Any]:
@@ -72,8 +76,17 @@ def _body_mapping(body: Any) -> dict[str, Any]:
     """
     if hasattr(body, "model_dump"):
         return body.model_dump(exclude_none=True)
-    assert isinstance(body, dict), f"expected dict or Pydantic model, got {type(body).__name__}"
+    if not isinstance(body, dict):
+        raise TypeError(f"expected dict or Pydantic model, got {type(body).__name__}")
     return body
+
+
+def _clear_gateway_map_cloud(gw: Any, reason: str) -> None:
+    clear_cache = getattr(gw, "clear_map_cloud_cache", None)
+    if callable(clear_cache):
+        clear_cache(reason=reason)
+        return
+    raise RuntimeError("gateway map cloud cache service is unavailable")
 
 
 def _preview_path_xyz(preview: dict[str, Any]) -> list[list[float]]:
@@ -142,10 +155,7 @@ def _mark_preview_target_unreached(preview: dict[str, Any]) -> None:
         reasons.append(reason)
     preview["feasible"] = False
     preview["reasons"] = reasons
-    preview["fallback_reason"] = (
-        preview.get("fallback_reason")
-        or "planner did not reach the requested target"
-    )
+    preview["fallback_reason"] = preview.get("fallback_reason") or "planner did not reach the requested target"
 
 
 def _append_preview_reason(preview: dict[str, Any], reason: str) -> None:
@@ -241,10 +251,7 @@ def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
     elif (
         "path_safety_failed" in reasons
         or "live path_safety failed" in lowered
-        or (
-            isinstance(path_safety, dict)
-            and path_safety.get("ok") is False
-        )
+        or (isinstance(path_safety, dict) and path_safety.get("ok") is False)
     ):
         reason = "live_path_safety_failed"
         message = "live path safety rejected the map-only path"
@@ -267,8 +274,7 @@ def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
         mismatch_hint = {
             "diagnostic_codes": ["no_traversable_path"],
             "likely_cause": (
-                "start and goal were accepted by OctoPlanner3D, but no "
-                "traversable occupancy path connected them"
+                "start and goal were accepted by OctoPlanner3D, but no traversable occupancy path connected them"
             ),
         }
     elif preview.get("fallback_reason") or preview.get("error"):
@@ -285,8 +291,7 @@ def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
         "runtime_mode": diagnostics.get("runtime_mode"),
         "process_boundary": diagnostics.get("process_boundary"),
         "executable_path": diagnostics.get("executable_path"),
-        "runtime_map_path": diagnostics.get("runtime_map_path")
-        or diagnostics.get("map_path"),
+        "runtime_map_path": diagnostics.get("runtime_map_path") or diagnostics.get("map_path"),
         "returncode": diagnostics.get("returncode"),
         "start": preview.get("start"),
         "goal": preview.get("goal"),
@@ -341,160 +346,19 @@ def _map_service_lifecycle_response(
 
 
 def _map_service_command(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
-    mgr = getattr(gw, "_map_mgr", None)
-    if mgr is None:
-        raise HTTPException(status_code=503, detail="MapService not running")
-    result: list[dict[str, Any]] = []
-
-    def _capture(resp: dict[str, Any]) -> None:
-        result.append(resp)
-
-    mgr.map_response._add_callback(_capture)
     try:
-        mgr.map_command._deliver(json.dumps(cmd))
-    finally:
-        try:
-            mgr.map_response._callbacks.remove(_capture)
-        except (ValueError, AttributeError):
-            pass
-    return result[0] if result else {"success": False, "message": "no response"}
+        return map_service_command(gw, cmd)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
-def _safe_map_file(name: str, filename: str) -> pathlib.Path:
-    base = pathlib.Path(_map_dir()).resolve()
-    path = (base / name / filename).resolve()
-    try:
-        path.relative_to(base)
-    except ValueError as exc:
-        raise HTTPException(status_code=403) from exc
-    return path
-
-
-def _write_binary_xyz_pcd(path: pathlib.Path, points: Any) -> int:
-    if is_numpy_array(points):
-        return _write_binary_xyz_pcd_array(path, points)
-
-    rows = points.tolist() if hasattr(points, "tolist") else points
-    pts: list[tuple[float, float, float]] = []
-    for row in rows or []:
-        try:
-            x, y, z = float(row[0]), float(row[1]), float(row[2])
-        except (TypeError, ValueError, IndexError):
-            continue
-        if (
-            math.isfinite(x)
-            and math.isfinite(y)
-            and math.isfinite(z)
-            and max(abs(x), abs(y), abs(z)) < 500.0
-        ):
-            pts.append((x, y, z))
-
-    if not pts:
-        raise ValueError("no valid points to save")
-    header = (
-        "# .PCD v0.7 - Point Cloud Data file format\n"
-        "VERSION 0.7\n"
-        "FIELDS x y z\n"
-        "SIZE 4 4 4\n"
-        "TYPE F F F\n"
-        "COUNT 1 1 1\n"
-        f"WIDTH {len(pts)}\n"
-        "HEIGHT 1\n"
-        "VIEWPOINT 0 0 0 1 0 0 0\n"
-        f"POINTS {len(pts)}\n"
-        "DATA binary\n"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as f:
-        f.write(header.encode("ascii"))
-        for point in pts:
-            f.write(struct.pack("<fff", *point))
-    return len(pts)
-
-
-def _write_binary_xyz_pcd_array(path: pathlib.Path, points: Any) -> int:
-    arr = np.asarray(points, dtype=np.float32)
-    if arr.ndim != 2 or arr.shape[1] < 3:
-        raise ValueError("point cloud must have shape Nx3")
-    xyz = arr[:, :3]
-    finite = np.isfinite(xyz).all(axis=1)
-    bounded = np.max(np.abs(xyz), axis=1) < 500.0
-    valid = np.ascontiguousarray(xyz[finite & bounded], dtype=np.float32)
-    if valid.size == 0:
-        raise ValueError("no valid points to save")
-    count = int(valid.shape[0])
-    header = (
-        "# .PCD v0.7 - Point Cloud Data file format\n"
-        "VERSION 0.7\n"
-        "FIELDS x y z\n"
-        "SIZE 4 4 4\n"
-        "TYPE F F F\n"
-        "COUNT 1 1 1\n"
-        f"WIDTH {count}\n"
-        "HEIGHT 1\n"
-        "VIEWPOINT 0 0 0 1 0 0 0\n"
-        f"POINTS {count}\n"
-        "DATA binary\n"
-    )
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as f:
-        f.write(header.encode("ascii"))
-        f.write(valid.astype("<f4", copy=False).tobytes())
-    return count
-
-
-def _median(values: list[float]) -> float:
-    ordered = sorted(values)
-    mid = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[mid]
-    return (ordered[mid - 1] + ordered[mid]) * 0.5
-
-
-def _sample_xyz_points(
-    points: list[tuple[float, float, float]],
-    max_points: int,
-) -> list[tuple[float, float, float]]:
-    if max_points <= 0:
-        return []
-    if len(points) <= max_points:
-        return points
-    step = len(points) / float(max_points)
-    return [points[min(int(index * step), len(points) - 1)] for index in range(max_points)]
-
-
-def _binary_pcd_xyz_payload(
-    data: bytes,
-    *,
-    n_points: int,
-    point_step: int,
-    max_points: int,
-) -> tuple[int, list[float]]:
-    if n_points <= 0 or point_step < 12:
-        return 0, []
-
-    points: list[tuple[float, float, float]] = []
-    available = min(n_points, len(data) // point_step)
-    for index in range(available):
-        x, y, z = struct.unpack_from("<fff", data, index * point_step)
-        if all(math.isfinite(value) for value in (x, y, z)):
-            points.append((float(x), float(y), float(z)))
-
-    if points:
-        med = (
-            _median([point[0] for point in points]),
-            _median([point[1] for point in points]),
-            _median([point[2] for point in points]),
-        )
-        points = [
-            point
-            for point in points
-            if max(abs(point[axis] - med[axis]) for axis in range(3)) < 100.0
-        ]
-
-    points = _sample_xyz_points(points, int(max_points))
-    flat = [coord for point in points for coord in point]
-    return len(points), flat
+def _map_navigation_ready(item: dict[str, Any]) -> bool:
+    if "navigation_ready" in item:
+        return bool(item.get("navigation_ready"))
+    # Legacy providers predate the authoritative readiness field.  The active
+    # field planner is OctoPlanner3D, so compatibility must stay conservative:
+    # 2-D occupancy, ESDF, or traversability alone cannot satisfy its map gate.
+    return bool(item.get("has_pcd")) and bool(item.get("has_octomap"))
 
 
 def register_map_routes(app, gw) -> None:
@@ -502,69 +366,47 @@ def register_map_routes(app, gw) -> None:
 
     @app.get(
         "/api/v1/slam/maps",
-        summary="List maps from filesystem",
+        summary="List maps through the native maps service",
         response_model=MapListResponse,
     )
     async def slam_maps():
-        map_dir = _map_dir()
+        resp = _map_service_command(gw, {"action": "list"})
+        active_target = str(resp.get("active") or "")
         maps = []
-        active_target = active_map_name() or ""
-
-        if os.path.isdir(map_dir):
-            for d in sorted(os.listdir(map_dir)):
-                full = os.path.join(map_dir, d)
-                if not os.path.isdir(full) or d.startswith("_") or d == "active":
-                    continue
-                pcd = os.path.join(full, "map.pcd")
-                has_pcd = os.path.isfile(pcd)
-                patches_dir = os.path.join(full, "patches")
-                patch_count = (
-                    len(os.listdir(patches_dir)) if os.path.isdir(patches_dir) else 0
-                )
-                has_tomogram = os.path.isfile(os.path.join(full, "tomogram.pickle"))
-                has_occupancy = os.path.isfile(os.path.join(full, "occupancy.npz"))
-                has_octomap = os.path.isfile(os.path.join(full, "octomap.ot")) or os.path.isfile(
-                    os.path.join(full, "octomap.bt")
-                )
-                has_metadata = os.path.isfile(os.path.join(full, "metadata.json"))
-                metadata_path = os.path.join(full, "metadata.json")
-                state: str | None = None
-                for state_path in (os.path.join(full, "map_record.json"), metadata_path):
-                    if not os.path.isfile(state_path):
-                        continue
-                    try:
-                        with open(state_path, encoding="utf-8") as f:
-                            state_data = json.load(f)
-                        state_value = state_data.get("state")
-                        if state_value is not None:
-                            state = str(state_value)
-                            break
-                    except (OSError, json.JSONDecodeError, TypeError, ValueError):
-                        continue
-                size_mb: float | None = None
-                if has_pcd:
-                    sz = os.path.getsize(pcd)
-                    size_mb = round(sz / 1024 / 1024, 1)
-                maps.append(
-                    {
-                        "name": d,
-                        "has_pcd": has_pcd,
-                        "has_tomogram": has_tomogram,
-                        "has_occupancy": has_occupancy,
-                        "has_octomap": has_octomap,
-                        "navigation_ready": bool(has_pcd and has_octomap and has_metadata),
-                        "state": state,
-                        "is_active": d == active_target,
-                        "size_mb": size_mb,
-                        "patch_count": patch_count,
-                    }
-                )
+        for item in resp.get("maps") if isinstance(resp.get("maps"), list) else []:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            if not name:
+                continue
+            maps.append(
+                {
+                    "name": name,
+                    "has_pcd": bool(item.get("has_pcd")),
+                    "has_occupancy": bool(item.get("has_occupancy")),
+                    "has_octomap": bool(item.get("has_octomap")),
+                    "navigation_ready": _map_navigation_ready(item),
+                    "state": item.get("state"),
+                    "is_active": bool(item.get("is_active")) or name == active_target,
+                    "size_mb": item.get("size_mb"),
+                    "patch_count": int(item.get("patch_count") or 0),
+                    "record": item.get("record"),
+                    "artifacts": item.get("artifacts"),
+                    "capabilities": item.get("capabilities"),
+                    "health": item.get("health"),
+                    "map_classes": item.get("map_classes"),
+                    "has_esdf": bool(item.get("has_esdf")),
+                    "has_traversability": bool(item.get("has_traversability")),
+                    "source": "maps_service",
+                }
+            )
         return {
             "schema_version": 1,
             "maps": maps,
             "count": len(maps),
             "active": active_target,
-            "map_dir": map_dir,
+            "map_dir": str(resp.get("map_dir") or ""),
+            "source": "maps_service",
             "ts": time.time(),
         }
 
@@ -579,12 +421,22 @@ def register_map_routes(app, gw) -> None:
         err = safe_map_name(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
+        try:
+            source_path = resolve_exchange_path(
+                payload.get("source_path") or payload.get("path") or "",
+                root=map_import_root(),
+                must_exist=True,
+                require_file=True,
+                suffixes=(".pcd",),
+            )
+        except ValueError as exc:
+            return _map_lifecycle_response(False, message=str(exc), status_code=400)
         resp = _map_service_command(
             gw,
             {
                 "action": "import_pcd",
                 "name": name,
-                "source_path": payload.get("source_path") or payload.get("path"),
+                "source_path": str(source_path),
                 "voxel_size": payload.get("voxel_size", 0.0),
                 "bounds": payload.get("bounds"),
             },
@@ -613,6 +465,9 @@ def register_map_routes(app, gw) -> None:
             },
         )
         ok = resp.get("success") is True
+        if ok:
+            _clear_gateway_map_cloud(gw, "saved_map_crop")
+            resp["live_cloud_reset"] = True
         return _map_service_lifecycle_response(resp, status_code=200 if ok else 400)
 
     @app.post(
@@ -652,14 +507,23 @@ def register_map_routes(app, gw) -> None:
         err = safe_map_name(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        map_dir = pathlib.Path(_map_dir()) / name
-        gate = validate_saved_map_artifact_dir(
-            map_dir,
-            require_octomap=True,
-            expected_frame_id=topic_default_frame_id(TOPICS.saved_map_cloud),
+        validation = _map_service_command(
+            gw,
+            {
+                "action": "validate_artifacts",
+                "name": name,
+                "require_octomap": True,
+                "expected_frame_id": topic_default_frame_id(TOPICS.saved_map_cloud),
+            },
         )
+        if validation.get("success") is not True:
+            message = str(validation.get("message") or "map validation unavailable")
+            code = 404 if validation.get("reason_code") == "map_not_found" else 400
+            return _map_lifecycle_response(False, message=message, status_code=code)
+        gate = dict(validation.get("gate") or {})
         gate["required"] = True
-        active = active_map_name() or ""
+        active_resp = _map_service_command(gw, {"action": "get_active"})
+        active = str(active_resp.get("active") or "")
         if gate.get("ok") is not True:
             return _map_lifecycle_response(
                 False,
@@ -697,7 +561,8 @@ def register_map_routes(app, gw) -> None:
             "real_runtime_evidence_missing_or_stale",
             "safety_stop",
         }
-        preview = command_service.preview_navigation_plan(
+        preview = await asyncio.to_thread(
+            command_service.preview_navigation_plan,
             body,
             ignore_blockers=ignored_blockers,
             map_only=True,
@@ -713,20 +578,15 @@ def register_map_routes(app, gw) -> None:
                 executable_preview["feasible"] = False
                 _append_preview_reason(executable_preview, "start_snap_too_large")
                 executable_preview["fallback_reason"] = (
-                    executable_preview.get("fallback_reason")
-                    or "planner start snapped too far from live pose"
+                    executable_preview.get("fallback_reason") or "planner start snapped too far from live pose"
                 )
             executable_path_safety = _evaluate_preview_live_safety(gw, preview)
             executable_preview["path_safety"] = executable_path_safety
-            if (
-                isinstance(executable_path_safety, dict)
-                and executable_path_safety.get("ok") is False
-            ):
+            if isinstance(executable_path_safety, dict) and executable_path_safety.get("ok") is False:
                 executable_preview["feasible"] = False
                 _append_preview_reason(executable_preview, "path_safety_failed")
                 executable_preview["fallback_reason"] = (
-                    executable_preview.get("fallback_reason")
-                    or "live path_safety failed"
+                    executable_preview.get("fallback_reason") or "live path_safety failed"
                 )
         else:
             executable_preview["path_safety"] = None
@@ -779,19 +639,26 @@ def register_map_routes(app, gw) -> None:
     @app.get(
         "/api/v1/maps/{name}/pcd",
         summary="Serve raw PCD file for inline preview",
-        responses={
-            200: {
-                "content": {
-                    "application/octet-stream": {
-                        "schema": {"type": "string", "format": "binary"}
-                    }
-                }
-            }
-        },
+        responses={200: {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}}},
     )
     async def get_map_pcd(name: str):
-        pcd_path = _safe_map_file(name, "map.pcd")
-        if not pcd_path.is_file():
+        resp = _map_service_command(
+            gw,
+            {
+                "action": "get_map_bundle",
+                "name": name,
+                "capability": "source_pointcloud",
+            },
+        )
+        if resp.get("success") is not True:
+            reason = str(resp.get("reason_code") or "")
+            status = 404 if reason in {"map_not_found", "missing_capability"} else 400
+            raise HTTPException(
+                status_code=status,
+                detail=str(resp.get("message") or f"No PCD for map: {name}"),
+            )
+        pcd_path = artifact_path(gw, name, "source_pointcloud")
+        if pcd_path is None:
             raise HTTPException(status_code=404, detail=f"No PCD for map: {name}")
         return FileResponse(
             str(pcd_path),
@@ -805,35 +672,75 @@ def register_map_routes(app, gw) -> None:
         response_model=MapPointsResponse,
     )
     async def get_saved_map_points(name: str, max_points: int = 30000):
-        pcd_path = _safe_map_file(name, "map.pcd")
-        if not pcd_path.is_file():
-            raise HTTPException(status_code=404, detail=f"Map not found: {name}")
-
-        with open(pcd_path, "rb") as f:
-            n_points, point_step = 0, 16
-            while True:
-                line = f.readline().decode("ascii", errors="ignore").strip()
-                if "POINTS" in line:
-                    n_points = int(line.split()[-1])
-                if "SIZE" in line:
-                    point_step = sum(int(s) for s in line.split()[1:])
-                if line.startswith("DATA"):
-                    break
-            data = f.read(n_points * point_step)
-        count, flat = _binary_pcd_xyz_payload(
-            data[: n_points * point_step],
-            n_points=n_points,
-            point_step=point_step,
-            max_points=max_points,
+        active_map_before = gw._active_map_from_maps_service()
+        if active_map_before != name:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Saved map is not the authoritative active map: "
+                    f"requested {name}, active {active_map_before or 'none'}"
+                ),
+            )
+        scene_identity_before = gw._cloud_viewer.scene_identity()
+        if scene_identity_before.get("map_id") != name:
+            raise HTTPException(
+                status_code=409,
+                detail="Live map scene is not bound to the requested saved map; retry",
+            )
+        resp = _map_service_command(
+            gw,
+            {
+                "action": "get_map_points",
+                "name": name,
+                "max_points": max(0, int(max_points or 0)),
+            },
         )
+        if resp.get("success") is not True:
+            reason = str(resp.get("reason_code") or "")
+            status = 404 if reason in {"map_not_found", "map_pcd_not_found"} else 400
+            raise HTTPException(
+                status_code=status,
+                detail=str(resp.get("message") or f"Map not found: {name}"),
+            )
+        response_map_id = str(resp.get("map_id") or "").strip()
+        if response_map_id != name:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"Saved map identity mismatch: expected {name}, got {response_map_id or 'unknown'}"),
+            )
+        frame_id = normalize_frame_id(str(resp.get("frame_id") or ""))
+        if frame_id is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Saved map frame_id unavailable: {name}",
+            )
+        scene_identity = gw._cloud_viewer.scene_identity()
+        active_map_after = gw._active_map_from_maps_service()
+        if (
+            active_map_after != name
+            or scene_identity.get("map_id") != name
+            or int(scene_identity_before["protocol_version"]) != int(scene_identity["protocol_version"])
+            or int(scene_identity_before["epoch"]) != int(scene_identity["epoch"])
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Map scene changed while saved map points were loading; retry",
+            )
         return {
             "schema_version": 1,
-            "count": count,
-            "layout": "flat_xyz",
-            "frame_id": "map",
-            "source": "saved_map_pcd",
-            "name": name,
-            "points": flat,
+            "protocol_version": int(scene_identity["protocol_version"]),
+            "count": int(resp.get("returned") or 0),
+            "layout": "xyz_rows",
+            "frame_id": frame_id,
+            "epoch": int(scene_identity["epoch"]),
+            "sequence": int(scene_identity["sequence"]),
+            "stamp_s": float(scene_identity["stamp_s"]),
+            "stream_kind": "map",
+            "source": "maps_service",
+            "name": response_map_id,
+            "version_id": str(resp.get("version_id") or "") or None,
+            "map_pcd_sha256": str(resp.get("map_pcd_sha256") or "") or None,
+            "points": resp.get("points") if isinstance(resp.get("points"), list) else [],
             "ts": time.time(),
         }
 
@@ -876,36 +783,24 @@ def register_map_routes(app, gw) -> None:
         err = safe_map_name(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        path = _safe_map_file(name, "voxel_edits.json")
-        if not path.parent.is_dir():
+        resp = _map_service_command(
+            gw,
+            {"action": "get_voxel_edits", "name": name},
+        )
+        if resp.get("success") is not True:
+            message = str(resp.get("message") or "voxel edit overlay unavailable")
+            code = 404 if resp.get("reason_code") == "map_not_found" else 400
             return _map_lifecycle_response(
                 False,
-                message=f"map not found: {name}",
-                status_code=404,
+                message=message,
+                status_code=code,
             )
-        if not path.is_file():
-            return {
-                "schema_version": 1,
-                "ok": True,
-                "success": True,
-                "map_id": name,
-                "edits": [],
-            }
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            return _map_lifecycle_response(
-                False,
-                message=f"invalid voxel edit overlay: {exc}",
-                status_code=400,
-            )
-        edits = payload.get("edits") if isinstance(payload, dict) else None
         return {
             "schema_version": 1,
             "ok": True,
             "success": True,
             "map_id": name,
-            "edits": edits if isinstance(edits, list) else [],
+            "edits": resp.get("edits") if isinstance(resp.get("edits"), list) else [],
         }
 
     @app.get(
@@ -914,34 +809,7 @@ def register_map_routes(app, gw) -> None:
         response_model=MapPointsResponse,
     )
     async def get_map_points(max_points: int = 80000):
-        with gw._map_cloud_lock:
-            pts = gw._map_points
-        if pts is None or len(pts) == 0:
-            return {
-                "schema_version": 1,
-                "count": 0,
-                "layout": "xyz_rows",
-                "frame_id": "map",
-                "source": "live_map_cloud",
-                "points": [],
-                "ts": time.time(),
-            }
-        if len(pts) > max_points:
-            idx = np.random.choice(len(pts), max_points, replace=False)
-            pts = pts[idx]
-        return {
-            "count": len(pts),
-            "layout": "xyz_rows",
-            "frame_id": "map",
-            "source": "live_map_cloud",
-            "bounds": {
-                "x": [float(pts[:, 0].min()), float(pts[:, 0].max())],
-                "y": [float(pts[:, 1].min()), float(pts[:, 1].max())],
-                "z": [float(pts[:, 2].min()), float(pts[:, 2].max())],
-            },
-            "points": pts[:, :3].tolist(),
-            "ts": time.time(),
-        }
+        return gw._cloud_viewer.map_points_snapshot(max_points=max_points)
 
     @app.post(
         "/api/v1/map_cloud/reset",
@@ -949,11 +817,7 @@ def register_map_routes(app, gw) -> None:
         response_model=MapLifecycleResponse,
     )
     async def reset_map_cloud():
-        with gw._map_cloud_lock:
-            gw._map_points = None
-            gw._map_cloud_count = 0
-            gw._voxel_hits.clear()
-        gw.push_event({"type": "map_cloud", "points": [], "count": 0})
+        _clear_gateway_map_cloud(gw, "manual_map_cloud_reset")
         return map_lifecycle_payload(
             True,
             message="Accumulated map cloud cleared",
@@ -962,29 +826,24 @@ def register_map_routes(app, gw) -> None:
     @app.get("/map/viewer", summary="Interactive 3D map viewer")
     async def map_viewer(map: str = ""):
         if map:
-            html = gw._generate_viewer_from_pcd(map)
-        else:
-            html = gw._generate_viewer_live()
-        return HTMLResponse(html)
+            safe_map_name(map)
+        return FileResponse(
+            MAP_VIEWER_TEMPLATE,
+            media_type="text/html; charset=utf-8",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
 
     @app.get("/robot/meshes/{filename}", summary="Serve robot STL mesh files")
     async def serve_robot_mesh(filename: str):
-        mesh_dir = os.environ.get(
-            "DOG_MESH_DIR",
-            os.path.join(
-                os.path.dirname(__file__),
-                "../../../../products/quadruped_ws/dog_arm/meshes",
-            ),
-        )
         safe_name = os.path.basename(filename)
-        path = os.path.join(mesh_dir, safe_name)
-        if not os.path.isfile(path):
+        path = _robot_mesh_path(safe_name)
+        if path is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": "mesh not found", "name": safe_name},
             )
         return FileResponse(
-            path,
+            str(path),
             media_type="application/octet-stream",
             headers={
                 "Access-Control-Allow-Origin": "*",
@@ -994,7 +853,7 @@ def register_map_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/map/restore_predufo",
-        summary="Restore map.pcd from DUFOMap pre-filter backup",
+        summary="Restore map.pcd from pre-clean backup",
         response_model=MapLifecycleResponse,
         responses={
             400: {"model": MapLifecycleResponse},
@@ -1008,52 +867,27 @@ def register_map_routes(app, gw) -> None:
         err = safe_map_name(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        map_dir = _map_dir()
-        target = pathlib.Path(map_dir) / name
-        pcd = target / "map.pcd"
-        backup = target / "map.pcd.predufo"
-        if not backup.is_file():
+        try:
+            resp = _map_service_command(
+                gw,
+                {"action": "restore_source", "name": name},
+            )
+        except HTTPException as exc:
             return _map_lifecycle_response(
                 False,
-                message=(
-                    f"No predufo backup for {name}. "
-                    "DUFOMap may not have run on this map."
-                ),
-                status_code=404,
+                message=str(exc.detail),
+                status_code=int(exc.status_code),
             )
-        try:
-            import time as _t
-
-            if pcd.is_file():
-                shutil.copy(pcd, target / f"map.pcd.replaced-{_t.time_ns()}")
-            tmp_new = pcd.with_suffix(".pcd.tmp")
-            shutil.copy(backup, tmp_new)
-            os.replace(tmp_new, pcd)
-
-            replaced = sorted(
-                target.glob("map.pcd.replaced-*"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            pruned = 0
-            for old in replaced[3:]:
-                try:
-                    old.unlink()
-                    pruned += 1
-                except Exception as e:
-                    logger.warning("cleanup old backup failed: %s", e)
-
-            return map_lifecycle_payload(
-                True,
-                name=name,
-                restored_size=pcd.stat().st_size,
-                replaced_backups_kept=min(len(replaced), 3),
-                replaced_backups_pruned=pruned,
-                note="octomap/occupancy must be rebuilt before planner use",
-            )
-        except Exception as e:
-            logger.exception("restore_predufo failed")
-            return _map_lifecycle_response(False, message=str(e), status_code=500)
+        reason = str(resp.get("reason_code") or "")
+        status_code = (
+            200
+            if resp.get("success") is True
+            else (404 if reason in {"map_not_found", "source_backup_missing"} else 500)
+        )
+        if resp.get("success") is True:
+            _clear_gateway_map_cloud(gw, "saved_map_restore_source")
+            resp["live_cloud_reset"] = True
+        return _map_service_lifecycle_response(resp, status_code=status_code, name=name)
 
     @app.post(
         "/api/v1/map/activate",
@@ -1071,6 +905,38 @@ def register_map_routes(app, gw) -> None:
         err = safe_map_name(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
+        session_mode = str(getattr(gw, "_session_mode", "") or "").strip().lower()
+        if session_mode in {"navigating", "exploring"}:
+            active_map = str(getattr(gw, "_session_map", "") or "").strip()
+            if not active_map or active_map != name:
+                return _map_lifecycle_response(
+                    False,
+                    status_code=409,
+                    name=name,
+                    active=active_map or None,
+                    message=(
+                        "Cross-map activation is blocked during an active navigation "
+                        "session; use the full runtime switch so localization and "
+                        "planning change maps together."
+                    ),
+                )
+            return _map_lifecycle_response(
+                True,
+                status_code=200,
+                name=name,
+                active=active_map,
+                message="Map is already active for the current navigation session.",
+            )
+        try:
+            previous_resp = _map_service_command(gw, {"action": "get_active"})
+        except HTTPException as exc:
+            return _map_lifecycle_response(
+                False,
+                message=str(exc.detail),
+                status_code=int(exc.status_code),
+            )
+        previous_active = str(previous_resp.get("active") or "").strip()
+        _clear_gateway_map_cloud(gw, "map_activation_begin")
         try:
             resp = _map_service_command(gw, {"action": "set_active", "name": name})
         except HTTPException as exc:
@@ -1087,12 +953,7 @@ def register_map_routes(app, gw) -> None:
             status_code = 409
         else:
             status_code = 200
-            map_path = str(
-                resp.get("octomap")
-                or resp.get("tomogram")
-                or resp.get("occupancy")
-                or ""
-            )
+            map_path = str(resp.get("octomap") or resp.get("occupancy") or resp.get("pcd") or "")
             nav = (getattr(gw, "_all_modules", {}) or {}).get("nav.mission")
             reload_planner_map = getattr(nav, "reload_planner_map", None)
             if callable(reload_planner_map):
@@ -1112,6 +973,60 @@ def register_map_routes(app, gw) -> None:
                     "reason": "nav_mission_unavailable",
                     "map_path": map_path,
                 }
+            planner_reload = resp.get("planner_reload")
+            if not isinstance(planner_reload, Mapping) or planner_reload.get("ok") is not True:
+                rollback: dict[str, Any] = {
+                    "success": previous_active == name,
+                    "skipped": previous_active == name,
+                    "previous_active": previous_active or None,
+                }
+                if previous_active and previous_active != name:
+                    try:
+                        rollback = _map_service_command(
+                            gw,
+                            {"action": "set_active", "name": previous_active},
+                        )
+                    except HTTPException as exc:
+                        rollback = {
+                            "success": False,
+                            "message": str(exc.detail),
+                            "previous_active": previous_active,
+                        }
+                map_rollback_ok = rollback.get("success") is True
+                if map_rollback_ok and previous_active and callable(reload_planner_map):
+                    rollback_path = str(
+                        rollback.get("octomap") or rollback.get("occupancy") or rollback.get("pcd") or ""
+                    )
+                    if rollback_path:
+                        try:
+                            planner_rollback = reload_planner_map(rollback_path)
+                        except Exception as exc:
+                            planner_rollback = {
+                                "ok": False,
+                                "reason": "planner_rollback_failed",
+                                "message": str(exc),
+                                "map_path": rollback_path,
+                            }
+                    else:
+                        planner_rollback = {
+                            "ok": False,
+                            "reason": "planner_rollback_path_missing",
+                            "map_path": "",
+                        }
+                    rollback["planner_reload"] = planner_rollback
+                    rollback["success"] = bool(
+                        isinstance(planner_rollback, Mapping) and planner_rollback.get("ok") is True
+                    )
+                resp["rollback"] = rollback
+                resp["success"] = False
+                resp["message"] = (
+                    "planner map reload failed; active map was rolled back"
+                    if rollback.get("success") is True
+                    else "planner map reload failed and active-map rollback failed"
+                )
+                status_code = 409
+            _clear_gateway_map_cloud(gw, "map_activation")
+            resp["live_cloud_reset"] = True
         return _map_service_lifecycle_response(resp, status_code=status_code)
 
     @app.post(
@@ -1137,36 +1052,36 @@ def register_map_routes(app, gw) -> None:
                 message=err_old or err_new,
                 status_code=400,
             )
-        map_dir = _map_dir()
-        old_path = os.path.join(map_dir, old)
-        new_path = os.path.join(map_dir, new)
-        if not os.path.isdir(old_path):
-            return _map_lifecycle_response(
-                False,
-                message=f"Map does not exist: {old}",
-                status_code=404,
-            )
-        if os.path.exists(new_path):
-            return _map_lifecycle_response(
-                False,
-                message=f"Name already exists: {new}",
-                status_code=409,
-            )
         try:
-            os.rename(old_path, new_path)
-            active_link = pathlib.Path(map_dir) / "active"
-            if active_link.is_symlink() and active_link.resolve().name == old:
-                active_link.unlink()
-                active_link.symlink_to(new)
-            return map_lifecycle_payload(True, old_name=old, new_name=new)
-        except Exception as e:
-            return _map_lifecycle_response(False, message=str(e), status_code=500)
+            resp = _map_service_command(
+                gw,
+                {"action": "rename", "name": old, "new_name": new},
+            )
+        except HTTPException as exc:
+            return _map_lifecycle_response(
+                False,
+                message=str(exc.detail),
+                status_code=int(exc.status_code),
+            )
+        message = str(resp.get("message") or "").lower()
+        status_code = (
+            200
+            if resp.get("success") is True
+            else (404 if "not found" in message else 409 if "exists" in message else 500)
+        )
+        return _map_service_lifecycle_response(
+            resp,
+            status_code=status_code,
+            old_name=old,
+            new_name=new,
+        )
 
     @app.post(
         "/api/v1/map/save",
         summary="Save current SLAM map",
         response_model=MapLifecycleResponse,
         responses={
+            202: {"model": MapLifecycleResponse},
             400: {"model": MapLifecycleResponse},
             409: {"model": MapLifecycleResponse},
             500: {"model": MapLifecycleResponse},
@@ -1185,6 +1100,16 @@ def register_map_routes(app, gw) -> None:
             slam_profile = gw._get_slam_profile()
         except Exception:
             slam_profile = getattr(gw, "_session_slam_profile", "unknown")
+        capability = backend_capability_defaults(slam_profile)
+        if capability.get("map_save_supported") is not True:
+            return _map_lifecycle_response(
+                False,
+                status_code=409,
+                name=name,
+                message=f"map save is not supported by SLAM backend: {slam_profile}",
+                slam_profile=slam_profile,
+                map_save_source=capability.get("map_save_source", "unknown"),
+            )
 
         try:
             resp = _map_service_command(
@@ -1193,6 +1118,8 @@ def register_map_routes(app, gw) -> None:
                     "action": "save",
                     "name": name,
                     "slam_profile": slam_profile,
+                    "optimization": payload.get("optimization"),
+                    "request_id": payload.get("request_id"),
                 },
             )
         except HTTPException as exc:
@@ -1203,11 +1130,140 @@ def register_map_routes(app, gw) -> None:
                 message=str(exc.detail),
             )
         ok = resp.get("success") is True
-        status_code = (
-            200
-            if ok
-            else 409
-            if "unsupported" in str(resp.get("message", ""))
-            else 500
-        )
+        accepted_running = resp.get("accepted") is True and resp.get("status") == "running"
+        if accepted_running:
+            accepted_payload = dict(resp)
+            accepted_payload.pop("success", None)
+            accepted_payload.pop("ok", None)
+            payload = map_lifecycle_payload(
+                True,
+                name=name,
+                **accepted_payload,
+            )
+            payload["success"] = False
+            return JSONResponse(payload, status_code=202)
+        message_lower = str(resp.get("message", "")).lower()
+        status_code = 200 if ok else 409 if "unsupported" in message_lower or "not supported" in message_lower else 500
         return _map_service_lifecycle_response(resp, status_code=status_code, name=name)
+
+    @app.get(
+        "/api/v1/maps/save-jobs",
+        summary="List durable SaveMap jobs",
+        response_model=MapLifecycleResponse,
+    )
+    async def list_save_map_jobs(limit: int = 100):
+        resp = _map_service_command(
+            gw,
+            {"action": "list_save_jobs", "limit": max(1, min(limit, 1000))},
+        )
+        return _map_service_lifecycle_response(
+            resp,
+            status_code=200 if resp.get("success") is True else 500,
+        )
+
+    @app.get(
+        "/api/v1/maps/save-jobs/{job_id}",
+        summary="Get durable SaveMap job status",
+        response_model=MapLifecycleResponse,
+    )
+    async def get_save_map_job(job_id: str):
+        if SAVE_JOB_ID_PATTERN.fullmatch(job_id) is None:
+            return _map_lifecycle_response(
+                False,
+                status_code=400,
+                message="invalid SaveMap job id",
+            )
+        resp = _map_service_command(
+            gw,
+            {"action": "save_status", "job_id": job_id},
+        )
+        return _map_service_lifecycle_response(
+            resp,
+            status_code=200 if resp.get("success") is True else 404,
+        )
+
+    @app.post(
+        "/api/v1/maps/save-jobs/{job_id}/cancel",
+        summary="Cancel a durable SaveMap job",
+        response_model=MapLifecycleResponse,
+    )
+    async def cancel_save_map_job(job_id: str):
+        if SAVE_JOB_ID_PATTERN.fullmatch(job_id) is None:
+            return _map_lifecycle_response(
+                False,
+                status_code=400,
+                message="invalid SaveMap job id",
+            )
+        resp = _map_service_command(
+            gw,
+            {"action": "cancel_save", "job_id": job_id},
+        )
+        accepted = resp.get("accepted") is True
+        return _map_service_lifecycle_response(
+            {**resp, "success": accepted},
+            status_code=200 if accepted else 409,
+        )
+
+    @app.post(
+        "/api/v1/maps/save-jobs/{job_id}/retry",
+        summary="Retry a failed durable SaveMap job",
+        response_model=MapLifecycleResponse,
+    )
+    async def retry_save_map_job(job_id: str):
+        if SAVE_JOB_ID_PATTERN.fullmatch(job_id) is None:
+            return _map_lifecycle_response(
+                False,
+                status_code=400,
+                message="invalid SaveMap job id",
+            )
+        resp = _map_service_command(
+            gw,
+            {"action": "retry_save", "job_id": job_id},
+        )
+        accepted = resp.get("accepted") is True
+        return _map_service_lifecycle_response(
+            {**resp, "success": accepted},
+            status_code=202 if accepted else 409,
+        )
+
+    @app.get(
+        "/api/v1/maps/{name}/versions",
+        summary="List verified immutable map versions",
+        response_model=MapLifecycleResponse,
+    )
+    async def list_map_versions(name: str):
+        err = safe_map_name(name)
+        if err is not None:
+            return _map_lifecycle_response(False, message=err, status_code=400)
+        resp = _map_service_command(
+            gw,
+            {"action": "list_map_versions", "name": name},
+        )
+        return _map_service_lifecycle_response(
+            resp,
+            status_code=200 if resp.get("success") is True else 409,
+        )
+
+    @app.post(
+        "/api/v1/maps/{name}/versions/{version}/rollback",
+        summary="Atomically roll a map back to a verified version",
+        response_model=MapLifecycleResponse,
+    )
+    async def rollback_map_version(name: str, version: int):
+        err = safe_map_name(name)
+        if err is not None:
+            return _map_lifecycle_response(False, message=err, status_code=400)
+        if version <= 0:
+            return _map_lifecycle_response(
+                False,
+                message="version must be a positive integer",
+                status_code=400,
+            )
+        resp = _map_service_command(
+            gw,
+            {"action": "rollback_map_version", "name": name, "version": version},
+        )
+        return _map_service_lifecycle_response(
+            resp,
+            status_code=200 if resp.get("success") is True else 409,
+        )

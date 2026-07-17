@@ -77,16 +77,17 @@ class VelocityMux(Module, layer=0):
     runtime_id = "nav.velocity_mux"
 
     # -- Inputs (one per source) --
-    teleop_cmd_vel:        In[Twist]
-    visual_servo_cmd_vel:  In[Twist]
-    recovery_cmd_vel:      In[Twist]
+    teleop_cmd_vel: In[Twist]
+    visual_servo_cmd_vel: In[Twist]
+    recovery_cmd_vel: In[Twist]
     path_follower_cmd_vel: In[Twist]
-    collision_odometry:    In[Odometry]
-    collision_costmap:     In[dict]
+    collision_odometry: In[Odometry]
+    collision_costmap: In[dict]
 
     # -- Outputs --
-    driver_cmd_vel: Out[Twist]     # ->driver
-    active_source:  Out[str]       # who currently controls
+    driver_cmd_vel: Out[Twist]  # ->driver
+    active_source: Out[str]  # who currently controls
+    collision_event: Out[dict]  # projected/observed collision evidence
 
     def __init__(
         self,
@@ -112,12 +113,9 @@ class VelocityMux(Module, layer=0):
             1.0,
             max(0.0, float(collision_monitor_slowdown_scale)),
         )
-        self._collision_native_runtime = (
-            self._load_collision_native()
-            if self._collision_monitor_enabled
-            else None
-        )
+        self._collision_native_runtime = self._load_collision_native() if self._collision_monitor_enabled else None
         self._collision_native_params = self._make_collision_native_params()
+        self._last_collision_event_signature: tuple[str, str, float | None] | None = None
 
         # Per-source state: last twist + last publish time
         self._sources: dict[str, dict] = {}
@@ -143,11 +141,7 @@ class VelocityMux(Module, layer=0):
         self._collision_state: dict[str, Any] = {
             "enabled": self._collision_monitor_enabled,
             "action": "disabled" if not self._collision_monitor_enabled else "waiting",
-            "reason": (
-                "disabled"
-                if not self._collision_monitor_enabled
-                else "waiting_for_costmap"
-            ),
+            "reason": ("disabled" if not self._collision_monitor_enabled else "waiting_for_costmap"),
             "last_cost": None,
             "costmap_age_ms": None,
             "odometry_age_ms": None,
@@ -202,14 +196,10 @@ class VelocityMux(Module, layer=0):
         return self._frozen
 
     def setup(self) -> None:
-        self.teleop_cmd_vel.subscribe(
-            lambda t: self._on_source("teleop", t))
-        self.visual_servo_cmd_vel.subscribe(
-            lambda t: self._on_source("visual_servo", t))
-        self.recovery_cmd_vel.subscribe(
-            lambda t: self._on_source("recovery", t))
-        self.path_follower_cmd_vel.subscribe(
-            lambda t: self._on_source("path_follower", t))
+        self.teleop_cmd_vel.subscribe(lambda t: self._on_source("teleop", t))
+        self.visual_servo_cmd_vel.subscribe(lambda t: self._on_source("visual_servo", t))
+        self.recovery_cmd_vel.subscribe(lambda t: self._on_source("recovery", t))
+        self.path_follower_cmd_vel.subscribe(lambda t: self._on_source("path_follower", t))
         self.collision_odometry.subscribe(self._on_odometry)
         self.collision_odometry.set_policy("latest")
         self.collision_costmap.subscribe(self._on_costmap)
@@ -241,8 +231,12 @@ class VelocityMux(Module, layer=0):
     @staticmethod
     def _is_finite_twist(twist: Twist) -> bool:
         values = (
-            twist.linear.x, twist.linear.y, twist.linear.z,
-            twist.angular.x, twist.angular.y, twist.angular.z,
+            twist.linear.x,
+            twist.linear.y,
+            twist.linear.z,
+            twist.angular.x,
+            twist.angular.y,
+            twist.angular.z,
         )
         return all(math.isfinite(float(v)) for v in values)
 
@@ -256,8 +250,12 @@ class VelocityMux(Module, layer=0):
     @staticmethod
     def _is_zero_twist(twist: Twist) -> bool:
         values = (
-            twist.linear.x, twist.linear.y, twist.linear.z,
-            twist.angular.x, twist.angular.y, twist.angular.z,
+            twist.linear.x,
+            twist.linear.y,
+            twist.linear.z,
+            twist.angular.x,
+            twist.angular.y,
+            twist.angular.z,
         )
         return all(abs(float(v)) <= 1e-9 for v in values)
 
@@ -321,11 +319,7 @@ class VelocityMux(Module, layer=0):
             if winner == self._active:
                 return
             self._active = winner
-            driver_twist = (
-                self._sanitize_twist(self._sources[winner]["last_twist"])
-                if winner
-                else Twist.zero()
-            )
+            driver_twist = self._sanitize_twist(self._sources[winner]["last_twist"]) if winner else Twist.zero()
             if winner:
                 driver_twist = self._apply_collision_monitor(driver_twist, now)
             self._last_driver_twist = driver_twist
@@ -553,30 +547,37 @@ class VelocityMux(Module, layer=0):
         *,
         backend: str | None = None,
     ) -> None:
+        emit_event = False
+        rounded_cost = None if cost is None else round(float(cost), 3)
         with self._lock:
-            costmap_age = (
-                now - self._latest_costmap_time
-                if self._latest_costmap_time > 0.0
-                else None
-            )
-            odom_age = (
-                now - self._latest_odom_time
-                if self._latest_odom_time > 0.0
-                else None
-            )
+            costmap_age = now - self._latest_costmap_time if self._latest_costmap_time > 0.0 else None
+            odom_age = now - self._latest_odom_time if self._latest_odom_time > 0.0 else None
             self._collision_state.update(
                 {
                     "enabled": self._collision_monitor_enabled,
                     "action": action,
                     "reason": reason,
-                    "last_cost": None if cost is None else round(float(cost), 3),
-                    "costmap_age_ms": (
-                        None if costmap_age is None else round(costmap_age * 1000)
-                    ),
-                    "odometry_age_ms": (
-                        None if odom_age is None else round(odom_age * 1000)
-                    ),
+                    "last_cost": rounded_cost,
+                    "costmap_age_ms": (None if costmap_age is None else round(costmap_age * 1000)),
+                    "odometry_age_ms": (None if odom_age is None else round(odom_age * 1000)),
                     "backend": backend,
+                    "ts": now,
+                }
+            )
+            signature = (action, reason, rounded_cost)
+            if action == "stop" and signature != self._last_collision_event_signature:
+                self._last_collision_event_signature = signature
+                emit_event = True
+            elif action != "stop":
+                self._last_collision_event_signature = None
+        if emit_event:
+            self.collision_event.publish(
+                {
+                    "schema_version": "map.health.collision.v1",
+                    "severity": 1.0,
+                    "source": "nav.velocity_mux.projected_collision",
+                    "reason": reason,
+                    "cost": rounded_cost,
                     "ts": now,
                 }
             )
@@ -661,11 +662,7 @@ class VelocityMux(Module, layer=0):
             if callable(ravel):
                 values = [self._coerce_cost_value(value) for value in ravel()]
             else:
-                values = [
-                    self._coerce_cost_value(grid[row][col])
-                    for row in range(height)
-                    for col in range(width)
-                ]
+                values = [self._coerce_cost_value(grid[row][col]) for row in range(height) for col in range(width)]
             if len(values) != height * width:
                 return None
             native.data = values

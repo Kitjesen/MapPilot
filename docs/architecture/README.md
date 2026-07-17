@@ -12,13 +12,17 @@ in `../plans/` and old decisions in `../archive/`.
 | [`NAVIGATION_COMPUTE_CONTRACT.md`](./NAVIGATION_COMPUTE_CONTRACT.md) | current | Planning/local-planning/safety/control boundary. |
 | [`NAVIGATION_RUNTIME_DATAFLOW.md`](./NAVIGATION_RUNTIME_DATAFLOW.md) | current | ROS-free navigation-base dataflow, transports, payloads, OctoPlanner3D map inputs, and local-planner inputs. |
 | [`MODULE_SERVICE_BOUNDARY.md`](./MODULE_SERVICE_BOUNDARY.md) | current cleanup guide | Names and boundaries for Modules, system services, internal service helpers, adapters, and remaining ROS surfaces. |
+| [`NAMING_AND_SERVICE_BOUNDARY_PLAN.md`](./NAMING_AND_SERVICE_BOUNDARY_PLAN.md) | cleanup plan | Keeps Blueprint/Module/Service/Agent/Kernel names, locks their responsibilities, and plans service-domain cleanup. |
 | [`GLOBAL_PLANNING_CONTRACT.md`](./GLOBAL_PLANNING_CONTRACT.md) | current | Global planner request/result, backend, preview, and transport boundary. |
-| [`MAP_SERVICE_CONTRACT.md`](./MAP_SERVICE_CONTRACT.md) | current | Saved-map classes, artifact capabilities, bundle lookup, and builder gap. |
+| [`MAP_SERVICE_CONTRACT.md`](./MAP_SERVICE_CONTRACT.md) | current | Map-domain ownership, saved-map lifecycle, artifact capabilities, bundle lookup, and realtime-layer boundary. |
+| [`SOCC_ICP_ADOPTION.md`](./SOCC_ICP_ADOPTION.md) | native baseline implemented; field validation pending | Semantic occupancy, stable ABI/artifact, MapObservation flow, MapIcp integration, and product gates. |
 | [`local_planner_io_contract.md`](./local_planner_io_contract.md) | current | Local planner inputs, outputs, and remaining traversability gap. |
+| [`LOCAL_PLANNING_AND_TRACKING_CONTRACT.md`](./LOCAL_PLANNING_AND_TRACKING_CONTRACT.md) | current | Local-planning algorithm, scoring, PathFollower boundary, and native-endpoint/Python-Module parameter surfaces; complements the I/O contract above. |
 | [`LINGTU_RUNTIME_BUS_DECISION.md`](./LINGTU_RUNTIME_BUS_DECISION.md) | current | Port, channel, and transport policy. |
+| [`blueprint_dds_integration.md`](./blueprint_dds_integration.md) | current | Blueprint–DDS integration: transport abstraction, QoS, worker deployment, observability, route contracts. |
+| [`TOPIC_CONTRACT_POLICY.md`](./TOPIC_CONTRACT_POLICY.md) | current guardrail | Canonical runtime topic ownership, allowed literal layers, static guard, and LiDAR topic status. |
 | [`ros_frame_contract.md`](./ros_frame_contract.md) | current | Frame naming and ROS compatibility constraints. |
 | [`ROS_ROLE_REPLACEMENT_MAP.md`](./ROS_ROLE_REPLACEMENT_MAP.md) | current migration map | Which ROS roles remain adapters and which are native LingTu. |
-| [`ROS2_DECOUPLING_MIGRATION_PLAN.md`](./ROS2_DECOUPLING_MIGRATION_PLAN.md) | proposal | Phased plan to remove the hard ROS 2/Ubuntu 22.04 runtime dependency from the C++ SLAM, base-autonomy, and sensor-ingestion layers. |
 | [`DART_RUST_PACKAGE_MIGRATION.md`](./DART_RUST_PACKAGE_MIGRATION.md) | proposal | Future portable UI/package direction. |
 
 ## Writing Rules

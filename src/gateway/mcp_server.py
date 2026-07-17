@@ -24,6 +24,9 @@ import logging
 import threading
 from typing import Any
 
+from gateway.services.module_refs import backend_reconfigure_targets
+from gateway.services.native_control import estop as native_estop
+from gateway.services.native_control import stop as native_stop
 from runtime.module import Module, skill
 from runtime.msgs.geometry import PoseStamped, Twist
 from runtime.msgs.nav import Odometry
@@ -41,17 +44,7 @@ _MOTION_BACKEND_CATEGORIES = {
     "terrain",
     "slam",
 }
-_BACKEND_RECONFIGURE_TARGETS = {
-    "detector": ("PerceptionModule",),
-    "encoder": ("PerceptionModule",),
-    "llm": ("LLMModule",),
-    "llm_client": ("LLMModule",),
-    "planner": ("nav.mission",),
-    "local_planner": ("nav.local_planner",),
-    "path_follower": ("nav.path_follower",),
-    "terrain": ("nav.terrain",),
-    "slam": ("SlamAdapterModule", "SlamModule", "SlamBridgeModule"),
-}
+_BACKEND_RECONFIGURE_TARGETS = backend_reconfigure_targets()
 
 
 def _navigation_state(nav: Any) -> str:
@@ -78,11 +71,14 @@ def _navigation_state(nav: Any) -> str:
 # JSON-RPC 2.0 helpers
 # ---------------------------------------------------------------------------
 
+
 def _ok(req_id: Any, result: Any) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
 
+
 def _text(req_id: Any, text: str) -> dict:
     return _ok(req_id, {"content": [{"type": "text", "text": str(text)}]})
+
 
 def _error(req_id: Any, code: int, msg: str) -> dict:
     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": msg}}
@@ -91,6 +87,7 @@ def _error(req_id: Any, code: int, msg: str) -> dict:
 # ---------------------------------------------------------------------------
 # MCPServerModule
 # ---------------------------------------------------------------------------
+
 
 @register("mcp", "server", description="MCP server for AI agent robot control")
 class MCPServerModule(Module, layer=6):
@@ -106,17 +103,17 @@ class MCPServerModule(Module, layer=6):
     _run_in_main: bool = True
 
     # -- receive telemetry for read-only queries ----------------------------
-    odometry:       In[Odometry]
-    scene_graph:    In[SceneGraph]
-    safety_state:   In[SafetyState]
+    odometry: In[Odometry]
+    scene_graph: In[SceneGraph]
+    safety_state: In[SafetyState]
     mission_status: In[dict]
 
     # -- outgoing commands --------------------------------------------------
-    goal_pose:   Out[PoseStamped]
-    cmd_vel:     Out[Twist]
-    stop_cmd:    Out[int]
+    goal_pose: Out[PoseStamped]
+    cmd_vel: Out[Twist]
+    stop_cmd: Out[int]
     instruction: Out[str]
-    mode_cmd:    Out[str]
+    mode_cmd: Out[str]
 
     def __init__(
         self,
@@ -132,23 +129,23 @@ class MCPServerModule(Module, layer=6):
         self._server_thread: threading.Thread | None = None
 
         # Cached telemetry (written by subscriptions)
-        self._odom:    dict | None = None
+        self._odom: dict | None = None
         self._sg_json: str = "{}"
-        self._safety:  dict | None = None
+        self._safety: dict | None = None
         self._mission: dict | None = None
 
         # Injected after system.start() by cli/main.py
         self._system_handle = None
 
         # Populated by on_system_modules() -all @skill across all modules
-        self._tool_registry: dict[str, Any] = {}   # func_name ->bound method
-        self._tool_list:     list[dict] = []        # MCP tool descriptors
+        self._tool_registry: dict[str, Any] = {}  # func_name ->bound method
+        self._tool_list: list[dict] = []  # MCP tool descriptors
         self._all_modules: dict[str, Any] = {}
 
         # Memory / perception module references (for built-in query tools)
         self._tagged_locations_mod = None
-        self._vector_memory_mod    = None
-        self._episodic_mod         = None
+        self._vector_memory_mod = None
+        self._episodic_mod = None
         self._navigation = None
         self._backend_reconfigure_modules: dict[str, Any] = {}
 
@@ -177,8 +174,8 @@ class MCPServerModule(Module, layer=6):
 
         # Grab module references for built-in tools
         self._tagged_locations_mod = modules.get("TaggedLocationsModule")
-        self._vector_memory_mod    = modules.get("VectorMemoryModule")
-        self._episodic_mod         = modules.get("EpisodicMemoryModule")
+        self._vector_memory_mod = modules.get("VectorMemoryModule")
+        self._episodic_mod = modules.get("EpisodicMemoryModule")
 
         # Discover @skill from every module (including self)
         for mod_name, mod in modules.items():
@@ -196,11 +193,13 @@ class MCPServerModule(Module, layer=6):
                 self._tool_registry[info.func_name] = method
                 schema = json.loads(info.args_schema)
                 desc = schema.pop("description", "")
-                self._tool_list.append({
-                    "name": info.func_name,
-                    "description": f"[{info.class_name}] {desc}".strip(),
-                    "inputSchema": schema,
-                })
+                self._tool_list.append(
+                    {
+                        "name": info.func_name,
+                        "description": f"[{info.class_name}] {desc}".strip(),
+                        "inputSchema": schema,
+                    }
+                )
 
         # Deduplicate: if a module @skill has the same name as a built-in,
         # the module-native version takes priority (last write in _tool_registry wins).
@@ -213,11 +212,12 @@ class MCPServerModule(Module, layer=6):
 
         logger.info(
             "MCP: %d tools from %d modules",
-            len(self._tool_list), len(modules),
+            len(self._tool_list),
+            len(modules),
         )
 
     def _install_legacy_tool_aliases(self) -> None:
-        """Keep old MCP clients working without exposing lifecycle stop()."""
+        """Keep old MCP clients working with a non-latching motion stop."""
 
         if "stop" in self._tool_registry:
             return
@@ -230,15 +230,15 @@ class MCPServerModule(Module, layer=6):
             None,
         )
         input_schema = (
-            dict(source.get("inputSchema", {}))
-            if source
-            else {"type": "object", "properties": {}, "required": []}
+            dict(source.get("inputSchema", {})) if source else {"type": "object", "properties": {}, "required": []}
         )
-        self._tool_list.append({
-            "name": "stop",
-            "description": "[MCPServerModule] Legacy alias for emergency_stop.",
-            "inputSchema": input_schema,
-        })
+        self._tool_list.append(
+            {
+                "name": "stop",
+                "description": "[MCPServerModule] Stop motion without latching estop.",
+                "inputSchema": input_schema,
+            }
+        )
 
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
@@ -248,9 +248,7 @@ class MCPServerModule(Module, layer=6):
 
     def start(self) -> None:
         super().start()
-        self._server_thread = threading.Thread(
-            target=self._run_server, daemon=True, name="mcp-server"
-        )
+        self._server_thread = threading.Thread(target=self._run_server, daemon=True, name="mcp-server")
         self._server_thread.start()
         logger.info("MCP Server at http://%s:%d/mcp", self._host, self._port)
 
@@ -262,8 +260,13 @@ class MCPServerModule(Module, layer=6):
 
     def _on_odom(self, odom: Odometry) -> None:
         self._odom = {
-            "x": odom.x, "y": odom.y, "z": getattr(odom, "z", 0.0),
-            "yaw": odom.yaw, "vx": odom.vx, "vy": odom.vy, "ts": odom.ts,
+            "x": odom.x,
+            "y": odom.y,
+            "z": getattr(odom, "z", 0.0),
+            "yaw": odom.yaw,
+            "vx": odom.vx,
+            "vy": odom.vy,
+            "ts": odom.ts,
         }
 
     def _on_sg(self, sg: SceneGraph) -> None:
@@ -271,6 +274,7 @@ class MCPServerModule(Module, layer=6):
 
     def _on_safety(self, state: SafetyState) -> None:
         import time
+
         self._safety = {"level": getattr(state, "level", 0), "ts": time.time()}
 
     def _on_mission(self, status: dict) -> None:
@@ -293,9 +297,9 @@ class MCPServerModule(Module, layer=6):
         modules = {}
         for n, m in self._system_handle.modules.items():
             modules[n] = {
-                "layer":     m.layer,
-                "running":   m.running,
-                "ports_in":  list(m.ports_in.keys()),
+                "layer": m.layer,
+                "running": m.running,
+                "ports_in": list(m.ports_in.keys()),
                 "ports_out": list(m.ports_out.keys()),
             }
         return json.dumps({"modules": modules})
@@ -305,18 +309,27 @@ class MCPServerModule(Module, layer=6):
         """Return robot configuration: speed limits, geometry, safety thresholds."""
         try:
             from runtime.config import get_config
+
             cfg = get_config()
-            return json.dumps({
-                "speed":    {"max_linear": cfg.speed.max_linear,
-                             "max_angular": cfg.speed.max_angular,
-                             "max_speed": cfg.speed.max_speed},
-                "geometry": {"height": cfg.geometry.vehicle_height,
-                             "width":  cfg.geometry.vehicle_width,
-                             "length": cfg.geometry.vehicle_length},
-                "safety":   {"stop_distance":  cfg.safety.stop_distance,
-                             "tilt_limit_deg": cfg.safety.tilt_limit_deg,
-                             "obstacle_height_thre": cfg.safety.obstacle_height_thre},
-            })
+            return json.dumps(
+                {
+                    "speed": {
+                        "max_linear": cfg.speed.max_linear,
+                        "max_angular": cfg.speed.max_angular,
+                        "max_speed": cfg.speed.max_speed,
+                    },
+                    "geometry": {
+                        "height": cfg.geometry.vehicle_height,
+                        "width": cfg.geometry.vehicle_width,
+                        "length": cfg.geometry.vehicle_length,
+                    },
+                    "safety": {
+                        "stop_distance": cfg.safety.stop_distance,
+                        "tilt_limit_deg": cfg.safety.tilt_limit_deg,
+                        "obstacle_height_thre": cfg.safety.obstacle_height_thre,
+                    },
+                }
+            )
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
@@ -336,8 +349,7 @@ class MCPServerModule(Module, layer=6):
         q = query.lower()
         try:
             sg = json.loads(self._sg_json)
-            matches = [o for o in sg.get("objects", [])
-                       if q in o.get("label", "").lower()]
+            matches = [o for o in sg.get("objects", []) if q in o.get("label", "").lower()]
             return json.dumps({"query": q, "matches": matches, "count": len(matches)})
         except Exception as e:
             logger.warning("scene graph JSON parse failed: %s", e)
@@ -361,24 +373,28 @@ class MCPServerModule(Module, layer=6):
                     for hit in r.get("results", [])[:3]:
                         if hit.get("navigable") is not True:
                             continue
-                        results.append({
-                            "source":   "vector",
-                            "position": [hit.get("x", 0), hit.get("y", 0)],
-                            "score":    hit.get("score", 0),
-                            "labels":   hit.get("labels", ""),
-                            "navigable": True,
-                        })
+                        results.append(
+                            {
+                                "source": "vector",
+                                "position": [hit.get("x", 0), hit.get("y", 0)],
+                                "score": hit.get("score", 0),
+                                "labels": hit.get("labels", ""),
+                                "navigable": True,
+                            }
+                        )
                 elif r.get("found"):
                     best = r.get("best") or {}
-                    results.append({
-                        "source": "vector",
-                        "query_only": True,
-                        "navigable": False,
-                        "reason": "vector_memory_not_safe_for_navigation",
-                        "encoder_type": r.get("encoder_type", "unknown"),
-                        "labels": best.get("labels", ""),
-                        "score": best.get("score", 0),
-                    })
+                    results.append(
+                        {
+                            "source": "vector",
+                            "query_only": True,
+                            "navigable": False,
+                            "reason": "vector_memory_not_safe_for_navigation",
+                            "encoder_type": r.get("encoder_type", "unknown"),
+                            "labels": best.get("labels", ""),
+                            "score": best.get("score", 0),
+                        }
+                    )
             except Exception as e:
                 logger.debug("vector memory query failed: %s", e)
 
@@ -386,12 +402,14 @@ class MCPServerModule(Module, layer=6):
         if em and hasattr(em, "memory"):
             try:
                 for r in em.memory.query_by_text(query, top_k=3):
-                    results.append({
-                        "source":   "episodic",
-                        "label":    getattr(r, "label", ""),
-                        "position": list(getattr(r, "position", [0, 0, 0])),
-                        "ts":       getattr(r, "timestamp", 0),
-                    })
+                    results.append(
+                        {
+                            "source": "episodic",
+                            "label": getattr(r, "label", ""),
+                            "position": list(getattr(r, "position", [0, 0, 0])),
+                            "ts": getattr(r, "timestamp", 0),
+                        }
+                    )
             except Exception as e:
                 logger.debug("episodic memory query failed: %s", e)
 
@@ -400,11 +418,13 @@ class MCPServerModule(Module, layer=6):
             try:
                 match = tl.store.query_fuzzy(query)
                 if match:
-                    results.append({
-                        "source":   "tagged",
-                        "label":    match["name"],
-                        "position": match["position"],
-                    })
+                    results.append(
+                        {
+                            "source": "tagged",
+                            "label": match["name"],
+                            "position": match["position"],
+                        }
+                    )
             except Exception as e:
                 logger.debug("tagged location query failed: %s", e)
 
@@ -425,8 +445,7 @@ class MCPServerModule(Module, layer=6):
         tl = self._tagged_locations_mod
         if not (tl and hasattr(tl, "store")):
             return json.dumps({"error": "TaggedLocationsModule not running"})
-        tl.store.tag(name, x=self._odom["x"], y=self._odom["y"],
-                     z=self._odom.get("z", 0))
+        tl.store.tag(name, x=self._odom["x"], y=self._odom["y"], z=self._odom.get("z", 0))
         entry = tl.store.query(name)
         return json.dumps({"tagged": name, "position": entry})
 
@@ -445,15 +464,31 @@ class MCPServerModule(Module, layer=6):
     @skill
     def emergency_stop(self) -> str:
         """Emergency stop -immediately halts all robot motion."""
-        return self._publish_stop("emergency_stopped")
+        return self._publish_estop("emergency_stopped")
 
     def _legacy_stop_tool(self) -> str:
-        return self._publish_stop("stopped")
+        wrote_native = native_stop("mcp_stop")
+        if not wrote_native:
+            self.stop_cmd.publish(2)
+            self.cmd_vel.publish(Twist())
+        return json.dumps(
+            {
+                "status": "stopped",
+                "control_boundary": "native_stop" if wrote_native else "local_compat",
+            }
+        )
 
-    def _publish_stop(self, status: str) -> str:
-        self.stop_cmd.publish(2)
-        self.cmd_vel.publish(Twist())
-        return json.dumps({"status": status})
+    def _publish_estop(self, status: str) -> str:
+        wrote_native = native_estop("mcp_emergency_stop")
+        if not wrote_native:
+            self.stop_cmd.publish(2)
+            self.cmd_vel.publish(Twist())
+        return json.dumps(
+            {
+                "status": status,
+                "control_boundary": "native_estop" if wrote_native else "local_compat",
+            }
+        )
 
     @skill
     def set_mode(self, mode: str) -> str:
@@ -462,8 +497,10 @@ class MCPServerModule(Module, layer=6):
             return json.dumps({"error": f"invalid mode: {mode!r}"})
         self.mode_cmd.publish(mode)
         if mode == "estop":
-            self.stop_cmd.publish(2)
-            self.cmd_vel.publish(Twist())
+            wrote_native = native_estop("mcp_mode_estop")
+            if not wrote_native:
+                self.stop_cmd.publish(2)
+                self.cmd_vel.publish(Twist())
         return json.dumps({"mode": mode})
 
     @skill
@@ -472,20 +509,24 @@ class MCPServerModule(Module, layer=6):
         try:
             config = json.loads(config_json or "{}")
         except json.JSONDecodeError as exc:
-            return json.dumps({
-                "ok": False,
-                "category": category,
-                "requested_backend": backend,
-                "reason": "invalid_config_json",
-                "error": str(exc),
-            })
+            return json.dumps(
+                {
+                    "ok": False,
+                    "category": category,
+                    "requested_backend": backend,
+                    "reason": "invalid_config_json",
+                    "error": str(exc),
+                }
+            )
         if not isinstance(config, dict):
-            return json.dumps({
-                "ok": False,
-                "category": category,
-                "requested_backend": backend,
-                "reason": "invalid_config_json",
-            })
+            return json.dumps(
+                {
+                    "ok": False,
+                    "category": category,
+                    "requested_backend": backend,
+                    "reason": "invalid_config_json",
+                }
+            )
         gateway = self._all_modules.get("GatewayModule")
         if gateway is not None and hasattr(gateway, "reconfigure_backend"):
             result = gateway.reconfigure_backend(category, backend, **config)
@@ -522,9 +563,10 @@ class MCPServerModule(Module, layer=6):
 
     def _run_server(self) -> None:
         try:
+            import os
+
             import uvicorn
             from fastapi import FastAPI
-            import os
             from fastapi.middleware.cors import CORSMiddleware
             from fastapi.responses import JSONResponse
         except ImportError:
@@ -536,9 +578,9 @@ class MCPServerModule(Module, layer=6):
             "http://localhost:5050,http://127.0.0.1:5050",
         ).split(",")
         app = FastAPI(title="LingTu MCP Server")
-        app.add_middleware(CORSMiddleware, allow_origins=cors_origins,
-                           allow_methods=["*"], allow_headers=["*"])
+        app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["*"], allow_headers=["*"])
         from gateway.auth import APIKeyMiddleware
+
         require_key = (
             self._require_api_key
             if self._require_api_key is not None
@@ -549,19 +591,24 @@ class MCPServerModule(Module, layer=6):
 
         @app.post("/mcp")
         async def mcp_endpoint(request: dict):
-            method  = request.get("method", "")
-            params  = request.get("params") or {}
-            req_id  = request.get("id")
+            method = request.get("method", "")
+            params = request.get("params") or {}
+            req_id = request.get("id")
 
             if req_id is None:
                 return JSONResponse(status_code=204, content=None)
 
             if method == "initialize":
-                return JSONResponse(_ok(req_id, {
-                    "protocolVersion": MCP_PROTOCOL_VERSION,
-                    "capabilities":    {"tools": {}},
-                    "serverInfo":      {"name": "lingtu", "version": "2.0.0"},
-                }))
+                return JSONResponse(
+                    _ok(
+                        req_id,
+                        {
+                            "protocolVersion": MCP_PROTOCOL_VERSION,
+                            "capabilities": {"tools": {}},
+                            "serverInfo": {"name": "lingtu", "version": "2.0.0"},
+                        },
+                    )
+                )
 
             if method == "notifications/initialized":
                 return JSONResponse(status_code=204, content=None)
@@ -570,9 +617,9 @@ class MCPServerModule(Module, layer=6):
                 return JSONResponse(_ok(req_id, {"tools": mcp._tool_list}))
 
             if method == "tools/call":
-                name   = params.get("name", "")
-                args   = params.get("arguments") or {}
-                fn     = mcp._tool_registry.get(name)
+                name = params.get("name", "")
+                args = params.get("arguments") or {}
+                fn = mcp._tool_registry.get(name)
                 if fn is None:
                     return JSONResponse(_text(req_id, f"Unknown tool: {name!r}"))
                 try:
@@ -587,9 +634,9 @@ class MCPServerModule(Module, layer=6):
         @app.get("/health")
         async def health():
             return {
-                "status":  "ok",
-                "tools":   len(mcp._tool_list),
-                "port":    mcp._port,
+                "status": "ok",
+                "tools": len(mcp._tool_list),
+                "port": mcp._port,
                 "has_handle": mcp._system_handle is not None,
             }
 
@@ -600,8 +647,8 @@ class MCPServerModule(Module, layer=6):
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
         info["mcp"] = {
-            "port":       self._port,
-            "tools":      len(self._tool_list),
+            "port": self._port,
+            "tools": len(self._tool_list),
             "has_handle": self._system_handle is not None,
         }
         return info

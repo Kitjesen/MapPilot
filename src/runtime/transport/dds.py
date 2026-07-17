@@ -14,7 +14,9 @@ from typing import Any
 from message.dds import dds_topic_name, dds_type_for_topic, topic_spec
 
 from .abc import Publisher, Subscriber, TopicConfig, TransportABC
+from .dds_metrics import record_publish, record_receive
 from .json_codec import dumps_message, loads_message
+from .qos import qos_for_profile, qos_for_topic, resolve_domain_id
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +53,20 @@ else:
 class DDSPublisher(Publisher):
     """DDS publisher for typed product topics and legacy RawMessage topics."""
 
-    def __init__(self, topic: TopicConfig, participant: Any, dds_topic: Any, dds_type: Any):
+    def __init__(
+        self,
+        topic: TopicConfig,
+        participant: Any,
+        dds_topic: Any,
+        dds_type: Any,
+        qos: Any | None = None,
+    ):
         super().__init__(topic)
         self._dds_type = dds_type
-        self._writer = DataWriter(participant, dds_topic)
+        if qos is not None:
+            self._writer = DataWriter(participant, dds_topic, qos=qos)
+        else:
+            self._writer = DataWriter(participant, dds_topic)
         logger.info("[DDS-Pub] created on topic '%s'", topic.name)
 
     def publish(self, msg: Any) -> None:
@@ -63,10 +75,12 @@ class DDSPublisher(Publisher):
                 expected = getattr(self._dds_type, "__name__", str(self._dds_type))
                 raise TypeError(f"{self.topic_name} expects typed DDS {expected}")
             self._writer.write(msg)
+            record_publish(self.topic_name)
             return
 
         data = msg if isinstance(msg, bytes) else dumps_message(msg, topic=self.topic_name)
         self._writer.write(RawMessage(data=list(data), timestamp=time.time()))
+        record_publish(self.topic_name, size_bytes=len(data))
 
     def close(self) -> None:
         try:
@@ -78,10 +92,11 @@ class DDSPublisher(Publisher):
 if _CYCLONE_AVAILABLE:
 
     class _MessageListener(Listener):
-        def __init__(self, callback: Callable, *, legacy_raw: bool):
+        def __init__(self, callback: Callable, *, legacy_raw: bool, topic_name: str = ""):
             super().__init__()
             self._callback = callback
             self._legacy_raw = legacy_raw
+            self._topic_name = topic_name
 
         def on_data_available(self, reader) -> None:  # type: ignore[override]
             for sample in reader.take():
@@ -93,8 +108,10 @@ if _CYCLONE_AVAILABLE:
                         msg = loads_message(raw_bytes)
                     except Exception:
                         msg = raw_bytes
+                    record_receive(self._topic_name, msg, size_bytes=len(raw_bytes))
                 else:
                     msg = sample
+                    record_receive(self._topic_name, msg)
                 try:
                     self._callback(msg)
                 except Exception:
@@ -113,10 +130,14 @@ class DDSSubscriber(Subscriber):
         participant: Any,
         dds_topic: Any,
         dds_type: Any,
+        qos: Any | None = None,
     ):
         super().__init__(topic, callback)
-        self._listener = _MessageListener(callback, legacy_raw=dds_type is RawMessage)
-        self._reader = DataReader(participant, dds_topic, listener=self._listener)
+        self._listener = _MessageListener(callback, legacy_raw=dds_type is RawMessage, topic_name=topic.name)
+        if qos is not None:
+            self._reader = DataReader(participant, dds_topic, listener=self._listener, qos=qos)
+        else:
+            self._reader = DataReader(participant, dds_topic, listener=self._listener)
         logger.info("[DDS-Sub] created on topic '%s'", topic.name)
 
     def start(self) -> None:
@@ -132,18 +153,29 @@ class DDSSubscriber(Subscriber):
 class DDSTransport(TransportABC):
     """CycloneDDS transport layer."""
 
-    def __init__(self, domain_id: int = 0):
+    def __init__(self, domain_id: int | None = None):
         if not _CYCLONE_AVAILABLE:
             raise ImportError(
                 "cyclonedds-python is not installed; Python DDS is optional for "
                 "development diagnostics. Robot field paths use the C++ "
                 "CycloneDDS runtime."
             )
+        domain_id = resolve_domain_id(domain_id)
         self._participant = DomainParticipant(domain_id)
         self._publishers: list[DDSPublisher] = []
         self._subscribers: list[DDSSubscriber] = []
         self._topics: dict[tuple[str, Any], Any] = {}
         logger.info("[DDSTransport] domain_id=%s", domain_id)
+
+    def _resolve_qos(self, topic: TopicConfig) -> Any | None:
+        """Resolve QoS for a topic: explicit profile wins over topic mapping.
+
+        Returns ``None`` when no profile applies, which keeps the previous
+        (CycloneDDS default) behavior.
+        """
+        if topic.qos_profile:
+            return qos_for_profile(topic.qos_profile)
+        return qos_for_topic(topic.name)
 
     def _topic_type(self, topic: TopicConfig) -> Any:
         if topic.msg_type is not None:
@@ -155,26 +187,28 @@ class DDSTransport(TransportABC):
             raise ImportError(f"typed DDS contract for {topic.name} is unavailable")
         return dds_type
 
-    def _get_or_create_topic(self, topic: TopicConfig) -> tuple[Any, Any]:
+    def _get_or_create_topic(self, topic: TopicConfig, qos: Any | None = None) -> tuple[Any, Any]:
         dds_type = self._topic_type(topic)
         key = (topic.name, dds_type)
         if key not in self._topics:
-            self._topics[key] = Topic(
-                self._participant,
-                dds_topic_name(topic.name, typed=dds_type is not RawMessage),
-                dds_type,
-            )
+            topic_name = dds_topic_name(topic.name, typed=dds_type is not RawMessage)
+            if qos is not None:
+                self._topics[key] = Topic(self._participant, topic_name, dds_type, qos=qos)
+            else:
+                self._topics[key] = Topic(self._participant, topic_name, dds_type)
         return self._topics[key], dds_type
 
     def create_publisher(self, topic: TopicConfig) -> DDSPublisher:
-        dds_topic, dds_type = self._get_or_create_topic(topic)
-        pub = DDSPublisher(topic, self._participant, dds_topic, dds_type)
+        qos = self._resolve_qos(topic)
+        dds_topic, dds_type = self._get_or_create_topic(topic, qos)
+        pub = DDSPublisher(topic, self._participant, dds_topic, dds_type, qos=qos)
         self._publishers.append(pub)
         return pub
 
     def create_subscriber(self, topic: TopicConfig, callback: Callable) -> DDSSubscriber:
-        dds_topic, dds_type = self._get_or_create_topic(topic)
-        sub = DDSSubscriber(topic, callback, self._participant, dds_topic, dds_type)
+        qos = self._resolve_qos(topic)
+        dds_topic, dds_type = self._get_or_create_topic(topic, qos)
+        sub = DDSSubscriber(topic, callback, self._participant, dds_topic, dds_type, qos=qos)
         sub.start()
         self._subscribers.append(sub)
         return sub

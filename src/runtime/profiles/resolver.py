@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from runtime.contracts import HW_COMPAT_CONFIG_ENABLE, HW_CONFIG_ENABLE
 from runtime.profiles.catalog.endpoints import (
     PRODUCT_PROFILE_ENDPOINTS,
     RUNTIME_ENDPOINTS,
@@ -167,8 +168,7 @@ def _require_product_endpoint(profile: str, endpoint: RuntimeEndpointSpec) -> No
         return
     choices = ", ".join(allowed)
     raise RuntimeEndpointError(
-        f"endpoint '{endpoint.name}' is not a product endpoint for profile "
-        f"'{profile}' (allowed: {choices})"
+        f"endpoint '{endpoint.name}' is not a product endpoint for profile '{profile}' (allowed: {choices})"
     )
 
 
@@ -199,11 +199,7 @@ def _resolve_runtime_layers(
             selected_robot,
             allow_custom_robot=allow_custom_robot,
         ),
-        endpoint_adapter=(
-            endpoint_config_for_profile(endpoint, profile)
-            if endpoint is not None
-            else {}
-        ),
+        endpoint_adapter=(endpoint_config_for_profile(endpoint, profile) if endpoint is not None else {}),
         user_overrides=dict(overrides or {}),
     )
 
@@ -217,12 +213,10 @@ def _merge_runtime_layers(profile: str, layers: _RuntimeConfigLayers) -> dict[st
     if layers.endpoint_adapter:
         config = merge_runtime_endpoint_config(config, layers.endpoint_adapter)
     config.update(layers.user_overrides)
+    _normalize_hw_keys(config)
     config.setdefault(
         "cmd_vel_mux_collision_monitor",
-        bool(
-            config.get("enable_teleop", True)
-            and config.get("enable_map_modules", True)
-        ),
+        bool(config.get("enable_teleop", True) and config.get("enable_map_modules", True)),
     )
     planner_profile = resolve_planner_runtime_profile(profile, config)
     config["planner"] = planner_profile["primary"]
@@ -235,6 +229,13 @@ def _merge_runtime_layers(profile: str, layers: _RuntimeConfigLayers) -> dict[st
     config["planner_latency_budget_ms"] = planner_profile["latency_budget_ms"]
     config["planner_profile"] = planner_profile
     return config
+
+
+def _normalize_hw_keys(config: dict[str, Any]) -> None:
+    if HW_CONFIG_ENABLE not in config and HW_COMPAT_CONFIG_ENABLE in config:
+        config[HW_CONFIG_ENABLE] = config[HW_COMPAT_CONFIG_ENABLE]
+    elif HW_CONFIG_ENABLE in config and HW_COMPAT_CONFIG_ENABLE not in config:
+        config[HW_COMPAT_CONFIG_ENABLE] = config[HW_CONFIG_ENABLE]
 
 
 def _selected_robot_preset(
@@ -290,16 +291,8 @@ def _product_intent_layer(
     include_profile_metadata: bool,
 ) -> dict[str, Any]:
     if include_profile_metadata:
-        return {
-            key: value
-            for key, value in product_config.items()
-            if key != "_default_robot"
-        }
-    return {
-        key: value
-        for key, value in product_config.items()
-        if not key.startswith("_")
-    }
+        return {key: value for key, value in product_config.items() if key != "_default_robot"}
+    return {key: value for key, value in product_config.items() if not key.startswith("_")}
 
 
 def _robot_preset_layer(
@@ -325,9 +318,7 @@ def _robot_runtime_defaults_layer(
         return dict(ROBOT_RUNTIME_DEFAULTS[selected_robot])
     if allow_custom_robot:
         return {}
-    raise KeyError(
-        f"unknown robot runtime defaults for profile {profile}: {selected_robot}"
-    )
+    raise KeyError(f"unknown robot runtime defaults for profile {profile}: {selected_robot}")
 
 
 def _apply_robot_defaults(

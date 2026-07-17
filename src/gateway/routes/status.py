@@ -19,8 +19,8 @@ from gateway.schemas import (
     LivenessResponse,
     LocalizationStatusResponse,
     LocationOperationResponse,
-    LocationUpsertRequest,
     LocationsResponse,
+    LocationUpsertRequest,
     NavigationDdsSnapshotResponse,
     NavigationStatusResponse,
     PathResponse,
@@ -33,37 +33,53 @@ from gateway.schemas import (
     RuntimeSwitchPlanResponse,
     RuntimeSwitchRequest,
     RuntimeSwitchResponse,
-    SSEEventEnvelope,
     SceneGraphResponse,
+    SSEEventEnvelope,
     StateResponse,
 )
+from gateway.services.map_service import map_service_query
 from gateway.services.media_status import build_camera_status
+from maps.paths import active_map_name, nav_map_root
+
+try:
+    from runtime.contracts import CAMERA_ROLE, HW_COMPAT_ALIAS, HW_ROLE
+except ImportError:
+    CAMERA_ROLE = "camera"
+    HW_ROLE = "hw"
+    HW_COMPAT_ALIAS = "DeviceManager"
 from gateway.services.readiness import build_readiness_snapshot
 from gateway.services.runtime_dataflow import (
     build_runtime_dataflow_snapshot,
     build_runtime_dataflow_subscription,
     build_runtime_dataflow_topic_detail,
 )
-from gateway.services.runtime_switch_plan import build_runtime_switch_plan
-from gateway.services.runtime_switch_execute import build_runtime_switch_response
 from gateway.services.runtime_status import (
     build_localization_status,
     build_navigation_status,
 )
+from gateway.services.runtime_switch_execute import build_runtime_switch_response
+from gateway.services.runtime_switch_plan import build_runtime_switch_plan
+from gateway.services.sse import subscribe_with_event_id, unsubscribe
 from gateway.services.state_snapshot import build_state_snapshot
-from gateway.services.traffic import (
-    SSE_RETRY_MS,
-    format_sse_message,
-    normalize_sse_event,
-)
 from gateway.services.telemetry_normalizers import (
     build_locations_response,
     build_path_response,
     build_scene_graph_response,
 )
+from gateway.services.traffic import (
+    SSE_RETRY_MS,
+    format_sse_message,
+    normalize_sse_event,
+)
+from gateway.services.traffic import (
+    snapshot as traffic_snapshot,
+)
 
 DEFAULT_NAV_ENDPOINT_STATUS_FILE = "/dev/shm/lingtu/nav_endpoint_status.json"
 DEFAULT_TRAVERSABILITY_STATUS_FILE = "/dev/shm/lingtu/traversability_status.json"
+_LOCATION_BINDING_METADATA_KEYS = frozenset(
+    {"map_id", "map_version", "frame_id", "binding_status"}
+)
 
 
 def _read_json_snapshot(path: str) -> dict[str, Any] | None:
@@ -76,15 +92,12 @@ def _read_json_snapshot(path: str) -> dict[str, Any] | None:
 
 
 def _native_nav_endpoint_status() -> dict[str, Any] | None:
-    return _read_json_snapshot(
-        os.environ.get("LINGTU_NAV_STATUS_FILE") or DEFAULT_NAV_ENDPOINT_STATUS_FILE
-    )
+    return _read_json_snapshot(os.environ.get("LINGTU_NAV_STATUS_FILE") or DEFAULT_NAV_ENDPOINT_STATUS_FILE)
 
 
 def _native_traversability_status() -> dict[str, Any] | None:
     return _read_json_snapshot(
-        os.environ.get("LINGTU_TRAVERSABILITY_STATUS_FILE")
-        or DEFAULT_TRAVERSABILITY_STATUS_FILE
+        os.environ.get("LINGTU_TRAVERSABILITY_STATUS_FILE") or DEFAULT_TRAVERSABILITY_STATUS_FILE
     )
 
 
@@ -122,10 +135,17 @@ def _native_float(value: Any) -> float:
 def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(payload, Mapping):
         return None
-    last_local = payload.get("last_local")
-    if not isinstance(last_local, Mapping):
-        return None
-    cmd = last_local.get("cmd_vel")
+    cmd = payload.get("final_cmd_vel")
+    control_mode = str(payload.get("control_mode") or "")
+    active_source = "native_nav_endpoint"
+    if not isinstance(cmd, Mapping) and control_mode in {"teleop", "teleop_avoid"}:
+        teleop = payload.get("teleop")
+        cmd = teleop.get("output") if isinstance(teleop, Mapping) else None
+    if control_mode in {"teleop", "teleop_avoid"}:
+        active_source = "native_teleop"
+    if not isinstance(cmd, Mapping):
+        last_local = payload.get("last_local")
+        cmd = last_local.get("cmd_vel") if isinstance(last_local, Mapping) else None
     if not isinstance(cmd, Mapping):
         return None
     return {
@@ -140,11 +160,7 @@ def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]
             "y": 0.0,
             "z": _native_float(cmd.get("wz")),
         },
-        "active_source": (
-            "native_nav_endpoint"
-            if payload.get("publish_cmd_vel") is True
-            else "native_nav_endpoint_preview"
-        ),
+        "active_source": (active_source if payload.get("publish_cmd_vel") is True else f"{active_source}_preview"),
         "ts": payload.get("stamp_s"),
     }
 
@@ -189,11 +205,7 @@ _BRAINSTEM_TRANSIENT_FIELDS = {
 
 
 def _cacheable_brainstem_info(info: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in dict(info).items()
-        if key not in _BRAINSTEM_TRANSIENT_FIELDS
-    }
+    return {key: value for key, value in dict(info).items() if key not in _BRAINSTEM_TRANSIENT_FIELDS}
 
 
 def _probe_brainstem_safely() -> dict[str, Any]:
@@ -311,10 +323,27 @@ def _health_module_needs_detail(name: str) -> bool:
             "lidarmodule",
             "camera",
             "slambridge",
+            "slamadapter",
             "slammodule",
             "navigation",
         )
     )
+
+
+def _module_odometry_status(health: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return live SLAM telemetry when a module publishes odometry."""
+    ports_out = health.get("ports_out")
+    if not isinstance(ports_out, Mapping):
+        return None
+    odometry = ports_out.get("odometry")
+    if not isinstance(odometry, Mapping):
+        return None
+    rate_hz = round(_positive_float(odometry.get("rate_hz")), 1)
+    return {
+        "status": "active" if rate_hz > 0.0 else "inactive",
+        "hz": rate_hz,
+        "messages": odometry.get("msg_count", 0),
+    }
 
 
 def _location_entries(gw) -> list[Any]:
@@ -328,6 +357,89 @@ def _location_entries(gw) -> list[Any]:
             return list(tlm.store._store.values())
         except Exception:
             return []
+
+
+def _map_version_value(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.isdigit():
+            return int(text)
+    return None
+
+
+def _location_map_binding(gw) -> dict[str, Any]:
+    """Snapshot the active saved-map identity for a tagged location."""
+    try:
+        map_root = nav_map_root()
+    except Exception:
+        return {"frame_id": "map", "binding_status": "unavailable"}
+    for attempt in range(2):
+        try:
+            map_id = str(active_map_name(map_root) or "").strip()
+        except Exception:
+            return {"frame_id": "map", "binding_status": "unavailable"}
+        if not map_id:
+            return {"frame_id": "map", "binding_status": "unbound"}
+
+        binding: dict[str, Any] = {
+            "map_id": map_id,
+            "frame_id": "map",
+            "binding_status": "version_unavailable",
+        }
+        try:
+            response = map_service_query(gw, {"action": "get_record", "name": map_id})
+        except Exception:
+            response = None
+        try:
+            active_after_query = str(active_map_name(map_root) or "").strip()
+        except Exception:
+            return {"frame_id": "map", "binding_status": "unavailable"}
+        if active_after_query != map_id:
+            if attempt == 0:
+                continue
+            return {"frame_id": "map", "binding_status": "active_map_changed"}
+
+        record = response.get("record") if isinstance(response, Mapping) else None
+        if (
+            not isinstance(response, Mapping)
+            or response.get("success") is not True
+            or not isinstance(record, Mapping)
+        ):
+            return binding
+        version = _map_version_value(record.get("version"))
+        if version is None:
+            return binding
+        binding["map_version"] = version
+        binding["binding_status"] = "bound"
+        return binding
+    return {"frame_id": "map", "binding_status": "active_map_changed"}
+
+
+def _location_metadata(
+    gw,
+    existing: Any,
+    requested: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Merge caller metadata while keeping map binding server-owned."""
+    merged: dict[str, Any] = {}
+    existing_raw = existing if isinstance(existing, Mapping) else {}
+    existing_metadata = existing_raw.get("metadata")
+    for source in (existing_metadata, requested):
+        if not isinstance(source, Mapping):
+            continue
+        merged.update(
+            {
+                str(key): value
+                for key, value in source.items()
+                if str(key) not in _LOCATION_BINDING_METADATA_KEYS
+            }
+        )
+    merged.update(_location_map_binding(gw))
+    return merged
 
 
 def _pose_value(value: Any, key: str) -> float | None:
@@ -470,7 +582,8 @@ def _upsert_location(
 
     existed = False
     try:
-        existed = bool(tlm.store.query(body.name))
+        existing = tlm.store.query(body.name)
+        existed = bool(existing)
         tlm.store.tag(
             body.name,
             x=x,
@@ -479,7 +592,7 @@ def _upsert_location(
             yaw=yaw,
             tags=body.tags,
             source=body.source,
-            metadata=body.metadata,
+            metadata=_location_metadata(gw, existing, body.metadata),
         )
         entry = tlm.store.query(body.name)
     except Exception as exc:
@@ -516,13 +629,7 @@ def register_status_routes(app, gw) -> None:
         "/api/v1/events",
         summary="SSE event stream",
         response_class=StreamingResponse,
-        responses={
-            200: {
-                "content": {
-                    "text/event-stream": {"schema": SSEEventEnvelope.model_json_schema()}
-                }
-            }
-        },
+        responses={200: {"content": {"text/event-stream": {"schema": SSEEventEnvelope.model_json_schema()}}}},
     )
     async def sse_events(
         topic: Annotated[
@@ -535,34 +642,22 @@ def register_status_routes(app, gw) -> None:
             ),
         ] = None,
     ):
-        q, snapshot_event_id = gw._sse_subscribe_with_event_id()
+        q, snapshot_event_id = subscribe_with_event_id(gw)
         topic_filter = topic.strip() if isinstance(topic, str) else ""
         selected_event_types: set[str] | None = None
         subscription_payload: dict[str, Any] | None = None
         if topic_filter:
             detail = build_runtime_dataflow_topic_detail(gw, topic_filter)
-            inspection = (
-                detail.get("inspection")
-                if isinstance(detail.get("inspection"), Mapping)
-                else {}
-            )
+            inspection = detail.get("inspection") if isinstance(detail.get("inspection"), Mapping) else {}
             stream_interfaces = [
-                dict(item)
-                for item in (inspection.get("stream_interfaces") or [])
-                if isinstance(item, Mapping)
+                dict(item) for item in (inspection.get("stream_interfaces") or []) if isinstance(item, Mapping)
             ]
-            selected_event_types = {
-                str(item.get("event_type"))
-                for item in stream_interfaces
-                if item.get("event_type")
-            }
+            selected_event_types = {str(item.get("event_type")) for item in stream_interfaces if item.get("event_type")}
             subscription_payload = {
                 "ok": bool(detail.get("ok")) and bool(selected_event_types),
                 "selector": topic_filter,
                 "topic": (
-                    (detail.get("topic") or {}).get("topic")
-                    if isinstance(detail.get("topic"), Mapping)
-                    else None
+                    (detail.get("topic") or {}).get("topic") if isinstance(detail.get("topic"), Mapping) else None
                 ),
                 "event_types": sorted(selected_event_types),
                 "stream_interfaces": stream_interfaces,
@@ -604,15 +699,12 @@ def register_status_routes(app, gw) -> None:
                             )
                         )
                         continue
-                    if (
-                        selected_event_types is not None
-                        and event.get("type") not in selected_event_types
-                    ):
+                    if selected_event_types is not None and event.get("type") not in selected_event_types:
                         continue
                     yield format_sse_message(event)
                     await asyncio.sleep(0)
             finally:
-                gw._sse_unsubscribe(q)
+                unsubscribe(gw, q)
 
         return StreamingResponse(
             _stream(),
@@ -728,12 +820,11 @@ def register_status_routes(app, gw) -> None:
         if not local_path:
             local_path = _native_path_points(nav_endpoint, "local_path")
         navigation = build_navigation_status(gw)
+        endpoint_only = os.environ.get("LINGTU_COMMAND_OUTPUT_MODE", "").strip().lower() == "endpoint_only"
         cmd_vel = (
-            navigation.get("control", {})
-            .get("cmd_vel_mux", {})
-            .get("last_driver_cmd_vel")
+            None if endpoint_only else (navigation.get("control", {}).get("cmd_vel_mux", {}).get("last_driver_cmd_vel"))
         )
-        if isinstance(cmd_vel, Mapping):
+        if not endpoint_only and isinstance(cmd_vel, Mapping):
             cmd_payload = {
                 "frame_id": "base_link",
                 "linear": dict(cmd_vel.get("linear") or {}),
@@ -834,7 +925,7 @@ def register_status_routes(app, gw) -> None:
     )
     async def get_devices():
         modules = getattr(gw, "_all_modules", None) or {}
-        mgr = modules.get("DeviceManager")
+        mgr = modules.get(HW_ROLE) or modules.get(HW_COMPAT_ALIAS)
         if mgr is None:
             return {"devices": [], "manager": "not_loaded"}
         try:
@@ -854,15 +945,18 @@ def register_status_routes(app, gw) -> None:
         response_model=HealthResponse,
     )
     async def get_health(
-        details: Annotated[bool, Query(
-            description="Probe every module health detail; default app polling path only probes displayed sensors.",
-        )] = False
+        details: Annotated[
+            bool,
+            Query(
+                description="Probe every module health detail; default app polling path only probes displayed sensors.",
+            ),
+        ] = False,
     ):
-        traffic = gw._traffic_stats_snapshot()
+        traffic = traffic_snapshot(gw)
         commands = gw._command_stats_snapshot()
+        cloud_debug = gw._cloud_viewer.debug_snapshot()
         n_sse = traffic["sse"]["clients"]
-        with gw._map_cloud_lock:
-            map_pts = len(gw._map_points) if gw._map_points is not None else 0
+        map_pts = gw._cloud_viewer.cache_point_count()
 
         sensors: dict[str, Any] = {}
         modules_ok = 0
@@ -882,32 +976,23 @@ def register_status_routes(app, gw) -> None:
                     module_summary[name] = "ok"
                     modules_ok += 1
 
+                    name_l = str(name).lower()
                     if "LidarModule" in name:
                         lidar_h = h.get("lidar", {})
                         sensors["lidar"] = {
                             "status": lidar_h.get("state", "unknown"),
                             "ip": lidar_h.get("ip", "?"),
                             "cloud_hz": round(
-                                h.get("ports_out", {})
-                                .get("scan", {})
-                                .get("rate_hz", 0),
+                                h.get("ports_out", {}).get("scan", {}).get("rate_hz", 0),
                                 1,
                             ),
                         }
-                    elif "CameraBridge" in name:
+                    elif name_l == CAMERA_ROLE or "camera" in name_l:
                         sensors["camera"] = build_camera_status(gw)
-                    elif "SlamBridge" in name:
-                        odom_out = h.get("ports_out", {}).get("odometry", {})
-                        slam_rate = round(odom_out.get("rate_hz", 0), 1)
-                        sensors["slam"] = {
-                            "status": (
-                                "active"
-                                if slam_rate > 0.0
-                                else "inactive"
-                            ),
-                            "hz": slam_rate,
-                            "messages": odom_out.get("msg_count", 0),
-                        }
+                    elif "slam" in name_l:
+                        slam_status = _module_odometry_status(h)
+                        if slam_status is not None:
+                            sensors["slam"] = slam_status
                     elif "nav.mission" in name:
                         nav = h.get("navigation", h)
                         sensors["navigation"] = {
@@ -948,11 +1033,7 @@ def register_status_routes(app, gw) -> None:
                     "source": (
                         "processed_scan_hz"
                         if processed_scan_hz > 0.0
-                        else (
-                            "localization_status"
-                            if localization_status
-                            else "gateway_odom_window"
-                        )
+                        else ("localization_status" if localization_status else "gateway_odom_window")
                     ),
                 }
             )
@@ -980,6 +1061,7 @@ def register_status_routes(app, gw) -> None:
                 "mode": gw._mode,
                 "sse_clients": n_sse,
                 "traffic": traffic,
+                "cloud": cloud_debug,
                 "commands": commands,
                 "diagnostic_details": details,
             },
@@ -996,12 +1078,94 @@ def register_status_routes(app, gw) -> None:
         }
 
     @app.get(
+        "/api/v1/metrics",
+        summary="Operator-facing runtime metrics snapshot",
+    )
+    async def get_metrics():
+        traffic = traffic_snapshot(gw)
+        commands = gw._command_stats_snapshot()
+        localization_status = getattr(gw, "_localization_status", None)
+        localization_status = localization_status if isinstance(localization_status, Mapping) else {}
+        camera = build_camera_status(gw)
+        map_points = gw._cloud_viewer.cache_point_count()
+
+        processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
+        lidar_input_hz = _positive_float(localization_status.get("lidar_input_hz"))
+        imu_input_hz = _positive_float(localization_status.get("imu_input_hz"))
+        slam_tick_hz = _positive_float(localization_status.get("slam_tick_hz"))
+        odom_hz = _positive_float(gw._get_slam_hz_cached())
+        slam_hz = processed_scan_hz or odom_hz
+        return {
+            "schema_version": 1,
+            "ok": True,
+            "ts": time.time(),
+            "gateway": {
+                "port": gw._port,
+                "mode": gw._mode,
+                "sse_clients": traffic.get("sse", {}).get("clients", 0),
+                "teleop_clients": gw._teleop_client_count(),
+            },
+            "slam": {
+                "hz": round(slam_hz, 3),
+                "processed_scan_hz": round(processed_scan_hz, 3),
+                "lidar_input_hz": round(lidar_input_hz, 3),
+                "imu_input_hz": round(imu_input_hz, 3),
+                "slam_tick_hz": round(slam_tick_hz, 3),
+                "odom_hz": round(odom_hz, 3),
+                "state": str(localization_status.get("state") or "").lower(),
+                "backend": localization_status.get("backend"),
+                "mode": localization_status.get("mode"),
+                "map_tf": localization_status.get("map_tf"),
+            },
+            "map": {
+                "points": map_points,
+                "active": getattr(gw, "_active_map", None),
+            },
+            "camera": {
+                "available": camera.get("available", False),
+                "status": camera.get("status", "unknown"),
+                "reason": camera.get("reason"),
+                "fps": camera.get("fps", 0.0),
+                "frames": camera.get("frames", 0),
+                "backend": camera.get("backend"),
+            },
+            "traffic": traffic,
+            "commands": commands,
+        }
+
+    @app.get(
         "/health",
         summary="Liveness probe",
         response_model=LivenessResponse,
     )
     async def liveness_health():
-        return {"status": "ok", "ts": time.time()}
+        traffic = traffic_snapshot(gw)
+        cloud = gw._cloud_viewer.debug_snapshot()
+        localization_status = getattr(gw, "_localization_status", None)
+        localization_status = localization_status if isinstance(localization_status, Mapping) else {}
+        processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
+        odom_hz = _positive_float(gw._get_slam_hz_cached())
+        slam_hz = processed_scan_hz or odom_hz
+        return {
+            "status": "ok",
+            "ts": time.time(),
+            "details_url": "/api/v1/health?details=true",
+            "gateway": {
+                "mode": gw._mode,
+                "sse_clients": traffic.get("sse", {}).get("clients", 0),
+                "cloud_clients": traffic.get("cloud", {}).get("clients", 0),
+                "cloud": cloud,
+            },
+            "sensors": {
+                "slam": {
+                    "status": str(localization_status.get("state") or "").lower() or "unknown",
+                    "hz": round(slam_hz, 1),
+                    "processed_scan_hz": round(processed_scan_hz, 1),
+                    "odom_hz": round(odom_hz, 1),
+                    "lidar_input_hz": localization_status.get("lidar_input_hz"),
+                }
+            },
+        }
 
     @app.get(
         "/ready",
@@ -1010,9 +1174,12 @@ def register_status_routes(app, gw) -> None:
         responses={503: {"model": ReadinessResponse}},
     )
     async def readiness_ready(
-        details: Annotated[bool, Query(
-            description="Include per-module health details; default probe payload is summary-only.",
-        )] = False
+        details: Annotated[
+            bool,
+            Query(
+                description="Include per-module health details; default probe payload is summary-only.",
+            ),
+        ] = False,
     ):
         payload, status_code = build_readiness_snapshot(gw, include_details=details)
         return JSONResponse(payload, status_code=status_code)
@@ -1023,9 +1190,12 @@ def register_status_routes(app, gw) -> None:
         response_model=ReadinessResponse,
     )
     async def api_readiness(
-        details: Annotated[bool, Query(
-            description="Include per-module health details for operator screens.",
-        )] = False
+        details: Annotated[
+            bool,
+            Query(
+                description="Include per-module health details for operator screens.",
+            ),
+        ] = False,
     ):
         payload, _status_code = build_readiness_snapshot(gw, include_details=details)
         return payload

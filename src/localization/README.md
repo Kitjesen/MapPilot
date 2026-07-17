@@ -25,20 +25,74 @@
 
 ## Main Files
 
-- `slam/module.py`: native Python Module boundary for downstream consumers.
-- `slam/cpp/`: ROS-free C++ `ISlamBackend` contract shared by Fast-LIO2 and
-  Point-LIO backends.
-- `runtime/adapters/native/localization_adapter.py` (`CppSlamStatusAdapterModule`):
-  the default product path for real saved-map navigation. Ingests C++ SLAM
-  status/localization over the native field endpoint (`localization_adapter=
-  "cpp_slam_status"`); no ROS2 dependency.
-- `bridge.py`: thin compatibility facade for the ROS2-backed localization bridge.
-- `adapters/ros2/slam_bridge.py`: ROS2/DDS compatibility bridge implementation,
-  used only when a profile explicitly opts into `localization_adapter=
-  "ros2_slam_bridge"`.
-- `gnss_module.py`, `gnss_serial_driver.py`, `ntrip_client_module.py`: GNSS/RTK input and correction support.
-- `localizer/`: ICP localizer native package.
-- `fastlio2/`, `pointlio/`: native LIO packages kept as algorithm assets.
-- `pgo/`, `hba/`: pose-graph/map optimization native packages.
+| Path | Category | Role |
+| --- | --- | --- |
+| `slam/cpp/` | realtime | ROS-free C++ `ISlamBackend`, DDS runtime, SLAM control, native relocalization hooks. |
+| `slam/module.py` | module boundary | Python Module wrapper for downstream runtime consumers. |
+| `fastlio2/`, `pointlio/` | algorithm assets | LIO algorithm packages used by native SLAM backends or compatibility builds. |
+| `opt/` | map optimization product entry | Short C++ entry surface for save-time map optimization: `map.*`, `pgo.*`, `hba.*`. |
+| `pgo/`, `hba/` | optimization algorithms / legacy wrappers | Existing PGO/HBA algorithm code and ROS2 node wrappers. Product use should go through `opt/`. |
+| `localizer/`, `native_localizer/` | relocalization | Saved-map relocalization and localizer command surfaces. |
+| `gnss_module.py`, `gnss_serial_driver.py`, `ntrip_client_module.py` | GNSS/RTK | GNSS input, corrections, and diagnostics. |
+| `bridge.py`, `adapters/ros2/` | compatibility | Explicit ROS2 bridge path only. Not the product default. |
+| `launch/`, `interface/` | legacy ROS support | ROS launch files and messages/services for compatibility builds. |
 
 The product/runtime names may still use `slam_profile` and `slam.service` for compatibility with deployed robots. New Python imports should use `localization.*`.
+
+## Semantic Occupancy Localization
+
+SOCC-ICP is a research input, not a vendored runtime. LingTu owns semantic
+occupancy and free-space evidence in `src/maps`; localization owns scan-to-map
+registration, pose estimates, and health.
+
+The current ROS-free path is:
+
+```text
+semantic_map.bin
+  -> lingtu_maps semantic C ABI
+  -> SemanticMapClient
+  -> MapIcp
+  -> NativeRelocalizer
+  -> Fast-LIO map->odom commit gate
+```
+
+`NativeRelocalizer` prefers a sibling `semantic_map.bin` for seeded ICP. If the
+artifact exists but is invalid or the ABI is unavailable, loading fails closed;
+it does not silently fall back to PCD. If no semantic artifact exists, the
+saved `map.pcd` remains the explicit geometry source. BBS3D supplies global
+coarse search when built, then the same MapIcp refines the result.
+
+Initial relocalization may establish a large map alignment. Periodic drift
+correction is stricter: it requires inlier/covariance diagnostics and rejects
+fitness failures, map-bound violations, covariance degeneracy, corrections
+larger than 1 m, and yaw jumps larger than 15 degrees. Rejected ICP never
+changes the active map or `map->odom`.
+
+The current MapIcp uses semantic-map voxel geometry as its target. Semantic
+class/confidence weighting and mixed point-to-plane residuals remain a measured
+algorithm upgrade, not a claimed property of this baseline.
+
+The adoption decision and product gates are documented in
+`docs/architecture/SOCC_ICP_ADOPTION.md`.
+
+## Save-Map Optimization Policy
+
+For product behavior, map optimization belongs to the save-map pipeline:
+
+```text
+live SLAM map + poses + patches
+  -> opt/map artifact check
+  -> opt/pgo by default
+  -> opt/hba only for high-quality/offline refinement
+  -> map.pcd + poses.txt + planner artifacts
+```
+
+`maps.services.pipeline.MapPipelineService.save()` calls this optimization
+step before rebuilding occupancy and OctoMap artifacts. The default strategy is
+`pgo`; callers may request `hba` or `none` through the save-map API. The current
+native runners fail closed until the non-ROS PGO/HBA algorithms are connected.
+
+Fast-LIO remains the realtime odometry/mapping front end. PGO can later become
+a low-rate online loop-closure backend, but the first supported product path is
+save-time optimization. HBA is heavier and should not block the realtime SLAM
+loop.

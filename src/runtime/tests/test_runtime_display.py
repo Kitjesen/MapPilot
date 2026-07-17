@@ -26,7 +26,7 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         endpoint=None,
         data_source="thunder_field",
         runtime_contract="thunder_field",
-        command_sink="hardware_driver_after_cmd_vel_mux",
+        command_sink="driver",
         simulation_only=False,
         slam_source="lingtu_fastlio_or_external_robot_slam",
         localization_source="slam_localizer",
@@ -68,10 +68,10 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
             },
             {
                 "name": "command_boundary",
-                "owner": "cmd_vel_mux_to_endpoint_sink",
+                "owner": "command_arbiter_to_driver",
                 "frame_role": "body_twist",
                 "inputs": ("/nav/cmd_vel",),
-                "outputs": ("hardware_driver_after_cmd_vel_mux",),
+                "outputs": ("driver",),
             },
         ),
         runtime_data_flow_stage_algorithm_interfaces={
@@ -91,7 +91,7 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         "endpoint=in_process data_source=thunder_field "
         "runtime_contract=thunder_field "
         "module_transport=local endpoint_transport=local "
-        "command_sink=hardware_driver_after_cmd_vel_mux simulation_only=false"
+        "command_sink=driver simulation_only=false"
     )
     assert format_runtime_sources(runtime) == (
         "slam_source=lingtu_fastlio_or_external_robot_slam "
@@ -104,13 +104,9 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         "axis_convention=x_forward_y_left_z_up"
     )
     assert format_frame_links(runtime) == "map->odom, odom->body"
-    assert format_runtime_topic_frames(runtime) == (
-        "map_cloud=map local_path=map,odom,body cmd_vel=body"
-    )
+    assert format_runtime_topic_frames(runtime) == ("map_cloud=map local_path=map,odom,body cmd_vel=body")
     assert format_runtime_flow(runtime) == (
-        "sensors=/nav/lidar_scan,/nav/imu "
-        "localization_map=/nav/odometry,/nav/map_cloud "
-        "command=hardware_driver_after_cmd_vel_mux"
+        "sensors=/nav/lidar_scan,/nav/imu localization_map=/nav/odometry,/nav/map_cloud command=driver"
     )
     assert format_product_runtime_boundary(runtime) == (
         "mode=field runtime_contract=thunder_field module_transport=local "
@@ -135,8 +131,8 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         "interfaces=global_planning,pct_global_planning,"
         "octoplanner3d_global_planning "
         "/nav/odometry,/nav/goal_pose->/nav/global_path | "
-        "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist] "
-        "/nav/cmd_vel->hardware_driver_after_cmd_vel_mux"
+        "command_boundary[command_arbiter_to_driver|body_twist] "
+        "/nav/cmd_vel->driver"
     )
 
 
@@ -151,6 +147,26 @@ def test_runtime_display_preserves_run_state_dict_shape() -> None:
 
     assert format_runtime_sources(runtime) == (
         "slam_source=slam localization_source=localizer mapping_source=map_cloud"
+    )
+
+
+def test_product_runtime_boundary_exposes_route_contract_mode() -> None:
+    from cli.runtime_display import format_product_runtime_boundary
+
+    runtime = {
+        "runtime_contract": "thunder_field",
+        "module_transport": "local",
+        "endpoint_transport": "dds",
+        "route_contract": "robot",
+        "routed_delivery": False,
+        "simulation_only": False,
+    }
+
+    assert format_product_runtime_boundary(runtime) == (
+        "mode=field runtime_contract=thunder_field module_transport=local "
+        "endpoint_transport=dds primary=Gateway+ModulePorts "
+        "adapter=endpoint_only ros2_topic_inspection_required=false "
+        "route_contract=robot routed_delivery=false"
     )
 
 
@@ -176,12 +192,9 @@ def test_runtime_display_topic_frame_summary_uses_real_required_frame_contract()
         }
     }
 
-    assert TOPIC_FRAME_SUMMARY_TOPICS == runtime_required_topic_frame_ids(
-        REAL_RUNTIME_CONTRACT
-    )
+    assert TOPIC_FRAME_SUMMARY_TOPICS == runtime_required_topic_frame_ids(REAL_RUNTIME_CONTRACT)
     assert format_runtime_topic_frames(runtime) == (
-        "odometry=odom,map registered_cloud=body map_cloud=map "
-        "global_path=map local_path=map,odom,body cmd_vel=body"
+        "odometry=odom,map registered_cloud=body map_cloud=map global_path=map local_path=map,odom,body cmd_vel=body"
     )
 
 
@@ -194,7 +207,7 @@ def test_runtime_contract_manifest_summary_exposes_interfaces_flow_and_frames() 
     assert "Runtime contract: lingtu.runtime_interface.v1" in output
     assert (
         "Frames: map=map odom=odom body=body lidar=lidar_link "
-        "real_lidar=livox_frame camera=camera_link "
+        "real_lidar=livox_frame camera=camera_link gnss=gnss_antenna "
         "axis_convention=x_forward_y_left_z_up"
     ) in output
     assert "Frame links: map->odom, odom->body, body->lidar_link" in output
@@ -208,26 +221,15 @@ def test_runtime_contract_manifest_summary_exposes_interfaces_flow_and_frames() 
     assert "Real data flow:" in output
     assert "  endpoint_adapter" in output
     assert "Data sources:" in output
+    assert ("  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw normalized=/lidar/raw_frame,/imu/raw") in output
+    assert "command=driver" in output
     assert (
-        "  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw "
-        "normalized=/lidar/raw_frame,/imu/raw"
-    ) in output
-    assert "command=hardware_driver_after_cmd_vel_mux" in output
-    assert (
-        "  mujoco_fastlio2_live[mujoco] source=/lidar/raw_frame,/imu/raw "
-        "normalized=/lidar/raw_frame,/imu/raw"
+        "  mujoco_fastlio2_live[mujoco] source=/lidar/raw_frame,/imu/raw normalized=/lidar/raw_frame,/imu/raw"
     ) in output
     assert "Profile bindings:" in output
     assert "  nav->thunder_field mode=real_robot_saved_map_navigation" in output
-    assert (
-        "  sim_mujoco_live->mujoco_fastlio2_live "
-        "mode=mujoco_raw_mid360_fastlio_live"
-    ) in output
+    assert ("  sim_mujoco_live->mujoco_fastlio2_live mode=mujoco_raw_mid360_fastlio_live") in output
     assert "Artifact formats:" in output
-    assert (
-        "  tomogram path=tomogram.pickle type=pct_tomogram frame_role=map "
-        "metadata=source_map_sha256,source_profile,data_source,frame_id,shape"
-    ) in output
     assert "Adapter aliases:" in output
     assert (
         "  fastlio2 /cloud_registered->/slam/registered_cloud(registered_cloud),"
@@ -305,7 +307,7 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
                     },
                     {
                         "name": "command_boundary",
-                        "owner": "cmd_vel_mux_to_endpoint_sink",
+                        "owner": "command_arbiter_to_driver",
                         "frame_role": "body_twist",
                         "inputs": ["/nav/cmd_vel"],
                         "outputs": ["mujoco_velocity_adapter"],
@@ -344,10 +346,7 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
     ) in output
     assert "Product acceptance:" in output
     assert "  python lingtu.py runtime-audit" in output
-    assert (
-        "  python lingtu.py gateway-runtime-acceptance --acceptance-mode simulation"
-        in output
-    )
+    assert "  python lingtu.py gateway-runtime-acceptance --acceptance-mode simulation" in output
     assert "Startup gates:" in output
     assert "  map_artifact,planner_runtime,localization" in output
     assert "Topic frames:" in output
@@ -408,7 +407,7 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
                     },
                     {
                         "name": "command_boundary",
-                        "owner": "cmd_vel_mux_to_endpoint_sink",
+                        "owner": "command_arbiter_to_driver",
                         "frame_role": "body_twist",
                         "inputs": ["/nav/cmd_vel"],
                         "outputs": ["mujoco_velocity_adapter"],
@@ -423,7 +422,7 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
                 "runtime_contract": "thunder_field",
                 "module_transport": "local",
                 "endpoint_transport": "dds",
-                "command_sink": "hardware_driver_after_cmd_vel_mux",
+                "command_sink": "driver",
                 "simulation_only": False,
                 "slam_source": "lingtu_fastlio_or_external_robot_slam",
                 "localization_source": "slam_localizer",
@@ -447,10 +446,10 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
                     },
                     {
                         "name": "command_boundary",
-                        "owner": "cmd_vel_mux_to_endpoint_sink",
+                        "owner": "command_arbiter_to_driver",
                         "frame_role": "body_twist",
                         "inputs": ["/nav/cmd_vel"],
-                        "outputs": ["hardware_driver_after_cmd_vel_mux"],
+                        "outputs": ["driver"],
                     },
                 ],
             },
@@ -469,10 +468,7 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
     )
 
     assert "Runtime switch plan: FAIL" in output
-    assert (
-        "Switch lifecycle: dry-run/preflight; endpoint changes require a fresh launcher"
-        in output
-    )
+    assert "Switch lifecycle: dry-run/preflight; endpoint changes require a fresh launcher" in output
     assert "Current profile: profile=sim_mujoco_live endpoint=mujoco_live robot_preset=sim_endpoint" in output
     assert "Target profile: profile=explore endpoint=thunder_field robot_preset=thunder" in output
     assert "Current runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live" in output
@@ -499,7 +495,7 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
     assert "Current data-flow topics:" in output
     assert "  /points_raw,/nav/cmd_vel" in output
     assert "Target data flow:" in output
-    assert "hardware_driver_after_cmd_vel_mux" in output
+    assert "driver" in output
     assert "Changed fields:" in output
     assert "  command_sink" in output
     assert "  endpoint_transport" in output
@@ -538,8 +534,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                     "blockers": [],
                     "commands": {
                         "runtime_audit": (
-                            "python lingtu.py runtime-audit "
-                            "--json-out artifacts/runtime_contract_audit.json"
+                            "python lingtu.py runtime-audit --json-out artifacts/runtime_contract_audit.json"
                         ),
                         "real_runtime_evidence": (
                             "python lingtu.py real-runtime-evidence --collector gateway "
@@ -565,7 +560,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                         },
                         "saved_map_artifact_gate": {
                             "acceptance_step": 2,
-                            "required_when": "saved_map_tomogram_occupancy_or_pct_artifact_is_used",
+                            "required_when": "saved_map_octomap_or_occupancy_artifact_is_used",
                             "requires_prior_gates": ["runtime_audit"],
                             "conditional_prior_gates": [],
                             "proves": [
@@ -630,7 +625,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
     ) in output
     assert (
         "  step=2 saved_map_artifact_gate "
-        "required_when=saved_map_tomogram_occupancy_or_pct_artifact_is_used "
+        "required_when=saved_map_octomap_or_occupancy_artifact_is_used "
         "prior=runtime_audit conditional_prior=none "
         "proves=saved_map_metadata_exists,map_pcd_checksum_matches_metadata "
         "summary_sections=Expected,Required artifacts,Metadata,Artifacts,Blockers"
@@ -641,8 +636,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
         "prior=runtime_audit"
     ) in output
     assert (
-        "summary_sections=Blockers,Topic frame evidence,"
-        "Frame link evidence,Stage evidence matrix,Data-flow evidence"
+        "summary_sections=Blockers,Topic frame evidence,Frame link evidence,Stage evidence matrix,Data-flow evidence"
     ) in output
     assert "Validation commands:" in output
     assert "  runtime_audit=python lingtu.py runtime-audit" in output
@@ -658,7 +652,7 @@ def test_saved_map_artifact_gate_summary_exposes_frame_source_and_artifacts() ->
             "map_dir": "maps/large_terrain",
             "validation_gate": {
                 "acceptance_step": 2,
-                "required_when": "saved_map_tomogram_occupancy_or_pct_artifact_is_used",
+                "required_when": "saved_map_octomap_or_occupancy_artifact_is_used",
                 "requires_prior_gates": ["runtime_audit"],
                 "conditional_prior_gates": [],
                 "proves": [
@@ -707,7 +701,7 @@ def test_saved_map_artifact_gate_summary_exposes_frame_source_and_artifacts() ->
     assert "Validation gate:" in output
     assert (
         "  step=2 "
-        "required_when=saved_map_tomogram_occupancy_or_pct_artifact_is_used "
+        "required_when=saved_map_octomap_or_occupancy_artifact_is_used "
         "prior=runtime_audit conditional_prior=none "
         "proves=saved_map_metadata_exists,"
         "tomogram_and_occupancy_derive_from_same_map_pcd "
@@ -746,7 +740,7 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
                 "nav_cmd_vel_nonzero": 0,
             },
             "hardware_boundary": {
-                "command_sink": "hardware_driver_after_cmd_vel_mux",
+                "command_sink": "driver",
             },
             "validation_gate": {
                 "acceptance_step": 3,
@@ -814,9 +808,9 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
                         "observed_inputs": ["/nav/cmd_vel"],
                         "observed_outputs": [],
                         "missing_inputs": [],
-                        "missing_outputs": ["hardware_driver_after_cmd_vel_mux"],
+                        "missing_outputs": ["driver"],
                         "missing_signals": ["hardware_command_route"],
-                        "owner": "cmd_vel_mux_to_endpoint_sink",
+                        "owner": "command_arbiter_to_driver",
                         "frame_role": "body_twist",
                         "map_dependency": "command_sink_boundary",
                         "reason": "hardware boundary missing",
@@ -830,17 +824,11 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
     assert "Runtime contract: name=thunder_field ok=false" in output
     assert "Validation gate:" in output
     assert (
-        "  step=3 "
-        "required_when=before_claiming_thunder_field_runtime_or_field_navigation "
-        "prior=runtime_audit"
+        "  step=3 required_when=before_claiming_thunder_field_runtime_or_field_navigation prior=runtime_audit"
     ) in output
+    assert ("proves=observed_thunder_field_runtime_contract,observed_resolved_runtime_data_flow") in output
     assert (
-        "proves=observed_thunder_field_runtime_contract,"
-        "observed_resolved_runtime_data_flow"
-    ) in output
-    assert (
-        "summary_sections=Blockers,Topic frame evidence,"
-        "Frame link evidence,Stage evidence matrix,Data-flow evidence"
+        "summary_sections=Blockers,Topic frame evidence,Frame link evidence,Stage evidence matrix,Data-flow evidence"
     ) in output
     assert "Motion: real_robot_motion=false odom_delta_m=0.0 min_motion_m=0.05" in output
     assert "Command boundary: cmd_vel_sent_to_hardware=false" in output
@@ -849,10 +837,7 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
     assert "  /nav/odometry" in output
     assert "  map_to_odom" in output
     assert "Topic frame evidence:" in output
-    assert (
-        "  /nav/odometry default=odom observed=missing "
-        "allowed=odom,map ok=false"
-    ) in output
+    assert ("  /nav/odometry default=odom observed=missing allowed=odom,map ok=false") in output
     assert "  /nav/cmd_vel default=body observed=body allowed=body ok=true" in output
     assert "Frame link evidence:" in output
     assert (
@@ -861,15 +846,15 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
     ) in output
     assert "Stage evidence matrix:" in output
     assert (
-        "  command_boundary ok=false owner=cmd_vel_mux_to_endpoint_sink "
+        "  command_boundary ok=false owner=command_arbiter_to_driver "
         "frame=body_twist map=command_sink_boundary "
         "interfaces=cmd_vel_mux_command_boundary observed=/nav/cmd_vel "
         "missing=hardware_command_route"
     ) in output
     assert "Data-flow evidence:" in output
     assert (
-        "  command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist] ok=false "
+        "  command_boundary[command_arbiter_to_driver|body_twist] ok=false "
         "observed_inputs=/nav/cmd_vel observed_outputs=none missing_inputs=none "
-        "missing_outputs=hardware_driver_after_cmd_vel_mux "
+        "missing_outputs=driver "
         "missing_signals=hardware_command_route reason=hardware boundary missing"
     ) in output

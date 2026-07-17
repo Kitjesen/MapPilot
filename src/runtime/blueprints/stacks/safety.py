@@ -8,6 +8,7 @@ from runtime.blueprints.stacks._registry import optional_stack_module, stack_mod
 
 def safety(
     *,
+    enable_cmd_vel_mux: bool = True,
     cmd_vel_mux_source_timeout: float | None = None,
     enable_collision_monitor: bool = False,
     collision_monitor_timeout_s: float | None = None,
@@ -28,27 +29,28 @@ def safety(
     )
     bp.add(SafetyRing, alias="nav.safety")
 
-    VelocityMux = stack_module(
-        "safety",
-        "cmd_vel_mux",
-        seed_group="safety",
-        fallback="nav.services.safety.velocity_mux.VelocityMux",
-    )
-    mux_kwargs = {}
-    if cmd_vel_mux_source_timeout is not None:
-        mux_kwargs["source_timeout"] = float(cmd_vel_mux_source_timeout)
-    mux_kwargs["enable_collision_monitor"] = bool(enable_collision_monitor)
-    for key, value in {
-        "collision_monitor_timeout_s": collision_monitor_timeout_s,
-        "collision_monitor_horizon_s": collision_monitor_horizon_s,
-        "collision_monitor_step_s": collision_monitor_step_s,
-        "collision_monitor_stop_cost": collision_monitor_stop_cost,
-        "collision_monitor_slow_cost": collision_monitor_slow_cost,
-        "collision_monitor_slowdown_scale": collision_monitor_slowdown_scale,
-    }.items():
-        if value is not None:
-            mux_kwargs[key] = float(value)
-    bp.add(VelocityMux, alias="nav.velocity_mux", **mux_kwargs)
+    if enable_cmd_vel_mux:
+        VelocityMux = stack_module(
+            "safety",
+            "cmd_vel_mux",
+            seed_group="safety",
+            fallback="nav.services.safety.velocity_mux.VelocityMux",
+        )
+        mux_kwargs = {}
+        if cmd_vel_mux_source_timeout is not None:
+            mux_kwargs["source_timeout"] = float(cmd_vel_mux_source_timeout)
+        mux_kwargs["enable_collision_monitor"] = bool(enable_collision_monitor)
+        for key, value in {
+            "collision_monitor_timeout_s": collision_monitor_timeout_s,
+            "collision_monitor_horizon_s": collision_monitor_horizon_s,
+            "collision_monitor_step_s": collision_monitor_step_s,
+            "collision_monitor_stop_cost": collision_monitor_stop_cost,
+            "collision_monitor_slow_cost": collision_monitor_slow_cost,
+            "collision_monitor_slowdown_scale": collision_monitor_slowdown_scale,
+        }.items():
+            if value is not None:
+                mux_kwargs[key] = float(value)
+        bp.add(VelocityMux, alias="nav.velocity_mux", **mux_kwargs)
 
     GeofenceManagerModule = optional_stack_module(
         "safety",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from runtime.contracts import CAMERA_COMPAT_ALIAS, CAMERA_ROLE
 from runtime.runtime_interface import TOPICS
 
 MAP_CLOUD_CONSUMERS = (
@@ -16,15 +17,21 @@ MAP_CLOUD_CONSUMERS = (
 )
 
 MAP_CLOUD_FRAME_CONSUMERS = (
+    "nav.terrain",
+    "maps.service",
+)
+
+MAP_OBSERVATION_CONSUMERS = (
     "OccupancyGridModule",
     "ElevationMapModule",
-    "nav.terrain",
     "VoxelGridModule",
-    "nav.maps",
+    "SemanticMapModule",
+    "ReconstructionModule",
 )
 
 SEMANTIC_CAMERA_CONSUMERS = (
     "PerceptionModule",
+    "InspectionEvidenceModule",
     "ReconstructionModule",
     "VisualServoModule",
 )
@@ -46,7 +53,9 @@ ODOMETRY_CONSUMERS = (
     "TemporalMemoryModule",
     "MissionLoggerModule",
     "SemanticPlannerModule",
+    "AgentPlannerModule",
     "VisualServoModule",
+    "InspectionEvidenceModule",
     "ReconstructionModule",
     "nav.safety",
     "GeofenceManagerModule",
@@ -58,23 +67,16 @@ RECON_RECORDERS = (
     "ReconKeyframeExporterModule",
 )
 
-NAV_IN = "nav.in"
-NAV_OUT = "nav.out"
 MAP_OUT = "map.out"
 
-TOPIC_NAV_GLOBAL_PATH = TOPICS.global_path
-TOPIC_NAV_LOCAL_PATH = TOPICS.local_path
-TOPIC_NAV_WAYPOINT = TOPICS.nav_way_point
-TOPIC_NAV_CMD_VEL = TOPICS.cmd_vel
-TOPIC_NAV_GOAL_POSE = TOPICS.goal_pose
-TOPIC_NAV_CANCEL = TOPICS.cancel
-TOPIC_NAV_INSTRUCTION = TOPICS.semantic_instruction
 TOPIC_NAV_TERRAIN_MAP = TOPICS.terrain_map
 TOPIC_NAV_TERRAIN_MAP_EXT = TOPICS.terrain_map_ext
 TOPIC_NAV_TRAVERSABILITY = TOPICS.traversability
 TOPIC_NAV_LOCAL_PLANNER_CLEAR_PATH = TOPICS.local_planner_clear_path
 TOPIC_NAV_LOCAL_PLANNER_CONTROL_HINT = TOPICS.local_planner_control_hint
 TOPIC_MAP_EXPLORATION_GRID = TOPICS.exploration_grid
+TOPIC_MAPS_SCENE = TOPICS.maps_scene
+TOPIC_MAPS_VOXEL_CLOUD = TOPICS.maps_voxel_cloud
 TOPIC_SLAM_ODOMETRY = TOPICS.odometry
 TOPIC_SLAM_MAP_CLOUD = TOPICS.map_cloud
 TOPIC_SLAM_LOCALIZATION_HEALTH = TOPICS.localization_health
@@ -93,11 +95,20 @@ class WiringContext:
     camera_src: str
     color_out: str
     nav_odom_src: str
+    legacy_driver_sensor_fallback: bool = False
 
 
 def camera_source(names: set[str] | frozenset[str], *, driver_module: str) -> tuple[str, str]:
-    camera_src = "CameraBridgeModule" if "CameraBridgeModule" in names else driver_module
-    color_out = "color_image" if camera_src == "CameraBridgeModule" else "camera_image"
+    if CAMERA_ROLE in names:
+        camera_src = CAMERA_ROLE
+    # Backward-compat fallback: prefer the short "camera" role (CAMERA_ROLE)
+    # above; only fall back to the legacy CameraBridgeModule name
+    # (CAMERA_COMPAT_ALIAS) when an old blueprint still uses it.
+    elif CAMERA_COMPAT_ALIAS in names:
+        camera_src = CAMERA_COMPAT_ALIAS
+    else:
+        camera_src = driver_module
+    color_out = "color_image" if camera_src in {CAMERA_ROLE, CAMERA_COMPAT_ALIAS} else "camera_image"
     return camera_src, color_out
 
 
@@ -109,6 +120,7 @@ def build_wiring_context(
     slam_profile: str,
     scene_xml: str = "",
     enable_semantic: bool = True,
+    legacy_driver_sensor_fallback: bool = False,
 ) -> WiringContext:
     names = frozenset(module_names)
     slam_module = _selected_slam_module(names, slam_profile=slam_profile)
@@ -125,6 +137,7 @@ def build_wiring_context(
         camera_src=camera_src,
         color_out=color_out,
         nav_odom_src=nav_odom_src,
+        legacy_driver_sensor_fallback=legacy_driver_sensor_fallback,
     )
 
 
@@ -135,6 +148,4 @@ def _selected_slam_module(names: frozenset[str], *, slam_profile: str) -> str:
         return "SlamModule"
     if "SlamAdapterModule" in names:
         return "SlamAdapterModule"
-    if "SlamBridgeModule" in names:
-        return "SlamBridgeModule"
     return ""

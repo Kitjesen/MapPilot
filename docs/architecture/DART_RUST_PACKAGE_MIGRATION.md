@@ -36,7 +36,7 @@ profile, and fixture behavior.
 
 ## Package Order
 
-The machine-readable source of truth is `src/runtime/migration_catalog.py`.
+The machine-readable source of truth is `tools/migration/catalog.py`.
 
 | Phase | Packages | Action |
 | ---: | --- | --- |

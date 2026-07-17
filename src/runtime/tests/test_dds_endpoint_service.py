@@ -67,8 +67,12 @@ class DDS_TwistWithCovariance:
 
 
 @dataclass
-class DDS_TwistStamped:
-    header: DDS_Header
+class DDS_FinalVelocityCommand:
+    host_boot_id: str
+    producer_boot_id: str
+    output_seq: int
+    source_boottime_ns: int
+    source_wall_ns: int
     twist: DDS_Twist
 
 
@@ -119,7 +123,7 @@ def _install_fake_dds_types(monkeypatch) -> None:
         DDS_Vector3,
         DDS_Twist,
         DDS_TwistWithCovariance,
-        DDS_TwistStamped,
+        DDS_FinalVelocityCommand,
         DDS_Odometry,
     ):
         monkeypatch.setattr(dds_mod, cls.__name__, cls, raising=False)
@@ -150,8 +154,12 @@ def test_dds_endpoint_service_consumes_cmd_vel() -> None:
 
     transport.emit(
         TOPICS.cmd_vel,
-        DDS_TwistStamped(
-            header=DDS_Header(DDS_Time(1, 0), "body"),
+        DDS_FinalVelocityCommand(
+            host_boot_id="test-host-boot",
+            producer_boot_id="test-endpoint-process",
+            output_seq=1,
+            source_boottime_ns=1_000_000_000,
+            source_wall_ns=2_000_000_000,
             twist=DDS_Twist(
                 linear=DDS_Vector3(0.4, 0.0, 0.0),
                 angular=DDS_Vector3(0.0, 0.0, 0.2),

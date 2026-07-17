@@ -17,11 +17,7 @@
 #include <unordered_set>
 #include <vector>
 
-// OctoPlanner3D does not expose runtime setters for these parameters upstream.
-// Keep the access shim local so product code does not patch imported source.
-#define private public
 #include "global_planner.h"
-#undef private
 
 #if defined(OCTOPLANNER3D_ENABLE_PCD)
 #include "pcd2octomap_converter.h"
@@ -115,52 +111,115 @@ double distanceToGoal(const Point & point, const Point & goal)
   return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-void applyPlannerOptions(
-  global_planner::GlobalPlanner & planner,
-  const PlannerOptions & options)
+double xyDistanceToGoal(const Point & point, const Point & goal)
 {
+  const double dx = point.x - goal.x;
+  const double dy = point.y - goal.y;
+  return std::sqrt(dx * dx + dy * dy);
+}
+
+double zDistanceToGoal(const Point & point, const Point & goal)
+{
+  return std::abs(point.z - goal.z);
+}
+
+global_planner::PlannerConfig plannerConfig(const PlannerOptions & options)
+{
+  global_planner::PlannerConfig config;
   if (std::isfinite(options.robot_radius) && options.robot_radius > 0.0) {
-    planner.robot_radius_ = options.robot_radius;
+    config.robot_radius = options.robot_radius;
   }
+  config.body_clearance_below_m =
+    std::isfinite(options.body_clearance_below_m) && options.body_clearance_below_m > 0.0
+    ? options.body_clearance_below_m
+    : 0.0;
+  config.body_clearance_above_m =
+    std::isfinite(options.body_clearance_above_m) && options.body_clearance_above_m > 0.0
+    ? options.body_clearance_above_m
+    : 0.0;
   if (options.max_iterations > 0) {
-    planner.max_iterations_ = options.max_iterations;
+    config.max_iterations = options.max_iterations;
   }
-  planner.snap_search_radius_cells_ =
+  config.snap_search_radius_cells =
     std::max(0, options.snap_search_radius_cells);
-  planner.require_ground_support_ = options.require_ground_support;
-  planner.strict_direct_ground_support_ = options.strict_direct_ground_support;
-  planner.ground_support_xy_radius_cells_ =
+  config.require_ground_support = options.require_ground_support;
+  config.strict_direct_ground_support = options.strict_direct_ground_support;
+  config.ground_support_xy_radius_cells =
     std::max(0, options.ground_support_xy_radius_cells);
-  planner.ground_support_depth_cells_ =
+  config.ground_support_depth_cells =
     std::max(1, options.ground_support_depth_cells);
-  planner.enable_preblocked_costmap_ = options.enable_preblocked_costmap;
-  planner.preblocked_costmap_radius_cells_ =
+  config.support_height_m =
+    std::isfinite(options.support_height_m) && options.support_height_m > 0.0
+    ? options.support_height_m
+    : 0.0;
+  config.support_height_tolerance_m =
+    std::isfinite(options.support_height_tolerance_m) && options.support_height_tolerance_m >= 0.0
+    ? options.support_height_tolerance_m
+    : 0.0;
+  config.support_patch_radius_cells =
+    std::max(0, options.support_patch_radius_cells);
+  config.support_patch_min_samples =
+    std::clamp(options.support_patch_min_samples, 0, 5);
+  config.enable_preblocked_costmap = options.enable_preblocked_costmap;
+  config.preblocked_costmap_radius_cells =
     std::max(0, options.preblocked_costmap_radius_cells);
   if (std::isfinite(options.preblocked_costmap_weight) &&
       options.preblocked_costmap_weight >= 0.0) {
-    planner.preblocked_costmap_weight_ = options.preblocked_costmap_weight;
+    config.preblocked_costmap_weight = options.preblocked_costmap_weight;
   }
-  planner.lowest_traversable_only_ = options.lowest_traversable_only;
+  config.lowest_traversable_only = options.lowest_traversable_only;
   if (std::isfinite(options.floor_change_penalty) && options.floor_change_penalty >= 0.0) {
-    planner.floor_change_penalty_ = options.floor_change_penalty;
+    config.floor_change_penalty = options.floor_change_penalty;
   }
   if (std::isfinite(options.max_step_height) && options.max_step_height >= 0.0) {
-    planner.max_step_height_ = options.max_step_height;
+    config.max_step_height = options.max_step_height;
   }
   if (std::isfinite(options.max_slope) && options.max_slope >= 0.0) {
-    planner.max_slope_ = options.max_slope;
+    config.max_slope = options.max_slope;
   }
-  planner.same_floor_preference_ = options.same_floor_preference;
+  config.same_floor_preference = options.same_floor_preference;
   if (std::isfinite(options.same_floor_z_tolerance) &&
       options.same_floor_z_tolerance >= 0.0) {
-    planner.same_floor_z_tolerance_ = options.same_floor_z_tolerance;
+    config.same_floor_z_tolerance = options.same_floor_z_tolerance;
   }
-  planner.obstacle_clearance_radius_cells_ =
+  config.obstacle_clearance_radius_cells =
     std::max(0, options.obstacle_clearance_radius_cells);
   if (std::isfinite(options.obstacle_clearance_weight) &&
       options.obstacle_clearance_weight >= 0.0) {
-    planner.obstacle_clearance_weight_ = options.obstacle_clearance_weight;
+    config.obstacle_clearance_weight = options.obstacle_clearance_weight;
   }
+  return config;
+}
+
+double positiveOrDefault(double value, double fallback)
+{
+  if (std::isfinite(value) && value > 0.0) {
+    return value;
+  }
+  return fallback;
+}
+
+bool hasAcceptableSameFloorExcursion(
+  const PlanRequest & request,
+  const std::vector<Point> & path)
+{
+  const auto & options = request.options;
+  if (!options.same_floor_preference || path.empty()) {
+    return true;
+  }
+
+  const double start_goal_dz = std::abs(request.goal.z - request.start.z);
+  const double tolerance = std::max(0.0, options.same_floor_z_tolerance);
+  const double max_excursion = options.max_same_floor_z_excursion;
+  if (start_goal_dz > tolerance || !std::isfinite(max_excursion) || max_excursion <= 0.0) {
+    return true;
+  }
+
+  const auto [minimum, maximum] = std::minmax_element(
+    path.begin(),
+    path.end(),
+    [](const Point & lhs, const Point & rhs) { return lhs.z < rhs.z; });
+  return maximum->z - minimum->z <= max_excursion;
 }
 
 }  // namespace
@@ -174,35 +233,72 @@ bool pcdConversionEnabled()
 #endif
 }
 
-PlanResult runPlan(const PlanRequest & request)
+PlanResult runPlan(
+  const PlanRequest & request,
+  const CancelCheck & cancel_check)
 {
   if (request.map_path.empty()) {
     throw std::runtime_error("map_path must not be empty");
   }
 
   const auto started = std::chrono::steady_clock::now();
+  if (cancel_check && cancel_check()) {
+    PlanResult result;
+    result.options = request.options;
+    result.cancelled = true;
+    result.failure_reason = "cancelled";
+    result.elapsed_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+    return result;
+  }
   const auto start = toPlannerPoint(request.start);
   const auto goal = toPlannerPoint(request.goal);
 
   std::vector<global_planner::PointPose> native_path;
   auto map = loadOctomap(request.map_path);
-  global_planner::GlobalPlanner planner;
-  applyPlannerOptions(planner, request.options);
+  global_planner::OctoPlanner3D planner;
+  planner.setConfig(plannerConfig(request.options));
+  planner.setCancelCheck(cancel_check);
   planner.setOctomap(map);
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
 
   PlanResult result;
   result.options = request.options;
+  result.cancelled = cancel_check && cancel_check();
+  if (result.cancelled) {
+    result.failure_reason = "cancelled";
+    result.elapsed_ms = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - started).count();
+    return result;
+  }
   result.path.reserve(native_path.size());
   for (const auto & point : native_path) {
     result.path.push_back(fromPlannerPoint(point));
   }
+  if (!hasAcceptableSameFloorExcursion(request, result.path)) {
+    result.failure_reason = "same_floor_z_excursion";
+    result.path.clear();
+  }
   result.ok = !result.path.empty();
+  if (!result.ok && result.failure_reason.empty()) {
+    result.failure_reason = "empty_path";
+  }
   result.pcd_conversion = pcdConversionEnabled();
   if (!result.path.empty()) {
     result.goal_error_m = distanceToGoal(result.path.back(), request.goal);
-    result.reached_goal = result.goal_error_m <= 0.5;
+    result.goal_xy_error_m = xyDistanceToGoal(result.path.back(), request.goal);
+    result.goal_z_error_m = zDistanceToGoal(result.path.back(), request.goal);
+    const double terminal_tolerance =
+      positiveOrDefault(request.options.terminal_goal_tolerance_m, 0.5);
+    const double terminal_xy_tolerance =
+      positiveOrDefault(request.options.terminal_goal_xy_tolerance_m, terminal_tolerance);
+    const double terminal_z_tolerance =
+      positiveOrDefault(request.options.terminal_goal_z_tolerance_m, 0.75);
+    result.reached_goal =
+      (result.goal_error_m <= terminal_tolerance) ||
+      (result.goal_xy_error_m <= terminal_xy_tolerance &&
+       result.goal_z_error_m <= terminal_z_tolerance);
   }
 
   const auto finished = std::chrono::steady_clock::now();

@@ -3,6 +3,7 @@
 W3-3: TSDFColorVolume interface + error paths (Open3D mocked).
 W3-2: Semantic scoring weights config-loaded + audit log emitted.
 """
+
 from __future__ import annotations
 
 import logging
@@ -68,6 +69,7 @@ def _make_o3d_mock() -> types.ModuleType:
 # W3-3 tests
 # ---------------------------------------------------------------------------
 
+
 class TestTSDFColorVolumeInterface:
     """TSDFColorVolume wrapper interface tests using mocked Open3D."""
 
@@ -84,6 +86,7 @@ class TestTSDFColorVolumeInterface:
         if "perception.reconstruction.reconstruction_module" in sys.modules:
             del sys.modules["perception.reconstruction.reconstruction_module"]
         from perception.reconstruction.reconstruction_module import TSDFColorVolume
+
         self.TSDFColorVolume = TSDFColorVolume
 
     def teardown_method(self) -> None:
@@ -112,6 +115,7 @@ class TestTSDFColorVolumeInterface:
             if "perception.reconstruction.reconstruction_module" in sys.modules:
                 del sys.modules["perception.reconstruction.reconstruction_module"]
             from perception.reconstruction.reconstruction_module import TSDFColorVolume
+
             with patch("builtins.__import__", side_effect=block_open3d_import):
                 with pytest.raises(RuntimeError, match="open3d"):
                     TSDFColorVolume()
@@ -146,6 +150,7 @@ class TestTSDFColorVolumeInterface:
 # W3-2 tests
 # ---------------------------------------------------------------------------
 
+
 class TestSemanticScoringWeightsConfig:
     """Verify each module loads weights from semantic_scoring.yaml and falls back correctly."""
 
@@ -153,26 +158,26 @@ class TestSemanticScoringWeightsConfig:
         """Reset loaded flags so tests are independent."""
 
         # fast_path
-        if "decision.goal_resolution.fast_path" in sys.modules:
-            mod = sys.modules["decision.goal_resolution.fast_path"]
+        if "decision.goals.fast" in sys.modules:
+            mod = sys.modules["decision.goals.fast"]
             mod._fast_path_weights_loaded = False
 
         # sgnav_reasoner
-        if "decision.goal_resolution.sgnav_reasoner" in sys.modules:
-            mod = sys.modules["decision.goal_resolution.sgnav_reasoner"]
+        if "decision.goals.sgnav" in sys.modules:
+            mod = sys.modules["decision.goals.sgnav"]
             mod._sgnav_weights_loaded = False
             mod._SGNAV_WEIGHTS = dict(mod._DEFAULTS_SGNAV)
 
         # frontier_scorer
-        if "decision.exploration.frontier_scorer" in sys.modules:
-            mod = sys.modules["decision.exploration.frontier_scorer"]
+        if "decision.frontiers.scorer" in sys.modules:
+            mod = sys.modules["decision.frontiers.scorer"]
             mod._frontier_weights_loaded = False
             mod._frontier_config_weight = mod._DEFAULT_SEMANTIC_PRIOR_WEIGHT
 
     def test_fast_path_loads_weights_from_yaml(self) -> None:
         """fast_path module reads label/clip/detector/spatial from the YAML file."""
         self._reset_module_globals()
-        import decision.goal_resolution.fast_path as fp
+        import decision.goals.fast as fp
 
         fp._fast_path_weights_loaded = False
         fake_yaml = {
@@ -193,7 +198,7 @@ class TestSemanticScoringWeightsConfig:
 
     def test_fast_path_uses_defaults_when_section_absent(self, caplog) -> None:
         """fast_path logs INFO and retains defaults when section is missing."""
-        import decision.goal_resolution.fast_path as fp
+        import decision.goals.fast as fp
 
         # Fully reset module globals to defaults before testing the absent-section path
         fp._fast_path_weights_loaded = False
@@ -212,7 +217,7 @@ class TestSemanticScoringWeightsConfig:
     def test_sgnav_loads_weights_from_yaml(self) -> None:
         """sgnav_reasoner reads keyword/relation/distance/richness from YAML."""
         self._reset_module_globals()
-        import decision.goal_resolution.sgnav_reasoner as sr
+        import decision.goals.sgnav as sr
 
         sr._sgnav_weights_loaded = False
         sr._SGNAV_WEIGHTS = dict(sr._DEFAULTS_SGNAV)
@@ -233,7 +238,7 @@ class TestSemanticScoringWeightsConfig:
     def test_frontier_scorer_loads_weight_from_yaml(self) -> None:
         """FrontierScorer picks up semantic_prior_weight from YAML."""
         self._reset_module_globals()
-        import decision.exploration.frontier_scorer as fs
+        import decision.frontiers.scorer as fs
 
         fs._frontier_weights_loaded = False
         fs._frontier_config_weight = fs._DEFAULT_SEMANTIC_PRIOR_WEIGHT
@@ -246,7 +251,7 @@ class TestSemanticScoringWeightsConfig:
     def test_sgnav_audit_log_emitted_at_debug(self, caplog) -> None:
         """_score_subgraphs_heuristic emits a DEBUG audit entry per candidate."""
         self._reset_module_globals()
-        from decision.goal_resolution.sgnav_reasoner import (
+        from decision.goals.sgnav import (
             SGNavReasoner,
             SubgraphCandidate,
         )

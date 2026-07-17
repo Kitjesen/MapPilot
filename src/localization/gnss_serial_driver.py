@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Minimal GNSS serial driver â€?reads NMEA from WTRTK-980 and publishes
-GnssFix messages into the LingTu module pipeline.
+"""Compatibility GNSS serial helper.
 
-No ROS2 dependency. No rclpy. No colcon build.
-Just pyserial + NMEA parsing â†?GnssModule.inject_fix().
+This file is not the product GNSS data path. It remains only for diagnostics
+and legacy compatibility tests that inject fixes into ``GnssModule``.
+
+Product note:
+    The field GNSS owner is the C++ native DDS service in
+    ``src/drivers/real/gnss``. It reads WTRTK-980 serial data and publishes
+    ``rt/gnss/fix``, ``rt/gnss/status``, and optional ``rt/gnss/odom``.
 
 Usage as standalone (diagnostics):
     python3 src/localization/gnss_serial_driver.py --port /dev/ttyUSB0 --baud 115200
-
-Usage from GnssModule (integrated):
-    from localization.gnss_serial_driver import GnssSerialDriver
-    driver = GnssSerialDriver("/dev/ttyUSB0", 115200, callback=gnss_module.inject_fix)
-    driver.start()
 """
 
 from __future__ import annotations
@@ -28,10 +27,10 @@ logger = logging.getLogger(__name__)
 
 def _nmea_checksum(sentence: str) -> bool:
     """Verify NMEA 0183 XOR checksum. Returns True if valid or no checksum."""
-    if '*' not in sentence:
+    if "*" not in sentence:
         return True
-    body, cksum_hex = sentence.rsplit('*', 1)
-    body = body.lstrip('$')
+    body, cksum_hex = sentence.rsplit("*", 1)
+    body = body.lstrip("$")
     computed = 0
     for ch in body:
         computed ^= ord(ch)
@@ -46,15 +45,15 @@ def _nmea_checksum(sentence: str) -> bool:
 
 # GGA fix quality â†?GnssFixType int mapping
 _GGA_QUALITY = {
-    '0': 0,   # NO_FIX
-    '1': 1,   # SINGLE (GPS)
-    '2': 2,   # DGPS
-    '3': 3,   # PPS
-    '4': 4,   # RTK_FIXED
-    '5': 5,   # RTK_FLOAT
-    '6': 6,   # ESTIMATED (dead reckoning)
-    '7': 7,   # MANUAL
-    '8': 8,   # SIMULATION
+    "0": 0,  # NO_FIX
+    "1": 1,  # SINGLE (GPS)
+    "2": 2,  # DGPS
+    "3": 3,  # PPS
+    "4": 4,  # RTK_FIXED
+    "5": 5,  # RTK_FLOAT
+    "6": 6,  # ESTIMATED (dead reckoning)
+    "7": 7,  # MANUAL
+    "8": 8,  # SIMULATION
 }
 
 
@@ -65,12 +64,12 @@ def _parse_latlon(raw: str, hemi: str) -> float | None:
     try:
         # GGA latitude: ddmm.mmmmm (2-digit degree)
         # GGA longitude: dddmm.mmmmm (3-digit degree)
-        dot = raw.index('.')
+        dot = raw.index(".")
         deg_len = dot - 2  # 2 for lat, 3 for lon
         degrees = int(raw[:deg_len])
         minutes = float(raw[deg_len:])
         dec = degrees + minutes / 60.0
-        if hemi in ('S', 'W'):
+        if hemi in ("S", "W"):
             dec = -dec
         return dec
     except (ValueError, IndexError):
@@ -95,9 +94,12 @@ def parse_gga(fields: list[str]) -> dict[str, Any] | None:
     if lat is None or lon is None:
         # Still return with NO_FIX so GnssModule sees link is alive
         return {
-            'fix_type': 0,
-            'lat': 0.0, 'lon': 0.0, 'alt': 0.0,
-            'num_sat_used': 0, 'hdop': 99.9,
+            "fix_type": 0,
+            "lat": 0.0,
+            "lon": 0.0,
+            "alt": 0.0,
+            "num_sat_used": 0,
+            "hdop": 99.9,
         }
 
     try:
@@ -124,13 +126,13 @@ def parse_gga(fields: list[str]) -> dict[str, Any] | None:
         rtcm_age = None
 
     return {
-        'fix_type': fix_type,
-        'lat': lat,
-        'lon': lon,
-        'alt': alt,
-        'num_sat_used': num_sat,
-        'hdop': hdop,
-        'rtcm_age_s': rtcm_age,
+        "fix_type": fix_type,
+        "lat": lat,
+        "lon": lon,
+        "alt": alt,
+        "num_sat_used": num_sat,
+        "hdop": hdop,
+        "rtcm_age_s": rtcm_age,
     }
 
 
@@ -138,12 +140,7 @@ def parse_gga(fields: list[str]) -> dict[str, Any] | None:
 
 
 class GnssSerialDriver:
-    """Read NMEA from a serial port and invoke a callback with GnssFix.
-
-    Designed to be lightweight â€?no ROS2, no DDS, just pyserial.
-    GnssModule can use this internally when DDS is not available
-    (no ironoa driver installed).
-    """
+    """Read NMEA from a serial port for diagnostics/legacy tests only."""
 
     def __init__(
         self,
@@ -167,6 +164,7 @@ class GnssSerialDriver:
         """Open serial port and start read thread. Returns True on success."""
         try:
             import serial
+
             self._serial = serial.Serial(
                 self._port,
                 self._baud,
@@ -174,12 +172,15 @@ class GnssSerialDriver:
             )
             self._running = True
             self._thread = threading.Thread(
-                target=self._read_loop, daemon=True, name="gnss-serial",
+                target=self._read_loop,
+                daemon=True,
+                name="gnss-serial",
             )
             self._thread.start()
             logger.info(
                 "GnssSerialDriver: started on %s @ %d baud",
-                self._port, self._baud,
+                self._port,
+                self._baud,
             )
             return True
         except ImportError:
@@ -221,7 +222,7 @@ class GnssSerialDriver:
         """Continuously read NMEA lines and dispatch GGA fixes."""
         from runtime.msgs.gnss import GnssFix, GnssFixType
 
-        buf = b''
+        buf = b""
         while self._running and self._serial:
             try:
                 chunk = self._serial.read(self._serial.in_waiting or 1)
@@ -230,41 +231,41 @@ class GnssSerialDriver:
                 buf += chunk
 
                 # Process complete lines
-                while b'\n' in buf:
-                    line_raw, buf = buf.split(b'\n', 1)
-                    line = line_raw.decode('ascii', errors='ignore').strip()
+                while b"\n" in buf:
+                    line_raw, buf = buf.split(b"\n", 1)
+                    line = line_raw.decode("ascii", errors="ignore").strip()
 
-                    if not line.startswith('$'):
+                    if not line.startswith("$"):
                         continue
 
                     # Only parse GGA (position fix)
-                    if 'GGA' not in line:
+                    if "GGA" not in line:
                         continue
 
                     if not _nmea_checksum(line):
                         continue
 
-                    fields = line.split(',')
+                    fields = line.split(",")
                     parsed = parse_gga(fields)
                     if parsed is None:
                         continue
 
                     self._seq += 1
-                    hdop = parsed['hdop']
-                    self.last_rtcm_age = parsed.get('rtcm_age_s')
+                    hdop = parsed["hdop"]
+                    self.last_rtcm_age = parsed.get("rtcm_age_s")
                     # Estimate covariance from HDOP (rough: cov â‰?(hdop * base_sigma)Â²)
-                    base_sigma = 0.01 if parsed['fix_type'] == 4 else 0.1 if parsed['fix_type'] == 5 else 3.0
+                    base_sigma = 0.01 if parsed["fix_type"] == 4 else 0.1 if parsed["fix_type"] == 5 else 3.0
                     h_var = (hdop * base_sigma) ** 2
                     v_var = h_var * 2.25  # vertical typically 1.5x worse
 
                     fix = GnssFix(
-                        lat=parsed['lat'],
-                        lon=parsed['lon'],
-                        alt=parsed['alt'],
-                        fix_type=GnssFixType(parsed['fix_type']),
+                        lat=parsed["lat"],
+                        lon=parsed["lon"],
+                        alt=parsed["alt"],
+                        fix_type=GnssFixType(parsed["fix_type"]),
                         covariance=(h_var, 0, 0, 0, h_var, 0, 0, 0, v_var),
-                        num_sat=parsed['num_sat_used'],
-                        num_sat_used=parsed['num_sat_used'],
+                        num_sat=parsed["num_sat_used"],
+                        num_sat_used=parsed["num_sat_used"],
                         seq=self._seq,
                         ts=time.time(),
                         frame_id="gnss_antenna",
@@ -288,7 +289,7 @@ if __name__ == "__main__":
     import argparse
     import sys
 
-    sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 
     parser = argparse.ArgumentParser(description="WTRTK-980 GNSS diagnostic reader")
     parser.add_argument("--port", default="/dev/ttyUSB0")

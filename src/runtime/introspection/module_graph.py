@@ -91,6 +91,9 @@ class ModuleGraph:
     auto_wire: bool = False
     global_config: Mapping[str, Any] = field(default_factory=dict)
     swap_config: Mapping[str, Any] | None = None
+    route: str | None = None
+    route_contract: str | None = None
+    routed_delivery: bool = False
 
     @property
     def module_names(self) -> tuple[str, ...]:
@@ -125,10 +128,13 @@ class ModuleGraph:
             "auto_wire": self.auto_wire,
             "global_config": _json_ready(self.global_config),
             "swap_config": _json_ready(self.swap_config) if self.swap_config is not None else None,
+            "route": self.route,
+            "route_contract": self.route_contract or self.route,
+            "routed_delivery": self.routed_delivery,
         }
 
     @classmethod
-    def from_blueprint(cls, blueprint: Any, *, profile: str | None = None) -> "ModuleGraph":
+    def from_blueprint(cls, blueprint: Any, *, profile: str | None = None) -> ModuleGraph:
         """Export a ModuleGraph from a Blueprint-like object."""
 
         modules = tuple(
@@ -164,6 +170,9 @@ class ModuleGraph:
             auto_wire=bool(getattr(blueprint, "_auto_wired", False)),
             global_config=dict(getattr(blueprint, "_global_cfg", {})),
             swap_config=_optional_dict(getattr(blueprint, "_swap_config", None)),
+            route=getattr(blueprint, "_route_name", None),
+            route_contract=getattr(blueprint, "_route_name", None),
+            routed_delivery=bool(getattr(blueprint, "_routed_delivery_enabled", False)),
         )
 
 

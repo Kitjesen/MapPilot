@@ -9,9 +9,9 @@ NaviMind Agent 鍐掔儫娴嬭瘯 鈥?涓嶉渶瑕?Habitat 鐜/鏁版嵁�
 5. 娑堣瀺寮€鍏虫甯?
 """
 
-import sys
 import json
 import math
+import sys
 from pathlib import Path
 
 # 鍔犲叆 src 璺緞
@@ -28,12 +28,14 @@ print("=" * 60)
 
 # Test 1: Import
 print("\n[1/5] 渚濊禆 import...")
-from runtime.utils.sanitize import sanitize_position, safe_json_loads
-from perception.tracking.projection import Detection3D
+from habitat_navimind_agent import OBJECTNAV_CATEGORIES, NaviMindAgent, _normalize_category
+
+from decision.goals.resolver import GoalResolver, GoalResult
+from decision.llm.client import LLMConfig
 from perception.tracking.instance_tracker import InstanceTracker
-from decision.goal_resolver import GoalResolver, GoalResult
-from decision.llm_client import LLMConfig
-from habitat_navimind_agent import NaviMindAgent, OBJECTNAV_CATEGORIES, _normalize_category
+from perception.tracking.projection import Detection3D
+from runtime.utils.sanitize import safe_json_loads, sanitize_position
+
 print("  鉁?鎵€鏈変緷璧?import 鎴愬姛")
 
 # Test 2: Agent 鍒濆鍖?
@@ -79,7 +81,7 @@ for step in range(10):
     action = agent.act(fake_obs)
 
 stats = agent.stats
-print(f"  鉁?11 姝ュ畬鎴? 鍔ㄤ綔姝ｅ父")
+print("  鉁?11 姝ュ畬鎴? 鍔ㄤ綔姝ｅ父")
 print(f"  鉁?Fast Path hits: {stats['fast_path_hits']}/{stats['total_resolves']}")
 print(f"  鉁?璁块棶缃戞牸: {stats['visited_cells']} cells")
 

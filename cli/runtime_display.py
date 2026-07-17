@@ -48,6 +48,9 @@ def format_runtime_boundary(runtime: Any) -> str:
     endpoint_contract = _get_attr_or_item(runtime, "endpoint_contract")
     if endpoint_contract:
         text = f"{text} endpoint_contract={endpoint_contract}"
+    route_contract = _get_attr_or_item(runtime, "route_contract")
+    if route_contract:
+        text = f"{text} route_contract={route_contract}"
     localization_adapter = _get_attr_or_item(runtime, "localization_adapter")
     if localization_adapter:
         text = f"{text} localization_adapter={localization_adapter}"
@@ -68,9 +71,7 @@ def format_runtime_sources(runtime: Any) -> str:
 
 def format_runtime_algorithms(runtime: Any) -> str:
     global_planner = _get_attr_or_item(runtime, "global_planner") or "unknown"
-    fallback_planners = join_runtime_items(
-        _get_attr_or_item(runtime, "fallback_global_planners")
-    )
+    fallback_planners = join_runtime_items(_get_attr_or_item(runtime, "fallback_global_planners"))
     latency_budget = _get_attr_or_item(runtime, "planner_latency_budget_ms")
     safety_policy = _get_attr_or_item(runtime, "plan_safety_policy") or "unknown"
     autonomy = _get_attr_or_item(runtime, "autonomy_backends") or {}
@@ -104,6 +105,7 @@ def format_runtime_frames(runtime: Any) -> str:
         "lidar",
         "real_lidar",
         "camera",
+        "gnss",
         "axis_convention",
     )
     parts: list[str] = []
@@ -133,9 +135,7 @@ def format_runtime_topic_frames(runtime: Any) -> str:
     frame_rules = _get_attr_or_item(runtime, "topic_allowed_frame_ids") or {}
     if not isinstance(frame_rules, Mapping):
         return "none"
-    ordered_topics = [
-        topic for topic in TOPIC_FRAME_SUMMARY_TOPICS if topic in frame_rules
-    ]
+    ordered_topics = [topic for topic in TOPIC_FRAME_SUMMARY_TOPICS if topic in frame_rules]
     ordered_topics.extend(topic for topic in frame_rules if topic not in ordered_topics)
     parts: list[str] = []
     for topic in ordered_topics:
@@ -154,34 +154,30 @@ def format_runtime_flow(runtime: Any) -> str:
         (
             stage
             for stage in stages
-            if isinstance(stage, Mapping)
-            and stage.get("name") == "slam_or_relayed_localization_map"
+            if isinstance(stage, Mapping) and stage.get("name") == "slam_or_relayed_localization_map"
         ),
         {},
     )
     command_stage = next(
-        (
-            stage
-            for stage in stages
-            if isinstance(stage, Mapping) and stage.get("name") == "command_boundary"
-        ),
+        (stage for stage in stages if isinstance(stage, Mapping) and stage.get("name") == "command_boundary"),
         {},
     )
     first_stage = first_stage if isinstance(first_stage, Mapping) else {}
     sensors = join_runtime_items(first_stage.get("inputs"))
     localization_map = join_runtime_items(slam_stage.get("outputs"))
-    command = join_runtime_items(
-        command_stage.get("outputs") or (_get_attr_or_item(runtime, "command_sink"),)
-    )
+    command = join_runtime_items(command_stage.get("outputs") or (_get_attr_or_item(runtime, "command_sink"),))
     return f"sensors={sensors} localization_map={localization_map} command={command}"
 
 
 def format_runtime_flow_stages(runtime: Any) -> str:
     stages = tuple(_get_attr_or_item(runtime, "resolved_runtime_data_flow") or ())
-    stage_interfaces = _get_attr_or_item(
-        runtime,
-        "runtime_data_flow_stage_algorithm_interfaces",
-    ) or {}
+    stage_interfaces = (
+        _get_attr_or_item(
+            runtime,
+            "runtime_data_flow_stage_algorithm_interfaces",
+        )
+        or {}
+    )
     if not isinstance(stage_interfaces, Mapping):
         stage_interfaces = {}
     parts: list[str] = []
@@ -197,9 +193,7 @@ def format_runtime_flow_stages(runtime: Any) -> str:
         frame_role = stage.get("frame_role") or "unknown"
         interfaces = join_runtime_items(stage_interfaces.get(str(name)))
         interface_prefix = f"interfaces={interfaces} " if interfaces != "none" else ""
-        parts.append(
-            f"{name}[{owner}|{frame_role}] {interface_prefix}{inputs}->{outputs}"
-        )
+        parts.append(f"{name}[{owner}|{frame_role}] {interface_prefix}{inputs}->{outputs}")
     return " | ".join(parts) if parts else "none"
 
 
@@ -208,8 +202,10 @@ def format_product_runtime_boundary(runtime: Any) -> str:
 
     simulation_only = bool(_get_attr_or_item(runtime, "simulation_only"))
     runtime_contract = _get_attr_or_item(runtime, "runtime_contract") or "none"
+    route_contract = _get_attr_or_item(runtime, "route_contract")
+    routed_delivery = _get_attr_or_item(runtime, "routed_delivery")
     mode = "simulation" if simulation_only else "field"
-    return (
+    text = (
         f"mode={mode} runtime_contract={runtime_contract} "
         f"module_transport={_get_attr_or_item(runtime, 'module_transport', 'local')} "
         f"endpoint_transport={_get_attr_or_item(runtime, 'endpoint_transport', 'local')} "
@@ -217,6 +213,11 @@ def format_product_runtime_boundary(runtime: Any) -> str:
         "adapter=endpoint_only "
         "ros2_topic_inspection_required=false"
     )
+    if route_contract:
+        text = f"{text} route_contract={route_contract}"
+    if routed_delivery is not None:
+        text = f"{text} routed_delivery={str(bool(routed_delivery)).lower()}"
+    return text
 
 
 def format_product_semantic_overrides(runtime: Any) -> str:
@@ -243,9 +244,7 @@ def format_product_acceptance_commands(runtime: Any) -> str:
 
     simulation_only = bool(_get_attr_or_item(runtime, "simulation_only"))
     runtime_audit = "python lingtu.py runtime-audit"
-    gateway_simulation = (
-        "python lingtu.py gateway-runtime-acceptance --acceptance-mode simulation"
-    )
+    gateway_simulation = "python lingtu.py gateway-runtime-acceptance --acceptance-mode simulation"
     if simulation_only:
         return f"{runtime_audit} | {gateway_simulation}"
     real_evidence = (
@@ -254,8 +253,7 @@ def format_product_acceptance_commands(runtime: Any) -> str:
         "--json-out artifacts/thunder_field_runtime/report.json"
     )
     gateway_field = (
-        "python lingtu.py gateway-runtime-acceptance --acceptance-mode field "
-        "--gateway-url http://<robot>:5050"
+        "python lingtu.py gateway-runtime-acceptance --acceptance-mode field --gateway-url http://<robot>:5050"
     )
     return f"{runtime_audit} | {real_evidence} | {gateway_field}"
 
@@ -269,12 +267,8 @@ def format_runtime_switch_plan(payload: Mapping[str, Any]) -> str:
     target_payload = target if isinstance(target, Mapping) else {}
     current_validation = payload.get("current_validation")
     target_validation = payload.get("target_validation")
-    current_validation_payload = (
-        current_validation if isinstance(current_validation, Mapping) else {}
-    )
-    target_validation_payload = (
-        target_validation if isinstance(target_validation, Mapping) else {}
-    )
+    current_validation_payload = current_validation if isinstance(current_validation, Mapping) else {}
+    target_validation_payload = target_validation if isinstance(target_validation, Mapping) else {}
     ok = payload.get("ok")
     status = "PASS" if ok is True else "FAIL" if ok is False else "UNKNOWN"
 
@@ -613,9 +607,7 @@ def format_real_runtime_evidence_summary(report: Mapping[str, Any]) -> str:
     validation = report.get("runtime_evidence")
     validation_payload = validation if isinstance(validation, Mapping) else {}
     runtime_contract = report.get("runtime_contract")
-    runtime_contract_payload = (
-        runtime_contract if isinstance(runtime_contract, Mapping) else {}
-    )
+    runtime_contract_payload = runtime_contract if isinstance(runtime_contract, Mapping) else {}
     motion = report.get("motion")
     motion_payload = motion if isinstance(motion, Mapping) else {}
     outputs = report.get("outputs")
@@ -665,19 +657,13 @@ def format_real_runtime_evidence_summary(report: Mapping[str, Any]) -> str:
         _append_contract_section(
             lines,
             "Checked runtime topics",
-            " ".join(
-                str(topic)
-                for topic in validation_payload.get("checked_runtime_topics", ())
-            ),
+            " ".join(str(topic) for topic in validation_payload.get("checked_runtime_topics", ())),
             separator=" ",
         )
         _append_contract_section(
             lines,
             "Checked frame links",
-            " ".join(
-                str(link)
-                for link in validation_payload.get("checked_frame_links", ())
-            ),
+            " ".join(str(link) for link in validation_payload.get("checked_frame_links", ())),
             separator=" ",
         )
         _append_contract_section(
@@ -717,9 +703,7 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
     evidence = _get_mapping(payload, "evidence")
     algorithm_payload = _get_mapping(payload, "algorithm")
     algorithm = _get_mapping(algorithm_payload, "strict_benchmark")
-    active_product_profile = (
-        algorithm_payload.get("active_product_profile") or "inspection_mvp"
-    )
+    active_product_profile = algorithm_payload.get("active_product_profile") or "inspection_mvp"
     product_profile = _get_mapping(
         _get_mapping(algorithm_payload, "product_profiles"),
         str(active_product_profile),
@@ -739,7 +723,7 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
             "Map: "
             f"active={map_payload.get('active', 'unknown')} "
             f"provenance={map_payload.get('provenance', 'UNKNOWN')} "
-            f"tomogram={map_payload.get('tomogram', 'UNKNOWN')} "
+            f"octomap={map_payload.get('octomap', 'UNKNOWN')} "
             f"occupancy={map_payload.get('occupancy', 'UNKNOWN')}"
         ),
         (
@@ -884,6 +868,7 @@ def _format_runtime_env(env: Mapping[str, Any]) -> str:
         "LINGTU_MODULE_TRANSPORT",
         "LINGTU_ENDPOINT_TRANSPORT",
         "LINGTU_RUNTIME_CONTRACT",
+        "LINGTU_ROUTE_CONTRACT",
         "LINGTU_COMMAND_SINK",
         "LINGTU_SIMULATION_ONLY",
         "LINGTU_FASTLIO2_PORTABLE_LIB",
@@ -973,9 +958,7 @@ def _format_runtime_audit_checks(payload: Mapping[str, Any]) -> str:
             continue
         blockers = raw_check.get("blockers")
         blocker_count = len(blockers) if isinstance(blockers, list) else 0
-        parts.append(
-            f"{name} ok={_format_bool(raw_check.get('ok'))} blockers={blocker_count}"
-        )
+        parts.append(f"{name} ok={_format_bool(raw_check.get('ok'))} blockers={blocker_count}")
     return " | ".join(parts) if parts else "none"
 
 
@@ -985,15 +968,9 @@ def _format_runtime_audit_acceptance(payload: Mapping[str, Any]) -> str:
     if not isinstance(acceptance, Mapping):
         return "none"
     ordered = sorted(
-        (
-            (str(name), raw_gate)
-            for name, raw_gate in acceptance.items()
-            if isinstance(raw_gate, Mapping)
-        ),
+        ((str(name), raw_gate) for name, raw_gate in acceptance.items() if isinstance(raw_gate, Mapping)),
         key=lambda item: (
-            item[1].get("acceptance_step")
-            if isinstance(item[1].get("acceptance_step"), int)
-            else 999,
+            item[1].get("acceptance_step") if isinstance(item[1].get("acceptance_step"), int) else 999,
             item[0],
         ),
     )
@@ -1015,11 +992,7 @@ def _format_runtime_audit_commands(payload: Mapping[str, Any]) -> str:
     commands = gate_check.get("commands") if isinstance(gate_check, Mapping) else {}
     if not isinstance(commands, Mapping):
         return "none"
-    parts = [
-        f"{name}={command}"
-        for name, command in commands.items()
-        if command
-    ]
+    parts = [f"{name}={command}" for name, command in commands.items() if command]
     return " | ".join(parts) if parts else "none"
 
 
@@ -1184,9 +1157,7 @@ def _format_manifest_algorithm_interfaces(manifest: Mapping[str, Any]) -> str:
         outputs = join_runtime_items(raw_interface.get("outputs"))
         owner = raw_interface.get("owner") or "unknown"
         map_dependency = raw_interface.get("map_dependency") or "unknown"
-        parts.append(
-            f"{name}[{owner}|{map_dependency}] {inputs}->{outputs}"
-        )
+        parts.append(f"{name}[{owner}|{map_dependency}] {inputs}->{outputs}")
     return " | ".join(parts) if parts else "none"
 
 
@@ -1233,8 +1204,7 @@ def _format_real_topic_frame_evidence(validation: Mapping[str, Any]) -> str:
         default = entry.get("default_frame_id") or "missing"
         allowed = join_runtime_items(entry.get("allowed_frame_ids"))
         parts.append(
-            f"{topic} default={default} observed={observed} "
-            f"allowed={allowed} ok={_format_bool(entry.get('ok'))}"
+            f"{topic} default={default} observed={observed} allowed={allowed} ok={_format_bool(entry.get('ok'))}"
         )
     return " | ".join(parts) if parts else "none"
 
@@ -1275,11 +1245,7 @@ def _format_real_data_flow_evidence(validation: Mapping[str, Any]) -> str:
     if not isinstance(raw_report, Mapping):
         return "none"
     raw_order = validation.get("checked_data_flow_stages")
-    ordered_stages = [
-        stage
-        for stage in raw_order or ()
-        if isinstance(stage, str) and stage in raw_report
-    ]
+    ordered_stages = [stage for stage in raw_order or () if isinstance(stage, str) and stage in raw_report]
     ordered_stages.extend(stage for stage in raw_report if stage not in ordered_stages)
 
     parts: list[str] = []
@@ -1312,15 +1278,9 @@ def _format_real_stage_evidence_matrix(validation: Mapping[str, Any]) -> str:
     if not isinstance(raw_report, Mapping):
         return "none"
     raw_order = validation.get("checked_data_flow_stages")
-    ordered_stages = [
-        stage
-        for stage in raw_order or ()
-        if isinstance(stage, str) and stage in raw_report
-    ]
+    ordered_stages = [stage for stage in raw_order or () if isinstance(stage, str) and stage in raw_report]
     ordered_stages.extend(stage for stage in raw_report if stage not in ordered_stages)
-    raw_interfaces = validation.get(
-        "checked_runtime_data_flow_stage_algorithm_interfaces"
-    )
+    raw_interfaces = validation.get("checked_runtime_data_flow_stage_algorithm_interfaces")
     stage_interfaces = raw_interfaces if isinstance(raw_interfaces, Mapping) else {}
 
     parts: list[str] = []
@@ -1343,8 +1303,6 @@ def _format_real_stage_evidence_matrix(validation: Mapping[str, Any]) -> str:
 
 def _stage_observed_tokens(entry: Mapping[str, Any]) -> str:
     observed_signals = join_runtime_items(entry.get("observed_signals"))
-    observed_inputs = join_runtime_items(entry.get("observed_inputs"))
-    observed_outputs = join_runtime_items(entry.get("observed_outputs"))
     if observed_signals != "none":
         return observed_signals
     observed = join_runtime_items(

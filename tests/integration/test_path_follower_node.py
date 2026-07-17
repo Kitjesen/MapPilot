@@ -36,11 +36,14 @@ import sys
 import threading
 import time
 
-import rclpy
-from rclpy.node import Node
+import pytest
 
+pytest.importorskip("rclpy", reason="ROS2 integration test — requires rclpy")
+
+import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry, Path
+from rclpy.node import Node
 from std_msgs.msg import Float32, Int8, String
 
 
@@ -48,28 +51,24 @@ class PathFollowerTestNode(Node):
     """pathFollower 集成测试节点"""
 
     def __init__(self):
-        super().__init__('path_follower_test')
+        super().__init__("path_follower_test")
 
         # ── Publishers ──
         # pathFollower 内部话题名: /Odometry, /path, /stop, /speed
         # /Odometry 和 /cmd_vel 通过 remap 映射到 /nav/ 前缀
         # /path, /stop, /speed 保持原名 (无 remap)
-        self.pub_odom = self.create_publisher(Odometry, '/nav/odometry', 10)
-        self.pub_path = self.create_publisher(Path, '/path', 10)
-        self.pub_stop = self.create_publisher(Int8, '/stop', 10)
-        self.pub_speed = self.create_publisher(Float32, '/speed', 10)
+        self.pub_odom = self.create_publisher(Odometry, "/nav/odometry", 10)
+        self.pub_path = self.create_publisher(Path, "/path", 10)
+        self.pub_stop = self.create_publisher(Int8, "/stop", 10)
+        self.pub_speed = self.create_publisher(Float32, "/speed", 10)
 
         # ── Subscribers ──
         self.cmd_vel_msgs = []
         self.planner_status_msgs = []
         self._lock = threading.Lock()
 
-        self.create_subscription(
-            TwistStamped, '/nav/cmd_vel',
-            self._on_cmd_vel, 10)
-        self.create_subscription(
-            String, '/nav/planner_status',
-            self._on_planner_status, 10)
+        self.create_subscription(TwistStamped, "/nav/cmd_vel", self._on_cmd_vel, 10)
+        self.create_subscription(String, "/nav/planner_status", self._on_planner_status, 10)
 
         # ── State ──
         self.odom_x = 0.0
@@ -105,8 +104,8 @@ class PathFollowerTestNode(Node):
         """发布当前 odom 位姿"""
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
-        msg.child_frame_id = 'body'
+        msg.header.frame_id = "odom"
+        msg.child_frame_id = "body"
         msg.pose.pose.position.x = self.odom_x
         msg.pose.pose.position.y = self.odom_y
         msg.pose.pose.position.z = self.odom_z
@@ -124,7 +123,7 @@ class PathFollowerTestNode(Node):
         """发布从 (0,0) 到 (length, 0) 的直线路径"""
         msg = Path()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
+        msg.header.frame_id = "odom"
         for i in range(num_poses):
             ps = PoseStamped()
             ps.header = msg.header
@@ -148,8 +147,9 @@ class PathFollowerTestNode(Node):
         self.pub_speed.publish(msg)
 
 
-def spin_for(node, duration, odom_hz=20, path_hz=0, stop_val=None,
-             speed_val=None, stop_hz=2, speed_hz=2, path_length=5.0):
+def spin_for(
+    node, duration, odom_hz=20, path_hz=0, stop_val=None, speed_val=None, stop_hz=2, speed_hz=2, path_length=5.0
+):
     """
     在指定时间内持续 spin 节点并按频率发布消息。
 
@@ -203,15 +203,15 @@ def spin_for(node, duration, odom_hz=20, path_hz=0, stop_val=None,
 
 
 def main():
-    print('=' * 60)
-    print('  pathFollower C++ Node Integration Test')
-    print('=' * 60)
+    print("=" * 60)
+    print("  pathFollower C++ Node Integration Test")
+    print("=" * 60)
 
     try:
         rclpy.init()
     except Exception as e:
-        print(f'[FATAL] ROS2 init failed: {e}')
-        print('  Please run: source /opt/ros/humble/setup.bash')
+        print(f"[FATAL] ROS2 init failed: {e}")
+        print("  Please run: source /opt/ros/humble/setup.bash")
         sys.exit(1)
 
     node = PathFollowerTestNode()
@@ -229,7 +229,7 @@ def main():
         # Warm-up: Ensure pathFollower has received odom + path
         # stopHandler needs 3 consecutive stop=0 to clear safetyStop
         # ──────────────────────────────────────────────────────────
-        print('\n[Warm-up] Sending initial odom + path + stop=0 (3s)...')
+        print("\n[Warm-up] Sending initial odom + path + stop=0 (3s)...")
         warmup_start = time.monotonic()
         while time.monotonic() - warmup_start < 3.0:
             node.publish_odom()
@@ -243,7 +243,7 @@ def main():
         # Robot at (0,0,0) yaw=0, path from (0,0) to (5,0)
         # Expect cmd_vel.linear.x > 0.05
         # ──────────────────────────────────────────────────────────
-        print('\n[Phase 1] Forward motion test (10s)...')
+        print("\n[Phase 1] Forward motion test (10s)...")
         node.odom_x = 0.0
         node.odom_y = 0.0
         node.odom_yaw = 0.0
@@ -260,13 +260,13 @@ def main():
 
         # Analyze Phase 1 cmd_vel
         cvs = node.get_cmd_vel_snapshot()
-        print(f'  Received {len(cvs)} cmd_vel messages')
+        print(f"  Received {len(cvs)} cmd_vel messages")
 
         if len(cvs) == 0:
-            print('  [FAIL] No cmd_vel received! Is pathFollower running?')
-            results['forward_cmd_vel_positive'] = False
-            results['forward_lateral_minimal'] = False
-            results['forward_rotation_minimal'] = False
+            print("  [FAIL] No cmd_vel received! Is pathFollower running?")
+            results["forward_cmd_vel_positive"] = False
+            results["forward_lateral_minimal"] = False
+            results["forward_rotation_minimal"] = False
         else:
             # Use messages from the second half (after speed ramp-up)
             half = len(cvs) // 2
@@ -284,23 +284,23 @@ def main():
             lateral_ok = max_lat < 0.1
             rotation_ok = max_yaw < 0.3
 
-            results['forward_cmd_vel_positive'] = forward_ok
-            results['forward_lateral_minimal'] = lateral_ok
-            results['forward_rotation_minimal'] = rotation_ok
+            results["forward_cmd_vel_positive"] = forward_ok
+            results["forward_lateral_minimal"] = lateral_ok
+            results["forward_rotation_minimal"] = rotation_ok
 
-            status = 'PASS' if forward_ok else 'FAIL'
-            print(f'  [{status}] forward_cmd_vel_positive: avg_fwd={avg_fwd:.4f} (>0.05)')
-            status = 'PASS' if lateral_ok else 'FAIL'
-            print(f'  [{status}] forward_lateral_minimal: max_lat={max_lat:.4f} (<0.1)')
-            status = 'PASS' if rotation_ok else 'FAIL'
-            print(f'  [{status}] forward_rotation_minimal: max_yaw={max_yaw:.4f} (<0.3)')
+            status = "PASS" if forward_ok else "FAIL"
+            print(f"  [{status}] forward_cmd_vel_positive: avg_fwd={avg_fwd:.4f} (>0.05)")
+            status = "PASS" if lateral_ok else "FAIL"
+            print(f"  [{status}] forward_lateral_minimal: max_lat={max_lat:.4f} (<0.1)")
+            status = "PASS" if rotation_ok else "FAIL"
+            print(f"  [{status}] forward_rotation_minimal: max_yaw={max_yaw:.4f} (<0.3)")
 
         # ──────────────────────────────────────────────────────────
         # Phase 2: Stop signal (5s)
         # Continue odom + path, publish stop=2
         # Expect cmd_vel goes to ~zero
         # ──────────────────────────────────────────────────────────
-        print('\n[Phase 2] Stop signal test (5s)...')
+        print("\n[Phase 2] Stop signal test (5s)...")
         node.clear_cmd_vel()
 
         phase2_start = time.monotonic()
@@ -312,11 +312,11 @@ def main():
             time.sleep(0.05)
 
         cvs = node.get_cmd_vel_snapshot()
-        print(f'  Received {len(cvs)} cmd_vel messages')
+        print(f"  Received {len(cvs)} cmd_vel messages")
 
         if len(cvs) == 0:
-            print('  [FAIL] No cmd_vel received during stop phase')
-            results['stop_signal_zeroes_cmd'] = False
+            print("  [FAIL] No cmd_vel received during stop phase")
+            results["stop_signal_zeroes_cmd"] = False
         else:
             # Check messages from the second half (after stop propagation)
             half = len(cvs) // 2
@@ -326,11 +326,10 @@ def main():
             max_yaw = max(abs(m.twist.angular.z) for m in late_cvs)
 
             stop_ok = max_fwd < 0.05 and max_yaw < 0.05
-            results['stop_signal_zeroes_cmd'] = stop_ok
+            results["stop_signal_zeroes_cmd"] = stop_ok
 
-            status = 'PASS' if stop_ok else 'FAIL'
-            print(f'  [{status}] stop_signal_zeroes_cmd: '
-                  f'max_fwd={max_fwd:.4f} (<0.05), max_yaw={max_yaw:.4f} (<0.05)')
+            status = "PASS" if stop_ok else "FAIL"
+            print(f"  [{status}] stop_signal_zeroes_cmd: max_fwd={max_fwd:.4f} (<0.05), max_yaw={max_yaw:.4f} (<0.05)")
 
         # ──────────────────────────────────────────────────────────
         # Phase 3: Stuck detection (18s)
@@ -342,13 +341,13 @@ def main():
         # We re-publish the path once to reset stuck state, then
         # keep odom fixed and stop=0 for 18s.
         # ──────────────────────────────────────────────────────────
-        print('\n[Phase 3] Stuck detection test (18s)...')
+        print("\n[Phase 3] Stuck detection test (18s)...")
         node.clear_planner_status()
         node.clear_cmd_vel()
 
         # First clear the stop signal — need 3 consecutive stop=0
         # to clear safetyStop in the C++ node
-        print('  Clearing stop signal (sending 10x stop=0)...')
+        print("  Clearing stop signal (sending 10x stop=0)...")
         for _ in range(10):
             node.publish_stop(0)
             time.sleep(0.05)
@@ -376,29 +375,30 @@ def main():
             statuses = node.get_planner_status_snapshot()
             if warn_stuck_time is None:
                 for s in statuses:
-                    if s == 'WARN_STUCK':
+                    if s == "WARN_STUCK":
                         warn_stuck_time = time.monotonic() - phase3_start
-                        print(f'  WARN_STUCK detected at t={warn_stuck_time:.1f}s')
+                        print(f"  WARN_STUCK detected at t={warn_stuck_time:.1f}s")
                         break
             if stuck_time is None:
                 for s in statuses:
-                    if s == 'STUCK':
+                    if s == "STUCK":
                         stuck_time = time.monotonic() - phase3_start
-                        print(f'  STUCK detected at t={stuck_time:.1f}s')
+                        print(f"  STUCK detected at t={stuck_time:.1f}s")
                         break
 
-        results['warn_stuck_detected'] = warn_stuck_time is not None
-        results['stuck_detected'] = stuck_time is not None
+        results["warn_stuck_detected"] = warn_stuck_time is not None
+        results["stuck_detected"] = stuck_time is not None
 
-        status = 'PASS' if results['warn_stuck_detected'] else 'FAIL'
-        print(f'  [{status}] warn_stuck_detected: '
-              f'{"at " + f"{warn_stuck_time:.1f}s" if warn_stuck_time else "NOT detected"}')
-        status = 'PASS' if results['stuck_detected'] else 'FAIL'
-        print(f'  [{status}] stuck_detected: '
-              f'{"at " + f"{stuck_time:.1f}s" if stuck_time else "NOT detected"}')
+        status = "PASS" if results["warn_stuck_detected"] else "FAIL"
+        print(
+            f"  [{status}] warn_stuck_detected: "
+            f"{'at ' + f'{warn_stuck_time:.1f}s' if warn_stuck_time else 'NOT detected'}"
+        )
+        status = "PASS" if results["stuck_detected"] else "FAIL"
+        print(f"  [{status}] stuck_detected: {'at ' + f'{stuck_time:.1f}s' if stuck_time else 'NOT detected'}")
 
     except KeyboardInterrupt:
-        print('\n[INTERRUPTED]')
+        print("\n[INTERRUPTED]")
     finally:
         executor.shutdown()
         node.destroy_node()
@@ -407,25 +407,25 @@ def main():
     # ──────────────────────────────────────────────────────────
     # Output JSON summary
     # ──────────────────────────────────────────────────────────
-    print('\n' + '=' * 60)
-    print('  Results Summary')
-    print('=' * 60)
+    print("\n" + "=" * 60)
+    print("  Results Summary")
+    print("=" * 60)
 
     all_pass = all(results.values())
     passed = sum(1 for v in results.values() if v)
     failed = sum(1 for v in results.values() if not v)
 
     for check, ok in results.items():
-        tag = 'PASS' if ok else 'FAIL'
-        print(f'  [{tag}] {check}')
+        tag = "PASS" if ok else "FAIL"
+        print(f"  [{tag}] {check}")
 
-    print(f'\n  Passed: {passed}/{len(results)}   Failed: {failed}/{len(results)}')
+    print(f"\n  Passed: {passed}/{len(results)}   Failed: {failed}/{len(results)}")
 
-    print('\n[JSON]')
+    print("\n[JSON]")
     print(json.dumps(results, indent=2))
 
     sys.exit(0 if all_pass else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

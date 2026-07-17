@@ -10,11 +10,13 @@ Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_LIVOX_BIN=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream
 Environment=LINGTU_LIVOX_CONFIG_DIR=/opt/lingtu/config/livox
 Environment=LINGTU_LIVOX_NET_IFACE=eth1
-Environment=LINGTU_LIVOX_LIDAR_FRAME=livox_frame
+Environment=LINGTU_LIVOX_LIDAR_FRAME=lidar_link
 Environment=LINGTU_LIVOX_IMU_FRAME=imu_link
 Environment=LINGTU_LIVOX_SCAN_HZ=10
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_CYCLONEDDS_PREFIX=
+Environment=LINGTU_TIME_SYNC_WAIT_SECONDS=8
+ExecStartPre=-/bin/bash /opt/lingtu/current/scripts/deploy/thunder/wait_for_time_sync.sh
 ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_livox_dds.sh
 Restart=on-failure
 RestartSec=3

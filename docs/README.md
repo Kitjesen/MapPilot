@@ -1,59 +1,155 @@
 # LingTu Documentation
 
-This directory is the written source of truth for LingTu's current runtime,
-architecture, deployment, and validation work. Historical notes remain available
-under `archive/`, but they are not the authority for new development.
+LingTu is a Module-First autonomous navigation system for quadruped robots in
+outdoor and off-road environments. This documentation is organized around the
+job you want to complete first; deeper contracts and dated validation evidence
+remain available when you need them.
 
-For a one-page authority map, start with [`CURRENT.md`](./CURRENT.md). For
-cleanup decisions and archive candidates, use [`DOCS_TRIAGE.md`](./DOCS_TRIAGE.md).
+## Browse these docs on the Web
 
-## Current Reading Path
+After the `web/` application is built, the same curated Markdown is available
+at `/guide/`: a static reading surface with task navigation, local full-text
+search, page outlines, code-copy controls, and explicit execution boundaries.
+It makes no Gateway/robot-control calls. `/docs` remains reserved for FastAPI's
+live OpenAPI UI; do not use it as the public product-documentation route.
 
-| Order | Document | Purpose |
-| ---: | --- | --- |
-| 1 | [`architecture/SYSTEM_DESIGN.md`](./architecture/SYSTEM_DESIGN.md) | Paper-style system overview and current technical argument. |
-| 2 | [`architecture/NAVIGATION_COMPUTE_CONTRACT.md`](./architecture/NAVIGATION_COMPUTE_CONTRACT.md) | Planning, local planning, safety, and control boundaries. |
-| 3 | [`architecture/GLOBAL_PLANNING_CONTRACT.md`](./architecture/GLOBAL_PLANNING_CONTRACT.md) | Global planner input/output and backend boundary. |
-| 4 | [`architecture/LINGTU_RUNTIME_BUS_DECISION.md`](./architecture/LINGTU_RUNTIME_BUS_DECISION.md) | Module ports, channels, and transport policy. |
-| 5 | [`QUICKSTART.md`](./QUICKSTART.md) | How to run the current profiles. |
-| 6 | [`REPO_LAYOUT.md`](./REPO_LAYOUT.md) | Where code and docs belong. |
-| 7 | [`07-testing/README.md`](./07-testing/README.md) | Validation and acceptance entrypoint. |
+> **Status:** Current navigation entry point<br>
+> **Audience:** Developers, integrators, and robot operators<br>
+> **Runs on:** Local development hosts, simulation, and supported field robots
 
-## Document Classes
+## What LingTu is
 
-| Class | Directory | Rule |
-| --- | --- | --- |
-| Architecture contracts | `architecture/` | Current design only. Keep these concise and testable. |
-| Product plans and PRDs | `plans/` | Forward-looking work. Must name owner, scope, and acceptance. |
-| Operator docs | `01-getting-started/`, `04-deployment/`, `api/` | Commands, services, and API behavior. |
-| Validation docs | `07-testing/` | Evidence, gates, and field/simulation acceptance. |
-| Historical material | `archive/`, `superpowers/` | Reference only. Do not cite as current behavior without rechecking code. |
-| Paper assets | `09-paper/`, `media/`, `assets/` | Publication drafts, figures, and supporting media. |
+LingTu assembles robot hardware, localization, map products, perception,
+semantic decision making, planning, safety, and operator interfaces into one
+runtime. Its primary design rule is **Module-First**:
 
-## Current Architecture Position
+- `Module` is the only runtime unit.
+- `Blueprint` is the only orchestration unit.
+- Typed ports and explicit wires are the product data boundary.
+- DDS, shared memory, simulators, and ROS 2 compatibility components are
+  transports or adapters, not the business API.
 
-LingTu is Module-First: `Module` is the runtime unit, `Blueprint` is the
-orchestration unit, and ports are the module data boundary. ROS 2, DDS, LCM,
-shared memory, simulators, and replay files are transports or adapters, not the
-business API.
+The product uses the same logical contract in three environments, but the
+execution boundary is different in each one:
 
-The current product path is:
+| Environment | Primary use | What it proves | What it does not prove |
+| --- | --- | --- | --- |
+| Local | Framework, unit tests, and integration development | Module composition and offline behavior | Simulator or robot behavior |
+| Simulation | Mission, planning, dataflow, and integration checks | The selected simulation gate | Field hardware readiness |
+| Field robot | Mapping, localization, navigation, and supervised operation | Evidence collected on the selected target | Behavior on every target or future deployment |
 
-```text
-drivers/localization -> maps -> planning -> local planning -> path following
-                     -> safety/cmd mux -> robot driver
+## System at a glance
+
+```mermaid
+flowchart LR
+    sensors["LiDAR / IMU / camera"] --> localization["Localization and SLAM"]
+    localization --> maps["Map products"]
+    maps --> planning["Global and local planning"]
+    planning --> safety["Safety and velocity arbitration"]
+    safety --> driver["Robot command boundary"]
+    sensors --> perception["Perception and semantic memory"]
+    perception --> decision["Decision and goal resolution"]
+    decision --> planning
+    gateway["CLI / Gateway / MCP / teleop"] --> decision
+    gateway --> planning
 ```
 
-Global planning is owned by `src/nav/services/plan/`. OctoPlanner3D is an
-algorithm backend behind the planning contract, not the public Navigation API.
+For the physical robot, high-rate sensor, SLAM, and final navigation paths use
+native C++ services and typed DDS at explicit process boundaries. Python owns
+the Module graph, mission coordination, semantic behavior, API surfaces, and
+product contracts. Read [System design](./architecture/SYSTEM_DESIGN.md) for
+the complete layer and ownership model.
 
-## Staleness Policy
+## Start with your goal
 
-- If a document describes ROS topics as the primary module API, treat it as
-  legacy unless it explicitly says adapter/compatibility.
-- If a document mentions NOVA as the current robot name, treat it as historical.
-- If a document claims PCT is the default product planner, treat it as historical;
-  OctoPlanner3D is the default map-backed planner.
-- If a document disagrees with `AGENTS.md`, `src/runtime/blueprint.py`,
-  `src/runtime/stream.py`, or `src/nav/services/plan/contracts.py`, update the
-  document or move it to `archive/`.
+| I want to... | Start here |
+| --- | --- |
+| Run LingTu locally or choose a profile | [Get started](./01-getting-started/README.md) |
+| Learn the Module-First model and runtime vocabulary | [Core concepts](./02-concepts/README.md) |
+| Understand control ownership, stop/recovery, and motion boundaries | [Safety and control boundaries](./10-safety/README.md) |
+| Change or extend the codebase | [Develop LingTu](./03-development/README.md) |
+| Build a REST, SDK, MCP, SSE, or teleoperation client | [Integrations](./09-integrations/README.md) |
+| Build a map, navigate, use semantic goals, or explore | [Task guides](./05-guides/README.md) |
+| Monitor, diagnose, or safely operate a running robot | [Operations](./06-operations/README.md) |
+| Prepare a field target without exposing target-specific details | [Field deployment](./04-deployment/WEB_GUIDE.md) |
+| Run tests, simulation gates, or no-motion field validation | [Testing and validation](./07-testing/WEB_GUIDE.md) |
+| Find the CLI, REST, MCP, configuration, or contract reference | [Reference](./08-reference/README.md) |
+
+## How to read this documentation
+
+| Documentation kind | Purpose | Where it belongs |
+| --- | --- | --- |
+| Task guide | Helps a reader reach an outcome with prerequisites, checks, and safe next steps. | `01-getting-started/`, `03-development/`, `05-guides/`, `06-operations/`, `09-integrations/`, `10-safety/` |
+| Contract | Defines a current architecture or runtime boundary precisely. | `architecture/` |
+| Reference | Lists stable commands, schemas, APIs, configuration, or generated inventories. | `08-reference/`, `api/`, package READMEs |
+| Validation evidence | Records what a named test, simulation gate, or field run demonstrated. | `07-testing/` and `07-testing/field-runs/` |
+| Plan or historical record | Describes intended work or retained context; it is not shipped behavior. | `plans/`, `superpowers/`, `archive/` |
+
+Every current task page identifies its audience and environment. A command or
+claim that only applies to simulation must say so. A procedure that can create
+robot motion must keep its no-motion inspection and route-preview steps
+separate from the final motion action.
+
+## Recommended reading paths
+
+### First local or simulation run
+
+1. [Choose a path and run a safe first profile](./01-getting-started/README.md).
+2. Read the detailed [Quick Start](./QUICKSTART.md) when you need profile,
+   lifecycle, or command details.
+3. Continue with the relevant [task guide](./05-guides/README.md).
+
+### Build a LingTu system
+
+1. Read the [core concepts](./02-concepts/README.md).
+2. Follow the [Module-First runtime bus contract](./architecture/LINGTU_RUNTIME_BUS_DECISION.md).
+3. Use [Blueprint-DDS integration](./architecture/blueprint_dds_integration.md)
+   and [module/service boundaries](./architecture/MODULE_SERVICE_BOUNDARY.md)
+   as implementation references.
+
+### Field deployment and operation
+
+1. Read [Safety and control boundaries](./10-safety/README.md) before exposing
+   or using any motion-capable surface.
+2. Read the [Field Deployment Guide](./04-deployment/WEB_GUIDE.md).
+3. Use the [robot operations CLI reference](./04-deployment/lingtu_cli.md).
+4. Complete the applicable [validation gate](./07-testing/WEB_GUIDE.md) before
+   making a product or field-readiness claim.
+
+## What is authoritative
+
+The documentation home is a curated navigation layer, not a second architecture
+contract. Use [`CURRENT.md`](./CURRENT.md) to identify the current source of
+truth for a specific subject. [Architecture contracts](./architecture/README.md)
+define shipped boundaries; [plans](./plans/README.md) are forward-looking; and
+dated test reports or field runs are evidence rather than product behavior.
+
+`archive/` is currently a placeholder, not an alternate source of truth. For
+cleanup decisions and archive candidates, see [`DOCS_TRIAGE.md`](./DOCS_TRIAGE.md).
+
+## Safety and claim boundaries
+
+- A green local test does not demonstrate simulator behavior.
+- A green simulation or endpoint check does not demonstrate field readiness.
+- A running process is not automatically navigation-ready: localization,
+  active map artifacts, route safety, and the selected readiness gate still
+  matter.
+- A goal is not a motor command. It must travel through the appropriate
+  planning, safety, and velocity-arbitration boundaries.
+
+The current known product gaps and non-goals are tracked in
+[Known gaps](./known_gaps.md). When a source conflicts with a current contract,
+use the contract and update or demote the stale page.
+
+## Documentation rules
+
+- Write task pages for an explicit audience and environment: local,
+  simulation, or field robot.
+- Keep commands that can move hardware separate from no-motion inspection and
+  route-preview steps.
+- Link to contracts and generated references instead of duplicating their
+  detailed tables.
+- Mark plans and dated evidence clearly; do not present either as current
+  product behavior.
+- Treat ROS 2 as a compatibility boundary unless a page explicitly documents a
+  compatibility workflow.

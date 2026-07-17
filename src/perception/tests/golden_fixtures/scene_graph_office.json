@@ -1,0 +1,545 @@
+{
+  "timestamp": 0.0,
+  "frame_id": "map",
+  "graph_level": "hierarchical",
+  "graph_version": "3.0",
+  "object_count": 5,
+  "objects": [
+    {
+      "id": 0,
+      "label": "chair",
+      "position": {
+        "x": 1.05,
+        "y": 0.52,
+        "z": 0.4
+      },
+      "score": 0.9,
+      "detection_count": 2,
+      "region_id": 0,
+      "floor_level": 0,
+      "belief": {
+        "P_exist": 0.714,
+        "sigma_pos": 0.073,
+        "credibility": 0.61,
+        "detections": 2,
+        "miss_streak": 0,
+        "confirmed_nav": true,
+        "confirmed_interact": true
+      },
+      "source": "observed",
+      "last_observed_time": 0.0,
+      "is_simulated": false
+    },
+    {
+      "id": 1,
+      "label": "desk",
+      "position": {
+        "x": 1.22,
+        "y": 0.31,
+        "z": 0.5
+      },
+      "score": 0.9,
+      "detection_count": 2,
+      "region_id": 0,
+      "floor_level": 0,
+      "belief": {
+        "P_exist": 0.714,
+        "sigma_pos": 0.075,
+        "credibility": 0.61,
+        "detections": 2,
+        "miss_streak": 0,
+        "confirmed_nav": true,
+        "confirmed_interact": true
+      },
+      "source": "observed",
+      "last_observed_time": 0.0,
+      "is_simulated": false
+    },
+    {
+      "id": 2,
+      "label": "monitor",
+      "position": {
+        "x": 1.31,
+        "y": 0.41,
+        "z": 1.2
+      },
+      "score": 0.9,
+      "detection_count": 2,
+      "region_id": 0,
+      "floor_level": 0,
+      "belief": {
+        "P_exist": 0.714,
+        "sigma_pos": 0.077,
+        "credibility": 0.61,
+        "detections": 2,
+        "miss_streak": 0,
+        "confirmed_nav": true,
+        "confirmed_interact": true
+      },
+      "source": "observed",
+      "last_observed_time": 0.0,
+      "is_simulated": false
+    },
+    {
+      "id": 3,
+      "label": "keyboard",
+      "position": {
+        "x": 1.12,
+        "y": 0.22,
+        "z": 0.8
+      },
+      "score": 0.9,
+      "detection_count": 2,
+      "region_id": 0,
+      "floor_level": 0,
+      "belief": {
+        "P_exist": 0.714,
+        "sigma_pos": 0.073,
+        "credibility": 0.61,
+        "detections": 2,
+        "miss_streak": 0,
+        "confirmed_nav": true,
+        "confirmed_interact": true
+      },
+      "source": "observed",
+      "last_observed_time": 0.0,
+      "is_simulated": false
+    },
+    {
+      "id": 4,
+      "label": "door",
+      "position": {
+        "x": 5.02,
+        "y": 0.01,
+        "z": 1.0
+      },
+      "score": 0.9,
+      "detection_count": 2,
+      "region_id": 1,
+      "floor_level": 0,
+      "belief": {
+        "P_exist": 0.714,
+        "sigma_pos": 0.149,
+        "credibility": 0.61,
+        "detections": 2,
+        "miss_streak": 0,
+        "confirmed_nav": true,
+        "confirmed_interact": true
+      },
+      "source": "observed",
+      "last_observed_time": 0.0,
+      "is_simulated": false
+    }
+  ],
+  "relations": [
+    {
+      "subject_id": 0,
+      "relation": "near",
+      "object_id": 1,
+      "distance": 0.29
+    },
+    {
+      "subject_id": 1,
+      "relation": "on",
+      "object_id": 0,
+      "distance": 0.23
+    },
+    {
+      "subject_id": 0,
+      "relation": "near",
+      "object_id": 2,
+      "distance": 0.85
+    },
+    {
+      "subject_id": 0,
+      "relation": "below",
+      "object_id": 2,
+      "distance": 0.46
+    },
+    {
+      "subject_id": 0,
+      "relation": "near",
+      "object_id": 3,
+      "distance": 0.5
+    },
+    {
+      "subject_id": 3,
+      "relation": "on",
+      "object_id": 0,
+      "distance": 0.07
+    },
+    {
+      "subject_id": 1,
+      "relation": "near",
+      "object_id": 2,
+      "distance": 0.71
+    },
+    {
+      "subject_id": 1,
+      "relation": "below",
+      "object_id": 2,
+      "distance": 0.36
+    },
+    {
+      "subject_id": 1,
+      "relation": "near",
+      "object_id": 3,
+      "distance": 0.33
+    },
+    {
+      "subject_id": 3,
+      "relation": "on",
+      "object_id": 1,
+      "distance": 0.03
+    },
+    {
+      "subject_id": 2,
+      "relation": "near",
+      "object_id": 3,
+      "distance": 0.48
+    },
+    {
+      "subject_id": 2,
+      "relation": "on",
+      "object_id": 3,
+      "distance": 0.06
+    }
+  ],
+  "regions": [
+    {
+      "region_id": 0,
+      "name": "office",
+      "center": {
+        "x": 1.17,
+        "y": 0.36
+      },
+      "object_ids": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "region_id": 1,
+      "name": "corridor",
+      "center": {
+        "x": 5.02,
+        "y": 0.01
+      },
+      "object_ids": [
+        4
+      ]
+    }
+  ],
+  "floors": [
+    {
+      "floor_id": 0,
+      "floor_level": 0,
+      "z_range": [
+        0.4,
+        1.2
+      ],
+      "center_z": 0.78,
+      "room_ids": [
+        0,
+        1
+      ],
+      "object_count": 5
+    }
+  ],
+  "rooms": [
+    {
+      "room_id": 0,
+      "name": "office",
+      "center": {
+        "x": 1.17,
+        "y": 0.36
+      },
+      "object_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "group_ids": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "room_id": 1,
+      "name": "corridor",
+      "center": {
+        "x": 5.02,
+        "y": 0.01
+      },
+      "object_ids": [
+        4
+      ],
+      "group_ids": [
+        3
+      ]
+    }
+  ],
+  "groups": [
+    {
+      "group_id": 0,
+      "room_id": 0,
+      "name": "furniture",
+      "center": {
+        "x": 1.13,
+        "y": 0.41
+      },
+      "object_ids": [
+        0,
+        1
+      ]
+    },
+    {
+      "group_id": 1,
+      "room_id": 0,
+      "name": "electronics",
+      "center": {
+        "x": 1.31,
+        "y": 0.41
+      },
+      "object_ids": [
+        2
+      ]
+    },
+    {
+      "group_id": 2,
+      "room_id": 0,
+      "name": "others",
+      "center": {
+        "x": 1.12,
+        "y": 0.22
+      },
+      "object_ids": [
+        3
+      ]
+    },
+    {
+      "group_id": 3,
+      "room_id": 1,
+      "name": "structure",
+      "center": {
+        "x": 5.02,
+        "y": 0.01
+      },
+      "object_ids": [
+        4
+      ]
+    }
+  ],
+  "views": [],
+  "hierarchy_edges": [
+    {
+      "parent_type": "room",
+      "parent_id": 0,
+      "child_type": "group",
+      "child_id": 0,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "room",
+      "parent_id": 0,
+      "child_type": "group",
+      "child_id": 1,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "room",
+      "parent_id": 0,
+      "child_type": "group",
+      "child_id": 2,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "room",
+      "parent_id": 1,
+      "child_type": "group",
+      "child_id": 3,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "group",
+      "parent_id": 0,
+      "child_type": "object",
+      "child_id": 0,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "group",
+      "parent_id": 0,
+      "child_type": "object",
+      "child_id": 1,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "group",
+      "parent_id": 1,
+      "child_type": "object",
+      "child_id": 2,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "group",
+      "parent_id": 2,
+      "child_type": "object",
+      "child_id": 3,
+      "relation": "contains"
+    },
+    {
+      "parent_type": "group",
+      "parent_id": 3,
+      "child_type": "object",
+      "child_id": 4,
+      "relation": "contains"
+    }
+  ],
+  "topology_edges": [
+    {
+      "from_room": 0,
+      "to_room": 1,
+      "type": "door",
+      "mediator": "door",
+      "mediator_pos": {
+        "x": 5.02,
+        "y": 0.01
+      },
+      "distance": 3.86
+    }
+  ],
+  "frontier_nodes": [],
+  "subgraphs": [
+    {
+      "subgraph_id": "room_0",
+      "level": "room",
+      "room_id": 0,
+      "center": {
+        "x": 1.17,
+        "y": 0.36
+      },
+      "object_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "object_labels": [
+        "chair",
+        "desk",
+        "monitor",
+        "keyboard"
+      ],
+      "relation_count": 12
+    },
+    {
+      "subgraph_id": "room_1",
+      "level": "room",
+      "room_id": 1,
+      "center": {
+        "x": 5.02,
+        "y": 0.01
+      },
+      "object_ids": [
+        4
+      ],
+      "object_labels": [
+        "door"
+      ],
+      "relation_count": 0
+    },
+    {
+      "subgraph_id": "group_0",
+      "level": "group",
+      "room_id": 0,
+      "group_id": 0,
+      "name": "furniture",
+      "center": {
+        "x": 1.13,
+        "y": 0.41
+      },
+      "object_ids": [
+        0,
+        1
+      ],
+      "object_labels": [
+        "chair",
+        "desk"
+      ],
+      "relation_count": 0
+    },
+    {
+      "subgraph_id": "group_1",
+      "level": "group",
+      "room_id": 0,
+      "group_id": 1,
+      "name": "electronics",
+      "center": {
+        "x": 1.31,
+        "y": 0.41
+      },
+      "object_ids": [
+        2
+      ],
+      "object_labels": [
+        "monitor"
+      ],
+      "relation_count": 0
+    },
+    {
+      "subgraph_id": "group_2",
+      "level": "group",
+      "room_id": 0,
+      "group_id": 2,
+      "name": "others",
+      "center": {
+        "x": 1.12,
+        "y": 0.22
+      },
+      "object_ids": [
+        3
+      ],
+      "object_labels": [
+        "keyboard"
+      ],
+      "relation_count": 0
+    },
+    {
+      "subgraph_id": "group_3",
+      "level": "group",
+      "room_id": 1,
+      "group_id": 3,
+      "name": "structure",
+      "center": {
+        "x": 5.02,
+        "y": 0.01
+      },
+      "object_ids": [
+        4
+      ],
+      "object_labels": [
+        "door"
+      ],
+      "relation_count": 0
+    }
+  ],
+  "kg_stats": {
+    "enriched": 0,
+    "dangerous": 0,
+    "graspable": 0
+  },
+  "phantom_nodes": [],
+  "room_type_posteriors": {},
+  "belief_propagation": {
+    "iterations": 1,
+    "convergence": [
+      0.0
+    ]
+  },
+  "summary": "Scene has 5 objects, 2 rooms, 4 groups, 0 views. | office: contains chair, desk, monitor, keyboard | corridor: contains door | chair is near desk (0.29m) | desk is on chair (0.23m) | chair is near monitor (0.85m) | chair is below monitor (0.46m) | chair is near keyboard (0.5m) | keyboard is on chair (0.07m) | desk is near monitor (0.71m) | desk is below monitor (0.36m) | desk is near keyboard (0.33m) | keyboard is on desk (0.03m) | Topology: 1 room connections | office \u2194 corridor (door)"
+}

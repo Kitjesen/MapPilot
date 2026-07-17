@@ -24,11 +24,18 @@ export interface MapListResponse {
 
 export interface MapPointsResponse {
   schema_version: number
+  protocol_version?: number | null
   count: number
   layout: 'flat_xyz' | 'xyz_rows'
   frame_id: string
+  epoch?: number | null
+  sequence?: number | null
+  stamp_s?: number | null
+  stream_kind?: 'cloud' | 'map' | 'scan' | 'reset' | null
   source: string
   name?: string | null
+  version_id?: string | null
+  map_pcd_sha256?: string | null
   points: number[] | Array<[number, number, number]>
   bounds?: Record<string, number[]> | null
   ts: number
@@ -100,6 +107,9 @@ export interface LocationEntry {
   tags: string[]
   source?: string | null
   ts?: number | null
+  map_id?: string | null
+  map_version?: number | null
+  frame_id?: string | null
   metadata?: Record<string, unknown>
 }
 
@@ -299,6 +309,66 @@ export interface PathResponse {
   source: string
 }
 
+export interface NativeLocalPlannerCandidate {
+  rotation_index?: number
+  rotation_deg?: number
+  group_id?: number
+  state?: string
+  dominant_state?: string
+  selected?: boolean
+  score?: number
+  terrain_risk?: number
+  path?: number[][]
+}
+
+export interface NativeLocalPlannerCandidates {
+  valid?: boolean
+  frame_id?: string
+  timestamp_s?: number
+  candidates?: NativeLocalPlannerCandidate[]
+}
+
+export interface NativeLocalTraversabilityDebug {
+  rows?: number
+  cols?: number
+  resolution_m?: number
+  origin_xy?: number[]
+  fresh?: boolean
+  risk_cells?: number[][]
+}
+
+export interface NativeLocalMapDebug {
+  enabled?: boolean
+  frame_id?: string
+  obstacle_points_fresh?: boolean
+  obstacle_points?: number[][]
+  traversability?: NativeLocalTraversabilityDebug
+}
+
+export interface NativeNavigationEndpointStatus extends Record<string, unknown> {
+  stamp_s?: number
+  local_map?: NativeLocalMapDebug
+  local_candidates?: NativeLocalPlannerCandidates
+}
+
+export interface NavigationDdsSnapshotResponse {
+  schema_version: 'lingtu.navigation.dds_snapshot.v1'
+  global_path: PathResponse
+  local_path: PathResponse
+  cmd_vel: {
+    frame_id?: string
+    linear?: Record<string, number>
+    angular?: Record<string, number>
+    active_source?: string
+    ts?: number | null
+  } | null
+  nav_endpoint: NativeNavigationEndpointStatus | null
+  traversability_endpoint: Record<string, unknown> | null
+  navigation: Record<string, unknown>
+  ts: number
+  source: string
+}
+
 export interface PlanPreviewRequest {
   x: number
   y: number
@@ -447,6 +517,151 @@ export interface InspectionAcceptanceResponse {
   advisories: string[]
   evidence: Record<string, unknown>
   commands: Record<string, string>
+  ts: number
+}
+
+export type InspectionFailurePolicy = 'stop' | 'retry' | 'skip'
+
+export interface InspectionRoutePoint {
+  id: string
+  x: number
+  y: number
+  z: number
+  yaw?: number | null
+  tolerance: number
+  dwell: number
+  action: string
+  enabled: boolean
+}
+
+export interface InspectionRoute {
+  id: string
+  name?: string | null
+  map_id?: string | null
+  map_version?: number | null
+  revision?: number | null
+  point_count?: number | null
+  points: InspectionRoutePoint[]
+  loop_count?: number | null
+  failure_policy?: InspectionFailurePolicy | string | null
+  max_retries?: number | null
+  [key: string]: unknown
+}
+
+export interface InspectionRouteRequest {
+  id: string
+  name?: string | null
+  map_id: string
+  map_version: number
+  revision: number
+  points: InspectionRoutePoint[]
+  loop_count: number
+  failure_policy: InspectionFailurePolicy
+  max_retries: number
+}
+
+export interface InspectionRouteResponse {
+  schema_version: 'lingtu.inspection.v1'
+  ok: boolean
+  route: InspectionRoute
+  ts: number
+}
+
+export interface InspectionRouteListResponse {
+  schema_version: 'lingtu.inspection.v1'
+  ok: boolean
+  map_id: string
+  routes: InspectionRoute[]
+  count: number
+  ts: number
+}
+
+export interface InspectionCommandResponse {
+  schema_version: 'lingtu.inspection.v1'
+  ok: boolean
+  accepted: boolean
+  action: 'start' | 'pause' | 'resume' | 'cancel' | 'delete'
+  route_id?: string | null
+  map_id?: string | null
+  revision?: number | null
+  request_id?: string | null
+  ts: number
+}
+
+export interface InspectionEvidenceWorkerStatus {
+  ready: boolean
+  reason?: string | null
+  supported_actions: string[]
+  heartbeat_ts?: number | null
+  heartbeat_age_s?: number | null
+  max_heartbeat_age_s?: number | null
+  worker_id?: string | null
+  status?: string | null
+  state?: string | null
+  readiness_reason?: string | null
+  analyzers?: Record<string, string>
+  last_error?: string | null
+  error?: string | null
+  [key: string]: unknown
+}
+
+export interface InspectionEvidenceArtifact {
+  kind: 'rgb' | 'pose' | 'detections' | string
+  media_type?: string | null
+  bytes?: number | null
+  sha256?: string | null
+}
+
+export interface InspectionEvidenceSummary {
+  evidence_id: string
+  manifest_sha256: string
+  request: {
+    run_id?: string
+    route_id?: string
+    route_revision?: number
+    map_id?: string
+    map_version?: number
+    point_id?: string
+    point_index?: number
+    request_id?: string
+    action?: string
+    requested_at_s?: number
+    deadline_s?: number
+    [key: string]: unknown
+  }
+  analysis: {
+    support?: string
+    verdict?: string
+    reason?: string
+    [key: string]: unknown
+  }
+  persistence?: Record<string, unknown>
+  artifacts: InspectionEvidenceArtifact[]
+}
+
+export interface InspectionEvidenceListResponse {
+  schema_version: 'lingtu.inspection.evidence.list.v1'
+  ok: boolean
+  count: number
+  limit: number
+  integrity_failures: number
+  evidence: InspectionEvidenceSummary[]
+  ts: number
+}
+
+export interface InspectionEvidenceDetailResponse {
+  schema_version: 'lingtu.inspection.evidence.detail.v1'
+  ok: boolean
+  evidence: InspectionEvidenceSummary
+  ts: number
+}
+
+export interface InspectionStatusResponse {
+  schema_version: 'lingtu.inspection.v1'
+  ok: boolean
+  status: Record<string, unknown> & {
+    evidence_worker?: InspectionEvidenceWorkerStatus
+  }
   ts: number
 }
 
@@ -669,6 +884,7 @@ export interface ClientLinks {
   path?: string
   localization_status?: string
   navigation_status?: string
+  navigation_dds_snapshot?: string
   runtime_dataflow?: string
   runtime_dataflow_topic?: string
   runtime_dataflow_subscribe?: string
@@ -677,16 +893,15 @@ export interface ClientLinks {
   algorithm_benchmark_latest?: string
   devices?: string
   readiness?: string
+  metrics?: string
   auth_login?: string
   auth_check?: string
   events?: string
   teleop_ws?: string
   camera_ws?: string
   cloud_ws?: string
+  scan_ws?: string
   camera_snapshot?: string
-  webrtc_stats?: string
-  webrtc_offer?: string
-  webrtc_bitrate?: string
   webrtc_whep?: string
   go2rtc_status?: string
   health?: string
@@ -696,7 +911,15 @@ export interface ClientLinks {
   navigation_goal_candidate?: string
   navigation_plan?: string
   inspection_acceptance?: string
+  inspection_routes?: string
+  inspection_route_detail?: string
+  inspection_route_start?: string
+  inspection_status?: string
+  inspection_pause?: string
+  inspection_resume?: string
+  inspection_cancel?: string
   navigation_cancel?: string
+  navigation_resume?: string
   goal?: string
   navigate_click?: string
   stop?: string
@@ -723,8 +946,10 @@ export interface ClientLinks {
   explore_stop?: string
   slam_status?: string
   slam_switch?: string
+  slam_restart?: string
   slam_auto_relocalize?: string
   slam_relocalize?: string
+  slam_track_against_map?: string
   bag_start?: string
   bag_stop?: string
   bag_status?: string
@@ -734,6 +959,7 @@ export interface ClientLinks {
   field_check?: string
   routecheck_latest?: string
   real_runtime_evidence_latest?: string
+  runtime_contract?: string
   [key: string]: string | undefined
 }
 
@@ -779,12 +1005,9 @@ export interface CameraMediaStatus {
   [key: string]: unknown
 }
 
-export interface WebRTCMediaStatus {
-  available: boolean
-  stats: string
-  offer: string
-  bitrate: string
-  whep: string
+export interface WHEPMediaStatus {
+  supported: boolean
+  endpoint: string
   go2rtc_status: string
   [key: string]: unknown
 }
@@ -794,15 +1017,12 @@ export interface AppMediaLinks {
   teleop_ws: string
   camera_ws: string
   cloud_ws: string
+  scan_ws?: string
   camera_snapshot: string
-  webrtc_available: boolean
-  webrtc_stats?: string
-  webrtc_offer?: string
-  webrtc_bitrate?: string
   webrtc_whep?: string
   go2rtc_status?: string
   camera: CameraMediaStatus
-  webrtc: WebRTCMediaStatus
+  whep: WHEPMediaStatus
   [key: string]: unknown
 }
 
@@ -856,6 +1076,7 @@ export interface AppRealtimeCapabilities {
   teleop: RealtimeTeleopCapability
   camera: RealtimeCameraCapability
   cloud: RealtimeCloudCapability
+  scan?: RealtimeCloudCapability
 }
 
 export interface TrafficSSEStats {
@@ -892,6 +1113,7 @@ export interface AppTrafficResponse {
   status: 'ok' | 'degraded'
   sse: TrafficSSEStats
   cloud: TrafficCloudStats
+  scan?: TrafficCloudStats
   recommended_client_rates_hz: Record<string, number>
   client_policy: {
     usage: string
@@ -1266,8 +1488,13 @@ export interface OdometryEvent {
   type: 'odometry'
   x: number
   y: number
+  z?: number | null
   yaw: number
   vx: number
+  wz?: number | null
+  frame_id?: string | null
+  child_frame_id?: string | null
+  ts?: number | null
 }
 
 export interface MissionStatusEvent {
@@ -1432,6 +1659,46 @@ export interface MapCloudEvent {
   count: number
   seq?: number
   bytes?: number
+  source?: string
+  clean_layer?: boolean
+  reset?: boolean
+}
+
+export interface MapScenePaletteEntry {
+  color?: string
+  name?: string
+}
+
+export interface MapSceneLayer {
+  id?: string
+  type?: string
+  layer_type?: string
+  source?: string
+  topic?: string
+  frame_id?: string
+  ts?: number
+  point_count?: number
+  has_labels?: boolean
+  label_count?: number
+  labels?: number[]
+  confidence?: number[]
+  palette?: Record<string, MapScenePaletteEntry>
+  taxonomy?: string | null
+  taxonomy_version?: string | number | null
+  metadata?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface MapSceneEvent {
+  type: 'map_scene'
+  schema_version?: string | number
+  source?: string
+  frame_id?: string
+  map_id?: string | null
+  sequence?: number
+  metadata?: Record<string, unknown>
+  layers: MapSceneLayer[]
+  consumed_pointcloud_layers?: number
 }
 
 export interface SavedMapEvent {
@@ -1465,8 +1732,10 @@ export interface SessionEvent {
     localization_backend?: string | null
     health_source?: string | null
     active_map: string | null
+    saved_active_map?: string | null
     map_has_pcd: boolean
     map_has_tomogram: boolean
+    map_has_octomap?: boolean
     since: number
     pending: boolean
     error: string
@@ -1537,6 +1806,8 @@ export interface MapLifecycleResponse {
   warnings?: unknown[] | null
   errors?: unknown[] | null
   dynamic_filter?: DynamicFilterResult | null
+  map_optimization?: Record<string, unknown> | null
+  map_optimization_ok?: boolean | null
   ts: number
   [key: string]: unknown
 }
@@ -1606,6 +1877,7 @@ export type SSEEvent = SSEEnvelopeFields & (
   | RobotStatusEvent
   | GlobalPathEvent
   | MapCloudEvent
+  | MapSceneEvent
   | SavedMapEvent
   | MapLifecycleEvent
   | SessionEvent
@@ -1625,6 +1897,7 @@ export interface SSEState {
   globalPath: GlobalPathEvent | null
   localPath: LocalPathEvent | null
   mapCloud: MapCloudEvent | null
+  mapScene: MapSceneEvent | null
   savedMap: SavedMapEvent | null
   mapEvent: MapLifecycleEvent['data'] | null
   session: SessionEvent['data'] | null
@@ -1665,9 +1938,51 @@ export interface Toast {
   kind: ToastKind
 }
 
-export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'dataflow' | 'inspection' | 'runtime' | 'planner'
+export type Tab = 'console' | 'scene' | 'map' | 'slam' | 'dataflow' | 'inspection' | 'planner'
 
-export type SlamProfile = 'fastlio2' | 'localizer' | 'super_lio' | 'super_lio_relocation' | 'stop'
+export type SlamProfile =
+  | 'none'
+  | 'native_dds'
+  | 'fastlio2'
+  | 'genz'
+  | 'localizer'
+  | 'super_lio'
+  | 'super_lio_relocation'
+  | 'stop'
+
+export interface SlamServiceDetail {
+  status: string
+  canonical_unit?: string
+  selected_unit?: string
+  installed_units?: string[]
+  active_units?: string[]
+  candidate_units?: string[]
+  [key: string]: unknown
+}
+
+export interface SlamServiceMetadata {
+  role: string
+  group: string
+  product_default: boolean
+  ros2_compat: boolean
+  experimental: boolean
+  description?: string
+  [key: string]: unknown
+}
+
+export interface SlamStatusResponse {
+  mode: string
+  native_mode?: string | null
+  services: Record<string, string>
+  service_details: Record<string, SlamServiceDetail>
+  service_groups: Record<string, string[]>
+  service_metadata: Record<string, SlamServiceMetadata>
+  product_runtime: string
+  ros2_required: boolean
+  manual_systemctl_required: boolean
+  control_entrypoint: string
+  [key: string]: unknown
+}
 
 export interface SlamOperationResponse {
   schema_version: number

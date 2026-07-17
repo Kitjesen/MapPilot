@@ -16,6 +16,7 @@ where code belongs before adding a new file.
 | Path | Put here |
 | --- | --- |
 | `src/runtime/` | Module, Blueprint, ports, registry, shared messages, transport, TF. |
+| `src/diagnostics/` | Runtime evidence, acceptance gates, audit helpers, and migration catalogs. |
 | `src/drivers/` | Real/sim robot and sensor backends. |
 | `src/localization/` | SLAM/localization modules and portable SLAM code. |
 | `src/nav/` | Navigation FSM, maps, safety, exploration, planner services. |
@@ -28,7 +29,7 @@ where code belongs before adding a new file.
 | `src/gateway/` | REST/SSE/WS, MCP, teleop, runtime status. |
 | `src/*/adapters/` | ROS2, LCM, portable compatibility adapters. |
 | `src/kernels/` | Portable compute kernel paths and ABI contracts. |
-| `src/gateway/media/` | Optional WebRTC camera stream module. |
+| `src/gateway/media/` | Camera transport notes for go2rtc WHEP and JPEG fallback. |
 
 ## Non-Runtime Roots
 

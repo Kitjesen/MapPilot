@@ -1,11 +1,4 @@
-"""
-test_action_executor.py — 动作执行器单元测试
-
-覆盖:
-  - 各类动作命令生成 (NAVIGATE, APPROACH, LOOK_AROUND, VERIFY, BACKTRACK)
-  - 超时检测
-  - 状态转换
-"""
+"""Decision module."""
 
 import math
 import time
@@ -13,20 +6,18 @@ import unittest
 
 import numpy as np
 
-from decision.tasking.action_executor import (
+from decision.tasks.actions import (
     ActionExecutor,
     ActionStatus,
 )
 
 
 class TestNavigateCommand(unittest.TestCase):
-    """NAVIGATE 命令生成测试。"""
+    """Test Navigate Command."""
 
     def test_basic_navigate(self):
         executor = ActionExecutor()
-        cmd = executor.generate_navigate_command(
-            target_position={"x": 5.0, "y": 3.0, "z": 0.0}
-        )
+        cmd = executor.generate_navigate_command(target_position={"x": 5.0, "y": 3.0, "z": 0.0})
         self.assertEqual(cmd.command_type, "goal")
         self.assertAlmostEqual(cmd.target_x, 5.0)
         self.assertAlmostEqual(cmd.target_y, 3.0)
@@ -43,7 +34,7 @@ class TestNavigateCommand(unittest.TestCase):
 
 
 class TestApproachCommand(unittest.TestCase):
-    """APPROACH 命令生成测试。"""
+    """Test Approach Command."""
 
     def test_approach_stops_before_target(self):
         executor = ActionExecutor(approach_distance=0.5)
@@ -51,10 +42,8 @@ class TestApproachCommand(unittest.TestCase):
             target_position={"x": 5.0, "y": 0.0, "z": 0.0},
             robot_position={"x": 0.0, "y": 0.0, "z": 0.0},
         )
-        # 应停在距目标 0.5m 处
-        dist_to_target = math.sqrt(
-            (cmd.target_x - 5.0) ** 2 + (cmd.target_y - 0.0) ** 2
-        )
+
+        dist_to_target = math.sqrt((cmd.target_x - 5.0) ** 2 + (cmd.target_y - 0.0) ** 2)
         self.assertAlmostEqual(dist_to_target, 0.5, places=1)
         self.assertAlmostEqual(cmd.approach_speed, 0.15)
 
@@ -64,13 +53,13 @@ class TestApproachCommand(unittest.TestCase):
             target_position={"x": 0.3, "y": 0.0, "z": 0.0},
             robot_position={"x": 0.0, "y": 0.0, "z": 0.0},
         )
-        # 已经在 0.5m 内, 不移动
+
         self.assertAlmostEqual(cmd.target_x, 0.0)
         self.assertAlmostEqual(cmd.target_y, 0.0)
 
 
 class TestLookAroundCommand(unittest.TestCase):
-    """LOOK_AROUND 命令生成测试。"""
+    """Test Look Around Command."""
 
     def test_look_around_is_velocity_command(self):
         executor = ActionExecutor(look_around_speed=0.5)
@@ -81,7 +70,7 @@ class TestLookAroundCommand(unittest.TestCase):
 
 
 class TestVerifyCommand(unittest.TestCase):
-    """VERIFY 命令生成测试。"""
+    """Test Verify Command."""
 
     def test_verify_does_not_move(self):
         executor = ActionExecutor()
@@ -89,7 +78,7 @@ class TestVerifyCommand(unittest.TestCase):
             target_position={"x": 3.0, "y": 4.0, "z": 0.0},
             robot_position={"x": 1.0, "y": 1.0, "z": 0.0},
         )
-        # 不移动, 只转向
+
         self.assertAlmostEqual(cmd.target_x, 1.0)
         self.assertAlmostEqual(cmd.target_y, 1.0)
         expected_yaw = math.atan2(3.0, 2.0)
@@ -97,7 +86,7 @@ class TestVerifyCommand(unittest.TestCase):
 
 
 class TestBacktrackCommand(unittest.TestCase):
-    """BACKTRACK 命令生成测试。"""
+    """Test Backtrack Command."""
 
     def test_backtrack_to_position(self):
         executor = ActionExecutor()
@@ -108,7 +97,7 @@ class TestBacktrackCommand(unittest.TestCase):
 
 
 class TestStatusManagement(unittest.TestCase):
-    """状态管理测试。"""
+    """Test Status Management."""
 
     def test_initial_idle(self):
         executor = ActionExecutor()
@@ -144,7 +133,7 @@ class TestStatusManagement(unittest.TestCase):
 
 
 class TestLeraRecover(unittest.TestCase):
-    """LERa 三步失败恢复测试。"""
+    """Test Lera Recover."""
 
     def test_first_failure_retries_path(self):
         executor = ActionExecutor()
@@ -184,12 +173,18 @@ class TestLeraRecover(unittest.TestCase):
             original_goal="find the red cup",
             failure_count=1,
         )
-        self.assertIn(result, (
-            "retry_different_path", "expand_search", "requery_goal", "abort",
-        ))
+        self.assertIn(
+            result,
+            (
+                "retry_different_path",
+                "expand_search",
+                "requery_goal",
+                "abort",
+            ),
+        )
 
     def test_llm_client_valid_response(self):
-        """Mock LLM returns valid JSON → use LLM action."""
+        """Test llm client valid response."""
 
         class MockLLM:
             async def chat(self, prompt, max_tokens=200, **kwargs):
@@ -206,7 +201,7 @@ class TestLeraRecover(unittest.TestCase):
         self.assertEqual(result, "expand_search")
 
     def test_llm_client_invalid_json_falls_back(self):
-        """Mock LLM returns garbage → fallback to rule-based."""
+        """Test llm client invalid json falls back."""
 
         class MockLLM:
             async def chat(self, prompt, max_tokens=200, **kwargs):
@@ -223,7 +218,7 @@ class TestLeraRecover(unittest.TestCase):
         self.assertEqual(result, "retry_different_path")
 
     def test_llm_client_exception_falls_back(self):
-        """Mock LLM raises exception → fallback to rule-based."""
+        """Test llm client exception falls back."""
 
         class MockLLM:
             async def chat(self, prompt, max_tokens=200, **kwargs):
@@ -240,7 +235,7 @@ class TestLeraRecover(unittest.TestCase):
         self.assertEqual(result, "expand_search")
 
     def test_llm_client_invalid_action_falls_back(self):
-        """Mock LLM returns invalid action → fallback."""
+        """Test llm client invalid action falls back."""
 
         class MockLLM:
             async def chat(self, prompt, max_tokens=200, **kwargs):

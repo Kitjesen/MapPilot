@@ -11,21 +11,23 @@ Usage:
     python web/dashboard_server.py
     # Open http://localhost:8066
 """
+
 import asyncio
 import json
+import os
 import sys
-import time
 import threading
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
-import yaml
 import paramiko
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, FileResponse
-from pydantic import BaseModel
 import uvicorn
+import yaml
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
+from pydantic import BaseModel
 
 # ── gRPC Proto Imports (graceful fallback) ───────────────────
 # The generated stubs use bare `import common_pb2` etc., so we
@@ -36,17 +38,18 @@ if _PROTO_DIR not in sys.path:
 
 GRPC_AVAILABLE = False
 try:
-    import grpc
-    from google.protobuf import empty_pb2
-    from google.protobuf.json_format import MessageToDict
-    import system_pb2
-    import system_pb2_grpc
     import control_pb2
     import control_pb2_grpc
-    import telemetry_pb2
-    import telemetry_pb2_grpc
     import data_pb2
     import data_pb2_grpc
+    import grpc
+    import system_pb2
+    import system_pb2_grpc
+    import telemetry_pb2
+    import telemetry_pb2_grpc
+    from google.protobuf import empty_pb2
+    from google.protobuf.json_format import MessageToDict
+
     GRPC_AVAILABLE = True
 except ImportError as e:
     print(f"[WARN] gRPC stubs not available, gRPC features disabled: {e}")
@@ -55,7 +58,7 @@ except ImportError as e:
 # ── Robot Config ──────────────────────────────────────────────
 ROBOT_HOST = "192.168.66.190"
 ROBOT_USER = "sunrise"
-ROBOT_PASS = "sunrise"
+ROBOT_PASS = os.environ.get("S100P_PASSWORD", "")
 GRPC_PORT = 50051
 GRPC_TIMEOUT = 5  # seconds
 
@@ -68,12 +71,21 @@ ROS_SETUP = f"source /opt/ros/humble/setup.bash && source {NAV_WS}/install/setup
 # All 16 managed services
 SERVICES = [
     # Navigation
-    "nav-lidar", "nav-slam", "nav-planning", "nav-autonomy", "nav-grpc", "nav-semantic",
+    "nav-lidar",
+    "nav-slam",
+    "nav-planning",
+    "nav-autonomy",
+    "nav-grpc",
+    "nav-semantic",
     # Brainstem
     "brainstem",
     # Cortex Runtime (6 microservices)
-    "cortex-arbiter", "cortex-telemetry", "cortex-safety",
-    "cortex-control", "cortex-nav-gw", "cortex-askme-edge",
+    "cortex-arbiter",
+    "cortex-telemetry",
+    "cortex-safety",
+    "cortex-control",
+    "cortex-nav-gw",
+    "cortex-askme-edge",
     # Askme
     "askme",
     # OTA
@@ -83,8 +95,12 @@ SERVICES = [
 # Stack start/stop orders
 STACK_NAV_ORDER = ["nav-lidar", "nav-slam", "nav-planning", "nav-autonomy", "nav-grpc"]
 STACK_CORTEX_ORDER = [
-    "cortex-telemetry", "cortex-safety", "cortex-control",
-    "cortex-nav-gw", "cortex-arbiter", "cortex-askme-edge",
+    "cortex-telemetry",
+    "cortex-safety",
+    "cortex-control",
+    "cortex-nav-gw",
+    "cortex-arbiter",
+    "cortex-askme-edge",
 ]
 STACK_ALL_ORDER = STACK_NAV_ORDER + ["nav-semantic", "brainstem"] + STACK_CORTEX_ORDER + ["askme", "ota-agent"]
 
@@ -103,7 +119,7 @@ TOPICS_MONITOR = [
     "/nav/goal_pose",
     "/nav/lidar_scan",
     "/nav/imu",
-    "/nav/dog_odometry",
+    "/driver/odometry",
     "/nav/localization_quality",
     "/nav/semantic/scene_graph",
     "/nav/semantic/detections_3d",
@@ -115,7 +131,7 @@ TOPICS_MONITOR = [
 #  SSH Connection Pool
 # ═════════════════════════════════════════════════════════════
 _ssh_lock = threading.Lock()
-_ssh_client: Optional[paramiko.SSHClient] = None
+_ssh_client: paramiko.SSHClient | None = None
 
 
 def get_ssh() -> paramiko.SSHClient:
@@ -135,6 +151,8 @@ def get_ssh() -> paramiko.SSHClient:
                 except Exception:
                     need_reconnect = True
         if need_reconnect:
+            if not ROBOT_PASS:
+                raise RuntimeError("S100P_PASSWORD must be set for SSH dashboard features")
             # Close stale connection
             if _ssh_client is not None:
                 try:
@@ -153,9 +171,9 @@ def get_ssh() -> paramiko.SSHClient:
 import re as _re
 
 # ── 输入验证 (防命令注入) ──
-_SAFE_TOPIC_RE = _re.compile(r'^/[a-zA-Z0-9_/]+$')
-_SAFE_ROS_NAME_RE = _re.compile(r'^[a-zA-Z0-9_/.:-]+$')
-_SAFE_MAP_NAME_RE = _re.compile(r'^[a-zA-Z0-9_.\-]+$')
+_SAFE_TOPIC_RE = _re.compile(r"^/[a-zA-Z0-9_/]+$")
+_SAFE_ROS_NAME_RE = _re.compile(r"^[a-zA-Z0-9_/.:-]+$")
+_SAFE_MAP_NAME_RE = _re.compile(r"^[a-zA-Z0-9_.\-]+$")
 
 
 def _validate_topic(topic: str) -> str:
@@ -171,7 +189,7 @@ def _validate_ros_name(name: str) -> str:
 
 
 def _validate_map_name(name: str) -> str:
-    if not _SAFE_MAP_NAME_RE.match(name) or '..' in name:
+    if not _SAFE_MAP_NAME_RE.match(name) or ".." in name:
         raise ValueError(f"Invalid map name: {name}")
     return name
 
@@ -290,9 +308,14 @@ def _grpc_call(service_name: str, method_name: str, request=None, timeout: float
             response = method(request, timeout=timeout)
             return MessageToDict(response, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
         except grpc.RpcError as e:
-            if attempt == 0 and GRPC_AVAILABLE and e.code() in (
-                grpc.StatusCode.UNAVAILABLE,
-                grpc.StatusCode.DEADLINE_EXCEEDED,
+            if (
+                attempt == 0
+                and GRPC_AVAILABLE
+                and e.code()
+                in (
+                    grpc.StatusCode.UNAVAILABLE,
+                    grpc.StatusCode.DEADLINE_EXCEEDED,
+                )
             ):
                 # Force channel recreation and retry once
                 _close_grpc()
@@ -329,32 +352,39 @@ class ServiceAction(BaseModel):
     service: str
     action: str  # start | stop | restart
 
+
 class NavGoal(BaseModel):
     x: float
     y: float
     z: float = 0.0
     yaw: float = 0.0
 
+
 class ParamUpdate(BaseModel):
     node: str
     param: str
     value: str
 
+
 class SemanticGoal(BaseModel):
     instruction: str
+
 
 class TopicPub(BaseModel):
     topic: str
     msg_type: str
     data: str
 
+
 class PatrolRoute(BaseModel):
     name: str
     waypoints: list  # [{x, y, z, name}, ...]
     loop: bool = False
 
+
 class PatrolAction(BaseModel):
     name: str
+
 
 class POIItem(BaseModel):
     name: str
@@ -362,9 +392,11 @@ class POIItem(BaseModel):
     y: float
     z: float = 0.0
 
+
 class GeofenceItem(BaseModel):
     name: str
     polygon: list  # [[x,y], [x,y], ...]
+
 
 class ScheduleItem(BaseModel):
     name: str
@@ -374,10 +406,12 @@ class ScheduleItem(BaseModel):
     weekdays: list = [0, 1, 2, 3, 4, 5, 6]
     enabled: bool = True
 
+
 # gRPC request models
 class GrpcLoginRequest(BaseModel):
     username: str
     password: str
+
 
 class GrpcRelocalizeRequest(BaseModel):
     pcd_path: str
@@ -386,22 +420,28 @@ class GrpcRelocalizeRequest(BaseModel):
     z: float = 0.0
     yaw: float = 0.0
 
+
 class GrpcSaveMapRequest(BaseModel):
     file_path: str
     save_patches: bool = True
 
+
 class GrpcSetModeRequest(BaseModel):
     mode: str  # IDLE, MANUAL, TELEOP, AUTONOMOUS, MAPPING
+
 
 class GrpcStartTaskRequest(BaseModel):
     task_type: str  # NAVIGATION, MAPPING, FOLLOW_PATH, SEMANTIC_NAV, FOLLOW_PERSON
     params_json: str = "{}"
 
+
 class GrpcCancelTaskRequest(BaseModel):
     task_id: str
 
+
 class GrpcReleaseLeaseRequest(BaseModel):
     lease_token: str
+
 
 class GrpcSetRuntimeConfigRequest(BaseModel):
     config_json: str
@@ -419,6 +459,7 @@ async def lifespan(app: FastAPI):
         _ssh_client.close()
     _close_grpc()
 
+
 app = FastAPI(title="LingTu Dashboard", lifespan=lifespan)
 
 
@@ -435,8 +476,11 @@ def ping():
     out, err, code = ssh_exec("echo OK && hostname && uptime -p", timeout=5)
     if code == 0:
         lines = out.strip().split("\n")
-        return {"ok": True, "hostname": lines[1] if len(lines) > 1 else "?",
-                "uptime": lines[2] if len(lines) > 2 else "?"}
+        return {
+            "ok": True,
+            "hostname": lines[1] if len(lines) > 1 else "?",
+            "uptime": lines[2] if len(lines) > 2 else "?",
+        }
     return {"ok": False, "error": err or "Connection failed"}
 
 
@@ -446,7 +490,14 @@ def ping():
 SERVICE_GROUPS = {
     "导航": ["nav-lidar", "nav-slam", "nav-planning", "nav-autonomy", "nav-grpc", "nav-semantic"],
     "运动控制": ["brainstem"],
-    "Cortex": ["cortex-arbiter", "cortex-telemetry", "cortex-safety", "cortex-control", "cortex-nav-gw", "cortex-askme-edge"],
+    "Cortex": [
+        "cortex-arbiter",
+        "cortex-telemetry",
+        "cortex-safety",
+        "cortex-control",
+        "cortex-nav-gw",
+        "cortex-askme-edge",
+    ],
     "其他": ["askme", "ota-agent"],
 }
 
@@ -466,7 +517,7 @@ SERVICE_DEPS = {
 
 @app.get("/api/services")
 def list_services():
-    cmd = f"for s in {' '.join(SERVICES)}; do st=$(systemctl is-active $s 2>/dev/null || echo inactive); echo \"$s $st\"; done"
+    cmd = f'for s in {" ".join(SERVICES)}; do st=$(systemctl is-active $s 2>/dev/null || echo inactive); echo "$s $st"; done'
     out, err, code = ssh_exec(cmd)
     results = []
     for line in out.strip().split("\n"):
@@ -479,7 +530,7 @@ def list_services():
 @app.get("/api/services/grouped")
 def list_services_grouped():
     """List services grouped by category with dependency info."""
-    cmd = f"for s in {' '.join(SERVICES)}; do st=$(systemctl is-active $s 2>/dev/null || echo inactive); echo \"$s $st\"; done"
+    cmd = f'for s in {" ".join(SERVICES)}; do st=$(systemctl is-active $s 2>/dev/null || echo inactive); echo "$s $st"; done'
     out, err, code = ssh_exec(cmd)
     status_map = {}
     for line in out.strip().split("\n"):
@@ -490,11 +541,13 @@ def list_services_grouped():
     for group_name, svcs in SERVICE_GROUPS.items():
         items = []
         for s in svcs:
-            items.append({
-                "name": s,
-                "status": status_map.get(s, "unknown"),
-                "depends_on": SERVICE_DEPS.get(s, []),
-            })
+            items.append(
+                {
+                    "name": s,
+                    "status": status_map.get(s, "unknown"),
+                    "depends_on": SERVICE_DEPS.get(s, []),
+                }
+            )
         active = sum(1 for i in items if i["status"] == "active")
         groups.append({"group": group_name, "services": items, "active": active, "total": len(items)})
     return {"groups": groups}
@@ -539,14 +592,16 @@ def cortex_detail():
         status = lines[0] if lines else "unknown"
         port_listening = str(port) in (lines[1] if len(lines) > 1 else "")
         started_at = lines[2] if len(lines) > 2 else ""
-        services.append({
-            "name": svc,
-            "status": status,
-            "port": port,
-            "port_listening": port_listening,
-            "started_at": started_at.strip(),
-            "depends_on": SERVICE_DEPS.get(svc, []),
-        })
+        services.append(
+            {
+                "name": svc,
+                "status": status,
+                "port": port,
+                "port_listening": port_listening,
+                "started_at": started_at.strip(),
+                "depends_on": SERVICE_DEPS.get(svc, []),
+            }
+        )
     active = sum(1 for s in services if s["status"] == "active")
     return {"services": services, "active": active, "total": len(services)}
 
@@ -583,35 +638,42 @@ def stack_nav_start():
     """Start navigation stack in dependency order."""
     return _stack_start(STACK_NAV_ORDER)
 
+
 @app.post("/api/stack/nav/stop")
 def stack_nav_stop():
     """Stop navigation stack in reverse order."""
     return _stack_stop(STACK_NAV_ORDER)
+
 
 @app.post("/api/stack/cortex/start")
 def stack_cortex_start():
     """Start cortex runtime stack."""
     return _stack_start(STACK_CORTEX_ORDER)
 
+
 @app.post("/api/stack/cortex/stop")
 def stack_cortex_stop():
     """Stop cortex runtime stack."""
     return _stack_stop(STACK_CORTEX_ORDER)
+
 
 @app.post("/api/stack/all/start")
 def stack_all_start():
     """Start all services in dependency order."""
     return _stack_start(STACK_ALL_ORDER)
 
+
 @app.post("/api/stack/all/stop")
 def stack_all_stop():
     """Stop all services in reverse order."""
     return _stack_stop(STACK_ALL_ORDER)
 
+
 # Legacy endpoints (kept for compatibility)
 @app.post("/api/stack/start")
 def stack_start_legacy():
     return _stack_start(STACK_NAV_ORDER)
+
 
 @app.post("/api/stack/stop")
 def stack_stop_legacy():
@@ -670,9 +732,7 @@ def topic_echo(topic_path: str):
 # ═════════════════════════════════════════════════════════════
 @app.get("/api/maps")
 def list_maps():
-    out2, _, _ = ssh_exec(
-        f"find {MAP_DIR} -maxdepth 2 -name '*.pcd' -o -name '*.pickle' 2>/dev/null | head -50"
-    )
+    out2, _, _ = ssh_exec(f"find {MAP_DIR} -maxdepth 2 -name '*.pcd' -o -name '*.pickle' 2>/dev/null | head -50")
     maps = []
     for line in out2.strip().split("\n"):
         if line.strip():
@@ -682,13 +742,15 @@ def list_maps():
             size_bytes = int(parts[0]) if parts[0].isdigit() else 0
             mtime = parts[1][:19] if len(parts) > 1 else ""
             size_mb = size_bytes / (1024 * 1024)
-            maps.append({
-                "path": fname,
-                "name": fname.replace(MAP_DIR + "/", ""),
-                "size": f"{size_mb:.1f} MB",
-                "size_bytes": size_bytes,
-                "modified": mtime,
-            })
+            maps.append(
+                {
+                    "path": fname,
+                    "name": fname.replace(MAP_DIR + "/", ""),
+                    "size": f"{size_mb:.1f} MB",
+                    "size_bytes": size_bytes,
+                    "modified": mtime,
+                }
+            )
     return {"maps": maps, "map_dir": MAP_DIR}
 
 
@@ -717,9 +779,7 @@ def delete_map(map_name: str):
 def list_maps_detail():
     """List map directories with metadata and active status."""
     # Find map directories (each should contain .pcd + .pickle)
-    out, _, _ = ssh_exec(
-        f"ls -d {MAP_DIR}/*/ 2>/dev/null; readlink {MAP_DIR}/active 2>/dev/null"
-    )
+    out, _, _ = ssh_exec(f"ls -d {MAP_DIR}/*/ 2>/dev/null; readlink {MAP_DIR}/active 2>/dev/null")
     lines = [l.strip().rstrip("/") for l in out.strip().split("\n") if l.strip()]
     active_target = ""
     dirs = []
@@ -742,14 +802,16 @@ def list_maps_detail():
         pcd_size = int(info_lines[0]) if info_lines and info_lines[0].isdigit() else 0
         pickle_size = int(info_lines[1]) if len(info_lines) > 1 and info_lines[1].isdigit() else 0
         metadata_text = "\n".join(info_lines[2:]) if len(info_lines) > 2 else ""
-        maps.append({
-            "name": name,
-            "path": d,
-            "active": name == active_target,
-            "pcd_size_mb": round(pcd_size / (1024 * 1024), 1),
-            "pickle_size_mb": round(pickle_size / (1024 * 1024), 1),
-            "metadata": metadata_text,
-        })
+        maps.append(
+            {
+                "name": name,
+                "path": d,
+                "active": name == active_target,
+                "pcd_size_mb": round(pcd_size / (1024 * 1024), 1),
+                "pickle_size_mb": round(pickle_size / (1024 * 1024), 1),
+                "metadata": metadata_text,
+            }
+        )
     return {"maps": maps, "active": active_target, "map_dir": MAP_DIR}
 
 
@@ -761,9 +823,7 @@ class MapActivateRequest(BaseModel):
 def activate_map(req: MapActivateRequest):
     """Switch active map symlink and optionally restart nav-planning."""
     target = f"{MAP_DIR}/{req.name}"
-    out, err, code = ssh_exec(
-        f"test -d '{target}' && cd {MAP_DIR} && ln -sfn {req.name} active && readlink active"
-    )
+    out, err, code = ssh_exec(f"test -d '{target}' && cd {MAP_DIR} && ln -sfn {req.name} active && readlink active")
     if req.name in out:
         return {"ok": True, "active": req.name, "output": f"Active map → {req.name}"}
     return {"ok": False, "error": f"Failed to activate: {err or out}"}
@@ -774,6 +834,7 @@ async def ws_log_stream(ws: WebSocket, service: str):
     """Stream journalctl logs in real-time via WebSocket."""
     await ws.accept()
     import subprocess
+
     try:
         ssh = get_ssh()
     except Exception:
@@ -820,7 +881,7 @@ def send_nav_goal(goal: NavGoal):
     cmd = (
         f"timeout 8 ros2 topic pub --once /nav/goal_pose geometry_msgs/msg/PoseStamped "
         f"\"{{header: {{frame_id: 'map'}}, pose: {{position: {{x: {goal.x}, y: {goal.y}, z: {goal.z}}}, "
-        f"orientation: {{w: 1.0}}}}}}\" 2>&1"
+        f'orientation: {{w: 1.0}}}}}}" 2>&1'
     )
     out, err, code = ssh_exec_ros(cmd, timeout=10)
     return {"ok": code == 0, "goal": {"x": goal.x, "y": goal.y, "z": goal.z}, "output": out.strip()}
@@ -828,16 +889,14 @@ def send_nav_goal(goal: NavGoal):
 
 @app.post("/api/nav/cancel")
 def cancel_nav():
-    out, _, code = ssh_exec_ros(
-        "timeout 5 ros2 topic pub --once /nav/cancel std_msgs/msg/Empty '{}' 2>&1", timeout=5
-    )
+    out, _, code = ssh_exec_ros("timeout 5 ros2 topic pub --once /nav/cancel std_msgs/msg/Empty '{}' 2>&1", timeout=5)
     return {"ok": True, "output": "Cancel signal sent"}
 
 
 @app.post("/api/nav/estop")
 def emergency_stop():
     out, _, code = ssh_exec_ros(
-        "timeout 5 ros2 topic pub --once /nav/stop std_msgs/msg/Int8 \"{data: 2}\" 2>&1", timeout=5
+        'timeout 5 ros2 topic pub --once /nav/stop std_msgs/msg/Int8 "{data: 2}" 2>&1', timeout=5
     )
     return {"ok": True, "output": "E-STOP sent (stop=2)"}
 
@@ -845,7 +904,7 @@ def emergency_stop():
 @app.post("/api/nav/clear_stop")
 def clear_stop():
     out, _, code = ssh_exec_ros(
-        "timeout 5 ros2 topic pub --once /nav/stop std_msgs/msg/Int8 \"{data: 0}\" 2>&1", timeout=5
+        'timeout 5 ros2 topic pub --once /nav/stop std_msgs/msg/Int8 "{data: 0}" 2>&1', timeout=5
     )
     return {"ok": True, "output": "Stop cleared (stop=0)"}
 
@@ -976,11 +1035,9 @@ def set_param(req: ParamUpdate):
     _validate_ros_name(req.node)
     _validate_ros_name(req.param)
     # 参数值只允许数字、布尔和简单字符串
-    if not _re.match(r'^[a-zA-Z0-9_.:\-/ ]+$', str(req.value)):
+    if not _re.match(r"^[a-zA-Z0-9_.:\-/ ]+$", str(req.value)):
         return {"ok": False, "output": f"Invalid parameter value: {req.value}"}
-    out, err, code = ssh_exec_ros(
-        f"ros2 param set {req.node} {req.param} {req.value} 2>&1", timeout=10
-    )
+    out, err, code = ssh_exec_ros(f"ros2 param set {req.node} {req.param} {req.value} 2>&1", timeout=10)
     return {"ok": "successfully" in out.lower(), "output": out.strip()}
 
 
@@ -1042,7 +1099,7 @@ async def websocket_endpoint(ws: WebSocket):
                 out, _, code = await asyncio.to_thread(ssh_exec, "echo OK", 3)
                 connected = code == 0
 
-                svc_cmd = f"for s in {' '.join(SERVICES)}; do st=$(systemctl is-active $s 2>/dev/null || echo inactive); echo \"$s $st\"; done"
+                svc_cmd = f'for s in {" ".join(SERVICES)}; do st=$(systemctl is-active $s 2>/dev/null || echo inactive); echo "$s $st"; done'
                 svc_out, _, _ = await asyncio.to_thread(ssh_exec, svc_cmd, 8)
                 services = {}
                 for line in svc_out.strip().split("\n"):
@@ -1050,19 +1107,23 @@ async def websocket_endpoint(ws: WebSocket):
                     if len(parts) >= 2:
                         services[parts[0]] = parts[1]
 
-                await ws.send_json({
-                    "type": "status",
-                    "connected": connected,
-                    "services": services,
-                    "timestamp": time.time(),
-                })
+                await ws.send_json(
+                    {
+                        "type": "status",
+                        "connected": connected,
+                        "services": services,
+                        "timestamp": time.time(),
+                    }
+                )
             except Exception as e:
-                await ws.send_json({
-                    "type": "status",
-                    "connected": False,
-                    "error": str(e),
-                    "timestamp": time.time(),
-                })
+                await ws.send_json(
+                    {
+                        "type": "status",
+                        "connected": False,
+                        "error": str(e),
+                        "timestamp": time.time(),
+                    }
+                )
 
             await asyncio.sleep(5)
     except WebSocketDisconnect:
@@ -1085,11 +1146,13 @@ def patrol_list():
             if rc == 0 and content.strip():
                 try:
                     data = yaml.safe_load(content)
-                    routes.append({
-                        "name": data.get("name", fpath.split("/")[-1].replace(".yaml", "")),
-                        "waypoints": len(data.get("waypoints", [])),
-                        "loop": data.get("loop", False),
-                    })
+                    routes.append(
+                        {
+                            "name": data.get("name", fpath.split("/")[-1].replace(".yaml", "")),
+                            "waypoints": len(data.get("waypoints", [])),
+                            "loop": data.get("loop", False),
+                        }
+                    )
                 except Exception:
                     pass
     return {"ok": True, "routes": routes}
@@ -1130,9 +1193,7 @@ def patrol_start(action: PatrolAction):
 
 @app.post("/api/patrol/stop")
 def patrol_stop():
-    out, _, code = ssh_exec_ros(
-        "timeout 5 ros2 topic pub --once /nav/cancel std_msgs/msg/Empty '{}' 2>&1", timeout=5
-    )
+    out, _, code = ssh_exec_ros("timeout 5 ros2 topic pub --once /nav/cancel std_msgs/msg/Empty '{}' 2>&1", timeout=5)
     return {"ok": True, "output": "Patrol cancel signal sent"}
 
 
@@ -1206,7 +1267,7 @@ def poi_navigate(action: PatrolAction):
     cmd = (
         f"timeout 8 ros2 topic pub --once /nav/goal_pose geometry_msgs/msg/PoseStamped "
         f"\"{{header: {{frame_id: 'map'}}, pose: {{position: {{x: {target['x']}, y: {target['y']}, z: {target.get('z', 0.0)}}}, "
-        f"orientation: {{w: 1.0}}}}}}\" 2>&1"
+        f'orientation: {{w: 1.0}}}}}}" 2>&1'
     )
     out, _, code = ssh_exec_ros(cmd, timeout=10)
     return {"ok": code == 0, "poi": target, "output": out.strip()}
@@ -1370,14 +1431,16 @@ def history_list():
                 try:
                     data = json.loads(content)
                     mission_id = fpath.split("/")[-1].replace(".json", "")
-                    missions.append({
-                        "id": mission_id,
-                        "status": data.get("status", "unknown"),
-                        "start_time": data.get("start_time"),
-                        "end_time": data.get("end_time"),
-                        "type": data.get("type"),
-                        "summary": data.get("summary", ""),
-                    })
+                    missions.append(
+                        {
+                            "id": mission_id,
+                            "status": data.get("status", "unknown"),
+                            "start_time": data.get("start_time"),
+                            "end_time": data.get("end_time"),
+                            "type": data.get("type"),
+                            "summary": data.get("summary", ""),
+                        }
+                    )
                 except Exception:
                     pass
     return {"ok": True, "missions": missions}
@@ -1399,7 +1462,7 @@ def history_detail(mission_id: str):
 # ═════════════════════════════════════════════════════════════
 #  SSH: Real-time Status Topics
 # ═════════════════════════════════════════════════════════════
-def _parse_ros_string_topic(out: str) -> Optional[dict]:
+def _parse_ros_string_topic(out: str) -> dict | None:
     """Parse a ROS2 String topic echo output and extract JSON from data: field."""
     for line in out.strip().split("\n"):
         line = line.strip()
@@ -1412,7 +1475,7 @@ def _parse_ros_string_topic(out: str) -> Optional[dict]:
     return None
 
 
-def _read_ros_string_topic(topic: str, timeout_sec: int = 3) -> Optional[dict]:
+def _read_ros_string_topic(topic: str, timeout_sec: int = 3) -> dict | None:
     """Read one ROS2 String topic via helper script (avoids ros2 echo truncation)."""
     out, _, code = ssh_exec_ros(
         f"timeout {timeout_sec + 2} python3 /opt/nav/tools/read_topic.py {topic} {timeout_sec} 2>/dev/null",
@@ -1453,7 +1516,9 @@ def nav_semantic_scene_graph_stats():
             "object_count": len(objects),
             "region_count": len(regions),
             "relation_count": len(relations),
-            "objects": [{"id": o.get("id", ""), "label": o.get("label", ""), "score": o.get("score", 0)} for o in objects[:20]],
+            "objects": [
+                {"id": o.get("id", ""), "label": o.get("label", ""), "score": o.get("score", 0)} for o in objects[:20]
+            ],
             "regions": [{"name": r.get("name", ""), "object_count": len(r.get("object_ids", []))} for r in regions],
         }
     return {"ok": False, "error": "Could not parse scene graph JSON"}
@@ -1474,9 +1539,7 @@ def status_dialogue():
 
 @app.get("/api/status/safety")
 def status_safety():
-    out, _, code = ssh_exec_ros(
-        "timeout 3 ros2 topic echo /nav/safety_state --once 2>/dev/null | head -50", timeout=8
-    )
+    out, _, code = ssh_exec_ros("timeout 3 ros2 topic echo /nav/safety_state --once 2>/dev/null | head -50", timeout=8)
     if not out.strip():
         return {"ok": False, "error": "No safety state received within 3s"}
     parsed = _parse_ros_string_topic(out)
@@ -1568,7 +1631,11 @@ def grpc_system_relocalize(req: GrpcRelocalizeRequest):
         return {"ok": False, "error": "gRPC not available"}
     try:
         request = system_pb2.RelocalizeRequest(
-            pcd_path=req.pcd_path, x=req.x, y=req.y, z=req.z, yaw=req.yaw,
+            pcd_path=req.pcd_path,
+            x=req.x,
+            y=req.y,
+            z=req.z,
+            yaw=req.yaw,
         )
         result = _grpc_call("system", "Relocalize", request, timeout=30)
         return _grpc_ok(result)
@@ -1582,7 +1649,8 @@ def grpc_system_save_map(req: GrpcSaveMapRequest):
         return {"ok": False, "error": "gRPC not available"}
     try:
         request = system_pb2.SaveMapRequest(
-            file_path=req.file_path, save_patches=req.save_patches,
+            file_path=req.file_path,
+            save_patches=req.save_patches,
         )
         result = _grpc_call("system", "SaveMap", request, timeout=30)
         return _grpc_ok(result)
@@ -1705,8 +1773,8 @@ def grpc_control_start_task(req: GrpcStartTaskRequest):
     if not GRPC_AVAILABLE:
         return {"ok": False, "error": "gRPC not available"}
     try:
-        from google.protobuf import json_format as _jf
         import common_pb2
+        from google.protobuf import json_format as _jf
 
         type_map = {
             "NAVIGATION": common_pb2.TASK_TYPE_NAVIGATION,
@@ -1783,7 +1851,9 @@ def grpc_telemetry_fast(count: int = 5):
             if i >= count:
                 stream.cancel()
                 break
-            frames.append(MessageToDict(msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True))
+            frames.append(
+                MessageToDict(msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+            )
         return {"ok": True, "frames": frames, "count": len(frames)}
     except Exception as e:
         return _grpc_err(e)
@@ -1825,7 +1895,9 @@ def grpc_telemetry_events(count: int = 10):
             if i >= count:
                 stream.cancel()
                 break
-            events.append(MessageToDict(msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True))
+            events.append(
+                MessageToDict(msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+            )
         return {"ok": True, "events": events, "count": len(events)}
     except Exception as e:
         return _grpc_err(e)
@@ -1867,6 +1939,7 @@ async def ws_telemetry(ws: WebSocket):
     async def _send_loop():
         """Main loop: pull from queues and send to websocket."""
         import queue
+
         fast_q: queue.Queue = queue.Queue(maxsize=50)
         slow_q: queue.Queue = queue.Queue(maxsize=10)
 
@@ -1882,7 +1955,9 @@ async def ws_telemetry(ws: WebSocket):
                     if stop_event.is_set():
                         stream.cancel()
                         break
-                    data = MessageToDict(msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+                    data = MessageToDict(
+                        msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+                    )
                     try:
                         fast_q.put_nowait(data)
                     except queue.Full:
@@ -1910,7 +1985,9 @@ async def ws_telemetry(ws: WebSocket):
                     if stop_event.is_set():
                         stream.cancel()
                         break
-                    data = MessageToDict(msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+                    data = MessageToDict(
+                        msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True
+                    )
                     try:
                         slow_q.put_nowait(data)
                     except queue.Full:
@@ -1939,7 +2016,14 @@ async def ws_telemetry(ws: WebSocket):
                     while True:
                         data = fast_q.get_nowait()
                         if "_error" in data:
-                            await ws.send_json({"type": "error", "source": "fast_state", "error": data["_error"], "timestamp": time.time()})
+                            await ws.send_json(
+                                {
+                                    "type": "error",
+                                    "source": "fast_state",
+                                    "error": data["_error"],
+                                    "timestamp": time.time(),
+                                }
+                            )
                         else:
                             await ws.send_json({"type": "fast_state", "data": data, "timestamp": time.time()})
                         sent = True
@@ -1950,7 +2034,14 @@ async def ws_telemetry(ws: WebSocket):
                     while True:
                         data = slow_q.get_nowait()
                         if "_error" in data:
-                            await ws.send_json({"type": "error", "source": "slow_state", "error": data["_error"], "timestamp": time.time()})
+                            await ws.send_json(
+                                {
+                                    "type": "error",
+                                    "source": "slow_state",
+                                    "error": data["_error"],
+                                    "timestamp": time.time(),
+                                }
+                            )
                         else:
                             await ws.send_json({"type": "slow_state", "data": data, "timestamp": time.time()})
                         sent = True
@@ -1977,6 +2068,6 @@ if __name__ == "__main__":
     print("  LingTu Dashboard Server")
     print(f"  Robot:  {ROBOT_HOST}")
     print(f"  gRPC:   {ROBOT_HOST}:{GRPC_PORT} ({'enabled' if GRPC_AVAILABLE else 'DISABLED - install grpcio'})")
-    print(f"  Open:   http://localhost:8066")
+    print("  Open:   http://localhost:8066")
     print()
     uvicorn.run(app, host="0.0.0.0", port=8066, log_level="info")

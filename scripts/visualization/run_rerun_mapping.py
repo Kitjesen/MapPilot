@@ -14,6 +14,7 @@ for path in ("src/perception", "src/decision"):
 logging.basicConfig(level=logging.WARNING)
 
 import rerun as rr
+
 from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 
 rr.init("lingtu_mapping")
@@ -34,11 +35,7 @@ bp = blueprint_for_resolved_profile(
 )
 system = bp.build()
 
-slam = (
-    system.modules.get("SlamAdapterModule")
-    or system.modules.get("SlamModule")
-    or system.modules.get("SlamBridgeModule")
-)
+slam = system.modules.get("SlamAdapterModule") or system.modules.get("SlamModule")
 
 
 def on_cloud(cloud):

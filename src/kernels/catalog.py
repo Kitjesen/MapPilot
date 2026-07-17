@@ -13,7 +13,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-
 BoundaryKind = Literal["c_abi", "process_abi"]
 ImplementationLane = Literal[
     "cpp_portable",
@@ -100,13 +99,19 @@ CALIBRATION_NOTES = (
     "correspondence search and GTSAM build/package removal remain."
 )
 
+POINTCLOUD_CODEC_NOTES = (
+    "Gateway/browser live-cloud hot path. Python owns control flow, but the "
+    "PCLD float32->int16 wire packing can be served by this C ABI when the "
+    "shared library is built."
+)
+
 
 KERNEL_TARGETS: tuple[KernelTarget, ...] = (
     _target(
         "path_safety",
         "L2 safety gate",
         "Accept, reject, or trim paths against live cost and geometry",
-        ("src/nav/services/safety/plan_safety.py", "src/nav/services/map_layers/traversability_cost_module.py"),
+        ("src/nav/services/safety/plan_safety.py", "src/maps/services/layers/traversability.py"),
         "src/kernels/nav/path_safety",
         "c_abi",
         "rust_candidate",
@@ -155,6 +160,18 @@ KERNEL_TARGETS: tuple[KernelTarget, ...] = (
         "contract_first",
         notes=CALIBRATION_NOTES,
     ),
+    _target(
+        "gateway_pointcloud_codec",
+        "L6 interface",
+        "Encode live PointCloud2 frames into compact binary PCLD websocket frames",
+        ("src/runtime/utils/binary_codec.py", "src/gateway/gateway_module.py"),
+        "src/kernels/gateway/pointcloud_codec",
+        "c_abi",
+        "cpp_portable",
+        "first_wave",
+        first_wave=True,
+        notes=POINTCLOUD_CODEC_NOTES,
+    ),
 )
 
 
@@ -174,9 +191,9 @@ def target_by_key(key: str) -> KernelTarget:
 
 
 __all__ = [
+    "KERNEL_TARGETS",
     "BoundaryKind",
     "ImplementationLane",
-    "KERNEL_TARGETS",
     "KernelTarget",
     "MigrationStatus",
     "first_wave_targets",

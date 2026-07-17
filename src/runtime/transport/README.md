@@ -132,6 +132,6 @@ Keep normal Module wires in-process. Use typed endpoints for cross-process
 product links:
 
 ```python
-bp.wire("SlamBridgeModule", "map_cloud", "nav.terrain", "map_cloud")
+bp.wire("SlamAdapterModule", "map_cloud", "nav.terrain", "map_cloud")
 bp.wire("GatewayModule", "goal_pose", "nav.mission", "goal_pose")
 ```

@@ -4,6 +4,7 @@
 #include <string>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/kdtree/kdtree_flann.h>
 
 #ifdef LINGTU_ENABLE_SMALL_GICP
 #include <small_gicp/pcl/pcl_registration.hpp>
@@ -39,10 +40,24 @@ public:
     ICPLocalizer(const ICPConfig &config);
 
     bool loadMap(const std::string &path);
+    bool setMap(const CloudType::Ptr &cloud);
 
     void setInput(const CloudType::Ptr &cloud);
 
     bool align(M4F &guess);
+    // Locally refine x/y/z/yaw while preserving the seed's roll/pitch.
+    // Corrections are applied in the target frame, so a gravity-aligned
+    // map->odom transform cannot acquire 6-DoF tilt from scan matching.
+    bool alignPlanar(M4F &guess, double max_correspondence_distance_m,
+                     int max_iterations = 5,
+                     double max_xy_m = 0.05,
+                     double max_z_m = 0.03,
+                     double max_yaw_rad = 0.008726646259971648);
+    // Score a fixed source-to-target transform without allowing 6-DoF GICP
+    // to move it. This is used to preserve a high-quality gravity-aligned
+    // seed when unconstrained GICP would otherwise fall into a tilted local
+    // minimum.
+    bool evaluate(const M4F &transform, double max_correspondence_distance_m);
     ICPConfig &config() { return m_config; }
     CloudType::Ptr roughMap() { return m_rough_tgt; }
     CloudType::Ptr refineMap() { return m_refine_tgt; }
@@ -64,10 +79,12 @@ public:
     /// Hessian. Larger = more uncertain
     /// translation. Returns -1 when no align() has succeeded yet.
     double getLastPosCovTrace() const { return m_last_pos_cov_trace; }
+    int getLastEvaluatedPoints() const { return m_last_evaluated_points; }
 
 private:
     ICPConfig m_config;
     pcl::VoxelGrid<PointType> m_voxel_filter;
+    pcl::KdTreeFLANN<PointType> m_refine_tree;
     LingTuIcpBackend<PointType, PointType> m_refine_icp;
     LingTuIcpBackend<PointType, PointType> m_rough_icp;
     CloudType::Ptr m_refine_inp;
@@ -87,4 +104,5 @@ private:
     int    m_last_inliers{-1};
     bool   m_last_converged{false};
     double m_last_pos_cov_trace{-1.0};   // -1 = not yet computed
+    int    m_last_evaluated_points{0};
 };

@@ -12,7 +12,14 @@ function fmtNum(v: unknown, digits = 2): string {
 }
 
 function labelList(values: string[], fallback: string): string[] {
-  const clean = values.map(v => String(v).trim()).filter(Boolean)
+  const seen = new Set<string>()
+  const clean = values
+    .map(v => String(v).trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
   return clean.length > 0 ? clean.slice(0, 5) : [fallback]
 }
 
@@ -191,8 +198,8 @@ export function ReadinessCard({ sseState }: ReadinessCardProps) {
       <section className={styles.section}>
         <div className={styles.sectionTitle}>Blockers</div>
         <ul className={styles.list}>
-          {blockers.map(item => (
-            <li key={item} className={goalReady ? styles.mutedItem : styles.alertItem}>{item}</li>
+          {blockers.map((item, index) => (
+            <li key={`${item}-${index}`} className={goalReady ? styles.mutedItem : styles.alertItem}>{item}</li>
           ))}
         </ul>
       </section>
@@ -200,8 +207,8 @@ export function ReadinessCard({ sseState }: ReadinessCardProps) {
       <section className={styles.section}>
         <div className={styles.sectionTitle}>Advisories</div>
         <ul className={styles.list}>
-          {advisories.map(item => (
-            <li key={item} className={styles.mutedItem}>{item}</li>
+          {advisories.map((item, index) => (
+            <li key={`${item}-${index}`} className={styles.mutedItem}>{item}</li>
           ))}
         </ul>
       </section>
@@ -209,9 +216,9 @@ export function ReadinessCard({ sseState }: ReadinessCardProps) {
       <section className={styles.section}>
         <div className={styles.sectionTitle}>Planner Safety</div>
         <ul className={styles.list}>
-          {plannerLines.map(item => (
+          {plannerLines.map((item, index) => (
             <li
-              key={item}
+              key={`${item}-${index}`}
               className={
                 item.includes('blocked') || item.includes('Fallback')
                   ? styles.alertItem
@@ -227,9 +234,9 @@ export function ReadinessCard({ sseState }: ReadinessCardProps) {
       <section className={styles.section}>
         <div className={styles.sectionTitle}>Routecheck</div>
         <ul className={styles.list}>
-          {routecheckItems.map(item => (
+          {routecheckItems.map((item, index) => (
             <li
-              key={item}
+              key={`${item}-${index}`}
               className={
                 routecheckBlocked || item.includes('blocked') || item.includes('fallback') || item.includes('error')
                   ? styles.alertItem

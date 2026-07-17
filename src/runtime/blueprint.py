@@ -28,6 +28,7 @@ autoconnect() merges multiple blueprints and enables auto_wire in one call::
 from __future__ import annotations
 
 import logging
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, is_typeddict
@@ -37,12 +38,15 @@ from .stream import In, Out
 from .transport.local import LocalTransport, Transport
 from .wiring import (
     WireSpec as _WireSpec,
+)
+from .wiring import (
     default_wire_topic,
     explicit_wire_topic,
     resolve_wire_delivery,
     wire_delivery_cache_key,
     wire_delivery_name,
 )
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -55,6 +59,7 @@ ConnectionMetadata = dict[ConnectionKey, dict[str, Any]]
 # ---------------------------------------------------------------------------
 # _ModuleEntry
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class _ModuleEntry:
@@ -87,6 +92,7 @@ class _ModuleEntry:
 # Blueprint
 # ---------------------------------------------------------------------------
 
+
 class Blueprint:
     """Declarative module orchestration builder.
 
@@ -94,12 +100,20 @@ class Blueprint:
     A Blueprint should not be modified after build() is called.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, name: str | None = None) -> None:
+        self._name = str(name).strip() if name else None
         self._entries: list[_ModuleEntry] = []
         self._wires: list[_WireSpec] = []
         self._auto_wired: bool = False
         self._global_cfg: dict[str, Any] = {}
         self._swap_config: dict[str, Any] | None = None  # set by product blueprints
+        self._route_name: str | None = None
+        self._route_spec: Any | None = None
+        self._routed_delivery_enabled: bool = False
+        # Per-module worker deployment descriptors (populated via worker()).
+        from .worker_config import WorkerDeploymentRegistry
+
+        self._worker_deployments: WorkerDeploymentRegistry = WorkerDeploymentRegistry()
 
     # -- registration -------------------------------------------------------
 
@@ -179,6 +193,47 @@ class Blueprint:
         )
         return self
 
+    def worker(
+        self,
+        module_name: str,
+        *,
+        host: str = "localhost",
+        transport: str | None = None,
+        domain_id: int | None = None,
+        qos_profile: str | None = None,
+    ) -> Blueprint:
+        """Configure deployment parameters for a worker module.
+
+        Call this *after* :meth:`add` and before :meth:`build`.  When no
+        ``worker()`` call is made for a module the original SHM-only
+        behaviour is preserved (full backward compatibility).
+
+        Args:
+            module_name: Name of a previously :meth:`add`-ed module.
+            host: Target host.  ``"localhost"`` keeps SHM; a remote address
+                triggers DDS in ``auto`` mode.
+            transport: Explicit override — ``"shm"``, ``"dds"``, ``"auto"``,
+                or ``None`` (same as ``"auto"``).
+            domain_id: DDS domain ID override for this worker.
+            qos_profile: Named QoS profile from
+                ``config/qos_profiles.yaml``.
+
+        Returns:
+            self
+        """
+        from .worker_config import WorkerDeployment
+
+        self._worker_deployments.register(
+            WorkerDeployment(
+                module_name=module_name,
+                host=host,
+                transport=transport,
+                domain_id=domain_id,
+                qos_profile=qos_profile,
+            )
+        )
+        return self
+
     def global_config(self, n_workers: int = 0, **kwargs: Any) -> Blueprint:
         """Set system-level configuration.
 
@@ -191,6 +246,49 @@ class Blueprint:
         """
         self._global_cfg = {"n_workers": n_workers, **kwargs}
         return self
+
+    def route_contract(self, name: Any) -> Blueprint:
+        """Attach the external route contract for this Blueprint.
+
+        Route presets describe runtime modes such as ``robot()``, ``replay()``,
+        or ``sim()``. Passing a string remains supported for compatibility.
+
+        This records the topic/schema/port contract for introspection and
+        validation only. It does not change internal ModulePort delivery.
+        """
+
+        value = str(getattr(name, "name", name)).strip()
+        if not value:
+            raise ValueError("route contract name must not be empty")
+        self._route_name = value
+        self._route_spec = _coerce_route_spec(name, value)
+        return self
+
+    def routed_delivery(self, name: Any) -> Blueprint:
+        """Route explicitly-topiced Module wires through the selected backend.
+
+        This is intentionally more explicit than ``route_contract`` because it
+        can move internal Module connections onto DDS/SHM.
+        """
+
+        self.route_contract(name)
+        self._routed_delivery_enabled = True
+        return self
+
+    def route(self, name: Any) -> Blueprint:
+        """Deprecated alias for ``routed_delivery``.
+
+        Older tests and tools used ``route`` to mean "make matching wire topics
+        use the route backend". New code should call ``route_contract`` for
+        metadata-only contracts or ``routed_delivery`` for actual transport.
+        """
+        warnings.warn(
+            "Blueprint.route() is deprecated. Use route_contract() for metadata-only "
+            "contracts, or routed_delivery() for transport-backed wires.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.routed_delivery(name)
 
     def auto_wire(self) -> Blueprint:
         """Enable automatic port matching by (port_name, msg_type).
@@ -208,7 +306,7 @@ class Blueprint:
         self._auto_wired = True
         return self
 
-    def export_graph(self, *, profile: str | None = None) -> "ModuleGraph":
+    def export_graph(self, *, profile: str | None = None) -> ModuleGraph:
         """Return a serializable declaration graph without instantiating modules."""
 
         from runtime.introspection.module_graph import ModuleGraph
@@ -243,10 +341,7 @@ class Blueprint:
             for w in self._wires
         ]
         if self._swap_config is not None:
-            self._swap_config = {
-                k: (pfx + v if isinstance(v, str) else v)
-                for k, v in self._swap_config.items()
-            }
+            self._swap_config = {k: (pfx + v if isinstance(v, str) else v) for k, v in self._swap_config.items()}
         return self
 
     # -- merge --------------------------------------------------------------
@@ -256,14 +351,18 @@ class Blueprint:
         existing = {e.name for e in self._entries}
         for entry in other._entries:
             if entry.name in existing:
-                raise ValueError(
-                    f"Cannot merge: module '{entry.name}' exists in both blueprints."
-                )
+                raise ValueError(f"Cannot merge: module '{entry.name}' exists in both blueprints.")
             self._entries.append(entry)
             existing.add(entry.name)
         self._wires.extend(other._wires)
         if other._auto_wired:
             self._auto_wired = True
+        if other._route_name:
+            if self._route_name and self._route_name != other._route_name:
+                raise ValueError(f"Cannot merge: route contract mismatch {self._route_name!r} != {other._route_name!r}")
+            self._route_name = other._route_name
+            self._route_spec = other._route_spec
+        self._routed_delivery_enabled = self._routed_delivery_enabled or other._routed_delivery_enabled
         return self
 
     # -- build --------------------------------------------------------------
@@ -292,6 +391,7 @@ class Blueprint:
         # compatibility with multiprocessing fork is verified on S100P aarch64.
         if n_workers == 0:
             import os as _os
+
             n_workers = int(_os.environ.get("LINGTU_WORKERS", "0"))
         if n_workers > 0:
             return self._build_worker_mode(n_workers)
@@ -305,9 +405,12 @@ class Blueprint:
             inst = entry.instance if entry.instance is not None else entry.module_cls(**entry.config)
             instances[entry.name] = inst
 
+        # 1b. Warn about declared soft dependencies that are not registered.
+        self._check_soft_depends(instances)
+
         # 2. Collect ports
         out_ports: dict[str, dict[str, Out]] = {n: m.ports_out for n, m in instances.items()}
-        in_ports:  dict[str, dict[str, In]]  = {n: m.ports_in  for n, m in instances.items()}
+        in_ports: dict[str, dict[str, In]] = {n: m.ports_in for n, m in instances.items()}
 
         # 3. Apply explicit wires
         wired_in: set[tuple[str, str]] = set()
@@ -324,6 +427,7 @@ class Blueprint:
                 connections,
                 connection_metadata,
                 transport_cache,
+                self._route_spec if self._routed_delivery_enabled else None,
             )
 
         # 4. Auto-wire remaining ports
@@ -372,6 +476,21 @@ class Blueprint:
 
         return handle
 
+    def _check_soft_depends(self, instances: dict[str, Module | type[Module]]) -> None:
+        """Warn about missing soft dependencies declared by modules."""
+        registered_names = set(instances.keys())
+        for mod in instances.values():
+            mod_cls = mod if isinstance(mod, type) else type(mod)
+            soft_deps = getattr(mod_cls, "SOFT_DEPENDS", [])
+            for dep in soft_deps:
+                if dep not in registered_names:
+                    logger.warning(
+                        "[Blueprint] %s declares SOFT_DEPENDS on '%s' which is not registered. "
+                        "Related features will be degraded.",
+                        mod_cls.__name__,
+                        dep,
+                    )
+
     def __repr__(self) -> str:
         modules = ", ".join(e.name for e in self._entries)
         return f"Blueprint(modules=[{modules}], wires={len(self._wires)}, auto_wire={self._auto_wired})"
@@ -385,22 +504,23 @@ class Blueprint:
         RPCClient proxies via on_system_modules().  All others are deployed
         to worker subprocesses round-robin.
 
-        Cross-boundary wires use SHM for the data path.
+        Cross-boundary wires default to SHM for the data path.  When a
+        :meth:`worker` deployment specifies a remote host or explicit DDS
+        transport, DDS is used instead.
         """
         from runtime.coordinator import ModuleCoordinator
+
         # Partition modules into: main-process locals vs worker subprocesses.
         # _run_in_worker modules are grouped by _worker_group so related heavy
         # modules share a single subprocess (and its GIL), but isolate from
         # the main process Gateway/Navigation.
-        worker_entries = [e for e in self._entries
-                          if getattr(e.module_cls, '_run_in_worker', False)]
-        local_entries  = [e for e in self._entries
-                          if not getattr(e.module_cls, '_run_in_worker', False)]
+        worker_entries = [e for e in self._entries if getattr(e.module_cls, "_run_in_worker", False)]
+        local_entries = [e for e in self._entries if not getattr(e.module_cls, "_run_in_worker", False)]
 
         # Count distinct worker groups to decide n_workers
         groups: dict[str, list] = {}
         for e in worker_entries:
-            grp = getattr(e.module_cls, '_worker_group', '') or 'default'
+            grp = getattr(e.module_cls, "_worker_group", "") or "default"
             groups.setdefault(grp, []).append(e)
         actual_workers = max(n_workers, len(groups)) if groups else 0
 
@@ -415,10 +535,9 @@ class Blueprint:
 
             proxies: dict[str, Any] = {}
             for entry in worker_entries:
-                grp = getattr(entry.module_cls, '_worker_group', '') or 'default'
+                grp = getattr(entry.module_cls, "_worker_group", "") or "default"
                 wid = group_worker_id[grp]
-                proxies[entry.name] = coord.deploy(
-                    entry.module_cls, entry.name, kwargs=entry.config, worker_id=wid)
+                proxies[entry.name] = coord.deploy(entry.module_cls, entry.name, kwargs=entry.config, worker_id=wid)
 
             local_instances: dict[str, Any] = {}
             for entry in local_entries:
@@ -426,7 +545,7 @@ class Blueprint:
                 local_instances[entry.name] = inst
 
             local_out = {n: m.ports_out for n, m in local_instances.items()}
-            local_in  = {n: m.ports_in  for n, m in local_instances.items()}
+            local_in = {n: m.ports_in for n, m in local_instances.items()}
             wired_in: set[tuple[str, str]] = set()
             connections: list[tuple[str, str, str, str]] = []
             connection_metadata: ConnectionMetadata = {}
@@ -434,15 +553,15 @@ class Blueprint:
 
             for spec in self._wires:
                 out_mod, out_port = spec.out_module, spec.out_port
-                in_mod,  in_port  = spec.in_module,  spec.in_port
+                in_mod, in_port = spec.in_module, spec.in_port
                 topic = _transport_topic(spec)
                 key = (out_mod, out_port, in_mod, in_port)
                 out_worker = out_mod in proxies
-                in_worker  = in_mod  in proxies
+                in_worker = in_mod in proxies
 
                 if out_worker and in_worker:
                     coord._mgr.bind_port(coord._assignments[out_mod], out_mod, out_port, "out", topic)
-                    coord._mgr.bind_port(coord._assignments[in_mod],  in_mod,  in_port,  "in",  topic)
+                    coord._mgr.bind_port(coord._assignments[in_mod], in_mod, in_port, "in", topic)
                     _record_connection_metadata(
                         connection_metadata,
                         key,
@@ -460,33 +579,40 @@ class Blueprint:
                         connections,
                         connection_metadata,
                         transport_cache,
+                        self._route_spec if self._routed_delivery_enabled else None,
                     )
                     continue
                 elif out_worker:
                     coord._mgr.bind_port(coord._assignments[out_mod], out_mod, out_port, "out", topic)
+                    xport_name = self._worker_deployments.resolve_transport(out_mod, default="shm")
                     p = local_in.get(in_mod, {}).get(in_port)
                     if p is not None and (in_mod, in_port) not in wired_in:
                         from runtime.transport.factory import create_transport_adapter
-                        create_transport_adapter("shm").subscribe(topic, p._deliver)
+
+                        adapter = create_transport_adapter(xport_name)
+                        adapter.subscribe(topic, p._deliver)
                         wired_in.add((in_mod, in_port))
                     _record_connection_metadata(
                         connection_metadata,
                         key,
                         delivery="worker_to_local",
-                        transport="shm",
+                        transport=xport_name,
                         topic=topic,
                     )
                 else:
+                    xport_name = self._worker_deployments.resolve_transport(in_mod, default="shm")
                     p = local_out.get(out_mod, {}).get(out_port)
                     if p is not None:
                         from runtime.transport.factory import create_transport_adapter
-                        p._bind_transport(create_transport_adapter("shm"), topic)
+
+                        adapter = create_transport_adapter(xport_name)
+                        p._bind_transport(adapter, topic)
                     coord._mgr.bind_port(coord._assignments[in_mod], in_mod, in_port, "in", topic)
                     _record_connection_metadata(
                         connection_metadata,
                         key,
                         delivery="local_to_worker",
-                        transport="shm",
+                        transport=xport_name,
                         topic=topic,
                     )
 
@@ -501,6 +627,9 @@ class Blueprint:
                     connections,
                     connection_metadata,
                 )
+
+            # Warn about declared soft dependencies that are not registered.
+            self._check_soft_depends({**local_instances, **{e.name: e.module_cls for e in worker_entries}})
 
             coord.setup_all()
             coord.start_all()
@@ -527,11 +656,16 @@ class Blueprint:
             if failed:
                 logger.warning(
                     "WorkerMode started with %d/%d local modules failed: %s",
-                    len(failed), len(local_instances), list(failed.keys()),
+                    len(failed),
+                    len(local_instances),
+                    list(failed.keys()),
                 )
             logger.info(
                 "WorkerMode: %d worker modules (%d workers), %d local, %d connections",
-                len(proxies), n_workers, len(local_instances), len(connections),
+                len(proxies),
+                n_workers,
+                len(local_instances),
+                len(connections),
             )
             return WorkerSystemHandle(
                 coord,
@@ -549,6 +683,19 @@ class Blueprint:
 # ---------------------------------------------------------------------------
 # Module-level helpers (extracted from Blueprint to remove @staticmethod noise)
 # ---------------------------------------------------------------------------
+
+
+def _coerce_route_spec(route: Any, route_name: str) -> Any | None:
+    """Return a RouteSpec-like object when the selected route is known."""
+    if hasattr(route, "backend_for"):
+        return route
+    try:
+        from runtime.route_contract.routes import route_preset
+
+        return route_preset(route_name)
+    except Exception:
+        return None
+
 
 def _resolve_transport(spec: Any) -> Transport | None:
     """Compatibility wrapper for wire delivery resolution."""
@@ -578,6 +725,30 @@ def _resolve_transport_cached(
     return transport
 
 
+def _resolve_route_transport(backend: str) -> Transport:
+    """Resolve a route-selected backend to a typed transport adapter."""
+    normalized = str(backend).strip().lower()
+    if normalized not in {"dds", "shm"}:
+        raise ValueError(f"Runtime route backend '{normalized}' is not supported by Blueprint.build()")
+    from runtime.transport.factory import create_route_transport_adapter
+
+    return create_route_transport_adapter(normalized)
+
+
+def _resolve_route_transport_cached(
+    backend: str,
+    cache: dict[tuple[str, str], Transport] | None,
+) -> Transport:
+    if cache is None:
+        return _resolve_route_transport(backend)
+    key = ("route", str(backend).strip().lower())
+    transport = cache.get(key)
+    if transport is None:
+        transport = _resolve_route_transport(backend)
+        cache[key] = transport
+    return transport
+
+
 def _transport_name(transport: Any) -> str:
     """Return a readable delivery/backend name for diagnostics."""
     return wire_delivery_name(transport)
@@ -589,6 +760,15 @@ def _explicit_topic(spec: _WireSpec) -> str | None:
 
 def _transport_topic(spec: _WireSpec) -> str:
     return default_wire_topic(spec)
+
+
+def _route_backend_for_topic(route_spec: Any | None, topic: str | None) -> str | None:
+    if route_spec is None or topic is None:
+        return None
+    backend = str(route_spec.backend_for(topic)).strip().lower()
+    if backend in {"", "callback", "local"}:
+        return None
+    return backend
 
 
 def _record_connection_metadata(
@@ -615,20 +795,19 @@ def _type_name(msg_type: Any) -> str:
 def _msg_types_compatible(out_type: Any, in_type: Any) -> bool:
     if out_type is Any or in_type is Any or out_type == in_type:
         return True
-    return (is_typeddict(out_type) and in_type is dict) or (
-        out_type is dict and is_typeddict(in_type)
-    )
+    return (is_typeddict(out_type) and in_type is dict) or (out_type is dict and is_typeddict(in_type))
 
 
 def _do_wire(
     spec: _WireSpec,
     instances: dict[str, Any],
     out_ports: dict[str, dict[str, Out]],
-    in_ports:  dict[str, dict[str, In]],
-    wired_in:  set[tuple[str, str]],
+    in_ports: dict[str, dict[str, In]],
+    wired_in: set[tuple[str, str]],
     connections: list[ConnectionKey],
     connection_metadata: ConnectionMetadata | None = None,
     transport_cache: dict[tuple[str, str], Transport] | None = None,
+    route_spec: Any | None = None,
 ) -> None:
     """Apply one explicit wire specification."""
     if spec.out_module not in instances:
@@ -652,9 +831,16 @@ def _do_wire(
         )
 
     key = (spec.out_module, spec.out_port, spec.in_module, spec.in_port)
-    delivery_spec = spec.delivery_spec
-    transport = _resolve_transport_cached(delivery_spec, transport_cache)
     explicit_topic = _explicit_topic(spec)
+    delivery_spec = spec.delivery_spec
+    route_backend = None
+    if delivery_spec is None:
+        route_backend = _route_backend_for_topic(route_spec, explicit_topic)
+
+    if route_backend is not None:
+        transport = _resolve_route_transport_cached(route_backend, transport_cache)
+    else:
+        transport = _resolve_transport_cached(delivery_spec, transport_cache)
     if transport is None:
         out._add_callback(inp._deliver)
         mode = "callback"
@@ -683,9 +869,12 @@ def _do_wire(
     connections.append(key)
     logger.debug(
         "Wired %s.%s ->%s.%s [%s, %s]",
-        spec.out_module, spec.out_port,
-        spec.in_module, spec.in_port,
-        _type_name(out.msg_type), mode,
+        spec.out_module,
+        spec.out_port,
+        spec.in_module,
+        spec.in_port,
+        _type_name(out.msg_type),
+        mode,
     )
 
 
@@ -703,8 +892,8 @@ def _get_ns(mod_name: str) -> str:
 def _do_auto_wire(
     instances: dict[str, Any],
     out_ports: dict[str, dict[str, Out]],
-    in_ports:  dict[str, dict[str, In]],
-    wired_in:  set[tuple[str, str]],
+    in_ports: dict[str, dict[str, In]],
+    wired_in: set[tuple[str, str]],
     connections: list[ConnectionKey],
     connection_metadata: ConnectionMetadata | None = None,
 ) -> None:
@@ -730,23 +919,16 @@ def _do_auto_wire(
             candidates = [
                 (mn, op)
                 for mn, op in out_index.get(in_port_name, [])
-                if mn != in_mod
-                and _msg_types_compatible(op.msg_type, in_port.msg_type)
+                if mn != in_mod and _msg_types_compatible(op.msg_type, in_port.msg_type)
             ]
-            exact_candidates = [
-                (mn, op) for mn, op in candidates
-                if op.msg_type == in_port.msg_type
-            ]
+            exact_candidates = [(mn, op) for mn, op in candidates if op.msg_type == in_port.msg_type]
             if exact_candidates:
                 candidates = exact_candidates
 
             # ----- namespace-aware candidate filtering -----
             in_ns = _get_ns(in_mod)
             if in_ns:
-                same_ns = [
-                    (mn, op) for mn, op in candidates
-                    if _get_ns(mn) == in_ns
-                ]
+                same_ns = [(mn, op) for mn, op in candidates if _get_ns(mn) == in_ns]
                 if same_ns:
                     candidates = same_ns
             # -----------------------------------------------
@@ -766,14 +948,19 @@ def _do_auto_wire(
                 )
                 logger.debug(
                     "Auto-wired %s.%s ->%s.%s [%s]",
-                    out_mod, in_port_name, in_mod, in_port_name,
+                    out_mod,
+                    in_port_name,
+                    in_mod,
+                    in_port_name,
                     _type_name(in_port.msg_type),
                 )
             elif len(candidates) > 1:
                 logger.warning(
-                    "Auto-wire ambiguity for %s.%s [%s]: %d candidates -"
-                    "add an explicit wire() to resolve",
-                    in_mod, in_port_name, _type_name(in_port.msg_type), len(candidates),
+                    "Auto-wire ambiguity for %s.%s [%s]: %d candidates -add an explicit wire() to resolve",
+                    in_mod,
+                    in_port_name,
+                    _type_name(in_port.msg_type),
+                    len(candidates),
                 )
 
 
@@ -854,7 +1041,8 @@ def _topo_sort(
             "Wire cycle detected -startup order may be imprecise for: %s. "
             "Cycle: %s. Falling back to layer-sorted order. "
             "This is expected for control loops (e.g. odometry ->/ cmd_vel ->.",
-            remaining, cycle_str,
+            remaining,
+            cycle_str,
         )
         # Sort remaining by layer descending: higher-layer orchestrators start first
         # so they're ready to accept data when lower-layer hardware comes up.
@@ -867,6 +1055,7 @@ def _topo_sort(
 # ---------------------------------------------------------------------------
 # SystemHandle
 # ---------------------------------------------------------------------------
+
 
 class SystemHandle:
     """Runtime handle for a single-process module system.
@@ -970,11 +1159,15 @@ class SystemHandle:
         if failed:
             logger.warning(
                 "System started with %d/%d modules failed: %s",
-                len(failed), len(self._modules), list(failed.keys()),
+                len(failed),
+                len(self._modules),
+                list(failed.keys()),
             )
         logger.info(
             "System started: %d modules (%d failed), %d connections",
-            len(self._modules), len(failed), len(self._connections),
+            len(self._modules),
+            len(failed),
+            len(self._connections),
         )
 
     def stop(self, timeout_per_module: float = 5.0) -> None:
@@ -986,6 +1179,7 @@ class SystemHandle:
         if not self._started:
             return
         import threading as _th
+
         hung_modules: list[str] = []
         stop_errors: dict[str, str] = {}
 
@@ -1000,15 +1194,12 @@ class SystemHandle:
             mod = self._modules.get(name)
             if mod is None:
                 continue
-            t = _th.Thread(target=_safe_stop, args=(mod, name),
-                           daemon=True, name=f"stop-{name}")
+            t = _th.Thread(target=_safe_stop, args=(mod, name), daemon=True, name=f"stop-{name}")
             t.start()
             t.join(timeout=timeout_per_module)
             if t.is_alive():
                 hung_modules.append(name)
-                logger.warning(
-                    "Module %s did not stop within %.1fs -skipping",
-                    name, timeout_per_module)
+                logger.warning("Module %s did not stop within %.1fs -skipping", name, timeout_per_module)
         if hasattr(self._transport, "close"):
             try:
                 self._transport.close()
@@ -1054,15 +1245,15 @@ class SystemHandle:
 
     def health(self) -> dict[str, Any]:
         """Return a health summary dict."""
-        total_in  = sum(p.msg_count for m in self._modules.values() for p in m.ports_in.values())
+        total_in = sum(p.msg_count for m in self._modules.values() for p in m.ports_in.values())
         total_out = sum(p.msg_count for m in self._modules.values() for p in m.ports_out.values())
         return {
-            "started":           self._started,
-            "module_count":      len(self._modules),
-            "connection_count":  len(self._connections),
-            "startup_order":     self._startup_order,
-            "failed_modules":    dict(self._failed_modules),
-            "layer_violations":  [],
+            "started": self._started,
+            "module_count": len(self._modules),
+            "connection_count": len(self._connections),
+            "startup_order": self._startup_order,
+            "failed_modules": dict(self._failed_modules),
+            "layer_violations": [],
             "total_messages_in": total_in,
             "total_messages_out": total_out,
             "modules": {n: m.port_summary() for n, m in self._modules.items()},
@@ -1135,15 +1326,13 @@ class SystemHandle:
 
     def __repr__(self) -> str:
         status = "running" if self._started else "stopped"
-        return (
-            f"SystemHandle({status}, modules={len(self._modules)}, "
-            f"connections={len(self._connections)})"
-        )
+        return f"SystemHandle({status}, modules={len(self._modules)}, connections={len(self._connections)})"
 
 
 # ---------------------------------------------------------------------------
 # WorkerSystemHandle
 # ---------------------------------------------------------------------------
+
 
 class WorkerSystemHandle:
     """Runtime handle for a multi-process worker-mode system.
@@ -1222,12 +1411,12 @@ class WorkerSystemHandle:
         for name, inst in self._local.items():
             modules[name] = inst.port_summary()
         return {
-            "started":         self._started,
-            "module_count":    len(self._proxies) + len(self._local),
-            "worker_modules":  list(self._proxies.keys()),
-            "local_modules":   list(self._local.keys()),
+            "started": self._started,
+            "module_count": len(self._proxies) + len(self._local),
+            "worker_modules": list(self._proxies.keys()),
+            "local_modules": list(self._local.keys()),
             "connection_count": len(self._connections),
-            "modules":         modules,
+            "modules": modules,
         }
 
     def comm_health(self) -> dict[str, Any]:
@@ -1248,8 +1437,8 @@ class WorkerSystemHandle:
             if not src_m or not dst_m:
                 continue
             # Only local instances expose ports_out / ports_in directly
-            src_ports = getattr(src_m, 'ports_out', None)
-            dst_ports = getattr(dst_m, 'ports_in', None)
+            src_ports = getattr(src_m, "ports_out", None)
+            dst_ports = getattr(dst_m, "ports_in", None)
             if not src_ports or not dst_ports:
                 continue
             out_p = src_ports.get(src_port)
@@ -1301,15 +1490,13 @@ class WorkerSystemHandle:
 
     def __repr__(self) -> str:
         status = "running" if self._started else "stopped"
-        return (
-            f"WorkerSystemHandle({status}, workers={list(self._proxies.keys())}, "
-            f"local={list(self._local.keys())})"
-        )
+        return f"WorkerSystemHandle({status}, workers={list(self._proxies.keys())}, local={list(self._local.keys())})"
 
 
 # ---------------------------------------------------------------------------
 # autoconnect()
 # ---------------------------------------------------------------------------
+
 
 def autoconnect(*blueprints: Blueprint) -> Blueprint:
     """Merge multiple Blueprints and enable auto_wire.

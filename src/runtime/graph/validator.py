@@ -5,10 +5,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from runtime.runtime_interface import TOPICS
+
 from .loader import RuntimeGraph, load_runtime_graph
 
-
-REAL_PRODUCT_PROFILES = frozenset({"map", "nav", "explore", "teleop_avoid"})
+REAL_PRODUCT_PROFILES = frozenset(
+    {
+        "teleop",
+        "teleop_avoid",
+        "map",
+        "tracking",
+        "nav",
+        "inspection",
+        "explore",
+        "tare_explore",
+    }
+)
 LEGACY_MODULE_SIM_PROFILES = frozenset({"sim_mujoco_live", "sim_mujoco_octo_live"})
 REQUIRED_NATIVE_ENDPOINTS = frozenset({"thunder_field", "mujoco_native_dds"})
 
@@ -107,7 +119,7 @@ def _validate_product(
                 )
             )
     if name == "nav":
-        for topic in ("/slam/odometry", "/slam/map_cloud", "/slam/localization_health"):
+        for topic in (TOPICS.odometry, TOPICS.map_cloud, TOPICS.localization_health):
             if topic not in required:
                 issues.append(
                     _issue(
@@ -126,9 +138,7 @@ def _validate_endpoint(
     native_topics: tuple[str, ...],
 ) -> list[RuntimeGraphIssue]:
     issues: list[RuntimeGraphIssue] = []
-    declared = set(_string_tuple(endpoint.get("source_topics"))) | set(
-        _string_tuple(endpoint.get("exposed_topics"))
-    )
+    declared = set(_string_tuple(endpoint.get("source_topics"))) | set(_string_tuple(endpoint.get("exposed_topics")))
     for topic in sorted(declared):
         if topic not in topics:
             issues.append(
@@ -234,6 +244,30 @@ def _validate_real_product_profile(
                 scope=f"profile:{profile}",
             )
         )
+    if config.get("command_output_mode") != "endpoint_only":
+        issues.append(
+            _issue(
+                "real_profile_command_output_drift",
+                f"{profile} must use endpoint_only command output",
+                scope=f"profile:{profile}",
+            )
+        )
+    if config.get("hardware_control_boundary") != "driver":
+        issues.append(
+            _issue(
+                "real_profile_driver_boundary_drift",
+                f"{profile} must use the canonical driver hardware boundary",
+                scope=f"profile:{profile}",
+            )
+        )
+    if config.get("enable_robot_driver") is not False:
+        issues.append(
+            _issue(
+                "real_profile_duplicate_driver",
+                f"{profile} must not add the Python robot driver beside the native driver",
+                scope=f"profile:{profile}",
+            )
+        )
     forbidden_present = sorted(forbidden_modules & modules)
     if forbidden_present:
         issues.append(
@@ -271,9 +305,7 @@ def _validate_legacy_module_sim_profile(profile: str) -> list[RuntimeGraphIssue]
 
 
 def _endpoint_topics(endpoint: dict[str, Any]) -> set[str]:
-    return set(_string_tuple(endpoint.get("source_topics"))) | set(
-        _string_tuple(endpoint.get("exposed_topics"))
-    )
+    return set(_string_tuple(endpoint.get("source_topics"))) | set(_string_tuple(endpoint.get("exposed_topics")))
 
 
 def _string_tuple(value: Any) -> tuple[str, ...]:

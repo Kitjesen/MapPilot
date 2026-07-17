@@ -1,0 +1,36 @@
+%YAML:1.0
+# LingTu Camera-LiDAR calibration config for livox_calib_standalone
+# Adapted from livox_camera_calib/config/config_outdoor.yaml
+
+# Initial extrinsic matrix (LiDAR -> Camera)
+# Based on robot_config.yaml: camera at (0.15, 0, 0.45), facing forward
+# LiDAR MID-360 at z_offset=0.04412
+# Coordinate transform: LiDAR(X=fwd,Y=left,Z=up) -> Camera(Z=fwd,X=right,Y=down)
+ExtrinsicMat: !!opencv-matrix
+  rows: 4
+  cols: 4
+  dt: d
+  data: [0.0,  -1.0,   0.0,   0.0,
+         0.0,   0.0,  -1.0,   0.0,
+         1.0,   0.0,   0.0,   0.4,
+         0.0,   0.0,   0.0,   1.0]
+
+# Canny Edge Extraction
+Canny.gray_threshold: 20
+Canny.len_threshold: 200
+
+# Voxel Cutting & Plane Fitting & Edge Extraction
+Voxel.size: 1.0
+Voxel.down_sample_size: 0.02
+Plane.min_points_size: 60
+Plane.normal_theta_min: 30
+Plane.normal_theta_max: 150
+Plane.max_size: 5
+Ransac.dis_threshold: 0.015
+Ransac.iter_num: 200
+Edge.min_dis_threshold: 0.03
+Edge.max_dis_threshold: 0.06
+
+# Color point clouds
+Color.dense: 1
+Color.intensity_threshold: 10

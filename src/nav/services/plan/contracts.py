@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-import math
 from typing import Any, Protocol, runtime_checkable
 
 from runtime.msgs.geometry import Pose, PoseStamped
@@ -49,6 +49,7 @@ def require_local_planner_backend(backend: str) -> None:
     from runtime.backend_status import require_backend
 
     require_backend("local_planner", backend, LOCAL_PLANNER_BACKENDS)
+
 
 GLOBAL_PLAN_RESULT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -148,7 +149,7 @@ class GlobalPlanningMap:
         }
 
     @classmethod
-    def from_wire(cls, payload: dict[str, Any]) -> "GlobalPlanningMap":
+    def from_wire(cls, payload: dict[str, Any]) -> GlobalPlanningMap:
         return cls(
             grid=payload.get("grid", []),
             resolution=float(payload.get("resolution", 0.2)),
@@ -179,7 +180,7 @@ class GlobalPlannerDiagnostics:
         return data
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "GlobalPlannerDiagnostics":
+    def from_dict(cls, payload: dict[str, Any]) -> GlobalPlannerDiagnostics:
         data = dict(payload)
         return cls(
             planner=str(data.pop("planner", "") or ""),
@@ -218,7 +219,7 @@ class GlobalPlanRequest:
         }
 
     @classmethod
-    def from_wire(cls, payload: dict[str, Any]) -> "GlobalPlanRequest":
+    def from_wire(cls, payload: dict[str, Any]) -> GlobalPlanRequest:
         return cls(
             start=payload.get("start", []),
             goal=payload.get("goal", []),
@@ -267,17 +268,13 @@ class GlobalPlanResult:
             "frame_id": self.frame_id,
             "request_id": self.request_id,
             "map_version": self.map_version,
-            "adjusted_goal": (
-                None
-                if self.adjusted_goal is None
-                else point_to_xyz(self.adjusted_goal).tolist()
-            ),
+            "adjusted_goal": (None if self.adjusted_goal is None else point_to_xyz(self.adjusted_goal).tolist()),
             "diagnostics": dict(self.diagnostics),
             "report": dict(self.report),
         }
 
     @classmethod
-    def from_wire(cls, payload: dict[str, Any]) -> "GlobalPlanResult":
+    def from_wire(cls, payload: dict[str, Any]) -> GlobalPlanResult:
         return cls(
             path=payload.get("path", []),
             plan_ms=float(payload.get("plan_ms", 0.0)),
@@ -290,6 +287,7 @@ class GlobalPlanResult:
             diagnostics=dict(payload.get("diagnostics") or {}),
             report=dict(payload.get("report") or {}),
         )
+
 
 PlanRequest = GlobalPlanRequest
 PlanResult = GlobalPlanResult
@@ -385,7 +383,7 @@ class LocalPlanResult:
         }
 
     @classmethod
-    def from_wire(cls, payload: dict[str, Any]) -> "LocalPlanResult":
+    def from_wire(cls, payload: dict[str, Any]) -> LocalPlanResult:
         return cls(
             local_path=payload.get("local_path", []),
             control_hint=dict(payload.get("control_hint") or {}),
@@ -418,10 +416,7 @@ def validate_global_plan_result_wire(payload: Any) -> list[str]:
         if field_name not in payload:
             issues.append(f"{field_name}: required field is missing")
     if payload.get("schema_version") != GLOBAL_PLAN_SCHEMA_VERSION:
-        issues.append(
-            "schema_version: expected "
-            f"{GLOBAL_PLAN_SCHEMA_VERSION!r}, got {payload.get('schema_version')!r}"
-        )
+        issues.append(f"schema_version: expected {GLOBAL_PLAN_SCHEMA_VERSION!r}, got {payload.get('schema_version')!r}")
     if "path" in payload and not _is_xyz_list(payload["path"]):
         issues.append("path: must be a list of finite [x, y, z] points")
     if "adjusted_goal" in payload and payload["adjusted_goal"] is not None:
@@ -478,10 +473,7 @@ def validate_local_plan_result_wire(payload: Any) -> list[str]:
         if field_name not in payload:
             issues.append(f"{field_name}: required field is missing")
     if payload.get("schema_version") != LOCAL_PLAN_SCHEMA_VERSION:
-        issues.append(
-            "schema_version: expected "
-            f"{LOCAL_PLAN_SCHEMA_VERSION!r}, got {payload.get('schema_version')!r}"
-        )
+        issues.append(f"schema_version: expected {LOCAL_PLAN_SCHEMA_VERSION!r}, got {payload.get('schema_version')!r}")
     if "local_path" in payload and not _is_xyz_list(payload["local_path"]):
         issues.append("local_path: must be a list of finite [x, y, z] points")
     if "control_hint" in payload and not isinstance(payload["control_hint"], Mapping):
@@ -663,11 +655,7 @@ class GlobalPlannerBackend(Protocol):
 def require_global_planner_backend(name: str, backend: Any) -> GlobalPlannerBackend:
     """Fail fast when a registered planner backend does not match the runtime boundary."""
 
-    missing = [
-        attr
-        for attr in ("plan_request", "update_map")
-        if not callable(getattr(backend, attr, None))
-    ]
+    missing = [attr for attr in ("plan_request", "update_map") if not callable(getattr(backend, attr, None))]
     if missing:
         raise TypeError(
             f"planner_backend/{name} must implement callable "
@@ -679,7 +667,7 @@ def require_global_planner_backend(name: str, backend: Any) -> GlobalPlannerBack
 
 @runtime_checkable
 class PlannerService(Protocol):
-    """Public planner boundary consumed by nav.mission."""
+    """Public planner boundary consumed by nav.navigation."""
 
     @property
     def planner_name(self) -> str:
@@ -743,8 +731,4 @@ class PlannerService(Protocol):
 
     def reload_map(self, map_path: str = "") -> dict[str, Any]:
         """Reload saved-map artifacts through the planner boundary."""
-        ...
-
-    def reload_tomogram(self, tomogram: str) -> dict[str, Any]:
-        """Compatibility alias for reload_map()."""
         ...

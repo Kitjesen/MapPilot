@@ -16,15 +16,21 @@ target_compile_options(local_planner_cpp INTERFACE
 
 option(LOCAL_PLANNER_CPP_BUILD_TESTS
   "Build standalone local planner C++ tests" OFF)
+option(LOCAL_PLANNER_CPP_BUILD_BENCHMARKS
+  "Build standalone local planner C++ micro-benchmarks" OFF)
+
+find_package(OpenMP QUIET)
 
 if(LOCAL_PLANNER_CPP_BUILD_TESTS)
-  include(FetchContent)
-
-  FetchContent_Declare(googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.14.0)
-  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-  FetchContent_MakeAvailable(googletest)
+  find_package(GTest CONFIG QUIET)
+  if(NOT TARGET GTest::gtest_main)
+    include(FetchContent)
+    FetchContent_Declare(googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG        v1.14.0)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+  endif()
 
   enable_testing()
   include(GoogleTest)
@@ -33,7 +39,20 @@ if(LOCAL_PLANNER_CPP_BUILD_TESTS)
     tests/test_local_planner_core.cpp)
   target_link_libraries(test_local_planner_core
     PRIVATE local_planner_cpp GTest::gtest_main)
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(test_local_planner_core PRIVATE OpenMP::OpenMP_CXX)
+  endif()
   gtest_discover_tests(test_local_planner_core)
+endif()
+
+if(LOCAL_PLANNER_CPP_BUILD_BENCHMARKS)
+  add_executable(benchmark_local_planner_core
+    tests/benchmark_local_planner_core.cpp)
+  target_link_libraries(benchmark_local_planner_core
+    PRIVATE local_planner_cpp)
+  if(OpenMP_CXX_FOUND)
+    target_link_libraries(benchmark_local_planner_core PRIVATE OpenMP::OpenMP_CXX)
+  endif()
 endif()
 
 install(FILES

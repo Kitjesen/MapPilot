@@ -2,16 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
-PGO_HEADER = ROOT / "src" / "slam" / "pgo" / "src" / "pgos" / "simple_pgo.h"
-PGO_SOURCE = ROOT / "src" / "slam" / "pgo" / "src" / "pgos" / "simple_pgo.cpp"
-PGO_NODE = ROOT / "src" / "slam" / "pgo" / "src" / "pgo_node.cpp"
-HBA_HEADER = ROOT / "src" / "slam" / "hba" / "src" / "hba" / "hba.h"
-HBA_SOURCE = ROOT / "src" / "slam" / "hba" / "src" / "hba" / "hba.cpp"
-HBA_NODE = ROOT / "src" / "slam" / "hba" / "src" / "hba_node.cpp"
-PGO_CMAKE = ROOT / "src" / "slam" / "pgo" / "CMakeLists.txt"
-HBA_CMAKE = ROOT / "src" / "slam" / "hba" / "CMakeLists.txt"
+PGO_HEADER = ROOT / "src" / "localization" / "pgo" / "src" / "pgos" / "simple_pgo.h"
+PGO_SOURCE = ROOT / "src" / "localization" / "pgo" / "src" / "pgos" / "simple_pgo.cpp"
+PGO_NODE = ROOT / "src" / "localization" / "pgo" / "src" / "pgo_node.cpp"
+HBA_HEADER = ROOT / "src" / "localization" / "hba" / "src" / "hba" / "hba.h"
+HBA_SOURCE = ROOT / "src" / "localization" / "hba" / "src" / "hba" / "hba.cpp"
+HBA_NODE = ROOT / "src" / "localization" / "hba" / "src" / "hba_node.cpp"
+PGO_CMAKE = ROOT / "src" / "localization" / "pgo" / "CMakeLists.txt"
+HBA_CMAKE = ROOT / "src" / "localization" / "hba" / "CMakeLists.txt"
 
 
 def _read(path: Path) -> str:

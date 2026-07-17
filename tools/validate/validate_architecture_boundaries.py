@@ -33,14 +33,30 @@ ARCHITECTURE_LAYER_ORDER = (
     "L5_algorithm_kernels",
     "L6_cli_deploy",
 )
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from runtime.adapters.ros2.manifest import (  # noqa: E402
-    ROS_IMPORT_ROOTS,
-    ROS_SCAN_EXCLUDED_PREFIXES,
-    ros_compat_boundary_for,
+ROS_IMPORT_ROOTS: frozenset[str] = frozenset(
+    {
+        "builtin_interfaces",
+        "geometry_msgs",
+        "livox_ros_driver2",
+        "nav_msgs",
+        "pcl_msgs",
+        "rclpy",
+        "rosbag2_py",
+        "rosgraph_msgs",
+        "rosidl_runtime_py",
+        "sensor_msgs",
+        "std_msgs",
+        "tf2_msgs",
+        "tf2_ros",
+        "visualization_msgs",
+    }
 )
+ROS_SCAN_EXCLUDED_PREFIXES: tuple[str, ...] = (
+    "drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2/",
+    "nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/",
+    "sim/diagnostics/gap_report.py",
+)
+
 
 def load_architecture_layers(path: Path = ARCHITECTURE_LAYERS_PATH) -> dict:
     """Load the repository architecture layer manifest."""
@@ -81,8 +97,7 @@ def _architecture_string_list(manifest: dict, key: str) -> list[str]:
     for index, value in enumerate(values):
         if not isinstance(value, str) or not value.strip():
             raise ValueError(
-                "config/architecture_layers.yaml: "
-                f"import_boundaries.{key}[{index}] must be a non-empty string"
+                f"config/architecture_layers.yaml: import_boundaries.{key}[{index}] must be a non-empty string"
             )
         normalized.append(_normalize_manifest_path(value))
     return normalized
@@ -91,10 +106,7 @@ def _architecture_string_list(manifest: dict, key: str) -> list[str]:
 def _architecture_package_rules(manifest: dict) -> dict[str, set[str]]:
     rules = _architecture_import_boundaries(manifest).get("package_forbidden_roots")
     if not isinstance(rules, dict):
-        raise ValueError(
-            "config/architecture_layers.yaml: "
-            "import_boundaries.package_forbidden_roots must be a mapping"
-        )
+        raise ValueError("config/architecture_layers.yaml: import_boundaries.package_forbidden_roots must be a mapping")
     parsed: dict[str, set[str]] = {}
     for package, roots in rules.items():
         if not isinstance(package, str) or not package.strip():
@@ -104,8 +116,7 @@ def _architecture_package_rules(manifest: dict) -> dict[str, set[str]]:
             )
         if not isinstance(roots, list):
             raise ValueError(
-                "config/architecture_layers.yaml: "
-                f"import_boundaries.package_forbidden_roots.{package} must be a list"
+                f"config/architecture_layers.yaml: import_boundaries.package_forbidden_roots.{package} must be a list"
             )
         parsed[package] = set()
         for index, root in enumerate(roots):
@@ -175,10 +186,7 @@ def _is_test_or_example(path: Path) -> bool:
 
 
 def _is_scan_excluded_path(path: Path) -> bool:
-    return any(
-        part in SCAN_EXCLUDED_PARTS or part.startswith(".")
-        for part in path.parts
-    )
+    return any(part in SCAN_EXCLUDED_PARTS or part.startswith(".") for part in path.parts)
 
 
 def _is_composition_exception(path: Path) -> bool:
@@ -191,28 +199,16 @@ def _is_ros_scan_excluded(path: Path) -> bool:
     return any(rel == prefix or rel.startswith(prefix) for prefix in ROS_SCAN_EXCLUDED_PREFIXES)
 
 
-def _ros_compat_boundary(path: Path) -> str | None:
-    rel = path.relative_to(SRC_DIR).as_posix()
-    boundary = ros_compat_boundary_for(rel)
-    return boundary.category if boundary is not None else None
-
-
 def _is_ros_import(module: str) -> bool:
     return _top_level(module) in ROS_IMPORT_ROOTS
 
 
 def _is_forbidden_hardware_compat_import(module: str) -> bool:
-    return any(
-        module == root or module.startswith(f"{root}.")
-        for root in HARDWARE_COMPAT_FORBIDDEN_IMPORT_ROOTS
-    )
+    return any(module == root or module.startswith(f"{root}.") for root in HARDWARE_COMPAT_FORBIDDEN_IMPORT_ROOTS)
 
 
 def _is_forbidden_core_compat_import(module: str) -> bool:
-    return any(
-        module == root or module.startswith(f"{root}.")
-        for root in CORE_COMPAT_FORBIDDEN_IMPORT_ROOTS
-    )
+    return any(module == root or module.startswith(f"{root}.") for root in CORE_COMPAT_FORBIDDEN_IMPORT_ROOTS)
 
 
 def _is_type_checking_expr(node: ast.AST) -> bool:
@@ -249,19 +245,11 @@ def _python_files(package: str) -> list[Path]:
     package_dir = SRC_DIR / package
     if not package_dir.exists():
         return []
-    return sorted(
-        path
-        for path in package_dir.rglob("*.py")
-        if not _is_scan_excluded_path(path)
-    )
+    return sorted(path for path in package_dir.rglob("*.py") if not _is_scan_excluded_path(path))
 
 
 def _all_src_python_files() -> list[Path]:
-    return sorted(
-        path
-        for path in SRC_DIR.rglob("*.py")
-        if not _is_scan_excluded_path(path)
-    )
+    return sorted(path for path in SRC_DIR.rglob("*.py") if not _is_scan_excluded_path(path))
 
 
 def _manifest_owned_paths(manifest: dict) -> list[tuple[str, str]]:
@@ -300,11 +288,7 @@ def architecture_layer_for_path(
 
     manifest = manifest or _ARCHITECTURE_LAYERS
     relpath = _manifest_relpath(path)
-    layers_by_id = {
-        str(layer.get("id")): layer
-        for layer in manifest.get("layers") or ()
-        if isinstance(layer, dict)
-    }
+    layers_by_id = {str(layer.get("id")): layer for layer in manifest.get("layers") or () if isinstance(layer, dict)}
     matches = [
         (owned_path.rstrip("/"), layer_id)
         for layer_id, owned_path in _manifest_owned_paths(manifest)
@@ -330,23 +314,17 @@ def validate_architecture_layer_manifest(
     manifest = load_architecture_layers(path)
     if manifest.get("schema_version") != ARCHITECTURE_LAYER_SCHEMA_VERSION:
         violations.append(
-            "config/architecture_layers.yaml: schema_version must be "
-            f"{ARCHITECTURE_LAYER_SCHEMA_VERSION!r}"
+            f"config/architecture_layers.yaml: schema_version must be {ARCHITECTURE_LAYER_SCHEMA_VERSION!r}"
         )
 
     layers = manifest.get("layers")
     if not isinstance(layers, list) or not layers:
         violations.append("config/architecture_layers.yaml: layers must be a non-empty list")
         layers = []
-    layer_ids = [
-        str(layer.get("id", ""))
-        for layer in layers
-        if isinstance(layer, dict)
-    ]
+    layer_ids = [str(layer.get("id", "")) for layer in layers if isinstance(layer, dict)]
     if tuple(layer_ids) != ARCHITECTURE_LAYER_ORDER:
         violations.append(
-            "config/architecture_layers.yaml: layer ids must be ordered as "
-            + ", ".join(ARCHITECTURE_LAYER_ORDER)
+            "config/architecture_layers.yaml: layer ids must be ordered as " + ", ".join(ARCHITECTURE_LAYER_ORDER)
         )
 
     seen_owned: dict[str, str] = {}
@@ -369,8 +347,7 @@ def validate_architecture_layer_manifest(
             canonical_rel = _canonical_manifest_path(raw_path)
             if canonical_rel in seen_owned:
                 violations.append(
-                    f"{layer_id}: owns duplicate path {rel!r}; already owned by "
-                    f"{seen_owned[canonical_rel]}"
+                    f"{layer_id}: owns duplicate path {rel!r}; already owned by {seen_owned[canonical_rel]}"
                 )
             seen_owned[canonical_rel] = layer_id
             if not _repo_path_from_manifest(rel).exists():
@@ -405,8 +382,7 @@ def validate_architecture_layer_manifest(
         package_rules = {}
     if not package_rules:
         violations.append(
-            "config/architecture_layers.yaml: import_boundaries.package_forbidden_roots "
-            "must not be empty"
+            "config/architecture_layers.yaml: import_boundaries.package_forbidden_roots must not be empty"
         )
     try:
         composition_exceptions = _architecture_path_set(manifest, "composition_exceptions")
@@ -414,10 +390,7 @@ def validate_architecture_layer_manifest(
         violations.append(str(exc))
         composition_exceptions = set()
     if not composition_exceptions:
-        violations.append(
-            "config/architecture_layers.yaml: import_boundaries.composition_exceptions "
-            "must not be empty"
-        )
+        violations.append("config/architecture_layers.yaml: import_boundaries.composition_exceptions must not be empty")
     for key in (
         "hardware_compat_forbidden_import_roots",
         "core_compat_forbidden_import_roots",
@@ -451,8 +424,7 @@ def _hardware_boundary_files() -> list[Path]:
         files.update(
             path
             for path in package_dir.rglob("*.py")
-            if not _is_scan_excluded_path(path)
-            and architecture_layer_for_path(path).get("id") != "L3_adapter_layer"
+            if not _is_scan_excluded_path(path) and architecture_layer_for_path(path).get("id") != "L3_adapter_layer"
         )
     return sorted(files)
 
@@ -465,8 +437,7 @@ def _core_boundary_files() -> list[Path]:
         files.update(
             path
             for path in package_dir.rglob("*.py")
-            if not _is_scan_excluded_path(path)
-            and architecture_layer_for_path(path).get("id") != "L3_adapter_layer"
+            if not _is_scan_excluded_path(path) and architecture_layer_for_path(path).get("id") != "L3_adapter_layer"
         )
     return sorted(files)
 
@@ -485,22 +456,12 @@ def validate_ros_import_boundaries() -> tuple[list[str], int, int]:
             violations.append(f"{rel}: cannot parse Python source for ROS boundary scan: {exc}")
             continue
         scanned += 1
-        ros_imports = sorted(
-            {
-                module
-                for module in _iter_imports(tree)
-                if _is_ros_import(module)
-            }
-        )
+        ros_imports = sorted({module for module in _iter_imports(tree) if _is_ros_import(module)})
         if not ros_imports:
             continue
         classified += 1
-        boundary = _ros_compat_boundary(path)
-        if boundary is None:
-            imports = ", ".join(ros_imports)
-            violations.append(
-                f"{rel}: imports ROS modules outside explicit compat boundary: {imports}"
-            )
+        imports = ", ".join(ros_imports)
+        violations.append(f"{rel}: imports ROS modules; LingTu product source is ROS-free: {imports}")
     return violations, scanned, classified
 
 
@@ -517,17 +478,10 @@ def validate_hardware_compat_boundaries() -> tuple[list[str], int]:
             violations.append(f"{rel}: cannot parse Python source for hardware boundary scan: {exc}")
             continue
         scanned += 1
-        imports = sorted(
-            {
-                module
-                for module in _iter_imports(tree)
-                if _is_forbidden_hardware_compat_import(module)
-            }
-        )
+        imports = sorted({module for module in _iter_imports(tree) if _is_forbidden_hardware_compat_import(module)})
         if imports:
             violations.append(
-                f"{rel}: hardware package must not import ROS compatibility modules: "
-                f"{', '.join(imports)}"
+                f"{rel}: hardware package must not import ROS compatibility modules: {', '.join(imports)}"
             )
     return violations, scanned
 
@@ -545,33 +499,11 @@ def validate_core_compat_boundaries() -> tuple[list[str], int]:
             violations.append(f"{rel}: cannot parse Python source for core compat scan: {exc}")
             continue
         scanned += 1
-        imports = sorted(
-            {
-                module
-                for module in _iter_imports(tree)
-                if _is_forbidden_core_compat_import(module)
-            }
-        )
+        imports = sorted({module for module in _iter_imports(tree) if _is_forbidden_core_compat_import(module)})
         if imports:
-            violations.append(
-                f"{rel}: core package must not import ROS compatibility modules: "
-                f"{', '.join(imports)}"
-            )
+            violations.append(f"{rel}: core package must not import ROS compatibility modules: {', '.join(imports)}")
     return violations, scanned
 
-
-ROS_COUPLING_STRING_ALLOWLIST: tuple[str, ...] = (
-    "runtime/adapters/ros2/",
-    "localization/adapters/ros2/",
-    "nav/adapters/ros2/",
-    "drivers/adapters/ros2/",
-    "perception/adapters/ros2/",
-    "localization/launch/",
-    "runtime/dimos_gap.py",
-    "drivers/real/lidar/lidar.py",
-    "lingtu/ros2_plugin_seed.py",
-    "lingtu/ros2_shutdown.py",
-)
 
 ROS_SUBPROCESS_MARKERS: tuple[str, ...] = (
     '["ros2"',
@@ -587,12 +519,7 @@ ROS_SETUP_MARKERS: tuple[str, ...] = (
 
 
 def _is_ros_coupling_allowlisted(path: Path) -> bool:
-    rel = path.relative_to(SRC_DIR).as_posix()
-    if _is_ros_scan_excluded(path):
-        return True
-    if ros_compat_boundary_for(rel) is not None:
-        return True
-    return any(rel == prefix or rel.startswith(prefix) for prefix in ROS_COUPLING_STRING_ALLOWLIST)
+    return _is_ros_scan_excluded(path)
 
 
 def validate_ros_coupling_touchpoints() -> tuple[list[str], int]:
@@ -648,14 +575,8 @@ def validate(verbose: bool = False) -> tuple[list[str], int]:
         print(f"Scanned {scanned} production Python files")
         print(f"Checked Thunder hardware compat boundary across {hardware_scanned} file(s)")
         print(f"Checked core compat boundary across {core_scanned} file(s)")
-        print(
-            "Classified ROS imports in "
-            f"{ros_classified} explicit compat file(s) across {ros_scanned} scanned file(s)"
-        )
-        print(
-            "Checked ROS CLI/setup coupling across "
-            f"{ros_coupling_scanned} production file(s)"
-        )
+        print(f"Detected ROS imports in {ros_classified} product file(s) across {ros_scanned} scanned file(s)")
+        print(f"Checked ROS CLI/setup coupling across {ros_coupling_scanned} production file(s)")
     return violations, scanned
 
 

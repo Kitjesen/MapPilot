@@ -5,10 +5,12 @@
 测试数量: 14个
 """
 
-import pytest
 import json
-from decision.goal_resolution.goal_resolver import GoalResolver
-from decision.llm.llm_client import LLMConfig
+
+import pytest
+
+from decision.goals.resolver import GoalResolver
+from decision.llm.client import LLMConfig
 
 
 class TestFastPath:
@@ -27,11 +29,16 @@ class TestFastPath:
 
         scene_graph = {
             "objects": [
-                {"id": 0, "label": "fire_extinguisher",
-                 "position": {"x": 3.0, "y": 4.0, "z": 1.0},
-                 "score": 0.95, "detection_count": 25}
+                {
+                    "id": 0,
+                    "label": "fire_extinguisher",
+                    "position": {"x": 3.0, "y": 4.0, "z": 1.0},
+                    "score": 0.95,
+                    "detection_count": 25,
+                }
             ],
-            "relations": [], "regions": []
+            "relations": [],
+            "regions": [],
         }
 
         result = resolver.fast_resolve("fire extinguisher", json.dumps(scene_graph))
@@ -45,11 +52,16 @@ class TestFastPath:
 
         scene_graph = {
             "objects": [
-                {"id": 0, "label": "unknown_object",
-                 "position": {"x": 3.0, "y": 4.0, "z": 1.0},
-                 "score": 0.3, "detection_count": 1}
+                {
+                    "id": 0,
+                    "label": "unknown_object",
+                    "position": {"x": 3.0, "y": 4.0, "z": 1.0},
+                    "score": 0.3,
+                    "detection_count": 1,
+                }
             ],
-            "relations": [], "regions": []
+            "relations": [],
+            "regions": [],
         }
 
         result = resolver.fast_resolve("fire extinguisher", json.dumps(scene_graph))
@@ -64,9 +76,10 @@ class TestESCAFiltering:
         config = LLMConfig(backend="openai", model="gpt-4o-mini")
         resolver = GoalResolver(config)
 
-        objects = [{"id": i, "label": f"object_{i}",
-                   "position": {"x": i*1.0, "y": 0, "z": 0},
-                   "score": 0.8} for i in range(100)]
+        objects = [
+            {"id": i, "label": f"object_{i}", "position": {"x": i * 1.0, "y": 0, "z": 0}, "score": 0.8}
+            for i in range(100)
+        ]
         scene_graph = {"objects": objects, "relations": [], "regions": []}
 
         filtered = resolver._selective_grounding("object_5", json.dumps(scene_graph))
@@ -84,9 +97,10 @@ class TestESCAFiltering:
             "objects": [
                 {"id": 0, "label": "chair", "position": {"x": 1.0, "y": 0, "z": 0}},
                 {"id": 1, "label": "table", "position": {"x": 2.0, "y": 0, "z": 0}},
-                {"id": 2, "label": "door", "position": {"x": 3.0, "y": 0, "z": 0}}
+                {"id": 2, "label": "door", "position": {"x": 3.0, "y": 0, "z": 0}},
             ],
-            "relations": [], "regions": []
+            "relations": [],
+            "regions": [],
         }
 
         filtered = resolver._selective_grounding("chair", json.dumps(scene_graph))
@@ -104,12 +118,10 @@ class TestESCAFiltering:
         scene_graph = {
             "objects": [
                 {"id": 0, "label": "chair", "position": {"x": 1.0, "y": 0, "z": 0}},
-                {"id": 1, "label": "table", "position": {"x": 2.0, "y": 0, "z": 0}}
+                {"id": 1, "label": "table", "position": {"x": 2.0, "y": 0, "z": 0}},
             ],
-            "relations": [
-                {"subject_id": 0, "relation": "near", "object_id": 1}
-            ],
-            "regions": []
+            "relations": [{"subject_id": 0, "relation": "near", "object_id": 1}],
+            "regions": [],
         }
 
         filtered = resolver._selective_grounding("chair", json.dumps(scene_graph))
@@ -126,10 +138,10 @@ class TestESCAFiltering:
         scene_graph = {
             "objects": [
                 {"id": 0, "label": "chair", "position": {"x": 1.0, "y": 0, "z": 0}, "region_id": 0},
-                {"id": 1, "label": "table", "position": {"x": 2.0, "y": 0, "z": 0}, "region_id": 0}
+                {"id": 1, "label": "table", "position": {"x": 2.0, "y": 0, "z": 0}, "region_id": 0},
             ],
             "relations": [],
-            "regions": [{"region_id": 0, "name": "office", "object_ids": [0, 1]}]
+            "regions": [{"region_id": 0, "name": "office", "object_ids": [0, 1]}],
         }
 
         filtered = resolver._selective_grounding("chair", json.dumps(scene_graph))
@@ -177,20 +189,25 @@ class TestConfidenceFusion:
 
     def test_label_match_weight(self):
         """测试标签匹配权重"""
-        from decision.goal_resolution.goal_resolver import WEIGHT_LABEL_MATCH
+        from decision.goals.resolver import WEIGHT_LABEL_MATCH
+
         assert WEIGHT_LABEL_MATCH == 0.35
 
     def test_clip_weight(self):
         """测试CLIP权重"""
-        from decision.goal_resolution.goal_resolver import WEIGHT_CLIP_SIM
+        from decision.goals.resolver import WEIGHT_CLIP_SIM
+
         assert WEIGHT_CLIP_SIM == 0.35
 
     def test_weights_sum_to_one(self):
         """测试权重和为1"""
-        from decision.goal_resolution.goal_resolver import (
-            WEIGHT_LABEL_MATCH, WEIGHT_CLIP_SIM,
-            WEIGHT_DETECTOR_SCORE, WEIGHT_SPATIAL_HINT
+        from decision.goals.resolver import (
+            WEIGHT_CLIP_SIM,
+            WEIGHT_DETECTOR_SCORE,
+            WEIGHT_LABEL_MATCH,
+            WEIGHT_SPATIAL_HINT,
         )
+
         total = WEIGHT_LABEL_MATCH + WEIGHT_CLIP_SIM + WEIGHT_DETECTOR_SCORE + WEIGHT_SPATIAL_HINT
         assert abs(total - 1.0) < 0.01
 

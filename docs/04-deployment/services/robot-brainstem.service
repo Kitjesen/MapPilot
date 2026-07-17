@@ -1,5 +1,5 @@
 [Unit]
-Description=Robot Brainstem (Dart CMS gRPC:13145)
+Description=LEGACY local Robot Brainstem example (not used by Thunder field runtime)
 Documentation=https://github.com/Kitjesen/lingtu
 After=network.target
 
@@ -14,4 +14,4 @@ RestartSec=5s
 TimeoutStartSec=30s
 
 [Install]
-WantedBy=multi-user.target
+# Intentionally not installable by the current Thunder field runtime.

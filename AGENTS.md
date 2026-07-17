@@ -7,14 +7,14 @@ This file provides guidance to Codex when working in this repository.
 LingTu (灵�? is an autonomous navigation system for quadruped robots in
 outdoor/off-road environments.
 
-- **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64), ROS 2 Humble, Ubuntu 22.04
+- **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64), native CycloneDDS, Ubuntu Linux
 - **Languages**: Python for the module framework and semantic stack; C++ for SLAM, terrain, and planning hot paths
 - **Architecture**: Module-First. Module is the only runtime unit; Blueprint is the only orchestration unit
 - **Canonical architecture guide**: `docs/architecture/README.md`
 
 ## Working Rules
 
-- Follow Module-First boundaries. Do not introduce ROS 2 runtime coupling inside normal Modules; use explicit bridge/compat adapters. NativeModule is legacy ROS2 compatibility only, not a planner/autonomy runtime path.
+- Follow Module-First boundaries. Product source is ROS-free: use native typed DDS at process boundaries and direct calls inside a C++ endpoint.
 - Prefer existing factories, registries, modules, and utilities before adding new abstractions.
 - Keep diffs small, reversible, and behavior-preserving unless the task explicitly requests a behavior change.
 - No new dependencies without an explicit request.
@@ -25,7 +25,7 @@ outdoor/off-road environments.
 ## Quick Start
 
 ```bash
-# Framework tests, no ROS 2 required
+# Framework tests
 python -m pytest src/runtime/tests/ -q
 
 # CLI
@@ -59,7 +59,7 @@ from runtime.blueprint import autoconnect
 from runtime.blueprints.stacks import *
 
 system = autoconnect(
-    driver("thunder", dog_host="192.168.66.190"),  # L1 robot + camera bridge
+    driver("thunder", dog_host="192.168.66.190"),  # L1 robot connection
     lidar(enabled=True),                            # Livox MID-360 hardware adapter
     slam("localizer"),                              # managed SLAM/localization
     maps(),                                         # occupancy, voxel, ESDF, elevation, traversability, map manager
@@ -69,7 +69,7 @@ system = autoconnect(
     navigation("octoplanner3d"),                    # global planner + autonomy chain
     exploration("none"),                            # "none" or TARE; wavefront lives in navigation(enable_frontier=True)
     safety(),                                       # safety ring, geofence, cmd_vel mux
-    gateway(5050),                                  # REST, SSE, WS teleop, MCP, optional WebRTC
+    gateway(5050),                                  # REST, SSE, WS teleop/camera, MCP, WHEP proxy
 ).build()
 system.start()
 ```
@@ -80,12 +80,12 @@ system.start()
 
 ```text
 L0  Safety       -> SafetyRingModule + GeofenceManagerModule + CmdVelMux
-L1  Hardware     -> Driver + CameraBridge + LiDAR + SLAM + GNSS
+L1  Hardware     -> Driver + camera + LiDAR + SLAM + GNSS
 L2  Maps         -> OccupancyGrid + VoxelGrid + ESDF + ElevationMap + TraversabilityCost
 L3  Perception   -> Detector + Encoder + Reconstruction + SemanticMapper + memories
 L4  Decision     -> SemanticPlanner + LLM + VisualServo
 L5  Planning     -> NavigationModule + planner backend + waypoint/path tracking
-L6  Interface    -> Gateway + MCP + Teleop + optional WebRTC/Rerun
+L6  Interface    -> Gateway + MCP + Teleop + WHEP/JPEG camera paths + optional Rerun
 ```
 
 High layers may depend on lower layers only. L5 to L2 waypoint/path dispatch is
@@ -113,10 +113,10 @@ Factories live under `src/runtime/blueprints/stacks/`.
 
 | Factory | Purpose |
 | --- | --- |
-| `driver(robot)` | Driver + optional camera bridge auto-detection |
+| `driver(robot)` | Driver connection |
 | `lidar(enabled=True)` | Livox LiDAR hardware adapter |
 | `sim_lidar(scene_xml=...)` | Simulated point-cloud provider |
-| `slam(profile)` | SLAMModule or SlamBridgeModule |
+| `slam(profile)` | Managed SlamModule or native endpoint adapter |
 | `maps()` | OccupancyGrid, VoxelGrid, ESDF, ElevationMap, TraversabilityCost, MapManager |
 | `perception(det, enc)` | Detector, Encoder, Reconstruction |
 | `memory(save_dir)` | SemanticMapper, Episodic, Tagged, Vector, Temporal, MissionLogger |
@@ -124,7 +124,7 @@ Factories live under `src/runtime/blueprints/stacks/`.
 | `navigation(planner)` | NavigationModule, optional native/Python autonomy, optional wavefront frontier |
 | `exploration(backend)` | `none` or `tare`; wavefront was removed from this stack |
 | `safety()` | SafetyRing, Geofence, CmdVelMux |
-| `gateway(port)` | GatewayModule, MCPServerModule, TeleopModule, optional WebRTC/Rerun |
+| `gateway(port)` | GatewayModule, MCPServerModule, TeleopModule, WHEP proxy, optional Rerun |
 
 ## Pluggable Backends
 
@@ -164,13 +164,13 @@ profile.
 | --- | --- |
 | `cli/` | argparse CLI, profiles, REPL, daemon lifecycle, external status commands |
 | `src/runtime/` | Module, Blueprint, streams, transports, registry, devices, utils, framework tests |
-| `src/nav/` | NavigationModule, safety, maps, traversability, planner services |
+| `src/nav/` | Navigation mission, global/local planning, realtime safety, endpoint execution |
+| `src/maps/` | Persistent map assets, map packages, artifact builders, reusable map layers, MapsModule |
 | `src/perception/` | perception, tracking, reconstruction, scene understanding |
 | `src/decision/` | semantic planner, LLM, visual servo, goal resolution |
 | `src/memory/` | semantic map, episodic/tagged/vector/temporal memories, KG |
 | `src/drivers/` | Thunder driver, simulation drivers, LiDAR, teleop |
 | `src/gateway/` | FastAPI gateway, MCP server, SSE/WS endpoints |
-| `src/webrtc/` | optional H.264 WebRTC stream module |
 | `src/nav/local/` | terrain, local planner, path follower Python modules and local autonomy backends |
 | `src/nav/services/plan/` | Planner service boundary, OctoPlanner3D backend, and explicit PCT legacy backend |
 | `src/localization/` | Fast-LIO2, Point-LIO, PGO, localizer, GNSS bridge, NTRIP client |
@@ -194,21 +194,22 @@ profile.
 | `src/runtime/stream.py` | `In[T]` / `Out[T]` ports and backpressure policies |
 | `src/runtime/blueprint.py` | Blueprint, autoconnect, explicit wire support |
 | `src/runtime/registry.py` | plugin registry |
-| `src/runtime/devices/` | DeviceManager and hardware registry |
+| `src/runtime/devices/` | `hw` module and hardware registry |
 | `src/runtime/utils/calibration_check.py` | startup calibration self-check |
 | `src/nav/mission/navigation.py` | mission FSM, global planning, recovery |
 | `src/nav/services/plan/global_planner/service.py` | OctoPlanner3D global planner dispatch, map artifact gate, and safe-goal search |
 | `src/nav/safety/safety_ring.py` | safety evaluator and reflexes |
 | `src/nav/safety/velocity_mux.py` | priority-based velocity arbitration |
-| `src/nav/services/maps.py` | map lifecycle: save/use/build/delete |
-| `src/nav/services/dynamic_filter.py` | DUFOMap subprocess wrapper |
+| `src/maps/modules/service.py` | map lifecycle Module facade over native map services |
+| `src/maps/services/` | persistent map query/control/storage/build application services |
+| `src/maps/artifacts.py` | saved-map metadata, hash, frame, and same-source validation |
+| `src/maps/prune/runtime.py` | DUFOMap/prune process-boundary adapter used by map save |
 | `src/decision/semantic_planner/goal_resolver.py` | fast/slow goal resolution |
 | `src/decision/semantic_planner/visual_servo_module.py` | bbox/depth visual servo |
 | `src/decision/semantic_planner/agent_loop.py` | multi-turn tool-calling agent loop |
 | `src/memory/modules/semantic_mapper_module.py` | scene graph to semantic/topological maps |
 | `src/memory/modules/vector_memory_module.py` | CLIP/ChromaDB vector search with numpy fallback |
 | `src/localization/slam_module.py` | managed Fast-LIO2/Point-LIO/localizer mode |
-| `src/localization/bridge.py` | ROS 2 SLAM bridge mode and localization health |
 | `src/gateway/gateway_module.py` | FastAPI REST/WS/SSE, map save hooks, drift watchdog |
 | `scripts/lingtu` | robot-side unified operations CLI |
 | `scripts/build/build_dufomap.sh` | aarch64 DUFOMap build helper |
@@ -221,7 +222,7 @@ profile.
 ## Build And Test
 
 ```bash
-# Python framework tests, no ROS 2 required
+# Python framework tests
 python -m pytest src/runtime/tests/ -q
 
 # Useful focused tests
@@ -244,9 +245,8 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
 cmake --build build -j
 ./build/test_local_planner_core
 
-# ROS 2 build on S100P
-source /opt/ros/humble/setup.bash
-make build
+# Native C++ runtime build on S100P
+bash scripts/build/build_nav_endpoint.sh
 ```
 
 Known C++ caveat: `test_validation` has expected NaN/Inf IEEE-compliance
@@ -309,8 +309,8 @@ Important explicit wires include:
 - Safety stop to driver and NavigationModule
 - SLAM or driver odometry into NavigationModule, Gateway, map layers, safety, and semantic consumers
 - SLAM `map_cloud` into occupancy, voxel, elevation, terrain, rerun, and gateway consumers
-- Camera/depth/camera_info into perception, reconstruction, visual servo, teleop, and optional WebRTC
-- Localization health from SlamBridgeModule into SafetyRing, NavigationModule, and DepthVisualOdom
+- Camera/depth/camera_info into perception, reconstruction, visual servo, and teleop/JPEG streaming
+- Localization health from SlamModule/SlamAdapterModule into SafetyRing, NavigationModule, and DepthVisualOdom
 - Gateway and MCP instruction/goal fan-in into SemanticPlannerModule and NavigationModule
 - TraversabilityCost outputs into NavigationModule, LocalPlannerModule, and Gateway
 - SemanticPlanner `servo_target` into VisualServo, then dual-channel `goal_pose`/`cmd_vel`
@@ -371,13 +371,12 @@ Use `mock` for offline and deterministic framework work.
 | Mapping | `fastlio2` | SLAMModule -> Fast-LIO2 | first visit and map build |
 | Localization | `localizer` | SLAMModule -> Fast-LIO2 + ICP localizer | navigate against a saved map |
 | Field navigation (real default) | `bridge` + `localization_adapter="cpp_slam_status"` | `CppSlamStatusAdapterModule` | the real `nav` profile's default against the physical `thunder_field` endpoint; ingests C++ SLAM status/localization over the native endpoint, no ROS 2 dependency |
-| Bridge (explicit ROS 2 compat only) | `bridge` + `localization_adapter="ros2_slam_bridge"` | SlamBridgeModule | only used when a profile explicitly opts into the ROS 2 compatibility bridge |
 | None | `none` | no SLAM module | stub/dev/sim_nav |
 
 The real `nav` profile uses the native `cpp_slam_status` adapter because
 robot-side SLAM services own the Livox device and publish status/localization
-over the field DDS endpoint, not ROS 2. Do not casually switch it back to the
-ROS 2 `SlamBridgeModule` or managed localizer mode.
+over the field DDS endpoint. Do not switch it to managed localizer mode unless
+the process ownership and sensor lifecycle are intentionally changed.
 
 ## Exploration
 
@@ -421,7 +420,7 @@ codex mcp add --transport http lingtu http://192.168.66.190:8090/mcp
 - REST/SSE/teleop WebSocket share Gateway port `5050`.
 - Teleop WebSocket: `ws://<robot>:5050/ws/teleop`.
 - MCP JSON-RPC runs on port `8090`.
-- Optional WebRTC uses the same camera source and exposes offer/stats endpoints through Gateway when `aiortc` is installed.
+- Low-latency camera video uses the go2rtc WHEP proxy; `/ws/camera` remains the JPEG fallback.
 - Optional Rerun visualization is enabled with `--rerun`.
 
 Teleop joystick payload:

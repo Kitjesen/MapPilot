@@ -12,6 +12,7 @@ import json
 import logging
 import time
 import os
+import tempfile
 import threading
 from typing import Any
 
@@ -130,15 +131,33 @@ class TaggedLocationStore:
         """将内存状态写入 JSON 文件。路径为空时跳过。"""
         if not self._path:
             return
+        temp_path = ""
         try:
-            os.makedirs(os.path.dirname(self._path), exist_ok=True) if os.path.dirname(self._path) else None
+            target_path = os.path.abspath(self._path)
+            target_dir = os.path.dirname(target_path)
+            os.makedirs(target_dir, exist_ok=True)
             with self._lock:
                 data = list(self._store.values())
-            with open(self._path, "w", encoding="utf-8") as f:
+            fd, temp_path = tempfile.mkstemp(
+                prefix=f".{os.path.basename(target_path)}.",
+                suffix=".tmp",
+                dir=target_dir,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, target_path)
+            temp_path = ""
             logger.info("Saved %d tagged location(s) to %s", len(data), self._path)
         except Exception as e:
             logger.warning("Failed to save tagged locations to %s: %s", self._path, e)
+        finally:
+            if temp_path:
+                try:
+                    os.unlink(temp_path)
+                except OSError:
+                    pass
 
     def load(self) -> None:
         """从 JSON 文件加载。文件不存在时静默跳过。"""

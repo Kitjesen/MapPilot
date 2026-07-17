@@ -25,10 +25,10 @@ Usage:
 import argparse
 import json
 import os
+import statistics
 import sys
 import time
-import statistics
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -37,10 +37,11 @@ from typing import Dict, List, Optional
 @dataclass
 class BenchmarkResult:
     """Result for a single benchmark metric."""
+
     name: str
     unit: str
-    values: List[float] = field(default_factory=list)
-    target: Optional[float] = None
+    values: list[float] = field(default_factory=list)
+    target: float | None = None
     target_op: str = ">"  # ">" or "<"
 
     @property
@@ -64,14 +65,14 @@ class BenchmarkResult:
         return sorted_v[min(idx, len(sorted_v) - 1)]
 
     @property
-    def meets_target(self) -> Optional[bool]:
+    def meets_target(self) -> bool | None:
         if self.target is None:
             return None
         if self.target_op == ">":
             return self.mean > self.target
         return self.mean < self.target
 
-    def to_dict(self) -> Dict:
+    def to_dict(self) -> dict:
         return {
             "name": self.name,
             "unit": self.unit,
@@ -88,7 +89,7 @@ class BenchmarkResult:
         }
 
 
-def get_system_info() -> Dict:
+def get_system_info() -> dict:
     """Collect system information."""
     info = {
         "timestamp": datetime.now().isoformat(),
@@ -100,6 +101,7 @@ def get_system_info() -> Dict:
 
     try:
         import platform
+
         info["platform"] = platform.platform()
         info["cpu"] = platform.processor() or "unknown"
     except Exception:
@@ -117,10 +119,12 @@ def get_system_info() -> Dict:
     # GPU info
     try:
         import subprocess
+
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             parts = result.stdout.strip().split(",")
@@ -132,6 +136,7 @@ def get_system_info() -> Dict:
     # Memory
     try:
         import psutil
+
         mem = psutil.virtual_memory()
         info["memory_total_gb"] = round(mem.total / (1024**3), 1)
     except ImportError:
@@ -140,7 +145,7 @@ def get_system_info() -> Dict:
     return info
 
 
-def get_gpu_usage() -> Dict:
+def get_gpu_usage() -> dict:
     """Sample current GPU/CPU/memory usage."""
     usage = {
         "gpu_util_pct": 0.0,
@@ -151,10 +156,12 @@ def get_gpu_usage() -> Dict:
 
     try:
         import subprocess
+
         result = subprocess.run(
-            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5
+            ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             parts = result.stdout.strip().split(",")
@@ -165,6 +172,7 @@ def get_gpu_usage() -> Dict:
 
     try:
         import psutil
+
         usage["cpu_util_pct"] = psutil.cpu_percent(interval=0.1)
         usage["ram_used_mb"] = psutil.virtual_memory().used / (1024**2)
     except ImportError:
@@ -183,8 +191,9 @@ def benchmark_yolo_world(iterations: int = 100, warmup: int = 10) -> BenchmarkRe
     )
 
     try:
-        from perception.detector_yolo_world import YOLOWorldDetector
         import numpy as np
+
+        from perception.detector_yolo_world import YOLOWorldDetector
 
         detector = YOLOWorldDetector(model_size="l", confidence=0.3)
         detector.load_model()
@@ -223,8 +232,9 @@ def benchmark_clip_encoding(iterations: int = 100, warmup: int = 10) -> Benchmar
     )
 
     try:
-        from perception.encoding.clip_encoder import CLIPEncoder
         import numpy as np
+
+        from perception.encoding.clip_encoder import CLIPEncoder
 
         encoder = CLIPEncoder(model_name="ViT-B/32")
         encoder.load_model()
@@ -262,9 +272,10 @@ def benchmark_scene_graph(iterations: int = 50, warmup: int = 5) -> BenchmarkRes
     )
 
     try:
+        import numpy as np
+
         from perception.tracking.instance_tracker import InstanceTracker
         from perception.tracking.projection import Detection3D
-        import numpy as np
 
         tracker = InstanceTracker(max_objects=200)
 
@@ -312,9 +323,10 @@ def benchmark_fast_path(iterations: int = 30, warmup: int = 5) -> BenchmarkResul
     )
 
     try:
-        from decision.goal_resolver import GoalResolver
-        from decision.llm_client import LLMConfig
         import numpy as np
+
+        from decision.goals.resolver import GoalResolver
+        from decision.llm.client import LLMConfig
 
         config = LLMConfig(backend="openai", model="gpt-4o-mini")
         resolver = GoalResolver(
@@ -324,19 +336,41 @@ def benchmark_fast_path(iterations: int = 30, warmup: int = 5) -> BenchmarkResul
         )
 
         # Mock scene graph JSON
-        scene_graph = json.dumps({
-            "objects": [
-                {"id": i, "label": f"object_{i}", "position": {"x": i, "y": 0, "z": 0},
-                 "score": 0.8, "detection_count": 3, "region_id": 0}
-                for i in range(20)
-            ],
-            "rooms": [{"room_id": 0, "name": "office", "center": {"x": 5, "y": 0},
-                       "object_ids": list(range(20)), "group_ids": [0]}],
-            "groups": [{"group_id": 0, "room_id": 0, "name": "furniture",
-                       "center": {"x": 5, "y": 0}, "object_ids": list(range(20))}],
-            "relations": [],
-            "summary": "Scene has 20 objects in 1 room",
-        })
+        scene_graph = json.dumps(
+            {
+                "objects": [
+                    {
+                        "id": i,
+                        "label": f"object_{i}",
+                        "position": {"x": i, "y": 0, "z": 0},
+                        "score": 0.8,
+                        "detection_count": 3,
+                        "region_id": 0,
+                    }
+                    for i in range(20)
+                ],
+                "rooms": [
+                    {
+                        "room_id": 0,
+                        "name": "office",
+                        "center": {"x": 5, "y": 0},
+                        "object_ids": list(range(20)),
+                        "group_ids": [0],
+                    }
+                ],
+                "groups": [
+                    {
+                        "group_id": 0,
+                        "room_id": 0,
+                        "name": "furniture",
+                        "center": {"x": 5, "y": 0},
+                        "object_ids": list(range(20)),
+                    }
+                ],
+                "relations": [],
+                "summary": "Scene has 20 objects in 1 room",
+            }
+        )
 
         print(f"  FastPath: warming up ({warmup} iterations)...")
         for _ in range(warmup):
@@ -361,7 +395,7 @@ def run_benchmark(
     iterations: int = 100,
     warmup: int = 10,
     perception_only: bool = False,
-    output_file: Optional[str] = None,
+    output_file: str | None = None,
 ):
     """Run the full benchmark suite."""
     print("=" * 60)
@@ -373,7 +407,7 @@ def run_benchmark(
     print(f"GPU: {sys_info['gpu']}")
     print(f"Memory: {sys_info['memory_total_gb']} GB\n")
 
-    results: List[BenchmarkResult] = []
+    results: list[BenchmarkResult] = []
 
     print("\n[1/5] YOLO-World Detection")
     results.append(benchmark_yolo_world(iterations, warmup))
@@ -407,10 +441,7 @@ def run_benchmark(
             continue
         target_str = f"{r.target_op}{r.target}{r.unit}" if r.target else "N/A"
         pass_str = "Y" if r.meets_target else ("N" if r.meets_target is not None else "-")
-        print(
-            f"  {r.name:<33} {r.mean:>7.1f}{r.unit:>3} "
-            f"{r.p95:>7.1f}{r.unit:>3} {target_str:>10} {pass_str:>4}"
-        )
+        print(f"  {r.name:<33} {r.mean:>7.1f}{r.unit:>3} {r.p95:>7.1f}{r.unit:>3} {target_str:>10} {pass_str:>4}")
 
     print(f"\n  GPU Util: {usage['gpu_util_pct']:.0f}%")
     print(f"  GPU Memory: {usage['gpu_mem_used_mb']:.0f} MB")
@@ -445,8 +476,7 @@ def main():
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument("--perception-only", action="store_true")
     parser.add_argument("--output", type=str, default=None)
-    parser.add_argument("--report", type=str, default=None,
-                        help="Generate report from existing results file")
+    parser.add_argument("--report", type=str, default=None, help="Generate report from existing results file")
 
     args = parser.parse_args()
 

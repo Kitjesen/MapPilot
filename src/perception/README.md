@@ -41,10 +41,9 @@ their shared base type:
 `detector_base.py` (`DetectorBase` ABC + `Detection2D`), `yoloe_detector.py`,
 `yolo_world_detector.py`, `grounding_dino_detector.py`, `bpu_detector.py`,
 `sim_scene_observer.py` (sim-only detector+projector shortcut),
-`detector_module.py` (standalone `DetectorModule` tool wrapper),
-`laplacian_filter.py` (blur-gate before running the detector),
-`keyframe_selector.py` (motion/visual-change gate for when to run detection --
-currently not imported anywhere; see "Open questions" below).
+`detector_module.py` (standalone `DetectorModule` tool wrapper), and
+`laplacian_filter.py` (blur-gate before running the detector). The unused
+legacy `keyframe_selector.py` gate has been removed.
 
 ### `encoding/`
 
@@ -57,10 +56,10 @@ currently not imported anywhere; see "Open questions" below).
 matching, EMA position smoothing, belief updates, room inference),
 `tracked_objects.py` (`TrackedObject` dataclass; re-exports shared scene types
 from `runtime.msgs.scene`), `projection.py` (2D detection + depth -> 3D
-`Detection3D`, the currency between detection and tracking),
-`bpu_tracker.py` (BoT-SORT 2D tracker for BPU detections), `bpu_qp_bridge.py`
-(BPU -> FusionMOT + OSNet Re-ID + target-selection pipeline for person
-following).
+`Detection3D`, the currency between detection and tracking), `bpu_tracker.py`
+(BoT-SORT 2D tracker for BPU detections), `native_byte_tracker.py`, and
+`person_counting.py`. The former all-in-one `bpu_qp_bridge.py` has been
+replaced by these explicit tracking services.
 
 ### `scene_understanding/`
 
@@ -169,7 +168,7 @@ All moves were `git mv` (history-preserving); no algorithm code changed.
 | `sim_scene_observer.py` | `detection/sim_scene_observer.py` |
 | `detector_module.py` | `detection/detector_module.py` |
 | `laplacian_filter.py` | `detection/laplacian_filter.py` |
-| `keyframe_selector.py` | `detection/keyframe_selector.py` |
+| `keyframe_selector.py` | removed (unused legacy detection gate) |
 | `clip_encoder.py` | `encoding/clip_encoder.py` |
 | `mobileclip_encoder.py` | `encoding/mobileclip_encoder.py` |
 | `encoder_module.py` | `encoding/encoder_module.py` |
@@ -177,7 +176,7 @@ All moves were `git mv` (history-preserving); no algorithm code changed.
 | `tracked_objects.py` | `tracking/tracked_objects.py` |
 | `projection.py` | `tracking/projection.py` |
 | `bpu_tracker.py` | `tracking/bpu_tracker.py` |
-| `bpu_qp_bridge.py` | `tracking/bpu_qp_bridge.py` |
+| `bpu_qp_bridge.py` | replaced by `tracking/bpu_tracker.py`, `tracking/native_byte_tracker.py`, and tracking services |
 | `scg_builder.py` | `scene_understanding/scg_builder.py` |
 | `scg_path_planner.py` | `scene_understanding/scg_path_planner.py` |
 | `global_coverage_mask.py` | `scene_understanding/global_coverage_mask.py` |

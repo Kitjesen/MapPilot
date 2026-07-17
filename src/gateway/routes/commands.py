@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
-import subprocess
 import time
 from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from runtime.msgs.geometry import Twist, Vector3
 from gateway.schemas import (
     CancelRequest,
     ClickNavRequest,
@@ -30,7 +29,23 @@ from gateway.schemas import (
 )
 from gateway.services.control_commands import ControlCommandService
 from gateway.services.goal_builder import construct_goal_from_request
-
+from gateway.services.native_control import (
+    clear_estop as native_clear_estop,
+)
+from gateway.services.native_control import (
+    endpoint_only_enabled,
+)
+from gateway.services.native_control import (
+    estop as native_estop,
+)
+from gateway.services.native_control import (
+    resume_autonomy as native_resume_autonomy,
+)
+from runtime.adapters.native.navigation import (
+    NavigationClientError,
+    get_native_navigation_client,
+)
+from runtime.msgs.geometry import Twist, Vector3
 
 CONTROL_COMMAND_ERROR_RESPONSES = {
     409: {"model": GatewayErrorResponse},
@@ -42,38 +57,46 @@ LEASE_ERROR_RESPONSES = {
 }
 
 
-def _native_nav_control_bin() -> str:
-    return os.environ.get("LINGTU_NAV_CONTROL_BIN", "").strip()
+def _native_navigation_client():
+    required_by_env = os.environ.get("LINGTU_NAV_COMMANDS_REQUIRED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    try:
+        required = required_by_env or endpoint_only_enabled()
+    except ValueError as exc:
+        raise NavigationClientError(str(exc)) from exc
+    client = get_native_navigation_client(required=required)
+    if client is None and required:
+        raise NavigationClientError("native navigation command boundary is unavailable")
+    return client
 
 
-def _publish_native_nav_control(command: str, *args: str) -> bool:
-    binary = _native_nav_control_bin()
-    if not binary:
-        return False
-    if not os.path.isfile(binary):
-        raise RuntimeError(f"native nav control binary missing: {binary}")
-    domain_id = os.environ.get("LINGTU_DDS_DOMAIN_ID", "0").strip() or "0"
-    subprocess.run(
-        [binary, command, *args, "--domain-id", domain_id],
-        check=True,
-        timeout=5.0,
-    )
-    return True
-
-
-def _publish_goal(gw: Any, goal: Any, *, ts: float) -> None:
-    if _publish_native_nav_control(
-        "goal",
-        f"{goal.x:.9g}",
-        f"{goal.y:.9g}",
-        f"{goal.z:.9g}",
-        f"{goal.yaw:.9g}",
-    ):
+def _publish_goal(
+    gw: Any,
+    goal: Any,
+    *,
+    ts: float,
+    request_id: str | None = None,
+) -> None:
+    client = _native_navigation_client()
+    if client is not None:
+        client.send_goal(
+            goal.x,
+            goal.y,
+            goal.z,
+            goal.yaw,
+            request_id=request_id,
+        )
         return
     gw.goal_pose.publish(goal.pose_stamped(ts=ts))
 
 
 def register_command_routes(app, gw) -> None:
+    """Register Gateway navigation and direct-control command routes."""
+
     command_service = ControlCommandService(gw)
 
     @app.post(
@@ -82,7 +105,7 @@ def register_command_routes(app, gw) -> None:
         response_model=PlanPreviewResponse,
     )
     async def post_navigation_plan(body: PlanPreviewRequest):
-        return command_service.preview_navigation_plan(body)
+        return await asyncio.to_thread(command_service.preview_navigation_plan, body)
 
     @app.post(
         "/api/v1/navigation/goal_candidate",
@@ -114,15 +137,12 @@ def register_command_routes(app, gw) -> None:
         reasons: list[str] = []
         status = "constructed"
         if body.preview:
-            preview = command_service.preview_navigation_plan(
-                goal.preview_request(client_id=body.client_id)
+            preview = await asyncio.to_thread(
+                command_service.preview_navigation_plan,
+                goal.preview_request(client_id=body.client_id),
             )
             reasons = list(preview.get("reasons") or [])
-            status = (
-                "preview_feasible"
-                if bool(preview.get("feasible", False))
-                else "preview_infeasible"
-            )
+            status = "preview_feasible" if bool(preview.get("feasible", False)) else "preview_infeasible"
 
         return {
             "schema_version": 1,
@@ -151,17 +171,19 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             ts = time.time()
-            _publish_goal(gw, goal, ts=ts)
-            if body.instruction:
-                if not _publish_native_nav_control("instruction", body.instruction):
-                    gw.instruction.publish(body.instruction)
+            _publish_goal(gw, goal, ts=ts, request_id=body.request_id)
             return goal.command_payload(
                 status="ok",
                 instruction=body.instruction,
                 ts=ts,
             )
 
-        return command_service.run_planned_goal_command("goal", body, _publish)
+        return await asyncio.to_thread(
+            command_service.run_planned_goal_command,
+            "goal",
+            body,
+            _publish,
+        )
 
     @app.post(
         "/api/v1/navigate/click",
@@ -179,10 +201,11 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             ts = time.time()
-            _publish_goal(gw, goal, ts=ts)
+            _publish_goal(gw, goal, ts=ts, request_id=body.request_id)
             return goal.command_payload(status="ok", ts=ts)
 
-        return command_service.run_planned_goal_command(
+        return await asyncio.to_thread(
+            command_service.run_planned_goal_command,
             "navigate_click",
             body,
             _publish,
@@ -196,15 +219,28 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_cmd_vel(body: CmdVelRequest):
         def _publish() -> dict[str, Any]:
-            gw.cmd_vel.publish(
-                Twist(
-                    linear=Vector3(body.vx, body.vy, 0),
-                    angular=Vector3(0, 0, body.wz),
-                )
+            twist = Twist(
+                linear=Vector3(body.vx, body.vy, 0),
+                angular=Vector3(0, 0, body.wz),
             )
-            return {"status": "ok"}
+            wrote_dds = False
+            if hasattr(gw, "publish_remote_velocity_request"):
+                wrote_dds = bool(
+                    gw.publish_remote_velocity_request(
+                        twist,
+                        request_id=body.request_id,
+                    )
+                )
+            else:
+                gw.cmd_vel.publish(twist)
+            return {"status": "ok", "dds": wrote_dds, "teleop_cmd_vel_dds": wrote_dds}
 
-        return command_service.run_motion_guarded_command("cmd_vel", body, _publish)
+        return await asyncio.to_thread(
+            command_service.run_motion_guarded_command,
+            "cmd_vel",
+            body,
+            _publish,
+        )
 
     @app.post(
         "/api/v1/stop",
@@ -214,11 +250,43 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_stop(body: StopRequest | None = None):
         def _publish() -> dict[str, Any]:
-            gw.stop_cmd.publish(2)
-            gw.cmd_vel.publish(Twist())
-            return {"status": "stopped"}
+            request_id = body.request_id if body is not None else None
+            wrote_dds = native_estop(
+                "rest_emergency_stop",
+                request_id=request_id,
+            )
+            if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
+                raise NavigationClientError("native stop command boundary is unavailable")
+            if not wrote_dds:
+                gw.stop_cmd.publish(2)
+                gw.cmd_vel.publish(Twist())
+            return {
+                "status": "stopped",
+                "dds": wrote_dds,
+                "native_control": "estop" if wrote_dds else "local_compat",
+            }
 
-        return gw._run_control_command("stop", body, _publish)
+        try:
+            return await asyncio.to_thread(
+                gw._run_control_command,
+                "stop",
+                body,
+                _publish,
+            )
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return command_service.rejected_response(
+                "stop",
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint did not acknowledge the stop command.",
+                detail=command_service.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
 
     @app.post(
         "/api/v1/navigation/cancel",
@@ -228,11 +296,95 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_navigation_cancel(body: CancelRequest):
         def _publish() -> dict[str, Any]:
-            if not _publish_native_nav_control("cancel", body.reason):
+            client = _native_navigation_client()
+            if client is not None:
+                client.cancel(body.reason, request_id=body.request_id)
+            else:
                 gw.cancel.publish(body.reason)
             return {"status": "cancelled", "reason": body.reason}
 
-        return gw._run_control_command("navigation_cancel", body, _publish)
+        try:
+            return await asyncio.to_thread(
+                gw._run_control_command,
+                "navigation_cancel",
+                body,
+                _publish,
+            )
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return command_service.rejected_response(
+                "navigation_cancel",
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint rejected the cancel request.",
+                detail=command_service.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
+
+    @app.post(
+        "/api/v1/navigation/resume",
+        summary="Release manual takeover and require a fresh navigation goal/path",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def post_navigation_resume(body: StopRequest | None = None):
+        client_id = body.client_id if body is not None else "unknown"
+        if not gw._lease.check(client_id):
+            return command_service.rejected_response(
+                "navigation_resume",
+                body,
+                error="control_lease",
+                message="Only the active control owner may resume autonomy.",
+                detail=command_service.command_error_detail(
+                    reason_code="control_lease",
+                    reason="Only the active control owner may resume autonomy.",
+                    source="control_lease",
+                    path="/api/v1/lease",
+                    blockers=["control_lease"],
+                    lease=gw._lease.to_dict(),
+                ),
+                status_code=403,
+            )
+
+        def _publish() -> dict[str, Any]:
+            request_id = body.request_id if body is not None else None
+            wrote_dds = native_resume_autonomy(
+                "operator_resume",
+                request_id=request_id,
+            )
+            if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
+                raise NavigationClientError("native autonomy resume boundary is unavailable")
+            return {
+                "status": "autonomy_resume_ready",
+                "dds": wrote_dds,
+                "goal_reissue_required": True,
+            }
+
+        try:
+            return await asyncio.to_thread(
+                gw._run_control_command,
+                "navigation_resume",
+                body,
+                _publish,
+            )
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return command_service.rejected_response(
+                "navigation_resume",
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint rejected autonomy resume.",
+                detail=command_service.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
 
     @app.post(
         "/api/v1/instruction",
@@ -242,8 +394,7 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_instruction(body: InstructionRequest):
         def _publish() -> dict[str, Any]:
-            if not _publish_native_nav_control("instruction", body.text):
-                gw.instruction.publish(body.text)
+            gw.instruction.publish(body.text)
             return {"status": "ok", "instruction": body.text}
 
         return command_service.run_motion_guarded_command(
@@ -275,11 +426,7 @@ def register_command_routes(app, gw) -> None:
                 ),
             )
 
-        servo_target = (
-            "stop"
-            if body.mode == "stop"
-            else f"{body.mode}:{body.target}"
-        )
+        servo_target = "stop" if body.mode == "stop" else f"{body.mode}:{body.target}"
 
         def _publish() -> dict[str, Any]:
             gw.servo_target.publish(servo_target)
@@ -306,15 +453,88 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_mode(body: ModeRequest):
         def _publish() -> dict[str, Any]:
+            if body.mode == "estop":
+                wrote_dds = native_estop(
+                    "mode_estop",
+                    request_id=body.request_id,
+                )
+                if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
+                    raise NavigationClientError("native estop command boundary is unavailable")
+                if not wrote_dds:
+                    gw.stop_cmd.publish(2)
+                    gw.cmd_vel.publish(Twist())
             with gw._state_lock:
                 gw._mode = body.mode
             gw.mode_cmd.publish(body.mode)
-            if body.mode == "estop":
-                gw.stop_cmd.publish(2)
-                gw.cmd_vel.publish(Twist())
             return {"status": "ok", "mode": body.mode}
 
-        return gw._run_control_command("mode", body, _publish)
+        try:
+            return await asyncio.to_thread(
+                gw._run_control_command,
+                "mode",
+                body,
+                _publish,
+            )
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return command_service.rejected_response(
+                "mode",
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint did not acknowledge emergency stop.",
+                detail=command_service.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
+
+    @app.post(
+        "/api/v1/estop/reset",
+        summary="Explicitly release the native software emergency-stop latch",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def post_estop_reset(body: StopRequest | None = None):
+        def _publish() -> dict[str, Any]:
+            request_id = body.request_id if body is not None else None
+            wrote_dds = native_clear_estop(
+                "operator_reset",
+                request_id=request_id,
+            )
+            if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
+                raise NavigationClientError("native estop reset boundary is unavailable")
+            with gw._state_lock:
+                if gw._mode == "estop":
+                    gw._mode = "manual"
+            return {
+                "status": "estop_cleared",
+                "dds": wrote_dds,
+                "mode": gw._mode,
+            }
+
+        try:
+            return await asyncio.to_thread(
+                gw._run_control_command,
+                "estop_reset",
+                body,
+                _publish,
+            )
+        except NavigationClientError as exc:
+            reason = str(exc)
+            return command_service.rejected_response(
+                "estop_reset",
+                body,
+                error="native_command_rejected",
+                message="Native navigation endpoint did not acknowledge emergency-stop reset.",
+                detail=command_service.command_error_detail(
+                    reason_code="native_command_rejected",
+                    reason=reason,
+                    source="native_navigation_command_ack",
+                    blockers=[reason],
+                ),
+            )
 
     @app.post(
         "/api/v1/lease",
@@ -384,11 +604,13 @@ def register_command_routes(app, gw) -> None:
             }
             if hasattr(gw, "_publish_command_ack"):
                 gw._publish_command_ack(content, status_code=status_code)
-            _publish_lease_event({
-                "status": "rejected",
-                "error": error,
-                **gw._lease.to_dict(),
-            })
+            _publish_lease_event(
+                {
+                    "status": "rejected",
+                    "error": error,
+                    **gw._lease.to_dict(),
+                }
+            )
             return JSONResponse(
                 status_code=status_code,
                 content=content,

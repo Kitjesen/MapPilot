@@ -132,7 +132,7 @@ def make_pointcloud2(
                 f"({relative_times.shape[0]} != {n_pts})"
             )
     if rings is None:
-        ring_values = (np.arange(n_pts, dtype=np.uint16) % 4).astype(np.uint16)
+        ring_values = np.zeros(n_pts, dtype=np.uint16)
     else:
         ring_values = np.asarray(rings, dtype=np.uint16).reshape(-1)
         if ring_values.shape[0] != n_pts:
@@ -196,7 +196,7 @@ def make_livox_custom_msg(
             f"({relative_times.shape[0]} != {n_pts})"
         )
     if rings is None:
-        ring_values = (np.arange(n_pts, dtype=np.uint16) % 4).astype(np.uint16)
+        ring_values = np.zeros(n_pts, dtype=np.uint16)
     else:
         ring_values = np.asarray(rings, dtype=np.uint16).reshape(-1)
         if ring_values.shape[0] != n_pts:
@@ -225,8 +225,8 @@ def make_livox_custom_msg(
         point.y = float(pts[idx, 1])
         point.z = float(pts[idx, 2])
         point.reflectivity = int(np.clip(round(float(pts[idx, 3])), 0, 255))
-        point.tag = 0x10
-        point.line = int(ring_values[idx] % 4)
+        point.tag = 0x00
+        point.line = int(ring_values[idx])
         points.append(point)
     msg.points = points
     return msg

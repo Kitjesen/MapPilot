@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package brainstem.api.v1;
+
+import "google/protobuf/empty.proto";
+
+// Minimal compatibility contract for the public robot-control boundary.
+// This is an independent LingTu declaration and does not vendor the
+// proprietary Thunder SDK implementation.
+message Vector3 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+enum CmsStateKind {
+  CMS_STATE_KIND_ZERO = 0;
+  CMS_STATE_KIND_GROUNDED = 1;
+  CMS_STATE_KIND_STANDING = 2;
+  CMS_STATE_KIND_WALKING = 3;
+  CMS_STATE_KIND_TRANSITIONING = 4;
+}
+
+message CmsState {
+  CmsStateKind kind = 1;
+}
+
+enum ControlOwner {
+  CONTROL_OWNER_NONE = 0;
+  CONTROL_OWNER_GRPC = 1;
+  CONTROL_OWNER_YUNZHUO = 2;
+}
+
+enum CommandRejectReason {
+  COMMAND_REJECT_REASON_NONE = 0;
+  COMMAND_REJECT_REASON_INVALID_VECTOR = 1;
+  COMMAND_REJECT_REASON_RATE_LIMITED = 2;
+  COMMAND_REJECT_REASON_FSM_NOT_READY = 3;
+  COMMAND_REJECT_REASON_MOTORS_DISABLED = 4;
+  COMMAND_REJECT_REASON_MOTOR_FAULT = 5;
+  COMMAND_REJECT_REASON_CONTROL_BUSY = 6;
+  COMMAND_REJECT_REASON_LEASE_MISSING = 7;
+  COMMAND_REJECT_REASON_LEASE_EXPIRED = 8;
+  COMMAND_REJECT_REASON_PREEMPTED = 9;
+}
+
+message AcquireControlRequest {
+  string client_id = 1;
+}
+
+message ControlLeaseRequest {
+  string token = 1;
+}
+
+message ControlStatus {
+  CmsState fsm = 1;
+  bool motor_output_enabled = 2;
+  ControlOwner owner = 3;
+  bool critical_motor_fault = 4;
+  bool grpc_lease_active = 5;
+  uint32 lease_remaining_ms = 6;
+  uint64 last_accepted_sequence = 7;
+  CommandRejectReason last_decision = 8;
+  bool ready_for_walk = 9;
+  string owner_id = 10;
+  uint64 accepted_count = 11;
+  uint64 rejected_count = 12;
+}
+
+message ControlLease {
+  bool accepted = 1;
+  string token = 2;
+  uint32 lease_duration_ms = 3;
+  CommandRejectReason reason = 4;
+  ControlStatus status = 5;
+}
+
+message WalkRequest {
+  string token = 1;
+  uint64 sequence = 2;
+  Vector3 direction = 3;
+}
+
+message CommandAck {
+  bool accepted = 1;
+  CommandRejectReason reason = 2;
+  uint64 sequence = 3;
+  ControlStatus status = 4;
+}
+
+service RobotControl {
+  rpc Walk(Vector3) returns (google.protobuf.Empty);
+  rpc WalkChecked(WalkRequest) returns (CommandAck);
+  rpc AcquireControl(AcquireControlRequest) returns (ControlLease);
+  rpc RenewControlLease(ControlLeaseRequest) returns (ControlLease);
+  rpc ReleaseControl(ControlLeaseRequest) returns (ControlStatus);
+  rpc GetControlStatus(google.protobuf.Empty) returns (ControlStatus);
+}

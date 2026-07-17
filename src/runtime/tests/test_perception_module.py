@@ -19,18 +19,19 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
+from perception.perception_module import (
+    PerceptionModule,
+    _quat_to_rotation,
+)
 from runtime import Blueprint, In, Module
 from runtime.msgs.geometry import Pose, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import Detection3D as CoreDetection3D
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
-from perception.perception_module import (
-    PerceptionModule,
-    _quat_to_rotation,
-)
 
 # -- helpers -------------------------------------------------------------------
+
 
 def _make_bgr(h: int = 480, w: int = 640) -> Image:
     """Synthetic BGR image with non-zero data (passes Laplacian filter)."""
@@ -55,6 +56,7 @@ def _make_odom(x: float = 1.0, y: float = 2.0, z: float = 0.35) -> Odometry:
 @dataclass
 class FakeDetection2D:
     """Minimal Detection2D for testing the fallback projection path."""
+
     bbox: np.ndarray = field(default_factory=lambda: np.array([300, 220, 340, 260]))
     score: float = 0.9
     label: str = "chair"
@@ -65,6 +67,7 @@ class FakeDetection2D:
 
 class FakeDetector:
     """Detector that returns canned 2D detections."""
+
     def __init__(self, detections=None):
         self._dets = detections or [FakeDetection2D()]
         self._shutdown_called = False
@@ -81,17 +84,23 @@ class FakeDetector:
 
 class FakeSimObserver:
     def __init__(self, detections=None):
-        self._dets = detections or [type('Det', (), {
-            'position': np.array([16.25, 2.9, 0.9375], dtype=np.float32),
-            'label': 'stairs',
-            'score': 1.0,
-            'bbox_2d': np.array([435.7, 173.6, 547.1, 285.0], dtype=np.float32),
-            'depth': 13.0,
-            'features': np.array([]),
-            'points': np.empty((0, 3), dtype=np.float32),
-        })()]
+        self._dets = detections or [
+            type(
+                "Det",
+                (),
+                {
+                    "position": np.array([16.25, 2.9, 0.9375], dtype=np.float32),
+                    "label": "stairs",
+                    "score": 1.0,
+                    "bbox_2d": np.array([435.7, 173.6, 547.1, 285.0], dtype=np.float32),
+                    "depth": 13.0,
+                    "features": np.array([]),
+                    "points": np.empty((0, 3), dtype=np.float32),
+                },
+            )()
+        ]
 
-    def observe(self, tf_camera_to_world, intrinsics, text_prompt=''):
+    def observe(self, tf_camera_to_world, intrinsics, text_prompt=""):
         return list(self._dets)
 
     def shutdown(self):
@@ -99,6 +108,7 @@ class FakeSimObserver:
 
 
 # -- Port declaration tests ----------------------------------------------------
+
 
 class TestPortDeclarations:
     def test_has_four_inputs(self):
@@ -130,6 +140,7 @@ class TestPortDeclarations:
 
 # -- Setup and lifecycle tests -------------------------------------------------
 
+
 class TestSetupLifecycle:
     def test_setup_registers_subscriptions(self):
         """After setup(), all four In ports should have callbacks."""
@@ -153,6 +164,7 @@ class TestSetupLifecycle:
 
 
 # -- Data caching tests --------------------------------------------------------
+
 
 class TestDataCaching:
     def test_depth_caching(self):
@@ -189,14 +201,13 @@ class TestDataCaching:
 
 # -- Pipeline tests (mock detector, no real YOLO/CLIP) -------------------------
 
+
 class TestPipeline:
     def _setup_module_with_fake_detector(self):
         """Create a PerceptionModule with a fake detector, feed intrinsics+depth."""
         mod = PerceptionModule(depth_scale=0.001, min_depth=0.3, max_depth=6.0)
         mod.setup()
         mod._detector = FakeDetector()
-        # Force fallback projection (avoid type mismatch with projection.CameraIntrinsics)
-        mod._project_to_3d = mod._project_to_3d_fallback
         mod.camera_info._deliver(_make_intrinsics())
         mod.depth_image._deliver(_make_depth(depth_mm=2000))
         mod.odometry._deliver(_make_odom())
@@ -270,7 +281,7 @@ class TestPipeline:
         assert len(received) == 0
 
     def test_sim_scene_backend_bypasses_blur_filter(self):
-        mod = PerceptionModule(detector_type='sim_scene')
+        mod = PerceptionModule(detector_type="sim_scene")
         mod.setup()
         mod._tracker = None
         mod._sim_scene_observer = FakeSimObserver()
@@ -288,7 +299,7 @@ class TestPipeline:
         mod.color_image._deliver(blurry)
 
         assert len(received) == 1
-        assert received[0][0].label == 'stairs'
+        assert received[0][0].label == "stairs"
 
     def test_fallback_projection_position(self):
         """Fallback 3D projection produces reasonable world-frame positions."""
@@ -304,6 +315,7 @@ class TestPipeline:
 
 
 # -- Graceful degradation tests ------------------------------------------------
+
 
 class TestGracefulDegradation:
     def test_no_detector_no_crash(self):
@@ -383,8 +395,10 @@ class TestSceneGraphMetadata:
 
 # -- Autoconnect integration test ----------------------------------------------
 
+
 class _DownstreamPlanner(Module, layer=5):
     """Dummy downstream consumer for autoconnect test."""
+
     scene_graph: In[SceneGraph]
     detections_3d: In[list]
 
@@ -392,12 +406,7 @@ class _DownstreamPlanner(Module, layer=5):
 class TestAutoconnect:
     def test_autoconnect_with_planner(self):
         """PerceptionModule.scene_graph -> PlannerModule.scene_graph via auto_wire."""
-        bp = (
-            Blueprint()
-            .add(PerceptionModule)
-            .add(_DownstreamPlanner)
-            .auto_wire()
-        )
+        bp = Blueprint().add(PerceptionModule).add(_DownstreamPlanner).auto_wire()
         system = bp.build()
         # SystemHandle.start() calls setup() + start() on all modules
         system.start()
@@ -429,6 +438,7 @@ class TestAutoconnect:
 
 # -- Utility function test -----------------------------------------------------
 
+
 class TestQuatToRotation:
     def test_identity_quaternion(self):
         """(0,0,0,1) should give identity rotation."""
@@ -438,6 +448,7 @@ class TestQuatToRotation:
     def test_90deg_z_rotation(self):
         """90-degree rotation around Z axis."""
         import math
+
         angle = math.pi / 2
         qw = math.cos(angle / 2)
         qz = math.sin(angle / 2)
@@ -446,14 +457,11 @@ class TestQuatToRotation:
         np.testing.assert_allclose(R, expected, atol=1e-10)
 
 
-
 class TestDetectorConfiguration:
     def test_perception_backend_registry_names_are_visible(self):
         from runtime.registry import list_plugins
 
-        assert {"yoloe", "yolo_world", "bpu", "sim_scene"} <= set(
-            list_plugins("detector")
-        )
+        assert {"yoloe", "yolo_world", "bpu", "sim_scene"} <= set(list_plugins("detector"))
         assert {"clip", "mobileclip"} <= set(list_plugins("encoder"))
         assert {"bpu"} <= set(list_plugins("perception_tracker"))
 

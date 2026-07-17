@@ -18,7 +18,7 @@ need a runtime mode switch with two channels:
    sustained NO_FIX → indoor).
 
 This module owns *only* the classification logic, not the wiring. The
-SlamBridgeModule feeds GnssOdom samples and reads the current mode; other
+The active SLAM module feeds GnssOdom samples and reads the current mode; other
 modules subscribe through a port for state-change notifications.
 
 Mode states
@@ -75,8 +75,7 @@ class SceneModeDetector:
         self.config = config or SceneModeConfig()
         env_mode = os.environ.get("LINGTU_SCENE_MODE", "").strip().lower() or None
         if env_mode and env_mode not in VALID_MODES:
-            logger.warning(
-                "LINGTU_SCENE_MODE=%r is not one of %s — ignoring", env_mode, VALID_MODES)
+            logger.warning("LINGTU_SCENE_MODE=%r is not one of %s — ignoring", env_mode, VALID_MODES)
             env_mode = None
         self._manual: str | None = env_mode if env_mode in (MODE_INDOOR, MODE_OUTDOOR) else None
         self._auto_mode: str = MODE_UNKNOWN
@@ -152,9 +151,7 @@ class SceneModeDetector:
                 self._last_change_ts = now
                 # Only log if it would change the *effective* mode.
                 if self._manual is None:
-                    logger.info(
-                        "SceneMode: auto %s → %s (consistent for %.1fs)",
-                        old, candidate, elapsed)
+                    logger.info("SceneMode: auto %s → %s (consistent for %.1fs)", old, candidate, elapsed)
                 return True
         else:
             # Candidate flipped — restart the timer.

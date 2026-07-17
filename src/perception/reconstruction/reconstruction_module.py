@@ -34,19 +34,35 @@ import threading
 import time
 from typing import Any
 
+from maps.taxonomy import load_semantic_taxonomy
 from runtime import In, Module, Out
-from runtime.msgs.numpy_compat import np
+from runtime.config import get_config
+from runtime.msgs.map import MapObservationFrame, SemanticLabelsFrame
 from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat
 from runtime.registry import register
 
 # ── Default dynamic-class labels that should not be written to the static map ──
-_DYNAMIC_LABELS = frozenset({
-    "person", "people", "pedestrian",
-    "car", "vehicle", "truck", "bus", "bicycle", "motorcycle",
-    "dog", "cat", "animal",
-})
+# Phase 4: the canonical default now lives in runtime.config.PerceptionConfig;
+# this module-level alias is kept so the fallback path is self-contained.
+_DYNAMIC_LABELS = frozenset(
+    {
+        "person",
+        "people",
+        "pedestrian",
+        "car",
+        "vehicle",
+        "truck",
+        "bus",
+        "bicycle",
+        "motorcycle",
+        "dog",
+        "cat",
+        "animal",
+    }
+)
 
 # Camera-body extrinsic defaults (identity — corrected from robot_config at init)
 _DEFAULT_CAM_BODY = (
@@ -60,9 +76,7 @@ _DEFAULT_CAM_BODY = (
 def _pose_to_matrix(odom: Odometry) -> np.ndarray:
     """Convert Odometry to 4×4 body-to-world homogeneous transform."""
     R = odom.pose.orientation.to_rotation_matrix()
-    t = np.array([odom.pose.position.x,
-                  odom.pose.position.y,
-                  odom.pose.position.z], dtype=np.float64)
+    t = np.array([odom.pose.position.x, odom.pose.position.y, odom.pose.position.z], dtype=np.float64)
     T = np.eye(4, dtype=np.float64)
     T[:3, :3] = R
     T[:3, 3] = t
@@ -71,9 +85,9 @@ def _pose_to_matrix(odom: Odometry) -> np.ndarray:
 
 def _rpy_to_rotation(roll: float, pitch: float, yaw: float) -> np.ndarray:
     """Build 3×3 rotation matrix from roll-pitch-yaw (rad), ZYX convention."""
-    cr, sr = math.cos(roll),  math.sin(roll)
+    cr, sr = math.cos(roll), math.sin(roll)
     cp, sp = math.cos(pitch), math.sin(pitch)
-    cy, sy = math.cos(yaw),   math.sin(yaw)
+    cy, sy = math.cos(yaw), math.sin(yaw)
     Rz = np.array([[cy, -sy, 0], [sy, cy, 0], [0, 0, 1]], dtype=np.float64)
     Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]], dtype=np.float64)
     Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]], dtype=np.float64)
@@ -87,6 +101,7 @@ def _load_cam_body_extrinsic() -> np.ndarray:
     """
     try:
         from runtime.config import get_config
+
         cfg = get_config()
         cam = cfg.camera
         R = _rpy_to_rotation(
@@ -108,6 +123,7 @@ def _load_depth_scale() -> float:
     """Return depth_scale from robot_config.yaml (default 0.001 for mm depths)."""
     try:
         from runtime.config import get_config
+
         cfg = get_config()
         return float(getattr(cfg.camera, "depth_scale", 0.001))
     except Exception:
@@ -135,10 +151,7 @@ class TSDFColorVolume:
         try:
             import open3d as o3d
         except ImportError as e:
-            raise RuntimeError(
-                "TSDFColorVolume requires open3d. "
-                "Install with: pip install open3d"
-            ) from e
+            raise RuntimeError("TSDFColorVolume requires open3d. Install with: pip install open3d") from e
 
         self.voxel_length = float(voxel_length)
         self.sdf_trunc = float(sdf_trunc)
@@ -158,18 +171,24 @@ class TSDFColorVolume:
     ) -> None:
         """Integrate one RGB-D frame into the TSDF volume."""
         import open3d as o3d
+
         h, w = depth.shape[:2]
         color_img = o3d.geometry.Image(color)
         depth_img = o3d.geometry.Image(depth)
         rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            color_img, depth_img,
-            depth_scale=1000.0, depth_trunc=5.0,
+            color_img,
+            depth_img,
+            depth_scale=1000.0,
+            depth_trunc=5.0,
             convert_rgb_to_intensity=False,
         )
         intrinsic = o3d.camera.PinholeCameraIntrinsic(
-            width=w, height=h,
-            fx=float(K[0, 0]), fy=float(K[1, 1]),
-            cx=float(K[0, 2]), cy=float(K[1, 2]),
+            width=w,
+            height=h,
+            fx=float(K[0, 0]),
+            fy=float(K[1, 1]),
+            cx=float(K[0, 2]),
+            cy=float(K[1, 2]),
         )
         self._volume.integrate(rgbd, intrinsic, extrinsic)
 
@@ -215,38 +234,47 @@ class ReconstructionModule(Module, layer=3):
     depth_image: In[Image]
     camera_info: In[CameraIntrinsics]
     scene_graph: In[SceneGraph]
+    map_observation: In[MapObservationFrame]
     odometry: In[Odometry]
     semantic_cloud: Out[dict]
+    semantic_labels: Out[SemanticLabelsFrame]
     reconstruction_stats: Out[dict]
 
     def __init__(self, **config: Any) -> None:
         super().__init__(**config)
 
         self._voxel_size = float(config.get("voxel_size", 0.05))
-        self._voxel_ttl  = float(config.get("voxel_ttl", 30.0))
+        self._voxel_ttl = float(config.get("voxel_ttl", 30.0))
         self._projector = _LazyProjectorConfig(self._voxel_size, self._voxel_ttl)
         self._labeler = None
 
-        self._process_hz    = float(config.get("process_hz", 5.0))
-        self._min_points    = int(config.get("min_points_to_publish", 1000))
-        self._save_dir      = str(config.get("save_dir", "maps/reconstruction"))
-        self._mask_dynamic  = bool(config.get("mask_dynamic", True))
+        self._process_hz = float(config.get("process_hz", 5.0))
+        self._min_points = int(config.get("min_points_to_publish", 1000))
+        self._save_dir = str(config.get("save_dir", "maps/reconstruction"))
+        self._mask_dynamic = bool(config.get("mask_dynamic", True))
+        self._semantic_scene_max_age_s = max(0.0, float(config.get("semantic_scene_max_age_s", 0.25)))
+        self._taxonomy = load_semantic_taxonomy(config.get("semantic_taxonomy_path"))
+        self._semantic_scan_labels_published = 0
+        self._semantic_scan_labels_skipped = 0
 
         dyn_labels = config.get("dynamic_labels")
-        self._dynamic_labels: frozenset[str] = (
-            frozenset(dyn_labels) if dyn_labels else _DYNAMIC_LABELS
-        )
+        if dyn_labels:
+            self._dynamic_labels: frozenset[str] = frozenset(dyn_labels)
+        else:
+            # Fall back to the robot_config.yaml perception.dynamic_labels set,
+            # keeping the module-level _DYNAMIC_LABELS as the ultimate default.
+            self._dynamic_labels = get_config().perception.dynamic_labels or _DYNAMIC_LABELS
 
         # Extrinsic: camera pose in body frame (loaded from robot_config)
         self._camera_pose_in_body = None
-        self._depth_scale: float      = _load_depth_scale()
+        self._depth_scale: float = _load_depth_scale()
 
         # Buffered inputs (latest-wins)
-        self._latest_color:  Image | None            = None
-        self._latest_depth:  Image | None            = None
-        self._latest_odom:   Odometry | None         = None
-        self._latest_sg:     SceneGraph | None       = None
-        self._intrinsics:    CameraIntrinsics | None = None
+        self._latest_color: Image | None = None
+        self._latest_depth: Image | None = None
+        self._latest_odom: Odometry | None = None
+        self._latest_sg: SceneGraph | None = None
+        self._intrinsics: CameraIntrinsics | None = None
         self._buf_lock = threading.Lock()
 
         self._last_update_time: float | None = None
@@ -269,6 +297,12 @@ class ReconstructionModule(Module, layer=3):
         if self._camera_pose_in_body is None:
             self._camera_pose_in_body = _load_cam_body_extrinsic()
 
+    def _ensure_labeler(self) -> None:
+        if self._labeler is None:
+            from .semantic_labeler import SemanticLabeler
+
+            self._labeler = SemanticLabeler()
+
     # ── Module lifecycle ────────────────────────────────────────────────────
 
     def setup(self) -> None:
@@ -282,12 +316,12 @@ class ReconstructionModule(Module, layer=3):
         self.depth_image.set_policy("latest")
         self.camera_info.subscribe(self._on_camera_info)
         self.scene_graph.subscribe(self._on_scene_graph)
+        self.map_observation.subscribe(self._on_map_observation)
+        self.map_observation.set_policy("latest")
         self.odometry.subscribe(self._on_odom)
 
         self._recon_active.set()
-        self._bg_thread = threading.Thread(
-            target=self._process_loop, daemon=True, name="reconstruction_bg"
-        )
+        self._bg_thread = threading.Thread(target=self._process_loop, daemon=True, name="reconstruction_bg")
         self._bg_thread.start()
 
     def teardown(self) -> None:
@@ -314,7 +348,7 @@ class ReconstructionModule(Module, layer=3):
                 self._depth_scale = float(info.depth_scale)
 
     def _on_scene_graph(self, sg: SceneGraph) -> None:
-        self._ensure_components()
+        self._ensure_labeler()
         with self._buf_lock:
             self._latest_sg = sg
         self._labeler.update_from_scene_graph(sg.to_json())
@@ -322,6 +356,39 @@ class ReconstructionModule(Module, layer=3):
     def _on_odom(self, odom: Odometry) -> None:
         with self._buf_lock:
             self._latest_odom = odom
+
+    def _on_map_observation(self, observation: MapObservationFrame) -> None:
+        """Label one accepted LiDAR scan without changing its point order."""
+        self._ensure_labeler()
+        with self._buf_lock:
+            scene_graph = self._latest_sg
+        if (
+            scene_graph is None
+            or scene_graph.frame_id != observation.frame_id
+            or abs(float(scene_graph.ts) - observation.ts) > self._semantic_scene_max_age_s
+        ):
+            self._semantic_scan_labels_skipped += 1
+            return
+        labels_text = self._labeler.label_cloud(observation.map_points())
+        label_ids = self._taxonomy.encode(labels_text, excluded=self._dynamic_labels)
+        if not bool(np.any(label_ids != 0)):
+            self._semantic_scan_labels_skipped += 1
+            return
+        confidence = (label_ids != 0).astype(np.float32)
+        self.semantic_labels.publish(
+            SemanticLabelsFrame(
+                labels=label_ids,
+                confidence=confidence,
+                sequence=observation.sequence,
+                ts=observation.ts,
+                frame_id=observation.sensor_frame_id,
+                taxonomy=self._taxonomy.name,
+                taxonomy_version=self._taxonomy.version,
+                source="reconstruction.scene_graph_projection",
+                metadata={"scene_graph_ts": float(scene_graph.ts)},
+            )
+        )
+        self._semantic_scan_labels_published += 1
 
     # ── Background processing loop ──────────────────────────────────────────
 
@@ -343,8 +410,8 @@ class ReconstructionModule(Module, layer=3):
         with self._buf_lock:
             color = self._latest_color
             depth = self._latest_depth
-            odom  = self._latest_odom
-            sg    = self._latest_sg
+            odom = self._latest_odom
+            sg = self._latest_sg
 
         if color is None or depth is None or odom is None:
             return
@@ -354,19 +421,24 @@ class ReconstructionModule(Module, layer=3):
             # Fall back to robot_config camera parameters
             try:
                 from runtime.config import get_config
+
                 cam = get_config().camera
                 from runtime.msgs.sensor import CameraIntrinsics
+
                 intrinsics = CameraIntrinsics(
-                    fx=float(cam.fx), fy=float(cam.fy),
-                    cx=float(cam.cx), cy=float(cam.cy),
-                    width=int(cam.width), height=int(cam.height),
+                    fx=float(cam.fx),
+                    fy=float(cam.fy),
+                    cx=float(cam.cx),
+                    cy=float(cam.cy),
+                    width=int(cam.width),
+                    height=int(cam.height),
                     depth_scale=float(cam.depth_scale),
                 )
             except Exception:
                 return
 
         # Build camera-to-world: T_world_cam = T_world_body @ T_body_cam
-        body_to_world   = _pose_to_matrix(odom)
+        body_to_world = _pose_to_matrix(odom)
         camera_to_world = body_to_world @ self._camera_pose_in_body
 
         # Prepare depth array (normalise to mm uint16 equivalent)
@@ -403,8 +475,10 @@ class ReconstructionModule(Module, layer=3):
         self._projector.update_from_frame(
             color_bgr=color_bgr,
             depth_mm=depth_mm,
-            fx=intrinsics.fx, fy=intrinsics.fy,
-            cx=intrinsics.cx, cy=intrinsics.cy,
+            fx=intrinsics.fx,
+            fy=intrinsics.fy,
+            cx=intrinsics.cx,
+            cy=intrinsics.cy,
             camera_to_world=camera_to_world,
             exclude_boxes=exclude_boxes,
             depth_scale=depth_scale_used,
@@ -447,8 +521,10 @@ class ReconstructionModule(Module, layer=3):
         return self._projector.update_from_frame(
             color_bgr=color_bgr,
             depth_mm=depth_mm,
-            fx=intrinsics.fx, fy=intrinsics.fy,
-            cx=intrinsics.cx, cy=intrinsics.cy,
+            fx=intrinsics.fx,
+            fy=intrinsics.fy,
+            cx=intrinsics.cx,
+            cy=intrinsics.cy,
             camera_to_world=camera_to_world,
             exclude_boxes=exclude_boxes,
             depth_scale=self._depth_scale,
@@ -465,6 +541,7 @@ class ReconstructionModule(Module, layer=3):
             return None
 
         labels = self._labeler.label_cloud(xyzrgb)
+        label_ids = self._taxonomy.encode(labels, excluded=self._dynamic_labels)
         n_labeled = sum(1 for lb in labels if lb != "background")
 
         stats: dict[str, Any] = {
@@ -476,6 +553,12 @@ class ReconstructionModule(Module, layer=3):
         }
 
         cloud_payload: dict[str, Any] = {
+            "points": xyzrgb,
+            "label_ids": label_ids,
+            "labels": labels,
+            "taxonomy": self._taxonomy.name,
+            "taxonomy_version": self._taxonomy.version,
+            "palette": self._taxonomy.palette,
             "points_shape": list(xyzrgb.shape),
             "labels_count": len(labels),
             "stats": stats,
@@ -506,19 +589,17 @@ class ReconstructionModule(Module, layer=3):
 
         try:
             n = save_ply_with_labels(xyzrgb, labels, filepath)
-            return {"success": True,
-                    "message": f"saved {n} points to {filepath}",
-                    "filepath": filepath}
+            return {"success": True, "message": f"saved {n} points to {filepath}", "filepath": filepath}
         except Exception as exc:
             return {"success": False, "message": f"save failed: {exc}"}
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
-        info["mesh_vertices"]     = 0 if self._projector is None else self._projector.voxel_count
-        info["frames_processed"]  = self._total_frames
-        info["last_update_time"]  = self._last_update_time
-        info["voxel_ttl_s"]       = self._voxel_ttl
-        info["mask_dynamic"]      = self._mask_dynamic
+        info["mesh_vertices"] = 0 if self._projector is None else self._projector.voxel_count
+        info["frames_processed"] = self._total_frames
+        info["last_update_time"] = self._last_update_time
+        info["voxel_ttl_s"] = self._voxel_ttl
+        info["mask_dynamic"] = self._mask_dynamic
         return info
 
     @property

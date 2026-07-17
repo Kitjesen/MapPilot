@@ -8,9 +8,9 @@ Lazy activation: only runs feature detection/tracking when degeneracy >= SEVERE.
 When LiDAR is healthy, this module sleeps (near-zero CPU).
 
 Architecture:
-    CameraBridge → color_image, depth_image, camera_info → this module
-    SlamBridgeModule → localization_status → this module (degeneracy trigger)
-    this module → visual_odometry → SlamBridgeModule (selective DOF fusion)
+    camera → color_image, depth_image, camera_info → this module
+    SlamModule/SlamAdapterModule -> localization_status -> this module
+    this module -> visual_odometry -> selected SLAM implementation
 
 Based on Selective KF (arXiv 2412.17235) principle:
     Only fuse visual odometry for degenerate DOF directions.
@@ -25,9 +25,9 @@ import time
 from typing import Any
 
 from runtime.module import Module
-from runtime.msgs.numpy_compat import np
 from runtime.msgs.geometry import Pose, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import CameraIntrinsics, Image
 from runtime.registry import register
 from runtime.stream import In, Out
@@ -43,6 +43,7 @@ def _cv2_module() -> Any:
     if _cv2 is None:
         _cv2 = importlib.import_module("cv2")
     return _cv2
+
 
 # Minimum features to compute PnP reliably
 MIN_FEATURES_PNP = 8
@@ -138,11 +139,14 @@ class DepthVisualOdomModule(Module, layer=1):
         if self._K is not None:
             return  # already initialized
         self._intrinsics = info
-        self._K = np.array([
-            [info.fx, 0, info.cx],
-            [0, info.fy, info.cy],
-            [0, 0, 1],
-        ], dtype=np.float64)
+        self._K = np.array(
+            [
+                [info.fx, 0, info.cx],
+                [0, info.fy, info.cy],
+                [0, 0, 1],
+            ],
+            dtype=np.float64,
+        )
         if info.has_distortion:
             self._D = np.array(info.D_vector, dtype=np.float64)
         else:
@@ -151,13 +155,15 @@ class DepthVisualOdomModule(Module, layer=1):
         if info.has_distortion and np.any(self._D != 0):
             cv2 = _cv2_module()
             self._undistort_maps = cv2.initUndistortRectifyMap(
-                self._K, self._D, None, self._K,
-                (info.width, info.height), cv2.CV_16SC2,
+                self._K,
+                self._D,
+                None,
+                self._K,
+                (info.width, info.height),
+                cv2.CV_16SC2,
             )
-            logger.info("DepthVisualOdom: undistortion maps computed (D=%s)",
-                         np.array2string(self._D, precision=4))
-        logger.info("DepthVisualOdom: intrinsics received (%.0fx%.0f, fx=%.1f)",
-                     info.width, info.height, info.fx)
+            logger.info("DepthVisualOdom: undistortion maps computed (D=%s)", np.array2string(self._D, precision=4))
+        logger.info("DepthVisualOdom: intrinsics received (%.0fx%.0f, fx=%.1f)", info.width, info.height, info.fx)
 
     def _on_loc_status(self, msg: dict) -> None:
         """Activate/deactivate based on SLAM degeneracy level."""
@@ -241,9 +247,7 @@ class DepthVisualOdomModule(Module, layer=1):
             return
 
         # Track features with Lucas-Kanade optical flow
-        tracked_prev, tracked_curr = self._track_features(
-            self._prev_gray, gray, self._prev_kps
-        )
+        tracked_prev, tracked_curr = self._track_features(self._prev_gray, gray, self._prev_kps)
         if tracked_prev is None or len(tracked_prev) < MIN_FEATURES_PNP:
             # Lost tracking — re-detect
             kps = self._detect_features(gray)
@@ -257,9 +261,7 @@ class DepthVisualOdomModule(Module, layer=1):
             return
 
         # Build 3D-2D correspondences from previous depth + current 2D
-        pts_3d, pts_2d = self._build_correspondences(
-            tracked_prev, tracked_curr, self._prev_depth
-        )
+        pts_3d, pts_2d = self._build_correspondences(tracked_prev, tracked_curr, self._prev_depth)
         if pts_3d is None or len(pts_3d) < MIN_FEATURES_PNP:
             self._prev_gray = gray
             self._prev_depth = depth.copy()
@@ -308,23 +310,17 @@ class DepthVisualOdomModule(Module, layer=1):
 
         pts = prev_pts.reshape(-1, 1, 2)
         cv2 = _cv2_module()
-        curr_pts, status, _err = cv2.calcOpticalFlowPyrLK(
-            prev_gray, curr_gray, pts, None, **_lk_params(cv2)
-        )
+        curr_pts, status, _err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, pts, None, **_lk_params(cv2))
         if curr_pts is None or status is None:
             return None, None
 
         # Bidirectional check for robustness
-        back_pts, back_status, _ = cv2.calcOpticalFlowPyrLK(
-            curr_gray, prev_gray, curr_pts, None, **_lk_params(cv2)
-        )
+        back_pts, back_status, _ = cv2.calcOpticalFlowPyrLK(curr_gray, prev_gray, curr_pts, None, **_lk_params(cv2))
         if back_pts is None:
             return None, None
 
         # Filter: forward-backward error < 1.0 pixel
-        fb_err = np.linalg.norm(
-            prev_pts.reshape(-1, 2) - back_pts.reshape(-1, 2), axis=1
-        )
+        fb_err = np.linalg.norm(prev_pts.reshape(-1, 2) - back_pts.reshape(-1, 2), axis=1)
         good = (status.ravel() == 1) & (back_status.ravel() == 1) & (fb_err < 1.0)
 
         if good.sum() < MIN_FEATURES_PNP:
@@ -377,7 +373,10 @@ class DepthVisualOdomModule(Module, layer=1):
         # distCoeffs=None because images are already undistorted in _process_frame
         cv2 = _cv2_module()
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
-            pts_3d, pts_2d, self._K, None,
+            pts_3d,
+            pts_2d,
+            self._K,
+            None,
             iterationsCount=200,
             reprojectionError=3.0,
             flags=cv2.SOLVEPNP_ITERATIVE,
@@ -409,16 +408,20 @@ class DepthVisualOdomModule(Module, layer=1):
         # Convert rotation matrix to quaternion
         quat = self._rotation_to_quaternion(R)
 
-        self.visual_odometry.publish(Odometry(
-            pose=Pose(
-                position=Vector3(x=float(pos[0]), y=float(pos[1]), z=float(pos[2])),
-                orientation=Quaternion(
-                    x=float(quat[0]), y=float(quat[1]),
-                    z=float(quat[2]), w=float(quat[3]),
+        self.visual_odometry.publish(
+            Odometry(
+                pose=Pose(
+                    position=Vector3(x=float(pos[0]), y=float(pos[1]), z=float(pos[2])),
+                    orientation=Quaternion(
+                        x=float(quat[0]),
+                        y=float(quat[1]),
+                        z=float(quat[2]),
+                        w=float(quat[3]),
+                    ),
                 ),
-            ),
-            ts=time.time(),
-        ))
+                ts=time.time(),
+            )
+        )
 
     @staticmethod
     def _rotation_to_quaternion(R: np.ndarray) -> np.ndarray:

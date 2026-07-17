@@ -86,7 +86,7 @@ class Terrain(Module, layer=2):
         self._terrain_ext_voxel_size = max(0.0, float(terrain_ext_voxel_size))
         self._terrain_ext_max_points = max(0, int(terrain_ext_max_points))
         self._strict_native = bool(strict_native)
-        self._core = None       # nanobind: TerrainAnalysisCore
+        self._core = None  # nanobind: TerrainAnalysisCore
         self._native_kernel = None
         self._odom_x = 0.0
         self._odom_y = 0.0
@@ -145,14 +145,12 @@ class Terrain(Module, layer=2):
     def _on_odom(self, odom: Odometry):
         self._odom_x = odom.x
         self._odom_y = odom.y
-        self._odom_z = getattr(odom, 'z', 0.0)
+        self._odom_z = getattr(odom, "z", 0.0)
         self._odom_yaw = odom.yaw
 
         if self._core:
             # Feed odometry to C++ core (roll/pitch = 0 for ground robot)
-            self._core.update_vehicle(
-                odom.x, odom.y, self._odom_z,
-                0.0, 0.0, odom.yaw)
+            self._core.update_vehicle(odom.x, odom.y, self._odom_z, 0.0, 0.0, odom.yaw)
 
         if self._backend == "simple":
             self.traversability.publish({"status": "passthrough"})
@@ -163,6 +161,7 @@ class Terrain(Module, layer=2):
         # 2. Throttle to 0.5 Hz (2 s interval)
         # 3. Cap point count in _process_nanobind below
         import os
+
         if os.environ.get("LINGTU_DISABLE_TERRAIN", "0") == "1":
             return
         now = time.time()
@@ -199,10 +198,7 @@ class Terrain(Module, layer=2):
         dist = np.hypot(dx, dy)
         rel_z = xyz[:, 2] - float(self._odom_z)
         keep = (
-            finite
-            & (dist <= self._terrain_ext_radius_m)
-            & (rel_z > (-2.5 - 0.1 * dist))
-            & (rel_z < (1.0 + 0.1 * dist))
+            finite & (dist <= self._terrain_ext_radius_m) & (rel_z > (-2.5 - 0.1 * dist)) & (rel_z < (1.0 + 0.1 * dist))
         )
         if not np.any(keep):
             return
@@ -217,10 +213,7 @@ class Terrain(Module, layer=2):
         # Keep this stateless; add a time-decay cache only if ext-map flicker hurts planning.
         if self._terrain_ext_voxel_size > 0.0:
             ext_cloud = ext_cloud.voxel_downsample(self._terrain_ext_voxel_size)
-        if (
-            self._terrain_ext_max_points > 0
-            and ext_cloud.points.shape[0] > self._terrain_ext_max_points
-        ):
+        if self._terrain_ext_max_points > 0 and ext_cloud.points.shape[0] > self._terrain_ext_max_points:
             step = int(np.ceil(ext_cloud.points.shape[0] / self._terrain_ext_max_points))
             ext_cloud = PointCloud2(
                 points=ext_cloud.points[::step][: self._terrain_ext_max_points].copy(),
@@ -249,7 +242,7 @@ class Terrain(Module, layer=2):
         # zero-copy without requiring the full nb::ndarray<float, ndim<1>>
         # binding refactor (follow-up C++ change).
         flat = np.ascontiguousarray(pts4, dtype=np.float32).ravel()
-        ts = getattr(cloud, 'ts', time.time())
+        ts = getattr(cloud, "ts", time.time())
 
         result = self._core.process(flat, ts)
 
@@ -260,23 +253,26 @@ class Terrain(Module, layer=2):
         # Publish terrain cloud
         if result.n_points > 0:
             arr = np.array(result.terrain_points, dtype=np.float32).reshape(-1, 4)
-            self.terrain_map.publish(PointCloud2(
-                points=arr,
-                frame_id=topic_default_frame_id(TOPICS.terrain_map),
-                ts=ts,
-            ))
+            self.terrain_map.publish(
+                PointCloud2(
+                    points=arr,
+                    frame_id=topic_default_frame_id(TOPICS.terrain_map),
+                    ts=ts,
+                )
+            )
             if traversability_payload is None:
                 traversability_payload = {}
-            traversability_payload.update({
-                "n_obstacles": result.n_points,
-                "map_width": result.map_width,
-                "map_resolution": result.map_resolution,
-            })
+            traversability_payload.update(
+                {
+                    "n_obstacles": result.n_points,
+                    "map_width": result.map_width,
+                    "map_resolution": result.map_resolution,
+                }
+            )
 
         # Publish elevation map
         if result.map_width > 0:
-            elev = np.array(result.elevation_map, dtype=np.float32).reshape(
-                result.map_width, result.map_width)
+            elev = np.array(result.elevation_map, dtype=np.float32).reshape(result.map_width, result.map_width)
             self.elevation_map.publish(elev)
             if traversability_payload is not None:
                 self.traversability.publish(traversability_payload)
@@ -285,7 +281,7 @@ class Terrain(Module, layer=2):
         """Build a 0..100 terrain risk grid from the C++ elevation output."""
         if self._native_kernel is None or result.map_width <= 0:
             return None
-        from nav.services.map_layers.cpp_backend import (
+        from maps.adapters.python.kernels import (
             grid_to_array,
             make_grid2d,
             terrain_risk_result_to_payload,
@@ -323,11 +319,13 @@ class Terrain(Module, layer=2):
         grid = grid_to_array(risk.risk)
         max_risk = float(np.nanmax(grid)) if grid.size else 0.0
         mean_risk = float(np.nanmean(grid)) if grid.size else 0.0
-        payload.update({
-            "traversability_class": self._classify_risk(max_risk, mean_risk),
-            "risk_max": max_risk,
-            "risk_mean": mean_risk,
-        })
+        payload.update(
+            {
+                "traversability_class": self._classify_risk(max_risk, mean_risk),
+                "risk_max": max_risk,
+                "risk_mean": mean_risk,
+            }
+        )
         return payload
 
     @staticmethod

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Collect read-only Thunder field runtime evidence.
 
 This script does not publish goals, cmd_vel, or any robot-control topic. The
@@ -20,7 +20,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -33,7 +32,7 @@ def _ensure_import_path() -> None:
 
 _ensure_import_path()
 
-from runtime.diagnostics.runtime_evidence import (
+from diagnostics.field.evidence import (
     REAL_HARDWARE_COMMAND_SINK,
     REAL_RUNTIME_COLLECTOR_NAME,
     REAL_RUNTIME_CONTRACT,
@@ -45,22 +44,21 @@ from runtime.diagnostics.runtime_evidence import (
     runtime_data_flow_stage_signals,
     validate_real_runtime_evidence,
 )
+from diagnostics.field.gates import runtime_validation_gates
 from runtime.runtime_interface import (
     FRAME_LINKS,
     TOPICS,
+    resolved_runtime_data_flow,
     runtime_algorithm_interface_contract,
+    runtime_data_flow_topics,
     runtime_frames_contract,
     runtime_required_topic_frame_ids,
     runtime_stage_algorithm_interface_contract,
-    runtime_topic_allowed_frame_ids,
     runtime_topic_allowed_frame_contract,
-    runtime_topic_default_frame_ids,
+    runtime_topic_allowed_frame_ids,
     runtime_topic_default_frame_contract,
-    resolved_runtime_data_flow,
-    runtime_data_flow_topics,
+    runtime_topic_default_frame_ids,
 )
-from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
-
 
 OBSERVED_TOPICS = runtime_data_flow_topics(REAL_RUNTIME_CONTRACT)
 REAL_RUNTIME_VALIDATION_GATE = runtime_validation_gates()["real_runtime_evidence"]
@@ -110,14 +108,9 @@ def _topic_observed(
 ) -> bool:
     entry = _topic_entry(topic_evidence, topic)
     if require_nonzero_cmd:
-        return _positive_number(entry.get("nonzero_samples")) or _positive_number(
-            entry.get("max_norm")
-        )
+        return _positive_number(entry.get("nonzero_samples")) or _positive_number(entry.get("max_norm"))
     if require_nonempty:
-        return any(
-            _positive_number(entry.get(key))
-            for key in ("nonempty_samples", "max_poses", "points", "cells")
-        )
+        return any(_positive_number(entry.get(key)) for key in ("nonempty_samples", "max_poses", "points", "cells"))
     if _positive_number(entry.get("samples")) or entry.get("ok") is True:
         return True
     return allow_graph and entry.get("graph_exists") is True
@@ -190,12 +183,8 @@ def build_data_flow_evidence(
                 topic_evidence,
                 hardware_boundary,
             ),
-            "observed_signals": [
-                name for name, observed in signals.items() if observed
-            ],
-            "missing_signals": [
-                name for name, observed in signals.items() if not observed
-            ],
+            "observed_signals": [name for name, observed in signals.items() if observed],
+            "missing_signals": [name for name, observed in signals.items() if not observed],
             "owner": stage.owner,
             "frame_role": stage.frame_role,
             "map_dependency": stage.map_dependency,
@@ -225,9 +214,7 @@ def _observed_tokens(
     hardware_boundary: Mapping[str, Any],
 ) -> list[str]:
     return [
-        str(token)
-        for token in tokens
-        if _runtime_flow_token_observed(str(token), topic_evidence, hardware_boundary)
+        str(token) for token in tokens if _runtime_flow_token_observed(str(token), topic_evidence, hardware_boundary)
     ]
 
 
@@ -296,12 +283,9 @@ def build_hardware_boundary(
     expected_command_subscribers: Sequence[str] = (),
 ) -> dict[str, Any]:
     subscribers = sorted(dict.fromkeys(str(item) for item in command_subscribers if item))
-    unexpected_simulation_sinks = [
-        name for name in subscribers if _looks_like_simulation_sink(name)
-    ]
+    unexpected_simulation_sinks = [name for name in subscribers if _looks_like_simulation_sink(name)]
     hardware_route_observed = any(
-        _looks_like_hardware_sink(name)
-        or _matches_expected_subscriber(name, expected_command_subscribers)
+        _looks_like_hardware_sink(name) or _matches_expected_subscriber(name, expected_command_subscribers)
         for name in subscribers
     )
     return {
@@ -377,23 +361,12 @@ def build_real_runtime_report(
             "name": REAL_RUNTIME_CONTRACT,
             "ok": True,
             "frames": runtime_frames_contract(),
-            "topic_default_frame_ids": runtime_topic_default_frame_contract(
-                REAL_RUNTIME_CONTRACT
-            ),
-            "topic_allowed_frame_ids": runtime_topic_allowed_frame_contract(
-                REAL_RUNTIME_CONTRACT
-            ),
+            "topic_default_frame_ids": runtime_topic_default_frame_contract(REAL_RUNTIME_CONTRACT),
+            "topic_allowed_frame_ids": runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT),
             "algorithm_interfaces": runtime_algorithm_interface_contract(),
-            "runtime_data_flow_stage_algorithm_interfaces": (
-                runtime_stage_algorithm_interface_contract()
-            ),
-            "required_topic_frame_contract": build_required_topic_frame_contract(
-                REAL_RUNTIME_CONTRACT
-            ),
-            "topic_evidence": {
-                topic: _topic_summary(topic_evidence, topic)
-                for topic in OBSERVED_TOPICS
-            },
+            "runtime_data_flow_stage_algorithm_interfaces": (runtime_stage_algorithm_interface_contract()),
+            "required_topic_frame_contract": build_required_topic_frame_contract(REAL_RUNTIME_CONTRACT),
+            "topic_evidence": {topic: _topic_summary(topic_evidence, topic) for topic in OBSERVED_TOPICS},
             "frame_evidence": frame_evidence,
             "data_flow_evidence": data_flow_evidence,
         },
@@ -401,10 +374,7 @@ def build_real_runtime_report(
 
 
 def _topic_types_by_name(node) -> dict[str, list[str]]:
-    return {
-        name: list(types)
-        for name, types in node.get_topic_names_and_types()
-    }
+    return {name: list(types) for name, types in node.get_topic_names_and_types()}
 
 
 def _endpoint_name(endpoint: Any) -> str:
@@ -735,9 +705,7 @@ def _record_gateway_sample(
 
 def _latest_summary_from_ports(topic_summary: Mapping[str, Any]) -> Mapping[str, Any]:
     candidates = (
-        _mapping_payload(topic_summary.get("observability")).get(
-            "module_port_candidates"
-        )
+        _mapping_payload(topic_summary.get("observability")).get("module_port_candidates")
         or _mapping_payload(topic_summary.get("inspection")).get("module_stats")
         or ()
     )
@@ -806,11 +774,15 @@ def _record_gateway_dataflow(
         payload = latest_payload or latest_summary
         if not payload and live:
             payload = {"frame_id": summary.get("default_frame_id")}
-        inferred_nonempty = bool(live and topic in {
-            TOPICS.lidar_scan,
-            TOPICS.registered_cloud,
-            TOPICS.map_cloud,
-        })
+        inferred_nonempty = bool(
+            live
+            and topic
+            in {
+                TOPICS.lidar_scan,
+                TOPICS.registered_cloud,
+                TOPICS.map_cloud,
+            }
+        )
         _record_gateway_sample(
             topic_evidence,
             odom_positions,
@@ -965,11 +937,11 @@ def _record_gateway_rest_payloads(
 
 def _gateway_command_active(navigation_status: Mapping[str, Any]) -> bool:
     control = _mapping_payload(navigation_status.get("control"))
-    active_source = str(
-        control.get("active_cmd_source")
-        or _nested_mapping(control, "active_source").get("name")
-        or ""
-    ).strip().lower()
+    active_source = (
+        str(control.get("active_cmd_source") or _nested_mapping(control, "active_source").get("name") or "")
+        .strip()
+        .lower()
+    )
     if active_source and active_source != "none":
         return True
     sources = _mapping_payload(control.get("sources"))
@@ -1018,12 +990,14 @@ def _gateway_command_subscribers(dataflow: Mapping[str, Any]) -> list[str]:
         ports_in = _mapping_payload(_mapping_payload(module_payload).get("ports_in"))
         cmd_port = _mapping_payload(ports_in.get("cmd_vel"))
         if cmd_port:
-            port_candidates.append({
-                **cmd_port,
-                "module": module_name,
-                "port": "cmd_vel",
-                "direction": "in",
-            })
+            port_candidates.append(
+                {
+                    **cmd_port,
+                    "module": module_name,
+                    "port": "cmd_vel",
+                    "direction": "in",
+                }
+            )
 
     for candidate in port_candidates:
         stats = _mapping_payload(candidate)
@@ -1048,9 +1022,7 @@ def _gateway_frame_samples(dataflow: Mapping[str, Any]) -> tuple[dict[str, int],
     declared_links = _mapping_payload(runtime_boundary.get("frame_links"))
     for name, link in FRAME_LINKS.items():
         declared = _mapping_payload(declared_links.get(name))
-        if boundary_ok or (
-            declared.get("parent") == link.parent and declared.get("child") == link.child
-        ):
+        if boundary_ok or (declared.get("parent") == link.parent and declared.get("child") == link.child):
             frame_samples[name] = 1
         else:
             frame_errors[name] = "Gateway runtime boundary did not prove frame link"
@@ -1091,8 +1063,7 @@ def _collect_gateway_payloads(args: argparse.Namespace) -> dict[str, Any]:
 
 def run_gateway_collect(args: argparse.Namespace) -> dict[str, Any]:
     topic_evidence: dict[str, dict[str, Any]] = {
-        topic: {"ok": False, "samples": 0, "graph_exists": False}
-        for topic in OBSERVED_TOPICS
+        topic: {"ok": False, "samples": 0, "graph_exists": False} for topic in OBSERVED_TOPICS
     }
     odom_positions: list[tuple[float, float, float]] = []
     command_subscribers: list[str] = []
@@ -1161,10 +1132,7 @@ def _transform_is_finite(transform: Any) -> bool:
     trans = transform.transform.translation
     rot = transform.transform.rotation
     values = (trans.x, trans.y, trans.z, rot.x, rot.y, rot.z, rot.w)
-    return all(
-        _safe_float(value) is not None
-        for value in values
-    )
+    return all(_safe_float(value) is not None for value in values)
 
 
 def _sample_frame_links(buffer, rclpy_time) -> tuple[dict[str, int], dict[str, str]]:
@@ -1186,20 +1154,28 @@ def _sample_frame_links(buffer, rclpy_time) -> tuple[dict[str, int], dict[str, s
 
 
 def run_ros2_collect(args: argparse.Namespace) -> dict[str, Any]:
-    import rclpy
-    from rclpy.node import Node
-    from rosidl_runtime_py.utilities import get_message
-    from tf2_ros import Buffer, TransformListener
+    # ROS2 imports are lazy and protected so this module loads without ROS2.
+    # When rclpy/tf2_ros/rosidl are unavailable, degrade to a well-formed
+    # "collection unavailable" report instead of raising ImportError.
+    try:
+        import rclpy
+        from rclpy.node import Node
+        from rosidl_runtime_py.utilities import get_message
+        from tf2_ros import Buffer, TransformListener
+    except ImportError as exc:
+        return build_unavailable_real_runtime_report(
+            duration_sec=args.duration_sec,
+            error=f"ros2 collector unavailable: {exc}",
+            expected_command_subscribers=args.expected_command_subscriber,
+            min_motion_m=args.min_motion_m,
+        )
 
     rclpy.init(args=None)
     node = Node(f"lingtu_{REAL_RUNTIME_COLLECTOR_NAME}")
     buffer = Buffer()
     TransformListener(buffer, node)
 
-    topic_evidence: dict[str, dict[str, Any]] = {
-        topic: {"ok": False, "samples": 0}
-        for topic in OBSERVED_TOPICS
-    }
+    topic_evidence: dict[str, dict[str, Any]] = {topic: {"ok": False, "samples": 0} for topic in OBSERVED_TOPICS}
     odom_positions: list[tuple[float, float, float]] = []
     subscriptions = []
     subscribed_topics: set[str] = set()
@@ -1347,10 +1323,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-validate", action="store_true")
     args = parser.parse_args(argv)
     if args.expected_contract != REAL_RUNTIME_CONTRACT:
-        parser.error(
-            f"real runtime evidence only supports expected contract "
-            f"{REAL_RUNTIME_CONTRACT}"
-        )
+        parser.error(f"real runtime evidence only supports expected contract {REAL_RUNTIME_CONTRACT}")
     return args
 
 

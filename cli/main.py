@@ -152,8 +152,7 @@ def preflight(profile_name: str, cfg: dict) -> None:
 
 def _exit_lite_lifecycle_error(profile_name: str, blockers: tuple[str, ...]) -> None:
     print(
-        f"  {T.red('Error')}: profile {profile_name!r} is a Lite runtime "
-        "but requested full-stack lifecycle features."
+        f"  {T.red('Error')}: profile {profile_name!r} is a Lite runtime but requested full-stack lifecycle features."
     )
     for blocker in blockers:
         print(f"    - {blocker}")
@@ -203,8 +202,8 @@ def _run_external_profile_launcher(
     print(f"  Frame ids: {format_runtime_frames(spec)}", flush=True)
     print(f"  Frames:   {format_frame_links(spec)}", flush=True)
     print(f"  Topic frames: {format_runtime_topic_frames(spec)}", flush=True)
-    print(f"  Flow:     {format_runtime_flow(spec)}", flush=True)
-    print(f"  Flow stages: {format_runtime_flow_stages(spec)}", flush=True)
+    print(f"  Path:     {format_runtime_flow(spec)}", flush=True)
+    print(f"  Path stages: {format_runtime_flow_stages(spec)}", flush=True)
     command = list(context.command)
     print(f"  Command:  {' '.join(command)}", flush=True)
     try:
@@ -253,8 +252,7 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
     payload = compare_runtime_switch(current_spec, target_spec)
     payload["product_mode_switch"] = (
         product_mode_switch_plan(current_profile, target_profile)
-        if current_profile in PRODUCT_MODE_CONTRACTS
-        and target_profile in PRODUCT_MODE_CONTRACTS
+        if current_profile in PRODUCT_MODE_CONTRACTS and target_profile in PRODUCT_MODE_CONTRACTS
         else None
     )
     payload["ok"] = current_validation.ok and target_validation.ok
@@ -358,7 +356,7 @@ def _cmd_runtime_audit(args: argparse.Namespace) -> None:
 def _cmd_gateway_runtime_acceptance(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.diagnostics.gateway_runtime_acceptance import (
+    from diagnostics.field.gateway_acceptance import (
         collect_gateway_runtime_acceptance,
         format_gateway_runtime_acceptance,
     )
@@ -433,9 +431,7 @@ def _format_dataflow_interfaces(items: object) -> str:
 def _format_dataflow_topic(payload: dict) -> str:
     status = "PASS" if payload.get("ok") is True else "FAIL"
     topic = payload.get("topic") if isinstance(payload.get("topic"), dict) else {}
-    inspection = (
-        payload.get("inspection") if isinstance(payload.get("inspection"), dict) else {}
-    )
+    inspection = payload.get("inspection") if isinstance(payload.get("inspection"), dict) else {}
     live = str(bool(inspection.get("live"))).lower()
     communicate = "gateway_commands" if inspection.get("communicate") else "read_only"
     lines = [
@@ -457,10 +453,7 @@ def _format_dataflow_topic(payload: dict) -> str:
         f"endpoint_topic_required={str(bool(endpoint_topic_required)).lower()} "
         "adapter=endpoint_only"
     )
-    lines.append(
-        "arbitrary_publish_supported="
-        f"{str(bool(inspection.get('arbitrary_publish_supported'))).lower()}"
-    )
+    lines.append(f"arbitrary_publish_supported={str(bool(inspection.get('arbitrary_publish_supported'))).lower()}")
     if payload.get("error"):
         lines.append(f"error={payload.get('error')}")
     return "\n".join(lines)
@@ -469,17 +462,9 @@ def _format_dataflow_topic(payload: dict) -> str:
 def _format_dataflow_summary(payload: dict) -> str:
     ok = payload.get("ok")
     status = "FAIL" if ok is False or payload.get("error") else "PASS"
-    transport_layers = (
-        payload.get("transport_layers")
-        if isinstance(payload.get("transport_layers"), dict)
-        else {}
-    )
+    transport_layers = payload.get("transport_layers") if isinstance(payload.get("transport_layers"), dict) else {}
     module_bus = transport_layers.get("module_port_bus", {})
-    endpoint_adapter = (
-        transport_layers.get("endpoint_adapter")
-        or transport_layers.get("ros2_adapter")
-        or {}
-    )
+    endpoint_adapter = transport_layers.get("endpoint_adapter") or transport_layers.get("ros2_adapter") or {}
     topics = payload.get("topics") if isinstance(payload.get("topics"), list) else []
     live_count = 0
     commandable_topics = 0
@@ -492,11 +477,7 @@ def _format_dataflow_summary(payload: dict) -> str:
         communication = topic.get("communication")
         if isinstance(communication, dict) and communication.get("allowed"):
             commandable_topics += 1
-    stages = (
-        payload.get("stage_evidence")
-        if isinstance(payload.get("stage_evidence"), list)
-        else []
-    )
+    stages = payload.get("stage_evidence") if isinstance(payload.get("stage_evidence"), list) else []
     live_stages = 0
     missing_stages = 0
     for stage in stages:
@@ -506,15 +487,9 @@ def _format_dataflow_summary(payload: dict) -> str:
             live_stages += 1
         if stage.get("status") == "missing" or stage.get("observable") is False:
             missing_stages += 1
-    control = (
-        payload.get("control_boundary")
-        if isinstance(payload.get("control_boundary"), dict)
-        else {}
-    )
+    control = payload.get("control_boundary") if isinstance(payload.get("control_boundary"), dict) else {}
     command_interfaces = (
-        control.get("command_interfaces")
-        if isinstance(control.get("command_interfaces"), list)
-        else []
+        control.get("command_interfaces") if isinstance(control.get("command_interfaces"), list) else []
     )
     lines = [
         f"Runtime dataflow: {status}",
@@ -524,12 +499,8 @@ def _format_dataflow_summary(payload: dict) -> str:
         f"endpoint_adapter.primary={str(bool(endpoint_adapter.get('primary'))).lower()}",
         f"topics={len(topics)} live_topics={live_count}",
         f"stages={len(stages)} live_stages={live_stages} missing_stages={missing_stages}",
-        (
-            f"commandable_topics={commandable_topics} "
-            f"command_interfaces={len(command_interfaces)}"
-        ),
-        "arbitrary_publish_supported="
-        f"{str(bool(control.get('arbitrary_publish_supported'))).lower()}",
+        (f"commandable_topics={commandable_topics} command_interfaces={len(command_interfaces)}"),
+        f"arbitrary_publish_supported={str(bool(control.get('arbitrary_publish_supported'))).lower()}",
         "Use `python lingtu.py dataflow <topic>` for one stream.",
     ]
     if payload.get("error"):
@@ -545,10 +516,7 @@ def _cmd_dataflow(args: argparse.Namespace) -> None:
     import json
 
     if len(args.extra) > 1:
-        print(
-            "  Usage: lingtu dataflow [topic] "
-            "[--gateway-url URL] [--gateway-timeout-sec SEC] [--json]"
-        )
+        print("  Usage: lingtu dataflow [topic] [--gateway-url URL] [--gateway-timeout-sec SEC] [--json]")
         sys.exit(1)
     topic = args.topic or (args.extra[0] if args.extra else None)
     if topic:
@@ -579,13 +547,13 @@ def _cmd_dataflow(args: argparse.Namespace) -> None:
 def _cmd_field_check(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.diagnostics.product_field_check import collect_product_field_check
+    from diagnostics.field.field_check import collect_product_field_check
 
     if len(args.extra) > 1:
         print(
             "  Usage: lingtu field-check [map-dir] "
             "[--gateway-url URL] [--acceptance-mode non_motion|simulation|field] "
-            "[--require-tomogram] [--require-occupancy] [--json] [--json-out PATH]"
+            "[--require-octomap] [--require-occupancy] [--json] [--json-out PATH]"
         )
         sys.exit(1)
 
@@ -594,7 +562,7 @@ def _cmd_field_check(args: argparse.Namespace) -> None:
         timeout_sec=args.gateway_timeout_sec,
         mode=args.acceptance_mode or "simulation",
         map_dir=args.extra[0] if args.extra else None,
-        require_tomogram=args.require_tomogram,
+        require_octomap=args.require_octomap,
         require_occupancy=args.require_occupancy,
         expected_data_source=args.expected_data_source,
         expected_source_profile=args.expected_source_profile,
@@ -619,14 +587,14 @@ def _parse_inspection_point(raw: str):
 def _cmd_inspection_check(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.diagnostics.inspection_acceptance import collect_inspection_acceptance
+    from diagnostics.field.inspection import collect_inspection_acceptance
 
     if len(args.extra) > 1:
         print(
             "  Usage: lingtu inspection-check [map-dir] "
             "[--point NAME] [--tag TAG] "
             "[--gateway-url URL] [--acceptance-mode non_motion|simulation|field] "
-            "[--require-tomogram] [--require-occupancy] [--json] [--json-out PATH]"
+            "[--require-octomap] [--require-occupancy] [--json] [--json-out PATH]"
         )
         sys.exit(1)
 
@@ -637,7 +605,7 @@ def _cmd_inspection_check(args: argparse.Namespace) -> None:
         map_dir=args.extra[0] if args.extra else None,
         points=[_parse_inspection_point(item) for item in args.point],
         tag=args.tag,
-        require_tomogram=args.require_tomogram,
+        require_octomap=args.require_octomap,
         require_occupancy=args.require_occupancy,
         expected_data_source=args.expected_data_source,
         expected_source_profile=args.expected_source_profile,
@@ -661,7 +629,7 @@ def _cmd_saved_map_artifact_gate(args: argparse.Namespace) -> None:
     if len(args.extra) != 1:
         print(
             "  Usage: lingtu saved-map-artifact-gate <map-dir> "
-            "[--require-tomogram] [--require-occupancy] [--json-out PATH]"
+            "[--require-octomap] [--require-occupancy] [--json-out PATH]"
         )
         sys.exit(1)
 
@@ -671,8 +639,8 @@ def _cmd_saved_map_artifact_gate(args: argparse.Namespace) -> None:
         str(repo_root / "scripts" / "gates" / "saved_map_artifact_gate.py"),
         args.extra[0],
     ]
-    if args.require_tomogram:
-        cmd.append("--require-tomogram")
+    if args.require_octomap:
+        cmd.append("--require-octomap")
     if args.require_occupancy:
         cmd.append("--require-occupancy")
     if args.expected_data_source:
@@ -704,7 +672,7 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    from runtime.diagnostics.runtime_evidence import REAL_RUNTIME_CONTRACT
+    from diagnostics.field.evidence import REAL_RUNTIME_CONTRACT
 
     repo_root = Path(__file__).resolve().parent.parent
     report_path = args.json_out or Path("artifacts/thunder_field_runtime/report.json")
@@ -813,10 +781,7 @@ def _cmd_portable_mujoco(args: argparse.Namespace) -> None:
                     "mujoco_kinematic_nav_runtime",
                     "mujoco_lidar_open_field",
                 }:
-                    print(
-                        f"  - {check.get('name')}: {check.get('status')} 鈥?"
-                        f"{check.get('summary')}"
-                    )
+                    print(f"  - {check.get('name')}: {check.get('status')} - {check.get('summary')}")
     elif not proc.returncode:
         print(f"  {T.yellow('WARN')}: portable MuJoCo gate succeeded but no report was written: {report_path}")
 
@@ -857,7 +822,7 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
         require_backend(
             "planner",
             normalized_planner,
-            ("octoplanner3d", "pct", "direct"),
+            ("octoplanner3d", "direct"),
         )
         args.planner = normalized_planner
 
@@ -940,7 +905,8 @@ def _resolve_config(
         "local_planner_backend": getattr(args, "local_planner_backend", None),
         "path_follower_backend": getattr(args, "path_follower_backend", None),
         "terrain_backend": getattr(args, "terrain_backend", None),
-        "tomogram": getattr(args, "tomogram", None),
+        "planner_map": getattr(args, "map_path", None) or getattr(args, "octomap", None),
+        "map_path": getattr(args, "map_path", None) or getattr(args, "octomap", None),
         "plan_safety_policy": getattr(args, "plan_safety_policy", None),
         "fallback_planner_name": getattr(args, "fallback_planner_name", None),
         "gateway_port": getattr(args, "gateway_port", None),
@@ -1058,10 +1024,17 @@ def main() -> None:
     parser.add_argument("--list", action="store_true", help="List product profiles and exit")
     parser.add_argument("--all", action="store_true", help="Show advanced, simulation, and dev profiles with --list")
     parser.add_argument("--version", action="store_true", help="Print LingTu version and exit")
-    parser.add_argument("--json", action="store_true",
-                        help="Machine-readable JSON output (status / show-config / switch-plan / runtime-spec / runtime-contract / runtime-audit / dataflow / gateway-runtime-acceptance / field-check / inspection-check / real-runtime-evidence / mujoco)")
-    parser.add_argument("--json-out", type=Path, default=None,
-                        help="Write JSON output for commands such as switch-plan, runtime-spec, runtime-contract, runtime-audit, dataflow, gateway-runtime-acceptance, field-check, inspection-check, real-runtime-evidence, or mujoco")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Machine-readable JSON output (status / show-config / switch-plan / runtime-spec / runtime-contract / runtime-audit / dataflow / gateway-runtime-acceptance / field-check / inspection-check / real-runtime-evidence / mujoco)",
+    )
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=None,
+        help="Write JSON output for commands such as switch-plan, runtime-spec, runtime-contract, runtime-audit, dataflow, gateway-runtime-acceptance, field-check, inspection-check, real-runtime-evidence, or mujoco",
+    )
     parser.add_argument("--daemon", "-d", action="store_true", help="Run as background daemon (Unix)")
     parser.add_argument("--follow", "-f", action="store_true", help="Follow output for `lingtu log`")
     parser.add_argument("--lines", type=int, default=80, help="Number of lines for `lingtu log` (default: 80)")
@@ -1095,7 +1068,8 @@ def main() -> None:
     parser.add_argument("--local-planner-backend", default=None)
     parser.add_argument("--path-follower-backend", default=None)
     parser.add_argument("--terrain-backend", default=None)
-    parser.add_argument("--tomogram", default=None)
+    parser.add_argument("--map-path", default=None, dest="map_path")
+    parser.add_argument("--octomap", default=None)
     parser.add_argument(
         "--plan-safety-policy",
         default=None,
@@ -1126,58 +1100,101 @@ def main() -> None:
     )
     parser.add_argument("--no-semantic", action="store_true")
     parser.add_argument("--no-gateway", action="store_true")
-    parser.add_argument("--native", action="store_true", help="Force C++ autonomy stack (terrain+local_planner+pathFollower)")
+    parser.add_argument(
+        "--native", action="store_true", help="Force C++ autonomy stack (terrain+local_planner+pathFollower)"
+    )
     parser.add_argument("--no-native", action="store_true")
     parser.add_argument("--rerun", action="store_true", help="Enable Rerun 3D visualization on startup")
     parser.add_argument("--no-repl", action="store_true", help="Foreground daemon (no interactive REPL)")
     parser.add_argument("--log-level", default="INFO", dest="log_level")
-    parser.add_argument("--log-format", default="text", choices=["text", "json"],
-                        dest="log_format", help="Log file format: text (default) or json")
-    parser.add_argument("--duration-sec", type=float, default=20.0,
-                        help="Duration for `lingtu real-runtime-evidence`")
-    parser.add_argument("--collector", choices=["gateway", "ros2"], default="gateway",
-                        help="Read-only evidence source for `lingtu real-runtime-evidence`")
-    parser.add_argument("--mujoco-world", action="append", default=[], dest="mujoco_worlds",
-                        help="MuJoCo world for `lingtu mujoco`. Repeat for multiple worlds; default: open_field")
-    parser.add_argument("--nav-duration", type=float, default=8.0,
-                        help="Navigation duration in seconds for `lingtu mujoco`")
-    parser.add_argument("--nav-goal-distance", type=float, default=1.0,
-                        help="Goal distance in meters for `lingtu mujoco`")
-    parser.add_argument("--min-nav-motion", type=float, default=0.15,
-                        help="Minimum MuJoCo motion in meters for `lingtu mujoco`")
-    parser.add_argument("--require-all", action="store_true",
-                        help="For `lingtu mujoco`, fail on any blocked optional check")
-    parser.add_argument("--gateway-url", default="http://127.0.0.1:5050",
-                        help="Gateway base URL for dataflow, acceptance, field-check, inspection-check, or real-runtime-evidence")
-    parser.add_argument("--gateway-timeout-sec", type=float, default=2.0,
-                        help="Per-request timeout for Gateway dataflow/acceptance/field-check/inspection-check")
-    parser.add_argument("--topic", default=None,
-                        help="Runtime dataflow topic or short alias for `lingtu dataflow`")
-    parser.add_argument("--acceptance-mode", default=None,
-                        choices=["non_motion", "simulation", "field"],
-                        help="Gateway acceptance strictness: non_motion checks product observability; simulation requires a live simulation endpoint; field requires Thunder field evidence. Defaults: gateway-runtime-acceptance=non_motion, field-check=simulation, inspection-check=simulation")
-    parser.add_argument("--min-motion-m", type=float, default=0.05,
-                        help="Minimum odometry motion for `lingtu real-runtime-evidence`")
-    parser.add_argument("--min-cmd-vel-norm", type=float, default=0.01,
-                        help="Minimum cmd_vel norm for `lingtu real-runtime-evidence`")
-    parser.add_argument("--expected-command-subscriber", action="append", default=[],
-                        help="Accepted hardware cmd_vel subscriber for `lingtu real-runtime-evidence`")
-    parser.add_argument("--require-tomogram", action="store_true",
-                        help="Require tomogram.pickle for `lingtu saved-map-artifact-gate`")
-    parser.add_argument("--require-occupancy", action="store_true",
-                        help="Require occupancy.npz for `lingtu saved-map-artifact-gate`")
-    parser.add_argument("--expected-data-source", default=None,
-                        help="Expected data_source for `lingtu saved-map-artifact-gate`")
-    parser.add_argument("--expected-source-profile", default=None,
-                        help="Expected source_profile for `lingtu saved-map-artifact-gate`")
-    parser.add_argument("--expected-frame-id", default=None,
-                        help="Expected frame_id for `lingtu saved-map-artifact-gate`")
-    parser.add_argument("--point", action="append", default=[],
-                        help="Inspection target for `lingtu inspection-check`: saved location name. Repeat for multiple points")
-    parser.add_argument("--tag", default=None,
-                        help="Use saved locations with this tag for `lingtu inspection-check`")
-    parser.add_argument("--no-validate", action="store_true",
-                        help="Collect real runtime evidence without running the validation gate")
+    parser.add_argument(
+        "--log-format",
+        default="text",
+        choices=["text", "json"],
+        dest="log_format",
+        help="Log file format: text (default) or json",
+    )
+    parser.add_argument("--duration-sec", type=float, default=20.0, help="Duration for `lingtu real-runtime-evidence`")
+    parser.add_argument(
+        "--collector",
+        choices=["gateway", "ros2"],
+        default="gateway",
+        help="Read-only evidence source for `lingtu real-runtime-evidence`",
+    )
+    parser.add_argument(
+        "--mujoco-world",
+        action="append",
+        default=[],
+        dest="mujoco_worlds",
+        help="MuJoCo world for `lingtu mujoco`. Repeat for multiple worlds; default: open_field",
+    )
+    parser.add_argument(
+        "--nav-duration", type=float, default=8.0, help="Navigation duration in seconds for `lingtu mujoco`"
+    )
+    parser.add_argument(
+        "--nav-goal-distance", type=float, default=1.0, help="Goal distance in meters for `lingtu mujoco`"
+    )
+    parser.add_argument(
+        "--min-nav-motion", type=float, default=0.15, help="Minimum MuJoCo motion in meters for `lingtu mujoco`"
+    )
+    parser.add_argument(
+        "--require-all", action="store_true", help="For `lingtu mujoco`, fail on any blocked optional check"
+    )
+    parser.add_argument(
+        "--gateway-url",
+        default="http://127.0.0.1:5050",
+        help="Gateway base URL for dataflow, acceptance, field-check, inspection-check, or real-runtime-evidence",
+    )
+    parser.add_argument(
+        "--gateway-timeout-sec",
+        type=float,
+        default=2.0,
+        help="Per-request timeout for Gateway dataflow/acceptance/field-check/inspection-check",
+    )
+    parser.add_argument("--topic", default=None, help="Runtime dataflow topic or short alias for `lingtu dataflow`")
+    parser.add_argument(
+        "--acceptance-mode",
+        default=None,
+        choices=["non_motion", "simulation", "field"],
+        help="Gateway acceptance strictness: non_motion checks product observability; simulation requires a live simulation endpoint; field requires Thunder field evidence. Defaults: gateway-runtime-acceptance=non_motion, field-check=simulation, inspection-check=simulation",
+    )
+    parser.add_argument(
+        "--min-motion-m", type=float, default=0.05, help="Minimum odometry motion for `lingtu real-runtime-evidence`"
+    )
+    parser.add_argument(
+        "--min-cmd-vel-norm", type=float, default=0.01, help="Minimum cmd_vel norm for `lingtu real-runtime-evidence`"
+    )
+    parser.add_argument(
+        "--expected-command-subscriber",
+        action="append",
+        default=[],
+        help="Accepted hardware cmd_vel subscriber for `lingtu real-runtime-evidence`",
+    )
+    parser.add_argument(
+        "--require-octomap", action="store_true", help="Require octomap.ot/bt for `lingtu saved-map-artifact-gate`"
+    )
+    parser.add_argument(
+        "--require-occupancy", action="store_true", help="Require occupancy.npz for `lingtu saved-map-artifact-gate`"
+    )
+    parser.add_argument(
+        "--expected-data-source", default=None, help="Expected data_source for `lingtu saved-map-artifact-gate`"
+    )
+    parser.add_argument(
+        "--expected-source-profile", default=None, help="Expected source_profile for `lingtu saved-map-artifact-gate`"
+    )
+    parser.add_argument(
+        "--expected-frame-id", default=None, help="Expected frame_id for `lingtu saved-map-artifact-gate`"
+    )
+    parser.add_argument(
+        "--point",
+        action="append",
+        default=[],
+        help="Inspection target for `lingtu inspection-check`: saved location name. Repeat for multiple points",
+    )
+    parser.add_argument("--tag", default=None, help="Use saved locations with this tag for `lingtu inspection-check`")
+    parser.add_argument(
+        "--no-validate", action="store_true", help="Collect real runtime evidence without running the validation gate"
+    )
     args, trailing_extra = parser.parse_known_args()
     if trailing_extra:
         args.extra.extend(trailing_extra)
@@ -1211,15 +1228,17 @@ def main() -> None:
     if args.target == "doctor":
         import subprocess as _sp
 
-        _sp.run([
-            sys.executable,
-            str(_repo / "scripts" / "diagnostics" / "doctor.py"),
-            "--gateway-url",
-            args.gateway_url,
-            "--gateway-timeout-sec",
-            str(args.gateway_timeout_sec),
-            *args.extra,
-        ])
+        _sp.run(
+            [
+                sys.executable,
+                str(_repo / "scripts" / "diagnostics" / "doctor.py"),
+                "--gateway-url",
+                args.gateway_url,
+                "--gateway-timeout-sec",
+                str(args.gateway_timeout_sec),
+                *args.extra,
+            ]
+        )
         return
 
     if args.target == "rerun":
@@ -1236,12 +1255,14 @@ def main() -> None:
         if args.native:
             rerun_extra.append("--native")
         if not use_ros2_rerun:
-            cmd.extend([
-                "--gateway-url",
-                args.gateway_url,
-                "--gateway-timeout-sec",
-                str(args.gateway_timeout_sec),
-            ])
+            cmd.extend(
+                [
+                    "--gateway-url",
+                    args.gateway_url,
+                    "--gateway-timeout-sec",
+                    str(args.gateway_timeout_sec),
+                ]
+            )
         cmd.extend(rerun_extra)
         _sp.run(cmd)
         return
@@ -1308,9 +1329,7 @@ def main() -> None:
     endpoint_external = False
     if args.endpoint:
         endpoint_external = bool(_runtime_endpoint(args.endpoint).external_launcher)
-    external_profile = bool(
-        PROFILES.get(profile_name, {}).get("_external_launcher") or endpoint_external
-    )
+    external_profile = bool(PROFILES.get(profile_name, {}).get("_external_launcher") or endpoint_external)
 
     if args.target not in _SPECIAL_COMMANDS and args.extra and not external_profile:
         print(f"  {T.red('Error')}: Unexpected extra positional arguments: {' '.join(args.extra)}")
@@ -1346,8 +1365,8 @@ def main() -> None:
     print(f"  Frame ids: {format_runtime_frames(runtime_spec)}")
     print(f"  Frames:   {format_frame_links(runtime_spec)}")
     print(f"  Topic frames: {format_runtime_topic_frames(runtime_spec)}")
-    print(f"  Flow:     {format_runtime_flow(runtime_spec)}")
-    print(f"  Flow stages: {format_runtime_flow_stages(runtime_spec)}")
+    print(f"  Path:     {format_runtime_flow(runtime_spec)}")
+    print(f"  Path stages: {format_runtime_flow_stages(runtime_spec)}")
     print(f"\n  Building system ({T.green(profile_name)})...")
 
     from runtime.blueprints.profile_builder import build_system_from_resolved_profile
@@ -1360,7 +1379,7 @@ def main() -> None:
         sys.exit(1)
 
     if not health_check(system):
-        print(f"  {T.red('Health check failed')} 鈥?some modules did not build correctly")
+        print(f"  {T.red('Health check failed')} - some modules did not build correctly")
         sys.exit(1)
     logger.info("Health check passed: %d modules OK", len(system.modules))
 
@@ -1469,12 +1488,6 @@ def main() -> None:
     except Exception:
         pass
     system.stop()
-    try:
-        from lingtu.ros2_shutdown import shutdown_ros2_runtime
-
-        shutdown_ros2_runtime()
-    except Exception:
-        pass
     try:
         from runtime.service_manager import get_service_manager
 

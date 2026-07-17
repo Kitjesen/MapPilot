@@ -6,10 +6,22 @@ from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
-from perception.tracking import bpu_qp_bridge as bridge
+try:
+    from perception.tracking import bpu_qp_bridge as bridge
+
+    _HAS_BPU_QP_BRIDGE = True
+except (ImportError, ModuleNotFoundError):
+    bridge = None
+    _HAS_BPU_QP_BRIDGE = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_BPU_QP_BRIDGE,
+    reason="bpu_qp_bridge removed (dead code, Phase 1 cleanup)",
+)
 
 
 @dataclass

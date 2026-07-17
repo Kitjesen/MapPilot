@@ -31,6 +31,7 @@ if _MUJOCO_LIDAR_PARENT.is_dir() and str(_MUJOCO_LIDAR_PARENT) not in sys.path:
     sys.path.insert(0, str(_MUJOCO_LIDAR_PARENT))
 
 _PRODUCT_BACKENDS = {"mujoco_lidar", "ray_caster_lidar"}
+_SELF_GEOM_GROUP = 5
 _BACKEND_ALIASES = {
     "": "auto",
     "auto": "auto",
@@ -71,6 +72,7 @@ class MuJoCoLidar:
         self._backend_error = ""
         self._fallback_used = False
         self._product_backend = False
+        self._self_geom_count = 0
 
         self._geomgroup = self._geomgroup_from_config(config)
         requested = self._normalize_backend(config.backend)
@@ -93,10 +95,7 @@ class MuJoCoLidar:
 
         if bool(config.require_product_backend) and self._backend not in _PRODUCT_BACKENDS:
             detail = "; ".join(init_errors) or self._backend_error or "legacy fallback selected"
-            raise RuntimeError(
-                "Product MuJoCo LiDAR backend required; "
-                f"selected {self._backend!r}. Details: {detail}"
-            )
+            raise RuntimeError(f"Product MuJoCo LiDAR backend required; selected {self._backend!r}. Details: {detail}")
 
         print(
             "[MuJoCoLidar] Initialized: "
@@ -147,32 +146,48 @@ class MuJoCoLidar:
     def _resolve_body_id(self) -> int:
         import mujoco
 
-        body_id = mujoco.mj_name2id(
-            self._model, mujoco.mjtObj.mjOBJ_BODY, self._config.body_name
-        )
+        body_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_BODY, self._config.body_name)
         if body_id < 0:
-            print(
-                f'[MuJoCoLidar] body "{self._config.body_name}" not found, '
-                "using world origin"
-            )
+            print(f'[MuJoCoLidar] body "{self._config.body_name}" not found, using world origin')
             return 0
         return int(body_id)
 
     def _resolve_site_id(self) -> int:
         import mujoco
 
-        site_id = mujoco.mj_name2id(
-            self._model, mujoco.mjtObj.mjOBJ_SITE, self._config.site_name
-        )
+        site_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_SITE, self._config.site_name)
         if site_id < 0:
             raise ValueError(f"MuJoCo LiDAR site not found: {self._config.site_name}")
         return int(site_id)
+
+    def _exclude_robot_geoms(self) -> None:
+        """Move robot-owned geoms to a LiDAR-excluded MuJoCo group."""
+
+        root_body = int(self._body_id)
+        if root_body <= 0:
+            return
+
+        excluded = 0
+        for geom_id in range(int(self._model.ngeom)):
+            body_id = int(self._model.geom_bodyid[geom_id])
+            while body_id > 0 and body_id != root_body:
+                body_id = int(self._model.body_parentid[body_id])
+            if body_id != root_body:
+                continue
+            self._model.geom_group[geom_id] = _SELF_GEOM_GROUP
+            excluded += 1
+
+        # MuJoCo ray queries filter by geom group, while bodyexclude only skips
+        # one body. Reserving one group excludes the full articulated robot.
+        self._geomgroup[_SELF_GEOM_GROUP] = 0
+        self._self_geom_count = excluded
 
     def _init_mujoco_lidar(self) -> None:
         """Initialize discoverse-dev/MuJoCo-LiDAR wrapper."""
 
         self._resolve_site_id()
         self._body_id = self._resolve_body_id()
+        self._exclude_robot_geoms()
         from mujoco_lidar import MjLidarWrapper
 
         self._ray_angles = self._load_scan_mode_angles(self._config.mid360_npy_path)
@@ -198,25 +213,26 @@ class MuJoCoLidar:
         import mujoco
         from livox_mid360 import read_plugin_lidar
 
-        sensor_id = mujoco.mj_name2id(
-            self._model, mujoco.mjtObj.mjOBJ_SENSOR, self._config.sensor_name
-        )
+        sensor_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_SENSOR, self._config.sensor_name)
         if sensor_id < 0:
             raise ValueError(f"ray_caster_lidar sensor not found: {self._config.sensor_name}")
         if int(self._model.sensor_plugin[sensor_id]) < 0:
-            raise RuntimeError(
-                f"MuJoCo sensor {self._config.sensor_name!r} is not backed by a loaded plugin"
-            )
+            raise RuntimeError(f"MuJoCo sensor {self._config.sensor_name!r} is not backed by a loaded plugin")
         self._plugin_reader = read_plugin_lidar
 
     def _init_fallback(self, model, data, config: LidarConfig) -> None:
         """Initialize legacy local ``mj_multiRay`` backend."""
 
         self._body_id = self._resolve_body_id()
+        self._exclude_robot_geoms()
         self._rng = np.random.default_rng(0)
         self._ray_angles = self._load_scan_mode_angles(config.mid360_npy_path)
         if self._ray_angles is None:
-            self._ray_dirs_local = self._build_golden_spiral(config.n_rays)
+            self._ray_dirs_local = self._build_golden_spiral(
+                config.n_rays,
+                np.deg2rad(float(config.vfov_min_deg)),
+                np.deg2rad(float(config.vfov_max_deg)),
+            )
         else:
             self._ray_cursor = 0
             self._ray_dirs_local = None
@@ -238,7 +254,7 @@ class MuJoCoLidar:
         return np.column_stack([cv * np.cos(ha), cv * np.sin(ha), np.sin(va)])
 
     @staticmethod
-    def _load_scan_mode_angles(path: Optional[str]) -> Optional[np.ndarray]:
+    def _load_scan_mode_angles(path: str | None) -> np.ndarray | None:
         """Load Livox scan-mode angles as ``[theta, phi]`` radians.
 
         ``.npy`` files are expected to already contain the same two-column
@@ -266,9 +282,7 @@ class MuJoCoLidar:
             angles = np.column_stack([theta, phi])
         angles = np.asarray(angles, dtype=np.float32)
         if angles.ndim != 2 or angles.shape[1] != 2:
-            raise ValueError(
-                f"MID-360 scan-mode file must contain Nx2 theta/phi angles: {scan_path}"
-            )
+            raise ValueError(f"MID-360 scan-mode file must contain Nx2 theta/phi angles: {scan_path}")
         if len(angles) == 0:
             raise ValueError(f"MID-360 scan-mode file is empty: {scan_path}")
         return angles
@@ -335,9 +349,7 @@ class MuJoCoLidar:
         try:
             import mujoco
 
-            site_id = mujoco.mj_name2id(
-                self._model, mujoco.mjtObj.mjOBJ_SITE, self._config.site_name
-            )
+            site_id = mujoco.mj_name2id(self._model, mujoco.mjtObj.mjOBJ_SITE, self._config.site_name)
             if site_id >= 0:
                 return np.asarray(self._data.site_xpos[site_id], dtype=np.float32)
         except Exception:
@@ -350,7 +362,42 @@ class MuJoCoLidar:
     def _points_with_return_model(self, pts_xyz: np.ndarray) -> np.ndarray:
         pts = np.asarray(pts_xyz, dtype=np.float32)
         origin = self._sensor_origin()
-        ranges = np.linalg.norm(pts - origin, axis=1).astype(np.float32)
+        angle_noise = float(getattr(self._config, "angle_noise_std_rad", 0.0) or 0.0)
+        if (
+            getattr(self, "_backend", "") == "ray_caster_lidar"
+            and bool(getattr(self._config, "add_noise", False))
+            and angle_noise > 0.0
+            and len(pts) > 0
+        ):
+            # The plugin owns ray generation and cannot accept our noisy angle
+            # table. Apply the same angular measurement error to returned ray
+            # vectors. This preserves range but cannot reproduce edge/occlusion
+            # changes that a pre-raycast perturbation would cause.
+            plugin_vectors = pts - origin
+            plugin_ranges = np.linalg.norm(plugin_vectors, axis=1).astype(np.float32)
+            nonzero = plugin_ranges > 1e-9
+            if np.any(nonzero):
+                angular_error = self._rng.normal(
+                    0.0,
+                    angle_noise,
+                    (int(np.count_nonzero(nonzero)), 2),
+                ).astype(np.float32)
+                vectors = plugin_vectors[nonzero]
+                radii = plugin_ranges[nonzero]
+                theta = np.arctan2(vectors[:, 1], vectors[:, 0]) + angular_error[:, 0]
+                phi = np.arcsin(np.clip(vectors[:, 2] / radii, -1.0, 1.0)) + angular_error[:, 1]
+                phi = np.clip(phi, -0.5 * np.pi, 0.5 * np.pi)
+                cos_phi = np.cos(phi)
+                plugin_vectors[nonzero] = np.column_stack(
+                    [
+                        radii * cos_phi * np.cos(theta),
+                        radii * cos_phi * np.sin(theta),
+                        radii * np.sin(phi),
+                    ]
+                )
+                pts = origin + plugin_vectors
+        ray_vectors = pts - origin
+        ranges = np.linalg.norm(ray_vectors, axis=1).astype(np.float32)
         valid = (
             np.isfinite(pts).all(axis=1)
             & np.isfinite(ranges)
@@ -369,11 +416,47 @@ class MuJoCoLidar:
             return np.zeros((0, 4), dtype=np.float32)
 
         pts = pts[valid]
+        ray_vectors = ray_vectors[valid]
         ranges = ranges[valid]
+        range_noise = float(getattr(self._config, "noise_std", 0.0) or 0.0)
+        if bool(getattr(self._config, "add_noise", False)) and range_noise > 0.0:
+            near_std = getattr(self._config, "range_noise_near_std_m", None)
+            far_std = getattr(self._config, "range_noise_far_std_m", None)
+            if near_std is not None and far_std is not None:
+                near_range = float(getattr(self._config, "range_noise_near_m", 0.2))
+                far_range = max(
+                    near_range + 1e-6,
+                    float(getattr(self._config, "range_noise_far_m", 10.0)),
+                )
+                blend = np.clip(
+                    (ranges - near_range) / (far_range - near_range),
+                    0.0,
+                    1.0,
+                )
+                range_sigmas = (
+                    float(near_std)
+                    + blend * (float(far_std) - float(near_std))
+                ).astype(np.float32)
+            else:
+                range_sigmas = np.full(len(ranges), range_noise, dtype=np.float32)
+            measured_ranges = ranges + self._rng.normal(
+                0.0,
+                range_sigmas,
+                len(ranges),
+            ).astype(np.float32)
+            measured_valid = (
+                np.isfinite(measured_ranges)
+                & (measured_ranges >= float(self._config.range_min))
+                & (measured_ranges <= float(self._config.range_max))
+            )
+            if not np.any(measured_valid):
+                return np.zeros((0, 4), dtype=np.float32)
+            unit_rays = ray_vectors[measured_valid] / ranges[measured_valid, None]
+            ranges = measured_ranges[measured_valid]
+            pts = origin + unit_rays * ranges[:, None]
+
         scale = max(float(getattr(self._config, "intensity_range_scale_m", 25.0) or 25.0), 1e-3)
-        intensity = float(getattr(self._config, "intensity_base", 180.0) or 180.0) / (
-            1.0 + (ranges / scale) ** 2
-        )
+        intensity = float(getattr(self._config, "intensity_base", 180.0) or 180.0) / (1.0 + (ranges / scale) ** 2)
         noise = float(getattr(self._config, "intensity_noise_std", 0.0) or 0.0)
         if bool(getattr(self._config, "add_noise", False)) and noise > 0.0:
             intensity += self._rng.normal(0.0, noise, len(intensity)).astype(np.float32)
@@ -423,8 +506,6 @@ class MuJoCoLidar:
         rot = np.asarray(self._mujoco_lidar.sensor_rotation, dtype=np.float32)
         pos = np.asarray(self._mujoco_lidar.sensor_position, dtype=np.float32)
         pts = pos + hit_local[valid] @ rot.T
-        if self._config.add_noise:
-            pts += self._rng.normal(0, self._config.noise_std, pts.shape).astype(np.float32)
         return pts.astype(np.float32, copy=False)
 
     def _scan_plugin(self) -> np.ndarray:
@@ -480,8 +561,6 @@ class MuJoCoLidar:
             return np.zeros((0, 3), dtype=np.float32)
 
         pts = (pos + dirs_world[mask] * dist_out[mask, None]).astype(np.float32)
-        if self._config.add_noise:
-            pts += self._rng.normal(0, self._config.noise_std, pts.shape).astype(np.float32)
         return pts
 
     def update_data(self, data) -> None:
@@ -505,9 +584,7 @@ class MuJoCoLidar:
         return {
             "backend": self._backend,
             "product_backend": bool(self._product_backend),
-            "product_lidar_backend_verified": bool(
-                self._product_backend and not self._fallback_used
-            ),
+            "product_lidar_backend_verified": bool(self._product_backend and not self._fallback_used),
             "fallback_used": bool(self._fallback_used),
             "requested_backend": str(self._config.backend),
             "mujoco_lidar_backend": self._mujoco_lidar_impl,
@@ -522,16 +599,42 @@ class MuJoCoLidar:
             "range_min_m": float(self._config.range_min),
             "range_max_m": float(self._config.range_max),
             "noise_std_m": float(self._config.noise_std if self._config.add_noise else 0.0),
-            "angle_noise_std_rad": float(
-                getattr(self._config, "angle_noise_std_rad", 0.0)
+            "range_noise_model": (
+                "radial_piecewise_gaussian"
+                if self._config.add_noise
+                and getattr(self._config, "range_noise_near_std_m", None) is not None
+                and getattr(self._config, "range_noise_far_std_m", None) is not None
+                else "radial_gaussian"
+                if self._config.add_noise
+                else "disabled"
+            ),
+            "range_noise_near_std_m": float(
+                getattr(self._config, "range_noise_near_std_m", self._config.noise_std)
                 if self._config.add_noise
                 else 0.0
             ),
-            "pixel_dropout_prob": float(getattr(self._config, "pixel_dropout_prob", 0.0)),
-            "distance_dropout_prob_at_max": float(
-                getattr(self._config, "distance_dropout_prob_at_max", 0.0)
+            "range_noise_far_std_m": float(
+                getattr(self._config, "range_noise_far_std_m", self._config.noise_std)
+                if self._config.add_noise
+                else 0.0
             ),
-            "self_occlusion_mode": "scene_geoms_with_sensor_body_excluded",
+            "angle_noise_std_rad": float(
+                getattr(self._config, "angle_noise_std_rad", 0.0) if self._config.add_noise else 0.0
+            ),
+            "angle_noise_model": (
+                "post_return_gaussian_approximation"
+                if self._config.add_noise and self._backend == "ray_caster_lidar"
+                else "pre_raycast_gaussian"
+                if self._config.add_noise
+                else "disabled"
+            ),
+            "pixel_dropout_prob": float(getattr(self._config, "pixel_dropout_prob", 0.0)),
+            "distance_dropout_prob_at_max": float(getattr(self._config, "distance_dropout_prob_at_max", 0.0)),
+            "intensity_model": "distance_proxy_not_material_calibrated",
+            "multi_return_model": "single_return",
+            "self_occlusion_mode": "robot_group" if self._self_geom_count else "backend_default",
+            "self_geom_group": _SELF_GEOM_GROUP,
+            "self_geoms": int(self._self_geom_count),
             "fields": ["x", "y", "z", "intensity"],
             "error": self._backend_error,
         }

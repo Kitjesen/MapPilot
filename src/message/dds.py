@@ -17,6 +17,7 @@ class TopicSpec:
     idl_type: str
     cpp_type: str
     ros_compatible: bool = True
+    dds_topic: str | None = None
 
     def dds_type(self) -> Any:
         module_name, attr = self.import_path.rsplit(".", 1)
@@ -66,8 +67,24 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "lingtu::dds::Imu",
         ros_compatible=False,
     ),
+    TOPICS.raw_imu: TopicSpec(
+        TOPICS.raw_imu,
+        "Imu",
+        "message.dds_types.imu.Imu",
+        "lingtu.dds.Imu",
+        "lingtu::dds::Imu",
+        ros_compatible=False,
+    ),
     TOPICS.odom_prior: TopicSpec(
         TOPICS.odom_prior,
+        "Odometry",
+        "message.dds_types.nav.Odometry",
+        "lingtu.dds.Odometry",
+        "lingtu::dds::Odometry",
+        ros_compatible=False,
+    ),
+    TOPICS.driver_odometry: TopicSpec(
+        TOPICS.driver_odometry,
         "Odometry",
         "message.dds_types.nav.Odometry",
         "lingtu.dds.Odometry",
@@ -121,6 +138,60 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "lingtu.dds.PointCloud2",
         "lingtu::dds::PointCloud2",
         ros_compatible=False,
+    ),
+    TOPICS.camera_color: TopicSpec(
+        TOPICS.camera_color,
+        "Image",
+        "message.dds_types.camera.Image",
+        "lingtu.dds.Image",
+        "lingtu::dds::Image",
+        ros_compatible=True,
+        dds_topic="rt/camera/color",
+    ),
+    TOPICS.camera_depth: TopicSpec(
+        TOPICS.camera_depth,
+        "Image",
+        "message.dds_types.camera.Image",
+        "lingtu.dds.Image",
+        "lingtu::dds::Image",
+        ros_compatible=True,
+        dds_topic="rt/camera/depth",
+    ),
+    TOPICS.camera_info: TopicSpec(
+        TOPICS.camera_info,
+        "CameraInfo",
+        "message.dds_types.camera.CameraInfo",
+        "lingtu.dds.CameraInfo",
+        "lingtu::dds::CameraInfo",
+        ros_compatible=True,
+        dds_topic="rt/camera/info",
+    ),
+    TOPICS.gnss_fix: TopicSpec(
+        TOPICS.gnss_fix,
+        "GnssFix",
+        "message.dds_types.gnss.GnssFix",
+        "lingtu.dds.GnssFix",
+        "lingtu::dds::GnssFix",
+        ros_compatible=False,
+        dds_topic="rt/gnss/fix",
+    ),
+    TOPICS.gnss_status: TopicSpec(
+        TOPICS.gnss_status,
+        "GnssStatus",
+        "message.dds_types.gnss.GnssStatus",
+        "lingtu.dds.GnssStatus",
+        "lingtu::dds::GnssStatus",
+        ros_compatible=False,
+        dds_topic="rt/gnss/status",
+    ),
+    TOPICS.gnss_odom: TopicSpec(
+        TOPICS.gnss_odom,
+        "Odometry",
+        "message.dds_types.nav.Odometry",
+        "lingtu.dds.Odometry",
+        "lingtu::dds::Odometry",
+        ros_compatible=False,
+        dds_topic="rt/gnss/odom",
     ),
     TOPICS.slam_map_command: TopicSpec(
         TOPICS.slam_map_command,
@@ -194,6 +265,64 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "lingtu::dds::PoseStamped",
         ros_compatible=False,
     ),
+    TOPICS.nav_command_request: TopicSpec(
+        TOPICS.nav_command_request,
+        "NavigationCommandRequest",
+        "message.dds_types.nav.NavigationCommandRequest",
+        "lingtu.dds.NavigationCommandRequest",
+        "lingtu::dds::NavigationCommandRequest",
+        ros_compatible=False,
+    ),
+    TOPICS.nav_command_ack: TopicSpec(
+        TOPICS.nav_command_ack,
+        "NavigationCommandAck",
+        "message.dds_types.nav.NavigationCommandAck",
+        "lingtu.dds.NavigationCommandAck",
+        "lingtu::dds::NavigationCommandAck",
+        ros_compatible=False,
+    ),
+    TOPICS.inspection_command: TopicSpec(
+        TOPICS.inspection_command,
+        "InspectionCommandRequest",
+        "message.dds_types.nav.InspectionCommandRequest",
+        "lingtu.dds.InspectionCommandRequest",
+        "lingtu::dds::InspectionCommandRequest",
+        ros_compatible=False,
+    ),
+    TOPICS.inspection_ack: TopicSpec(
+        TOPICS.inspection_ack,
+        "InspectionCommandAck",
+        "message.dds_types.nav.InspectionCommandAck",
+        "lingtu.dds.InspectionCommandAck",
+        "lingtu::dds::InspectionCommandAck",
+        ros_compatible=False,
+    ),
+    TOPICS.inspection_evidence_request: TopicSpec(
+        TOPICS.inspection_evidence_request,
+        "InspectionEvidenceRequest",
+        "message.dds_types.nav.InspectionEvidenceRequest",
+        "lingtu.dds.InspectionEvidenceRequest",
+        "lingtu::dds::InspectionEvidenceRequest",
+        ros_compatible=False,
+        dds_topic="rt/nav/inspection/evidence/request",
+    ),
+    TOPICS.inspection_evidence_result: TopicSpec(
+        TOPICS.inspection_evidence_result,
+        "InspectionEvidenceResult",
+        "message.dds_types.nav.InspectionEvidenceResult",
+        "lingtu.dds.InspectionEvidenceResult",
+        "lingtu::dds::InspectionEvidenceResult",
+        ros_compatible=False,
+        dds_topic="rt/nav/inspection/evidence/result",
+    ),
+    TOPICS.inspection_status: TopicSpec(
+        TOPICS.inspection_status,
+        "InspectionStatus",
+        "message.dds_types.nav.InspectionStatus",
+        "lingtu.dds.InspectionStatus",
+        "lingtu::dds::InspectionStatus",
+        ros_compatible=False,
+    ),
     TOPICS.goal_pose: TopicSpec(
         TOPICS.goal_pose,
         "PoseStamped",
@@ -260,6 +389,14 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
     ),
     TOPICS.cmd_vel: TopicSpec(
         TOPICS.cmd_vel,
+        "FinalVelocityCommand",
+        "message.dds_types.geometry.FinalVelocityCommand",
+        "lingtu.dds.FinalVelocityCommand",
+        "lingtu::dds::FinalVelocityCommand",
+        ros_compatible=False,
+    ),
+    TOPICS.teleop_cmd_vel: TopicSpec(
+        TOPICS.teleop_cmd_vel,
         "TwistStamped",
         "message.dds_types.geometry.TwistStamped",
         "lingtu.dds.TwistStamped",
@@ -318,6 +455,9 @@ def from_dds_message(topic: str, msg: Any) -> Any:
 
 def dds_topic_name(topic: str, *, typed: bool) -> str:
     name = str(topic)
+    spec = topic_spec(name)
+    if typed and spec and spec.dds_topic:
+        return spec.dds_topic
     if typed and name.startswith("/"):
         return "rt" + name
     return name

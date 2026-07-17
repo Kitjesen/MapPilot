@@ -4,73 +4,76 @@ ROS 2 话题频率验证测试
 确保关键话题以预期频率发布
 """
 
+import pytest
+
+pytest.importorskip("rclpy", reason="ROS2 integration test — requires rclpy")
+
+import sys
+import time
+from collections import defaultdict
+
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-import time
-import sys
-from collections import defaultdict
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 
 from runtime.runtime_interface import TOPICS
 
 
 class Colors:
     """终端颜色"""
-    GREEN = '\033[0;32m'
-    RED = '\033[0;31m'
-    YELLOW = '\033[1;33m'
-    BLUE = '\033[0;34m'
-    NC = '\033[0m'
+
+    GREEN = "\033[0;32m"
+    RED = "\033[0;31m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[0;34m"
+    NC = "\033[0m"
 
 
 class TopicHzChecker(Node):
     """话题频率检查器"""
 
     def __init__(self):
-        super().__init__('topic_hz_checker')
+        super().__init__("topic_hz_checker")
 
         # 定义预期频率（Hz）：(最小值, 最大值)
         self.expected_hz = {
-            TOPICS.odometry: (8.0, 12.0),      # 期望 10 Hz ± 20%
-            TOPICS.terrain_map: (0.5, 2.0),    # 期望 1 Hz
-            TOPICS.global_path: (0.5, 2.0),           # 期望 1 Hz
-            TOPICS.cmd_vel: (8.0, 12.0),           # 期望 10 Hz
+            TOPICS.odometry: (8.0, 12.0),  # 期望 10 Hz ± 20%
+            TOPICS.terrain_map: (0.5, 2.0),  # 期望 1 Hz
+            TOPICS.global_path: (0.5, 2.0),  # 期望 1 Hz
+            TOPICS.cmd_vel: (8.0, 12.0),  # 期望 10 Hz
         }
 
         self.message_counts = defaultdict(int)
         self.subscribers = {}
 
         # 创建订阅者
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-            depth=10
-        )
+        qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=10)
 
         for topic in self.expected_hz.keys():
             msg_type = self._get_msg_type(topic)
             if msg_type:
                 self.subscribers[topic] = self.create_subscription(
-                    msg_type=msg_type,
-                    topic=topic,
-                    callback=lambda msg, t=topic: self._callback(t),
-                    qos_profile=qos
+                    msg_type=msg_type, topic=topic, callback=lambda msg, t=topic: self._callback(t), qos_profile=qos
                 )
 
     def _get_msg_type(self, topic):
         """根据话题名获取消息类型"""
         try:
-            if 'odometry' in topic.lower():
+            if "odometry" in topic.lower():
                 from nav_msgs.msg import Odometry
+
                 return Odometry
-            elif 'terrain_map' in topic.lower():
+            elif "terrain_map" in topic.lower():
                 from sensor_msgs.msg import PointCloud2
+
                 return PointCloud2
-            elif 'path' in topic.lower():
+            elif "path" in topic.lower():
                 from nav_msgs.msg import Path
+
                 return Path
-            elif 'cmd_vel' in topic.lower():
+            elif "cmd_vel" in topic.lower():
                 from geometry_msgs.msg import TwistStamped
+
                 return TwistStamped
         except ImportError as e:
             self.get_logger().warn(f"无法导入消息类型: {e}")
@@ -100,12 +103,7 @@ class TopicHzChecker(Node):
             actual_hz = count / duration
 
             passed = min_hz <= actual_hz <= max_hz
-            results[topic] = {
-                'count': count,
-                'hz': actual_hz,
-                'expected': (min_hz, max_hz),
-                'passed': passed
-            }
+            results[topic] = {"count": count, "hz": actual_hz, "expected": (min_hz, max_hz), "passed": passed}
 
         return results
 
@@ -160,17 +158,17 @@ def main():
 
     all_passed = True
     for topic, result in results.items():
-        status = f"{Colors.GREEN}✓{Colors.NC}" if result['passed'] else f"{Colors.RED}✗{Colors.NC}"
+        status = f"{Colors.GREEN}✓{Colors.NC}" if result["passed"] else f"{Colors.RED}✗{Colors.NC}"
         print(f"{status} {topic}")
         print(f"    实际频率: {result['hz']:.2f} Hz")
         print(f"    预期范围: {result['expected'][0]:.1f} - {result['expected'][1]:.1f} Hz")
         print(f"    消息数量: {result['count']}")
 
-        if not result['passed']:
+        if not result["passed"]:
             all_passed = False
-            if result['count'] == 0:
+            if result["count"] == 0:
                 print(f"    {Colors.YELLOW}⚠ 未收到任何消息{Colors.NC}")
-            elif result['hz'] < result['expected'][0]:
+            elif result["hz"] < result["expected"][0]:
                 print(f"    {Colors.YELLOW}⚠ 频率过低{Colors.NC}")
             else:
                 print(f"    {Colors.YELLOW}⚠ 频率过高{Colors.NC}")
@@ -199,6 +197,5 @@ def main():
         sys.exit(1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-

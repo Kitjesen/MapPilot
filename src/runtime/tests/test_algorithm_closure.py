@@ -6,18 +6,29 @@ import time
 import numpy as np
 import pytest
 
-from decision.vision.bbox_navigator import STATE_TRACKING
-from decision.modules.visual_servo_module import (
+from decision.modules.visual_servo import (
     MODE_FIND,
     VisualServoModule,
 )
-from nav.services.map_layers.traversability_cost_module import TraversabilityCostModule
-from nav.mission.navigation import Navigation
-from nav.services.safety.velocity_mux import VelocityMux
+from decision.vision.bbox import STATE_TRACKING
+from maps.modules.traversability import TraversabilityCostModule
+from nav.localization_monitor.monitor_module import LocalizationMonitorModule
+from nav.navigation import Navigation
 from nav.services.plan.global_planner.service import GlobalPlanner
+from nav.services.safety.velocity_mux import VelocityMux
 from runtime.msgs.geometry import Pose, PoseStamped, Twist, Vector3
 from runtime.msgs.nav import Path
 from runtime.runtime_interface import TOPICS, topic_default_frame_id
+
+# Detect native map kernel availability for traversability tests
+try:
+    from maps.adapters.python.kernels import create_map_kernel_backend as _create_kernel
+
+    _HAS_MAP_KERNEL = _create_kernel() is not None
+except Exception:
+    _HAS_MAP_KERNEL = False
+
+_skip_no_kernel = pytest.mark.skipif(not _HAS_MAP_KERNEL, reason="native map kernel not available")
 
 
 class _FakePlanner:
@@ -347,6 +358,7 @@ def test_global_planner_safe_goal_bfs_adjusts_obstacle_goal():
     assert np.allclose(safe_goal, [2.0, 1.0, 0.0])
 
 
+@_skip_no_kernel
 def test_traversability_fusion_preserves_hard_costs_and_relays_esdf():
     module = TraversabilityCostModule(
         safe_distance=2.0,
@@ -379,6 +391,7 @@ def test_traversability_fusion_preserves_hard_costs_and_relays_esdf():
     assert fused[0]["frame_id"] == topic_default_frame_id(TOPICS.exploration_grid)
 
 
+@_skip_no_kernel
 def test_traversability_slope_grid_normalizes_costmap_frame_id():
     module = TraversabilityCostModule(max_slope_deg=45.0, publish_hz=1000.0)
     slopes: list[dict] = []
@@ -386,19 +399,23 @@ def test_traversability_slope_grid_normalizes_costmap_frame_id():
     module.slope_grid._add_callback(slopes.append)
     module.fused_cost._add_callback(fused.append)
 
-    module._on_elevation({
-        "max_z": np.array([[0.0, 0.0], [0.0, 1.0]], dtype=np.float32),
-        "valid": np.ones((2, 2), dtype=bool),
-        "resolution": 1.0,
-        "origin": [0.0, 0.0],
-        "frame_id": "map",
-    })
-    module._on_costmap({
-        "grid": np.zeros((2, 2), dtype=np.float32),
-        "resolution": 1.0,
-        "origin": [0.0, 0.0],
-        "frame_id": "/odom",
-    })
+    module._on_elevation(
+        {
+            "max_z": np.array([[0.0, 0.0], [0.0, 1.0]], dtype=np.float32),
+            "valid": np.ones((2, 2), dtype=bool),
+            "resolution": 1.0,
+            "origin": [0.0, 0.0],
+            "frame_id": "map",
+        }
+    )
+    module._on_costmap(
+        {
+            "grid": np.zeros((2, 2), dtype=np.float32),
+            "resolution": 1.0,
+            "origin": [0.0, 0.0],
+            "frame_id": "/odom",
+        }
+    )
 
     assert len(slopes) == 1
     assert len(fused) == 1
@@ -406,53 +423,59 @@ def test_traversability_slope_grid_normalizes_costmap_frame_id():
     assert fused[0]["frame_id"] == "odom"
 
 
+@_skip_no_kernel
 def test_traversability_grid_participates_in_fused_cost():
     module = TraversabilityCostModule(max_slope_deg=45.0, publish_hz=1000.0)
     fused: list[dict] = []
     module.fused_cost._add_callback(fused.append)
 
-    module._on_traversability({
-        "grid": np.array([[0.0, 70.0], [20.0, 0.0]], dtype=np.float32),
-        "resolution": 1.0,
-        "origin": [0.0, 0.0],
-    })
-    module._on_costmap({
-        "grid": np.array([[0.0, 0.0], [99.0, 0.0]], dtype=np.float32),
-        "resolution": 1.0,
-        "origin": [0.0, 0.0],
-    })
+    module._on_traversability(
+        {
+            "grid": np.array([[0.0, 70.0], [20.0, 0.0]], dtype=np.float32),
+            "resolution": 1.0,
+            "origin": [0.0, 0.0],
+        }
+    )
+    module._on_costmap(
+        {
+            "grid": np.array([[0.0, 0.0], [99.0, 0.0]], dtype=np.float32),
+            "resolution": 1.0,
+            "origin": [0.0, 0.0],
+        }
+    )
 
     assert len(fused) == 1
     assert np.allclose(fused[0]["grid"], [[0.0, 70.0], [99.0, 0.0]])
 
 
+@_skip_no_kernel
 def test_traversability_fusion_refreshes_when_esdf_arrives_after_costmap():
     module = TraversabilityCostModule(safe_distance=2.0, publish_hz=1000.0)
     module._interval = 0.0
     fused: list[dict] = []
     module.fused_cost._add_callback(fused.append)
 
-    module._on_costmap({
-        "grid": np.zeros((2, 2), dtype=np.float32),
-        "resolution": 1.0,
-        "origin": [0.0, 0.0],
-    })
-    module._on_esdf({
-        "distance_field": np.array([[0.0, 2.0], [2.0, 2.0]], dtype=np.float32),
-        "resolution": 1.0,
-        "origin": [0.0, 0.0],
-    })
+    module._on_costmap(
+        {
+            "grid": np.zeros((2, 2), dtype=np.float32),
+            "resolution": 1.0,
+            "origin": [0.0, 0.0],
+        }
+    )
+    module._on_esdf(
+        {
+            "distance_field": np.array([[0.0, 2.0], [2.0, 2.0]], dtype=np.float32),
+            "resolution": 1.0,
+            "origin": [0.0, 0.0],
+        }
+    )
 
     assert len(fused) == 2
     assert fused[-1]["grid"][0, 0] > fused[0]["grid"][0, 0]
 
 
+@_skip_no_kernel
 def test_traversability_storage_inputs_keep_latest_without_changing_costmap_clock():
-    import nav.services.map_layers.traversability_cost_module as trav_module
-
-    if not trav_module._SCIPY_AVAILABLE:
-        pytest.skip("scipy unavailable")
-
     module = TraversabilityCostModule()
     module.setup()
 
@@ -464,17 +487,21 @@ def test_traversability_storage_inputs_keep_latest_without_changing_costmap_cloc
 
 def test_localization_degeneracy_scales_navigation_speed():
     nav = Navigation()
+    monitor = LocalizationMonitorModule()
+    monitor.speed_scale._add_callback(nav._on_speed_scale)
+    monitor.localization_state._add_callback(nav._on_localization_state)
+    monitor.setup()
 
-    nav._on_localization_status({"state": "TRACKING", "degeneracy": "MILD"})
+    monitor.localization_status._deliver({"state": "TRACKING", "degeneracy": "MILD"})
     assert nav._speed_scale == 0.7
 
-    nav._on_localization_status({"state": "TRACKING", "degeneracy": "SEVERE"})
+    monitor.localization_status._deliver({"state": "TRACKING", "degeneracy": "SEVERE"})
     assert nav._speed_scale == 0.4
 
-    nav._on_localization_status({"state": "FALLBACK_GNSS_ONLY", "degeneracy": "NONE"})
+    monitor.localization_status._deliver({"state": "FALLBACK_GNSS_ONLY", "degeneracy": "NONE"})
     assert nav._speed_scale == 0.3
 
-    nav._on_localization_status({"state": "TRACKING", "degeneracy": "NONE"})
+    monitor.localization_status._deliver({"state": "TRACKING", "degeneracy": "NONE"})
     assert nav._speed_scale == 1.0
 
 

@@ -49,8 +49,12 @@ class TestSaveReadClear:
         from cli.run_state import read_run_state, save_run_state
 
         save_run_state(
-            "stub", {"robot": "stub"}, str(isolated_run_dir),
-            status="running", module_count=19, wire_count=48,
+            "stub",
+            {"robot": "stub"},
+            str(isolated_run_dir),
+            status="running",
+            module_count=19,
+            wire_count=48,
         )
         state = read_run_state()
         assert state["status"] == "running"
@@ -67,11 +71,11 @@ class TestSaveReadClear:
             "endpoint": "thunder_field",
             "data_source": "thunder_field",
             "runtime_contract": "thunder_field",
-            "command_sink": "hardware_driver_after_cmd_vel_mux",
+            "command_sink": "driver",
             "resolved_runtime_data_flow": [
                 {
                     "name": "command_boundary",
-                    "outputs": ["hardware_driver_after_cmd_vel_mux"],
+                    "outputs": ["driver"],
                 }
             ],
         }
@@ -222,7 +226,7 @@ def _runtime_status_state() -> dict:
             "endpoint": "thunder_field",
             "data_source": "thunder_field",
             "runtime_contract": "thunder_field",
-            "command_sink": "hardware_driver_after_cmd_vel_mux",
+            "command_sink": "driver",
             "simulation_only": False,
             "slam_source": "lingtu_fastlio_or_external_robot_slam",
             "localization_source": "slam_localizer",
@@ -277,7 +281,7 @@ def _runtime_status_state() -> dict:
                 },
                 {
                     "name": "command_boundary",
-                    "outputs": ["hardware_driver_after_cmd_vel_mux"],
+                    "outputs": ["driver"],
                 },
             ],
             "validation": {"ok": True, "blockers": []},
@@ -307,8 +311,8 @@ def test_status_human_output_includes_runtime_boundary(monkeypatch, capsys):
         "Topic frames: odometry=odom,map registered_cloud=body "
         "map_cloud=map global_path=map local_path=map,odom,body cmd_vel=body"
     ) in out
-    assert "Flow:     sensors=/nav/lidar_scan,/nav/imu" in out
-    assert "command=hardware_driver_after_cmd_vel_mux" in out
+    assert "Path:     sensors=/nav/lidar_scan,/nav/imu" in out
+    assert "command=driver" in out
 
 
 def test_status_json_output_includes_runtime_boundary(monkeypatch, capsys):
@@ -324,15 +328,11 @@ def test_status_json_output_includes_runtime_boundary(monkeypatch, capsys):
     assert report["runtime_status"] == "running"
     assert report["runtime"]["endpoint"] == "thunder_field"
     assert report["runtime"]["data_source"] == "thunder_field"
-    assert report["runtime"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
-    assert report["runtime"]["topic_allowed_frame_ids"]["/slam/map_cloud"] == [
-        "map"
-    ]
+    assert report["runtime"]["command_sink"] == "driver"
+    assert report["runtime"]["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
     assert report["runtime"]["frames"]["axis_convention"] == "x_forward_y_left_z_up"
     assert report["runtime"]["topic_default_frame_ids"]["/nav/cmd_vel"] == "body"
-    assert report["runtime"]["resolved_runtime_data_flow"][-1]["outputs"] == [
-        "hardware_driver_after_cmd_vel_mux"
-    ]
+    assert report["runtime"]["resolved_runtime_data_flow"][-1]["outputs"] == ["driver"]
     assert report["runtime"]["validation"] == {"ok": True, "blockers": []}
 
 

@@ -22,7 +22,7 @@ def compose_thunder_lite_modules(
     robot: str,
     driver_module: str,
     planner_backend: str,
-    tomogram: str,
+    map_path: str,
     enable_native: bool,
     config: dict[str, Any] | None = None,
 ) -> Blueprint:
@@ -39,7 +39,7 @@ def compose_thunder_lite_modules(
 
     return autoconnect(
         driver(robot, **driver_config) if enable_robot_driver else Blueprint(),
-        navigation(planner_backend, tomogram, enable_native, **cfg),
+        navigation(planner_backend, map_path, enable_native, **cfg),
         safety(cmd_vel_mux_source_timeout=cfg.get("cmd_vel_mux_source_timeout")),
     )
 

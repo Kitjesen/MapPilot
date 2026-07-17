@@ -35,6 +35,57 @@ be visible here, not hidden in Module constructors.
 `adapters/` owns Module choices at external boundaries: driver runtime,
 mapping/SLAM bridge, navigation IO, and perception/gateway IO.
 
+## Management Model
+
+Blueprint management is not a separate manager service. It is a fixed set of
+small management surfaces:
+
+| Surface | Owns | Must not own |
+| --- | --- | --- |
+| `profile_builder.py` | Resolve a profile into one product graph. | Domain logic, module callbacks, filesystem mutation. |
+| `products/` | Product-level composition such as `thunder`, `thunder_lite`, map/nav/explore variants. | Algorithms, map building, HTTP routes. |
+| `stacks/` | Small reusable module groups: driver, lidar, slam, maps, navigation, safety, gateway. | Cross-stack behavior hidden in constructors. |
+| `wires/` | Explicit important connections between stacks. | Module creation, planner policy, data conversion. |
+| `route_contract()` | External topic/schema metadata. | Moving internal wires to DDS by accident. |
+| `routed_delivery()` | Deliberate routed delivery for selected explicit wires. | Default product composition. |
+| `export_graph()` / graph tests | Introspection, snapshots, static boundary checks. | Runtime behavior. |
+
+The product graph should be readable in this order:
+
+```text
+Profile config
+  -> Product blueprint
+  -> Stack factories add Modules
+  -> Wire files connect ports
+  -> Route contract declares external topics
+  -> Blueprint.build() instantiates runtime Modules
+```
+
+If a change cannot be explained in that order, it probably belongs in a
+domain Service, Module, Adapter, or Kernel instead of Blueprint.
+
+## Blueprint Boundary Rules
+
+Allowed in Blueprint code:
+
+- choose Module classes;
+- pass configuration into Module constructors;
+- assign stable aliases;
+- declare wires and route contracts;
+- select optional adapters at known external boundaries;
+- export graph/introspection metadata.
+
+Forbidden in Blueprint code:
+
+- run subprocesses;
+- open network sockets or HTTP clients;
+- build maps, run SLAM, plan paths, or compute costs;
+- read or write map artifacts;
+- implement Gateway routes;
+- encode domain policy that belongs to a Service or Agent.
+
+Existing compatibility exceptions should be moved out rather than copied.
+
 ## Product Modes
 
 Each product mode is a profile-level graph, not a separate runtime framework.

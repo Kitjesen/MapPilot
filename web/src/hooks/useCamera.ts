@@ -28,8 +28,8 @@ export function useCamera(url: string = '/ws/camera'): CameraState {
       wsRef.current = null
     }
 
-    // Empty url signals "stay idle" — used by CameraFeed when the WebRTC
-    // path is in charge.  Avoids opening a phantom camera WebSocket.
+    // Empty url signals "stay idle" while the WHEP path is in charge.
+    // This avoids opening a duplicate camera WebSocket.
     if (!url) return
 
     // Build absolute ws URL from current location + path

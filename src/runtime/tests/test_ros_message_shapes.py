@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import sys
-import types
-
 import numpy as np
 
 from runtime.msgs.geometry import (
@@ -122,64 +119,3 @@ def test_path_and_occupancy_grid_ros_shapes() -> None:
     assert grid_ros["info"]["height"] == 2
     assert grid_ros["info"]["origin"]["position"] == {"x": 1.0, "y": 2.0, "z": 0.0}
     assert grid_ros["data"] == [0, 100, -1, 0]
-
-
-def test_ros2_nav_out_publishes_cmd_vel_as_twist_stamped(monkeypatch) -> None:
-    class _Header:
-        def __init__(self) -> None:
-            self.frame_id = ""
-            self.stamp = None
-
-    class _Vec3:
-        def __init__(self) -> None:
-            self.x = 0.0
-            self.y = 0.0
-            self.z = 0.0
-
-    class _Twist:
-        def __init__(self) -> None:
-            self.linear = _Vec3()
-            self.angular = _Vec3()
-
-    class _TwistStamped:
-        def __init__(self) -> None:
-            self.header = _Header()
-            self.twist = _Twist()
-
-    class _Pose:
-        def __init__(self) -> None:
-            self.position = _Vec3()
-            self.orientation = _Vec3()
-            self.orientation.w = 1.0
-
-    class _PoseStamped:
-        def __init__(self) -> None:
-            self.header = _Header()
-            self.pose = _Pose()
-
-    geometry_msgs = types.ModuleType("geometry_msgs")
-    geometry_msgs_msg = types.ModuleType("geometry_msgs.msg")
-    geometry_msgs_msg.PoseStamped = _PoseStamped
-    geometry_msgs_msg.TwistStamped = _TwistStamped
-    monkeypatch.setitem(sys.modules, "geometry_msgs", geometry_msgs)
-    monkeypatch.setitem(sys.modules, "geometry_msgs.msg", geometry_msgs_msg)
-
-    from nav.adapters.ros2.nav.nav_out import ROS2NavOutModule
-
-    adapter = ROS2NavOutModule(cmd_frame_id="body")
-    msg = adapter._to_ros_twist(
-        Twist(linear=Vector3(0.6, 0.1, 0.0), angular=Vector3(0.0, 0.0, 0.3))
-    )
-
-    assert isinstance(msg, _TwistStamped)
-    assert msg.header.frame_id == "body"
-    assert msg.twist.linear.x == 0.6
-    assert msg.twist.linear.y == 0.1
-    assert msg.twist.angular.z == 0.3
-
-    waypoint = adapter._to_ros_waypoint(PoseStamped(Pose(1.0, 2.0, 0.3), frame_id="map"))
-    assert isinstance(waypoint, _PoseStamped)
-    assert waypoint.header.frame_id == "map"
-    assert waypoint.pose.position.x == 1.0
-    assert waypoint.pose.position.y == 2.0
-    assert waypoint.pose.position.z == 0.3

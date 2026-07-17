@@ -65,26 +65,22 @@ def test_sdk2_imu_record_maps_to_runtime_imu() -> None:
 
 
 def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
-    cmake = Path("src/drivers/real/lidar/sdk2_stream/CMakeLists.txt").read_text(
-        encoding="utf-8"
-    )
-    main = Path("src/drivers/real/lidar/sdk2_stream/main.cpp").read_text(
-        encoding="utf-8"
-    )
-    build_script = Path("scripts/build/build_livox_sdk2_stream.sh").read_text(
-        encoding="utf-8"
-    )
+    cmake = Path("src/drivers/real/lidar/sdk2_stream/CMakeLists.txt").read_text(encoding="utf-8")
+    main = Path("src/drivers/real/lidar/sdk2_stream/main.cpp").read_text(encoding="utf-8")
+    dds_module = Path("src/drivers/real/lidar/native/dds_module.cpp").read_text(encoding="utf-8")
+    build_script = Path("scripts/build/build_livox_sdk2_stream.sh").read_text(encoding="utf-8")
 
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in cmake
     assert "CycloneDDS::ddsc" in cmake
     assert "CycloneDDS-CXX" not in cmake
     assert "src/message/idl/lingtu_slam.idl" in cmake
     assert "LINGTU_LIVOX_SDK2_STREAM_HAS_DDS=1" in cmake
-    assert "#include \"dds/dds.h\"" in main
-    assert "dds_create_writer" in main
-    assert "lingtu_dds_LivoxFrame_desc" in main
-    assert "lingtu_dds_Imu_desc" in main
-    assert "kLidarRawPacket" in main
+    assert '#include "native/dds_module.hpp"' in main
+    assert '#include "dds/dds.h"' not in main
+    assert "dds_create_writer" in dds_module
+    assert "lingtu_dds_LivoxFrame_desc" in dds_module
+    assert "lingtu_dds_Imu_desc" in dds_module
+    assert "kLidarRawPacket" in dds_module
     assert "ScanAccumulator" in main
     assert "--publish-freq" in main
     assert "--stdin-records" in main
@@ -92,5 +88,6 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     assert "--stdin-records requires --dds" in main
     assert "--dds" in main
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS" in build_script
-    assert 'LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON' in build_script
+    assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON" in build_script
+    assert '-DLIVOX_SDK2_DIR="$ROOT/src/drivers/real/lidar/deps/livox/Livox-SDK2"' in build_script
     assert "LINGTU_CYCLONEDDS_PREFIX" in build_script

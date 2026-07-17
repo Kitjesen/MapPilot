@@ -15,7 +15,6 @@ from runtime.contracts.simulation import simulation_runtime_contract
 from runtime.runtime_interface import resolved_runtime_data_flow
 from sim.scripts import server_sim_closure
 
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -94,15 +93,10 @@ def _write_moving_obstacle_child_report(
             "scan_time_profile": "physical_rolling",
             "lidar_source": {
                 "scan_time_profile": "physical_rolling",
-                "scan_time_model_contract": (
-                    "physical_subscans_with_actual_sim_time_offsets"
-                ),
+                "scan_time_model_contract": ("physical_subscans_with_actual_sim_time_offsets"),
             },
             "nav_data_source": "fastlio2",
-            "true_mapping_input_path": (
-                "/points_raw + /imu_raw -> fastlio2 -> /nav/odometry "
-                "+ /nav/map_cloud"
-            ),
+            "true_mapping_input_path": ("/points_raw + /imu_raw -> fastlio2 -> /nav/odometry + /nav/map_cloud"),
             "outputs": {
                 "fastlio2_cloud_registered": 20,
                 "fastlio2_odometry": 20,
@@ -265,9 +259,7 @@ def _has_video_decode_gap(gaps: str, prefix: str) -> bool:
 def test_dimos_required_gates_come_from_core_algorithm_gate_constant():
     from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
-    assert tuple(server_sim_closure.ALGORITHM_PRESETS["dimos_benchmark"]) == tuple(
-        DIMOS_BENCHMARK_REQUIRED_GATES
-    )
+    assert tuple(server_sim_closure.ALGORITHM_PRESETS["dimos_benchmark"]) == tuple(DIMOS_BENCHMARK_REQUIRED_GATES)
     assert DIMOS_BENCHMARK_REQUIRED_GATES[0] == "gateway_runtime_acceptance"
 
 
@@ -276,7 +268,7 @@ def _readme_current_full_closure_gates() -> tuple[str, ...]:
     lines = readme.splitlines()
     start = lines.index("Current full closure gates:")
     gates: list[str] = []
-    for line in lines[start + 1:]:
+    for line in lines[start + 1 :]:
         if not line.strip():
             if gates:
                 break
@@ -287,17 +279,11 @@ def _readme_current_full_closure_gates() -> tuple[str, ...]:
 
 
 def test_g4_server_full_sim_required_gates_come_from_core_algorithm_gate_constant():
-    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
+    from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES, G4_SERVER_FULL_SIM_REQUIRED_GATES
 
-    assert tuple(server_sim_closure.ALGORITHM_PRESETS["g4_server_full_sim"]) == tuple(
-        G4_SERVER_FULL_SIM_REQUIRED_GATES
-    )
+    assert tuple(server_sim_closure.ALGORITHM_PRESETS["g4_server_full_sim"]) == tuple(G4_SERVER_FULL_SIM_REQUIRED_GATES)
     assert set(G4_SERVER_FULL_SIM_REQUIRED_GATES) == (
-        (
-            set(DIMOS_BENCHMARK_REQUIRED_GATES)
-            - {"native_pct_mujoco", "pct_saved_map_navigation", "gazebo_runtime"}
-        )
+        (set(DIMOS_BENCHMARK_REQUIRED_GATES) - {"native_pct_mujoco", "pct_saved_map_navigation", "gazebo_runtime"})
         | {
             "multifloor_exploration",
             "policy_nav",
@@ -313,9 +299,7 @@ def test_g4_server_full_sim_required_gates_come_from_core_algorithm_gate_constan
 def test_readme_current_full_closure_gates_match_g4_server_full_sim_preset():
     from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
-    assert _readme_current_full_closure_gates() == tuple(
-        G4_SERVER_FULL_SIM_REQUIRED_GATES
-    )
+    assert _readme_current_full_closure_gates() == tuple(G4_SERVER_FULL_SIM_REQUIRED_GATES)
 
 
 def test_readme_full_closure_command_uses_g4_server_full_sim_preset():
@@ -334,11 +318,7 @@ def test_g4_required_gates_have_report_override_options():
     from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
     parser = server_sim_closure._build_parser()
-    option_strings = {
-        option
-        for action in parser._actions
-        for option in action.option_strings
-    }
+    option_strings = {option for action in parser._actions for option in action.option_strings}
 
     for gate in G4_SERVER_FULL_SIM_REQUIRED_GATES:
         assert f"--{gate.replace('_', '-')}-report" in option_strings
@@ -370,17 +350,13 @@ def test_g4_missing_required_gates_preserve_core_order(tmp_path: Path, monkeypat
     )
 
     assert tuple(summary["missing_or_failed"]) == G4_SERVER_FULL_SIM_REQUIRED_GATES
-    assert tuple(
-        gap.split(":", 1)[0] for gap in summary["remaining_gaps"]
-    ) == G4_SERVER_FULL_SIM_REQUIRED_GATES
+    assert tuple(gap.split(":", 1)[0] for gap in summary["remaining_gaps"]) == G4_SERVER_FULL_SIM_REQUIRED_GATES
 
 
 def test_g4_required_gates_are_default_freshness_required():
     from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
 
-    assert set(G4_SERVER_FULL_SIM_REQUIRED_GATES) <= set(
-        server_sim_closure.DEFAULT_FRESHNESS_REQUIRED_GATES
-    )
+    assert set(G4_SERVER_FULL_SIM_REQUIRED_GATES) <= set(server_sim_closure.DEFAULT_FRESHNESS_REQUIRED_GATES)
 
 
 def test_dimos_summary_required_gate_sequence_preserves_core_order(tmp_path: Path, monkeypatch):
@@ -408,9 +384,7 @@ def test_dimos_summary_requires_fresh_reports_for_every_required_gate(
         tmp_path / "artifacts/server_sim_closure/gateway_runtime_acceptance/report.json",
         _complete_gateway_runtime_acceptance_report(),
     )
-    old_mtime = server_sim_closure.time.time() - (
-        server_sim_closure.DEFAULT_REQUIRED_MAX_REPORT_AGE_S + 60.0
-    )
+    old_mtime = server_sim_closure.time.time() - (server_sim_closure.DEFAULT_REQUIRED_MAX_REPORT_AGE_S + 60.0)
     os.utime(stale_gateway_report, (old_mtime, old_mtime))
 
     summary = server_sim_closure.summarize(
@@ -423,9 +397,7 @@ def test_dimos_summary_requires_fresh_reports_for_every_required_gate(
     assert gateway_gate["ok"] is False
     assert gateway_gate["status"] == "failed"
     assert gateway_gate["is_fresh"] is False
-    assert gateway_gate["max_report_age_s"] == (
-        server_sim_closure.DEFAULT_REQUIRED_MAX_REPORT_AGE_S
-    )
+    assert gateway_gate["max_report_age_s"] == (server_sim_closure.DEFAULT_REQUIRED_MAX_REPORT_AGE_S)
     assert any("report_age_s" in blocker for blocker in gateway_gate["blockers"])
 
 
@@ -535,9 +507,7 @@ def _complete_gateway_runtime_acceptance_report() -> dict:
         "real_robot_motion": False,
         "cmd_vel_sent_to_hardware": False,
         "mode": "non_motion",
-        "target_result": (
-            "Gateway-only product runtime acceptance; ROS2 topic inspection is not required."
-        ),
+        "target_result": ("Gateway-only product runtime acceptance; ROS2 topic inspection is not required."),
         "runtime_contract": "real_s100p",
         "ros2_topic_required": False,
         "blockers": [],
@@ -881,8 +851,7 @@ def _complete_fastlio2_dynamic_inspection_report(tmp_path: Path) -> dict:
     report["video_frame_count"] = 181
     report["video_sample_count"] = 181
     report["true_mapping_input_path"] = (
-        "/points_raw + /imu_raw -> fastlio2 -> /Odometry + /cloud_map "
-        "-> /nav/odometry + /nav/map_cloud"
+        "/points_raw + /imu_raw -> fastlio2 -> /Odometry + /cloud_map -> /nav/odometry + /nav/map_cloud"
     )
     report["fastlio2_z_consistency"] = {
         "checked": True,
@@ -1804,9 +1773,7 @@ def test_routecheck_preflight_gate_writes_non_motion_summary(tmp_path: Path):
 
 
 def test_blocked_route_replan_gate_is_required_local_non_motion():
-    spec = next(
-        item for item in server_sim_closure.GATES if item.name == "blocked_route_replan_preflight"
-    )
+    spec = next(item for item in server_sim_closure.GATES if item.name == "blocked_route_replan_preflight")
 
     assert "sim/scripts/blocked_route_replan_gate.py" in spec.command
     assert "server_sim_closure/blocked_route_replan/report.json" in spec.command
@@ -1897,9 +1864,7 @@ def test_server_sim_closure_rejects_weak_blocked_route_replan_report(tmp_path: P
 
 
 def test_navigation_replay_deviation_gate_is_required_local_non_motion():
-    spec = next(
-        item for item in server_sim_closure.GATES if item.name == "navigation_replay_deviation"
-    )
+    spec = next(item for item in server_sim_closure.GATES if item.name == "navigation_replay_deviation")
 
     assert "sim/scripts/navigation_replay_deviation_gate.py" in spec.command
     assert "--routecheck-report artifacts/server_sim_closure/routecheck/summary.json" in spec.command
@@ -1933,12 +1898,10 @@ def test_server_sim_closure_materializes_navigation_replay_deviation_topic_jsonl
     report_path = tmp_path / "navigation_replay_deviation" / "report.json"
     trace_path = tmp_path / "navigation_replay_deviation" / "trace.json"
 
-    materialized_report, materialized = (
-        server_sim_closure.materialize_navigation_replay_deviation_topic_jsonl(
-            topic_jsonl,
-            report_path=report_path,
-            trace_path=trace_path,
-        )
+    materialized_report, materialized = server_sim_closure.materialize_navigation_replay_deviation_topic_jsonl(
+        topic_jsonl,
+        report_path=report_path,
+        trace_path=trace_path,
     )
 
     assert materialized_report == report_path
@@ -2034,14 +1997,8 @@ def test_server_sim_closure_native_pct_command_loads_ros_python_environment():
     assert "--route terrain_short" in spec.command
     assert "--timeout-s 80" in spec.command
     assert "--near-field-stop-distance 0.35" in spec.command
-    assert (
-        "artifacts/server_sim_closure/native_pct_mujoco/report.*.server.json"
-        in spec.default_patterns
-    )
-    assert (
-        "--source-report artifacts/server_sim_closure/large_terrain/report.json"
-        in spec.command
-    )
+    assert "artifacts/server_sim_closure/native_pct_mujoco/report.*.server.json" in spec.default_patterns
+    assert "--source-report artifacts/server_sim_closure/large_terrain/report.json" in spec.command
 
 
 def test_server_sim_closure_policy_nav_command_uses_verified_policy_gait_params():
@@ -2065,24 +2022,25 @@ def test_server_sim_closure_gazebo_runtime_command_starts_runtime_gate():
     assert "--check-frontier-exploration" in spec.command
     assert "--check-cumulative-map" in spec.command
     assert "--check-tare-contract" in spec.command
-    assert "artifacts/server_sim_closure/gazebo_runtime_explore/report_grid_astar_odomfoot.json" in spec.default_patterns
+    assert (
+        "artifacts/server_sim_closure/gazebo_runtime_explore/report_grid_astar_odomfoot.json" in spec.default_patterns
+    )
     assert "--nav-goal-x 3.0" in spec.command
     assert "DOMAIN=${ROS_DOMAIN_ID:-30}" in spec.command
     assert "--gz-partition $PART" in spec.command
     assert "gazebo_runtime_explore/report_grid_astar_odomfoot.json" in spec.command
-    assert "--launch-log artifacts/server_sim_closure/gazebo_runtime_explore/launch_grid_astar_odomfoot.log" in spec.command
+    assert (
+        "--launch-log artifacts/server_sim_closure/gazebo_runtime_explore/launch_grid_astar_odomfoot.log"
+        in spec.command
+    )
     assert "tf_contract_smoke.py" not in spec.command
     assert "source /opt/ros/humble/setup.bash" in spec.command
     assert spec.host_requirements == server_sim_closure.ROS2_GAZEBO_NAV_HOST_REQUIREMENTS
 
 
 def test_gazebo_runtime_gate_uses_existing_sim_script_paths():
-    gate_source = (REPO_ROOT / "sim/scripts/gazebo_runtime_gate.py").read_text(
-        encoding="utf-8"
-    )
-    launcher_source = (
-        REPO_ROOT / "sim/scripts/launch_lingtu_gazebo_industrial_demo.sh"
-    ).read_text(encoding="utf-8")
+    gate_source = (REPO_ROOT / "sim/scripts/gazebo_runtime_gate.py").read_text(encoding="utf-8")
+    launcher_source = (REPO_ROOT / "sim/scripts/launch_lingtu_gazebo_industrial_demo.sh").read_text(encoding="utf-8")
 
     expected_paths = (
         "sim/scripts/tf_contract_smoke.py",
@@ -2154,11 +2112,16 @@ def test_server_sim_closure_cmu_unity_pct_strict_command_runs_no_fallback_gate()
     assert "LINGTU_CMU_EXPLORATION_AUTO_START=0" in spec.command
     assert "LINGTU_CMU_ALLOW_DIRECT_GOAL_FALLBACK=0" in spec.command
     assert "LINGTU_CMU_AUTO_TOMOGRAM=${LINGTU_CMU_AUTO_TOMOGRAM:-1}" in spec.command
-    assert "LINGTU_CMU_TOMOGRAM_TOPICS=${LINGTU_CMU_TOMOGRAM_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}" in spec.command
+    assert (
+        "LINGTU_CMU_TOMOGRAM_TOPICS=${LINGTU_CMU_TOMOGRAM_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}" in spec.command
+    )
     assert "LINGTU_CMU_TOMOGRAM_MODE=${LINGTU_CMU_TOMOGRAM_MODE:-official}" in spec.command
     assert "LINGTU_CMU_GATE_TIMEOUT_SEC=${LINGTU_CMU_GATE_TIMEOUT_SEC:-240}" in spec.command
     assert "LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS=${LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS:-3}" in spec.command
-    assert "LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS=${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}" in spec.command
+    assert (
+        "LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS=${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}"
+        in spec.command
+    )
 
 
 def test_server_sim_closure_dynamic_obstacle_command_uses_nanobind_module_gate():
@@ -2213,10 +2176,7 @@ def test_server_sim_closure_pct_saved_map_navigation_command_uses_composed_gate(
     assert "source /opt/ros/humble/setup.bash" in spec.command
     assert "export MUJOCO_GL=${MUJOCO_GL:-egl}" in spec.command
     assert "export PYOPENGL_PLATFORM=${PYOPENGL_PLATFORM:-egl}" in spec.command
-    assert (
-        "--relocalize-report "
-        "artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json"
-    ) in spec.command
+    assert ("--relocalize-report artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json") in spec.command
     assert "--max-relocalize-report-age-s 86400" in spec.command
     assert "--goal 4.5 3.0" in spec.command
     assert "--timeout-s 80" in spec.command
@@ -2609,9 +2569,7 @@ def test_server_sim_closure_multifloor_surfaces_pct_runtime_blocker(tmp_path: Pa
 
     gate = summary["gates"]["multifloor_exploration"]
     assert "PCT native runtime unavailable" in gate["blockers"]
-    assert "environment_runtime" in summary["algorithm_validation"]["gate_categories"][
-        "multifloor_exploration"
-    ]
+    assert "environment_runtime" in summary["algorithm_validation"]["gate_categories"]["multifloor_exploration"]
     action = summary["algorithm_validation"]["next_actions"][0]
     assert action["gate"] == "multifloor_exploration"
     assert action["category"] == "environment_runtime"
@@ -2914,15 +2872,11 @@ def test_server_sim_closure_summary_lists_missing_required_commands(
 
     assert summary["ok"] is False
     assert summary["required_gate_sequence"] == ["large_terrain"]
-    assert [item["name"] for item in summary["missing_required_commands"]] == [
-        "large_terrain"
-    ]
+    assert [item["name"] for item in summary["missing_required_commands"]] == ["large_terrain"]
     command = summary["missing_required_commands"][0]
     assert "large_terrain_nav_validation.py" in command["command"]
     assert "LINGTU_PCT_OPTIMIZE_TRAJECTORY=1" in command["command"]
-    assert command["expected_report_path"] == (
-        "artifacts/server_sim_closure/large_terrain/report.json"
-    )
+    assert command["expected_report_path"] == ("artifacts/server_sim_closure/large_terrain/report.json")
     assert "artifacts/large_terrain_nav_validation*/report.json" in command["accepted_patterns"]
     assert any("PCT native extension modules" in item for item in command["host_requirements"])
     assert any("CPython 3.10" in item for item in command["host_requirements"])
@@ -3100,15 +3054,11 @@ def test_server_sim_closure_run_missing_records_host_blocked_gate(
                 "dynamic_obstacle_local_planner": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": [
-                        "Windows/MINGW NumPy local-planner runtime is not accepted"
-                    ],
+                    "blockers": ["Windows/MINGW NumPy local-planner runtime is not accepted"],
                     "checks": {
                         "local_numeric_nav": {
                             "ok": False,
-                            "blocker": (
-                                "Windows/MINGW NumPy local-planner runtime is not accepted"
-                            ),
+                            "blocker": ("Windows/MINGW NumPy local-planner runtime is not accepted"),
                         }
                     },
                 },
@@ -3166,10 +3116,7 @@ def test_server_sim_closure_run_missing_records_host_blocked_gate(
     assert any("numpy" in command for command in blocked_run["diagnostic_commands"])
     assert blocked_run["host_preflight"]["status"] == "blocked"
     assert summary["skipped_host_blocked_gates"] == ["dynamic_obstacle_local_planner"]
-    assert (
-        summary["run_missing_host_preflight"]["blocked_gates"]
-        == ["dynamic_obstacle_local_planner"]
-    )
+    assert summary["run_missing_host_preflight"]["blocked_gates"] == ["dynamic_obstacle_local_planner"]
     assert summary["missing_or_failed"] == ["dynamic_obstacle_local_planner"]
     assert summary["remaining_gaps"][0].startswith("dynamic_obstacle_local_planner:")
 
@@ -3227,9 +3174,7 @@ def test_server_sim_closure_run_missing_runs_pct_saved_map_navigation_after_relo
     map_dir = tmp_path / "same_source_map"
     map_pcd = _write_artifact(map_dir / "map.pcd")
     tomogram = _write_artifact(map_dir / "tomogram.pickle")
-    relocalize_report = (
-        tmp_path / "artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json"
-    )
+    relocalize_report = tmp_path / "artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json"
     pct_report = tmp_path / "artifacts/server_sim_closure/pct_saved_map_navigation/report.json"
 
     def fake_runner(command: object, **_kwargs: object) -> subprocess.CompletedProcess[object]:
@@ -3480,9 +3425,7 @@ def test_server_sim_closure_dynamic_obstacle_runtime_error_stops_content_checks(
                 "platform_system": "Windows",
                 "accepted_host": False,
                 "blocked_reason": "windows_mingw_numpy_not_accepted",
-                "blockers": [
-                    "Windows/MINGW NumPy local-planner runtime is not accepted"
-                ],
+                "blockers": ["Windows/MINGW NumPy local-planner runtime is not accepted"],
                 "claim_boundary": "environment_blocked_no_algorithm_claim",
             },
             "errors": ["Windows/MINGW NumPy local-planner runtime is not accepted"],
@@ -3502,15 +3445,9 @@ def test_server_sim_closure_dynamic_obstacle_runtime_error_stops_content_checks(
     evidence = summary["gates"]["dynamic_obstacle_local_planner"]["evidence"]
     assert evidence["execution_mode"] == "host_guard"
     assert evidence["environment"]["accepted_host"] is False
-    assert evidence["environment"]["blocked_reason"] == (
-        "windows_mingw_numpy_not_accepted"
-    )
-    assert evidence["environment"]["claim_boundary"] == (
-        "environment_blocked_no_algorithm_claim"
-    )
-    assert evidence["errors"] == [
-        "Windows/MINGW NumPy local-planner runtime is not accepted"
-    ]
+    assert evidence["environment"]["blocked_reason"] == ("windows_mingw_numpy_not_accepted")
+    assert evidence["environment"]["claim_boundary"] == ("environment_blocked_no_algorithm_claim")
+    assert evidence["errors"] == ["Windows/MINGW NumPy local-planner runtime is not accepted"]
 
 
 def test_server_sim_closure_rejects_weak_saved_map_relocalize_report(tmp_path: Path):
@@ -3696,10 +3633,7 @@ def test_server_sim_closure_pct_saved_map_navigation_stops_on_relocalize_prereq(
     assert "native_gate.report.ok is not true" not in gaps
     evidence = summary["gates"]["pct_saved_map_navigation"]["evidence"]
     assert evidence["plan_preview"]["skipped"] is True
-    assert (
-        evidence["plan_preview"]["reason"]
-        == "saved_map_relocalization_prerequisite_failed"
-    )
+    assert evidence["plan_preview"]["reason"] == "saved_map_relocalization_prerequisite_failed"
     assert evidence["native_gate"]["skipped"] is True
     assert evidence["artifacts"]["relocalize_report"]["exists"] is True
     assert "tomogram" not in evidence["artifacts"]
@@ -3710,9 +3644,7 @@ def test_server_sim_closure_rejects_pct_saved_map_navigation_mismatched_map_sour
 ):
     map_pcd = _write_artifact(tmp_path / "same_source_map_a" / "map.pcd")
     _write_artifact(tmp_path / "same_source_map_a" / "tomogram.pickle")
-    mismatched_tomogram = _write_artifact(
-        tmp_path / "same_source_map_b" / "tomogram.pickle"
-    )
+    mismatched_tomogram = _write_artifact(tmp_path / "same_source_map_b" / "tomogram.pickle")
 
     relocalize_payload = _complete_saved_map_relocalize_runtime_report()
     relocalize_payload["map_pcd"] = str(map_pcd)
@@ -3734,10 +3666,7 @@ def test_server_sim_closure_rejects_pct_saved_map_navigation_mismatched_map_sour
 
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert (
-        "pct_saved_map_navigation tomogram is not sibling of "
-        "relocalize_report.map_pcd"
-    ) in gaps
+    assert ("pct_saved_map_navigation tomogram is not sibling of relocalize_report.map_pcd") in gaps
     evidence = summary["gates"]["pct_saved_map_navigation"]["evidence"]
     assert evidence["artifacts"]["same_source_binding"]["ok"] is False
 
@@ -3768,10 +3697,7 @@ def test_server_sim_closure_rejects_pct_saved_map_navigation_missing_hash_identi
 
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert (
-        "pct_saved_map_navigation.same_source_hash_identity.ok is not true"
-        in gaps
-    )
+    assert "pct_saved_map_navigation.same_source_hash_identity.ok is not true" in gaps
     evidence = summary["gates"]["pct_saved_map_navigation"]["evidence"]
     assert evidence["artifacts"]["same_source_hash_identity"]["ok"] is False
 
@@ -3969,10 +3895,7 @@ def test_server_sim_closure_rejects_gazebo_frontier_without_post_pass_stall_wind
     assert summary["verified"]["gazebo_runtime"] is False
     gaps = "\n".join(summary["remaining_gaps"])
     assert "frontier_exploration.frontier_no_gain_stall.ok is not true" in gaps
-    assert (
-        "frontier_exploration.frontier_no_gain_stall.stop_reason is not "
-        "post_pass_observation_elapsed"
-    ) in gaps
+    assert ("frontier_exploration.frontier_no_gain_stall.stop_reason is not post_pass_observation_elapsed") in gaps
     assert "frontier_exploration.frontier_no_gain_stall.observed_s below required" in gaps
 
 
@@ -4210,10 +4133,7 @@ def test_server_sim_closure_rejects_cmu_unity_runtime_missing_data_flow_stage(tm
     assert summary["ok"] is False
     evidence = summary["gates"]["cmu_unity_runtime"]["evidence"]["runtime_evidence"]
     assert evidence["data_flow_required"] is True
-    assert (
-        "data-flow evidence missing or failed for local_planning_and_following"
-        in evidence["blockers"]
-    )
+    assert "data-flow evidence missing or failed for local_planning_and_following" in evidence["blockers"]
     gaps = "\n".join(summary["remaining_gaps"])
     assert "data-flow evidence missing or failed for local_planning_and_following" in gaps
 
@@ -4752,7 +4672,7 @@ def test_server_sim_closure_fastlio2_rejects_bad_runtime_frame_evidence(tmp_path
 def test_server_sim_closure_fastlio2_rejects_bad_runtime_data_flow(tmp_path: Path):
     report = _complete_fastlio2_tare_report()
     data_flow = _data_flow_evidence()
-    data_flow["command_boundary"]["outputs"] = ["hardware_driver_after_cmd_vel_mux"]
+    data_flow["command_boundary"]["outputs"] = ["driver"]
     report["runtime_contract"] = {
         "name": "mujoco_fastlio2_live",
         "ok": True,
@@ -5238,9 +5158,7 @@ def test_server_sim_closure_rejects_weak_fastlio2_dynamic_inspection_core_gate(
     report_payload["lingtu_inspection"]["replan_on_costmap_update"] = True
     report_payload["moving_obstacles"]["count"] = 1
     report_payload["moving_obstacles"]["speed_bounds"]["peak_planar_speed_bound_mps"] = 0.5
-    report_payload["moving_obstacles"]["trail_clearance"][
-        "min_clearance_minus_robot_radius_m"
-    ] = 0.1
+    report_payload["moving_obstacles"]["trail_clearance"]["min_clearance_minus_robot_radius_m"] = 0.1
     report_payload["video_frame_count"] = 0
     report_payload["fastlio2_z_consistency"]["ok"] = False
     report = _write_json(tmp_path / "fastlio2_dynamic_inspection_weak.json", report_payload)
@@ -5372,15 +5290,11 @@ def test_server_sim_closure_g4_server_full_sim_preset_selects_closure_gate_set()
     parser = server_sim_closure._build_parser()
     args = parser.parse_args(["--preset", "g4_server_full_sim"])
 
-    assert server_sim_closure._required_from_args(args) == set(
-        G4_SERVER_FULL_SIM_REQUIRED_GATES
-    )
+    assert server_sim_closure._required_from_args(args) == set(G4_SERVER_FULL_SIM_REQUIRED_GATES)
 
 
 def test_server_sim_closure_gateway_runtime_acceptance_gate_is_product_data_plane():
-    spec = next(
-        gate for gate in server_sim_closure.GATES if gate.name == "gateway_runtime_acceptance"
-    )
+    spec = next(gate for gate in server_sim_closure.GATES if gate.name == "gateway_runtime_acceptance")
 
     assert "gateway-runtime-acceptance" in spec.command
     assert "--acceptance-mode non_motion" in spec.command
@@ -5424,9 +5338,7 @@ def test_server_sim_closure_accepts_non_motion_gateway_stage_token_advisories(
     )
 
     assert summary["ok"] is True, summary["remaining_gaps"]
-    assert summary["gates"]["gateway_runtime_acceptance"]["evidence"][
-        "missing_stage_tokens"
-    ] == {
+    assert summary["gates"]["gateway_runtime_acceptance"]["evidence"]["missing_stage_tokens"] == {
         "global_planning": {"inputs": ["artifact:tomogram"], "outputs": []}
     }
 
@@ -5439,9 +5351,7 @@ def test_server_sim_closure_rejects_gateway_runtime_acceptance_ros2_primary(
     payload["checks"]["module_first_dataflow"]["ros2_topic_required"] = True
     payload["checks"]["module_first_dataflow"]["module_port_bus_primary"] = False
     payload["checks"]["module_first_dataflow"]["ros2_adapter_primary"] = True
-    payload["checks"]["module_first_dataflow"]["missing_stream_interfaces"] = [
-        "/nav/odometry"
-    ]
+    payload["checks"]["module_first_dataflow"]["missing_stream_interfaces"] = ["/nav/odometry"]
     report = _write_json(tmp_path / "gateway_runtime_acceptance_ros2.json", payload)
 
     summary = server_sim_closure.summarize(
@@ -5461,9 +5371,7 @@ def test_server_sim_closure_rejects_gateway_runtime_acceptance_ros2_primary(
 def test_server_sim_closure_validation_flow_includes_runtime_data_plane():
     stages = {stage["id"]: stage for stage in server_sim_closure.ALGORITHM_VALIDATION_FLOW}
 
-    assert stages["runtime_data_plane"]["gates"] == (
-        "gateway_runtime_acceptance",
-    )
+    assert stages["runtime_data_plane"]["gates"] == ("gateway_runtime_acceptance",)
     assert "Gateway" in stages["runtime_data_plane"]["title"]
     assert "ROS2" not in stages["runtime_data_plane"]["title"]
 
@@ -5474,8 +5382,7 @@ def test_server_sim_closure_moving_obstacle_sweep_command_aggregates_reports():
     assert "sim/scripts/moving_obstacle_sweep_gate.py" in spec.command
     assert "--run-matrix" in spec.command
     assert (
-        "--world ${LINGTU_MUJOCO_LIVE_WORLD:-"
-        "artifacts/server_sim_closure/large_terrain/large_terrain_scene.xml}"
+        "--world ${LINGTU_MUJOCO_LIVE_WORLD:-artifacts/server_sim_closure/large_terrain/large_terrain_scene.xml}"
     ) in spec.command
     assert "--child-run-root artifacts/server_sim_closure/moving_obstacle_sweep/children" in spec.command
     assert "--report-glob" not in spec.command
@@ -5511,25 +5418,19 @@ def test_server_sim_closure_materializes_moving_obstacle_sweep_report_only(
     )
     monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
 
-    report_path, materialized = (
-        server_sim_closure.materialize_moving_obstacle_sweep_report_only(
-            report_globs=[str(child_dir / "*.json")],
-            allow_missing_video_file=True,
-        )
+    report_path, materialized = server_sim_closure.materialize_moving_obstacle_sweep_report_only(
+        report_globs=[str(child_dir / "*.json")],
+        allow_missing_video_file=True,
     )
 
-    assert report_path == (
-        tmp_path / "artifacts/server_sim_closure/moving_obstacle_sweep/report.json"
-    )
+    assert report_path == (tmp_path / "artifacts/server_sim_closure/moving_obstacle_sweep/report.json")
     assert materialized["gate"] == "moving_obstacle_sweep"
     assert materialized["source"] == "existing_child_reports"
     assert materialized["ok"] is True
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["execution_mode"] == "report_only_aggregate"
     assert report["run_matrix"]["enabled"] is False
-    assert report["claim_boundary"] == (
-        "report_only_aggregate_requires_child_live_fastlio_pct_cmd_vel_evidence"
-    )
+    assert report["claim_boundary"] == ("report_only_aggregate_requires_child_live_fastlio_pct_cmd_vel_evidence")
 
     summary = server_sim_closure.summarize(
         report_overrides={"moving_obstacle_sweep": report_path},
@@ -5618,9 +5519,7 @@ def test_server_sim_closure_accepts_moving_obstacle_sweep_report(tmp_path: Path)
                             "global_path_count": 1,
                             "local_path_count": 24,
                         },
-                        "map_artifacts": _same_source_map_artifacts(
-                            pair.replace(":", "_")
-                        ),
+                        "map_artifacts": _same_source_map_artifacts(pair.replace(":", "_")),
                         "blockers": [],
                     },
                 }
@@ -5714,10 +5613,7 @@ def test_server_sim_closure_rejects_moving_obstacle_sweep_without_live_map_sha(
 
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert (
-        "moving_obstacle_sweep case fast:dense.live_nav_chain.map_pcd.sha256 missing"
-        in gaps
-    )
+    assert "moving_obstacle_sweep case fast:dense.live_nav_chain.map_pcd.sha256 missing" in gaps
 
 
 def test_server_sim_closure_rejects_moving_obstacle_sweep_undecodable_required_video_file(
@@ -5760,9 +5656,7 @@ def test_server_sim_closure_rejects_moving_obstacle_sweep_undecodable_required_v
                         "global_path_count": 1,
                         "local_path_count": 24,
                     },
-                    "map_artifacts": _same_source_map_artifacts(
-                        pair.replace(":", "_")
-                    ),
+                    "map_artifacts": _same_source_map_artifacts(pair.replace(":", "_")),
                     "blockers": [],
                 },
             }
@@ -5808,8 +5702,7 @@ def test_server_sim_closure_finds_physical_rolling_moving_obstacle_report(
 ):
     monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
     _write_json(
-        tmp_path
-        / "artifacts/server_sim_closure/moving_obstacle_sweep/report_physical_rolling_20260521.json",
+        tmp_path / "artifacts/server_sim_closure/moving_obstacle_sweep/report_physical_rolling_20260521.json",
         {
             "schema_version": "lingtu.moving_obstacle_sweep_gate.v1",
             "ok": True,
@@ -5855,9 +5748,7 @@ def test_server_sim_closure_finds_physical_rolling_moving_obstacle_report(
                             "global_path_count": 1,
                             "local_path_count": 24,
                         },
-                        "map_artifacts": _same_source_map_artifacts(
-                            pair.replace(":", "_")
-                        ),
+                        "map_artifacts": _same_source_map_artifacts(pair.replace(":", "_")),
                         "blockers": [],
                     },
                 }
@@ -5878,9 +5769,7 @@ def test_server_sim_closure_finds_physical_rolling_moving_obstacle_report(
     )
 
     assert summary["ok"] is True
-    assert summary["gates"]["moving_obstacle_sweep"]["path"].endswith(
-        "report_physical_rolling_20260521.json"
-    )
+    assert summary["gates"]["moving_obstacle_sweep"]["path"].endswith("report_physical_rolling_20260521.json")
 
 
 def test_server_sim_closure_rejects_incomplete_moving_obstacle_sweep_report(tmp_path: Path):
@@ -5953,9 +5842,7 @@ def test_server_sim_closure_classifies_moving_obstacle_preflight_blocker_as_envi
             "required_density_bins": ["sparse", "dense"],
             "required_scan_time_profile": "physical_rolling",
             "required_live_nav_chain": True,
-            "environment_blockers": [
-                "launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh"
-            ],
+            "environment_blockers": ["launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh"],
             "artifact_blockers": [
                 "inspection_tomogram missing: artifacts/server_sim_closure/large_terrain/tomogram.pickle"
             ],
@@ -5976,15 +5863,11 @@ def test_server_sim_closure_classifies_moving_obstacle_preflight_blocker_as_envi
 
     assert summary["ok"] is False
     evidence = summary["gates"]["moving_obstacle_sweep"]["evidence"]
-    assert evidence["environment_blockers"] == [
-        "launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh"
-    ]
+    assert evidence["environment_blockers"] == ["launch_script missing: sim/scripts/mujoco/launch_fastlio2_live.sh"]
     assert evidence["artifact_blockers"] == [
         "inspection_tomogram missing: artifacts/server_sim_closure/large_terrain/tomogram.pickle"
     ]
-    categories = summary["algorithm_validation"]["gate_categories"][
-        "moving_obstacle_sweep"
-    ]
+    categories = summary["algorithm_validation"]["gate_categories"]["moving_obstacle_sweep"]
     assert "environment_runtime" in categories
     assert "artifact_contract" in categories
     action = summary["algorithm_validation"]["next_actions"][0]
@@ -6047,9 +5930,7 @@ def test_server_sim_closure_propagates_moving_sweep_root_cause_categories(
         "planning_tracking",
         "slam_localization",
     ]
-    assert validation["blocking_categories"]["slam_localization"] == [
-        "moving_obstacle_sweep"
-    ]
+    assert validation["blocking_categories"]["slam_localization"] == ["moving_obstacle_sweep"]
 
 
 def test_server_sim_closure_rejects_moving_obstacle_sweep_without_live_nav_chain(
@@ -6110,10 +5991,12 @@ def test_server_sim_closure_rejects_moving_obstacle_sweep_without_live_nav_chain
 def test_server_sim_closure_accepts_moving_obstacle_sweep_report_override(tmp_path: Path):
     report = tmp_path / "moving_obstacle_sweep.json"
     parser = server_sim_closure._build_parser()
-    args = parser.parse_args([
-        "--moving-obstacle-sweep-report",
-        str(report),
-    ])
+    args = parser.parse_args(
+        [
+            "--moving-obstacle-sweep-report",
+            str(report),
+        ]
+    )
 
     assert args.moving_obstacle_sweep_report == report
 
@@ -6127,69 +6010,42 @@ def test_server_sim_closure_large_loop_closure_command_aggregates_runtime_report
         "LINGTU_MUJOCO_LIVE_WORLD=${LINGTU_MUJOCO_LIVE_WORLD:-"
         "artifacts/server_sim_closure/large_terrain/large_terrain_scene.xml}"
     ) in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_MAX_WALL_TIME_S=${LINGTU_MUJOCO_LIVE_MAX_WALL_TIME_S:-7200}") in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED=${LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED:-0.45}") in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT=${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT:-0.45}") in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_MAX_WALL_TIME_S="
-        "${LINGTU_MUJOCO_LIVE_MAX_WALL_TIME_S:-7200}"
+        "LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_ACCEL_LIMIT=${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_ACCEL_LIMIT:-0.8}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED="
-        "${LINGTU_MUJOCO_LIVE_NAV_MAX_LINEAR_SPEED:-0.45}"
+        "LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT=${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-0.25}"
+    ) in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z=${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-0.25}") in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM=${LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM:-1}") in spec.command
+    assert (
+        "LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER=${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-10}"
+    ) in spec.command
+    assert ("LINGTU_PCT_OPTIMIZE_TRAJECTORY=${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-1}") in spec.command
+    assert (
+        "LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES=${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-6}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT="
-        "${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_LIMIT:-0.45}"
+        "LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M=${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-1.0}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_ACCEL_LIMIT="
-        "${LINGTU_MUJOCO_LIVE_CMD_VEL_LINEAR_ACCEL_LIMIT:-0.8}"
+        "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START=${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START:-0.0}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT="
-        "${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-0.25}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z="
-        "${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-0.25}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM="
-        "${LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM:-1}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER="
-        "${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-10}"
-    ) in spec.command
-    assert (
-        "LINGTU_PCT_OPTIMIZE_TRAJECTORY="
-        "${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-1}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES="
-        "${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-6}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M="
-        "${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-1.0}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START="
-        "${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_YAW_RATE_START:-0.0}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE="
-        "${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE:-1.0}"
+        "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE=${LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE:-1.0}"
     ) in spec.command
     assert (
         "LINGTU_MUJOCO_LIVE_INSPECTION_GOALS="
         f"${{LINGTU_MUJOCO_LIVE_INSPECTION_GOALS:-{server_sim_closure.LARGE_LOOP_INSPECTION_GOALS}}}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST:-1.0}"
+        "LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST=${LINGTU_MUJOCO_LIVE_INSPECTION_DOWNSAMPLE_DIST:-1.0}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD:-0.65}"
+        "LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD=${LINGTU_MUJOCO_LIVE_INSPECTION_WAYPOINT_THRESHOLD:-0.65}"
     ) in spec.command
     assert (
         "LINGTU_MUJOCO_LIVE_INSPECTION_FINAL_WAYPOINT_THRESHOLD="
@@ -6204,36 +6060,33 @@ def test_server_sim_closure_large_loop_closure_command_aggregates_runtime_report
         "${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_PROXIMITY_COMPLETION_THRESHOLD:-0.65}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD:-2.0}"
+        "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_LOOKAHEAD:-2.0}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN:-2.5}"
+        "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_YAW_RATE_GAIN:-2.5}"
     ) in spec.command
     assert (
         "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_STOP_YAW_RATE_GAIN="
         "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_STOP_YAW_RATE_GAIN:-2.5}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-1.8}"
+        "LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE=${LINGTU_MUJOCO_LIVE_INSPECTION_PATH_DIR_DIFF_THRE:-1.8}"
     ) in spec.command
-    assert "LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE=${LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE:-physical_rolling}" in spec.command
+    assert (
+        "LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE=${LINGTU_MUJOCO_LIVE_SCAN_TIME_PROFILE:-physical_rolling}" in spec.command
+    )
     assert "run_start=$(date +%s)" in spec.command
     assert "mujoco/launch_fastlio2_live.sh inspection-loop-video;" in spec.command
-    assert "test -n \"$latest\" && test -f \"$latest/report.json\"" in spec.command
-    assert "stat -c %Y \"$latest/report.json\"" in spec.command
-    assert "stat -c %Y \"$latest/report.json\")\" -ge \"$run_start\" &&" in spec.command
+    assert 'test -n "$latest" && test -f "$latest/report.json"' in spec.command
+    assert 'stat -c %Y "$latest/report.json"' in spec.command
+    assert 'stat -c %Y "$latest/report.json")" -ge "$run_start" &&' in spec.command
     assert "--required-scan-time-profile physical_rolling" in spec.command
     assert "--require-video-file" in spec.command
     assert "server_sim_closure/large_loop_closure/report.json" in spec.command
 
 
 def test_mujoco_live_launcher_large_loop_defaults_close_in_live_planning_frame():
-    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
-        encoding="utf-8"
-    )
+    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert (
         "inspection_default_goals="
@@ -6241,8 +6094,8 @@ def test_mujoco_live_launcher_large_loop_defaults_close_in_live_planning_frame()
     ) in launcher
     assert '"--inspection-goals=$inspection_default_goals"' in launcher
     assert '"--inspection-goals" "$inspection_default_goals"' not in launcher
-    assert "inspection_default_min_checkpoints=\"${LINGTU_MUJOCO_LIVE_INSPECTION_MIN_CHECKPOINTS:-4}\"" in launcher
-    assert "inspection_default_planner=\"${LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER:-pct}\"" in launcher
+    assert 'inspection_default_min_checkpoints="${LINGTU_MUJOCO_LIVE_INSPECTION_MIN_CHECKPOINTS:-4}"' in launcher
+    assert 'inspection_default_planner="${LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER:-pct}"' in launcher
     assert 'inspection_downsample_dist_default="1.0"' in launcher
     assert 'cmd_vel_linear_limit_default="0.45"' in launcher
     assert 'cmd_vel_angular_limit_default="0.25"' in launcher
@@ -6263,9 +6116,7 @@ def test_mujoco_live_launcher_large_loop_defaults_close_in_live_planning_frame()
 
 
 def test_mujoco_live_launcher_writes_red_report_when_runtime_report_missing():
-    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
-        encoding="utf-8"
-    )
+    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'if [[ ! -f "$run_dir/report.json" ]]; then' in launcher
     assert "runtime_report_missing_after_launcher" in launcher
@@ -6424,10 +6275,7 @@ def test_server_sim_closure_rejects_large_loop_with_mismatched_tomogram_source(
 
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert (
-        "large_loop_closure best_case.tomogram.source_map_sha256 does not match "
-        "map_pcd.sha256"
-    ) in gaps
+    assert ("large_loop_closure best_case.tomogram.source_map_sha256 does not match map_pcd.sha256") in gaps
 
 
 def test_server_sim_closure_rejects_large_loop_undecodable_required_video_file(
@@ -6537,9 +6385,7 @@ def test_server_sim_closure_finds_same_source_large_loop_report(
     )
 
     assert summary["ok"] is True
-    assert summary["gates"]["large_loop_closure"]["path"].endswith(
-        "large_loop_closure_report.json"
-    )
+    assert summary["gates"]["large_loop_closure"]["path"].endswith("large_loop_closure_report.json")
 
 
 def test_server_sim_closure_rejects_large_loop_fastlio_loop_error(tmp_path: Path):
@@ -6748,10 +6594,12 @@ def test_server_sim_closure_algorithm_validation_flow_keeps_global_and_local_rol
 def test_server_sim_closure_accepts_large_loop_closure_report_override(tmp_path: Path):
     report = tmp_path / "large_loop_closure.json"
     parser = server_sim_closure._build_parser()
-    args = parser.parse_args([
-        "--large-loop-closure-report",
-        str(report),
-    ])
+    args = parser.parse_args(
+        [
+            "--large-loop-closure-report",
+            str(report),
+        ]
+    )
 
     assert args.large_loop_closure_report == report
 
@@ -6895,9 +6743,7 @@ def test_server_sim_closure_large_terrain_surfaces_pct_runtime_blocker(tmp_path:
     assert "PCT native runtime unavailable" in gate["blockers"]
     assert gate["evidence"]["execution_mode"] == "host_guard"
     assert gate["evidence"]["native_runtime"]["python_tag"] == "py313"
-    assert gate["evidence"]["environment"]["claim_boundary"] == (
-        "environment_blocked_no_algorithm_claim"
-    )
+    assert gate["evidence"]["environment"]["claim_boundary"] == ("environment_blocked_no_algorithm_claim")
     assert "environment_runtime" in summary["algorithm_validation"]["gate_categories"]["large_terrain"]
 
 
@@ -6937,34 +6783,20 @@ def test_server_sim_closure_next_actions_separate_runtime_blocker_from_missing_r
     assert actions["large_terrain"]["action_type"] == "fix_runtime_then_rerun"
     assert "PCT native runtime unavailable" in actions["large_terrain"]["blockers"]
     assert "large_terrain_nav_validation.py" in actions["large_terrain"]["command"]
-    assert any(
-        "PCT native extension modules" in item
-        for item in actions["large_terrain"]["host_requirements"]
-    )
+    assert any("PCT native extension modules" in item for item in actions["large_terrain"]["host_requirements"])
     assert actions["large_terrain"]["expected_report_path"] == (
         "artifacts/server_sim_closure/large_terrain/report.json"
     )
-    assert "artifacts/large_terrain_nav_validation*/report.json" in actions["large_terrain"][
-        "accepted_patterns"
-    ]
+    assert "artifacts/large_terrain_nav_validation*/report.json" in actions["large_terrain"]["accepted_patterns"]
     assert actions["fastlio2_dynamic_inspection"]["category"] == "artifact_contract"
     assert actions["fastlio2_dynamic_inspection"]["action_type"] == "generate_missing_report"
     assert "mujoco/launch_fastlio2_live.sh" in actions["fastlio2_dynamic_inspection"]["command"]
     assert actions["fastlio2_dynamic_inspection"]["expected_report_path"].startswith(
         "artifacts/server_sim_closure/mujoco_fastlio2_live"
     )
-    assert any(
-        "inspection" in pattern
-        for pattern in actions["fastlio2_dynamic_inspection"]["accepted_patterns"]
-    )
-    assert any(
-        "ROS 2 Humble" in item
-        for item in actions["fastlio2_dynamic_inspection"]["host_requirements"]
-    )
-    assert any(
-        "MuJoCo EGL" in item
-        for item in actions["fastlio2_dynamic_inspection"]["host_requirements"]
-    )
+    assert any("inspection" in pattern for pattern in actions["fastlio2_dynamic_inspection"]["accepted_patterns"])
+    assert any("ROS 2 Humble" in item for item in actions["fastlio2_dynamic_inspection"]["host_requirements"])
+    assert any("MuJoCo EGL" in item for item in actions["fastlio2_dynamic_inspection"]["host_requirements"])
     assert summary["algorithm_validation"]["next_actions"] == summary["next_actions"]
 
 
@@ -6982,9 +6814,7 @@ def test_server_sim_closure_saved_map_relocalize_next_action_lists_localizer_hos
 
     action = summary["next_actions"][0]
     assert action["gate"] == "saved_map_relocalize"
-    assert action["expected_report_path"] == (
-        "artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json"
-    )
+    assert action["expected_report_path"] == ("artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json")
     assert any("MuJoCo/Fast-LIO live feed" in item for item in action["host_requirements"])
     assert any("localizer runtime" in item for item in action["host_requirements"])
     assert not any("PCT native extension modules" in item for item in action["host_requirements"])
@@ -7010,21 +6840,15 @@ def test_server_sim_closure_native_pct_missing_summary_lists_runtime_requirement
     assert "--route terrain_short" in command["command"]
     assert "--timeout-s 80" in command["command"]
     assert "--near-field-stop-distance 0.35" in command["command"]
-    assert command["expected_report_path"] == (
-        "artifacts/server_sim_closure/native_pct_mujoco/report.json"
-    )
-    assert (
-        "artifacts/server_sim_closure/native_pct_mujoco/report.*.server.json"
-        in command["accepted_patterns"]
-    )
+    assert command["expected_report_path"] == ("artifacts/server_sim_closure/native_pct_mujoco/report.json")
+    assert "artifacts/server_sim_closure/native_pct_mujoco/report.*.server.json" in command["accepted_patterns"]
     assert any("PCT native extension modules" in item for item in command["host_requirements"])
     assert any("CPython 3.10" in item for item in command["host_requirements"])
     assert any("ROS 2 Humble" in item for item in command["host_requirements"])
     assert any("MuJoCo EGL" in item for item in command["host_requirements"])
     assert any("MID-360 scan pattern asset" in item for item in command["host_requirements"])
     assert any(
-        "no physical robot drivers or hardware command publishers" in item
-        for item in command["host_requirements"]
+        "no physical robot drivers or hardware command publishers" in item for item in command["host_requirements"]
     )
 
 
@@ -7058,10 +6882,7 @@ def test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host():
     assert gate["failed_checks"] == ["pct_native"]
     assert gate["checks"]["pct_native"]["ok"] is False
     assert "build/source the PCT native runtime" in gate["checks"]["pct_native"]["recommended_action"]
-    assert any(
-        "pct_runtime_preflight.py" in command
-        for command in gate["checks"]["pct_native"]["diagnostic_commands"]
-    )
+    assert any("pct_runtime_preflight.py" in command for command in gate["checks"]["pct_native"]["diagnostic_commands"])
     assert "bash scripts/deploy/setup_server_ros_pct.sh" in gate["diagnostic_commands"]
     assert any("PCT native runtime unavailable" in item for item in gate["blockers"])
     assert any("CPython 3.10" in item for item in gate["blockers"])
@@ -7111,9 +6932,7 @@ def test_server_sim_host_preflight_accepts_local_non_motion_gate():
     assert report["host_setup_plan"]["ok"] is True
     assert report["host_setup_plan"]["failed_check_count"] == 0
     assert report["host_setup_plan"]["failed_checks"] == []
-    assert report["host_setup_plan"]["stop_condition"] == (
-        "host can run the selected DimOS gates"
-    )
+    assert report["host_setup_plan"]["stop_condition"] == ("host can run the selected DimOS gates")
 
 
 def test_server_sim_host_preflight_blocks_dynamic_obstacle_on_windows_numpy_runtime():
@@ -7135,7 +6954,9 @@ def test_server_sim_host_preflight_blocks_dynamic_obstacle_on_windows_numpy_runt
     assert gate["checks"]["local_non_motion"]["ok"] is True
     assert gate["checks"]["local_numeric_nav"]["ok"] is False
     assert gate["failed_checks"] == ["local_numeric_nav"]
-    assert any("platform.system" in command.lower() or "platform.system" in command for command in gate["diagnostic_commands"])
+    assert any(
+        "platform.system" in command.lower() or "platform.system" in command for command in gate["diagnostic_commands"]
+    )
     assert report["next_actions"][0]["failed_checks"] == ["local_numeric_nav"]
     setup_plan = report["host_setup_plan"]
     assert setup_plan["failed_check_count"] == 1
@@ -7250,8 +7071,7 @@ def test_server_sim_host_preflight_requires_isolated_ros_domain_and_hardware_aud
     assert unsafe["ok"] is False
     assert unsafe["blocked_gates"] == ["native_pct_mujoco"]
     assert any(
-        "hardware command subscribers present" in item
-        for item in unsafe["gates"]["native_pct_mujoco"]["blockers"]
+        "hardware command subscribers present" in item for item in unsafe["gates"]["native_pct_mujoco"]["blockers"]
     )
 
     safe = server_sim_closure.host_preflight(
@@ -7337,10 +7157,7 @@ def test_server_sim_host_preflight_blocks_missing_gazebo_pct_adapter_runtime():
     check = gate["checks"]["ros2_pct_adapters"]
     assert check["ok"] is False
     assert check["evidence"]["missing_executables"] == ["pct_path_adapter"]
-    assert any(
-        "ros2 pkg executables pct_adapters" in command
-        for command in check["diagnostic_commands"]
-    )
+    assert any("ros2 pkg executables pct_adapters" in command for command in check["diagnostic_commands"])
 
 
 def test_server_sim_host_preflight_blocks_missing_gazebo_navigation_source():
@@ -7359,9 +7176,7 @@ def test_server_sim_host_preflight_blocks_missing_gazebo_navigation_source():
             return True
         if normalized.endswith(missing_rel):
             return False
-        return any(
-            normalized.endswith(rel) for rel in server_sim_closure.GAZEBO_NAV_SOURCE_RELS
-        )
+        return any(normalized.endswith(rel) for rel in server_sim_closure.GAZEBO_NAV_SOURCE_RELS)
 
     report = server_sim_closure.host_preflight(
         required={"gazebo_runtime"},
@@ -7384,10 +7199,7 @@ def test_server_sim_host_preflight_blocks_missing_gazebo_navigation_source():
     check = gate["checks"]["gazebo_navigation_sources"]
     assert check["ok"] is False
     assert check["evidence"]["missing_relative_paths"] == [missing_rel]
-    assert any(
-        "gazebo_line_global_planner.py" in command
-        for command in check["diagnostic_commands"]
-    )
+    assert any("gazebo_line_global_planner.py" in command for command in check["diagnostic_commands"])
 
 
 def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
@@ -7424,16 +7236,11 @@ def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
     check = gate["checks"]["ros2_fastlio2"]
     assert check["ok"] is False
     assert check["evidence"]["missing_executables"] == ["lio_node"]
-    assert any(
-        "ros2 pkg executables fastlio2" in command
-        for command in check["diagnostic_commands"]
-    )
+    assert any("ros2 pkg executables fastlio2" in command for command in check["diagnostic_commands"])
     setup_plan = report["host_setup_plan"]
     assert setup_plan["failed_check_count"] == 1
     assert setup_plan["failed_checks"][0]["check"] == "ros2_fastlio2"
-    assert setup_plan["failed_checks"][0]["gates"] == [
-        "fastlio2_dynamic_inspection"
-    ]
+    assert setup_plan["failed_checks"][0]["gates"] == ["fastlio2_dynamic_inspection"]
 
 
 def test_server_sim_host_preflight_accepts_ros2_fastlio2_runtime():
@@ -7467,15 +7274,11 @@ def test_server_sim_host_preflight_accepts_ros2_fastlio2_runtime():
     gate = report["gates"]["fastlio2_dynamic_inspection"]
     assert "ros2_local_planner" not in gate["checks"]
     assert gate["checks"]["ros2_fastlio2"]["ok"] is True
-    assert gate["checks"]["ros2_fastlio2"]["evidence"]["executables"] == [
-        "fastlio2 lio_node"
-    ]
+    assert gate["checks"]["ros2_fastlio2"]["evidence"]["executables"] == ["fastlio2 lio_node"]
 
 
 def test_server_sim_host_preflight_blocks_missing_mid360_pattern_asset():
-    world_path = str(
-        server_sim_closure.ROOT / server_sim_closure.MUJOCO_WORLD_ASSET_REL
-    ).replace("\\", "/")
+    world_path = str(server_sim_closure.ROOT / server_sim_closure.MUJOCO_WORLD_ASSET_REL).replace("\\", "/")
 
     report = server_sim_closure.host_preflight(
         required={"native_pct_mujoco"},
@@ -7485,8 +7288,7 @@ def test_server_sim_host_preflight_blocks_missing_mid360_pattern_asset():
         env={"ROS_DISTRO": "humble", "ROS_DOMAIN_ID": "75", "MUJOCO_GL": "egl"},
         executable_exists=lambda name: name in {"ros2"},
         module_available=lambda name: name == "mujoco",
-        path_exists=lambda path: str(path).replace("\\", "/")
-        in {"/opt/ros/humble/setup.bash", world_path},
+        path_exists=lambda path: str(path).replace("\\", "/") in {"/opt/ros/humble/setup.bash", world_path},
         pct_runtime_report={
             "ok": True,
             "host_platform_supported": True,
@@ -7509,17 +7311,12 @@ def test_server_sim_host_preflight_blocks_missing_mid360_pattern_asset():
     assert check["ok"] is False
     assert check["evidence"]["relative_path"] == server_sim_closure.MID360_PATTERN_REL
     assert check["evidence"]["exists"] is False
-    assert any(
-        "sim/assets/livox/mid360.npy" in command
-        for command in check["diagnostic_commands"]
-    )
+    assert any("sim/assets/livox/mid360.npy" in command for command in check["diagnostic_commands"])
 
 
 def test_server_sim_host_preflight_blocks_missing_mujoco_world_asset():
     setup_path = "/opt/ros/humble/setup.bash"
-    mid360_path = str(
-        server_sim_closure.ROOT / server_sim_closure.MID360_PATTERN_REL
-    ).replace("\\", "/")
+    mid360_path = str(server_sim_closure.ROOT / server_sim_closure.MID360_PATTERN_REL).replace("\\", "/")
 
     report = server_sim_closure.host_preflight(
         required={"native_pct_mujoco"},
@@ -7529,8 +7326,7 @@ def test_server_sim_host_preflight_blocks_missing_mujoco_world_asset():
         env={"ROS_DISTRO": "humble", "ROS_DOMAIN_ID": "75", "MUJOCO_GL": "egl"},
         executable_exists=lambda name: name in {"ros2"},
         module_available=lambda name: name == "mujoco",
-        path_exists=lambda path: str(path).replace("\\", "/")
-        in {setup_path, mid360_path},
+        path_exists=lambda path: str(path).replace("\\", "/") in {setup_path, mid360_path},
         pct_runtime_report={
             "ok": True,
             "host_platform_supported": True,
@@ -7553,10 +7349,7 @@ def test_server_sim_host_preflight_blocks_missing_mujoco_world_asset():
     assert check["ok"] is False
     assert check["evidence"]["relative_path"] == server_sim_closure.MUJOCO_WORLD_ASSET_REL
     assert check["evidence"]["exists"] is False
-    assert any(
-        "industrial_park_scene.xml" in command
-        for command in check["diagnostic_commands"]
-    )
+    assert any("industrial_park_scene.xml" in command for command in check["diagnostic_commands"])
 
 
 def test_server_sim_host_preflight_blocks_missing_localizer_runtime():
@@ -7581,10 +7374,7 @@ def test_server_sim_host_preflight_blocks_missing_localizer_runtime():
     check = gate["checks"]["localizer_runtime"]
     assert check["ok"] is False
     assert check["evidence"]["missing_executables"] == ["localizer_node"]
-    assert any(
-        "ros2 pkg executables localizer" in command
-        for command in check["diagnostic_commands"]
-    )
+    assert any("ros2 pkg executables localizer" in command for command in check["diagnostic_commands"])
 
 
 def test_server_sim_host_preflight_accepts_localizer_runtime():
@@ -7599,9 +7389,7 @@ def test_server_sim_host_preflight_accepts_localizer_runtime():
         path_exists=_native_pct_preflight_path_exists,
         pct_runtime_report={"ok": True},
         hardware_subscribers=lambda: [],
-        ros2_package_executables=lambda package: (
-            ["localizer localizer_node"] if package == "localizer" else []
-        ),
+        ros2_package_executables=lambda package: (["localizer localizer_node"] if package == "localizer" else []),
     )
 
     assert report["ok"] is True
@@ -7683,9 +7471,7 @@ def test_server_sim_host_preflight_setup_plan_orders_native_runtime_failures():
 
     assert report["ok"] is False
     assert report["blocked_gates"] == ["native_pct_mujoco"]
-    failed_checks = [
-        item["check"] for item in report["host_setup_plan"]["failed_checks"]
-    ]
+    failed_checks = [item["check"] for item in report["host_setup_plan"]["failed_checks"]]
     assert failed_checks == [
         "pct_native",
         "ros2_humble",
@@ -7698,18 +7484,12 @@ def test_server_sim_host_preflight_setup_plan_orders_native_runtime_failures():
     ]
     for item in report["host_setup_plan"]["failed_checks"]:
         assert item["gates"] == ["native_pct_mujoco"]
-    commands = {
-        item["check"]: item["diagnostic_commands"]
-        for item in report["host_setup_plan"]["failed_checks"]
-    }
+    commands = {item["check"]: item["diagnostic_commands"] for item in report["host_setup_plan"]["failed_checks"]}
     assert any("pct_runtime_preflight.py" in command for command in commands["pct_native"])
     assert any("source /opt/ros/humble/setup.bash" in command for command in commands["ros2_humble"])
     assert any("import mujoco" in command for command in commands["mujoco_headless"])
     assert any("mid360.npy" in command for command in commands["mid360_pattern"])
-    assert any(
-        "industrial_park_scene.xml" in command
-        for command in commands["mujoco_world_asset"]
-    )
+    assert any("industrial_park_scene.xml" in command for command in commands["mujoco_world_asset"])
     assert any("ROS_DOMAIN_ID" in command for command in commands["isolated_ros_domain"])
     assert any("ros2 topic info" in command for command in commands["hardware_subscribers"])
     assert any("local_planner" in command for command in commands["ros2_local_planner"])
@@ -7830,8 +7610,7 @@ def test_server_sim_closure_rejects_navigation_replay_report_and_topic_jsonl_mix
     with pytest.raises(SystemExit) as exc:
         server_sim_closure.main()
     assert (
-        "--navigation-replay-deviation-report cannot be combined with "
-        "--navigation-replay-deviation-topic-jsonl"
+        "--navigation-replay-deviation-report cannot be combined with --navigation-replay-deviation-topic-jsonl"
     ) in str(exc.value)
 
 
@@ -7852,10 +7631,7 @@ def test_server_sim_closure_rejects_navigation_replay_topic_jsonl_with_host_pref
 
     with pytest.raises(SystemExit) as exc:
         server_sim_closure.main()
-    assert (
-        "--navigation-replay-deviation-topic-jsonl cannot be combined with "
-        "--host-preflight"
-    ) in str(exc.value)
+    assert ("--navigation-replay-deviation-topic-jsonl cannot be combined with --host-preflight") in str(exc.value)
 
 
 def test_server_sim_closure_cli_passes_skip_host_blocked_to_run_missing(
@@ -7904,33 +7680,16 @@ def test_server_sim_closure_cli_passes_skip_host_blocked_to_run_missing(
 
 
 def test_server_sim_closure_fastlio2_dynamic_inspection_command_uses_pct_contract():
-    spec = next(
-        gate for gate in server_sim_closure.GATES if gate.name == "fastlio2_dynamic_inspection"
-    )
-    moving_sweep = next(
-        gate for gate in server_sim_closure.GATES if gate.name == "moving_obstacle_sweep"
-    )
-    fastlio_gate = Path("sim/scripts/mujoco/live_gate.py").read_text(
-        encoding="utf-8"
-    )
-    fastlio_report = Path("sim/scripts/mujoco_live/report.py").read_text(
-        encoding="utf-8"
-    )
-    fastlio_launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
-        encoding="utf-8"
-    )
+    spec = next(gate for gate in server_sim_closure.GATES if gate.name == "fastlio2_dynamic_inspection")
+    moving_sweep = next(gate for gate in server_sim_closure.GATES if gate.name == "moving_obstacle_sweep")
+    fastlio_gate = Path("sim/scripts/mujoco/live_gate.py").read_text(encoding="utf-8")
+    fastlio_report = Path("sim/scripts/mujoco_live/report.py").read_text(encoding="utf-8")
+    fastlio_launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
+    assert "artifacts/server_sim_closure/mujoco_fastlio2_live*/inspection*/report.json" in spec.default_patterns
+    assert ("LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER=${LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER:-pct}") in spec.command
     assert (
-        "artifacts/server_sim_closure/mujoco_fastlio2_live*/inspection*/report.json"
-        in spec.default_patterns
-    )
-    assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_PLANNER:-pct}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT="
-        "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-timed_pointcloud2}"
+        "LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT=${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-timed_pointcloud2}"
     ) in spec.command
     assert (
         "LINGTU_MUJOCO_LIVE_INSPECTION_TOMOGRAM="
@@ -7943,46 +7702,32 @@ def test_server_sim_closure_fastlio2_dynamic_inspection_command_uses_pct_contrac
         "artifacts/server_sim_closure/large_terrain/large_terrain_scene.xml}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_INSPECTION_GOALS="
-        "${LINGTU_MUJOCO_LIVE_INSPECTION_GOALS:-0.5,0.05;1.0,0.1;1.5,0.15}"
+        "LINGTU_MUJOCO_LIVE_INSPECTION_GOALS=${LINGTU_MUJOCO_LIVE_INSPECTION_GOALS:-0.5,0.05;1.0,0.1;1.5,0.15}"
+    ) in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM=${LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM:-1}") in spec.command
+    assert (
+        "LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER=${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-10}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM="
-        "${LINGTU_MUJOCO_LIVE_BUILD_TOMOGRAM:-1}"
+        "LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_START_S=${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_START_S:-2}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER="
-        "${LINGTU_MUJOCO_LIVE_FASTLIO_IESKF_MAX_ITER:-10}"
+        "LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT=${LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT:-5.0}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_START_S="
-        "${LINGTU_MUJOCO_LIVE_MOVING_OBSTACLE_START_S:-2}"
+        "LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT=${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-0.25}"
+    ) in spec.command
+    assert ("LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z=${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-0.20}") in spec.command
+    assert (
+        "LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES=${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-6}"
     ) in spec.command
     assert (
-        "LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT="
-        "${LINGTU_MUJOCO_LIVE_CMD_VEL_MUX_SOURCE_TIMEOUT:-5.0}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT="
-        "${LINGTU_MUJOCO_LIVE_CMD_VEL_ANGULAR_LIMIT:-0.25}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z="
-        "${LINGTU_MUJOCO_LIVE_NAV_MAX_ANGULAR_Z:-0.20}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES="
-        "${LINGTU_MUJOCO_LIVE_RUNTIME_FAULT_CONFIRM_SAMPLES:-6}"
-    ) in spec.command
-    assert (
-        "LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M="
-        "${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-1.0}"
+        "LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M=${LINGTU_MUJOCO_LIVE_RUNTIME_MOTION_FAULT_MIN_SIM_M:-1.0}"
     ) in spec.command
     assert "--run-matrix" in moving_sweep.command
     assert "--report-glob" not in moving_sweep.command
     assert (
-        "LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT="
-        "${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-timed_pointcloud2}"
+        "LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT=${LINGTU_MUJOCO_LIVE_FASTLIO_LIDAR_INPUT:-timed_pointcloud2}"
     ) in moving_sweep.command
     assert "--fastlio-lidar-input" in fastlio_gate
     assert 'choices=["livox_custom_msg", "timed_pointcloud2"]' in fastlio_gate
@@ -7999,10 +7744,12 @@ def test_server_sim_closure_accepts_fastlio2_dynamic_inspection_report_override(
 ):
     report = tmp_path / "dynamic.json"
     parser = server_sim_closure._build_parser()
-    args = parser.parse_args([
-        "--fastlio2-dynamic-inspection-report",
-        str(report),
-    ])
+    args = parser.parse_args(
+        [
+            "--fastlio2-dynamic-inspection-report",
+            str(report),
+        ]
+    )
 
     assert args.fastlio2_dynamic_inspection_report == report
 
@@ -8334,9 +8081,7 @@ def test_server_sim_closure_reports_native_pct_ros2_runtime_boundary(tmp_path: P
                 "ros_distro": "",
                 "diagnostic_commands": ["ros2 pkg executables local_planner"],
             },
-            "blockers": [
-                "ROS2 runtime unavailable for native local planner gate: ros2 CLI is unavailable"
-            ],
+            "blockers": ["ROS2 runtime unavailable for native local planner gate: ros2 CLI is unavailable"],
         },
     )
 
@@ -8401,9 +8146,7 @@ def test_server_sim_closure_reports_native_pct_ros2_boundary_with_bad_pct_eviden
                 "ros_distro": "",
                 "diagnostic_commands": ["ros2 pkg executables local_planner"],
             },
-            "blockers": [
-                "ROS2 runtime unavailable for native local planner gate: ros2 CLI is unavailable"
-            ],
+            "blockers": ["ROS2 runtime unavailable for native local planner gate: ros2 CLI is unavailable"],
         },
     )
 
@@ -8536,10 +8279,7 @@ def test_server_sim_closure_rejects_policy_nav_legacy_local_backends(tmp_path: P
     assert summary["ok"] is False
     assert summary["verified"]["policy_nav"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert (
-        "full_stack_policy_nav global_planner_backend_status.configured_backend is not octoplanner3d"
-        in gaps
-    )
+    assert "full_stack_policy_nav global_planner_backend_status.configured_backend is not octoplanner3d" in gaps
     assert "full_stack_policy_nav local_planner_backend_actual is not nanobind" in gaps
     assert "full_stack_policy_nav path_follower_backend_actual is not nav_kernel" in gaps
 

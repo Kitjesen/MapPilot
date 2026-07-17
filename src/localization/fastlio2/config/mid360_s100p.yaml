@@ -54,17 +54,47 @@ ng: 0.01
 nba: 0.0001
 nbg: 0.0001
 
-imu_init_num: 20
+# Use a 2 s stationary window at the live 200 Hz IMU rate. The previous
+# 20-sample (0.1 s) window left enough gyro-bias error to leak gravity into
+# horizontal velocity while the robot was motionless.
+imu_init_num: 400
 near_search_num: 3
 ieskf_max_iter: 5
+# Preserve the last bounded LiDAR correction when the solver reaches the
+# iteration limit.  Degenerate non-converged updates remain rejected below.
+reject_nonconverged_update: false
+reject_degenerate_nonconverged_update: true
 max_update_velocity_mps: 3.0
 max_update_velocity_delta_mps: 1.0
+# The filter initializes the three position variances at 1 m^2 each, so this
+# threshold must stay above the 3 m^2 startup trace. Fail closed at the native
+# runtime's 100 m^2 safety envelope; accepted LiDAR updates rapidly reduce the
+# healthy field trace to the 1e-5 m^2 range.
+fastlio_max_pos_cov_trace: 100.0
+
+# Saved-map relocalization safety. map and odom are both gravity-aligned, so
+# map->odom may translate and rotate around Z but must never acquire roll or
+# pitch. Periodic corrections are deliberately much tighter than the initial
+# seeded alignment; large corrections indicate an ambiguous GICP solution and
+# are rejected while the continuous Fast-LIO odometry remains active.
+track_against_map_max_translation_m: 0.15
+track_against_map_max_yaw_deg: 2.0
+track_against_map_max_tilt_deg: 5.0
 
 gravity_align: true
 esti_il: false
 
 r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 t_il: [-0.011, -0.02329, 0.04412]
+
+# Thunder V4 front-nose lidar1 mount. Fast-LIO estimates the MID-360 IMU pose,
+# while the public odometry/cloud contract is the navigation body frame. These
+# values are T_body_imu, solved from the V4 T_body_lidar and the internal t_il:
+#   T_body_imu = T_body_lidar * inverse(T_imu_lidar)
+# The corresponding gravity direction in the IMU frame is approximately
+# [0.707, 0, -0.707], matching the live stationary sample on this robot.
+navigation_body_from_imu_rotation: [0.707106781186548, 0.0, 0.707106781186548, 0.0, -1.0, 0.0, 0.707106781186548, 0.0, -0.707106781186548]
+navigation_body_from_imu_translation: [0.379456698274331, -0.02329, 0.097177670845584]
 
 lidar_cov_inv: 1000.0
 

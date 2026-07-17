@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_URL="${LINGTU_ORBBEC_ROS2_REPO:-https://github.com/orbbec/OrbbecSDK_ROS2.git}"
 REF="${LINGTU_ORBBEC_ROS2_REF:-v2.8.6}"
-DEST="${LINGTU_ORBBEC_ROS2_DIR:-src/drivers/real/camera/OrbbecSDK_ROS2}"
+DEST="${LINGTU_ORBBEC_ROS2_DIR:-src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2}"
 
 if [[ -d "$DEST/.git" ]]; then
   git -C "$DEST" fetch --tags --depth 1 origin "$REF"

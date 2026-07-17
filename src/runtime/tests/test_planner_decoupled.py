@@ -12,15 +12,15 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "semantic", "planner"))
 
+from decision.modules.llm import LLMModule, LLMRequest, LLMResponse
 from runtime import Blueprint, In, Module, Out
-from decision.modules.llm_module import LLMModule, LLMRequest, LLMResponse
 
 # ---------------------------------------------------------------------------
 # LLMRequest / LLMResponse
 # ---------------------------------------------------------------------------
 
-class TestLLMTypes(unittest.TestCase):
 
+class TestLLMTypes(unittest.TestCase):
     def test_simple_request(self):
         req = LLMRequest.simple("find the chair", system="You are a nav agent")
         self.assertEqual(len(req.messages), 2)
@@ -44,8 +44,8 @@ class TestLLMTypes(unittest.TestCase):
 # LLMModule
 # ---------------------------------------------------------------------------
 
-class TestLLMModule(unittest.TestCase):
 
+class TestLLMModule(unittest.TestCase):
     def test_ports(self):
         mod = LLMModule()
         self.assertIn("request", mod.ports_in)
@@ -93,8 +93,8 @@ class TestLLMModule(unittest.TestCase):
 # Pipeline: GoalResolver → LLMModule wiring
 # ---------------------------------------------------------------------------
 
-class TestLLMPipeline(unittest.TestCase):
 
+class TestLLMPipeline(unittest.TestCase):
     def test_two_modules_wire_via_blueprint(self):
         """GoalResolver-like module can wire to LLMModule via request/response."""
 
@@ -152,12 +152,10 @@ class TestLLMPipeline(unittest.TestCase):
             handle.start()
 
             requester = handle.get_module("Requester")
-            requester.llm_request.publish(
-                LLMRequest.simple("test", request_id="swap"))
+            requester.llm_request.publish(LLMRequest.simple("test", request_id="swap"))
 
             time.sleep(0.5)
-            self.assertIsNotNone(requester.llm_response.latest,
-                                 f"No response from backend={backend}")
+            self.assertIsNotNone(requester.llm_response.latest, f"No response from backend={backend}")
             handle.stop()
 
 
@@ -165,8 +163,8 @@ class TestLLMPipeline(unittest.TestCase):
 # Full perception → planner pipeline
 # ---------------------------------------------------------------------------
 
-class TestFullDecoupledPipeline(unittest.TestCase):
 
+class TestFullDecoupledPipeline(unittest.TestCase):
     def test_image_to_goal_pipeline(self):
         """Image → Detector → GoalResolver → LLM → Goal, all via Blueprint."""
         import numpy as np
@@ -184,7 +182,7 @@ class TestFullDecoupledPipeline(unittest.TestCase):
                 self.detections.subscribe(self._on_det)
 
             def _on_det(self, det: DetectionResult):
-                labels = [d.label for d in det.detections if hasattr(d, 'label')]
+                labels = [d.label for d in det.detections if hasattr(d, "label")]
                 self.goal.publish(f"goal_from_{labels}")
 
         # Mock detector backend
@@ -192,8 +190,7 @@ class TestFullDecoupledPipeline(unittest.TestCase):
 
         from runtime.tests._test_utils import _MockDetectorBackend
 
-        with patch.object(DetectorModule, '_create_backend',
-                         return_value=_MockDetectorBackend()):
+        with patch.object(DetectorModule, "_create_backend", return_value=_MockDetectorBackend()):
             bp = Blueprint()
             bp.add(DetectorModule, detector="yoloe")
             bp.add(FakePlanner)

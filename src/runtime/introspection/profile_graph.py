@@ -12,6 +12,37 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from runtime.blueprint import Blueprint
+from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+from runtime.blueprints.stacks.slam import (
+    normalize_slam_profile,
+    slam_adapter_module_name,
+    slam_module_name,
+)
+from runtime.blueprints.stacks.stack_config import needs_lidar_for_slam
+from runtime.blueprints.wires.context import (
+    MAP_OUT,
+)
+from runtime.contracts import (
+    CAMERA_COMPAT_CONFIG_FORCE,
+    CAMERA_CONFIG_FORCE,
+    CAMERA_ROLE,
+    GNSS_BACKEND_DDS,
+    GNSS_BACKEND_HW,
+    GNSS_BACKEND_REPLAY,
+    GNSS_BACKEND_WTRTK980,
+    GNSS_CONFIG_BACKEND,
+    HW_COMPAT_CONFIG_BRIDGE,
+    HW_COMPAT_CONFIG_ENABLE,
+    HW_CONFIG_BRIDGE,
+    HW_CONFIG_ENABLE,
+    HW_ROLE,
+)
+from runtime.profiles.binding_policy import (
+    localization_adapter_for_config,
+    map_output_adapter_enabled,
+    map_output_uses_dds,
+    map_output_uses_ros2,
+)
 from runtime.profiles.catalog.products import (
     LIGHTWEIGHT_PRODUCT_PROFILES,
     OPTIONAL_NATIVE_PRODUCT_PROFILES,
@@ -20,28 +51,6 @@ from runtime.profiles.catalog.products import (
     SIMULATION_PROFILES,
 )
 from runtime.profiles.catalog.robots import robot_driver_module_name
-from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
-from runtime.blueprints.wires.context import (
-    MAP_OUT,
-    NAV_IN,
-    NAV_OUT,
-)
-from runtime.blueprints.stacks.slam import (
-    normalize_slam_profile,
-    slam_adapter_module_name,
-    slam_module_name,
-)
-from runtime.blueprints.stacks.stack_config import needs_lidar_for_slam
-from runtime.profiles.binding_policy import (
-    localization_adapter_for_config,
-    map_output_adapter_enabled,
-    map_output_uses_dds,
-    map_output_uses_ros2,
-    navigation_input_adapter_enabled,
-    navigation_input_uses_ros2,
-    navigation_output_adapter_enabled,
-    navigation_output_uses_ros2,
-)
 from runtime.profiles.resolver import resolve_profile_config
 
 __all__ = [
@@ -60,6 +69,7 @@ __all__ = [
 @dataclass(frozen=True, order=True)
 class WireEdge:
     """A directed edge in the profile dependency graph between two module ports."""
+
     out_module: str
     out_port: str
     in_module: str
@@ -68,7 +78,7 @@ class WireEdge:
     topic: str | None = None
 
     @classmethod
-    def from_blueprint_spec(cls, spec: Any) -> "WireEdge":
+    def from_blueprint_spec(cls, spec: Any) -> WireEdge:
         transport = getattr(spec, "delivery_spec", getattr(spec, "transport", None))
         if isinstance(transport, str):
             pass
@@ -84,7 +94,7 @@ class WireEdge:
         )
 
     @classmethod
-    def from_graph_spec(cls, spec: Any) -> "WireEdge":
+    def from_graph_spec(cls, spec: Any) -> WireEdge:
         return cls(
             out_module=spec.out_module,
             out_port=spec.out_port,
@@ -106,6 +116,7 @@ class WireEdge:
 @dataclass(frozen=True)
 class ProfileGraph:
     """DAG representation of a runtime profile: which modules and explicit wires it includes."""
+
     profile: str
     modules: tuple[str, ...]
     explicit_wires: tuple[WireEdge, ...]
@@ -125,7 +136,6 @@ class ProfileGraph:
         )
 
 
-_NATIVE_CAMERA_DRIVERS = {"MujocoDriverModule"}
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -161,30 +171,44 @@ def _optional_bool(value: Any) -> bool | None:
     return bool(value)
 
 
+def _normalize_gnss_backend(value: Any) -> str | None:
+    if value is None:
+        return None
+    backend = str(value).strip().lower()
+    if not backend:
+        return None
+    if backend in {
+        GNSS_BACKEND_WTRTK980,
+        GNSS_BACKEND_HW,
+        GNSS_BACKEND_DDS,
+        GNSS_BACKEND_REPLAY,
+    }:
+        return backend
+    raise ValueError(
+        f"Unsupported gnss backend: {value!r}; expected one of "
+        f"{(GNSS_BACKEND_WTRTK980, GNSS_BACKEND_HW, GNSS_BACKEND_DDS, GNSS_BACKEND_REPLAY)}"
+    )
+
+
 def _static_driver_module(robot: str) -> str:
     return robot_driver_module_name(robot)
 
 
-def _needs_camera_bridge(config: dict[str, Any], *, driver_module: str) -> bool:
+def _needs_camera(config: dict[str, Any], *, driver_module: str) -> bool:
+    force_camera = bool(config.get(CAMERA_CONFIG_FORCE, config.get(CAMERA_COMPAT_CONFIG_FORCE)))
     return bool(config.get("enable_camera", True)) and (
-        bool(config.get("force_camera_bridge"))
-        or (
-            driver_module not in _NATIVE_CAMERA_DRIVERS
-            and not bool(config.get("use_driver_camera", False))
-        )
+        force_camera or not bool(config.get("use_driver_camera", False))
     )
 
 
-def _camera_bridge_module_enabled(config: dict[str, Any], *, driver_module: str) -> bool:
-    return bool(config.get("enable_camera", True)) or bool(
-        config.get("enable_ros2_camera_bridge")
-    )
+def _camera_enabled(config: dict[str, Any], *, driver_module: str) -> bool:
+    return bool(config.get("enable_camera", True)) or bool(config.get("enable_ros2_camera_bridge"))
 
 
-def _static_device_manager_modules() -> tuple[str, ...]:
-    """Mirror stacks.system.device_manager without importing devices."""
+def _static_hw_modules() -> tuple[str, ...]:
+    """Mirror stacks.system.hw without importing devices."""
 
-    return ("DeviceManager",) if (_REPO_ROOT / "config" / "devices.yaml").exists() else ()
+    return (HW_ROLE,) if (_REPO_ROOT / "config" / "devices.yaml").exists() else ()
 
 
 def _static_gnss_module_names(config: dict[str, Any]) -> tuple[str, ...]:
@@ -208,11 +232,25 @@ def _static_gnss_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     if not gnss_cfg.get("enabled", False):
         return ()
     serial_port = gnss_cfg.get("device") or gnss_cfg.get("serial_port")
-    use_device_manager_bridge = _optional_bool(gnss_cfg.get("device_manager_bridge"))
-    if use_device_manager_bridge is None:
-        use_device_manager_bridge = not bool(serial_port)
+    requested_backend = config.get(GNSS_CONFIG_BACKEND) or gnss_cfg.get(GNSS_CONFIG_BACKEND) or gnss_cfg.get("backend")
+    requested_backend = _normalize_gnss_backend(requested_backend)
+    use_hw_bridge = _optional_bool(gnss_cfg.get(HW_CONFIG_BRIDGE, gnss_cfg.get(HW_COMPAT_CONFIG_BRIDGE)))
+    if use_hw_bridge is None:
+        if requested_backend == GNSS_BACKEND_HW:
+            use_hw_bridge = True
+        elif requested_backend in {
+            GNSS_BACKEND_WTRTK980,
+            GNSS_BACKEND_DDS,
+            GNSS_BACKEND_REPLAY,
+        }:
+            use_hw_bridge = False
+        else:
+            use_hw_bridge = not bool(serial_port)
+    source_backend = requested_backend or (GNSS_BACKEND_HW if use_hw_bridge else GNSS_BACKEND_WTRTK980)
+    if not use_hw_bridge and source_backend == GNSS_BACKEND_WTRTK980 and serial_port:
+        return ()
     modules = ["GnssModule"]
-    if use_device_manager_bridge:
+    if use_hw_bridge:
         modules.append("GnssBridgeModule")
     if (gnss_cfg.get("rtcm") or {}).get("enabled", False):
         modules.append("NtripClientModule")
@@ -227,12 +265,12 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     enable_gateway = bool(config.get("enable_gateway", True))
     enable_teleop = bool(config.get("enable_teleop", True))
     enable_navigation = bool(config.get("enable_navigation", True))
-    enable_device_manager = bool(config.get("enable_device_manager", True))
+    enable_hw = bool(config.get(HW_CONFIG_ENABLE, config.get(HW_COMPAT_CONFIG_ENABLE, True)))
     enable_robot_driver = bool(config.get("enable_robot_driver", True))
 
     modules: list[str] = []
-    if enable_device_manager:
-        modules.extend(_static_device_manager_modules())
+    if enable_hw:
+        modules.extend(_static_hw_modules())
     if enable_robot_driver:
         modules.append(driver_module)
 
@@ -240,7 +278,9 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     if enable_lidar is None:
         enable_lidar = needs_lidar_for_slam(slam_profile)
     if enable_lidar:
-        modules.append("LidarModule")
+        modules.append("lidar")
+    if bool(config.get("enable_imu", False)):
+        modules.append("imu")
     if config.get("scene_xml", ""):
         modules.append("SimPointCloudProvider")
 
@@ -253,41 +293,45 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
 
     if bool(config.get("enable_map_modules", True)):
         modules.append("OccupancyGridModule")
-        if (
-            map_output_adapter_enabled(config)
-            and (map_output_uses_dds(config) or map_output_uses_ros2(config))
-        ):
+        if map_output_adapter_enabled(config) and (map_output_uses_dds(config) or map_output_uses_ros2(config)):
             modules.append(MAP_OUT)
-        modules.extend([
-            "VoxelGridModule",
-            "ESDFModule",
-            "ElevationMapModule",
-            "TraversabilityCostModule",
-            "nav.maps",
-        ])
+        modules.extend(
+            [
+                "VoxelGridModule",
+                "ESDFModule",
+                "ElevationMapModule",
+                "TraversabilityCostModule",
+                "maps.service",
+            ]
+        )
+
+    if _needs_camera(
+        config,
+        driver_module=driver_module,
+    ) and _camera_enabled(config, driver_module=driver_module):
+        modules.append(CAMERA_ROLE)
 
     if enable_semantic:
-        if _needs_camera_bridge(
-            config,
-            driver_module=driver_module,
-        ) and _camera_bridge_module_enabled(config, driver_module=driver_module):
-            modules.append("CameraBridgeModule")
         modules.extend(["PerceptionModule", "ReconstructionModule"])
+        if bool(config.get("enable_inspection_evidence", False)):
+            modules.append("InspectionEvidenceModule")
         if config.get("recon_save_dir", ""):
             modules.append("DatasetRecorderModule")
         if config.get("recon_server_url", ""):
             modules.append("ReconKeyframeExporterModule")
-        modules.extend([
-            "SemanticMapperModule",
-            "EpisodicMemoryModule",
-            "TaggedLocationsModule",
-            "VectorMemoryModule",
-            "TemporalMemoryModule",
-            "MissionLoggerModule",
-            "SemanticPlannerModule",
-            "LLMModule",
-            "VisualServoModule",
-        ])
+        modules.extend(
+            [
+                "SemanticMapperModule",
+                "EpisodicMemoryModule",
+                "TaggedLocationsModule",
+                "VectorMemoryModule",
+                "TemporalMemoryModule",
+                "MissionLoggerModule",
+                "SemanticPlannerModule",
+                "LLMModule",
+                "VisualServoModule",
+            ]
+        )
 
     if bool(config.get("enable_goals", True)):
         modules.append("nav.goals")
@@ -296,19 +340,8 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     if bool(config.get("enable_scheduler", False)):
         modules.append("TaskSchedulerModule")
 
-    if (
-        navigation_output_adapter_enabled(config)
-        and navigation_output_uses_ros2(config)
-    ):
-        modules.append(NAV_OUT)
-
     if enable_navigation:
         modules.append("nav.mission")
-        if (
-            navigation_input_adapter_enabled(config)
-            and navigation_input_uses_ros2(config)
-        ):
-            modules.append(NAV_IN)
         if bool(config.get("enable_frontier", False)):
             modules.append("WavefrontFrontierExplorer")
         if bool(config.get("enable_traversable_frontier", False)):
@@ -320,11 +353,12 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     if exploration_backend in {"tare", "tare_external"}:
         modules.extend(["TAREExplorerModule", "ExplorationSupervisorModule"])
     elif exploration_backend != "none":
-        raise ValueError(
-            f"unknown exploration backend for static profile graph: {exploration_backend}"
-        )
+        raise ValueError(f"unknown exploration backend for static profile graph: {exploration_backend}")
 
-    modules.extend(["nav.safety", "nav.velocity_mux", "GeofenceManagerModule"])
+    modules.append("nav.safety")
+    if str(config.get("command_output_mode", "")).strip().lower() != "endpoint_only":
+        modules.append("nav.velocity_mux")
+    modules.append("GeofenceManagerModule")
 
     if enable_gateway:
         modules.extend(["GatewayModule", "MCPServerModule"])
@@ -349,20 +383,22 @@ def _static_stack_wire_specs(config: dict[str, Any]) -> tuple[WireEdge, ...]:
     modules = set(_static_module_names(config))
     specs: list[WireEdge] = []
     if "WavefrontFrontierExplorer" in modules:
-        specs.extend([
-            WireEdge(
-                "WavefrontFrontierExplorer",
-                "exploration_goal",
-                "nav.mission",
-                "goal_pose",
-            ),
-            WireEdge(
-                "nav.mission",
-                "mission_status",
-                "WavefrontFrontierExplorer",
-                "navigation_status",
-            ),
-        ])
+        specs.extend(
+            [
+                WireEdge(
+                    "WavefrontFrontierExplorer",
+                    "exploration_goal",
+                    "nav.mission",
+                    "goal_pose",
+                ),
+                WireEdge(
+                    "nav.mission",
+                    "mission_status",
+                    "WavefrontFrontierExplorer",
+                    "navigation_status",
+                ),
+            ]
+        )
     return tuple(specs)
 
 
@@ -428,9 +464,8 @@ def graph_for_profile(
                 scene_xml=str(config.get("scene_xml", "")),
                 enable_semantic=bool(config.get("enable_semantic", True)),
                 safety_stop_wiring=bool(config.get("safety_stop_wiring", True)),
-                cmd_vel_mux_collision_monitor=bool(
-                    config.get("cmd_vel_mux_collision_monitor", False)
-                ),
+                cmd_vel_mux_collision_monitor=bool(config.get("cmd_vel_mux_collision_monitor", False)),
+                legacy_driver_sensor_fallback=bool(config.get("legacy_driver_sensor_fallback", False)),
             )
         ),
     ]

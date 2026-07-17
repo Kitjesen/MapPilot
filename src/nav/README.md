@@ -12,8 +12,9 @@ For a file-by-file purpose index, start with `FILES.md`.
 The default physical `thunder_field` product path is a native endpoint chain:
 
 ```text
-Gateway/MCP/CLI/SemanticPlanner
-  -> GoalService / nav.mission
+MCP/Agent/CLI
+  -> NavSkills
+  -> GoalService
   -> native field endpoint boundary
   -> lingtu-nav-dds
   -> DDS /nav/cmd_vel
@@ -28,7 +29,8 @@ Simulation, local-driver, and compatibility profiles can still run the
 Module-owned local execution chain:
 
 ```text
-Gateway/MCP/CLI
+MCP/Agent/CLI
+  -> NavSkills
   -> GoalService
   -> Navigation
   -> LocalPlanner
@@ -51,8 +53,9 @@ Main implementation locations:
 
 | Runtime piece | File | Role |
 | --- | --- | --- |
+| NavSkills | `src/nav/skills/skills_module.py` | L6 MCP/agent command adapter and status reader. |
 | GoalService | `src/nav/services/goals.py` | External goal/cancel/patrol command entry. |
-| Navigation | `src/nav/mission/navigation.py` | Mission FSM, global planning call, waypoint dispatch. |
+| Navigation | `src/nav/navigation.py` | Mission FSM, global planning call, waypoint dispatch. |
 | PlannerService | `src/nav/services/plan/contracts.py` | Internal planner interface consumed by `Navigation`. |
 | GlobalPlanner | `src/nav/services/plan/global_planner/service.py` | Map-backed global planning coordinator. |
 | LocalPlanner | `src/nav/services/plan/local_planner/service.py` | Local obstacle-avoidance Module around `nav_kernel`. |
@@ -99,13 +102,13 @@ Main implementation locations:
 
 | Area | Files | Responsibility |
 | --- | --- | --- |
-| Mission execution | `mission/` | Goal handling, OctoPlanner3D/A*/PCT planning requests, waypoint tracking, recovery, mission FSM. |
+| Mission execution | `navigation.py`, `model/`, `runtime/`, `tracking/` | Goal handling, planning requests, waypoint tracking, recovery, and mission FSM. |
 | Global planning dispatch | `services/plan/global_planner/service.py` | Select OctoPlanner3D/A*/PCT planner, validate paths, find safe nearby goals. |
 | Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/compat/direct_path.py` owns the Thunder Lite direct planner. |
-| Maps | `services/map_layers/`, `services/maps.py` | L2 realtime map layers plus the saved-map lifecycle service used by navigation, safety, gateway preview, and local autonomy. |
+| Maps | `services/map/layers/`, `services/maps.py` | L2 realtime map layers plus the saved-map lifecycle service used by navigation, safety, gateway preview, and local autonomy. |
 | Safety | `safety/`, `services/geofence.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
 | Frontier exploration | `exploration/` | Wavefront frontier goals and traversability-enriched frontier previews. |
-| IO adapter ports | Blueprint aliases `nav.in`, `nav.out`, `map.out` | Optional external control/visualization endpoints. Navigation output is unified under `nav.out`; map visualization leaves through `map.out`; ROS 2 implementations live under `nav/adapters/ros2/nav/`; `nav/` keeps no ROS runtime implementation. |
+| Process boundary | C++ `lingtu-nav-dds` | Owns typed DDS goal/cancel input and global/local path plus final command output. The Python graph has no `nav.in` or `nav.out` adapter modules. Map visualization remains a separate map-domain concern. |
 | Navigation services | `services/` | Map lifecycle, goal commands, patrol routes, optional schedules, and geofence state. |
 | Map lifecycle | `services/maps.py` | Save/use/build/delete maps through the native map-save adapter, map optimization metadata, and artifact builders. |
 | C++ hot path | `kernel/` | Header-first local planner/path follower/terrain kernels plus nanobind binding and C++ tests. Pytest does not cover this directory. |
@@ -114,7 +117,8 @@ Main implementation locations:
 
 | Service | Module | Status |
 | --- | --- | --- |
-| Saved maps and POIs | `MapService` | Mounted by `maps()` when map modules are enabled. |
+| MCP/agent navigation | `NavSkills` | Mounted as `nav.skills`; all commands pass through `GoalService`. |
+| Saved maps and POIs | `MapsModule` | Mounted by `maps()` when map modules are enabled. |
 | Goal commands | `GoalService` | Mounted by the full stack service layer; Gateway/MCP coordinate goals and cancels pass through it before `Navigation`. |
 | Patrol routes | `PatrolManagerModule` | Mounted by the full stack service layer; emits route waypoints to `Navigation`. |
 | Scheduled patrols | `TaskSchedulerModule` | Implemented but opt-in; enable with `enable_scheduler=True`. |

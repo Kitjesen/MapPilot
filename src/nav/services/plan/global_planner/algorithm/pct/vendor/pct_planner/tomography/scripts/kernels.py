@@ -1,6 +1,19 @@
 """Numba-accelerated tomography kernels for PCT planner cost computation."""
 
-from numba import jit, prange
+try:
+    from numba import jit, prange
+except ModuleNotFoundError:
+
+    def jit(*_jit_args, **_jit_kwargs):
+        if _jit_args and callable(_jit_args[0]) and len(_jit_args) == 1:
+            return _jit_args[0]
+
+        def decorator(func):
+            return func
+
+        return decorator
+
+    prange = range
 
 
 @jit(nopython=True)
@@ -73,17 +86,28 @@ def get_idx_relative(idx, dx, dy, n_row, n_col, layer_size):
 
 
 @jit(nopython=True, parallel=True)
-def travKernel_cpu(interval, grad_mag_sq, grad_mag_max, trav_cost,
-                   n_row, n_col, half_kernel_size,
-                   interval_min, interval_free, step_cross, step_stand,
-                   standable_th, cost_barrier):
+def travKernel_cpu(
+    interval,
+    grad_mag_sq,
+    grad_mag_max,
+    trav_cost,
+    n_row,
+    n_col,
+    half_kernel_size,
+    interval_min,
+    interval_free,
+    step_cross,
+    step_stand,
+    standable_th,
+    cost_barrier,
+):
     """
     CPU version of traversability kernel (Accelerated with Numba)
     Computes travel cost based on interval and terrain gradient
     """
     layer_size = n_row * n_col
-    step_cross_sq = step_cross ** 2
-    step_stand_sq = step_stand ** 2
+    step_cross_sq = step_cross**2
+    step_stand_sq = step_stand**2
 
     total_size = interval.size
     # Parallel loop over all grid cells
@@ -122,8 +146,7 @@ def travKernel_cpu(interval, grad_mag_sq, grad_mag_max, trav_cost,
 
 
 @jit(nopython=True, parallel=True)
-def inflationKernel_cpu(trav_cost, score_table, inflated_cost,
-                        n_row, n_col, half_kernel_size):
+def inflationKernel_cpu(trav_cost, score_table, inflated_cost, n_row, n_col, half_kernel_size):
     """
     CPU version of inflation kernel (Accelerated with Numba)
     Applies inflation to travel cost map
@@ -150,27 +173,42 @@ def inflationKernel_cpu(trav_cost, score_table, inflated_cost,
 # For backward compatibility, create wrapper functions
 def tomographyKernel(resolution, n_row, n_col, n_slice, slice_h0, slice_dh):
     """Wrapper function for CPU version"""
+
     def kernel_func(points, center, layers_g, layers_c):
-        tomographyKernel_cpu(points, center, layers_g, layers_c,
-                            resolution, n_row, n_col, n_slice, slice_h0, slice_dh)
+        tomographyKernel_cpu(points, center, layers_g, layers_c, resolution, n_row, n_col, n_slice, slice_h0, slice_dh)
+
     return kernel_func
 
 
-def travKernel(n_row, n_col, half_kernel_size,
-               interval_min, interval_free, step_cross, step_stand,
-               standable_th, cost_barrier):
+def travKernel(
+    n_row, n_col, half_kernel_size, interval_min, interval_free, step_cross, step_stand, standable_th, cost_barrier
+):
     """Wrapper function for CPU version"""
+
     def kernel_func(interval, grad_mag_sq, grad_mag_max, trav_cost):
-        travKernel_cpu(interval, grad_mag_sq, grad_mag_max, trav_cost,
-                      n_row, n_col, half_kernel_size,
-                      interval_min, interval_free, step_cross, step_stand,
-                      standable_th, cost_barrier)
+        travKernel_cpu(
+            interval,
+            grad_mag_sq,
+            grad_mag_max,
+            trav_cost,
+            n_row,
+            n_col,
+            half_kernel_size,
+            interval_min,
+            interval_free,
+            step_cross,
+            step_stand,
+            standable_th,
+            cost_barrier,
+        )
+
     return kernel_func
 
 
 def inflationKernel(n_row, n_col, half_kernel_size):
     """Wrapper function for CPU version"""
+
     def kernel_func(trav_cost, score_table, inflated_cost):
-        inflationKernel_cpu(trav_cost, score_table, inflated_cost,
-                           n_row, n_col, half_kernel_size)
+        inflationKernel_cpu(trav_cost, score_table, inflated_cost, n_row, n_col, half_kernel_size)
+
     return kernel_func

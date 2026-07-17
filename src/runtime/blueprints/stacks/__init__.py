@@ -7,12 +7,13 @@ from typing import Any
 
 _EXPORTS = {
     "compose_full_stack_modules": ("runtime.blueprints.stacks.composition", "compose_full_stack_modules"),
-    "device_manager": ("runtime.blueprints.stacks.system", "device_manager"),
     "driver": ("runtime.blueprints.stacks.driver", "driver"),
     "exploration": ("runtime.blueprints.stacks.exploration", "exploration"),
     "external_services": ("runtime.blueprints.stacks.system", "external_services"),
     "gateway": ("runtime.blueprints.stacks.gateway", "gateway"),
     "gnss": ("runtime.blueprints.stacks.system", "gnss"),
+    "hw": ("runtime.blueprints.stacks.system", "hw"),
+    "imu": ("runtime.blueprints.stacks.imu", "imu"),
     "lidar": ("runtime.blueprints.stacks.lidar", "lidar"),
     "maps": ("runtime.blueprints.stacks.maps", "maps"),
     "memory": ("runtime.blueprints.stacks.memory", "memory"),

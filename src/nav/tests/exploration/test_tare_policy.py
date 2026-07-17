@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
+from explore import explore_kernel_available
 from runtime.msgs.geometry import Pose, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
+
+requires_explore_kernel = pytest.mark.skipif(
+    not explore_kernel_available(),
+    reason="lingtu_explore_kernel not built; run scripts/build/build_explore_kernel.sh",
+)
 
 
 def _grid_payload() -> dict:
@@ -17,6 +25,7 @@ def _grid_payload() -> dict:
     }
 
 
+@requires_explore_kernel
 def test_portable_tare_policy_selects_reachable_frontier_viewpoint() -> None:
     from nav.exploration.tare.policy import PortableTAREPolicy
 
@@ -32,6 +41,7 @@ def test_portable_tare_policy_selects_reachable_frontier_viewpoint() -> None:
     assert decision.candidates
 
 
+@requires_explore_kernel
 def test_tare_module_in_process_emits_goal_from_exploration_grid() -> None:
     from nav.exploration.tare.module import TAREExplorerModule
 

@@ -19,17 +19,17 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[2]
 for candidate in (ROOT / "src", ROOT):
     path = str(candidate)
     if path not in sys.path:
         sys.path.insert(0, path)
 
-from cli.profiles_data import PROFILES
-from nav.exploration.tare.topics import TARE_REMAPS
-from runtime.runtime_interface import TOPICS
 from sim.engine.bridge.cmu_unity_lingtu_adapter import required_relay_contract
+
+from cli.profiles_data import PROFILES
+from explore.tare.topics import TARE_REMAPS
+from runtime.runtime_interface import TOPICS
 
 SCHEMA_VERSION = "lingtu.cmu_unity_sim_gate.v1"
 CMU_REPO_URL = "https://github.com/jizhang-cmu/autonomy_stack_mecanum_wheel_platform.git"
@@ -43,8 +43,7 @@ REQUIRED_CMU_PATHS: dict[str, str] = {
     "system_simulation_with_exploration": "system_simulation_with_exploration_planner.sh",
     "vehicle_system_launch": "src/base_autonomy/vehicle_simulator/launch/system_simulation.launch",
     "vehicle_exploration_launch": (
-        "src/base_autonomy/vehicle_simulator/launch/"
-        "system_simulation_with_exploration_planner.launch"
+        "src/base_autonomy/vehicle_simulator/launch/system_simulation_with_exploration_planner.launch"
     ),
     "vehicle_simulator_rviz": "src/base_autonomy/vehicle_simulator/rviz/vehicle_simulator.rviz",
     "tare_explore_world_launch": "src/exploration_planner/tare_planner/launch/explore_world.launch",
@@ -85,6 +84,7 @@ def _topic_contract_token_present(topic: str, source: str) -> bool:
         if value == topic and f"TOPICS.{name}" in source:
             return True
     return False
+
 
 OPTIONAL_CMU_TOPIC_CONTRACT: dict[str, str] = {
     "/global_path_full": "TARE full global exploration strategy path",
@@ -168,11 +168,13 @@ def _command_ok(command: list[str]) -> bool:
 def _ros2_help_ok() -> bool:
     if not ROS_HUMBLE_SETUP.exists():
         return False
-    return _command_ok([
-        "bash",
-        "-lc",
-        f"source {ROS_HUMBLE_SETUP} && ros2 --help",
-    ])
+    return _command_ok(
+        [
+            "bash",
+            "-lc",
+            f"source {ROS_HUMBLE_SETUP} && ros2 --help",
+        ]
+    )
 
 
 def _path_checks(workspace: Path, paths: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -266,14 +268,8 @@ def _check_cmu_workspace(
             REQUIRED_CMU_PATHS["path_follower_source"],
         )
     )
-    topic_presence = {
-        topic: (topic in combined_text)
-        for topic in CMU_TOPIC_CONTRACT
-    }
-    optional_topic_presence = {
-        topic: (topic in combined_text)
-        for topic in OPTIONAL_CMU_TOPIC_CONTRACT
-    }
+    topic_presence = {topic: (topic in combined_text) for topic in CMU_TOPIC_CONTRACT}
+    optional_topic_presence = {topic: (topic in combined_text) for topic in OPTIONAL_CMU_TOPIC_CONTRACT}
     _add_check(
         checks,
         "cmu_topic_contract",
@@ -315,10 +311,7 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     remap_presence = {
         f"{src}->{dst}": (
             TARE_REMAPS.get(src) == dst
-            and (
-                uses_adapter_alias_contract
-                or (src in topic_text and _topic_contract_token_present(dst, topic_text))
-            )
+            and (uses_adapter_alias_contract or (src in topic_text and _topic_contract_token_present(dst, topic_text)))
         )
         for src, dst in TARE_REMAPS.items()
     }
@@ -336,12 +329,8 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
     profile_required_tokens = {
         "tare_explore": "tare_explore" in PROFILES,
         "wavefront_frontier_disabled": tare_profile.get("enable_frontier") is False,
-        "traversable_frontier_disabled": (
-            tare_profile.get("enable_traversable_frontier") is False
-        ),
-        "exploration_backend_tare": (
-            tare_profile.get("exploration_backend") == "tare"
-        ),
+        "traversable_frontier_disabled": (tare_profile.get("enable_traversable_frontier") is False),
+        "exploration_backend_tare": (tare_profile.get("exploration_backend") == "tare"),
         "planner_octoplanner3d": tare_profile.get("planner") == "octoplanner3d",
     }
     _add_check(
@@ -354,18 +343,13 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         "sim_cmu_tare": "sim_cmu_tare" in PROFILES,
         "runtime_contract": cmu_profile.get("_runtime_contract") == "cmu_unity_external",
         "external_launcher": (
-            cmu_profile.get("_external_launcher")
-            == "sim/scripts/launch_cmu_unity_lingtu_runtime.sh"
+            cmu_profile.get("_external_launcher") == "sim/scripts/launch_cmu_unity_lingtu_runtime.sh"
         ),
         "robot_sim_endpoint": cmu_profile.get("_default_robot") == "sim_endpoint",
         "slam_none": cmu_profile.get("slam_profile") == "none",
-        "exploration_backend_tare_external": (
-            cmu_profile.get("exploration_backend") == "tare_external"
-        ),
+        "exploration_backend_tare_external": (cmu_profile.get("exploration_backend") == "tare_external"),
         "planner_octoplanner3d": cmu_profile.get("planner") == "octoplanner3d",
-        "nav_out_disabled": (
-            cmu_profile.get("enable_nav_out") is False
-        ),
+        "nav_out_disabled": (cmu_profile.get("enable_nav_out") is False),
     }
     _add_check(
         checks,
@@ -407,10 +391,7 @@ def _check_lingtu_contract() -> tuple[dict[str, Any], list[dict[str, Any]]]:
         },
     )
 
-    safety_presence = {
-        token: (token in adapter_text)
-        for token in LINGTU_ADAPTER_SAFETY_TOKENS
-    }
+    safety_presence = {token: (token in adapter_text) for token in LINGTU_ADAPTER_SAFETY_TOKENS}
     _add_check(
         checks,
         "lingtu_cmu_adapter_safety_contract",
@@ -522,11 +503,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
     lingtu, lingtu_checks = _check_lingtu_contract()
     checks.extend(lingtu_checks)
 
-    blockers = [
-        check["name"]
-        for check in checks
-        if check.get("required") is True and check.get("ok") is not True
-    ]
+    blockers = [check["name"] for check in checks if check.get("required") is True and check.get("ok") is not True]
     ok = not blockers
     return {
         "schema_version": SCHEMA_VERSION,
@@ -542,10 +519,7 @@ def build_report(args: argparse.Namespace) -> dict[str, Any]:
         "checks": checks,
         "blockers": blockers,
         "next_commands": [
-            (
-                "git clone --branch humble --depth 1 "
-                f"{CMU_REPO_URL} <cmu_workspace>"
-            ),
+            (f"git clone --branch humble --depth 1 {CMU_REPO_URL} <cmu_workspace>"),
             "download the Unity environment into src/base_autonomy/vehicle_simulator/mesh/unity/environment",
             "source /opt/ros/humble/setup.bash && colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release",
             (
@@ -562,7 +536,9 @@ def _build_parser() -> argparse.ArgumentParser:
     default_workspace = os.environ.get("LINGTU_CMU_AUTONOMY_WS") or str(DEFAULT_CMU_WORKSPACE)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cmu-workspace", default=default_workspace)
-    parser.add_argument("--json-out", type=Path, default=ROOT / "artifacts/server_sim_closure/cmu_unity_sim/report.json")
+    parser.add_argument(
+        "--json-out", type=Path, default=ROOT / "artifacts/server_sim_closure/cmu_unity_sim/report.json"
+    )
     parser.add_argument("--strict", action="store_true")
     parser.add_argument("--require-git", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--require-humble-branch", action=argparse.BooleanOptionalAction, default=True)

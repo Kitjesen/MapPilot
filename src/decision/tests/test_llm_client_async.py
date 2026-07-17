@@ -1,15 +1,4 @@
-"""
-test_llm_client_async.py 鈥?LLM 瀹㈡埛绔紓姝ヨ皟鐢ㄥ洖褰掓祴璇?(Round 14)
-
-楠岃瘉 asyncio 浜嬩欢寰幆浣跨敤鐨勬纭€э紝闃叉 DeprecationWarning 鍜屾閿併€?
-鏃犻渶 ROS2 鐜锛屾棤闇€鐪熷疄 API Key銆?
-
-瑕嗙洊:
-  - asyncio 浜嬩欢寰幆涓皟鐢?chat锛屾棤 DeprecationWarning
-  - ThreadPoolExecutor 绾跨▼涓皟鐢紝get_running_loop() 姝ｇ‘宸ヤ綔
-  - LLM 瓒呮椂杩斿洖 None/raise锛堜笉宕╂簝锛?
-  - backend='mock' 妯″紡鐩存帴杩斿洖鍥哄畾鍝嶅簲
-"""
+"""Decision module."""
 
 import asyncio
 import concurrent.futures
@@ -19,10 +8,9 @@ import unittest
 import warnings
 from unittest.mock import MagicMock, patch
 
-# semantic_planner 鍖呰矾寰?
 sys.path.insert(0, "D:/inovxio/brain/lingtu/src/decision")
 
-from decision.llm.llm_client import (
+from decision.llm.client import (
     LLMConfig,
     LLMError,
     MockLLMClient,
@@ -93,14 +81,9 @@ class TestAsyncEventLoop(unittest.TestCase):
                 loop.close()
 
             deprecation_warnings = [
-                x for x in w
-                if issubclass(x.category, DeprecationWarning)
-                and "event loop" in str(x.message).lower()
+                x for x in w if issubclass(x.category, DeprecationWarning) and "event loop" in str(x.message).lower()
             ]
-            self.assertEqual(
-                len(deprecation_warnings), 0,
-                f"Got unexpected DeprecationWarning: {deprecation_warnings}"
-            )
+            self.assertEqual(len(deprecation_warnings), 0, f"Got unexpected DeprecationWarning: {deprecation_warnings}")
         self.assertIsNotNone(result)
 
     def test_chat_in_threadpool_executor(self):
@@ -131,10 +114,7 @@ class TestAsyncEventLoop(unittest.TestCase):
         client = MockLLMClient(config)
 
         async def _multi_call():
-            tasks = [
-                client.chat([{"role": "user", "content": f"go to room {i}"}])
-                for i in range(5)
-            ]
+            tasks = [client.chat([{"role": "user", "content": f"go to room {i}"}]) for i in range(5)]
             return await asyncio.gather(*tasks)
 
         loop = asyncio.new_event_loop()
@@ -156,12 +136,11 @@ class TestLLMTimeout(unittest.TestCase):
         """Test documentation."""
         config = LLMConfig(backend="openai", timeout_sec=0.001, max_retries=0)
 
-        # Mock OpenAI 瀹㈡埛绔娇鍏惰秴鏃?
         with patch.dict("sys.modules", {"openai": MagicMock()}):
-            from decision.llm.llm_client import OpenAIClient
+            from decision.llm.client import OpenAIClient
+
             client = OpenAIClient(config)
 
-            # 妯℃嫙 _client.chat.completions.create 鎶涜秴鏃?
             mock_openai = MagicMock()
 
             async def _raise_timeout(**kw):
@@ -173,9 +152,7 @@ class TestLLMTimeout(unittest.TestCase):
             loop = asyncio.new_event_loop()
             try:
                 with self.assertRaises(LLMError) as ctx:
-                    loop.run_until_complete(
-                        client.chat([{"role": "user", "content": "hello"}])
-                    )
+                    loop.run_until_complete(client.chat([{"role": "user", "content": "hello"}]))
                 self.assertIn("failed", str(ctx.exception).lower())
             finally:
                 loop.close()
@@ -187,9 +164,7 @@ class TestLLMTimeout(unittest.TestCase):
 
         loop = asyncio.new_event_loop()
         try:
-            result = loop.run_until_complete(
-                client.chat([{"role": "user", "content": "find bed"}])
-            )
+            result = loop.run_until_complete(client.chat([{"role": "user", "content": "find bed"}]))
         finally:
             loop.close()
 

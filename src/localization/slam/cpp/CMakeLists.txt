@@ -7,7 +7,6 @@ option(LINGTU_SLAM_BUILD_PYTHON_BINDINGS "Build native SLAM Python bindings" OFF
 option(LINGTU_SLAM_BUILD_DDS_RUNTIME "Build ROS-free CycloneDDS C++ sensor-to-SLAM runtime" OFF)
 option(LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME "Deprecated alias for LINGTU_SLAM_BUILD_DDS_RUNTIME" OFF)
 option(LINGTU_SLAM_BUILD_CYCLONE_DDS_RUNTIME "Deprecated alias for LINGTU_SLAM_BUILD_DDS_RUNTIME" OFF)
-option(LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME "Build legacy ROS2/rclcpp DDS compatibility runtime" OFF)
 option(LINGTU_REQUIRE_BBS3D "Fail configure if cpu_bbs3d is not available" OFF)
 option(LINGTU_ENABLE_SMALL_GICP "Use small_gicp for native relocalization refine when available" ON)
 set(CPU_BBS3D_ROOT "" CACHE PATH "Optional local install prefix for cpu_bbs3d")
@@ -60,6 +59,7 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   find_package(Eigen3 REQUIRED)
   find_package(PCL REQUIRED COMPONENTS common io filters kdtree registration)
   find_package(yaml-cpp REQUIRED)
+  find_package(Threads REQUIRED)
   find_package(OpenMP QUIET)
   find_library(CPU_BBS3D_LIBRARY
     NAMES cpu_bbs3d libcpu_bbs3d.so
@@ -94,6 +94,8 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   endif()
 
   target_sources(lingtu_slam_contract PRIVATE
+    map_icp.cpp
+    semantic_map_client.cpp
     native_relocalizer.cpp
     "${FASTLIO2_DIR}/src/map_builder/commons.cpp"
     "${FASTLIO2_DIR}/src/map_builder/ieskf.cpp"
@@ -111,12 +113,17 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
     "${FASTLIO2_DIR}/src"
     "${FASTLIO2_DIR}/src/map_builder"
     "${LOCALIZER_DIR}/src/localizers"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include"
     ${SMALL_GICP_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS})
   target_link_libraries(lingtu_slam_contract PUBLIC
     Eigen3::Eigen
+    Threads::Threads
     yaml-cpp
     ${PCL_LIBRARIES})
+  if(CMAKE_DL_LIBS)
+    target_link_libraries(lingtu_slam_contract PUBLIC ${CMAKE_DL_LIBS})
+  endif()
   if(CPU_BBS3D_LIBRARY AND CPU_BBS3D_INCLUDE_DIR)
     target_compile_definitions(lingtu_slam_contract PRIVATE LINGTU_ENABLE_BBS3D=1)
     target_include_directories(lingtu_slam_contract PRIVATE ${CPU_BBS3D_INCLUDE_DIR})
@@ -140,9 +147,33 @@ endif()
 if(LINGTU_SLAM_BUILD_TESTS)
   add_executable(test_slam_contract test_slam.cpp)
   target_link_libraries(test_slam_contract PRIVATE lingtu_slam_contract)
+  add_executable(test_relocalization_gate test_relocalization_gate.cpp)
+  target_link_libraries(test_relocalization_gate PRIVATE lingtu_slam_contract)
+  add_executable(test_map_tracking_health test_map_tracking_health.cpp)
+  target_link_libraries(test_map_tracking_health PRIVATE lingtu_slam_contract)
   if(LINGTU_SLAM_FASTLIO2_BACKEND)
     add_executable(test_fastlio2_mock_flow test_fastlio2_mock_flow.cpp)
     target_link_libraries(test_fastlio2_mock_flow PRIVATE lingtu_slam_contract)
+    add_executable(test_initial_body_origin test_initial_body_origin.cpp)
+    target_link_libraries(test_initial_body_origin PRIVATE lingtu_slam_contract)
+    add_executable(test_icp_diagnostics test_icp_diagnostics.cpp)
+    target_include_directories(test_icp_diagnostics PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/../../localizer/src/localizers")
+    target_link_libraries(test_icp_diagnostics PRIVATE lingtu_slam_contract)
+    add_executable(test_imu_acceleration_scale
+      test_imu_acceleration_scale.cpp
+      "${FASTLIO2_DIR}/src/map_builder/commons.cpp"
+      "${FASTLIO2_DIR}/src/map_builder/ieskf.cpp"
+      "${FASTLIO2_DIR}/src/map_builder/imu_processor.cpp")
+    target_include_directories(test_imu_acceleration_scale PRIVATE
+      "${FASTLIO2_DIR}/src"
+      "${FASTLIO2_DIR}/src/map_builder"
+      ${PCL_INCLUDE_DIRS})
+    target_link_libraries(test_imu_acceleration_scale PRIVATE
+      Eigen3::Eigen
+      Threads::Threads
+      yaml-cpp
+      ${PCL_LIBRARIES})
   endif()
 endif()
 
@@ -187,37 +218,13 @@ if(LINGTU_SLAM_BUILD_PYTHON_BINDINGS)
   endif()
 endif()
 
-if(LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME)
-  find_package(ament_cmake REQUIRED)
-  find_package(rclcpp REQUIRED)
-  find_package(livox_ros_driver2 REQUIRED)
-  find_package(builtin_interfaces REQUIRED)
-  find_package(geometry_msgs REQUIRED)
-  find_package(sensor_msgs REQUIRED)
-  find_package(nav_msgs REQUIRED)
-  find_package(std_msgs REQUIRED)
-
-  add_executable(
-    lingtu_slam_ros2_dds_runtime
-    ../../adapters/ros2/cpp/ros2_dds_runtime.cpp)
-  target_compile_features(lingtu_slam_ros2_dds_runtime PRIVATE cxx_std_17)
-  target_include_directories(lingtu_slam_ros2_dds_runtime PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
-  target_link_libraries(lingtu_slam_ros2_dds_runtime lingtu_slam_contract)
-  ament_target_dependencies(lingtu_slam_ros2_dds_runtime
-    rclcpp
-    livox_ros_driver2
-    builtin_interfaces
-    geometry_msgs
-    sensor_msgs
-    nav_msgs
-    std_msgs)
-endif()
-
 if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   find_package(iceoryx_binding_c QUIET)
   find_package(CycloneDDS REQUIRED)
+
+  add_subdirectory(
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../message/cpp"
+    "${CMAKE_CURRENT_BINARY_DIR}/message_cpp")
 
   find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)
   set(_LINGTU_SLAM_IDL "${CMAKE_CURRENT_SOURCE_DIR}/../../../message/idl/lingtu_slam.idl")
@@ -248,6 +255,7 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   target_link_libraries(lingtu_slam_dds_runtime
     lingtu_slam_contract
     lingtu_slam_cyclone_idl
+    lingtu_dds_qos_profiles
     CycloneDDS::ddsc)
   add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)
 
@@ -257,5 +265,6 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
     "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
   target_link_libraries(lingtu_slam_control
     lingtu_slam_cyclone_idl
+    lingtu_dds_qos_profiles
     CycloneDDS::ddsc)
 endif()

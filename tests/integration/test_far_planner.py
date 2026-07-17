@@ -19,20 +19,28 @@ FAR Planner 集成测试 — terrain_analysis + FAR Planner 联调
 """
 
 import os
-import paramiko
-import time
+
+import pytest
+
+pytest.importorskip("paramiko", reason="SSH integration test — requires paramiko")
+
 import json
-import sys
 import math
+import sys
+import time
 import unittest
+
+import paramiko
 
 ROBOT = os.environ.get("S100P_HOST", "192.168.66.190")
 USER = os.environ.get("S100P_USER", "sunrise")
-PASS = os.environ.get("S100P_PASSWORD", "sunrise")
+PASS = os.environ.get("S100P_PASSWORD", "")
 
 _SKIP_REASON = None
 if not os.environ.get("S100P_HOST"):
     _SKIP_REASON = "S100P_HOST not set — skipping real-hardware integration test"
+elif not PASS:
+    _SKIP_REASON = "S100P_PASSWORD not set — skipping password-authenticated integration test"
 NAV_WS = "/home/sunrise/data/SLAM/navigation"
 SETUP = f"source /opt/ros/humble/setup.bash && source {NAV_WS}/install/setup.bash"
 PATHS_DIR = f"{NAV_WS}/install/local_planner/share/local_planner/paths"
@@ -320,9 +328,9 @@ if __name__ == '__main__':
     main()
 '''
         sftp = ssh.open_sftp()
-        with sftp.open('/tmp/far_test_harness.py', 'w') as f:
+        with sftp.open("/tmp/far_test_harness.py", "w") as f:
             f.write(harness_script)
-        sftp.chmod('/tmp/far_test_harness.py', 0o755)
+        sftp.chmod("/tmp/far_test_harness.py", 0o755)
         sftp.close()
         print("Test harness uploaded")
 
@@ -335,24 +343,24 @@ if __name__ == '__main__':
         # 这样避免了 terrain_analysis vs terrain_analysis_ext 的输出格式问题
         print("\n[Step 1] Starting FAR Planner (直连模式)...")
         far_cmd = (
-            f"ros2 run far_planner far_planner "
-            f"--ros-args "
-            f"-r /odom_world:=/nav/odometry "
-            f"-r /terrain_cloud:=/nav/terrain_map "
-            f"-r /scan_cloud:=/nav/terrain_map "
-            f"-r /terrain_local_cloud:=/nav/registered_cloud "
-            f"-r /goal_point:=/nav/goal_point "
-            f"-r /way_point:=/nav/way_point "
-            f"-r /navigation_boundary:=/nav/navigation_boundary "
-            f"-r /far_reach_goal_status:=/nav/far_reach_goal "
-            f"-p sensor_range:=15.0 "
-            f"-p robot_dim:=0.8 "
-            f"-p vehicle_height:=0.6 "
-            f"-p is_static_env:=true "
-            f"-p is_debug_output:=true "
-            f"-p main_run_freq:=5.0 "
-            f"-p voxel_dim:=0.1 "
-            f"-p world_frame:=odom "
+            "ros2 run far_planner far_planner "
+            "--ros-args "
+            "-r /odom_world:=/nav/odometry "
+            "-r /terrain_cloud:=/nav/terrain_map "
+            "-r /scan_cloud:=/nav/terrain_map "
+            "-r /terrain_local_cloud:=/nav/registered_cloud "
+            "-r /goal_point:=/nav/goal_point "
+            "-r /way_point:=/nav/way_point "
+            "-r /navigation_boundary:=/nav/navigation_boundary "
+            "-r /far_reach_goal_status:=/nav/far_reach_goal "
+            "-p sensor_range:=15.0 "
+            "-p robot_dim:=0.8 "
+            "-p vehicle_height:=0.6 "
+            "-p is_static_env:=true "
+            "-p is_debug_output:=true "
+            "-p main_run_freq:=5.0 "
+            "-p voxel_dim:=0.1 "
+            "-p world_frame:=odom "
         )
         run_bg(ssh, far_cmd)
         time.sleep(3)
@@ -377,7 +385,7 @@ if __name__ == '__main__':
         # Step 2: 运行测试 harness (直接发合成点云给 FAR)
         # ================================================================
         print("\n[Step 2] Running test harness (35s timeout)...")
-        harness_cmd = f"timeout 40 python3 /tmp/far_test_harness.py 2>&1"
+        harness_cmd = "timeout 40 python3 /tmp/far_test_harness.py 2>&1"
         _, out, err = ssh.exec_command(f"{SETUP} && {harness_cmd}", timeout=55)
         harness_output = out.read().decode()
         harness_err = err.read().decode()
@@ -387,8 +395,8 @@ if __name__ == '__main__':
 
         # 解析结果
         result_data = None
-        for line in harness_output.split('\n'):
-            if line.startswith('RESULT:'):
+        for line in harness_output.split("\n"):
+            if line.startswith("RESULT:"):
                 result_data = json.loads(line[7:])
                 break
 
@@ -397,27 +405,27 @@ if __name__ == '__main__':
 
             # F2: 可视图构建 — 检查 FAR 日志中有 vertices 输出
             # (通过 harness 收到的 phase 判断)
-            v_graph_built = result_data['phase'] in ('goal', 'monitor')
-            check("F2 可视图构建 (V-Graph 初始化)", v_graph_built,
-                  f"phase={result_data['phase']}")
+            v_graph_built = result_data["phase"] in ("goal", "monitor")
+            check("F2 可视图构建 (V-Graph 初始化)", v_graph_built, f"phase={result_data['phase']}")
 
             # F3: 收到航点
-            wp_ok = result_data['waypoint_received']
-            check("F3 收到 /nav/way_point 航点", wp_ok,
-                  f"pos={result_data.get('waypoint_pos')}")
+            wp_ok = result_data["waypoint_received"]
+            check("F3 收到 /nav/way_point 航点", wp_ok, f"pos={result_data.get('waypoint_pos')}")
 
             # F4: 航点方向正确 (目标在 x=10, 航点 x 应该 > 0)
-            if result_data['waypoint_pos']:
-                wx, wy, wz = result_data['waypoint_pos']
+            if result_data["waypoint_pos"]:
+                wx, wy, wz = result_data["waypoint_pos"]
                 direction_ok = wx > 0.5  # 航点在正前方
-                check("F4 航点方向正确 (朝向目标 x=10)", direction_ok,
-                      f"waypoint=({wx:.2f}, {wy:.2f})")
+                check("F4 航点方向正确 (朝向目标 x=10)", direction_ok, f"waypoint=({wx:.2f}, {wy:.2f})")
             else:
                 check("F4 航点方向正确", False, "无航点数据")
 
             # F5: elapsed time (goal sent at 10s, so waypoint should come before 35s)
-            check("F5 响应时间 < 35s", result_data['elapsed'] < 35,
-                  f"{result_data['elapsed']:.1f}s, terrain_map_count={result_data.get('terrain_map_count', 0)}")
+            check(
+                "F5 响应时间 < 35s",
+                result_data["elapsed"] < 35,
+                f"{result_data['elapsed']:.1f}s, terrain_map_count={result_data.get('terrain_map_count', 0)}",
+            )
         else:
             check("F2 可视图构建", False, "无结果数据")
             check("F3 收到航点", False, "无结果数据")
@@ -441,13 +449,13 @@ if __name__ == '__main__':
         ssh.close()
 
     # 汇总 — convert to unittest assertions
-    passed = sum(1 for r in results if r['pass'])
+    passed = sum(1 for r in results if r["pass"])
     total = len(results)
-    print(f"\n{'='*50}")
+    print(f"\n{'=' * 50}")
     print(f"FAR Planner 集成测试: {passed}/{total} PASS")
-    print(f"{'='*50}")
+    print(f"{'=' * 50}")
     self.assertEqual(passed, total, f"{passed}/{total} tests passed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

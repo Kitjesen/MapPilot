@@ -170,6 +170,7 @@ interface ConfirmModalProps {
   message: string
   confirmLabel?: string
   danger?: boolean
+  busy?: boolean
   onConfirm: () => void
   onCancel: () => void
 }
@@ -180,6 +181,7 @@ export function ConfirmModal({
   message,
   confirmLabel = '确认',
   danger = false,
+  busy = false,
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
@@ -189,17 +191,18 @@ export function ConfirmModal({
       title={title}
       icon={danger ? <AlertTriangle size={18} /> : <Save size={18} />}
       danger={danger}
-      onClose={onCancel}
+      onClose={busy ? () => undefined : onCancel}
       footer={
         <>
-          <button className={styles.btnCancel} onClick={onCancel}>
+          <button className={styles.btnCancel} onClick={onCancel} disabled={busy}>
             取消
           </button>
           <button
             className={danger ? styles.btnDanger : styles.btnPrimary}
             onClick={onConfirm}
+            disabled={busy}
           >
-            {confirmLabel}
+            {busy ? '处理中…' : confirmLabel}
           </button>
         </>
       }

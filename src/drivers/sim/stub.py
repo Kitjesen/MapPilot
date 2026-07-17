@@ -38,8 +38,9 @@ class StubConnection(Module, layer=1):
     odometry: Out[Odometry]
     alive: Out[bool]
 
-    def __init__(self, dt: float = 0.02, initial_x: float = 0.0,
-                 initial_y: float = 0.0, initial_yaw: float = 0.0, **kw):
+    def __init__(
+        self, dt: float = 0.02, initial_x: float = 0.0, initial_y: float = 0.0, initial_yaw: float = 0.0, **kw
+    ):
         super().__init__(**kw)
         self._dt = dt
         self._x = initial_x
@@ -80,13 +81,15 @@ class StubConnection(Module, layer=1):
 
     def _publish_odom(self):
         q = Quaternion.from_yaw(self._yaw)
-        self.odometry.publish(Odometry(
-            pose=Pose(Vector3(self._x, self._y, 0.0), q),
-            twist=Twist(Vector3(self._vx, self._vy, 0.0), Vector3(0.0, 0.0, self._wz)),
-            ts=time.time(),
-            frame_id=STUB_LEGACY_ODOM_FRAME_ID,
-            child_frame_id=STUB_BODY_FRAME_ID,
-        ))
+        self.odometry.publish(
+            Odometry(
+                pose=Pose(Vector3(self._x, self._y, 0.0), q),
+                twist=Twist(Vector3(self._vx, self._vy, 0.0), Vector3(0.0, 0.0, self._wz)),
+                ts=time.time(),
+                frame_id=STUB_LEGACY_ODOM_FRAME_ID,
+                child_frame_id=STUB_BODY_FRAME_ID,
+            )
+        )
 
 
 def stub_blueprint(**config) -> Blueprint:
@@ -104,7 +107,7 @@ def stub_blueprint(**config) -> Blueprint:
         "navigation",
         "default",
         seed_group="navigation",
-        fallback="nav.mission.navigation.Navigation",
+        fallback="nav.navigation.Navigation",
     )
     SafetyRing = stack_module(
         "safety",

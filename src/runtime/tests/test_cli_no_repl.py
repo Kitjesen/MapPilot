@@ -51,6 +51,9 @@ class _FakeBuilder:
         self._system.build_transport = transport
         return self._system
 
+    def route_contract(self, *args, **kwargs):
+        return self
+
 
 def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
     import cli.main as main_mod
@@ -66,14 +69,8 @@ def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
 
     monkeypatch.setattr(products_mod, "thunder_blueprint", _fake_thunder_blueprint)
 
-    fake_ros2 = types.ModuleType("runtime.adapters.ros2.context")
-    fake_ros2.shutdown_shared_executor = lambda: None
-    monkeypatch.setitem(sys.modules, "runtime.adapters.ros2.context", fake_ros2)
-
     fake_service_manager = types.ModuleType("runtime.service_manager")
-    fake_service_manager.get_service_manager = lambda: types.SimpleNamespace(
-        _started=[]
-    )
+    fake_service_manager.get_service_manager = lambda: types.SimpleNamespace(_started=[])
     monkeypatch.setitem(sys.modules, "runtime.service_manager", fake_service_manager)
 
     monkeypatch.setattr(main_mod, "setup_logging", lambda *args, **kwargs: tmp_path)
@@ -88,41 +85,12 @@ def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
     return calls
 
 
-def test_cli_shutdown_uses_runtime_ros2_shutdown_shim() -> None:
+def test_cli_shutdown_has_no_ros2_runtime_hook() -> None:
     source = Path("cli/main.py").read_text(encoding="utf-8-sig")
 
     assert "from runtime.ros2_context import shutdown_shared_executor" not in source
     assert "from runtime.adapters.ros2.context import shutdown_shared_executor" not in source
-    assert "from lingtu.ros2_shutdown import shutdown_ros2_runtime" in source
-
-
-def test_ros2_shutdown_is_noop_without_loaded_compat_context() -> None:
-    from lingtu.ros2_shutdown import shutdown_ros2_runtime
-
-    previous = sys.modules.pop("runtime.adapters.ros2.context", None)
-    try:
-        shutdown_ros2_runtime()
-        assert "runtime.adapters.ros2.context" not in sys.modules
-    finally:
-        if previous is not None:
-            sys.modules["runtime.adapters.ros2.context"] = previous
-
-
-def test_ros2_shutdown_calls_loaded_compat_context(monkeypatch) -> None:
-    from lingtu.ros2_shutdown import shutdown_ros2_runtime
-
-    called = {"shutdown": 0}
-    fake_ros2 = types.ModuleType("runtime.adapters.ros2.context")
-
-    def _shutdown_shared_executor() -> None:
-        called["shutdown"] += 1
-
-    fake_ros2.shutdown_shared_executor = _shutdown_shared_executor
-    monkeypatch.setitem(sys.modules, "runtime.adapters.ros2.context", fake_ros2)
-
-    shutdown_ros2_runtime()
-
-    assert called["shutdown"] == 1
+    assert "from lingtu.ros2_shutdown import shutdown_ros2_runtime" not in source
 
 
 def test_cli_help_shows_product_endpoint_aliases_not_legacy_board_names(
@@ -178,6 +146,8 @@ def test_lite_preflight_stays_on_lite_lifecycle_without_runtime_extra() -> None:
             "runtime_mode": "lite",
             "slam_profile": "none",
             "enable_native": False,
+            "python_autonomy_backend": "simple",
+            "python_path_follower_backend": "pid",
             "enable_gateway": False,
             "run_startup_checks": False,
         },
@@ -406,9 +376,7 @@ def test_octoplanner3d_preflight_points_to_standalone_builder(
     assert "build_octoplanner3d.sh" in output
 
 
-def test_no_repl_exits_nonzero_when_gateway_server_returns_false(
-    monkeypatch, tmp_path
-):
+def test_no_repl_exits_nonzero_when_gateway_server_returns_false(monkeypatch, tmp_path):
     import cli.main as main_mod
 
     gateway = _FakeGateway(run_result=False)
@@ -477,30 +445,30 @@ def test_in_process_profile_overrides_stale_runtime_env(monkeypatch, tmp_path, c
         "odometry=odom,map registered_cloud=body "
         "map_cloud=map global_path=map local_path=map,odom,body cmd_vel=body"
     ) in out
-    assert "Flow stages: endpoint_adapter[endpoint_adapter|native_to_canonical]" in out
+    assert "Path stages: endpoint_adapter[endpoint_adapter|native_to_canonical]" in out
     assert "global_planning[lingtu_navigation_or_planner_backend|map]" in out
-    assert "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist]" in out
+    assert "command_boundary[command_arbiter_to_driver|body_twist]" in out
     assert os.environ["LINGTU_PROFILE"] == "nav"
     assert os.environ["LINGTU_ENDPOINT"] == "thunder_field"
     assert os.environ["LINGTU_DATA_SOURCE"] == "thunder_field"
     assert os.environ["LINGTU_MODULE_TRANSPORT"] == "local"
     assert os.environ["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert os.environ["LINGTU_RUNTIME_CONTRACT"] == "thunder_field"
-    assert os.environ["LINGTU_COMMAND_SINK"] == "hardware_driver_after_cmd_vel_mux"
+    assert os.environ["LINGTU_COMMAND_SINK"] == "driver"
     assert os.environ["LINGTU_SIMULATION_ONLY"] == "0"
     assert saved_state["runtime"]["endpoint"] == "thunder_field"
     assert saved_state["runtime"]["data_source"] == "thunder_field"
     assert saved_state["runtime"]["runtime_contract"] == "thunder_field"
     assert saved_state["runtime"]["module_transport"] == "local"
     assert saved_state["runtime"]["endpoint_transport"] == "dds"
-    assert saved_state["runtime"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
+    assert saved_state["runtime"]["command_sink"] == "driver"
     assert saved_state["runtime"]["validation"] == {
         "ok": True,
         "blockers": [],
         "warnings": [],
     }
     assert saved_state["runtime"]["resolved_runtime_data_flow"][-1]["outputs"] == [
-        "hardware_driver_after_cmd_vel_mux",
+        "driver",
     ]
     assert len(calls["product"]) == 1
     assert calls["product"][0]["robot"] == "thunder"
@@ -605,40 +573,6 @@ def test_external_simulation_profile_runs_relative_launcher(monkeypatch):
 
 
 @pytest.mark.sim
-def test_pct_mujoco_profile_defaults_to_pct_video_launcher(monkeypatch):
-    import subprocess
-
-    import cli.main as main_mod
-
-    captured = {}
-
-    def _fake_run(cmd, *, cwd, env, check):
-        captured["cmd"] = cmd
-        captured["cwd"] = cwd
-        captured["env"] = env
-        captured["check"] = check
-        return types.SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-    monkeypatch.setattr(sys, "argv", ["lingtu.py", "sim_mujoco_pct_live"])
-
-    main_mod.main()
-
-    assert captured["cmd"] == [
-        "bash",
-        "sim/scripts/mujoco/launch_fastlio2_live.sh",
-        "pct-moving-obstacle-video",
-    ]
-    assert (Path(captured["cwd"]) / "lingtu.py").exists()
-    assert captured["env"]["LINGTU_PROFILE"] == "sim_mujoco_pct_live"
-    assert captured["env"]["LINGTU_ENDPOINT"] == "mujoco_live"
-    assert captured["env"]["LINGTU_DATA_SOURCE"] == "mujoco_fastlio2_live"
-    assert captured["env"]["LINGTU_ENDPOINT_TRANSPORT"] == "local"
-    assert captured["env"]["LINGTU_RUNTIME_CONTRACT"] == "mujoco_fastlio2_live"
-    assert captured["check"] is False
-
-
-@pytest.mark.sim
 def test_product_task_endpoint_routes_to_mujoco_live_launcher(monkeypatch):
     import subprocess
 
@@ -717,16 +651,13 @@ def test_external_launcher_uses_runtime_run_spec_env(monkeypatch, capsys):
         "local_path=map,odom,body cmd_vel=body"
     ) in output
     assert (
-        "Flow:     sensors=/lidar/raw_frame,/imu/raw "
+        "Path:     sensors=/lidar/raw_frame,/imu/raw "
         "localization_map=/slam/odometry,/slam/registered_cloud,/slam/map_cloud "
         "command=mujoco_velocity_adapter"
     ) in output
-    assert (
-        "Flow stages: endpoint_adapter[endpoint_adapter|native_to_canonical]"
-        in output
-    )
+    assert "Path stages: endpoint_adapter[endpoint_adapter|native_to_canonical]" in output
     assert "global_planning[lingtu_navigation_or_planner_backend|map]" in output
-    assert "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist]" in output
+    assert "command_boundary[command_arbiter_to_driver|body_twist]" in output
     assert captured["cmd"] == [
         "bash",
         "sim/scripts/mujoco/launch_fastlio2_live.sh",
@@ -751,7 +682,7 @@ def test_external_launcher_overrides_stale_runtime_env(monkeypatch, capsys):
     monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "hardware_driver_after_cmd_vel_mux")
+    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
     captured = {}
@@ -918,7 +849,7 @@ def test_switch_plan_prints_sim_to_real_boundary(monkeypatch, capsys):
     assert "/slam/odometry,/slam/registered_cloud,/slam/map_cloud" in out
     assert "Current data flow:" in out
     assert "Target data flow:" in out
-    assert "command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist]" in out
+    assert "command_boundary[command_arbiter_to_driver|body_twist]" in out
     assert "command_sink" in out
     assert "Current validation: PASS" in out
     assert "Target validation: PASS" in out
@@ -950,7 +881,7 @@ def test_switch_plan_json_prints_machine_payload(monkeypatch, capsys):
     assert '"/imu/raw"' in out
     assert '"current_validation": {' in out
     assert '"target_validation": {' in out
-    assert '"command_sink": "hardware_driver_after_cmd_vel_mux"' in out
+    assert '"command_sink": "driver"' in out
     assert '"ok": true' in out
 
 
@@ -1236,14 +1167,11 @@ def test_runtime_contract_default_prints_operator_summary(monkeypatch, capsys):
     assert "Real data flow:" in out
     assert "  endpoint_adapter" in out
     assert "Data sources:" in out
-    assert (
-        "  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw "
-        "normalized=/lidar/raw_frame,/imu/raw"
-    ) in out
+    assert ("  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw normalized=/lidar/raw_frame,/imu/raw") in out
     assert "Profile bindings:" in out
     assert "  nav->thunder_field mode=real_robot_saved_map_navigation" in out
     assert "Artifact formats:" in out
-    assert "  tomogram path=tomogram.pickle type=pct_tomogram frame_role=map" in out
+    assert "  octomap path=octomap.ot type=octomap_full_tree frame_role=map" in out
     assert "Adapter aliases:" in out
     assert "  fastlio2 /cloud_registered->/slam/registered_cloud" in out
     assert "Adapter relays:" in out
@@ -1328,21 +1256,14 @@ def test_runtime_audit_default_prints_operator_summary(monkeypatch, capsys):
     assert "Runtime audit: PASS" in out
     assert "Schema: lingtu.runtime_contract_audit.v1" in out
     assert "Validation gate:" in out
-    assert (
-        "  step=1 "
-        "required_when=before_any_runtime_contract_or_field_readiness_claim"
-    ) in out
+    assert ("  step=1 required_when=before_any_runtime_contract_or_field_readiness_claim") in out
     assert "Checks:" in out
     assert "  yaml_manifest ok=true blockers=0" in out
     assert "  runtime_validation_gates ok=true blockers=0" in out
     assert "Validation gate sequence:" in out
+    assert ("  step=1 runtime_audit required_when=before_any_runtime_contract_or_field_readiness_claim") in out
     assert (
-        "  step=1 runtime_audit "
-        "required_when=before_any_runtime_contract_or_field_readiness_claim"
-    ) in out
-    assert (
-        "  step=2 saved_map_artifact_gate "
-        "required_when=saved_map_tomogram_occupancy_or_pct_artifact_is_used"
+        "  step=2 saved_map_artifact_gate required_when=saved_map_octomap_or_occupancy_artifact_is_used"
     ) in out
     assert (
         "  step=3 real_runtime_evidence "
@@ -1373,57 +1294,25 @@ def test_runtime_audit_writes_json_out(monkeypatch, tmp_path, capsys):
     assert payload["validation_gate"]["acceptance_step"] == 1
     assert payload["checks"]["source_frame_contracts"]["ok"] is True
     assert payload["checks"]["source_frame_contracts"]["matches"] == []
-    assert (
-        "sim/scripts/mujoco/live_gate.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/gateway/schemas.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/runtime/msgs/geometry.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/runtime/msgs/nav.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/drivers/real/lidar/lidar_module.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/drivers/real/thunder/connection.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/drivers/real/thunder/han_dog_module.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/decision/modules/semantic_planner_module.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
-    assert (
-        "src/perception/perception_module.py"
-        in payload["checks"]["source_frame_contracts"]["checked_files"]
-    )
+    assert "sim/scripts/mujoco/live_gate.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/gateway/schemas.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/runtime/msgs/geometry.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/runtime/msgs/nav.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/drivers/real/lidar/module.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/drivers/real/thunder/connection.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/drivers/real/thunder/han_dog_module.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/decision/modules/semantic_planner.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/perception/perception_module.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
     assert (
         "sim/scripts/saved_map_relocalize_runtime_gate.py"
         in payload["checks"]["source_topic_contracts"]["checked_files"]
     )
     assert payload["checks"]["source_topic_contracts"]["ok"] is True
     assert payload["checks"]["source_topic_contracts"]["matches"] == []
-    assert (
-        "scripts/monitor/feishu_config_template.py"
-        in payload["checks"]["source_topic_contracts"]["checked_files"]
-    )
+    assert "scripts/monitor/feishu_config_template.py" in payload["checks"]["source_topic_contracts"]["checked_files"]
 
 
-def test_runtime_audit_source_frame_contracts_reject_direct_frame_constants(
-    monkeypatch, tmp_path
-):
+def test_runtime_audit_source_frame_contracts_reject_direct_frame_constants(monkeypatch, tmp_path):
     import cli.runtime_audit as audit_mod
 
     source_root = tmp_path / "src" / "localization"
@@ -1438,9 +1327,9 @@ def test_runtime_audit_source_frame_contracts_reject_direct_frame_constants(
     )
     bad_source = source_root / "bad_sim_driver.py"
     bad_source.write_text(
-        'frame_id = FRAMES.odom\n'
+        "frame_id = FRAMES.odom\n"
         'CONFIG = {"planning_frame_id": "map"}\n'
-        'class Bad:\n'
+        "class Bad:\n"
         '    frame_id: str = "map"\n'
         'frame_id = getattr(body, "frame_id", "map")\n'
         'PAYLOAD = {"frame_id": parsed.get("frame_id") or "map"}\n'
@@ -1507,14 +1396,11 @@ def test_runtime_audit_source_frame_contracts_reject_direct_frame_constants(
         },
     ]
     assert (
-        "source frame contract violation src/localization/bad_sim_driver.py:1 "
-        "direct_FRAMES_runtime_frames"
+        "source frame contract violation src/localization/bad_sim_driver.py:1 direct_FRAMES_runtime_frames"
     ) in result["blockers"]
 
 
-def test_runtime_audit_source_topic_contracts_reject_direct_runtime_topics(
-    monkeypatch, tmp_path
-):
+def test_runtime_audit_source_topic_contracts_reject_direct_runtime_topics(monkeypatch, tmp_path):
     import cli.runtime_audit as audit_mod
 
     source_root = tmp_path / "src" / "nav"
@@ -1550,10 +1436,9 @@ def test_runtime_audit_source_topic_contracts_reject_direct_runtime_topics(
             "text": 'ERROR = f"topic /nav/goal_pose missing"',
         }
     ]
-    assert (
-        "source topic contract violation src/nav/bad_nav_driver.py:1 "
-        "hardcoded_canonical_runtime_topic"
-    ) in result["blockers"]
+    assert ("source topic contract violation src/nav/bad_nav_driver.py:1 hardcoded_canonical_runtime_topic") in result[
+        "blockers"
+    ]
 
 
 def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
@@ -1579,7 +1464,7 @@ def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
             "lingtu.py",
             "saved-map-artifact-gate",
             str(map_dir),
-            "--require-tomogram",
+            "--require-octomap",
             "--require-occupancy",
             "--expected-data-source",
             "thunder_field",
@@ -1598,7 +1483,7 @@ def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
     assert cmd[0] == sys.executable
     assert Path(cmd[1]).name == "saved_map_artifact_gate.py"
     assert cmd[2] == str(map_dir)
-    assert "--require-tomogram" in cmd
+    assert "--require-octomap" in cmd
     assert "--require-occupancy" in cmd
     assert cmd[cmd.index("--expected-data-source") + 1] == "thunder_field"
     assert cmd[cmd.index("--expected-source-profile") + 1] == "nav"
@@ -1610,11 +1495,9 @@ def test_saved_map_artifact_gate_cli_invokes_script(monkeypatch, tmp_path):
 
 
 @pytest.mark.sim
-def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
-    monkeypatch, tmp_path, capsys
-):
+def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(monkeypatch, tmp_path, capsys):
     import cli.main as main_mod
-    import runtime.diagnostics.product_field_check as field_check_mod
+    import diagnostics.field.field_check as field_check_mod
 
     captured = {}
     out_path = tmp_path / "field_check.json"
@@ -1647,7 +1530,7 @@ def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
             "http://robot.local:5050",
             "--gateway-timeout-sec",
             "3.5",
-            "--require-tomogram",
+            "--require-octomap",
             "--require-occupancy",
             "--expected-data-source",
             "thunder_field",
@@ -1668,7 +1551,7 @@ def test_field_check_cli_defaults_to_simulation_mode_and_writes_json(
         "timeout_sec": 3.5,
         "mode": "simulation",
         "map_dir": str(map_dir),
-        "require_tomogram": True,
+        "require_octomap": True,
         "require_occupancy": True,
         "expected_data_source": "thunder_field",
         "expected_source_profile": "nav",
@@ -2063,9 +1946,7 @@ def test_saved_map_artifact_gate_cli_forwards_json_flag(monkeypatch, tmp_path):
     assert "--json" in cmd
 
 
-def test_real_runtime_evidence_cli_runs_read_only_collector(
-    monkeypatch, tmp_path, capsys
-):
+def test_real_runtime_evidence_cli_runs_read_only_collector(monkeypatch, tmp_path, capsys):
     import subprocess
 
     import cli.main as main_mod
@@ -2148,9 +2029,7 @@ def test_real_runtime_evidence_cli_propagates_gate_failure(monkeypatch, capsys):
     assert "--no-validate" in captured["cmd"]
 
 
-def test_real_runtime_evidence_cli_prints_validation_blockers(
-    monkeypatch, tmp_path, capsys
-):
+def test_real_runtime_evidence_cli_prints_validation_blockers(monkeypatch, tmp_path, capsys):
     import subprocess
 
     import cli.main as main_mod
@@ -2170,16 +2049,14 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
                         "nav_cmd_vel_nonzero": 0,
                     },
                     "hardware_boundary": {
-                        "command_sink": "hardware_driver_after_cmd_vel_mux",
+                        "command_sink": "driver",
                     },
                     "runtime_contract": {"name": "thunder_field", "ok": False},
                     "runtime_evidence": {
                         "ok": False,
                         "validation_gate": {
                             "acceptance_step": 3,
-                            "required_when": (
-                                "before_claiming_thunder_field_runtime_or_field_navigation"
-                            ),
+                            "required_when": ("before_claiming_thunder_field_runtime_or_field_navigation"),
                             "requires_prior_gates": ["runtime_audit"],
                             "conditional_prior_gates": [
                                 "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
@@ -2239,11 +2116,9 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
                                 "observed_inputs": ["/nav/cmd_vel"],
                                 "observed_outputs": [],
                                 "missing_inputs": [],
-                                "missing_outputs": [
-                                    "hardware_driver_after_cmd_vel_mux"
-                                ],
+                                "missing_outputs": ["driver"],
                                 "missing_signals": ["hardware_command_route"],
-                                "owner": "cmd_vel_mux_to_endpoint_sink",
+                                "owner": "command_arbiter_to_driver",
                                 "frame_role": "body_twist",
                                 "reason": "hardware boundary missing",
                             }
@@ -2279,9 +2154,7 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
     assert "Runtime contract: name=thunder_field ok=false" in out
     assert "Validation gate:" in out
     assert (
-        "  step=3 "
-        "required_when=before_claiming_thunder_field_runtime_or_field_navigation "
-        "prior=runtime_audit"
+        "  step=3 required_when=before_claiming_thunder_field_runtime_or_field_navigation prior=runtime_audit"
     ) in out
     assert "  real robot motion evidence missing" in out
     assert "  cmd_vel did not reach hardware boundary" in out
@@ -2292,7 +2165,7 @@ def test_real_runtime_evidence_cli_prints_validation_blockers(
     assert "Frame link evidence:" in out
     assert "  map_to_odom expected=map->odom observed=missing" in out
     assert "Data-flow evidence:" in out
-    assert "  command_boundary[cmd_vel_mux_to_endpoint_sink|body_twist] ok=false" in out
+    assert "  command_boundary[command_arbiter_to_driver|body_twist] ok=false" in out
 
 
 @pytest.mark.sim

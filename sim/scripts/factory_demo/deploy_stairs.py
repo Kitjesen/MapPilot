@@ -270,7 +270,10 @@ print("All done!")
 # === Deploy ===
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-ssh.connect('192.168.66.190', username='sunrise', password='sunrise')
+password = os.environ.get("S100P_PASSWORD")
+if not password:
+    raise SystemExit("S100P_PASSWORD is required")
+ssh.connect("192.168.66.190", username="sunrise", password=password)
 
 
 def run(cmd, t=120):

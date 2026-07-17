@@ -12,9 +12,8 @@
 #   "#hardware" makes go2rtc rewrite the ffmpeg pipeline to use whatever
 #   v4l2_m2m / vaapi / rkmpp encoder is available on the host.  On RDK
 #   S100P (Nash BPU) go2rtc can target the kernel v4l2 codec node if the
-#   BSP exposes one; if not, it falls back to libx264 software — which is
-#   still faster than aiortc's Python-wrapped x264 because SRTP/RTP stay
-#   in Go.
+#   BSP exposes one; if not, it falls back to libx264 software while
+#   SRTP/RTP processing remains in Go.
 #
 # Discover your camera:
 #   v4l2-ctl --list-devices

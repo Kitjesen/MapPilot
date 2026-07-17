@@ -1,242 +1,380 @@
-﻿# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
-# ROS 2 QoS 鍦烘櫙鍖栭厤缃?鈥?3D NAV
+# =============================================================================
+# ROS 2 / DDS QoS Scenario Configuration - LingTu 3D NAV
 #
-# 姝ゆ枃浠跺畾涔変簡涓嶅悓閾捐矾鐨勬帹鑽?QoS 閰嶇疆銆?
-# 鍦ㄤ唬鐮佷腑閫氳繃 rclcpp::QoS 鎴?launch 鍙傛暟搴旂敤銆?
+# This file defines recommended QoS profiles for different data links.
+# Applied via rclcpp::QoS in C++ or launch parameters in Python.
 #
-# QoS 缁村害璇存槑:
-#   reliability:  RELIABLE (淇濊瘉閫佽揪) / BEST_EFFORT (鍏佽涓㈠寘)
-#   durability:   VOLATILE (浠呮椿璺冭繛鎺? / TRANSIENT_LOCAL (琛ュ彂缁欐櫄鍒拌闃呰€?
+# QoS dimension reference:
+#   reliability:  RELIABLE (guaranteed delivery) / BEST_EFFORT (drop allowed)
+#   durability:   VOLATILE (live subscribers only) / TRANSIENT_LOCAL (late-join replay)
 #   history:      KEEP_LAST(depth) / KEEP_ALL
-#   deadline:     鍙戝竷鑰呮壙璇虹殑鏈€澶у彂甯冮棿闅?
-#   liveliness:   瀛樻椿妫€娴嬬瓥鐣?
-#   lifespan:     娑堟伅杩囨湡鏃堕棿 (杩囨湡涓㈠純, 涓嶉€佽揪)
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
+#   deadline:     publisher's maximum publish interval
+#   liveliness:   alive detection policy
+#   lifespan:     message expiry time (dropped if expired, not delivered)
+#
+# Each topic is listed in both ROS style (/topic) and DDS native style (rt/topic).
+# The rt/ prefix is the CycloneDDS / Fast DDS native topic name for ROS 2 topics.
+# =============================================================================
 
-# 鈹€鈹€ 閾捐矾鍒嗙被 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# -----------------------------------------------------------------------------
+# QoS Profiles
+# -----------------------------------------------------------------------------
 
 profiles:
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 楂橀澶ф暟鎹? LiDAR 鐐逛簯 (PointCloud2)
-  # 鐗圭偣: ~1MB/甯? 10Hz, 涓?1 甯у彲鎺ュ彈
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # =========================================================================
+  # Existing profiles (preserved and fixed)
+  # =========================================================================
+
+  # --- LiDAR PointCloud (large high-frequency data) ---
+  # ~1 MB/frame, 10 Hz, losing 1 frame is acceptable
   lidar_pointcloud:
+    reliability: best_effort       # drop is acceptable, avoid retransmit stall
+    durability: volatile
+    history: keep_last
+    depth: 2                       # buffer at most 2 frames, prevent memory burst
+    lifespan: 200ms                # point clouds older than 200 ms are meaningless
     topics:
       - /slam/registered_cloud
+      - rt/slam/registered_cloud
       - /nav/terrain_map
+      - rt/nav/terrain_map
       - /nav/terrain_map_ext
-      - /nav/scan_cloud          # sensor_scan_generation 杈撳嚭
-    qos:
-      reliability: BEST_EFFORT   # 涓㈠抚鍙帴鍙? 閬垮厤閲嶄紶闃诲
-      durability: VOLATILE
-      history: KEEP_LAST
-      depth: 2                   # 鏈€澶氱紦 2 甯? 闃叉鍐呭瓨鐖?
-      lifespan: 200ms            # 瓒呰繃 200ms 鐨勭偣浜戞棤鎰忎箟
-    rationale: >
-      鐐逛簯鏄渶澶у甫瀹芥秷鑰楄€呫€侭EST_EFFORT 閬垮厤 NACK 閲嶄紶椋庢毚銆?
-      depth=2 纭繚璁㈤槄鑰呮案杩滄嬁鍒版渶鏂板抚銆俵ifespan 闃茬Н鍘嬨€?
+      - rt/nav/terrain_map_ext
+      - /nav/scan_cloud            # sensor_scan_generation output
+      - rt/nav/scan_cloud
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 楂橀灏忔暟鎹? Odometry, IMU
-  # 鐗圭偣: ~200B, 100-200Hz, 涓?1 甯у彲鎺ュ彈
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- High-frequency State (Odometry, IMU) ---
+  # ~200 B, 100-200 Hz, only latest value matters
   high_freq_state:
+    reliability: best_effort
+    durability: volatile
+    history: keep_last
+    depth: 5
+    deadline: 20ms                 # expect >= 50 Hz
     topics:
+      - /driver/odometry
+      - rt/driver/odometry
       - /slam/odometry
+      - rt/slam/odometry
+      - /gnss/fix
+      - rt/gnss/fix
+      - /gnss/odom
+      - rt/gnss/odom
       - /imu/raw
+      - rt/imu/raw
       - /slam/localization_quality
-    qos:
-      reliability: BEST_EFFORT
-      durability: VOLATILE
-      history: KEEP_LAST
-      depth: 5
-      deadline: 20ms             # 鏈熸湜 >= 50Hz
-      lifespan: 50ms
-    rationale: >
-      鐘舵€佹暟鎹彧鍏冲績鏈€鏂板€笺€俤eadline 甯姪妫€娴嬪彂甯冭€呮帀绾裤€?
+      - rt/slam/localization_quality
+
+  # --- Localization Health (low-rate diagnostic) ---
   localization_health:
+    reliability: reliable          # keep state transitions visible
+    durability: volatile           # avoid replaying stale lock/lost state
+    history: keep_last
+    depth: 10
     topics:
       - /slam/localization_health
-    qos:
-      reliability: RELIABLE
-      durability: VOLATILE
-      history: KEEP_LAST
-      depth: 10
-    rationale: >
-      Localizer health is a low-rate diagnostic signal. RELIABLE keeps state
-      transitions visible while VOLATILE avoids replaying stale lock/lost state.
+      - rt/slam/localization_health
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?  # 鎺у埗鎸囦护: cmd_vel, stop, way_point
-  # 鐗圭偣: ~100B, 50Hz, 涓嶈兘涓?!!
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  control_commands:
+  # --- Final hardware velocity command ---
+  # The application-level envelope is also freshness checked by lingtu-driver.
+  final_velocity_command:
+    reliability: reliable
+    durability: volatile
+    history: keep_last
+    depth: 1
+    deadline: 50ms
+    lifespan: 200ms
     topics:
       - /nav/cmd_vel
-      - /nav/stop
-      - /nav/way_point
-      - /nav/slow_down
-    qos:
-      reliability: RELIABLE       # 鎺у埗鎸囦护蹇呴』閫佽揪
-      durability: VOLATILE
-      history: KEEP_LAST
-      depth: 1                    # 鍙鏈€鏂版寚浠?
-      deadline: 50ms              # 鏈熸湜 >= 20Hz
-    rationale: >
-      鎺у埗鎸囦护涓㈠け瀵艰嚧澶辨帶銆俁ELIABLE + depth=1 纭繚閫佽揪涓斾笉绉帇銆?
-      deadline 甯姪妫€娴?SafetyGate 鏄惁姝ｅ父宸ヤ綔銆?
+      - rt/nav/cmd_vel
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 鍏ㄥ眬璺緞: Path
-  # 鐗圭偣: ~10KB, <1Hz, 涓嶈兘涓?
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Other control commands (stop, waypoint) ---
+  control_commands:
+    reliability: reliable          # control commands must be delivered
+    durability: volatile
+    history: keep_last
+    depth: 1                       # only the latest command
+    deadline: 50ms                 # expect >= 20 Hz
+    topics:
+      - /nav/stop
+      - rt/nav/stop
+      - /nav/way_point
+      - rt/nav/way_point
+      - /nav/teleop_cmd_vel
+      - rt/nav/teleop_cmd_vel
+      - /nav/cancel
+      - rt/nav/cancel
+      - /nav/map_clearing
+      - rt/nav/map_clearing
+      - /nav/cloud_clearing
+      - rt/nav/cloud_clearing
+      - /nav/slow_down
+      - rt/nav/slow_down
+
+  navigation_command_request:
+    reliability: reliable
+    durability: volatile
+    history: keep_last
+    depth: 32
+    topics:
+      - /nav/command/request
+      - rt/nav/command/request
+      - /nav/inspection/command
+      - rt/nav/inspection/command
+
+  navigation_command_ack:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 64
+    topics:
+      - /nav/command/ack
+      - rt/nav/command/ack
+      - /nav/inspection/ack
+      - rt/nav/inspection/ack
+
+  inspection_status:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
+    topics:
+      - /nav/inspection/status
+      - rt/nav/inspection/status
+
+  # --- Global Path ---
+  # ~10 KB, <1 Hz, must not drop
   global_path:
+    reliability: reliable
+    durability: transient_local    # late-joining subscribers get the latest path
+    history: keep_last
+    depth: 1
     topics:
       - /nav/global_path
+      - rt/nav/global_path
       - /nav/local_path
+      - rt/nav/local_path
       - /nav/pct_path
-    qos:
-      reliability: RELIABLE
-      durability: TRANSIENT_LOCAL  # 鏅氬埌鐨勮闃呰€呬篃鑳芥嬁鍒版渶鏂拌矾寰?
-      history: KEEP_LAST
-      depth: 1
-    rationale: >
-      璺緞浣庨浣嗗叧閿€俆RANSIENT_LOCAL 纭繚鏂板惎鍔ㄧ殑鑺傜偣绔嬪嵆鎷垮埌褰撳墠璺緞銆?
+      - rt/nav/pct_path
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 鐘舵€?鍋ュ悍: 浣庨浣嗗繀杈?
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Map/Grid State ---
+  # Low-rate occupancy-style state consumed by planners and gateway surfaces.
+  map_grid:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
+    topics:
+      - /nav/traversability
+      - rt/nav/traversability
+      - /nav/exploration_grid
+      - rt/nav/exploration_grid
+
+  # --- Exploration Events (TARE explorer outputs, event-driven) ---
+  # Waypoint / local path / runtime / finish / start signals emitted by the
+  # exploration planner. Low-rate, event-driven; must not drop and late-joining
+  # consumers should latch the latest value.
+  exploration:
+    reliability: reliable          # exploration commands/signals must be delivered
+    durability: transient_local    # late-joining consumers get the latest value
+    history: keep_last
+    depth: 1                       # only the latest exploration output matters
+    topics:
+      - /exploration/way_point
+      - rt/exploration/way_point
+      - /exploration/local_path
+      - rt/exploration/local_path
+      - /exploration/runtime
+      - rt/exploration/runtime
+      - /exploration/finish
+      - rt/exploration/finish
+      - /exploration/start
+      - rt/exploration/start
+
+  # --- System Status (low-frequency but must arrive) ---
   system_status:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
     topics:
       - /nav/health_status
+      - rt/nav/health_status
       - /nav/geofence_status
+      - rt/nav/geofence_status
       - /robot_state
+      - rt/robot_state
+      - /gnss/status
+      - rt/gnss/status
       - /nav/mode
-    qos:
-      reliability: RELIABLE
-      durability: TRANSIENT_LOCAL
-      history: KEEP_LAST
-      depth: 1
-    rationale: >
-      鐘舵€佹暟鎹綆棰戜絾涓嶈兘涓€俆RANSIENT_LOCAL 璁?gRPC gateway 閲嶅惎鍚?
-      绔嬪埢鎷垮埌褰撳墠鐘舵€? 涓嶇敤绛変笅涓€娆″彂甯冦€?
+      - rt/nav/mode
+      - /driver/control_state
+      - rt/driver/control_state
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 鍥存爮/鐩爣: 浜嬩欢椹卞姩, 涓嶈兘涓?
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Geofence / Goal Pose (event-driven, must not drop) ---
   geofence_events:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
     topics:
       - /nav/geofence_boundary
+      - rt/nav/geofence_boundary
       - /nav/goal_pose
-    qos:
-      reliability: RELIABLE
-      durability: TRANSIENT_LOCAL
-      history: KEEP_LAST
-      depth: 1
-    rationale: >
-      鍥存爮鍜岀洰鏍囩偣鍙戝竷鍚庡繀椤昏鎵€鏈夎妭鐐规敹鍒? 涓旀櫄鍔犲叆鐨勪篃鑳芥嬁鍒般€?
+      - rt/nav/goal_pose
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 鍥惧儚/瑙嗛娴? WebRTC 鍘熷婧?
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Image / Video Stream (WebRTC raw source) ---
   image_stream:
+    reliability: best_effort
+    durability: volatile
+    history: keep_last
+    depth: 1                       # only the latest frame
+    lifespan: 100ms
     topics:
       - /camera/image_raw/compressed
+      - rt/camera/image_raw/compressed
       - /camera/image_raw
-    qos:
-      reliability: BEST_EFFORT
-      durability: VOLATILE
-      history: KEEP_LAST
-      depth: 1                    # 鍙鏈€鏂板抚
-      lifespan: 100ms
-    rationale: >
-      瑙嗛娴佷涪甯ф棤鍏崇揣瑕併€俤epth=1 + lifespan 纭繚涓嶇Н鍘嬨€?
+      - rt/camera/image_raw
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 璇箟鎰熺煡灞? 鍦烘櫙鍥?(1-2 Hz, 2-10 KB/甯?
-  # 璁烘枃渚濇嵁:
-  #   Hydra (MIT SPARK, TRO 2022): fast/slow 鍙岄鏋舵瀯 鈥?鍑犱綍灞?20-30Hz,
-  #     璇箟灞?1-2Hz; TRANSIENT_LOCAL 璁╂櫄鍒拌妭鐐圭珛鍗宠幏鍙栧綋鍓嶇姸鎬併€?
-  #   KeySG (arXiv 2510.01049, 2025): 浠呭湪鍏抽敭甯у彉鍖栨椂瑙﹀彂鍦烘櫙鍥炬洿鏂般€?
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Semantic Scene Graph (1-2 Hz, 2-10 KB/frame) ---
+  # References:
+  #   Hydra (MIT SPARK, TRO 2022): fast/slow dual-rate architecture -
+  #     geometric layer 20-30 Hz, semantic layer 1-2 Hz;
+  #     TRANSIENT_LOCAL lets late-joining nodes get current state immediately.
+  #   KeySG (arXiv 2510.01049, 2025): trigger scene graph update only on key frames.
   semantic_scene_graph:
+    reliability: reliable          # scene graph must not drop; 1 Hz miss = 1 s state gap
+    durability: transient_local    # late-starting planner/gateway gets latest snapshot
+    history: keep_last
+    depth: 2                       # 1 Hz publish: buffer 2 frames, prevent stale buildup
+    lifespan: 5000ms               # expire after 5 s, avoid stale scene graph on restart
     topics:
       - /nav/semantic/scene_graph
+      - rt/nav/semantic/scene_graph
       - /nav/semantic/scene_diff
-    qos:
-      reliability: RELIABLE        # 鍦烘櫙鍥句笉鍙涪锛?Hz 涓竴甯?= 1s 鐘舵€佺┖鐧?
-      durability: TRANSIENT_LOCAL  # 鏅氬惎鍔ㄧ殑 planner/gRPC 绔嬪嵆鎷垮埌鏈€鏂板揩鐓?
-      history: KEEP_LAST
-      depth: 2                     # 1Hz 鍙戝竷: 缂?2 甯у鐢紝闃叉棫鏁版嵁绉帇
-      lifespan: 5000ms             # 5s 鍚庤嚜鍔ㄨ繃鏈燂紝閬垮厤閲嶅惎鍚庢敹鍒伴檲鏃у満鏅浘
-    rationale: >
-      TRANSIENT_LOCAL 鏄叧閿? semantic_planner銆乬oal_resolver銆佽繙绋嬬洃鎺?gRPC
-      鍧囧彲鑳芥瘮 perception_node 鏅氬惎鍔ㄦ暟绉掞紝鑻ョ敤 VOLATILE 杩欎簺鑺傜偣棣栨
-      鎺ユ敹鍦烘櫙鍥捐绛夊埌涓嬩竴涓?1Hz 鍛ㄦ湡銆俤epth=2 闃叉 1Hz 鍙戝竷鏃堕槦鍒楃Н鍘?
-      10 鏉℃棫鏁版嵁锛堥粯璁?depth=10 浼氬鑷?planner 娑堣垂 10s 鍓嶇殑鍦烘櫙鍥撅級銆?
+      - rt/nav/semantic/scene_diff
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 璇箟妫€娴嬬粨鏋? 闄愭祦鍒?2 Hz (鎰熺煡鑺傜偣渚ч檺閫?
-  # 璁烘枃渚濇嵁:
-  #   LOST-3DSG (arXiv 2601.02905, 2026): 閬垮厤瀛樺偍 15Hz 楂橀瀵嗛泦鐗瑰緛,
-  #     浠呬繚鐣欒涔夋憳瑕佷互鍑忓皯甯﹀鍜屽唴瀛? 2Hz 宸叉弧瓒?1Hz planner 闇€姹傘€?
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Semantic Detections (throttled to 2 Hz) ---
+  # References:
+  #   LOST-3DSG (arXiv 2601.02905, 2026): avoid storing 15 Hz dense features,
+  #     keep only semantic digests to reduce bandwidth and memory; 2 Hz satisfies
+  #     1 Hz planner demand.
   semantic_detections:
+    reliability: best_effort       # detection frames allow occasional drops
+    durability: volatile
+    history: keep_last
+    depth: 2                       # 2 Hz publish: buffer 2 frames, prevent single-frame delay
+    lifespan: 1000ms               # detections older than 1 s are meaningless
     topics:
       - /nav/semantic/detections_3d
-    qos:
-      reliability: BEST_EFFORT     # 妫€娴嬪抚鍏佽鍋跺皵涓㈠寘锛宲lanner 娑堣垂鏈€鏂板嵆鍙?
-      durability: VOLATILE
-      history: KEEP_LAST
-      depth: 2                     # 2Hz 鍙戝竷: 缂?2 甯ч槻鍗曞抚寤惰繜
-      lifespan: 1000ms             # 瓒呰繃 1s 鐨勬娴嬬粨鏋滄棤鎰忎箟
-    rationale: >
-      perception_node 浠?2Hz 闄愰€熷彂甯冿紙鐩告瘮鍘?15Hz 鍑忓皯 87% 甯﹀锛夈€?
-      planner_node 浠?1Hz 娑堣垂, depth=2 闃叉闃熷垪鍫嗙Н鏃ф娴嬨€?
+      - rt/nav/semantic/detections_3d
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # 璇箟瀵艰埅鎸囦护 / 鐩爣 / 鐘舵€? 浜嬩欢椹卞姩
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- Semantic Nav Events (instruction / goal / status, event-driven) ---
   semantic_nav_events:
+    reliability: reliable
+    durability: transient_local    # late-joining executor gets current task state
+    history: keep_last
+    depth: 1
     topics:
       - /nav/semantic/instruction
+      - rt/nav/semantic/instruction
       - /nav/semantic/resolved_goal
+      - rt/nav/semantic/resolved_goal
       - /nav/semantic/status
-    qos:
-      reliability: RELIABLE
-      durability: TRANSIENT_LOCAL  # 鏂板惎鍔ㄧ殑鎵ц鑺傜偣绔嬪嵆鑾峰彇褰撳墠浠诲姟鐘舵€?
-      history: KEEP_LAST
-      depth: 1
-    rationale: >
-      鎸囦护鍜岀洰鏍囩偣鏄簨浠堕┍鍔ㄧ殑锛屽繀椤讳繚璇侀€佽揪銆俆RANSIENT_LOCAL 纭繚
-      鏅氬姞鍏ョ殑鑺傜偣锛堝 action_executor 閲嶅惎鍚庯級绔嬪嵆鑾峰彇褰撳墠浠诲姟鐘舵€併€?
+      - rt/nav/semantic/status
 
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
-  # TF (tf2_ros): 浣跨敤 ROS 2 榛樿 QoS
-  # 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹?
+  # --- TF (tf2_ros): use ROS 2 default QoS ---
+  # /tf: BEST_EFFORT + KEEP_LAST(100) (ROS 2 default)
+  # /tf_static: RELIABLE + TRANSIENT_LOCAL (ROS 2 default)
+  # Do not override these; tf2_ros behavior will be abnormal otherwise.
   tf:
+    note: "Use ROS 2 / tf2_ros default settings, do not override"
     topics:
       - /tf
+      - rt/tf
       - /tf_static
-    qos:
-      # /tf: BEST_EFFORT + KEEP_LAST(100) (ROS 2 榛樿)
-      # /tf_static: RELIABLE + TRANSIENT_LOCAL (ROS 2 榛樿)
-      # 涓嶈鏀硅繖浜? 鍚﹀垯 tf2_ros 琛屼负寮傚父
-      note: "浣跨敤 ROS 2 / tf2_ros 榛樿璁剧疆, 涓嶈瑕嗙洊"
+      - rt/tf_static
 
-# 鈹€鈹€ 甯﹀棰勭畻 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  # =========================================================================
+  # Product-level QoS profiles (new)
+  # =========================================================================
+
+  # --- Sensor Stream (raw LiDAR frames, IMU, SLAM odom prior) ---
+  # High-rate sensor data where only the latest sample matters.
+  sensor_stream:
+    reliability: best_effort
+    durability: volatile
+    history: keep_last
+    depth: 256
+    topics:
+      - /lidar/raw_frame
+      - rt/lidar/raw_frame
+      - /imu/raw
+      - rt/imu/raw
+      - /slam/odom_prior
+      - rt/slam/odom_prior
+
+  # --- Camera Stream (color + depth) ---
+  # Best-effort video; depth=1 ensures only the latest frame is kept.
+  camera_stream:
+    reliability: best_effort
+    durability: volatile
+    history: keep_last
+    depth: 1
+    topics:
+      - /camera/color
+      - rt/camera/color
+      - /camera/depth
+      - rt/camera/depth
+
+  # --- Camera Info (calibration metadata) ---
+  # Latched: late-joining subscribers receive the last published camera info.
+  camera_info:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
+    topics:
+      - /camera/info
+      - rt/camera/info
+
+  # --- TF Dynamic (ROS 2 default for /tf) ---
+  tf_dynamic:
+    reliability: best_effort
+    durability: volatile
+    history: keep_last
+    depth: 100
+    topics:
+      - /tf
+      - rt/tf
+
+  # --- TF Static (ROS 2 default for /tf_static) ---
+  tf_static:
+    reliability: reliable
+    durability: transient_local
+    history: keep_last
+    depth: 1
+    topics:
+      - /tf_static
+      - rt/tf_static
+
+# -----------------------------------------------------------------------------
+# Bandwidth Budget
+# -----------------------------------------------------------------------------
 
 bandwidth_budget:
-  # 浼扮畻鍚勯摼璺甫瀹芥秷鑰?(鍗曟満, 杩涚▼闂撮€氫俊)
+  # Estimated per-link bandwidth consumers (single machine, remote inter-machine comm)
   lidar_10hz_1MB: "~10 MB/s"
   odometry_100hz_200B: "~20 KB/s"
   imu_200hz_200B: "~40 KB/s"
   cmd_vel_50hz_100B: "~5 KB/s"
   path_1hz_10KB: "~10 KB/s"
   image_30hz_50KB: "~1.5 MB/s"
-  scene_graph_1hz_5KB: "~5 KB/s"       # JSON 鍦烘櫙鍥?(200 鐗╀綋)
-  detections_2hz_2KB: "~4 KB/s"        # 闄愭祦鍚?(鍘?15Hz: ~45 KB/s)
+  scene_graph_1hz_5KB: "~5 KB/s"       # JSON scene graph (200 objects)
+  detections_2hz_2KB: "~4 KB/s"        # throttled (was 15 Hz: ~45 KB/s)
   total_estimate: "~12 MB/s"
   note: >
-    CycloneDDS 榛樿浣跨敤 UDP 缁勬挱銆傚悓涓绘満 loopback 涓嶈蛋鐗╃悊缃戝崱,
-    甯﹀涓嶆槸鐡堕銆傝法涓绘満鏃?(濡傝繙绋嬬洃鎺? 鑰冭檻闄愬埗 image_stream銆?
+    CycloneDDS uses UDP multicast by default. Same-host loopback does not use
+    the physical NIC, so bandwidth is not a bottleneck. For cross-host traffic
+    (e.g. remote monitoring), consider limiting image_stream.

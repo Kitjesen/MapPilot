@@ -105,7 +105,7 @@ prepare_optional_packages() {
   fi
 
   if [[ "${BUILD_GNSS}" != "1" ]]; then
-    skip+=(wtrtk980_ros2_reader)
+    skip+=(wtrtk980_reader)
   fi
 
   if [[ "${BUILD_VENDORED_GTSAM}" != "1" ]]; then

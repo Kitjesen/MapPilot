@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
 # Thunder compatibility smoke; run from repository root:
 #   python tests/scripts/smoke/mapping.py
-import sys, os, time
+import os
+import sys
+import time
+
 sys.path.insert(0, "src")
 for d in ["src/perception", "src/decision"]:
     if os.path.isdir(d):
         sys.path.insert(0, d)
 import logging
+
 logging.basicConfig(level=logging.INFO)
 
 from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 
 print("=== Starting mapping mode ===")
-bp = blueprint_for_resolved_profile("stub", dict(
-    robot="stub", slam_profile="fastlio2",
-    enable_native=False, enable_semantic=False, enable_gateway=False,
-))
+bp = blueprint_for_resolved_profile(
+    "stub",
+    dict(
+        robot="stub",
+        slam_profile="fastlio2",
+        enable_native=False,
+        enable_semantic=False,
+        enable_gateway=False,
+    ),
+)
 system = bp.build()
 print("Modules: %d" % len(system.modules))
 
-# Check the product SLAM entry first; ROS2 bridge is compat-only.
-slam = (
-    system.modules.get("SlamAdapterModule")
-    or system.modules.get("SlamModule")
-    or system.modules.get("SlamBridgeModule")
-)
+# Check the native managed or endpoint-adapter SLAM entry.
+slam = system.modules.get("SlamAdapterModule") or system.modules.get("SlamModule")
 print("SLAM module: %s" % (slam is not None))
 
 system.start()

@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[3]
 KERNEL = ROOT / "src" / "kernels" / "slam" / "pose_graph_opt"
 MANIFEST = KERNEL / "Cargo.toml"
@@ -273,9 +272,11 @@ def test_pose_graph_opt_staticlib_contract(tmp_path):
         assert required in native_libs
 
     cmake_text = (
-        (ROOT / "src" / "slam" / "pgo" / "CMakeLists.txt").read_text()
+        (ROOT / "src" / "localization" / "pgo" / "CMakeLists.txt").read_text()
         + "\n"
-        + (ROOT / "src" / "slam" / "hba" / "CMakeLists.txt").read_text()
+        + (ROOT / "src" / "localization" / "hba" / "CMakeLists.txt").read_text()
+        + "\n"
+        + (ROOT / "src" / "native" / "runtime" / "CMakeLists.txt").read_text()
     ).lower()
     for required in ["kernel32", "ntdll", "userenv", "ws2_32", "dbghelp"]:
         assert required in cmake_text
@@ -294,12 +295,8 @@ def test_pose_graph_opt_windows_artifact_candidates_include_msvc_names(monkeypat
 def test_pose_graph_opt_abi_solves_two_pose_graph(pose_graph_opt_lib):
     lib = pose_graph_opt_lib
     poses = (Pose3 * 2)(identity_pose(), identity_pose(1.3, 0.2, 0.0))
-    priors = (Prior3 * 1)(
-        Prior3(0, 0, identity_pose(), diagonal_information([100.0] * 6))
-    )
-    betweens = (Between3 * 1)(
-        Between3(0, 1, identity_pose(1.0, 0.0, 0.0), diagonal_information([10.0] * 6))
-    )
+    priors = (Prior3 * 1)(Prior3(0, 0, identity_pose(), diagonal_information([100.0] * 6)))
+    betweens = (Between3 * 1)(Between3(0, 1, identity_pose(1.0, 0.0, 0.0), diagonal_information([10.0] * 6)))
     report = Report()
     config = default_config()
 
@@ -320,9 +317,7 @@ def test_pose_graph_opt_abi_solves_two_pose_graph(pose_graph_opt_lib):
         assert report.final_cost < report.initial_cost
 
         written = ctypes.c_uint64()
-        status = lib.lt_pose_graph_opt_copy_result_poses(
-            handle, poses, len(poses), ctypes.byref(written)
-        )
+        status = lib.lt_pose_graph_opt_copy_result_poses(handle, poses, len(poses), ctypes.byref(written))
         assert status == OK
         assert written.value == 2
         assert abs(poses[1].t_xyz[0] - 1.0) < 1e-5
@@ -338,12 +333,8 @@ def test_pose_graph_opt_abi_solves_rotated_se3_between_graph(pose_graph_opt_lib)
         identity_pose(),
         rpy_pose(1.35, -0.1, 0.18, roll=0.02, pitch=0.03, yaw=0.08),
     )
-    priors = (Prior3 * 1)(
-        Prior3(0, 0, identity_pose(), diagonal_information([100.0] * 6))
-    )
-    betweens = (Between3 * 1)(
-        Between3(0, 1, target, diagonal_information([20.0] * 6))
-    )
+    priors = (Prior3 * 1)(Prior3(0, 0, identity_pose(), diagonal_information([100.0] * 6)))
+    betweens = (Between3 * 1)(Between3(0, 1, target, diagonal_information([20.0] * 6)))
     report = Report()
     config = default_config()
     config.max_iterations = 60
@@ -365,9 +356,7 @@ def test_pose_graph_opt_abi_solves_rotated_se3_between_graph(pose_graph_opt_lib)
         assert report.final_cost < report.initial_cost
 
         written = ctypes.c_uint64()
-        status = lib.lt_pose_graph_opt_copy_result_poses(
-            handle, poses, len(poses), ctypes.byref(written)
-        )
+        status = lib.lt_pose_graph_opt_copy_result_poses(handle, poses, len(poses), ctypes.byref(written))
         assert status == OK
         assert written.value == 2
         for idx in range(3):
@@ -413,9 +402,7 @@ def test_pose_graph_opt_abi_solves_hba_full_information_graph(pose_graph_opt_lib
         assert report.final_cost < report.initial_cost * 1e-6
 
         written = ctypes.c_uint64()
-        status = lib.lt_pose_graph_opt_copy_result_poses(
-            handle, poses, len(poses), ctypes.byref(written)
-        )
+        status = lib.lt_pose_graph_opt_copy_result_poses(handle, poses, len(poses), ctypes.byref(written))
         assert status == OK
         assert written.value == 4
         assert abs(poses[3].t_xyz[0] - 2.1) < 1e-5

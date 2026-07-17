@@ -1,0 +1,76 @@
+{
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "extends": "mujoco_native_navigation_acceptance.json",
+  "name": "mujoco_multifloor_native_navigation",
+  "description": "Three-level ThunderV4 navigation acceptance using the field C++ typed-DDS SLAM, terrain, OctoPlanner3D, LocalPlanner, PathFollower, safety, and RL locomotion chain.",
+  "start": [7.0, -1.2, 0.55, 0.0],
+  "goal": [7.4, 2.8, 4.15, 0.0],
+  "asset_builder": {
+    "scene_preset": "multifloor_stack_3",
+    "resolution": 0.09,
+    "map_source": "mujoco_lidar",
+    "lidar_timeout_s": 90.0,
+    "mid360_samples_per_frame": 15000
+  },
+  "sensor_runtime": {
+    "publish_hz": 10.0,
+    "imu_hz": 200.0,
+    "mid360_samples_per_frame": 6000,
+    "physical_rolling_sample_mode": "subscan",
+    "publish_odom_prior": false
+  },
+  "paths": {
+    "policy": "sim/robots/thunderv4/policy/history_285.onnx"
+  },
+  "planner_constraints": {
+    "robot_radius_m": 0.25,
+    "body_clearance_below_m": 0.18,
+    "body_clearance_above_m": 0.30,
+    "max_iterations": 240000,
+    "snap_radius_cells": 16,
+    "require_ground_support": true,
+    "strict_ground_support": false,
+    "ground_support_xy_radius_cells": 1,
+    "ground_support_depth_cells": 8,
+    "support_height_m": 0.55,
+    "support_height_tolerance_m": 0.05,
+    "support_patch_radius_cells": 0,
+    "support_patch_min_samples": 0,
+    "enable_preblocked_costmap": false,
+    "preblocked_radius_cells": 0,
+    "preblocked_weight": 0.0,
+    "lowest_traversable_only": false,
+    "floor_change_penalty": 4.0,
+    "max_step_height_m": 0.23,
+    "max_slope": 0.65,
+    "same_floor_preference": true,
+    "same_floor_z_tolerance_m": 0.75,
+    "max_same_floor_z_excursion_m": 2.0,
+    "obstacle_clearance_radius_cells": 0,
+    "obstacle_clearance_weight": 0.0,
+    "terminal_goal_tolerance_m": 0.35,
+    "terminal_goal_xy_tolerance_m": 0.35,
+    "terminal_goal_z_tolerance_m": 0.18
+  },
+  "phases": {
+    "no_motion": {
+      "duration_s": 120.0,
+      "warmup_s": 15.0,
+      "start_anchor": "run"
+    },
+    "motion": {
+      "duration_s": 180.0,
+      "warmup_s": 15.0,
+      "start_anchor": "warmup"
+    }
+  },
+  "thresholds": {
+    "startup_timeout_s": 35.0,
+    "plan_timeout_s": 100.0,
+    "min_global_path_points": 40,
+    "min_local_path_points": 20,
+    "min_cmd_vel_samples": 20,
+    "min_motion_m": 4.0,
+    "min_goal_distance_reduction_m": 1.0
+  }
+}

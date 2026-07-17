@@ -19,14 +19,18 @@ from dataclasses import dataclass, field
 import numpy as np
 
 # ── USS-Nav 点云参数 ──
-POINTCLOUD_MAX_POINTS = 512       # 每个物体最大点数 (降采样后)
-POINTCLOUD_VOXEL_SIZE = 0.02      # 体素降采样分辨率 (m)
-POINTCLOUD_MIN_POINTS = 10        # 少于此数的点云视为无效
+POINTCLOUD_MAX_POINTS = 512  # 每个物体最大点数 (降采样后)
+POINTCLOUD_VOXEL_SIZE = 0.02  # 体素降采样分辨率 (m)
+POINTCLOUD_MIN_POINTS = 10  # 少于此数的点云视为无效
+
+# ── BBox depth fallback 参数 ──
+BBOX_MEDIAN_MIN_VALID_PIXELS = 20  # minimum valid depth pixels inside bbox
 
 
 @dataclass
 class CameraIntrinsics:
     """相机内参。"""
+
     fx: float
     fy: float
     cx: float
@@ -38,12 +42,13 @@ class CameraIntrinsics:
 @dataclass
 class Detection3D:
     """3D 检测结果 (USS-Nav 升级: 含物体点云)。"""
-    position: np.ndarray        # [x, y, z] 质心, world frame
+
+    position: np.ndarray  # [x, y, z] 质心, world frame
     label: str
     score: float
-    bbox_2d: np.ndarray         # [x1, y1, x2, y2] in pixels
-    depth: float                # 质心深度 (m)
-    features: np.ndarray        # 语义特征向量 (Mobile-CLIP text encoding)
+    bbox_2d: np.ndarray  # [x1, y1, x2, y2] in pixels
+    depth: float  # 质心深度 (m)
+    features: np.ndarray  # 语义特征向量 (Mobile-CLIP text encoding)
     points: np.ndarray = field(default_factory=lambda: np.empty((0, 3)))
     # USS-Nav: 物体点云 (N, 3) world frame, 降采样后
     track_id: int | None = None  # Optional 2D tracker id (BoT-SORT/ByteTrack)
@@ -91,6 +96,7 @@ def undistort_points(
         return us.astype(np.float64), vs.astype(np.float64)
     try:
         import cv2
+
         pts = np.stack([us.astype(np.float64), vs.astype(np.float64)], axis=-1)
         pts = pts.reshape(-1, 1, 2)
         undist = cv2.undistortPoints(pts, K, D, P=K)
@@ -119,7 +125,10 @@ def project_to_3d(
     u, v = pixel_u, pixel_v
     if D is not None and K is not None and not np.allclose(D, 0):
         u_arr, v_arr = undistort_points(
-            np.array([pixel_u]), np.array([pixel_v]), K, D,
+            np.array([pixel_u]),
+            np.array([pixel_v]),
+            K,
+            D,
         )
         u, v = float(u_arr[0]), float(v_arr[0])
 
@@ -267,7 +276,9 @@ def _voxel_downsample(
     quantized = np.floor(points / voxel_size).astype(np.int32)
 
     _, unique_indices = np.unique(
-        quantized, axis=0, return_index=True,
+        quantized,
+        axis=0,
+        return_index=True,
     )
 
     downsampled = points[unique_indices]
@@ -284,3 +295,94 @@ def pointcloud_centroid(points: np.ndarray) -> np.ndarray:
     if points is None or len(points) == 0:
         return np.zeros(3)
     return np.mean(points, axis=0)
+
+
+def bbox_median_depth_to_detection3d(
+    det2d,
+    depth_image: np.ndarray,
+    tf_camera_to_world: np.ndarray,
+    intrinsics: CameraIntrinsics,
+    depth_scale: float = 0.001,
+    min_depth: float = 0.3,
+    max_depth: float = 6.0,
+    min_valid_pixels: int = BBOX_MEDIAN_MIN_VALID_PIXELS,
+) -> Detection3D | None:
+    """W2-1: masked-depth median 3D projection fallback.
+
+    For each 2D detection:
+      1. Gather all depth pixels inside the bbox.
+      2. Filter invalid (0, non-finite, out of [min_depth, max_depth]).
+      3. If fewer than *min_valid_pixels* valid, drop the detection
+         (we refuse to fabricate a 3D position from sparse/unreliable depth).
+      4. Take the median of the valid samples as representative depth
+         (robust to outliers and reflections).
+      5. Back-project the bbox centre pixel using median depth to get a
+         camera-frame 3D point; transform to world.
+      6. Attach confidence_3d = valid_pixels / total_pixels.
+
+    Returns a Detection3D with extra attributes confidence_3d, width_3d,
+    height_3d, or None when the detection is rejected.
+    """
+    if intrinsics is None:
+        return None
+
+    bbox = det2d.bbox
+    x1 = max(0, int(bbox[0]))
+    y1 = max(0, int(bbox[1]))
+    x2 = min(depth_image.shape[1], int(bbox[2]))
+    y2 = min(depth_image.shape[0], int(bbox[3]))
+    if x2 <= x1 or y2 <= y1:
+        return None
+
+    roi = depth_image[y1:y2, x1:x2]
+    total_pixels = roi.size
+    if total_pixels == 0:
+        return None
+
+    roi_m = roi.astype(np.float32) * depth_scale
+    finite_mask = np.isfinite(roi_m) & (roi_m > 0.0)
+    range_mask = (roi_m >= min_depth) & (roi_m <= max_depth)
+    valid_mask = finite_mask & range_mask
+    valid_depths = roi_m[valid_mask]
+
+    if valid_depths.size < min_valid_pixels:
+        return None
+
+    d_median = float(np.median(valid_depths))
+    confidence_3d = float(valid_depths.size) / float(total_pixels)
+
+    fx = intrinsics.fx if intrinsics.fx != 0.0 else 600.0
+    fy = intrinsics.fy if intrinsics.fy != 0.0 else 600.0
+    ccx = intrinsics.cx
+    ccy = intrinsics.cy
+
+    px = (bbox[0] + bbox[2]) / 2.0
+    py = (bbox[1] + bbox[3]) / 2.0
+    p_cam = np.array(
+        [
+            (px - ccx) * d_median / fx,
+            (py - ccy) * d_median / fy,
+            d_median,
+        ]
+    )
+    p_world = (tf_camera_to_world @ np.array([*p_cam, 1.0]))[:3]
+
+    bbox_w_px = max(1.0, float(bbox[2] - bbox[0]))
+    bbox_h_px = max(1.0, float(bbox[3] - bbox[1]))
+    width_3d = bbox_w_px * d_median / fx
+    height_3d = bbox_h_px * d_median / fy
+
+    det3d = Detection3D(
+        position=p_world,
+        label=det2d.label,
+        score=det2d.score,
+        bbox_2d=bbox,
+        depth=d_median,
+        features=getattr(det2d, "features", np.array([])),
+        points=np.empty((0, 3)),
+        track_id=getattr(det2d, "track_id", None),
+    )
+    det3d.confidence_3d = confidence_3d
+    det3d.width_3d = width_3d
+    det3d.height_3d = height_3d
+    return det3d

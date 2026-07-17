@@ -5,11 +5,29 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from fastapi.responses import JSONResponse
 
-from runtime.runtime_interface import TOPICS, topic_default_frame_id
+from gateway.schemas import (
+    SessionResponse,
+    SessionStartRequest,
+    SessionTransitionResponse,
+)
+from gateway.services.map_service import ensure_maps_service, map_service_command, map_service_query
+from gateway.services.native_control import (
+    endpoint_only_enabled,
+)
+from gateway.services.native_control import (
+    read_status as read_native_control_status,
+)
+from gateway.services.native_control import (
+    status_is_fresh as native_control_status_is_fresh,
+)
+from maps.services.storage import safe_map_name
+from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
+from runtime.profiles.resolver import canonical_profile_name
 from runtime.runtime_policy import (
     default_slam_profile_for_mode,
     is_supported_slam_profile,
@@ -17,19 +35,6 @@ from runtime.runtime_policy import (
     session_transition_plan,
     slam_switch_plan,
 )
-from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
-from runtime.profiles.resolver import canonical_profile_name
-from gateway.schemas import (
-    SessionResponse,
-    SessionStartRequest,
-    SessionTransitionResponse,
-)
-from gateway.services.map_paths import nav_map_root
-from gateway.services.map_safety import safe_map_name
-from runtime.same_source_map_artifacts import (
-    validate_saved_map_artifact_dir,
-)
-
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +101,14 @@ def _body_mapping(body: Any) -> dict[str, Any]:
     return body
 
 
+def _clear_gateway_map_cloud(gw: Any, reason: str) -> None:
+    clear_cache = getattr(gw, "clear_map_cloud_cache", None)
+    if callable(clear_cache):
+        clear_cache(reason=reason)
+        return
+    raise RuntimeError("gateway map cloud cache service is unavailable")
+
+
 def _normalize_slam_profile(profile: str) -> str:
     return normalize_slam_profile(profile)
 
@@ -105,6 +118,21 @@ _DEFAULT_PRODUCT_IDENTITY_BY_MODE = {
     "mapping": ("map", "mapping"),
     "navigating": ("nav", "navigation"),
     "exploring": ("tare_explore", "exploration"),
+}
+
+_REQUIRED_PRODUCT_PROFILES_BY_SESSION_MODE = {
+    "mapping": ("map",),
+    "navigating": ("teleop_avoid", "tracking", "nav", "inspection"),
+    "exploring": ("tare_explore",),
+}
+
+_EXPECTED_NATIVE_CONTROL_MODE_BY_PROFILE = {
+    "map": "teleop",
+    "teleop_avoid": "teleop_avoid",
+    "tracking": "autonomy",
+    "nav": "autonomy",
+    "inspection": "autonomy",
+    "tare_explore": "autonomy",
 }
 
 
@@ -119,48 +147,233 @@ def _normalize_product_identity(
     payload: dict[str, Any],
     mode: str,
 ) -> tuple[str | None, str]:
-    raw_profile = (
-        payload.get("product_profile")
-        or payload.get("profile")
-        or ""
-    )
-    product_profile = (
-        canonical_profile_name(str(raw_profile).strip())
-        if str(raw_profile or "").strip()
-        else None
-    )
+    raw_profile = payload.get("product_profile") or payload.get("profile") or ""
+    product_profile = canonical_profile_name(str(raw_profile).strip()) if str(raw_profile or "").strip() else None
     explicit_session = str(payload.get("product_session") or "").strip().lower()
+    default_profile, mode_default_session = _default_product_identity_for_mode(mode)
 
     if product_profile in PRODUCT_MODE_CONTRACTS:
-        default_session = PRODUCT_MODE_CONTRACTS[product_profile].product_session
+        contract_session = (
+            str(getattr(PRODUCT_MODE_CONTRACTS[product_profile], "product_session", "") or "").strip().lower()
+        )
+        default_session = contract_session or mode_default_session
     else:
-        default_profile, default_session = _default_product_identity_for_mode(mode)
+        default_session = mode_default_session
         if product_profile is None:
             product_profile = default_profile
 
     return product_profile, explicit_session or default_session
 
 
-def _resolve_session_map_name(
-    map_name: str,
-) -> tuple[str | None, Any | None, Any | None, str | None]:
-    map_root = nav_map_root()
-    candidate = map_root / map_name
+def _gateway_maps_service(gw: Any) -> Any | None:
     try:
-        resolved = candidate.resolve(strict=False)
+        return ensure_maps_service(gw)
     except RuntimeError as exc:
-        return None, map_root, None, f"Map '{map_name}' cannot be resolved: {exc}"
+        logger.warning("maps.service lookup failed: %s", exc)
+        return None
+
+
+def _maps_get_bundle(manager: Any, map_name: str, capability: str) -> dict[str, Any]:
+    return map_service_query(
+        manager,
+        {
+            "action": "get_map_bundle",
+            "name": map_name,
+            "capability": capability,
+        },
+    )
+
+
+def _current_runtime_product_profile(gw: Any) -> str | None:
+    raw_profile = os.environ.get("LINGTU_PROFILE") or getattr(gw, "_runtime_product_profile", None) or ""
+    profile = canonical_profile_name(str(raw_profile).strip())
+    return profile if profile in PRODUCT_MODE_CONTRACTS else None
+
+
+def _externally_owned_product_profile(gw: Any) -> str | None:
+    if bool(getattr(gw, "_manage_session_services", True)):
+        return None
     try:
-        rel = resolved.relative_to(map_root)
+        uses_native_endpoint = endpoint_only_enabled()
     except ValueError:
-        return None, map_root, None, "map_name escapes NAV_MAP_DIR"
-    if len(rel.parts) != 1:
-        return None, map_root, None, "map_name must resolve to a direct map directory"
-    normalized = rel.parts[0]
-    err = safe_map_name(normalized)
-    if err is not None:
-        return None, map_root, None, err
-    return normalized, map_root, map_root / normalized, None
+        uses_native_endpoint = True
+    if not uses_native_endpoint:
+        return None
+    return _current_runtime_product_profile(gw) or ""
+
+
+def _external_product_mode_guard(
+    gw: Any,
+    mode: str,
+    *,
+    requested_profile: str | None,
+) -> dict[str, Any] | None:
+    """Reject low-level sessions that would cross an externally-owned product graph."""
+
+    current_profile = _externally_owned_product_profile(gw)
+    if current_profile is None:
+        return None
+    if requested_profile is not None and requested_profile != current_profile:
+        return {
+            "reason_code": "product_profile_mismatch",
+            "current_profile": current_profile,
+            "requested_profile": requested_profile,
+            "runtime_switch": "/api/v1/runtime/switch",
+        }
+
+    required_profiles = _REQUIRED_PRODUCT_PROFILES_BY_SESSION_MODE.get(mode, ())
+    if current_profile not in required_profiles:
+        return {
+            "reason_code": "product_mode_switch_required",
+            "current_profile": current_profile or None,
+            "required_profiles": list(required_profiles),
+            "runtime_switch": "/api/v1/runtime/switch",
+        }
+
+    expected_control_mode = _EXPECTED_NATIVE_CONTROL_MODE_BY_PROFILE.get(current_profile)
+    status = read_native_control_status()
+    actual_control_mode = str(status.get("control_mode") or "").strip().lower() if isinstance(status, dict) else ""
+    if expected_control_mode and (
+        not native_control_status_is_fresh(status) or actual_control_mode != expected_control_mode
+    ):
+        return {
+            "reason_code": "native_control_mode_not_ready",
+            "current_profile": current_profile,
+            "expected_control_mode": expected_control_mode,
+            "actual_control_mode": actual_control_mode or None,
+            "control_status_fresh": native_control_status_is_fresh(status),
+            "runtime_switch": "/api/v1/runtime/switch",
+        }
+    return None
+
+
+def _external_same_session_active(
+    gw: Any,
+    *,
+    mode: str,
+    product_profile: str | None,
+    product_session: str,
+    map_name: str,
+) -> bool:
+    """Return whether an externally-owned runtime is already in this session."""
+
+    if not _externally_owned_product_profile(gw):
+        return False
+    if gw._session_mode != mode:
+        return False
+    if (gw._session_product_profile or None) != (product_profile or None):
+        return False
+    if str(gw._session_product_session or "").strip().lower() != product_session:
+        return False
+    if mode == "navigating":
+        return str(gw._session_map or "").strip() == str(map_name or "").strip()
+    return True
+
+
+def _maps_set_active(manager: Any, map_name: str) -> dict[str, Any]:
+    return map_service_command(manager, {"action": "set_active", "name": map_name})
+
+
+def _maps_active_name(manager: Any) -> str:
+    response = map_service_query(manager, {"action": "get_active"})
+    if isinstance(response, dict) and response.get("success") is True:
+        return str(response.get("active") or "").strip()
+    return ""
+
+
+def _bundle_artifact_path(bundle: dict[str, Any]) -> str:
+    artifact = bundle.get("artifact") if isinstance(bundle.get("artifact"), dict) else {}
+    raw_uri = str(artifact.get("uri") or artifact.get("path") or "")
+    if not raw_uri:
+        return ""
+    if os.path.isabs(raw_uri):
+        return raw_uri
+    base = str(bundle.get("map_dir") or "")
+    return str(os.path.join(base, raw_uri) if base else raw_uri)
+
+
+def _activate_session_map_via_maps_service(
+    gw: Any,
+    map_name: str,
+) -> tuple[bool, str, dict[str, Any], str]:
+    manager = _gateway_maps_service(gw)
+    if manager is None:
+        return (
+            False,
+            "maps.service is unavailable",
+            {"reason_code": "maps_service_unavailable"},
+            "",
+        )
+    previous_active = _maps_active_name(manager)
+    bundle = _maps_get_bundle(manager, map_name, "navigation_safety_3d")
+    if bundle.get("success") is not True:
+        return False, str(bundle.get("message") or "navigation_safety_3d bundle unavailable"), bundle, ""
+    active = _maps_set_active(manager, map_name)
+    if active.get("success") is not True:
+        return False, str(active.get("message") or "failed to activate map"), active, ""
+    map_path = (
+        str(active.get("octomap") or "")
+        or _bundle_artifact_path(bundle)
+        or str(active.get("occupancy") or "")
+        or str(active.get("pcd") or "")
+    )
+    return (
+        True,
+        "",
+        {
+            "bundle": bundle,
+            "activation": active,
+            "previous_active": previous_active,
+        },
+        map_path,
+    )
+
+
+def _rollback_session_map_activation(
+    gw: Any,
+    activation_detail: dict[str, Any],
+    reload_planner_map: Any,
+) -> dict[str, Any]:
+    previous_active = str(activation_detail.get("previous_active") or "").strip()
+    activation = activation_detail.get("activation")
+    activated_map = str(activation.get("active") if isinstance(activation, Mapping) else "").strip()
+    if not previous_active or previous_active == activated_map:
+        rollback = {
+            "success": previous_active == activated_map,
+            "skipped": True,
+            "reason": "no_distinct_previous_active_map",
+        }
+        activation_detail["rollback"] = rollback
+        return rollback
+
+    manager = _gateway_maps_service(gw)
+    if manager is None:
+        rollback = {
+            "success": False,
+            "reason": "maps_service_unavailable",
+        }
+        activation_detail["rollback"] = rollback
+        return rollback
+
+    rollback = _maps_set_active(manager, previous_active)
+    if rollback.get("success") is True and callable(reload_planner_map):
+        previous_bundle = _maps_get_bundle(
+            manager,
+            previous_active,
+            "navigation_safety_3d",
+        )
+        previous_path = _bundle_artifact_path(previous_bundle)
+        if previous_bundle.get("success") is True and previous_path:
+            try:
+                rollback["planner_reload"] = reload_planner_map(previous_path)
+            except Exception as exc:
+                rollback["planner_reload"] = {
+                    "ok": False,
+                    "reason": "planner_rollback_failed",
+                    "message": str(exc),
+                }
+    activation_detail["rollback"] = rollback
+    return rollback
 
 
 def register_session_routes(app, gw) -> None:
@@ -172,9 +385,7 @@ def register_session_routes(app, gw) -> None:
     async def session_get():
         inferred_mode, inferred_map = gw._session_detect_current_mode()
         if inferred_mode != gw._session_mode:
-            product_profile, product_session = _default_product_identity_for_mode(
-                inferred_mode
-            )
+            product_profile, product_session = _default_product_identity_for_mode(inferred_mode)
             gw._session_mode = inferred_mode
             gw._session_product_profile = product_profile
             gw._session_product_session = product_session
@@ -197,23 +408,46 @@ def register_session_routes(app, gw) -> None:
         payload = _body_mapping(body)
         mode = (payload.get("mode") or "").strip().lower()
         map_name = payload.get("map_name") or payload.get("map") or ""
-        slam_profile = (
-            payload.get("slam_profile") or payload.get("slam_backend") or ""
-        ).strip().lower()
+        slam_profile = (payload.get("slam_profile") or payload.get("slam_backend") or "").strip().lower()
         slam_profile = _normalize_slam_profile(slam_profile)
         if mode not in ("mapping", "navigating", "exploring"):
             return _transition_response(
                 False,
                 status_code=400,
-                message=(
-                    f"Unknown mode: {mode!r}. "
-                    "Use 'mapping' | 'navigating' | 'exploring'."
-                ),
+                message=(f"Unknown mode: {mode!r}. Use 'mapping' | 'navigating' | 'exploring'."),
             )
+        raw_requested_profile = str(payload.get("product_profile") or payload.get("profile") or "").strip()
+        requested_profile = canonical_profile_name(raw_requested_profile) if raw_requested_profile else None
+        product_mode_blocker = _external_product_mode_guard(
+            gw,
+            mode,
+            requested_profile=requested_profile,
+        )
+        if product_mode_blocker is not None:
+            return _transition_response(
+                False,
+                status_code=409,
+                message=(
+                    "Low-level session start cannot switch the externally-owned "
+                    "product runtime. Use /api/v1/runtime/switch."
+                ),
+                detail=product_mode_blocker,
+            )
+        external_profile = _externally_owned_product_profile(gw)
+        if external_profile and requested_profile is None:
+            payload["product_profile"] = external_profile
         product_profile, product_session = _normalize_product_identity(
             payload,
             mode,
         )
+        if _external_same_session_active(
+            gw,
+            mode=mode,
+            product_profile=product_profile,
+            product_session=product_session,
+            map_name=str(map_name or ""),
+        ):
+            return _transition_payload(True, session=gw._session_snapshot())
         if slam_profile and not is_supported_slam_profile(slam_profile):
             return _transition_response(
                 False,
@@ -238,19 +472,13 @@ def register_session_routes(app, gw) -> None:
             return _transition_response(
                 False,
                 status_code=503,
-                message=(
-                    "Exploration backend not running - start lingtu with "
-                    "'explore' or 'tare_explore' profile."
-                ),
+                message=("Exploration backend not running - start lingtu with 'explore' or 'tare_explore' profile."),
             )
         if gw._session_mode != "idle":
             return _transition_response(
                 False,
                 status_code=409,
-                message=(
-                    f"Already in {gw._session_mode}. "
-                    "Call /session/end first."
-                ),
+                message=(f"Already in {gw._session_mode}. Call /session/end first."),
             )
         if gw._session_pending:
             return _transition_response(
@@ -280,52 +508,77 @@ def register_session_routes(app, gw) -> None:
                     message="map_name is required for navigating",
                 )
 
-            resolved_map_name, map_root, base, map_err = _resolve_session_map_name(
-                map_name
-            )
-            if map_err is not None or not resolved_map_name or base is None:
+            map_err = safe_map_name(map_name)
+            if map_err is not None:
                 return _transition_response(
                     False,
                     status_code=400,
-                    message=map_err or "map_name cannot be resolved",
+                    message=map_err,
                 )
-            map_name = resolved_map_name
-            if not (base / "map.pcd").is_file():
+            if map_name == "active":
+                manager = _gateway_maps_service(gw)
+                map_name = _maps_active_name(manager) if manager is not None else ""
+                if not map_name:
+                    return _transition_response(
+                        False,
+                        status_code=409,
+                        message="no active map is selected",
+                    )
+            (
+                map_ready,
+                activation_message,
+                activation_detail,
+                map_path,
+            ) = _activate_session_map_via_maps_service(gw, map_name)
+            if map_ready is not True:
+                status_code = 400
+                if isinstance(activation_detail, dict) and activation_detail.get("reason_code") == "missing_capability":
+                    status_code = 409
+                elif "artifact gate failed" in activation_message:
+                    status_code = 409
                 return _transition_response(
                     False,
-                    status_code=400,
-                    message=f"Map '{map_name}' has no map.pcd",
+                    status_code=status_code,
+                    message=activation_message or "map activation failed",
+                    detail={"map_activation": activation_detail},
                 )
-            artifact_gate = validate_saved_map_artifact_dir(
-                base,
-                require_octomap=True,
-                expected_frame_id=topic_default_frame_id(TOPICS.saved_map_cloud),
-            )
-            artifact_gate["required"] = True
-            if artifact_gate.get("ok") is not True:
-                blockers = [
-                    str(item)
-                    for item in (artifact_gate.get("blockers") or [])
-                    if str(item)
-                ]
-                detail = "; ".join(blockers) if blockers else "unknown blocker"
-                return _transition_response(
-                    False,
-                    status_code=409,
-                    message=f"saved map artifact gate failed: {detail}",
-                    detail={"artifact_gate": artifact_gate},
-                )
-            active = map_root / "active"
-            try:
-                if active.is_symlink() or active.exists():
-                    active.unlink()
-                os.symlink(map_name, str(active))
-            except OSError as e:
-                return _transition_response(
-                    False,
-                    status_code=500,
-                    message=f"Failed to activate map: {e}",
-                )
+            nav = (getattr(gw, "_all_modules", {}) or {}).get("nav.mission")
+            reload_planner_map = getattr(nav, "reload_planner_map", None)
+            if callable(reload_planner_map):
+                try:
+                    planner_reload = reload_planner_map(map_path)
+                except Exception as exc:
+                    logger.warning(
+                        "planner map reload after session map activation failed: %s",
+                        exc,
+                    )
+                    _rollback_session_map_activation(
+                        gw,
+                        activation_detail,
+                        reload_planner_map,
+                    )
+                    return _transition_response(
+                        False,
+                        status_code=409,
+                        message=f"planner map reload failed: {exc}",
+                        detail={"map_activation": activation_detail},
+                    )
+                if not isinstance(planner_reload, Mapping) or planner_reload.get("ok") is not True:
+                    _rollback_session_map_activation(
+                        gw,
+                        activation_detail,
+                        reload_planner_map,
+                    )
+                    return _transition_response(
+                        False,
+                        status_code=409,
+                        message="planner map reload failed; navigation session was not started",
+                        detail={
+                            "map_activation": activation_detail,
+                            "planner_reload": planner_reload,
+                        },
+                    )
+            _clear_gateway_map_cloud(gw, "session_map_activation")
 
         gw._session_pending = True
         gw._session_error = ""
@@ -347,15 +600,9 @@ def register_session_routes(app, gw) -> None:
                 svc.stop(*plan.stop)
                 if plan.ensure:
                     svc.ensure(*plan.ensure)
-                ok = (
-                    svc.wait_ready(*plan.wait_ready, timeout=10.0)
-                    if plan.wait_ready
-                    else True
-                )
+                ok = svc.wait_ready(*plan.wait_ready, timeout=10.0) if plan.wait_ready else True
                 if plan.clear_live_map:
-                    with gw._map_cloud_lock:
-                        gw._map_points = None
-                        gw._voxel_hits.clear()
+                    _clear_gateway_map_cloud(gw, "session_transition")
                 if not ok:
                     gw._session_error = "Services not ready after 10s"
                     return _transition_response(
@@ -364,9 +611,7 @@ def register_session_routes(app, gw) -> None:
                         message=gw._session_error,
                     )
             elif mode in {"mapping", "exploring"}:
-                with gw._map_cloud_lock:
-                    gw._map_points = None
-                    gw._voxel_hits.clear()
+                _clear_gateway_map_cloud(gw, "session_transition")
 
             if (
                 manages_services
@@ -441,7 +686,7 @@ def register_session_routes(app, gw) -> None:
                 svc = get_service_manager()
                 svc.stop(*slam_switch_plan("stop").stop)
             gw._session_mode = "idle"
-            gw._session_product_profile = None
+            gw._session_product_profile = _current_runtime_product_profile(gw)
             gw._session_product_session = "idle"
             gw._session_map = None
             gw._session_slam_profile = "stopped"

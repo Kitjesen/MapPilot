@@ -4,6 +4,7 @@
 #include "ikd_Tree.h"
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/common/transforms.h>
+#include <cstddef>
 
 struct LocalMap
 {
@@ -24,7 +25,11 @@ public:
 
     void initCloudMap(PointVec &point_vec);
 
-    void process(SyncPackage &package);
+    bool process(SyncPackage &package);
+
+    bool lastUpdateAttempted() const { return m_last_update_attempted; }
+    bool lastUpdateAccepted() const { return m_last_update_accepted; }
+    std::size_t consecutiveUpdateRejections() const { return m_consecutive_update_rejections; }
 
     void updateLossFunc(State &state, SharedState &share_data);
 
@@ -48,4 +53,7 @@ private:
     CloudType::Ptr m_effect_norm_vec;
     std::vector<PointVec> m_nearest_points;
     pcl::VoxelGrid<PointType> m_scan_filter;
+    bool m_last_update_attempted = false;
+    bool m_last_update_accepted = false;
+    std::size_t m_consecutive_update_rejections = 0;
 };

@@ -35,6 +35,7 @@ add_library(${PROJECT_NAME} STATIC
   src/path_follower_core.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../maps/include>
   $<INSTALL_INTERFACE:include>
   $<INSTALL_INTERFACE:include/services/plan/local_planner/cpp>)
 set_target_properties(${PROJECT_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -67,7 +68,7 @@ if(DEFINED ENV{AMENT_PREFIX_PATH})
     # Helper: add test with OpenMP.
     macro(nav_kernel_add_test target src)
       ament_add_gtest(${target} ${src})
-      target_include_directories(${target} PRIVATE include)
+      target_include_directories(${target} PRIVATE include ../../maps/include)
       target_link_libraries(${target} ${PROJECT_NAME} local_planner_cpp)
       if(OpenMP_CXX_FOUND)
         target_link_libraries(${target} OpenMP::OpenMP_CXX)
@@ -80,8 +81,8 @@ if(DEFINED ENV{AMENT_PREFIX_PATH})
     nav_kernel_add_test(test_path_edge_cases tests/test_path_edge_cases.cpp)
     nav_kernel_add_test(test_benchmark tests/test_benchmark.cpp)
     nav_kernel_add_test(test_validation tests/test_validation.cpp)
-    nav_kernel_add_test(test_map_layers_core tests/test_map_layers_core.cpp)
     nav_kernel_add_test(test_terrain_core tests/test_terrain_core.cpp)
+    nav_kernel_add_test(test_dynamic_clear_core tests/test_dynamic_clear_core.cpp)
   endif()
 
   ament_package()
@@ -89,23 +90,14 @@ if(DEFINED ENV{AMENT_PREFIX_PATH})
 else()
   # Standalone mode for Windows, CI, and local development.
 
-  FetchContent_Declare(googletest
-    GIT_REPOSITORY https://github.com/google/googletest.git
-    GIT_TAG        v1.14.0)
-  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-
-  FetchContent_Declare(taskflow
-    GIT_REPOSITORY https://github.com/taskflow/taskflow.git
-    GIT_TAG        v3.8.0)
-
-  set(TF_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-  set(TF_BUILD_CUDA OFF CACHE BOOL "" FORCE)
-  set(TF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  set(TF_BUILD_PROFILER OFF CACHE BOOL "" FORCE)
-  set(TF_BUILD_SYCL OFF CACHE BOOL "" FORCE)
-  set(TF_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-
-  FetchContent_MakeAvailable(googletest taskflow)
+  find_package(GTest CONFIG QUIET)
+  if(NOT TARGET GTest::gtest_main)
+    FetchContent_Declare(googletest
+      GIT_REPOSITORY https://github.com/google/googletest.git
+      GIT_TAG        v1.14.0)
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+  endif()
 
   # OpenMP is optional and used for baseline comparison.
   find_package(OpenMP QUIET)
@@ -135,7 +127,7 @@ else()
 
   add_executable(test_benchmark tests/test_benchmark.cpp)
   target_include_directories(test_benchmark PRIVATE include)
-  target_link_libraries(test_benchmark GTest::gtest_main Taskflow ${PROJECT_NAME} local_planner_cpp)
+  target_link_libraries(test_benchmark GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   if(OpenMP_CXX_FOUND)
     target_link_libraries(test_benchmark OpenMP::OpenMP_CXX)
   endif()
@@ -146,15 +138,15 @@ else()
   target_link_libraries(test_validation GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_validation)
 
-  add_executable(test_map_layers_core tests/test_map_layers_core.cpp)
-  target_include_directories(test_map_layers_core PRIVATE include)
-  target_link_libraries(test_map_layers_core GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
-  gtest_discover_tests(test_map_layers_core)
-
   add_executable(test_terrain_core tests/test_terrain_core.cpp)
   target_include_directories(test_terrain_core PRIVATE include)
   target_link_libraries(test_terrain_core GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
   gtest_discover_tests(test_terrain_core)
+
+  add_executable(test_dynamic_clear_core tests/test_dynamic_clear_core.cpp)
+  target_include_directories(test_dynamic_clear_core PRIVATE include)
+  target_link_libraries(test_dynamic_clear_core GTest::gtest_main ${PROJECT_NAME} local_planner_cpp)
+  gtest_discover_tests(test_dynamic_clear_core)
 
   option(NAV_KERNEL_BUILD_PYTHON_BINDINGS "Build nav_kernel Python bindings" OFF)
   if(NAV_KERNEL_BUILD_PYTHON_BINDINGS)
@@ -175,7 +167,7 @@ else()
       bindings/bind_local_planner.cpp
       bindings/bind_terrain.cpp)
     nanobind_add_module(lingtu_nav_kernel ${NAV_KERNEL_BINDING_SOURCES})
-    target_include_directories(lingtu_nav_kernel PRIVATE include)
+    target_include_directories(lingtu_nav_kernel PRIVATE include ../../maps/include)
     target_link_libraries(lingtu_nav_kernel PRIVATE ${PROJECT_NAME} local_planner_cpp)
   elseif(NAV_KERNEL_BUILD_PYTHON_BINDINGS)
     message(WARNING "Skipping nav_kernel Python bindings because Python development headers were not found")

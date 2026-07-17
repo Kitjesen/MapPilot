@@ -26,7 +26,11 @@ def stack_module(
     except KeyError:
         pass
 
-    seed_registered_plugins(groups=(seed_group,), reload_loaded=False)
+    try:
+        seed_registered_plugins(groups=(seed_group,), reload_loaded=False)
+    except ValueError as exc:
+        if "Unknown plugin seed group" not in str(exc):
+            raise
     try:
         return get(category, name)
     except KeyError:

@@ -13,11 +13,12 @@ Usage:
     python tests/scripts/test_end_to_end.py
 """
 
-import sys
 import os
+import sys
 import time
-import numpy as np
 from pathlib import Path
+
+import numpy as np
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -32,11 +33,12 @@ print()
 # ============================================================================
 print("Test 1: Module imports...")
 try:
+    from decision.goals.resolver import GoalResolver
+    from decision.goals.tokenizer import extract_keywords
     from perception.detection.yolo_world_detector import YOLOWorldDetector
     from perception.encoding.clip_encoder import CLIPEncoder
     from perception.tracking.instance_tracker import InstanceTracker
-    from decision.goal_resolution.goal_resolver import GoalResolver
-    from decision.goal_resolution.chinese_tokenizer import extract_keywords
+
     print("[OK] All modules imported successfully")
 except ImportError as e:
     print(f"[FAIL] Module import failed: {e}")
@@ -75,19 +77,9 @@ try:
     # Simulate detection results
     from perception.tracking.projection import Detection3D
 
-    det1 = Detection3D(
-        label="chair",
-        confidence=0.85,
-        position=np.array([1.0, 0.5, 0.0]),
-        bbox_2d=[100, 100, 200, 200]
-    )
+    det1 = Detection3D(label="chair", confidence=0.85, position=np.array([1.0, 0.5, 0.0]), bbox_2d=[100, 100, 200, 200])
 
-    det2 = Detection3D(
-        label="table",
-        confidence=0.90,
-        position=np.array([2.0, 0.5, 0.0]),
-        bbox_2d=[300, 300, 400, 400]
-    )
+    det2 = Detection3D(label="table", confidence=0.90, position=np.array([2.0, 0.5, 0.0]), bbox_2d=[300, 300, 400, 400])
 
     # Update tracker
     tracker.update([det1, det2])
@@ -107,6 +99,7 @@ try:
 except Exception as e:
     print(f"[FAIL] Instance tracker test failed: {e}")
     import traceback
+
     traceback.print_exc()
 
 print()
@@ -124,31 +117,29 @@ try:
                 "label": "chair",
                 "position": {"x": 1.0, "y": 0.5, "z": 0.0},
                 "confidence": 0.85,
-                "clip_feature": np.random.randn(512).tolist()
+                "clip_feature": np.random.randn(512).tolist(),
             },
             {
                 "id": 1,
                 "label": "table",
                 "position": {"x": 2.0, "y": 0.5, "z": 0.0},
                 "confidence": 0.90,
-                "clip_feature": np.random.randn(512).tolist()
+                "clip_feature": np.random.randn(512).tolist(),
             },
             {
                 "id": 2,
                 "label": "door",
                 "position": {"x": 3.0, "y": 0.0, "z": 0.0},
                 "confidence": 0.75,
-                "clip_feature": np.random.randn(512).tolist()
-            }
+                "clip_feature": np.random.randn(512).tolist(),
+            },
         ],
-        "relations": [
-            {"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.2}
-        ],
-        "regions": []
+        "relations": [{"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.2}],
+        "regions": [],
     }
 
     # Test Fast Path (no LLM required)
-    from decision.goal_resolution.goal_resolver import GoalResolver
+    from decision.goals.resolver import GoalResolver
 
     resolver = GoalResolver(llm_config=None)
 
@@ -172,6 +163,7 @@ try:
 except Exception as e:
     print(f"[FAIL] Goal resolver test failed: {e}")
     import traceback
+
     traceback.print_exc()
 
 print()
@@ -181,26 +173,17 @@ print()
 # ============================================================================
 print("Test 5: Action executor...")
 try:
-    from decision.tasking.action_executor import ActionExecutor, ActionCommand
+    from decision.tasks.actions import ActionCommand, ActionExecutor
 
     executor = ActionExecutor()
 
     # Test navigate command
-    cmd = executor.create_navigate_command(
-        target_x=2.0,
-        target_y=1.0,
-        target_yaw=0.0
-    )
+    cmd = executor.create_navigate_command(target_x=2.0, target_y=1.0, target_yaw=0.0)
 
     print(f"  Navigate command: type={cmd.command_type}, goal=({cmd.goal_x:.1f}, {cmd.goal_y:.1f})")
 
     # Test approach command
-    cmd = executor.create_approach_command(
-        target_x=2.0,
-        target_y=1.0,
-        current_x=0.0,
-        current_y=0.0
-    )
+    cmd = executor.create_approach_command(target_x=2.0, target_y=1.0, current_x=0.0, current_y=0.0)
 
     print(f"  Approach command: type={cmd.command_type}")
 
@@ -208,6 +191,7 @@ try:
 except Exception as e:
     print(f"[FAIL] Action executor test failed: {e}")
     import traceback
+
     traceback.print_exc()
 
 print()
@@ -217,7 +201,7 @@ print()
 # ============================================================================
 print("Test 6: Task decomposer...")
 try:
-    from decision.tasking.task_decomposer import TaskDecomposer, SubGoalAction
+    from decision.tasks.decomposition import SubGoalAction, TaskDecomposer
 
     decomposer = TaskDecomposer()
 
@@ -240,6 +224,7 @@ try:
 except Exception as e:
     print(f"[FAIL] Task decomposer test failed: {e}")
     import traceback
+
     traceback.print_exc()
 
 print()
@@ -279,6 +264,7 @@ try:
 except Exception as e:
     print(f"[FAIL] Topological memory test failed: {e}")
     import traceback
+
     traceback.print_exc()
 
 print()

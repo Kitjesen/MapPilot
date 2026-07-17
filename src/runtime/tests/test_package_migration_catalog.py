@@ -1,13 +1,12 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
-from runtime.diagnostics.migration_catalog import (
+from tools.migration.catalog import (
     PACKAGE_MIGRATION_TARGETS,
     target_for_package,
     targets_by_phase,
 )
-
 
 REPO = Path(__file__).resolve().parents[3]
 STALE_RUNTIME_PATHS = (
@@ -23,6 +22,12 @@ STALE_RUNTIME_PATHS = (
     "src/runtime/transport/dual.py",
     "src/nav/services/plan/global_planner/direct.py",
     "src/nav/services/plan/global_planner/algorithm/direct_path.py",
+)
+STALE_DIAGNOSTICS_RUNTIME_PATHS = (
+    "src/diagnostics/field/dimos_gap.py",
+    "src/diagnostics/field/dimos_runtime_dataflow.py",
+    "src/diagnostics/field/efficiency_status.py",
+    "src/diagnostics/field/migration_catalog.py",
 )
 STALE_PATH_SCAN_ROOTS = (
     "cli",
@@ -93,6 +98,10 @@ def test_non_doc_surfaces_do_not_reference_stale_runtime_paths():
             except UnicodeDecodeError:
                 continue
             for stale in STALE_RUNTIME_PATHS:
+                if stale in text:
+                    rel = path.relative_to(REPO).as_posix()
+                    offenders.append(f"{rel}: {stale}")
+            for stale in STALE_DIAGNOSTICS_RUNTIME_PATHS:
                 if stale in text:
                     rel = path.relative_to(REPO).as_posix()
                     offenders.append(f"{rel}: {stale}")

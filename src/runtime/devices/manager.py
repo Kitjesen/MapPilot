@@ -1,4 +1,4 @@
-"""DeviceManager — orchestrates all hardware devices.
+"""hw orchestrates hardware inventory and low-rate device status.
 
 Loads `config/devices.yaml`, instantiates a Device per spec, opens them,
 publishes `device_status` snapshot to Dashboard. Optional udev watcher
@@ -14,6 +14,7 @@ import threading
 from pathlib import Path
 from typing import Any, Callable
 
+from runtime.contracts import HW_ROLE
 from runtime.devices.base import Device, DeviceStatus
 from runtime.devices.spec import DeviceSpec, load_device_specs
 from runtime.module import Module
@@ -23,8 +24,9 @@ from runtime.stream import Out
 logger = logging.getLogger(__name__)
 
 
-@register("device_manager", "default", description="Hardware device orchestrator")
-class DeviceManager(Module, layer=0):
+@register("hw", "default", description="Hardware inventory/status module")
+@register("device_manager", "default", description="Compatibility alias for hw")
+class Hw(Module, layer=0):
     """Loads devices.yaml and manages all hardware lifecycle.
 
     Outputs:
@@ -35,12 +37,13 @@ class DeviceManager(Module, layer=0):
     device_status: Out[list]
     device_event: Out[str]
     alive: Out[bool]
+    runtime_id = HW_ROLE
 
     def __init__(
         self,
         config_path: str = "config/devices.yaml",
-        status_rate_hz: float = 0.5,            # 2Hz → 0.5Hz, GIL friendly
-        enable_hotplug: bool = False,           # default off — saves a thread
+        status_rate_hz: float = 0.5,  # 2Hz → 0.5Hz, GIL friendly
+        enable_hotplug: bool = False,  # default off — saves a thread
         **kw: Any,
     ) -> None:
         super().__init__(**kw)
@@ -72,7 +75,9 @@ class DeviceManager(Module, layer=0):
         self.alive.publish(True)
         self._shutdown.clear()
         self._status_thread = threading.Thread(
-            target=self._status_loop, daemon=True, name="dev-status",
+            target=self._status_loop,
+            daemon=True,
+            name="dev-status",
         )
         self._status_thread.start()
         if self._enable_hotplug:
@@ -89,19 +94,20 @@ class DeviceManager(Module, layer=0):
             try:
                 d.close()
             except Exception:
-                logger.debug("DeviceManager: error closing device %s", d.id, exc_info=True)
+                logger.debug("hw: error closing device %s", d.id, exc_info=True)
         super().stop()
 
     # ── Spec loading ──────────────────────────────────────────────────
 
     def _load_specs(self) -> None:
         if not self._config_path.exists():
-            logger.warning("DeviceManager: %s not found", self._config_path)
+            logger.warning("hw: %s not found", self._config_path)
             return
         self._specs = load_device_specs(self._config_path)
         logger.info(
-            "DeviceManager: loaded %d device specs from %s",
-            len(self._specs), self._config_path,
+            "hw: loaded %d device specs from %s",
+            len(self._specs),
+            self._config_path,
         )
 
     def _import_drivers(self) -> None:
@@ -109,20 +115,22 @@ class DeviceManager(Module, layer=0):
         try:
             pass
         except Exception as e:
-            logger.warning("DeviceManager: driver import failed: %s", e)
+            logger.warning("hw: driver import failed: %s", e)
 
     def _open_all(self) -> None:
         from runtime.devices.drivers.serial_nmea0183 import driver_registry
+
         registry = driver_registry()
         for spec in self._specs:
             if not spec.enabled:
-                logger.info("DeviceManager: skip disabled device %s", spec.id)
+                logger.info("hw: skip disabled device %s", spec.id)
                 continue
             cls = registry.get(spec.driver)
             if cls is None:
                 logger.warning(
-                    "DeviceManager: driver %r for %s not registered",
-                    spec.driver, spec.id,
+                    "hw: driver %r for %s not registered",
+                    spec.driver,
+                    spec.id,
                 )
                 continue
             try:
@@ -132,14 +140,15 @@ class DeviceManager(Module, layer=0):
                     dev.set_callback(self._make_dispatch(spec.id))
                 if dev.open():
                     self.device_event.publish(f"open:{spec.id}")
-                    logger.info("DeviceManager: opened %s (%s)", spec.id, spec.driver)
+                    logger.info("hw: opened %s (%s)", spec.id, spec.driver)
                 else:
                     logger.warning(
-                        "DeviceManager: failed to open %s — %s",
-                        spec.id, dev.health().last_error or "no hardware",
+                        "hw: failed to open %s — %s",
+                        spec.id,
+                        dev.health().last_error or "no hardware",
                     )
             except Exception as e:
-                logger.exception("DeviceManager: error creating %s: %s", spec.id, e)
+                logger.exception("hw: error creating %s: %s", spec.id, e)
 
     # ── Subscription API ───────────────────────────────────────────────
 
@@ -153,7 +162,8 @@ class DeviceManager(Module, layer=0):
                 try:
                     cb(msg)
                 except Exception as e:
-                    logger.debug("DeviceManager dispatch %s: %s", device_id, e)
+                    logger.debug("hw dispatch %s: %s", device_id, e)
+
         return _dispatch
 
     def get_device(self, device_id: str) -> Device | None:
@@ -178,13 +188,15 @@ class DeviceManager(Module, layer=0):
             for spec in self._specs:
                 if spec.id in opened_ids:
                     continue
-                snapshot.append({
-                    "id": spec.id,
-                    "type": spec.type,
-                    "status": "disabled" if not spec.enabled else "missing",
-                    "description": spec.description,
-                    "is_healthy": False,
-                })
+                snapshot.append(
+                    {
+                        "id": spec.id,
+                        "type": spec.type,
+                        "status": "disabled" if not spec.enabled else "missing",
+                        "description": spec.description,
+                        "is_healthy": False,
+                    }
+                )
             self.device_status.publish(snapshot)
 
     # ── Hot-plug (optional, pyudev) ───────────────────────────────────
@@ -192,14 +204,15 @@ class DeviceManager(Module, layer=0):
     def _start_hotplug(self) -> None:
         try:
             import pyudev
+
             ctx = pyudev.Context()
             monitor = pyudev.Monitor.from_netlink(ctx)
             monitor.filter_by(subsystem="usb")
         except ImportError:
-            logger.info("DeviceManager: pyudev not installed, hot-plug disabled")
+            logger.info("hw: pyudev not installed, hot-plug disabled")
             return
         except Exception as e:
-            logger.warning("DeviceManager: hot-plug init failed: %s", e)
+            logger.warning("hw: hot-plug init failed: %s", e)
             return
 
         def _watch():
@@ -211,10 +224,12 @@ class DeviceManager(Module, layer=0):
                     self._on_hotplug(action, device)
 
         self._hotplug_thread = threading.Thread(
-            target=_watch, daemon=True, name="dev-hotplug",
+            target=_watch,
+            daemon=True,
+            name="dev-hotplug",
         )
         self._hotplug_thread.start()
-        logger.info("DeviceManager: hot-plug watcher started")
+        logger.info("hw: hot-plug watcher started")
 
     def _on_hotplug(self, action: str, device: Any) -> None:
         """Re-detect/open devices that match the hot-plug event."""
@@ -223,21 +238,29 @@ class DeviceManager(Module, layer=0):
             for d in self._devices.values():
                 if d.status == DeviceStatus.OFFLINE:
                     if d.open():
-                        logger.info("DeviceManager: hot-plug reopened %s", d.id)
+                        logger.info("hw: hot-plug reopened %s", d.id)
                         self.device_event.publish(f"reopen:{d.id}")
         elif action == "remove":
             for d in self._devices.values():
                 if d.status in (DeviceStatus.READY, DeviceStatus.STREAMING):
                     if not d.detect():
                         d.close()
-                        logger.warning("DeviceManager: device %s removed", d.id)
+                        logger.warning("hw: device %s removed", d.id)
                         self.device_event.publish(f"unplug:{d.id}")
 
     # ── Health for Dashboard ──────────────────────────────────────────
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
+        info["role"] = HW_ROLE
+        info["backend"] = "inventory"
+        info["status"] = "running" if self._running else "stopped"
+        info["sensor_streams"] = False
+        info["scope"] = "hardware inventory/status only"
         info["devices"] = [d.health().to_dict() for d in self._devices.values()]
         info["spec_count"] = len(self._specs)
         info["opened_count"] = len(self._devices)
         return info
+
+
+DeviceManager = Hw

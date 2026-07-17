@@ -12,20 +12,25 @@ sudo systemctl restart lingtu
 sudo systemctl restart robot-fastlio2
 ```
 
-## 1. Robot Kinematic Limits - `config/robot_config.yaml`
+## 1. Robot Speed Inputs - `config/robot_config.yaml`
 
 | Key | Default | Range | Effect |
 | --- | --- | --- | --- |
-| `robot.max_linear_vel` | 1.0 m/s | 0.3-2.0 | Path-follower velocity ceiling |
-| `robot.max_angular_vel` | 1.0 rad/s | 0.3-2.0 | Turn-rate ceiling |
-| `robot.stuck_timeout` | 10.0 s | 5-20 | Stuck detector window |
-| `robot.stuck_dist_thre` | 0.15 m | 0.05-0.30 | Min movement before stuck |
-| `robot.cruise_speed` | 0.6 m/s | 0.3-1.0 | Default mission speed |
+| `speed.max_linear` | 1.0 m/s | robot-specific | Chassis/legacy linear limit; not the native endpoint path-follower limit |
+| `speed.max_angular` | 1.0 rad/s | robot-specific | Chassis/legacy angular limit |
+| `speed.max_speed` | 0.875 m/s | 0.3-1.0 | Python `LocalPlanner` normalization denominator |
+| `speed.autonomy_speed` | 0.875 m/s | 0.3-1.0 | Python `LocalPlanner` requested planning speed |
+
+The native endpoint owns a separate speed surface. Its defaults are
+`--max-speed-mps 0.4` and `--max-accel-mps2 1.0`; it does not read the Python
+Module's `speed.max_speed` as its command ceiling.
 
 ## 2. Local Planner - `local_planner.*`
 
 The production local planner is the in-process `nav_kernel LocalPlanner` exposed
 through the private `_nav_kernel` nanobind extension. It is not a ROS2 node.
+The exact algorithm and runtime-lane differences are defined in
+[Local Planning and Tracking Contract](architecture/LOCAL_PLANNING_AND_TRACKING_CONTRACT.md).
 
 | Key | Default | Effect |
 | --- | --- | --- |
@@ -41,22 +46,58 @@ through the private `_nav_kernel` nanobind extension. It is not a ROS2 node.
 | `local_planner.near_field_stop_dis` | 0.5 m | Emergency stop distance |
 | `local_planner.check_obstacle` | true | Enable collision filtering |
 | `local_planner.two_way_drive` | true | Allow reverse motion candidates |
+| `local_planner.use_traversability_cost` | true | Python Module: enable traversability hard/soft scoring |
+| `local_planner.traversability_hard_cost` | 90 | Reject a path group at or above this risk |
+| `local_planner.traversability_soft_cost` | 40 | Begin multiplicative risk penalty above this value |
+| `local_planner.traversability_weight` | 0.01 | Soft-risk penalty slope |
 
 The legacy ROS2 `cmu` backend is not a Module runtime backend. Use
 `local_planner.effective_params` in module health to confirm tuning reached the
 in-process planner.
 
-## 3. Path Follower - `path_follower.*`
+`point_per_path_thre=2` means two or more voxel-correspondence obstacle hits
+hard-reject a primitive. `use_cost=false` together with `slope_weight=0.0`
+keeps the height-derived score factor at 1; obstacle collision and the separate
+traversability grid still remain active when enabled.
 
-The production path follower is also in-process `nav_kernel`.
+The native endpoint defaults differ: traversability scoring is disabled unless
+explicitly enabled, and its hard/soft/weight defaults are `80/40/0.01`. Its
+`--local-planner-obstacle-height-max-m` ceiling defaults to `1.20 m` (environment
+equivalent: `LINGTU_NAV_LOCAL_PLANNER_OBSTACLE_HEIGHT_MAX_M`); non-finite or
+higher body-relative points are treated as invalid/overhead evidence and are
+not admitted to near-field stop, collision scoring, or recovery checks.
 
-| Key | Default | Effect |
+## 3. Path Follower Effective Parameters
+
+The production path follower is also in-process `nav_kernel`. It is a
+lookahead-point holonomic geometric tracker, not a local planner and not the
+classic curvature-form Pure Pursuit controller.
+
+The names below describe `nav_kernel::PathFollowerParams`; not every field is
+an independently exposed YAML setting. The endpoint exposes speed/acceleration
+through CLI/environment, while the Python Module derives these fields from its
+constructor/profile settings.
+
+| Core field | Native endpoint default | Effect |
 | --- | --- | --- |
-| `path_follower.base_look_ahead` | 0.3 m | Lookahead at zero velocity |
-| `path_follower.look_ahead_ratio` | 0.5 | Extra lookahead per m/s |
-| `path_follower.yaw_rate_gain` | 7.5 | Turning gain |
-| `path_follower.max_yaw_rate` | 45 deg/s | Yaw-rate limit |
-| `path_follower.stop_dis_thre` | 0.5 m | Stop distance to final waypoint |
+| `baseLookAheadDis` | 0.3 m | Lookahead at zero velocity |
+| `lookAheadRatio` | 0.5 | Extra lookahead per m/s |
+| `yawRateGain` | 7.5 | Turning gain |
+| `maxYawRate` | 45 deg/s | Yaw-rate limit |
+| `maxSpeed` | 0.4 m/s | Native endpoint velocity ceiling |
+| `maxAccel` | 1.0 m/s^2 | Native endpoint signed scalar-speed ramp |
+| `stopDisThre` | 0.2 m | Follower stop band around the tracked path end |
+
+Adaptive lookahead uses the follower's internal commanded scalar speed, not
+measured odometry speed. With the native endpoint's `0.4 m/s` ceiling, the
+reachable lookahead is `0.30-0.50 m`. `max_accel` does not limit yaw
+acceleration, jerk, or `vx/vy` components independently.
+
+Do not confuse the follower stop band with `local_planner.near_field_stop_dis`
+(`0.5 m`) or the native mission goal-reached threshold (`0.35 m`). Python
+product profiles can override the follower separately; the current
+`thunder_nav` Module profile uses `max_speed=0.20 m/s`, adapter
+`lookahead=0.35 m`, `goal_tolerance=0.05 m`, and `native_max_accel=10.0 m/s^2`.
 
 ## 4. Global Planner Backend
 

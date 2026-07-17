@@ -1,4 +1,4 @@
-﻿"""MCP JSON-RPC 2.0 client for the LingTu MCP server (port 8090).
+"""MCP JSON-RPC 2.0 client for the LingTu MCP server (port 8090).
 
 Wraps every ``@skill`` tool as a typed Python convenience method.
 
@@ -27,14 +27,10 @@ from typing import Any
 try:
     import httpx
 except ImportError:  # pragma: no cover
-    msg = (
-        "The LingTu MCP SDK requires httpx. "
-        "Install it with: pip install 'lingtu[sdk-mcp]'"
-    )
+    msg = "The LingTu MCP SDK requires httpx. Install it with: pip install 'lingtu[sdk-mcp]'"
     raise ImportError(msg) from None
 
 from lingtu.sdk import LingTuClient
-from lingtu.sdk.config import LingTuConfig
 
 log = logging.getLogger(__name__)
 
@@ -541,14 +537,14 @@ class LingTuMCP:
         """
         return self.call("use_map", {"name": name})
 
-    def build_tomogram(self, name: str) -> Any:
-        """Build tomogram from map PCD.
+    def build_octomap(self, name: str) -> Any:
+        """Build OctoMap from map PCD.
 
         Example::
 
-            mcp.build_tomogram("factory_01")
+            mcp.build_octomap("factory_01")
         """
-        return self.call("build_tomogram", {"name": name})
+        return self.call("build_octomap", {"name": name})
 
     # ------------------------------------------------------------------
     # Convenience -- Exploration
@@ -819,11 +815,14 @@ class LingTuMCP:
 
             mcp.switch_backend("planner", "pct")
         """
-        return self.call("switch_backend", {
-            "category": category,
-            "backend": backend,
-            "config_json": config_json,
-        })
+        return self.call(
+            "switch_backend",
+            {
+                "category": category,
+                "backend": backend,
+                "config_json": config_json,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Convenience -- NTRIP / GNSS
@@ -876,4 +875,3 @@ class MCPError(Exception):
         self.code = code
         self.message = message
         super().__init__(f"[MCP {code}] {message}")
-

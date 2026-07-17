@@ -1,22 +1,19 @@
-"""Tests for FrontierModule, TopologicalMemoryModule, EpisodicMemoryModule,
-TaggedLocationsModule -- frontier exploration and memory Module conversions.
-"""
+"""Tests for topological, episodic, and tagged-location memory modules."""
 
-import numpy as np
 import pytest
 
+from memory.modules.episodic_module import EpisodicMemoryModule
+from memory.modules.tagged_locations_module import TaggedLocationsModule
+from memory.modules.topological_module import TopologicalMemoryModule
 from runtime import Module, Out, autoconnect
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import Detection3D, SceneGraph
-from memory.modules.episodic_module import EpisodicMemoryModule
-from memory.modules.tagged_locations_module import TaggedLocationsModule
-from memory.modules.topological_module import TopologicalMemoryModule
-from decision.modules.frontier_module import FrontierModule
 
 
 def _make_odom(x, y, z=0.0):
     return Odometry(pose=Pose(position=Vector3(x, y, z)))
+
 
 def _make_sg(labels, positions=None):
     objects = []
@@ -25,63 +22,11 @@ def _make_sg(labels, positions=None):
         objects.append(Detection3D(id=f"obj_{i}", label=label, confidence=0.9, position=Vector3(*pos)))
     return SceneGraph(objects=objects)
 
+
 def _collect(module, port_name):
     collected = []
     getattr(module, port_name)._add_callback(collected.append)
     return collected
-
-
-class TestFrontierModulePorts:
-    def test_ports_in_detected(self):
-        mod = FrontierModule()
-        assert "scene_graph" in mod.ports_in
-        assert "odometry" in mod.ports_in
-        assert "instruction" in mod.ports_in
-
-    def test_ports_out_detected(self):
-        mod = FrontierModule()
-        assert "frontier_goal" in mod.ports_out
-        assert "frontier_scores" in mod.ports_out
-
-    def test_port_types(self):
-        mod = FrontierModule()
-        assert mod.ports_in["scene_graph"].msg_type is SceneGraph
-        assert mod.ports_in["odometry"].msg_type is Odometry
-        assert mod.ports_in["instruction"].msg_type is str
-        assert mod.ports_out["frontier_goal"].msg_type is PoseStamped
-        assert mod.ports_out["frontier_scores"].msg_type is dict
-
-    def test_layer(self):
-        assert FrontierModule._layer == 4
-        assert FrontierModule().layer == 4
-
-    def test_scorer_accessible(self):
-        assert FrontierModule().scorer is not None
-
-    def test_no_output_without_costmap(self):
-        mod = FrontierModule()
-        mod.setup()
-        goals = _collect(mod, "frontier_goal")
-        mod.odometry._deliver(_make_odom(0, 0))
-        mod.instruction._deliver("find the kitchen")
-        mod.scene_graph._deliver(_make_sg(["chair", "table"]))
-        assert len(goals) == 0
-
-    def test_costmap_integration(self):
-        mod = FrontierModule(min_frontier_size=1, max_frontiers=5, score_threshold=0.0)
-        mod.setup()
-        goals = _collect(mod, "frontier_goal")
-        scores = _collect(mod, "frontier_scores")
-        grid = np.zeros((20, 20), dtype=np.int8)
-        grid[:, 10:] = -1
-        mod.update_costmap(grid, resolution=1.0, origin_x=0.0, origin_y=0.0)
-        mod.odometry._deliver(_make_odom(5, 5))
-        mod.instruction._deliver("find the door")
-        mod.scene_graph._deliver(_make_sg(["door"], positions=[(9.0, 5.0, 0.0)]))
-        assert len(goals) >= 1
-        assert len(scores) >= 1
-        assert isinstance(goals[0], PoseStamped)
-        assert "frontier_count" in scores[0]
 
 
 class TestTopologicalMemoryModulePorts:
@@ -333,6 +278,7 @@ class TestAutoconnectPerceptionMemory:
         class SourceModule(Module, layer=2):
             scene_graph: Out[SceneGraph]
             odometry: Out[Odometry]
+
         return SourceModule
 
     def test_autoconnect_topo_memory(self):

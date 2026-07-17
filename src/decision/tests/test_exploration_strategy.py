@@ -1,39 +1,39 @@
-"""
-test_exploration_strategy.py — Frontier 探索策略纯逻辑测试
-"""
+"""Decision module."""
 
 import json
 import unittest
 
 import numpy as np
 
-from decision.exploration.exploration_strategy import (
-    extract_frontier_scene_data,
-    generate_frontier_goal,
-)
-from decision.exploration.frontier_scorer import (
+from decision.frontiers.scorer import (
     FREE_CELL,
     UNKNOWN_CELL,
     FrontierScorer,
 )
+from decision.frontiers.strategy import (
+    extract_frontier_scene_data,
+    generate_frontier_goal,
+)
 
 
 class TestExtractFrontierSceneData(unittest.TestCase):
-    """场景图提取测试。"""
+    """Test Extract Frontier Scene Data."""
 
     def test_extract_filters_invalid_objects(self):
-        sg = json.dumps({
-            "objects": [
-                {"id": 1, "label": "door", "position": {"x": 1.2, "y": 2.3}},
-                {"id": 2, "label": "bad-no-pos"},
-                {"id": 3, "label": "bad-pos", "position": {"x": "nan", "y": 1}},
-                "not-a-dict",
-            ],
-            "relations": [
-                {"subject_id": 1, "relation": "near", "object_id": 2},
-                "invalid-relation",
-            ],
-        })
+        sg = json.dumps(
+            {
+                "objects": [
+                    {"id": 1, "label": "door", "position": {"x": 1.2, "y": 2.3}},
+                    {"id": 2, "label": "bad-no-pos"},
+                    {"id": 3, "label": "bad-pos", "position": {"x": "nan", "y": 1}},
+                    "not-a-dict",
+                ],
+                "relations": [
+                    {"subject_id": 1, "relation": "near", "object_id": 2},
+                    "invalid-relation",
+                ],
+            }
+        )
 
         objects, relations, rooms = extract_frontier_scene_data(sg)
 
@@ -48,17 +48,18 @@ class TestExtractFrontierSceneData(unittest.TestCase):
         self.assertEqual(relations, [])
         self.assertEqual(rooms, [])
 
-
     def test_extract_rooms_from_scene_graph(self):
-        sg = json.dumps({
-            "objects": [
-                {"id": 1, "label": "desk", "position": {"x": 1.0, "y": 2.0}},
-            ],
-            "relations": [],
-            "rooms": [
-                {"room_id": 0, "name": "office", "center": {"x": 1.0, "y": 2.0}},
-            ],
-        })
+        sg = json.dumps(
+            {
+                "objects": [
+                    {"id": 1, "label": "desk", "position": {"x": 1.0, "y": 2.0}},
+                ],
+                "relations": [],
+                "rooms": [
+                    {"room_id": 0, "name": "office", "center": {"x": 1.0, "y": 2.0}},
+                ],
+            }
+        )
 
         objects, _relations, rooms = extract_frontier_scene_data(sg)
         self.assertEqual(len(objects), 1)
@@ -67,7 +68,7 @@ class TestExtractFrontierSceneData(unittest.TestCase):
 
 
 class TestGenerateFrontierGoal(unittest.TestCase):
-    """Frontier 目标生成测试。"""
+    """Test Generate Frontier Goal."""
 
     @staticmethod
     def _make_scorer_with_costmap() -> FrontierScorer:
@@ -79,16 +80,18 @@ class TestGenerateFrontierGoal(unittest.TestCase):
 
     def test_generate_frontier_goal_success(self):
         scorer = self._make_scorer_with_costmap()
-        scene_graph = json.dumps({
-            "objects": [
-                {
-                    "id": 1,
-                    "label": "door",
-                    "position": {"x": 1.0, "y": 1.0, "z": 0.0},
-                }
-            ],
-            "relations": [],
-        })
+        scene_graph = json.dumps(
+            {
+                "objects": [
+                    {
+                        "id": 1,
+                        "label": "door",
+                        "position": {"x": 1.0, "y": 1.0, "z": 0.0},
+                    }
+                ],
+                "relations": [],
+            }
+        )
 
         result = generate_frontier_goal(
             frontier_scorer=scorer,

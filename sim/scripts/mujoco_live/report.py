@@ -1,4 +1,4 @@
-﻿"""Report and runtime-contract helpers for the MuJoCo live gate."""
+"""Report and runtime-contract helpers for the MuJoCo live gate."""
 
 from __future__ import annotations
 
@@ -8,8 +8,9 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from runtime.diagnostics.runtime_evidence import validate_runtime_evidence
+from diagnostics.field.evidence import validate_runtime_evidence
 from runtime.runtime_interface import FRAME_LINKS, TOPICS, resolved_runtime_data_flow
+
 
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -18,13 +19,15 @@ def _sha256_file(path: Path) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
 def _mujoco_fastlio_contract_definition() -> tuple[dict[str, Any], list[str]]:
     try:
-        from runtime.blueprints.simulation_contract import simulation_runtime_contract
+        from runtime.contracts.simulation import simulation_runtime_contract
 
         return simulation_runtime_contract("mujoco_fastlio2_live").as_report(), []
     except Exception as exc:
         return {}, [f"{type(exc).__name__}: {exc}"]
+
 
 def _mujoco_frame_evidence(
     *,
@@ -63,12 +66,14 @@ def _mujoco_frame_evidence(
         },
     }
 
+
 def _mujoco_hardware_safety() -> dict[str, Any]:
     return {
         "blocked_hardware_nodes": [],
         "unexpected_command_publishers": [],
         "topics": {TOPICS.cmd_vel: ["/mujoco_velocity_adapter"]},
     }
+
 
 def _mujoco_data_flow_evidence(
     *,
@@ -154,6 +159,7 @@ def _mujoco_data_flow_evidence(
         ),
     }
 
+
 def _mujoco_runtime_contract(
     *,
     definition: dict[str, Any],
@@ -162,16 +168,8 @@ def _mujoco_runtime_contract(
     frame_evidence: dict[str, dict[str, Any]],
     data_flow_evidence: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    required_topics = (
-        definition.get("required_runtime_topics")
-        if isinstance(definition, dict)
-        else ()
-    ) or ()
-    required_slam_topics = (
-        definition.get("required_slam_topics")
-        if isinstance(definition, dict)
-        else ()
-    ) or ()
+    required_topics = (definition.get("required_runtime_topics") if isinstance(definition, dict) else ()) or ()
+    required_slam_topics = (definition.get("required_slam_topics") if isinstance(definition, dict) else ()) or ()
     return {
         "name": "mujoco_fastlio2_live",
         "ok": (
@@ -180,8 +178,7 @@ def _mujoco_runtime_contract(
             and all((topic_evidence.get(topic) or {}).get("ok") is True for topic in required_slam_topics)
             and all((item or {}).get("ok") is True for item in frame_evidence.values())
             and all(
-                (item or {}).get("ok") is True
-                or (item or {}).get("required") is False
+                (item or {}).get("ok") is True or (item or {}).get("required") is False
                 for item in data_flow_evidence.values()
             )
         ),
@@ -196,6 +193,7 @@ def _mujoco_runtime_contract(
         "errors": definition_errors,
     }
 
+
 def _runtime_evidence_report(result: Any) -> dict[str, Any]:
     return {
         "ok": bool(result.ok),
@@ -203,6 +201,7 @@ def _runtime_evidence_report(result: Any) -> dict[str, Any]:
         "frame_links_required": True,
         "data_flow_required": True,
     }
+
 
 def _exception_lidar_source(args: argparse.Namespace) -> dict[str, Any]:
     pattern = Path(str(getattr(args, "mid360_pattern", "") or ""))
@@ -217,9 +216,7 @@ def _exception_lidar_source(args: argparse.Namespace) -> dict[str, Any]:
         "requested_backend": requested_backend,
         "mujoco_lidar_backend": mujoco_lidar_backend,
         "require_product_backend": True,
-        "allow_legacy_fallback": bool(
-            getattr(args, "allow_legacy_lidar_fallback", False)
-        ),
+        "allow_legacy_fallback": bool(getattr(args, "allow_legacy_lidar_fallback", False)),
         "error": "gate_exception_before_lidar_backend_report",
     }
     try:
@@ -243,6 +240,7 @@ def _exception_lidar_source(args: argparse.Namespace) -> dict[str, Any]:
         "fallback_n_rays": int(getattr(args, "n_rays", 0) or 0),
     }
 
+
 def _exception_partial_report_path(args: argparse.Namespace) -> Path | None:
     explicit = getattr(args, "partial_json_out", None)
     if explicit:
@@ -251,6 +249,7 @@ def _exception_partial_report_path(args: argparse.Namespace) -> Path | None:
     if json_out:
         return Path(json_out).with_suffix(".partial.json")
     return None
+
 
 def _load_exception_partial_report(
     args: argparse.Namespace,
@@ -266,6 +265,7 @@ def _load_exception_partial_report(
         return None, partial_path
     return payload, partial_path
 
+
 def _append_unique(items: list[str], values: Sequence[Any]) -> list[str]:
     seen = set(items)
     for value in values:
@@ -275,6 +275,7 @@ def _append_unique(items: list[str], values: Sequence[Any]) -> list[str]:
         items.append(text)
         seen.add(text)
     return items
+
 
 def _merge_exception_partial_report(
     report: dict[str, Any],
@@ -287,9 +288,7 @@ def _merge_exception_partial_report(
             report["partial_report_available"] = False
         return report
 
-    report["partial_report_path"] = (
-        partial_report_path.as_posix() if partial_report_path else ""
-    )
+    report["partial_report_path"] = partial_report_path.as_posix() if partial_report_path else ""
     report["partial_report_available"] = True
     report["partial_report"] = partial_report
     for key in (
@@ -321,11 +320,7 @@ def _merge_exception_partial_report(
             if key in simulation_path:
                 report[key] = simulation_path[key]
 
-    partial_faults = [
-        str(fault)
-        for fault in (partial_report.get("runtime_faults") or [])
-        if str(fault)
-    ]
+    partial_faults = [str(fault) for fault in (partial_report.get("runtime_faults") or []) if str(fault)]
     report["runtime_faults"] = _append_unique(
         list(report.get("runtime_faults") or []),
         partial_faults,
@@ -336,6 +331,7 @@ def _merge_exception_partial_report(
     )
     report["ok"] = False
     return report
+
 
 def _gate_exception_report(
     args: argparse.Namespace,
@@ -393,13 +389,9 @@ def _gate_exception_report(
         "product_lidar_backend_verified": False,
         "fallback_used": False,
         "requested_backend": str(getattr(args, "lidar_backend", "") or ""),
-        "mujoco_lidar_backend": str(
-            getattr(args, "mujoco_lidar_backend", "") or ""
-        ),
+        "mujoco_lidar_backend": str(getattr(args, "mujoco_lidar_backend", "") or ""),
         "require_product_backend": True,
-        "allow_legacy_fallback": bool(
-            getattr(args, "allow_legacy_lidar_fallback", False)
-        ),
+        "allow_legacy_fallback": bool(getattr(args, "allow_legacy_lidar_fallback", False)),
         "error": runtime_fault,
     }
     remaining_gaps = [
@@ -476,6 +468,7 @@ def _gate_exception_report(
         partial_report_path=partial_report_path,
     )
 
+
 def _wall_timeout_status(elapsed_wall_s: float, max_wall_time_s: float) -> dict[str, Any]:
     elapsed = max(0.0, float(elapsed_wall_s))
     limit = max(0.0, float(max_wall_time_s or 0.0))
@@ -485,22 +478,19 @@ def _wall_timeout_status(elapsed_wall_s: float, max_wall_time_s: float) -> dict[
         "triggered": triggered,
         "elapsed_wall_s": round(elapsed, 3),
         "max_wall_time_s": float(limit),
-        "fault": (
-            f"gate wall timeout after {elapsed:.1f}s (limit={limit:.1f}s)"
-            if triggered
-            else ""
-        ),
+        "fault": (f"gate wall timeout after {elapsed:.1f}s (limit={limit:.1f}s)" if triggered else ""),
     }
+
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
-        + "\n",
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str) + "\n",
         encoding="utf-8",
     )
     tmp.replace(path)
+
 
 def _video_sample_elapsed_s(
     duration_clock: str,
@@ -511,6 +501,7 @@ def _video_sample_elapsed_s(
     if str(duration_clock or "wall").strip().lower() == "sim":
         return float(elapsed_sim_s)
     return float(elapsed_wall_s)
+
 
 def _inspection_gate_evidence_complete(
     *,
@@ -531,33 +522,18 @@ def _inspection_gate_evidence_complete(
 ) -> dict[str, Any]:
     if not run_lingtu_inspection:
         return {"ok": False, "reason": "inspection disabled"}
-    patrol_total = int(
-        navigation_health.get("patrol_total")
-        or inspection_goal_count
-        or 0
-    )
+    patrol_total = int(navigation_health.get("patrol_total") or inspection_goal_count or 0)
     patrol_index = int(navigation_health.get("patrol_index") or 0)
     patrol_state = str(navigation_health.get("state") or "").upper()
     required_checkpoints = max(1, int(inspection_min_checkpoints))
     successful_checkpoints = min(max(patrol_index, 0), patrol_total)
-    patrol_success = bool(
-        patrol_state == "SUCCESS"
-        and patrol_total > 0
-        and patrol_index >= patrol_total
-    )
+    patrol_success = bool(patrol_state == "SUCCESS" and patrol_total > 0 and patrol_index >= patrol_total)
     checkpoint_count_ok = bool(successful_checkpoints >= required_checkpoints)
     terminal_success = patrol_success and checkpoint_count_ok
-    local_path_had_trackable_segment = bool(
-        local_path_counts and max(int(count) for count in local_path_counts) >= 2
-    )
-    latest_local_path_active = bool(
-        local_path_counts and int(local_path_counts[-1]) >= 2
-    )
+    local_path_had_trackable_segment = bool(local_path_counts and max(int(count) for count in local_path_counts) >= 2)
+    latest_local_path_active = bool(local_path_counts and int(local_path_counts[-1]) >= 2)
     early_success = bool(
-        not terminal_success
-        and latest_local_path_active
-        and canonical_nav_outputs_verified
-        and nav_cmd_nonzero > 0
+        not terminal_success and latest_local_path_active and canonical_nav_outputs_verified and nav_cmd_nonzero > 0
     )
     checks = {
         "patrol_success": patrol_success,
@@ -565,28 +541,18 @@ def _inspection_gate_evidence_complete(
         "fastlio2_algorithm_outputs": bool(algorithm_verified),
         "canonical_nav_outputs": bool(canonical_nav_outputs_verified),
         "global_path": bool(global_path_counts and max(global_path_counts) > 0),
-        "local_path": bool(
-            local_path_had_trackable_segment
-            and (terminal_success or latest_local_path_active)
-        ),
+        "local_path": bool(local_path_had_trackable_segment and (terminal_success or latest_local_path_active)),
         "nav_cmd_nonzero": bool(nav_cmd_nonzero > 0),
         "moving_obstacles": bool(
             not moving_obstacle_enabled
-            or (
-                moving_obstacle_published_update_count > 0
-                and moving_obstacle_published_point_count_max > 0
-            )
+            or (moving_obstacle_published_update_count > 0 and moving_obstacle_published_point_count_max > 0)
         ),
         "video_samples": bool(not video_required or video_sample_count > 0),
     }
     missing = [name for name, passed in checks.items() if not passed]
     return {
         "ok": not missing,
-        "reason": (
-            "inspection evidence complete"
-            if not missing
-            else "inspection evidence incomplete"
-        ),
+        "reason": ("inspection evidence complete" if not missing else "inspection evidence incomplete"),
         "missing": missing,
         "checks": checks,
         "successful_checkpoints": successful_checkpoints,

@@ -17,6 +17,6 @@ The normal path is in-process:
 
 The historical ROS2 shells that used to live under `legacy_ros/` (`terrain_analysis`,
 `terrain_analysis_ext`, `local_planner`, `sensor_scan_generation`) were `COLCON_IGNORE`d,
-never part of the product Module graph, and have been retired outright — confirmed unused
-by every production profile and removed per `docs/architecture/ROS2_DECOUPLING_MIGRATION_PLAN.md`
-(Phase 1). Their source remains available in git history if ever needed for reference.
+never part of the product Module graph, and have been retired outright. Current
+ROS replacement status is tracked in `docs/architecture/ROS_ROLE_REPLACEMENT_MAP.md`.
+Their source remains available in git history if ever needed for reference.

@@ -73,6 +73,11 @@ class Robot:
         except KeyError:
             return None
 
+    def _nav(self):
+        """Return the canonical command adapter, then the compatibility target."""
+
+        return self._mod("nav.skills") or self._mod("nav.mission")
+
     def go(self, instruction: str) -> str:
         """Send a natural-language instruction to the semantic planner."""
 
@@ -91,7 +96,7 @@ class Robot:
         the current odometry height and then falls back to ``0.0``.
         """
 
-        nav = self._mod("nav.mission")
+        nav = self._nav()
         if nav is None:
             return "Navigation not available"
         if z is None:
@@ -106,7 +111,10 @@ class Robot:
     def stop_motion(self) -> str:
         """Immediately stop all robot motion."""
 
-        nav = self._mod("nav.mission")
+        safety = self._mod("nav.safety")
+        if safety is not None and hasattr(safety, "emergency_stop"):
+            return safety.emergency_stop()
+        nav = self._nav()
         if nav is None:
             return "Navigation not available"
         return nav.stop_navigation()
@@ -114,7 +122,7 @@ class Robot:
     def cancel(self) -> str:
         """Cancel the current navigation mission."""
 
-        nav = self._mod("nav.mission")
+        nav = self._nav()
         if nav is None:
             return "Navigation not available"
         return nav.cancel_mission()
@@ -122,7 +130,7 @@ class Robot:
     def status(self) -> str:
         """Current mission/navigation state."""
 
-        nav = self._mod("nav.mission")
+        nav = self._nav()
         if nav is None:
             return "NOT_STARTED"
         get_status = getattr(nav, "get_navigation_status", None)
@@ -172,9 +180,9 @@ class Robot:
         return self._map_skill_ok("use_map", name)
 
     def list_maps(self) -> list:
-        """List maps known to the active nav.services.map_layers."""
+        """List maps known to the active maps module."""
 
-        mm = self._mod("nav.maps")
+        mm = self._mod("maps.service")
         if mm is None:
             return []
         try:
@@ -184,9 +192,9 @@ class Robot:
             return []
 
     def _map_skill_ok(self, skill: str, name: str) -> bool:
-        mm = self._mod("nav.maps")
+        mm = self._mod("maps.service")
         if mm is None:
-            logger.error("MapService not available")
+            logger.error("MapsModule not available")
             return False
         try:
             result = getattr(mm, skill)(name)
@@ -230,7 +238,7 @@ class Robot:
     def get_pose(self):
         """Robot position ``(x, y, z)`` in the map frame, or ``None``."""
 
-        nav = self._mod("nav.mission")
+        nav = self._nav()
         get_status = getattr(nav, "get_navigation_status", None) if nav is not None else None
         if not callable(get_status):
             return None

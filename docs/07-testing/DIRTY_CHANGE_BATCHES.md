@@ -236,11 +236,11 @@ git add \
   src/nav/kernel/CMakeLists_nanobind_only.cmake \
   src/nav/kernel/bindings/bind_map_layers.cpp \
   src/nav/kernel/bindings/bind_path_follower.cpp \
-  src/nav/kernel/include/nav_kernel/map_layers_core.hpp \
+  src/maps/include/lingtu/maps/layers/grid.hpp \
   src/nav/kernel/include/nav_kernel/path_follower_core.hpp \
   src/nav/kernel/paths.py \
   src/nav/kernel/src/path_follower_core.cpp \
-  src/nav/kernel/tests/test_map_layers_core.cpp \
+  src/maps/tests/cpp/grid_layers_test.cpp \
   src/nav/kernel/tests/test_path_follower_core.cpp \
   src/nav/local/path_follower.py \
   src/nav/local/path_follower_backend.py \
@@ -249,8 +249,8 @@ git add \
   src/nav/mission/runtime/control.py \
   src/nav/mission/runtime/planning.py \
   src/nav/services/frame_transforms.py \
-  src/nav/services/map/pipeline.py \
-  src/nav/services/maps.py \
+  src/maps/services/pipeline.py \
+  src/maps/modules/service.py \
   src/nav/services/plan/contracts.py \
   src/nav/services/plan/factory.py \
   src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/include/global_planner.h \

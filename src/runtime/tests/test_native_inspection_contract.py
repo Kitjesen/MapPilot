@@ -25,7 +25,7 @@ def test_typed_inspection_topics_are_canonical() -> None:
     assert TOPIC_ROS_TYPES[TOPICS.inspection_evidence_request] == ("lingtu.dds.InspectionEvidenceRequest",)
     assert TOPIC_ROS_TYPES[TOPICS.inspection_evidence_result] == ("lingtu.dds.InspectionEvidenceResult",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_command] == ("map",)
-    assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_ack] == ()
+    assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_ack] == ("map",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_status] == ("map",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_evidence_request] == ("map",)
     assert TOPIC_ALLOWED_FRAME_IDS[TOPICS.inspection_evidence_result] == ("map",)

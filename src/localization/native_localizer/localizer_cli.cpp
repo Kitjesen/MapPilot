@@ -66,18 +66,26 @@ int main(int argc, char** argv) {
             scan_path = argv[++i];
         } else if (arg == "--global") {
             use_global = true;
-        } else if (arg == "--x" && !read_double(argc, argv, i, x)) {
-            usage();
-            return 2;
-        } else if (arg == "--y" && !read_double(argc, argv, i, y)) {
-            usage();
-            return 2;
-        } else if (arg == "--z" && !read_double(argc, argv, i, z)) {
-            usage();
-            return 2;
-        } else if (arg == "--yaw" && !read_double(argc, argv, i, yaw)) {
-            usage();
-            return 2;
+        } else if (arg == "--x") {
+            if (!read_double(argc, argv, i, x)) {
+                usage();
+                return 2;
+            }
+        } else if (arg == "--y") {
+            if (!read_double(argc, argv, i, y)) {
+                usage();
+                return 2;
+            }
+        } else if (arg == "--z") {
+            if (!read_double(argc, argv, i, z)) {
+                usage();
+                return 2;
+            }
+        } else if (arg == "--yaw") {
+            if (!read_double(argc, argv, i, yaw)) {
+                usage();
+                return 2;
+            }
         } else {
             usage();
             return 2;

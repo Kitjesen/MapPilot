@@ -1,8 +1,12 @@
-"""TARE exploration entrypoint for LingTu."""
+"""Compatibility wrapper for ``explore.tare``."""
 
-from .module import TAREExplorerModule
-from .policy import PortableTAREPolicy, TAREDecision, TAREPolicyConfig
-from .supervisor import ExplorationSupervisorModule
+from explore.tare import (
+    ExplorationSupervisorModule,
+    PortableTAREPolicy,
+    TAREDecision,
+    TAREExplorerModule,
+    TAREPolicyConfig,
+)
 
 __all__ = [
     "ExplorationSupervisorModule",

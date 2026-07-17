@@ -11,12 +11,11 @@ from pathlib import Path
 
 import numpy as np
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _write_same_source_map(tmp_path: Path, *, frame_id: str = "odom") -> Path:
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         write_same_source_map_artifacts,
     )
 
@@ -47,7 +46,7 @@ def _write_same_source_map(tmp_path: Path, *, frame_id: str = "odom") -> Path:
 
 
 def test_saved_map_artifact_dir_gate_accepts_same_source_metadata(tmp_path: Path):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
 
@@ -79,19 +78,19 @@ def test_saved_map_artifact_dir_gate_accepts_same_source_metadata(tmp_path: Path
     ]
 
 
+@pytest.mark.skip(reason="tomogram builder retired; _tomography_script_dirs removed")
 def test_tomogram_builder_loader_falls_back_to_legacy_pct_script_dir(
     tmp_path: Path,
     monkeypatch,
 ):
     import builtins
 
-    import runtime.same_source_map_artifacts as artifacts
+    import maps.artifacts as artifacts
 
     script_dir = tmp_path / "PCT_planner" / "tomography" / "scripts"
     script_dir.mkdir(parents=True)
     (script_dir / "build_tomogram.py").write_text(
-        "def build_tomogram_from_pcd(*args, **kwargs):\n"
-        "    return {'data': [1], 'source': 'legacy'}\n",
+        "def build_tomogram_from_pcd(*args, **kwargs):\n    return {'data': [1], 'source': 'legacy'}\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(artifacts, "_tomography_script_dirs", lambda: [script_dir])
@@ -99,7 +98,10 @@ def test_tomogram_builder_loader_falls_back_to_legacy_pct_script_dir(
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "nav.services.plan.global_planner.algorithm.pct.vendor.pct_planner.tomography.scripts.build_tomogram":
+        if (
+            name
+            == "nav.services.plan.global_planner.algorithm.pct.vendor.pct_planner.tomography.scripts.build_tomogram"
+        ):
             raise ModuleNotFoundError(name)
         return real_import(name, *args, **kwargs)
 
@@ -120,7 +122,7 @@ def test_tomogram_builder_loader_falls_back_to_legacy_pct_script_dir(
 def test_saved_map_artifact_dir_gate_reports_expected_source_contract(
     tmp_path: Path,
 ):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
 
@@ -144,7 +146,7 @@ def test_saved_map_artifact_dir_gate_reports_expected_source_contract(
 
 
 def test_saved_map_artifact_dir_gate_rejects_missing_metadata(tmp_path: Path):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
         write_ascii_pcd,
     )
@@ -162,7 +164,7 @@ def test_saved_map_artifact_dir_gate_rejects_missing_metadata(tmp_path: Path):
 
 
 def test_saved_map_artifact_dir_gate_rejects_file_sha_drift(tmp_path: Path):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
 
@@ -179,7 +181,7 @@ def test_saved_map_artifact_dir_gate_rejects_file_sha_drift(tmp_path: Path):
 def test_saved_map_artifact_dir_gate_rejects_expected_frame_mismatch(
     tmp_path: Path,
 ):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
 
@@ -197,7 +199,7 @@ def test_saved_map_artifact_dir_gate_rejects_expected_frame_mismatch(
 def test_saved_map_artifact_dir_gate_normalizes_expected_frame_ids(
     tmp_path: Path,
 ):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_saved_map_artifact_dir,
     )
 
@@ -219,23 +221,17 @@ def test_saved_map_artifact_dir_gate_rejects_cwd_relative_artifact_paths(
     tmp_path: Path,
     monkeypatch,
 ):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         build_saved_map_metadata,
         sha256_file,
         validate_saved_map_artifact_dir,
     )
 
-    artifact_dir = (
-        tmp_path
-        / "artifacts/server_sim_closure/runtime/run/same_source_map"
-    )
+    artifact_dir = tmp_path / "artifacts/server_sim_closure/runtime/run/same_source_map"
     artifact_dir.mkdir(parents=True)
     map_pcd = artifact_dir / "map.pcd"
-    tomogram = artifact_dir / "tomogram.pickle"
     map_pcd.write_text("VERSION 0.7\nDATA ascii\n", encoding="ascii")
-    tomogram.write_bytes(b"tomogram")
     map_rel = map_pcd.relative_to(tmp_path).as_posix()
-    tomogram_rel = tomogram.relative_to(tmp_path).as_posix()
     metadata = build_saved_map_metadata(
         source_profile="mujoco_fastlio2_live_gate",
         data_source="fastlio2",
@@ -253,15 +249,6 @@ def test_saved_map_artifact_dir_gate_rejects_cwd_relative_artifact_paths(
                 "slam_source": "fastlio2",
                 "frame_id": "odom",
             },
-            "tomogram": {
-                "path": tomogram_rel,
-                "sha256": sha256_file(tomogram),
-                "source_map_sha256": sha256_file(map_pcd),
-                "source_profile": "mujoco_fastlio2_live_gate",
-                "data_source": "fastlio2",
-                "frame_id": "odom",
-                "shape": [1, 1],
-            },
         },
     )
     (artifact_dir / "metadata.json").write_text(
@@ -272,17 +259,15 @@ def test_saved_map_artifact_dir_gate_rejects_cwd_relative_artifact_paths(
 
     result = validate_saved_map_artifact_dir(
         artifact_dir,
-        require_tomogram=True,
         expected_frame_id="odom",
     )
 
     assert result["ok"] is False
     assert "map_pcd file missing" in result["blockers"]
-    assert "tomogram file missing" in result["blockers"]
 
 
 def test_saved_map_artifact_dir_gate_rejects_escaping_artifact_paths(tmp_path: Path):
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         build_saved_map_metadata,
         sha256_file,
         validate_saved_map_artifact_dir,
@@ -323,6 +308,7 @@ def test_saved_map_artifact_dir_gate_rejects_escaping_artifact_paths(tmp_path: P
     assert result["artifacts"]["map_pcd"]["path_within_map_dir"] is False
 
 
+@pytest.mark.skip(reason="--require-tomogram flag removed; tomogram artifacts retired")
 def test_saved_map_artifact_gate_script_rejects_missing_required_tomogram(
     tmp_path: Path,
 ):
@@ -355,15 +341,13 @@ def test_saved_map_artifact_gate_script_rejects_missing_required_tomogram(
         "Artifacts",
         "Blockers",
     ]
-    assert (
-        "artifact_gate_payload_declares_checked_artifacts_frames_sources"
-        in payload["validation_gate"]["validates"]
-    )
+    assert "artifact_gate_payload_declares_checked_artifacts_frames_sources" in payload["validation_gate"]["validates"]
     assert "tomogram required but missing" in payload["blockers"]
     assert payload["checked_required_artifacts"] == ["map_pcd", "tomogram"]
     assert payload["checked_frame_id"] == "odom"
 
 
+@pytest.mark.skip(reason="--require-tomogram flag removed; tomogram artifacts retired")
 def test_saved_map_artifact_gate_script_prints_operator_summary_by_default(
     tmp_path: Path,
 ):
@@ -383,9 +367,7 @@ def test_saved_map_artifact_gate_script_prints_operator_summary_by_default(
     assert f"Map dir: {artifact_dir}" in proc.stdout
     assert "Validation gate:" in proc.stdout
     assert (
-        "  step=2 "
-        "required_when=saved_map_tomogram_occupancy_or_pct_artifact_is_used "
-        "prior=runtime_audit"
+        "  step=2 required_when=saved_map_octomap_or_occupancy_artifact_is_used prior=runtime_audit"
     ) in proc.stdout
     assert (
         "proves=saved_map_metadata_exists,"

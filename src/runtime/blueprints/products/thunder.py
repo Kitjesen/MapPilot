@@ -11,18 +11,22 @@ import os
 from typing import Any, Mapping
 
 from runtime.blueprint import Blueprint
+from runtime.profiles.binding_policy import (
+    LEGACY_MAP_OUT_ENABLE_KEYS,
+    LEGACY_NAV_IN_ENABLE_KEYS,
+    LEGACY_NAV_OUT_ENABLE_KEYS,
+    MAP_OUT_ENABLE_KEYS,
+    NAV_IN_ENABLE_KEYS,
+    NAV_OUT_ENABLE_KEYS,
+)
+from runtime.profiles.catalog.product_intents import (
+    THUNDER_MAP_ARTIFACT_CONFIG,
+    THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+)
 from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_PLANNING_FRAME_ID,
     _resolve_octoplanner3d_map,
-)
-from runtime.profiles.binding_policy import (
-    LEGACY_NAV_IN_ENABLE_KEYS,
-    LEGACY_NAV_OUT_ENABLE_KEYS,
-    LEGACY_MAP_OUT_ENABLE_KEYS,
-    MAP_OUT_ENABLE_KEYS,
-    NAV_IN_ENABLE_KEYS,
-    NAV_OUT_ENABLE_KEYS,
 )
 from runtime.runtime_policy import normalize_slam_profile
 
@@ -41,28 +45,6 @@ _THUNDER_BASE_CONFIG: dict[str, Any] = {
     "planning_frame_id": DEFAULT_PLANNING_FRAME_ID,
     "gateway_port": DEFAULT_GATEWAY_PORT,
     "preview_timeout": 30.0,
-}
-_THUNDER_OCTOPLANNER3D_CONSTRAINTS: dict[str, Any] = {
-    "octoplanner3d_timeout_s": 30.0,
-    "octoplanner3d_robot_radius": 0.25,
-    "octoplanner3d_max_iterations": 500000,
-    "octoplanner3d_snap_search_radius_cells": 12,
-    "octoplanner3d_require_ground_support": True,
-    "octoplanner3d_strict_direct_ground_support": False,
-    "octoplanner3d_ground_support_xy_radius_cells": 1,
-    "octoplanner3d_ground_support_depth_cells": 1,
-    "octoplanner3d_enable_preblocked_costmap": True,
-    "octoplanner3d_preblocked_costmap_radius_cells": 3,
-    "octoplanner3d_preblocked_costmap_weight": 2.5,
-    "octoplanner3d_lowest_traversable_only": False,
-    "octoplanner3d_floor_change_penalty": 6.0,
-    "octoplanner3d_max_step_height": 0.45,
-    "octoplanner3d_max_slope": 0.0,
-    "octoplanner3d_same_floor_preference": True,
-    "octoplanner3d_same_floor_z_tolerance": 0.75,
-    "octoplanner3d_max_same_floor_z_excursion": 2.0,
-    "octoplanner3d_obstacle_clearance_radius_cells": 2,
-    "octoplanner3d_obstacle_clearance_weight": 1.5,
 }
 _LITE_IGNORED_GRAPH_KEYS = (
     "enable_frontier",
@@ -237,7 +219,7 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
     llm = str(cfg.pop("llm", "qwen"))
     planner_backend_default = cfg.pop("planner_backend", "octoplanner3d")
     planner_backend = str(cfg.pop("planner", "") or planner_backend_default)
-    tomogram = str(cfg.pop("tomogram", ""))
+    map_path = str(cfg.pop("map_path", "") or cfg.pop("planner_map", "") or cfg.pop("octomap", ""))
     gateway_port = int(cfg.pop("gateway_port", DEFAULT_GATEWAY_PORT))
     teleop_port = int(cfg.pop("teleop_port", gateway_port))
     enable_native = bool(cfg.pop("enable_native", False))
@@ -274,10 +256,7 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
         )
         if lite_incompatibilities:
             joined = ", ".join(lite_incompatibilities)
-            raise ValueError(
-                "Thunder Lite runtime cannot enable full-stack capabilities: "
-                f"{joined}"
-            )
+            raise ValueError(f"Thunder Lite runtime cannot enable full-stack capabilities: {joined}")
 
     driver_module = _driver_name(robot)
     if run_startup_checks:
@@ -308,7 +287,7 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             robot=robot,
             driver_module=driver_module,
             planner_backend=planner_backend,
-            tomogram=tomogram,
+            map_path=map_path,
             enable_native=enable_native,
             config=lite_config,
         )
@@ -329,7 +308,7 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             encoder=encoder,
             llm=llm,
             planner_backend=planner_backend,
-            tomogram=tomogram,
+            map_path=map_path,
             gateway_port=gateway_port,
             teleop_port=teleop_port,
             enable_native=enable_native,
@@ -352,9 +331,8 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             scene_xml=scene_xml,
             enable_semantic=enable_semantic,
             safety_stop_wiring=bool(cfg.get("safety_stop_wiring", True)),
-            cmd_vel_mux_collision_monitor=bool(
-                cfg.get("cmd_vel_mux_collision_monitor", False)
-            ),
+            cmd_vel_mux_collision_monitor=bool(cfg.get("cmd_vel_mux_collision_monitor", False)),
+            legacy_driver_sensor_fallback=bool(cfg.get("legacy_driver_sensor_fallback", False)),
         )
 
     if enable_swap:
@@ -421,10 +399,11 @@ def thunder_map_config(**overrides: Any) -> dict[str, Any]:
             "slam_profile": "fastlio2",
             "llm": "mock",
             "planner": "octoplanner3d",
-            "tomogram": _resolve_octoplanner3d_map(),
+            "map_path": _resolve_octoplanner3d_map(),
             "plan_safety_policy": "reject",
             "fallback_planner_name": "",
-            **_THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+            **THUNDER_MAP_ARTIFACT_CONFIG,
+            **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
             "enable_native": True,
             "terrain_backend": "nanobind",
             "terrain_strict_native": True,
@@ -446,7 +425,7 @@ def thunder_nav_config(**overrides: Any) -> dict[str, Any]:
             **_THUNDER_BASE_CONFIG,
             "llm": "qwen",
             "planner": "octoplanner3d",
-            "tomogram": _resolve_octoplanner3d_map(),
+            "map_path": _resolve_octoplanner3d_map(),
             "plan_safety_policy": "reject",
             "fallback_planner_name": "",
             "waypoint_threshold": 0.20,
@@ -459,7 +438,8 @@ def thunder_nav_config(**overrides: Any) -> dict[str, Any]:
             "path_follower_max_speed": 0.20,
             "path_follower_min_speed": 0.08,
             "path_follower_native_max_accel": 10.0,
-            **_THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+            **THUNDER_MAP_ARTIFACT_CONFIG,
+            **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
             "enable_native": True,
             "terrain_backend": "nanobind",
             "terrain_strict_native": True,
@@ -481,10 +461,11 @@ def thunder_explore_config(**overrides: Any) -> dict[str, Any]:
             "slam_profile": "fastlio2",
             "llm": "qwen",
             "planner": "octoplanner3d",
-            "tomogram": _resolve_octoplanner3d_map(),
+            "map_path": _resolve_octoplanner3d_map(),
             "plan_safety_policy": "reject",
             "fallback_planner_name": "",
-            **_THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+            **THUNDER_MAP_ARTIFACT_CONFIG,
+            **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
             "enable_semantic": True,
             "enable_gateway": True,
             "enable_frontier": True,

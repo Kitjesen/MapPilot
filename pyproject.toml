@@ -85,7 +85,6 @@ include = [
     "perception*",
     "decision*",
     "localization*",
-    "webrtc*",
 ]
 
 [tool.ruff]
@@ -144,7 +143,6 @@ known-first-party = [
     "perception",
     "decision",
     "localization",
-    "webrtc",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -152,6 +150,7 @@ known-first-party = [
 "src/runtime/tests/*" = ["F811", "E402", "D"]
 "src/perception/*/test*" = ["F811", "E402", "D"]
 "src/decision/*/test*" = ["F811", "E402", "D"]
+"src/decision/tests/*" = ["S101"]
 "src/*/tests/*" = ["D", "E402"]
 "sim/tests/*" = ["D"]
 "scripts/*" = ["D"]

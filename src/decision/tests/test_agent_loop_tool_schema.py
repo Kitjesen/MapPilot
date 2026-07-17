@@ -1,4 +1,4 @@
-from decision.tasking.agent_loop import AgentLoop
+from decision.tasks.agent import AgentLoop
 
 
 class _DummyLLM:

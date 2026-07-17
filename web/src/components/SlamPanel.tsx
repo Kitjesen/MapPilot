@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import { Radio, Navigation, OctagonX, Activity, Map as MapIcon, AlertTriangle, Compass, LocateFixed } from 'lucide-react'
 import type { SSEState, ToastKind, MapInfo } from '../types'
 import * as api from '../services/api'
+import { mapIsNavigationReady } from '../services/mapReadiness'
 import { ConfirmModal } from './Modal'
+import { text, type Locale } from '../i18n'
 import styles from './SlamPanel.module.css'
 
 type SessionMode = 'idle' | 'mapping' | 'navigating' | 'exploring'
@@ -10,6 +12,7 @@ type SessionMode = 'idle' | 'mapping' | 'navigating' | 'exploring'
 interface SlamPanelProps {
   sseState: SSEState
   showToast: (msg: string, kind?: ToastKind) => void
+  locale: Locale
 }
 
 const MODE_LABEL: Record<SessionMode, string> = {
@@ -27,12 +30,22 @@ interface PendingAction {
   confirmLabel: string
 }
 
+function numericMetric(data: Record<string, unknown> | undefined, key: string): number | undefined {
+  const value = data?.[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
+}
+
 /**
  * Session-driven SLAM control. Single source of truth is backend /api/v1/session.
  * All transitions require explicit user confirmation. Buttons disable themselves
  * when transitions aren't allowed (no active map, wrong mode, transition pending).
  */
-export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
+export function SlamPanel({ sseState, showToast, locale }: SlamPanelProps) {
   const [busy, setBusy] = useState(false)
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [maps, setMaps] = useState<MapInfo[]>([])
@@ -56,7 +69,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
   const loadMaps = useCallback(async () => {
     try {
       const all = await api.fetchMaps()
-      const navigable = all.filter(m => m.has_pcd && (m.navigation_ready === true || m.has_octomap === true))
+      const navigable = all.filter(mapIsNavigationReady)
       setMaps(navigable)
       if (!selectedMap && session?.active_map && navigable.some(m => m.name === session.active_map)) {
         setSelectedMap(session.active_map)
@@ -78,14 +91,14 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
 
   const requestStartNavigating = () => {
     if (!selectedMap) {
-      showToast('请先选择一张 navigation-ready 地图', 'error')
+      showToast('请先选择一张可导航地图', 'error')
       return
     }
     setPending({
       kind: 'start-navigating',
       mapName: selectedMap,
       title: `进入导航巡航：${selectedMap}`,
-      message: `将激活地图 "${selectedMap}" 并启动 Localizer 进行 ICP 定位。确认后进入巡航模式。`,
+      message: `将激活地图「${selectedMap}」并启动地图定位进行 ICP 对齐。确认后进入巡航模式。`,
       confirmLabel: '开始巡航',
     })
   }
@@ -103,7 +116,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
     setPending({
       kind: 'end',
       title: `结束当前 ${MODE_LABEL[mode]}?`,
-      message: '会停止 SLAM 和 Localizer，机器狗返回空闲。未保存的建图数据将丢失。',
+      message: '会停止 SLAM 和地图定位，机器狗返回空闲。未保存的建图数据将丢失。',
       confirmLabel: '结束会话',
     })
   }
@@ -114,18 +127,32 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
     setPending(null)
     setBusy(true)
     try {
+      const currentSession = action.kind === 'end' ? session : await api.fetchSession()
       if (action.kind === 'start-mapping') {
-        const s = await api.startSession('mapping')
-        setLastSession(s)
-        showToast('已进入 SLAM 建图', 'success')
+        const result = await api.switchProductSession('mapping', {
+          currentProfile: currentSession?.product_profile,
+        })
+        showToast(
+          `${text(locale, 'Mapping switch accepted; waiting for service restart', '建图切换已受理，等待服务重启')}: ${result.status}`,
+          'info',
+        )
       } else if (action.kind === 'start-navigating') {
-        const s = await api.startSession('navigating', action.mapName)
-        setLastSession(s)
-        showToast(`已进入导航巡航 (${action.mapName})`, 'success')
+        const result = await api.switchProductSession('navigating', {
+          currentProfile: currentSession?.product_profile,
+          mapName: action.mapName,
+        })
+        showToast(
+          `${text(locale, 'Navigation switch accepted; waiting for localization restart', '导航切换已受理，等待定位服务重启')}: ${result.status}`,
+          'info',
+        )
       } else if (action.kind === 'start-exploring') {
-        const s = await api.startSession('exploring')
-        setLastSession(s)
-        showToast('自主探索启动', 'success')
+        const result = await api.switchProductSession('exploring', {
+          currentProfile: currentSession?.product_profile,
+        })
+        showToast(
+          `${text(locale, 'Exploration switch accepted; waiting for service restart', '探索切换已受理，等待服务重启')}: ${result.status}`,
+          'info',
+        )
       } else {
         const s = await api.endSession()
         setLastSession(s)
@@ -145,6 +172,9 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
   const explorerAvailable = session?.explorer_available ?? false
   const canEnd = (session?.can_end ?? false) && !busy && !pendingTx
   const slamStatus = sseState.slamStatus
+  const slamDiag = sseState.slamDiag?.data
+  const displaySlamHz = numericMetric(slamDiag, 'processed_scan_hz') ?? slamStatus?.slam_hz
+  const displayMapPoints = numericMetric(slamDiag, 'map_points') ?? slamStatus?.map_points
   const localizationBackend = session?.localization_backend ?? session?.slam_profile ?? slamStatus?.mode ?? 'unknown'
   const savedMapRelocalizeSupported =
     session?.saved_map_relocalization_supported ??
@@ -152,8 +182,8 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
     localizationBackend === 'localizer'
   const recoveryMethod = session?.recovery_method ?? '--'
   const relocalizeTitle = savedMapRelocalizeSupported
-    ? `Backend ${localizationBackend} supports saved-map relocalize`
-    : `Backend ${localizationBackend} does not support saved-map relocalize; recovery=${recoveryMethod}`
+    ? `后端 ${localizationBackend} 支持保存地图重定位`
+    : `后端 ${localizationBackend} 不支持保存地图重定位；恢复方式：${recoveryMethod}`
   const mapSaveSource = session?.map_save_source ?? (session?.map_save_supported ? 'available' : '--')
   const recoverySignal = session?.recovery_signal && session.recovery_signal !== 'none'
     ? session.recovery_signal
@@ -161,6 +191,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
 
   // 3D-BBS auto-relocalize requires a saved-map localizer backend.
   const [autoRelocBusy, setAutoRelocBusy] = useState(false)
+  const [restartBusy, setRestartBusy] = useState(false)
   const canAutoReloc = mode === 'navigating' && savedMapRelocalizeSupported && !autoRelocBusy && !pendingTx
   const handleAutoReloc = useCallback(async () => {
     setAutoRelocBusy(true)
@@ -211,6 +242,28 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
     }
   }, [showToast])
 
+  const canRestartSlam = !restartBusy && !busy && !pendingTx
+  const handleRestartSlam = useCallback(async () => {
+    setRestartBusy(true)
+    try {
+      showToast('正在重启底层定位链路…', 'info')
+      const r = await api.restartSlam()
+      if (!r.success) {
+        showToast(`重启失败: ${r.message || 'SLAM 服务未就绪'}`, 'error')
+        return
+      }
+      showToast('底层定位链路已重启，位姿会从新会话重新起算', 'success')
+      try {
+        const s = await api.fetchSession()
+        setLastSession(s)
+      } catch { /* ignore */ }
+    } catch (e) {
+      showToast(`重启请求失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
+    } finally {
+      setRestartBusy(false)
+    }
+  }, [showToast])
+
   const quality = session?.icp_quality ?? 0
   const qualityClass = quality <= 0 ? '' : quality < 0.15 ? styles.qualityGood : quality < 0.3 ? styles.qualityWarn : styles.qualityBad
 
@@ -221,7 +274,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
       <div className={styles.panelHeader}>
         <span className={styles.panelTitle}>
           <Radio size={15} />
-          SLAM 模式
+          {text(locale, 'Localization Mode', '定位模式')}
         </span>
         <span className={`${styles.modePill} ${mode === 'idle' ? styles.modePillIdle : mode === 'mapping' ? styles.modePillMapping : mode === 'exploring' ? styles.modePillExploring : styles.modePillNavigating}`}>
           当前：{MODE_LABEL[mode]}
@@ -315,11 +368,26 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
           {autoRelocBusy && <span className={styles.spinnerInline} />}
         </button>
         {mode !== 'navigating' && (
-          <p className={styles.hint}>仅巡航模式可用（localizer 需运行）</p>
+          <p className={styles.hint}>仅巡航模式可用（地图定位器需运行）</p>
         )}
         {mode === 'navigating' && !savedMapRelocalizeSupported && (
-          <p className={styles.hint}>saved-map relocalize unavailable; recovery={recoveryMethod}</p>
+          <p className={styles.hint}>保存地图重定位不可用；恢复方式：{recoveryMethod}</p>
         )}
+      </div>
+
+      <div className={styles.section}>
+        <p className={styles.sectionLabel}>底层定位</p>
+        <button
+          className={canRestartSlam ? styles.primaryBtn : styles.primaryBtnDisabled}
+          onClick={canRestartSlam ? handleRestartSlam : undefined}
+          disabled={!canRestartSlam}
+          title="强制重启 lingtu-slam-dds.service；用于把当前定位链路清干净重新开始。"
+        >
+          <LocateFixed size={14} />
+          <span>重启定位链路</span>
+          {restartBusy && <span className={styles.spinnerInline} />}
+        </button>
+        <p className={styles.hint}>这会重启底层 SLAM 服务；不是清除可视化点云。</p>
       </div>
 
       {/* Stats */}
@@ -327,15 +395,15 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
         <p className={styles.sectionLabel}>运行状态</p>
         <div className={styles.statsGrid}>
           <div className={styles.statCard}>
-            <span className={styles.statLabel}>SLAM 频率</span>
+            <span className={styles.statLabel}>处理输出</span>
             <span className={styles.statValue}>
-              {slamStatus ? `${slamStatus.slam_hz.toFixed(1)} Hz` : '--'}
+              {typeof displaySlamHz === 'number' ? `${displaySlamHz.toFixed(1)} Hz` : '--'}
             </span>
           </div>
           <div className={styles.statCard}>
             <span className={styles.statLabel}>地图点云</span>
             <span className={styles.statValue}>
-              {slamStatus ? slamStatus.map_points.toLocaleString() : '--'}
+              {typeof displayMapPoints === 'number' ? displayMapPoints.toLocaleString() : '--'}
             </span>
           </div>
           <div className={styles.statCard}>
@@ -345,25 +413,25 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
             </span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.statLabel}>Localizer</span>
+            <span className={styles.statLabel}>地图定位</span>
             <span className={`${styles.statValue} ${session?.localizer_ready ? styles.statOk : styles.statDim}`}>
               {mode !== 'navigating' ? '停止' : session?.localizer_ready ? '就绪' : '对齐中…'}
             </span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.statLabel}>Backend</span>
+            <span className={styles.statLabel}>后端</span>
             <span className={`${styles.statValue} ${styles.statValueCompact}`} title={localizationBackend}>
               {localizationBackend}
             </span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.statLabel}>Map Save</span>
+            <span className={styles.statLabel}>存图来源</span>
             <span className={`${styles.statValue} ${styles.statValueCompact}`} title={mapSaveSource}>
               {mapSaveSource}
             </span>
           </div>
           <div className={styles.statCard}>
-            <span className={styles.statLabel}>Recovery</span>
+            <span className={styles.statLabel}>恢复</span>
             <span
               className={`${styles.statValue} ${styles.statValueCompact} ${
                 session?.restart_recovery_supported ? styles.statOk : styles.statDim
@@ -387,7 +455,7 @@ export function SlamPanel({ sseState, showToast }: SlamPanelProps) {
           <OctagonX size={16} />
           结束会话
         </button>
-        <p className={styles.estopHint}>停止 SLAM / Localizer，回到空闲</p>
+        <p className={styles.estopHint}>停止 SLAM / 地图定位，回到空闲</p>
       </div>
 
       <ConfirmModal

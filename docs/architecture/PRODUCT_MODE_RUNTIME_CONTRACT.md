@@ -63,7 +63,7 @@ Module-owned velocity commands must pass through:
 Teleop / VisualServo / PathFollower / Recovery
   -> nav.velocity_mux
   -> nav.safety.cmd_vel
-  -> nav.out.cmd_vel or driver only when that boundary exists in the profile
+  -> selected local driver in Module-owned profiles
 ```
 
 ## Velocity Commands And Communication Boundary
@@ -79,6 +79,8 @@ Web / CLI / MCP
   -> native field endpoint boundary
   -> lingtu-nav-dds
   -> DDS /nav/cmd_vel
+  -> lingtu-driver
+  -> brainstem Walk(Vector3)
 ```
 
 Key `thunder_field` runtime settings:
@@ -86,20 +88,19 @@ Key `thunder_field` runtime settings:
 ```text
 endpoint_transport = dds
 command_output_mode = endpoint_only
-hardware_control_boundary = dds_endpoint_source
+hardware_control_boundary = driver
 native_navigation_endpoint = lingtu-nav-dds
-enable_nav_in = false
-enable_nav_out = false
 enable_robot_driver = false
 ```
 
-Field DDS navigation has one `/nav/cmd_vel` writer: C++ `lingtu-nav-dds`. The
+Field DDS navigation has one `/nav/cmd_vel` writer: C++ `lingtu-nav-dds`, and
+one hardware consumer: C++ `lingtu-driver`. The
 old Python nav DDS adapters were removed to prevent duplicate goal, path, and
 cmd_vel writers in `thunder_field`.
 
-In this default field branch, the Python graph intentionally does not load
-`nav.in`, `nav.out`, `map.out`, `nav.terrain`, `nav.local_planner`, or
-`nav.path_follower`.
+In this default field branch, the Python graph has no navigation DDS adapter
+modules. It also does not load `map.out`, `nav.terrain`, `nav.local_planner`,
+or `nav.path_follower`; the C++ endpoint owns those runtime responsibilities.
 
 External velocity entries:
 
@@ -203,7 +204,7 @@ modes stay disabled until the operator explicitly enables restart permission in
 the UI. Hot-switch product modes are still accepted or rejected by the backend
 plan based on the active graph and session.
 
-The legacy direct gRPC path is kept only for lightweight, compatibility, or
+The Python direct gRPC path is kept only for lightweight, compatibility, or
 local direct-driver chains:
 
 ```text
@@ -220,12 +221,12 @@ field output.
 | Profile | Product Mode | Product Session | Required Chain | Forbidden Chain | Switch Policy |
 | --- | --- | --- | --- | --- | --- |
 | `teleop` | Teleop | `teleop` | Gateway/Teleop/MCP -> CmdVelMux -> Safety -> NavOut | SLAM, global planning, local planning, path following | Cold restart |
-| `teleop_avoid` | Teleop with avoidance | `teleop_avoid` | SLAM/map/traversability cost + Teleop -> CmdVelMux -> Safety -> NavOut | mission, local planner, path follower, semantic planner | Cold restart |
+| `teleop_avoid` | Teleop with avoidance | `teleop_avoid` | Teleop intent + SLAM/cloud/traversability -> native LocalPlanner -> PathFollower -> curved-path final safety -> `/nav/cmd_vel` | mission, global planner, semantic planner, Python local planner/path follower modules | Cold restart |
 | `map` | Mapping | `mapping` | SLAM -> Occupancy/Voxel/Elevation/ESDF/Traversability -> Gateway/MapManager; Teleop -> CmdVelMux -> NavOut | mission, local planner, path follower, semantic planner | Cold restart |
-| `tracking` | Tracking | `tracking` | GoalService -> Mission/status -> lingtu-nav-dds -> `/nav/cmd_vel` | semantic planner, Python terrain/local planner/path follower | Same-graph hot-switch candidate |
-| `nav` | Navigation | `navigation` | Web/CLI/MCP/semantic goal -> Mission/status -> lingtu-nav-dds -> `/nav/cmd_vel` | Python terrain/local planner/path follower, target directly becoming motor command | Same-graph hot-switch candidate |
-| `inspection` | Inspection | `inspection` | Scheduler/Patrol/Semantic -> GoalService -> Mission/status -> lingtu-nav-dds -> `/nav/cmd_vel` | Python terrain/local planner/path follower, inspection task directly controlling chassis | Same-graph hot-switch candidate |
-| `tare_explore` | Exploration | `exploration` | Livox/IMU or endpoint SLAM -> maps/traversability -> TARE -> Mission/status -> lingtu-nav-dds -> `/nav/cmd_vel` | Python terrain/local planner/path follower, TARE directly controlling chassis, WavefrontFrontierExplorer enabled at the same time, missing live map input | Cold restart |
+| `tracking` | Tracking | `tracking` | Goal/path -> native LocalPlanner -> PathFollower -> final safety; operator takeover reuses assisted LocalPlanner and invalidates the old path | semantic planner, Python terrain/local planner/path follower | Same-graph hot-switch candidate |
+| `nav` | Navigation | `navigation` | Web/CLI/MCP/semantic goal -> OctoPlanner3D -> native LocalPlanner -> PathFollower -> final safety; operator takeover branches to assisted local planning | Python terrain/local planner/path follower, target directly becoming motor command | Same-graph hot-switch candidate |
+| `inspection` | Inspection | `inspection` | Inspection scheduler -> fresh goal -> global/local planning -> PathFollower -> final safety; operator takeover pauses inspection motion and uses assisted local planning | Python terrain/local planner/path follower, inspection task directly controlling chassis | Same-graph hot-switch candidate |
+| `tare_explore` | Exploration | `exploration` | Livox/IMU or endpoint SLAM -> maps/traversability -> TARE goal -> global/local planning -> final safety; operator takeover uses assisted local planning | Python terrain/local planner/path follower, TARE directly controlling chassis, WavefrontFrontierExplorer enabled at the same time, missing live map input | Cold restart |
 
 `explore` is kept only as a wavefront frontier compatibility/debug entry. It is
 not the default product exploration entry. Field exploration defaults to
@@ -244,18 +245,18 @@ TeleopModule.cmd_vel
   -> nav.safety.cmd_vel
 ```
 
-If the active profile has a local navigation output boundary, the same
-`driver_cmd_vel` can also wire to `nav.out.cmd_vel`. In default
-`thunder_field`, `nav.out` is absent.
+Module-owned simulation/development profiles wire `driver_cmd_vel` directly to
+their selected driver. Field profiles send operator requests to the C++ native
+endpoint, which is the single `/nav/cmd_vel` writer.
 
 ### Map Chain
 
 ```text
-SlamBridgeModule.map_cloud
+C++ SLAM DDS service / SlamModule.map_cloud
   -> OccupancyGridModule.map_cloud
   -> VoxelGridModule.map_cloud
   -> ElevationMapModule.map_cloud
-  -> nav.maps.map_cloud
+  -> maps.service.map_cloud
 
 OccupancyGridModule.costmap
 ESDFModule.esdf
@@ -275,7 +276,7 @@ GatewayModule / MCPServerModule / SemanticPlannerModule
   -> nav.path_follower.local_path
   -> nav.path_follower.cmd_vel
   -> nav.velocity_mux.path_follower_cmd_vel
-  -> nav.out.cmd_vel
+  -> selected local driver.cmd_vel
 ```
 
 This chain is for simulation, local-driver, and compatibility profiles. It is

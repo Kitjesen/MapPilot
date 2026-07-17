@@ -49,3 +49,34 @@ def test_mid360_config_supports_field_env_overrides(tmp_path, monkeypatch):
     assert host_info["host_ip"] == "192.168.127.10"
     assert host_info["lidar_ip"] == ["192.168.127.88"]
 
+
+def test_livox_host_ip_selection_prefers_robot_config():
+    from runtime.config import RobotConfig
+    from runtime.utils.livox_config import select_livox_host_ip
+
+    cfg = RobotConfig()
+    cfg.lidar.host_ip = "192.168.1.5"
+    cfg.lidar.lidar_ip = "192.168.1.178"
+
+    selected = select_livox_host_ip(
+        cfg,
+        ("192.168.127.10/24", "192.168.1.5/24"),
+    )
+
+    assert selected == "192.168.1.5"
+
+
+def test_livox_host_ip_selection_falls_back_to_lidar_subnet():
+    from runtime.config import RobotConfig
+    from runtime.utils.livox_config import select_livox_host_ip
+
+    cfg = RobotConfig()
+    cfg.lidar.host_ip = ""
+    cfg.lidar.lidar_ip = "192.168.1.178"
+
+    selected = select_livox_host_ip(
+        cfg,
+        ("192.168.127.10/24", "192.168.1.5/24"),
+    )
+
+    assert selected == "192.168.1.5"

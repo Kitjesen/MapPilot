@@ -6,8 +6,8 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from runtime.msgs.numpy_compat import np
 from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
+from runtime.msgs.numpy_compat import np
 
 from .octoplanner3d_protocol import (
     DEFAULT_PLANNER_CONSTRAINTS,
@@ -32,14 +32,13 @@ class OctoPlanner3DPlanner:
 
     def __init__(
         self,
-        tomogram_path: str = "",
+        map_path: str = "",
         obstacle_thr: float = 49.9,
         *,
         executable_path: str | os.PathLike[str] | None = None,
         timeout_s: float | None = None,
     ) -> None:
-        self._tomogram_path = str(tomogram_path or "")
-        self._map_path = self._tomogram_path
+        self._map_path = str(map_path or "")
         self._obstacle_thr = float(obstacle_thr)
         self._planner_constraints = dict(DEFAULT_PLANNER_CONSTRAINTS)
         self._runtime = OctoPlanner3DRuntime(
@@ -112,9 +111,8 @@ class OctoPlanner3DPlanner:
             "origin": [float(self._origin[0]), float(self._origin[1])],
         }
 
-    def _load_tomogram(self, tomogram_path: str) -> None:
-        self._tomogram_path = str(tomogram_path or "")
-        self._map_path = self._tomogram_path
+    def load_map(self, map_path: str) -> None:
+        self._map_path = str(map_path or "")
         self._validate_runtime()
 
     def plan_request(self, request: GlobalPlanRequest) -> GlobalPlanResult:
@@ -198,9 +196,7 @@ class OctoPlanner3DPlanner:
             return []
 
         if not bool(result.get("ok", True)):
-            self._last_plan_error = str(
-                result.get("error") or result.get("message") or "octoplanner3d plan failed"
-            )
+            self._last_plan_error = str(result.get("error") or result.get("message") or "octoplanner3d plan failed")
             self._last_plan_reached_goal = False
             self._last_plan_diagnostics = self._base_diagnostics(
                 stage="cxx_plan_failed",
@@ -332,9 +328,7 @@ class OctoPlanner3DPlanner:
         return diagnostics
 
     def _validate_runtime(self) -> None:
-        self._load_error = "; ".join(
-            self._runtime.validate_map(self._map_path, SUPPORTED_MAP_EXTENSIONS)
-        )
+        self._load_error = "; ".join(self._runtime.validate_map(self._map_path, SUPPORTED_MAP_EXTENSIONS))
 
     def _runtime_map_path(self) -> str:
         return self._runtime.runtime_map_path(self._map_path)

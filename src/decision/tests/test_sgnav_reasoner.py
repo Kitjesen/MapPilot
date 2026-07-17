@@ -1,6 +1,4 @@
-"""
-test_sgnav_reasoner.py — SG-Nav 对齐推理器测试
-"""
+"""Decision module."""
 
 import asyncio
 import json
@@ -8,12 +6,12 @@ import unittest
 
 import numpy as np
 
-from decision.exploration.frontier_scorer import Frontier
-from decision.goal_resolution.sgnav_reasoner import SGNavReasoner
+from decision.frontiers.scorer import Frontier
+from decision.goals.sgnav import SGNavReasoner
 
 
 class TestSGNavReasoner(unittest.TestCase):
-    """SG-Nav 子图推理与 re-perception 测试。"""
+    """Test S G Nav Reasoner."""
 
     def setUp(self):
         self.loop = asyncio.new_event_loop()
@@ -23,26 +21,28 @@ class TestSGNavReasoner(unittest.TestCase):
 
     def test_reason_subgraphs_prefers_relevant_room(self):
         reasoner = SGNavReasoner(use_llm_reasoning=False, max_subgraphs=4)
-        scene_graph = json.dumps({
-            "subgraphs": [
-                {
-                    "subgraph_id": "room_0",
-                    "level": "room",
-                    "center": {"x": 1.0, "y": 1.0},
-                    "object_ids": [1, 2],
-                    "object_labels": ["door", "sign"],
-                    "relation_count": 2,
-                },
-                {
-                    "subgraph_id": "room_1",
-                    "level": "room",
-                    "center": {"x": 8.0, "y": 8.0},
-                    "object_ids": [3],
-                    "object_labels": ["chair"],
-                    "relation_count": 0,
-                },
-            ]
-        })
+        scene_graph = json.dumps(
+            {
+                "subgraphs": [
+                    {
+                        "subgraph_id": "room_0",
+                        "level": "room",
+                        "center": {"x": 1.0, "y": 1.0},
+                        "object_ids": [1, 2],
+                        "object_labels": ["door", "sign"],
+                        "relation_count": 2,
+                    },
+                    {
+                        "subgraph_id": "room_1",
+                        "level": "room",
+                        "center": {"x": 8.0, "y": 8.0},
+                        "object_ids": [3],
+                        "object_labels": ["chair"],
+                        "relation_count": 0,
+                    },
+                ]
+            }
+        )
 
         scores = self.loop.run_until_complete(
             reasoner.reason_subgraphs(
@@ -64,26 +64,28 @@ class TestSGNavReasoner(unittest.TestCase):
             max_subgraphs=4,
         )
 
-        scene_graph = json.dumps({
-            "subgraphs": [
-                {
-                    "subgraph_id": "room_0",
-                    "level": "room",
-                    "center": {"x": 1.0, "y": 1.0},
-                    "object_ids": [1],
-                    "object_labels": ["fire extinguisher", "door"],
-                    "relation_count": 2,
-                },
-                {
-                    "subgraph_id": "room_1",
-                    "level": "room",
-                    "center": {"x": 8.0, "y": 8.0},
-                    "object_ids": [2],
-                    "object_labels": ["desk"],
-                    "relation_count": 0,
-                },
-            ]
-        })
+        scene_graph = json.dumps(
+            {
+                "subgraphs": [
+                    {
+                        "subgraph_id": "room_0",
+                        "level": "room",
+                        "center": {"x": 1.0, "y": 1.0},
+                        "object_ids": [1],
+                        "object_labels": ["fire extinguisher", "door"],
+                        "relation_count": 2,
+                    },
+                    {
+                        "subgraph_id": "room_1",
+                        "level": "room",
+                        "center": {"x": 8.0, "y": 8.0},
+                        "object_ids": [2],
+                        "object_labels": ["desk"],
+                        "relation_count": 0,
+                    },
+                ]
+            }
+        )
 
         f_near = Frontier(
             frontier_id=0,
@@ -124,12 +126,14 @@ class TestSGNavReasoner(unittest.TestCase):
             reject_threshold=0.35,
             false_positive_penalty=0.25,
         )
-        scene_graph = json.dumps({
-            "objects": [
-                {"id": 1, "label": "chair", "score": 0.8},
-                {"id": 2, "label": "desk", "score": 0.7},
-            ]
-        })
+        scene_graph = json.dumps(
+            {
+                "objects": [
+                    {"id": 1, "label": "chair", "score": 0.8},
+                    {"id": 2, "label": "desk", "score": 0.7},
+                ]
+            }
+        )
 
         reject, cred, _ = reasoner.evaluate_target_credibility(
             target_label="fire extinguisher",
@@ -143,11 +147,13 @@ class TestSGNavReasoner(unittest.TestCase):
 
     def test_reperception_accepts_confirmed_target(self):
         reasoner = SGNavReasoner(use_llm_reasoning=False)
-        scene_graph = json.dumps({
-            "objects": [
-                {"id": 1, "label": "fire extinguisher", "score": 0.9},
-            ]
-        })
+        scene_graph = json.dumps(
+            {
+                "objects": [
+                    {"id": 1, "label": "fire extinguisher", "score": 0.9},
+                ]
+            }
+        )
 
         reject, cred, _ = reasoner.evaluate_target_credibility(
             target_label="fire extinguisher",
@@ -165,46 +171,48 @@ class TestSGNavReasoner(unittest.TestCase):
             room_gate_weight=0.4,
             max_subgraphs=6,
         )
-        scene_graph = json.dumps({
-            "subgraphs": [
-                {
-                    "subgraph_id": "room_0",
-                    "level": "room",
-                    "room_id": 0,
-                    "center": {"x": 1.0, "y": 1.0},
-                    "object_ids": [1],
-                    "object_labels": ["door"],
-                    "relation_count": 1,
-                },
-                {
-                    "subgraph_id": "room_1",
-                    "level": "room",
-                    "room_id": 1,
-                    "center": {"x": 8.0, "y": 8.0},
-                    "object_ids": [2],
-                    "object_labels": ["desk"],
-                    "relation_count": 0,
-                },
-                {
-                    "subgraph_id": "group_0",
-                    "level": "group",
-                    "room_id": 0,
-                    "center": {"x": 1.2, "y": 1.1},
-                    "object_ids": [1],
-                    "object_labels": ["door"],
-                    "relation_count": 0,
-                },
-                {
-                    "subgraph_id": "group_1",
-                    "level": "group",
-                    "room_id": 1,
-                    "center": {"x": 8.1, "y": 8.0},
-                    "object_ids": [2],
-                    "object_labels": ["desk"],
-                    "relation_count": 0,
-                },
-            ]
-        })
+        scene_graph = json.dumps(
+            {
+                "subgraphs": [
+                    {
+                        "subgraph_id": "room_0",
+                        "level": "room",
+                        "room_id": 0,
+                        "center": {"x": 1.0, "y": 1.0},
+                        "object_ids": [1],
+                        "object_labels": ["door"],
+                        "relation_count": 1,
+                    },
+                    {
+                        "subgraph_id": "room_1",
+                        "level": "room",
+                        "room_id": 1,
+                        "center": {"x": 8.0, "y": 8.0},
+                        "object_ids": [2],
+                        "object_labels": ["desk"],
+                        "relation_count": 0,
+                    },
+                    {
+                        "subgraph_id": "group_0",
+                        "level": "group",
+                        "room_id": 0,
+                        "center": {"x": 1.2, "y": 1.1},
+                        "object_ids": [1],
+                        "object_labels": ["door"],
+                        "relation_count": 0,
+                    },
+                    {
+                        "subgraph_id": "group_1",
+                        "level": "group",
+                        "room_id": 1,
+                        "center": {"x": 8.1, "y": 8.0},
+                        "object_ids": [2],
+                        "object_labels": ["desk"],
+                        "relation_count": 0,
+                    },
+                ]
+            }
+        )
 
         scores = self.loop.run_until_complete(
             reasoner.reason_subgraphs(

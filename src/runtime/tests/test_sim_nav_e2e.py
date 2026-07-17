@@ -8,6 +8,7 @@ runtime tests skip instead of silently falling back to the old Python demo.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -19,22 +20,24 @@ pytestmark = [pytest.mark.sim]
 
 _scipy_available = True
 try:
-    import scipy.ndimage  # noqa: F401 -- availability check for skipUnless
+    import scipy.ndimage
 except ImportError:
     _scipy_available = False
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-_SCENE = os.path.normpath(os.path.join(
-    os.path.dirname(__file__),
-    "..",
-    "..",
-    "..",
-    "sim",
-    "worlds",
-    "mujoco",
-    "building_scene.xml",
-))
+_SCENE = os.path.normpath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        "..",
+        "..",
+        "sim",
+        "worlds",
+        "mujoco",
+        "building_scene.xml",
+    )
+)
 
 
 def _wait_until(predicate, timeout_s: float, interval_s: float = 0.1) -> bool:
@@ -143,6 +146,28 @@ class TestSimNavEndToEnd:
         system.stop()
 
         assert paths, "No path planned; OctoPlanner3D did not produce output"
+        assert len(paths[0]) >= 2, f"Path too short: {len(paths[0])} waypoints"
+
+    def test_navigation_skill_plans_path(self):
+        bp = _build_sim_nav()
+        system = bp.build()
+
+        paths = []
+        nav = system.get_module("nav.mission")
+        skills = system.get_module("nav.skills")
+        nav.global_path.subscribe(paths.append)
+
+        system.start()
+        time.sleep(1.2)
+        try:
+            ack = json.loads(skills.navigate_to(5.0, 3.0, z=0.0))
+            assert ack["accepted"] is True, ack
+            assert ack["sink"] == "module"
+            _wait_until(lambda: bool(paths), timeout_s=35.0)
+        finally:
+            system.stop()
+
+        assert paths, "nav.skills goal produced no global path"
         assert len(paths[0]) >= 2, f"Path too short: {len(paths[0])} waypoints"
 
     def test_robot_moves_toward_goal(self):

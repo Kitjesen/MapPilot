@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -143,7 +144,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--host", default="192.168.66.13")
     parser.add_argument("--user", default="sunrise")
-    parser.add_argument("--password", default="sunrise")
+    parser.add_argument("--password", default=os.environ.get("S100P_PASSWORD"))
     parser.add_argument("--duration", type=float, default=180.0)
     parser.add_argument(
         "--domain-id",
@@ -160,6 +161,8 @@ def main() -> int:
     parser.add_argument("--no-sync", action="store_true")
     parser.add_argument("--no-kill-stale", action="store_true", help="Do not pkill prior gate SLAM on this domain.")
     args = parser.parse_args()
+    if not args.password:
+        raise SystemExit("--password or S100P_PASSWORD is required")
     domain_id = _validate_domain_id(int(args.domain_id))
     slam_config = Path(args.slam_config)
     if not slam_config.is_file():

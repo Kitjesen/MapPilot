@@ -12,7 +12,7 @@ SRC_ROOT = Path(__file__).resolve().parents[2]
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from decision.exploration.frontier_scorer import Frontier, FrontierScorer
+from decision.frontiers.scorer import Frontier, FrontierScorer
 
 
 def _make_scorer(**kwargs) -> FrontierScorer:

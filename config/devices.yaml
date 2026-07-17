@@ -1,50 +1,43 @@
-# LingTu Device Registry — 单一硬件设备清单
+# LingTu device registry: physical hardware inventory.
 #
-# 所有硬件设备登记在此。DeviceManager 在启动时:
-#   1. 加载本文件
-#   2. 自动检测 (udev / lsusb / ping)
-#   3. 用对应 driver 打开
-#   4. 用对应 decoder 解码协议
-#   5. 状态发布到 Dashboard /api/v1/devices
+# This file describes hardware assets and low-rate discovery/status metadata.
+# It must not decide runtime sensor wiring. Camera images, LiDAR point clouds,
+# IMU samples, and GNSS fixes are owned by the camera/lidar/imu/gnss roles.
 #
-# 替换硬件: 改这里一行, 不需要改代码
+# The hw role may use this inventory for discovery, status, hotplug, open, and
+# close operations. Product profiles decide dataflow through explicit runtime
+# roles and service catalog entries, not through this file.
 
 version: 1
 
 devices:
-  # ── GNSS ────────────────────────────────────────
+  # GNSS
   - id: wtrtk980_main
     type: gnss
     enabled: true
-    driver: serial_nmea0183       # NmeaSerialDriver
+    driver: serial_nmea0183  # inventory probe only; product dataflow is C++ gnss
     description: "WitMotion WTRTK-980 RTK GNSS"
     udev_match:
-      vendor_id: "1a86"            # CH340
+      vendor_id: "1a86"
       product_id: "7523"
-      port_path: "3-1"             # USB physical port (区分多个 CH340)
+      port_path: "3-1"
     serial:
-      device: /dev/wtrtk980        # udev symlink (auto-created)
+      device: /dev/wtrtk980
       baud: 115200
     capabilities: [position, velocity]
-    publish_topics:
-      - {name: gnss_fix,    type: GnssFix,    rate_hz: 1.0}
-      - {name: gnss_status, type: GnssStatus, rate_hz: 0.5}
 
-  # ── LiDAR ───────────────────────────────────────
+  # LiDAR
   - id: livox_mid360_main
     type: lidar
     enabled: true
     driver: livox_sdk2
-    description: "Livox MID-360 360° 3D LiDAR"
+    description: "Livox MID-360 360-degree 3D LiDAR"
     network:
       ip: "192.168.1.178"
       port: 56100
     capabilities: [pointcloud, imu]
-    publish_topics:
-      - {name: scan, type: PointCloud2, rate_hz: 10}
-      - {name: imu,  type: Imu,         rate_hz: 200}
 
-  # ── Camera ──────────────────────────────────────
+  # Camera
   - id: orbbec_gemini335_main
     type: camera
     enabled: true
@@ -56,7 +49,7 @@ devices:
     config:
       sdk_config_path: ""
       serial_number: ""
-      uid: ""                      # USB uid / physical port, e.g. 1-1.2
+      uid: ""
       product_id: "0x0800"
       device_index: 0
       connect_timeout_ms: 10000
@@ -69,32 +62,27 @@ devices:
         height: 480
         fps: 30
       enable_frame_sync: false
-      rotate: 270                  # 安装方向旋转 (0/90/180/270)
       frame_id: camera_link
     capabilities: [color, depth, intrinsics]
-    publish_topics:
-      - {name: color_image, type: Image, rate_hz: 30}
-      - {name: depth_image, type: Image, rate_hz: 30}
-      - {name: camera_info, type: CameraIntrinsics, rate_hz: 1}
 
-  # ── Motor Controller ────────────────────────────
+  # Motor controller
   - id: brainstem_main
     type: motor_controller
     enabled: true
     driver: brainstem_grpc
-    description: "Brainstem 四足运动控制 (han_dog.dart)"
+    description: "Brainstem quadruped motion controller"
     network:
       host: "127.0.0.1"
       port: 13145
     capabilities: [walk, stand, sit, listen_imu, listen_joint]
 
-  # ── PCAN-USB (CAN bus) ──────────────────────────
+  # PCAN-USB (CAN bus)
   - id: pcan_main
     type: can_bus
-    enabled: false                # 由 Brainstem 内部使用
+    enabled: false
     driver: pcan_native
-    description: "PEAK PCAN-USB → 电机 CAN 总线"
+    description: "PEAK PCAN-USB to motor CAN bus"
     udev_match:
       vendor_id: "0c72"
       product_id: "000c"
-    note: "Brainstem 内部独占, 不走 LingTu Module 系统"
+    note: "Brainstem internal exclusive bus; not part of LingTu Module dataflow"

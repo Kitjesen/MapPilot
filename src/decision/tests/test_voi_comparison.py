@@ -1,13 +1,8 @@
-"""VoI 调度策略对比实验 — FixedInterval vs OldVoI vs NewVoI (Shannon 熵)。
-
-模拟 50 步导航场景，对比三种策略的触发效率。
-PYTHONPATH: src/decision
-"""
+"""Decision module."""
 
 import sys
 import time
 
-# ── 路径设置 ──
 sys.path.insert(0, "src")
 
 from memory.scheduling.voi_scheduler import (
@@ -17,49 +12,35 @@ from memory.scheduling.voi_scheduler import (
     VoIScheduler,
 )
 
-# ═══════════════════════════════════════════════════════════════
-# 场景生成: 50 步导航轨迹
-# ═══════════════════════════════════════════════════════════════
 
 def generate_trajectory(n_steps: int = 50):
-    """生成 50 步导航轨迹数据。
-
-    - credibility: 0.3 → 0.9 线性上升，step 20 和 35 插入误检突降到 0.2
-    - distance_to_goal: 10m → 0.5m 线性下降
-    - position_var: 2.0 → 0.1 线性下降
-    """
+    """Generate trajectory."""
     trajectory = []
     for i in range(n_steps):
         t = i / (n_steps - 1)  # 0..1
 
-        # 基础 credibility: 0.3 → 0.9
         cred = 0.3 + 0.6 * t
 
-        # 误检注入
         if i == 20 or i == 35:
             cred = 0.2
 
-        # distance: 10 → 0.5
         dist = 10.0 - 9.5 * t
 
-        # position_var: 2.0 → 0.1
         pos_var = 2.0 - 1.9 * t
 
-        trajectory.append({
-            "step": i,
-            "credibility": round(cred, 4),
-            "distance_to_goal": round(dist, 3),
-            "position_var": round(pos_var, 4),
-        })
+        trajectory.append(
+            {
+                "step": i,
+                "credibility": round(cred, 4),
+                "distance_to_goal": round(dist, 3),
+                "position_var": round(pos_var, 4),
+            }
+        )
     return trajectory
 
 
-# ═══════════════════════════════════════════════════════════════
-# 策略 1: FixedInterval — 每 5 步 reperceive
-# ═══════════════════════════════════════════════════════════════
-
 def run_fixed_interval(trajectory):
-    """每 5 步无条件触发 reperceive。"""
+    """Run fixed interval."""
     actions = []
     for step_data in trajectory:
         i = step_data["step"]
@@ -70,17 +51,8 @@ def run_fixed_interval(trajectory):
     return actions
 
 
-# ═══════════════════════════════════════════════════════════════
-# 策略 2: OldVoI — 旧公式 delta_s = 0.4*uncertainty + 0.3*position_info
-# ═══════════════════════════════════════════════════════════════
-
 def run_old_voi(trajectory):
-    """旧版 VoI: delta_s = 0.4 * uncertainty + 0.3 * position_info。
-
-    uncertainty = 1 - credibility
-    position_info = position_var / 2.0 (归一化)
-    阈值 0.35 → reperceive, 0.55 → slow_reason
-    """
+    """Run old voi."""
     actions = []
     for step_data in trajectory:
         cred = step_data["credibility"]
@@ -99,14 +71,10 @@ def run_old_voi(trajectory):
     return actions
 
 
-# ═══════════════════════════════════════════════════════════════
-# 策略 3: NewVoI — Shannon 熵 (voi_scheduler.py)
-# ═══════════════════════════════════════════════════════════════
-
 def run_new_voi(trajectory):
-    """使用 voi_scheduler.py 的 Shannon 熵公式。"""
+    """Run new voi."""
     cfg = VoIConfig(
-        reperception_cooldown=0.0,   # 禁用冷却以公平对比
+        reperception_cooldown=0.0,
         slow_reason_cooldown=0.0,
         min_distance_for_trigger=0.0,
     )
@@ -124,7 +92,7 @@ def run_new_voi(trajectory):
             target_credibility=step_data["credibility"],
             target_position_var=step_data["position_var"],
             distance_to_goal=step_data["distance_to_goal"],
-            distance_since_last_reperception=2.0,  # 模拟足够移动距离
+            distance_since_last_reperception=2.0,
             match_count=3,
             total_objects=15,
             slow_reason_count=slow_count,
@@ -148,15 +116,11 @@ def run_new_voi(trajectory):
     return actions
 
 
-# ═══════════════════════════════════════════════════════════════
-# 评估指标
-# ═══════════════════════════════════════════════════════════════
-
 def evaluate(trajectory, actions):
-    """计算评估指标。"""
+    """Evaluate."""
     total_triggers = 0
-    unnecessary = 0   # credibility > 0.7 时触发
-    missed = 0        # credibility < 0.3 时没触发
+    unnecessary = 0
+    missed = 0
     slow_count = 0
 
     for step_data, action in zip(trajectory, actions):
@@ -168,11 +132,9 @@ def evaluate(trajectory, actions):
         if action == SchedulerAction.SLOW_REASON:
             slow_count += 1
 
-        # 不必要触发: cred 高还触发
         if triggered and cred > 0.7:
             unnecessary += 1
 
-        # 遗漏: cred 低却没触发
         if not triggered and cred < 0.3:
             missed += 1
 
@@ -184,12 +146,8 @@ def evaluate(trajectory, actions):
     }
 
 
-# ═══════════════════════════════════════════════════════════════
-# 可视化 + LaTeX 输出
-# ═══════════════════════════════════════════════════════════════
-
 def print_timeline(trajectory, results):
-    """打印 50 步时间线可视化。"""
+    """Print timeline."""
     print("\n" + "=" * 72)
     print("  50-Step Navigation Timeline")
     print("=" * 72)
@@ -197,7 +155,7 @@ def print_timeline(trajectory, results):
     print("-" * 72)
 
     action_sym = {
-        SchedulerAction.CONTINUE: "  ·  ",
+        SchedulerAction.CONTINUE: "  .  ",
         SchedulerAction.REPERCEIVE: " REP ",
         SchedulerAction.SLOW_REASON: " SLO ",
     }
@@ -218,7 +176,7 @@ def print_timeline(trajectory, results):
 
 
 def print_latex_table(metrics):
-    """输出 LaTeX 表格。"""
+    """Print latex table."""
     print("\n% ── LaTeX Table ──")
     print(r"\begin{table}[h]")
     print(r"\centering")
@@ -230,17 +188,14 @@ def print_latex_table(metrics):
     print(r"\midrule")
     for name in ["FixedInterval", "OldVoI", "NewVoI"]:
         m = metrics[name]
-        print(
-            f"{name} & {m['total_triggers']} & "
-            f"{m['unnecessary']} & {m['missed']} & {m['slow_reason']} \\\\"
-        )
+        print(f"{name} & {m['total_triggers']} & {m['unnecessary']} & {m['missed']} & {m['slow_reason']} \\\\")
     print(r"\bottomrule")
     print(r"\end{tabular}")
     print(r"\end{table}")
 
 
 def print_summary(metrics):
-    """打印汇总表。"""
+    """Print summary."""
     print("\n" + "=" * 60)
     print("  Strategy Comparison Summary")
     print("=" * 60)
@@ -249,21 +204,13 @@ def print_summary(metrics):
     print("-" * 60)
     for name in ["FixedInterval", "OldVoI", "NewVoI"]:
         m = metrics[name]
-        print(
-            f"{name:<16} {m['total_triggers']:>8} "
-            f"{m['unnecessary']:>12} {m['missed']:>8} {m['slow_reason']:>8}"
-        )
+        print(f"{name:<16} {m['total_triggers']:>8} {m['unnecessary']:>12} {m['missed']:>8} {m['slow_reason']:>8}")
     print("-" * 60)
 
-
-# ═══════════════════════════════════════════════════════════════
-# 主入口
-# ═══════════════════════════════════════════════════════════════
 
 def main():
     trajectory = generate_trajectory(50)
 
-    # 运行三种策略
     actions_fixed = run_fixed_interval(trajectory)
     actions_old = run_old_voi(trajectory)
     actions_new = run_new_voi(trajectory)
@@ -274,27 +221,21 @@ def main():
         "NewVoI": actions_new,
     }
 
-    # 评估
     metrics = {}
     for name, acts in results.items():
         metrics[name] = evaluate(trajectory, acts)
 
-    # 输出
     print_timeline(trajectory, results)
     print_summary(metrics)
     print_latex_table(metrics)
 
-    # ── Assertions ──
     m_new = metrics["NewVoI"]
     m_fixed = metrics["FixedInterval"]
 
-    # NewVoI 不应遗漏误检步 (step 20, 35 cred=0.2)
     assert m_new["missed"] == 0, f"NewVoI missed {m_new['missed']} low-cred steps"
 
-    # NewVoI 不必要触发应少于 FixedInterval
     assert m_new["unnecessary"] <= m_fixed["unnecessary"], (
-        f"NewVoI unnecessary ({m_new['unnecessary']}) > "
-        f"Fixed unnecessary ({m_fixed['unnecessary']})"
+        f"NewVoI unnecessary ({m_new['unnecessary']}) > Fixed unnecessary ({m_fixed['unnecessary']})"
     )
 
     print("\nAll assertions passed.")

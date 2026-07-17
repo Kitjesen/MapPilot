@@ -25,7 +25,6 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-
 SCHEMA_VERSION = "lingtu.cmu_unity_runtime_gate.v1"
 
 HARDWARE_NODE_TOKENS = (
@@ -81,20 +80,14 @@ def _same_source_tomogram_evidence() -> dict[str, Any]:
     tomogram_raw = os.environ.get("LINGTU_CMU_TOMOGRAM", "")
     run_dir_raw = os.environ.get("LINGTU_CMU_RUN_DIR", "")
     tomogram_path = Path(tomogram_raw) if tomogram_raw else None
-    capture_path = (
-        Path(run_dir_raw) / "cmu_unity_tomogram_capture.json"
-        if run_dir_raw
-        else None
-    )
+    capture_path = Path(run_dir_raw) / "cmu_unity_tomogram_capture.json" if run_dir_raw else None
     evidence: dict[str, Any] = {
         "available": False,
         "ok": False,
         "tomogram": tomogram_raw,
         "tomogram_exists": bool(tomogram_path is not None and tomogram_path.exists()),
         "tomogram_sha256": (
-            _sha256_file(tomogram_path)
-            if tomogram_path is not None and tomogram_path.exists()
-            else ""
+            _sha256_file(tomogram_path) if tomogram_path is not None and tomogram_path.exists() else ""
         ),
         "capture_report": str(capture_path) if capture_path is not None else "",
         "capture_report_exists": bool(capture_path is not None and capture_path.exists()),
@@ -130,8 +123,7 @@ def _same_source_tomogram_evidence() -> dict[str, Any]:
     evidence["same_source_tomogram"] = bool(
         source_contract.get("same_source_tomogram") is True
         and tomo.get("same_source_input") is True
-        and str(tomo.get("input_pcd_sha256") or "")
-        == str(pcd.get("sha256") or "")
+        and str(tomo.get("input_pcd_sha256") or "") == str(pcd.get("sha256") or "")
         and str(tomo.get("sha256") or "") == evidence["tomogram_sha256"]
     )
     if not evidence["capture_ok"]:
@@ -294,9 +286,7 @@ def _late_cmd_report(metrics: dict[str, Any], args: argparse.Namespace) -> dict[
     required = int(getattr(args, "min_late_cmd_vel_samples", 0) or 0)
     start_time = _window_start(metrics, window_sec)
     times = [
-        float(t)
-        for t in ((metrics.get("cmd_vel") or {}).get("nonzero_times_sec") or [])
-        if float(t) >= start_time
+        float(t) for t in ((metrics.get("cmd_vel") or {}).get("nonzero_times_sec") or []) if float(t) >= start_time
     ]
     return {
         "window_sec": window_sec,
@@ -314,9 +304,7 @@ def _late_map_report(metrics: dict[str, Any], args: argparse.Namespace) -> dict[
     best_delta = 0.0
     for topic, item in ((metrics.get("cloud_coverage") or {}).get("topics") or {}).items():
         history = [
-            sample
-            for sample in list((item or {}).get("history") or [])
-            if float(sample.get("t") or 0.0) >= start_time
+            sample for sample in list((item or {}).get("history") or []) if float(sample.get("t") or 0.0) >= start_time
         ]
         if len(history) < 2:
             delta = 0.0
@@ -346,11 +334,7 @@ def _late_path_report(
     ok = True
     for topic in path_topics:
         item = (metrics.get("paths") or {}).get(topic) or {}
-        times = [
-            float(t)
-            for t in (item.get("nonempty_times_sec") or [])
-            if float(t) >= start_time
-        ]
+        times = [float(t) for t in (item.get("nonempty_times_sec") or []) if float(t) >= start_time]
         topic_ok = len(times) >= required
         ok = ok and topic_ok
         topics[topic] = {
@@ -393,10 +377,7 @@ def _frontier_no_gain_stall_report(
         map_growth = late_activity.get("map_growth")
         if not isinstance(map_growth, dict):
             blockers.append("late map_growth evidence missing")
-        elif not (
-            map_growth.get("ok") is True
-            or map_growth.get("accepted_flat_after_total_growth") is True
-        ):
+        elif not (map_growth.get("ok") is True or map_growth.get("accepted_flat_after_total_growth") is True):
             blockers.append("late map_growth evidence is not ok")
         if int(tare_navigation.get("failure_count") or 0) > 0:
             blockers.append("TARE navigation failure_count is nonzero")
@@ -421,8 +402,7 @@ def _frontier_no_gain_stall_report(
             "paths_ok": (late_activity.get("paths") or {}).get("ok") is True,
             "map_growth_ok": (late_activity.get("map_growth") or {}).get("ok") is True,
             "map_growth_accepted_flat_after_total_growth": (
-                (late_activity.get("map_growth") or {}).get("accepted_flat_after_total_growth")
-                is True
+                (late_activity.get("map_growth") or {}).get("accepted_flat_after_total_growth") is True
             ),
         },
         "tare_navigation": {
@@ -557,9 +537,7 @@ def _planner_diagnostics_from_gateway(status: dict[str, Any]) -> dict[str, Any]:
     fallback_reason = str(last_plan.get("fallback_reason") or "")
     fallback_used = bool(primary and selected and selected != primary)
     selected_path_safety = (
-        last_plan.get("selected_path_safety")
-        if isinstance(last_plan.get("selected_path_safety"), dict)
-        else {}
+        last_plan.get("selected_path_safety") if isinstance(last_plan.get("selected_path_safety"), dict) else {}
     )
     path_safety_ok = selected_path_safety.get("ok")
     if path_safety_ok is not None:
@@ -645,6 +623,7 @@ def _tare_navigation_from_gateway_exploration(status: dict[str, Any]) -> dict[st
             except (TypeError, ValueError):
                 continue
         return 0
+
     last_navigation_status = stats.get("last_navigation_status")
     if not isinstance(last_navigation_status, dict) or not last_navigation_status:
         last_navigation_status = raw_status.get("last_navigation_status")
@@ -681,9 +660,7 @@ def _tare_strategy_quality_from_gateway_exploration(
         ),
     )
     try:
-        max_suppressed_ratio = float(
-            getattr(args, "max_tare_suppressed_waypoint_ratio", 1.0)
-        )
+        max_suppressed_ratio = float(getattr(args, "max_tare_suppressed_waypoint_ratio", 1.0))
     except (TypeError, ValueError):
         max_suppressed_ratio = 1.0
     max_suppressed_ratio = min(1.0, max(0.0, max_suppressed_ratio))
@@ -753,11 +730,7 @@ def _tare_strategy_quality_from_gateway_exploration(
     navigation_failure_count = _counter("navigation_failure_count")
     suppressed_total = suppressed_waypoint_count + suppressed_far_waypoint_count
     suppression_denominator = waypoint_count + suppressed_total
-    suppressed_ratio = (
-        float(suppressed_total) / float(suppression_denominator)
-        if suppression_denominator > 0
-        else 0.0
-    )
+    suppressed_ratio = float(suppressed_total) / float(suppression_denominator) if suppression_denominator > 0 else 0.0
     reject_reasons = [
         reason
         for reason in (
@@ -891,8 +864,7 @@ class RuntimeSampler:
         item.setdefault("times_sec", []).append(round(self._elapsed(), 3))
         unique_points = item.setdefault("unique_points", [])
         if not any(
-            math.hypot(x - float(existing[0]), y - float(existing[1])) <= 0.05
-            and abs(z - float(existing[2])) <= 0.05
+            math.hypot(x - float(existing[0]), y - float(existing[1])) <= 0.05 and abs(z - float(existing[2])) <= 0.05
             for existing in unique_points
         ):
             unique_points.append(point)
@@ -1056,10 +1028,14 @@ class RuntimeSampler:
 
     def _update_active_waypoint(self, topic: str, waypoint_xy: tuple[float, float]) -> None:
         previous = self._active_waypoint.get(topic)
-        if previous is not None and math.hypot(
-            waypoint_xy[0] - previous[0],
-            waypoint_xy[1] - previous[1],
-        ) <= 0.05:
+        if (
+            previous is not None
+            and math.hypot(
+                waypoint_xy[0] - previous[0],
+                waypoint_xy[1] - previous[1],
+            )
+            <= 0.05
+        ):
             return
         self._active_waypoint[topic] = waypoint_xy
         distance = self._distance_to_waypoint(waypoint_xy)
@@ -1171,7 +1147,7 @@ def _load_cmu_runtime_contract() -> dict[str, Any]:
             path = str(candidate)
             if path not in sys.path:
                 sys.path.insert(0, path)
-        from runtime.blueprints.simulation_contract import simulation_runtime_contract
+        from runtime.contracts.simulation import simulation_runtime_contract
 
         return simulation_runtime_contract("cmu_unity_external").as_report()
     except Exception as exc:
@@ -1265,10 +1241,7 @@ def _cmu_runtime_contract_evidence(
         )
         for topic in list(definition.get(key) or [])
     }
-    topic_evidence = {
-        topic: _runtime_topic_evidence(topic, metrics)
-        for topic in sorted(evidence_topics)
-    }
+    topic_evidence = {topic: _runtime_topic_evidence(topic, metrics) for topic in sorted(evidence_topics)}
     for topic, evidence in topic_evidence.items():
         if evidence.get("ok") is not True:
             errors.append(f"{topic} did not satisfy runtime topic evidence")
@@ -1347,10 +1320,7 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
                     blockers.append(f"{topic} unique waypoint count below threshold")
         else:
             observed = max(
-                (
-                    int((waypoints.get(topic) or {}).get("unique_count") or 0)
-                    for topic in WAYPOINT_TOPICS
-                ),
+                (int((waypoints.get(topic) or {}).get("unique_count") or 0) for topic in WAYPOINT_TOPICS),
                 default=0,
             )
             ok = observed >= required_unique
@@ -1458,9 +1428,8 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
         late_map = _late_map_report(metrics, args)
         late_activity["map_growth"] = late_map
         if not late_map["ok"]:
-            total_map_ok = (
-                float(cloud.get("best_area_delta_m2") or 0.0) >= args.min_map_area_delta_m2
-                and all(bool(req.get("ok")) for req in map_requirements.values())
+            total_map_ok = float(cloud.get("best_area_delta_m2") or 0.0) >= args.min_map_area_delta_m2 and all(
+                bool(req.get("ok")) for req in map_requirements.values()
             )
             late_motion_ok = (
                 (late_activity.get("odometry") or {}).get("ok") is True
@@ -1468,9 +1437,7 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
                 and (late_activity.get("paths") or {}).get("ok") is True
             )
             accept_flat_late_map = (
-                bool(getattr(args, "allow_flat_late_map_after_total_growth", False))
-                and total_map_ok
-                and late_motion_ok
+                bool(getattr(args, "allow_flat_late_map_after_total_growth", False)) and total_map_ok and late_motion_ok
             )
             late_map["accepted_flat_after_total_growth"] = accept_flat_late_map
             if accept_flat_late_map:
@@ -1514,9 +1481,8 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
         require_planner_diagnostics=bool(getattr(args, "require_planner_diagnostics", False)),
     )
     gateway_session_start = metrics.get("gateway_session_start") or {}
-    if (
-        bool(getattr(args, "gateway_start_exploration_session", False))
-        and not _gateway_session_start_ok(gateway_session_start)
+    if bool(getattr(args, "gateway_start_exploration_session", False)) and not _gateway_session_start_ok(
+        gateway_session_start
     ):
         blockers.append("gateway exploration session start failed")
     if args.require_planner_diagnostics and not planner_diagnostics.get("available"):
@@ -1527,9 +1493,7 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
         planner_diagnostics.get("path_safety_ok") is False
     ):
         blockers.append("planner selected path safety failed")
-    if bool(getattr(args, "require_no_primary_replan", False)) and bool(
-        planner_diagnostics.get("primary_replan_used")
-    ):
+    if bool(getattr(args, "require_no_primary_replan", False)) and bool(planner_diagnostics.get("primary_replan_used")):
         blockers.append("planner primary replan was used")
     if navigation_failure.get("failed"):
         blockers.append("navigation mission failed")
@@ -1541,19 +1505,11 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
             blockers.append("TARE navigation success count below threshold")
         if int(tare_navigation.get("failure_count") or 0) > 0:
             blockers.append("TARE navigation failure count is nonzero")
-    if bool(getattr(args, "require_tare_strategy_quality", False)) and (
-        tare_strategy_quality.get("ok") is not True
-    ):
-        for blocker in tare_strategy_quality.get("blockers") or [
-            "TARE strategy quality failed"
-        ]:
+    if bool(getattr(args, "require_tare_strategy_quality", False)) and (tare_strategy_quality.get("ok") is not True):
+        for blocker in tare_strategy_quality.get("blockers") or ["TARE strategy quality failed"]:
             blockers.append(f"TARE strategy quality: {blocker}")
-    if bool(getattr(args, "require_frontier_no_gain_stall", False)) and (
-        frontier_no_gain_stall.get("ok") is not True
-    ):
-        for blocker in frontier_no_gain_stall.get("blockers") or [
-            "frontier late activity observation failed"
-        ]:
+    if bool(getattr(args, "require_frontier_no_gain_stall", False)) and (frontier_no_gain_stall.get("ok") is not True):
+        for blocker in frontier_no_gain_stall.get("blockers") or ["frontier late activity observation failed"]:
             blockers.append(f"frontier_no_gain_stall: {blocker}")
     if bool(getattr(args, "require_same_source_tomogram", False)):
         if same_source_tomogram.get("ok") is not True:
@@ -1584,34 +1540,22 @@ def evaluate_report(metrics: dict[str, Any], args: argparse.Namespace, ros_domai
             "min_late_odom_delta_m": float(getattr(args, "min_late_odom_delta_m", 0.0) or 0.0),
             "min_late_cmd_vel_samples": int(getattr(args, "min_late_cmd_vel_samples", 0) or 0),
             "min_late_path_samples": int(getattr(args, "min_late_path_samples", 0) or 0),
-            "min_late_map_area_delta_m2": float(
-                getattr(args, "min_late_map_area_delta_m2", 0.0) or 0.0
-            ),
+            "min_late_map_area_delta_m2": float(getattr(args, "min_late_map_area_delta_m2", 0.0) or 0.0),
             "allow_flat_late_map_after_total_growth": bool(
                 getattr(args, "allow_flat_late_map_after_total_growth", False)
             ),
             "min_scan_samples": args.min_scan_samples,
             "voxel_size_m": args.voxel_size,
-            "min_exploration_navigation_successes": int(
-                getattr(args, "min_exploration_navigation_successes", 1) or 1
-            ),
-            "require_tare_strategy_quality": bool(
-                getattr(args, "require_tare_strategy_quality", False)
-            ),
+            "min_exploration_navigation_successes": int(getattr(args, "min_exploration_navigation_successes", 1) or 1),
+            "require_tare_strategy_quality": bool(getattr(args, "require_tare_strategy_quality", False)),
             "min_tare_waypoints": int(getattr(args, "min_tare_waypoints", 1) or 1),
             "min_tare_paths": int(getattr(args, "min_tare_paths", 1) or 1),
-            "min_tare_strategy_paths": int(
-                getattr(args, "min_tare_strategy_paths", 0) or 0
-            ),
+            "min_tare_strategy_paths": int(getattr(args, "min_tare_strategy_paths", 0) or 0),
             "max_tare_suppressed_waypoint_ratio": float(
                 getattr(args, "max_tare_suppressed_waypoint_ratio", 1.0) or 1.0
             ),
-            "require_frontier_no_gain_stall": bool(
-                getattr(args, "require_frontier_no_gain_stall", False)
-            ),
-            "require_same_source_tomogram": bool(
-                getattr(args, "require_same_source_tomogram", False)
-            ),
+            "require_frontier_no_gain_stall": bool(getattr(args, "require_frontier_no_gain_stall", False)),
+            "require_same_source_tomogram": bool(getattr(args, "require_same_source_tomogram", False)),
         },
         "waypoints": waypoints,
         "waypoint_unique_requirements": waypoint_unique_requirements,
@@ -1662,22 +1606,24 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     cloud_qos = qos_profile_sensor_data
 
     for topic in WAYPOINT_TOPICS:
-        subscriptions.append(node.create_subscription(
-            PointStamped, topic, lambda msg, topic=topic: sampler.on_waypoint(topic, msg), qos
-        ))
+        subscriptions.append(
+            node.create_subscription(PointStamped, topic, lambda msg, topic=topic: sampler.on_waypoint(topic, msg), qos)
+        )
     for topic in PATH_TOPICS:
-        subscriptions.append(node.create_subscription(
-            ROSPath, topic, lambda msg, topic=topic: sampler.on_path(topic, msg), qos
-        ))
+        subscriptions.append(
+            node.create_subscription(ROSPath, topic, lambda msg, topic=topic: sampler.on_path(topic, msg), qos)
+        )
     subscriptions.append(node.create_subscription(TwistStamped, "/nav/cmd_vel", sampler.on_cmd_vel, qos))
     for topic in ODOM_TOPICS:
-        subscriptions.append(node.create_subscription(
-            Odometry, topic, lambda msg, topic=topic: sampler.on_odom(topic, msg), qos
-        ))
+        subscriptions.append(
+            node.create_subscription(Odometry, topic, lambda msg, topic=topic: sampler.on_odom(topic, msg), qos)
+        )
     for topic in CLOUD_TOPICS:
-        subscriptions.append(node.create_subscription(
-            PointCloud2, topic, lambda msg, topic=topic: sampler.on_cloud(topic, msg), cloud_qos
-        ))
+        subscriptions.append(
+            node.create_subscription(
+                PointCloud2, topic, lambda msg, topic=topic: sampler.on_cloud(topic, msg), cloud_qos
+            )
+        )
 
     start_pubs = []
     if args.publish_start:
@@ -1818,10 +1764,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--min-late-path-samples",
         type=int,
         default=0,
-        help=(
-            "Require non-empty required path topic samples during the final "
-            "--late-window-sec seconds."
-        ),
+        help=("Require non-empty required path topic samples during the final --late-window-sec seconds."),
     )
     parser.add_argument("--require-motion-progress", action="store_true")
     parser.add_argument(
@@ -1856,8 +1799,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help=(
-            "Require a scan/cloud topic to produce samples. "
-            "Defaults to /registered_scan and /slam/registered_cloud."
+            "Require a scan/cloud topic to produce samples. Defaults to /registered_scan and /slam/registered_cloud."
         ),
     )
     parser.add_argument(
@@ -1972,10 +1914,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-tare-suppressed-waypoint-ratio",
         type=float,
         default=0.75,
-        help=(
-            "Maximum allowed ratio of suppressed TARE waypoints to accepted plus "
-            "suppressed waypoints."
-        ),
+        help=("Maximum allowed ratio of suppressed TARE waypoints to accepted plus suppressed waypoints."),
     )
     parser.add_argument(
         "--require-runtime-contract",

@@ -53,7 +53,7 @@ def add_exploration_goal_sources(bp: Blueprint, **config) -> Blueprint:
                 "exploration",
                 "wavefront_frontier",
                 seed_group="exploration",
-                fallback="nav.exploration.frontier_explorer_module.WavefrontFrontierExplorer",
+                fallback="explore.frontier.WavefrontFrontierExplorer",
             )
             bp.add(
                 WavefrontFrontierExplorer,
@@ -81,7 +81,7 @@ def add_exploration_goal_sources(bp: Blueprint, **config) -> Blueprint:
                 "navigation",
                 "traversable_frontier",
                 seed_group="navigation",
-                fallback="nav.exploration.traversable_frontier_module.TraversableFrontierModule",
+                fallback="explore.traversable_frontier.TraversableFrontierModule",
             )
 
             bp.add(

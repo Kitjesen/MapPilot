@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """Build a DimOS-style gap report from LingTu simulation closure evidence."""
 
 from __future__ import annotations
@@ -17,10 +17,11 @@ if str(SRC) not in sys.path:
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from runtime.diagnostics.dimos_gap import build_dimos_gap_report
-from runtime.diagnostics.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from sim.diagnostics.dataflow_report import build_runtime_dataflow_from_summary
+from sim.diagnostics.gap_report import build_dimos_gap_report
 from sim.scripts import server_sim_closure
+
+from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
 
 DEFAULT_HOST_PREFLIGHT_MAX_AGE_S = 86_400.0
 
@@ -131,11 +132,7 @@ def _host_preflight_file_freshness(
     max_report_age_s: float | None,
 ) -> dict[str, Any]:
     checked_at = time.time()
-    threshold = (
-        DEFAULT_HOST_PREFLIGHT_MAX_AGE_S
-        if max_report_age_s is None
-        else float(max_report_age_s)
-    )
+    threshold = DEFAULT_HOST_PREFLIGHT_MAX_AGE_S if max_report_age_s is None else float(max_report_age_s)
     mtime = path.stat().st_mtime
     file_age_s = max(0.0, checked_at - mtime)
     generated_at = _float_or_none(payload.get("generated_at"))
@@ -147,9 +144,7 @@ def _host_preflight_file_freshness(
     else:
         generated_age_s = max(0.0, checked_at - generated_at)
         if generated_age_s > threshold:
-            blockers.append(
-                f"host_preflight_generated_age_s {generated_age_s:.3f} > {threshold:.3f}"
-            )
+            blockers.append(f"host_preflight_generated_age_s {generated_age_s:.3f} > {threshold:.3f}")
         if generated_at - checked_at > 300.0:
             blockers.append("generated_at is too far in the future")
     return {
@@ -159,11 +154,7 @@ def _host_preflight_file_freshness(
         "mtime": mtime,
         "file_age_s": round(file_age_s, 3),
         "generated_at": generated_at,
-        "generated_age_s": (
-            None
-            if generated_at is None
-            else round(max(0.0, checked_at - generated_at), 3)
-        ),
+        "generated_age_s": (None if generated_at is None else round(max(0.0, checked_at - generated_at), 3)),
         "max_age_s": threshold,
         "fresh": not blockers,
         "stale": bool(blockers),
@@ -211,9 +202,7 @@ def build_gap_report(
         )
     preflight_source = ""
     if host_preflight:
-        preflight = server_sim_closure.host_preflight(
-            required=set(DIMOS_BENCHMARK_REQUIRED_GATES)
-        )
+        preflight = server_sim_closure.host_preflight(required=set(DIMOS_BENCHMARK_REQUIRED_GATES))
         preflight_source = "argument"
     elif host_preflight_report is not None:
         preflight = _load_host_preflight_report(
@@ -266,16 +255,10 @@ def _markdown_table(report: dict[str, Any]) -> str:
         requirement = str(row["dimos_requirement"]).replace("|", "/")
         surface = str(row["dimos_surface"]).replace("|", "/")
         action = str(row["recommended_action"]).replace("|", "/")
-        dataflow_blocker = str(row.get("runtime_dataflow_blocker") or "").replace(
-            "|", "/"
-        )
+        dataflow_blocker = str(row.get("runtime_dataflow_blocker") or "").replace("|", "/")
         row_host = row.get("host_preflight") or {}
         row_host_status = (
-            "ok"
-            if row_host.get("ok") is True
-            else "blocked"
-            if row_host.get("ok") is False
-            else "not checked"
+            "ok" if row_host.get("ok") is True else "blocked" if row_host.get("ok") is False else "not checked"
         )
         lines.append(
             f"| {row['priority']} | `{row['gate']}` | {row['status']} | {row_host_status} | "
@@ -295,9 +278,7 @@ def _markdown_table(report: dict[str, Any]) -> str:
             gates = ", ".join(f"`{gate}`" for gate in check.get("gates") or [])
             blockers = "; ".join(str(item) for item in check.get("blockers") or [])
             action = str(check.get("recommended_action") or "").replace("|", "/")
-            lines.append(
-                f"| `{check.get('check')}` | {gates} | {action} | {blockers} |"
-            )
+            lines.append(f"| `{check.get('check')}` | {gates} | {action} | {blockers} |")
     if execution_plan.get("phases"):
         lines.extend(
             [
@@ -373,10 +354,7 @@ def _markdown_table(report: dict[str, Any]) -> str:
         for step in trace.get("primary_chain") or []:
             role = str(step.get("role") or "").replace("|", "/")
             code = ", ".join(f"`{item}`" for item in step.get("code") or [])
-            lines.append(
-                f"| `{step.get('id')}` | `{step.get('runtime_evidence_gate')}` | "
-                f"{role} | {code} |"
-            )
+            lines.append(f"| `{step.get('id')}` | `{step.get('runtime_evidence_gate')}` | {role} | {code} |")
     return "\n".join(lines) + "\n"
 
 
@@ -411,12 +389,9 @@ def _shell_plan(report: dict[str, Any]) -> str:
         f"# Source: {report.get('source')}",
         f"# Claim allowed: {str(report['lingtu_readiness']['claim_allowed']).lower()}",
         f"# Readiness ok: {str(readiness.get('ok') is True).lower()}",
-        "# Runtime dataflow checked: "
-        f"{str(readiness.get('runtime_dataflow_checked') is True).lower()}",
-        "# Runtime dataflow complete: "
-        f"{str(readiness.get('runtime_dataflow_complete') is True).lower()}",
-        "# Runtime dataflow ok: "
-        f"{str(readiness.get('runtime_dataflow_ok') is True).lower()}",
+        f"# Runtime dataflow checked: {str(readiness.get('runtime_dataflow_checked') is True).lower()}",
+        f"# Runtime dataflow complete: {str(readiness.get('runtime_dataflow_complete') is True).lower()}",
+        f"# Runtime dataflow ok: {str(readiness.get('runtime_dataflow_ok') is True).lower()}",
         f"# Passed/required: {report['gap_counts']['passed']}/{report['gap_counts']['required']}",
         f"# ok_to_run_missing: {str(plan.get('ok_to_run_missing')).lower()}",
         "",
@@ -449,36 +424,18 @@ def _shell_plan(report: dict[str, Any]) -> str:
         for item in command_items:
             check = str(item.get("check") or "")
             gate = str(item.get("gate") or "")
-            gates = [
-                str(value)
-                for value in item.get("gates") or []
-                if str(value)
-            ]
+            gates = [str(value) for value in item.get("gates") or [] if str(value)]
             priority = str(item.get("priority") or "")
             expected = str(item.get("expected_report_path") or "")
             recommended_action = str(item.get("recommended_action") or "")
             host_preflight_ok = item.get("host_preflight_ok")
-            failed_checks = [
-                str(value)
-                for value in item.get("host_failed_checks") or []
-                if str(value)
-            ]
-            host_blockers = [
-                str(value)
-                for value in item.get("host_preflight_blockers") or []
-                if str(value)
-            ]
-            dependency_blockers = [
-                str(value)
-                for value in item.get("dependency_blockers") or []
-                if str(value)
-            ]
+            failed_checks = [str(value) for value in item.get("host_failed_checks") or [] if str(value)]
+            host_blockers = [str(value) for value in item.get("host_preflight_blockers") or [] if str(value)]
+            dependency_blockers = [str(value) for value in item.get("dependency_blockers") or [] if str(value)]
             dependency_status = item.get("dependency_blocker_status") or {}
             runtime_blocker = str(item.get("runtime_dataflow_blocker") or "")
             runtime_failed_edges = [
-                str(value)
-                for value in item.get("runtime_dataflow_failed_edges") or []
-                if str(value)
+                str(value) for value in item.get("runtime_dataflow_failed_edges") or [] if str(value)
             ]
             if gate:
                 suffix = f" priority={priority}" if priority else ""
@@ -492,40 +449,26 @@ def _shell_plan(report: dict[str, Any]) -> str:
             if expected:
                 lines.append(f"# Expected report: {expected}")
             if host_preflight_ok is not None:
-                lines.append(
-                    f"# Host preflight ok: {str(host_preflight_ok).lower()}"
-                )
+                lines.append(f"# Host preflight ok: {str(host_preflight_ok).lower()}")
             if failed_checks:
                 lines.append(f"# Host failed checks: {', '.join(failed_checks)}")
             for blocker in host_blockers:
                 lines.append(f"# Host blocker: {blocker}")
             if dependency_blockers:
-                lines.append(
-                    "# Dependency blockers: " + ", ".join(dependency_blockers)
-                )
+                lines.append("# Dependency blockers: " + ", ".join(dependency_blockers))
                 for blocker in dependency_blockers:
                     if blocker in dependency_status:
-                        lines.append(
-                            f"# Dependency blocker status: {blocker}="
-                            f"{dependency_status[blocker]}"
-                        )
+                        lines.append(f"# Dependency blocker status: {blocker}={dependency_status[blocker]}")
             if runtime_blocker:
                 lines.append(f"# Runtime dataflow blocker: {runtime_blocker}")
             if runtime_failed_edges:
-                lines.append(
-                    "# Runtime dataflow failed edges: "
-                    + ", ".join(runtime_failed_edges)
-                )
+                lines.append("# Runtime dataflow failed edges: " + ", ".join(runtime_failed_edges))
             command = str(item["command"])
-            should_comment_command = (
-                phase_id
-                in {
-                    "blocked_gate_commands",
-                    "dependency_blocked_gate_commands",
-                    "preflight_required_gate_commands",
-                }
-                or (status == "blocked" and phase_id != "host_setup")
-            )
+            should_comment_command = phase_id in {
+                "blocked_gate_commands",
+                "dependency_blocked_gate_commands",
+                "preflight_required_gate_commands",
+            } or (status == "blocked" and phase_id != "host_setup")
             if should_comment_command:
                 lines.append(f"# BLOCKED: {command}")
             else:
@@ -565,10 +508,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--host-preflight",
         action="store_true",
-        help=(
-            "Include read-only host suitability checks for the DimOS gate set. "
-            "This does not launch gate commands."
-        ),
+        help=("Include read-only host suitability checks for the DimOS gate set. This does not launch gate commands."),
     )
     parser.add_argument(
         "--host-preflight-report",

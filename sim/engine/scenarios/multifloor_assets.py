@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from runtime.same_source_map_artifacts import build_saved_map_metadata, sha256_file
+from maps.artifacts import build_saved_map_metadata, sha256_file
 
 
 @dataclass(frozen=True)
@@ -172,7 +172,7 @@ def _scene_xml(start: tuple[float, float, float], goal: tuple[float, float, floa
     <light pos="5 -6 8" dir="-0.4 0.35 -1" diffuse="0.9 0.88 0.82" castshadow="false"/>
     <geom name="ground_reference" type="plane" size="12 8 0.1" material="ground_mat"
           contype="1" conaffinity="1" condim="3" friction="1 0.5 0.5" group="1"/>
-{''.join(geoms)}    <geom name="goal_marker" type="sphere" size="0.16"
+{"".join(geoms)}    <geom name="goal_marker" type="sphere" size="0.16"
           pos="{_format_vec(goal)}" contype="0" conaffinity="0"
           rgba="0.1 0.35 1 0.75" group="1"/>
   </worldbody>

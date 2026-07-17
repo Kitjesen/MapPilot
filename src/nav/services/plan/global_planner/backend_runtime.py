@@ -7,8 +7,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from runtime.msgs.numpy_compat import np
-from runtime.profiles.planner_backends import normalize_planner_name
 from nav.services.plan.contracts import (
     GlobalPlanRequest,
     GlobalPlanResult,
@@ -16,19 +14,27 @@ from nav.services.plan.contracts import (
     coerce_planning_map,
     require_global_planner_backend,
 )
+from runtime.msgs.numpy_compat import np
+from runtime.profiles.planner_backends import normalize_planner_name
 
 logger = logging.getLogger(__name__)
 
-_GLOBAL_PLANNERS = ("octoplanner3d", "pct")
+_GLOBAL_PLANNERS = ("octoplanner3d",)
 
 _OCTOPLANNER3D_CONSTRAINT_KEYS = {
     "robot_radius",
+    "body_clearance_below_m",
+    "body_clearance_above_m",
     "max_iterations",
     "snap_search_radius_cells",
     "require_ground_support",
     "strict_direct_ground_support",
     "ground_support_xy_radius_cells",
     "ground_support_depth_cells",
+    "support_height_m",
+    "support_height_tolerance_m",
+    "support_patch_radius_cells",
+    "support_patch_min_samples",
     "enable_preblocked_costmap",
     "preblocked_costmap_radius_cells",
     "preblocked_costmap_weight",
@@ -57,9 +63,7 @@ def normalize_octoplanner3d_constraints(
     if not constraints:
         return {}
     return {
-        key: value
-        for key, value in constraints.items()
-        if key in _OCTOPLANNER3D_CONSTRAINT_KEYS and value is not None
+        key: value for key, value in constraints.items() if key in _OCTOPLANNER3D_CONSTRAINT_KEYS and value is not None
     }
 
 
@@ -81,14 +85,8 @@ def create_planner_backend(
             obstacle_thr,
             timeout_s=octoplanner3d_timeout_s,
         )
-    elif canonical == "pct":
-        from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner
-
-        backend = PCTPlanner(map_path, obstacle_thr)
     else:
-        raise ValueError(
-            f"Unknown planner: '{canonical}'. Available: {list(_GLOBAL_PLANNERS)}"
-        )
+        raise ValueError(f"Unknown planner: '{canonical}'. Available: {list(_GLOBAL_PLANNERS)}")
     return require_global_planner_backend(canonical, backend)
 
 
@@ -214,7 +212,5 @@ def backend_unavailable_reason(backend: Any) -> str:
     if backend is None or getattr(backend, "available", True) is not False:
         return ""
     return str(
-        getattr(backend, "_load_error", "")
-        or getattr(backend, "_last_plan_error", "")
-        or "planner backend unavailable"
+        getattr(backend, "_load_error", "") or getattr(backend, "_last_plan_error", "") or "planner backend unavailable"
     )

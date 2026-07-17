@@ -1,0 +1,254 @@
+# 现场部署就绪性验证 Runbook
+
+## 1. 概述
+
+本 runbook 覆盖 camera / lidar / imu / slam / nav **native DDS 服务**的现场部署验证流程。
+适用于 S100P 机器人（aarch64 / Ubuntu）环境，整合以下四个工作流的机器人侧部署与验证步骤：
+
+| 工作流 | 主题 |
+|--------|------|
+| #16 | Gateway services/status 端点 |
+| #17 | Field readiness collector 采样 |
+| #18 | Camera service catalog 安装 |
+| #19 | Replay backend round-trip DDS 类型契约 |
+
+---
+
+## 2. Camera Service Catalog 安装（工作流 #18）
+
+通过 Thunder service catalog 统一安装并启用 camera native DDS 服务，替代手工复制 systemd unit。
+
+```bash
+ssh sunrise@192.168.66.190
+cd /opt/lingtu/current
+
+# 通过 catalog 安装并启用（替代手工复制 service）
+sudo bash scripts/deploy/thunder/install_catalog_service.sh camera
+
+# 启用并立即启动服务
+sudo systemctl enable --now lingtu-camera-dds.service
+
+# 验证服务状态
+systemctl status lingtu-camera-dds.service
+
+# 确认不再是 disabled
+systemctl is-enabled lingtu-camera-dds.service
+# 期望输出：enabled
+```
+
+### 环境变量覆盖机制
+
+camera 服务支持以下环境变量覆盖（在 systemd unit 的 `[Service]` 段或 override.conf 中设置）：
+
+| 环境变量 | 用途 | 默认值 |
+|----------|------|--------|
+| `LINGTU_CAMERA_STATUS_FILE` | camera ready 状态文件路径 | `/tmp/lingtu/camera_ready` |
+| `LINGTU_CAMERA_DDS_DOMAIN` | DDS domain ID | `0` |
+| `LINGTU_CAMERA_COLOR_TOPIC` | 彩色图像 topic 名 | `rt/camera/color` |
+| `LINGTU_CAMERA_DEPTH_TOPIC` | 深度图像 topic 名 | `rt/camera/depth` |
+| `LINGTU_CAMERA_INFO_TOPIC` | 相机参数 topic 名 | `rt/camera/info` |
+
+覆盖示例：
+
+```bash
+sudo systemctl edit lingtu-camera-dds.service
+# 在编辑器中添加：
+# [Service]
+# Environment="LINGTU_CAMERA_STATUS_FILE=/var/run/lingtu/camera_ready"
+```
+
+---
+
+## 3. Gateway services/status 部署与验证（工作流 #16）
+
+部署新 Gateway 代码后，验证 `/api/v1/services/status` 端点不再返回 404。
+
+```bash
+# 查询多个服务的状态（逗号分隔）
+curl -s http://192.168.66.190:5050/api/v1/services/status?names=camera,lidar,slam,nav | python3 -m json.tool
+```
+
+### 期望响应结构
+
+```json
+{
+  "schema_version": 1,
+  "services": {
+    "camera": {"status": "running", "systemd_unit": "lingtu-camera-dds.service"},
+    "lidar": {"status": "running", "systemd_unit": "lingtu-lidar-dds.service"},
+    "slam": {"status": "running", "systemd_unit": "lingtu-slam-dds.service"},
+    "nav": {"status": "running", "systemd_unit": "lingtu-nav-dds.service"}
+  },
+  "readiness": {
+    "camera": {"ready": true, "blockers": []},
+    "lidar": {"ready": true, "blockers": []},
+    "slam": {"ready": true, "blockers": []},
+    "nav": {"ready": true, "blockers": []}
+  },
+  "field_readiness": {
+    "ok": true,
+    "missing": [],
+    "sampled_at": "2026-07-08T10:00:00Z"
+  }
+}
+```
+
+### 异常排查
+
+- **404**：Gateway 代码未部署或路由未注册，检查 Gateway 版本
+- **readiness blockers 非空**：按 blocker 类型逐一排查（systemd unit 缺失 / status file 不存在 / DDS silence）
+- **field_readiness.ok = false**：参见第 4 节 field readiness collector 诊断
+
+---
+
+## 4. Field Readiness Collector 采样（工作流 #17）
+
+一次性采样所有 native DDS topic，验证数据链路连通性。
+
+```bash
+cd ~/data/SLAM/navigation
+
+# 一次性采样所有 native DDS topic
+PYTHONPATH=src:. python -m diagnostics.field.field_readiness_collector \
+    --seconds 5 \
+    --domain 0 \
+    --json artifacts/field/readiness.json
+```
+
+### 输出解读
+
+- `ok=true`：所有 topic 在采样窗口内收到数据
+- `ok=false`：存在 dead topic，查看 `missing[]` 列表
+
+### 期望输出示例
+
+```json
+{
+  "schema_version": 1,
+  "ok": true,
+  "duration_sec": 5,
+  "domain_id": 0,
+  "topics": {
+    "rt/camera/color": {"alive": true, "samples": 15},
+    "rt/camera/depth": {"alive": true, "samples": 15},
+    "rt/camera/info": {"alive": true, "samples": 5},
+    "rt/lidar/raw_frame": {"alive": true, "samples": 50},
+    "rt/imu/raw": {"alive": true, "samples": 500},
+    "rt/slam/odometry": {"alive": true, "samples": 50},
+    "rt/slam/map_cloud": {"alive": true, "samples": 2},
+    "rt/slam/localization_health": {"alive": true, "samples": 5},
+    "rt/nav/traversability": {"alive": true, "samples": 10},
+    "rt/nav/terrain_map": {"alive": true, "samples": 5}
+  },
+  "missing": []
+}
+```
+
+### 监控的 Topic 清单
+
+| 域 | Topic | 说明 |
+|----|-------|------|
+| camera | `rt/camera/color` | 彩色图像流 |
+| camera | `rt/camera/depth` | 深度图像流 |
+| camera | `rt/camera/info` | 相机内参 |
+| lidar | `rt/lidar/raw_frame` | Livox 原始点云帧 |
+| imu | `rt/imu/raw` | IMU 原始数据 |
+| slam | `rt/slam/odometry` | 里程计 |
+| slam | `rt/slam/map_cloud` | 建图点云 |
+| slam | `rt/slam/localization_health` | 定位健康状态 |
+| nav | `rt/nav/traversability` | 可通行性地图 |
+| nav | `rt/nav/terrain_map` | 地形地图 |
+
+---
+
+## 5. Round-trip 测试（工作流 #19）
+
+### 声明式绑定说明
+
+Replay backend 是**声明式绑定**（declarative binding），非真实 LCM 运行时后端。
+其作用是将 LCM channel 声明性地映射到 DDS typed topic，确保：
+
+1. 每个 replay channel 的 message type 都有对应的 DDS typed spec
+2. DDS codec 能正确完成 serialize → deserialize round-trip
+3. Robot preset 与 replay preset 使用相同的 topic 路由
+
+### DDS Round-trip 覆盖的类型清单
+
+| DDS 类型 | 对应 Topic 示例 |
+|----------|-----------------|
+| Odometry | `rt/slam/odometry` |
+| PointCloud2 | `rt/slam/map_cloud`, `rt/lidar/raw_frame` |
+| OccupancyGrid | `rt/nav/traversability` |
+| TwistStamped | 速度指令 |
+| PoseStamped | 目标位姿 |
+| Text (String) | 状态文本 |
+| Float32 | 标量传感器值 |
+| Imu | `rt/imu/raw` |
+| LivoxRawFrame | `rt/lidar/raw_frame`（typed adapter） |
+| CameraInfo | `rt/camera/info` |
+| Image (color/depth) | `rt/camera/color`, `rt/camera/depth` |
+| TFMessage | `/tf` |
+
+---
+
+## 6. 已知缺口 / 后续
+
+| 项目 | 说明 | 优先级 |
+|------|------|--------|
+| Driver odometry DDS is not a field readiness blocker | Canonical runtime topic is `/driver/odometry`; typed DDS derives to `rt/driver/odometry`. It stays optional until a real driver/base odometry publisher is productized. | Medium |
+| LCM/replay backend 非真实运行时 | replay backend 仅为声明式绑定，不作为真实 LCM 运行时后端存在 | 低（设计如此） |
+| QoS field evidence | late subscriber / reconnect 场景需在 S100P 实机验证 | 高 |
+| 旧名兼容 alias | `CameraBridgeModule` / `LidarModule` / `DeviceManager` 保留兼容 alias，暂不删除 | 低 |
+
+---
+
+## 7. LiDAR/IMU 收口验证命令
+
+确认 `livox_sdk2_stream` 是唯一的 LiDAR/IMU owner，无遗留 ROS2 驱动进程。
+
+```bash
+# 确认 livox_sdk2_stream 是唯一 LiDAR/IMU owner
+ps aux | grep -E "livox|lidar" | grep -v grep
+# 期望：仅看到 livox_sdk2_stream 进程
+
+# 确认无 livox_ros_driver2 或重复 IMU publisher
+systemctl list-units | grep -E "livox|imu"
+# 期望：仅 lingtu-lidar-dds.service（active），无 livox_ros_driver2 相关 unit
+
+# 如发现遗留进程，执行清理
+# sudo systemctl stop livox_ros_driver2.service 2>/dev/null
+# sudo systemctl disable livox_ros_driver2.service 2>/dev/null
+```
+
+### 判定标准
+
+- ✅ 仅 `livox_sdk2_stream` 进程存在
+- ✅ 无 `livox_ros_driver2` systemd unit 处于 active 状态
+- ✅ IMU 数据仅通过 `rt/imu/raw` 单一 topic 发布
+- ❌ 若存在重复 publisher，需先停止遗留服务再重新采样验证
+
+---
+
+## 附录：快速验证清单
+
+部署完成后，按以下顺序逐步验证：
+
+```bash
+# 1. 服务安装与启动
+systemctl is-enabled lingtu-camera-dds.service  # → enabled
+systemctl is-enabled lingtu-lidar-dds.service   # → enabled
+systemctl is-enabled lingtu-slam-dds.service    # → enabled
+systemctl is-enabled lingtu-nav-dds.service     # → enabled
+
+# 2. LiDAR/IMU 收口
+ps aux | grep -E "livox|lidar" | grep -v grep  # → 仅 livox_sdk2_stream
+
+# 3. Gateway 端点
+curl -sf http://localhost:5050/api/v1/services/status?names=camera,lidar,slam,nav | python3 -m json.tool
+
+# 4. Field readiness 采样
+PYTHONPATH=src:. python -m diagnostics.field.field_readiness_collector --seconds 5 --domain 0 --json /tmp/readiness.json
+cat /tmp/readiness.json | python3 -m json.tool
+```
+
+全部通过后，机器人侧 native DDS 服务部署即告完成。

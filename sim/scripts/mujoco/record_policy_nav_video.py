@@ -18,7 +18,6 @@ from typing import Any
 
 import numpy as np
 
-
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -44,30 +43,42 @@ def _load_policy_metadata(policy_path: str) -> dict[str, Any]:
         import onnxruntime as ort
 
         sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-        meta["input"] = [
-            {"name": inp.name, "shape": list(inp.shape), "type": inp.type}
-            for inp in sess.get_inputs()
-        ]
-        meta["output"] = [
-            {"name": out.name, "shape": list(out.shape), "type": out.type}
-            for out in sess.get_outputs()
-        ]
+        meta["input"] = [{"name": inp.name, "shape": list(inp.shape), "type": inp.type} for inp in sess.get_inputs()]
+        meta["output"] = [{"name": out.name, "shape": list(out.shape), "type": out.type} for out in sess.get_outputs()]
     except Exception as exc:
         meta["onnx_error"] = str(exc)
     return meta
 
 
-def _put_text(frame: np.ndarray, text: str, y: int, color=(255, 255, 255)) -> None:
+def _put_text(
+    frame: np.ndarray,
+    text: str,
+    y: int,
+    color=(255, 255, 255),
+    *,
+    x: int = 28,
+    scale: float = 0.72,
+    thickness: int = 2,
+) -> None:
     import cv2
 
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    pad = 8
+    cv2.rectangle(
+        frame,
+        (max(0, x - pad), max(0, y - th - pad)),
+        (min(frame.shape[1] - 1, x + tw + pad), min(frame.shape[0] - 1, y + baseline + pad)),
+        (15, 20, 24),
+        -1,
+    )
     cv2.putText(
         frame,
         text,
-        (20, y),
+        (x, y),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        scale,
         color,
-        2,
+        thickness,
         cv2.LINE_AA,
     )
 
@@ -84,10 +95,14 @@ def _draw_inset(
     import cv2
 
     h, w = frame.shape[:2]
-    x0, y0 = w - 300, 30
-    x1, y1 = w - 20, 250
-    cv2.rectangle(frame, (x0, y0), (x1, y1), (20, 20, 20), -1)
-    cv2.rectangle(frame, (x0, y0), (x1, y1), (220, 220, 220), 1)
+    inset_w = max(360, min(520, int(w * 0.27)))
+    inset_h = max(240, min(360, int(h * 0.33)))
+    x0, y0 = w - inset_w - 28, h - inset_h - 28
+    x1, y1 = w - 28, y0 + inset_h
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x1, y1), (12, 16, 18), -1)
+    cv2.addWeighted(overlay, 0.86, frame, 0.14, 0.0, frame)
+    cv2.rectangle(frame, (x0, y0), (x1, y1), (235, 235, 235), 2)
     path_points = global_path or []
     map_points = obstacle_points or []
     points = [start_xy, goal_xy, *trail, *path_points, *map_points]
@@ -105,19 +120,43 @@ def _draw_inset(
         return px, py
 
     if map_points:
-        for p in map_points[:: max(1, len(map_points) // 900)]:
-            cv2.circle(frame, project(p), 1, (70, 70, 210), -1)
+        for p in map_points[:: max(1, len(map_points) // 1800)]:
+            cv2.circle(frame, project(p), 1, (92, 92, 120), -1)
     if len(path_points) >= 2:
         pts = np.array([project(p) for p in path_points], dtype=np.int32)
-        cv2.polylines(frame, [pts], isClosed=False, color=(40, 255, 80), thickness=2)
+        cv2.polylines(frame, [pts], isClosed=False, color=(255, 140, 40), thickness=4)
+        for point in pts:
+            cv2.circle(frame, tuple(int(v) for v in point), 4, (255, 170, 70), -1)
     if len(trail) >= 2:
         pts = np.array([project(p) for p in trail], dtype=np.int32)
-        cv2.polylines(frame, [pts], isClosed=False, color=(0, 220, 255), thickness=2)
-    cv2.circle(frame, project(start_xy), 5, (80, 220, 80), -1)
-    cv2.circle(frame, project(goal_xy), 6, (80, 80, 255), -1)
+        cv2.polylines(frame, [pts], isClosed=False, color=(40, 245, 80), thickness=4)
+    cv2.circle(frame, project(start_xy), 8, (80, 220, 80), -1)
+    cv2.circle(frame, project(goal_xy), 10, (70, 70, 255), -1)
     if trail:
-        cv2.circle(frame, project(trail[-1]), 6, (255, 220, 0), -1)
-    cv2.putText(frame, "tomogram / global path / trail", (x0 + 12, y0 + 24), cv2.FONT_HERSHEY_SIMPLEX, 0.47, (230, 230, 230), 1)
+        cv2.circle(frame, project(trail[-1]), 10, (40, 230, 255), -1)
+    cv2.putText(
+        frame,
+        "map / path / trail",
+        (x0 + 14, y0 + 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (245, 245, 245),
+        2,
+        cv2.LINE_AA,
+    )
+    legend_y = y1 - 34
+    cv2.line(frame, (x0 + 18, legend_y), (x0 + 62, legend_y), (255, 140, 40), 4)
+    cv2.putText(
+        frame, "global", (x0 + 68, legend_y + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (245, 245, 245), 1, cv2.LINE_AA
+    )
+    cv2.line(frame, (x0 + 154, legend_y), (x0 + 194, legend_y), (40, 245, 80), 4)
+    cv2.putText(
+        frame, "trail", (x0 + 202, legend_y + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (245, 245, 245), 1, cv2.LINE_AA
+    )
+    cv2.circle(frame, (x0 + 276, legend_y), 6, (70, 70, 255), -1)
+    cv2.putText(
+        frame, "goal", (x0 + 290, legend_y + 6), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (245, 245, 245), 1, cv2.LINE_AA
+    )
 
 
 def _path_points(path: Any) -> list[tuple[float, float]]:
@@ -140,9 +179,88 @@ def _path_points(path: Any) -> list[tuple[float, float]]:
 def _path_distance(points: list[tuple[float, float]]) -> float:
     if len(points) < 2:
         return 0.0
-    return float(
-        sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:]))
+    return float(sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(points, points[1:])))
+
+
+def _yaw_from_mj_qpos(qpos: np.ndarray) -> float | None:
+    if qpos.size < 7:
+        return None
+    qw, qx, qy, qz = (float(v) for v in qpos[3:7])
+    norm = math.sqrt(qw * qw + qx * qx + qy * qy + qz * qz)
+    if norm <= 1e-9:
+        return None
+    qw, qx, qy, qz = qw / norm, qx / norm, qy / norm, qz / norm
+    return math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+
+
+def _draw_robot_focus(frame: np.ndarray, qpos: np.ndarray) -> None:
+    import cv2
+
+    h, w = frame.shape[:2]
+    cx, cy = w // 2, h // 2
+    color = (0, 245, 255)
+    shadow = (10, 15, 18)
+    cv2.circle(frame, (cx, cy), 52, shadow, 5, cv2.LINE_AA)
+    cv2.circle(frame, (cx, cy), 52, color, 3, cv2.LINE_AA)
+
+    yaw = _yaw_from_mj_qpos(qpos)
+    if yaw is not None:
+        # The camera azimuth is fixed at 135 degrees. Rotate the world yaw into
+        # the screen plane so the marker gives a stable heading cue.
+        screen_yaw = yaw - math.radians(135.0)
+        end = (
+            int(cx + math.cos(screen_yaw) * 66),
+            int(cy - math.sin(screen_yaw) * 66),
+        )
+        cv2.arrowedLine(frame, (cx, cy), end, color, 5, cv2.LINE_AA, tipLength=0.24)
+
+    cv2.rectangle(frame, (cx + 58, cy + 24), (cx + 194, cy + 60), shadow, -1)
+    cv2.putText(
+        frame,
+        "robot",
+        (cx + 78, cy + 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.68,
+        color,
+        2,
+        cv2.LINE_AA,
     )
+
+
+def _boost_robot_replay_materials(model: Any) -> None:
+    # The ThunderV4 mesh material is almost white; in a white indoor scene it
+    # disappears in recorded evidence. This is a replay-only visual override.
+    try:
+        import mujoco
+    except Exception:
+        mujoco = None
+    try:
+        geom_group = model.geom_group
+        geom_rgba = model.geom_rgba
+        ngeom = int(model.ngeom)
+    except Exception:
+        return
+    transparent_prefixes = (
+        "floor_2",
+        "wall_2",
+        "obs_2f",
+        "stair_wall",
+        "step_",
+        "rail_",
+    )
+    for geom_id in range(ngeom):
+        try:
+            name = ""
+            if mujoco is not None:
+                name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or ""
+            if name.startswith(transparent_prefixes):
+                geom_rgba[geom_id][:] = [0.62, 0.62, 0.62, 0.10]
+                continue
+            if int(geom_group[geom_id]) != 1:
+                continue
+            geom_rgba[geom_id][:] = [0.04, 0.24, 0.95, 1.0]
+        except Exception:
+            continue
 
 
 def _load_tomogram_obstacle_points(
@@ -183,8 +301,7 @@ def _load_tomogram_obstacle_points(
         return []
     step = max(1, int(math.ceil(len(rows) / max_points)))
     return [
-        (float(origin[0] + col * res), float(origin[1] + row * res))
-        for row, col in zip(rows[::step], cols[::step])
+        (float(origin[0] + col * res), float(origin[1] + row * res)) for row, col in zip(rows[::step], cols[::step])
     ]
 
 
@@ -202,10 +319,13 @@ def _render_replay(
     width: int,
     height: int,
     fps: float,
+    show_telemetry: bool = True,
+    show_inset: bool = True,
+    show_robot_focus: bool = True,
 ) -> int:
     import cv2
-    import mujoco
 
+    import mujoco
     from drivers.sim.mujoco.driver import MujocoDriverModule
 
     if not snapshots:
@@ -225,29 +345,29 @@ def _render_replay(
     try:
         if engine is None or engine.model is None or engine.data is None:
             raise RuntimeError("Replay MuJoCo engine is not available")
+        _boost_robot_replay_materials(engine.model)
         engine.model.vis.global_.offwidth = max(int(engine.model.vis.global_.offwidth), width)
         engine.model.vis.global_.offheight = max(int(engine.model.vis.global_.offheight), height)
         renderer = mujoco.Renderer(engine.model, height=height, width=width)
+        scene_option = mujoco.MjvOption()
+        scene_option.geomgroup[:] = 1
         camera = mujoco.MjvCamera()
         camera.type = mujoco.mjtCamera.mjCAMERA_FREE
         route_points = [
             start_xy,
             goal_xy,
             *global_path,
-            *obstacle_points,
             *[(float(s["x"]), float(s["y"])) for s in snapshots],
         ]
         xs = [p[0] for p in route_points]
         ys = [p[1] for p in route_points]
-        center_x = (min(xs) + max(xs)) * 0.5
-        center_y = (min(ys) + max(ys)) * 0.5
-        extent = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
-        camera.distance = max(3.2, extent * 1.9)
-        camera.elevation = -58.0
+        extent = max(max(xs) - min(xs), max(ys) - min(ys), 0.8)
+        camera.distance = max(10.0, min(15.0, extent * 0.72))
+        camera.elevation = -82.0
         camera.azimuth = 135.0
-        camera.lookat[0] = center_x
-        camera.lookat[1] = center_y
-        camera.lookat[2] = 0.38
+        camera.lookat[0] = start_xy[0]
+        camera.lookat[1] = start_xy[1]
+        camera.lookat[2] = 0.85
 
         output.parent.mkdir(parents=True, exist_ok=True)
         writer = cv2.VideoWriter(
@@ -264,36 +384,56 @@ def _render_replay(
             qpos = np.asarray(snap["qpos"], dtype=np.float64)
             n_qpos = min(qpos.size, engine.data.qpos.size)
             engine.data.qpos[:n_qpos] = qpos[:n_qpos]
+            person = snap.get("person")
+            if person is not None:
+                try:
+                    body_id = mujoco.mj_name2id(engine.model, mujoco.mjtObj.mjOBJ_BODY, "walking_person")
+                    if body_id >= 0:
+                        mocap_id = int(engine.model.body_mocapid[body_id])
+                        if mocap_id >= 0:
+                            engine.data.mocap_pos[mocap_id][:] = np.asarray(person[:3], dtype=np.float64)
+                            engine.data.mocap_quat[mocap_id][:] = [1.0, 0.0, 0.0, 0.0]
+                except Exception:
+                    pass
             engine.data.qvel[:] = 0.0
             mujoco.mj_forward(engine.model, engine.data)
 
             x = float(snap["x"])
             y = float(snap["y"])
             replay_trail.append((x, y))
-            renderer.update_scene(engine.data, camera)
+            camera.lookat[0] = x
+            camera.lookat[1] = y
+            camera.lookat[2] = max(0.75, float(snap.get("z", 0.5)) + 0.45)
+            renderer.update_scene(engine.data, camera, scene_option=scene_option)
             frame = renderer.render().copy()
             cmd = snap["cmd"]
-            _put_text(frame, "LingTu policy navigation sim", 36, (255, 255, 255))
-            _put_text(
-                frame,
-                f"state={snap['state']}  t={snap['t']:.1f}s  dist={snap['dist']:.3f}m",
-                70,
-                (0, 255, 255),
-            )
-            _put_text(
-                frame,
-                f"robot=({x:.2f},{y:.2f})  goal=({goal_xy[0]:.2f},{goal_xy[1]:.2f})  cmd=({cmd[0]:.2f},{cmd[1]:.2f})",
-                104,
-                (230, 230, 230),
-            )
-            _draw_inset(
-                frame,
-                start_xy=start_xy,
-                goal_xy=goal_xy,
-                trail=replay_trail,
-                global_path=global_path,
-                obstacle_points=obstacle_points,
-            )
+            if show_telemetry:
+                _put_text(frame, "LingTu MuJoCo navigation acceptance", 42, (255, 255, 255), scale=0.82)
+                _put_text(
+                    frame,
+                    f"state={snap['state']}   t={snap['t']:.1f}s   dist={snap['dist']:.3f}m   global_pts={len(global_path)}",
+                    82,
+                    (0, 255, 255),
+                    scale=0.66,
+                )
+                _put_text(
+                    frame,
+                    f"robot=({x:.2f},{y:.2f})   goal=({goal_xy[0]:.2f},{goal_xy[1]:.2f})   cmd_vx={cmd[0]:.2f} cmd_wz={cmd[1]:.2f}",
+                    120,
+                    (230, 230, 230),
+                    scale=0.58,
+                )
+            if show_robot_focus:
+                _draw_robot_focus(frame, qpos)
+            if show_inset:
+                _draw_inset(
+                    frame,
+                    start_xy=start_xy,
+                    goal_xy=goal_xy,
+                    trail=replay_trail,
+                    global_path=global_path,
+                    obstacle_points=obstacle_points,
+                )
             writer.write(frame[:, :, ::-1])
         return len(snapshots)
     finally:
@@ -328,41 +468,45 @@ def record_full_stack_nav(
     nav_max_angular_z: float,
     success_settle: float,
 ) -> dict[str, Any]:
-    from runtime.blueprints.profile_builder import build_system_for_profile
-    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
     from sim.scripts.policy_nav_smoke import (
         PRODUCTION_GLOBAL_PLANNER_BACKEND,
         PRODUCTION_LOCAL_PLANNER_BACKEND,
         PRODUCTION_PATH_FOLLOWER_BACKEND,
     )
 
-    system = build_system_for_profile("sim", dict(
-        robot="sim_mujoco",
-        world=world,
-        slam_profile="none",
-        detector="sim_scene",
-        llm="mock",
-        planner_backend=PRODUCTION_GLOBAL_PLANNER_BACKEND,
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=False,
-        enable_map_modules=enable_map_modules,
-        render=False,
-        python_autonomy_backend=PRODUCTION_LOCAL_PLANNER_BACKEND,
-        python_path_follower_backend=PRODUCTION_PATH_FOLLOWER_BACKEND,
-        drive_mode=drive_mode,
-        policy_path=policy_path,
-        tomogram=tomogram,
-        max_angular_vel=nav_max_angular_z,
-        waypoint_threshold=waypoint_threshold,
-        final_waypoint_threshold=final_waypoint_threshold,
-        downsample_dist=downsample_dist,
-        path_follower_goal_tolerance=path_goal_tolerance,
-        path_follower_min_speed=path_min_speed,
-        path_follower_max_speed=path_max_speed,
-        safe_goal_tolerance=safe_goal_tolerance,
-        run_startup_checks=False,
-    ))
+    from runtime.blueprints.profile_builder import build_system_for_profile
+    from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+
+    system = build_system_for_profile(
+        "sim",
+        dict(
+            robot="sim_mujoco",
+            world=world,
+            slam_profile="none",
+            detector="sim_scene",
+            llm="mock",
+            planner_backend=PRODUCTION_GLOBAL_PLANNER_BACKEND,
+            enable_native=False,
+            enable_semantic=False,
+            enable_gateway=False,
+            enable_map_modules=enable_map_modules,
+            render=False,
+            python_autonomy_backend=PRODUCTION_LOCAL_PLANNER_BACKEND,
+            python_path_follower_backend=PRODUCTION_PATH_FOLLOWER_BACKEND,
+            drive_mode=drive_mode,
+            policy_path=policy_path,
+            tomogram=tomogram,
+            max_angular_vel=nav_max_angular_z,
+            waypoint_threshold=waypoint_threshold,
+            final_waypoint_threshold=final_waypoint_threshold,
+            downsample_dist=downsample_dist,
+            path_follower_goal_tolerance=path_goal_tolerance,
+            path_follower_min_speed=path_min_speed,
+            path_follower_max_speed=path_max_speed,
+            safe_goal_tolerance=safe_goal_tolerance,
+            run_startup_checks=False,
+        ),
+    )
 
     driver = system.get_module("MujocoDriverModule")
     ogm = system.get_module("OccupancyGridModule") if enable_map_modules else None
@@ -396,9 +540,7 @@ def record_full_stack_nav(
         )
     )
     driver.odometry._add_callback(
-        lambda m: odom.append(
-            (float(m.pose.position.x), float(m.pose.position.y), float(m.pose.position.z))
-        )
+        lambda m: odom.append((float(m.pose.position.x), float(m.pose.position.y), float(m.pose.position.z)))
     )
 
     snapshots: list[dict[str, Any]] = []

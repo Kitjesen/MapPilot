@@ -27,15 +27,13 @@ def safety_status_specs() -> tuple[WireSpec, ...]:
         WireSpec("nav.safety", "safety_state", "MCPServerModule", "safety_state"),
         WireSpec("nav.safety", "execution_eval", "GatewayModule", "execution_eval"),
         WireSpec("nav.safety", "dialogue_state", "GatewayModule", "dialogue_state"),
+        WireSpec("nav.mission", "map_health_event", "maps.service", "planning_health"),
+        WireSpec("nav.velocity_mux", "collision_event", "maps.service", "collision_event"),
     )
 
 
 def cmd_vel_collision_monitor_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
-    topic = (
-        TOPIC_SLAM_ODOMETRY
-        if ctx.slam_module and ctx.nav_odom_src == ctx.slam_module
-        else None
-    )
+    topic = TOPIC_SLAM_ODOMETRY if ctx.slam_module and ctx.nav_odom_src == ctx.slam_module else None
     return (
         WireSpec(
             ctx.nav_odom_src,

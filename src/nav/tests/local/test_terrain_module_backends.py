@@ -1,4 +1,4 @@
-﻿"""Contract tests for all Terrain backends.
+"""Contract tests for all Terrain backends.
 
 Verifies that every declared backend (nanobind, simple) can be
 instantiated, that port types match the spec, that the simple backend survives
@@ -35,9 +35,7 @@ class TestTerrainBackends:
             Terrain,
         )
 
-        assert backend in _AVAILABLE_TERRAIN_BACKENDS, (
-            f"{backend} not listed in _AVAILABLE_TERRAIN_BACKENDS"
-        )
+        assert backend in _AVAILABLE_TERRAIN_BACKENDS, f"{backend} not listed in _AVAILABLE_TERRAIN_BACKENDS"
         mod = Terrain(backend=backend)
         assert mod._backend == backend
         assert mod._backend_status.configured == backend
@@ -69,9 +67,7 @@ class TestTerrainBackends:
         assert "map_cloud_frame" in mod._ports_in
         assert mod._ports_in["map_cloud_frame"].msg_type is MapCloudFrame
 
-        assert len(mod._ports_in) == 3, (
-            f"expected 3 In ports, got {list(mod._ports_in)}"
-        )
+        assert len(mod._ports_in) == 3, f"expected 3 In ports, got {list(mod._ports_in)}"
 
         # -- Output ports --
         assert "terrain_map" in mod._ports_out
@@ -89,9 +85,7 @@ class TestTerrainBackends:
         assert "alive" in mod._ports_out
         assert mod._ports_out["alive"].msg_type is bool
 
-        assert len(mod._ports_out) == 5, (
-            f"expected 5 Out ports, got {list(mod._ports_out)}"
-        )
+        assert len(mod._ports_out) == 5, f"expected 5 Out ports, got {list(mod._ports_out)}"
 
     # ------------------------------------------------------------------ #
     # Lifecycle (simple backend)
@@ -127,11 +121,14 @@ class TestTerrainBackends:
         ext_values: list[PointCloud2] = []
         mod.terrain_map_ext._add_callback(ext_values.append)
 
-        pts = np.array([
-            [1.0, 0.0, 0.0, 10.0],
-            [6.0, 0.0, 0.0, 20.0],
-            [2.0, 0.0, 4.0, 30.0],
-        ], dtype=np.float32)
+        pts = np.array(
+            [
+                [1.0, 0.0, 0.0, 10.0],
+                [6.0, 0.0, 0.0, 20.0],
+                [2.0, 0.0, 4.0, 30.0],
+            ],
+            dtype=np.float32,
+        )
         mod._last_process_ts = 0.0
         mod._on_cloud(PointCloud2(points=pts, frame_id="map"))
 
@@ -299,7 +296,7 @@ class TestTerrainBackends:
         assert payload["grid"].shape == (3, 3)
         assert payload["grid"][1, 1] == 95.0
         assert payload["traversability_class"] == "blocked"
-        assert payload["backend"] == "nav_kernel"
+        assert payload["backend"] == "cpp"
 
     def test_nanobind_backend_setup_succeeds(self, require_nav_kernel) -> None:
         """nanobind setup succeeds when LingTu native navigation kernel is available."""

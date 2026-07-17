@@ -3,6 +3,7 @@ import pytest
 pytestmark = [pytest.mark.sim]
 
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -50,7 +51,7 @@ def test_mujoco_gates_default_to_forced_mid360_pattern() -> None:
 
     assert fastlio_args.mid360_pattern == MID360_PATTERN
     assert pct_args.mid360_pattern == MID360_PATTERN
-    assert fastlio_args.mid360_samples_per_frame == 15000
+    assert fastlio_args.mid360_samples_per_frame == 20000
     assert pct_args.mid360_samples_per_frame == 24000
     assert fastlio_args.cmd_vel_angular_limit == 0.45
     assert fastlio_args.nav_max_angular_z == 0.45
@@ -63,6 +64,29 @@ def test_mujoco_gates_default_to_forced_mid360_pattern() -> None:
     assert fastlio_args.scan_time_profile == "physical_rolling"
     assert not fastlio_args.no_save_map_artifacts
     assert not fastlio_args.build_tomogram
+
+
+def test_mid360_nominal_config_uses_conservative_official_envelope() -> None:
+    from drivers.sim.mujoco.runtime import DEFAULT_MID360_SAMPLES_PER_FRAME
+    from sim.engine.core.sensor import LidarConfig
+
+    config = LidarConfig()
+
+    assert DEFAULT_MID360_SAMPLES_PER_FRAME == 20000
+    assert config.samples_per_frame == 20000
+    assert config.fps == pytest.approx(10.0)
+    assert config.range_min == pytest.approx(0.1)
+    assert config.range_max == pytest.approx(40.0)
+    assert config.noise_std == pytest.approx(0.02)
+    assert config.range_noise_near_std_m == pytest.approx(0.03)
+    assert config.range_noise_far_std_m == pytest.approx(0.02)
+    assert config.range_noise_near_m == pytest.approx(0.2)
+    assert config.range_noise_far_m == pytest.approx(10.0)
+    assert config.angle_noise_std_rad < math.radians(0.15)
+    assert config.pixel_dropout_prob == 0.0
+    assert config.distance_dropout_prob_at_max == 0.0
+    assert config.intensity_base == pytest.approx(15.0)
+    assert config.intensity_noise_std == 0.0
 
 
 def test_fastlio_live_gate_defaults_to_product_mujoco_lidar_backend() -> None:
@@ -87,9 +111,7 @@ def test_fastlio_live_gate_removes_portable_lio_backend() -> None:
     from sim.scripts.mujoco.live_gate import _build_parser
 
     choices = _build_parser()._option_string_actions["--localization-backend"].choices
-    script = Path("sim/scripts/mujoco/live_gate.py").read_text(
-        encoding="utf-8"
-    )
+    script = Path("sim/scripts/mujoco/live_gate.py").read_text(encoding="utf-8")
 
     assert choices is None
     assert "from runtime.adapters.ros2.fastlio2_live_bridge import" not in script
@@ -97,9 +119,7 @@ def test_fastlio_live_gate_removes_portable_lio_backend() -> None:
 
 
 def test_fastlio_live_gate_reports_product_lidar_backend_contract() -> None:
-    script = Path("sim/scripts/mujoco/live_gate.py").read_text(
-        encoding="utf-8"
-    )
+    script = Path("sim/scripts/mujoco/live_gate.py").read_text(encoding="utf-8")
 
     assert '"lidar_backend": lidar_backend_report' in script
     assert '"product_lidar_backend_verified": product_lidar_backend_verified' in script
@@ -145,8 +165,7 @@ def test_saved_map_relocalize_discovers_tare_same_source_map(
     from sim.scripts import saved_map_relocalize_runtime_gate as gate
 
     map_pcd = (
-        tmp_path
-        / "artifacts/server_sim_closure/cli_tare_endpoint_mujoco_live_full/tare-1/same_source_map/map.pcd"
+        tmp_path / "artifacts/server_sim_closure/cli_tare_endpoint_mujoco_live_full/tare-1/same_source_map/map.pcd"
     )
     map_pcd.parent.mkdir(parents=True)
     map_pcd.write_text(
@@ -166,10 +185,7 @@ def test_pct_saved_map_navigation_discovers_tare_same_source_tomogram(
 ) -> None:
     from sim.scripts import pct_saved_map_navigation_gate as gate
 
-    tomogram = (
-        tmp_path
-        / "artifacts/server_sim_closure/mujoco_tare_exploration/tare-1/same_source_map/tomogram.pickle"
-    )
+    tomogram = tmp_path / "artifacts/server_sim_closure/mujoco_tare_exploration/tare-1/same_source_map/tomogram.pickle"
     tomogram.parent.mkdir(parents=True)
     tomogram.write_bytes(b"tomogram")
 
@@ -185,13 +201,11 @@ def test_pct_saved_map_navigation_uses_relocalized_same_source_tomogram(
     from sim.scripts import pct_saved_map_navigation_gate as gate
 
     relocalized_map = (
-        tmp_path
-        / "artifacts/server_sim_closure/cli_tare_endpoint_mujoco_live_fullchain/tare/same_source_map/map.pcd"
+        tmp_path / "artifacts/server_sim_closure/cli_tare_endpoint_mujoco_live_fullchain/tare/same_source_map/map.pcd"
     )
     relocalized_tomogram = relocalized_map.parent / "tomogram.pickle"
     newer_unrelated = (
-        tmp_path
-        / "artifacts/server_sim_closure/mujoco_tare_exploration/newer/same_source_map/tomogram.pickle"
+        tmp_path / "artifacts/server_sim_closure/mujoco_tare_exploration/newer/same_source_map/tomogram.pickle"
     )
     for path in (relocalized_map, relocalized_tomogram, newer_unrelated):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,10 +213,13 @@ def test_pct_saved_map_navigation_uses_relocalized_same_source_tomogram(
 
     monkeypatch.setattr(gate, "ROOT", tmp_path)
 
-    assert gate._resolve_tomogram(
-        None,
-        relocalize_report={"map_pcd": str(relocalized_map)},
-    ) == relocalized_tomogram
+    assert (
+        gate._resolve_tomogram(
+            None,
+            relocalize_report={"map_pcd": str(relocalized_map)},
+        )
+        == relocalized_tomogram
+    )
 
 
 def test_pct_saved_map_navigation_rejects_mismatched_explicit_tomogram(
@@ -234,9 +251,7 @@ def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> Non
     )
 
     args = _build_parser().parse_args([])
-    script = Path("sim/scripts/pct_saved_map_navigation_gate.py").read_text(
-        encoding="utf-8"
-    )
+    script = Path("sim/scripts/pct_saved_map_navigation_gate.py").read_text(encoding="utf-8")
 
     assert args.min_route_progress_ratio == 0.90
     assert args.goal == DEFAULT_SAVED_MAP_GOAL
@@ -248,11 +263,13 @@ def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> Non
 def test_fastlio_live_gate_reports_exploration_coverage_growth() -> None:
     from sim.scripts.mujoco.live_gate import _coverage_growth
 
-    growth = _coverage_growth([
-        {"known_m2": 1.0, "unknown_m2": 9.0},
-        {"known_m2": 2.5, "unknown_m2": 7.5},
-        {"known_m2": 4.0, "unknown_m2": 6.0},
-    ])
+    growth = _coverage_growth(
+        [
+            {"known_m2": 1.0, "unknown_m2": 9.0},
+            {"known_m2": 2.5, "unknown_m2": 7.5},
+            {"known_m2": 4.0, "unknown_m2": 6.0},
+        ]
+    )
 
     assert growth["first_ratio"] == 0.1
     assert growth["last_ratio"] == 0.4
@@ -263,16 +280,14 @@ def test_fastlio_live_gate_reports_exploration_coverage_growth() -> None:
 
 
 def test_fastlio_live_gate_has_no_ros_shutdown_path() -> None:
-    source = (ROOT / "sim/scripts/mujoco/live_gate.py").read_text(
-        encoding="utf-8"
-    )
+    source = (ROOT / "sim/scripts/mujoco/live_gate.py").read_text(encoding="utf-8")
 
     assert "rclpy.ok()" not in source
     assert "rclpy.shutdown()" not in source
 
 
 def test_fastlio_live_gate_writes_same_source_map_artifacts(tmp_path) -> None:
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_same_source_map_metadata,
         write_same_source_map_artifacts,
     )
@@ -323,7 +338,7 @@ def test_fastlio_live_gate_writes_same_source_map_artifacts(tmp_path) -> None:
 
 
 def test_same_source_map_metadata_rejects_derived_artifact_sha_drift() -> None:
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         validate_same_source_map_metadata,
     )
 
@@ -360,14 +375,11 @@ def test_same_source_map_metadata_rejects_derived_artifact_sha_drift() -> None:
     validation = validate_same_source_map_metadata(metadata)
 
     assert validation["ok"] is False
-    assert (
-        "metadata.artifacts.tomogram.source_map_sha256 does not match map_pcd.sha256"
-        in validation["blockers"]
-    )
+    assert "metadata.artifacts.tomogram.source_map_sha256 does not match map_pcd.sha256" in validation["blockers"]
 
 
 def test_fastlio_live_gate_rejects_diverged_map_before_tomogram(tmp_path) -> None:
-    from runtime.same_source_map_artifacts import (
+    from maps.artifacts import (
         write_same_source_map_artifacts,
     )
 
@@ -404,12 +416,8 @@ def test_fastlio_live_gate_uses_trackable_path_defaults_for_live_explore() -> No
 def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> None:
     stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
-    endpoint_catalog = Path("src/runtime/profiles/catalog/endpoints.py").read_text(
-        encoding="utf-8"
-    )
-    exploration_stack = Path("src/runtime/blueprints/stacks/exploration.py").read_text(
-        encoding="utf-8"
-    )
+    endpoint_catalog = Path("src/runtime/profiles/catalog/endpoints.py").read_text(encoding="utf-8")
+    exploration_stack = Path("src/runtime/blueprints/stacks/exploration.py").read_text(encoding="utf-8")
 
     assert "goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID" in text
     assert "hold_active_goal_until_terminal=True" in text
@@ -422,15 +430,10 @@ def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> Non
 def test_mujoco_inspection_stack_keeps_static_tomogram_saved_map_frame_contract() -> None:
     stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
-    nav_stack = Path("src/runtime/blueprints/stacks/navigation_core.py").read_text(
-        encoding="utf-8"
-    )
+    nav_stack = Path("src/runtime/blueprints/stacks/navigation_core.py").read_text(encoding="utf-8")
 
     assert "MUJOCO_LIVE_PLANNING_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in text
-    assert (
-        "MUJOCO_LIVE_SAVED_MAP_FRAME_ID = "
-        "topic_default_frame_id(TOPICS.saved_map_cloud)"
-    ) in text
+    assert ("MUJOCO_LIVE_SAVED_MAP_FRAME_ID = topic_default_frame_id(TOPICS.saved_map_cloud)") in text
     assert "expected_saved_map_frame_id=MUJOCO_LIVE_SAVED_MAP_FRAME_ID" in text
     assert '"expected_saved_map_frame_id"' in nav_stack
 
@@ -457,33 +460,26 @@ def test_fastlio_live_gate_uses_simulator_world_frame_contract() -> None:
 def test_fastlio_live_gate_can_run_duration_by_sim_time() -> None:
     script = Path("sim/scripts/mujoco/live_gate.py")
     text = script.read_text(encoding="utf-8")
-    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
-        encoding="utf-8"
-    )
+    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--duration-clock" in text
     assert 'choices=["wall", "sim"]' in text
     assert '"duration_clock": duration_clock' in text
-    assert (
-        '"duration_clock": args.duration_clock' in text
-        or "duration_clock=args.duration_clock" in text
-    )
+    assert '"duration_clock": args.duration_clock' in text or "duration_clock=args.duration_clock" in text
     assert "LINGTU_MUJOCO_LIVE_DURATION_CLOCK" in launcher
     assert '"--duration-clock" "$duration_clock"' in launcher
     assert "LINGTU_MUJOCO_LIVE_WORLD=industrial_park" in launcher
-    assert 'LINGTU_MUJOCO_LIVE_WORLD:-industrial_park' in launcher
+    assert "LINGTU_MUJOCO_LIVE_WORLD:-industrial_park" in launcher
 
 
 def test_mujoco_live_gate_defaults_to_finite_difference_imu() -> None:
     script = Path("sim/scripts/mujoco/live_gate.py")
     text = script.read_text(encoding="utf-8")
-    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(
-        encoding="utf-8"
-    )
+    launcher = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'default="finite_difference"' in text
-    assert 'LINGTU_MUJOCO_LIVE_IMU_ACC_MODE=finite_difference' in launcher
-    assert 'LINGTU_MUJOCO_LIVE_IMU_ACC_MODE:-finite_difference' in launcher
+    assert "LINGTU_MUJOCO_LIVE_IMU_ACC_MODE=finite_difference" in launcher
+    assert "LINGTU_MUJOCO_LIVE_IMU_ACC_MODE:-finite_difference" in launcher
 
 
 def test_fastlio_live_gate_uses_src_mujoco_sensors() -> None:
@@ -526,9 +522,7 @@ def test_fastlio_live_gate_uses_src_mujoco_runtime() -> None:
 def test_fastlio_live_gate_does_not_import_unused_stack_builders() -> None:
     script = Path("sim/scripts/mujoco/live_gate.py")
     text = script.read_text(encoding="utf-8")
-    stack = Path("src/drivers/sim/mujoco/stack.py").read_text(
-        encoding="utf-8"
-    )
+    stack = Path("src/drivers/sim/mujoco/stack.py").read_text(encoding="utf-8")
 
     assert "from drivers.sim.mujoco.stack import" not in text
     assert "build_fastlio2_inspection_stack" not in text
@@ -541,7 +535,7 @@ def test_fastlio_live_gate_does_not_import_unused_stack_builders() -> None:
     assert "enable_nav_out=False" in stack
     assert "enable_ros2_path_bridge=True" not in stack
     assert 'exploration_backend="tare"' in stack
-    assert "plan_safety_policy=\"reject\"" in stack
+    assert 'plan_safety_policy="reject"' in stack
 
 
 def test_fastlio_live_gate_reports_motion_path_length_and_command_integrals() -> None:
@@ -557,10 +551,7 @@ def test_fastlio_live_gate_reports_motion_path_length_and_command_integrals() ->
 def test_load_mid360_csv_pattern_converts_zenith_to_elevation(tmp_path) -> None:
     csv_path = tmp_path / "mid360.csv"
     csv_path.write_text(
-        "Time/s,Azimuth/deg,Zenith/deg\n"
-        "1,0,90\n"
-        "2,90,0\n"
-        "3,180,180\n",
+        "Time/s,Azimuth/deg,Zenith/deg\n1,0,90\n2,90,0\n3,180,180\n",
         encoding="utf-8",
     )
 
@@ -596,6 +587,24 @@ def test_mid360_pattern_sampler_advances_and_wraps() -> None:
     assert lidar._ray_cursor == 1
 
 
+def test_legacy_golden_spiral_honors_configured_vertical_fov() -> None:
+    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
+    lidar._resolve_body_id = lambda: 0
+    lidar._exclude_robot_geoms = lambda: None
+    config = SimpleNamespace(
+        mid360_npy_path=None,
+        n_rays=5,
+        vfov_min_deg=-1.0,
+        vfov_max_deg=1.0,
+    )
+
+    lidar._init_fallback(SimpleNamespace(), SimpleNamespace(), config)
+
+    elevations = np.degrees(np.arcsin(lidar._ray_dirs_local[:, 2]))
+    assert elevations[0] == pytest.approx(-1.0)
+    assert elevations[-1] == pytest.approx(0.6)
+
+
 def test_lidar_return_model_uses_distance_weighted_intensity() -> None:
     lidar = MuJoCoLidar.__new__(MuJoCoLidar)
     lidar._config = SimpleNamespace(
@@ -616,13 +625,121 @@ def test_lidar_return_model_uses_distance_weighted_intensity() -> None:
     lidar._data = None
     lidar._body_id = 0
 
-    cloud = lidar._points_with_return_model(
-        np.array([[1.0, 0.0, 0.0], [40.0, 0.0, 0.0]], dtype=np.float32)
-    )
+    cloud = lidar._points_with_return_model(np.array([[1.0, 0.0, 0.0], [40.0, 0.0, 0.0]], dtype=np.float32))
 
     assert cloud.shape == (2, 4)
     assert cloud[0, 3] > cloud[1, 3]
     assert not np.allclose(cloud[:, 3], 100.0)
+
+
+def test_lidar_return_model_applies_radial_range_noise_without_lateral_drift() -> None:
+    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
+    lidar._config = SimpleNamespace(
+        add_noise=True,
+        noise_std=0.05,
+        range_min=0.1,
+        range_max=70.0,
+        pixel_dropout_prob=0.0,
+        distance_dropout_prob_at_max=0.0,
+        intensity_base=180.0,
+        intensity_range_scale_m=25.0,
+        intensity_noise_std=0.0,
+        intensity_min=1.0,
+        intensity_max=255.0,
+        site_name="lidar_site",
+    )
+    lidar._rng = np.random.default_rng(7)
+    lidar._mujoco_lidar = None
+    lidar._data = None
+    lidar._body_id = 0
+    ideal = np.array([[10.0, 0.0, 0.0], [0.0, 20.0, 0.0]], dtype=np.float32)
+
+    cloud = lidar._points_with_return_model(ideal)
+
+    assert cloud.shape == (2, 4)
+    assert cloud[0, 1] == 0.0
+    assert cloud[0, 2] == 0.0
+    assert cloud[1, 0] == 0.0
+    assert cloud[1, 2] == 0.0
+    assert not np.allclose(np.linalg.norm(cloud[:, :3], axis=1), [10.0, 20.0])
+
+
+def test_lidar_return_model_interpolates_mid360_near_and_far_range_noise() -> None:
+    class OneSigmaRng:
+        @staticmethod
+        def normal(_loc, scale, size=None):
+            values = np.asarray(scale, dtype=np.float32)
+            if values.ndim == 0:
+                return np.full(int(size), float(values), dtype=np.float32)
+            return values
+
+    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
+    lidar._config = SimpleNamespace(
+        add_noise=True,
+        noise_std=0.02,
+        range_noise_near_std_m=0.03,
+        range_noise_far_std_m=0.02,
+        range_noise_near_m=0.2,
+        range_noise_far_m=10.0,
+        range_min=0.1,
+        range_max=40.0,
+        pixel_dropout_prob=0.0,
+        distance_dropout_prob_at_max=0.0,
+        intensity_base=180.0,
+        intensity_range_scale_m=25.0,
+        intensity_noise_std=0.0,
+        intensity_min=1.0,
+        intensity_max=255.0,
+        site_name="lidar_site",
+    )
+    lidar._rng = OneSigmaRng()
+    lidar._mujoco_lidar = None
+    lidar._data = None
+    lidar._body_id = 0
+
+    cloud = lidar._points_with_return_model(
+        np.array([[0.2, 0.0, 0.0], [10.0, 0.0, 0.0]], dtype=np.float32)
+    )
+
+    np.testing.assert_allclose(cloud[:, 0], [0.23, 10.02], atol=1e-6)
+    np.testing.assert_allclose(cloud[:, 1:3], 0.0, atol=0.0)
+
+
+def test_ray_caster_plugin_applies_post_return_angle_noise_approximation() -> None:
+    class FixedAngleRng:
+        @staticmethod
+        def normal(_loc, _scale, size=None):
+            assert size == (1, 2)
+            return np.array([[0.01, 0.0]], dtype=np.float32)
+
+    lidar = MuJoCoLidar.__new__(MuJoCoLidar)
+    lidar._backend = "ray_caster_lidar"
+    lidar._config = SimpleNamespace(
+        add_noise=True,
+        noise_std=0.0,
+        angle_noise_std_rad=0.01,
+        range_min=0.1,
+        range_max=40.0,
+        pixel_dropout_prob=0.0,
+        distance_dropout_prob_at_max=0.0,
+        intensity_base=180.0,
+        intensity_range_scale_m=25.0,
+        intensity_noise_std=0.0,
+        intensity_min=1.0,
+        intensity_max=255.0,
+        site_name="lidar_site",
+    )
+    lidar._rng = FixedAngleRng()
+    lidar._mujoco_lidar = None
+    lidar._data = None
+    lidar._body_id = 0
+
+    cloud = lidar._points_with_return_model(
+        np.array([[10.0, 0.0, 0.0]], dtype=np.float32)
+    )
+
+    assert math.atan2(float(cloud[0, 1]), float(cloud[0, 0])) == pytest.approx(0.01)
+    assert np.linalg.norm(cloud[0, :3]) == pytest.approx(10.0)
 
 
 def test_mid360_pattern_angle_noise_keeps_theta_wrapped() -> None:

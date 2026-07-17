@@ -12,10 +12,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from drivers.sim.camera.impl.mujoco.camera import sample_from_camera
 from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, Imu, PointCloud2
+from runtime.msgs.sensor import CameraIntrinsics, Image, Imu, PointCloud2
 from runtime.portable.contracts import PortableCommandFrame, PortableSensorFrame
 from runtime.portable.topic_transport import PortableTopicTransport
 from runtime.runtime_interface import FRAMES, TOPICS, topic_default_frame_id
@@ -182,42 +183,9 @@ class MujocoPortableAdapter:
 
     @staticmethod
     def _camera_bundle(camera: Any, ts: float) -> tuple[Image | None, Image | None, CameraIntrinsics | None]:
-        rgb = getattr(camera, "rgb", None)
-        depth = getattr(camera, "depth", None)
-        if rgb is not None:
-            height, width = rgb.shape[:2]
-        elif depth is not None:
-            height, width = depth.shape[:2]
-        else:
-            return None, None, None
-
-        camera_image = None
-        if rgb is not None:
-            camera_image = Image(
-                data=rgb,
-                format=ImageFormat.RGB,
-                ts=ts,
-                frame_id=MUJOCO_PORTABLE_CAMERA_FRAME_ID,
-            )
-        depth_image = None
-        if depth is not None:
-            depth_image = Image(
-                data=depth,
-                format=ImageFormat.DEPTH_F32,
-                ts=ts,
-                frame_id=MUJOCO_PORTABLE_CAMERA_FRAME_ID,
-            )
-        fx, fy, cx, cy = camera.intrinsics
-        camera_info = CameraIntrinsics(
-            fx=float(fx),
-            fy=float(fy),
-            cx=float(cx),
-            cy=float(cy),
-            width=int(width),
-            height=int(height),
-            depth_scale=1.0,
-        )
-        return camera_image, depth_image, camera_info
+        del ts
+        sample = sample_from_camera(camera, frame_id=MUJOCO_PORTABLE_CAMERA_FRAME_ID)
+        return sample.color, sample.depth, sample.intrinsics
 
 
 def quat_xyzw_to_rotation_matrix(quat: Any) -> np.ndarray:

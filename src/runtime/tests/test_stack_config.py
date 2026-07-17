@@ -31,6 +31,18 @@ def test_driver_stack_config_aligns_mujoco_no_slam_cloud_frame() -> None:
     assert config["map_cloud_frame_id"] == "map"
 
 
+def test_driver_stack_config_disables_mujoco_legacy_sensors_by_default() -> None:
+    config = driver_stack_config(
+        {},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["publish_lidar"] is False
+    assert config["publish_imu"] is False
+
+
 def test_driver_stack_config_enables_mujoco_camera_for_semantic_mode() -> None:
     config = driver_stack_config(
         {},
@@ -40,6 +52,73 @@ def test_driver_stack_config_enables_mujoco_camera_for_semantic_mode() -> None:
     )
 
     assert config["enable_camera"] is True
+    assert config["publish_camera"] is False
+
+
+def test_driver_stack_config_can_keep_legacy_mujoco_driver_camera() -> None:
+    config = driver_stack_config(
+        {"use_driver_camera": True},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=True,
+    )
+
+    assert config["publish_camera"] is True
+
+
+def test_driver_stack_config_disables_mujoco_driver_lidar_when_role_exists() -> None:
+    config = driver_stack_config(
+        {"enable_lidar": True},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["publish_lidar"] is False
+
+
+def test_driver_stack_config_disables_mujoco_driver_lidar_for_managed_slam() -> None:
+    config = driver_stack_config(
+        {},
+        slam_profile="fastlio2",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["publish_lidar"] is False
+
+
+def test_driver_stack_config_can_keep_legacy_mujoco_driver_lidar() -> None:
+    config = driver_stack_config(
+        {"enable_lidar": True, "use_driver_lidar": True},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["publish_lidar"] is True
+
+
+def test_driver_stack_config_disables_mujoco_driver_imu_when_role_exists() -> None:
+    config = driver_stack_config(
+        {"enable_imu": True},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["publish_imu"] is False
+
+
+def test_driver_stack_config_can_keep_legacy_mujoco_driver_imu() -> None:
+    config = driver_stack_config(
+        {"enable_imu": True, "use_driver_imu": True},
+        slam_profile="none",
+        driver_module="MujocoDriverModule",
+        enable_semantic=False,
+    )
+
+    assert config["publish_imu"] is True
 
 
 def test_perception_stack_config_records_driver_module() -> None:
@@ -47,6 +126,15 @@ def test_perception_stack_config_records_driver_module() -> None:
 
     assert config["detector_debug"] is True
     assert config["_driver_cls_name"] == "ThunderDriver"
+
+
+def test_perception_stack_config_uses_independent_mujoco_camera_role() -> None:
+    config = perception_stack_config({}, driver_module="MujocoDriverModule")
+
+    assert config["_driver_cls_name"] == "MujocoDriverModule"
+    assert config["enable_camera"] is True
+    assert config["camera_backend"] == "sim"
+    assert config["use_driver_camera"] is False
 
 
 def test_perception_stack_config_does_not_auto_enable_ros2_camera_bridge() -> None:

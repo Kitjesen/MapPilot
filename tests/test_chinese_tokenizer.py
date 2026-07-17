@@ -5,7 +5,8 @@
 """
 
 import pytest
-from decision.goal_resolution.chinese_tokenizer import (
+
+from decision.goals.tokenizer import (
     ChineseTokenizer,
     extract_keywords,
     simple_extract_keywords,
@@ -162,6 +163,7 @@ class TestPerformance:
         text = "请导航到会议室左边的红色灭火器旁边，然后回到充电桩附近"
 
         import time
+
         start = time.time()
         for _ in range(100):
             tokenizer.tokenize(text)
@@ -176,6 +178,7 @@ class TestPerformance:
         text = "请导航到会议室左边的红色灭火器旁边，然后回到充电桩附近"
 
         import time
+
         start = time.time()
         for _ in range(100):
             tokenizer.extract_keywords(text)

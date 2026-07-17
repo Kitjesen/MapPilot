@@ -27,7 +27,7 @@ Two read-only agents and local inspection found these pluginization gaps:
 - Modify: `src/nav/local/terrain_module.py` - report simple/native/nanobind status through shared status.
 - Modify: `src/nav/local/path_follower_module.py` - report `nav_kernel` to `pid` fallback through shared status.
 - Later modify: `src/perception/semantic_perception/api/factory.py` - registry-first detector/encoder/tracker factories.
-- Later modify: `src/decision/semantic_planner/llm_client.py` - registry-first LLM client factory.
+- Later modify: `src/decision/llm/client.py` - registry-first LLM client factory.
 - Later modify: `src/memory/modules/vector_memory_module.py` - align encoder fallback health with `BackendStatus`.
 - Later modify: `src/gateway/gateway_module.py` and `src/gateway/routes/diagnostics.py` - expose plugin catalog and degraded status.
 
@@ -187,9 +187,9 @@ python -m pytest src/runtime/tests/test_perception_factory_registry.py src/runti
 ### Task 4: LLM And Goal Resolver Plugin Alignment
 
 **Files:**
-- Modify: `src/decision/semantic_planner/llm_client.py`
-- Modify: `src/decision/semantic_planner/llm_module.py`
-- Modify: `src/decision/semantic_planner/semantic_planner_module.py`
+- Modify: `src/decision/llm/client.py`
+- Modify: `src/decision/modules/llm.py`
+- Modify: `src/decision/modules/semantic_planner.py`
 - Modify: `src/runtime/blueprints/stacks/planner.py`
 - Test: semantic planner LLM/client tests.
 

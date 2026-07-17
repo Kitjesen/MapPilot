@@ -8,7 +8,13 @@ async def _ok_app(scope, receive, send):
     await send({"type": "http.response.body", "body": b"ok"})
 
 
-async def _request(app, *, headers=None, path="/mcp"):
+async def _request(
+    app,
+    *,
+    headers=None,
+    path="/mcp",
+    client=("127.0.0.1", 5050),
+):
     sent = []
 
     async def receive():
@@ -23,6 +29,7 @@ async def _request(app, *, headers=None, path="/mcp"):
             "path": path,
             "headers": headers or [],
             "query_string": b"",
+            "client": client,
         },
         receive,
         send,
@@ -70,6 +77,63 @@ async def test_api_key_middleware_keeps_no_key_pass_through_by_default(monkeypat
     sent = await _request(app)
 
     assert sent[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_required_gateway_keeps_loopback_health_available(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(_ok_app, api_key=None, require_key=True)
+
+    sent = await _request(
+        app,
+        path="/health",
+        client=("127.0.0.1", 5050),
+    )
+
+    assert sent[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_required_gateway_protects_remote_health(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(_ok_app, api_key=None, require_key=True)
+
+    sent = await _request(
+        app,
+        path="/health",
+        client=("192.168.114.50", 5050),
+    )
+
+    assert sent[0]["status"] == 401
+
+
+def test_thunder_field_gateway_requires_api_key(monkeypatch):
+    from gateway.auth import gateway_api_key_required
+
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
+
+    assert gateway_api_key_required() is True
+
+
+def test_dev_gateway_keeps_auth_optional_by_default(monkeypatch):
+    from gateway.auth import gateway_api_key_required
+
+    monkeypatch.setenv("LINGTU_ENDPOINT", "stub")
+    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
+
+    assert gateway_api_key_required() is False
+
+
+def test_explicit_gateway_auth_requirement_is_honored(monkeypatch):
+    from gateway.auth import gateway_api_key_required
+
+    monkeypatch.setenv("LINGTU_ENDPOINT", "stub")
+    monkeypatch.setenv("LINGTU_GATEWAY_REQUIRE_API_KEY", "1")
+
+    assert gateway_api_key_required() is True
 
 
 def _mcp_auth_kwargs(app):

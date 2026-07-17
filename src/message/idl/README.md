@@ -1,4 +1,4 @@
-# IDL Ownership
+﻿# IDL Ownership
 
 LingTu has two DDS schema families:
 
@@ -33,6 +33,9 @@ portable builds, not DDS wire types.
 `/lidar/raw_frame` carries scan-level `LivoxFrame` data for SLAM.
 `/lidar/raw_packet` carries packet-level `LivoxFrame` diagnostics only.
 
-Python native DDS product types live in `message.dds_types`. `runtime.dds` and
-`drivers.real.lidar._dds` are compatibility shims for old ROS2/Livox readers;
-they are not the ownership location for new LingTu wire contracts.
+Python native DDS product types live in `message.dds_types`. The optional
+cyclonedds-python utility in `runtime.adapters.dds.reader` is currently bounded
+to camera/GNSS integration and explicit diagnostics or compatibility tools.
+It is not a navigation, SLAM, or terrain runtime boundary and it must not own
+new LingTu wire contracts. `drivers.real.lidar._dds` is the Livox/ROS2
+compatibility type shim for the LiDAR adapter.

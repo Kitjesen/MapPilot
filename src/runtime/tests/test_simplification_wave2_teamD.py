@@ -15,11 +15,12 @@ import numpy as np
 
 if TYPE_CHECKING:
     from nav.local.path_follower import PathFollower
-    from nav.mission.navigation import Navigation
+    from nav.navigation import Navigation
 
 # ---------------------------------------------------------------------------
 # W2-4: PathFollower adaptive Pure Pursuit
 # ---------------------------------------------------------------------------
+
 
 class TestAdaptivePurePursuit(unittest.TestCase):
     """Verify the adaptive Pure Pursuit improvements in the pid backend."""
@@ -59,7 +60,7 @@ class TestAdaptivePurePursuit(unittest.TestCase):
 
         m = self._make_module(max_speed=1.0)
         a_max = m._pp_a_max  # 1.0 m/s^2
-        dt = 0.1             # 100 ms step
+        dt = 0.1  # 100 ms step
 
         v_prev = 0.0
         v_desired = 1.0  # large jump
@@ -102,6 +103,7 @@ class TestAdaptivePurePursuit(unittest.TestCase):
 # W2-5: Terrain 30K truncation removed
 # ---------------------------------------------------------------------------
 
+
 class TestTerrainNumpyPath(unittest.TestCase):
     """Verify the 30K truncation is gone and numpy array is passed directly."""
 
@@ -114,13 +116,12 @@ class TestTerrainNumpyPath(unittest.TestCase):
 
         # Read the source to confirm the old truncation constant is gone
         import inspect
+
         src = inspect.getsource(nav.terrain._process_nanobind)
-        self.assertNotIn("MAX_POINTS = 30_000", src,
-                         "30K truncation constant should be removed")
+        self.assertNotIn("MAX_POINTS = 30_000", src, "30K truncation constant should be removed")
         # The old line was: flat = pts4.ravel().tolist()
         # After the fix the ravel result is NOT converted to a Python list.
-        self.assertNotIn("pts4.ravel().tolist()", src,
-                         "pts4.ravel().tolist() should be replaced with numpy path")
+        self.assertNotIn("pts4.ravel().tolist()", src, "pts4.ravel().tolist() should be replaced with numpy path")
 
     def test_flat_array_is_contiguous_float32(self):
         """The flat array passed to C++ must be contiguous float32."""
@@ -137,15 +138,15 @@ class TestTerrainNumpyPath(unittest.TestCase):
 # W2-8: Navigation context-aware recovery
 # ---------------------------------------------------------------------------
 
+
 class TestContextAwareRecovery(unittest.TestCase):
     """Verify recovery strategies are selected based on traversability class."""
 
     def _make_nav(self) -> Navigation:
         """Create a Navigation with mocked planner and tracker."""
-        from nav.mission.navigation import MissionState, Navigation
+        from nav.navigation import MissionState, Navigation
 
-        with patch("nav.mission.navigation.create_planner_service"), \
-             patch("nav.mission.navigation.WaypointTracker"):
+        with patch("nav.navigation.create_planner_service"), patch("nav.navigation.WaypointTracker"):
             m = Navigation(planner="astar")
             m.setup()
 
@@ -163,7 +164,7 @@ class TestContextAwareRecovery(unittest.TestCase):
         nav.adapter_status.subscribe(lambda e: adapter_events.append(e))
 
         # Patch sleep to avoid real waits
-        with patch("nav.mission.navigation.time") as mock_time:
+        with patch("nav.runtime.recovery.time") as mock_time:
             mock_time.sleep = MagicMock()
             mock_time.time = time.time
             nav._execute_recovery_motion()

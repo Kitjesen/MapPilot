@@ -6,9 +6,9 @@ outputs: no global_path, local_path, waypoint, cmd_vel, or generic path port.
 
 from __future__ import annotations
 
-import logging
 import importlib
 import json
+import logging
 import math
 import os
 import struct
@@ -19,20 +19,21 @@ from pathlib import Path
 from typing import Any
 
 from runtime.module import Module, rpc, skill
+from runtime.msgs.geometry import Pose, Quaternion, Transform, Vector3
+from runtime.msgs.gnss import GnssOdom
+from runtime.msgs.map import MapCloudFrame, MapObservationFrame
+from runtime.msgs.nav import Odometry
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
 from runtime.runtime_interface import (
     TOPICS,
+    body_frame_id,
     map_frame_id,
     odom_frame_id,
     topic_default_frame_id,
 )
 from runtime.stream import In, Out
-from runtime.msgs.gnss import GnssOdom
-from runtime.msgs.geometry import Pose, Quaternion, Vector3
-from runtime.msgs.map import MapCloudFrame
-from runtime.msgs.nav import Odometry
-from runtime.msgs.numpy_compat import np
-from runtime.msgs.sensor import Imu, PointCloud2
 
 logger = logging.getLogger(__name__)
 
@@ -77,52 +78,32 @@ def _map_optimization_status(outputs: dict[str, Any]) -> dict[str, Any]:
     if isinstance(value, dict):
         normalized = dict(value)
         if "refine_enabled" not in normalized:
-            normalized["refine_enabled"] = bool(
-                normalized.get("hba_refine_enabled", False)
-            )
+            normalized["refine_enabled"] = bool(normalized.get("hba_refine_enabled", False))
         if "refine_applied" not in normalized:
-            normalized["refine_applied"] = bool(
-                normalized.get("hba_refine_applied", False)
-            )
+            normalized["refine_applied"] = bool(normalized.get("hba_refine_applied", False))
         return normalized
     return {
         "status": str(outputs.get("map_optimization_status") or "not_run"),
         "backend": str(outputs.get("map_optimization_backend") or ""),
         "refine_backend": str(outputs.get("map_optimization_refine_backend") or ""),
         "enabled": bool(outputs.get("map_optimization_enabled", False)),
-        "loop_closure_enabled": bool(
-            outputs.get("map_optimization_loop_closure_enabled", False)
-        ),
-        "loop_closure_applied": bool(
-            outputs.get("map_optimization_loop_closure_applied", False)
-        ),
+        "loop_closure_enabled": bool(outputs.get("map_optimization_loop_closure_enabled", False)),
+        "loop_closure_applied": bool(outputs.get("map_optimization_loop_closure_applied", False)),
         "refine_enabled": bool(
-            outputs.get("map_optimization_refine_enabled")
-            or outputs.get("map_optimization_hba_refine_enabled", False)
+            outputs.get("map_optimization_refine_enabled") or outputs.get("map_optimization_hba_refine_enabled", False)
         ),
         "refine_applied": bool(
-            outputs.get("map_optimization_refine_applied")
-            or outputs.get("map_optimization_hba_refine_applied", False)
+            outputs.get("map_optimization_refine_applied") or outputs.get("map_optimization_hba_refine_applied", False)
         ),
-        "hba_refine_enabled": bool(
-            outputs.get("map_optimization_hba_refine_enabled", False)
-        ),
-        "hba_refine_applied": bool(
-            outputs.get("map_optimization_hba_refine_applied", False)
-        ),
+        "hba_refine_enabled": bool(outputs.get("map_optimization_hba_refine_enabled", False)),
+        "hba_refine_applied": bool(outputs.get("map_optimization_hba_refine_applied", False)),
         "patch_count": int(outputs.get("map_optimization_patch_count", 0)),
         "pose_count": int(outputs.get("map_optimization_pose_count", 0)),
-        "optimized_pose_count": int(
-            outputs.get("map_optimization_optimized_pose_count", 0)
-        ),
+        "optimized_pose_count": int(outputs.get("map_optimization_optimized_pose_count", 0)),
         "loop_count": int(outputs.get("map_optimization_loop_count", 0)),
         "raw_map_points": int(outputs.get("map_optimization_raw_map_points", 0)),
-        "optimized_map_points": int(
-            outputs.get("map_optimization_optimized_map_points", 0)
-        ),
-        "loop_closure_error_m": float(
-            outputs.get("map_optimization_loop_error_m", -1.0)
-        ),
+        "optimized_map_points": int(outputs.get("map_optimization_optimized_map_points", 0)),
+        "loop_closure_error_m": float(outputs.get("map_optimization_loop_error_m", -1.0)),
     }
 
 
@@ -148,6 +129,7 @@ class SlamModule(Module, layer=1):
 
     odometry: Out[Odometry]
     registered_cloud: Out[PointCloud2]
+    map_observation: Out[MapObservationFrame]
     map_cloud_frame: Out[MapCloudFrame]
     map_cloud: Out[PointCloud2]
     saved_map: Out[PointCloud2]
@@ -196,6 +178,7 @@ class SlamModule(Module, layer=1):
         self._last_status: dict[str, Any] = {}
         self._last_gnss_health = _default_gnss_health()
         self._last_scene_mode = "unknown"
+        self._last_observation_sequence = 0
 
     def setup(self) -> None:
         self.visual_odom.set_policy("latest")
@@ -340,9 +323,7 @@ class SlamModule(Module, layer=1):
 
         with self._lock:
             self._last_gnss_health["enabled"] = bool(enabled)
-            self._last_gnss_health["reason"] = (
-                "gnss_fusion_enabled" if enabled else "gnss_fusion_disabled"
-            )
+            self._last_gnss_health["reason"] = "gnss_fusion_enabled" if enabled else "gnss_fusion_disabled"
             self.gnss_fusion_health.publish(dict(self._last_gnss_health))
             return {"ok": True, "enabled": bool(enabled)}
 
@@ -352,9 +333,7 @@ class SlamModule(Module, layer=1):
 
         with self._lock:
             self._last_gnss_health["alignment_locked"] = False
-            self._last_gnss_health["relock_count"] = int(
-                self._last_gnss_health.get("relock_count", 0)
-            ) + 1
+            self._last_gnss_health["relock_count"] = int(self._last_gnss_health.get("relock_count", 0)) + 1
             self._last_gnss_health["reason"] = "gnss_relock_requested"
             self.gnss_fusion_health.publish(dict(self._last_gnss_health))
             return {"ok": True, "reason": "gnss_relock_requested"}
@@ -475,9 +454,7 @@ class SlamModule(Module, layer=1):
             "map_frame_jump": bool(outputs.get("map_frame_jump", False)),
             "localization_quality": quality,
             "scene_mode": str(outputs.get("scene_mode") or self._last_scene_mode),
-            "saved_map_relocalization_supported": bool(
-                outputs.get("saved_map_relocalization_supported", True)
-            ),
+            "saved_map_relocalization_supported": bool(outputs.get("saved_map_relocalization_supported", True)),
             "map_optimization": _map_optimization_status(outputs),
             "buffers": _buffer_status(outputs),
             "sync": _sync_status(outputs),
@@ -498,6 +475,16 @@ class SlamModule(Module, layer=1):
         )
         if registered is not None:
             self.registered_cloud.publish(registered)
+        observation = _map_observation_from_outputs(
+            outputs,
+            registered,
+            scan_odom,
+            backend_profile=self._backend_profile,
+            quality=quality,
+        )
+        if observation is not None and observation.sequence > self._last_observation_sequence:
+            self.map_observation.publish(observation)
+            self._last_observation_sequence = observation.sequence
         map_cloud = _cloud_from_output(
             outputs.get("map_cloud_map"),
             topic_default_frame_id(TOPICS.map_cloud),
@@ -508,6 +495,7 @@ class SlamModule(Module, layer=1):
                     map_cloud,
                     mode="FULL",
                     source=f"native_slam:{self._backend_profile}",
+                    sequence=int(outputs.get("observation_sequence", 0) or 0),
                 )
             )
             self.map_cloud.publish(map_cloud)
@@ -811,9 +799,7 @@ class _PythonSlamRunner:
             "map_optimization": dict(self.map_optimization),
             "map_optimization_status": self.map_optimization.get("status", "not_run"),
             "map_optimization_loop_count": self.map_optimization.get("loop_count", 0),
-            "map_optimization_optimized_pose_count": self.map_optimization.get(
-                "optimized_pose_count", 0
-            ),
+            "map_optimization_optimized_pose_count": self.map_optimization.get("optimized_pose_count", 0),
         }
 
     def reset(self) -> dict[str, Any]:
@@ -1074,6 +1060,130 @@ def _odometry_from_output(raw: Any) -> Odometry | None:
     )
 
 
+def _map_observation_from_outputs(
+    outputs: dict[str, Any],
+    registered: PointCloud2 | None,
+    scan_odom: Odometry | None,
+    *,
+    backend_profile: str,
+    quality: float,
+) -> MapObservationFrame | None:
+    if registered is None or scan_odom is None:
+        return None
+    registered_raw = outputs.get("registered_cloud_body")
+    if isinstance(registered_raw, dict):
+        mode = str(registered_raw.get("mode") or registered_raw.get("kind") or "")
+        if mode and mode.strip().upper() != "INCREMENTAL":
+            return None
+    sequence = _observation_sequence(outputs, registered_raw)
+    if sequence <= 0:
+        return None
+    map_sensor = _map_sensor_transform(outputs.get("map_odom_tf"), scan_odom, registered)
+    if map_sensor is None:
+        return None
+    try:
+        return MapObservationFrame(
+            points=registered.points,
+            sequence=sequence,
+            ts=float(getattr(registered, "ts", 0.0) or scan_odom.ts),
+            frame_id=map_sensor.frame_id,
+            sensor_frame_id=map_sensor.child_frame_id,
+            sensor_origin=map_sensor.translation,
+            map_sensor_pose=Pose(map_sensor.translation, map_sensor.rotation),
+            map_sensor_transform=map_sensor,
+            pose_quality={
+                "confidence": float(quality),
+                "state": str(outputs.get("state") or ""),
+                "reason": str(outputs.get("reason") or ""),
+                "source": "state_estimation_at_scan",
+            },
+            source=f"native_slam:{backend_profile}:registered_cloud_body",
+            metadata={
+                "scan_start_s": float(outputs.get("scan_start_s", 0.0) or 0.0),
+                "scan_end_s": float(outputs.get("scan_end_s", 0.0) or 0.0),
+            },
+        )
+    except (ImportError, TypeError, ValueError):
+        logger.debug("dropping malformed MapObservationFrame", exc_info=True)
+        return None
+
+
+def _observation_sequence(outputs: dict[str, Any], registered_raw: Any) -> int:
+    if isinstance(registered_raw, dict):
+        for key in ("sequence", "scan_sequence", "lidar_sequence"):
+            if key in registered_raw:
+                return int(registered_raw.get(key) or 0)
+    for key in ("observation_sequence", "scan_sequence", "lidar_sequence"):
+        if key in outputs:
+            return int(outputs.get(key) or 0)
+    return 0
+
+
+def _map_sensor_transform(
+    map_odom_tf: Any,
+    scan_odom: Odometry,
+    registered: PointCloud2,
+) -> Transform | None:
+    odom_sensor = Transform(
+        translation=scan_odom.pose.position,
+        rotation=scan_odom.pose.orientation,
+        frame_id=str(scan_odom.frame_id or odom_frame_id()),
+        child_frame_id=str(
+            getattr(registered, "frame_id", "") or scan_odom.child_frame_id or body_frame_id()
+        ),
+        ts=float(scan_odom.ts),
+    )
+    if odom_sensor.frame_id == map_frame_id():
+        return Transform(
+            translation=odom_sensor.translation,
+            rotation=odom_sensor.rotation,
+            frame_id=map_frame_id(),
+            child_frame_id=odom_sensor.child_frame_id,
+            ts=odom_sensor.ts,
+        )
+    map_odom = _transform_from_tf_dict(map_odom_tf)
+    if map_odom is None:
+        return None
+    if map_odom.child_frame_id != odom_sensor.frame_id:
+        return None
+    composed = map_odom + odom_sensor
+    return Transform(
+        translation=composed.translation,
+        rotation=composed.rotation,
+        frame_id=map_frame_id(),
+        child_frame_id=odom_sensor.child_frame_id,
+        ts=odom_sensor.ts,
+    )
+
+
+def _transform_from_tf_dict(raw: Any) -> Transform | None:
+    if isinstance(raw, Transform):
+        return raw
+    if not isinstance(raw, dict):
+        return None
+    try:
+        translation = raw.get("translation") or {
+            "x": raw.get("tx", 0.0),
+            "y": raw.get("ty", 0.0),
+            "z": raw.get("tz", 0.0),
+        }
+        rotation = raw.get("rotation") or {
+            "x": raw.get("qx", 0.0),
+            "y": raw.get("qy", 0.0),
+            "z": raw.get("qz", 0.0),
+            "w": raw.get("qw", 1.0),
+        }
+        return Transform(
+            translation=Vector3.from_dict(translation),
+            rotation=Quaternion.from_dict(rotation),
+            frame_id=str(raw.get("frame_id") or map_frame_id()),
+            child_frame_id=str(raw.get("child_frame_id") or odom_frame_id()),
+            ts=float(raw.get("stamp_s", raw.get("ts", time.time()))),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 def _cloud_from_output(raw: Any, frame_id: str) -> PointCloud2 | None:
     if raw is None:
         return None
@@ -1083,7 +1193,11 @@ def _cloud_from_output(raw: Any, frame_id: str) -> PointCloud2 | None:
         points = raw.get("points")
         if points is None:
             return None
-        return PointCloud2(points=points, frame_id=str(raw.get("frame_id") or frame_id))
+        return PointCloud2(
+            points=points,
+            frame_id=str(raw.get("frame_id") or frame_id),
+            ts=float(raw.get("stamp_s", raw.get("ts", time.time()))),
+        )
     return None
 
 

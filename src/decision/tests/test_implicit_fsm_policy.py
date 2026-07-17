@@ -1,6 +1,4 @@
-"""
-test_implicit_fsm_policy.py — 隐式 FSM 策略测试
-"""
+"""Decision module."""
 
 import tempfile
 import unittest
@@ -8,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from decision.tasking.implicit_fsm_policy import (
+from decision.tasks.policy import (
     ImplicitFSMObservation,
     ImplicitFSMPolicy,
 )

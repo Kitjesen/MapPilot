@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from .stream import In, Out
 
@@ -68,15 +68,16 @@ def skill(fn):
     return fn
 
 
-import inspect as _inspect  # noqa: E402
-import json as _json  # noqa: E402
-import types as _types  # noqa: E402
-from dataclasses import dataclass as _dataclass  # noqa: E402
+import inspect as _inspect
+import json as _json
+import types as _types
+from dataclasses import dataclass as _dataclass
 
 
 @_dataclass
 class SkillInfo:
     """Metadata for a single @skill method, used by MCPServerModule for tool discovery."""
+
     func_name: str
     class_name: str
     args_schema: str  # JSON string of MCP-compatible inputSchema
@@ -86,29 +87,61 @@ def _build_skill_schema(method) -> dict:
     """Build MCP inputSchema dict from a bound @skill method's signature + docstring."""
     sig = _inspect.signature(method)
     doc = _inspect.getdoc(method) or ""
+    try:
+        resolved_hints = get_type_hints(method)
+    except (NameError, TypeError):
+        resolved_hints = {}
 
     _PY_TO_JSON = {
-        int: "integer", float: "number", str: "string", bool: "boolean",
+        int: "integer",
+        float: "number",
+        str: "string",
+        bool: "boolean",
         type(None): "null",
     }
 
     properties: dict[str, Any] = {}
     required: list[str] = []
 
-    def json_type(ann: Any) -> str:
+    def json_schema(ann: Any) -> dict[str, Any]:
         origin = get_origin(ann)
         args = get_args(ann)
         if origin in (_types.UnionType, Union):
             non_null = [arg for arg in args if arg is not type(None)]
             if len(non_null) == 1:
-                return _PY_TO_JSON.get(non_null[0], "string")
-        return _PY_TO_JSON.get(ann, "string")
+                return json_schema(non_null[0])
+            return {"anyOf": [json_schema(arg) for arg in args]}
+        if origin is Literal:
+            values = list(args)
+            value_type = type(values[0]) if values else str
+            return {"type": _PY_TO_JSON.get(value_type, "string"), "enum": values}
+        if origin in (list, set, frozenset):
+            item_type = args[0] if args else Any
+            return {"type": "array", "items": json_schema(item_type)}
+        if origin is tuple:
+            if len(args) == 2 and args[1] is Ellipsis:
+                return {"type": "array", "items": json_schema(args[0])}
+            return {
+                "type": "array",
+                "prefixItems": [json_schema(arg) for arg in args],
+                "minItems": len(args),
+                "maxItems": len(args),
+            }
+        if origin is dict:
+            value_type = args[1] if len(args) > 1 else Any
+            return {
+                "type": "object",
+                "additionalProperties": json_schema(value_type),
+            }
+        if ann in (Any, _inspect.Parameter.empty):
+            return {}
+        return {"type": _PY_TO_JSON.get(ann, "string")}
 
     for pname, param in sig.parameters.items():
         if pname == "self":
             continue
-        ann = param.annotation
-        prop: dict[str, Any] = {"type": json_type(ann)}
+        ann = resolved_hints.get(pname, param.annotation)
+        prop = json_schema(ann)
         if param.default is not _inspect.Parameter.empty:
             prop["default"] = param.default
         else:
@@ -153,6 +186,10 @@ class Module:
     # "perception" 鈫?PerceptionModule + EncoderModule share one worker).
     _run_in_worker: bool = False
     _worker_group: str = ""
+
+    # Optional soft dependencies - Blueprint warns if missing at startup, but
+    # the module still starts and related features degrade gracefully.
+    SOFT_DEPENDS: list[str] = []
 
     # -- dimos-style __init_subclass__: set None placeholders at class definition ---
 
@@ -307,9 +344,9 @@ class Module:
         result = {}
         for cls in type(self).__mro__:
             for name, val in cls.__dict__.items():
-                if name.startswith('_') or name in result:
+                if name.startswith("_") or name in result:
                     continue
-                if callable(val) and getattr(val, '__rpc__', False):
+                if callable(val) and getattr(val, "__rpc__", False):
                     result[name] = getattr(self, name)
         return result
 
@@ -322,9 +359,9 @@ class Module:
         result = {}
         for cls in type(self).__mro__:
             for name, val in cls.__dict__.items():
-                if name.startswith('_') or name in result:
+                if name.startswith("_") or name in result:
                     continue
-                if callable(val) and getattr(val, '__skill__', False):
+                if callable(val) and getattr(val, "__skill__", False):
                     result[name] = getattr(self, name)
         return result
 
@@ -336,20 +373,20 @@ class Module:
         infos = []
         for name, method in self.skills.items():
             schema = _build_skill_schema(method)
-            infos.append(SkillInfo(
-                func_name=name,
-                class_name=type(self).__name__,
-                args_schema=_json.dumps(schema),
-            ))
+            infos.append(
+                SkillInfo(
+                    func_name=name,
+                    class_name=type(self).__name__,
+                    args_schema=_json.dumps(schema),
+                )
+            )
         return infos
 
     def call_rpc(self, method_name: str, **kwargs: Any) -> Any:
         """Call an RPC method by name. Returns the method result."""
         rpcs = self.rpcs
         if method_name not in rpcs:
-            raise ValueError(
-                f"RPC method '{method_name}' not found on {type(self).__name__}"
-            )
+            raise ValueError(f"RPC method '{method_name}' not found on {type(self).__name__}")
         return rpcs[method_name](**kwargs)
 
     @property
@@ -430,6 +467,7 @@ class Module:
     def blueprint(cls, **kwargs: Any) -> Blueprint:
         """Create a Blueprint containing only this module."""
         from .blueprint import Blueprint
+
         return Blueprint().add(cls, **kwargs)
 
     # -- diagnostics ---------------------------------------------------------
@@ -471,9 +509,4 @@ class Module:
 
     def __repr__(self) -> str:
         layer_str = f", L{self._layer}" if self._layer is not None else ""
-        return (
-            f"{type(self).__name__}("
-            f"in={list(self._ports_in.keys())}, "
-            f"out={list(self._ports_out.keys())}"
-            f"{layer_str})"
-        )
+        return f"{type(self).__name__}(in={list(self._ports_in.keys())}, out={list(self._ports_out.keys())}{layer_str})"

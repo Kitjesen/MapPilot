@@ -1,8 +1,7 @@
-﻿"""RerunBridgeModule 鈥?on-demand Rerun visualization as a Module.
+"""RerunBridgeModule 鈥?on-demand Rerun visualization as a Module.
 
-Logs ModulePort data to the Rerun web viewer. Optional ROS2 visualization
-overlays are delegated to an explicit compatibility adapter. This module is not
-the product runtime communication boundary.
+Logs Module port data to the Rerun web viewer. This module is a visualization
+consumer, not the product runtime communication boundary.
 
 Usage in blueprint:
     bp.add(RerunBridgeModule, web_port=9090, grpc_port=9877)
@@ -17,7 +16,6 @@ from __future__ import annotations
 import logging
 import math
 import time
-from importlib import import_module
 from typing import Any
 
 from runtime.module import Module, skill
@@ -25,7 +23,6 @@ from runtime.msgs.nav import Odometry, PoseStamped
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import TOPICS
 from runtime.stream import In, Out
 
 logger = logging.getLogger("gateway.rerun_bridge_module")
@@ -39,17 +36,16 @@ _VOXEL_SIZE = 0.08
 class RerunBridgeModule(Module, layer=6):
     """On-demand Rerun visualization bridge.
 
-    Subscribes to Module ports (odometry, map_cloud). Optional ROS2 overlays
-    are delegated to ``runtime.adapters.ros2.rerun_overlay``.
-    Runtime product dataflow remains Gateway + ModulePorts.
+    Subscribes only to LingTu Module ports. Runtime product dataflow remains
+    Gateway plus native DDS/Module boundaries.
 
     The Rerun server is lazy 鈥?only started when start_rerun() is called.
     """
 
     # Module ports (auto-wired from SLAM / Driver)
-    odometry:  In[Odometry]
+    odometry: In[Odometry]
     map_cloud: In[PointCloud2]
-    goal_pose: In[PoseStamped]   # navigation goal (from GatewayModule click)
+    goal_pose: In[PoseStamped]  # navigation goal (from GatewayModule click)
 
     # Output: whether rerun is active (for UI/status)
     rerun_active: Out[bool]
@@ -78,19 +74,19 @@ class RerunBridgeModule(Module, layer=6):
         self._counts = {"odom": 0, "cloud": 0}
         self._last_odom_t = 0.0
 
-        # Optional visualization-only ROS2 adapter, created on start_rerun.
-        self._ros2_overlay = None
-
     def setup(self) -> None:
+        """Subscribe to module streams used by the optional Rerun bridge."""
         self.odometry.subscribe(self._on_odom)
         self.map_cloud.subscribe(self._on_cloud)
         self.goal_pose.subscribe(self._on_goal_pose)
 
     def start(self) -> None:
+        """Start the module with Rerun initially inactive."""
         super().start()
         self.rerun_active.publish(False)
 
     def stop(self) -> None:
+        """Stop Rerun and release bridge resources."""
         self.stop_rerun()
         super().stop()
 
@@ -104,6 +100,7 @@ class RerunBridgeModule(Module, layer=6):
 
         try:
             import rerun as rr
+
             self._rr = rr
             rr.init("lingtu_live")
             server_uri = rr.serve_grpc(grpc_port=self._grpc_port)
@@ -114,9 +111,6 @@ class RerunBridgeModule(Module, layer=6):
             )
             self._active = True
             self.rerun_active.publish(True)
-
-            # Start optional ROS2 overlay subscriptions.
-            self._start_ros2_subs()
 
             url = f"http://localhost:{self._web_port}"
             logger.info("Rerun started: %s", url)
@@ -132,7 +126,6 @@ class RerunBridgeModule(Module, layer=6):
         if not self._active:
             return "not running"
 
-        self._stop_ros2_subs()
         self._active = False
         self._rr = None
         self._trajectory.clear()
@@ -144,11 +137,14 @@ class RerunBridgeModule(Module, layer=6):
     def rerun_status(self) -> str:
         """Return Rerun status."""
         import json
-        return json.dumps({
-            "active": self._active,
-            "url": f"http://localhost:{self._web_port}" if self._active else None,
-            "counts": dict(self._counts),
-        })
+
+        return json.dumps(
+            {
+                "active": self._active,
+                "url": f"http://localhost:{self._web_port}" if self._active else None,
+                "counts": dict(self._counts),
+            }
+        )
 
     # Module port callbacks
 
@@ -164,30 +160,39 @@ class RerunBridgeModule(Module, layer=6):
 
         # Robot body 鈥?wireframe box
         try:
-            rr.log("world/robot", rr.Boxes3D(
-                centers=[[x, y, z + _ROBOT_HALF[2]]],
-                half_sizes=[_ROBOT_HALF],
-                colors=[[0, 255, 127]],
-                fill_mode="MajorWireframe",
-            ))
+            rr.log(
+                "world/robot",
+                rr.Boxes3D(
+                    centers=[[x, y, z + _ROBOT_HALF[2]]],
+                    half_sizes=[_ROBOT_HALF],
+                    colors=[[0, 255, 127]],
+                    fill_mode="MajorWireframe",
+                ),
+            )
 
             # Heading arrow
             yaw = odom.yaw
             dx, dy = math.cos(yaw) * 0.8, math.sin(yaw) * 0.8
-            rr.log("world/heading", rr.Arrows3D(
-                origins=[[x, y, z + 0.3]],
-                vectors=[[dx, dy, 0]],
-                colors=[[255, 255, 0]],
-                radii=0.05,
-            ))
+            rr.log(
+                "world/heading",
+                rr.Arrows3D(
+                    origins=[[x, y, z + 0.3]],
+                    vectors=[[dx, dy, 0]],
+                    colors=[[255, 255, 0]],
+                    radii=0.05,
+                ),
+            )
 
             # Trajectory
             self._trajectory.append([x, y, z])
             if len(self._trajectory) > 2:
-                rr.log("world/trajectory", rr.LineStrips3D(
-                    [self._trajectory[-1000:]],
-                    colors=[[0, 100, 255]],
-                ))
+                rr.log(
+                    "world/trajectory",
+                    rr.LineStrips3D(
+                        [self._trajectory[-1000:]],
+                        colors=[[0, 100, 255]],
+                    ),
+                )
 
             # SLAM Hz
             now = time.time()
@@ -217,26 +222,28 @@ class RerunBridgeModule(Module, layer=6):
             if len(xyz) == 0:
                 return
 
-            # Voxelize for block rendering
-            vs = self._voxel_size
-            vox_idx = np.floor(xyz / vs).astype(np.int32)
-            _, unique_idx = np.unique(vox_idx, axis=0, return_index=True)
-            centers = (vox_idx[unique_idx].astype(np.float32) + 0.5) * vs
+            z = xyz[:, 2]
+            z_norm = np.clip((z - z.min()) / max(z.max() - z.min(), 0.01), 0.0, 1.0)
+            low = z_norm < 0.5
+            colors = np.zeros((len(xyz), 3), dtype=np.uint8)
+            colors[low, 0] = (46 + (140 - 46) * (z_norm[low] * 2.0)).astype(np.uint8)
+            colors[low, 1] = 140
+            colors[low, 2] = (128 + (140 - 128) * (z_norm[low] * 2.0)).astype(np.uint8)
+            hi = ~low
+            hi_t = (z_norm[hi] - 0.5) * 2.0
+            colors[hi, 0] = (140 + (199 - 140) * hi_t).astype(np.uint8)
+            colors[hi, 1] = (140 + (153 - 140) * hi_t).astype(np.uint8)
+            colors[hi, 2] = (140 + (89 - 140) * hi_t).astype(np.uint8)
 
-            # Color by height
-            z = centers[:, 2]
-            z_norm = np.clip((z - z.min()) / max(z.max() - z.min(), 0.01), 0, 1)
-            colors = np.zeros((len(centers), 3), dtype=np.uint8)
-            colors[:, 0] = (z_norm * 255).astype(np.uint8)
-            colors[:, 2] = ((1 - z_norm) * 255).astype(np.uint8)
-            colors[:, 1] = 80
-
-            half = vs * 0.5
-            rr.log("world/point_cloud", rr.Boxes3D(
-                centers=centers,
-                half_sizes=np.full((len(centers), 3), half, dtype=np.float32),
-                colors=colors,
-            ))
+            radius = max(0.01, min(float(self._voxel_size) * 0.35, 0.06))
+            rr.log(
+                "world/point_cloud",
+                rr.Points3D(
+                    xyz,
+                    colors=colors,
+                    radii=radius,
+                ),
+            )
         except Exception as e:
             logger.debug("rerun point cloud log failed: %s", e)
 
@@ -247,202 +254,22 @@ class RerunBridgeModule(Module, layer=6):
         rr = self._rr
         x, y, z = goal.pose.position.x, goal.pose.position.y, goal.pose.position.z
         try:
-            rr.log("world/nav_goal", rr.Points3D(
-                [[x, y, z + 0.1]],
-                radii=[0.25],
-                colors=[[0, 255, 170]],
-                labels=["goal"],
-            ))
-            rr.log("world/nav_goal_ring", rr.Boxes3D(
-                centers=[[x, y, 0.02]],
-                half_sizes=[[0.3, 0.3, 0.01]],
-                colors=[[0, 255, 170, 80]],
-            ))
+            rr.log(
+                "world/nav_goal",
+                rr.Points3D(
+                    [[x, y, z + 0.1]],
+                    radii=[0.25],
+                    colors=[[0, 255, 170]],
+                    labels=["goal"],
+                ),
+            )
+            rr.log(
+                "world/nav_goal_ring",
+                rr.Boxes3D(
+                    centers=[[x, y, 0.02]],
+                    half_sizes=[[0.3, 0.3, 0.01]],
+                    colors=[[0, 255, 170, 80]],
+                ),
+            )
         except Exception as e:
             logger.debug("rerun goal marker log failed: %s", e)
-
-    # Optional ROS2 visualization overlay
-
-    def _start_ros2_subs(self) -> None:
-        """Start optional ROS2 visualization overlays through the adapter layer."""
-        try:
-            overlay_mod = import_module("runtime.adapters.ros2.rerun_overlay")
-            overlay_cls = overlay_mod.RerunRos2Overlay
-            self._ros2_overlay = overlay_cls(self, TOPICS)
-            self._ros2_overlay.start()
-            logger.info("RerunBridge: ROS2 subscriptions active")
-        except ImportError:
-            logger.info("RerunBridge: rclpy not available, Module-only visualization")
-        except Exception as e:
-            logger.warning("RerunBridge: ROS2 setup failed: %s", e)
-
-    def _stop_ros2_subs(self) -> None:
-        if self._ros2_overlay is not None:
-            self._ros2_overlay.stop()
-            self._ros2_overlay = None
-
-    # ROS2 camera overlay callbacks
-
-    _color_count = 0
-    _depth_count = 0
-
-    @staticmethod
-    def _crop_square(img: np.ndarray) -> np.ndarray:
-        h, w = img.shape[:2]
-        if h > w:
-            margin = (h - w) // 2
-            return img[margin:margin + w]
-        return img
-
-    def _on_ros2_color(self, msg) -> None:
-        self._color_count += 1
-        if not self._active or self._rr is None:
-            return
-        if self._color_count % 6 != 0:
-            return
-        try:
-            h, w = msg.height, msg.width
-            enc = msg.encoding.lower()
-            if enc in ("bgr8", "rgb8"):
-                img = np.frombuffer(msg.data, dtype=np.uint8).reshape(h, w, 3)
-                if enc == "bgr8":
-                    img = img[:, :, ::-1]
-                img = self._crop_square(np.rot90(img, k=1))
-                self._rr.log("camera/color", self._rr.Image(img))
-        except Exception as e:
-            logger.debug("rerun color frame log failed: %s", e)
-
-    def _on_ros2_depth(self, msg) -> None:
-        self._depth_count += 1
-        if not self._active or self._rr is None:
-            return
-        if self._depth_count % 5 != 0:
-            return
-        try:
-            h, w = msg.height, msg.width
-            enc = msg.encoding.lower()
-            if enc == "16uc1":
-                img = np.frombuffer(msg.data, dtype=np.uint16).reshape(h, w)
-                img = self._crop_square(np.rot90(img, k=1))
-                self._rr.log("camera/depth", self._rr.DepthImage(img, meter=1000.0))
-            elif enc == "32fc1":
-                img = np.frombuffer(msg.data, dtype=np.float32).reshape(h, w)
-                img = self._crop_square(np.rot90(img, k=1))
-                self._rr.log("camera/depth", self._rr.DepthImage(img, meter=1.0))
-        except Exception as e:
-            logger.debug("rerun depth frame log failed: %s", e)
-
-    # ROS2 TF overlay callbacks
-
-    def _on_ros2_tf(self, msg) -> None:
-        if not self._active or self._rr is None:
-            return
-        rr = self._rr
-        try:
-            for tf in msg.transforms:
-                child = tf.child_frame_id.lstrip("/")
-                t = tf.transform.translation
-                q = tf.transform.rotation
-                rr.log(f"world/tf/{child}", rr.Transform3D(
-                    translation=[t.x, t.y, t.z],
-                    rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
-                ))
-        except Exception as e:
-            logger.debug("rerun TF log failed: %s", e)
-
-    def _on_ros2_tf_static(self, msg) -> None:
-        if not self._active or self._rr is None:
-            return
-        rr = self._rr
-        try:
-            for tf in msg.transforms:
-                child = tf.child_frame_id.lstrip("/")
-                t = tf.transform.translation
-                q = tf.transform.rotation
-                rr.log(f"world/tf/{child}", rr.Transform3D(
-                    translation=[t.x, t.y, t.z],
-                    rotation=rr.Quaternion(xyzw=[q.x, q.y, q.z, q.w]),
-                ), static=True)
-        except Exception as e:
-            logger.debug("rerun TF static log failed: %s", e)
-
-    # ROS2 costmap overlay callback
-
-    _costmap_count = 0
-
-    def _on_ros2_costmap(self, msg) -> None:
-        self._costmap_count += 1
-        if not self._active or self._rr is None:
-            return
-        if self._costmap_count % 5 != 0:
-            return
-        try:
-            w = msg.info.width
-            h = msg.info.height
-            res = msg.info.resolution
-            ox = msg.info.origin.position.x
-            oy = msg.info.origin.position.y
-
-            grid = np.array(msg.data, dtype=np.int8).reshape(h, w)
-            img = np.zeros((h, w, 3), dtype=np.uint8)
-            img[grid == 0] = [40, 80, 40]
-            img[grid > 50] = [200, 50, 50]
-            img[grid < 0] = [60, 60, 60]
-            img[(grid > 0) & (grid <= 50)] = [180, 160, 40]
-
-            x0, y0 = ox, oy
-            x1, y1 = ox + w * res, oy + h * res
-            vertices = np.array([
-                [x0, y0, 0.01], [x1, y0, 0.01],
-                [x1, y1, 0.01], [x0, y1, 0.01],
-            ], dtype=np.float32)
-            self._rr.log("world/costmap", self._rr.Mesh3D(
-                vertex_positions=vertices,
-                triangle_indices=np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32),
-                vertex_texcoords=np.array([[0, 1], [1, 1], [1, 0], [0, 0]], dtype=np.float32),
-                albedo_texture=img,
-            ))
-        except Exception as e:
-            logger.debug("rerun costmap log failed: %s", e)
-
-    # ROS2 detection overlay callback
-
-    def _on_ros2_detections(self, msg) -> None:
-        if not self._active or self._rr is None:
-            return
-        try:
-            positions, labels, colors = [], [], []
-            for m in msg.markers:
-                if m.action == 2:
-                    continue
-                px, py, pz = m.pose.position.x, m.pose.position.y, m.pose.position.z
-                if not (math.isfinite(px) and math.isfinite(py) and math.isfinite(pz)):
-                    continue
-                positions.append([px, py, pz])
-                labels.append(m.text or f"obj_{m.id}")
-                r = int(m.color.r * 255) if m.color.r <= 1.0 else int(m.color.r)
-                g = int(m.color.g * 255) if m.color.g <= 1.0 else int(m.color.g)
-                b = int(m.color.b * 255) if m.color.b <= 1.0 else int(m.color.b)
-                colors.append([max(r, 50), max(g, 50), max(b, 50)])
-
-            if positions:
-                self._rr.log("world/detections", self._rr.Points3D(
-                    positions, labels=labels, colors=colors, radii=0.12,
-                ))
-        except Exception as e:
-            logger.debug("rerun detections log failed: %s", e)
-
-    # ROS2 path overlay callback
-
-    def _on_ros2_path(self, msg) -> None:
-        if not self._active or self._rr is None:
-            return
-        try:
-            pts = [[ps.pose.position.x, ps.pose.position.y, ps.pose.position.z]
-                   for ps in msg.poses]
-            if len(pts) > 1:
-                self._rr.log("world/nav_path", self._rr.LineStrips3D(
-                    [pts], colors=[[0, 255, 100]], radii=0.04,
-                ))
-        except Exception as e:
-            logger.debug("rerun nav path log failed: %s", e)

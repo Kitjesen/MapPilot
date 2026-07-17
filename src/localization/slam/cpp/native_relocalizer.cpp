@@ -1,12 +1,16 @@
 #include "native_relocalizer.hpp"
 
 #include "bbs3d_global_localizer.h"
-#include "icp_localizer.h"
+#include "map_icp.hpp"
 
 #include <Eigen/Geometry>
 
+#include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
 #include <memory>
+#include <mutex>
 #include <pcl/io/pcd_io.h>
 
 namespace lingtu::slam {
@@ -63,21 +67,24 @@ LocalizerCloud::Ptr toLocalizerCloud(const Cloud& cloud) {
   return out;
 }
 
-void fillIcpDiagnostics(NativeRelocalizationResult& result, const ICPLocalizer& icp) {
-  result.quality = icp.getLastFitnessScore();
-  result.refine_backend = icp.getBackendName();
-  result.refine_iterations = icp.getLastIterations();
-  result.refine_inliers = icp.getLastInliers();
-  result.refine_converged = icp.getLastConverged();
-  result.refine_pos_cov_trace = icp.getLastPosCovTrace();
+void fillMapIcpDiagnostics(
+    NativeRelocalizationResult& result,
+    const MapIcpDiagnostics& diagnostics) {
+  result.quality = diagnostics.quality;
+  result.refine_backend = diagnostics.refine_backend;
+  result.refine_iterations = diagnostics.refine_iterations;
+  result.refine_inliers = diagnostics.refine_inliers;
+  result.refine_converged = diagnostics.refine_converged;
+  result.refine_pos_cov_trace = diagnostics.refine_pos_cov_trace;
 }
 
 }  // namespace
 
 struct NativeRelocalizer::Impl {
-  ICPLocalizer icp{ICPConfig{}};
+  MapIcp map_icp{ICPConfig{}};
   BBS3DGlobalLocalizer bbs3d{};
-  bool map_loaded = false;
+  mutable std::mutex bbs3d_mutex;
+  std::atomic<bool> map_loaded{false};
   bool bbs3d_map_loaded = false;
 };
 
@@ -92,7 +99,22 @@ bool NativeRelocalizer::loadMap(const std::string& pcd_path, std::string* messag
     }
     return false;
   }
-  impl_->map_loaded = impl_->icp.loadMap(pcd_path);
+  const std::filesystem::path pcd(pcd_path);
+  const std::filesystem::path semantic_map = pcd.parent_path() / "semantic_map.bin";
+  const bool has_semantic_map = std::filesystem::is_regular_file(semantic_map);
+  const bool loaded = has_semantic_map
+      ? impl_->map_icp.loadSemanticMap(semantic_map.string())
+      : impl_->map_icp.loadMap(pcd_path);
+  if (!loaded) {
+    if (message) {
+      *message = has_semantic_map
+          ? "native_relocalizer_semantic_map_load_failed: " + impl_->map_icp.lastError()
+          : "native_relocalizer_pcd_map_load_failed: " + impl_->map_icp.lastError();
+    }
+    return false;
+  }
+  impl_->map_loaded.store(true, std::memory_order_release);
+  std::lock_guard<std::mutex> lock(impl_->bbs3d_mutex);
   impl_->bbs3d_map_loaded = false;
   if (impl_->map_loaded && impl_->bbs3d.available()) {
     auto cloud = std::make_shared<LocalizerCloud>();
@@ -101,14 +123,17 @@ bool NativeRelocalizer::loadMap(const std::string& pcd_path, std::string* messag
     }
   }
   if (message) {
-    *message = impl_->map_loaded ? "native_relocalizer_map_loaded"
-                                 : "native_relocalizer_map_load_failed";
+    if (impl_->map_loaded) {
+      *message = has_semantic_map ? "native_relocalizer_semantic_map_loaded"
+                                  : "native_relocalizer_pcd_map_loaded";
+    }
   }
   return impl_->map_loaded;
 }
 
 bool NativeRelocalizer::hasMap() const {
-  return impl_ && impl_->map_loaded;
+  return impl_ && impl_->map_loaded.load(std::memory_order_acquire) &&
+      impl_->map_icp.hasMap();
 }
 
 bool NativeRelocalizer::supportsSeededRelocalization() const {
@@ -116,7 +141,11 @@ bool NativeRelocalizer::supportsSeededRelocalization() const {
 }
 
 bool NativeRelocalizer::supportsGlobalRelocalization() const {
-  return impl_ && impl_->bbs3d.available();
+  if (!impl_ || !impl_->map_loaded.load(std::memory_order_acquire)) {
+    return false;
+  }
+  std::lock_guard<std::mutex> lock(impl_->bbs3d_mutex);
+  return impl_->bbs3d.available() && impl_->bbs3d_map_loaded;
 }
 
 NativeRelocalizationResult NativeRelocalizer::relocalize(
@@ -124,7 +153,7 @@ NativeRelocalizationResult NativeRelocalizer::relocalize(
     const Pose3d& map_body_guess,
     const Pose3d& odom_body) const {
   NativeRelocalizationResult result;
-  if (!impl_ || !impl_->map_loaded) {
+  if (!impl_ || !impl_->map_loaded.load(std::memory_order_acquire)) {
     result.message = "native_relocalizer_map_not_loaded";
     return result;
   }
@@ -134,21 +163,29 @@ NativeRelocalizationResult NativeRelocalizer::relocalize(
     return result;
   }
 
-  M4F map_body = poseToMatrix(map_body_guess);
-  impl_->icp.setInput(scan);
-  if (!impl_->icp.align(map_body)) {
-    fillIcpDiagnostics(result, impl_->icp);
-    result.message = "native_relocalizer_icp_failed";
+  const std::uint64_t map_generation = impl_->map_icp.mapGeneration();
+  const Eigen::Matrix4f guess = poseToMatrix(map_body_guess);
+  const MapIcpResult icp_result =
+      impl_->map_icp.verifySeed(scan, guess, map_generation);
+  if (!icp_result.success) {
+    fillMapIcpDiagnostics(result, icp_result.diagnostics);
+    result.message = icp_result.message == "map_icp_generation_mismatch"
+        ? "native_relocalizer_map_generation_mismatch"
+        : "native_relocalizer_icp_failed";
     return result;
   }
 
   const Eigen::Matrix4f odom_body_matrix = poseToMatrix(odom_body);
-  const Eigen::Matrix4f map_odom = map_body * odom_body_matrix.inverse();
+  const Eigen::Matrix4f map_odom = icp_result.map_body * odom_body_matrix.inverse();
   result.success = true;
-  result.message = "native_relocalized";
-  result.map_body = matrixToPose(map_body);
+  result.message = icp_result.message == "map_icp_seed_verified"
+      ? "native_relocalized_seed_verified"
+      : icp_result.message == "map_icp_seed_planar_refined"
+          ? "native_relocalized_seed_planar_refined"
+          : "native_relocalized";
+  result.map_body = matrixToPose(icp_result.map_body);
   result.map_odom = matrixToPose(map_odom);
-  fillIcpDiagnostics(result, impl_->icp);
+  fillMapIcpDiagnostics(result, icp_result.diagnostics);
   return result;
 }
 
@@ -156,16 +193,8 @@ NativeRelocalizationResult NativeRelocalizer::globalRelocalize(
     const Cloud& scan_body,
     const Pose3d& odom_body) const {
   NativeRelocalizationResult result;
-  if (!impl_ || !impl_->map_loaded) {
+  if (!impl_ || !impl_->map_loaded.load(std::memory_order_acquire)) {
     result.message = "native_relocalizer_map_not_loaded";
-    return result;
-  }
-  if (!impl_->bbs3d.available()) {
-    result.message = "native_global_relocalizer_unavailable";
-    return result;
-  }
-  if (!impl_->bbs3d_map_loaded) {
-    result.message = "native_global_relocalizer_map_not_loaded";
     return result;
   }
   auto scan = toLocalizerCloud(scan_body);
@@ -174,27 +203,42 @@ NativeRelocalizationResult NativeRelocalizer::globalRelocalize(
     return result;
   }
 
-  const auto coarse = impl_->bbs3d.localize(scan);
+  const std::uint64_t map_generation = impl_->map_icp.mapGeneration();
+  BBS3DGlobalLocalizer::Result coarse;
+  {
+    std::lock_guard<std::mutex> lock(impl_->bbs3d_mutex);
+    if (!impl_->bbs3d.available()) {
+      result.message = "native_global_relocalizer_unavailable";
+      return result;
+    }
+    if (!impl_->bbs3d_map_loaded) {
+      result.message = "native_global_relocalizer_map_not_loaded";
+      return result;
+    }
+    coarse = impl_->bbs3d.localize(scan);
+  }
   if (!coarse.success) {
     result.message = std::string("native_global_relocalizer_failed: ") + coarse.message;
     return result;
   }
 
-  Eigen::Matrix4f map_body = coarse.pose;
-  impl_->icp.setInput(scan);
-  if (!impl_->icp.align(map_body)) {
-    fillIcpDiagnostics(result, impl_->icp);
-    result.message = "native_global_relocalizer_icp_refine_failed";
+  const MapIcpResult icp_result =
+      impl_->map_icp.refine(scan, coarse.pose, map_generation);
+  if (!icp_result.success) {
+    fillMapIcpDiagnostics(result, icp_result.diagnostics);
+    result.message = icp_result.message == "map_icp_generation_mismatch"
+        ? "native_global_relocalizer_map_generation_mismatch"
+        : "native_global_relocalizer_icp_refine_failed";
     return result;
   }
 
   const Eigen::Matrix4f odom_body_matrix = poseToMatrix(odom_body);
-  const Eigen::Matrix4f map_odom = map_body * odom_body_matrix.inverse();
+  const Eigen::Matrix4f map_odom = icp_result.map_body * odom_body_matrix.inverse();
   result.success = true;
   result.message = "native_global_relocalized";
-  result.map_body = matrixToPose(map_body);
+  result.map_body = matrixToPose(icp_result.map_body);
   result.map_odom = matrixToPose(map_odom);
-  fillIcpDiagnostics(result, impl_->icp);
+  fillMapIcpDiagnostics(result, icp_result.diagnostics);
   return result;
 }
 

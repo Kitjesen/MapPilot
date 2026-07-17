@@ -1,124 +1,116 @@
-"""Native DDS wire types owned by the message package."""
+"""Native DDS wire types owned by the message package.
 
-from .common import (
-    DDS_Header,
-    DDS_Point,
-    DDS_Quaternion,
-    DDS_Time,
-    DDS_Vector3,
-    Header,
-    Point,
-    Quaternion,
-    Time,
-    Vector3,
-)
-from .geometry import (
-    DDS_TFMessage,
-    DDS_Pose,
-    DDS_PoseStamped,
-    DDS_PoseWithCovariance,
-    DDS_Transform,
-    DDS_TransformStamped,
-    DDS_Twist,
-    DDS_TwistStamped,
-    DDS_TwistWithCovariance,
-    TFMessage,
-    Pose,
-    PoseStamped,
-    PoseWithCovariance,
-    Transform,
-    TransformStamped,
-    Twist,
-    TwistStamped,
-    TwistWithCovariance,
-)
-from .imu import DDS_Imu, Imu, dds_imu_to_imu
-from .livox import (
-    LivoxCustomMsg,
-    LivoxFrame,
-    LivoxPoint,
-    livox_frame_to_msg,
-    livox_msg_to_frame,
-    livox_msg_to_numpy,
-)
-from .nav import (
-    DDS_MapMetaData,
-    DDS_OccupancyGrid,
-    DDS_Odometry,
-    DDS_Path,
-    MapMetaData,
-    OccupancyGrid,
-    Odometry,
-    Path,
-)
-from .pointcloud import DDS_PointCloud2, DDS_PointField, PointCloud2, PointField
-from .scalar import DDS_Bool, DDS_Float32, DDS_String, Bool, Float32, String, Text
-from .slam import (
-    DDS_RelocalizationRequest,
-    DDS_RelocalizationResponse,
-    RelocalizationRequest,
-    RelocalizationResponse,
-)
+The package-level namespace preserves the historical ``message.dds_types``
+exports without importing every message family up front. In particular, Livox
+conversion helpers depend on NumPy-backed frame utilities, so those names must
+stay lazy for control-plane imports that only need navigation or scalar types.
+"""
 
-__all__ = [
-    "DDS_Float32",
-    "DDS_Bool",
-    "DDS_Header",
-    "DDS_Imu",
-    "DDS_MapMetaData",
-    "DDS_OccupancyGrid",
-    "DDS_Odometry",
-    "DDS_Path",
-    "DDS_Point",
-    "DDS_PointCloud2",
-    "DDS_PointField",
-    "DDS_Pose",
-    "DDS_PoseStamped",
-    "DDS_PoseWithCovariance",
-    "DDS_Quaternion",
-    "DDS_RelocalizationRequest",
-    "DDS_RelocalizationResponse",
-    "DDS_String",
-    "DDS_TFMessage",
-    "DDS_Time",
-    "DDS_Transform",
-    "DDS_TransformStamped",
-    "DDS_Twist",
-    "DDS_TwistStamped",
-    "DDS_TwistWithCovariance",
-    "DDS_Vector3",
-    "Float32",
-    "Bool",
-    "Header",
-    "Imu",
-    "LivoxCustomMsg",
-    "LivoxFrame",
-    "LivoxPoint",
-    "MapMetaData",
-    "OccupancyGrid",
-    "Odometry",
-    "Path",
-    "Point",
-    "PointCloud2",
-    "PointField",
-    "Pose",
-    "PoseStamped",
-    "PoseWithCovariance",
-    "Quaternion",
-    "RelocalizationRequest",
-    "RelocalizationResponse",
-    "String",
-    "TFMessage",
-    "Text",
-    "Time",
-    "Transform",
-    "TransformStamped",
-    "Twist",
-    "TwistStamped",
-    "TwistWithCovariance",
-    "Vector3",
-    "dds_imu_to_imu",
-    "livox_frame_to_msg",
-    "livox_msg_to_frame",
-    "livox_msg_to_numpy",
-]
+from __future__ import annotations
+
+from importlib import import_module
+from typing import Any
+
+_EXPORTS: dict[str, str] = {
+    "Bool": ".scalar",
+    "CameraInfo": ".camera",
+    "DDS_Bool": ".scalar",
+    "DDS_CameraInfo": ".camera",
+    "DDS_Float32": ".scalar",
+    "DDS_FinalVelocityCommand": ".geometry",
+    "DDS_GnssFix": ".gnss",
+    "DDS_GnssStatus": ".gnss",
+    "DDS_Header": ".common",
+    "DDS_Image": ".camera",
+    "DDS_Imu": ".imu",
+    "DDS_InspectionCommandAck": ".nav",
+    "DDS_InspectionCommandRequest": ".nav",
+    "DDS_InspectionEvidenceRequest": ".nav",
+    "DDS_InspectionEvidenceResult": ".nav",
+    "DDS_InspectionStatus": ".nav",
+    "DDS_MapMetaData": ".nav",
+    "DDS_NavigationCommandAck": ".nav",
+    "DDS_NavigationCommandRequest": ".nav",
+    "DDS_OccupancyGrid": ".nav",
+    "DDS_Odometry": ".nav",
+    "DDS_Path": ".nav",
+    "DDS_Point": ".common",
+    "DDS_PointCloud2": ".pointcloud",
+    "DDS_PointField": ".pointcloud",
+    "DDS_Pose": ".geometry",
+    "DDS_PoseStamped": ".geometry",
+    "DDS_PoseWithCovariance": ".geometry",
+    "DDS_Quaternion": ".common",
+    "DDS_RelocalizationRequest": ".slam",
+    "DDS_RelocalizationResponse": ".slam",
+    "DDS_String": ".scalar",
+    "DDS_TFMessage": ".geometry",
+    "DDS_Time": ".common",
+    "DDS_Transform": ".geometry",
+    "DDS_TransformStamped": ".geometry",
+    "DDS_Twist": ".geometry",
+    "DDS_TwistStamped": ".geometry",
+    "DDS_TwistWithCovariance": ".geometry",
+    "DDS_Vector3": ".common",
+    "Float32": ".scalar",
+    "FinalVelocityCommand": ".geometry",
+    "GnssFix": ".gnss",
+    "GnssStatus": ".gnss",
+    "Header": ".common",
+    "Image": ".camera",
+    "Imu": ".imu",
+    "InspectionCommandAck": ".nav",
+    "InspectionCommandRequest": ".nav",
+    "InspectionEvidenceRequest": ".nav",
+    "InspectionEvidenceResult": ".nav",
+    "InspectionStatus": ".nav",
+    "LivoxCustomMsg": ".livox",
+    "LivoxFrame": ".livox",
+    "LivoxPoint": ".livox",
+    "MapMetaData": ".nav",
+    "NavigationCommandAck": ".nav",
+    "NavigationCommandRequest": ".nav",
+    "OccupancyGrid": ".nav",
+    "Odometry": ".nav",
+    "Path": ".nav",
+    "Point": ".common",
+    "PointCloud2": ".pointcloud",
+    "PointField": ".pointcloud",
+    "Pose": ".geometry",
+    "PoseStamped": ".geometry",
+    "PoseWithCovariance": ".geometry",
+    "Quaternion": ".common",
+    "RelocalizationRequest": ".slam",
+    "RelocalizationResponse": ".slam",
+    "String": ".scalar",
+    "TFMessage": ".geometry",
+    "Text": ".scalar",
+    "Time": ".common",
+    "Transform": ".geometry",
+    "TransformStamped": ".geometry",
+    "Twist": ".geometry",
+    "TwistStamped": ".geometry",
+    "TwistWithCovariance": ".geometry",
+    "Vector3": ".common",
+    "dds_imu_to_imu": ".imu",
+    "livox_frame_to_msg": ".livox",
+    "livox_msg_to_frame": ".livox",
+    "livox_msg_to_numpy": ".livox",
+}
+
+__all__ = list(_EXPORTS)
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        module_name = _EXPORTS[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    value = getattr(import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted([*globals(), *__all__])

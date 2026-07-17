@@ -2,6 +2,8 @@
 
 #include "nav_kernel/terrain_core.hpp"
 
+#include <chrono>
+#include <cmath>
 #include <vector>
 
 using namespace nav_kernel;
@@ -71,4 +73,78 @@ TEST(TerrainCore, NoDataObstacleEmitsSyntheticBlockingCellsAfterMotion) {
   EXPECT_GT(after_motion.n_points, 0);
   ASSERT_GE(after_motion.terrain_points.size(), 4u);
   EXPECT_FLOAT_EQ(after_motion.terrain_points[3], 1.25f);
+}
+
+TEST(TerrainCore, RepeatedStationaryScansKeepRollingStorageBounded) {
+  TerrainParams p = smallTerrainParams();
+  p.terrainVoxelHalfWidth = 6;
+  p.planarVoxelHalfWidth = 30;
+  p.planarVoxelSize = 0.2;
+  p.scanVoxelSize = 0.05;
+  p.maxPointsPerVoxel = 192;
+  p.maxStoredPoints = 200;
+  p.noDecayDis = 4.0;
+  p.voxelPointUpdateThre = 1;
+  p.voxelTimeUpdateThre = 0.0;
+
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  scan.reserve(4000 * 4);
+  for (int i = 0; i < 4000; ++i) {
+    const float angle = static_cast<float>(i) * 0.0174532925f;
+    const float radius = 0.5f + static_cast<float>(i % 60) * 0.08f;
+    scan.push_back(std::cos(angle) * radius);
+    scan.push_back(std::sin(angle) * radius);
+    scan.push_back(static_cast<float>(i % 7) * 0.04f);
+    scan.push_back(1.0f);
+  }
+
+  for (int frame = 0; frame < 120; ++frame) {
+    terrain.process(scan.data(), static_cast<int>(scan.size() / 4), frame * 0.1);
+  }
+
+  EXPECT_LE(terrain.storedPointCount(), p.maxStoredPoints);
+
+  const auto start = std::chrono::steady_clock::now();
+  const TerrainResult result =
+      terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 12.1);
+  const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - start)
+                                .count();
+  EXPECT_LE(result.terrain_points.size() / 4, terrain.storedPointCount());
+  EXPECT_LT(elapsed_ms, 250.0);
+}
+
+TEST(TerrainCore, CompactionPreservesHighObstacleEvidence) {
+  TerrainParams p = smallTerrainParams();
+  p.scanVoxelSize = 0.01;
+  p.maxPointsPerVoxel = 1;
+  p.maxStoredPoints = 25;
+  p.voxelPointUpdateThre = 1;
+  p.voxelTimeUpdateThre = 0.0;
+
+  TerrainAnalysisCore terrain(p);
+  terrain.updateVehicle(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+
+  std::vector<float> scan;
+  for (int i = 0; i < 100; ++i) {
+    scan.insert(scan.end(), {
+        0.001f * static_cast<float>(i % 10),
+        0.001f * static_cast<float>(i / 10),
+        0.0f,
+        1.0f,
+    });
+  }
+  scan.insert(scan.end(), {0.005f, 0.005f, 0.8f, 1.0f});
+
+  const TerrainResult result =
+      terrain.process(scan.data(), static_cast<int>(scan.size() / 4), 0.0);
+  float max_z = -1000.0f;
+  for (std::size_t i = 0; i < result.terrain_points.size() / 4; ++i) {
+    max_z = std::max(max_z, result.terrain_points[i * 4 + 2]);
+  }
+  EXPECT_GE(max_z, 0.79f);
+  EXPECT_LE(terrain.storedPointCount(), p.maxStoredPoints);
 }

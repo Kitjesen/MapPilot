@@ -6,11 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shlex
 import socket
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
@@ -54,6 +52,49 @@ def port_open(host: str, port: int) -> bool:
         return True
     except Exception:
         return False
+
+
+def _read_environment_file(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    values: dict[str, str] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in {"LINGTU_BRAINSTEM_HOST", "LINGTU_BRAINSTEM_PORT"}:
+            continue
+        values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def _brainstem_endpoint(
+    env: Mapping[str, str] = os.environ,
+    env_path: Path | None = None,
+) -> tuple[str, int]:
+    if env_path is None:
+        config_dir = Path(env.get("LINGTU_CONFIG_DIR", "/opt/lingtu/config"))
+        env_path = config_dir / "brainstem.env"
+    configured = _read_environment_file(env_path)
+    host = env.get("LINGTU_BRAINSTEM_HOST", "").strip() or configured.get(
+        "LINGTU_BRAINSTEM_HOST", ""
+    ).strip()
+    port_text = env.get("LINGTU_BRAINSTEM_PORT", "").strip() or configured.get(
+        "LINGTU_BRAINSTEM_PORT", "13145"
+    ).strip()
+    try:
+        port = int(port_text)
+    except ValueError:
+        port = 13145
+    if not 1 <= port <= 65535:
+        port = 13145
+    return host, port
 
 
 def run(cmd: list[str], timeout: int = 5) -> str:
@@ -137,21 +178,6 @@ def _count_live_stages(stages: Any) -> tuple[int, int, int]:
     return (len(stages), live, missing)
 
 
-def ros2_topic_list() -> str:
-    setup_files = [
-        os.environ.get("LINGTU_ROS_SETUP", "/opt/ros/humble/setup.bash"),
-        os.environ.get(
-            "LINGTU_ROS_OVERLAY_SETUP",
-            "/opt/nova/lingtu/v1.8.0/install/setup.bash",
-        ),
-    ]
-    source_cmds = " && ".join(
-        f"[ -f {shlex.quote(path)} ] && source {shlex.quote(path)} || true"
-        for path in setup_files
-    )
-    return run(["bash", "-lc", f"{source_cmds} && ros2 topic list 2>/dev/null"], timeout=5)
-
-
 def run_gateway_dataflow_checks(args: argparse.Namespace) -> None:
     print("\n  --- Runtime Data Flow (Gateway) ---")
     try:
@@ -170,9 +196,7 @@ def run_gateway_dataflow_checks(args: argparse.Namespace) -> None:
     control_boundary = _nested(dataflow, "control_boundary")
     runtime_boundary = _nested(dataflow, "runtime_boundary")
     topics_total, topics_live = _count_live_topics(dataflow.get("topics"))
-    stages_total, stages_live, stages_missing = _count_live_stages(
-        dataflow.get("stage_evidence")
-    )
+    stages_total, stages_live, stages_missing = _count_live_stages(dataflow.get("stage_evidence"))
 
     check("Gateway runtime dataflow", True, args.gateway_url)
     check("ModulePort bus primary", module_port_bus.get("primary") is True)
@@ -192,100 +216,6 @@ def run_gateway_dataflow_checks(args: argparse.Namespace) -> None:
         stages_total > 0,
         f"{stages_live}/{stages_total} live, {stages_missing} missing",
     )
-
-
-def run_ros2_compat_checks(args: argparse.Namespace) -> None:
-    print("\n  --- ROS2 Compatibility Topics ---")
-    topics = ros2_topic_list()
-    for topic in [
-        "/slam/odometry",
-        "/slam/map_cloud",
-        "/slam/registered_cloud",
-        "/camera/color/image_raw",
-        "/camera/depth/image_raw",
-        "/lidar/raw_frame",
-    ]:
-        check(topic, topic in topics)
-
-    slam_was_off = not service_active("slam")
-    auto_started_slam = False
-    if slam_was_off and os.environ.get("LINGTU_DOCTOR_AUTOSTART_SLAM", "0") == "1":
-        print("\n  [..] Starting slam for ROS2 compatibility data flow test...")
-        subprocess.run(
-            ["sudo", "systemctl", "start", "slam"],
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-        time.sleep(8)
-        auto_started_slam = True
-    elif slam_was_off:
-        skip(
-            "slam",
-            "inactive; set LINGTU_DOCTOR_AUTOSTART_SLAM=1 for ROS2 compat flow checks",
-        )
-
-    print("\n  --- ROS2 Compatibility Data Flow (3s) ---")
-    sys.path.insert(0, str(REPO_ROOT / "src"))
-    try:
-        from runtime.adapters.ros2.context import (
-            ensure_rclpy,
-            get_shared_executor,
-            shutdown_shared_executor,
-        )
-
-        ensure_rclpy()
-        from nav_msgs.msg import Odometry
-        from rclpy.node import Node
-        from rclpy.qos import QoSProfile, ReliabilityPolicy
-        from sensor_msgs.msg import Image, PointCloud2
-
-        qos = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, depth=5)
-        counts = {"odom": 0, "cloud": 0, "color": 0, "depth": 0}
-        node = Node("doctor")
-        node.create_subscription(
-            Odometry,
-            "/slam/odometry",
-            lambda _msg: counts.__setitem__("odom", counts["odom"] + 1),
-            qos,
-        )
-        node.create_subscription(
-            PointCloud2,
-            "/slam/map_cloud",
-            lambda _msg: counts.__setitem__("cloud", counts["cloud"] + 1),
-            qos,
-        )
-        node.create_subscription(
-            Image,
-            "/camera/color/image_raw",
-            lambda _msg: counts.__setitem__("color", counts["color"] + 1),
-            qos,
-        )
-        node.create_subscription(
-            Image,
-            "/camera/depth/image_raw",
-            lambda _msg: counts.__setitem__("depth", counts["depth"] + 1),
-            qos,
-        )
-        executor = get_shared_executor()
-        executor.add_node(node)
-        time.sleep(3)
-        check("SLAM odometry", counts["odom"] > 0, "%d msgs (%.0f Hz)" % (counts["odom"], counts["odom"] / 3))
-        check("SLAM cloud", counts["cloud"] > 0, "%d msgs" % counts["cloud"])
-        check("Camera color", counts["color"] > 0, "%d msgs" % counts["color"])
-        check("Camera depth", counts["depth"] > 0, "%d msgs" % counts["depth"])
-        node.destroy_node()
-        shutdown_shared_executor()
-    except Exception as exc:
-        skip("ROS2 compatibility data flow", str(exc))
-    finally:
-        if auto_started_slam:
-            subprocess.run(
-                ["sudo", "systemctl", "stop", "slam"],
-                capture_output=True,
-                timeout=5,
-                check=False,
-            )
 
 
 def run_service_checks() -> None:
@@ -310,7 +240,14 @@ def run_hardware_checks() -> None:
 
 def run_port_checks() -> None:
     print("\n  --- Ports ---")
-    check("brainstem gRPC :13145", port_open("127.0.0.1", 13145))
+    brainstem_host, brainstem_port = _brainstem_endpoint()
+    if brainstem_host:
+        check(
+            f"brainstem gRPC {brainstem_host}:{brainstem_port}",
+            port_open(brainstem_host, brainstem_port),
+        )
+    else:
+        skip("brainstem gRPC", "LINGTU_BRAINSTEM_HOST is not configured")
     for name, port in [("Gateway :5050", 5050), ("MCP :8090", 8090)]:
         if port_open("127.0.0.1", port):
             check(name, True)
@@ -335,17 +272,9 @@ def run_map_checks() -> None:
     print("\n  --- Maps ---")
     map_dir = os.environ.get("NAV_MAP_DIR", os.path.expanduser("~/data/nova/maps"))
     if os.path.isdir(map_dir):
-        maps = [
-            name
-            for name in os.listdir(map_dir)
-            if os.path.isdir(os.path.join(map_dir, name)) and name != "active"
-        ]
+        maps = [name for name in os.listdir(map_dir) if os.path.isdir(os.path.join(map_dir, name)) and name != "active"]
         active_path = os.path.join(map_dir, "active")
-        active = (
-            os.path.basename(os.readlink(active_path))
-            if os.path.islink(active_path)
-            else "none"
-        )
+        active = os.path.basename(os.readlink(active_path)) if os.path.islink(active_path) else "none"
         check("Maps directory", True, "%d maps, active=%s" % (len(maps), active))
     else:
         check("Maps directory", False, map_dir)
@@ -355,7 +284,7 @@ def run_python_checks() -> None:
     print("\n  --- Python ---")
     sys.path.insert(0, str(REPO_ROOT / "src"))
     try:
-        import lingtu  # noqa: F401
+        import lingtu
 
         check("lingtu importable", True)
     except Exception as exc:
@@ -398,18 +327,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Skip Gateway runtime dataflow checks.",
     )
-    parser.add_argument(
-        "--ros2",
-        action="store_true",
-        help="Run legacy ROS2 topic and rclpy compatibility checks.",
-    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(list(argv or sys.argv[1:]))
-    run_ros2 = args.ros2 or os.environ.get("LINGTU_DOCTOR_ROS2", "0") == "1"
-
     print("\n  \033[1mLingTu Doctor\033[0m\n")
     run_service_checks()
     run_hardware_checks()
@@ -420,11 +342,6 @@ def main(argv: list[str] | None = None) -> int:
         skip("Gateway runtime dataflow", "skipped")
     else:
         run_gateway_dataflow_checks(args)
-    if run_ros2:
-        run_ros2_compat_checks(args)
-    else:
-        print("\n  --- ROS2 Compatibility ---")
-        skip("ROS2 topic/rclpy checks", "use --ros2 or LINGTU_DOCTOR_ROS2=1")
     run_map_checks()
     run_python_checks()
     print()

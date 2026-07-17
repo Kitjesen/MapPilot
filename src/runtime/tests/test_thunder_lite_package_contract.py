@@ -10,11 +10,12 @@ from pathlib import Path
 import yaml
 from tools import package_thunder_lite as packager
 from tools.validate import validate_thunder_lite_package as validator
+
+from lingtu.plugin_seed import install_builtin_plugin_catalog
 from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
 from runtime.blueprints.stacks.autonomy_chain import autonomy_stack_config
 from runtime.profiles.endpoints import resolve_runtime_run_spec
 from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
-from lingtu.plugin_seed import install_builtin_plugin_catalog
 
 ROOT = Path(__file__).resolve().parents[3]
 INTERNAL_PACKAGE_ROOTS = frozenset(
@@ -27,7 +28,6 @@ INTERNAL_PACKAGE_ROOTS = frozenset(
         "memory",
         "nav",
         "slam",
-        "webrtc",
     }
 )
 
@@ -91,10 +91,7 @@ def test_thunder_lite_package_manifest_names_minimal_runtime_surface() -> None:
     assert manifest["runtime"]["expected_spec"]["module_transport"] == "local"
     assert manifest["runtime"]["expected_spec"]["endpoint_transport"] == "local"
     assert manifest["runtime"]["expected_spec"]["simulation_only"] is False
-    assert (
-        manifest["runtime"]["expected_spec"]["command_sink"]
-        == "hardware_driver_after_cmd_vel_mux"
-    )
+    assert manifest["runtime"]["expected_spec"]["command_sink"] == "driver"
     assert "scripts/deploy/thunder/runtime-env.sh" in manifest["deploy"]["required_files"]
 
 
@@ -106,17 +103,12 @@ def test_thunder_lite_package_manifest_declares_package_boundary() -> None:
     omit_paths = {validator._normalize_manifest_path(path) for path in package["omit_paths"]}
 
     assert {
-        validator._normalize_manifest_path(path)
-        for path in validator.REQUIRED_PACKAGE_INCLUDE_PATHS
+        validator._normalize_manifest_path(path) for path in validator.REQUIRED_PACKAGE_INCLUDE_PATHS
     } <= include_paths
     assert {
-        validator._normalize_manifest_path(path)
-        for path in validator.REQUIRED_PACKAGE_EXCLUDE_PATHS
+        validator._normalize_manifest_path(path) for path in validator.REQUIRED_PACKAGE_EXCLUDE_PATHS
     } <= exclude_paths
-    assert {
-        validator._normalize_manifest_path(path)
-        for path in validator.REQUIRED_PACKAGE_OMIT_PATHS
-    } <= omit_paths
+    assert {validator._normalize_manifest_path(path) for path in validator.REQUIRED_PACKAGE_OMIT_PATHS} <= omit_paths
     assert "src/localization" not in include_paths
     assert "src/*/adapters/ros2" not in include_paths
     assert "config/robots/thunder.yaml" in include_paths
@@ -145,9 +137,7 @@ def test_requirements_lite_contains_only_minimal_python_runtime_dependencies() -
 
 def test_runtime_env_defaults_match_thunder_lite_runtime_spec() -> None:
     defaults = validator._parse_shell_default_env(
-        (ROOT / "scripts/deploy/thunder/runtime-env.sh").read_text(
-            encoding="utf-8-sig"
-        )
+        (ROOT / "scripts/deploy/thunder/runtime-env.sh").read_text(encoding="utf-8-sig")
     )
 
     assert defaults["LINGTU_PROFILE"] == "thunder-lite"
@@ -194,10 +184,7 @@ def test_resolved_thunder_lite_profile_builds_only_local_lite_control_graph() ->
     config = resolve_profile_config("thunder-lite")
     bp = blueprint_for_resolved_profile(canonical_profile_name("thunder-lite"), config)
     names = {entry.name for entry in bp._entries}
-    wires = {
-        f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-        for wire in bp._wires
-    }
+    wires = {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires}
 
     assert {
         "ThunderDriver",
@@ -216,12 +203,12 @@ def test_resolved_thunder_lite_profile_builds_only_local_lite_control_graph() ->
         "GatewayModule",
         "MCPServerModule",
         "ExternalServiceManagerModule",
-        "DeviceManager",
+        "hw",
         "nav.in",
         "nav.out",
         "map.out",
         "SemanticPlannerModule",
-        "nav.maps",
+        "maps.service",
     }.isdisjoint(names)
     assert "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel" in wires
     assert "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel" not in wires
@@ -274,11 +261,7 @@ def test_thunder_lite_package_validator_rejects_lite_excluded_graph_module() -> 
         {"name": "GatewayModule", "module_cls": FakeGateway},
     )()
     fake_blueprint = type("FakeBlueprint", (), {"_entries": [fake_entry]})()
-    manifest = yaml.safe_load(
-        (ROOT / "config" / "thunder_lite_package.yaml").read_text(
-            encoding="utf-8-sig"
-        )
-    )
+    manifest = yaml.safe_load((ROOT / "config" / "thunder_lite_package.yaml").read_text(encoding="utf-8-sig"))
     blockers: list[str] = []
 
     validator._validate_product_graph(
@@ -310,7 +293,7 @@ def test_thunder_lite_package_validator_rejects_missing_required_package_omit() 
     manifest["package"]["omit_paths"] = [
         path
         for path in manifest["package"]["omit_paths"]
-        if validator._normalize_manifest_path(path) != "src/runtime/dds.py"
+        if validator._normalize_manifest_path(path) != "src/runtime/adapters/dds/reader.py"
     ]
     blockers: list[str] = []
 
@@ -349,18 +332,17 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "cli/repl.py" not in copied_files
     assert "cli/runtime_audit.py" not in copied_files
     assert "cli/runtime_extra.py" not in copied_files
-    assert "src/runtime/dds.py" not in copied_files
-    assert "src/runtime/dimos_runtime_dataflow.py" not in copied_files
-    assert "src/runtime/dynamic_filter.py" not in copied_files
+    assert "src/runtime/adapters/dds/reader.py" not in copied_files
+    assert "sim/diagnostics/dataflow_report.py" not in copied_files
+    assert "sim/diagnostics/gap_report.py" not in copied_files
     assert "src/runtime/external_service_module.py" not in copied_files
-    assert "src/runtime/gateway_runtime_acceptance.py" not in copied_files
-    assert "src/runtime/inspection_acceptance.py" not in copied_files
-    assert "src/runtime/map_save.py" not in copied_files
-    assert "src/runtime/native_install.py" not in copied_files
-    assert "src/runtime/product_field_check.py" not in copied_files
-    assert "src/runtime/runtime_evidence.py" not in copied_files
-    assert "src/runtime/runtime_validation_gates.py" not in copied_files
-    assert "src/runtime/same_source_map_artifacts.py" not in copied_files
+    assert "src/diagnostics/field/gateway_acceptance.py" not in copied_files
+    assert "src/diagnostics/field/inspection.py" not in copied_files
+    assert "src/runtime/adapters/ros2/native_install.py" not in copied_files
+    assert "src/diagnostics/field/field_check.py" not in copied_files
+    assert "src/diagnostics/field/evidence.py" not in copied_files
+    assert "src/diagnostics/field/gates.py" not in copied_files
+    assert not any(path.startswith("src/maps/") for path in copied_files)
     assert "src/runtime/blueprints/full_stack_wiring.py" not in copied_files
     assert "src/runtime/blueprints/adapters/driver_ros2_runtime.py" not in copied_files
     assert "src/runtime/blueprints/adapters/mapping_slam.py" not in copied_files
@@ -370,7 +352,6 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "src/runtime/blueprints/stacks/gateway.py" not in copied_files
     assert "src/runtime/blueprints/stacks/navigation.py" in copied_files
     assert "src/runtime/blueprints/stacks/navigation_core.py" in copied_files
-    assert "src/runtime/blueprints/stacks/navigation_io.py" in copied_files
     assert "src/runtime/blueprints/stacks/autonomy_chain.py" in copied_files
     assert "src/runtime/blueprints/stacks/exploration_goal_sources.py" in copied_files
     assert "src/runtime/blueprints/wires/slam.py" not in copied_files
@@ -382,8 +363,8 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "src/nav/services/plan/global_planner/service.py" not in copied_files
     assert "src/nav/lite_planner_backend.py" not in copied_files
     assert "src/nav/plan_safety.py" not in copied_files
-    assert "src/nav/mission/navigation.py" in copied_files
-    assert "src/nav/mission/tracking/waypoint_tracker.py" in copied_files
+    assert "src/nav/navigation.py" in copied_files
+    assert "src/nav/tracking/waypoint_tracker.py" in copied_files
     assert "src/nav/kernel/__init__.py" in copied_files
     assert "src/nav/kernel/loader.py" in copied_files
     assert "src/nav/kernel/paths.py" in copied_files
@@ -392,8 +373,7 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "src/nav/services/plan/compat/direct.py" in copied_files
     assert "src/nav/services/plan/compat/direct_path.py" in copied_files
     assert "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/Dockerfile.build" not in copied_files
-    assert "src/nav/mission/model/frame_contract.py" in copied_files
-    assert "src/nav/mission/tracking/waypoint_tracker.py" in copied_files
+    assert "src/nav/model/frame_contract.py" in copied_files
     assert "src/nav/services/safety/safety_ring.py" in copied_files
     assert "src/nav/services/safety/velocity_mux.py" in copied_files
     assert not any(path.startswith("src/runtime/devices/") for path in copied_files)
@@ -404,7 +384,7 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
 
 def test_thunder_lite_packager_exclude_paths_support_globs() -> None:
     assert packager._is_excluded(
-        "src/nav/adapters/ros2/bridge.py",
+        "src/localization/adapters/ros2/bridge.py",
         ("src/*/adapters/ros2/",),
     )
     assert not packager._is_excluded(
@@ -505,46 +485,22 @@ def test_thunder_lite_packager_builds_filtered_package(tmp_path: Path) -> None:
     assert not (output_dir / "src" / "core" / "product_field_check.py").exists()
     assert (output_dir / "src" / "drivers" / "real" / "thunder").is_dir()
     assert not (output_dir / "src" / "nav" / "global_planner.py").exists()
-    assert not (
-        output_dir / "src" / "nav" / "planning" / "global_planner.py"
-    ).exists()
+    assert not (output_dir / "src" / "nav" / "planning" / "global_planner.py").exists()
     assert not (output_dir / "src" / "nav" / "lite_planner_backend.py").exists()
     assert not (output_dir / "src" / "nav" / "plan_safety.py").exists()
-    assert (output_dir / "src" / "nav" / "mission" / "navigation.py").is_file()
-    assert (
-        output_dir / "src" / "nav" / "mission" / "tracking" / "waypoint_tracker.py"
-    ).is_file()
+    assert (output_dir / "src" / "nav" / "navigation.py").is_file()
+    assert (output_dir / "src" / "nav" / "tracking" / "waypoint_tracker.py").is_file()
     assert (output_dir / "src" / "nav" / "services" / "plan" / "factory.py").is_file()
-    assert (
-        output_dir / "src" / "nav" / "services" / "plan" / "compat" / "direct.py"
-    ).is_file()
-    assert (
-        output_dir
-        / "src"
-        / "nav"
-        / "services"
-        / "plan"
-        / "compat"
-        / "direct_path.py"
-    ).is_file()
-    assert (
-        output_dir / "src" / "nav" / "mission" / "model" / "frame_contract.py"
-    ).is_file()
+    assert (output_dir / "src" / "nav" / "services" / "plan" / "compat" / "direct.py").is_file()
+    assert (output_dir / "src" / "nav" / "services" / "plan" / "compat" / "direct_path.py").is_file()
+    assert (output_dir / "src" / "nav" / "model" / "frame_contract.py").is_file()
     assert (output_dir / "src" / "nav" / "services" / "safety" / "safety_ring.py").is_file()
     assert (output_dir / "src" / "nav" / "services" / "safety" / "velocity_mux.py").is_file()
     assert not (output_dir / "src" / "core" / "blueprints" / "full_stack_wiring.py").exists()
-    assert not (
-        output_dir / "src" / "core" / "blueprints" / "adapters" / "driver_ros2_runtime.py"
-    ).exists()
-    assert not (
-        output_dir / "src" / "core" / "blueprints" / "adapters" / "mapping_slam.py"
-    ).exists()
-    assert not (
-        output_dir / "src" / "core" / "blueprints" / "adapters" / "navigation_io.py"
-    ).exists()
-    assert not (
-        output_dir / "src" / "core" / "blueprints" / "adapters" / "perception_gateway.py"
-    ).exists()
+    assert not (output_dir / "src" / "core" / "blueprints" / "adapters" / "driver_ros2_runtime.py").exists()
+    assert not (output_dir / "src" / "core" / "blueprints" / "adapters" / "mapping_slam.py").exists()
+    assert not (output_dir / "src" / "core" / "blueprints" / "adapters" / "navigation_io.py").exists()
+    assert not (output_dir / "src" / "core" / "blueprints" / "adapters" / "perception_gateway.py").exists()
     assert not (output_dir / "src" / "core" / "blueprints" / "stacks" / "localization.py").exists()
     assert not (output_dir / "src" / "core" / "blueprints" / "stacks" / "gateway.py").exists()
     assert not (output_dir / "src" / "core" / "blueprints" / "wires").exists()
@@ -566,8 +522,8 @@ def test_thunder_lite_filtered_package_can_setup_direct_navigation(tmp_path: Pat
     env = dict(os.environ)
     env["PYTHONPATH"] = str(output_dir / "src")
     script = (
-        "from nav.mission.navigation import Navigation\n"
-        "m = Navigation(planner='direct', tomogram='')\n"
+        "from nav.navigation import Navigation\n"
+        "m = Navigation(planner='direct')\n"
         "m.setup()\n"
         "print(type(m._planner_svc).__name__)\n"
         "print(m._planner_svc.has_map)\n"
@@ -626,8 +582,8 @@ def test_thunder_lite_filtered_package_setup_does_not_load_excluded_heavy_stacks
     script = (
         "import json\n"
         "import sys\n"
-        "from nav.mission.navigation import Navigation\n"
-        "m = Navigation(planner='direct', tomogram='')\n"
+        "from nav.navigation import Navigation\n"
+        "m = Navigation(planner='direct')\n"
         "m.setup()\n"
         "excluded = ('nav.services.plan.global_planner.algorithm.pct.vendor', 'runtime.adapters.ros2', 'slam')\n"
         "loaded = sorted(\n"

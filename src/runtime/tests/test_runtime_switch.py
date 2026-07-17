@@ -4,21 +4,20 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.runtime_profiles import PROFILES
-from runtime.profiles.resolver import resolve_profile_config
+from runtime.profiles.catalog.runtime_paths import (
+    DEFAULT_PLANNING_FRAME_ID,
+    RUNTIME_ODOM_FRAME_ID,
+)
 from runtime.profiles.endpoints import (
     RUNTIME_ENDPOINTS,
     RuntimeEndpointError,
     resolve_runtime_run_spec,
 )
-from runtime.profiles.catalog.runtime_paths import (
-    DEFAULT_PLANNING_FRAME_ID,
-    RUNTIME_ODOM_FRAME_ID,
-)
+from runtime.profiles.resolver import resolve_profile_config
 from runtime.runtime_interface import (
     DATA_SOURCE_CONTRACTS,
-    FRAMES,
     FRAME_LINKS,
+    FRAMES,
     PROFILE_DATA_SOURCE_BINDINGS,
     RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
     TOPICS,
@@ -26,6 +25,7 @@ from runtime.runtime_interface import (
     runtime_topic_allowed_frame_ids,
     runtime_topic_default_frame_ids,
 )
+from runtime.runtime_profiles import PROFILES
 from runtime.runtime_switch import (
     compare_runtime_switch,
     runtime_spec_summary,
@@ -57,7 +57,7 @@ def test_sim_to_real_switch_changes_command_sink_and_simulation_only():
     assert diff["from"]["lidar_extrinsic_profile"] == "mujoco_thunder_v3"
     assert diff["to"]["lidar_extrinsic_profile"] == "real_mid360"
     assert diff["from"]["command_sink"] == "mujoco_velocity_adapter"
-    assert diff["to"]["command_sink"] == "hardware_driver_after_cmd_vel_mux"
+    assert diff["to"]["command_sink"] == "driver"
     assert diff["from"]["frame_links"]["map_to_odom"] == {
         "parent": "map",
         "child": "odom",
@@ -95,7 +95,7 @@ def test_sim_to_real_switch_changes_command_sink_and_simulation_only():
         TOPICS.imu,
     ]
     assert diff["to"]["resolved_runtime_data_flow"][-1]["outputs"] == [
-        "hardware_driver_after_cmd_vel_mux",
+        "driver",
     ]
     assert diff["from"]["simulation_only"] is True
     assert diff["to"]["simulation_only"] is False
@@ -135,6 +135,7 @@ def test_runtime_spec_summary_is_json_native():
     assert summary["module_transport"] == "local"
     assert summary["endpoint_transport"] == "local"
     assert summary["endpoint_contract"] is None
+    assert summary["route_contract"] == "sim"
     assert summary["required_topic_frame_ids"] == []
     assert TOPICS.raw_lidar_points in summary["runtime_data_flow_topics"]
     assert isinstance(summary["runtime_data_flow_topics"], list)
@@ -143,11 +144,8 @@ def test_runtime_spec_summary_is_json_native():
         TOPICS.raw_imu,
     ]
     assert isinstance(summary["resolved_runtime_data_flow"][0]["inputs"], list)
-    assert summary["runtime_data_flow_stage_algorithm_interfaces"][
-        "global_planning"
-    ] == [
+    assert summary["runtime_data_flow_stage_algorithm_interfaces"]["global_planning"] == [
         "global_planning",
-        "pct_global_planning",
         "octoplanner3d_global_planning",
     ]
     assert summary["launcher_args"] == ["explore"]
@@ -157,16 +155,28 @@ def test_runtime_spec_summary_is_json_native():
     assert "warnings" in summary["validation"]
 
 
+def test_runtime_switch_validates_route_contract_env() -> None:
+    config = resolve_profile_config("nav")
+    spec = resolve_runtime_run_spec("nav", config)
+
+    assert spec.route_contract == "robot"
+    assert validate_runtime_switch(spec).ok is True
+
+    broken = replace(spec, env={**dict(spec.env), "LINGTU_ROUTE_CONTRACT": "sim"})
+
+    validation = validate_runtime_switch(broken)
+
+    assert validation.ok is False
+    assert "env route contract does not match run spec" in validation.blockers
+
+
 @pytest.mark.sim
 def test_runtime_summary_reports_mujoco_explore_product_semantic_overrides():
     config = resolve_profile_config("explore", runtime_endpoint="mujoco_live")
     spec = resolve_runtime_run_spec("explore", config)
 
     summary = runtime_spec_summary(spec)
-    overrides = {
-        item["field"]: item
-        for item in summary["product_semantic_overrides"]
-    }
+    overrides = {item["field"]: item for item in summary["product_semantic_overrides"]}
 
     assert validate_runtime_switch(spec).ok is True
     assert overrides["llm"]["product_value"] == "qwen"
@@ -183,10 +193,7 @@ def test_runtime_summary_reports_tare_endpoint_frame_override():
     spec = resolve_runtime_run_spec("tare_explore", config)
 
     summary = runtime_spec_summary(spec)
-    overrides = {
-        item["field"]: item
-        for item in summary["product_semantic_overrides"]
-    }
+    overrides = {item["field"]: item for item in summary["product_semantic_overrides"]}
 
     assert validate_runtime_switch(spec).ok is True
     assert "planner" not in overrides
@@ -198,9 +205,7 @@ def test_runtime_summary_reports_tare_endpoint_frame_override():
     }
     assert "tare_scenario" not in overrides
     assert "gateway_port" not in overrides
-    assert "runtime compatibility override: planning_frame_id map -> odom" in (
-        summary["validation"]["warnings"]
-    )
+    assert "runtime compatibility override: planning_frame_id map -> odom" in (summary["validation"]["warnings"])
 
 
 @pytest.mark.parametrize(
@@ -296,11 +301,7 @@ def test_in_process_sim_profiles_resolve_without_runtime_endpoint(
     }
     assert validate_runtime_switch(spec).ok is True
     if data_source == "mujoco_module_graph":
-        topics = {
-            topic
-            for stage in spec.resolved_runtime_data_flow
-            for topic in stage["inputs"] + stage["outputs"]
-        }
+        topics = {topic for stage in spec.resolved_runtime_data_flow for topic in stage["inputs"] + stage["outputs"]}
         assert TOPICS.height_rays in source.normalized_outputs
         assert TOPICS.height_rays in source.algorithm_context_outputs
         assert TOPICS.height_rays in topics
@@ -315,7 +316,6 @@ def test_in_process_sim_profiles_resolve_without_runtime_endpoint(
     ),
     (
         ("sim_mujoco_live", "mujoco_live", "mujoco_fastlio2_live", "mujoco_fastlio2_live"),
-        ("sim_mujoco_pct_live", "mujoco_live", "mujoco_fastlio2_live", "mujoco_fastlio2_live"),
         ("sim_gazebo", "gazebo", "gazebo_industrial", "gazebo_industrial"),
         ("sim_industrial", "gazebo", "gazebo_industrial", "gazebo_industrial"),
         ("sim_cmu_tare", "cmu_unity", "cmu_unity_external", "cmu_unity_external"),
@@ -356,9 +356,7 @@ def test_external_launcher_without_action_contract_is_rejected():
     with pytest.raises(RuntimeEndpointError) as exc_info:
         resolve_runtime_run_spec("explore", config)
 
-    assert "external launcher args missing for profile 'explore'" in str(
-        exc_info.value
-    )
+    assert "external launcher args missing for profile 'explore'" in str(exc_info.value)
 
 
 def test_external_launcher_extra_args_are_explicit_override():
@@ -376,7 +374,7 @@ def test_switch_guard_rejects_simulation_target_with_hardware_sink():
     bad_spec = sim_spec.__class__(
         **{
             **sim_spec.__dict__,
-            "command_sink": "hardware_driver_after_cmd_vel_mux",
+            "command_sink": "driver",
         }
     )
 
@@ -631,8 +629,7 @@ def test_switch_guard_rejects_resolved_flow_not_matching_data_source():
         **{
             **real_spec.__dict__,
             "resolved_runtime_data_flow": tuple(
-                stage.__dict__
-                for stage in resolved_runtime_data_flow("mujoco_fastlio2_live")
+                stage.__dict__ for stage in resolved_runtime_data_flow("mujoco_fastlio2_live")
             ),
         }
     )
@@ -678,10 +675,7 @@ def test_switch_guard_rejects_topic_default_frame_drift():
     result = validate_runtime_switch(bad_spec)
 
     assert result.ok is False
-    assert (
-        "topic default frame_id contract does not match runtime contract"
-        in result.blockers
-    )
+    assert "topic default frame_id contract does not match runtime contract" in result.blockers
 
 
 def test_switch_guard_rejects_stage_algorithm_interface_binding_drift():
@@ -700,10 +694,7 @@ def test_switch_guard_rejects_stage_algorithm_interface_binding_drift():
     result = validate_runtime_switch(bad_spec)
 
     assert result.ok is False
-    assert (
-        "runtime data flow stage algorithm interfaces do not match contract"
-        in result.blockers
-    )
+    assert "runtime data flow stage algorithm interfaces do not match contract" in result.blockers
 
 
 def test_all_runtime_endpoint_profiles_resolve_to_matching_contracts():
@@ -720,10 +711,7 @@ def test_all_runtime_endpoint_profiles_resolve_to_matching_contracts():
             assert spec.module_transport == endpoint.module_transport
             assert spec.endpoint_transport == endpoint.endpoint_transport
             assert spec.env["LINGTU_MODULE_TRANSPORT"] == endpoint.module_transport
-            assert (
-                spec.env["LINGTU_ENDPOINT_TRANSPORT"]
-                == endpoint.endpoint_transport
-            )
+            assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == endpoint.endpoint_transport
             assert spec.simulation_only is endpoint.simulation_only
             assert validate_runtime_switch(spec).ok is True, (endpoint_name, profile)
 
@@ -731,10 +719,7 @@ def test_all_runtime_endpoint_profiles_resolve_to_matching_contracts():
 def test_all_cli_profiles_resolve_to_declared_runtime_contracts():
     assert set(PROFILES) == set(PROFILE_DATA_SOURCE_BINDINGS)
 
-    expected_frame_links = {
-        name: asdict(link)
-        for name, link in FRAME_LINKS.items()
-    }
+    expected_frame_links = {name: asdict(link) for name, link in FRAME_LINKS.items()}
     expected_frames = asdict(FRAMES)
     for profile in PROFILES:
         config = resolve_profile_config(profile)
@@ -745,9 +730,7 @@ def test_all_cli_profiles_resolve_to_declared_runtime_contracts():
         assert spec.profile == profile
         assert spec.data_source == binding.data_source
         expected_endpoint_transport = (
-            RUNTIME_ENDPOINTS[spec.endpoint].endpoint_transport
-            if spec.endpoint in RUNTIME_ENDPOINTS
-            else "local"
+            RUNTIME_ENDPOINTS[spec.endpoint].endpoint_transport if spec.endpoint in RUNTIME_ENDPOINTS else "local"
         )
         assert spec.module_transport == "local"
         assert spec.endpoint_transport == expected_endpoint_transport
@@ -767,14 +750,10 @@ def test_all_cli_profiles_resolve_to_declared_runtime_contracts():
             spec.runtime_contract or spec.data_source
         )
         assert spec.resolved_runtime_data_flow == tuple(
-            asdict(stage)
-            for stage in resolved_runtime_data_flow(binding.data_source)
+            asdict(stage) for stage in resolved_runtime_data_flow(binding.data_source)
         )
         assert spec.runtime_data_flow_stage_algorithm_interfaces == {
-            stage: tuple(interfaces)
-            for stage, interfaces in (
-                RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items()
-            )
+            stage: tuple(interfaces) for stage, interfaces in (RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items())
         }
         assert validate_runtime_switch(spec).ok is True, profile
 
@@ -802,10 +781,7 @@ def test_runtime_endpoint_config_rejects_missing_default_action_profile():
     with pytest.raises(RuntimeEndpointError) as exc_info:
         broken_endpoint.config_for_profile("explore")
 
-    assert (
-        "endpoint 'mujoco_live' default_actions missing profile 'explore'"
-        in str(exc_info.value)
-    )
+    assert "endpoint 'mujoco_live' default_actions missing profile 'explore'" in str(exc_info.value)
 
 
 def test_runtime_endpoint_config_rejects_missing_record_action_profile():
@@ -817,7 +793,4 @@ def test_runtime_endpoint_config_rejects_missing_record_action_profile():
     with pytest.raises(RuntimeEndpointError) as exc_info:
         broken_endpoint.config_for_profile("explore")
 
-    assert (
-        "endpoint 'mujoco_live' record_actions missing profile 'explore'"
-        in str(exc_info.value)
-    )
+    assert "endpoint 'mujoco_live' record_actions missing profile 'explore'" in str(exc_info.value)

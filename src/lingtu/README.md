@@ -28,7 +28,6 @@ robot.shutdown()
 | `lingtu.runtime` | `runtime.py` | Resolve profiles and build Module-First systems directly |
 | `lingtu.plugin_seed` | `plugin_seed.py` | Product plugin catalog; imports built-in module groups so their `@register` decorators populate `runtime.registry` |
 | `lingtu.sdk` | `sdk/` | Remote client SDK for an already running robot or gateway |
-| `lingtu.ros2_plugin_seed` | `ros2_plugin_seed.py` | Optional ROS2 compatibility plugin groups; not a normal business-module entry |
 
 Standalone camera, LiDAR, SLAM, navigator, and detector wrappers were removed.
 Those capabilities live in the normal Blueprint stacks and module packages.

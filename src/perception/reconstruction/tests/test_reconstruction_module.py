@@ -8,13 +8,17 @@ Verifies module instantiation, port registration, and lifecycle for:
 These are CONTRACT tests — they verify the module interface contract, not
 internal implementation details or algorithmic correctness.
 """
+
 from __future__ import annotations
 
+from types import SimpleNamespace
 
+import pytest
 
 # =============================================================================
 # ReconstructionModule
 # =============================================================================
+
 
 class TestReconstructionModule:
     """Contract tests for ReconstructionModule (layer=3, RGB-D voxel map)."""
@@ -28,6 +32,8 @@ class TestReconstructionModule:
         assert mod._min_points == 1000
         assert mod._mask_dynamic is True
         assert mod._projector is not None
+        assert mod._labeler is None
+        mod._ensure_labeler()
         assert mod._labeler is not None
 
     def test_instantiation_with_custom_config(self):
@@ -50,6 +56,7 @@ class TestReconstructionModule:
     def test_ports(self):
         """All In/Out ports declared on the class must be registered."""
         from perception.reconstruction.reconstruction_module import ReconstructionModule
+        from runtime.msgs.map import MapObservationFrame, SemanticLabelsFrame
         from runtime.msgs.nav import Odometry
         from runtime.msgs.semantic import SceneGraph
         from runtime.msgs.sensor import CameraIntrinsics, Image
@@ -62,6 +69,7 @@ class TestReconstructionModule:
             "depth_image": Image,
             "camera_info": CameraIntrinsics,
             "scene_graph": SceneGraph,
+            "map_observation": MapObservationFrame,
             "odometry": Odometry,
         }
         assert len(mod._ports_in) == len(expected_in), (
@@ -70,13 +78,13 @@ class TestReconstructionModule:
         for name, expected_type in expected_in.items():
             assert name in mod._ports_in, f"missing In port: {name}"
             assert mod._ports_in[name].msg_type is expected_type, (
-                f"In.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_in[name].msg_type.__name__}"
+                f"In.{name}: expected {expected_type.__name__}, got {mod._ports_in[name].msg_type.__name__}"
             )
 
         # -- Output ports --
         expected_out = {
             "semantic_cloud": dict,
+            "semantic_labels": SemanticLabelsFrame,
             "reconstruction_stats": dict,
         }
         assert len(mod._ports_out) == len(expected_out), (
@@ -85,8 +93,7 @@ class TestReconstructionModule:
         for name, expected_type in expected_out.items():
             assert name in mod._ports_out, f"missing Out port: {name}"
             assert mod._ports_out[name].msg_type is expected_type, (
-                f"Out.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_out[name].msg_type.__name__}"
+                f"Out.{name}: expected {expected_type.__name__}, got {mod._ports_out[name].msg_type.__name__}"
             )
 
     def test_lifecycle_setup_teardown(self):
@@ -135,10 +142,52 @@ class TestReconstructionModule:
         result = mod.publish_cloud()
         assert result is None
 
+    def test_map_observation_publishes_exact_uint16_labels(self):
+        from perception.reconstruction.reconstruction_module import ReconstructionModule
+        from runtime.msgs.geometry import Pose, Transform, Vector3
+        from runtime.msgs.map import MapObservationFrame
+        from runtime.msgs.numpy_compat import np
+
+        class _Labeler:
+            def label_cloud(self, points):
+                assert points.shape == (2, 3)
+                return ["chair", "person"]
+
+        mod = ReconstructionModule(semantic_scene_max_age_s=0.1)
+        mod._labeler = _Labeler()
+        mod._latest_sg = SimpleNamespace(frame_id="map", ts=10.0)
+        observed = []
+        mod.semantic_labels.subscribe(observed.append)
+        transform = Transform(
+            translation=Vector3(1.0, 2.0, 0.0),
+            frame_id="map",
+            child_frame_id="body",
+            ts=10.0,
+        )
+        frame = MapObservationFrame(
+            points=np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]], dtype=np.float32),
+            sequence=5,
+            ts=10.0,
+            frame_id="map",
+            sensor_frame_id="body",
+            sensor_origin=transform.translation,
+            map_sensor_pose=Pose(transform.translation, transform.rotation),
+            map_sensor_transform=transform,
+        )
+
+        mod._on_map_observation(frame)
+
+        assert len(observed) == 1
+        assert observed[0].labels.tolist() == [6, 0]
+        assert observed[0].confidence.tolist() == pytest.approx([1.0, 0.0])
+        assert observed[0].sequence == 5
+        assert observed[0].frame_id == "body"
+
 
 # =============================================================================
 # DatasetRecorderModule
 # =============================================================================
+
 
 class TestDatasetRecorderModule:
     """Contract tests for DatasetRecorderModule (layer=3, keyframe recorder)."""
@@ -201,23 +250,21 @@ class TestDatasetRecorderModule:
         for name, expected_type in expected_in.items():
             assert name in mod._ports_in, f"missing In port: {name}"
             assert mod._ports_in[name].msg_type is expected_type, (
-                f"In.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_in[name].msg_type.__name__}"
+                f"In.{name}: expected {expected_type.__name__}, got {mod._ports_in[name].msg_type.__name__}"
             )
 
         # -- Output ports --
         assert "recorder_stats" in mod._ports_out
         assert mod._ports_out["recorder_stats"].msg_type is dict
-        assert len(mod._ports_out) == 1, (
-            f"expected 1 Out port, got {list(mod._ports_out)}"
-        )
+        assert len(mod._ports_out) == 1, f"expected 1 Out port, got {list(mod._ports_out)}"
 
     def test_lifecycle_setup(self):
         """setup() must create directories and subscribe ports without error."""
+        import tempfile
+
         from perception.reconstruction.dataset_recorder_module import (
             DatasetRecorderModule,
         )
-        import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mod = DatasetRecorderModule(save_dir=tmpdir)
@@ -243,10 +290,11 @@ class TestDatasetRecorderModule:
 
     def test_reset_clears_state(self):
         """reset() must clear frame count and create a new session directory."""
+        import tempfile
+
         from perception.reconstruction.dataset_recorder_module import (
             DatasetRecorderModule,
         )
-        import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mod = DatasetRecorderModule(save_dir=tmpdir)
@@ -276,6 +324,7 @@ class TestDatasetRecorderModule:
 # =============================================================================
 # ReconKeyframeExporterModule
 # =============================================================================
+
 
 class TestReconKeyframeExporterModule:
     """Contract tests for ReconKeyframeExporterModule (layer=3, server uploader)."""
@@ -338,16 +387,13 @@ class TestReconKeyframeExporterModule:
         for name, expected_type in expected_in.items():
             assert name in mod._ports_in, f"missing In port: {name}"
             assert mod._ports_in[name].msg_type is expected_type, (
-                f"In.{name}: expected {expected_type.__name__}, "
-                f"got {mod._ports_in[name].msg_type.__name__}"
+                f"In.{name}: expected {expected_type.__name__}, got {mod._ports_in[name].msg_type.__name__}"
             )
 
         # -- Output ports --
         assert "export_stats" in mod._ports_out
         assert mod._ports_out["export_stats"].msg_type is dict
-        assert len(mod._ports_out) == 1, (
-            f"expected 1 Out port, got {list(mod._ports_out)}"
-        )
+        assert len(mod._ports_out) == 1, f"expected 1 Out port, got {list(mod._ports_out)}"
 
     def test_lifecycle_setup_teardown(self):
         """setup() and teardown() must transition without error (no server needed)."""

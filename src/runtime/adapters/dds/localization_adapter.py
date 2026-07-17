@@ -10,9 +10,17 @@ from typing import Any
 
 from message.dds_codec import (
     coerce_health_payload as _coerce_health_payload,
+)
+from message.dds_codec import (
     from_dds_imu as _from_dds_imu,
+)
+from message.dds_codec import (
     from_dds_lidar_scan as _from_dds_lidar_scan,
+)
+from message.dds_codec import (
     from_dds_odometry as _from_dds_odometry,
+)
+from message.dds_codec import (
     from_dds_pointcloud2 as _from_dds_pointcloud2,
 )
 from runtime.backend_status import BackendStatus
@@ -24,7 +32,7 @@ from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
 from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from runtime.stream import In, Out
-from runtime.tf import FrameTree, TF_STATIC_TOPIC, TF_TOPIC, iter_tf_transforms
+from runtime.tf import TF_STATIC_TOPIC, TF_TOPIC, FrameTree, iter_tf_transforms
 from runtime.transport.abc import TopicConfig
 
 logger = logging.getLogger(__name__)
@@ -60,17 +68,19 @@ class DDSLocalizationAdapterModule(Module, layer=1):
         backend_profile: str = "bridge",
         transport: Any | None = None,
         transport_factory: Callable[[], Any] | None = None,
-        domain_id: int = 0,
+        domain_id: int | None = None,
         qos_depth: int = 10,
         reliable: bool = True,
         **kw: Any,
     ) -> None:
         super().__init__(**kw)
+        from runtime.transport.qos import resolve_domain_id
+
         self._backend_profile = str(backend_profile or "bridge")
         self._transport = transport
         self._transport_factory = transport_factory
         self._owns_transport = transport is None
-        self._domain_id = int(domain_id)
+        self._domain_id = resolve_domain_id(domain_id)
         self._qos_depth = int(qos_depth)
         self._reliable = bool(reliable)
         self._subscriptions: list[Any] = []
@@ -330,10 +340,9 @@ class DDSLocalizationAdapterModule(Module, layer=1):
         )
 
     def _publish_map_odom_if_match(self, transform: Transform) -> None:
-        if (
-            transform.frame_id != topic_default_frame_id(TOPICS.map_cloud)
-            or transform.child_frame_id != topic_default_frame_id(TOPICS.odometry)
-        ):
+        if transform.frame_id != topic_default_frame_id(
+            TOPICS.map_cloud
+        ) or transform.child_frame_id != topic_default_frame_id(TOPICS.odometry):
             return
         self.map_odom_tf.publish(
             {

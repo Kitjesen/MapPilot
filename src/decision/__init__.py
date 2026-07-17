@@ -2,10 +2,12 @@
 
 Functional packages:
 
-- modules: runtime Module entrypoints.
-- goal_resolution: fast/slow goal grounding and SG-Nav reasoning.
+- modules: production runtime Module entrypoints.
+- goals: fast/slow goal grounding and SG-Nav reasoning.
 - llm: LLM clients and prompt builders.
-- tasking: agent loop, task decomposition, execution, and planner state.
-- exploration: frontier scoring and exploration strategies.
+- tasks: agent loop, task decomposition, execution, and planner state.
+- frontiers: frontier scoring and exploration strategies.
 - vision: visual servo helpers, VLM queries, person tracking, and Re-ID.
 """
+
+from decision.backends import BackendManager

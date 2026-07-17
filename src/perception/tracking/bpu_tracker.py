@@ -1,21 +1,6 @@
-"""
-BPU 检测 + BoT-SORT 跟踪器 — 实时多目标跟踪。
-
-架构:
-  BPUDetector.detect() → list[Detection2D]   (~26ms, BPU 硬件)
-        ↓
-  _DetectionResults wrapper (xyxy→xywh 格式转换)
-        ↓
-  BOTSORT.update()                            (~3ms, 纯 numpy/scipy)
-        ↓
-  list[TrackedDetection]                      (带持久 track_id)
-
-跟踪器直接使用 ultralytics BoT-SORT 实现，不依赖 PyTorch 推理。
-ReID 默认关闭，仅靠 IoU + Kalman 滤波，适合嵌入式场景。
-"""
-
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 
@@ -23,17 +8,20 @@ import numpy as np
 
 from ..detection.detector_base import Detection2D
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class TrackedDetection:
     """带持久跟踪 ID 的检测结果。"""
-    track_id: int             # BoT-SORT 持久 ID (跨帧稳定)
-    bbox: np.ndarray          # [x1, y1, x2, y2] in pixels (float32)
-    score: float              # 检测置信度 0-1
-    label: str                # 检测类别文本
-    class_id: int             # COCO class_id
+
+    track_id: int  # BoT-SORT 持久 ID (跨帧稳定)
+    bbox: np.ndarray  # [x1, y1, x2, y2] in pixels (float32)
+    score: float  # 检测置信度 0-1
+    label: str  # 检测类别文本
+    class_id: int  # COCO class_id
     mask: np.ndarray | None = None  # HxW bool 实例分割 mask (可选)
-    det_idx: int = -1         # 对应原始 Detection2D 的索引 (用于回溯 mask)
+    det_idx: int = -1  # 对应原始 Detection2D 的索引 (用于回溯 mask)
 
 
 class _DetectionResults:
@@ -110,6 +98,7 @@ def _build_botsort_args(
 ):
     """构造 BOTSORT 需要的 args 命名空间 (无需解析 yaml)。"""
     from types import SimpleNamespace
+
     return SimpleNamespace(
         tracker_type="botsort",
         track_high_thresh=track_high_thresh,
@@ -142,7 +131,9 @@ class BPUTracker:
 
     Args:
         bpu_detector: 已 load_model() 的 BPUDetector 实例。
-        tracker_type: "botsort" 或 "bytetrack"。
+        tracker_type: "botsort", "bytetrack" 或无外部运行时依赖的
+                      "native_bytetrack"。前两者缺少 Ultralytics 时会自动
+                      回退到 native_bytetrack。
         frame_rate: 视频帧率，影响 lost track 保留时长。
         track_high_thresh: 第一阶段匹配置信度阈值。
         track_low_thresh: 第二阶段低分检测阈值。
@@ -178,14 +169,31 @@ class BPUTracker:
             with_reid=False,  # 嵌入式不用 ReID 模型
         )
 
-        if self._tracker_type == "botsort":
-            from ultralytics.trackers.bot_sort import BOTSORT
-            self._tracker = BOTSORT(args, frame_rate=frame_rate)
-        elif self._tracker_type == "bytetrack":
-            from ultralytics.trackers.byte_tracker import BYTETracker
-            self._tracker = BYTETracker(args, frame_rate=frame_rate)
+        if self._tracker_type == "native_bytetrack":
+            self._tracker = self._build_native_tracker(args, frame_rate)
+        elif self._tracker_type in {"botsort", "bytetrack"}:
+            try:
+                if self._tracker_type == "botsort":
+                    from ultralytics.trackers.bot_sort import BOTSORT
+
+                    self._tracker = BOTSORT(args, frame_rate=frame_rate)
+                else:
+                    from ultralytics.trackers.byte_tracker import BYTETracker
+
+                    self._tracker = BYTETracker(args, frame_rate=frame_rate)
+            except (ImportError, ModuleNotFoundError) as exc:
+                requested = self._tracker_type
+                self._tracker_type = "native_bytetrack"
+                self._tracker = self._build_native_tracker(args, frame_rate)
+                logger.warning(
+                    "BPUTracker: %s unavailable (%s); using native_bytetrack",
+                    requested,
+                    exc,
+                )
         else:
-            raise ValueError(f"tracker_type must be 'botsort' or 'bytetrack', got '{tracker_type}'")
+            raise ValueError(
+                f"tracker_type must be 'botsort', 'bytetrack', or 'native_bytetrack', got '{tracker_type}'"
+            )
 
         # 保存最新一帧的原始检测，用于 track_id → mask 的回溯
         self._last_dets: list[Detection2D] = []
@@ -193,6 +201,23 @@ class BPUTracker:
         # 性能统计
         self.last_detect_ms: float = 0.0
         self.last_track_ms: float = 0.0
+
+        from .person_counting import PersonTrackCounter
+
+        self._person_counter = PersonTrackCounter()
+
+    @staticmethod
+    def _build_native_tracker(args, frame_rate: int):
+        from .native_byte_tracker import NativeByteTracker
+
+        return NativeByteTracker(
+            frame_rate=frame_rate,
+            track_high_thresh=args.track_high_thresh,
+            track_low_thresh=args.track_low_thresh,
+            new_track_thresh=args.new_track_thresh,
+            track_buffer=args.track_buffer,
+            match_thresh=args.match_thresh,
+        )
 
     def track(self, bgr_frame: np.ndarray, text_prompt: str) -> list[TrackedDetection]:
         """对单帧执行 BPU 检测 + BoT-SORT 跟踪。
@@ -222,6 +247,7 @@ class BPUTracker:
         self.last_track_ms = (time.perf_counter() - t1) * 1000.0
 
         if len(raw_tracks) == 0:
+            self._person_counter.update([], frame_height=int(bgr_frame.shape[0]))
             return []
 
         # 4. 转换为 TrackedDetection
@@ -242,34 +268,44 @@ class BPUTracker:
                 label = orig.label
                 mask = orig.mask
 
-            tracked.append(TrackedDetection(
-                track_id=track_id,
-                bbox=np.array([x1, y1, x2, y2], dtype=np.float32),
-                score=score,
-                label=label,
-                class_id=class_id,
-                mask=mask,
-                det_idx=det_idx,
-            ))
+            tracked.append(
+                TrackedDetection(
+                    track_id=track_id,
+                    bbox=np.array([x1, y1, x2, y2], dtype=np.float32),
+                    score=score,
+                    label=label,
+                    class_id=class_id,
+                    mask=mask,
+                    det_idx=det_idx,
+                )
+            )
 
         tracked.sort(key=lambda t: t.track_id)
+        self._person_counter.update(tracked, frame_height=int(bgr_frame.shape[0]))
         return tracked
 
     def reset(self) -> None:
         """重置跟踪状态 (换场景时调用)。"""
         self._tracker.reset()
         self._last_dets = []
+        self._person_counter.reset()
 
     @property
     def active_track_ids(self) -> list[int]:
         """当前活跃 track ID 列表。"""
         return [t.track_id for t in self._tracker.tracked_stracks if t.is_activated]
 
+    @property
+    def backend_name(self) -> str:
+        """Name of the active tracker backend after runtime fallback."""
+        return self._tracker_type
+
+    @property
+    def person_counts(self) -> dict[str, int]:
+        """Current person occupancy and cumulative track/crossing counters."""
+        return self._person_counter.snapshot()
+
     def timing_summary(self) -> str:
         """返回最近一帧的耗时摘要字符串。"""
         total = self.last_detect_ms + self.last_track_ms
-        return (
-            f"detect={self.last_detect_ms:.1f}ms  "
-            f"track={self.last_track_ms:.1f}ms  "
-            f"total={total:.1f}ms"
-        )
+        return f"detect={self.last_detect_ms:.1f}ms  track={self.last_track_ms:.1f}ms  total={total:.1f}ms"

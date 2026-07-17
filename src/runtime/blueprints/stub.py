@@ -116,18 +116,23 @@ class StubDogModule(Module, layer=1):
 
     def _publish_initial_odom(self) -> None:
         now = time.time()
-        self.odometry.publish(Odometry(
-            pose=Pose(
-                position=Vector3(self._pos_x, self._pos_y, 0.0),
-                orientation=Quaternion(
-                    0.0, 0.0,
-                    math.sin(self._yaw / 2),
-                    math.cos(self._yaw / 2),
+        self.odometry.publish(
+            Odometry(
+                pose=Pose(
+                    position=Vector3(self._pos_x, self._pos_y, 0.0),
+                    orientation=Quaternion(
+                        0.0,
+                        0.0,
+                        math.sin(self._yaw / 2),
+                        math.cos(self._yaw / 2),
+                    ),
                 ),
-            ),
-            twist=Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0)),
-            ts=now, frame_id=self._odom_frame_id, child_frame_id=self._child_frame_id,
-        ))
+                twist=Twist(linear=Vector3(0, 0, 0), angular=Vector3(0, 0, 0)),
+                ts=now,
+                frame_id=self._odom_frame_id,
+                child_frame_id=self._child_frame_id,
+            )
+        )
 
     # -- Port callbacks ------------------------------------------------
 
@@ -149,23 +154,26 @@ class StubDogModule(Module, layer=1):
             self._pos_y += (self._vx * sin_y + self._vy * cos_y) * dt
             self._yaw += self._wz * dt
 
-            self.odometry.publish(Odometry(
-                pose=Pose(
-                    position=Vector3(self._pos_x, self._pos_y, 0.0),
-                    orientation=Quaternion(
-                        0.0, 0.0,
-                        math.sin(self._yaw / 2),
-                        math.cos(self._yaw / 2),
+            self.odometry.publish(
+                Odometry(
+                    pose=Pose(
+                        position=Vector3(self._pos_x, self._pos_y, 0.0),
+                        orientation=Quaternion(
+                            0.0,
+                            0.0,
+                            math.sin(self._yaw / 2),
+                            math.cos(self._yaw / 2),
+                        ),
                     ),
-                ),
-                twist=Twist(
-                    linear=Vector3(self._vx, self._vy, 0.0),
-                    angular=Vector3(0.0, 0.0, self._wz),
-                ),
-                ts=now,
-                frame_id=self._odom_frame_id,
-                child_frame_id=self._child_frame_id,
-            ))
+                    twist=Twist(
+                        linear=Vector3(self._vx, self._vy, 0.0),
+                        angular=Vector3(0.0, 0.0, self._wz),
+                    ),
+                    ts=now,
+                    frame_id=self._odom_frame_id,
+                    child_frame_id=self._child_frame_id,
+                )
+            )
             time.sleep(dt)
 
     def _on_stop(self, level: int) -> None:
@@ -179,16 +187,18 @@ class StubDogModule(Module, layer=1):
 
     def _publish_robot_state(self) -> None:
         """Publish stub operational state."""
-        self.robot_state.publish({
-            "standing": True,
-            "enabled": True,
-            "emergency": False,
-            "connected": True,
-            "battery_voltage": 0.0,
-            "battery_soc": 0.0,
-            "current_gait": "none",
-            "timestamp": time.time(),
-        })
+        self.robot_state.publish(
+            {
+                "standing": True,
+                "enabled": True,
+                "emergency": False,
+                "connected": True,
+                "battery_voltage": 0.0,
+                "battery_soc": 0.0,
+                "current_gait": "none",
+                "timestamp": time.time(),
+            }
+        )
 
     # -- Health --------------------------------------------------------
 
@@ -199,6 +209,7 @@ class StubDogModule(Module, layer=1):
 
 
 # -- Blueprint factory -------------------------------------------------
+
 
 def stub_blueprint(**config: Any) -> Blueprint:
     """Test blueprint -- StubDogModule + new module architecture.
@@ -214,7 +225,7 @@ def stub_blueprint(**config: Any) -> Blueprint:
         "navigation",
         "default",
         seed_group="navigation",
-        fallback="nav.mission.navigation.Navigation",
+        fallback="nav.navigation.Navigation",
     )
     SafetyRing = stack_module(
         "safety",

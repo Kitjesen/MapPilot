@@ -1,18 +1,31 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: map
 summary: Build live map artifacts from native LiDAR-inertial SLAM output.
+data_plane: typed_dds
+control_owner: operator
+autonomy_owner: none
 required_topics:
   - /lidar/raw_frame
   - /imu/raw
   - /slam/odometry
+  - /slam/registered_cloud
   - /slam/map_cloud
+  - /slam/saved_map_cloud
   - /slam/localization_health
 required_capabilities:
   - native_slam_mapping
   - map_artifact_save
+  - map_pcd_to_octomap_artifact
 forbidden_modules:
   - SimEndpointDriverModule
-  - SlamBridgeModule
+  - nav.mission
+  - nav.local_planner
+  - nav.path_follower
 forbidden_claims:
   - module_sim_real_equivalence
   - ros2_bridge_required
+  - autonomous_navigation
+target_chain:
+  - Livox DDS publishes /lidar/raw_frame and /imu/raw.
+  - Fast-LIO2 native SLAM publishes /slam/odometry, /slam/registered_cloud, and /slam/map_cloud.
+  - Gateway/MapService saves map.pcd and builds metadata plus octomap.ot for later navigation.

@@ -2,10 +2,10 @@
 
 #include <nanobind/stl/vector.h>
 
-#include "nav_kernel/map_layers_core.hpp"
+#include "lingtu/maps/layers/grid.hpp"
 
 namespace nb = nanobind;
-using namespace nav_kernel;
+using namespace lingtu::maps::layers;
 
 namespace lingtu_nav_kernel_bindings {
 

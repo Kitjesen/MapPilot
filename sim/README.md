@@ -59,7 +59,6 @@ pipeline checks.
 python lingtu.py sim_mujoco_live gate
 python lingtu.py sim_mujoco_live video
 python lingtu.py sim_mujoco_octo_live octo-moving-obstacle-video
-python lingtu.py sim_mujoco_pct_live pct-moving-obstacle-video
 ```
 
 These profiles use external launchers and the `mujoco_fastlio2_live` contract.

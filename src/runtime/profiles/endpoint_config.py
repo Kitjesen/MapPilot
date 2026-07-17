@@ -37,7 +37,7 @@ PRODUCT_SEMANTIC_CONFIG_KEYS: tuple[str, ...] = (
     "planner_backend",
     "planner_latency_budget_ms",
     "llm",
-    "tomogram",
+    "map_path",
     "plan_safety_policy",
     "fallback_planner_name",
     "fallback_planners",
@@ -107,19 +107,13 @@ def endpoint_config_for_profile(
         if profile not in endpoint.default_actions:
             from runtime.profiles.catalog.endpoints import RuntimeEndpointError
 
-            raise RuntimeEndpointError(
-                f"endpoint '{endpoint.name}' default_actions missing profile "
-                f"'{profile}'"
-            )
+            raise RuntimeEndpointError(f"endpoint '{endpoint.name}' default_actions missing profile '{profile}'")
         merged["_external_default_args"] = endpoint.default_actions[profile]
     if endpoint.record_actions:
         if profile not in endpoint.record_actions:
             from runtime.profiles.catalog.endpoints import RuntimeEndpointError
 
-            raise RuntimeEndpointError(
-                f"endpoint '{endpoint.name}' record_actions missing profile "
-                f"'{profile}'"
-            )
+            raise RuntimeEndpointError(f"endpoint '{endpoint.name}' record_actions missing profile '{profile}'")
         merged["_external_record_args"] = endpoint.record_actions[profile]
     return merged
 
@@ -181,9 +175,7 @@ def normalized_product_semantic_overrides(
         normalized.append(
             {
                 "field": str(field),
-                "override_scope": str(
-                    item.get("override_scope") or "compatibility_override"
-                ),
+                "override_scope": str(item.get("override_scope") or "compatibility_override"),
                 "product_value": json_config_value(item.get("product_value")),
                 "endpoint_value": json_config_value(item.get("endpoint_value")),
             }

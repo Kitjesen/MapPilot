@@ -506,7 +506,7 @@ public:
     {
         const auto &degen = m_kf->degeneracy();
 
-        // Publish effective_ratio as simple Float32 (for SlamBridgeModule)
+        // Publish effective_ratio for external localization health consumers.
         // effective_ratio: 1.0 = all DOFs well-constrained, 0.0 = fully degenerate
         std_msgs::msg::Float32 ratio_msg;
         ratio_msg.data = static_cast<float>(degen.effective_ratio);

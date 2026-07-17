@@ -1,0 +1,45 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: tare_explore
+summary: TARE-style exploration goal generation feeding native saved-map/navigation execution.
+data_plane: typed_dds
+control_owner: autonomy
+autonomy_owner: explore_endpoint
+required_topics:
+  - /lidar/raw_frame
+  - /imu/raw
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/map_cloud
+  - /slam/localization_health
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/traversability
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
+  - /nav/cmd_vel
+required_capabilities:
+  - native_slam_mapping
+  - tare_frontier_or_viewpoint_goal_source
+  - octoplanner3d_global_planning
+  - local_planner_collision_and_traversability_scoring
+  - final_cmd_vel_single_writer
+  - operator_teleop_takeover_with_safety_veto
+  - operator_assisted_local_planner_takeover
+forbidden_modules:
+  - SimEndpointDriverModule
+  - WavefrontFrontierExplorer
+  - nav.local_planner
+  - nav.path_follower
+forbidden_claims:
+  - module_sim_real_equivalence
+  - ros2_bridge_required
+transport_rules:
+  product_bus: typed_dds
+  same_process_algorithms: direct_function_calls
+  lcm_allowed: false
+target_chain:
+  - Native exploration endpoint chooses exploration goals from live map context.
+  - Exploration goals use typed /nav/command/request and must receive /nav/command/ack before they are recorded as active.
+  - Native nav endpoint executes exploration goals through OctoPlanner3D and LocalPlanner.
+  - Operator takeover remains inside the native endpoint and uses assisted local planning; release holds zero until explicit resume and a fresh exploration goal.

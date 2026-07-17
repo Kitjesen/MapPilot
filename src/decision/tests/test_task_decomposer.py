@@ -1,16 +1,9 @@
-"""
-test_task_decomposer.py — 任务分解器单元测试
-
-覆盖:
-  - 规则分解 (快速路径)
-  - LLM 响应解析
-  - TaskPlan 状态机 (advance / fail / retry)
-"""
+"""Decision module."""
 
 import json
 import unittest
 
-from decision.tasking.task_decomposer import (
+from decision.tasks.decomposition import (
     SubGoal,
     SubGoalAction,
     SubGoalStatus,
@@ -20,12 +13,11 @@ from decision.tasking.task_decomposer import (
 
 
 class TestRuleDecomposition(unittest.TestCase):
-    """规则分解 (无需 LLM) 测试。"""
+    """Test Rule Decomposition."""
 
     def setUp(self):
         self.decomposer = TaskDecomposer()
 
-    # -- 中文简单导航 --
     def test_simple_nav_zh(self):
         plan = self.decomposer.decompose_with_rules("去门那里")
         self.assertIsNotNone(plan)
@@ -33,7 +25,7 @@ class TestRuleDecomposition(unittest.TestCase):
         self.assertIn(SubGoalAction.NAVIGATE, actions)
         self.assertIn(SubGoalAction.APPROACH, actions)
         self.assertIn(SubGoalAction.VERIFY, actions)
-        # 简单导航不应包含 FIND / LOOK_AROUND
+
         self.assertNotIn(SubGoalAction.FIND, actions)
 
     def test_simple_nav_zh_variants(self):
@@ -42,7 +34,6 @@ class TestRuleDecomposition(unittest.TestCase):
             self.assertIsNotNone(plan, f"Should decompose: '{cmd}'")
             self.assertTrue(len(plan.subgoals) >= 3)
 
-    # -- 中文简单搜索 --
     def test_simple_find_zh(self):
         plan = self.decomposer.decompose_with_rules("找红色灭火器")
         self.assertIsNotNone(plan)
@@ -52,22 +43,16 @@ class TestRuleDecomposition(unittest.TestCase):
         self.assertIn(SubGoalAction.NAVIGATE, actions)
         self.assertIn(SubGoalAction.VERIFY, actions)
 
-    # -- 英文 --
     def test_simple_nav_en(self):
         plan = self.decomposer.decompose_with_rules("go to the kitchen")
         self.assertIsNotNone(plan)
-        self.assertTrue(any(
-            sg.action == SubGoalAction.NAVIGATE for sg in plan.subgoals
-        ))
+        self.assertTrue(any(sg.action == SubGoalAction.NAVIGATE for sg in plan.subgoals))
 
     def test_simple_find_en(self):
         plan = self.decomposer.decompose_with_rules("find the red chair")
         self.assertIsNotNone(plan)
-        self.assertTrue(any(
-            sg.action == SubGoalAction.FIND for sg in plan.subgoals
-        ))
+        self.assertTrue(any(sg.action == SubGoalAction.FIND for sg in plan.subgoals))
 
-    # -- 复杂指令应返回 None --
     def test_complex_instruction_returns_none(self):
         plan = self.decomposer.decompose_with_rules("先去厨房拿杯子然后回来")
         self.assertIsNone(plan)
@@ -78,20 +63,22 @@ class TestRuleDecomposition(unittest.TestCase):
 
 
 class TestLLMDecompositionParsing(unittest.TestCase):
-    """LLM 分解响应解析测试。"""
+    """Test L L M Decomposition Parsing."""
 
     def setUp(self):
         self.decomposer = TaskDecomposer()
 
     def test_parse_valid_json(self):
-        response = json.dumps({
-            "subgoals": [
-                {"action": "navigate", "target": "kitchen"},
-                {"action": "find", "target": "red cup"},
-                {"action": "approach", "target": "red cup"},
-                {"action": "verify", "target": "red cup"},
-            ]
-        })
+        response = json.dumps(
+            {
+                "subgoals": [
+                    {"action": "navigate", "target": "kitchen"},
+                    {"action": "find", "target": "red cup"},
+                    {"action": "approach", "target": "red cup"},
+                    {"action": "verify", "target": "red cup"},
+                ]
+            }
+        )
         plan = self.decomposer.parse_decomposition_response("去厨房拿红杯子", response)
         self.assertEqual(len(plan.subgoals), 4)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE)
@@ -115,14 +102,16 @@ class TestLLMDecompositionParsing(unittest.TestCase):
     def test_parse_invalid_returns_fallback(self):
         plan = self.decomposer.parse_decomposition_response("去门", "this is garbage")
         self.assertIsNotNone(plan)
-        self.assertTrue(len(plan.subgoals) >= 1)  # fallback 生成
+        self.assertTrue(len(plan.subgoals) >= 1)
 
     def test_parse_unknown_action_defaults_navigate(self):
-        response = json.dumps({
-            "subgoals": [
-                {"action": "fly", "target": "moon"},
-            ]
-        })
+        response = json.dumps(
+            {
+                "subgoals": [
+                    {"action": "fly", "target": "moon"},
+                ]
+            }
+        )
         plan = self.decomposer.parse_decomposition_response("fly", response)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE)
 
@@ -136,21 +125,16 @@ class TestLLMDecompositionParsing(unittest.TestCase):
         self.assertIn("红杯子", messages[1]["content"])
 
     def test_build_decomposition_prompt_en(self):
-        messages = self.decomposer.build_decomposition_prompt(
-            "go to the kitchen", language="en"
-        )
+        messages = self.decomposer.build_decomposition_prompt("go to the kitchen", language="en")
         self.assertEqual(len(messages), 2)
         self.assertIn("robot task planner", messages[0]["content"])
 
 
 class TestTaskPlanStateMachine(unittest.TestCase):
-    """TaskPlan 状态机测试。"""
+    """Test Task Plan State Machine."""
 
     def _make_plan(self, n_steps=3):
-        subgoals = [
-            SubGoal(step_id=i, action=SubGoalAction.NAVIGATE, target=f"target_{i}")
-            for i in range(n_steps)
-        ]
+        subgoals = [SubGoal(step_id=i, action=SubGoalAction.NAVIGATE, target=f"target_{i}") for i in range(n_steps)]
         return TaskPlan(instruction="test", subgoals=subgoals)
 
     def test_initial_state(self):
@@ -184,7 +168,7 @@ class TestTaskPlanStateMachine(unittest.TestCase):
         self.assertEqual(plan.subgoals[0].status, SubGoalStatus.PENDING)
         self.assertEqual(plan.subgoals[0].retry_count, 1)
 
-        plan.fail_current()  # retry 2 → failed
+        plan.fail_current()
         self.assertTrue(plan.is_failed)
         self.assertEqual(plan.subgoals[0].status, SubGoalStatus.FAILED)
 

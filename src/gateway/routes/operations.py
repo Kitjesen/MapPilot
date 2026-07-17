@@ -8,64 +8,56 @@ changing the external API shape.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Any
 
+from gateway.schemas import (
+    BagOperationResponse,
+    BagStartRequest,
+    BagStatusResponse,
+    ExplorationCommandResponse,
+    ExplorationStatusResponse,
+    GatewayErrorResponse,
+    Go2RTCStatusResponse,
+    ServiceStatusResponse,
+    SlamOperationResponse,
+    SlamRelocalizeRequest,
+    SlamStatusResponse,
+    SlamSwitchRequest,
+    TemporalMemoryResponse,
+    TemporalSemanticRequest,
+)
+from gateway.services.map_service import ensure_maps_service
+from maps.services.storage import safe_map_name
 from runtime.runtime_policy import (
     is_supported_slam_profile,
     normalize_slam_profile,
     slam_switch_plan,
 )
-from gateway.services.map_paths import map_dir_for
-from gateway.services.map_safety import safe_map_name
-from gateway.schemas import (
-    BagStartRequest,
-    BagOperationResponse,
-    BagStatusResponse,
-    BitrateRequest,
-    ExplorationCommandResponse,
-    ExplorationStatusResponse,
-    GatewayErrorResponse,
-    Go2RTCStatusResponse,
-    SlamOperationResponse,
-    SlamRelocalizeRequest,
-    SlamStatusResponse,
-    SlamSwitchRequest,
-    TemporalSemanticRequest,
-    TemporalMemoryResponse,
-    WebRTCOfferRequest,
-    WebRTCControlResponse,
-    WebRTCStatsResponse,
+from runtime.service_catalogs.thunder import (
+    thunder_field_readiness_services,
+    thunder_service_groups,
+    thunder_service_metadata,
+    thunder_slam_status_services,
 )
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_SERVICE_STATES = {"running", "active"}
-_SLAM_STATUS_SERVICES = (
-    "lidar",
-    "slam",
-    "nav_dds",
-    "slam_pgo",
-    "localizer",
-    "genz_icp",
-    "hba",
-    "super_lio",
-    "super_lio_relocation",
-)
-_SLAM_SERVICE_GROUPS = {
-    "native_dds": ["lidar", "slam", "nav_dds"],
-    "experimental": ["genz_icp", "hba", "super_lio", "super_lio_relocation"],
-    "legacy_ros2_compat": ["slam_pgo", "localizer"],
-}
+_SERVICE_STATUS_DEFAULTS = tuple(dict.fromkeys((*thunder_field_readiness_services(), "gateway")))
+_FIELD_SERVICE_READINESS_DEFAULT_PATH = "/tmp/lingtu_service_readiness.json"
+_SLAM_STATUS_SERVICES = thunder_slam_status_services()
+_SLAM_SERVICE_GROUPS = thunder_service_groups()
+_SLAM_SERVICE_METADATA = thunder_service_metadata()
 _EXPLORER_UNAVAILABLE_DETAIL = {
     "reason": "explorer_backend_not_running",
     "required_profile": "explore_or_tare_explore",
     "supported_profiles": ["explore", "tare_explore"],
-    "action": (
-        "restart LingTu with the explore or tare_explore profile before "
-        "starting exploration"
-    ),
+    "action": ("restart LingTu with the explore or tare_explore profile before starting exploration"),
 }
 
 try:
@@ -101,6 +93,160 @@ def _parse_since(since: str) -> float:
 
 def _normalize_slam_profile(profile: Any) -> str:
     return normalize_slam_profile(profile)
+
+
+def _parse_service_names(names: str | None) -> tuple[str, ...]:
+    if not names:
+        return _SERVICE_STATUS_DEFAULTS
+    parsed = tuple(item.strip() for item in names.split(",") if item.strip())
+    return parsed or _SERVICE_STATUS_DEFAULTS
+
+
+def _mark_gateway_http_observed(service_details: dict[str, Any]) -> None:
+    """The current route response proves the Gateway HTTP surface is alive."""
+    for name in ("gateway", "lingtu"):
+        detail = service_details.get(name)
+        if not isinstance(detail, dict):
+            continue
+        contract = detail.get("contract")
+        checks = contract.get("checks") if isinstance(contract, dict) else []
+        if "http" not in checks:
+            continue
+        observed = detail.setdefault("observed", {})
+        if isinstance(observed, dict):
+            observed["http"] = {
+                "ok": True,
+                "checked": True,
+                "enabled": True,
+                "source": "current_gateway_route",
+                "path": "/api/v1/services/status",
+                "blockers": [],
+            }
+        blockers = [blocker for blocker in list(detail.get("blockers") or []) if blocker != "http_unchecked"]
+        detail["blockers"] = blockers
+        detail["ready"] = not blockers
+
+
+def _service_readiness_summary(
+    services: dict[str, str],
+    service_details: dict[str, Any],
+    selected: tuple[str, ...],
+    field_readiness: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    blockers: list[str] = []
+    ready_services: list[str] = []
+    not_ready_services: list[str] = []
+
+    for name in selected:
+        detail = service_details.get(name)
+        if isinstance(detail, dict):
+            ready = bool(detail.get("ready", False))
+            detail_blockers = list(detail.get("blockers") or [])
+            if ready:
+                ready_services.append(name)
+                continue
+            not_ready_services.append(name)
+            if detail_blockers:
+                blockers.extend(f"{name}:{blocker}" for blocker in detail_blockers)
+            else:
+                blockers.append(f"{name}:not_ready")
+            continue
+
+        status = services.get(name, "unknown")
+        if status in _ACTIVE_SERVICE_STATES:
+            ready_services.append(name)
+        else:
+            not_ready_services.append(name)
+            blockers.append(f"{name}:status_{status}")
+
+    if field_readiness and field_readiness.get("required"):
+        blockers.extend(f"field_readiness:{blocker}" for blocker in field_readiness.get("blockers", []))
+
+    return {
+        "ok": not blockers,
+        "ready": not blockers,
+        "selected": list(selected),
+        "ready_services": ready_services,
+        "not_ready_services": not_ready_services,
+        "blockers": blockers,
+        "blocker_count": len(blockers),
+    }
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+def _load_field_service_readiness(now: float | None = None) -> dict[str, Any]:
+    """Load optional field collector evidence written by the read-only gate."""
+    path_text = os.environ.get(
+        "LINGTU_SERVICE_READINESS_JSON",
+        _FIELD_SERVICE_READINESS_DEFAULT_PATH,
+    ).strip()
+    required = _env_bool("LINGTU_REQUIRE_FIELD_SERVICE_READINESS", False)
+    max_age_s = _env_float("LINGTU_SERVICE_READINESS_MAX_AGE_S", 300.0)
+    evidence: dict[str, Any] = {
+        "path": path_text,
+        "required": required,
+        "available": False,
+        "checked": False,
+        "fresh": False,
+        "ok": not required,
+        "max_age_s": max_age_s,
+        "blockers": [],
+    }
+    if not path_text:
+        if required:
+            evidence["ok"] = False
+            evidence["blockers"] = ["field_readiness_path_unset"]
+        return evidence
+
+    path = Path(path_text)
+    if not path.exists():
+        if required:
+            evidence["ok"] = False
+            evidence["blockers"] = [f"field_readiness_missing:{path_text}"]
+        return evidence
+
+    evidence["available"] = True
+    try:
+        stat = path.stat()
+        age_s = max(0.0, (time.time() if now is None else now) - stat.st_mtime)
+        evidence["age_s"] = age_s
+        evidence["fresh"] = age_s <= max_age_s
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        evidence["checked"] = True
+        evidence["ok"] = False
+        evidence["blockers"] = [f"field_readiness_unreadable:{type(exc).__name__}"]
+        return evidence
+
+    summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
+    evidence["checked"] = True
+    evidence["schema"] = payload.get("schema") if isinstance(payload, dict) else None
+    evidence["stamp_s"] = payload.get("stamp_s") if isinstance(payload, dict) else None
+    evidence["summary"] = summary
+    blockers: list[str] = []
+    if not evidence["fresh"]:
+        blockers.append(f"field_readiness_stale:{path_text}")
+    if isinstance(summary, dict) and not summary.get("ok", False):
+        blockers.extend(str(item) for item in summary.get("blockers", []))
+    evidence["blockers"] = blockers
+    evidence["ok"] = not blockers
+    return evidence
 
 
 def _body_mapping(body: Any) -> dict[str, Any]:
@@ -150,7 +296,6 @@ def _slam_operation_response(
 
 
 def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
-
     from gateway.services.runtime_status import build_localization_status
 
     try:
@@ -170,22 +315,14 @@ def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
         "saved_map_relocalization_supported",
         status.get("saved_map_relocalization_supported"),
     )
-    if (
-        backend_name not in {"genz", "super_lio", "super_lio_relocation"}
-        or saved_map_supported is not False
-    ):
+    if backend_name not in {"genz", "super_lio", "super_lio_relocation"} or saved_map_supported is not False:
         return None
 
     recovery_method = status.get("recovery_method") or raw.get("recovery_method")
-    recovery_hint = (
-        f"; recovery_method={recovery_method}" if recovery_method else ""
-    )
+    recovery_hint = f"; recovery_method={recovery_method}" if recovery_method else ""
     return _slam_operation_response(
         False,
-        message=(
-            "unsupported: saved map relocalization is not supported by "
-            f"{backend_name}{recovery_hint}"
-        ),
+        message=(f"unsupported: saved map relocalization is not supported by {backend_name}{recovery_hint}"),
         status_code=409,
     )
 
@@ -202,26 +339,7 @@ def _relocalization_service_unavailable_response(gw) -> Any | None:
 
 
 def register_operation_routes(app, gw) -> None:
-    from fastapi import Body
     from fastapi.responses import JSONResponse, Response
-
-    @app.get(
-        "/api/v1/webrtc/stats",
-        summary="WebRTC peer telemetry (bitrate, fps, encode time)",
-        response_model=WebRTCStatsResponse,
-        responses={500: {"model": WebRTCStatsResponse}},
-    )
-    async def get_webrtc_stats():
-        if gw._webrtc is None:
-            return {"enabled": False, "active_peers": 0}
-        try:
-            return await gw._webrtc.collect_stats()
-        except Exception as e:
-            logger.debug("webrtc stats error: %s", e)
-            return JSONResponse(
-                {"enabled": True, "error": str(e)},
-                status_code=500,
-            )
 
     go2rtc_upstream = gw._go2rtc_upstream
 
@@ -250,9 +368,7 @@ def register_operation_routes(app, gw) -> None:
         "/api/v1/webrtc/whep",
         summary="WHEP signalling proxy to go2rtc (image transmission path)",
         responses={
-            200: {
-                "content": {"application/sdp": {"schema": {"type": "string"}}}
-            },
+            200: {"content": {"application/sdp": {"schema": {"type": "string"}}}},
             503: {"model": GatewayErrorResponse},
         },
     )
@@ -279,40 +395,6 @@ def register_operation_routes(app, gw) -> None:
             media_type=r.headers.get("content-type", "application/sdp"),
         )
 
-    @app.post(
-        "/api/v1/webrtc/offer",
-        summary="WebRTC SDP offer/answer exchange for low-latency camera",
-        response_model=WebRTCControlResponse,
-        responses={
-            400: {"model": GatewayErrorResponse},
-            503: {"model": GatewayErrorResponse},
-        },
-    )
-    async def post_webrtc_offer(body: WebRTCOfferRequest = Body(...)):
-        if gw._webrtc is None:
-            return JSONResponse({"error": "webrtc_unavailable"}, status_code=503)
-        try:
-            return await gw._webrtc.handle_offer(_body_mapping(body))
-        except ValueError as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-
-    @app.post(
-        "/api/v1/webrtc/bitrate",
-        summary="Live-tune WebRTC max bitrate without reconnect",
-        response_model=WebRTCControlResponse,
-        responses={
-            400: {"model": GatewayErrorResponse},
-            503: {"model": GatewayErrorResponse},
-        },
-    )
-    async def post_webrtc_bitrate(body: BitrateRequest):
-        if gw._webrtc is None:
-            return JSONResponse({"error": "webrtc_unavailable"}, status_code=503)
-        try:
-            return await gw._webrtc.set_max_bitrate(body.bps)
-        except ValueError as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
-
     def _temporal_store():
         if gw._temporal_store is None:
             try:
@@ -324,9 +406,7 @@ def register_operation_routes(app, gw) -> None:
                     "LINGTU_MEMORY_DIR",
                     os.path.join(os.path.expanduser("~"), ".nova", "semantic"),
                 )
-                gw._temporal_store = TemporalStore(
-                    os.path.join(mem_dir, "temporal_memory.db")
-                )
+                gw._temporal_store = TemporalStore(os.path.join(mem_dir, "temporal_memory.db"))
             except Exception as exc:
                 logger.warning("GatewayModule: TemporalStore unavailable: %s", exc)
         return gw._temporal_store
@@ -490,6 +570,45 @@ def register_operation_routes(app, gw) -> None:
         return gw._exploration_status_payload()
 
     @app.get(
+        "/api/v1/services/status",
+        summary="Product service status",
+        response_model=ServiceStatusResponse,
+    )
+    async def service_status(names: str | None = None, dds_check: bool = False):
+        selected = _parse_service_names(names)
+        service_details: dict[str, Any] = {}
+        try:
+            from runtime.service_manager import get_service_manager
+
+            svc = get_service_manager()
+            services = svc.status(*selected)
+            if hasattr(svc, "status_details"):
+                try:
+                    service_details = svc.status_details(*selected, dds_check=dds_check)
+                except TypeError:
+                    service_details = svc.status_details(*selected)
+                _mark_gateway_http_observed(service_details)
+        except Exception:
+            services = {name: "unknown" for name in selected}
+        field_readiness = _load_field_service_readiness()
+        return {
+            "schema_version": 1,
+            "services": services,
+            "service_details": service_details,
+            "readiness": _service_readiness_summary(
+                services,
+                service_details,
+                selected,
+                field_readiness,
+            ),
+            "field_readiness": field_readiness,
+            "service_groups": _SLAM_SERVICE_GROUPS,
+            "service_metadata": _SLAM_SERVICE_METADATA,
+            "product_runtime": "native_dds",
+            "control_entrypoint": "lingtu svc status",
+        }
+
+    @app.get(
         "/api/v1/slam/status",
         summary="SLAM service status",
         response_model=SlamStatusResponse,
@@ -507,7 +626,9 @@ def register_operation_routes(app, gw) -> None:
             services = {
                 "lidar": "unknown",
                 "slam": "unknown",
-                "nav_dds": "unknown",
+                "traversability": "unknown",
+                "nav": "unknown",
+                "explore": "unknown",
                 "slam_pgo": "unknown",
                 "localizer": "unknown",
                 "genz_icp": "unknown",
@@ -520,21 +641,14 @@ def register_operation_routes(app, gw) -> None:
         native_mode = None
         try:
             status_snapshot = getattr(gw, "_localization_status", None) or {}
-            live_mode = str(
-                gw._slam_profile_from_status(status_snapshot)
-                or ""
-            ).strip().lower()
+            live_mode = str(gw._slam_profile_from_status(status_snapshot) or "").strip().lower()
             if live_mode == "native_dds":
                 native_mode = str(status_snapshot.get("mode") or "").strip() or None
         except Exception:
             live_mode = ""
 
         slam_detail = service_details.get("slam") if isinstance(service_details, dict) else {}
-        slam_active_units = (
-            slam_detail.get("active_units", [])
-            if isinstance(slam_detail, dict)
-            else []
-        )
+        slam_active_units = slam_detail.get("active_units", []) if isinstance(slam_detail, dict) else []
         native_slam_active = "lingtu-slam-dds.service" in slam_active_units
 
         if live_mode in {
@@ -569,6 +683,7 @@ def register_operation_routes(app, gw) -> None:
             "services": services,
             "service_details": service_details,
             "service_groups": _SLAM_SERVICE_GROUPS,
+            "service_metadata": _SLAM_SERVICE_METADATA,
             "product_runtime": "native_dds",
             "ros2_required": False,
             "manual_systemctl_required": False,
@@ -602,20 +717,45 @@ def register_operation_routes(app, gw) -> None:
             svc.stop(*plan.stop)
             if plan.ensure:
                 svc.ensure(*plan.ensure)
-            ok = (
-                svc.wait_ready(*plan.wait_ready, timeout=10.0)
-                if plan.wait_ready
-                else True
-            )
+            ok = svc.wait_ready(*plan.wait_ready, timeout=10.0) if plan.wait_ready else True
             if ok:
                 gw._cached_slam_profile = "stopped" if profile == "stop" else profile
                 gw._slam_profile_ts = time.time()
             return slam_operation_payload(
                 ok,
                 profile=profile,
-                message=(
-                    f"Switched to {profile}" if ok else "Services not ready after 10s"
-                ),
+                message=(f"Switched to {profile}" if ok else "Services not ready after 10s"),
+            )
+        except Exception as e:
+            return _slam_operation_response(False, message=str(e), status_code=500)
+
+    @app.post(
+        "/api/v1/slam/restart",
+        summary="Force-restart native SLAM localization service",
+        response_model=SlamOperationResponse,
+        responses={
+            500: {"model": SlamOperationResponse},
+            504: {"model": SlamOperationResponse},
+        },
+    )
+    async def slam_restart():
+        try:
+            from runtime.service_manager import get_service_manager
+
+            svc = get_service_manager()
+            svc.stop("slam")
+            clear_cache = getattr(gw, "clear_localization_runtime_cache", None)
+            if callable(clear_cache):
+                clear_cache(reason="manual_localization_restart")
+            svc.ensure("slam")
+            ok = svc.wait_ready("slam", timeout=20.0)
+            if ok:
+                gw._cached_slam_profile = "native_dds"
+                gw._slam_profile_ts = time.time()
+            return slam_operation_payload(
+                ok,
+                profile="native_dds",
+                message=("Native SLAM restarted" if ok else "SLAM service not ready after restart"),
             )
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)
@@ -692,11 +832,18 @@ def register_operation_routes(app, gw) -> None:
                 message=name_error,
                 status_code=400,
             )
-        pcd_path = map_dir_for(map_name) / "map.pcd"
-        if not pcd_path.is_file():
+        try:
+            ensure_maps_service(gw)
+        except RuntimeError as exc:
+            return _slam_operation_response(False, message=str(exc), status_code=503)
+        pcd_path = gw._map_artifact_path_from_maps_service(
+            map_name,
+            "source_pointcloud",
+        )
+        if pcd_path is None:
             return _slam_operation_response(
                 False,
-                message=f"Map not found: {pcd_path}",
+                message=f"Map source point cloud unavailable: {map_name}",
                 status_code=404,
             )
         unavailable_response = _relocalization_service_unavailable_response(gw)
@@ -768,11 +915,18 @@ def register_operation_routes(app, gw) -> None:
                 message=name_error,
                 status_code=400,
             )
-        pcd_path = map_dir_for(map_name) / "map.pcd"
-        if not pcd_path.is_file():
+        try:
+            ensure_maps_service(gw)
+        except RuntimeError as exc:
+            return _slam_operation_response(False, message=str(exc), status_code=503)
+        pcd_path = gw._map_artifact_path_from_maps_service(
+            map_name,
+            "source_pointcloud",
+        )
+        if pcd_path is None:
             return _slam_operation_response(
                 False,
-                message=f"Map not found: {pcd_path}",
+                message=f"Map source point cloud unavailable: {map_name}",
                 status_code=404,
             )
         unavailable_response = _relocalization_service_unavailable_response(gw)
@@ -933,9 +1087,7 @@ def register_operation_routes(app, gw) -> None:
             "duration_s": (time.time() - started_ts) if started_ts else 0.0,
             "size_bytes": size_bytes,
             "pid": proc.pid if proc else None,
-            "exit_code": (
-                proc.returncode if proc and proc.poll() is not None else None
-            ),
+            "exit_code": (proc.returncode if proc and proc.poll() is not None else None),
             "disk_free": disk_free,
             "disk_total": disk_total,
         }

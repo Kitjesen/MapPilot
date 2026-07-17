@@ -5,7 +5,6 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-
 _EXPORTS = {
     "mount_dashboard_assets": ("gateway.routes.assets", "mount_dashboard_assets"),
     "register_app_routes": ("gateway.routes.app", "register_app_routes"),
@@ -15,6 +14,10 @@ _EXPORTS = {
     "register_diagnostic_routes": (
         "gateway.routes.diagnostics",
         "register_diagnostic_routes",
+    ),
+    "register_inspection_routes": (
+        "gateway.routes.inspection",
+        "register_inspection_routes",
     ),
     "map_lifecycle_payload": ("gateway.routes.maps", "map_lifecycle_payload"),
     "register_map_routes": ("gateway.routes.maps", "register_map_routes"),

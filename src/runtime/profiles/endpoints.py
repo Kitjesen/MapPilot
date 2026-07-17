@@ -10,22 +10,21 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Mapping
 
-from runtime.profiles.catalog.endpoints import (
-    COMPAT_RUNTIME_ENDPOINT_ALIASES,
-    PRODUCT_PROFILE_ENDPOINTS,
-    PRODUCT_RUNTIME_ENDPOINT_ALIASES,
-    RUNTIME_ENDPOINT_ALIASES,
-    RUNTIME_ENDPOINTS,
-    RuntimeEndpointError,
-    RuntimeEndpointSpec,
-    RuntimeRunSpec,
-)
 from runtime.profiles.binding_policy import (
     endpoint_contract_for_config,
     endpoint_transport_for_config,
     localization_adapter_for_config,
     module_transport_for_config,
     resolved_autonomy_backend_selection,
+)
+from runtime.profiles.catalog.endpoints import (
+    COMPAT_RUNTIME_ENDPOINT_ALIASES,
+    PRODUCT_RUNTIME_ENDPOINT_ALIASES,
+    RUNTIME_ENDPOINT_ALIASES,
+    RUNTIME_ENDPOINTS,
+    RuntimeEndpointError,
+    RuntimeEndpointSpec,
+    RuntimeRunSpec,
 )
 from runtime.profiles.endpoint_config import (
     endpoint_config_for_profile,
@@ -53,9 +52,8 @@ _RESOLVER_OWNED_ENV_KEYS = frozenset(
         "LINGTU_ENDPOINT_TRANSPORT",
         "LINGTU_RUNTIME_CONTRACT",
         "LINGTU_ENDPOINT_CONTRACT",
+        "LINGTU_ROUTE_CONTRACT",
         "LINGTU_LOCALIZATION_ADAPTER",
-        "LINGTU_NAV_IN_ADAPTER",
-        "LINGTU_NAV_OUT_ADAPTER",
         "LINGTU_ENABLE_ROBOT_DRIVER",
         "LINGTU_COMMAND_OUTPUT_MODE",
         "LINGTU_HARDWARE_CONTROL_BOUNDARY",
@@ -75,9 +73,7 @@ def runtime_endpoint(name: str) -> RuntimeEndpointSpec:
         return RUNTIME_ENDPOINTS[endpoint_name]
     except KeyError as exc:
         choices = ", ".join(runtime_endpoint_names(include_aliases=True))
-        raise RuntimeEndpointError(
-            f"unknown runtime endpoint '{name}' (choices: {choices})"
-        ) from exc
+        raise RuntimeEndpointError(f"unknown runtime endpoint '{name}' (choices: {choices})") from exc
 
 
 def runtime_endpoint_names(
@@ -87,16 +83,10 @@ def runtime_endpoint_names(
 ) -> tuple[str, ...]:
     names = list(RUNTIME_ENDPOINTS.keys())
     if include_aliases:
-        names.extend(
-            alias
-            for alias in PRODUCT_RUNTIME_ENDPOINT_ALIASES
-            if alias not in RUNTIME_ENDPOINTS
-        )
+        names.extend(alias for alias in PRODUCT_RUNTIME_ENDPOINT_ALIASES if alias not in RUNTIME_ENDPOINTS)
     if include_compat_aliases:
         names.extend(
-            alias
-            for alias in COMPAT_RUNTIME_ENDPOINT_ALIASES
-            if alias not in RUNTIME_ENDPOINTS and alias not in names
+            alias for alias in COMPAT_RUNTIME_ENDPOINT_ALIASES if alias not in RUNTIME_ENDPOINTS and alias not in names
         )
     return tuple(names)
 
@@ -136,37 +126,24 @@ def _launcher_args_for_config(
         endpoint = _endpoint_for_launcher_args(config, endpoint_name, launcher)
         if endpoint is not None and endpoint.record_actions:
             if profile not in endpoint.record_actions:
-                raise RuntimeEndpointError(
-                    f"endpoint '{endpoint.name}' record_actions missing profile "
-                    f"'{profile}'"
-                )
+                raise RuntimeEndpointError(f"endpoint '{endpoint.name}' record_actions missing profile '{profile}'")
             return endpoint.record_actions[profile]
         if explicit_default_args:
             return tuple(explicit_default_args)
         if endpoint is not None and endpoint.default_actions:
             if profile not in endpoint.default_actions:
-                raise RuntimeEndpointError(
-                    f"endpoint '{endpoint.name}' default_actions missing profile "
-                    f"'{profile}'"
-                )
+                raise RuntimeEndpointError(f"endpoint '{endpoint.name}' default_actions missing profile '{profile}'")
             return endpoint.default_actions[profile]
-        raise RuntimeEndpointError(
-            f"external launcher args missing for profile '{profile}'"
-        )
+        raise RuntimeEndpointError(f"external launcher args missing for profile '{profile}'")
 
     if explicit_default_args:
         return tuple(explicit_default_args)
     endpoint = _endpoint_for_launcher_args(config, endpoint_name, launcher)
     if endpoint is not None and endpoint.default_actions:
         if profile not in endpoint.default_actions:
-            raise RuntimeEndpointError(
-                f"endpoint '{endpoint.name}' default_actions missing profile "
-                f"'{profile}'"
-            )
+            raise RuntimeEndpointError(f"endpoint '{endpoint.name}' default_actions missing profile '{profile}'")
         return endpoint.default_actions[profile]
-    raise RuntimeEndpointError(
-        f"external launcher args missing for profile '{profile}'"
-    )
+    raise RuntimeEndpointError(f"external launcher args missing for profile '{profile}'")
 
 
 def _endpoint_for_launcher_args(
@@ -210,6 +187,56 @@ def _endpoint_name_for_config(
     return None
 
 
+def route_contract_for_config(
+    config: Mapping[str, Any],
+    *,
+    endpoint_name: str | None = None,
+    data_source_name: str | None = None,
+    endpoint_transport: str | None = None,
+    endpoint_contract: str | None = None,
+) -> str | None:
+    """Return the route-contract preset for a resolved runtime boundary.
+
+    This is deliberately separate from ``module_transport``. A route contract
+    describes the external bus/topic boundary. It does not force normal Module
+    ports to use DDS unless the Blueprint explicitly opts into routed delivery.
+    """
+
+    raw_endpoint = endpoint_name or str(config.get("_runtime_endpoint") or "").strip()
+    resolved_endpoint = canonical_runtime_endpoint_name(raw_endpoint) if raw_endpoint else ""
+    resolved_endpoint = resolved_endpoint or None
+    if resolved_endpoint == "thunder_field":
+        return "robot"
+
+    resolved_transport = (
+        str(
+            endpoint_transport
+            if endpoint_transport is not None
+            else config.get("endpoint_transport") or config.get("_endpoint_transport") or ""
+        )
+        .strip()
+        .lower()
+    )
+    resolved_contract = str(
+        endpoint_contract
+        if endpoint_contract is not None
+        else config.get("endpoint_contract") or config.get("_endpoint_contract") or ""
+    ).strip()
+    if resolved_transport == "dds" and resolved_contract == "thunder_field_dds_v1":
+        return "robot"
+
+    resolved_data_source = str(
+        data_source_name
+        if data_source_name is not None
+        else config.get("_endpoint_data_source") or config.get("_runtime_contract") or ""
+    ).strip()
+    if "replay" in resolved_data_source:
+        return "replay"
+    if resolved_endpoint in {"mujoco_live", "gazebo", "cmu_unity"}:
+        return "sim"
+    return None
+
+
 def resolve_runtime_run_spec(
     profile: str,
     config: Mapping[str, Any],
@@ -246,13 +273,18 @@ def resolve_runtime_run_spec(
         config,
         default=_default_endpoint_contract(endpoint_name),
     )
+    route_contract = route_contract_for_config(
+        config,
+        endpoint_name=endpoint_name,
+        data_source_name=data_source_name,
+        endpoint_transport=endpoint_transport,
+        endpoint_contract=endpoint_contract,
+    )
     localization_adapter = localization_adapter_for_config(
         config,
         endpoint_transport=endpoint_transport,
         endpoint_contract=endpoint_contract,
     )
-    nav_in_adapter = str(config.get("nav_in_adapter") or "").strip()
-    nav_out_adapter = str(config.get("nav_out_adapter") or "").strip()
     planner_profile = _planner_profile_for_config(config)
     autonomy_backends = resolved_autonomy_backend_selection(
         config,
@@ -272,16 +304,12 @@ def resolve_runtime_run_spec(
         env["LINGTU_RUNTIME_CONTRACT"] = str(runtime_contract)
     if endpoint_contract:
         env["LINGTU_ENDPOINT_CONTRACT"] = endpoint_contract
+    if route_contract:
+        env["LINGTU_ROUTE_CONTRACT"] = route_contract
     if localization_adapter:
         env["LINGTU_LOCALIZATION_ADAPTER"] = localization_adapter
-    if nav_in_adapter:
-        env["LINGTU_NAV_IN_ADAPTER"] = nav_in_adapter
-    if nav_out_adapter:
-        env["LINGTU_NAV_OUT_ADAPTER"] = nav_out_adapter
     if "enable_robot_driver" in config:
-        env["LINGTU_ENABLE_ROBOT_DRIVER"] = (
-            "1" if bool(config["enable_robot_driver"]) else "0"
-        )
+        env["LINGTU_ENABLE_ROBOT_DRIVER"] = "1" if bool(config["enable_robot_driver"]) else "0"
     command_output_mode = str(config.get("command_output_mode") or "").strip()
     if command_output_mode:
         env["LINGTU_COMMAND_OUTPUT_MODE"] = command_output_mode
@@ -301,9 +329,8 @@ def resolve_runtime_run_spec(
         module_transport=module_transport,
         endpoint_transport=endpoint_transport,
         endpoint_contract=endpoint_contract or None,
+        route_contract=route_contract,
         localization_adapter=localization_adapter or None,
-        nav_in_adapter=nav_in_adapter or None,
-        nav_out_adapter=nav_out_adapter or None,
         simulation_only=source.provider != "hardware",
         command_sink=source.command_sink,
         slam_source=source.slam_source,
@@ -311,23 +338,16 @@ def resolve_runtime_run_spec(
         mapping_source=source.mapping_source,
         lidar_extrinsic_profile=source.lidar_extrinsic_profile,
         frames=asdict(FRAMES),
-        frame_links={
-            name: asdict(link)
-            for name, link in FRAME_LINKS.items()
-        },
+        frame_links={name: asdict(link) for name, link in FRAME_LINKS.items()},
         topic_allowed_frame_ids=runtime_topic_allowed_frame_ids(
             str(runtime_contract) if runtime_contract else data_source_name
         ),
         topic_default_frame_ids=runtime_topic_default_frame_ids(
             str(runtime_contract) if runtime_contract else data_source_name
         ),
-        resolved_runtime_data_flow=tuple(
-            asdict(stage)
-            for stage in resolved_runtime_data_flow(data_source_name)
-        ),
+        resolved_runtime_data_flow=tuple(asdict(stage) for stage in resolved_runtime_data_flow(data_source_name)),
         runtime_data_flow_stage_algorithm_interfaces={
-            name: tuple(interfaces)
-            for name, interfaces in RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items()
+            name: tuple(interfaces) for name, interfaces in RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items()
         },
         launcher=str(launcher) if launcher else None,
         launcher_args=(
@@ -343,9 +363,7 @@ def resolve_runtime_run_spec(
             else ()
         ),
         env=env,
-        product_semantic_overrides=normalized_product_semantic_overrides(
-            config.get("_product_semantic_overrides")
-        ),
+        product_semantic_overrides=normalized_product_semantic_overrides(config.get("_product_semantic_overrides")),
         global_planner=planner_profile["primary"],
         fallback_global_planners=planner_profile["fallback_planners"],
         planner_latency_budget_ms=planner_profile["latency_budget_ms"],
@@ -366,11 +384,7 @@ def _planner_profile_for_config(config: Mapping[str, Any]) -> dict[str, Any]:
             "latency_budget_ms",
             config.get("planner_latency_budget_ms"),
         )
-        safety_policy = str(
-            raw_profile.get("plan_safety_policy")
-            or config.get("plan_safety_policy")
-            or ""
-        ).strip()
+        safety_policy = str(raw_profile.get("plan_safety_policy") or config.get("plan_safety_policy") or "").strip()
     else:
         primary = str(config.get("planner") or "").strip()
         fallback_planners = _string_tuple(config.get("fallback_planners"))
@@ -434,7 +448,6 @@ def _merge_endpoint_env_overrides(
         key = str(raw_key)
         if key in _RESOLVER_OWNED_ENV_KEYS:
             raise RuntimeEndpointError(
-                f"endpoint '{endpoint.name}' env_overrides cannot override "
-                f"resolver-owned env key '{key}'"
+                f"endpoint '{endpoint.name}' env_overrides cannot override resolver-owned env key '{key}'"
             )
         env[key] = str(raw_value)

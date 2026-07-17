@@ -56,9 +56,9 @@ check_dir  "src/perception"
 check_dir  "src/decision"
 check_dir  "src/perception/reconstruction"
 check_file "src/perception/__init__.py"
-check_file "src/decision/modules/semantic_planner_module.py"
-check_file "src/decision/goal_resolution/goal_resolver.py"
-check_file "src/decision/goal_resolution/slow_path.py"
+check_file "src/decision/modules/semantic_planner.py"
+check_file "src/decision/goals/resolver.py"
+check_file "src/decision/goals/slow.py"
 
 info "Phase 1: Checking semantic runtime contracts..."
 if grep -q "semantic:" "$REPO_ROOT/config/topic_contract.yaml"; then
@@ -73,13 +73,13 @@ else
   fail "resolved_goal semantic contract missing"
 fi
 
-if grep -q "topo_summary" "$REPO_ROOT/src/decision/modules/semantic_planner_module.py"; then
+if grep -q "topo_summary" "$REPO_ROOT/src/decision/modules/semantic_planner.py"; then
   pass "SemanticPlanner topo_summary port present"
 else
   fail "SemanticPlanner topo_summary port missing"
 fi
 
-if grep -q "room_graph" "$REPO_ROOT/src/decision/modules/semantic_planner_module.py"; then
+if grep -q "room_graph" "$REPO_ROOT/src/decision/modules/semantic_planner.py"; then
   pass "SemanticPlanner room_graph port present"
 else
   fail "SemanticPlanner room_graph port missing"

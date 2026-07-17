@@ -1,75 +1,169 @@
 # Decision
 
-`src/decision/` owns semantic decision-making: instruction interpretation,
-goal resolution, LLM/tool orchestration, visual servo decisions, task
-decomposition, action recovery, and frontier scoring.
+`src/decision/` is the semantic decision layer. It turns high-level user
+instructions and perception outputs into navigation goals, visual-servo targets,
+cancel requests, task plans, and agent status messages.
 
-Semantic planning is pure Python Module orchestration. It does not own robot
-drivers, velocity arbitration, global/local path planning, SLAM, or ROS 2
-runtime bridges. The local autonomy uses in-process C++/Python kernels in the
-navigation layer; decision code produces semantic goals, servo targets,
-cancels, and task status.
+Semantic planning is pure Python Module orchestration.
 
-## Functional Layout
+It is not the robot driver, SLAM, map builder, global planner, local planner, or
+velocity arbiter. Those live in `src/drivers/`, `src/localization/`, and
+`src/nav/`.
 
-| Path | Role |
-| --- | --- |
-| `modules/` | Runtime `Module` entrypoints used by blueprints and plugin registration. |
-| `goal_resolution/` | Fast/slow target grounding, AdaCoT routing, SG-Nav reasoning, tokenizer helpers. |
-| `llm/` | LLM clients, backend registry, and prompt builders. |
-| `tasking/` | Agent loop, task decomposition, action execution, and service wrappers. |
-| `exploration/` | Frontier types, scoring, semantic uncertainty, and exploration strategy helpers. |
-| `vision/` | BBox navigation, person tracking, OSNet Re-ID, VLM bbox and scene queries. |
-| `resource/` | Static decision resources. |
-| `tests/` | Decision-layer tests. |
+The local autonomy uses in-process C++/Python kernels in the navigation layer;
+decision only chooses semantic intent and target outputs. Compute-heavy SLAM,
+map building, global planning, local planning, and velocity arbitration stay
+outside this package.
 
-## Runtime Modules
+The old `src/decision/legacy/` Module wrappers have been removed. Runtime code
+should use `modules/semantic_planner.py`, `modules/visual_servo.py`, and
+`modules/llm.py`; tests for goal resolution, task decomposition, frontier
+scoring, and action shaping target the strategy packages directly.
 
-| Module | File | Runtime role |
+## Main Entry Point
+
+The main program in this package is:
+
+| Runtime object | File | Role |
 | --- | --- | --- |
-| `SemanticPlannerModule` | `modules/semantic_planner_module.py` | Production entry point. Converts user/agent instructions into goals, plans, cancels, and servo targets; internally owns goal resolution, task decomposition, action execution, and frontier scoring. |
-| `VisualServoModule` | `modules/visual_servo_module.py` | Converts visual targets into far `goal_pose` or near `cmd_vel`. |
-| `LLMModule` | `modules/llm_module.py` | Multi-backend LLM wrapper exposed as a Module; stacked by `planner()` but not currently consumed by `SemanticPlannerModule`, which builds its own LLM client. |
+| `SemanticPlannerModule` | `modules/semantic_planner.py` | Primary semantic planner. Receives instructions, scene graph, odometry, topology summary, and mission status. Publishes `goal_pose`, `cancel`, `servo_target`, `task_plan`, and `agent_message`. |
+| `VisualServoModule` | `modules/visual_servo.py` | Near-target visual control. Receives camera/depth/intrinsics/scene graph plus `servo_target`. Publishes far `goal_pose`, close-range `cmd_vel`, and `nav_stop`. |
+| `LLMModule` | `modules/llm.py` | Optional LLM backend module. The planner can also build its own LLM client directly. |
 
-Legacy/test-only wrapper Modules (not added by any stack factory or product
-blueprint; superseded by `SemanticPlannerModule`, which calls the underlying
-helpers directly). Kept only because their own tests still exercise them:
+There is no standalone `main.py` under `src/decision/`. Decision modules are
+started by the runtime blueprint system.
 
-| Module | File | Superseded by |
-| --- | --- | --- |
-| `GoalResolverModule` | `modules/goal_resolver_module.py` | `SemanticPlannerModule` + `goal_resolution/goal_resolver.py` |
-| `TaskDecomposerModule` | `modules/task_decomposer_module.py` | `SemanticPlannerModule` + `tasking/task_decomposer.py` |
-| `ActionExecutorModule` | `modules/action_executor_module.py` | `SemanticPlannerModule` + `tasking/action_executor.py` |
-| `FrontierModule` | `modules/frontier_module.py` | `SemanticPlannerModule` + `exploration/frontier_scorer.py` |
+## How It Starts
 
-## Algorithm Use
+The startup chain is:
 
-Decision uses local Python strategies and model clients. It does not call the
-native navigation kernels directly; navigation, local planning, path following,
-and velocity muxing remain in `src/nav/` and `src/nav/kernel/`.
-
-| Function | Decision entry | Strategy/algorithm used | Lower layer handoff |
-| --- | --- | --- | --- |
-| Natural-language goal resolution | `modules/semantic_planner_module.py`, `modules/goal_resolver_module.py` | `goal_resolution/goal_resolver.py` with `FastPathMixin`, `SlowPathMixin`, `AdaCoTRouter`, tokenizer, optional SG-Nav reasoning | Publishes `goal_pose`; `Navigation` and planner backends handle path planning. |
-| Unknown-target exploration choice | `modules/semantic_planner_module.py`, `modules/frontier_module.py` | `exploration/frontier_scorer.py`, frontier BFS, information gain, uncertainty, KG/semantic prior, simple TSP ordering | Publishes an exploration `goal_pose`; map/frontier data comes from map/navigation layers. |
-| Multi-step task execution | `modules/semantic_planner_module.py`, `modules/action_executor_module.py` | `tasking/task_decomposer.py`, `tasking/task_rules.py`, `tasking/action_executor.py`, LERa recovery rules | Converts high-level actions to `goal_pose`, `cmd_vel`, or `cancel`; actual motion arbitration stays outside decision. |
-| Tool-calling agent loop | `modules/semantic_planner_module.py` | `tasking/agent_loop.py` plus discovered `@skill` tools and optional VLM scene agent | Calls Module skills; does not own hardware or planner execution. |
-| Visual servo / follow | `modules/visual_servo_module.py` | `vision/bbox_navigator.py` bbox depth projection, PD control, Ziegler-Nichols gain tuning; `vision/person_tracker.py` IoU/CLIP/OSNet/VLM Re-ID | Far target publishes `goal_pose`; close target publishes short-range `cmd_vel` through the mux path. |
-| LLM reasoning | `modules/llm_module.py`, `llm/llm_client.py` | Kimi/OpenAI/Claude/Qwen/mock clients and prompt builders | Supplies text/VLM decisions only; no navigation kernel access. |
-
-## Imports
-
-```python
-from decision.goal_resolution.goal_resolver import GoalResolver
-from decision.modules.visual_servo_module import VisualServoModule
+```text
+lingtu.py <profile>
+  -> cli/profile resolution
+  -> runtime.blueprints.full_stack / stack factories
+  -> runtime.blueprints.stacks.planner()
+  -> add SemanticPlannerModule, LLMModule, VisualServoModule
+  -> runtime.blueprints.wires.semantic connects ports
 ```
 
-## Boundaries
+The stack factory that creates decision modules is:
 
-- Decision code may publish `goal_pose`, `cancel`, `servo_target`, and
-  short-range `cmd_vel` through Module ports.
-- Decision code does not directly drive hardware or own the `VelocityMux`.
-- Decision code does not own global planning, local obstacle avoidance, path
-  following, map maintenance, SLAM, or localization health.
-- MCP skills are discovered from runtime Modules through
-  `runtime.module.skill`; normal strategy helpers should stay plain Python.
+```text
+src/runtime/blueprints/stacks/planner.py
+```
+
+The wires that connect decision modules to Gateway, MCP, Perception, Memory, and
+Navigation are:
+
+```text
+src/runtime/blueprints/wires/semantic.py
+```
+
+Profiles with semantic planning enabled include `dev`, `sim`, `nav`,
+`explore`, and `tare_explore`. `stub` and `sim_nav` are smaller profiles and may
+not include the semantic stack.
+
+## Runtime Data Flow
+
+Typical instruction flow:
+
+```text
+GatewayModule.instruction
+MCPServerModule.instruction
+runtime nav input topic
+        |
+        v
+SemanticPlannerModule.instruction
+        |
+        +-- goals/resolver.py          fast/slow target grounding
+        +-- tasks/decomposition.py     task splitting
+        +-- tasks/actions.py           action command shaping
+        +-- frontiers/scorer.py        fallback frontier target
+        |
+        +--> goal_pose      -> nav.mission.goal_pose
+        +--> cancel         -> nav.mission.cancel
+        +--> servo_target   -> VisualServoModule.servo_target
+        +--> task_plan      -> Gateway/status consumers
+        +--> agent_message  -> Gateway chat/status stream
+```
+
+Typical visual-servo flow:
+
+```text
+Camera/color/depth/intrinsics
+PerceptionModule.scene_graph
+SemanticPlannerModule.servo_target or GatewayModule.servo_target
+        |
+        v
+VisualServoModule
+        |
+        +--> goal_pose   -> nav.mission.goal_pose      (far target)
+        +--> cmd_vel     -> nav.velocity_mux           (close target)
+        +--> nav_stop    -> nav.mission.stop_signal    (pause planner while servoing)
+```
+
+## Directory Layout
+
+| Path | Runtime status | Purpose |
+| --- | --- | --- |
+| `modules/` | Product entrypoints | Runtime `Module` classes registered into the blueprint system. |
+| `goals/` | Product strategy | Fast/slow goal grounding, route selection, SG-Nav helper, tokenizer. |
+| `tasks/` | Product strategy | Task decomposition, action shaping, agent loop, service wrappers. |
+| `frontiers/` | Product strategy | Frontier extraction, scoring, and exploration fallback. |
+| `llm/` | Product utility | LLM clients and prompt builders. |
+| `vision/` | Product utility | BBox navigation, person tracking, Re-ID, VLM helpers. |
+| `tests/` | Tests | Decision-layer regression tests. |
+
+## Strategy Entrypoints
+
+| Need | Use |
+| --- | --- |
+| Runtime semantic planning | `modules/semantic_planner.py::SemanticPlannerModule` |
+| Near-target visual control | `modules/visual_servo.py::VisualServoModule` |
+| Optional LLM module boundary | `modules/llm.py::LLMModule` |
+| Goal grounding without Module wiring | `goals/resolver.py::GoalResolver` |
+| Fast deterministic goal match | `goals/fast.py` |
+| Slow LLM-backed goal match | `goals/slow.py` |
+| Task decomposition | `tasks/decomposition.py::TaskDecomposer` |
+| Action command shaping | `tasks/actions.py::ActionExecutor` |
+| Frontier fallback scoring | `frontiers/scorer.py::FrontierScorer` |
+
+Removed compatibility wrappers:
+
+- `GoalResolverModule`
+- `TaskDecomposerModule`
+- `ActionExecutorModule`
+- `FrontierModule`
+
+Those names were test-only adapters around the strategy classes. They are not a
+product startup surface anymore.
+
+## Product Boundary
+
+Allowed dependencies:
+
+- `runtime`: Module base class, typed messages, registry, stream ports.
+- `memory`: semantic/tagged/topological memory helpers.
+- `decision.*`: local strategy packages.
+
+Forbidden direct dependencies:
+
+- `drivers`
+- `nav`
+- `gateway`
+- `localization`
+
+Decision talks to those layers through Module ports and blueprint wires, not by
+importing their implementations.
+
+## Functional Data
+
+Some Chinese text remains intentionally in functional data:
+
+- tokenizer vocabulary and bilingual label maps,
+- rule-based Chinese command phrases,
+- Chinese LLM/VLM prompts,
+- tests that verify Chinese instruction handling.
+
+Comments and docstrings should be English-only. Do not add explanatory Chinese
+comments back into source code.

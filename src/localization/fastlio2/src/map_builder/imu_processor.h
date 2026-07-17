@@ -18,6 +18,8 @@ public:
         return {static_cast<int>(m_imu_cache.size()), m_config.imu_init_num};
     }
 
+    double accelerationScale() const { return m_acc_scale; }
+
 private:
     void checkIMUStationary(const Vec<IMUData> &batch);
 
@@ -30,7 +32,13 @@ private:
     V3D m_last_gyro;
     M12D m_Q;
     IMUData m_last_imu;
+    double m_acc_scale = 1.0;
 
     // ZUPT static detection state
     int m_static_frame_count = 0;
+
+    // ZARU gyro-bias adaptation state. Biases stay in the IMU frame.
+    V3D m_initial_gyro_bias = V3D::Zero();
+    int m_bias_static_frame_count = 0;
+    double m_last_bias_stationary_time_s = -1.0;
 };

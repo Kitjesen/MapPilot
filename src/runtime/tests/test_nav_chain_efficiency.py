@@ -1,4 +1,4 @@
-﻿"""Chain-level navigation efficiency evidence.
+"""Chain-level navigation efficiency evidence.
 
 Verifies that every component in the navigation compute chain reports its
 backend and performance telemetry correctly, and that no fallback mechanism
@@ -21,11 +21,11 @@ import time
 import numpy as np
 import pytest
 
+from nav.navigation import Navigation
+from nav.services.plan.contracts import GLOBAL_PLAN_SCHEMA_VERSION
+from nav.services.safety.velocity_mux import VelocityMux
 from runtime.msgs.geometry import Pose, PoseStamped, Twist, Vector3
 from runtime.msgs.nav import Odometry, Path
-from nav.services.safety.velocity_mux import VelocityMux
-from nav.mission.navigation import Navigation
-from nav.services.plan.contracts import GLOBAL_PLAN_SCHEMA_VERSION
 
 
 def _identity_map_odom_tf() -> dict:
@@ -76,11 +76,13 @@ class _FakePctPlanner:
         dist = np.hypot(dx, dy)
         steps = max(2, int(dist / 0.5))
         path = [
-            np.array([
-                start[0] + dx * i / steps,
-                start[1] + dy * i / steps,
-                start[2] + (goal[2] - start[2]) * i / steps,
-            ])
+            np.array(
+                [
+                    start[0] + dx * i / steps,
+                    start[1] + dy * i / steps,
+                    start[2] + (goal[2] - start[2]) * i / steps,
+                ]
+            )
             for i in range(steps + 1)
         ]
         # Simulate PCT latency (~15 ms)
@@ -334,7 +336,8 @@ class TestNavChainGlobalPlannerEfficiency:
 
     def test_chain_global_planner_detects_direct_goal_fallback(self):
         """When planner is not ready, direct_goal_fallback is activated and reported."""
-        nav = Navigation(allow_direct_goal_fallback=True,
+        nav = Navigation(
+            allow_direct_goal_fallback=True,
         )
         nav._planner_svc = _FakeDirectGoalFallbackPlanner()
         nav._robot_pos = np.array([0.0, 0.0, 0.0])
@@ -504,13 +507,15 @@ class TestNavChainPathFollowerEfficiency:
 
         pf._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
         pf._on_map_odom_tf(_identity_map_odom_tf())
-        pf._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
+        pf._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
         pf._on_odom(Odometry(pose=Pose(position=Vector3(0.1, 0.0, 0.0))))
 
         assert len(cmd_vel_out) >= 1
@@ -530,13 +535,15 @@ class TestNavChainPathFollowerEfficiency:
 
         pf._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
         pf._on_map_odom_tf(_identity_map_odom_tf())
-        pf._on_path(Path(
-            poses=[
-                PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
-                PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
-            ],
-            frame_id="map",
-        ))
+        pf._on_path(
+            Path(
+                poses=[
+                    PoseStamped(pose=Pose(position=Vector3(0.0, 0.0, 0.0))),
+                    PoseStamped(pose=Pose(position=Vector3(2.0, 0.0, 0.0))),
+                ],
+                frame_id="map",
+            )
+        )
         pf._on_odom(Odometry(pose=Pose(position=Vector3(0.1, 0.0, 0.0))))
         assert cmd_vel_out[-1].linear.x > 0.0
 
@@ -697,9 +704,7 @@ def test_nav_chain_telemetry_schema_happy_path():
                 or len(report.get("rejected_plans", [])) > 0
             ),
             "direct_goal_fallback": (
-                nav._direct_goal_fallback_status
-                if nav._direct_goal_fallback_status
-                else {"used": False}
+                nav._direct_goal_fallback_status if nav._direct_goal_fallback_status else {"used": False}
             ),
             "latency_ms": report.get("plan_ms", 0.0),
             "path_length_m": report.get("path_length_m", 0.0),
@@ -783,7 +788,8 @@ def test_nav_chain_telemetry_schema_with_direct_goal_fallback():
     When the planner is not ready and direct-goal fallback is enabled,
     the telemetry must show direct_goal_fallback.used=True with the reason.
     """
-    nav = Navigation(allow_direct_goal_fallback=True,
+    nav = Navigation(
+        allow_direct_goal_fallback=True,
     )
     nav._planner_svc = _FakeDirectGoalFallbackPlanner()
     nav._robot_pos = np.array([0.0, 0.0, 0.0])
@@ -795,9 +801,7 @@ def test_nav_chain_telemetry_schema_with_direct_goal_fallback():
             "selected_planner": "pct",
             "fallback_used": True,
             "direct_goal_fallback": (
-                nav._direct_goal_fallback_status
-                if nav._direct_goal_fallback_status
-                else {"used": False}
+                nav._direct_goal_fallback_status if nav._direct_goal_fallback_status else {"used": False}
             ),
         },
     }
@@ -816,5 +820,6 @@ def test_nav_chain_preview_returns_cli_safe_and_json_serializable():
 
     # json.dumps with allow_nan=False would reject NaN/Inf
     import json
+
     json.dumps(preview, allow_nan=False)
     # If we got here, no NaN/Inf in output

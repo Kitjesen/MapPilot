@@ -1,13 +1,14 @@
 """Tests for nav service modules, driver modules, and frontier explorer.
 
 Covers:
-  1. MapService      -- map CRUD, POI operations, persistence
-  2. WavefrontFrontierExplorer -- frontier detection, scoring, health
-  3. PatrolManagerModule   -- route CRUD, patrol start/stop
-  4. TaskSchedulerModule   -- schedule CRUD, firing logic, deduplication
-  5. GeofenceManagerModule -- fence CRUD, point-in-polygon, intrusion
-  6. CameraBridgeModule    -- instantiation, setup without rclpy, health
-  7. TeleopModule          -- joystick scaling, idle release, health, JPEG path
+  1. WavefrontFrontierExplorer -- frontier detection, scoring, health
+  2. PatrolManagerModule   -- route CRUD, patrol start/stop
+  3. TaskSchedulerModule   -- schedule CRUD, firing logic, deduplication
+  4. GeofenceManagerModule -- fence CRUD, point-in-polygon, intrusion
+  5. camera                -- instantiation, setup without rclpy, health
+  6. TeleopModule          -- joystick scaling, idle release, health, JPEG path
+
+Persistent map tests live under ``src/maps/tests``.
 
 All tests are pure-Python, no ROS2 / hardware required.
 """
@@ -27,697 +28,25 @@ import time
 import unittest
 from datetime import datetime
 from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 
 from runtime.msgs.geometry import Pose
 from runtime.msgs.nav import Odometry
-from runtime.msgs.sensor import Image, ImageFormat, PointCloud2
+from runtime.msgs.sensor import Image, ImageFormat
 
 # ---------------------------------------------------------------------------
-# 1. MapService
+# 1. WavefrontFrontierExplorer
 # ---------------------------------------------------------------------------
 
-class TestMapService(unittest.TestCase):
-    """Test map CRUD, POI operations, and persistence."""
-
-    def setUp(self):
-        self._tmpdir = tempfile.mkdtemp()
-        self._map_dir = os.path.join(self._tmpdir, "maps")
-        self._data_dir = os.path.join(self._tmpdir, "data")
-        from nav.services.maps import MapService
-        self.mod = MapService(
-            map_dir=self._map_dir,
-            data_dir=self._data_dir,
-        )
-        self.mod.setup()
-        self._responses: list[dict] = []
-        self.mod.map_response.subscribe(lambda r: self._responses.append(r))
-
-    def tearDown(self):
-        shutil.rmtree(self._tmpdir, ignore_errors=True)
-
-    def _cmd(self, cmd: dict) -> dict:
-        self._responses.clear()
-        self.mod._on_command(json.dumps(cmd))
-        self.assertTrue(len(self._responses) > 0, "no response published")
-        return self._responses[-1]
-
-    def _write_valid_saved_map_artifacts(
-        self,
-        name: str,
-        *,
-        occupancy: bool = False,
-    ) -> Path:
-        map_dir = Path(self._map_dir) / name
-        map_dir.mkdir(exist_ok=True)
-        pcd = map_dir / "map.pcd"
-        tomogram = map_dir / "tomogram.pickle"
-        pcd.write_text(
-            "VERSION 0.7\n"
-            "FIELDS x y z\n"
-            "SIZE 4 4 4\n"
-            "TYPE F F F\n"
-            "COUNT 1 1 1\n"
-            "WIDTH 1\n"
-            "HEIGHT 1\n"
-            "POINTS 1\n"
-            "DATA ascii\n"
-            "0.0 0.0 0.0\n",
-            encoding="utf-8",
-        )
-        tomogram.write_bytes(b"unit-test-tomogram")
-        from runtime.runtime_interface import TOPICS, topic_default_frame_id
-        from runtime.same_source_map_artifacts import (
-            build_saved_map_metadata,
-            sha256_file,
-        )
-
-        frame_id = topic_default_frame_id(TOPICS.saved_map_cloud)
-        source_profile = "unit_test"
-        data_source = "unit_test"
-        map_sha = sha256_file(pcd)
-        artifacts: dict[str, dict[str, Any]] = {
-            "map_pcd": {
-                "path": "map.pcd",
-                "source_profile": source_profile,
-                "data_source": data_source,
-                "slam_source": "unit_test_slam",
-                "frame_id": frame_id,
-                "point_count": 1,
-                "sha256": map_sha,
-            },
-            "tomogram": {
-                "path": "tomogram.pickle",
-                "source_map_sha256": map_sha,
-                "source_profile": source_profile,
-                "data_source": data_source,
-                "frame_id": frame_id,
-                "shape": [1, 1, 1],
-                "sha256": sha256_file(tomogram),
-            },
-        }
-        if occupancy:
-            occupancy_path = map_dir / "occupancy.npz"
-            np.savez(
-                str(occupancy_path),
-                grid=np.zeros((1, 1), dtype=np.int8),
-                resolution=np.array(0.2),
-                origin=np.array([0.0, 0.0]),
-            )
-            artifacts["occupancy_grid"] = {
-                "path": "occupancy.npz",
-                "source_map_sha256": map_sha,
-                "source_profile": source_profile,
-                "data_source": data_source,
-                "frame_id": frame_id,
-                "sha256": sha256_file(occupancy_path),
-            }
-        metadata = build_saved_map_metadata(
-            source_profile=source_profile,
-            data_source=data_source,
-            slam_source="unit_test_slam",
-            localization_source="unit_test_localizer",
-            mapping_source="unit_test_mapping",
-            frame_id=frame_id,
-            artifacts=artifacts,
-        )
-        (map_dir / "metadata.json").write_text(
-            json.dumps(metadata),
-            encoding="utf-8",
-        )
-        return map_dir
-
-    def test_instantiation(self):
-        """Module creates map_dir and data_dir on init."""
-        self.assertTrue(os.path.isdir(self._map_dir))
-        self.assertTrue(os.path.isdir(self._data_dir))
-
-    def test_list_empty(self):
-        resp = self._cmd({"action": "list"})
-        self.assertTrue(resp["success"])
-        self.assertEqual(resp["maps"], [])
-
-    def test_delete_nonexistent(self):
-        resp = self._cmd({"action": "delete", "name": "no_such_map"})
-        self.assertFalse(resp["success"])
-        self.assertIn("not found", resp["message"])
-
-    def test_rename_creates_and_renames(self):
-        # Create a map dir manually, then rename
-        src = Path(self._map_dir) / "alpha"
-        src.mkdir()
-        (src / "map.pcd").touch()
-        resp = self._cmd({"action": "rename", "name": "alpha", "new_name": "beta"})
-        self.assertTrue(resp["success"])
-        self.assertFalse(src.exists())
-        self.assertTrue((Path(self._map_dir) / "beta" / "map.pcd").exists())
-
-    def test_rename_missing_names(self):
-        resp = self._cmd({"action": "rename", "name": "", "new_name": ""})
-        self.assertFalse(resp["success"])
-
-    def test_set_active_and_list(self):
-        self._write_valid_saved_map_artifacts("mymap")
-        resp = self._cmd({"action": "set_active", "name": "mymap"})
-        self.assertTrue(resp["success"])
-        self.assertEqual(resp["active"], "mymap")
-        # Verify symlink
-        link = Path(self._map_dir) / "active"
-        self.assertTrue(link.is_symlink())
-
-    def test_set_active_missing(self):
-        resp = self._cmd({"action": "set_active", "name": "ghost"})
-        self.assertFalse(resp["success"])
-
-    def test_delete_active_clears_symlink(self):
-        self._write_valid_saved_map_artifacts("todel")  # side effect: creates map dir
-        self._cmd({"action": "set_active", "name": "todel"})
-        resp = self._cmd({"action": "delete", "name": "todel"})
-        self.assertTrue(resp["success"])
-        self.assertEqual(self.mod._active_map, "")
-
-    # -- POI tests --
-
-    def test_poi_set_list_delete(self):
-        resp = self._cmd({"action": "poi_set", "name": "home", "x": 1.0, "y": 2.0})
-        self.assertTrue(resp["success"])
-        resp = self._cmd({"action": "poi_list"})
-        self.assertIn("home", resp["pois"])
-
-        resp = self._cmd({"action": "poi_delete", "name": "home"})
-        self.assertTrue(resp["success"])
-        resp = self._cmd({"action": "poi_list"})
-        self.assertNotIn("home", resp["pois"])
-
-    def test_poi_delete_nonexistent(self):
-        resp = self._cmd({"action": "poi_delete", "name": "nope"})
-        self.assertFalse(resp["success"])
-
-    def test_unknown_action(self):
-        resp = self._cmd({"action": "foobar"})
-        self.assertFalse(resp["success"])
-        self.assertIn("unknown", resp.get("message", ""))
-
-    def test_invalid_json(self):
-        self._responses.clear()
-        self.mod._on_command("not json{{{")
-        self.assertTrue(len(self._responses) > 0)
-        resp = self._responses[-1]
-        self.assertFalse(resp["success"])
-
-    def test_get_active_tomogram_none(self):
-        result = self.mod.get_active_tomogram()
-        self.assertIsNone(result)
-
-    def test_build_tomogram_missing_name(self):
-        resp = self.mod._build_tomogram("")
-        self.assertFalse(resp["success"])
-
-    def test_build_occupancy_command_dispatches_snapshot_builder(self):
-        with patch.object(
-            self.mod.pipeline,
-            "build_occupancy_snapshot",
-            return_value={
-                "action": "build_occupancy_snapshot",
-                "success": True,
-                "occupancy": "occupancy.npz",
-            },
-        ) as occupancy:
-            resp = self._cmd({"action": "build_occupancy", "name": "demo"})
-
-        self.assertTrue(resp["success"])
-        self.assertEqual(resp["action"], "build_occupancy_snapshot")
-        occupancy.assert_called_once_with("demo")
-
-    def test_map_save_missing_name(self):
-        resp = self.mod._map_save("")
-        self.assertFalse(resp["success"])
-
-    @patch("subprocess.run")
-    @patch(
-        "gateway.gateway_module._apply_dynamic_filter_step1half",
-        return_value=None,
-    )
-    def test_map_save_super_lio_reports_gateway_capability_contract(
-        self,
-        _filter,
-        run,
-    ):
-        map_dir = Path(self._map_dir) / "super_lio_map"
-        pcd_path = map_dir / "map.pcd"
-        self.mod._on_map_cloud(
-            PointCloud2.from_numpy(
-                np.array(
-                    [
-                        [1.0, 2.0, 0.1],
-                        [3.0, 4.0, 0.2],
-                        [np.inf, 5.0, 0.3],
-                    ],
-                    dtype=np.float32,
-                )
-            )
-        )
-
-        def _build_tomogram(name):
-            return {
-                "action": "build_tomogram",
-                "success": False,
-                "message": "Super-LIO PGO output unavailable",
-            }
-
-        with patch.object(self.mod, "_build_tomogram", side_effect=_build_tomogram):
-            with patch.object(
-                self.mod,
-                "_build_occupancy_snapshot",
-                return_value={"success": False, "message": "no PGO patches"},
-            ):
-                resp = self.mod._map_save(
-                    "super_lio_map",
-                    slam_profile="super_lio",
-                )
-
-        self.assertTrue(resp["success"], resp)
-        run.assert_not_called()
-        self.assertTrue(pcd_path.exists())
-        raw = pcd_path.read_bytes()
-        self.assertIn(b"FIELDS x y z", raw)
-        self.assertIn(b"DATA binary", raw)
-        self.assertIn(b"POINTS 2", raw)
-        self.assertEqual(resp["slam_profile"], "super_lio")
-        self.assertTrue(resp["map_save_supported"])
-        self.assertEqual(resp["source"], "live_map_cloud_snapshot")
-        self.assertEqual(resp["map_save_source"], "live_map_cloud_snapshot")
-        self.assertFalse(resp["relocalization_supported"])
-        self.assertFalse(resp["saved_map_relocalization_supported"])
-        self.assertTrue(resp["restart_recovery_supported"])
-        self.assertEqual(resp["recovery_method"], "restart_super_lio")
-        self.assertFalse(resp["tomogram_ok"])
-        self.assertIn("Super-LIO", resp["warnings"][0])
-
-    @patch("subprocess.run")
-    def test_map_save_super_lio_fails_without_live_map_cloud(self, run):
-        resp = self.mod._map_save("super_lio_empty", slam_profile="super_lio")
-
-        self.assertFalse(resp["success"])
-        self.assertEqual(resp["slam_profile"], "super_lio")
-        self.assertTrue(resp["map_save_supported"])
-        self.assertEqual(resp["map_save_source"], "live_map_cloud_snapshot")
-        self.assertIn("No live map_cloud", resp["message"])
-        run.assert_not_called()
-
-    def test_super_lio_relocation_alias_reports_conservative_capability_contract(
-        self,
-    ):
-        fields = self.mod._map_save_capability_fields("relocation")
-
-        self.assertEqual(fields["map_save_source"], "active_map")
-        self.assertFalse(fields["map_save_supported"])
-        self.assertFalse(fields["relocalization_supported"])
-        self.assertFalse(fields["saved_map_relocalization_supported"])
-        self.assertTrue(fields["restart_recovery_supported"])
-        self.assertEqual(
-            fields["recovery_method"],
-            "restart_super_lio_relocation",
-        )
-
-    @patch("subprocess.run")
-    def test_map_save_super_lio_relocation_is_explicitly_unsupported(self, run):
-        resp = self.mod._map_save(
-            "relocation_map",
-            slam_profile="super_lio_relocation",
-        )
-
-        self.assertFalse(resp["success"])
-        self.assertEqual(resp["slam_profile"], "super_lio_relocation")
-        self.assertFalse(resp["map_save_supported"])
-        self.assertEqual(resp["map_save_source"], "active_map")
-        self.assertIn("not supported", resp["message"])
-        run.assert_not_called()
-
-    @patch(
-        "gateway.gateway_module._apply_dynamic_filter_step1half",
-        return_value=None,
-    )
-    def test_map_save_localizer_keeps_relocalization_contract(
-        self,
-        _filter,
-    ):
-        adapter = MagicMock(return_value={"success": True, "source": "fake_adapter"})
-        self.mod._map_save_adapter = adapter
-
-        with patch.object(
-            self.mod,
-            "_build_tomogram",
-            return_value={"success": True, "tomogram": "tomogram.pickle"},
-        ):
-            with patch.object(
-                self.mod,
-                "_build_occupancy_snapshot",
-                return_value={"success": True, "occupancy": "occupancy.npz"},
-            ):
-                resp = self.mod._map_save(
-                    "localizer_map",
-                    slam_profile="localizer",
-                )
-
-        self.assertTrue(resp["success"], resp)
-        self.assertEqual(resp["slam_profile"], "localizer")
-        self.assertTrue(resp["map_save_supported"])
-        self.assertEqual(resp["map_save_source"], "slam_service")
-        self.assertTrue(resp["relocalization_supported"])
-        self.assertTrue(resp["saved_map_relocalization_supported"])
-        self.assertTrue(resp["restart_recovery_supported"])
-        self.assertEqual(resp["recovery_method"], "relocalize_service")
-        adapter.assert_called_once()
-        self.assertEqual(
-            Path(adapter.call_args.args[0]),
-            Path(self._map_dir) / "localizer_map" / "map.pcd",
-        )
-        self.assertTrue(adapter.call_args.kwargs["save_patches"])
-
-    @patch(
-        "gateway.gateway_module._apply_dynamic_filter_step1half",
-        return_value=None,
-    )
-    def test_map_save_localizer_tomogram_failure_does_not_block_octomap(
-        self,
-        _filter,
-    ):
-        def _fake_save_maps(pcd_path, **_kw):
-            Path(pcd_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(pcd_path).write_text(
-                "VERSION 0.7\n"
-                "FIELDS x y z\n"
-                "SIZE 4 4 4\n"
-                "TYPE F F F\n"
-                "COUNT 1 1 1\n"
-                "WIDTH 1\n"
-                "HEIGHT 1\n"
-                "POINTS 1\n"
-                "DATA ascii\n"
-                "0.0 0.0 0.0\n",
-                encoding="utf-8",
-            )
-            return {"success": True, "source": "fake_adapter"}
-
-        adapter = MagicMock(side_effect=_fake_save_maps)
-        self.mod._map_save_adapter = adapter
-
-        with patch.object(
-            self.mod,
-            "_build_tomogram",
-            return_value={
-                "success": False,
-                "message": "tomogram source has no occupied structure",
-            },
-        ):
-            with patch.object(
-                self.mod,
-                "_build_occupancy_snapshot",
-                return_value={"success": True, "occupancy": "occupancy.npz"},
-            ) as occupancy:
-                with patch.object(
-                    self.mod,
-                    "_build_octomap_artifact",
-                    return_value={
-                        "success": True,
-                        "octomap": "octomap.ot",
-                        "metadata": {"ok": True, "path": "metadata.json"},
-                    },
-                ):
-                    resp = self.mod._map_save(
-                        "bad_nav_map",
-                        slam_profile="localizer",
-                    )
-
-        self.assertTrue(resp["success"], resp)
-        self.assertEqual(resp["slam_profile"], "localizer")
-        self.assertTrue(resp["map_save_supported"])
-        self.assertEqual(resp["map_save_source"], "slam_service")
-        self.assertFalse(resp["tomogram_ok"])
-        self.assertIn("tomogram source", resp["tomogram_message"])
-        self.assertTrue(resp["octomap_ok"])
-        self.assertIn("Legacy tomogram build failed", resp["warnings"][0])
-        adapter.assert_called_once()
-        occupancy.assert_called_once()
-
-    @patch(
-        "gateway.gateway_module._apply_dynamic_filter_step1half",
-        return_value=None,
-    )
-    def test_simulation_only_map_save_closes_active_artifact_loop(
-        self,
-        _filter,
-    ):
-        """Map save produces active map artifacts without ROS2 or hardware."""
-        map_name = "sim_saved"
-        map_dir = Path(self._map_dir) / map_name
-
-        def _fake_save_maps(pcd_path, **_kw):
-            Path(pcd_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(pcd_path).write_text(
-                "VERSION 0.7\n"
-                "FIELDS x y z\n"
-                "SIZE 4 4 4\n"
-                "TYPE F F F\n"
-                "COUNT 1 1 1\n"
-                "WIDTH 8\n"
-                "HEIGHT 1\n"
-                "VIEWPOINT 0 0 0 1 0 0 0\n"
-                "POINTS 8\n"
-                "DATA ascii\n"
-                "0.0 0.0 0.0\n"
-                "1.0 0.0 0.0\n"
-                "0.0 1.0 0.0\n"
-                "1.0 1.0 0.0\n"
-                "0.0 0.0 0.5\n"
-                "1.0 0.0 0.5\n"
-                "0.0 1.0 0.5\n"
-                "1.0 1.0 0.5\n",
-                encoding="utf-8",
-            )
-            return {"success": True, "source": "fake_adapter"}
-
-        def _fake_build_tomogram(name):
-            import pickle
-
-            tomogram_path = Path(self._map_dir) / name / "tomogram.pickle"
-            tomogram_path.write_bytes(
-                pickle.dumps(
-                    {
-                        "data": np.zeros((5, 1, 2, 2), dtype=np.float16),
-                        "resolution": 0.2,
-                        "center": [0.0, 0.0],
-                        "slice_h0": 0.0,
-                        "slice_dh": 0.25,
-                    },
-                    protocol=pickle.HIGHEST_PROTOCOL,
-                )
-            )
-            return {
-                "action": "build_tomogram",
-                "success": True,
-                "tomogram": str(tomogram_path),
-            }
-
-        adapter = MagicMock(side_effect=_fake_save_maps)
-        self.mod._map_save_adapter = adapter
-        with patch.object(self.mod, "_build_tomogram", side_effect=_fake_build_tomogram):
-            resp = self.mod._map_save(map_name, slam_profile="localizer")
-
-        self.assertTrue(resp["success"], resp)
-        self.assertEqual(resp["slam_profile"], "localizer")
-        self.assertEqual(resp["map_save_source"], "slam_service")
-        self.assertTrue(resp["tomogram_ok"])
-        self.assertTrue(resp["occupancy_ok"])
-        self.assertTrue(Path(resp["pcd"]).exists())
-        self.assertTrue(Path(resp["tomogram"]).exists())
-        self.assertTrue(Path(resp["occupancy"]).exists())
-        self.assertTrue(resp["saved_map_relocalization_supported"])
-        adapter.assert_called_once()
-        self.assertEqual(Path(adapter.call_args.args[0]), map_dir / "map.pcd")
-        self.assertTrue(adapter.call_args.kwargs["save_patches"])
-
-        active = self._cmd({"action": "set_active", "name": map_name})
-        self.assertTrue(active["success"], active)
-        self.assertEqual(self.mod._active_map, map_name)
-        self.assertEqual(
-            Path(self.mod.get_active_tomogram()).resolve(),
-            (map_dir / "tomogram.pickle").resolve(),
-        )
-        self.assertEqual(
-            Path(self.mod.get_active_occupancy()).resolve(),
-            (map_dir / "occupancy.npz").resolve(),
-        )
-
-        listed = self._cmd({"action": "list"})
-        entry = next(m for m in listed["maps"] if m["name"] == map_name)
-        self.assertTrue(entry["has_pcd"])
-        self.assertTrue(entry["has_tomogram"])
-        self.assertTrue(entry["has_occupancy"])
-
-        occupancy = np.load(resp["occupancy"])
-        self.assertIn("grid", occupancy)
-        self.assertTrue(np.any(occupancy["grid"] == 100))
-
-    # -- occupancy snapshot tests --
-
-    def test_build_occupancy_snapshot_missing_name(self):
-        resp = self.mod._build_occupancy_snapshot("")
-        self.assertFalse(resp["success"])
-
-    def test_build_occupancy_snapshot_no_pcd(self):
-        resp = self.mod._build_occupancy_snapshot("nonexistent_map")
-        self.assertFalse(resp["success"])
-        self.assertIn("no PCD file", resp["message"])
-
-    def test_build_occupancy_snapshot_ascii_pcd(self):
-        """Write a minimal ASCII PCD file and verify occupancy.npz is produced."""
-        map_dir = Path(self._map_dir) / "test_occ"
-        map_dir.mkdir()
-        pcd_path = map_dir / "map.pcd"
-        # Minimal valid ASCII PCD with 4 obstacle-height points forming a 2x2 square
-        # Ground points at z=0.0 (many, so percentile-5 閳?0.0),
-        # obstacle points at z=0.5 (within 0.10-1.00 above ground).
-        pcd_content = (
-            "VERSION 0.7\n"
-            "FIELDS x y z\n"
-            "SIZE 4 4 4\n"
-            "TYPE F F F\n"
-            "COUNT 1 1 1\n"
-            "WIDTH 8\n"
-            "HEIGHT 1\n"
-            "VIEWPOINT 0 0 0 1 0 0 0\n"
-            "POINTS 8\n"
-            "DATA ascii\n"
-            "0.0 0.0 0.0\n"
-            "1.0 0.0 0.0\n"
-            "0.0 1.0 0.0\n"
-            "1.0 1.0 0.0\n"
-            "0.0 0.0 0.5\n"
-            "1.0 0.0 0.5\n"
-            "0.0 1.0 0.5\n"
-            "1.0 1.0 0.5\n"
-        )
-        pcd_path.write_text(pcd_content)
-
-        resp = self.mod._build_occupancy_snapshot("test_occ")
-        self.assertTrue(resp["success"], f"Expected success, got: {resp}")
-        occ_path = map_dir / "occupancy.npz"
-        self.assertTrue(occ_path.exists())
-
-        data = np.load(str(occ_path))
-        self.assertIn("grid", data)
-        self.assertIn("resolution", data)
-        self.assertIn("origin", data)
-        grid = data["grid"]
-        self.assertEqual(grid.dtype, np.int8)
-        self.assertEqual(grid.ndim, 2)
-        # At least one occupied cell
-        self.assertTrue(np.any(grid == 100))
-
-        metadata_path = map_dir / "metadata.json"
-        self.assertTrue(metadata_path.exists())
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        artifacts = metadata["artifacts"]
-        from runtime.runtime_interface import TOPICS, topic_default_frame_id
-
-        self.assertEqual(
-            metadata["frame_id"],
-            topic_default_frame_id(TOPICS.saved_map_cloud),
-        )
-        self.assertIn("map_pcd", artifacts)
-        self.assertIn("occupancy_grid", artifacts)
-        self.assertEqual(
-            artifacts["occupancy_grid"]["source_map_sha256"],
-            artifacts["map_pcd"]["sha256"],
-        )
-        from runtime.same_source_map_artifacts import (
-            validate_same_source_map_metadata,
-        )
-
-        validation = validate_same_source_map_metadata(metadata)
-        self.assertTrue(validation["ok"], validation)
-
-    def test_load_pcd_points_ascii(self):
-        """_load_pcd_points parses a simple ASCII PCD correctly."""
-        import tempfile
-        pcd_content = (
-            "VERSION 0.7\nFIELDS x y z\nSIZE 4 4 4\nTYPE F F F\nCOUNT 1 1 1\n"
-            "WIDTH 3\nHEIGHT 1\nVIEWPOINT 0 0 0 1 0 0 0\nPOINTS 3\nDATA ascii\n"
-            "1.0 2.0 0.5\n3.0 4.0 1.0\n5.0 6.0 1.5\n"
-        )
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pcd", delete=False) as f:
-            f.write(pcd_content)
-            fname = f.name
-        try:
-            from nav.services.maps import MapService
-            pts = MapService._load_pcd_points(fname)
-            self.assertIsNotNone(pts)
-            self.assertEqual(pts.shape, (3, 3))
-            np.testing.assert_allclose(pts[0], [1.0, 2.0, 0.5], atol=1e-5)
-        finally:
-            os.unlink(fname)
-
-    def test_map_list_has_occupancy_field(self):
-        """_map_list reports has_occupancy=True when occupancy.npz exists."""
-        d = Path(self._map_dir) / "mapwithall"
-        d.mkdir()
-        (d / "map.pcd").touch()
-        (d / "tomogram.pickle").touch()
-        (d / "occupancy.npz").touch()
-
-        resp = self._cmd({"action": "list"})
-        self.assertTrue(resp["success"])
-        entry = next(m for m in resp["maps"] if m["name"] == "mapwithall")
-        self.assertTrue(entry["has_occupancy"])
-
-    def test_map_list_has_occupancy_false_when_absent(self):
-        d = Path(self._map_dir) / "mapnocc"
-        d.mkdir()
-        (d / "map.pcd").touch()
-
-        resp = self._cmd({"action": "list"})
-        entry = next(m for m in resp["maps"] if m["name"] == "mapnocc")
-        self.assertFalse(entry["has_occupancy"])
-
-    def test_get_active_occupancy_none(self):
-        result = self.mod.get_active_occupancy()
-        self.assertIsNone(result)
-
-    def test_get_active_occupancy_returns_path(self):
-        self._write_valid_saved_map_artifacts("fullmap", occupancy=True)
-        self._cmd({"action": "set_active", "name": "fullmap"})
-        result = self.mod.get_active_occupancy()
-        self.assertIsNotNone(result)
-        self.assertTrue(result.endswith("occupancy.npz"))
-
-    def test_set_active_rejects_map_without_same_source_tomogram_metadata(self):
-        d = Path(self._map_dir) / "bad_active"
-        d.mkdir()
-        (d / "map.pcd").write_text("VERSION 0.7\nPOINTS 0\nDATA ascii\n")
-        (d / "tomogram.pickle").write_bytes(b"bad")
-
-        resp = self._cmd({"action": "set_active", "name": "bad_active"})
-
-        self.assertFalse(resp["success"])
-        self.assertIn("saved map artifact gate failed", resp["message"])
-        self.assertIn("metadata.json missing", resp["artifact_gate"]["blockers"])
-        self.assertEqual(self.mod._active_map, "")
-
-
-# ---------------------------------------------------------------------------
-# 2. WavefrontFrontierExplorer
-# ---------------------------------------------------------------------------
 
 class TestWavefrontFrontierExplorer(unittest.TestCase):
     """Test frontier discovery, scoring, and health."""
 
     def _make_explorer(self, **kw):
         from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
+
         kw.setdefault("min_frontier_size", 2)
         mod = WavefrontFrontierExplorer(**kw)
         mod.setup()
@@ -748,8 +77,14 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
 
     def test_on_costmap(self):
         mod = self._make_explorer()
-        costmap = {"grid": np.zeros((10, 10), dtype=np.int16), "resolution": 0.1,
-                   "origin_x": 0.0, "origin_y": 0.0, "width": 10, "height": 10}
+        costmap = {
+            "grid": np.zeros((10, 10), dtype=np.int16),
+            "resolution": 0.1,
+            "origin_x": 0.0,
+            "origin_y": 0.0,
+            "width": 10,
+            "height": 10,
+        }
         mod._on_costmap(costmap)
         self.assertIsNotNone(mod._costmap_data)
 
@@ -830,9 +165,14 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
 
     def test_parse_costmap_valid(self):
         mod = self._make_explorer()
-        data = {"grid": np.zeros((20, 30), dtype=np.int16),
-                "resolution": 0.05, "origin_x": -1.0, "origin_y": -1.5,
-                "width": 30, "height": 20}
+        data = {
+            "grid": np.zeros((20, 30), dtype=np.int16),
+            "resolution": 0.05,
+            "origin_x": -1.0,
+            "origin_y": -1.5,
+            "width": 30,
+            "height": 20,
+        }
         grid, meta = mod._parse_costmap(data)
         self.assertEqual(grid.shape, (20, 30))
         self.assertAlmostEqual(meta["resolution"], 0.05)
@@ -840,8 +180,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
     def test_parse_costmap_1d(self):
         mod = self._make_explorer()
         flat = np.zeros(100, dtype=np.int16)
-        data = {"grid": flat, "resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0,
-                "width": 10, "height": 10}
+        data = {"grid": flat, "resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0, "width": 10, "height": 10}
         grid, _meta = mod._parse_costmap(data)
         self.assertEqual(grid.shape, (10, 10))
 
@@ -849,8 +188,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         """Grid with only FREE cells has no frontiers."""
         mod = self._make_explorer()
         grid = np.zeros((20, 20), dtype=np.int16)
-        meta = {"resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0,
-                "width": 20, "height": 20}
+        meta = {"resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0, "width": 20, "height": 20}
         clusters = mod._find_frontier_clusters(grid, meta, 1.0, 1.0)
         self.assertEqual(len(clusters), 0)
 
@@ -860,8 +198,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         grid = np.full((20, 20), -1, dtype=np.int16)  # all unknown
         # carve a free region around (10, 10)
         grid[8:13, 8:13] = 0  # free
-        meta = {"resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0,
-                "width": 20, "height": 20}
+        meta = {"resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0, "width": 20, "height": 20}
         clusters = mod._find_frontier_clusters(grid, meta, 1.0, 1.0)
         self.assertGreater(len(clusters), 0)
 
@@ -871,8 +208,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         grid = np.full((9, 14), -1, dtype=np.int16)
         grid[4, 1:4] = 0
         grid[4, 10:13] = 0
-        meta = {"resolution": 1.0, "origin_x": 0.0, "origin_y": 0.0,
-                "width": 14, "height": 9}
+        meta = {"resolution": 1.0, "origin_x": 0.0, "origin_y": 0.0, "width": 14, "height": 9}
 
         clusters = mod._find_frontier_clusters(grid, meta, 1.0, 4.0)
         xs = [cluster["cx"] for cluster in clusters]
@@ -891,10 +227,13 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
             {"cx": 1.0, "cy": 0.0, "size": 5, "cells": []},
             {"cx": 5.0, "cy": 0.0, "size": 20, "cells": []},
         ]
-        meta = {"resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0,
-                "width": 100, "height": 100}
-        mod._costmap_data = {"grid": np.zeros((100, 100), dtype=np.int16),
-                             "resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0}
+        meta = {"resolution": 0.1, "origin_x": 0.0, "origin_y": 0.0, "width": 100, "height": 100}
+        mod._costmap_data = {
+            "grid": np.zeros((100, 100), dtype=np.int16),
+            "resolution": 0.1,
+            "origin_x": 0.0,
+            "origin_y": 0.0,
+        }
         scored = mod._score_clusters(clusters, 0.0, 0.0, 0.0, meta)
         self.assertEqual(len(scored), 2)
         self.assertGreaterEqual(scored[0]["score"], scored[1]["score"])
@@ -1101,11 +440,13 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
             "height": 50,
         }
 
-        mod._on_navigation_status({
-            "state": "FAILED",
-            "goal": [1.0, 2.0, 0.0],
-            "failure_reason": "planner returned empty path",
-        })
+        mod._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [1.0, 2.0, 0.0],
+                "failure_reason": "planner returned empty path",
+            }
+        )
 
         self.assertTrue(mod._goal_reached_event.is_set())
         self.assertEqual(mod.health()["blocked_goal_count"], 1)
@@ -1132,19 +473,25 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         mod._current_goal = (1.0, 2.0)
 
         self.assertTrue(
-            mod._navigation_status_matches_current_goal({
-                "goal": [1.0, 2.0, 0.0],
-            })
+            mod._navigation_status_matches_current_goal(
+                {
+                    "goal": [1.0, 2.0, 0.0],
+                }
+            )
         )
         self.assertTrue(
-            mod._navigation_status_matches_current_goal({
-                "goal": {"x": 1.0, "y": 2.0, "z": 0.0},
-            })
+            mod._navigation_status_matches_current_goal(
+                {
+                    "goal": {"x": 1.0, "y": 2.0, "z": 0.0},
+                }
+            )
         )
         self.assertFalse(
-            mod._navigation_status_matches_current_goal({
-                "goal": {"x": 5.0, "y": 5.0, "z": 0.0},
-            })
+            mod._navigation_status_matches_current_goal(
+                {
+                    "goal": {"x": 5.0, "y": 5.0, "z": 0.0},
+                }
+            )
         )
 
     def test_transient_failed_then_executing_does_not_block_frontier_goal(self):
@@ -1154,18 +501,22 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         )
         mod._current_goal = (1.0, 2.0)
 
-        mod._on_navigation_status({
-            "state": "FAILED",
-            "goal": [1.0, 2.0, 0.0],
-            "failure_reason": "planner transient empty path",
-        })
+        mod._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [1.0, 2.0, 0.0],
+                "failure_reason": "planner transient empty path",
+            }
+        )
         self.assertFalse(mod._goal_reached_event.is_set())
         self.assertIsNotNone(mod.health()["pending_goal_failure"])
 
-        mod._on_navigation_status({
-            "state": "EXECUTING",
-            "goal": {"x": 1.0, "y": 2.0, "z": 0.0},
-        })
+        mod._on_navigation_status(
+            {
+                "state": "EXECUTING",
+                "goal": {"x": 1.0, "y": 2.0, "z": 0.0},
+            }
+        )
 
         self.assertFalse(mod._goal_reached_event.is_set())
         self.assertEqual(mod.health()["blocked_goal_count"], 0)
@@ -1175,10 +526,12 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         mod = self._make_explorer(navigation_failure_grace_s=5.0)
         mod._current_goal = (1.0, 2.0)
 
-        mod._on_navigation_status({
-            "state": "FAILED",
-            "failure_reason": "planner returned empty path",
-        })
+        mod._on_navigation_status(
+            {
+                "state": "FAILED",
+                "failure_reason": "planner returned empty path",
+            }
+        )
 
         self.assertFalse(mod._goal_reached_event.is_set())
         self.assertEqual(mod.health()["blocked_goal_count"], 0)
@@ -1191,11 +544,13 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         )
         mod._current_goal = (1.0, 2.0)
 
-        mod._on_navigation_status({
-            "state": "FAILED",
-            "goal": [1.0, 2.0, 0.0],
-            "failure_reason": "planner returned empty path",
-        })
+        mod._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [1.0, 2.0, 0.0],
+                "failure_reason": "planner returned empty path",
+            }
+        )
         with mod._state_lock:
             mod._pending_goal_failure["ts"] -= 2.0
 
@@ -1207,11 +562,13 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         mod = self._make_explorer(blocked_goal_radius=0.5)
         mod._current_goal = (1.0, 2.0)
 
-        mod._on_navigation_status({
-            "state": "FAILED",
-            "goal": [5.0, 5.0, 0.0],
-            "failure_reason": "external goal failed",
-        })
+        mod._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [5.0, 5.0, 0.0],
+                "failure_reason": "external goal failed",
+            }
+        )
 
         self.assertFalse(mod._goal_reached_event.is_set())
         self.assertEqual(mod.health()["blocked_goal_count"], 0)
@@ -1222,6 +579,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
         # PoseStamped.x is a read-only property delegating to pose.x
         # The method may use direct pose attribute access; verify frame_id
         from runtime.msgs.geometry import Pose, PoseStamped
+
         ps = PoseStamped(pose=Pose(3.0, 4.0, 0.0), frame_id="map")
         self.assertAlmostEqual(ps.x, 3.0)
         self.assertAlmostEqual(ps.y, 4.0)
@@ -1232,12 +590,14 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
 # 3. PatrolManagerModule
 # ---------------------------------------------------------------------------
 
+
 class TestPatrolManagerModule(unittest.TestCase):
     """Test patrol route CRUD and start/stop logic."""
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
         from nav.services.patrol import PatrolManagerModule
+
         self.mod = PatrolManagerModule(routes_dir=os.path.join(self._tmpdir, "routes"))
         self.mod.setup()
         self._statuses: list[str] = []
@@ -1329,15 +689,15 @@ class TestPatrolManagerModule(unittest.TestCase):
 # 4. TaskSchedulerModule
 # ---------------------------------------------------------------------------
 
+
 class TestTaskSchedulerModule(unittest.TestCase):
     """Test schedule CRUD, firing logic, and double-fire prevention."""
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
         from nav.services.scheduler import TaskSchedulerModule
-        self.mod = TaskSchedulerModule(
-            schedule_file=os.path.join(self._tmpdir, "sched.yaml")
-        )
+
+        self.mod = TaskSchedulerModule(schedule_file=os.path.join(self._tmpdir, "sched.yaml"))
         self.mod.setup()
         self._tasks: list[dict] = []
         self.mod.scheduled_task.subscribe(lambda t: self._tasks.append(t))
@@ -1355,8 +715,7 @@ class TestTaskSchedulerModule(unittest.TestCase):
         self.assertIsInstance(self.mod._schedules, dict)
 
     def test_add_and_list(self):
-        resp = self._cmd({"action": "add", "name": "morning",
-                          "patrol_route": "route_a", "hour": 8, "minute": 0})
+        resp = self._cmd({"action": "add", "name": "morning", "patrol_route": "route_a", "hour": 8, "minute": 0})
         self.assertTrue(resp["success"])
 
         resp = self._cmd({"action": "list"})
@@ -1416,8 +775,10 @@ class TestTaskSchedulerModule(unittest.TestCase):
     def test_check_schedules_no_double_fire(self):
         self.mod._schedules["test"] = {
             "patrol_route": "r_test",
-            "hour": 14, "minute": 30,
-            "weekdays": [0, 1, 2, 3, 4, 5, 6], "enabled": True,
+            "hour": 14,
+            "minute": 30,
+            "weekdays": [0, 1, 2, 3, 4, 5, 6],
+            "enabled": True,
         }
         now = datetime(2026, 4, 6, 14, 30, 0)
         self.mod.check_schedules(now=now)
@@ -1428,8 +789,10 @@ class TestTaskSchedulerModule(unittest.TestCase):
     def test_check_schedules_disabled_skipped(self):
         self.mod._schedules["test"] = {
             "patrol_route": "r_test",
-            "hour": 14, "minute": 30,
-            "weekdays": [0, 1, 2, 3, 4, 5, 6], "enabled": False,
+            "hour": 14,
+            "minute": 30,
+            "weekdays": [0, 1, 2, 3, 4, 5, 6],
+            "enabled": False,
         }
         now = datetime(2026, 4, 6, 14, 30, 0)
         fired = self.mod.check_schedules(now=now)
@@ -1438,7 +801,8 @@ class TestTaskSchedulerModule(unittest.TestCase):
     def test_check_schedules_wrong_weekday(self):
         self.mod._schedules["test"] = {
             "patrol_route": "r_test",
-            "hour": 14, "minute": 30,
+            "hour": 14,
+            "minute": 30,
             "weekdays": [2],  # Wednesday only
             "enabled": True,
         }
@@ -1456,15 +820,15 @@ class TestTaskSchedulerModule(unittest.TestCase):
 # 5. GeofenceManagerModule
 # ---------------------------------------------------------------------------
 
+
 class TestGeofenceManagerModule(unittest.TestCase):
     """Test fence CRUD, point-in-polygon, and intrusion detection."""
 
     def setUp(self):
         self._tmpdir = tempfile.mkdtemp()
         from nav.services.geofence import GeofenceManagerModule
-        self.mod = GeofenceManagerModule(
-            geofence_file=os.path.join(self._tmpdir, "fences.yaml")
-        )
+
+        self.mod = GeofenceManagerModule(geofence_file=os.path.join(self._tmpdir, "fences.yaml"))
         self.mod.setup()
         self._alerts: list[dict] = []
         self.mod.geofence_alert.subscribe(lambda a: self._alerts.append(a))
@@ -1491,20 +855,18 @@ class TestGeofenceManagerModule(unittest.TestCase):
         self.assertFalse(resp["success"])
 
     def test_add_fence_missing_name(self):
-        resp = self._cmd({"action": "add", "name": "", "polygon": [[0,0],[1,0],[1,1]]})
+        resp = self._cmd({"action": "add", "name": "", "polygon": [[0, 0], [1, 0], [1, 1]]})
         self.assertFalse(resp["success"])
 
     def test_list_fences(self):
-        self._cmd({"action": "add", "name": "z1",
-                   "polygon": [[0, 0], [1, 0], [1, 1], [0, 1]]})
+        self._cmd({"action": "add", "name": "z1", "polygon": [[0, 0], [1, 0], [1, 1], [0, 1]]})
         resp = self._cmd({"action": "list"})
         self.assertTrue(resp["success"])
         self.assertEqual(len(resp["fences"]), 1)
         self.assertEqual(resp["fences"][0]["vertex_count"], 4)
 
     def test_remove_fence(self):
-        self._cmd({"action": "add", "name": "rm_me",
-                   "polygon": [[0, 0], [1, 0], [1, 1]]})
+        self._cmd({"action": "add", "name": "rm_me", "polygon": [[0, 0], [1, 0], [1, 1]]})
         resp = self._cmd({"action": "remove", "name": "rm_me"})
         self.assertTrue(resp["success"])
         resp = self._cmd({"action": "list"})
@@ -1515,17 +877,14 @@ class TestGeofenceManagerModule(unittest.TestCase):
         self.assertFalse(resp["success"])
 
     def test_clear_fences(self):
-        self._cmd({"action": "add", "name": "a",
-                   "polygon": [[0,0],[1,0],[1,1]]})
-        self._cmd({"action": "add", "name": "b",
-                   "polygon": [[0,0],[1,0],[1,1]]})
+        self._cmd({"action": "add", "name": "a", "polygon": [[0, 0], [1, 0], [1, 1]]})
+        self._cmd({"action": "add", "name": "b", "polygon": [[0, 0], [1, 0], [1, 1]]})
         resp = self._cmd({"action": "clear"})
         self.assertTrue(resp["success"])
         self.assertIn("2", resp["message"])
 
     def test_enable_disable(self):
-        self._cmd({"action": "add", "name": "f1",
-                   "polygon": [[0,0],[1,0],[1,1]]})
+        self._cmd({"action": "add", "name": "f1", "polygon": [[0, 0], [1, 0], [1, 1]]})
         resp = self._cmd({"action": "disable", "name": "f1"})
         self.assertTrue(resp["success"])
         self.assertFalse(self.mod._fences["f1"]["enabled"])
@@ -1542,16 +901,19 @@ class TestGeofenceManagerModule(unittest.TestCase):
 
     def test_point_in_polygon_inside(self):
         from nav.services.geofence import GeofenceManagerModule
+
         poly = [[0, 0], [10, 0], [10, 10], [0, 10]]
         self.assertTrue(GeofenceManagerModule._point_in_polygon(5, 5, poly))
 
     def test_point_in_polygon_outside(self):
         from nav.services.geofence import GeofenceManagerModule
+
         poly = [[0, 0], [10, 0], [10, 10], [0, 10]]
         self.assertFalse(GeofenceManagerModule._point_in_polygon(15, 15, poly))
 
     def test_point_in_polygon_too_few(self):
         from nav.services.geofence import GeofenceManagerModule
+
         self.assertFalse(GeofenceManagerModule._point_in_polygon(0, 0, [[0, 0]]))
 
     # -- intrusion detection --
@@ -1602,11 +964,13 @@ class TestGeofenceManagerModule(unittest.TestCase):
 # 6. TeleopModule
 # ---------------------------------------------------------------------------
 
+
 class TestTeleopModule(unittest.TestCase):
     """Test joystick scaling, idle release, health, and JPEG encode path."""
 
     def _make_teleop(self, **kw):
         from drivers.real.teleop_module import TeleopModule
+
         mod = TeleopModule(**kw)
         mod.setup()
         return mod
@@ -1680,6 +1044,7 @@ class TestTeleopModule(unittest.TestCase):
 
     def test_get_teleop_status_skill(self):
         import json
+
         mod = self._make_teleop(port=9999)
         status = json.loads(mod.get_teleop_status())
         self.assertEqual(status["port"], 9999)

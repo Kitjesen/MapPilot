@@ -12,5 +12,8 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        # ROS/OpenCV calibration packages use `%YAML:1.0`, which PyYAML's
+        # generic checker does not accept even though the tools consume it.
+        exclude: ^calibration/camera_lidar/(mlcc|livox_camera_calib|livox_calib_standalone)/
       - id: check-added-large-files
         args: [--maxkb=10000]

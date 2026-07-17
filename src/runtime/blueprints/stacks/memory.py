@@ -45,7 +45,11 @@ def memory(save_dir: str = "", **config) -> Blueprint:
         fallback="memory.modules.tagged_locations_module.TaggedLocationsModule",
     )
     if TaggedLocationsModule is not None:
-        bp.add(TaggedLocationsModule, alias="TaggedLocationsModule")
+        bp.add(
+            TaggedLocationsModule,
+            alias="TaggedLocationsModule",
+            json_path=os.path.join(save_dir, "tagged_locations.json"),
+        )
 
     VectorMemoryModule = optional_stack_module(
         "vector_memory",

@@ -15,12 +15,8 @@ from runtime.profiles.planner_backends import (
 )
 
 DDS_MAP_OUTPUT_ADAPTERS = frozenset({"dds", "dds_endpoint", "dds_map_output"})
-NAV_IN_ENABLE_KEYS = (
-    "enable_nav_in",
-)
-NAV_OUT_ENABLE_KEYS = (
-    "enable_nav_out",
-)
+NAV_IN_ENABLE_KEYS = ("enable_nav_in",)
+NAV_OUT_ENABLE_KEYS = ("enable_nav_out",)
 LEGACY_NAV_IN_ENABLE_KEYS = (
     "enable_endpoint_command_bridge",
     "enable_ros2_command_bridge",
@@ -30,9 +26,7 @@ LEGACY_NAV_OUT_ENABLE_KEYS = (
     "enable_endpoint_waypoint_bridge",
     "enable_ros2_bridge",
 )
-MAP_OUT_ENABLE_KEYS = (
-    "enable_map_out",
-)
+MAP_OUT_ENABLE_KEYS = ("enable_map_out",)
 LEGACY_MAP_OUT_ENABLE_KEYS = (
     "enable_endpoint_grid_bridge",
     "enable_ros2_grid_bridge",
@@ -70,33 +64,30 @@ LIDAR_LEGACY_DRIVER_START_KEYS = (
     "lidar_start_driver",
     "start_lidar_driver",
 )
-ROS2_CAMERA_BRIDGE_ENABLE_KEYS = (
-    "enable_ros2_camera_bridge",
+LEGACY_SENSOR_BINDING_KEYS = (
+    "use_driver_camera",
+    "use_driver_lidar",
+    "use_driver_imu",
+    "legacy_driver_sensor_fallback",
+    "enable_legacy_sim_lidar",
 )
-ROS2_RERUN_BRIDGE_ENABLE_KEYS = (
-    "enable_ros2_rerun_bridge",
-)
+ROS2_CAMERA_BRIDGE_ENABLE_KEYS = ("enable_ros2_camera_bridge",)
+ROS2_RERUN_BRIDGE_ENABLE_KEYS = ("enable_ros2_rerun_bridge",)
 LOCALIZATION_ADAPTER_KEYS = (
     "localization_adapter",
     "_localization_adapter",
 )
-NAV_OUT_ADAPTER_KEYS = (
-    "nav_out_adapter",
-)
+NAV_OUT_ADAPTER_KEYS = ("nav_out_adapter",)
 LEGACY_NAV_OUT_ADAPTER_KEYS = (
     "endpoint_path_bridge",
     "endpoint_egress_adapter",
 )
-NAV_IN_ADAPTER_KEYS = (
-    "nav_in_adapter",
-)
+NAV_IN_ADAPTER_KEYS = ("nav_in_adapter",)
 LEGACY_NAV_IN_ADAPTER_KEYS = (
     "endpoint_command_bridge",
     "endpoint_ingress_adapter",
 )
-MAP_OUT_ADAPTER_KEYS = (
-    "map_out_adapter",
-)
+MAP_OUT_ADAPTER_KEYS = ("map_out_adapter",)
 LEGACY_MAP_OUT_ADAPTER_KEYS = (
     "endpoint_grid_bridge",
     "endpoint_grid_adapter",
@@ -137,8 +128,6 @@ ROS2_GLOBAL_PLANNER_BACKENDS = frozenset(
     {
         "ros2",
         "ros2_global_planner",
-        "ros2_pct",
-        "pct_ros2",
         "ros2_octoplanner3d",
         "octoplanner3d_ros2",
     }
@@ -188,14 +177,7 @@ def localization_adapter_for_config(
     if explicit:
         return explicit
     resolved_transport = (
-        endpoint_transport
-        if endpoint_transport is not None
-        else endpoint_transport_for_config(config, default="")
-    )
-    resolved_contract = (
-        endpoint_contract
-        if endpoint_contract is not None
-        else endpoint_contract_for_config(config, default="")
+        endpoint_transport if endpoint_transport is not None else endpoint_transport_for_config(config, default="")
     )
     if str(resolved_transport).lower() == "dds":
         return "dds_endpoint"
@@ -213,9 +195,7 @@ def navigation_output_uses_ros2(config: Mapping[str, Any]) -> bool:
         *LEGACY_NAV_OUT_ADAPTER_KEYS,
     ).lower()
     return (
-        selected in ROS2_ADAPTER_NAMES
-        or selected.startswith("ros2_")
-        or bool(config.get("enable_ros2_bridge", False))
+        selected in ROS2_ADAPTER_NAMES or selected.startswith("ros2_") or bool(config.get("enable_ros2_bridge", False))
     )
 
 
@@ -256,40 +236,11 @@ def map_output_uses_dds(config: Mapping[str, Any]) -> bool:
         *LEGACY_MAP_OUT_ADAPTER_KEYS,
     ).lower()
     endpoint_transport = endpoint_transport_for_config(config, default="").lower()
-    return selected in DDS_MAP_OUTPUT_ADAPTERS or (
-        not selected and endpoint_transport == "dds"
-    )
-
-
-endpoint_egress_uses_dds = navigation_output_uses_dds
-endpoint_egress_uses_ros2 = navigation_output_uses_ros2
-endpoint_ingress_uses_dds = navigation_input_uses_dds
-endpoint_ingress_uses_ros2 = navigation_input_uses_ros2
-
-
-def navigation_io_adapters_enabled(config: Mapping[str, Any]) -> bool:
-    return any(bool(config.get(key)) for key in IO_ADAPTER_ENABLE_KEYS)
-
-
-def navigation_input_adapter_enabled(config: Mapping[str, Any]) -> bool:
-    return any(
-        bool(config.get(key))
-        for key in (*NAV_IN_ENABLE_KEYS, *LEGACY_NAV_IN_ENABLE_KEYS)
-    )
-
-
-def navigation_output_adapter_enabled(config: Mapping[str, Any]) -> bool:
-    return any(
-        bool(config.get(key))
-        for key in (*NAV_OUT_ENABLE_KEYS, *LEGACY_NAV_OUT_ENABLE_KEYS)
-    )
+    return selected in DDS_MAP_OUTPUT_ADAPTERS or (not selected and endpoint_transport == "dds")
 
 
 def map_output_adapter_enabled(config: Mapping[str, Any]) -> bool:
-    return any(
-        bool(config.get(key))
-        for key in (*MAP_OUT_ENABLE_KEYS, *LEGACY_MAP_OUT_ENABLE_KEYS)
-    )
+    return any(bool(config.get(key)) for key in (*MAP_OUT_ENABLE_KEYS, *LEGACY_MAP_OUT_ENABLE_KEYS))
 
 
 def autonomy_backend_selection(
@@ -322,9 +273,7 @@ def autonomy_backend_selection(
 def global_planner_backend_selection(config: Mapping[str, Any]) -> dict[str, list[str] | str]:
     """Resolve the configured global planner backends without importing plugins."""
 
-    primary = normalize_planner_name(
-        _string_value(config, "planner", "planner_backend") or "octoplanner3d"
-    )
+    primary = normalize_planner_name(_string_value(config, "planner", "planner_backend") or "octoplanner3d")
     fallback_value = config.get("fallback_planners")
     if fallback_value is None:
         fallback_value = config.get("fallback_planner_name")
@@ -348,9 +297,7 @@ def resolved_autonomy_backend_selection(
     terrain_name = str(terrain_backend or "").strip()
     if not terrain_name:
         terrain_name = (
-            local_planner_backend
-            if local_planner_backend in AUTONOMY_TERRAIN_BACKENDS
-            else DEFAULT_TERRAIN_BACKEND
+            local_planner_backend if local_planner_backend in AUTONOMY_TERRAIN_BACKENDS else DEFAULT_TERRAIN_BACKEND
         )
     return {
         "terrain_backend": terrain_name,
@@ -396,17 +343,11 @@ def ros2_autonomy_backend_violations(
     )
     violations: list[str] = []
     if selected["terrain_backend"] in ROS2_TERRAIN_BACKENDS:
-        violations.append(
-            f"terrain_backend={selected['terrain_backend']} requires ROS2 NativeModule"
-        )
+        violations.append(f"terrain_backend={selected['terrain_backend']} requires ROS2 NativeModule")
     if selected["local_planner_backend"] in ROS2_LOCAL_PLANNER_BACKENDS:
-        violations.append(
-            "local_planner_backend=cmu requires ROS2 NativeModule"
-        )
+        violations.append("local_planner_backend=cmu requires ROS2 NativeModule")
     if selected["path_follower_backend"] in ROS2_PATH_FOLLOWER_BACKENDS:
-        violations.append(
-            "path_follower_backend=pure_pursuit requires ROS2 NativeModule"
-        )
+        violations.append("path_follower_backend=pure_pursuit requires ROS2 NativeModule")
     return violations
 
 
@@ -429,9 +370,17 @@ def ros2_lidar_driver_violations(config: Mapping[str, Any]) -> list[str]:
     violations: list[str] = []
     for key in LIDAR_LEGACY_DRIVER_START_KEYS:
         if bool(config.get(key)):
-            violations.append(
-                f"{key}=true starts the legacy local Livox ROS2 driver"
-            )
+            violations.append(f"{key}=true starts the legacy local Livox ROS2 driver")
+    return violations
+
+
+def legacy_sensor_binding_violations(config: Mapping[str, Any]) -> list[str]:
+    """Return settings that route sensor streams through legacy driver paths."""
+
+    violations: list[str] = []
+    for key in LEGACY_SENSOR_BINDING_KEYS:
+        if bool(config.get(key)):
+            violations.append(f"{key}=true enables a legacy driver sensor path")
     return violations
 
 
@@ -457,11 +406,7 @@ def ros2_rerun_bridge_violations(config: Mapping[str, Any]) -> list[str]:
 
 def _is_ros2_planner_backend(name: str) -> bool:
     normalized = normalize_planner_name(name)
-    return (
-        normalized in ROS2_GLOBAL_PLANNER_BACKENDS
-        or normalized.startswith("ros2_")
-        or normalized.endswith("_ros2")
-    )
+    return normalized in ROS2_GLOBAL_PLANNER_BACKENDS or normalized.startswith("ros2_") or normalized.endswith("_ros2")
 
 
 def ros2_global_planner_backend_violations(
@@ -476,9 +421,7 @@ def ros2_global_planner_backend_violations(
         violations.append(f"planner={primary} selects a ROS2 global planner wrapper")
     for fallback in selected["fallback_planners"]:
         if _is_ros2_planner_backend(fallback):
-            violations.append(
-                f"fallback_planner={fallback} selects a ROS2 global planner wrapper"
-            )
+            violations.append(f"fallback_planner={fallback} selects a ROS2 global planner wrapper")
     return violations
 
 
@@ -505,57 +448,35 @@ def ros2_runtime_binding_violations(
     violations.extend(ros2_global_planner_backend_violations(config))
     exploration_backend = exploration_backend_for_config(config)
     if exploration_backend in ROS2_EXPLORATION_BACKENDS:
-        violations.append(
-            f"exploration_backend={exploration_backend} requires ROS2 NativeModule"
-        )
+        violations.append(f"exploration_backend={exploration_backend} requires ROS2 NativeModule")
     for key in IO_ADAPTER_ENABLE_KEYS:
         if key in LEGACY_MAP_OUT_ENABLE_KEYS:
             continue
         if key.startswith("enable_ros2") and bool(config.get(key)):
             violations.append(f"{key}=true enables a ROS2 IO adapter")
     if map_output_uses_ros2(config):
-        violations.append(
-            "map output adapter selects a ROS2 IO adapter"
-        )
+        violations.append("map output adapter selects a ROS2 IO adapter")
     if (
         any(bool(config.get(key, False)) for key in (*MAP_OUT_ENABLE_KEYS, *LEGACY_MAP_OUT_ENABLE_KEYS))
         and not map_output_uses_ros2(config)
         and not map_output_uses_dds(config)
     ):
-        key = (
-            "enable_map_out"
-            if bool(config.get("enable_map_out", False))
-            else "enable_endpoint_grid_bridge"
-        )
-        violations.append(
-            f"{key}=true without explicit non-ROS map output adapter has no safe default"
-        )
-    nav_in_key = (
-        "enable_nav_in"
-        if bool(config.get("enable_nav_in", False))
-        else "enable_endpoint_command_bridge"
-    )
+        key = "enable_map_out" if bool(config.get("enable_map_out", False)) else "enable_endpoint_grid_bridge"
+        violations.append(f"{key}=true without explicit non-ROS map output adapter has no safe default")
+    nav_in_key = "enable_nav_in" if bool(config.get("enable_nav_in", False)) else "enable_endpoint_command_bridge"
     if (
         bool(config.get(nav_in_key, False))
         and not navigation_input_uses_dds(config)
         and not navigation_input_uses_ros2(config)
     ):
-        violations.append(
-            f"{nav_in_key}=true without explicit non-ROS navigation input adapter has no safe default"
-        )
-    nav_out_key = (
-        "enable_nav_out"
-        if bool(config.get("enable_nav_out", False))
-        else "enable_endpoint_path_bridge"
-    )
+        violations.append(f"{nav_in_key}=true without explicit non-ROS navigation input adapter has no safe default")
+    nav_out_key = "enable_nav_out" if bool(config.get("enable_nav_out", False)) else "enable_endpoint_path_bridge"
     if (
         bool(config.get(nav_out_key, False))
         and not navigation_output_uses_dds(config)
         and not navigation_output_uses_ros2(config)
     ):
-        violations.append(
-            f"{nav_out_key}=true without explicit non-ROS navigation output adapter has no safe default"
-        )
+        violations.append(f"{nav_out_key}=true without explicit non-ROS navigation output adapter has no safe default")
     if (
         bool(config.get("enable_endpoint_waypoint_bridge", False))
         and not navigation_output_uses_dds(config)

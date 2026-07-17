@@ -87,9 +87,7 @@ def _binding(
         import_path=spec.import_path,
         idl_type=spec.idl_type,
         cpp_type=spec.cpp_type,
-        frame_ids=tuple(
-            runtime_topic_allowed_frame_ids(THUNDER_FIELD_RUNTIME_CONTRACT).get(topic, ())
-        ),
+        frame_ids=tuple(runtime_topic_allowed_frame_ids(THUNDER_FIELD_RUNTIME_CONTRACT).get(topic, ())),
         required=required,
         note=note,
     )
@@ -160,25 +158,67 @@ THUNDER_FIELD_DDS_CONTRACT = DDSEndpointContract(
             required=False,
         ),
         _binding(
-            TOPICS.goal_pose,
+            TOPICS.nav_command_request,
+            direction="lingtu_to_endpoint",
+            schema="lingtu.dds.NavigationCommandRequest",
+            note="Typed goal, cancel, or operator velocity request from the persistent C++ client.",
+        ),
+        _binding(
+            TOPICS.nav_command_ack,
             direction="endpoint_to_lingtu",
+            schema="lingtu.dds.NavigationCommandAck",
+            note="Business-level endpoint acceptance or rejection for a request_id.",
+        ),
+        _binding(
+            TOPICS.inspection_command,
+            direction="lingtu_to_endpoint",
+            schema="lingtu.dds.InspectionCommandRequest",
+            note="Typed native route start, pause, resume, or cancel request.",
+        ),
+        _binding(
+            TOPICS.inspection_ack,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.InspectionCommandAck",
+            note="Business-level inspection command ACK.",
+        ),
+        _binding(
+            TOPICS.inspection_status,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.InspectionStatus",
+            note="Current native inspection run and point progress.",
+        ),
+        _binding(
+            TOPICS.inspection_evidence_request,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.InspectionEvidenceRequest",
+            note="Native inspection action request for the LingTu evidence worker.",
+        ),
+        _binding(
+            TOPICS.inspection_evidence_result,
+            direction="lingtu_to_endpoint",
+            schema="lingtu.dds.InspectionEvidenceResult",
+            note="Persisted evidence result returned to the native inspection executor.",
+        ),
+        _binding(
+            TOPICS.goal_pose,
+            direction="lingtu_to_endpoint",
             schema="geometry_msgs/msg/PoseStamped",
             required=False,
-            note="Operator or supervisor navigation goal entering the LingTu planner.",
+            note="Legacy compatibility reader; product clients use nav_command_request.",
         ),
         _binding(
             TOPICS.cancel,
-            direction="endpoint_to_lingtu",
+            direction="lingtu_to_endpoint",
             schema="std_msgs/msg/String",
             required=False,
-            note="Mission cancel command entering the LingTu navigation FSM.",
+            note="Legacy compatibility reader; product clients use nav_command_request.",
         ),
         _binding(
-            TOPICS.semantic_instruction,
-            direction="endpoint_to_lingtu",
-            schema="std_msgs/msg/String",
+            TOPICS.teleop_cmd_vel,
+            direction="lingtu_to_endpoint",
+            schema="geometry_msgs/msg/TwistStamped",
             required=False,
-            note="Natural-language navigation instruction entering semantic planning.",
+            note="Legacy compatibility reader; product clients use nav_command_request.",
         ),
         _binding(
             TOPICS.traversability,
@@ -207,8 +247,11 @@ THUNDER_FIELD_DDS_CONTRACT = DDSEndpointContract(
         _binding(
             TOPICS.cmd_vel,
             direction="lingtu_to_endpoint",
-            schema="geometry_msgs/msg/TwistStamped",
-            note="Muxed body-frame command after safety arbitration.",
+            schema="lingtu.dds.FinalVelocityCommand",
+            note=(
+                "Native endpoint final body-frame command with boot, process, "
+                "sequence, and source-clock freshness metadata."
+            ),
         ),
     ),
 )

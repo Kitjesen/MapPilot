@@ -3,8 +3,27 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from runtime.blueprints.stacks.driver import RobotProfile
+from runtime.contracts import HW_COMPAT_CONFIG_BRIDGE, HW_COMPAT_CONFIG_ENABLE
+from runtime.profiles.binding_policy import (
+    LEGACY_SENSOR_BINDING_KEYS,
+    LIDAR_LEGACY_DRIVER_START_KEYS,
+    ROS2_CAMERA_BRIDGE_ENABLE_KEYS,
+    ROS2_RERUN_BRIDGE_ENABLE_KEYS,
+    resolved_autonomy_backend_selection,
+    ros2_autonomy_backend_violations,
+    ros2_runtime_binding_violations,
+)
+from runtime.profiles.catalog.endpoint_adapter_configs import (
+    CMU_UNITY_CONFIG,
+    GAZEBO_CONFIG,
+    MUJOCO_LIVE_CONFIG,
+)
 from runtime.profiles.catalog.endpoints import (
     COMPAT_RUNTIME_ENDPOINT_ALIASES as CATALOG_COMPAT_ENDPOINT_ALIASES,
+)
+from runtime.profiles.catalog.endpoints import (
+    PRODUCT_PROFILE_ENDPOINTS,
 )
 from runtime.profiles.catalog.endpoints import (
     PRODUCT_RUNTIME_ENDPOINT_ALIASES as CATALOG_PRODUCT_ENDPOINT_ALIASES,
@@ -13,10 +32,15 @@ from runtime.profiles.catalog.endpoints import (
     RUNTIME_ENDPOINT_ALIASES as CATALOG_ENDPOINT_ALIASES,
 )
 from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS as CATALOG_ENDPOINTS
+from runtime.profiles.catalog.endpoints import (
+    RUNTIME_ENDPOINTS as RUNTIME_CATALOG_ENDPOINTS,
+)
 from runtime.profiles.catalog.products import (
     LIGHTWEIGHT_PRODUCT_PROFILES,
+    OPTIONAL_NATIVE_PRODUCT_PROFILES,
     PRODUCT_INTENT_PROFILES,
     PRODUCT_PROFILES,
+    PROFILE_NAME_OVERLAP,
     PROFILE_SNAPSHOT_TARGETS,
     SIMULATION_ENTRYPOINT_PROFILES,
     SIMULATION_PROFILES,
@@ -27,53 +51,8 @@ from runtime.profiles.catalog.products import (
 from runtime.profiles.catalog.products import (
     PROFILES as CATALOG_PROFILES,
 )
-from runtime.profiles.catalog.robots import (
-    CANONICAL_ROBOT_DRIVER_PROFILES,
-    CANONICAL_ROBOT_PRESETS,
-    COMPAT_ROBOT_DRIVER_PROFILES as CATALOG_COMPAT_ROBOT_DRIVER_PROFILES,
-    COMPAT_ROBOT_PRESETS as CATALOG_COMPAT_ROBOT_PRESETS,
-    ROBOT_DRIVER_PROFILES,
-    ROBOT_PRESETS,
-    robot_driver_module_name,
-    robot_driver_profile_names,
-    robot_preset_names,
-)
-from runtime.profiles.catalog.runtime_paths import _resolve_tomogram
-from runtime.profiles.catalog.endpoints import (
-    PRODUCT_PROFILE_ENDPOINTS,
-    RUNTIME_ENDPOINTS as RUNTIME_CATALOG_ENDPOINTS,
-)
-from runtime.profiles.catalog.endpoint_adapter_configs import (
-    CMU_UNITY_CONFIG,
-    GAZEBO_CONFIG,
-    MUJOCO_LIVE_CONFIG,
-)
 from runtime.profiles.catalog.products import (
-    OPTIONAL_NATIVE_PRODUCT_PROFILES,
-    PROFILE_NAME_OVERLAP,
     PROFILES as RUNTIME_CATALOG_PROFILES,
-)
-from runtime.profiles.catalog.runtime_paths import (
-    DEFAULT_GATEWAY_PORT,
-    DEFAULT_PLANNING_FRAME_ID,
-    DEFAULT_SAMPLE_OCTOPLANNER3D_MAP,
-    DEFAULT_SAMPLE_TOMOGRAM,
-    RUNTIME_MAP_FRAME_ID,
-    RUNTIME_ODOM_FRAME_ID,
-    _resolve_octoplanner3d_map,
-)
-from runtime.profiles.catalog.robot_runtime_defaults import (
-    CANONICAL_ROBOT_RUNTIME_DEFAULTS,
-    COMPAT_ROBOT_RUNTIME_DEFAULTS,
-    ROBOT_RUNTIME_DEFAULTS,
-)
-from runtime.profiles.binding_policy import (
-    LIDAR_LEGACY_DRIVER_START_KEYS,
-    ROS2_CAMERA_BRIDGE_ENABLE_KEYS,
-    ROS2_RERUN_BRIDGE_ENABLE_KEYS,
-    resolved_autonomy_backend_selection,
-    ros2_autonomy_backend_violations,
-    ros2_runtime_binding_violations,
 )
 from runtime.profiles.catalog.robot_archives import (
     ROBOT_ARCHIVE_SCHEMA_VERSION,
@@ -88,23 +67,50 @@ from runtime.profiles.catalog.robot_archives import (
     robot_archive_compat_runtime_defaults,
     robot_archive_path,
 )
+from runtime.profiles.catalog.robot_runtime_defaults import (
+    CANONICAL_ROBOT_RUNTIME_DEFAULTS,
+    COMPAT_ROBOT_RUNTIME_DEFAULTS,
+    ROBOT_RUNTIME_DEFAULTS,
+)
+from runtime.profiles.catalog.robots import (
+    CANONICAL_ROBOT_DRIVER_PROFILES,
+    CANONICAL_ROBOT_PRESETS,
+    ROBOT_DRIVER_PROFILES,
+    ROBOT_PRESETS,
+    robot_driver_module_name,
+    robot_driver_profile_names,
+    robot_preset_names,
+)
+from runtime.profiles.catalog.robots import (
+    COMPAT_ROBOT_DRIVER_PROFILES as CATALOG_COMPAT_ROBOT_DRIVER_PROFILES,
+)
+from runtime.profiles.catalog.robots import (
+    COMPAT_ROBOT_PRESETS as CATALOG_COMPAT_ROBOT_PRESETS,
+)
 from runtime.profiles.catalog.robots import ROBOT_PRESETS as RUNTIME_ROBOT_PRESETS
+from runtime.profiles.catalog.runtime_paths import (
+    DEFAULT_GATEWAY_PORT,
+    DEFAULT_PLANNING_FRAME_ID,
+    DEFAULT_SAMPLE_OCTOPLANNER3D_MAP,
+    RUNTIME_MAP_FRAME_ID,
+    RUNTIME_ODOM_FRAME_ID,
+    _resolve_octoplanner3d_map,
+)
 from runtime.profiles.endpoint_config import endpoint_config_for_profile
-from runtime.profiles.resolver import resolve_runtime_config
-from runtime.profiles.endpoints import (
-    RUNTIME_ENDPOINTS as RUNTIME_ENDPOINTS_RUNTIME,
-)
-from runtime.profiles.endpoints import (
-    resolve_runtime_run_spec as resolve_runtime_run_spec_runtime,
-)
 from runtime.profiles.endpoints import (
     RUNTIME_ENDPOINTS as COMPAT_ENDPOINTS,
 )
 from runtime.profiles.endpoints import (
+    RUNTIME_ENDPOINTS as RUNTIME_ENDPOINTS_RUNTIME,
+)
+from runtime.profiles.endpoints import (
     resolve_runtime_run_spec as resolve_runtime_run_spec_compat,
 )
+from runtime.profiles.endpoints import (
+    resolve_runtime_run_spec as resolve_runtime_run_spec_runtime,
+)
 from runtime.profiles.endpoints import runtime_endpoint_names
-from runtime.blueprints.stacks.driver import RobotProfile
+from runtime.profiles.resolver import resolve_runtime_config
 from runtime.runtime_profiles import PROFILES as COMPAT_PROFILES
 from runtime.runtime_profiles import ROBOT_PRESETS as RUNTIME_PROFILES_ROBOT_PRESETS
 
@@ -127,11 +133,11 @@ def test_runtime_endpoint_resolver_reexports_endpoint_catalog() -> None:
     assert COMPAT_ENDPOINTS is CATALOG_ENDPOINTS
     assert COMPAT_ENDPOINTS is RUNTIME_ENDPOINTS_RUNTIME
     assert resolve_runtime_run_spec_compat is resolve_runtime_run_spec_runtime
-    assert PRODUCT_PROFILE_ENDPOINTS["nav"] == ("thunder_field", "replay")
+    assert PRODUCT_PROFILE_ENDPOINTS["nav"] == ("thunder_field",)
     assert CATALOG_ENDPOINTS["thunder_lite"].robot_preset == "thunder"
     assert CATALOG_ENDPOINTS["thunder_lite"].data_source == "thunder_lite_local"
     assert CATALOG_ENDPOINTS["thunder_lite"].config_overrides == {
-        "enable_device_manager": False,
+        "enable_hw": False,
     }
     assert CATALOG_ENDPOINTS["thunder_field"].robot_preset == "thunder"
     assert CATALOG_ENDPOINTS["thunder_field"].data_source == "thunder_field"
@@ -139,19 +145,18 @@ def test_runtime_endpoint_resolver_reexports_endpoint_catalog() -> None:
     assert CATALOG_ENDPOINTS["thunder_field"].endpoint_transport == "dds"
     assert CATALOG_ENDPOINTS["thunder_field"].endpoint_contract == "thunder_field_dds_v1"
     assert CATALOG_ENDPOINTS["thunder_field"].config_overrides == {
-        "enable_device_manager": False,
+        "enable_hw": False,
         "enable_robot_driver": False,
         "enable_lidar": False,
+        "enable_imu": False,
         "command_output_mode": "endpoint_only",
-        "hardware_control_boundary": "dds_endpoint_source",
+        "hardware_control_boundary": "driver",
         "localization_adapter": "cpp_slam_status",
         "native_navigation_endpoint": "lingtu-nav-dds",
         "manage_session_services": False,
-        "enable_nav_in": False,
-        "enable_nav_out": False,
         "enable_map_out": False,
         "enable_camera": True,
-        "camera_backend": "orbbec_native",
+        "camera_backend": "dds",
     }
     assert CATALOG_PRODUCT_ENDPOINT_ALIASES["field"] == "thunder_field"
     assert CATALOG_PRODUCT_ENDPOINT_ALIASES["thunder-field"] == "thunder_field"
@@ -196,10 +201,7 @@ def test_robot_catalog_hides_legacy_board_names_from_canonical_presets() -> None
     assert "s100p" not in CANONICAL_ROBOT_PRESETS
     assert "navigate" not in CANONICAL_ROBOT_PRESETS
     assert CATALOG_COMPAT_ROBOT_PRESETS["s100p"] == CANONICAL_ROBOT_PRESETS["thunder"]
-    assert (
-        CATALOG_COMPAT_ROBOT_DRIVER_PROFILES["s100p"]
-        == CANONICAL_ROBOT_DRIVER_PROFILES["thunder"]
-    )
+    assert CATALOG_COMPAT_ROBOT_DRIVER_PROFILES["s100p"] == CANONICAL_ROBOT_DRIVER_PROFILES["thunder"]
     assert "s100p" not in robot_preset_names(include_compat=False)
     assert "s100p" not in robot_driver_profile_names(include_compat=False)
     assert "s100p" in robot_preset_names(include_compat=True)
@@ -207,9 +209,7 @@ def test_robot_catalog_hides_legacy_board_names_from_canonical_presets() -> None
     assert "s100p" not in RobotProfile.known_presets(include_compat=False)
     assert robot_driver_module_name("thunder") == "ThunderDriver"
     assert robot_driver_module_name("s100p") == "ThunderDriver"
-    assert COMPAT_ROBOT_RUNTIME_DEFAULTS["s100p"] == CANONICAL_ROBOT_RUNTIME_DEFAULTS[
-        "thunder"
-    ]
+    assert COMPAT_ROBOT_RUNTIME_DEFAULTS["s100p"] == CANONICAL_ROBOT_RUNTIME_DEFAULTS["thunder"]
 
 
 def test_thunder_is_canonical_product_robot_name() -> None:
@@ -235,9 +235,7 @@ def test_thunder_robot_catalog_is_sourced_from_robot_archive() -> None:
         "thunder": CANONICAL_ROBOT_DRIVER_PROFILES["thunder"],
         "thunder_remote": CANONICAL_ROBOT_DRIVER_PROFILES["thunder_remote"],
     }
-    assert robot_archive_compat_driver_profiles("thunder") == (
-        CATALOG_COMPAT_ROBOT_DRIVER_PROFILES
-    )
+    assert robot_archive_compat_driver_profiles("thunder") == (CATALOG_COMPAT_ROBOT_DRIVER_PROFILES)
     assert robot_archive_canonical_driver_modules("thunder") == {
         "thunder": "ThunderDriver",
         "thunder_remote": "ThunderDriver",
@@ -250,9 +248,7 @@ def test_thunder_robot_catalog_is_sourced_from_robot_archive() -> None:
         "thunder": CANONICAL_ROBOT_RUNTIME_DEFAULTS["thunder"],
         "thunder_remote": CANONICAL_ROBOT_RUNTIME_DEFAULTS["thunder_remote"],
     }
-    assert robot_archive_compat_runtime_defaults("thunder") == (
-        COMPAT_ROBOT_RUNTIME_DEFAULTS
-    )
+    assert robot_archive_compat_runtime_defaults("thunder") == (COMPAT_ROBOT_RUNTIME_DEFAULTS)
 
 
 def test_robot_presets_do_not_own_upper_stack_defaults() -> None:
@@ -347,11 +343,8 @@ def test_runtime_paths_own_shared_runtime_defaults() -> None:
     assert DEFAULT_PLANNING_FRAME_ID == RUNTIME_MAP_FRAME_ID
     assert RUNTIME_MAP_FRAME_ID == "map"
     assert RUNTIME_ODOM_FRAME_ID == "odom"
-    assert DEFAULT_SAMPLE_TOMOGRAM.endswith("building2_9.pickle")
     assert DEFAULT_SAMPLE_OCTOPLANNER3D_MAP.endswith("result_cleaned.bt")
 
-    resolved = Path(_resolve_tomogram()).as_posix()
-    assert resolved.endswith(DEFAULT_SAMPLE_TOMOGRAM)
     octo_map = Path(_resolve_octoplanner3d_map()).as_posix()
     assert octo_map.endswith((".bt", ".ot", ".octomap", ".pcd"))
 
@@ -360,21 +353,22 @@ def test_catalog_profiles_consume_shared_runtime_defaults() -> None:
     assert CATALOG_PROFILES["lite"]["gateway_port"] == DEFAULT_GATEWAY_PORT
     assert CATALOG_PROFILES["lite"]["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
     assert CATALOG_PROFILES["nav"]["gateway_port"] == DEFAULT_GATEWAY_PORT
-    assert CATALOG_PROFILES["sim"]["tomogram"] == _resolve_octoplanner3d_map()
+    assert CATALOG_PROFILES["sim"]["map_path"] == _resolve_octoplanner3d_map()
     assert MUJOCO_LIVE_CONFIG["gateway_port"] == DEFAULT_GATEWAY_PORT
     assert MUJOCO_LIVE_CONFIG["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
     assert MUJOCO_LIVE_CONFIG["enable_map_out"] is False
-    assert MUJOCO_LIVE_CONFIG["enable_nav_out"] is False
-    assert GAZEBO_CONFIG["tomogram"] == _resolve_octoplanner3d_map()
+    assert "enable_nav_out" not in MUJOCO_LIVE_CONFIG
+    assert GAZEBO_CONFIG["map_path"] == _resolve_octoplanner3d_map()
     assert CMU_UNITY_CONFIG["python_autonomy_backend"] == "nanobind"
     assert CMU_UNITY_CONFIG["python_path_follower_backend"] == "nav_kernel"
 
-    assert CATALOG_ENDPOINTS["mujoco_live"].profile_overrides[
-        "tare_explore"
-    ]["planning_frame_id"] == RUNTIME_ODOM_FRAME_ID
-    assert CATALOG_ENDPOINTS["mujoco_live"].profile_overrides[
-        "sim_mujoco_octo_live"
-    ]["tomogram"] == _resolve_octoplanner3d_map()
+    assert (
+        CATALOG_ENDPOINTS["mujoco_live"].profile_overrides["tare_explore"]["planning_frame_id"] == RUNTIME_ODOM_FRAME_ID
+    )
+    assert (
+        CATALOG_ENDPOINTS["mujoco_live"].profile_overrides["sim_mujoco_octo_live"]["map_path"]
+        == _resolve_octoplanner3d_map()
+    )
 
 
 def test_nav_product_does_not_own_field_bridge_policy() -> None:
@@ -384,11 +378,7 @@ def test_nav_product_does_not_own_field_bridge_policy() -> None:
 
 
 def _ros_bridge_keys(config: dict) -> list[str]:
-    return [
-        key
-        for key in config
-        if key.startswith("enable_ros2")
-    ]
+    return [key for key in config if key.startswith("enable_ros2")]
 
 
 def test_catalog_profiles_do_not_own_ros_bridge_switches() -> None:
@@ -400,6 +390,12 @@ def test_catalog_profiles_do_not_start_legacy_lidar_driver() -> None:
     for profile, config in CATALOG_PROFILES.items():
         for key in LIDAR_LEGACY_DRIVER_START_KEYS:
             assert key not in config, profile
+
+
+def test_catalog_profiles_do_not_use_device_manager_compat_keys() -> None:
+    compat_keys = {HW_COMPAT_CONFIG_ENABLE, HW_COMPAT_CONFIG_BRIDGE}
+    for profile, config in CATALOG_PROFILES.items():
+        assert compat_keys.isdisjoint(config), profile
 
 
 def test_catalog_profiles_do_not_enable_ros2_camera_bridge() -> None:
@@ -417,10 +413,7 @@ def test_catalog_profiles_do_not_enable_ros2_rerun_bridge() -> None:
 def test_catalog_profiles_do_not_default_to_ros2_autonomy_backends() -> None:
     for profile, config in CATALOG_PROFILES.items():
         enable_native = bool(config.get("enable_native", False))
-        assert (
-            ros2_autonomy_backend_violations(config, enable_native=enable_native)
-            == []
-        ), profile
+        assert ros2_autonomy_backend_violations(config, enable_native=enable_native) == [], profile
 
 
 def test_default_product_runtime_configs_do_not_select_ros2_bindings() -> None:
@@ -428,10 +421,7 @@ def test_default_product_runtime_configs_do_not_select_ros2_bindings() -> None:
         resolved = resolve_runtime_config(profile)
         config = resolved.config
         enable_native = bool(config.get("enable_native", False))
-        assert (
-            ros2_runtime_binding_violations(config, enable_native=enable_native)
-            == []
-        ), profile
+        assert ros2_runtime_binding_violations(config, enable_native=enable_native) == [], profile
 
 
 def test_product_runtime_configs_use_ros_free_autonomy_backends() -> None:
@@ -500,10 +490,7 @@ def test_product_runtime_configs_use_ros_free_autonomy_backends() -> None:
         config = resolved.config
         enable_native = bool(config.get("enable_native", False))
 
-        assert (
-            resolved_autonomy_backend_selection(config, enable_native=enable_native)
-            == expected[profile]
-        )
+        assert resolved_autonomy_backend_selection(config, enable_native=enable_native) == expected[profile]
 
 
 def test_mapped_teleop_profiles_enable_cmd_vel_collision_monitor() -> None:
@@ -540,7 +527,7 @@ def test_octoplanner3d_product_profiles_use_supported_map_formats() -> None:
         config = CATALOG_PROFILES[profile]
         assert config["planner"] == "octoplanner3d"
         assert config.get("fallback_planner_name", "") == ""
-        assert Path(config["tomogram"]).suffix.lower() in {
+        assert Path(config["map_path"]).suffix.lower() in {
             ".bt",
             ".ot",
             ".octomap",
@@ -564,6 +551,34 @@ def test_runtime_endpoints_do_not_start_legacy_lidar_driver() -> None:
             profile_config = dict(overrides)
             for key in LIDAR_LEGACY_DRIVER_START_KEYS:
                 assert key not in profile_config, (endpoint_name, profile)
+
+
+def test_real_runtime_endpoints_do_not_select_legacy_driver_sensor_paths() -> None:
+    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
+        if endpoint.simulation_only:
+            continue
+        endpoint_config = dict(endpoint.config_overrides)
+        for key in LEGACY_SENSOR_BINDING_KEYS:
+            assert key not in endpoint_config, endpoint_name
+        for profile, overrides in endpoint.profile_overrides.items():
+            profile_config = dict(overrides)
+            for key in LEGACY_SENSOR_BINDING_KEYS:
+                assert key not in profile_config, (endpoint_name, profile)
+
+
+def test_real_product_profiles_do_not_select_legacy_driver_sensor_paths() -> None:
+    field_profiles = {
+        "map",
+        "nav",
+        "explore",
+        "tare_explore",
+        "super_lio",
+        "super_lio_relocation",
+    }
+    for profile in field_profiles:
+        config = dict(CATALOG_PROFILES[profile])
+        for key in LEGACY_SENSOR_BINDING_KEYS:
+            assert key not in config, profile
 
 
 def test_runtime_endpoints_do_not_enable_ros2_camera_bridge() -> None:
@@ -605,20 +620,11 @@ def test_product_blueprints_do_not_import_compat_runtime_profiles() -> None:
 
 
 def test_profile_graph_does_not_hardcode_legacy_robot_driver_aliases() -> None:
-    source = (SRC / "runtime" / "introspection" / "profile_graph.py").read_text(
-        encoding="utf-8-sig"
-    )
+    source = (SRC / "runtime" / "introspection" / "profile_graph.py").read_text(encoding="utf-8-sig")
 
     assert '"s100p": "ThunderDriver"' not in source
     assert '"navigate": "ThunderDriver"' not in source
     assert "robot_driver_module_name" in source
-
-
-def test_catalog_tomogram_fallback_points_to_repo_sample(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-    resolved = Path(_resolve_tomogram())
-
-    assert resolved.as_posix().endswith(DEFAULT_SAMPLE_TOMOGRAM)
 
 
 def test_catalog_octoplanner3d_map_prefers_active_saved_map(monkeypatch, tmp_path) -> None:
@@ -627,8 +633,8 @@ def test_catalog_octoplanner3d_map_prefers_active_saved_map(monkeypatch, tmp_pat
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
     active = tmp_path / "active"
     active.mkdir()
-    active_map = active / "map.pcd"
-    active_map.write_text("VERSION .7\n", encoding="utf-8")
+    active_map = active / "octomap.ot"
+    active_map.write_bytes(b"# OctoMap OcTree file\n")
 
     assert Path(_resolve_octoplanner3d_map()) == active_map
 
@@ -636,7 +642,7 @@ def test_catalog_octoplanner3d_map_prefers_active_saved_map(monkeypatch, tmp_pat
 def test_catalog_octoplanner3d_map_env_override_wins(monkeypatch, tmp_path) -> None:
     active = tmp_path / "active"
     active.mkdir()
-    (active / "map.pcd").write_text("VERSION .7\n", encoding="utf-8")
+    (active / "octomap.ot").write_bytes(b"# OctoMap OcTree file\n")
     override = tmp_path / "override.bt"
     override.write_bytes(b"# OctoMap OcTree binary file\n")
 

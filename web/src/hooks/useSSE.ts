@@ -58,6 +58,7 @@ const INITIAL_STATE: SSEState = {
   globalPath: null,
   localPath: null,
   mapCloud: null,
+  mapScene: null,
   savedMap: null,
   mapEvent: null,
   session: null,
@@ -239,7 +240,7 @@ export function useSSE(url: string = '/api/v1/events') {
 
       setState(prev => ({
         ...prev,
-        odometry: odometry ?? prev.odometry,
+        odometry: statePayload ? odometry : prev.odometry,
         missionStatus: mission ?? prev.missionStatus,
         safetyState: safety ?? prev.safetyState,
         session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
@@ -391,7 +392,11 @@ export function useSSE(url: string = '/api/v1/events') {
                   queueRefresh('event_stream_initial_snapshot_auxiliary', 'auxiliary')
                 }
                 const d = evt.data || {}
-                if (d.odometry) next.odometry = { type: 'odometry', ...d.odometry as object } as never
+                if (Object.prototype.hasOwnProperty.call(d, 'odometry')) {
+                  next.odometry = d.odometry
+                    ? { type: 'odometry', ...d.odometry as object } as never
+                    : null
+                }
                 if (d.mission)  next.missionStatus = { type: 'mission_status', ...d.mission as object } as never
                 if (d.safety)   next.safetyState = { type: 'safety_state', ...d.safety as object } as never
                 if (d.session)  next.session = d.session as never
@@ -400,7 +405,11 @@ export function useSSE(url: string = '/api/v1/events') {
                 break
               }
               case 'odometry':
-                next.odometry = { type: 'odometry', ...(evt.data as object || evt) } as never
+                if (evt.reset === true || evt.data === null) {
+                  next.odometry = null
+                } else {
+                  next.odometry = { type: 'odometry', ...(evt.data as object || evt) } as never
+                }
                 break
               case 'mission':
               case 'mission_status':
@@ -468,6 +477,9 @@ export function useSSE(url: string = '/api/v1/events') {
                 break
               case 'map_cloud':
                 next.mapCloud = event as never
+                break
+              case 'map_scene':
+                next.mapScene = event as never
                 break
               case 'saved_map':
                 next.savedMap = event as never

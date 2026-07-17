@@ -105,7 +105,7 @@ Format: [Semantic Versioning](https://semver.org/) — `MAJOR.MINOR.PATCH`
 ### 相机自动恢复
 
 - **三级 watchdog** — L1 rclpy 重连 (1-2次) → L2 systemctl restart camera (3-5次) → L3 USB sysfs reset + restart (6+次)
-- **QoS 修复** — CameraBridgeModule RELIABLE→BEST_EFFORT 匹配 Orbbec Gemini 335
+- **QoS 修复** — camera RELIABLE→BEST_EFFORT 匹配 Orbbec Gemini 335
 - **防重复进程** — camera.service 添加 ExecStartPre killall + KillMode=control-group，watchdog stop→kill→start 三步清洁重启
 - **帧缓存优化** — TeleopModule 无论有无 WS 客户端都缓存最新帧，连接时立即推送
 

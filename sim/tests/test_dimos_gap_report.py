@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -8,8 +8,7 @@ import time
 from pathlib import Path
 
 from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from runtime.diagnostics.dimos_runtime_dataflow import RUNTIME_DATAFLOW_GATES
-from runtime.diagnostics.dimos_runtime_dataflow import build_runtime_dataflow_from_summary
+from sim.diagnostics.dataflow_report import RUNTIME_DATAFLOW_GATES, build_runtime_dataflow_from_summary
 from sim.scripts import dimos_gap_report
 
 
@@ -395,16 +394,16 @@ def _gazebo_runtime_dataflow_report() -> dict:
         "odometry_frame_id": "odom",
         "odometry_child_frame_id": "body",
         "topic_samples": {
-            "/nav/map_cloud": 3,
-            "/nav/registered_cloud": 3,
+            "/slam/map_cloud": 3,
+            "/slam/registered_cloud": 3,
         },
         "topic_frames": {
-            "/nav/map_cloud": "odom",
-            "/nav/registered_cloud": "body",
+            "/slam/map_cloud": "odom",
+            "/slam/registered_cloud": "body",
         },
         "point_counts": {
-            "/nav/map_cloud": 1024,
-            "/nav/registered_cloud": 1024,
+            "/slam/map_cloud": 1024,
+            "/slam/registered_cloud": 1024,
         },
         "nav_loop": {
             "ok": True,
@@ -422,7 +421,7 @@ def _gazebo_runtime_dataflow_report() -> dict:
                 "/nav/global_path": 2,
                 "/nav/local_path": 12,
                 "/nav/cmd_vel": 18,
-                "/nav/odometry": 16,
+                "/slam/odometry": 16,
             },
             "publisher_contract": {
                 "ok": True,
@@ -442,7 +441,7 @@ def _gazebo_runtime_dataflow_report() -> dict:
                         "publishers": ["/pathFollower"],
                         "disallowed_node_names": [],
                     },
-                    "/nav/odometry": {
+                    "/slam/odometry": {
                         "ok": True,
                         "publishers": ["/lingtu_gazebo_runtime_adapter"],
                         "disallowed_node_names": [],
@@ -514,12 +513,12 @@ def _gazebo_runtime_dataflow_report() -> dict:
                 "/nav/global_path": 2,
                 "/nav/local_path": 12,
                 "/nav/cmd_vel": 18,
-                "/nav/odometry": 16,
-                "/nav/map_cloud": 3,
+                "/slam/odometry": 16,
+                "/slam/map_cloud": 3,
                 "/nav/terrain_map": 3,
                 "/nav/terrain_map_ext": 9,
-                "/nav/cumulative_map_cloud": 9,
-                "/nav/registered_cloud": 9,
+                "/slam/cumulative_map_cloud": 9,
+                "/slam/registered_cloud": 9,
             },
         },
         "tare_exploration": {
@@ -671,9 +670,7 @@ def test_dimos_gap_report_marks_current_stress_gates_as_p0(tmp_path: Path):
     assert rows["moving_obstacle_sweep"]["priority"] == "p0"
     assert rows["moving_obstacle_sweep"]["primary_category"] == "dynamic_obstacle"
     assert rows["moving_obstacle_sweep"]["gate_command"] == "run moving_obstacle_sweep"
-    assert rows["large_loop_closure"]["validation_stages"] == [
-        "long_range_loop_closure"
-    ]
+    assert rows["large_loop_closure"]["validation_stages"] == ["long_range_loop_closure"]
 
 
 def test_dimos_gap_report_keeps_green_summary_unclaimable_without_dataflow(
@@ -780,8 +777,7 @@ def test_dimos_gap_report_rejects_stale_host_preflight_file_even_with_green_data
             "runnable_gates": list(DIMOS_BENCHMARK_REQUIRED_GATES),
             "blocked_gates": [],
             "gates": {
-                gate: {"ok": True, "status": "runnable", "checks": {}}
-                for gate in DIMOS_BENCHMARK_REQUIRED_GATES
+                gate: {"ok": True, "status": "runnable", "checks": {}} for gate in DIMOS_BENCHMARK_REQUIRED_GATES
             },
         },
     )
@@ -816,9 +812,7 @@ def test_dimos_gap_report_rejects_stale_host_preflight_file_even_with_green_data
     assert report["host_preflight"]["checked"] is True
     assert report["host_preflight"]["ok"] is False
     assert report["host_setup_plan"]["ok"] is False
-    assert report["host_setup_plan"]["failed_checks"][0]["check"] == (
-        "host_preflight_report_freshness"
-    )
+    assert report["host_setup_plan"]["failed_checks"][0]["check"] == ("host_preflight_report_freshness")
     assert report["lingtu_readiness"]["host_preflight_ok"] is False
     assert report["lingtu_readiness"]["ok"] is False
     assert "host preflight passes" in report["lingtu_readiness"]["stop_condition"]
@@ -841,8 +835,7 @@ def test_dimos_gap_report_rejects_green_host_preflight_without_contract(
             "runnable_gates": list(DIMOS_BENCHMARK_REQUIRED_GATES),
             "blocked_gates": [],
             "gates": {
-                gate: {"ok": True, "status": "runnable", "checks": {}}
-                for gate in DIMOS_BENCHMARK_REQUIRED_GATES
+                gate: {"ok": True, "status": "runnable", "checks": {}} for gate in DIMOS_BENCHMARK_REQUIRED_GATES
             },
         }
 
@@ -930,9 +923,7 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": [
-                        "PCT native runtime requires CPython 3.10 ABI; current py313"
-                    ],
+                    "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
                     "checks": {
                         "pct_native": {
                             "ok": False,
@@ -941,9 +932,7 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
                         }
                     },
                     "command": "run native_pct_mujoco",
-                    "expected_report_path": (
-                        "artifacts/server_sim_closure/native_pct_mujoco/report.json"
-                    ),
+                    "expected_report_path": ("artifacts/server_sim_closure/native_pct_mujoco/report.json"),
                     "host_requirements": ["PCT native extension modules"],
                 }
             },
@@ -977,12 +966,8 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
     assert report["host_setup_plan"]["ok"] is False
     assert report["host_setup_plan"]["failed_check_count"] == 1
     assert report["host_setup_plan"]["failed_checks"][0]["check"] == "pct_native"
-    assert report["host_setup_plan"]["failed_checks"][0]["gates"] == [
-        "native_pct_mujoco"
-    ]
-    diagnostic_commands = report["host_setup_plan"]["failed_checks"][0][
-        "diagnostic_commands"
-    ]
+    assert report["host_setup_plan"]["failed_checks"][0]["gates"] == ["native_pct_mujoco"]
+    diagnostic_commands = report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"]
     assert any("pct_runtime_preflight.py" in command for command in diagnostic_commands)
     assert "bash scripts/deploy/setup_server_ros_pct.sh" in diagnostic_commands
     assert report["execution_plan"]["ok_to_run_missing"] is False
@@ -1013,16 +998,11 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
     assert next_step["category"] == "environment_runtime"
     assert next_step["recommended_action"] == "fix host preflight before running this gate"
     assert next_step["command"] == "run native_pct_mujoco"
-    assert (
-        next_step["expected_report_path"]
-        == "artifacts/server_sim_closure/native_pct_mujoco/report.json"
-    )
+    assert next_step["expected_report_path"] == "artifacts/server_sim_closure/native_pct_mujoco/report.json"
     assert next_step["dependency_blockers"] == []
     assert next_step["dependency_blocker_status"] == {}
     assert next_step["host_preflight_ok"] is False
-    assert next_step["host_preflight_blockers"] == [
-        "PCT native runtime requires CPython 3.10 ABI; current py313"
-    ]
+    assert next_step["host_preflight_blockers"] == ["PCT native runtime requires CPython 3.10 ABI; current py313"]
     assert next_step["host_failed_checks"] == ["pct_native"]
     assert next_step["runtime_dataflow_blocker"] == ""
     assert next_step["runtime_dataflow_failed_edges"] == []
@@ -1038,9 +1018,7 @@ def test_dimos_gap_report_reads_run_missing_host_blocked_summary(tmp_path: Path)
     gate_preflight = {
         "ok": False,
         "status": "blocked",
-        "blockers": [
-            "PCT native runtime requires CPython 3.10 ABI; current py313"
-        ],
+        "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
         "checks": {
             "pct_native": {
                 "ok": False,
@@ -1051,9 +1029,7 @@ def test_dimos_gap_report_reads_run_missing_host_blocked_summary(tmp_path: Path)
             }
         },
         "command": "run native_pct_mujoco",
-        "expected_report_path": (
-            "artifacts/server_sim_closure/native_pct_mujoco/report.json"
-        ),
+        "expected_report_path": ("artifacts/server_sim_closure/native_pct_mujoco/report.json"),
     }
     summary = _summary(failed=["native_pct_mujoco"])
     summary.update(
@@ -1108,15 +1084,9 @@ def test_dimos_gap_report_reads_run_missing_host_blocked_summary(tmp_path: Path)
         "error": "PCT native runtime requires CPython 3.10 ABI; current py313",
     }
     assert native["host_preflight"]["failed_checks"] == ["pct_native"]
-    assert native["host_preflight"]["blockers"] == [
-        "PCT native runtime requires CPython 3.10 ABI; current py313"
-    ]
-    assert report["host_setup_plan"]["failed_checks"][0]["recommended_action"] == (
-        "server-native PCT setup hint"
-    )
-    assert report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"] == [
-        "server-native pct diagnostic"
-    ]
+    assert native["host_preflight"]["blockers"] == ["PCT native runtime requires CPython 3.10 ABI; current py313"]
+    assert report["host_setup_plan"]["failed_checks"][0]["recommended_action"] == ("server-native PCT setup hint")
+    assert report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"] == ["server-native pct diagnostic"]
     assert report["execution_plan"]["ok_to_run_missing"] is False
     phase_ids = [phase["id"] for phase in report["execution_plan"]["phases"]]
     assert "linux_sim_closure" in phase_ids
@@ -1156,9 +1126,7 @@ def test_dimos_gap_report_reads_host_preflight_report_path(tmp_path: Path):
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": [
-                        "PCT native runtime requires CPython 3.10 ABI; current py313"
-                    ],
+                    "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
                     "checks": {
                         "pct_native": {
                             "ok": False,
@@ -1176,9 +1144,7 @@ def test_dimos_gap_report_reads_host_preflight_report_path(tmp_path: Path):
         host_preflight_report=preflight_path,
     )
 
-    native = {
-        row["gate"]: row for row in report["gap_matrix"]
-    }["native_pct_mujoco"]
+    native = {row["gate"]: row for row in report["gap_matrix"]}["native_pct_mujoco"]
     assert report["host_preflight"]["checked"] is True
     assert report["host_preflight"]["source"] == f"file:{preflight_path}"
     assert report["host_preflight"]["blocked_gates"] == ["native_pct_mujoco"]
@@ -1186,12 +1152,8 @@ def test_dimos_gap_report_reads_host_preflight_report_path(tmp_path: Path):
     assert native["recommended_action"] == "fix host preflight before running this gate"
     assert report["host_setup_plan"]["source"] == "recomputed_from_host_preflight_gates"
     assert report["host_setup_plan"]["failed_checks"][0]["check"] == "pct_native"
-    assert report["host_setup_plan"]["failed_checks"][0]["gates"] == [
-        "native_pct_mujoco"
-    ]
-    assert "do not use this stale command" not in report["host_setup_plan"][
-        "failed_checks"
-    ][0]["diagnostic_commands"]
+    assert report["host_setup_plan"]["failed_checks"][0]["gates"] == ["native_pct_mujoco"]
+    assert "do not use this stale command" not in report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"]
     assert report["execution_plan"]["ok_to_run_missing"] is False
     phase_ids = [phase["id"] for phase in report["execution_plan"]["phases"]]
     assert "preflight_required_gate_commands" not in phase_ids
@@ -1236,9 +1198,7 @@ def test_dimos_gap_report_orders_blocked_commands_by_dependency(tmp_path: Path):
     assert rows["moving_obstacle_sweep"]["priority"] == "p0"
     assert rows["large_loop_closure"]["priority"] == "p0"
     blocked_phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "blocked_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "blocked_gate_commands"
     )
     assert blocked_phase["order"] == "dimos_dependency_order"
     assert blocked_phase["gates"] == [
@@ -1266,10 +1226,7 @@ def test_dimos_gap_report_orders_runnable_commands_by_dependency(tmp_path: Path)
         "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
         "runnable_gates": failed,
         "blocked_gates": [],
-        "gates": {
-            gate: {"ok": True, "status": "runnable", "checks": {}}
-            for gate in failed
-        },
+        "gates": {gate: {"ok": True, "status": "runnable", "checks": {}} for gate in failed},
     }
     summary_path = _write_json(
         tmp_path / "summary_runnable_dependency_order.json",
@@ -1282,9 +1239,7 @@ def test_dimos_gap_report_orders_runnable_commands_by_dependency(tmp_path: Path)
     assert rows["moving_obstacle_sweep"]["priority"] == "p0"
     assert rows["large_loop_closure"]["priority"] == "p0"
     runnable_phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "run_unblocked_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "run_unblocked_gate_commands"
     )
     assert runnable_phase["order"] == "dimos_dependency_order"
     assert runnable_phase["gates"] == [
@@ -1298,9 +1253,7 @@ def test_dimos_gap_report_orders_runnable_commands_by_dependency(tmp_path: Path)
         "large_loop_closure",
     ]
     dependency_phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "dependency_blocked_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "dependency_blocked_gate_commands"
     )
     assert dependency_phase["gates"] == ["native_pct_mujoco"]
     assert dependency_phase["commands"][0]["dependency_blockers"] == ["large_terrain"]
@@ -1361,40 +1314,26 @@ def test_dimos_gap_report_blocks_live_dependents_when_prerequisite_is_host_block
     report = dimos_gap_report.build_gap_report(summary_path=summary_path)
 
     rows = {row["gate"]: row for row in report["gap_matrix"]}
-    assert report["lingtu_readiness"]["highest_actionable_blocker"] == (
-        "fastlio2_dynamic_inspection"
-    )
-    assert rows["moving_obstacle_sweep"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
-    assert rows["large_loop_closure"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
+    assert report["lingtu_readiness"]["highest_actionable_blocker"] == ("fastlio2_dynamic_inspection")
+    assert rows["moving_obstacle_sweep"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
+    assert rows["large_loop_closure"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
     assert rows["moving_obstacle_sweep"]["recommended_action"] == (
         "run prerequisite gate reports first: fastlio2_dynamic_inspection"
     )
     blocked_phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "blocked_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "blocked_gate_commands"
     )
     assert blocked_phase["gates"] == ["fastlio2_dynamic_inspection"]
     dependency_phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "dependency_blocked_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "dependency_blocked_gate_commands"
     )
     assert dependency_phase["gates"] == [
         "moving_obstacle_sweep",
         "large_loop_closure",
     ]
-    assert dependency_phase["commands"][0]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
+    assert dependency_phase["commands"][0]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
     next_steps = {step["gate"]: step for step in report["next_steps"]}
-    assert next_steps["moving_obstacle_sweep"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
+    assert next_steps["moving_obstacle_sweep"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
 
 
 def test_dimos_gap_report_marks_missing_prerequisites_as_dependency_blockers(
@@ -1416,41 +1355,23 @@ def test_dimos_gap_report_marks_missing_prerequisites_as_dependency_blockers(
     report = dimos_gap_report.build_gap_report(summary_path=summary_path)
 
     rows = {row["gate"]: row for row in report["gap_matrix"]}
-    assert rows["moving_obstacle_sweep"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
-    assert rows["moving_obstacle_sweep"]["dependency_blocker_status"] == {
-        "fastlio2_dynamic_inspection": "failed"
-    }
-    assert rows["large_loop_closure"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
-    assert rows["pct_saved_map_navigation"]["dependency_blockers"] == [
-        "saved_map_relocalize"
-    ]
+    assert rows["moving_obstacle_sweep"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
+    assert rows["moving_obstacle_sweep"]["dependency_blocker_status"] == {"fastlio2_dynamic_inspection": "failed"}
+    assert rows["large_loop_closure"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
+    assert rows["pct_saved_map_navigation"]["dependency_blockers"] == ["saved_map_relocalize"]
     assert rows["pct_saved_map_navigation"]["recommended_action"] == (
         "run prerequisite gate reports first: saved_map_relocalize"
     )
 
     preflight_phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "preflight_required_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "preflight_required_gate_commands"
     )
     command_by_gate = {command["gate"]: command for command in preflight_phase["commands"]}
-    assert command_by_gate["moving_obstacle_sweep"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
-    assert command_by_gate["large_loop_closure"]["dependency_blockers"] == [
-        "fastlio2_dynamic_inspection"
-    ]
-    assert command_by_gate["pct_saved_map_navigation"]["dependency_blockers"] == [
-        "saved_map_relocalize"
-    ]
+    assert command_by_gate["moving_obstacle_sweep"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
+    assert command_by_gate["large_loop_closure"]["dependency_blockers"] == ["fastlio2_dynamic_inspection"]
+    assert command_by_gate["pct_saved_map_navigation"]["dependency_blockers"] == ["saved_map_relocalize"]
     next_steps = {step["gate"]: step for step in report["next_steps"]}
-    assert next_steps["pct_saved_map_navigation"]["dependency_blockers"] == [
-        "saved_map_relocalize"
-    ]
+    assert next_steps["pct_saved_map_navigation"]["dependency_blockers"] == ["saved_map_relocalize"]
 
 
 def test_dimos_gap_report_surfaces_gate_environment_evidence(tmp_path: Path):
@@ -1477,9 +1398,7 @@ def test_dimos_gap_report_surfaces_gate_environment_evidence(tmp_path: Path):
 
     report = dimos_gap_report.build_gap_report(summary_path=summary_path)
 
-    rows = {
-        item["gate"]: item for item in report["gap_matrix"]
-    }
+    rows = {item["gate"]: item for item in report["gap_matrix"]}
     row = rows["dynamic_obstacle_local_planner"]
     assert row["execution_mode"] == "host_guard"
     assert row["environment"] == {
@@ -1505,9 +1424,7 @@ def test_dimos_gap_report_requires_host_preflight_before_gate_commands(
     assert report["host_preflight"]["checked"] is False
     assert report["execution_plan"]["ok_to_run_missing"] is False
     phase = next(
-        phase
-        for phase in report["execution_plan"]["phases"]
-        if phase["id"] == "preflight_required_gate_commands"
+        phase for phase in report["execution_plan"]["phases"] if phase["id"] == "preflight_required_gate_commands"
     )
     assert phase["status"] == "blocked"
     assert phase["gates"] == ["large_terrain", "native_pct_mujoco"]
@@ -1571,9 +1488,7 @@ def test_dimos_gap_report_cli_accepts_host_preflight_report(tmp_path: Path):
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": [
-                        "PCT native runtime requires CPython 3.10 ABI; current py313"
-                    ],
+                    "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
                     "checks": {
                         "pct_native": {
                             "ok": False,
@@ -1720,9 +1635,7 @@ def test_dimos_gap_report_attaches_aggregate_child_dataflow(tmp_path: Path):
     assert flow["source_gate_report"] == str(aggregate)
     assert flow["source_report"] == str(child)
     assert "path_follower_to_cmd_vel" in flow["failed_edges"]
-    assert report["runtime_dataflow"]["failing_primary_blockers"][
-        "moving_obstacle_sweep"
-    ] == "path_follower_to_cmd_vel"
+    assert report["runtime_dataflow"]["failing_primary_blockers"]["moving_obstacle_sweep"] == "path_follower_to_cmd_vel"
 
 
 def test_dimos_gap_report_rejects_stale_aggregate_child_dataflow(tmp_path: Path):
@@ -1778,9 +1691,7 @@ def test_dimos_gap_report_rejects_stale_aggregate_child_dataflow(tmp_path: Path)
     assert flow["source_gate_report"] == str(aggregate)
     assert flow["source_report"] == str(child)
     assert flow["child_report_freshness"]["fresh"] is False
-    assert "child_report_age_vs_parent_s" in flow["child_report_freshness"][
-        "blockers"
-    ][0]
+    assert "child_report_age_vs_parent_s" in flow["child_report_freshness"]["blockers"][0]
 
 
 def test_dimos_gap_report_rejects_old_child_even_when_parent_is_equally_old(
@@ -1838,10 +1749,7 @@ def test_dimos_gap_report_rejects_old_child_even_when_parent_is_equally_old(
     assert flow["reason"] == "child_report_stale"
     assert flow["child_report_freshness"]["fresh"] is False
     assert flow["child_report_freshness"]["age_vs_parent_s"] == 0.0
-    assert any(
-        "child_report_age_s" in blocker
-        for blocker in flow["child_report_freshness"]["blockers"]
-    )
+    assert any("child_report_age_s" in blocker for blocker in flow["child_report_freshness"]["blockers"])
 
 
 def test_dimos_gap_report_cli_json_includes_aggregate_child_dataflow(
@@ -1908,17 +1816,15 @@ def test_dimos_gap_report_cli_json_includes_aggregate_child_dataflow(
     payload = json.loads(out.read_text(encoding="utf-8"))
     rows = {row["gate"]: row for row in payload["gap_matrix"]}
     flow = rows["moving_obstacle_sweep"]["runtime_dataflow"]
-    assert payload["runtime_dataflow"]["schema_version"] == (
-        "lingtu.dimos_runtime_dataflow.v1"
-    )
+    assert payload["runtime_dataflow"]["schema_version"] == ("lingtu.dimos_runtime_dataflow.v1")
     assert flow["checked"] is True
     assert flow["source_gate_report"] == str(aggregate)
     assert flow["source_report"] == str(child)
     assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
     assert flow["edge_status"]["path_follower_to_cmd_vel"] is False
-    assert payload["runtime_dataflow"]["failing_primary_blockers"][
-        "moving_obstacle_sweep"
-    ] == "path_follower_to_cmd_vel"
+    assert (
+        payload["runtime_dataflow"]["failing_primary_blockers"]["moving_obstacle_sweep"] == "path_follower_to_cmd_vel"
+    )
 
 
 def test_dimos_gap_report_missing_dataflow_uses_expected_report_path(
@@ -1952,11 +1858,7 @@ def test_dimos_gap_report_missing_fastlio_dataflow_lists_rejected_candidates(
 ):
     monkeypatch.setattr(dimos_gap_report, "ROOT", tmp_path)
     candidate = _write_json(
-        tmp_path
-        / "mujoco_fastlio2_live_case"
-        / "legacy_live"
-        / "run_001"
-        / "report.json",
+        tmp_path / "mujoco_fastlio2_live_case" / "legacy_live" / "run_001" / "report.json",
         {
             "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
             "ok": True,
@@ -1971,13 +1873,7 @@ def test_dimos_gap_report_missing_fastlio_dataflow_lists_rejected_candidates(
             },
         },
     )
-    expected = (
-        tmp_path
-        / "mujoco_fastlio2_live*"
-        / "inspection*"
-        / "*"
-        / "report.json"
-    )
+    expected = tmp_path / "mujoco_fastlio2_live*" / "inspection*" / "*" / "report.json"
     summary = _summary(failed=["fastlio2_dynamic_inspection"])
     summary["gates"]["fastlio2_dynamic_inspection"]["path"] = ""
     for action in summary["algorithm_validation"]["next_actions"]:
@@ -1999,32 +1895,21 @@ def test_dimos_gap_report_missing_fastlio_dataflow_lists_rejected_candidates(
     assert flow["source_report"] == str(expected)
     assert flow["candidate_reports"][0]["path"] == str(candidate)
     assert flow["candidate_reports"][0]["ok"] is False
-    assert flow["candidate_reports"][0]["primary_blocker"] == (
-        "global_planner_to_local_planner"
-    )
+    assert flow["candidate_reports"][0]["primary_blocker"] == ("global_planner_to_local_planner")
     assert "path_follower_to_cmd_vel" in flow["candidate_reports"][0]["failed_edges"]
-    assert "does not satisfy fastlio2_dynamic_inspection" in flow[
-        "candidate_reports"
-    ][0]["rejection_reason"]
+    assert "does not satisfy fastlio2_dynamic_inspection" in flow["candidate_reports"][0]["rejection_reason"]
 
-    chain = report["runtime_dataflow"]["cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ]
+    chain = report["runtime_dataflow"]["cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
     assert chain["ok"] is False
     assert chain["fastlio_candidate_rejections"][0]["path"] == str(candidate)
-    assert chain["fastlio_candidate_rejections"][0]["primary_blocker"] == (
-        "global_planner_to_local_planner"
-    )
+    assert chain["fastlio_candidate_rejections"][0]["primary_blocker"] == ("global_planner_to_local_planner")
 
 
 def test_dimos_gap_report_resolves_matching_glob_dataflow_report(
     tmp_path: Path,
 ):
     matched = _write_json(
-        tmp_path
-        / "mujoco_fastlio2_live_case"
-        / "inspection_smoke"
-        / "report.json",
+        tmp_path / "mujoco_fastlio2_live_case" / "inspection_smoke" / "report.json",
         {
             "schema_version": "lingtu.mujoco_fastlio2_live_gate.v2",
             "ok": True,
@@ -2054,12 +1939,7 @@ def test_dimos_gap_report_resolves_matching_glob_dataflow_report(
             "fastlio2_yaw_consistency": {"ok": True},
         },
     )
-    expected = (
-        tmp_path
-        / "mujoco_fastlio2_live*"
-        / "inspection*"
-        / "report.json"
-    )
+    expected = tmp_path / "mujoco_fastlio2_live*" / "inspection*" / "report.json"
     summary = _summary(failed=["fastlio2_dynamic_inspection"])
     summary["gates"]["fastlio2_dynamic_inspection"]["path"] = ""
     for action in summary["algorithm_validation"]["next_actions"]:
@@ -2589,9 +2469,7 @@ def test_dimos_gap_report_native_pct_dataflow_reports_ros2_runtime_blocker(
     assert flow["edge_status"]["ros2_runtime"] is False
     assert flow["primary_blocker"] == "ros2_runtime"
     assert flow["claim_boundary"] == "ros2_runtime_unavailable"
-    assert flow["edge_evidence"]["ros2_runtime"]["diagnostic_commands"] == [
-        "ros2 pkg executables local_planner"
-    ]
+    assert flow["edge_evidence"]["ros2_runtime"]["diagnostic_commands"] == ["ros2 pkg executables local_planner"]
 
 
 def test_dimos_gap_report_attaches_pct_saved_map_navigation_dataflow(
@@ -2659,10 +2537,7 @@ def test_dimos_gap_report_attaches_pct_saved_map_navigation_dataflow(
     assert flow["schema_detected"] == "pct_saved_map_navigation"
     assert flow["edge_status"]["saved_map_relocalization"] is True
     assert flow["edge_status"]["pct_plan_preview"] is True
-    assert (
-        flow["edge_evidence"]["pct_plan_preview"]["pct_planner_path_mode"]
-        == "native_astar_raw_path"
-    )
+    assert flow["edge_evidence"]["pct_plan_preview"]["pct_planner_path_mode"] == "native_astar_raw_path"
     assert flow["edge_evidence"]["pct_plan_preview"]["pct_optimizer_enabled"] is False
     assert flow["edge_status"]["same_source_saved_map_artifacts"] is True
     assert flow["edge_status"]["native_pct_backend"] is True
@@ -2793,9 +2668,7 @@ def test_dimos_gap_report_saved_map_relocalize_blocks_on_metadata_contract(
 ):
     payload = _saved_map_relocalize_dataflow_report()
     payload["map_metadata_contract"]["ok"] = False
-    payload["map_metadata_contract"]["checks"][
-        "map_pcd_sha256_matches_file"
-    ] = False
+    payload["map_metadata_contract"]["checks"]["map_pcd_sha256_matches_file"] = False
     relocalize = _write_json(
         tmp_path / "saved_map_relocalize" / "report.json",
         payload,
@@ -2881,13 +2754,8 @@ def test_dimos_gap_report_dynamic_obstacle_blocks_on_backend(
     assert row["evidence_blockers"][0]["source"] == "runtime_dataflow"
     assert row["evidence_blockers"][0]["blocker"] == "local_planner_backend"
     next_steps = {step["gate"]: step for step in report["next_steps"]}
-    assert (
-        next_steps["dynamic_obstacle_local_planner"]["runtime_dataflow_blocker"]
-        == "local_planner_backend"
-    )
-    assert next_steps["dynamic_obstacle_local_planner"][
-        "runtime_dataflow_failed_edges"
-    ] == ["local_planner_backend"]
+    assert next_steps["dynamic_obstacle_local_planner"]["runtime_dataflow_blocker"] == "local_planner_backend"
+    assert next_steps["dynamic_obstacle_local_planner"]["runtime_dataflow_failed_edges"] == ["local_planner_backend"]
 
 
 def test_dimos_gap_report_attaches_gazebo_runtime_dataflow(tmp_path: Path):
@@ -3067,25 +2935,20 @@ def test_dimos_gap_report_cross_gate_requires_fastlio_live_dataflow(
         include_dataflow=True,
     )
 
-    chain = report["runtime_dataflow"]["cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ]
+    chain = report["runtime_dataflow"]["cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
     assert chain["checked"] is True
     assert chain["ok"] is False
     assert chain["native_pct_gate"]["ok"] is True
     assert "Fast-LIO live dataflow missing" in chain["blockers"]
-    assert report["runtime_dataflow"]["failing_cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ] == "Fast-LIO live dataflow missing"
+    assert (
+        report["runtime_dataflow"]["failing_cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
+        == "Fast-LIO live dataflow missing"
+    )
     assert report["lingtu_readiness"]["ok"] is False
     assert report["lingtu_readiness"]["runtime_dataflow_ok"] is False
-    assert report["lingtu_readiness"]["cross_gate_failures"] == [
-        "pct_mujoco_and_fastlio_live"
-    ]
+    assert report["lingtu_readiness"]["cross_gate_failures"] == ["pct_mujoco_and_fastlio_live"]
     assert report["lingtu_readiness"]["runtime_dataflow_complete"] is False
-    assert "runtime dataflow evidence is complete" in report["lingtu_readiness"][
-        "stop_condition"
-    ]
+    assert "runtime dataflow evidence is complete" in report["lingtu_readiness"]["stop_condition"]
 
 
 def test_dimos_gap_report_cross_gate_accepts_native_and_fastlio_live_dataflow(
@@ -3120,9 +2983,7 @@ def test_dimos_gap_report_cross_gate_accepts_native_and_fastlio_live_dataflow(
                 "planner_repair_used": False,
                 "last_plan_report": {"selected_planner": "pct"},
             },
-            "deliverable_contract": {
-                "checks": {"same_source_map_artifact": True}
-            },
+            "deliverable_contract": {"checks": {"same_source_map_artifact": True}},
             "map_artifacts": {
                 "ok": True,
                 "source_contract": {
@@ -3182,20 +3043,14 @@ def test_dimos_gap_report_cross_gate_accepts_native_and_fastlio_live_dataflow(
         include_dataflow=True,
     )
 
-    chain = report["runtime_dataflow"]["cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ]
+    chain = report["runtime_dataflow"]["cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
     assert chain["checked"] is True
     assert chain["ok"] is True
     assert chain["selected_fastlio_gate"] == "fastlio2_dynamic_inspection"
     assert chain["native_pct_gate"]["ok"] is True
     assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"]["ok"] is True
-    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"][
-        "pct_provenance"
-    ]["ok"] is True
-    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"][
-        "same_source_provenance"
-    ]["ok"] is True
+    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"]["pct_provenance"]["ok"] is True
+    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"]["same_source_provenance"]["ok"] is True
     assert chain["same_run_proven"] is True
     assert chain["claim_boundary"] == "same_run_pct_fastlio_live"
     assert report["lingtu_readiness"]["ok"] is True
@@ -3247,24 +3102,15 @@ def test_dimos_gap_report_cross_gate_rejects_fastlio_without_same_run_pct(
         include_dataflow=True,
     )
 
-    chain = report["runtime_dataflow"]["cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ]
+    chain = report["runtime_dataflow"]["cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
     assert chain["checked"] is True
     assert chain["ok"] is False
     assert chain["same_run_proven"] is False
-    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"][
-        "pct_provenance"
-    ]["ok"] is False
-    assert (
-        "Fast-LIO live dataflow did not prove PCT planner in the same run"
-        in chain["blockers"]
-    )
+    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"]["pct_provenance"]["ok"] is False
+    assert "Fast-LIO live dataflow did not prove PCT planner in the same run" in chain["blockers"]
     assert report["lingtu_readiness"]["ok"] is False
     assert report["lingtu_readiness"]["runtime_dataflow_ok"] is False
-    assert report["lingtu_readiness"]["cross_gate_failures"] == [
-        "pct_mujoco_and_fastlio_live"
-    ]
+    assert report["lingtu_readiness"]["cross_gate_failures"] == ["pct_mujoco_and_fastlio_live"]
 
 
 def test_dimos_gap_report_cross_gate_rejects_fastlio_without_same_source(
@@ -3316,18 +3162,11 @@ def test_dimos_gap_report_cross_gate_rejects_fastlio_without_same_source(
         include_dataflow=True,
     )
 
-    chain = report["runtime_dataflow"]["cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ]
+    chain = report["runtime_dataflow"]["cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
     assert chain["ok"] is False
     assert chain["same_run_proven"] is False
-    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"][
-        "same_source_provenance"
-    ]["ok"] is False
-    assert (
-        "Fast-LIO live dataflow did not prove same-source map artifacts"
-        in chain["blockers"]
-    )
+    assert chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"]["same_source_provenance"]["ok"] is False
+    assert "Fast-LIO live dataflow did not prove same-source map artifacts" in chain["blockers"]
 
 
 def test_dimos_gap_report_cross_gate_rejects_same_source_flags_without_artifact_sha(
@@ -3364,9 +3203,7 @@ def test_dimos_gap_report_cross_gate_rejects_same_source_flags_without_artifact_
                 "planner_repair_used": False,
                 "last_plan_report": {"selected_planner": "pct"},
             },
-            "deliverable_contract": {
-                "checks": {"same_source_map_artifact": True}
-            },
+            "deliverable_contract": {"checks": {"same_source_map_artifact": True}},
             "map_artifacts": {
                 "ok": True,
                 "source_contract": {
@@ -3389,19 +3226,12 @@ def test_dimos_gap_report_cross_gate_rejects_same_source_flags_without_artifact_
         include_dataflow=True,
     )
 
-    chain = report["runtime_dataflow"]["cross_gate_chains"][
-        "pct_mujoco_and_fastlio_live"
-    ]
-    provenance = chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"][
-        "same_source_provenance"
-    ]
+    chain = report["runtime_dataflow"]["cross_gate_chains"]["pct_mujoco_and_fastlio_live"]
+    provenance = chain["fastlio_live_gates"]["fastlio2_dynamic_inspection"]["same_source_provenance"]
     assert chain["ok"] is False
     assert provenance["ok"] is False
     assert provenance["reason"] == "map_pcd.sha256 missing"
-    assert (
-        "Fast-LIO live dataflow did not prove same-source map artifacts"
-        in chain["blockers"]
-    )
+    assert "Fast-LIO live dataflow did not prove same-source map artifacts" in chain["blockers"]
 
 
 def test_dimos_gap_report_shell_plan_exposes_cross_gate_boundary(tmp_path: Path):
@@ -3647,10 +3477,7 @@ def test_dimos_gap_report_shell_plan_comments_blocked_gate_commands(
     assert "# Phase: blocked_gate_commands [blocked]" in text
     assert "# Order: dimos_dependency_order" in text
     assert "# Gate: native_pct_mujoco priority=p1" in text
-    assert (
-        "# Expected report: artifacts/server_sim_closure/native_pct_mujoco/report.json"
-        in text
-    )
+    assert "# Expected report: artifacts/server_sim_closure/native_pct_mujoco/report.json" in text
     assert "# Host preflight ok: false" in text
     assert "# Host failed checks: pct_native" in text
     assert "# Host blocker:" in text
@@ -3739,10 +3566,7 @@ def test_dimos_gap_report_shell_plan_labels_runnable_gate_commands(tmp_path: Pat
     assert "# Phase: run_unblocked_gate_commands [pending]" in text
     assert "# Order: dimos_dependency_order" in text
     assert "# Gate: large_terrain priority=p2" in text
-    assert (
-        "# Expected report: artifacts/server_sim_closure/large_terrain/report.json"
-        in text
-    )
+    assert "# Expected report: artifacts/server_sim_closure/large_terrain/report.json" in text
     assert "# Host preflight ok: none" not in text
     assert "# BLOCKED: run large_terrain" not in text
     assert "\nrun large_terrain\n" in text
@@ -3790,10 +3614,7 @@ def test_dimos_gap_report_shell_plan_comments_dependency_blocked_gate_commands(
     assert "# Phase: dependency_blocked_gate_commands [blocked]" in text
     assert "# Gate: moving_obstacle_sweep priority=p0" in text
     assert "# Dependency blockers: fastlio2_dynamic_inspection" in text
-    assert (
-        "# Dependency blocker status: fastlio2_dynamic_inspection=host_blocked"
-        in text
-    )
+    assert "# Dependency blocker status: fastlio2_dynamic_inspection=host_blocked" in text
     assert "# BLOCKED: run moving_obstacle_sweep" in text
     assert "\nrun moving_obstacle_sweep\n" not in text
 

@@ -5,7 +5,6 @@ import copy
 from pathlib import Path
 
 import yaml
-
 from tools.validate.validate_architecture_boundaries import (
     ARCHITECTURE_LAYER_ORDER,
     BOUNDARY_RULES,
@@ -13,8 +12,6 @@ from tools.validate.validate_architecture_boundaries import (
     load_architecture_layers,
     validate_architecture_layer_manifest,
 )
-from runtime.adapters.ros2.manifest import ROS_COMPAT_IMPORT_BOUNDARIES
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
@@ -48,9 +45,7 @@ def test_architecture_layer_manifest_drives_boundary_validator_rules() -> None:
     manifest = load_architecture_layers()
     expected_rules = {
         package: set(forbidden)
-        for package, forbidden in manifest["import_boundaries"][
-            "package_forbidden_roots"
-        ].items()
+        for package, forbidden in manifest["import_boundaries"]["package_forbidden_roots"].items()
     }
 
     assert BOUNDARY_RULES == expected_rules
@@ -62,13 +57,9 @@ def test_architecture_layer_manifest_rejects_scalar_import_boundary_values(
     manifest = copy.deepcopy(load_architecture_layers())
     manifest["import_boundaries"]["package_forbidden_roots"]["nav"] = "semantic"
     manifest["import_boundaries"]["composition_exceptions"] = "runtime/blueprints/"
-    manifest["import_boundaries"]["hardware_compat_forbidden_dirs"] = (
-        "src/drivers/real/thunder/"
-    )
+    manifest["import_boundaries"]["hardware_compat_forbidden_dirs"] = "src/drivers/real/thunder/"
 
-    violations, _manifest = validate_architecture_layer_manifest(
-        _write_manifest(tmp_path, manifest)
-    )
+    violations, _manifest = validate_architecture_layer_manifest(_write_manifest(tmp_path, manifest))
 
     assert any("package_forbidden_roots.nav must be a list" in item for item in violations)
     assert any("composition_exceptions must be a list" in item for item in violations)
@@ -81,68 +72,35 @@ def test_architecture_layer_manifest_rejects_equal_paths_with_trailing_slash_dri
     manifest = copy.deepcopy(load_architecture_layers())
     manifest["layers"][3]["owns"].append("src/nav/kernel")
 
-    violations, _manifest = validate_architecture_layer_manifest(
-        _write_manifest(tmp_path, manifest)
-    )
+    violations, _manifest = validate_architecture_layer_manifest(_write_manifest(tmp_path, manifest))
 
-    assert any(
-        "owns duplicate path" in item and "src/nav/kernel" in item
-        for item in violations
-    )
+    assert any("owns duplicate path" in item and "src/nav/kernel" in item for item in violations)
 
 
 def test_architecture_layer_manifest_uses_most_specific_path_owner() -> None:
-    assert (
-        architecture_layer_for_path("src/nav/local/path_follower.py")[
-            "id"
-        ]
-        == "L4_capability_modules"
-    )
-    assert architecture_layer_for_path(
-        "src/nav/services/plan/local_planner/paths"
-    )["id"] == "L5_algorithm_kernels"
-    assert architecture_layer_for_path(
-        "src/drivers/adapters/ros2/livox_driver.py"
-    )["id"] == "L3_adapter_layer"
-    assert architecture_layer_for_path(
-        "src/runtime/adapters/ros2/rerun_overlay.py"
-    )["id"] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/nav/kernel/CMakeLists.txt")["id"] == (
-        "L5_algorithm_kernels"
-    )
-    assert architecture_layer_for_path("src/nav/adapters/ros2/nav/path_bridge.py")["id"] == (
-        "L3_adapter_layer"
-    )
+    assert architecture_layer_for_path("src/nav/local/path_follower.py")["id"] == "L4_capability_modules"
+    assert architecture_layer_for_path("src/nav/services/plan/local_planner/paths")["id"] == "L5_algorithm_kernels"
+    assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
+    assert architecture_layer_for_path("src/maps/adapters/native/map_save.py")["id"] == "L3_adapter_layer"
+    assert architecture_layer_for_path("src/nav/kernel/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
+    assert architecture_layer_for_path("src/nav/adapters/dds/nav/path_bridge.py")["id"] == ("L3_adapter_layer")
 
 
-def test_ros_and_lite_manifests_stay_cross_checked_by_architecture_layers() -> None:
-    lite_manifest = yaml.safe_load(
-        (ROOT / "config" / "thunder_lite_package.yaml").read_text(encoding="utf-8-sig")
-    )
+def test_lite_manifest_does_not_carry_retired_ros2_adapter_paths() -> None:
+    lite_manifest = yaml.safe_load((ROOT / "config" / "thunder_lite_package.yaml").read_text(encoding="utf-8-sig"))
     lite_excludes = set(lite_manifest["package"]["exclude_paths"])
     lite_omits = set(lite_manifest["package"]["omit_paths"])
 
-    assert architecture_layer_for_path("src/runtime/adapters/ros2/context.py")["id"] == (
-        "L3_adapter_layer"
-    )
-    assert architecture_layer_for_path("src/lingtu/ros2_shutdown.py")["id"] == (
-        "L3_adapter_layer"
-    )
-    assert "src/runtime/adapters/ros2/" in lite_excludes
-    assert "src/nav/adapters/ros2/" in lite_excludes
-    assert "src/localization/adapters/ros2/" in lite_excludes
-    assert "src/perception/adapters/ros2/" in lite_excludes
-    assert "src/lingtu/ros2_plugin_seed.py" in lite_omits
-    assert "src/lingtu/ros2_shutdown.py" in lite_omits
-
-    for boundary in ROS_COMPAT_IMPORT_BOUNDARIES:
-        source_path = f"src/{boundary.prefix}"
-        layer = architecture_layer_for_path(source_path)
-        assert layer is not None, source_path
-        assert layer["id"] in {
-            "L3_adapter_layer",
-            "L5_algorithm_kernels",
-        }, source_path
+    assert "src/nav/adapters/dds/" in lite_excludes
+    retired = {
+        "src/runtime/adapters/ros2/",
+        "src/localization/adapters/ros2/",
+        "src/perception/adapters/ros2/",
+        "src/lingtu/ros2_plugin_seed.py",
+        "src/lingtu/ros2_shutdown.py",
+    }
+    assert retired.isdisjoint(lite_excludes)
+    assert retired.isdisjoint(lite_omits)
 
 
 def test_product_composition_does_not_import_runtime_bootstrap_surfaces() -> None:
@@ -162,9 +120,7 @@ def test_product_composition_does_not_import_runtime_bootstrap_surfaces() -> Non
         rel = path.relative_to(ROOT).as_posix()
         imports = _absolute_imports(path)
         leaked = sorted(
-            module
-            for module in imports
-            if any(module == root or module.startswith(f"{root}.") for root in forbidden)
+            module for module in imports if any(module == root or module.startswith(f"{root}.") for root in forbidden)
         )
         if leaked:
             violations.append(f"{rel}: imports {', '.join(leaked)}")

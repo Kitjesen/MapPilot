@@ -1,4 +1,9 @@
-"""Navigation service stack: goals, patrol routes, and optional schedules."""
+"""Navigation service stack: command ingress only.
+
+Inspection route storage/execution is native C++ and enters through typed
+inspection commands. The old Python patrol/scheduler modules are compatibility
+only and are not mounted by product stacks by default.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +17,7 @@ logger = logging.getLogger(__name__)
 def services(
     *,
     enable_goals: bool = True,
-    enable_patrol_routes: bool = True,
+    enable_patrol_routes: bool = False,
     enable_scheduler: bool = False,
     enable_navigation: bool = True,
     **config,
@@ -21,13 +26,6 @@ def services(
 
     bp = Blueprint()
 
-    if not enable_navigation:
-        from runtime.adapters.navigation_io import (
-            add_navigation_output_adapter,
-        )
-
-        add_navigation_output_adapter(bp, **config)
-
     if enable_goals:
         try:
             from nav.services.goals import GoalService
@@ -35,6 +33,7 @@ def services(
             kwargs = {}
             if config.get("planning_frame_id") is not None:
                 kwargs["planning_frame_id"] = config.get("planning_frame_id")
+            kwargs["native_endpoint"] = bool(config.get("native_navigation_endpoint"))
             bp.add(
                 GoalService,
                 alias="nav.goals",

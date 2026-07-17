@@ -20,6 +20,16 @@ timestamp_unit: 3
 acc_scale: 9.80665
 time_diff_lidar_to_imu: 0.0
 max_imu_gap_s: 0.25
+max_imu_buffer: 4000
+# Navigation is real-time: discard old scans under overload instead of
+# replaying a seconds-long LiDAR backlog into planning.
+max_lidar_buffer: 3
+
+# MuJoCo contact dynamics can make local odometry drift faster than the field
+# sensor. Continuous map alignment remains guarded by fitness, inliers, and
+# covariance; this wider simulation-only transform bound lets a validated map
+# registration recover instead of leaving navigation on a stale transform.
+track_against_map_max_translation_m: 3.0
 
 # Simulation-only diagnostic path. Keep the default off so MuJoCo acceptance
 # exercises Fast-LIO-only motion estimation unless an operator explicitly uses
@@ -47,7 +57,9 @@ ng: 0.01
 nba: 0.0001
 nbg: 0.0001
 
-imu_init_num: 20
+# Match the upstream initialization horizon: roughly one second of stationary
+# 200 Hz IMU data before the acceleration magnitude scale is locked.
+imu_init_num: 200
 near_search_num: 3
 ieskf_max_iter: 5
 # Per-scan pose/velocity step guards. IMPORTANT: max_update_velocity_mps rejects the
@@ -58,8 +70,15 @@ max_update_translation_m: 0.35
 max_update_rotation_rad: 0.35
 max_update_velocity_mps: 3.0
 max_update_velocity_delta_mps: 0.35
+# A five-iteration IEKF solve frequently reaches a usable bounded correction
+# without satisfying the sub-millimetre stop threshold. Reject only the
+# non-converged updates that are also degenerate; rejecting every such update
+# turns normal policy motion into an IMU-only integration loop.
 reject_nonconverged_update: false
-reject_degenerate_nonconverged_update: true
+# Partial degeneracy is already handled by the observable-subspace projection.
+# Keeping this true would discard that bounded correction whenever the strict
+# iteration stop threshold is not reached, which recreates the IMU-only loop.
+reject_degenerate_nonconverged_update: false
 
 gravity_align: true
 esti_il: false
@@ -70,6 +89,13 @@ r_il: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
 # Fast-LIO LiDAR->IMU extrinsic colocated here; do not reuse the base_link
 # mounting offset from the visual robot model.
 t_il: [0.0, 0.0, 0.0]
+
+# The Fast-LIO estimator state follows the MID-360 IMU frame. Navigation,
+# collision checking, and the saved-map initial pose use the quadruped body
+# reference. This rigid transform maps IMU-frame points into navigation-body
+# coordinates and keeps the public odometry contract as odom -> body.
+navigation_body_from_imu_rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+navigation_body_from_imu_translation: [-0.30638, 0.0, 0.19417]
 
 lidar_cov_inv: 1000.0
 

@@ -7,60 +7,95 @@ import os
 import subprocess
 import sys
 
-from . import term as T
-from .profiles_data import _default_map_dir
+from maps.adapters.python.service import (
+    MapsServiceNativeUnavailable,
+    NativeMapsService,
+)
 from nav.kernel import nav_kernel_available, nav_kernel_build_hint
 from runtime.profiles.binding_policy import nav_kernel_backend_required
 
-# Built-in sample tomogram (relative to project root, ships in repo)
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_SAMPLE_TOMOGRAM = os.path.join(
-    _REPO_ROOT, "src", "nav", "services", "plan", "global_planner",
-    "backends", "pct", "vendor", "pct_planner",
-    "rsc", "tomogram", "building2_9.pickle",
-)
+from . import term as T
+from .profiles_data import _default_map_dir
+
+
+def _close_maps_service(service: object | None) -> None:
+    close = getattr(service, "close", None)
+    if callable(close):
+        close()
+
+
+def _navigation_map_entries(
+    payload: dict,
+    service: NativeMapsService,
+) -> list[tuple[str, str, bool, bool]]:
+    entries: list[tuple[str, str, bool, bool]] = []
+    for item in payload.get("maps") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        octomap = service.get_bundle(name, "navigation_safety_3d")
+        if octomap.get("success") is not True:
+            continue
+        pcd = service.get_bundle(name, "source_pointcloud")
+        entries.append(
+            (
+                name,
+                str((octomap.get("artifact") or {}).get("uri") or ""),
+                True,
+                pcd.get("success") is True,
+            )
+        )
+    return entries
 
 
 def _scan_maps(map_dir: str) -> list:
-    """Return sorted list of map names that have at least a tomogram or PCD."""
-    if not os.path.isdir(map_dir):
+    """Return navigation-ready maps through the canonical maps service."""
+    service = None
+    try:
+        service = NativeMapsService(map_dir)
+        payload = service.list_maps()
+        if payload.get("success") is not True:
+            return []
+        return sorted(
+            _navigation_map_entries(payload, service),
+            key=lambda entry: entry[0],
+        )
+    except (MapsServiceNativeUnavailable, OSError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("maps service unavailable: %s", exc)
         return []
-    maps = []
-    for d in sorted(os.listdir(map_dir)):
-        if d == "active":
-            continue
-        full = os.path.join(map_dir, d)
-        if not os.path.isdir(full):
-            continue
-        has_tomo = os.path.isfile(os.path.join(full, "tomogram.pickle"))
-        has_pcd  = os.path.isfile(os.path.join(full, "map.pcd"))
-        if has_tomo or has_pcd:
-            maps.append((d, has_tomo, has_pcd))
-    return maps
+    finally:
+        _close_maps_service(service)
 
 
 def _select_map_interactive(cfg: dict, map_dir: str) -> None:
-    """If slam=localizer and no active tomogram, let the user pick a map
-    or choose to build one / use the built-in sample.
+    """If slam=localizer and no active planner map exists, let the user pick one.
 
-    Mutates cfg['tomogram'] in place if the user selects a map.
+    Mutates the planner-map config in place if the user selects a map.
     Returns immediately (no-op) when not in an interactive TTY.
     """
     if not sys.stdin.isatty():
         return
 
-    # Current tomogram already valid 閳?nothing to do
-    current = cfg.get("tomogram", "")
+    # Current planner map already valid.
+    current = cfg.get("planner_map") or cfg.get("map_path") or cfg.get("octomap", "")
     if current and os.path.isfile(current):
         return
 
-    maps = _scan_maps(map_dir)
-    active_link = os.path.join(map_dir, "active")
-    active_name = (
-        os.path.basename(os.readlink(active_link))
-        if os.path.islink(active_link)
-        else ""
+    service = None
+    try:
+        service = NativeMapsService(map_dir)
+        catalog = service.list_maps()
+    except (MapsServiceNativeUnavailable, OSError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("maps service unavailable: %s", exc)
+        catalog = {"success": False, "maps": [], "active": ""}
+    maps = (
+        sorted(_navigation_map_entries(catalog, service), key=lambda entry: entry[0])
+        if catalog.get("success") is True and service is not None
+        else []
     )
+    active_name = str(catalog.get("active") or "")
 
     print()
     print(f"  {T.yellow('No active map found.')} Select how to proceed:\n")
@@ -69,26 +104,22 @@ def _select_map_interactive(cfg: dict, map_dir: str) -> None:
 
     if maps:
         print(f"  {T.bold('Saved maps:')}")
-        for name, has_tomo, has_pcd in maps:
+        for name, planner_map, has_octomap, has_pcd in maps:
             parts = []
-            if has_tomo:
-                parts.append("tomogram")
+            if has_octomap:
+                parts.append("octomap")
             if has_pcd:
                 parts.append("pcd")
+            if planner_map.endswith("occupancy.npz"):
+                parts.append("occupancy")
             marker = f"  {T.green('*')} (active)" if name == active_name else ""
-            print(f"    [{len(options)+1}] {T.green(name):30s} [{', '.join(parts)}]{marker}")
-            options.append(("use", name, os.path.join(map_dir, name, "tomogram.pickle")))
+            print(f"    [{len(options) + 1}] {T.green(name):30s} [{', '.join(parts)}]{marker}")
+            options.append(("use", name, planner_map))
         print()
 
-    # Built-in sample option
-    sample_label = "Use built-in sample map (building2_9) 閳?PCT test only, not your environment"
     print(f"  {T.bold('Other options:')}")
-    idx_sample = len(options) + 1
-    print(f"    [{idx_sample}] {sample_label}")
-    options.append(("sample", "building2_9", _SAMPLE_TOMOGRAM))
-
     idx_build = len(options) + 1
-    print(f"    [{idx_build}] Switch to 'map' profile 閳?build a new map first")
+    print(f"    [{idx_build}] Switch to 'map' profile and build a new map first")
     options.append(("build", "", ""))
 
     idx_skip = len(options) + 1
@@ -107,42 +138,42 @@ def _select_map_interactive(cfg: dict, map_dir: str) -> None:
         if raw.isdigit():
             idx = int(raw) - 1
             if 0 <= idx < len(options):
-                action, name, tomo_path = options[idx]
+                action, name, planner_map = options[idx]
                 break
         print(f"  {T.red('?')} Enter a number between 1 and {len(options)}")
 
     if action == "use":
-        cfg["tomogram"] = tomo_path
-        # Also update the active symlink so subsequent starts remember the choice
         try:
-            map_path = os.path.join(map_dir, name)
-            if os.path.islink(active_link):
-                os.unlink(active_link)
-            os.symlink(map_path, active_link)
+            if service is None:
+                raise RuntimeError("maps service is unavailable")
+            activated = service.set_active_map(name, strict=True)
+            if activated.get("success") is not True:
+                raise RuntimeError(str(activated.get("message") or "map activation failed"))
+            cfg["planner_map"] = planner_map
+            cfg["map_path"] = planner_map
+            cfg["octomap"] = planner_map
             print(f"  Active map set to: {T.green(name)}")
-        except OSError as e:
-            print(f"  {T.yellow('WARN')}: Could not update active symlink: {e}")
-
-    elif action == "sample":
-        cfg["tomogram"] = _SAMPLE_TOMOGRAM
-        print(f"  {T.yellow('Using sample map')} 閳?results reflect demo environment, not yours.")
-        print("  Run 'lingtu map' on your robot to build a real map.")
+        except (OSError, RuntimeError) as exc:
+            print(f"  {T.red('Error')}: Could not activate map: {exc}")
 
     elif action == "build":
+        _close_maps_service(service)
         print()
         print(f"  Run:  {T.green('python lingtu.py map')}")
         print("  Then: drive the robot around to build the map.")
-        print("  Then: map save <name>  閳? map use <name>")
+        print("  Then: map save <name> and map use <name>")
         print()
         sys.exit(0)
 
-    # action == "skip": continue with current (possibly empty) tomogram
+    # action == "skip": continue with current (possibly empty) map path
+    _close_maps_service(service)
     print()
 
 
 def _check_port_accessible(port: int) -> bool:
     """Return True if the port is reachable from localhost (i.e. not firewalled internally)."""
     import socket
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(0.3)
@@ -174,31 +205,19 @@ def _octoplanner3d_runtime_errors(cfg: dict) -> tuple[str, ...]:
         executable_path=cfg.get("octoplanner3d_executable") or None,
         timeout_s=cfg.get("octoplanner3d_timeout_s"),
     )
-    map_path = str(cfg.get("tomogram") or cfg.get("octomap") or "")
+    map_path = str(cfg.get("planner_map") or cfg.get("map_path") or cfg.get("octomap") or "")
     return tuple(runtime.validate_map(map_path, SUPPORTED_MAP_EXTENSIONS))
 
 
 def _uses_non_ros_localization_adapter(cfg: dict) -> bool:
     """Return True when localization is provided by an endpoint adapter."""
 
-    adapter = str(
-        cfg.get("localization_adapter")
-        or cfg.get("_localization_adapter")
-        or ""
-    ).lower()
+    adapter = str(cfg.get("localization_adapter") or cfg.get("_localization_adapter") or "").lower()
     if adapter in {"dds_endpoint", "cpp_slam_status", "native_slam_status"}:
         return True
 
-    endpoint_transport = str(
-        cfg.get("endpoint_transport")
-        or cfg.get("_endpoint_transport")
-        or ""
-    ).lower()
-    endpoint_contract = str(
-        cfg.get("endpoint_contract")
-        or cfg.get("_endpoint_contract")
-        or ""
-    )
+    endpoint_transport = str(cfg.get("endpoint_transport") or cfg.get("_endpoint_transport") or "").lower()
+    endpoint_contract = str(cfg.get("endpoint_contract") or cfg.get("_endpoint_contract") or "")
     return endpoint_transport == "dds" and bool(endpoint_contract)
 
 
@@ -209,38 +228,48 @@ def _ros_setup_path() -> str:
 def preflight(profile_name: str, cfg: dict) -> None:
     slam = cfg.get("slam_profile", "none")
 
-    if slam in (
-        "fastlio2",
-        "pointlio",
-        "super_lio",
-        "super_lio_relocation",
-    ) and os.name != "nt" and not _uses_non_ros_localization_adapter(cfg):
+    if (
+        slam
+        in (
+            "fastlio2",
+            "pointlio",
+            "super_lio",
+            "super_lio_relocation",
+        )
+        and os.name != "nt"
+        and not _uses_non_ros_localization_adapter(cfg)
+    ):
         import shutil
+
         if not shutil.which("ros2"):
             setup_path = _ros_setup_path()
-            print(
-                f"  {T.yellow('!')} ros2 not in PATH; "
-                "this SLAM profile uses the ROS2 compatibility runtime"
-            )
+            print(f"  {T.yellow('!')} ros2 not in PATH; this SLAM profile uses the ROS2 compatibility runtime")
             print(f"    Fix: {T.bold(f'source {setup_path}')}")
             _bashrc_cmd = f'echo "source {setup_path}" >> ~/.bashrc'
             print(f"    Permanent: {T.dim(_bashrc_cmd)}")
-    elif slam in (
-        "fastlio2",
-        "pointlio",
-        "super_lio",
-        "super_lio_relocation",
-    ) and os.name == "nt":
+    elif (
+        slam
+        in (
+            "fastlio2",
+            "pointlio",
+            "super_lio",
+            "super_lio_relocation",
+        )
+        and os.name == "nt"
+    ):
         print(
             f"  {T.yellow('!')} Windows local FastLIO2 has no supported portable "
             "runtime; the previous portable-lio endpoint was removed."
         )
         print("    Use the field DDS localization endpoint, or run ROS2 compatibility on Linux.")
 
-    if nav_kernel_backend_required(
-        cfg,
-        enable_native=bool(cfg.get("enable_native", True)),
-    ) and not _native_nav_kernel_available():
+    if (
+        nav_kernel_backend_required(
+            cfg,
+            enable_native=bool(cfg.get("enable_native", True)),
+        )
+        and not _native_nav_kernel_available()
+    ):
         print(f"  {T.red('Error')}: LingTu native navigation kernel is required by this profile")
         print(f"    {nav_kernel_build_hint()}")
         print("    The production chain will not silently fall back to Python.")
@@ -258,6 +287,7 @@ def preflight(profile_name: str, cfg: dict) -> None:
     if cfg.get("enable_gateway"):
         gw_port = cfg.get("gateway_port", 5050)
         import platform
+
         if platform.system() == "Linux":
             # Check if iptables is likely blocking the port
             try:
@@ -272,10 +302,7 @@ def preflight(profile_name: str, cfg: dict) -> None:
                 rules = result.stdout
                 # If there's a DROP/REJECT default policy and no ACCEPT for our port, warn
                 if "policy DROP" in rules or "policy REJECT" in rules:
-                    port_open = any(
-                        str(gw_port) in line and "ACCEPT" in line
-                        for line in rules.splitlines()
-                    )
+                    port_open = any(str(gw_port) in line and "ACCEPT" in line for line in rules.splitlines())
                     if not port_open:
                         print(f"  {T.yellow('!')} Firewall may block port {gw_port} from LAN")
                         print(f"    Fix: {T.bold(f'sudo iptables -I INPUT -p tcp --dport {gw_port} -j ACCEPT')}")
@@ -288,10 +315,10 @@ def preflight(profile_name: str, cfg: dict) -> None:
         map_dir = _default_map_dir()
         _select_map_interactive(cfg, map_dir)
 
-        # Post-selection warning if still no valid tomogram
-        tomogram = cfg.get("tomogram", "")
-        if not tomogram or not os.path.isfile(tomogram):
-            print(f"  {T.yellow('!')}: Tomogram not found: {tomogram or '(none)'}")
+        # Post-selection warning if still no valid planner map.
+        planner_map = cfg.get("planner_map") or cfg.get("map_path") or cfg.get("octomap", "")
+        if not planner_map or not os.path.isfile(planner_map):
+            print(f"  {T.yellow('!')}: Planner map not found: {planner_map or '(none)'}")
             print("        Navigation will start but map-backed global planning may be unavailable.")
 
 
@@ -355,4 +382,3 @@ def daemonize(log_file: str) -> bool:
     os.dup2(log_f.fileno(), sys.stderr.fileno())
 
     return True
-

@@ -1,30 +1,14 @@
 #!/usr/bin/env python3
-"""
-Intent Parsing 全覆盖测试 — 验证 task_decomposer 的意图识别和槽位提取。
-
-运行: python -m pytest test/test_intent_parsing.py -v
-      或: python test/test_intent_parsing.py
-
-覆盖:
-  - 21 种 SubGoalAction 类型 (原 13 + 新 8)
-  - 中英文双语模式
-  - 槽位提取 (POI 名称、速度值、巡逻路线名)
-  - 优先级排序 (STOP > STATUS > PAUSE > RETURN_HOME > PATROL > ...)
-  - 边界情况 (空指令、超短指令、数字混合、乱码)
-  - 复杂度守卫 (复合指令 → 返回 None 让 LLM 处理)
-  - 计划结构完整性 (subgoal count, step_id, parameters)
-
-纯 Python，零 ROS2 依赖。
-"""
+"""Decision module."""
 
 import os
 import sys
 import unittest
 
 # Add parent to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from decision.tasking.task_decomposer import SubGoalAction, TaskDecomposer
+from decision.tasks.decomposition import SubGoalAction, TaskDecomposer
 
 
 class TestIntentParsing(unittest.TestCase):
@@ -44,194 +28,188 @@ class TestIntentParsing(unittest.TestCase):
         """Helper: return full plan."""
         return self.decomposer.decompose_with_rules(instruction)
 
-    # ══════════════════════════════════════════════════════════════
-    #  STOP intent (最高优先级, step 0)
-    # ══════════════════════════════════════════════════════════════
-
     def test_stop_chinese_basic(self):
-        """基础停止指令。"""
+        """Test stop chinese basic."""
         for cmd in ["停", "停下", "停止", "停下来", "停一下"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_chinese_urgent(self):
-        """紧急停止指令。"""
+        """Test stop chinese urgent."""
         for cmd in ["紧急停止", "急停"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_chinese_cancel(self):
-        """取消/终止类指令应归为 STOP。"""
+        """Test stop chinese cancel."""
         for cmd in ["取消", "取消任务", "终止", "终止任务", "中断", "中止"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_chinese_dont_move(self):
-        """别动/不要动/站住 类指令。"""
+        """Test stop chinese dont move."""
         for cmd in ["别动", "不要动", "站住", "别走了"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_chinese_informal(self):
-        """口语化取消指令。"""
+        """Test stop chinese informal."""
         for cmd in ["算了", "不用了", "不找了", "不去了", "不用去了"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_english(self):
-        """英文停止指令。"""
+        """Test stop english."""
         for cmd in ["stop", "halt", "cancel", "abort", "quit", "enough"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_english_with_punctuation(self):
-        """带标点的英文停止指令仍可识别。"""
+        """Test stop english with punctuation."""
         for cmd in ["stop!", "stop.", "halt!"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
     def test_stop_english_casual(self):
-        """非正式英文取消。"""
+        """Test stop english casual."""
         for cmd in ["nevermind", "never mind", "forget it"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STOP, f"Failed: '{cmd}'")
 
-    # ══════════════════════════════════════════════════════════════
     #  STATUS/QUERY intent (step 1)
-    # ══════════════════════════════════════════════════════════════
 
     def test_status_chinese_battery(self):
-        """电量/电池查询。"""
+        """Test status chinese battery."""
         for cmd in ["电量", "电池", "电量多少", "还有多少电", "剩余电量", "电池电量"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
     def test_status_chinese_state(self):
-        """状态查询。"""
+        """Test status chinese state."""
         for cmd in ["当前状态", "系统状态", "机器人状态", "状态"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
     def test_status_chinese_location(self):
-        """位置查询。"""
+        """Test status chinese location."""
         for cmd in ["你在哪", "现在在哪", "现在位置", "当前位置"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
     def test_status_chinese_task(self):
-        """任务进度查询。"""
+        """Test status chinese task."""
         for cmd in ["任务进度", "当前任务", "任务状态", "完成了吗", "做完了吗"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
     def test_status_chinese_misc(self):
-        """其他状态查询: 温度、网络、模式等。"""
-        for cmd in ["温度", "温度多少", "连接状态", "网络状态", "当前模式",
-                     "报告状态", "汇报状态", "现在在做什么"]:
+        """Test status chinese misc."""
+        for cmd in ["温度", "温度多少", "连接状态", "网络状态", "当前模式", "报告状态", "汇报状态", "现在在做什么"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
     def test_status_chinese_speed(self):
-        """'当前速度' 归为 STATUS (在 STATUS 模式列表中)。"""
+        """Test status chinese speed."""
         self.assertEqual(self._get_action("当前速度"), SubGoalAction.STATUS)
 
     def test_status_english(self):
-        """英文状态查询。"""
-        for cmd in ["current status", "battery level", "where are you",
-                     "system status", "robot status", "task progress",
-                     "battery status", "current position", "status report"]:
+        """Test status english."""
+        for cmd in [
+            "current status",
+            "battery level",
+            "where are you",
+            "system status",
+            "robot status",
+            "task progress",
+            "battery status",
+            "current position",
+            "status report",
+        ]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
     def test_status_english_short(self):
-        """短英文状态词。"""
+        """Test status english short."""
         for cmd in ["status", "battery", "temperature"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.STATUS, f"Failed: '{cmd}'")
 
-    # ══════════════════════════════════════════════════════════════
     #  PAUSE intent (step 1.5)
-    # ══════════════════════════════════════════════════════════════
 
     def test_pause_chinese(self):
-        """暂停指令。"""
-        for cmd in ["暂停", "等一下", "等等", "先等一下", "暂停任务",
-                     "暂时停下", "等一等", "先停一下", "先暂停"]:
+        """Test pause chinese."""
+        for cmd in ["暂停", "等一下", "等等", "先等一下", "暂停任务", "暂时停下", "等一等", "先停一下", "先暂停"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.PAUSE, f"Failed: '{cmd}'")
 
     def test_pause_target(self):
-        """PAUSE 的 target 应为 'current_task'。"""
+        """Test pause target."""
         plan = self._get_plan("等一下")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].target, "current_task")
 
-    # ══════════════════════════════════════════════════════════════
     #  RESUME intent (step 1.5)
-    # ══════════════════════════════════════════════════════════════
 
     def test_resume_chinese(self):
-        """恢复/继续指令。
-        注意: '接着' 和 '接着走' 被复杂度守卫拦截 (_COMPLEXITY_MARKERS_ZH 包含 '接着')。
-        """
-        for cmd in ["继续", "恢复", "继续走", "继续任务",
-                     "恢复任务", "继续执行",
-                     "继续导航", "继续巡逻"]:
+        """Test resume chinese."""
+        for cmd in ["继续", "恢复", "继续走", "继续任务", "恢复任务", "继续执行", "继续导航", "继续巡逻"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.RESUME, f"Failed: '{cmd}'")
 
     def test_resume_target(self):
-        """RESUME 的 target 应为 'current_task'。"""
+        """Test resume target."""
         plan = self._get_plan("继续")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].target, "current_task")
 
-    # ══════════════════════════════════════════════════════════════
     #  RETURN_HOME intent (step 1.6)
-    # ══════════════════════════════════════════════════════════════
 
     def test_return_chinese_basic(self):
-        """基础返航指令。"""
+        """Test return chinese basic."""
         for cmd in ["回去", "回家", "返航", "返回", "回来"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.RETURN_HOME, f"Failed: '{cmd}'")
 
     def test_return_chinese_base(self):
-        """回基地/充电桩指令。"""
+        """Test return chinese base."""
         for cmd in ["回基地", "返回基地", "返回充电桩", "去充电", "回去充电"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.RETURN_HOME, f"Failed: '{cmd}'")
 
     def test_return_chinese_origin(self):
-        """回起点/原点指令。"""
+        """Test return chinese origin."""
         for cmd in ["回到起点", "返回起点", "返回原点", "回出发点"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.RETURN_HOME, f"Failed: '{cmd}'")
 
     def test_return_chinese_done(self):
-        """收工/任务完成指令。"""
+        """Test return chinese done."""
         self.assertEqual(self._get_action("收工"), SubGoalAction.RETURN_HOME)
 
     def test_return_english(self):
-        """英文返航指令。"""
-        for cmd in ["go home", "return home", "go back", "return to base",
-                     "return to start", "head back", "come back", "rtb"]:
+        """Test return english."""
+        for cmd in [
+            "go home",
+            "return home",
+            "go back",
+            "return to base",
+            "return to start",
+            "head back",
+            "come back",
+            "rtb",
+        ]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.RETURN_HOME, f"Failed: '{cmd}'")
 
     def test_return_target_is_home(self):
-        """RETURN_HOME 的 target 应为 'home'。"""
+        """Test return target is home."""
         plan = self._get_plan("回去")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].target, "home")
 
-    # ══════════════════════════════════════════════════════════════
     #  PATROL intent (step 1.7)
-    # ══════════════════════════════════════════════════════════════
 
     def test_patrol_chinese_basic(self):
-        """基础巡逻指令。"""
+        """Test patrol chinese basic."""
         for cmd in ["巡逻", "巡检", "巡视", "巡查"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.PATROL, f"Failed: '{cmd}'")
 
     def test_patrol_chinese_start(self):
-        """启动巡逻指令。"""
-        for cmd in ["开始巡逻", "开始巡检", "启动巡逻", "执行巡检", "执行巡逻",
-                     "开始巡视", "定点巡逻", "例行巡检"]:
+        """Test patrol chinese start."""
+        for cmd in ["开始巡逻", "开始巡检", "启动巡逻", "执行巡检", "执行巡逻", "开始巡视", "定点巡逻", "例行巡检"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.PATROL, f"Failed: '{cmd}'")
 
     def test_patrol_chinese_loop(self):
-        """绕圈/走一圈类指令。"""
+        """Test patrol chinese loop."""
         for cmd in ["走一圈", "跑一圈", "绕一圈", "巡逻一圈"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.PATROL, f"Failed: '{cmd}'")
 
     def test_patrol_english(self):
-        """英文巡逻指令。"""
-        for cmd in ["patrol", "start patrol", "begin patrol",
-                     "do a patrol", "run patrol"]:
+        """Test patrol english."""
+        for cmd in ["patrol", "start patrol", "begin patrol", "do a patrol", "run patrol"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.PATROL, f"Failed: '{cmd}'")
 
     def test_patrol_route_extraction(self):
-        """巡逻路线名称提取。"""
+        """Test patrol route extraction."""
         plan = self._get_plan("巡逻路线A区")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.PATROL)
@@ -239,69 +217,72 @@ class TestIntentParsing(unittest.TestCase):
         self.assertIn("A", route, f"Route name not extracted: {route}")
 
     def test_patrol_default_route(self):
-        """无路线名称时默认 'default'。"""
+        """Test patrol default route."""
         plan = self._get_plan("巡逻")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].parameters.get("route"), "default")
 
-    # ══════════════════════════════════════════════════════════════
     #  SAVE_MAP intent (step 1.8)
-    # ══════════════════════════════════════════════════════════════
 
     def test_save_map_chinese(self):
-        """中文保存地图指令。"""
-        for cmd in ["保存地图", "存地图", "存图", "保存当前地图", "建图完成",
-                     "结束建图", "存一下地图", "地图保存",
-                     "存个地图", "把地图存下来", "保存一下地图"]:
+        """Test save map chinese."""
+        for cmd in [
+            "保存地图",
+            "存地图",
+            "存图",
+            "保存当前地图",
+            "建图完成",
+            "结束建图",
+            "存一下地图",
+            "地图保存",
+            "存个地图",
+            "把地图存下来",
+            "保存一下地图",
+        ]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_MAP, f"Failed: '{cmd}'")
 
     def test_save_map_english(self):
-        """英文保存地图指令。"""
-        for cmd in ["save map", "save the map", "save current map",
-                     "store map", "finish mapping"]:
+        """Test save map english."""
+        for cmd in ["save map", "save the map", "save current map", "store map", "finish mapping"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_MAP, f"Failed: '{cmd}'")
 
     def test_save_map_target(self):
-        """保存地图的 target 应为 'current_map'。"""
+        """Test save map target."""
         plan = self._get_plan("保存地图")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].target, "current_map")
 
-    # ══════════════════════════════════════════════════════════════
     #  SAVE_POI intent (step 1.9)
-    # ══════════════════════════════════════════════════════════════
 
     def test_save_poi_chinese_mark(self):
-        """标记类指令。"""
+        """Test save poi chinese mark."""
         for cmd in ["标记为充电桩", "标记成仓库", "标记这里"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_POI, f"Failed: '{cmd}'")
 
     def test_save_poi_chinese_remember(self):
-        """记住/保存位置类指令。"""
-        for cmd in ["记住这里", "记住这个位置", "记住当前位置",
-                     "保存位置", "保存这个点", "保存当前位置"]:
+        """Test save poi chinese remember."""
+        for cmd in ["记住这里", "记住这个位置", "记住当前位置", "保存位置", "保存这个点", "保存当前位置"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_POI, f"Failed: '{cmd}'")
 
     def test_save_poi_chinese_this_is(self):
-        """'这里是/这里叫' 类指令。"""
+        """Test save poi chinese this is."""
         for cmd in ["这里是仓库", "这里叫大门", "把这里叫做入口"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_POI, f"Failed: '{cmd}'")
 
     def test_save_poi_chinese_set_as(self):
-        """设为/命名为类指令。"""
-        for cmd in ["设为休息区", "设置为仓库", "命名为大门",
-                     "保存为休息区", "记为充电桩", "定义为入口"]:
+        """Test save poi chinese set as."""
+        for cmd in ["设为休息区", "设置为仓库", "命名为大门", "保存为休息区", "记为充电桩", "定义为入口"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_POI, f"Failed: '{cmd}'")
 
     def test_save_poi_name_extraction_mark(self):
-        """验证 '标记为X' 的名称提取。"""
+        """Test save poi name extraction mark."""
         plan = self._get_plan("标记为充电桩")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SAVE_POI)
         self.assertEqual(plan.subgoals[0].parameters.get("name"), "充电桩")
 
     def test_save_poi_name_extraction_this_is(self):
-        """验证 '这里是X' / '这里叫X' 的名称提取。"""
+        """Test save poi name extraction this is."""
         test_cases = [
             ("这里叫仓库", "仓库"),
             ("这里是大门", "大门"),
@@ -312,20 +293,27 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
             self.assertEqual(plan.subgoals[0].action, SubGoalAction.SAVE_POI)
             actual_name = plan.subgoals[0].parameters.get("name", "")
-            self.assertEqual(actual_name, expected_name,
-                             f"Name extraction failed for '{cmd}': "
-                             f"expected '{expected_name}', got '{actual_name}'")
+            self.assertEqual(
+                actual_name,
+                expected_name,
+                f"Name extraction failed for '{cmd}': expected '{expected_name}', got '{actual_name}'",
+            )
 
     def test_save_poi_english(self):
-        """英文 POI 标记指令。"""
-        for cmd in ["mark here as charging", "mark this as entrance",
-                     "save this location as entrance",
-                     "remember here as lobby", "save poi", "mark here",
-                     "save this location"]:
+        """Test save poi english."""
+        for cmd in [
+            "mark here as charging",
+            "mark this as entrance",
+            "save this location as entrance",
+            "remember here as lobby",
+            "save poi",
+            "mark here",
+            "save this location",
+        ]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SAVE_POI, f"Failed: '{cmd}'")
 
     def test_save_poi_english_name_extraction(self):
-        """英文 POI 名称提取。"""
+        """Test save poi english name extraction."""
         plan = self._get_plan("mark here as charging")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].parameters.get("name"), "charging")
@@ -335,61 +323,57 @@ class TestIntentParsing(unittest.TestCase):
         self.assertEqual(plan2.subgoals[0].parameters.get("name"), "entrance")
 
     def test_save_poi_target_equals_name(self):
-        """SAVE_POI 的 target 和 parameters['name'] 应一致。"""
+        """Test save poi target equals name."""
         plan = self._get_plan("标记为充电桩")
         self.assertIsNotNone(plan)
         sg = plan.subgoals[0]
         self.assertEqual(sg.target, sg.parameters.get("name"))
 
-    # ══════════════════════════════════════════════════════════════
     #  SET_SPEED intent (step 1.10)
-    # ══════════════════════════════════════════════════════════════
 
     def test_speed_chinese_faster(self):
-        """加速类指令。"""
+        """Test speed chinese faster."""
         for cmd in ["快点", "加速", "调快", "快一点"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
     def test_speed_chinese_slower(self):
-        """减速类指令。"""
+        """Test speed chinese slower."""
         for cmd in ["慢点", "减速", "调慢", "慢一点"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
     def test_speed_chinese_absolute(self):
-        """绝对速度指令。"""
+        """Test speed chinese absolute."""
         for cmd in ["速度调到0.5", "速度设为1.0", "速度设置为2.0"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
     def test_speed_chinese_extremes(self):
-        """极端速度指令。"""
+        """Test speed chinese extremes."""
         for cmd in ["全速", "最大速度", "最快", "低速", "最低速度", "最慢"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
     def test_speed_chinese_normal(self):
-        """恢复正常速度指令。
-        注意: '恢复速度' 匹配 RESUME ('恢复' 在 RESUME 模式列表中, 优先于 SET_SPEED)。
-        """
+        """Test speed chinese normal."""
         for cmd in ["正常速度", "默认速度"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
     def test_speed_semantic_fast_value(self):
-        """语义快速关键词: 值 > 1.0。"""
+        """Test speed semantic fast value."""
         plan = self._get_plan("快点")
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SET_SPEED)
         val = plan.subgoals[0].parameters.get("value")
         self.assertIsNotNone(val)
-        self.assertGreater(val, 1.0)  # 期望 1.5
+        self.assertGreater(val, 1.0)
 
     def test_speed_semantic_slow_value(self):
-        """语义慢速关键词: 值 < 1.0。"""
+        """Test speed semantic slow value."""
         plan = self._get_plan("慢点")
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SET_SPEED)
         val = plan.subgoals[0].parameters.get("value")
         self.assertIsNotNone(val)
-        self.assertLess(val, 1.0)  # 期望 0.3
+        self.assertLess(val, 1.0)
 
     def test_speed_numeric_extraction(self):
-        """从 '速度调到0.5' 中提取数字 0.5。"""
+        """Test speed numeric extraction."""
         plan = self._get_plan("速度调到0.5")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SET_SPEED)
@@ -397,155 +381,170 @@ class TestIntentParsing(unittest.TestCase):
         self.assertAlmostEqual(val, 0.5, places=1)
 
     def test_speed_semantic_max_value(self):
-        """全速: 值 = 2.0。"""
+        """Test speed semantic max value."""
         plan = self._get_plan("全速")
         self.assertIsNotNone(plan)
         self.assertAlmostEqual(plan.subgoals[0].parameters.get("value"), 2.0, places=1)
 
     def test_speed_semantic_normal_value(self):
-        """正常速度: 值 = 1.0。"""
+        """Test speed semantic normal value."""
         plan = self._get_plan("正常速度")
         self.assertIsNotNone(plan)
         self.assertAlmostEqual(plan.subgoals[0].parameters.get("value"), 1.0, places=1)
 
     def test_speed_english(self):
-        """英文速度指令。"""
-        for cmd in ["speed up", "slow down", "go faster", "go slower",
-                     "max speed", "full speed", "normal speed", "default speed"]:
+        """Test speed english."""
+        for cmd in [
+            "speed up",
+            "slow down",
+            "go faster",
+            "go slower",
+            "max speed",
+            "full speed",
+            "normal speed",
+            "default speed",
+        ]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
     def test_speed_english_set(self):
-        """英文 set speed 指令。"""
+        """Test speed english set."""
         for cmd in ["set speed to", "set speed"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.SET_SPEED, f"Failed: '{cmd}'")
 
-    # ══════════════════════════════════════════════════════════════
     #  EXPLORE intent (step 2)
-    # ══════════════════════════════════════════════════════════════
 
     def test_explore_chinese(self):
-        """中文探索指令。"""
-        for cmd in ["探索", "探索一下", "四处看看", "到处看看", "逛逛", "逛一逛",
-                     "随便走走", "随便逛逛", "自由探索", "环顾四周"]:
+        """Test explore chinese."""
+        for cmd in [
+            "探索",
+            "探索一下",
+            "四处看看",
+            "到处看看",
+            "逛逛",
+            "逛一逛",
+            "随便走走",
+            "随便逛逛",
+            "自由探索",
+            "环顾四周",
+        ]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.EXPLORE, f"Failed: '{cmd}'")
 
     def test_explore_strategy_frontier(self):
-        """探索策略参数应为 'frontier'。"""
+        """Test explore strategy frontier."""
         plan = self._get_plan("探索")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].parameters.get("strategy"), "frontier")
 
     def test_explore_english(self):
-        """英文探索指令。"""
+        """Test explore english."""
         for cmd in ["explore", "look around"]:
             self.assertEqual(self._get_action(cmd), SubGoalAction.EXPLORE, f"Failed: '{cmd}'")
 
-    # ══════════════════════════════════════════════════════════════
     #  NAVIGATE intent (step 7)
-    # ══════════════════════════════════════════════════════════════
 
     def test_navigate_chinese(self):
-        """中文导航指令, 首个 action 应为 NAVIGATE。"""
-        for cmd in ["去大门", "导航到仓库", "前往会议室", "走到出口",
-                     "到椅子旁边", "移动到门口"]:
+        """Test navigate chinese."""
+        for cmd in ["去大门", "导航到仓库", "前往会议室", "走到出口", "到椅子旁边", "移动到门口"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
-            self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE,
-                             f"Failed: '{cmd}'")
+            self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE, f"Failed: '{cmd}'")
 
     def test_navigate_chinese_polite(self):
-        """礼貌/引导类导航。"""
+        """Test navigate chinese polite."""
         for cmd in ["请去大门", "帮我去仓库", "带我去出口", "带路到办公室"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
-            self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE,
-                             f"Failed: '{cmd}'")
+            self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE, f"Failed: '{cmd}'")
 
     def test_navigate_english(self):
-        """英文导航指令。"""
-        for cmd in ["go to the door", "navigate to warehouse", "move to the exit",
-                     "head to the kitchen", "proceed to the office"]:
+        """Test navigate english."""
+        for cmd in [
+            "go to the door",
+            "navigate to warehouse",
+            "move to the exit",
+            "head to the kitchen",
+            "proceed to the office",
+        ]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
-            self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE,
-                             f"Failed: '{cmd}'")
+            self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE, f"Failed: '{cmd}'")
 
     def test_navigate_produces_approach_verify(self):
-        """简单导航应产生 NAVIGATE + APPROACH + VERIFY 三步。"""
+        """Test navigate produces approach verify."""
         plan = self._get_plan("去大门")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
-        self.assertEqual(actions, [
-            SubGoalAction.NAVIGATE,
-            SubGoalAction.APPROACH,
-            SubGoalAction.VERIFY,
-        ])
+        self.assertEqual(
+            actions,
+            [
+                SubGoalAction.NAVIGATE,
+                SubGoalAction.APPROACH,
+                SubGoalAction.VERIFY,
+            ],
+        )
 
     def test_navigate_target_extraction(self):
-        """导航目标提取。"""
+        """Test navigate target extraction."""
         plan = self._get_plan("去大门")
         self.assertIsNotNone(plan)
         target = plan.subgoals[0].target
         self.assertTrue(len(target) > 0, "Target should not be empty")
 
-    # ══════════════════════════════════════════════════════════════
     #  FIND intent (step 7, via simple_find or conversational regex)
-    # ══════════════════════════════════════════════════════════════
 
     def test_find_chinese(self):
-        """中文搜索指令, 首个 action 应为 FIND。"""
+        """Test find chinese."""
         for cmd in ["找红色灭火器", "寻找椅子", "搜索杯子", "定位出口"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
-            self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND,
-                             f"Failed: '{cmd}'")
+            self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND, f"Failed: '{cmd}'")
 
     def test_find_english(self):
-        """英文搜索指令。"""
+        """Test find english."""
         for cmd in ["find the red chair", "search for the cup", "locate the exit"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
-            self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND,
-                             f"Failed: '{cmd}'")
+            self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND, f"Failed: '{cmd}'")
 
     def test_find_produces_full_sequence(self):
-        """搜索应产生 FIND + LOOK_AROUND + NAVIGATE + APPROACH + VERIFY。"""
+        """Test find produces full sequence."""
         plan = self._get_plan("找红色灭火器")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
-        self.assertEqual(actions, [
-            SubGoalAction.FIND,
-            SubGoalAction.LOOK_AROUND,
-            SubGoalAction.NAVIGATE,
-            SubGoalAction.APPROACH,
-            SubGoalAction.VERIFY,
-        ])
+        self.assertEqual(
+            actions,
+            [
+                SubGoalAction.FIND,
+                SubGoalAction.LOOK_AROUND,
+                SubGoalAction.NAVIGATE,
+                SubGoalAction.APPROACH,
+                SubGoalAction.VERIFY,
+            ],
+        )
 
     def test_find_conversational_zh(self):
-        """口语化搜索: 'X在哪' 应匹配 FIND。"""
+        """Test find conversational zh."""
         plan = self._get_plan("灭火器在哪")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND)
 
     def test_find_conversational_en(self):
-        """口语化搜索: 'where is X' 应匹配 FIND。"""
+        """Test find conversational en."""
         plan = self._get_plan("where is the door")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND)
 
     def test_find_desire_zh(self):
-        """意愿式: '我想去X' 应产生计划 (含 FIND)。"""
+        """Test find desire zh."""
         plan = self._get_plan("我想去厨房")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
         self.assertIn(SubGoalAction.FIND, actions)
 
-    # ══════════════════════════════════════════════════════════════
     #  FOLLOW intent
-    # ══════════════════════════════════════════════════════════════
 
     def test_follow_chinese(self):
-        """中文跟随指令: 产生 FIND + FOLLOW 序列。"""
+        """Test follow chinese."""
         for cmd in ["跟着那个人", "跟随他", "追踪目标"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
@@ -553,7 +552,7 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIn(SubGoalAction.FOLLOW, actions, f"No FOLLOW in '{cmd}'")
 
     def test_follow_english(self):
-        """英文跟随指令。"""
+        """Test follow english."""
         for cmd in ["follow the person", "track him"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
@@ -561,19 +560,17 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIn(SubGoalAction.FOLLOW, actions, f"No FOLLOW in '{cmd}'")
 
     def test_follow_produces_find_then_follow(self):
-        """跟随应产生 FIND + FOLLOW 序列。"""
+        """Test follow produces find then follow."""
         plan = self._get_plan("跟着那个人")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
         self.assertEqual(actions[0], SubGoalAction.FIND)
         self.assertEqual(actions[1], SubGoalAction.FOLLOW)
 
-    # ══════════════════════════════════════════════════════════════
     #  PICK intent
-    # ══════════════════════════════════════════════════════════════
 
     def test_pick_chinese(self):
-        """中文取物指令: 产生 FIND + APPROACH + PICK 序列。"""
+        """Test pick chinese."""
         for cmd in ["拿杯子", "取一下工具", "帮我拿水杯"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
@@ -581,19 +578,17 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIn(SubGoalAction.PICK, actions, f"No PICK in '{cmd}'")
 
     def test_pick_english(self):
-        """英文取物指令。"""
+        """Test pick english."""
         for cmd in ["pick up the cup", "grab the tool", "fetch me a pen"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
             actions = [sg.action for sg in plan.subgoals]
             self.assertIn(SubGoalAction.PICK, actions, f"No PICK in '{cmd}'")
 
-    # ══════════════════════════════════════════════════════════════
     #  PLACE intent
-    # ══════════════════════════════════════════════════════════════
 
     def test_place_chinese(self):
-        """中文放置指令: 产生 NAVIGATE + PLACE 序列。"""
+        """Test place chinese."""
         for cmd in ["放到桌子上", "放在地上"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
@@ -601,21 +596,17 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIn(SubGoalAction.PLACE, actions, f"No PLACE in '{cmd}'")
 
     def test_place_english(self):
-        """英文放置指令。"""
+        """Test place english."""
         for cmd in ["put it on the desk", "place it on the table"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
             actions = [sg.action for sg in plan.subgoals]
             self.assertIn(SubGoalAction.PLACE, actions, f"No PLACE in '{cmd}'")
 
-    # ══════════════════════════════════════════════════════════════
     #  INSPECT intent (FIND + LOOK_AROUND + APPROACH + VERIFY)
-    # ══════════════════════════════════════════════════════════════
 
     def test_inspect_chinese(self):
-        """中文巡检指令: 产生 FIND + LOOK_AROUND + APPROACH + VERIFY。
-        注意: '巡检设备' 匹配 PATROL ('巡检' 在 PATROL 模式列表中, 优先于 INSPECT)。
-        """
+        """Test inspect chinese."""
         for cmd in ["检查灭火器", "查看门锁"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
@@ -625,7 +616,7 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIn(SubGoalAction.VERIFY, actions)
 
     def test_inspect_english(self):
-        """英文巡检指令。"""
+        """Test inspect english."""
         for cmd in ["inspect the fire extinguisher", "check the door"]:
             plan = self._get_plan(cmd)
             self.assertIsNotNone(plan, f"No plan for '{cmd}'")
@@ -633,127 +624,113 @@ class TestIntentParsing(unittest.TestCase):
             self.assertIn(SubGoalAction.FIND, actions)
             self.assertIn(SubGoalAction.VERIFY, actions)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Priority tests (意图优先级排序)
-    # ══════════════════════════════════════════════════════════════
-
     def test_priority_stop_is_highest(self):
-        """STOP 是最高优先级。"""
+        """Test priority stop is highest."""
         self.assertEqual(self._get_action("停"), SubGoalAction.STOP)
         self.assertEqual(self._get_action("停止"), SubGoalAction.STOP)
         self.assertEqual(self._get_action("取消"), SubGoalAction.STOP)
 
     def test_priority_return_before_navigate(self):
-        """RETURN_HOME 优先于 NAVIGATE ('回去' 不被 '去' 吃掉)。"""
+        """Test priority return before navigate."""
         self.assertEqual(self._get_action("回去"), SubGoalAction.RETURN_HOME)
         self.assertEqual(self._get_action("回家"), SubGoalAction.RETURN_HOME)
 
     def test_priority_patrol_before_explore(self):
-        """PATROL 优先于 EXPLORE ('巡视' 同时在两个列表, 但 PATROL 先检查)。"""
+        """Test priority patrol before explore."""
         self.assertEqual(self._get_action("巡逻"), SubGoalAction.PATROL)
         self.assertEqual(self._get_action("巡视"), SubGoalAction.PATROL)
 
     def test_priority_save_map_before_navigate(self):
-        """SAVE_MAP 优先于 NAVIGATE。"""
+        """Test priority save map before navigate."""
         self.assertEqual(self._get_action("保存地图"), SubGoalAction.SAVE_MAP)
 
     def test_priority_save_poi_before_navigate(self):
-        """SAVE_POI 优先于 NAVIGATE。"""
+        """Test priority save poi before navigate."""
         self.assertEqual(self._get_action("标记为充电桩"), SubGoalAction.SAVE_POI)
 
     def test_priority_return_before_patrol(self):
-        """RETURN_HOME 优先于 PATROL。"""
+        """Test priority return before patrol."""
         self.assertEqual(self._get_action("回家"), SubGoalAction.RETURN_HOME)
         self.assertEqual(self._get_action("巡逻"), SubGoalAction.PATROL)
 
-    # ══════════════════════════════════════════════════════════════
-    #  Compound commands (复杂指令 -> None / LLM fallback)
-    # ══════════════════════════════════════════════════════════════
-
     def test_compound_with_then(self):
-        """含 '然后' 的复合指令应返回 None (交给 LLM)。"""
+        """Test compound with then."""
         self.assertIsNone(self._get_plan("去仓库然后再去大门"))
 
     def test_compound_with_first(self):
-        """含 '先去/先找' 的复合指令应返回 None。"""
+        """Test compound with first."""
         self.assertIsNone(self._get_plan("先保存地图再去大门"))
 
     def test_compound_with_after(self):
-        """含 '完成后' 等复杂度标记的指令应返回 None。"""
+        """Test compound with after."""
         self.assertIsNone(self._get_plan("巡逻完成后回基地"))
 
     def test_compound_with_multiple_commas(self):
-        """含 2 个以上逗号的指令应返回 None。"""
+        """Test compound with multiple commas."""
         self.assertIsNone(self._get_plan("先去大门，再去仓库，最后回家"))
 
     def test_compound_with_condition(self):
-        """含 '如果' 的条件指令应返回 None。"""
+        """Test compound with condition."""
         self.assertIsNone(self._get_plan("如果电量低就回家"))
 
     def test_compound_english(self):
-        """英文复合指令含 ' and then ' 应返回 None。"""
+        """Test compound english."""
         self.assertIsNone(self._get_plan("go to door and then come back"))
 
     def test_compound_english_if(self):
-        """英文条件指令含 ' if ' 应返回 None。"""
+        """Test compound english if."""
         self.assertIsNone(self._get_plan("go to the door if it is open"))
 
-    # ══════════════════════════════════════════════════════════════
     #  Edge cases
-    # ══════════════════════════════════════════════════════════════
 
     def test_empty_instruction(self):
-        """空字符串应返回 None。"""
+        """Test empty instruction."""
         plan = self._get_plan("")
         self.assertIsNone(plan)
 
     def test_whitespace_only(self):
-        """纯空白应返回 None。"""
+        """Test whitespace only."""
         plan = self._get_plan("   ")
         self.assertIsNone(plan)
 
     def test_gibberish(self):
-        """无意义字符串不应崩溃, 应返回 None。"""
+        """Test gibberish."""
         plan = self._get_plan("asdfghjkl")
         self.assertIsNone(plan)
 
     def test_single_character_stop(self):
-        """单字符 '停' 应正确识别为 STOP。"""
+        """Test single character stop."""
         plan = self._get_plan("停")
         self.assertIsNotNone(plan)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.STOP)
 
     def test_unrecognized_returns_none(self):
-        """不匹配任何模式的指令应返回 None (需 LLM)。"""
+        """Test unrecognized returns none."""
         self.assertIsNone(self._get_plan("打开空调"))
         self.assertIsNone(self._get_plan("播放音乐"))
 
-    # ══════════════════════════════════════════════════════════════
-    #  Slot extraction helpers (直接测试私有方法)
-    # ══════════════════════════════════════════════════════════════
-
     def test_extract_speed_value_numeric(self):
-        """从含数字的字符串中提取速度值。"""
+        """Test extract speed value numeric."""
         self.assertAlmostEqual(self.decomposer._extract_speed_value("速度调到0.5"), 0.5, places=1)
         self.assertAlmostEqual(self.decomposer._extract_speed_value("速度1.0"), 1.0, places=1)
 
     def test_extract_speed_value_percentage(self):
-        """超过 10 的数值视为百分比。"""
+        """Test extract speed value percentage."""
         self.assertAlmostEqual(self.decomposer._extract_speed_value("速度50"), 0.5, places=1)
 
     def test_extract_speed_value_semantic(self):
-        """语义关键词到速度值的映射。"""
+        """Test extract speed value semantic."""
         self.assertAlmostEqual(self.decomposer._extract_speed_value("全速前进"), 2.0, places=1)
         self.assertAlmostEqual(self.decomposer._extract_speed_value("快一点"), 1.5, places=1)
         self.assertAlmostEqual(self.decomposer._extract_speed_value("慢一些"), 0.3, places=1)
         self.assertAlmostEqual(self.decomposer._extract_speed_value("正常速度"), 1.0, places=1)
 
     def test_extract_speed_value_none(self):
-        """无速度信息时返回 None。"""
+        """Test extract speed value none."""
         self.assertIsNone(self.decomposer._extract_speed_value("你好"))
 
     def test_extract_poi_name_patterns(self):
-        """POI 名称提取 — 各种模式。"""
+        """Test extract poi name patterns."""
         test_cases = [
             ("标记为充电桩", "充电桩"),
             ("标记成仓库", "仓库"),
@@ -766,36 +743,28 @@ class TestIntentParsing(unittest.TestCase):
         ]
         for inst, expected in test_cases:
             name = self.decomposer._extract_poi_name(inst)
-            self.assertEqual(name, expected,
-                             f"POI name for '{inst}': expected '{expected}', got '{name}'")
+            self.assertEqual(name, expected, f"POI name for '{inst}': expected '{expected}', got '{name}'")
 
     def test_extract_poi_name_english(self):
-        """英文 POI 名称提取。"""
+        """Test extract poi name english."""
         self.assertEqual(self.decomposer._extract_poi_name("mark here as charging"), "charging")
-        self.assertEqual(
-            self.decomposer._extract_poi_name("save this location as entrance"), "entrance"
-        )
-        self.assertEqual(
-            self.decomposer._extract_poi_name("remember here as lobby"), "lobby"
-        )
+        self.assertEqual(self.decomposer._extract_poi_name("save this location as entrance"), "entrance")
+        self.assertEqual(self.decomposer._extract_poi_name("remember here as lobby"), "lobby")
 
     def test_extract_route_name_with_route(self):
-        """路线名称提取。"""
+        """Test extract route name with route."""
         self.assertEqual(self.decomposer._extract_route_name("巡逻路线A区"), "A区")
 
     def test_extract_route_name_default(self):
-        """无路线名称 -> 'default'。"""
+        """Test extract route name default."""
         self.assertEqual(self.decomposer._extract_route_name("巡逻"), "default")
 
-    # ══════════════════════════════════════════════════════════════
-    #  Prompt Templates (验证 LLM prompt 构建函数存在且可用)
-    # ══════════════════════════════════════════════════════════════
-
     def test_intent_classification_prompt(self):
-        """验证 LLM intent classification prompt 可以正常构建。"""
-        from decision.llm.prompt_templates import (
+        """Test intent classification prompt."""
+        from decision.llm.prompts import (
             build_intent_classification_prompt,
         )
+
         prompt = build_intent_classification_prompt(
             instruction="巡逻完了去充电桩",
             robot_state="IDLE",
@@ -808,10 +777,11 @@ class TestIntentParsing(unittest.TestCase):
         self.assertIn("PATROL", prompt)
 
     def test_compound_decomposition_prompt(self):
-        """验证复合指令分解 prompt 可以正常构建。"""
-        from decision.llm.prompt_templates import (
+        """Test compound decomposition prompt."""
+        from decision.llm.prompts import (
             build_compound_decomposition_prompt,
         )
+
         prompt = build_compound_decomposition_prompt(
             instruction="先保存地图再去大门",
             robot_state="NAVIGATING",
@@ -838,24 +808,38 @@ class TestIntentCoverage(unittest.TestCase):
         ]
         all_values = [a.value for a in SubGoalAction]
         for action in new_actions:
-            self.assertIn(action.value, all_values,
-                          f"{action.value} missing from SubGoalAction enum")
+            self.assertIn(action.value, all_values, f"{action.value} missing from SubGoalAction enum")
 
     def test_full_enum_values(self):
-        """SubGoalAction 应包含所有预期的 21 个值。"""
+        """Test full enum values."""
         expected = {
-            "navigate", "find", "approach", "verify", "look_around",
-            "explore", "backtrack", "wait", "follow", "stop",
-            "pick", "place", "status",
-            "patrol", "save_map", "save_poi", "set_speed", "set_geofence",
-            "return_home", "pause", "resume",
+            "navigate",
+            "find",
+            "approach",
+            "verify",
+            "look_around",
+            "explore",
+            "backtrack",
+            "wait",
+            "follow",
+            "stop",
+            "pick",
+            "place",
+            "status",
+            "patrol",
+            "save_map",
+            "save_poi",
+            "set_speed",
+            "set_geofence",
+            "return_home",
+            "pause",
+            "resume",
         }
         actual = {a.value for a in SubGoalAction}
-        self.assertEqual(expected, actual,
-                         f"Missing: {expected - actual}, Extra: {actual - expected}")
+        self.assertEqual(expected, actual, f"Missing: {expected - actual}, Extra: {actual - expected}")
 
     def test_new_actions_reachable_via_rules(self):
-        """每个新 action 至少能通过一条规则匹配到 (中文)。"""
+        """Test new actions reachable via rules."""
         decomposer = TaskDecomposer()
         action_examples = {
             SubGoalAction.PATROL: "巡逻",
@@ -870,47 +854,47 @@ class TestIntentCoverage(unittest.TestCase):
             plan = decomposer.decompose_with_rules(instruction)
             self.assertIsNotNone(plan, f"No plan for '{instruction}' (expected {action.value})")
             self.assertEqual(
-                plan.subgoals[0].action, action,
-                f"'{instruction}' expected {action.value}, "
-                f"got {plan.subgoals[0].action.value}"
+                plan.subgoals[0].action,
+                action,
+                f"'{instruction}' expected {action.value}, got {plan.subgoals[0].action.value}",
             )
 
 
 class TestSubGoalPlanStructure(unittest.TestCase):
-    """验证各意图生成的计划结构完整性。"""
+    """Test Sub Goal Plan Structure."""
 
     def setUp(self):
         self.decomposer = TaskDecomposer()
 
     def test_stop_plan_single_subgoal(self):
-        """STOP 计划只有 1 个子目标, target = 'current_task'。"""
+        """Test stop plan single subgoal."""
         plan = self.decomposer.decompose_with_rules("停止")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.STOP)
         self.assertEqual(plan.subgoals[0].target, "current_task")
 
     def test_status_plan_single_subgoal(self):
-        """STATUS 计划只有 1 个子目标。"""
+        """Test status plan single subgoal."""
         plan = self.decomposer.decompose_with_rules("当前状态")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.STATUS)
 
     def test_patrol_plan_with_route(self):
-        """PATROL 计划有 1 个子目标, 带 route 参数。"""
+        """Test patrol plan with route."""
         plan = self.decomposer.decompose_with_rules("巡逻")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.PATROL)
         self.assertIn("route", plan.subgoals[0].parameters)
 
     def test_save_map_plan(self):
-        """SAVE_MAP 计划有 1 个子目标, target = 'current_map'。"""
+        """Test save map plan."""
         plan = self.decomposer.decompose_with_rules("保存地图")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SAVE_MAP)
         self.assertEqual(plan.subgoals[0].target, "current_map")
 
     def test_save_poi_plan_with_name(self):
-        """SAVE_POI 计划有 1 个子目标, 带 name 参数。"""
+        """Test save poi plan with name."""
         plan = self.decomposer.decompose_with_rules("标记为充电桩")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SAVE_POI)
@@ -918,7 +902,7 @@ class TestSubGoalPlanStructure(unittest.TestCase):
         self.assertEqual(plan.subgoals[0].parameters["name"], "充电桩")
 
     def test_speed_plan_with_value(self):
-        """SET_SPEED 计划有 1 个子目标, 带 value 参数。"""
+        """Test speed plan with value."""
         plan = self.decomposer.decompose_with_rules("快点")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.SET_SPEED)
@@ -926,35 +910,35 @@ class TestSubGoalPlanStructure(unittest.TestCase):
         self.assertIsInstance(plan.subgoals[0].parameters["value"], float)
 
     def test_return_plan(self):
-        """RETURN_HOME 计划有 1 个子目标, target = 'home'。"""
+        """Test return plan."""
         plan = self.decomposer.decompose_with_rules("回去")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.RETURN_HOME)
         self.assertEqual(plan.subgoals[0].target, "home")
 
     def test_pause_plan(self):
-        """PAUSE 计划有 1 个子目标, target = 'current_task'。"""
+        """Test pause plan."""
         plan = self.decomposer.decompose_with_rules("等一下")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.PAUSE)
         self.assertEqual(plan.subgoals[0].target, "current_task")
 
     def test_resume_plan(self):
-        """RESUME 计划有 1 个子目标, target = 'current_task'。"""
+        """Test resume plan."""
         plan = self.decomposer.decompose_with_rules("继续")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.RESUME)
         self.assertEqual(plan.subgoals[0].target, "current_task")
 
     def test_explore_plan_with_strategy(self):
-        """EXPLORE 计划有 1 个子目标, strategy = 'frontier'。"""
+        """Test explore plan with strategy."""
         plan = self.decomposer.decompose_with_rules("探索")
         self.assertEqual(len(plan.subgoals), 1)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.EXPLORE)
         self.assertEqual(plan.subgoals[0].parameters.get("strategy"), "frontier")
 
     def test_navigate_plan_three_steps(self):
-        """NAVIGATE 计划有 3 个子目标: NAVIGATE + APPROACH + VERIFY。"""
+        """Test navigate plan three steps."""
         plan = self.decomposer.decompose_with_rules("去大门")
         self.assertEqual(len(plan.subgoals), 3)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.NAVIGATE)
@@ -962,7 +946,7 @@ class TestSubGoalPlanStructure(unittest.TestCase):
         self.assertEqual(plan.subgoals[2].action, SubGoalAction.VERIFY)
 
     def test_find_plan_five_steps(self):
-        """FIND 计划有 5 个子目标: FIND + LOOK_AROUND + NAVIGATE + APPROACH + VERIFY。"""
+        """Test find plan five steps."""
         plan = self.decomposer.decompose_with_rules("找灭火器")
         self.assertEqual(len(plan.subgoals), 5)
         self.assertEqual(plan.subgoals[0].action, SubGoalAction.FIND)
@@ -972,28 +956,34 @@ class TestSubGoalPlanStructure(unittest.TestCase):
         self.assertEqual(plan.subgoals[4].action, SubGoalAction.VERIFY)
 
     def test_pick_plan_three_steps(self):
-        """PICK 计划有 3 个子目标: FIND + APPROACH + PICK。"""
+        """Test pick plan three steps."""
         plan = self.decomposer.decompose_with_rules("拿杯子")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
-        self.assertEqual(actions, [
-            SubGoalAction.FIND,
-            SubGoalAction.APPROACH,
-            SubGoalAction.PICK,
-        ])
+        self.assertEqual(
+            actions,
+            [
+                SubGoalAction.FIND,
+                SubGoalAction.APPROACH,
+                SubGoalAction.PICK,
+            ],
+        )
 
     def test_place_plan_two_steps(self):
-        """PLACE 计划有 2 个子目标: NAVIGATE + PLACE。"""
+        """Test place plan two steps."""
         plan = self.decomposer.decompose_with_rules("放到桌子上")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
-        self.assertEqual(actions, [
-            SubGoalAction.NAVIGATE,
-            SubGoalAction.PLACE,
-        ])
+        self.assertEqual(
+            actions,
+            [
+                SubGoalAction.NAVIGATE,
+                SubGoalAction.PLACE,
+            ],
+        )
 
     def test_follow_plan_two_steps(self):
-        """FOLLOW 计划有 2 个子目标: FIND + FOLLOW。"""
+        """Test follow plan two steps."""
         plan = self.decomposer.decompose_with_rules("跟着那个人")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
@@ -1001,26 +991,30 @@ class TestSubGoalPlanStructure(unittest.TestCase):
         self.assertEqual(actions[1], SubGoalAction.FOLLOW)
 
     def test_inspect_plan_four_steps(self):
-        """INSPECT 计划有 4 个子目标: FIND + LOOK_AROUND + APPROACH + VERIFY。"""
+        """Test inspect plan four steps."""
         plan = self.decomposer.decompose_with_rules("检查灭火器")
         self.assertIsNotNone(plan)
         actions = [sg.action for sg in plan.subgoals]
-        self.assertEqual(actions, [
-            SubGoalAction.FIND,
-            SubGoalAction.LOOK_AROUND,
-            SubGoalAction.APPROACH,
-            SubGoalAction.VERIFY,
-        ])
+        self.assertEqual(
+            actions,
+            [
+                SubGoalAction.FIND,
+                SubGoalAction.LOOK_AROUND,
+                SubGoalAction.APPROACH,
+                SubGoalAction.VERIFY,
+            ],
+        )
 
     def test_step_ids_sequential(self):
-        """子目标的 step_id 应从 0 开始递增。"""
+        """Test step ids sequential."""
         plan = self.decomposer.decompose_with_rules("找红色灭火器")
         for i, sg in enumerate(plan.subgoals):
             self.assertEqual(sg.step_id, i, f"step_id mismatch at index {i}")
 
     def test_plan_to_dict_serializable(self):
-        """计划的 to_dict 应返回可 JSON 序列化的字典。"""
+        """Test plan to dict serializable."""
         import json
+
         plan = self.decomposer.decompose_with_rules("去大门")
         d = plan.to_dict()
         serialized = json.dumps(d, ensure_ascii=False)
@@ -1028,5 +1022,5 @@ class TestSubGoalPlanStructure(unittest.TestCase):
         self.assertEqual(d["total_steps"], 3)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main(verbosity=2)

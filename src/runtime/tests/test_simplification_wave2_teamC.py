@@ -1,8 +1,9 @@
 """Wave 2 Team C — tests for perception algorithm upgrades.
 
-W2-1: _project_to_3d_fallback — masked-depth median algorithm
+W2-1: bbox_median_depth_to_detection3d — masked-depth median algorithm
 W2-3: BPUDetector._generate_masks — proper proto decoding with missing-proto guard
 """
+
 from __future__ import annotations
 
 import types
@@ -11,37 +12,14 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
+from perception.tracking.projection import (
+    CameraIntrinsics,
+    bbox_median_depth_to_detection3d,
+)
+
 # ---------------------------------------------------------------------------
-# Helpers — build a minimal PerceptionModule without importing ROS2 or torch
+# Helpers
 # ---------------------------------------------------------------------------
-
-def _make_perception_module(**kw):
-    """Return a PerceptionModule instance with runtime state set to safe defaults."""
-    from perception.perception_module import PerceptionModule
-
-    with patch("runtime.config.get_config") as mock_cfg:
-        # Minimal camera config
-        cam = MagicMock()
-        cam.T_camera_body = np.eye(4)
-        cam.position_x = cam.position_y = cam.position_z = 0.0
-        cam.fx = cam.fy = 600.0
-        lidar = MagicMock()
-        lidar.offset_x = lidar.offset_y = lidar.offset_z = 0.0
-        mock_cfg.return_value.camera = cam
-        mock_cfg.return_value.lidar = lidar
-
-        m = PerceptionModule.__new__(PerceptionModule)
-
-    # Populate required attributes without calling __init__ (avoids get_config)
-    m._depth_scale = 0.001
-    m._min_depth = 0.3
-    m._max_depth = 6.0
-    m._FALLBACK_MIN_DEPTH_PIXELS = 20
-
-    # Build a simple intrinsics stub
-    intr = types.SimpleNamespace(fx=600.0, fy=600.0, cx=320.0, cy=240.0)
-    m._latest_intrinsics = intr
-    return m
 
 
 def _det2d(bbox, label="chair", score=0.9):
@@ -58,15 +36,36 @@ def _identity_tf():
     return np.eye(4, dtype=np.float64)
 
 
+def _project_fallback(dets2d, depth, tf, intrinsics=None):
+    """Wrapper around bbox_median_depth_to_detection3d for list input."""
+    if intrinsics is None:
+        intrinsics = CameraIntrinsics(fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480)
+    results = []
+    for det2d in dets2d:
+        d3d = bbox_median_depth_to_detection3d(
+            det2d,
+            depth_image=depth,
+            tf_camera_to_world=tf,
+            intrinsics=intrinsics,
+            depth_scale=0.001,
+            min_depth=0.3,
+            max_depth=6.0,
+            min_valid_pixels=20,
+        )
+        if d3d is not None:
+            results.append(d3d)
+    return results
+
+
 # ---------------------------------------------------------------------------
-# W2-1 Tests — _project_to_3d_fallback
+# W2-1 Tests — bbox_median_depth_to_detection3d
 # ---------------------------------------------------------------------------
+
 
 class TestProjectTo3dFallback(unittest.TestCase):
-
     def setUp(self):
-        self.module = _make_perception_module()
         self.tf = _identity_tf()
+        self.intrinsics = CameraIntrinsics(fx=600.0, fy=600.0, cx=320.0, cy=240.0, width=640, height=480)
 
     def _depth_image(self, h, w, fill_raw=2000):
         """Return uint16-ish depth image where raw * 0.001 = fill_raw * 0.001 metres."""
@@ -75,9 +74,9 @@ class TestProjectTo3dFallback(unittest.TestCase):
     # -- W2-1-A: valid bbox with plenty of depth pixels --
     def test_valid_bbox_returns_det3d_with_median_depth(self):
         """A bbox with >20 valid depth pixels should return a detection with median depth."""
-        depth = self._depth_image(480, 640, fill_raw=2000)   # 2.0 m everywhere
+        depth = self._depth_image(480, 640, fill_raw=2000)  # 2.0 m everywhere
         det2d = _det2d([100, 100, 200, 200])
-        results = self.module._project_to_3d_fallback([det2d], depth, self.tf)
+        results = _project_fallback([det2d], depth, self.tf, self.intrinsics)
 
         self.assertEqual(len(results), 1)
         r = results[0]
@@ -93,23 +92,23 @@ class TestProjectTo3dFallback(unittest.TestCase):
     def test_sparse_depth_returns_no_detection(self):
         """Bbox with fewer than 20 valid depth pixels must be skipped."""
         h, w = 480, 640
-        depth = np.zeros((h, w), dtype=np.uint16)   # all zeros -> invalid
+        depth = np.zeros((h, w), dtype=np.uint16)  # all zeros -> invalid
         # Plant exactly 10 valid pixels in the bbox interior
         for px in range(10):
             depth[110 + px, 110] = 2000
         det2d = _det2d([100, 100, 200, 200])
-        results = self.module._project_to_3d_fallback([det2d], depth, self.tf)
+        results = _project_fallback([det2d], depth, self.tf, self.intrinsics)
         self.assertEqual(len(results), 0, "Sparse depth must produce no detection")
 
     # -- W2-1-C: median is robust to outliers --
     def test_median_robust_to_outlier_pixels(self):
         """Median depth must not be pulled toward extreme outlier values."""
         h, w = 480, 640
-        depth = np.full((h, w), 2000, dtype=np.uint16)   # 2.0 m background
+        depth = np.full((h, w), 2000, dtype=np.uint16)  # 2.0 m background
         # Inject a cluster of very-far pixels (8 m -> raw=8000) in the bbox corner
-        depth[100:105, 100:115] = 8000   # 75 pixels at 8 m (beyond max_depth=6 -> filtered)
+        depth[100:105, 100:115] = 8000  # 75 pixels at 8 m (beyond max_depth=6 -> filtered)
         det2d = _det2d([100, 100, 200, 200])
-        results = self.module._project_to_3d_fallback([det2d], depth, self.tf)
+        results = _project_fallback([det2d], depth, self.tf, self.intrinsics)
         self.assertEqual(len(results), 1)
         # Remaining valid pixels are all 2.0 m; median must be ~2.0 m
         self.assertAlmostEqual(results[0].depth, 2.0, places=2)
@@ -123,7 +122,7 @@ class TestProjectTo3dFallback(unittest.TestCase):
         # Zero out the right half -> ~50% valid
         depth[100:200, 150:200] = 0
         det2d = _det2d(bbox)
-        results = self.module._project_to_3d_fallback([det2d], depth, self.tf)
+        results = _project_fallback([det2d], depth, self.tf, self.intrinsics)
         self.assertEqual(len(results), 1)
         c = results[0].confidence_3d
         self.assertGreater(c, 0.0)
@@ -136,9 +135,11 @@ class TestProjectTo3dFallback(unittest.TestCase):
 # W2-3 Tests — BPUDetector._generate_masks
 # ---------------------------------------------------------------------------
 
+
 def _make_bpu_detector(**kw):
     """Return a BPUDetector without loading any .hbm model."""
     from perception.detection.bpu_detector import BPUDetector
+
     det = BPUDetector.__new__(BPUDetector)
     det._conf_thr = 0.25
     det._iou_thr = 0.45
@@ -168,7 +169,7 @@ def _synthetic_outputs(proto_key="proto", proto_shape=(160, 160, 32)):
     """Build a minimal outputs dict with deterministic proto and mask-coeff tensors."""
     rng = np.random.default_rng(42)
     proto = rng.standard_normal(proto_shape).astype(np.float32)
-    outputs = {proto_key: np.expand_dims(proto, 0)}   # (1, *proto_shape)
+    outputs = {proto_key: np.expand_dims(proto, 0)}  # (1, *proto_shape)
     return outputs
 
 
@@ -184,7 +185,6 @@ def _make_raw_and_mc(n=2):
 
 
 class TestGenerateMasks(unittest.TestCase):
-
     # -- W2-3-A: normal path produces boolean masks with bbox intersection --
     def test_masks_are_bool_and_intersect_bbox(self):
         """Each returned mask crop must be a bool array and within bbox bounds."""
@@ -213,8 +213,7 @@ class TestGenerateMasks(unittest.TestCase):
         raw, kept_mc = _make_raw_and_mc(n=3)
         outputs = {}  # no proto key
 
-        with self.assertLogs("perception.detection.bpu_detector",
-                             level="ERROR") as log_ctx:
+        with self.assertLogs("perception.detection.bpu_detector", level="ERROR") as log_ctx:
             masks1 = det._generate_masks(raw, kept_mc, outputs, 1.0, 0, 0)
             # Second call must NOT emit another log (logged once guard)
             masks2 = det._generate_masks(raw, kept_mc, outputs, 1.0, 0, 0)

@@ -59,6 +59,11 @@ void Pcd2OctomapConverter::setFreeEnvelopeDilationCells(int cells)
   free_xy_dilation_cells_ = std::max(0, cells);
 }
 
+void Pcd2OctomapConverter::setSupportDilationCells(int cells)
+{
+  support_xy_dilation_cells_ = std::max(0, cells);
+}
+
 bool Pcd2OctomapConverter::convert()
 {
   if (!loadPointCloud()) {
@@ -70,6 +75,7 @@ bool Pcd2OctomapConverter::convert()
   buildVoxelCounts();
   filterByPointCount();
   filterByConnectedClusters();
+  occupied_keys_ = dilatedOccupiedKeys();
   fillOcTree();
   carveFreeEnvelope();
 
@@ -203,6 +209,95 @@ void Pcd2OctomapConverter::fillOcTree()
   }
 
   tree_->updateInnerOccupancy();
+}
+
+std::unordered_set<Key, KeyHash> Pcd2OctomapConverter::dilatedOccupiedKeys()
+{
+  support_keys_ = horizontalSupportKeys();
+  if (support_xy_dilation_cells_ <= 0 || occupied_keys_.empty()) {
+    return occupied_keys_;
+  }
+
+  std::unordered_set<Key, KeyHash> out = occupied_keys_;
+  const auto support_seeds = support_keys_;
+  const int dilation = std::max(0, support_xy_dilation_cells_);
+  const auto max_key = static_cast<long long>(std::numeric_limits<unsigned int>::max());
+
+  for (const auto & key : support_seeds) {
+    for (int dx = -dilation; dx <= dilation; ++dx) {
+      for (int dy = -dilation; dy <= dilation; ++dy) {
+        const long long x = static_cast<long long>(key.k[0]) + dx;
+        const long long y = static_cast<long long>(key.k[1]) + dy;
+        const long long z = static_cast<long long>(key.k[2]);
+        if (x < 0 || y < 0 || z < 0 || x > max_key || y > max_key || z > max_key) {
+          continue;
+        }
+        const Key dilated_key{{
+          static_cast<unsigned int>(x),
+          static_cast<unsigned int>(y),
+          static_cast<unsigned int>(z)}};
+        out.insert(dilated_key);
+        support_keys_.insert(dilated_key);
+      }
+    }
+  }
+
+  std::cout << "Horizontal support candidates: " << support_seeds.size() << std::endl;
+  std::cout << "High-confidence support voxels: " << support_keys_.size() << std::endl;
+  std::cout << "Support-dilated voxels: " << out.size()
+            << " xy_dilation=" << support_xy_dilation_cells_ << std::endl;
+  return out;
+}
+
+std::unordered_set<Key, KeyHash> Pcd2OctomapConverter::horizontalSupportKeys() const
+{
+  std::unordered_set<Key, KeyHash> supports;
+  supports.reserve(occupied_keys_.size());
+  constexpr int kMinimumProbeDistance = 2;
+  constexpr int kProbeRadius = 4;
+  constexpr int kLateralTolerance = 2;
+  constexpr int kVerticalTolerance = 1;
+  const auto max_key = static_cast<long long>(std::numeric_limits<unsigned int>::max());
+
+  auto contains = [&](const Key & key, int dx, int dy, int dz) {
+    const long long x = static_cast<long long>(key.k[0]) + dx;
+    const long long y = static_cast<long long>(key.k[1]) + dy;
+    const long long z = static_cast<long long>(key.k[2]) + dz;
+    if (x < 0 || y < 0 || z < 0 || x > max_key || y > max_key || z > max_key) {
+      return false;
+    }
+    return occupied_keys_.count(Key{{
+      static_cast<unsigned int>(x),
+      static_cast<unsigned int>(y),
+      static_cast<unsigned int>(z)}}) > 0;
+  };
+
+  auto hasDirection = [&](const Key & key, int axis_x, int axis_y) {
+    for (int step = kMinimumProbeDistance; step <= kProbeRadius; ++step) {
+      for (int lateral = -kLateralTolerance; lateral <= kLateralTolerance; ++lateral) {
+        for (int dz = -kVerticalTolerance; dz <= kVerticalTolerance; ++dz) {
+          const int dx = axis_x * step + axis_y * lateral;
+          const int dy = axis_y * step + axis_x * lateral;
+          if (contains(key, dx, dy, dz)) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  for (const auto & key : occupied_keys_) {
+    int directions = 0;
+    directions += hasDirection(key, 1, 0) ? 1 : 0;
+    directions += hasDirection(key, -1, 0) ? 1 : 0;
+    directions += hasDirection(key, 0, 1) ? 1 : 0;
+    directions += hasDirection(key, 0, -1) ? 1 : 0;
+    if (directions >= 3) {
+      supports.insert(key);
+    }
+  }
+  return supports;
 }
 
 void Pcd2OctomapConverter::carveFreeEnvelope()

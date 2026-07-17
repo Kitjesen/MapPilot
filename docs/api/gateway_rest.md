@@ -1,7 +1,7 @@
 # Gateway REST API
 
 > Auto-generated from route registrations in `src/gateway/routes/`.
-> Generated: 2026-06-02 01:58:19
+> Generated: 2026-07-07 15:08:47
 
 The GatewayModule serves these endpoints via FastAPI on port 5050.
 
@@ -12,12 +12,12 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 - **src\gateway\gateway_module.py**:
   - `POST /api/v1/driver/swap` — Swap the active driver backend at runtime
   - `POST /api/v1/maps` — Map lifecycle management
-  - `POST /api/v1/runtime/backend` — 
+  - `POST /api/v1/runtime/backend` —
 - **src\gateway\routes\app.py**:
   - `GET /api/v1/app/bootstrap` — App/Web bootstrap snapshot
   - `GET /api/v1/app/capabilities` — App/Web API capability manifest
   - `GET /api/v1/app/traffic` — App/Web realtime traffic and client polling policy
-  - `GET /api/v1/bootstrap` — 
+  - `GET /api/v1/bootstrap` —
 - **src\gateway\routes\auth.py**:
   - `GET /api/v1/auth/check` — Check if auth is required
   - `POST /api/v1/auth/login` — Login with API key
@@ -31,6 +31,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/mode` — Switch operating mode
   - `POST /api/v1/navigate/click` — Navigate to map-viewer click point
   - `POST /api/v1/navigation/cancel` — Gracefully cancel current navigation mission
+  - `POST /api/v1/navigation/resume` — Release a latched manual takeover; a fresh goal/path is still required
   - `POST /api/v1/navigation/goal_candidate` — Construct and optionally preview a navigation goal without publishing it
   - `POST /api/v1/navigation/plan` — Preview navigation plan without publishing a goal
   - `POST /api/v1/stop` — Emergency stop
@@ -40,7 +41,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `GET /api/v1/diagnostics/algorithm-benchmark/latest` — Read latest read-only algorithm benchmark summary
   - `POST /api/v1/diagnostics/field-check` — Run read-only product field readiness check
   - `GET /api/v1/diagnostics/plugins` — Read registered plugin categories and providers
-  - `GET /api/v1/diagnostics/real-runtime-evidence/latest` — Read latest real S100P runtime evidence gate summary
+  - `GET /api/v1/diagnostics/real-runtime-evidence/latest` — Read latest Thunder field runtime evidence gate summary
   - `GET /api/v1/diagnostics/routecheck/latest` — Read latest non-motion routecheck summary
   - `GET /api/v1/diagnostics/runtime-contract` — Read canonical runtime interface contract
   - `POST /api/v1/inspection/acceptance` — Run read-only inspection acceptance without publishing motion commands
@@ -51,8 +52,15 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/map/restore_predufo` — Restore map.pcd from DUFOMap pre-filter backup
   - `POST /api/v1/map/save` — Save current SLAM map
   - `POST /api/v1/map_cloud/reset` — Clear accumulated map cloud (viz only, SLAM ikd-tree untouched)
+  - `POST /api/v1/maps/import_pcd` — Import a PCD file into a LingTu map package
+  - `POST /api/v1/maps/{name}/build_octomap` — Build OctoPlanner3D octomap.ot from saved map.pcd
+  - `POST /api/v1/maps/{name}/crop` — Crop a saved map point cloud and invalidate derived artifacts
+  - `POST /api/v1/maps/{name}/mark_zone` — Mark occupied/free/preblocked/traversable zones in the saved OctoMap
   - `GET /api/v1/maps/{name}/pcd` — Serve raw PCD file for inline preview
   - `GET /api/v1/maps/{name}/points` — Saved map point cloud as JSON
+  - `POST /api/v1/maps/{name}/validate_plan` — No-motion OctoPlanner3D route preview for the active saved map
+  - `POST /api/v1/maps/{name}/voxels/edit` — Edit saved OctoMap voxels for OctoPlanner3D
+  - `GET /api/v1/maps/{name}/voxels/edits` — Saved OctoMap voxel edit overlay
   - `GET /api/v1/slam/maps` — List maps from filesystem
   - `GET /map/viewer` — Interactive 3D map viewer
   - `GET /robot/meshes/{filename}` — Serve robot STL mesh files
@@ -67,12 +75,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/memory/temporal/semantic` — Semantic similarity search over temporal observations
   - `POST /api/v1/slam/auto_relocalize` — Global relocalize via 3D-BBS (no guess required)
   - `POST /api/v1/slam/relocalize` — Relocalize against a saved map
+  - `POST /api/v1/slam/restart` — Force-restart native SLAM localization service
   - `GET /api/v1/slam/status` — SLAM service status
   - `POST /api/v1/slam/switch` — Hot-switch SLAM profile
-  - `POST /api/v1/webrtc/bitrate` — Live-tune WebRTC max bitrate without reconnect
+  - `POST /api/v1/slam/track_against_map` — Start continuous saved-map tracking
   - `GET /api/v1/webrtc/go2rtc/status` — Probe the go2rtc sidecar (image transmission fast path)
-  - `POST /api/v1/webrtc/offer` — WebRTC SDP offer/answer exchange for low-latency camera
-  - `GET /api/v1/webrtc/stats` — WebRTC peer telemetry (bitrate, fps, encode time)
   - `POST /api/v1/webrtc/whep` — WHEP signalling proxy to go2rtc (image transmission path)
 - **src\gateway\routes\session.py**:
   - `GET /api/v1/session` — Current session state + capabilities
@@ -87,15 +94,16 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/locations` — Create or update a tagged navigation location
   - `PUT /api/v1/locations/{name}` — Update a tagged navigation location
   - `DELETE /api/v1/locations/{name}` — Delete a tagged navigation location
-  - `GET /api/v1/navigation` — 
+  - `GET /api/v1/navigation` —
+  - `GET /api/v1/navigation/dds_snapshot` — Latest navigation data for the native DDS endpoint
   - `GET /api/v1/navigation/status` — Navigation mission and control status
   - `GET /api/v1/path` — Latest planned path
   - `GET /api/v1/readiness` — Client readiness snapshot
   - `GET /api/v1/runtime/dataflow` — Runtime dataflow and Module port observability
   - `POST /api/v1/runtime/dataflow/subscribe` — Create a read-only runtime dataflow SSE subscription plan
   - `GET /api/v1/runtime/dataflow/topic` — Inspect one runtime dataflow topic
-  - `POST /api/v1/runtime/switch-plan` — Dry-run runtime endpoint switch plan
   - `POST /api/v1/runtime/switch` — Validate and optionally execute a product mode switch
+  - `POST /api/v1/runtime/switch-plan` — Dry-run runtime endpoint switch plan
   - `GET /api/v1/scene_graph` — Current scene graph
   - `GET /api/v1/state` — Full robot state snapshot
   - `GET /health` — Liveness probe
@@ -235,7 +243,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `plugin_catalog`
 
 ### `GET /api/v1/diagnostics/real-runtime-evidence/latest`
-**Summary:** Read latest real S100P runtime evidence gate summary
+**Summary:** Read latest Thunder field runtime evidence gate summary
 **Response model:** `RealRuntimeEvidenceLatestResponse`
 **Handler:** `real_runtime_evidence_latest`
 
@@ -281,10 +289,62 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `MapLifecycleResponse`
 **Handler:** `save_map_now`
 
+The optional `request_id` is the durable SaveMap idempotency key. A successful
+save returns `job_id`, `version`, `manifest`, immutable artifact paths, and
+`compatibility_ready`. Canonical readers use the immutable version selected by
+`current_version.txt`; a false compatibility flag means only the legacy root
+mirror needs resynchronization. If processing outlives the synchronous wait
+budget, the endpoint returns HTTP `202` with `accepted=true`, `status=running`,
+and `job_id`; clients continue through the save-job status endpoint.
+
+### `GET /api/v1/maps/save-jobs`
+**Summary:** List recent durable SaveMap jobs
+**Response model:** `MapLifecycleResponse`
+
+### `GET /api/v1/maps/save-jobs/{job_id}`
+**Summary:** Read durable SaveMap state, phase, progress, reports, and version
+**Response model:** `MapLifecycleResponse`
+
+### `POST /api/v1/maps/save-jobs/{job_id}/cancel`
+**Summary:** Request cooperative cancellation, including native subprocesses
+**Response model:** `MapLifecycleResponse`
+
+### `POST /api/v1/maps/save-jobs/{job_id}/retry`
+**Summary:** Retry a failed or cancelled SaveMap job
+**Response model:** `MapLifecycleResponse`
+
+### `GET /api/v1/maps/{name}/versions`
+**Summary:** List verified immutable versions of a saved map, newest first
+**Response model:** `MapLifecycleResponse`
+
+### `POST /api/v1/maps/{name}/versions/{version}/rollback`
+**Summary:** Atomically select a verified historical map version and resync the compatibility view
+**Response model:** `MapLifecycleResponse`
+
 ### `POST /api/v1/map_cloud/reset`
 **Summary:** Clear accumulated map cloud (viz only, SLAM ikd-tree untouched)
 **Response model:** `MapLifecycleResponse`
 **Handler:** `reset_map_cloud`
+
+### `POST /api/v1/maps/import_pcd`
+**Summary:** Import a PCD file into a LingTu map package
+**Response model:** `MapLifecycleResponse`
+**Handler:** `import_pcd_map`
+
+### `POST /api/v1/maps/{name}/build_octomap`
+**Summary:** Build OctoPlanner3D octomap.ot from saved map.pcd
+**Response model:** `MapLifecycleResponse`
+**Handler:** `build_saved_map_octomap`
+
+### `POST /api/v1/maps/{name}/crop`
+**Summary:** Crop a saved map point cloud and invalidate derived artifacts
+**Response model:** `MapLifecycleResponse`
+**Handler:** `crop_saved_map`
+
+### `POST /api/v1/maps/{name}/mark_zone`
+**Summary:** Mark occupied/free/preblocked/traversable zones in the saved OctoMap
+**Response model:** `MapLifecycleResponse`
+**Handler:** `mark_saved_map_zone`
 
 ### `GET /api/v1/maps/{name}/pcd`
 **Summary:** Serve raw PCD file for inline preview
@@ -294,6 +354,19 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Saved map point cloud as JSON
 **Response model:** `MapPointsResponse`
 **Handler:** `get_saved_map_points`
+
+### `POST /api/v1/maps/{name}/validate_plan`
+**Summary:** No-motion OctoPlanner3D route preview for the active saved map
+**Handler:** `validate_saved_map_plan`
+
+### `POST /api/v1/maps/{name}/voxels/edit`
+**Summary:** Edit saved OctoMap voxels for OctoPlanner3D
+**Response model:** `MapLifecycleResponse`
+**Handler:** `edit_saved_map_voxels`
+
+### `GET /api/v1/maps/{name}/voxels/edits`
+**Summary:** Saved OctoMap voxel edit overlay
+**Handler:** `get_saved_map_voxel_edits`
 
 ### `GET /api/v1/slam/maps`
 **Summary:** List maps from filesystem
@@ -360,6 +433,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `SlamOperationResponse`
 **Handler:** `slam_relocalize`
 
+### `POST /api/v1/slam/restart`
+**Summary:** Force-restart native SLAM localization service
+**Response model:** `SlamOperationResponse`
+**Handler:** `slam_restart`
+
 ### `GET /api/v1/slam/status`
 **Summary:** SLAM service status
 **Response model:** `SlamStatusResponse`
@@ -370,25 +448,15 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `SlamOperationResponse`
 **Handler:** `slam_switch`
 
-### `POST /api/v1/webrtc/bitrate`
-**Summary:** Live-tune WebRTC max bitrate without reconnect
-**Response model:** `WebRTCControlResponse`
-**Handler:** `post_webrtc_bitrate`
+### `POST /api/v1/slam/track_against_map`
+**Summary:** Start continuous saved-map tracking
+**Response model:** `SlamOperationResponse`
+**Handler:** `slam_track_against_map`
 
 ### `GET /api/v1/webrtc/go2rtc/status`
 **Summary:** Probe the go2rtc sidecar (image transmission fast path)
 **Response model:** `Go2RTCStatusResponse`
 **Handler:** `get_go2rtc_status`
-
-### `POST /api/v1/webrtc/offer`
-**Summary:** WebRTC SDP offer/answer exchange for low-latency camera
-**Response model:** `WebRTCControlResponse`
-**Handler:** `post_webrtc_offer`
-
-### `GET /api/v1/webrtc/stats`
-**Summary:** WebRTC peer telemetry (bitrate, fps, encode time)
-**Response model:** `WebRTCStatsResponse`
-**Handler:** `get_webrtc_stats`
 
 ### `POST /api/v1/webrtc/whep`
 **Summary:** WHEP signalling proxy to go2rtc (image transmission path)
@@ -456,6 +524,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `NavigationStatusResponse`
 **Handler:** `get_navigation_status_legacy_alias`
 
+### `GET /api/v1/navigation/dds_snapshot`
+**Summary:** Latest navigation data for the native DDS endpoint
+**Response model:** `NavigationDdsSnapshotResponse`
+**Handler:** `get_navigation_dds_snapshot`
+
 ### `GET /api/v1/navigation/status`
 **Summary:** Navigation mission and control status
 **Response model:** `NavigationStatusResponse`
@@ -486,15 +559,15 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `RuntimeDataflowTopicDetailResponse`
 **Handler:** `get_runtime_dataflow_topic`
 
-### `POST /api/v1/runtime/switch-plan`
-**Summary:** Dry-run runtime endpoint switch plan
-**Response model:** `RuntimeSwitchPlanResponse`
-**Handler:** `post_runtime_switch_plan`
-
 ### `POST /api/v1/runtime/switch`
 **Summary:** Validate and optionally execute a product mode switch
 **Response model:** `RuntimeSwitchResponse`
 **Handler:** `post_runtime_switch`
+
+### `POST /api/v1/runtime/switch-plan`
+**Summary:** Dry-run runtime endpoint switch plan
+**Response model:** `RuntimeSwitchPlanResponse`
+**Handler:** `post_runtime_switch_plan`
 
 ### `GET /api/v1/scene_graph`
 **Summary:** Current scene graph

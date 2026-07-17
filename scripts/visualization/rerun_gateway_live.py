@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 import sys
 import time
@@ -19,6 +20,8 @@ from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+logger = logging.getLogger(__name__)
 
 
 def find_repo_root(start: Path) -> Path:
@@ -46,9 +49,9 @@ def _fetch_json(
     url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
     if params:
         url = f"{url}?{urlencode(params)}"
-    request = Request(url, headers={"Accept": "application/json"})
+    request = Request(url, headers={"Accept": "application/json"})  # noqa: S310 - operator-provided Gateway URL
     try:
-        with urlopen(request, timeout=timeout_sec) as response:
+        with urlopen(request, timeout=timeout_sec) as response:  # noqa: S310 - operator-provided Gateway URL
             payload = json.loads(response.read().decode("utf-8"))
     except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
         raise GatewayError(f"{url}: {exc}") from exc
@@ -106,6 +109,36 @@ def _extract_points(payload: Any) -> list[list[float]]:
     return []
 
 
+def _height_colors(points: Sequence[Sequence[float]]) -> list[list[int]]:
+    if not points:
+        return []
+    zs = [float(point[2]) for point in points]
+    z_min = min(zs)
+    z_span = max(max(zs) - z_min, 0.01)
+    colors: list[list[int]] = []
+    for z in zs:
+        t = max(0.0, min(1.0, (z - z_min) / z_span))
+        if t < 0.5:
+            u = t * 2.0
+            colors.append(
+                [
+                    round(46 + (140 - 46) * u),
+                    140,
+                    round(128 + (140 - 128) * u),
+                ]
+            )
+        else:
+            u = (t - 0.5) * 2.0
+            colors.append(
+                [
+                    round(140 + (199 - 140) * u),
+                    round(140 + (153 - 140) * u),
+                    round(140 + (89 - 140) * u),
+                ]
+            )
+    return colors
+
+
 def _init_rerun(args: argparse.Namespace):
     try:
         import rerun as rr
@@ -129,8 +162,8 @@ def _init_rerun(args: argparse.Namespace):
         print(f"Rerun web: http://localhost:{args.web_port}")
     try:
         rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Rerun coordinate-system log failed: %s", exc)
     return rr
 
 
@@ -161,17 +194,13 @@ def _log_map_points(rr: Any, payload: Mapping[str, Any], *, max_points: int) -> 
     if len(points) > max_points:
         step = max(1, len(points) // max_points)
         points = points[::step][:max_points]
-    rr.log("world/map/points", rr.Points3D(points, colors=[[110, 160, 255]], radii=0.035))
+    rr.log("world/map/points", rr.Points3D(points, colors=_height_colors(points), radii=0.035))
 
 
 def _log_dataflow(rr: Any, payload: Mapping[str, Any]) -> None:
     topics = payload.get("topics") if isinstance(payload.get("topics"), list) else []
     stages = payload.get("stage_evidence") if isinstance(payload.get("stage_evidence"), list) else []
-    live_topics = sum(
-        1
-        for topic in topics
-        if _mapping(_mapping(topic).get("inspection")).get("live") is True
-    )
+    live_topics = sum(1 for topic in topics if _mapping(_mapping(topic).get("inspection")).get("live") is True)
     live_stages = sum(1 for stage in stages if _mapping(stage).get("live") is True)
     text = (
         f"contract={payload.get('runtime_contract') or '?'} "
@@ -180,8 +209,8 @@ def _log_dataflow(rr: Any, payload: Mapping[str, Any]) -> None:
     )
     try:
         rr.log("metrics/runtime_dataflow", rr.TextLog(text))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Rerun dataflow log failed: %s", exc)
 
 
 def _poll_once(rr: Any, args: argparse.Namespace, trajectory: list[list[float]]) -> None:

@@ -1,4 +1,4 @@
-﻿"""Lightweight App/Web bootstrap contract for GatewayModule."""
+"""Lightweight App/Web bootstrap contract for GatewayModule."""
 
 from __future__ import annotations
 
@@ -7,11 +7,20 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.diagnostics.runtime_validation_gates import runtime_validation_gates
+try:
+    from diagnostics.field.gates import runtime_validation_gates
+except ModuleNotFoundError:
+    # Field diagnostics are optional on deployed robots; bootstrap must still start.
+    def runtime_validation_gates() -> dict[str, Any]:
+        return {}
+
+
 from gateway.services.media_status import build_media_status
 from gateway.services.runtime_status import (
     build_localization_status_from_parts,
     build_navigation_status,
+)
+from gateway.services.runtime_status import (
     safe_session as _safe_session,
 )
 from gateway.services.safety_status import (
@@ -28,10 +37,12 @@ from gateway.services.traffic import (
     SSE_LEGACY_EVENT_TYPES,
     SSE_RETRY_MS,
 )
+from gateway.services.traffic import (
+    snapshot as traffic_snapshot,
+)
 
-
-APP_BOOTSTRAP_SCHEMA_VERSION = 1
-APP_CAPABILITIES_SCHEMA_VERSION = 1
+APP_BOOTSTRAP_SCHEMA_VERSION = 2
+APP_CAPABILITIES_SCHEMA_VERSION = 2
 APP_TRAFFIC_SCHEMA_VERSION = 1
 _OPERATION_CONTRACT_CACHE_ATTR = "_app_capabilities_operation_contract_cache"
 _OPERATION_CONTRACT_CACHE_LOCK = threading.RLock()
@@ -54,6 +65,7 @@ CLIENT_LINKS: dict[str, str] = {
     "runtime_switch": "/api/v1/runtime/switch",
     "devices": "/api/v1/devices",
     "health": "/api/v1/health",
+    "metrics": "/api/v1/metrics",
     "readiness": "/api/v1/readiness",
     "auth_login": "/api/v1/auth/login",
     "auth_check": "/api/v1/auth/check",
@@ -64,10 +76,8 @@ CLIENT_LINKS: dict[str, str] = {
     "teleop_ws": "/ws/teleop",
     "camera_ws": "/ws/camera",
     "cloud_ws": "/ws/cloud",
+    "scan_ws": "/ws/scan",
     "camera_snapshot": "/api/v1/camera/snapshot",
-    "webrtc_stats": "/api/v1/webrtc/stats",
-    "webrtc_offer": "/api/v1/webrtc/offer",
-    "webrtc_bitrate": "/api/v1/webrtc/bitrate",
     "webrtc_whep": "/api/v1/webrtc/whep",
     "go2rtc_status": "/api/v1/webrtc/go2rtc/status",
     "goal": "/api/v1/goal",
@@ -75,7 +85,15 @@ CLIENT_LINKS: dict[str, str] = {
     "navigation_goal_candidate": "/api/v1/navigation/goal_candidate",
     "navigation_plan": "/api/v1/navigation/plan",
     "inspection_acceptance": "/api/v1/inspection/acceptance",
+    "inspection_routes": "/api/v1/inspection/routes",
+    "inspection_route_detail": "/api/v1/inspection/routes/{route_id}",
+    "inspection_route_start": "/api/v1/inspection/routes/{route_id}/start",
+    "inspection_status": "/api/v1/inspection/status",
+    "inspection_pause": "/api/v1/inspection/run/pause",
+    "inspection_resume": "/api/v1/inspection/run/resume",
+    "inspection_cancel": "/api/v1/inspection/run/cancel",
     "navigation_cancel": "/api/v1/navigation/cancel",
+    "navigation_resume": "/api/v1/navigation/resume",
     "stop": "/api/v1/stop",
     "instruction": "/api/v1/instruction",
     "visual_servo": "/api/v1/visual_servo",
@@ -98,8 +116,10 @@ CLIENT_LINKS: dict[str, str] = {
     "explore_status": "/api/v1/explore/status",
     "explore_start": "/api/v1/explore/start",
     "explore_stop": "/api/v1/explore/stop",
+    "service_status": "/api/v1/services/status",
     "slam_status": "/api/v1/slam/status",
     "slam_switch": "/api/v1/slam/switch",
+    "slam_restart": "/api/v1/slam/restart",
     "slam_auto_relocalize": "/api/v1/slam/auto_relocalize",
     "slam_relocalize": "/api/v1/slam/relocalize",
     "slam_track_against_map": "/api/v1/slam/track_against_map",
@@ -156,6 +176,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
         },
         "devices": {"method": "GET", "path": CLIENT_LINKS["devices"]},
         "health": {"method": "GET", "path": CLIENT_LINKS["health"]},
+        "metrics": {"method": "GET", "path": CLIENT_LINKS["metrics"]},
         "readiness": {"method": "GET", "path": CLIENT_LINKS["readiness"]},
     },
     "realtime": {
@@ -163,6 +184,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
         "teleop": {"method": "WS", "path": CLIENT_LINKS["teleop_ws"]},
         "camera": {"method": "WS", "path": CLIENT_LINKS["camera_ws"]},
         "cloud": {"method": "WS", "path": CLIENT_LINKS["cloud_ws"]},
+        "scan": {"method": "WS", "path": CLIENT_LINKS["scan_ws"]},
     },
     "control": {
         "navigation_goal_candidate": {
@@ -171,6 +193,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
         },
         "navigation_plan": {"method": "POST", "path": CLIENT_LINKS["navigation_plan"]},
         "navigation_cancel": {"method": "POST", "path": CLIENT_LINKS["navigation_cancel"]},
+        "navigation_resume": {"method": "POST", "path": CLIENT_LINKS["navigation_resume"]},
         "goal": {"method": "POST", "path": CLIENT_LINKS["goal"]},
         "navigate_click": {"method": "POST", "path": CLIENT_LINKS["navigate_click"]},
         "stop": {"method": "POST", "path": CLIENT_LINKS["stop"]},
@@ -181,9 +204,6 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
     },
     "media": {
         "camera_snapshot": {"method": "GET", "path": CLIENT_LINKS["camera_snapshot"]},
-        "webrtc_stats": {"method": "GET", "path": CLIENT_LINKS["webrtc_stats"]},
-        "webrtc_offer": {"method": "POST", "path": CLIENT_LINKS["webrtc_offer"]},
-        "webrtc_bitrate": {"method": "POST", "path": CLIENT_LINKS["webrtc_bitrate"]},
         "webrtc_whep": {"method": "POST", "path": CLIENT_LINKS["webrtc_whep"]},
         "go2rtc_status": {"method": "GET", "path": CLIENT_LINKS["go2rtc_status"]},
     },
@@ -219,6 +239,7 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
         "explore_stop": {"method": "POST", "path": CLIENT_LINKS["explore_stop"]},
     },
     "ops": {
+        "service_status": {"method": "GET", "path": CLIENT_LINKS["service_status"]},
         "slam_status": {"method": "GET", "path": CLIENT_LINKS["slam_status"]},
         "slam_switch": {"method": "POST", "path": CLIENT_LINKS["slam_switch"]},
         "slam_auto_relocalize": {"method": "POST", "path": CLIENT_LINKS["slam_auto_relocalize"]},
@@ -243,6 +264,27 @@ CLIENT_ENDPOINTS: dict[str, dict[str, dict[str, str]]] = {
             "method": "POST",
             "path": CLIENT_LINKS["inspection_acceptance"],
         },
+        "inspection_routes": {"method": "GET", "path": CLIENT_LINKS["inspection_routes"]},
+        "inspection_route_create": {
+            "method": "POST",
+            "path": CLIENT_LINKS["inspection_routes"],
+        },
+        "inspection_route_detail": {
+            "method": "GET",
+            "path": CLIENT_LINKS["inspection_route_detail"],
+        },
+        "inspection_route_delete": {
+            "method": "DELETE",
+            "path": CLIENT_LINKS["inspection_route_detail"],
+        },
+        "inspection_route_start": {
+            "method": "POST",
+            "path": CLIENT_LINKS["inspection_route_start"],
+        },
+        "inspection_status": {"method": "GET", "path": CLIENT_LINKS["inspection_status"]},
+        "inspection_pause": {"method": "POST", "path": CLIENT_LINKS["inspection_pause"]},
+        "inspection_resume": {"method": "POST", "path": CLIENT_LINKS["inspection_resume"]},
+        "inspection_cancel": {"method": "POST", "path": CLIENT_LINKS["inspection_cancel"]},
         "routecheck_latest": {"method": "GET", "path": CLIENT_LINKS["routecheck_latest"]},
         "real_runtime_evidence_latest": {
             "method": "GET",
@@ -281,30 +323,22 @@ def _safety_summary(safety: Any) -> dict[str, Any]:
 
 
 def _map_summary(gw: Any, session: Mapping[str, Any]) -> dict[str, Any]:
-    lock = getattr(gw, "_map_cloud_lock", None)
-    if lock is None:
-        points = getattr(gw, "_map_points", None)
-    else:
-        with lock:
-            points = getattr(gw, "_map_points", None)
-    try:
-        live_points = len(points) if points is not None else 0
-    except TypeError:
-        live_points = 0
+    cloud_summary = gw._cloud_viewer.map_summary()
+    live_points = _int_value(cloud_summary.get("live_points"), 0)
     return {
         "active": session.get("active_map"),
         "has_live_cloud": live_points > 0,
         "live_points": live_points,
-        "live_cloud_frames": int(getattr(gw, "_map_cloud_count", 0)),
+        "live_cloud_frames": _int_value(cloud_summary.get("live_cloud_frames"), 0),
         "has_manager": getattr(gw, "_map_mgr", None) is not None,
         "map_has_pcd": bool(session.get("map_has_pcd", False)),
-        "map_has_tomogram": bool(session.get("map_has_tomogram", False)),
+        "map_has_octomap": bool(session.get("map_has_octomap", False)),
     }
 
 
 def _traffic_summary(gw: Any) -> dict[str, Any]:
     try:
-        snapshot = gw._traffic_stats_snapshot()
+        snapshot = traffic_snapshot(gw)
         if isinstance(snapshot, Mapping):
             return dict(snapshot)
     except (AttributeError, TypeError):
@@ -362,17 +396,76 @@ def _traffic_warnings(traffic: Mapping[str, Any]) -> list[str]:
 
 
 def _large_event_policy(gw: Any) -> dict[str, Any]:
-    slope_inline = bool(
-        getattr(gw, "_sse_slope_payload_enabled", DEFAULT_SSE_SLOPE_PAYLOAD_ENABLED)
-    )
+    slope_inline = bool(getattr(gw, "_sse_slope_payload_enabled", DEFAULT_SSE_SLOPE_PAYLOAD_ENABLED))
     return {
-        "raster_min_interval_s": float(
-            getattr(gw, "_sse_raster_min_interval_s", DEFAULT_SSE_RASTER_MIN_INTERVAL_S)
-        ),
+        "raster_min_interval_s": float(getattr(gw, "_sse_raster_min_interval_s", DEFAULT_SSE_RASTER_MIN_INTERVAL_S)),
         "costmap_payload": "inline_sse",
         "slope_grid_payload": "inline_sse" if slope_inline else "metadata_sse",
         "point_cloud_payload": "binary_websocket",
         "binary_cloud_endpoint": CLIENT_LINKS["cloud_ws"],
+    }
+
+
+def _scene_layer_contract(gw: Any) -> dict[str, Any]:
+    clean_prefer_fn = getattr(gw, "clean_map_layer_prefer_s", None)
+    clean_prefer_s = clean_prefer_fn() if callable(clean_prefer_fn) else 0.0
+    return {
+        "schema_version": 1,
+        "coordinate_frame": "map",
+        "coordinate_mapping": "lingtu_xyz_to_three_x_z_neg_y",
+        "layers": [
+            {
+                "id": "saved_map",
+                "kind": "point_cloud",
+                "source": "saved_map_points",
+                "transport": "http",
+                "endpoint": CLIENT_LINKS["saved_map_points"],
+                "role": "static_reference",
+            },
+            {
+                "id": "live_cloud",
+                "kind": "point_cloud",
+                "source": "voxel_cloud_preferred",
+                "transport": "websocket",
+                "endpoint": CLIENT_LINKS["cloud_ws"],
+                "role": "clean_live_map",
+                "fallback_source": "slam_map_cloud",
+                "prefer_clean_layer_s": float(clean_prefer_s),
+            },
+            {
+                "id": "costmap",
+                "kind": "raster_texture",
+                "source": "costmap",
+                "transport": "sse",
+                "endpoint": CLIENT_LINKS["events"],
+                "role": "navigation_risk",
+            },
+            {
+                "id": "slope",
+                "kind": "raster_texture",
+                "source": "slope_grid",
+                "transport": "sse",
+                "endpoint": CLIENT_LINKS["events"],
+                "role": "terrain_slope",
+                "payload": "inline_sse" if bool(getattr(gw, "_sse_slope_payload_enabled", False)) else "metadata_sse",
+            },
+            {
+                "id": "path",
+                "kind": "polyline",
+                "source": "global_path/local_path",
+                "transport": "sse",
+                "endpoint": CLIENT_LINKS["events"],
+                "role": "navigation_plan",
+            },
+            {
+                "id": "robot",
+                "kind": "pose_marker",
+                "source": "odometry",
+                "transport": "sse",
+                "endpoint": CLIENT_LINKS["events"],
+                "role": "robot_pose",
+            },
+        ],
     }
 
 
@@ -454,41 +547,34 @@ def _feature_flags(gw: Any) -> dict[str, bool]:
         "exploration": explorer_available,
         "teleop": True,
         "camera_snapshot": True,
-        "webrtc": getattr(gw, "_webrtc", None) is not None,
+        "whep": True,
         "scene_graph": True,
         "locations": True,
         "sessions": True,
     }
 
 
-def _webrtc_summary(gw: Any) -> dict[str, Any]:
+def _whep_summary() -> dict[str, Any]:
     return {
-        "available": getattr(gw, "_webrtc", None) is not None,
-        "stats": CLIENT_LINKS["webrtc_stats"],
-        "offer": CLIENT_LINKS["webrtc_offer"],
-        "bitrate": CLIENT_LINKS["webrtc_bitrate"],
-        "whep": CLIENT_LINKS["webrtc_whep"],
+        "supported": True,
+        "endpoint": CLIENT_LINKS["webrtc_whep"],
         "go2rtc_status": CLIENT_LINKS["go2rtc_status"],
     }
 
 
 def _media_summary(gw: Any) -> dict[str, Any]:
     media = build_media_status(gw)
-    webrtc = _webrtc_summary(gw)
     return {
         "events": CLIENT_LINKS["events"],
         "teleop_ws": CLIENT_LINKS["teleop_ws"],
         "camera_ws": CLIENT_LINKS["camera_ws"],
         "cloud_ws": CLIENT_LINKS["cloud_ws"],
+        "scan_ws": CLIENT_LINKS["scan_ws"],
         "camera_snapshot": CLIENT_LINKS["camera_snapshot"],
-        "webrtc_available": bool(webrtc["available"]),
-        "webrtc_stats": CLIENT_LINKS["webrtc_stats"],
-        "webrtc_offer": CLIENT_LINKS["webrtc_offer"],
-        "webrtc_bitrate": CLIENT_LINKS["webrtc_bitrate"],
         "webrtc_whep": CLIENT_LINKS["webrtc_whep"],
         "go2rtc_status": CLIENT_LINKS["go2rtc_status"],
         "camera": media["camera"],
-        "webrtc": webrtc,
+        "whep": _whep_summary(),
     }
 
 
@@ -562,18 +648,14 @@ def _operation_contracts(gw: Any) -> dict[tuple[str, str], dict[str, Any]]:
                     if isinstance(op.get("requestBody"), Mapping)
                     else {}
                 )
-                request_json = _mapping(
-                    _mapping(request_content).get("application/json")
-                )
+                request_json = _mapping(_mapping(request_content).get("application/json"))
                 responses = _mapping(op.get("responses"))
                 response_200 = _mapping(responses.get("200"))
                 response_content = _mapping(response_200.get("content"))
                 response_json = _mapping(response_content.get("application/json"))
                 response_schema = _schema_name(response_json.get("schema"))
                 if response_schema is None:
-                    response_media = _mapping(
-                        response_content.get("text/event-stream")
-                    )
+                    response_media = _mapping(response_content.get("text/event-stream"))
                     response_schema = _schema_name(response_media.get("schema"))
                 contracts[(http_method, str(path))] = {
                     "operation_id": op.get("operationId"),
@@ -678,8 +760,17 @@ def build_app_capabilities(gw: Any) -> dict[str, Any]:
                 "path": CLIENT_LINKS["cloud_ws"],
                 "transport": "websocket",
                 "binary_point_cloud_frames": True,
+                "semantic": "accumulated_mapping_cloud",
                 "drop_policy": traffic.get("cloud", {}).get("drop_policy"),
             },
+            "scan": {
+                "path": CLIENT_LINKS["scan_ws"],
+                "transport": "websocket",
+                "binary_point_cloud_frames": True,
+                "semantic": "current_lidar_scan",
+                "drop_policy": traffic.get("scan", {}).get("drop_policy"),
+            },
+            "scene_layers": _scene_layer_contract(gw),
         },
         "client_policy": {
             "poll_rates_hz": traffic.get("recommended_client_rates_hz", {}),
@@ -705,6 +796,7 @@ def build_app_traffic(gw: Any) -> dict[str, Any]:
         "status": "degraded" if warnings else "ok",
         "sse": _mapping(traffic.get("sse")),
         "cloud": _mapping(traffic.get("cloud")),
+        "scan": _mapping(traffic.get("scan")),
         "recommended_client_rates_hz": traffic.get("recommended_client_rates_hz", {}),
         "client_policy": _client_traffic_policy(
             gw,
@@ -754,14 +846,8 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
             },
             "estop_clear": mode != "estop",
             "safety_clear": safety_clear,
-            "can_send_commands": (
-                mode != "estop"
-                and safety_clear
-                and not bool(session.get("pending"))
-            ),
-            "can_send_goal": (
-                safety_clear and bool(navigation.get("can_accept_goal", False))
-            ),
+            "can_send_commands": (mode != "estop" and safety_clear and not bool(session.get("pending"))),
+            "can_send_goal": (safety_clear and bool(navigation.get("can_accept_goal", False))),
             "goal_blockers": goal_blockers,
             "command_policy": _command_policy(gw),
         }
@@ -788,6 +874,7 @@ def build_app_bootstrap(gw: Any) -> dict[str, Any]:
         "scene": {
             "available": bool(scene_graph_json) and scene_graph_json != "{}",
             "endpoint": CLIENT_LINKS["scene_graph"],
+            "layers": _scene_layer_contract(gw),
         },
         "path": {
             "points": path_len,

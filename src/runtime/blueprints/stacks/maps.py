@@ -1,20 +1,19 @@
-"""Map stack: runtime map layers plus MapService."""
+"""Map stack: runtime map layers plus native maps service."""
 
 from __future__ import annotations
 
 import logging
-import os
 
+from maps.adapters.resolver import map_output_adapter_module
+from maps.paths import nav_map_root_str
 from runtime.blueprint import Blueprint
-from runtime.adapters.mapping_slam import map_output_adapter_module
 from runtime.blueprints.stacks._registry import stack_module
-from runtime.blueprints.wires.mapping import map_output_specs
 from runtime.blueprints.wires.context import MAP_OUT
+from runtime.blueprints.wires.mapping import map_output_specs
 from runtime.blueprints.wires.types import wire_present_specs
 from runtime.profiles.binding_policy import (
     map_output_adapter_enabled,
     map_output_uses_dds,
-    map_output_uses_ros2,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ def maps(**config) -> Blueprint:
     """Real-time map layers from LiDAR point cloud, plus map lifecycle management.
 
     Params sourced from robot_config.yaml (occupancy_grid / voxel_grid sections).
-    MapService is always included 閳?it handles list/save/use/delete/build
+    MapsModule is always included; it handles list/save/use/delete/build
     commands arriving via its map_command In port.
     """
     bp = Blueprint()
@@ -35,31 +34,37 @@ def maps(**config) -> Blueprint:
             "map",
             "occupancy_grid",
             seed_group="map",
-            fallback="nav.services.map_layers.occupancy_grid_module.OccupancyGridModule",
+            fallback="maps.modules.occupancy.OccupancyGridModule",
         )
         VoxelGridModule = stack_module(
             "map",
             "voxel",
             seed_group="map",
-            fallback="nav.services.map_layers.voxel_grid_module.VoxelGridModule",
+            fallback="maps.modules.voxel_grid.VoxelGridModule",
+        )
+        SemanticMapModule = stack_module(
+            "map",
+            "semantic",
+            seed_group="map",
+            fallback="maps.modules.semantic.SemanticMapModule",
         )
         ESDFModule = stack_module(
             "map",
             "esdf",
             seed_group="map",
-            fallback="nav.services.map_layers.esdf_module.ESDFModule",
+            fallback="maps.modules.esdf.ESDFModule",
         )
         ElevationMapModule = stack_module(
             "map",
             "elevation",
             seed_group="map",
-            fallback="nav.services.map_layers.elevation_map_module.ElevationMapModule",
+            fallback="maps.modules.elevation.ElevationMapModule",
         )
         TraversabilityCostModule = stack_module(
             "map",
             "traversability_cost",
             seed_group="map",
-            fallback="nav.services.map_layers.traversability_cost_module.TraversabilityCostModule",
+            fallback="maps.modules.traversability.TraversabilityCostModule",
         )
         cfg = get_config()
         og = cfg.raw.get("occupancy_grid", {})
@@ -104,12 +109,9 @@ def maps(**config) -> Blueprint:
         if map_output_adapter_enabled(config):
             if map_output_uses_dds(config):
                 GridAdapterModule = map_output_adapter_module(enable_dds=True)
-            elif map_output_uses_ros2(config):
-                GridAdapterModule = map_output_adapter_module(enable_ros2=True)
             else:
                 logger.warning(
-                    "Map output adapter requested without an explicit adapter; "
-                    "skipping instead of selecting a ROS2 adapter by default"
+                    "Map output adapter requested without an explicit adapter; only native DDS map output is supported"
                 )
                 GridAdapterModule = None
             if GridAdapterModule is not None:
@@ -128,6 +130,17 @@ def maps(**config) -> Blueprint:
             max_z=vg.get("max_z", 3.0),
             decay_rate=vg.get("decay_rate", 0.01),
             publish_interval=vg.get("publish_interval", 2.0),
+            backend=config.get("voxel_backend", vg.get("backend", "cpp")),
+            column_carving=config.get(
+                "voxel_column_carving",
+                vg.get("column_carving", True),
+            ),
+        )
+        bp.add(
+            SemanticMapModule,
+            alias="SemanticMapModule",
+            voxel_size=config.get("semantic_voxel_size", 0.2),
+            publish_interval=config.get("semantic_publish_interval", 1.0),
         )
 
         bp.add(ESDFModule, alias="ESDFModule")
@@ -151,27 +164,41 @@ def maps(**config) -> Blueprint:
     except ImportError as e:
         logger.warning("Map modules not available: %s", e)
 
-    # MapService: map lifecycle (list/save/use/build/delete).
+    # MapsModule: map lifecycle (list/save/use/build/delete).
     # Always included so the REPL and Gateway can issue map_command messages
     # without needing a direct subprocess call.
     try:
-        MapService = stack_module(
+        MapsModule = stack_module(
             "map",
-            "manager",
+            "service",
             seed_group="map",
-            fallback="nav.services.maps.MapService",
+            fallback="maps.modules.service.MapsModule",
         )
         map_dir = config.get(
             "map_dir",
-            os.environ.get(
-                "NAV_MAP_DIR",
-                # Canonical sunrise map dir 閳?see note in
-                # nav.services.map_layers.__init__ for why this must match.
-                os.path.expanduser("~/data/nova/maps"),
-            ),
+            nav_map_root_str(),
         )
-        bp.add(MapService, alias="nav.maps", map_dir=map_dir)
+        maps_service_config = {"map_dir": map_dir}
+        for key in (
+            "map_artifact_converter_command",
+            "octomap_converter_command",
+            "octomap_build_mode",
+            "octomap_resolution",
+            "octomap_free_layers_above",
+            "octomap_free_dilation_cells",
+            "octomap_build_timeout_sec",
+            "build_octomap_on_save",
+            "map_prune_command",
+            "dynamic_filter_command",
+            "map_opt",
+            "map_opt_command",
+            "map_opt_timeout_sec",
+            "map_opt_required",
+        ):
+            if key in config and config[key] is not None:
+                maps_service_config[key] = config[key]
+        bp.add(MapsModule, alias="maps.service", **maps_service_config)
     except ImportError as e:
-        logger.warning("MapService not available: %s", e)
+        logger.warning("MapsModule not available: %s", e)
 
     return bp

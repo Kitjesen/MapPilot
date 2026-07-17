@@ -58,16 +58,21 @@ else
     echo "  skipped: Node.js or web/ is not available"
 fi
 
-echo "[3/6] Building production nav kernel..."
+echo "[3/6] Building production navigation and driver plus maps..."
 if is_lite_profile; then
-    echo "  skipped: Lite profile uses simple/pid autonomy"
+    echo "  skipped: Lite profile uses the local compatibility driver"
 else
+    bash "${REPO}/scripts/build/build_maps.sh"
     bash "${REPO}/scripts/build/build_nav_kernel.sh" --clean
+    bash "${REPO}/scripts/build/build_nav_endpoint.sh"
+    bash "${REPO}/scripts/build/build_orbbec_native.sh"
+    bash "${REPO}/scripts/build/build_camera_dds.sh"
     PYTHONPATH="${REPO}/src:${PYTHONPATH:-}" "${PYTHON_BIN}" - <<'PY'
 from nav.kernel import require_nav_kernel
 require_nav_kernel(context="Thunder deployment")
 print("  nav_kernel OK")
 PY
+    bash "${REPO}/scripts/build/build_driver.sh"
 fi
 
 echo "[4/6] Stopping previous LingTu runtime if present..."

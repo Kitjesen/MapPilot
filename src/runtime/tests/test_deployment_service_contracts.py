@@ -13,7 +13,6 @@ import pytest
 
 from runtime.runtime_interface import TOPICS, adapter_remappings
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -184,8 +183,29 @@ def _gateway_fixture(tmp_path: Path, *, mutate_plan_state: bool = False):
                     elif self.path == "/api/v1/state":
                         self.send_json({
                             "schema_version": 1,
-                            "odometry": {"x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.3},
-                            "localization": {"state": "TRACKING", "ready": True},
+                            "odometry": {
+                                "x": 1.0,
+                                "y": 2.0,
+                                "z": 0.0,
+                                "yaw": 0.3,
+                                "frame_id": "odom",
+                            },
+                            "localization": {
+                                "state": "TRACKING",
+                                "ready": True,
+                                "map_odom_tf": {
+                                    "valid": True,
+                                    "frame_id": "map",
+                                    "child_frame_id": "odom",
+                                    "tx": 10.0,
+                                    "ty": -5.0,
+                                    "tz": 1.0,
+                                    "qx": 0.0,
+                                    "qy": 0.0,
+                                    "qz": 0.0,
+                                    "qw": 1.0,
+                                },
+                            },
                             "navigation": {"control": {"active_cmd_source": "none"}},
                         })
                     else:
@@ -501,6 +521,13 @@ def _make_slamcheck_harness(tmp_path: Path) -> dict[str, Path | str]:
             */api/v1/session)
                 echo '{}'
                 ;;
+            */api/v1/map/activate)
+                name="$(printf '%s' "$data" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+                [ -n "$name" ] || name=demo
+                echo "activate:$name" >> "${FAKE_ROOT}/calls.log"
+                ln -sfn "$name" "$HOME/data/nova/maps/active"
+                printf '{"schema_version":1,"ok":true,"success":true,"active":"%s"}\n' "$name"
+                ;;
             */ready)
                 echo '{"ready":true,"data_ready":true,"motion_ready":false,"non_motion_safe":true,"reasons":["navigation_blocked:navigation_session_inactive"],"failed_modules":[],"runtime":{"summary":{"data_blockers":[]}}}'
                 ;;
@@ -514,10 +541,11 @@ def _make_slamcheck_harness(tmp_path: Path) -> dict[str, Path | str]:
                 echo "maps:$data" >> "${FAKE_ROOT}/calls.log"
                 action="$(printf '%s' "$data" | sed -n 's/.*"action"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
                 name="$(printf '%s' "$data" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+                active="$(readlink "$HOME/data/nova/maps/active" 2>/dev/null || true)"
                 [ -n "$action" ] || action=list
                 [ -n "$name" ] || name=demo
-                printf '{"schema_version":1,"ok":true,"success":true,"action":"%s","name":"%s","map_dir":"%s/data/nova/maps/%s","tomogram":"tomogram.pickle","occupancy":"occupancy.npz","occupancy_ok":true}\n' \
-                    "$action" "$name" "$HOME" "$name"
+                printf '{"schema_version":1,"ok":true,"success":true,"action":"%s","name":"%s","active":"%s","map_dir":"%s/data/nova/maps/%s","octomap":"octomap.ot","occupancy":"occupancy.npz","occupancy_ok":true}\n' \
+                    "$action" "$name" "$active" "$HOME" "$name"
                 ;;
             */api/v1/map/restore_predufo)
                 echo "restore:$data" >> "${FAKE_ROOT}/calls.log"
@@ -588,10 +616,7 @@ def _make_slamcheck_harness(tmp_path: Path) -> dict[str, Path | str]:
         [
             "bash",
             "-lc",
-            (
-                f"ln -sfn demo "
-                f"{shlex.quote(fake_home_posix + '/data/nova/maps/active')}"
-            ),
+            (f"ln -sfn demo {shlex.quote(fake_home_posix + '/data/nova/maps/active')}"),
         ],
         check=True,
         cwd=REPO_ROOT,
@@ -655,12 +680,10 @@ def _run_lingtu_command(
     }
     if extra_env:
         exports.update(extra_env)
-    export_cmd = "; ".join(
-        f"export {name}={shlex.quote(str(value))}" for name, value in exports.items()
-    )
+    export_cmd = "; ".join(f"export {name}={shlex.quote(str(value))}" for name, value in exports.items())
     command = (
         f"{export_cmd}; "
-        f"export PATH={shlex.quote(str(harness['bin_posix']))}:\"$PATH\"; "
+        f'export PATH={shlex.quote(str(harness["bin_posix"]))}:"$PATH"; '
         "hash -r; "
         f"bash scripts/lingtu {command_args}"
     )
@@ -700,10 +723,7 @@ def test_robot_localizer_service_matches_slam_bridge_topics():
         assert f"-r {source}:={target}" in text
     assert f"-r /localization_quality:={TOPICS.localization_quality}" in text
     assert f"-r global_relocalize:={TOPICS.global_relocalize_service}" in text
-    assert (
-        f"-r global_relocalize_status:={TOPICS.global_relocalize_status_service}"
-        in text
-    )
+    assert f"-r global_relocalize_status:={TOPICS.global_relocalize_status_service}" in text
     assert "-r map_cloud:=/nav/map_cloud" not in text
 
 
@@ -748,10 +768,7 @@ def test_s100p_localizer_template_matches_relocalize_api():
         assert f"-r {source}:={target}" in text
     assert f"-r /localization_quality:={TOPICS.localization_quality}" in text
     assert f"-r global_relocalize:={TOPICS.global_relocalize_service}" in text
-    assert (
-        f"-r global_relocalize_status:={TOPICS.global_relocalize_status_service}"
-        in text
-    )
+    assert f"-r global_relocalize_status:={TOPICS.global_relocalize_status_service}" in text
     assert "-r map_cloud:=/nav/map_cloud" not in text
 
 
@@ -801,10 +818,7 @@ def test_topic_contract_names_static_map_and_global_relocalize():
     assert f"quality: {TOPICS.localization_quality}" in text
     assert f"health: {TOPICS.localization_health}" in text
     assert f"global_relocalize_service: {TOPICS.global_relocalize_service}" in text
-    assert (
-        f"global_relocalize_status_service: {TOPICS.global_relocalize_status_service}"
-        in text
-    )
+    assert f"global_relocalize_status_service: {TOPICS.global_relocalize_status_service}" in text
 
 
 def test_qos_profiles_use_canonical_localization_topics():
@@ -817,11 +831,7 @@ def test_qos_profiles_use_canonical_localization_topics():
 
 def test_record_bag_captures_canonical_localization_topics():
     text = _read("scripts/hardware/record_bag.sh")
-    topic_lines = {
-        line.strip()
-        for line in text.splitlines()
-        if line.strip().startswith("/")
-    }
+    topic_lines = {line.strip() for line in text.splitlines() if line.strip().startswith("/")}
 
     assert TOPICS.localization_quality in topic_lines
     assert TOPICS.localization_health in topic_lines
@@ -830,11 +840,7 @@ def test_record_bag_captures_canonical_localization_topics():
 
 def test_record_bag_captures_published_camera_intrinsics_topics():
     text = _read("scripts/hardware/record_bag.sh")
-    topic_lines = {
-        line.strip()
-        for line in text.splitlines()
-        if line.strip().startswith("/")
-    }
+    topic_lines = {line.strip() for line in text.splitlines() if line.strip().startswith("/")}
 
     assert "/camera/color/camera_info" in topic_lines
     assert "/camera/depth/camera_info" in topic_lines
@@ -868,7 +874,7 @@ def test_lingtu_doctor_checks_camera_device_online_status():
 
     assert "camera.device_status" in text
     assert "--require-camera" in text
-    assert "require_camera = sys.argv[5] == \"1\"" in text
+    assert 'require_camera = sys.argv[5] == "1"' in text
     assert "camera_check_status" in text
     assert "Mode: camera required for full App/Web visual readiness" in text
     assert '"/camera/device_status"' in text
@@ -893,11 +899,15 @@ def test_lingtu_doctor_reports_standard_quality_topic_with_legacy_hint():
 def test_lingtu_doctor_json_gates_runtime_readiness_freshness():
     text = _read("scripts/lingtu")
 
+    assert '"lingtu-camera-dds.service"' in text
+    assert 'elif svc == "lingtu-camera-dds.service"' in text
     assert "livox.sdk_init" in text
     assert "latest_livox_sdk_event" in text
     assert "Init lds lidar success" in text
     assert "livox.netdev_carrier" in text
     assert "LINGTU_LIDAR_NETDEV" in text
+    assert "LINGTU_LIVOX_NET_IFACE" in text
+    assert 'systemd_environment("lingtu-livox-dds.service")' in text
     assert "/sys/class/net/{name}" in text
     assert "bind failed" in text
     assert "gateway.slam_stream" in text
@@ -945,7 +955,7 @@ def test_lingtu_doctor_normalizes_structured_active_command_source():
 
     assert "def command_source_name(control):" in text
     assert 'source.get("name") or source.get("source") or source.get("owner") or "none"' in text
-    assert 'isinstance(s,dict)' in text
+    assert "isinstance(s,dict)" in text
 
 
 def test_lingtu_doctor_non_motion_json_runs_without_motion_side_effects(tmp_path):
@@ -959,12 +969,8 @@ def test_lingtu_doctor_non_motion_json_runs_without_motion_side_effects(tmp_path
     assert result.returncode == 0, result.stdout + result.stderr
     payload = json.loads(result.stdout)
     assert payload["ok"] is True
-    preview = next(
-        check for check in payload["checks"] if check["id"] == "gateway.navigation_plan_preview"
-    )
-    client_readiness = next(
-        check for check in payload["checks"] if check["id"] == "gateway.client_readiness"
-    )
+    preview = next(check for check in payload["checks"] if check["id"] == "gateway.navigation_plan_preview")
+    client_readiness = next(check for check in payload["checks"] if check["id"] == "gateway.client_readiness")
     assert client_readiness["status"] == "pass"
     assert client_readiness["evidence"]["status"] == "degraded"
     assert preview["status"] == "pass"
@@ -972,8 +978,7 @@ def test_lingtu_doctor_non_motion_json_runs_without_motion_side_effects(tmp_path
     assert preview["evidence"]["state_after"] == "IDLE"
     calls = (harness["root"] / "calls.log").read_text(encoding="utf-8")
     requests = [
-        tuple(json.loads(line)[:2])
-        for line in gateway["requests_log"].read_text(encoding="utf-8").splitlines()
+        tuple(json.loads(line)[:2]) for line in gateway["requests_log"].read_text(encoding="utf-8").splitlines()
     ]
     assert ("POST", "/api/v1/navigation/plan") in requests
     assert ("POST", "/api/v1/goal") not in requests
@@ -986,6 +991,12 @@ def test_lingtu_doctor_non_motion_json_runs_without_motion_side_effects(tmp_path
     assert "cmd_vel" not in calls
     assert "systemctl:restart" not in calls
     assert "systemctl:stop" not in calls
+    preview_request = next(
+        json.loads(json.loads(line)[2])
+        for line in gateway["requests_log"].read_text(encoding="utf-8").splitlines()
+        if tuple(json.loads(line)[:2]) == ("POST", "/api/v1/navigation/plan")
+    )
+    assert preview_request == {"x": 10.8, "y": -3.0, "z": 1.0}
 
 
 def test_lingtu_doctor_non_motion_preview_fails_if_plan_changes_state(tmp_path):
@@ -998,17 +1009,14 @@ def test_lingtu_doctor_non_motion_preview_fails_if_plan_changes_state(tmp_path):
 
     assert result.returncode != 0
     payload = json.loads(result.stdout)
-    preview = next(
-        check for check in payload["checks"] if check["id"] == "gateway.navigation_plan_preview"
-    )
+    preview = next(check for check in payload["checks"] if check["id"] == "gateway.navigation_plan_preview")
     assert preview["status"] == "fail"
     assert "mission state" in preview["message"]
     assert preview["evidence"]["active_cmd_source_after"] == "none"
     assert preview["evidence"]["state_after"] == "RUNNING"
     calls = (harness["root"] / "calls.log").read_text(encoding="utf-8")
     requests = [
-        tuple(json.loads(line)[:2])
-        for line in gateway["requests_log"].read_text(encoding="utf-8").splitlines()
+        tuple(json.loads(line)[:2]) for line in gateway["requests_log"].read_text(encoding="utf-8").splitlines()
     ]
     assert ("POST", "/api/v1/navigation/plan") in requests
     assert ("POST", "/api/v1/goal") not in requests
@@ -1214,9 +1222,19 @@ def test_lingtu_map_save_uses_map_manager_lifecycle():
     assert '"$GW/api/v1/maps"' in cmd_map
     assert '"$GW/api/v1/map/save"' not in cmd_map
     assert "restore_ok=" in cmd_map
-    assert "for rebuild_action in build_tomogram build_occupancy" in cmd_map
+    assert "for rebuild_action in build_octomap build_occupancy" in cmd_map
     assert '\\"action\\":\\"$rebuild_action\\"' in cmd_map
     assert "rebuild_ok=" in cmd_map
+
+
+def test_lingtu_map_start_delegates_to_full_product_mode_switch():
+    text = _read("scripts/lingtu")
+    cmd_map = text.split("cmd_map() {", 1)[1].split("cmd_nav() {", 1)[0]
+    map_start = cmd_map.split("start)", 1)[1].split("save)", 1)[0]
+
+    assert "cmd_mode switch map" in map_start
+    assert "slam_dds_set_mode" not in map_start
+    assert "/api/v1/session/start" not in map_start
 
 
 def test_lingtu_map_save_executes_map_manager_lifecycle(tmp_path):
@@ -1233,29 +1251,30 @@ def test_lingtu_map_restore_rebuilds_derived_artifacts(tmp_path):
     result, harness = _run_lingtu_command(tmp_path, "map restore demo")
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Rebuilding tomogram for demo" in result.stdout
+    assert "Rebuilding octomap for demo" in result.stdout
     assert "Rebuilding occupancy for demo" in result.stdout
     calls = (harness["root"] / "calls.log").read_text(encoding="utf-8")
     restore = 'restore:{"name":"demo"}'
-    tomogram = 'maps:{"action":"build_tomogram","name":"demo"}'
+    octomap = 'maps:{"action":"build_octomap","name":"demo"}'
     occupancy = 'maps:{"action":"build_occupancy","name":"demo"}'
     assert restore in calls
-    assert tomogram in calls
+    assert octomap in calls
     assert occupancy in calls
-    assert calls.index(restore) < calls.index(tomogram) < calls.index(occupancy)
+    assert calls.index(restore) < calls.index(octomap) < calls.index(occupancy)
 
 
-def test_lingtu_slamcheck_sets_active_map_symlink_and_runtime_env():
+def test_lingtu_slamcheck_activates_map_through_gateway_and_sets_runtime_env():
     text = _read("scripts/lingtu")
 
-    assert 'map_name=$(readlink "$maps_root/active" 2>/dev/null || true)' in text
+    assert 'active_maps_json=$(curl -s --max-time 4 "$GW/api/v1/maps"' in text
     assert "resolve_relocation_map_name()" in text
     assert "lingtu_maps_root()" in text
     assert 'MAP_DIR="${MAP_DIR:-${NAV_MAP_DIR:-$HOME/data/nova/maps}}"' in text
-    assert '$HOME/data/lingtu/maps' in text
+    assert "$HOME/data/lingtu/maps" in text
     assert 'maps_root="$(lingtu_maps_root)"' in text
     assert '[ ! -f "$map_dir/map.pcd" ]' in text
-    assert 'ln -sfn "$map_name" "$maps_root/active"' in text
+    assert '"$GW/api/v1/map/activate"' in text
+    assert 'ln -sfn "$map_name" "$maps_root/active"' not in text
     assert "SUPER_LIO_RELOCATION_MAP_DIR=$maps_root/active" in text
     assert "SUPER_LIO_RELOCATION_MAP_NAME=map.pcd" in text
     assert "SUPER_LIO_RELOCATION_UPDATE_MAP=false" in text
@@ -1328,7 +1347,7 @@ def test_lingtu_plan_preview_is_offline_non_motion_planner_gate():
     assert "Usage: lingtu plan-preview" in text
     assert "plan-preview|planpreview|preview-plan" in text
     assert 'python3 "$SCRIPT_DIR/planning/plan_preview.py"' in impl
-    assert "--map-root \"$map_root\"" in impl
+    assert '--map-root "$map_root"' in impl
     assert "Gateway calls, goals, or cmd_vel" in impl
     assert "/api/v1/goal" not in impl
     assert "/api/v1/navigation/plan" not in impl
@@ -1351,9 +1370,7 @@ def test_lingtu_routecompare_is_allow_motion_gated():
     assert "/api/v1/goal" in impl
     assert "/api/v1/cmd_vel" not in impl
     cmd_impl = impl[impl.index("cmd_routecompare()") :]
-    assert cmd_impl.index('if [ "$allow_motion" != "1" ]') < cmd_impl.index(
-        "routecompare_run_backend"
-    )
+    assert cmd_impl.index('if [ "$allow_motion" != "1" ]') < cmd_impl.index("routecompare_run_backend")
 
 
 def test_lingtu_exposes_product_acceptance_gateway_commands():
@@ -1414,13 +1431,9 @@ def test_lingtu_product_acceptance_wrappers_delegate_to_lingtu_py(tmp_path):
     log = calls.read_text(encoding="utf-8")
     assert "lingtu.py dataflow --gateway-url http://fake-gateway:5050 odometry" in log
     assert (
-        "lingtu.py gateway-runtime-acceptance --gateway-url "
-        "http://fake-gateway:5050 --acceptance-mode field"
+        "lingtu.py gateway-runtime-acceptance --gateway-url http://fake-gateway:5050 --acceptance-mode field"
     ) in log
-    assert (
-        "lingtu.py field-check --gateway-url "
-        "http://fake-gateway:5050 /tmp/map --require-tomogram"
-    ) in log
+    assert ("lingtu.py field-check --gateway-url http://fake-gateway:5050 /tmp/map --require-tomogram") in log
     assert "lingtu.py saved-map-artifact-gate /tmp/map --require-occupancy" in log
 
 
@@ -1516,11 +1529,10 @@ def test_lingtu_slamcompare_waits_for_candidate_ready_before_probe(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASS: static localization compare met non-motion thresholds" in result.stdout
     calls = (harness["root"] / "calls.log").read_text(encoding="utf-8")
+    assert "activate:demo" in calls
     assert "switch:super_lio_relocation" in calls
     assert "switch:localizer" in calls
-    assert (harness["root"] / "candidate_state_calls").read_text(
-        encoding="utf-8"
-    ).strip() == "3"
+    assert (harness["root"] / "candidate_state_calls").read_text(encoding="utf-8").strip() == "3"
 
 
 def test_lingtu_slamcheck_executes_super_lio_snapshot_contract(tmp_path):
@@ -1553,6 +1565,7 @@ def test_lingtu_slamcheck_executes_relocation_active_map_env_and_rollback(tmp_pa
     assert "SUPER_LIO_RELOCATION_UPDATE_MAP=false" in env_text
     assert "SUPER_LIO_RELOCATION_INIT_POSE=[1.000000,2.000000,0.0,0.0,0.0,3.000000]" in env_text
     calls = (harness["root"] / "calls.log").read_text(encoding="utf-8")
+    assert "activate:demo" in calls
     assert "switch:super_lio_relocation" in calls
     assert "switch:localizer" in calls
 
@@ -1562,9 +1575,7 @@ def test_lingtu_slamcheck_overwrites_stale_relocation_runtime_env(tmp_path):
         tmp_path,
         "super_lio_relocation --duration 0 --initial-pose 4 5 6 --rollback none",
         seed_relocation_env=(
-            "SUPER_LIO_RELOCATION_MAP_DIR=/stale\n"
-            "SUPER_LIO_RELOCATION_INIT_POSE=[9,9,9]\n"
-            "STALE_KEY=must_disappear\n"
+            "SUPER_LIO_RELOCATION_MAP_DIR=/stale\nSUPER_LIO_RELOCATION_INIT_POSE=[9,9,9]\nSTALE_KEY=must_disappear\n"
         ),
     )
 
@@ -1686,10 +1697,7 @@ def test_lingtu_routecheck_previews_baseline_candidate_and_rolls_back(tmp_path):
     artifact = tmp_path / "route-artifacts"
     result, harness = _run_lingtu_command(
         tmp_path,
-        (
-            "routecheck --map demo --goal 1 2 0 --candidate-warmup 0 "
-            f"--artifact-dir {shlex.quote(_wsl_path(artifact))}"
-        ),
+        (f"routecheck --map demo --goal 1 2 0 --candidate-warmup 0 --artifact-dir {shlex.quote(_wsl_path(artifact))}"),
         extra_env={
             "LINGTU_SLAMCOMPARE_READY_POLL": "0",
             "LINGTU_SLAMCOMPARE_READY_TIMEOUT": "2",
@@ -1736,10 +1744,7 @@ def test_lingtu_routecheck_blocks_plan_and_captures_failed_rollback(tmp_path):
     artifact = tmp_path / "route-artifacts"
     result, harness = _run_lingtu_command(
         tmp_path,
-        (
-            "routecheck --map demo --goal 1 2 0 --candidate-warmup 0 "
-            f"--artifact-dir {shlex.quote(_wsl_path(artifact))}"
-        ),
+        (f"routecheck --map demo --goal 1 2 0 --candidate-warmup 0 --artifact-dir {shlex.quote(_wsl_path(artifact))}"),
         extra_env={
             "FAKE_NAV_BLOCKER": "safety_stop",
             "LINGTU_SLAMCOMPARE_READY_POLL": "0",
@@ -1964,7 +1969,7 @@ def test_super_lio_relocation_service_uses_active_map_and_float_pose():
     assert '-p "lio.map.save_map_dir:=$${EFFECTIVE_MAP_DIR}"' in text
     assert 'ln -sfn "$${SOURCE_MAP_DIR}" "$${SUPER_LIO_ROOT}/map/lingtu_active"' in text
     assert 'EFFECTIVE_MAP_DIR="map/lingtu_active"' in text
-    assert 'Super-LIO relocation map: $${MAP_CHECK_DIR}/$${SUPER_LIO_RELOCATION_MAP_NAME} bytes=$${MAP_BYTES}' in text
+    assert "Super-LIO relocation map: $${MAP_CHECK_DIR}/$${SUPER_LIO_RELOCATION_MAP_NAME} bytes=$${MAP_BYTES}" in text
 
 
 def test_camera_deployment_retires_legacy_units():
@@ -2014,7 +2019,7 @@ def test_robot_lidar_uses_installed_ros2_env_helper():
     assert "robot-lidar readiness failed" in lidar_service
     assert "TimeoutStopSec=10s" in lidar_service
     assert "KillMode=control-group" in lidar_service
-    assert "sed -n \"s/^Publisher count: //p\"" in lidar_service
+    assert 'sed -n "s/^Publisher count: //p"' in lidar_service
     assert "ros2-env.conf" not in lidar_service
 
 
@@ -2064,9 +2069,7 @@ def test_lingtu_nav_start_auto_relocalizes_when_tracking_not_reusable():
     seeded_relocalize = script.split("nav_relocalize_saved_map() {", 1)[1].split(
         "\n}\n\nnav_global_relocalize_saved_map() {", 1
     )[0]
-    reuse_check = script.split("nav_relocalization_ready_without_request() {", 1)[1].split(
-        "\nPY\n}", 1
-    )[0]
+    reuse_check = script.split("nav_relocalization_ready_without_request() {", 1)[1].split("\nPY\n}", 1)[0]
 
     assert 'elif nav_relocalization_ready_without_request "$map"; then' in nav_start
     assert 'nav_global_relocalize_saved_map "$map" || exit 1' in nav_start
@@ -2074,18 +2077,16 @@ def test_lingtu_nav_start_auto_relocalizes_when_tracking_not_reusable():
     assert 'raw_map="$map"' in nav_start
     assert 'map=$(resolve_relocation_map_name "$maps_root" "$raw_map")' in nav_start
     assert 'tf.get("valid") is True' in reuse_check
-    assert 'reported_map == map_name' in reuse_check
+    assert "reported_map == map_name" in reuse_check
     assert "pose_fresh_ok" in reuse_check
-    assert '*timeout*)' in seeded_relocalize
+    assert "*timeout*)" in seeded_relocalize
 
 
 def test_lingtu_svc_status_defaults_to_native_services():
     script = _read("scripts/lingtu")
     docs = _read("docs/04-deployment/lingtu_cli.md")
     status_case = script.split("cmd_svc() {", 1)[1].split("\n        restart)", 1)[0]
-    default_status = status_case.split("status)", 1)[1].split(
-        "status-legacy|legacy-status", 1
-    )[0]
+    default_status = status_case.split("status)", 1)[1].split("status-legacy|legacy-status", 1)[0]
     legacy_status = status_case.split("status-legacy|legacy-status", 1)[1]
 
     assert "lingtu-livox-dds.service" in default_status
@@ -2100,7 +2101,7 @@ def test_lingtu_svc_status_defaults_to_native_services():
     assert "robot-localizer.service" in legacy_status
     assert "legacy/experimental services are active" in script
     assert "status-legacy|restart" in script
-    assert "if [ \"$ros2\" = \"1\" ]; then" in script
+    assert 'if [ "$ros2" = "1" ]; then' in script
     assert "cmd_svc status-legacy" in script
     assert "lingtu svc status-legacy" in docs
 

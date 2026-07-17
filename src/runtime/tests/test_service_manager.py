@@ -107,7 +107,7 @@ def test_canonical_robot_unit_wins_over_active_legacy_alias(monkeypatch):
 
     fake = _FakeSystemctl(
         active={"camera.service"},
-        loaded={"robot-camera.service", "camera.service"},
+        loaded={"lingtu-camera-dds.service", "camera.service"},
     )
     monkeypatch.setattr(subprocess, "run", fake)
 
@@ -115,8 +115,8 @@ def test_canonical_robot_unit_wins_over_active_legacy_alias(monkeypatch):
 
     assert svc.status("camera") == {"camera": "stopped"}
     assert svc.start("camera") == ["camera"]
-    assert "robot-camera.service" in fake.active
-    assert ["sudo", "systemctl", "start", "robot-camera.service"] in fake.commands
+    assert "lingtu-camera-dds.service" in fake.active
+    assert ["sudo", "systemctl", "start", "lingtu-camera-dds.service"] in fake.commands
     assert ["sudo", "systemctl", "start", "camera.service"] not in fake.commands
 
 
@@ -407,9 +407,7 @@ def test_text_systemctl_calls_use_stable_utf8_decode(monkeypatch):
     svc = ServiceManager()
 
     assert svc._unit_exists("robot-camera.service") is True
-    show_index = fake.commands.index(
-        ["systemctl", "show", "-p", "LoadState", "--value", "robot-camera.service"]
-    )
+    show_index = fake.commands.index(["systemctl", "show", "-p", "LoadState", "--value", "robot-camera.service"])
     assert fake.kwargs[show_index]["encoding"] == "utf-8"
     assert fake.kwargs[show_index]["errors"] == "replace"
 

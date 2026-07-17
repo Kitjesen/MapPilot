@@ -6,46 +6,62 @@ Date: 2026-06-18
 ## Decision
 
 LingTu should not replace ROS 2 by copying the ROS topic model into business
-code. The project will own a small Runtime Bus contract:
+code. Product real-time boundaries use one product bus: typed CycloneDDS.
+Algorithms inside one process call each other directly.
 
 ```text
-Capability Module
-  -> typed Module ports
-  -> LingTu channel contract
-  -> local / lcm / shm / ros2 / replay transport adapters
+Cross-process product data plane
+  -> typed DDS topics
+
+Same-process algorithm chain
+  -> direct C++/Python function calls and in-memory data structures
+
+High-volume same-host snapshots
+  -> DDS metadata + SHM / mmap / binary snapshot when needed
+
+Replay/debug/legacy compatibility
+  -> explicit adapters only; LCM is not a product data plane
 ```
 
 Normal modules speak LingTu channels and `runtime.msgs` types. ROS 2 topics, LCM
-channels, simulator feeds, replay files, and future shared-memory paths are
-adapter aliases for those channels.
+channels, simulator feeds, replay files, and shared-memory paths are adapter
+aliases only when the selected endpoint explicitly enables them.
 
 ## Communication Plan And Status
 
-Current target: server/simulation/endpoint communication. Do not read this as
-real-hardware validation.
+Current target: product field runtime and real-equivalent simulation. Real-time
+product services communicate through typed DDS at service boundaries; internal
+algorithm chains stay in-process.
 
 | Boundary | Planned transport | Done now | Not done |
 | --- | --- | --- | --- |
 | Module to Module | Port/Wire with local transport | Yes: Blueprint wires connect typed ports in-process. | Nothing else needed by default. |
 | UI / SDK / operator | Gateway REST/SSE/WS/MCP JSON | Partly: status, preview, map, and command surfaces exist. | Generated Dart/Rust/TS SDK contracts are not complete. |
-| Map to planner | MapService bundle + artifact path | Yes: `map.bundle`, `map.record`, `octomap.bt`, `occupancy.npz`, `map.pcd`. | Native direct OctoMap/ESDF builders are pending. |
+| Gateway to native navigation | Process-wide C++ CycloneDDS command client loaded through a small C ABI | Goal, cancel, teleop, safety, and inspection commands use typed request/ACK envelopes through one reused `liblingtu_nav_client.so` session. Gateway does not fork a command subprocess and Python owns no field DDS writer. | Validate the ABI and endpoint binary on S100P as part of every deployment gate. |
+| Map to planner | MapService capability bundle | Native occupancy, ESDF, traversability and optional embedded OctoMap builders publish versioned bundles; external OctoMap conversion is an explicit build mode. | Remove the remaining planner-side legacy filesystem reader and validate on S100P. |
 | Global plan output | `GlobalPlanResult.to_wire()` JSON | Yes for Gateway/UI/replay payloads. | No binary planner protocol needed now. |
-| Endpoint/replay bridge | LCM endpoint contract or local smoke transport | Partly: LCM adapters, JSON envelope, local smoke source, JSONL validator, and deployment validator exist. | LCM remains for smoke/replay tests only; Thunder no longer ships an `lcm-endpoint` installer. |
-| DDS | Typed DDS for selected high-performance boundaries | Yes for `thunder_field`: `thunder_field_dds_v1`, native Livox SDK2 stream, and C++ CycloneDDS SLAM runtime. | Generic pickle DDS is not product-grade; ROS-shaped DDS schemas on command topics remain transitional. |
-| SHM | High-volume same-host IPC | Backend exists. | No stable point-cloud/image schema or performance gate yet. |
-| Native SLAM hot path | Local callbacks first; typed DDS only after split | Ingress contract exists. | Python runtime still uses the contract runner, not the C++ Fast-LIO backend. |
+| Endpoint/replay bridge | typed DDS for product, local/LCM only for replay or smoke | Partly: LCM adapters and JSONL validators still exist for replay/debug. | LCM must not be selected by field product profiles. |
+| DDS | Typed DDS for all field service boundaries | Livox, Fast-LIO2, traversability, native nav, exploration, camera publication, and teleop request/final-command ownership are C++ CycloneDDS paths. | Camera and GNSS still have bounded Python readers in the Module graph. |
+| SHM | High-volume same-host IPC | Point-cloud/status snapshots exist. | Camera color/depth still cross into the Module graph through Python DDS; add a versioned C++ SHM ring before retiring that reader. |
+| Native SLAM hot path | C++ Fast-LIO2 with typed DDS ingress/egress | Live field runtime and scan/odometry/cloud contracts exist. | Continue hardware regression and map/localization acceptance; do not reintroduce Python DDS into SLAM. |
 
 ## Core Rules
 
 - Product and capability code must not use ROS topic names as its primary data
   contract.
+- Product real-time main paths must use typed DDS at service boundaries.
 - Module-to-module traffic defaults to `ModulePort + LocalTransport`.
-- Cross-process or cross-language traffic should use an explicit endpoint
-  transport. Thunder field production endpoint (`thunder_field`) uses typed
-  CycloneDDS (`thunder_field_dds_v1`); LCM remains for smoke/replay bridges
-  and smoke/replay LCM tests.
-- ROS 2 remains a compatibility adapter only. It belongs under `runtime.adapters.ros2`,
-  legacy native launch surfaces, simulator bridges, or field adapter code.
+- Same-process C++ endpoint internals must not introduce LCM. OctoPlanner3D,
+  LocalPlanner, PathFollower, and command arbitration call each other directly
+  when they live inside one endpoint process.
+- Cross-process or cross-language product traffic must use typed DDS. Thunder
+  field production endpoint (`thunder_field`) uses typed CycloneDDS
+  (`thunder_field_dds_v1`).
+- LCM is limited to replay, debug, legacy adapters, or external benchmark
+  shims. It must not be required by `nav`, `teleop_avoid`, `map`, `tracking`,
+  `inspection`, or `tare_explore` field profiles.
+- ROS 2 remains a compatibility adapter only. It belongs outside the product
+  source tree or in explicitly quarantined legacy launch/simulator bridges.
 - `runtime.msgs` is the canonical in-process message model.
 - Codec layers convert between `runtime.msgs` and ROS messages, LCM payloads, JSON
   envelopes, or future binary/shared-memory schemas.
@@ -111,23 +127,67 @@ Thunder Endpoint/Nav:
   smoke/replay checks that do not require the native DDS sensor stack.
 - Uses ROS 2 only when integrating legacy SLAM, simulator, TARE, or existing
   external services.
+- Resolves a `route_contract` in addition to `module_transport` and
+  `endpoint_transport`. For `thunder_field`, the expected shape is
+  `module_transport=local`, `endpoint_transport=dds`,
+  `endpoint_contract=thunder_field_dds_v1`, and `route_contract=robot`.
+  The route contract validates canonical topic ownership and DDS schema
+  bindings; it does not by itself make ordinary Modules import or speak DDS.
+  Use `Blueprint.route_contract(...)` for metadata-only contracts and reserve
+  `Blueprint.routed_delivery(...)` for deliberate internal routed transport.
 
 Future hot-path streams:
 
 - Use shared memory or binary schemas only for large point cloud/image paths.
 - Do not make shared memory the default control-plane transport.
 
+## Remaining cyclonedds-python Surface
+
+Python navigation DDS input/output adapters have been deleted. A regression
+test now keeps the remaining `runtime.adapters.dds.reader` imports bounded to:
+
+- camera DDS ingestion;
+- GNSS DDS ingestion;
+- optional IMU and LiDAR compatibility adapters;
+- the legacy Python TARE bridge.
+
+Navigation goal/cancel/teleop writers are no longer part of this list. Their
+field owner is `liblingtu_nav_client.so`, reused by Gateway and `GoalService`.
+
+The remaining migration order is camera, GNSS, TARE, then compatibility adapters. Camera
+should move high-volume color/depth frames from the C++ camera service into a
+versioned SHM ring or snapshot contract, while low-rate camera metadata and
+health stay typed DDS. GNSS and TARE should move their consumers into C++
+endpoints. Diagnostic scripts may keep cyclonedds-python as an optional tool;
+it must never become a robot startup dependency.
+
 ## Implementation Order
 
-1. Add a channel contract module such as `runtime.contracts.channels`.
-2. Move topic names in product/runtime code behind channel constants.
-3. Keep ROS/LCM aliases in adapter contracts, not in capability modules.
-4. Add static tests that ordinary modules do not import ROS packages or hardcode
-   adapter topic names.
-5. Mark legacy native ROS packages such as `sensor_scan_generation` as optional
-   adapter surfaces.
-6. Only after the contract is stable, consider extracting pure algorithm kernels
-   from legacy ROS nodes.
+1. **Done:** make C++ navigation the single field command boundary. Goal,
+   cancel, teleop, global/local path, waypoint, and final command ownership are
+   explicit.
+2. **Done:** replace Gateway subprocess and Python DDS command writers with the
+   process-wide C++ `NavigationCommandClient`.
+3. **Done:** route natural-language requests through `SemanticPlanner`; only a
+   resolved map-frame goal may enter DDS.
+4. **Done locally:** lock endpoint control modes to `autonomy`, `teleop`, or
+   `teleop_avoid`; pure teleop has no SLAM dependency, while teleop avoidance
+   fails closed on missing motion context.
+5. **Next:** add a shared final C++ command-safety gate after autonomous
+   PathFollower output. `teleop_avoid` already has `TeleopSafety`; autonomy
+   currently relies on input and local-path safety before control generation.
+6. **Done locally:** typed navigation and inspection requests carry request IDs;
+   the client completes submission only after a matching admission ACK and
+   propagates the endpoint rejection reason. Goal admission means asynchronous
+   planning started, not that planning or navigation completed. The C ABI
+   exposes version and capability checks.
+7. **Next:** move camera color/depth Module ingestion to C++ DDS metadata plus a
+   versioned SHM ring; keep low-rate camera info/health on typed DDS.
+8. **Next:** make MuJoCo publish sensor DDS and consume final `/nav/cmd_vel`
+   through the same C++ services and learned locomotion sink used by field
+   acceptance, with no Python planner substitute.
+9. **Then:** migrate GNSS and TARE readers, and delete remaining field-ineligible
+   compatibility adapters after equivalent acceptance evidence exists.
 
 ## Non-Goals
 

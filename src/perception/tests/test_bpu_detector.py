@@ -1,16 +1,38 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
 
 from perception.detection.bpu_detector import BPUDetector
 from perception.detection.detector_base import Detection2D
 
 
 class TestBPUDetectorRecallTuning(unittest.TestCase):
+    def test_system_prompt_free_yoloe_is_a_default_candidate(self):
+        self.assertIn(
+            "/opt/hobot/model/s100/basic/yoloe_11s_seg_pf_nashe_640x640_nv12.hbm",
+            BPUDetector.MODEL_CANDIDATES,
+        )
+
+    def test_loads_newline_vocabulary_for_system_prompt_free_yoloe(self):
+        detector = BPUDetector()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vocab_path = Path(tmpdir) / "coco_extended.names"
+            vocab_path.write_text("door\nfire extinguisher\nvalve\n", encoding="utf-8")
+            with patch.object(detector, "SYSTEM_YOLOE_VOCAB", str(vocab_path)):
+                vocab = detector._load_custom_vocab(
+                    "/opt/hobot/model/s100/basic/yoloe_11s_seg_pf_nashe_640x640_nv12.hbm",
+                    __import__("glob"),
+                )
+
+        self.assertEqual(vocab, {0: "door", 1: "fire extinguisher", 2: "valve"})
+
     def test_small_box_threshold_is_configurable(self):
         detector = BPUDetector(min_box_size_px=12)
 
@@ -21,9 +43,9 @@ class TestBPUDetectorRecallTuning(unittest.TestCase):
     def test_limit_detection_results_prefers_highest_scores(self):
         detector = BPUDetector(max_detections=2)
         results = [
-            Detection2D(bbox=np.array([0, 0, 10, 10], dtype=np.float32), score=0.30, label='person'),
-            Detection2D(bbox=np.array([0, 0, 10, 10], dtype=np.float32), score=0.92, label='person'),
-            Detection2D(bbox=np.array([0, 0, 10, 10], dtype=np.float32), score=0.61, label='person'),
+            Detection2D(bbox=np.array([0, 0, 10, 10], dtype=np.float32), score=0.30, label="person"),
+            Detection2D(bbox=np.array([0, 0, 10, 10], dtype=np.float32), score=0.92, label="person"),
+            Detection2D(bbox=np.array([0, 0, 10, 10], dtype=np.float32), score=0.61, label="person"),
         ]
 
         limited = detector._limit_detection_results(results)
@@ -39,5 +61,5 @@ class TestBPUDetectorRecallTuning(unittest.TestCase):
         self.assertEqual(keep, [1, 2])
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

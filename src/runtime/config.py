@@ -5,6 +5,7 @@ Modules access config via: cfg = load_config(); cfg.speed.max_speed
 
 Environment variable LINGTU_CONFIG_PATH overrides the default config path.
 """
+
 from __future__ import annotations
 
 import math
@@ -29,6 +30,7 @@ _DEFAULT_REAL_LIDAR = LIDAR_EXTRINSICS["real_mid360"]
 @dataclass
 class SpeedConfig:
     """Velocity limits for the robot."""
+
     max_linear: float = 1.0
     max_angular: float = 1.0
     max_speed: float = 0.875
@@ -38,6 +40,7 @@ class SpeedConfig:
 @dataclass
 class GeometryConfig:
     """Physical dimensions and sensor offsets."""
+
     vehicle_height: float = 0.5
     vehicle_width: float = 0.6
     vehicle_length: float = 1.0
@@ -48,6 +51,7 @@ class GeometryConfig:
 @dataclass
 class DriverConfig:
     """Brainstem CMS connection and control parameters."""
+
     dog_host: str = "127.0.0.1"
     dog_port: int = 13145
     control_rate: float = 50.0
@@ -60,6 +64,7 @@ class DriverConfig:
 @dataclass
 class SafetyConfig:
     """Safety thresholds and timeouts."""
+
     obstacle_height_thre: float = 0.2
     ground_height_thre: float = 0.1
     stop_distance: float = 0.8
@@ -77,6 +82,7 @@ class CameraConfig:
     Intrinsics are factory defaults; runtime CameraInfo from ROS2 overrides them.
     Distortion uses Brown-Conrady (plumb_bob) model: k1, k2, p1, p2, k3.
     """
+
     # Extrinsics: camera position in body frame (m)
     position_x: float = 0.15
     position_y: float = 0.0
@@ -118,9 +124,9 @@ class CameraConfig:
         cy, sy = math.cos(self.yaw), math.sin(self.yaw)
         # ZYX extrinsic convention: R = Rz(yaw) @ Ry(pitch) @ Rx(roll)
         rows = [
-            [cy * cp,  cy * sp * sr - sy * cr,  cy * sp * cr + sy * sr],
-            [sy * cp,  sy * sp * sr + cy * cr,  sy * sp * cr - cy * sr],
-            [-sp,      cp * sr,                  cp * cr],
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
         ]
         if not numpy_import_is_safe():
             return [
@@ -143,6 +149,7 @@ class LidarConfig:
     offset_x/y/z + roll/pitch/yaw define the body→lidar static transform
     used by static_transform_publisher and C++ coordinate transforms.
     """
+
     frame_id: str = _DEFAULT_REAL_LIDAR.child
     publish_freq: float = 10.0
     # Network (Livox MID-360). These are consumed by the Livox driver JSON generator.
@@ -160,6 +167,7 @@ class LidarConfig:
 @dataclass
 class GnssAntennaOffset:
     """Antenna mounting offset in body frame (metres)."""
+
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -168,6 +176,7 @@ class GnssAntennaOffset:
 @dataclass
 class GnssQualityConfig:
     """Quality gate applied by GnssModule before forwarding fixes downstream."""
+
     min_sat_used: int = 8
     max_hdop: float = 2.5
     max_age_s: float = 2.0
@@ -177,10 +186,12 @@ class GnssQualityConfig:
 
 @dataclass
 class GnssFusionRuntime:
-    """Runtime fusion parameters consumed by SlamBridgeModule. Keys mirror
-    SlamBridgeModule kwargs 1:1 (minus the ``gnss_`` prefix). Values left
-    at their defaults here hand off to the Module's own hard-coded defaults."""
-    backend: str = "fastlio2_gnss"       # reserved for future factor-graph backends
+    """Runtime fusion parameters consumed by the selected SLAM implementation.
+
+    Keys are passed with a ``gnss_`` prefix by the SLAM stack.
+    """
+
+    backend: str = "fastlio2_gnss"  # reserved for future factor-graph backends
     factor_weight_fix: float = 1.0
     factor_weight_float: float = 0.3
     factor_weight_single: float = 0.05
@@ -203,6 +214,7 @@ class GnssConfig:
     ``RobotConfig.raw['gnss']`` for loose access. This config owns the
     safety-critical bits (antenna offset, quality gate, fusion weights).
     """
+
     enabled: bool = False
     model: str = "WTRTK-980"
     device: str = "/dev/wtrtk980"
@@ -213,6 +225,91 @@ class GnssConfig:
 
 
 @dataclass
+class TrackingConfig:
+    """3D instance-tracking fusion thresholds (USS-Nav style matching)."""
+
+    sem_threshold: float = 0.75
+    geo_weak_threshold: float = 0.1
+    geo_strong_threshold: float = 0.5
+    geo_point_dist_tau: float = 0.05
+    candidate_radius: float = 2.0
+    fov_half_angle: float = 0.52
+    fov_max_range: float = 5.0
+    merge_distance: float = 0.5
+    iou_threshold: float = 0.3
+    clip_threshold: float = 0.75
+    max_objects: int = 200
+    stale_timeout: float = 300.0
+    max_views: int = 300
+
+    # Stage 1a matching improvements (gated, default OFF to preserve behavior)
+    use_hungarian_matching: bool = False  # global-optimal Hungarian matching
+    enable_dedup_merge: bool = False  # post-matching duplicate merge
+    dedup_distance: float = 0.3  # m — max distance to consider a duplicate
+    dedup_clip_threshold: float = 0.85  # min CLIP cosine sim to merge
+    dedup_time_window: float = 5.0  # s — max last_seen diff to merge
+
+
+@dataclass
+class EncoderConfig:
+    """Image/text encoder runtime parameters."""
+
+    clip_cache_size: int = 1000
+    clip_batch_size: int = 32
+    clip_model_name: str = "ViT-B/32"
+    clip_multi_scale: bool = False
+
+
+@dataclass
+class DetectorConfig:
+    """Detector-related runtime defaults."""
+
+    confidence_threshold: float = 0.3
+    iou_threshold: float = 0.45
+    max_detections: int = 64
+    min_box_size_px: int = 12
+    model_size: str = "l"
+
+
+@dataclass
+class PerceptionConfig:
+    """Perception pipeline tunables.
+
+    Defaults mirror the previously hard-coded values in perception_module.py,
+    instance_tracker.py, clip_encoder.py, and reconstruction_module.py so
+    behavior is unchanged when no override is present in robot_config.yaml.
+    """
+
+    default_classes: str = "door . chair . person . desk . stairs . elevator . sign"
+    skip_frames: int = 1
+    max_depth: float = 6.0
+    min_depth: float = 0.3
+    depth_scale: float = 0.001
+    laplacian_threshold: float = 100.0
+    dynamic_labels: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            {
+                "person",
+                "people",
+                "pedestrian",
+                "car",
+                "vehicle",
+                "truck",
+                "bus",
+                "bicycle",
+                "motorcycle",
+                "dog",
+                "cat",
+                "animal",
+            }
+        )
+    )
+    tracking: TrackingConfig = field(default_factory=TrackingConfig)
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
+    detector: DetectorConfig = field(default_factory=DetectorConfig)
+
+
+@dataclass
 class RobotConfig:
     """Top-level robot configuration, mirroring config/robot_config.yaml.
 
@@ -220,6 +317,7 @@ class RobotConfig:
     The full parsed YAML dict is available via ``raw`` for sections not
     explicitly modelled (e.g. terrain, local_planner, pct_planner).
     """
+
     speed: SpeedConfig = field(default_factory=SpeedConfig)
     geometry: GeometryConfig = field(default_factory=GeometryConfig)
     driver: DriverConfig = field(default_factory=DriverConfig)
@@ -227,6 +325,7 @@ class RobotConfig:
     lidar: LidarConfig = field(default_factory=LidarConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     gnss: GnssConfig = field(default_factory=GnssConfig)
+    perception: PerceptionConfig = field(default_factory=PerceptionConfig)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -257,6 +356,51 @@ def _fill_gnss_config(data: dict[str, Any]) -> GnssConfig:
     )
 
 
+def _fill_perception_config(data: dict[str, Any]) -> PerceptionConfig:
+    """Build PerceptionConfig from the nested perception section of robot_config.yaml.
+
+    Unknown keys are ignored; missing nested sections fall back to typed defaults.
+    """
+    if not isinstance(data, dict):
+        data = {}
+
+    tracking = _fill_dataclass(TrackingConfig, data.get("tracking", {}))
+    encoder = _fill_dataclass(EncoderConfig, data.get("encoder", {}))
+    detector = _fill_dataclass(DetectorConfig, data.get("detector", {}))
+
+    default_dynamic_labels = frozenset(
+        {
+            "person",
+            "people",
+            "pedestrian",
+            "car",
+            "vehicle",
+            "truck",
+            "bus",
+            "bicycle",
+            "motorcycle",
+            "dog",
+            "cat",
+            "animal",
+        }
+    )
+    dyn_labels = data.get("dynamic_labels")
+    dynamic_labels = frozenset(dyn_labels) if isinstance(dyn_labels, (list, tuple, set)) else default_dynamic_labels
+
+    return PerceptionConfig(
+        default_classes=str(data.get("default_classes", "door . chair . person . desk . stairs . elevator . sign")),
+        skip_frames=int(data.get("skip_frames", 1)),
+        max_depth=float(data.get("max_depth", 6.0)),
+        min_depth=float(data.get("min_depth", 0.3)),
+        depth_scale=float(data.get("depth_scale", 0.001)),
+        laplacian_threshold=float(data.get("laplacian_threshold", 100.0)),
+        dynamic_labels=dynamic_labels,
+        tracking=tracking,
+        encoder=encoder,
+        detector=detector,
+    )
+
+
 def load_config(path: str | None = None) -> RobotConfig:
     """Load robot config from YAML.
 
@@ -283,12 +427,14 @@ def load_config(path: str | None = None) -> RobotConfig:
         lidar=_fill_dataclass(LidarConfig, raw.get("lidar", {})),
         camera=_fill_dataclass(CameraConfig, raw.get("camera", {})),
         gnss=_fill_gnss_config(raw.get("gnss", {})),
+        perception=_fill_perception_config(raw.get("perception", {})),
         raw=raw,
     )
 
     errors = validate_config(cfg)
     if errors:
         import logging
+
         _logger = logging.getLogger(__name__)
         for err in errors:
             _logger.warning("Config validation: %s", err)
@@ -321,8 +467,9 @@ def validate_config(cfg: RobotConfig) -> list[str]:
     if cfg.safety.stop_distance <= 0:
         errors.append(f"safety.stop_distance must be > 0, got {cfg.safety.stop_distance}")
     if cfg.safety.slow_distance <= cfg.safety.stop_distance:
-        errors.append(f"safety.slow_distance ({cfg.safety.slow_distance}) must be > "
-                      f"stop_distance ({cfg.safety.stop_distance})")
+        errors.append(
+            f"safety.slow_distance ({cfg.safety.slow_distance}) must be > stop_distance ({cfg.safety.stop_distance})"
+        )
 
     # Driver control rate must be positive
     if cfg.driver.control_rate <= 0:
@@ -331,36 +478,20 @@ def validate_config(cfg: RobotConfig) -> list[str]:
     # GNSS — only check when enabled; unset robots skip these
     if cfg.gnss.enabled:
         if cfg.gnss.quality.min_sat_used < 0:
-            errors.append(
-                f"gnss.quality.min_sat_used must be ≥ 0, got {cfg.gnss.quality.min_sat_used}"
-            )
+            errors.append(f"gnss.quality.min_sat_used must be ≥ 0, got {cfg.gnss.quality.min_sat_used}")
         if cfg.gnss.quality.max_hdop <= 0:
-            errors.append(
-                f"gnss.quality.max_hdop must be > 0, got {cfg.gnss.quality.max_hdop}"
-            )
+            errors.append(f"gnss.quality.max_hdop must be > 0, got {cfg.gnss.quality.max_hdop}")
         if cfg.gnss.quality.max_age_s <= 0:
-            errors.append(
-                f"gnss.quality.max_age_s must be > 0, got {cfg.gnss.quality.max_age_s}"
-            )
+            errors.append(f"gnss.quality.max_age_s must be > 0, got {cfg.gnss.quality.max_age_s}")
         if not 0.0 <= cfg.gnss.fusion.alpha_healthy <= 1.0:
-            errors.append(
-                f"gnss.fusion.alpha_healthy must be in [0, 1], "
-                f"got {cfg.gnss.fusion.alpha_healthy}"
-            )
+            errors.append(f"gnss.fusion.alpha_healthy must be in [0, 1], got {cfg.gnss.fusion.alpha_healthy}")
         if not 0.0 <= cfg.gnss.fusion.alpha_degraded <= 1.0:
-            errors.append(
-                f"gnss.fusion.alpha_degraded must be in [0, 1], "
-                f"got {cfg.gnss.fusion.alpha_degraded}"
-            )
+            errors.append(f"gnss.fusion.alpha_degraded must be in [0, 1], got {cfg.gnss.fusion.alpha_degraded}")
         if cfg.gnss.fusion.residual_warn_m <= 0:
-            errors.append(
-                f"gnss.fusion.residual_warn_m must be > 0, "
-                f"got {cfg.gnss.fusion.residual_warn_m}"
-            )
+            errors.append(f"gnss.fusion.residual_warn_m must be > 0, got {cfg.gnss.fusion.residual_warn_m}")
         if not 0.0 < cfg.gnss.fusion.residual_warn_ratio <= 1.0:
             errors.append(
-                f"gnss.fusion.residual_warn_ratio must be in (0, 1], "
-                f"got {cfg.gnss.fusion.residual_warn_ratio}"
+                f"gnss.fusion.residual_warn_ratio must be in (0, 1], got {cfg.gnss.fusion.residual_warn_ratio}"
             )
 
     # Camera intrinsics must be positive
@@ -394,4 +525,3 @@ def reset_config() -> None:
     """
     global _config
     _config = None
-

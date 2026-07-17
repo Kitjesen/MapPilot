@@ -96,10 +96,9 @@ The implementation also searches the default build output:
 build/octoplanner3d_headless/octoplanner3d_headless
 ```
 
-`tomogram_path` is the legacy constructor argument name used by
-`GlobalPlanner`. Treat it as the OctoPlanner3D map source path; the
-runtime sends both the legacy `map_path` field and the newer generic
-`map_source` descriptor to the headless executable without requiring ROS2.
+`map_path` is the OctoPlanner3D map source path. The runtime sends both
+`map_path` and the generic `map_source` descriptor to the headless executable
+without requiring ROS2.
 
 ## Executable protocol
 

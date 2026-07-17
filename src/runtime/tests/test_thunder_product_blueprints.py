@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from lingtu.plugin_seed import install_builtin_plugin_catalog
 from runtime.blueprints.products.thunder import (
     thunder_basic_blueprint,
     thunder_basic_config,
@@ -15,8 +16,6 @@ from runtime.blueprints.products.thunder import (
     thunder_map_config,
     thunder_nav_config,
 )
-from runtime.profiles.catalog.runtime_paths import _resolve_octoplanner3d_map
-from lingtu.plugin_seed import install_builtin_plugin_catalog
 
 ROOT = Path(__file__).resolve().parents[3]
 install_builtin_plugin_catalog()
@@ -27,10 +26,7 @@ def _entry_names(bp) -> set[str]:
 
 
 def _wire_set(bp) -> set[str]:
-    return {
-        f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-        for wire in bp._wires
-    }
+    return {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires}
 
 
 def test_thunder_product_configs_use_robot_name_not_board_name():
@@ -68,7 +64,7 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert nav["localization_adapter"] == "cpp_slam_status"
     assert "endpoint_contract" not in nav
     assert nav["planner"] == "octoplanner3d"
-    assert nav["tomogram"] == _resolve_octoplanner3d_map()
+    assert "tomogram" not in nav
     assert nav["plan_safety_policy"] == "reject"
     assert nav["fallback_planner_name"] == ""
     assert nav["preview_timeout"] == pytest.approx(30.0)
@@ -89,10 +85,14 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     assert nav["local_planner_backend"] == "nanobind"
     assert nav["path_follower_backend"] == "nav_kernel"
     assert nav["octoplanner3d_robot_radius"] == pytest.approx(0.25)
+    assert nav["octomap_resolution"] == pytest.approx(0.1)
+    assert nav["octomap_free_layers_above"] == 6
+    assert nav["octomap_free_dilation_cells"] == 1
+    assert nav["octoplanner3d_snap_search_radius_cells"] == 24
     assert nav["octoplanner3d_require_ground_support"] is True
     assert nav["octoplanner3d_strict_direct_ground_support"] is False
-    assert nav["octoplanner3d_ground_support_xy_radius_cells"] == 1
-    assert nav["octoplanner3d_ground_support_depth_cells"] == 1
+    assert nav["octoplanner3d_ground_support_xy_radius_cells"] == 2
+    assert nav["octoplanner3d_ground_support_depth_cells"] == 2
     assert nav["octoplanner3d_max_step_height"] == pytest.approx(0.45)
     assert nav["octoplanner3d_max_slope"] == pytest.approx(0.0)
     assert nav["enable_semantic"] is True
@@ -103,10 +103,12 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     mapping = thunder_map_config()
     assert mapping["slam_profile"] == "fastlio2"
     assert mapping["planner"] == "octoplanner3d"
-    assert mapping["tomogram"] == _resolve_octoplanner3d_map()
+    assert "tomogram" not in mapping
     assert mapping["plan_safety_policy"] == "reject"
     assert mapping["fallback_planner_name"] == ""
     assert mapping["octoplanner3d_robot_radius"] == pytest.approx(0.25)
+    assert mapping["octomap_resolution"] == pytest.approx(0.1)
+    assert mapping["octomap_free_layers_above"] == 6
     assert mapping["octoplanner3d_max_slope"] == pytest.approx(0.0)
     assert mapping["enable_native"] is True
     assert mapping["terrain_backend"] == "nanobind"
@@ -119,10 +121,12 @@ def test_thunder_product_configs_lock_core_runtime_modes():
     explore = thunder_explore_config()
     assert explore["slam_profile"] == "fastlio2"
     assert explore["planner"] == "octoplanner3d"
-    assert explore["tomogram"] == _resolve_octoplanner3d_map()
+    assert "tomogram" not in explore
     assert explore["plan_safety_policy"] == "reject"
     assert explore["fallback_planner_name"] == ""
     assert explore["octoplanner3d_robot_radius"] == pytest.approx(0.25)
+    assert explore["octomap_resolution"] == pytest.approx(0.1)
+    assert explore["octomap_free_layers_above"] == 6
     assert explore["octoplanner3d_require_ground_support"] is True
     assert explore["octoplanner3d_max_slope"] == pytest.approx(0.0)
     assert explore["enable_native"] is True
@@ -199,9 +203,9 @@ def test_thunder_lite_blueprint_is_minimal_no_ros_product_entrypoint() -> None:
     assert "GatewayModule" not in names
     assert "MCPServerModule" not in names
     assert "ExternalServiceManagerModule" not in names
-    assert "DeviceManager" not in names
+    assert "hw" not in names
     assert "OccupancyGridModule" not in names
-    assert "nav.maps" not in names
+    assert "maps.service" not in names
     assert "SemanticPlannerModule" not in names
     assert "nav.safety.stop_cmd->ThunderDriver.stop_signal" in wires
     assert "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel" in wires
@@ -214,9 +218,7 @@ def test_thunder_lite_blueprint_is_minimal_no_ros_product_entrypoint() -> None:
     assert configs["nav.path_follower"]["backend"] not in {"nav_kernel", "pure_pursuit"}
 
     slam_entries = [
-        entry
-        for entry in bp._entries
-        if getattr(entry.module_cls, "__module__", "").startswith("localization.")
+        entry for entry in bp._entries if getattr(entry.module_cls, "__module__", "").startswith("localization.")
     ]
     assert slam_entries == []
 
@@ -251,10 +253,8 @@ def test_thunder_lite_runtime_rejects_field_runtime_overrides(override) -> None:
 
 def test_manual_smoke_entrypoints_use_profile_builder() -> None:
     for rel_path in (
-        "tests/scripts/smoke/s100p_start.py",
         "tests/scripts/smoke/mapping.py",
         "tests/scripts/smoke/nav_planning.py",
-        "tests/scripts/smoke/mcp_full.py",
         "scripts/visualization/run_rerun_mapping.py",
     ):
         text = (ROOT / rel_path).read_text(encoding="utf-8-sig")
@@ -266,10 +266,8 @@ def test_manual_smoke_docs_use_thunder_product_name() -> None:
     for rel_path in (
         "tests/scripts/README.md",
         "tests/scripts/smoke/README.md",
-        "tests/scripts/smoke/s100p_start.py",
         "tests/scripts/smoke/mapping.py",
         "tests/scripts/smoke/nav_planning.py",
-        "tests/scripts/smoke/mcp_full.py",
     ):
         text = (ROOT / rel_path).read_text(encoding="utf-8-sig")
 

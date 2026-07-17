@@ -1,4 +1,4 @@
-﻿# LingTu Runtime Stream Token Contract
+# LingTu Runtime Stream Token Contract
 #
 # This file mirrors the canonical Python runtime contract in
 # src/runtime/runtime_interface.py. Keep simulator adapters and real robot
@@ -30,7 +30,17 @@ slam:
   cumulative_map_cloud: /slam/cumulative_map_cloud # simulation/debug accumulated cloud
   saved_map_cloud: /slam/saved_map_cloud  # sensor_msgs/PointCloud2; static localization map
   save_map_service: /slam/save_map        # map-save service
-  dog_odometry: /nav/dog_odometry        # robot proprioception feedback, not global pose
+
+maps:
+  voxel_cloud: /maps/voxel_cloud          # cleaned accumulated voxel cloud
+  occupancy: /maps/occupancy              # map-domain occupancy product
+  elevation: /maps/elevation              # map-domain elevation product
+  esdf: /maps/esdf                        # map-domain distance field
+  traversability: /maps/traversability    # map-domain risk product
+  scene: /maps/scene                      # layered Gateway/Rerun scene product
+
+driver:
+  odometry: /driver/odometry              # base/driver proprioception feedback, not SLAM pose
 
 localization:
   quality: /slam/localization_quality
@@ -78,6 +88,11 @@ autonomy:
   nav_state: /nav/nav_state
 
 control:
+  nav_command_request: /nav/command/request  # typed C++ goal/cancel/teleop command
+  nav_command_ack: /nav/command/ack          # native business-level ACK
+  inspection_command: /nav/inspection/command # typed route start/pause/resume/cancel
+  inspection_ack: /nav/inspection/ack        # native inspection business ACK
+  inspection_status: /nav/inspection/status  # route and current point progress
   goal_pose: /nav/goal_pose              # geometry_msgs/PoseStamped
   goal_point: /nav/goal_point            # geometry_msgs/PointStamped
   patrol_goals: /nav/patrol_goals        # JSON route command
@@ -124,6 +139,11 @@ visualization:
   detections: /nav/detections          # visualization_msgs/MarkerArray
   robot_marker: /nav/robot_marker      # visualization_msgs/Marker
   building_cloud: /nav/building_cloud  # sensor_msgs/PointCloud2 demo/reference cloud
+
+gnss:
+  fix: /gnss/fix                       # native DDS WGS84 fix
+  status: /gnss/status                 # native DDS receiver health
+  odom: /gnss/odom                     # ENU odometry when a map origin is configured
 
 required_runtime_topics:
 - /slam/odometry
@@ -203,6 +223,7 @@ tf:
   lidar_frame: lidar_link
   real_lidar_frame: livox_frame
   camera_frame: camera_link
+  gnss_frame: gnss_antenna
   simulator_world_frame: world
   axis_convention: x_forward_y_left_z_up
   body_aliases:
@@ -226,6 +247,10 @@ tf:
       parent: body
       child: camera_link
       required: true
+    body_to_gnss:
+      parent: body
+      child: gnss_antenna
+      required: false
 
 extrinsics:
   # All entries are body -> LiDAR static transforms in metres/radians.
@@ -235,11 +260,11 @@ extrinsics:
     real_mid360:
       parent: body
       child: livox_frame
-      x: -0.011
-      y: -0.02329
-      z: 0.04412
-      roll: 0.0
-      pitch: 0.0
+      x: 0.402876074867229
+      y: 0.0
+      z: 0.0582019450665819
+      roll: -3.141592653589793
+      pitch: -0.7853981633974483
       yaw: 0.0
     gazebo_proxy:
       parent: body
@@ -253,9 +278,9 @@ extrinsics:
     mujoco_thunder_v3:
       parent: body
       child: lidar_link
-      x: 0.0
+      x: -0.30638
       y: 0.0
-      z: 0.28
+      z: 0.19417
       roll: 0.0
       pitch: 0.0
       yaw: 0.0
@@ -290,6 +315,21 @@ data_formats:
     ros_type: sensor_msgs/msg/PointCloud2
     frame_role: map_or_odom
     required_fields: [x, y, z]
+  maps_elevation:
+    topic: /maps/elevation
+    ros_type: application/json
+    frame_role: map_or_odom
+    required_fields: [grid, resolution, origin]
+  maps_esdf:
+    topic: /maps/esdf
+    ros_type: application/json
+    frame_role: map_or_odom
+    required_fields: [distance, resolution, origin]
+  maps_scene:
+    topic: /maps/scene
+    ros_type: application/json
+    frame_role: map_or_odom
+    required_fields: [schema_version, layers]
   odometry:
     topic: /slam/odometry
     ros_type: nav_msgs/msg/Odometry
@@ -328,13 +368,57 @@ data_formats:
     ros_type: application/json
     frame_role: map
     required_fields: [id, centroid_3d, reachable_score, support_type, esdf_clearance_m, semantic_value, evidence_layers, reasons]
+  nav_command_request:
+    topic: /nav/command/request
+    ros_type: lingtu.dds.NavigationCommandRequest
+    frame_role: request_dependent
+    required_fields: [request_id, kind]
+    note: Typed C++ field command envelope. Goal, cancel, and operator velocity requests share this reliable volatile request channel.
+  nav_command_ack:
+    topic: /nav/command/ack
+    ros_type: lingtu.dds.NavigationCommandAck
+    frame_role: map
+    required_fields: [request_id, kind, accepted, reason]
+    note: Endpoint business acceptance or rejection with a native map-frame Header.
+  inspection_command:
+    topic: /nav/inspection/command
+    ros_type: lingtu.dds.InspectionCommandRequest
+    frame_role: map
+    required_fields: [request_id, kind, route_id, route_revision]
+    note: Typed start/pause/resume/cancel command referencing a native C++ route.
+  inspection_ack:
+    topic: /nav/inspection/ack
+    ros_type: lingtu.dds.InspectionCommandAck
+    frame_role: map
+    required_fields: [request_id, kind, accepted, reason, run_id]
+    note: Native inspection command acceptance or rejection with a map-frame Header.
+  inspection_status:
+    topic: /nav/inspection/status
+    ros_type: lingtu.dds.InspectionStatus
+    frame_role: map
+    required_fields: [run_id, route_id, state, point_index, point_count]
+    note: Live status from the native C++ multi-point inspection executor.
+  inspection_evidence_request:
+    topic: /nav/inspection/evidence/request
+    ros_type: lingtu.dds.InspectionEvidenceRequest
+    frame_role: map
+    required_fields: [request_id, run_id, route_id, revision, map_id, map_version, point_index, point_id, action, deadline_s]
+    note: Native inspection action request consumed by the evidence worker.
+  inspection_evidence_result:
+    topic: /nav/inspection/evidence/result
+    ros_type: lingtu.dds.InspectionEvidenceResult
+    frame_role: map
+    required_fields: [request_id, evidence_id, persisted, reason, analysis_verdict]
+    note: Durable evidence result returned to the native inspection executor.
 
 topic_formats:
   /lidar/raw_frame:
   - raw_livox_custom
   - raw_timed_pointcloud2
   /imu/raw:
-  - sensor_msgs/msg/Imu
+  - lingtu.dds.Imu
+  /driver/odometry:
+  - odometry
   /slam/odometry:
   - odometry
   /slam/state_at_scan:
@@ -344,15 +428,33 @@ topic_formats:
   /slam/map_cloud:
   - map_cloud
   /camera/color/image_raw:
-  - sensor_msgs/msg/Image
+  - lingtu.dds.Image
   /camera/depth/image_raw:
-  - sensor_msgs/msg/Image
+  - lingtu.dds.Image
   /camera/color/camera_info:
-  - sensor_msgs/msg/CameraInfo
+  - lingtu.dds.CameraInfo
+  /gnss/fix:
+  - lingtu.dds.GnssFix
+  /gnss/status:
+  - lingtu.dds.GnssStatus
+  /gnss/odom:
+  - odometry
   /slam/cumulative_map_cloud:
   - map_cloud
   /slam/saved_map_cloud:
   - map_cloud
+  /maps/voxel_cloud:
+  - map_cloud
+  /maps/occupancy:
+  - nav_msgs/msg/OccupancyGrid
+  /maps/elevation:
+  - maps_elevation
+  /maps/esdf:
+  - maps_esdf
+  /maps/traversability:
+  - traversability
+  /maps/scene:
+  - maps_scene
   /slam/map_command:
   - std_msgs/msg/String
   /slam/map_event:
@@ -394,6 +496,22 @@ topic_formats:
   - nav_msgs/msg/OccupancyGrid
   /nav/height_rays:
   - height_rays
+  /nav/teleop_cmd_vel:
+  - teleop_cmd_vel
+  /nav/command/request:
+  - nav_command_request
+  /nav/command/ack:
+  - nav_command_ack
+  /nav/inspection/command:
+  - inspection_command
+  /nav/inspection/ack:
+  - inspection_ack
+  /nav/inspection/status:
+  - inspection_status
+  /nav/inspection/evidence/request:
+  - inspection_evidence_request
+  /nav/inspection/evidence/result:
+  - inspection_evidence_result
   /nav/cmd_vel:
   - cmd_vel
   /nav/stop:
@@ -519,6 +637,8 @@ topic_ros_types:
   - sensor_msgs/msg/PointCloud2
   /imu/raw:
   - sensor_msgs/msg/Imu
+  /driver/odometry:
+  - nav_msgs/msg/Odometry
   /slam/odometry:
   - nav_msgs/msg/Odometry
   /slam/state_at_scan:
@@ -533,10 +653,28 @@ topic_ros_types:
   - sensor_msgs/msg/Image
   /camera/color/camera_info:
   - sensor_msgs/msg/CameraInfo
+  /gnss/fix:
+  - sensor_msgs/msg/NavSatFix
+  /gnss/status:
+  - diagnostic_msgs/msg/DiagnosticStatus
+  /gnss/odom:
+  - nav_msgs/msg/Odometry
   /slam/cumulative_map_cloud:
   - sensor_msgs/msg/PointCloud2
   /slam/saved_map_cloud:
   - sensor_msgs/msg/PointCloud2
+  /maps/voxel_cloud:
+  - sensor_msgs/msg/PointCloud2
+  /maps/occupancy:
+  - nav_msgs/msg/OccupancyGrid
+  /maps/elevation:
+  - application/json
+  /maps/esdf:
+  - application/json
+  /maps/traversability:
+  - application/json
+  /maps/scene:
+  - application/json
   /slam/map_command:
   - std_msgs/msg/String
   /slam/map_event:
@@ -578,6 +716,22 @@ topic_ros_types:
   - nav_msgs/msg/OccupancyGrid
   /nav/height_rays:
   - application/json
+  /nav/teleop_cmd_vel:
+  - geometry_msgs/msg/TwistStamped
+  /nav/command/request:
+  - lingtu.dds.NavigationCommandRequest
+  /nav/command/ack:
+  - lingtu.dds.NavigationCommandAck
+  /nav/inspection/command:
+  - lingtu.dds.InspectionCommandRequest
+  /nav/inspection/ack:
+  - lingtu.dds.InspectionCommandAck
+  /nav/inspection/status:
+  - lingtu.dds.InspectionStatus
+  /nav/inspection/evidence/request:
+  - lingtu.dds.InspectionEvidenceRequest
+  /nav/inspection/evidence/result:
+  - lingtu.dds.InspectionEvidenceResult
   /nav/cmd_vel:
   - geometry_msgs/msg/TwistStamped
   /nav/stop:
@@ -702,6 +856,8 @@ topic_allowed_frame_ids:
   - lidar_link
   /imu/raw:
   - lidar_link
+  /driver/odometry:
+  - odom
   /slam/odometry:
   - odom
   - map
@@ -716,6 +872,31 @@ topic_allowed_frame_ids:
   - map
   - odom
   /slam/saved_map_cloud:
+  - map
+  - odom
+  /maps/voxel_cloud:
+  - map
+  - odom
+  /maps/occupancy:
+  - map
+  - odom
+  /maps/elevation:
+  - map
+  - odom
+  /maps/esdf:
+  - map
+  - odom
+  /maps/traversability:
+  - map
+  - odom
+  /maps/scene:
+  - map
+  - odom
+  /gnss/fix:
+  - gnss_antenna
+  /gnss/status:
+  - gnss_antenna
+  /gnss/odom:
   - map
   - odom
   /nav/exploration_grid:
@@ -738,6 +919,23 @@ topic_allowed_frame_ids:
   - odom
   /nav/height_rays:
   - body
+  /nav/teleop_cmd_vel:
+  - body
+  /nav/command/request:
+  - map
+  - body
+  /nav/command/ack:
+  - map
+  /nav/inspection/command:
+  - map
+  /nav/inspection/ack:
+  - map
+  /nav/inspection/status:
+  - map
+  /nav/inspection/evidence/request:
+  - map
+  /nav/inspection/evidence/result:
+  - map
   /nav/global_path:
   - map
   - odom
@@ -759,12 +957,22 @@ topic_allowed_frame_ids:
 topic_default_frame_ids:
   /lidar/raw_frame: lidar_link
   /imu/raw: lidar_link
+  /driver/odometry: odom
   /slam/odometry: odom
   /slam/state_at_scan: odom
   /slam/registered_cloud: body
   /slam/map_cloud: map
   /slam/cumulative_map_cloud: map
   /slam/saved_map_cloud: map
+  /maps/voxel_cloud: map
+  /maps/occupancy: map
+  /maps/elevation: map
+  /maps/esdf: map
+  /maps/traversability: map
+  /maps/scene: map
+  /gnss/fix: gnss_antenna
+  /gnss/status: gnss_antenna
+  /gnss/odom: map
   /nav/exploration_grid: map
   /nav/traversable_frontiers: map
   /nav/frontier_candidate: map
@@ -772,6 +980,14 @@ topic_default_frame_ids:
   /nav/terrain_map_ext: map
   /nav/traversability: map
   /nav/height_rays: body
+  /nav/teleop_cmd_vel: body
+  /nav/command/request: map
+  /nav/command/ack: map
+  /nav/inspection/command: map
+  /nav/inspection/ack: map
+  /nav/inspection/status: map
+  /nav/inspection/evidence/request: map
+  /nav/inspection/evidence/result: map
   /nav/global_path: map
   /nav/local_path: map
   /exploration/way_point: map
@@ -783,6 +999,8 @@ real_runtime_topic_allowed_frame_ids:
   - lidar_link
   /imu/raw:
   - lidar_link
+  /driver/odometry:
+  - odom
   /slam/odometry:
   - odom
   - map
@@ -796,6 +1014,25 @@ real_runtime_topic_allowed_frame_ids:
   - map
   - odom
   /slam/saved_map_cloud:
+  - map
+  - odom
+  /maps/voxel_cloud:
+  - map
+  /maps/occupancy:
+  - map
+  /maps/elevation:
+  - map
+  /maps/esdf:
+  - map
+  /maps/traversability:
+  - map
+  /maps/scene:
+  - map
+  /gnss/fix:
+  - gnss_antenna
+  /gnss/status:
+  - gnss_antenna
+  /gnss/odom:
   - map
   - odom
   /nav/exploration_grid:
@@ -816,6 +1053,23 @@ real_runtime_topic_allowed_frame_ids:
   - odom
   /nav/height_rays:
   - body
+  /nav/teleop_cmd_vel:
+  - body
+  /nav/command/request:
+  - map
+  - body
+  /nav/command/ack:
+  - map
+  /nav/inspection/command:
+  - map
+  /nav/inspection/ack:
+  - map
+  /nav/inspection/status:
+  - map
+  /nav/inspection/evidence/request:
+  - map
+  /nav/inspection/evidence/result:
+  - map
   /nav/global_path:
   - map
   /nav/local_path:
@@ -836,12 +1090,22 @@ real_runtime_topic_allowed_frame_ids:
 real_runtime_topic_default_frame_ids:
   /lidar/raw_frame: lidar_link
   /imu/raw: lidar_link
+  /driver/odometry: odom
   /slam/odometry: odom
   /slam/state_at_scan: odom
   /slam/registered_cloud: body
   /slam/map_cloud: map
   /slam/cumulative_map_cloud: map
   /slam/saved_map_cloud: map
+  /maps/voxel_cloud: map
+  /maps/occupancy: map
+  /maps/elevation: map
+  /maps/esdf: map
+  /maps/traversability: map
+  /maps/scene: map
+  /gnss/fix: gnss_antenna
+  /gnss/status: gnss_antenna
+  /gnss/odom: map
   /nav/exploration_grid: map
   /nav/traversable_frontiers: map
   /nav/frontier_candidate: map
@@ -849,6 +1113,14 @@ real_runtime_topic_default_frame_ids:
   /nav/terrain_map_ext: map
   /nav/traversability: map
   /nav/height_rays: body
+  /nav/teleop_cmd_vel: body
+  /nav/command/request: map
+  /nav/command/ack: map
+  /nav/inspection/command: map
+  /nav/inspection/ack: map
+  /nav/inspection/status: map
+  /nav/inspection/evidence/request: map
+  /nav/inspection/evidence/result: map
   /nav/global_path: map
   /nav/local_path: map
   /exploration/way_point: map
@@ -939,28 +1211,6 @@ runtime_data_flow_topics:
   - /nav/check_obstacle
   - /nav/planner_status
   mujoco_fastlio2_live:
-  - /lidar/raw_frame
-  - /imu/raw
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_cloud
-  - /nav/exploration_grid
-  - /nav/terrain_map_ext
-  - /exploration/way_point
-  - /nav/goal_pose
-  - /nav/traversable_frontiers
-  - /nav/frontier_candidate
-  - /nav/global_path
-  - /nav/way_point
-  - /nav/terrain_map
-  - /nav/traversability
-  - /nav/local_path
-  - /nav/local_planner/control_hint
-  - /nav/cmd_vel
-  - /nav/added_obstacles
-  - /nav/check_obstacle
-  - /nav/planner_status
-  rosbag_fastlio2_replay:
   - /lidar/raw_frame
   - /imu/raw
   - /slam/odometry
@@ -1131,7 +1381,7 @@ runtime_data_flow:
   owner: slam_or_source_adapter
   frame_role: map_odom_body
   map_dependency: declared_by_data_source
-  producer: SlamModule_or_SlamAdapterModule_or_compat_SlamBridgeModule
+  producer: SlamModule_or_SlamAdapterModule
   consumers:
   - map_layers
   - navigation
@@ -1172,7 +1422,6 @@ runtime_data_flow:
   - /nav/exploration_grid
   - /exploration/way_point
   - /nav/goal_pose
-  - artifact:tomogram
   - artifact:octomap
   - artifact:point_cloud
   outputs:
@@ -1180,14 +1429,14 @@ runtime_data_flow:
   - /nav/way_point
   owner: lingtu_navigation_or_planner_backend
   frame_role: map
-  map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
-  producer: NavigationModule_global_planner_service
+  map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
+  producer: Navigation_global_planner
   consumers:
-  - LocalPlannerModule
+  - LocalPlanner
   - GatewayModule
-  - NAV_OUT
+  - lingtu-nav-dds
   frequency: on_goal_or_replan
-  transport_policy: direct_default_dds_or_local_when_nav_plan_transport_enabled
+  transport_policy: direct_in_process_module_chain; typed_dds_endpoint_for_process_boundary
 - name: local_planning_and_following
   inputs:
   - /slam/odometry
@@ -1203,11 +1452,11 @@ runtime_data_flow:
   owner: lingtu_autonomy
   frame_role: map_odom_body_local_terrain
   map_dependency: live_terrain_maps_traversability_and_global_path
-  producer: LocalPlannerModule_and_PathFollower
+  producer: LocalPlanner_and_PathFollower
   consumers:
   - PathFollower
   - SafetyRing
-  - CmdVelMux
+  - VelocityMux
   - GatewayModule
   frequency: local_plan_5_20hz_cmd_vel_20_50hz
   transport_policy: direct_default_shm_for_external_cpp_local_planner_dds_for_low_rate_path_state
@@ -1224,8 +1473,8 @@ runtime_data_flow:
   map_dependency: current_registered_cloud_and_added_obstacles
   producer: SafetyRing_or_dynamic_obstacle_gate
   consumers:
-  - NavigationModule
-  - CmdVelMux
+  - Navigation
+  - VelocityMux
   - GatewayModule
   frequency: 10_50hz
   transport_policy: direct_for_safety_path
@@ -1234,14 +1483,14 @@ runtime_data_flow:
   - /nav/cmd_vel
   outputs:
   - sink:data_source.command_sink
-  owner: cmd_vel_mux_to_endpoint_sink
+  owner: command_arbiter_to_driver
   frame_role: body_twist
   map_dependency: none
-  producer: CmdVelMux
+  producer: command_arbiter
   consumers:
-  - robot_driver_or_endpoint_command_sink
+  - driver
   frequency: 20_50hz
-  transport_policy: direct_to_driver_endpoint_transport_only_at_hardware_boundary
+  transport_policy: direct_or_dds_to_driver_at_hardware_boundary
 resolved_runtime_data_flow:
   in_process_stub:
   - name: endpoint_adapter
@@ -1303,7 +1552,6 @@ resolved_runtime_data_flow:
     - /nav/exploration_grid
     - /exploration/way_point
     - /nav/goal_pose
-    - artifact:tomogram
     - artifact:octomap
     - artifact:point_cloud
     outputs:
@@ -1311,7 +1559,7 @@ resolved_runtime_data_flow:
     - /nav/way_point
     owner: lingtu_navigation_or_planner_backend
     frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
+    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
     producer: ''
     consumers: []
     frequency: ''
@@ -1355,7 +1603,7 @@ resolved_runtime_data_flow:
     - /nav/cmd_vel
     outputs:
     - module_graph_driver_cmd_vel
-    owner: cmd_vel_mux_to_endpoint_sink
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -1426,7 +1674,6 @@ resolved_runtime_data_flow:
     - /nav/exploration_grid
     - /exploration/way_point
     - /nav/goal_pose
-    - artifact:tomogram
     - artifact:octomap
     - artifact:point_cloud
     outputs:
@@ -1434,7 +1681,7 @@ resolved_runtime_data_flow:
     - /nav/way_point
     owner: lingtu_navigation_or_planner_backend
     frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
+    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
     producer: ''
     consumers: []
     frequency: ''
@@ -1477,8 +1724,8 @@ resolved_runtime_data_flow:
     inputs:
     - /nav/cmd_vel
     outputs:
-    - hardware_driver_after_cmd_vel_mux
-    owner: cmd_vel_mux_to_endpoint_sink
+    - driver
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -1500,8 +1747,8 @@ resolved_runtime_data_flow:
     inputs:
     - /nav/cmd_vel
     outputs:
-    - hardware_driver_after_cmd_vel_mux
-    owner: cmd_vel_mux_to_endpoint_sink
+    - driver
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -1584,7 +1831,6 @@ resolved_runtime_data_flow:
     - /nav/exploration_grid
     - /exploration/way_point
     - /nav/goal_pose
-    - artifact:tomogram
     - artifact:octomap
     - artifact:point_cloud
     outputs:
@@ -1592,7 +1838,7 @@ resolved_runtime_data_flow:
     - /nav/way_point
     owner: lingtu_navigation_or_planner_backend
     frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
+    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
     producer: ''
     consumers: []
     frequency: ''
@@ -1636,7 +1882,7 @@ resolved_runtime_data_flow:
     - /nav/cmd_vel
     outputs:
     - mujoco_driver_module_cmd_vel
-    owner: cmd_vel_mux_to_endpoint_sink
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -1703,7 +1949,6 @@ resolved_runtime_data_flow:
     - /nav/exploration_grid
     - /exploration/way_point
     - /nav/goal_pose
-    - artifact:tomogram
     - artifact:octomap
     - artifact:point_cloud
     outputs:
@@ -1711,7 +1956,7 @@ resolved_runtime_data_flow:
     - /nav/way_point
     owner: lingtu_navigation_or_planner_backend
     frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
+    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
     producer: ''
     consumers: []
     frequency: ''
@@ -1755,126 +2000,7 @@ resolved_runtime_data_flow:
     - /nav/cmd_vel
     outputs:
     - mujoco_velocity_adapter
-    owner: cmd_vel_mux_to_endpoint_sink
-    frame_role: body_twist
-    map_dependency: none
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  rosbag_fastlio2_replay:
-  - name: endpoint_adapter
-    inputs:
-    - /lidar/raw_frame
-    - /imu/raw
-    outputs:
-    - /lidar/raw_frame
-    - /imu/raw
-    owner: endpoint_adapter
-    frame_role: native_to_canonical
-    map_dependency: declared_by_data_source
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  - name: slam_or_relayed_localization_map
-    inputs:
-    - /lidar/raw_frame
-    - /imu/raw
-    outputs:
-    - /slam/odometry
-    - /slam/registered_cloud
-    - /slam/map_cloud
-    owner: slam_or_source_adapter
-    frame_role: map_odom_body
-    map_dependency: declared_by_data_source
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  - name: map_layers_and_exploration
-    inputs:
-    - /slam/odometry
-    - /slam/registered_cloud
-    - /slam/map_cloud
-    - /nav/exploration_grid
-    - /nav/terrain_map_ext
-    - module:TraversableFrontierModule.fused_cost
-    - module:TraversableFrontierModule.slope_grid
-    - module:TraversableFrontierModule.esdf_field
-    - module:TraversableFrontierModule.elevation_map
-    outputs:
-    - /exploration/way_point
-    - /nav/goal_pose
-    - /nav/traversable_frontiers
-    - /nav/frontier_candidate
-    owner: maps_frontier_or_tare_adapter
-    frame_role: map
-    map_dependency: live_map_or_occupancy_grid
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  - name: global_planning
-    inputs:
-    - /slam/odometry
-    - /slam/map_cloud
-    - /nav/exploration_grid
-    - /exploration/way_point
-    - /nav/goal_pose
-    - artifact:tomogram
-    - artifact:octomap
-    - artifact:point_cloud
-    outputs:
-    - /nav/global_path
-    - /nav/way_point
-    owner: lingtu_navigation_or_planner_backend
-    frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  - name: local_planning_and_following
-    inputs:
-    - /slam/odometry
-    - /nav/terrain_map
-    - /nav/terrain_map_ext
-    - /nav/traversability
-    - /nav/global_path
-    - /nav/way_point
-    outputs:
-    - /nav/local_path
-    - /nav/local_planner/control_hint
-    - /nav/cmd_vel
-    owner: lingtu_autonomy
-    frame_role: map_odom_body_local_terrain
-    map_dependency: live_terrain_maps_traversability_and_global_path
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  - name: dynamic_obstacle_gate
-    inputs:
-    - /nav/added_obstacles
-    - /nav/local_path
-    - /nav/cmd_vel
-    outputs:
-    - /nav/check_obstacle
-    - /nav/planner_status
-    owner: local_planner_dynamic_obstacle_gate
-    frame_role: odom_body_registered_cloud
-    map_dependency: current_registered_cloud_and_added_obstacles
-    producer: ''
-    consumers: []
-    frequency: ''
-    transport_policy: direct
-  - name: command_boundary
-    inputs:
-    - /nav/cmd_vel
-    outputs:
-    - no_actuation_replay_sink
-    owner: cmd_vel_mux_to_endpoint_sink
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -1949,7 +2075,6 @@ resolved_runtime_data_flow:
     - /nav/exploration_grid
     - /exploration/way_point
     - /nav/goal_pose
-    - artifact:tomogram
     - artifact:octomap
     - artifact:point_cloud
     outputs:
@@ -1957,7 +2082,7 @@ resolved_runtime_data_flow:
     - /nav/way_point
     owner: lingtu_navigation_or_planner_backend
     frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
+    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
     producer: ''
     consumers: []
     frequency: ''
@@ -2001,7 +2126,7 @@ resolved_runtime_data_flow:
     - /nav/cmd_vel
     outputs:
     - /lingtu/gazebo/cmd_vel
-    owner: cmd_vel_mux_to_endpoint_sink
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -2082,7 +2207,6 @@ resolved_runtime_data_flow:
     - /nav/exploration_grid
     - /exploration/way_point
     - /nav/goal_pose
-    - artifact:tomogram
     - artifact:octomap
     - artifact:point_cloud
     outputs:
@@ -2090,7 +2214,7 @@ resolved_runtime_data_flow:
     - /nav/way_point
     owner: lingtu_navigation_or_planner_backend
     frame_role: map
-    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud;pct_uses_same_source_tomogram
+    map_dependency: octoplanner3d_uses_headless_octomap_or_point_cloud
     producer: ''
     consumers: []
     frequency: ''
@@ -2134,7 +2258,7 @@ resolved_runtime_data_flow:
     - /nav/cmd_vel
     outputs:
     - /cmd_vel
-    owner: cmd_vel_mux_to_endpoint_sink
+    owner: command_arbiter_to_driver
     frame_role: body_twist
     map_dependency: none
     producer: ''
@@ -2240,7 +2364,7 @@ data_sources:
     provider: hardware
     owns: [mid360_lidar, imu, robot_actuation]
     normalized_outputs: [/lidar/raw_frame, /imu/raw]
-    command_sink: hardware_driver_after_cmd_vel_mux
+    command_sink: driver
     source_outputs: [/lidar/raw_frame, /imu/raw]
     algorithm_entry_outputs: [/slam/odometry, /slam/registered_cloud, /slam/map_cloud, /slam/localization_health, /slam/localization_quality]
     algorithm_context_outputs: []
@@ -2252,7 +2376,7 @@ data_sources:
     provider: hardware
     owns: [robot_actuation, local_module_graph]
     normalized_outputs: []
-    command_sink: hardware_driver_after_cmd_vel_mux
+    command_sink: driver
     source_outputs: []
     algorithm_entry_outputs: []
     algorithm_context_outputs: []
@@ -2284,18 +2408,6 @@ data_sources:
     slam_source: lingtu_fastlio2
     localization_source: fastlio2_odometry
     mapping_source: fastlio2_map_cloud
-  rosbag_fastlio2_replay:
-    provider: replay
-    owns: [recorded_lidar_imu, recorded_slam_outputs, no_actuation]
-    normalized_outputs: [/lidar/raw_frame, /imu/raw]
-    command_sink: no_actuation_replay_sink
-    source_outputs: [/lidar/raw_frame, /imu/raw]
-    algorithm_entry_outputs: [/slam/odometry, /slam/registered_cloud, /slam/map_cloud]
-    algorithm_context_outputs: []
-    lidar_extrinsic_profile: mujoco_thunder_v3
-    slam_source: fastlio2_replay_or_recorded_slam
-    localization_source: replayed_fastlio2_odometry
-    mapping_source: replayed_fastlio2_map_cloud
   gazebo_industrial:
     provider: gazebo
     owns: [world_geometry, physics, rendered_lidar, simulation_actuation]
@@ -2357,11 +2469,6 @@ profile_data_sources:
     data_source: mujoco_fastlio2_live
     mode: mujoco_raw_mid360_fastlio_octoplanner3d_closed_loop
     note: 'OctoPlanner3D MuJoCo path: MID-360 + Fast-LIO source, OctoPlanner3D global plan, local planner/path follower, and simulated cmd_vel closure.'
-  sim_mujoco_pct_live:
-    profile: sim_mujoco_pct_live
-    data_source: mujoco_fastlio2_live
-    mode: mujoco_raw_mid360_fastlio_pct_closed_loop
-    note: 'PCT MuJoCo path: MID-360 + Fast-LIO source, PCT global plan, local planner/path follower, and simulated cmd_vel closure.'
   sim_gazebo:
     profile: sim_gazebo
     data_source: gazebo_industrial

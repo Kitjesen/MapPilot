@@ -1,27 +1,73 @@
 schema_version: lingtu.runtime_graph.endpoint.v1
 name: mujoco_native_dds
 runtime_class: native_dds_sim
-summary: MuJoCo MID-360 and IMU publisher feeding the same native C++ SLAM DDS boundary as the field endpoint.
+summary: MuJoCo MID-360/IMU and ThunderV4 policy around the same C++ SLAM, terrain, and navigation DDS boundaries as the field endpoint.
 simulation_only: true
 real_equivalent: true
 data_plane: native_dds
 launcher: sim/scripts/mujoco/native_dds_sensors.py
 sensor_publisher: livox_sdk2_stream --stdin-records --dds
+acceptance_runner: sim/scripts/mujoco/native_navigation_acceptance.py
+acceptance_manifest: config/runtime_graph/endpoints/mujoco_native_navigation_acceptance.json
 native_services:
   - lingtu_slam_cyclone_runtime
+  - lingtu_traversability_dds
+  - lingtu_nav_native_endpoint
+  - lingtu_mujoco_cmd_vel_tap
+simulation_command_consumer: ThunderV4 RL policy via C++ typed-DDS cmd_vel tap
+navigation_command_boundary:
+  request: /nav/command/request
+  ack: /nav/command/ack
+  client_completion: business_ack_required
+inspection_command_boundary:
+  request: /nav/inspection/command
+  ack: /nav/inspection/ack
+  status: /nav/inspection/status
+  client_completion: business_ack_required
+inspection_evidence_boundary:
+  request: /nav/inspection/evidence/request
+  result: /nav/inspection/evidence/result
+  client_completion: matching_persisted_result_required
+in_process_navigation_chain:
+  - OctoPlanner3D
+  - LocalPlanner
+  - PathFollower
+  - final command safety gate
+local_path_role: dds_telemetry_and_preview
+path_follower_role: embedded_before_cmd_vel_gate
 source_topics:
+  - /tf
+  - /tf_static
   - /lidar/raw_frame
   - /imu/raw
+  - /nav/command/request
+  - /nav/inspection/command
+  - /nav/inspection/evidence/result
+  - /nav/traversability
 exposed_topics:
   - /slam/odometry
   - /slam/registered_cloud
   - /slam/map_cloud
+  - /slam/saved_map_cloud
   - /slam/localization_health
   - /slam/localization_quality
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
   - /nav/cmd_vel
+  - /nav/command/ack
+  - /nav/inspection/ack
+  - /nav/inspection/status
+  - /nav/inspection/evidence/request
+compatibility_topics:
+  - /nav/teleop_cmd_vel
+  - /nav/goal_pose
+  - /nav/cancel
 forbidden_modules:
   - SimEndpointDriverModule
-  - SlamBridgeModule
+  - Python GlobalPlanner
+  - Python LocalPlanner
+  - Python PathFollower
 forbidden_claims:
   - module_sim_real_equivalence
   - python_slam

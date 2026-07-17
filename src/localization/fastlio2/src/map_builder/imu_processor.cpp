@@ -1,6 +1,16 @@
 #include <cmath>
 #include "imu_processor.h"
 
+namespace
+{
+constexpr int kGyroBiasMinStationaryFrames = 50;
+constexpr double kGyroBiasMaxResidualRadPerS = 0.001;
+constexpr double kGyroBiasAdaptationTauS = 5.0;
+constexpr double kGyroBiasMaxCorrectionRateRadPerS2 = 2e-4;
+constexpr double kGyroBiasMaxCumulativeCorrectionRadPerS = 0.01;
+constexpr double kGyroBiasMaxStationaryFrameGapS = 0.5;
+}
+
 IMUProcessor::IMUProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf)
 {
     m_Q.setIdentity();
@@ -28,9 +38,22 @@ bool IMUProcessor::initialize(SyncPackage &package)
     }
     acc_mean /= static_cast<double>(m_imu_cache.size());
     gyro_mean /= static_cast<double>(m_imu_cache.size());
+    const double acc_norm = acc_mean.norm();
+    if (!std::isfinite(acc_norm) || acc_norm < 1e-6)
+    {
+        m_imu_cache.clear();
+        return false;
+    }
+    // FAST-LIO normalizes raw accelerometer magnitude using the stationary
+    // initialization mean. Without this, a small scale error integrates into
+    // unbounded velocity and position drift even while the robot is static.
+    m_acc_scale = State::gravity / acc_norm;
     m_kf->x().r_il = m_config.r_il;
     m_kf->x().t_il = m_config.t_il;
     m_kf->x().bg = gyro_mean;
+    m_initial_gyro_bias = gyro_mean;
+    m_bias_static_frame_count = 0;
+    m_last_bias_stationary_time_s = -1.0;
     if (m_config.gravity_align)
     {
         m_kf->x().r_wi = (Eigen::Quaterniond::FromTwoVectors((-acc_mean).normalized(), V3D(0.0, 0.0, -1.0)).matrix());
@@ -68,7 +91,7 @@ void IMUProcessor::undistort(SyncPackage &package)
     V3D acc_val, gyro_val;
     double dt = 0.0;
     Input inp;
-    inp.acc = m_imu_cache.back().acc;
+    inp.acc = m_imu_cache.back().acc * m_acc_scale;
     inp.gyro = m_imu_cache.back().gyro;
     for (auto it_imu = m_imu_cache.begin(); it_imu < (m_imu_cache.end() - 1); it_imu++)
     {
@@ -77,7 +100,7 @@ void IMUProcessor::undistort(SyncPackage &package)
         if (tail.time < m_last_propagate_end_time)
             continue;
         gyro_val = 0.5 * (head.gyro + tail.gyro);
-        acc_val = 0.5 * (head.acc + tail.acc);
+        acc_val = 0.5 * (head.acc + tail.acc) * m_acc_scale;
 
         if (head.time < m_last_propagate_end_time)
             dt = tail.time - m_last_propagate_end_time;
@@ -140,26 +163,31 @@ void IMUProcessor::undistort(SyncPackage &package)
 void IMUProcessor::checkIMUStationary(const Vec<IMUData> &batch)
 {
     if (batch.size() < 2)
+    {
+        m_bias_static_frame_count = 0;
+        m_last_bias_stationary_time_s = -1.0;
         return;
+    }
 
     // Compute mean of acc and gyro over the batch
     V3D acc_mean = V3D::Zero();
     V3D gyro_mean = V3D::Zero();
     for (const auto &imu : batch)
     {
-        acc_mean += imu.acc;
+        acc_mean += imu.acc * m_acc_scale;
         gyro_mean += imu.gyro;
     }
     const double n = static_cast<double>(batch.size());
     acc_mean /= n;
     gyro_mean /= n;
+    const V3D gyro_residual_mean = gyro_mean - m_kf->x().bg;
 
     // Compute variance
     double acc_var = 0.0;
     double gyro_var = 0.0;
     for (const auto &imu : batch)
     {
-        acc_var  += (imu.acc  - acc_mean).squaredNorm();
+        acc_var  += (imu.acc * m_acc_scale - acc_mean).squaredNorm();
         gyro_var += (imu.gyro - gyro_mean).squaredNorm();
     }
     acc_var  /= n;
@@ -170,7 +198,7 @@ void IMUProcessor::checkIMUStationary(const Vec<IMUData> &batch)
     const bool low_variance = acc_var < acc_thresh2 && gyro_var < gyro_thresh2;
     const bool near_static_mean =
         std::abs(acc_mean.norm() - State::gravity) < m_config.imu_static_acc_thresh &&
-        gyro_mean.norm() < m_config.imu_static_gyro_thresh;
+        gyro_residual_mean.norm() < m_config.imu_static_gyro_thresh;
 
     if (low_variance && near_static_mean)
     {
@@ -181,9 +209,68 @@ void IMUProcessor::checkIMUStationary(const Vec<IMUData> &batch)
             // Keep counter at threshold — continue injecting ZUPT every frame while static
             m_static_frame_count = m_config.zupt_min_static_frames;
         }
+
+        const double gyro_residual_norm = gyro_residual_mean.norm();
+        const double stationary_time_s = batch.back().time;
+        if (!std::isfinite(gyro_residual_norm) ||
+            gyro_residual_norm > kGyroBiasMaxResidualRadPerS ||
+            !std::isfinite(stationary_time_s))
+        {
+            m_bias_static_frame_count = 0;
+            m_last_bias_stationary_time_s = -1.0;
+            return;
+        }
+
+        double elapsed_s = 0.0;
+        if (m_last_bias_stationary_time_s >= 0.0)
+        {
+            elapsed_s = stationary_time_s - m_last_bias_stationary_time_s;
+            if (!std::isfinite(elapsed_s) || elapsed_s <= 0.0)
+            {
+                m_bias_static_frame_count = 0;
+                m_last_bias_stationary_time_s = -1.0;
+                return;
+            }
+            if (elapsed_s > kGyroBiasMaxStationaryFrameGapS)
+            {
+                // A long sensor or callback outage breaks the continuous-static
+                // evidence. Treat the current frame as the first frame of a new
+                // stationary streak and never integrate the full gap into bg.
+                m_bias_static_frame_count = 1;
+                m_last_bias_stationary_time_s = stationary_time_s;
+                return;
+            }
+        }
+        m_last_bias_stationary_time_s = stationary_time_s;
+        m_bias_static_frame_count++;
+        if (m_bias_static_frame_count < kGyroBiasMinStationaryFrames || elapsed_s <= 0.0)
+            return;
+
+        // Both gyro_mean and bg are expressed in the IMU frame. Apply a slow
+        // zero-angular-rate update only after the existing stationary gate has
+        // remained true long enough; do not touch pose, velocity, or covariance.
+        V3D correction =
+            (1.0 - std::exp(-elapsed_s / kGyroBiasAdaptationTauS)) *
+            gyro_residual_mean;
+        const double max_step = kGyroBiasMaxCorrectionRateRadPerS2 * elapsed_s;
+        const double correction_norm = correction.norm();
+        if (correction_norm > max_step && correction_norm > 0.0)
+            correction *= max_step / correction_norm;
+
+        V3D cumulative_correction =
+            m_kf->x().bg + correction - m_initial_gyro_bias;
+        const double cumulative_norm = cumulative_correction.norm();
+        if (cumulative_norm > kGyroBiasMaxCumulativeCorrectionRadPerS)
+        {
+            cumulative_correction *=
+                kGyroBiasMaxCumulativeCorrectionRadPerS / cumulative_norm;
+        }
+        m_kf->x().bg = m_initial_gyro_bias + cumulative_correction;
     }
     else
     {
         m_static_frame_count = 0;
+        m_bias_static_frame_count = 0;
+        m_last_bias_stationary_time_s = -1.0;
     }
 }

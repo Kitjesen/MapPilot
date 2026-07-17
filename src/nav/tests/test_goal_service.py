@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from nav.services.goals import GoalService
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
 
 @pytest.fixture
@@ -130,6 +130,150 @@ class TestGoalService:
 
         assert goal_service._test_statuses[-1]["success"] is True
         assert goal_service._test_cancels == ["api_cancel"]
+
+    def test_native_goal_uses_persistent_command_client(self, monkeypatch):
+        from runtime.adapters.native import navigation
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.goals = []
+
+            def send_goal(self, x, y, z, yaw) -> None:
+                self.goals.append((x, y, z, yaw))
+
+        client = FakeClient()
+        monkeypatch.setattr(
+            navigation,
+            "get_native_navigation_client",
+            lambda *, required=False: client,
+        )
+        service = GoalService(native_endpoint=True)
+        service.setup()
+        emitted = []
+        statuses = []
+        service.goal_pose.subscribe(emitted.append)
+        service.goal_status.subscribe(statuses.append)
+
+        service.goal_request._deliver(
+            PoseStamped(
+                pose=Pose(
+                    position=Vector3(1.0, 2.0, 0.3),
+                    orientation=Quaternion.from_yaw(0.4),
+                ),
+                frame_id="map",
+            )
+        )
+
+        assert emitted == []
+        assert client.goals == [(1.0, 2.0, 0.3, pytest.approx(0.4))]
+        assert statuses[-1]["success"] is True
+        assert statuses[-1]["sink"] == "native_dds"
+
+    def test_native_cancel_uses_persistent_command_client(self, monkeypatch):
+        from runtime.adapters.native import navigation
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.reasons = []
+
+            def cancel(self, reason) -> None:
+                self.reasons.append(reason)
+
+        client = FakeClient()
+        monkeypatch.setattr(
+            navigation,
+            "get_native_navigation_client",
+            lambda *, required=False: client,
+        )
+        service = GoalService(native_endpoint=True)
+        service.setup()
+        emitted = []
+        statuses = []
+        service.cancel.subscribe(emitted.append)
+        service.goal_status.subscribe(statuses.append)
+
+        service.cancel_request._deliver("operator_cancel")
+
+        assert emitted == []
+        assert client.reasons == ["operator_cancel"]
+        assert statuses[-1]["sink"] == "native_dds"
+
+    def test_native_inspection_uses_dedicated_command_client(self, monkeypatch):
+        from runtime.adapters.native import inspection_commands
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self.starts = []
+
+            def start(self, route_id, *, revision=0, request_id=None) -> None:
+                self.starts.append((route_id, revision, request_id))
+
+        client = FakeClient()
+        monkeypatch.setattr(
+            inspection_commands,
+            "get_native_inspection_command_client",
+            lambda *, required=False: client,
+        )
+        service = GoalService(native_endpoint=True)
+        service.setup()
+        patrols = []
+        statuses = []
+        service.patrol_goals.subscribe(patrols.append)
+        service.goal_status.subscribe(statuses.append)
+
+        service._on_command(
+            json.dumps(
+                {
+                    "action": "inspection",
+                    "route_id": "daily-route",
+                    "route_revision": (1 << 64) - 1,
+                    "request_id": "inspection-42",
+                }
+            )
+        )
+
+        assert patrols == []
+        assert client.starts == [("daily-route", (1 << 64) - 1, "inspection-42")]
+        assert statuses[-1] == {
+            "request_id": "inspection-42",
+            "action": "inspection",
+            "success": True,
+            "accepted": True,
+            "state": "accepted",
+            "message": "inspection command dispatched",
+            "route_id": "daily-route",
+            "route_revision": (1 << 64) - 1,
+            "sink": "native_dds",
+        }
+
+    @pytest.mark.parametrize("revision", [-1, 1 << 64])
+    def test_native_inspection_rejects_revision_outside_uint64(self, monkeypatch, revision):
+        from runtime.adapters.native import inspection_commands
+
+        acquired = []
+        monkeypatch.setattr(
+            inspection_commands,
+            "get_native_inspection_command_client",
+            lambda *, required=False: acquired.append(required),
+        )
+        service = GoalService(native_endpoint=True)
+        service.setup()
+        statuses = []
+        service.goal_status.subscribe(statuses.append)
+
+        service._on_command(
+            json.dumps(
+                {
+                    "action": "inspection",
+                    "route_id": "daily-route",
+                    "revision": revision,
+                }
+            )
+        )
+
+        assert acquired == []
+        assert statuses[-1]["success"] is False
+        assert statuses[-1]["message"] == "inspection route revision must be between 0 and UINT64_MAX"
 
     def test_invalid_json_reports_error(self, goal_service):
         goal_service._on_command("not-json")

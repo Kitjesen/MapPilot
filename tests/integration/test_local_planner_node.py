@@ -39,15 +39,17 @@ import threading
 import time
 
 import numpy as np
-import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+import pytest
 
+pytest.importorskip("rclpy", reason="ROS2 integration test — requires rclpy")
+
+import rclpy
 from geometry_msgs.msg import PointStamped, Quaternion
 from nav_msgs.msg import Odometry, Path
+from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Int8
-
 
 # ---------------------------------------------------------------------------
 ODOM_HZ = 20
@@ -77,10 +79,10 @@ def make_xyzi_cloud(pts, frame_id, stamp):
     msg.is_dense = False
     msg.is_bigendian = False
     msg.fields = [
-        PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-        PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-        PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-        PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1),
+        PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+        PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+        PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        PointField(name="intensity", offset=12, datatype=PointField.FLOAT32, count=1),
     ]
     msg.point_step = 16
     msg.row_step = 16 * len(arr)
@@ -106,25 +108,23 @@ def build_ground_cloud(include_wall=False):
 
 class LocalPlannerTestNode(Node):
     def __init__(self):
-        super().__init__('local_planner_test')
+        super().__init__("local_planner_test")
         self._lock = threading.Lock()
 
         # Publishers
-        self.pub_odom = self.create_publisher(Odometry, '/nav/odometry', 10)
-        self.pub_cloud = self.create_publisher(PointCloud2, '/nav/map_cloud', 10)
-        self.pub_waypoint = self.create_publisher(PointStamped, '/nav/way_point', 10)
+        self.pub_odom = self.create_publisher(Odometry, "/nav/odometry", 10)
+        self.pub_cloud = self.create_publisher(PointCloud2, "/nav/map_cloud", 10)
+        self.pub_waypoint = self.create_publisher(PointStamped, "/nav/way_point", 10)
 
         # Subscribers
         self.path_msgs = []
         self.stop_msgs = []
 
-        qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST, depth=10)
-        self.create_subscription(Path, '/path', self._path_cb, qos)
+        qos = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST, depth=10)
+        self.create_subscription(Path, "/path", self._path_cb, qos)
         # localPlanner publishes /stop (internal name, no remap in manual start)
-        self.create_subscription(Int8, '/stop', self._stop_cb, 10)
-        self.create_subscription(Int8, '/nav/stop', self._stop_cb, 10)
+        self.create_subscription(Int8, "/stop", self._stop_cb, 10)
+        self.create_subscription(Int8, "/nav/stop", self._stop_cb, 10)
 
     def _path_cb(self, msg):
         with self._lock:
@@ -137,8 +137,8 @@ class LocalPlannerTestNode(Node):
     def publish_odom(self):
         msg = Odometry()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
-        msg.child_frame_id = 'body'
+        msg.header.frame_id = "odom"
+        msg.child_frame_id = "body"
         msg.pose.pose.position.x = ROBOT_X
         msg.pose.pose.position.y = ROBOT_Y
         msg.pose.pose.position.z = ROBOT_Z
@@ -148,13 +148,13 @@ class LocalPlannerTestNode(Node):
     def publish_cloud(self, include_wall=False):
         pts = build_ground_cloud(include_wall)
         stamp = self.get_clock().now().to_msg()
-        msg = make_xyzi_cloud(pts, 'body', stamp)
+        msg = make_xyzi_cloud(pts, "body", stamp)
         self.pub_cloud.publish(msg)
 
     def publish_waypoint(self, x, y, z=0.0):
         msg = PointStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
+        msg.header.frame_id = "odom"
         msg.point.x = float(x)
         msg.point.y = float(y)
         msg.point.z = float(z)
@@ -175,9 +175,9 @@ class LocalPlannerTestNode(Node):
 
 
 def main():
-    print('=' * 60)
-    print('  localPlanner + terrainAnalysis Integration Test (T2)')
-    print('=' * 60)
+    print("=" * 60)
+    print("  localPlanner + terrainAnalysis Integration Test (T2)")
+    print("=" * 60)
 
     rclpy.init()
     node = LocalPlannerTestNode()
@@ -190,7 +190,7 @@ def main():
     results = {}
 
     # ── Warmup (3s) ──
-    print('\n[Warmup] 3s...')
+    print("\n[Warmup] 3s...")
     t0 = time.monotonic()
     while time.monotonic() - t0 < 3.0:
         node.publish_odom()
@@ -198,7 +198,7 @@ def main():
         time.sleep(0.05)
 
     # ── Phase 1: Normal — waypoint at (5,0), no wall ──
-    print(f'\n[Phase 1] Waypoint (5,0), no wall ({PHASE1_DURATION}s)...')
+    print(f"\n[Phase 1] Waypoint (5,0), no wall ({PHASE1_DURATION}s)...")
     node.clear()
     t0 = time.monotonic()
     while time.monotonic() - t0 < PHASE1_DURATION:
@@ -212,24 +212,22 @@ def main():
 
     paths = node.get_paths()
     path_received = len(paths) > 0
-    results['path_output_received'] = path_received
-    print(f'  {"PASS" if path_received else "FAIL"} path_output_received: '
-          f'{len(paths)} path msgs')
+    results["path_output_received"] = path_received
+    print(f"  {'PASS' if path_received else 'FAIL'} path_output_received: {len(paths)} path msgs")
 
     # Check path points exist and are reasonable
     if paths:
         last = paths[-1]
         n_poses = len(last.poses)
         path_has_poses = n_poses > 2
-        results['path_has_poses'] = path_has_poses
-        print(f'  {"PASS" if path_has_poses else "FAIL"} path_has_poses: '
-              f'{n_poses} poses in last path')
+        results["path_has_poses"] = path_has_poses
+        print(f"  {'PASS' if path_has_poses else 'FAIL'} path_has_poses: {n_poses} poses in last path")
     else:
-        results['path_has_poses'] = False
-        print('  FAIL path_has_poses: no path received')
+        results["path_has_poses"] = False
+        print("  FAIL path_has_poses: no path received")
 
     # ── Phase 2: Wall at x=5, waypoint at (8,0) ──
-    print(f'\n[Phase 2] Waypoint (8,0), wall at x=5 ({PHASE2_DURATION}s)...')
+    print(f"\n[Phase 2] Waypoint (8,0), wall at x=5 ({PHASE2_DURATION}s)...")
     node.clear()
     t0 = time.monotonic()
     while time.monotonic() - t0 < PHASE2_DURATION:
@@ -248,11 +246,10 @@ def main():
     # OR check if stop=2 was triggered (near-field ESTOP because wall is close)
     stop_values = [m.data for m in stops2]
     has_estop = 2 in stop_values
-    results['wall_triggers_response'] = has_estop or len(paths2) > 0
+    results["wall_triggers_response"] = has_estop or len(paths2) > 0
 
     if has_estop:
-        print(f'  PASS wall_triggers_response: stop=2 (E-STOP) triggered '
-              f'({stop_values.count(2)} times)')
+        print(f"  PASS wall_triggers_response: stop=2 (E-STOP) triggered ({stop_values.count(2)} times)")
     elif paths2:
         # Check if paths avoid the wall region
         wall_penetrations = 0
@@ -263,17 +260,21 @@ def main():
                 if 4.5 < px < 5.5 and abs(py) < 2.5:
                     wall_penetrations += 1
         avoids_wall = wall_penetrations == 0
-        results['wall_triggers_response'] = avoids_wall or has_estop
-        print(f'  {"PASS" if avoids_wall else "FAIL"} wall_triggers_response: '
-              f'{wall_penetrations} wall penetrations in recent paths')
+        results["wall_triggers_response"] = avoids_wall or has_estop
+        print(
+            f"  {'PASS' if avoids_wall else 'FAIL'} wall_triggers_response: "
+            f"{wall_penetrations} wall penetrations in recent paths"
+        )
     else:
-        print('  FAIL wall_triggers_response: no paths or stops in Phase 2')
+        print("  FAIL wall_triggers_response: no paths or stops in Phase 2")
 
     # Check terrain_map was being consumed (indirectly: if localPlanner outputs
     # paths, it means terrain_map was received)
-    results['terrain_chain_works'] = path_received
-    print(f'  {"PASS" if path_received else "FAIL"} terrain_chain_works: '
-          f'localPlanner produced paths (implies terrain_map received)')
+    results["terrain_chain_works"] = path_received
+    print(
+        f"  {'PASS' if path_received else 'FAIL'} terrain_chain_works: "
+        f"localPlanner produced paths (implies terrain_map received)"
+    )
 
     # ── Summary ──
     executor.shutdown()
@@ -281,15 +282,15 @@ def main():
     rclpy.shutdown()
 
     all_pass = all(results.values())
-    print('\n' + '=' * 60)
+    print("\n" + "=" * 60)
     for k, v in results.items():
-        print(f'  [{"PASS" if v else "FAIL"}] {k}')
-    print(f'\n  {sum(results.values())}/{len(results)} passed')
-    print('=' * 60)
+        print(f"  [{'PASS' if v else 'FAIL'}] {k}")
+    print(f"\n  {sum(results.values())}/{len(results)} passed")
+    print("=" * 60)
     print(json.dumps(results, indent=2))
 
     sys.exit(0 if all_pass else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -34,8 +34,10 @@ REQUIRED_PACKAGE_INCLUDE_PATHS = (
     "src/lingtu/",
     "src/drivers/real/thunder/",
     "src/nav/__init__.py",
-    "src/nav/mission/navigation.py",
-    "src/nav/mission/",
+    "src/nav/navigation.py",
+    "src/nav/runtime/",
+    "src/nav/model/",
+    "src/nav/tracking/",
     "src/nav/services/plan/__init__.py",
     "src/nav/services/plan/contracts.py",
     "src/nav/services/plan/factory.py",
@@ -51,10 +53,8 @@ REQUIRED_PACKAGE_INCLUDE_PATHS = (
     "src/nav/services/__init__.py",
     "src/nav/services/frame_transforms.py",
     "src/nav/services/goals.py",
-    "src/nav/mission/model/frame_contract.py",
     "src/nav/services/geofence.py",
     "src/nav/local/",
-    "src/nav/mission/tracking/waypoint_tracker.py",
     "src/nav/kernel/__init__.py",
     "src/nav/kernel/loader.py",
     "src/nav/kernel/paths.py",
@@ -68,7 +68,6 @@ REQUIRED_PACKAGE_EXCLUDE_PATHS = (
     "src/gateway/",
     "src/gateway/media/",
     "src/drivers/sim/",
-    "src/drivers/real/lidar/livox_ros_driver2/",
     "sim/",
     "web/",
     "third_party/",
@@ -99,9 +98,8 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "src/runtime/blueprints/stacks/exploration.py",
     "src/runtime/blueprints/stacks/gateway.py",
     "src/runtime/blueprints/stacks/lidar.py",
-    "src/runtime/blueprints/adapters/driver_ros2_runtime.py",
-    "src/runtime/blueprints/adapters/mapping_slam.py",
-    "src/runtime/blueprints/adapters/navigation_io.py",
+    "src/runtime/adapters/localization.py",
+    "src/runtime/adapters/navigation_io.py",
     "src/runtime/blueprints/stacks/maps.py",
     "src/runtime/blueprints/stacks/memory.py",
     "src/runtime/blueprints/adapters/perception_gateway.py",
@@ -111,31 +109,23 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "src/runtime/blueprints/stacks/slam.py",
     "src/runtime/blueprints/stacks/system.py",
     "src/runtime/blueprints/wires/",
-    "src/runtime/dds.py",
+    "src/runtime/adapters/dds/reader.py",
     "src/runtime/devices/",
-    "src/runtime/diagnostics/dimos_gap.py",
-    "src/runtime/diagnostics/dimos_runtime_dataflow.py",
-    "src/runtime/dynamic_filter.py",
+    "sim/diagnostics/gap_report.py",
+    "sim/diagnostics/dataflow_report.py",
     "src/runtime/external_service_module.py",
-    "src/runtime/diagnostics/gateway_runtime_acceptance.py",
-    "src/runtime/diagnostics/inspection_acceptance.py",
-    "src/runtime/map_save.py",
-    "src/runtime/native_module.py",
-    "src/runtime/native_install.py",
-    "src/runtime/diagnostics/product_field_check.py",
+    "src/diagnostics/field/gateway_acceptance.py",
+    "src/diagnostics/field/inspection.py",
+    "src/diagnostics/field/field_check.py",
     "src/runtime/rerun_module.py",
-    "src/runtime/diagnostics/runtime_evidence.py",
-    "src/runtime/diagnostics/runtime_validation_gates.py",
-    "src/runtime/same_source_map_artifacts.py",
+    "src/diagnostics/field/evidence.py",
+    "src/diagnostics/field/gates.py",
     "src/runtime/transport/dds.py",
     "src/runtime/transport/shm.py",
-    "src/runtime/adapters/native/map_save.py",
     "src/runtime/adapters/native/relocalization.py",
     "src/drivers/real/thunder/blueprints.py",
     "src/drivers/real/thunder/connection.py",
     "src/lingtu/sdk/",
-    "src/lingtu/ros2_plugin_seed.py",
-    "src/lingtu/ros2_shutdown.py",
 )
 REQUIRED_PACKAGE_FORBIDDEN_MARKERS = (
     "rclpy",
@@ -254,10 +244,7 @@ def load_pyproject_dependencies(path: Path = PYPROJECT_PATH) -> tuple[list[str],
         project = data.get("project") or {}
         return (
             list(project.get("dependencies") or []),
-            {
-                str(key): list(value or [])
-                for key, value in (project.get("optional-dependencies") or {}).items()
-            },
+            {str(key): list(value or []) for key, value in (project.get("optional-dependencies") or {}).items()},
         )
     return _parse_toml_string_lists(path.read_text(encoding="utf-8-sig"))
 
@@ -367,38 +354,28 @@ def _validate_package_boundary(
 
     missing_includes = sorted(required_includes - include_set)
     if missing_includes:
-        blockers.append(
-            "package.include_paths missing required Lite runtime paths: "
-            + ", ".join(missing_includes)
-        )
+        blockers.append("package.include_paths missing required Lite runtime paths: " + ", ".join(missing_includes))
 
     missing_excludes = sorted(required_excludes - exclude_set)
     if missing_excludes:
-        blockers.append(
-            "package.exclude_paths missing required Lite exclusions: "
-            + ", ".join(missing_excludes)
-        )
+        blockers.append("package.exclude_paths missing required Lite exclusions: " + ", ".join(missing_excludes))
 
     missing_omits = sorted(required_omits - omit_set)
     if missing_omits:
-        blockers.append(
-            "package.omit_paths missing required Lite omissions: "
-            + ", ".join(missing_omits)
-        )
+        blockers.append("package.omit_paths missing required Lite omissions: " + ", ".join(missing_omits))
 
     marker_set = {marker.lower() for marker in forbidden_markers}
-    missing_markers = sorted(marker for marker in REQUIRED_PACKAGE_FORBIDDEN_MARKERS if marker.lower() not in marker_set)
+    missing_markers = sorted(
+        marker for marker in REQUIRED_PACKAGE_FORBIDDEN_MARKERS if marker.lower() not in marker_set
+    )
     if missing_markers:
         blockers.append(
-            "package.forbidden_markers missing required ROS/native build markers: "
-            + ", ".join(missing_markers)
+            "package.forbidden_markers missing required ROS/native build markers: " + ", ".join(missing_markers)
         )
 
     overlap = sorted(include_set & exclude_set)
     if overlap:
-        blockers.append(
-            "package paths cannot be both included and excluded: " + ", ".join(overlap)
-        )
+        blockers.append("package paths cannot be both included and excluded: " + ", ".join(overlap))
 
     for raw_path in include_paths:
         normalized = _normalize_manifest_path(raw_path)
@@ -411,14 +388,11 @@ def _validate_package_boundary(
             blockers.append(f"package.include_paths entry is missing: {normalized}")
             continue
         nested_excludes = sorted(
-            exclude
-            for exclude in exclude_set
-            if normalized == exclude or normalized.startswith(f"{exclude}/")
+            exclude for exclude in exclude_set if normalized == exclude or normalized.startswith(f"{exclude}/")
         )
         if nested_excludes:
             blockers.append(
-                f"package.include_paths entry {normalized} is under excluded path(s): "
-                + ", ".join(nested_excludes)
+                f"package.include_paths entry {normalized} is under excluded path(s): " + ", ".join(nested_excludes)
             )
 
 
@@ -445,8 +419,7 @@ def _validate_python_dependencies(manifest: dict[str, Any], blockers: list[str],
     leaked_lite = sorted(lite_names & forbidden_lite)
     if leaked_lite:
         blockers.append(
-            f"pyproject.toml: {lite_extra!r} extra includes "
-            f"Lite-forbidden packages: {', '.join(leaked_lite)}"
+            f"pyproject.toml: {lite_extra!r} extra includes Lite-forbidden packages: {', '.join(leaked_lite)}"
         )
 
     gateway_extra = str(python_cfg.get("gateway_extra") or "gateway")
@@ -483,10 +456,10 @@ def _validate_runtime_contract(
     blockers: list[str],
     checked_files: list[str],
 ) -> None:
+    from lingtu.plugin_seed import install_builtin_plugin_catalog
     from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
     from runtime.profiles.endpoints import resolve_runtime_run_spec
     from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
-    from lingtu.plugin_seed import install_builtin_plugin_catalog
 
     install_builtin_plugin_catalog()
 
@@ -599,10 +572,7 @@ def _validate_product_graph(
         for prefix, label in forbidden_prefixes.items():
             if _module_matches_prefix(module_name, prefix):
                 class_name = getattr(entry.module_cls, "__name__", str(entry.module_cls))
-                blockers.append(
-                    f"{profile} graph contains {label} module "
-                    f"{entry.name} ({module_name}.{class_name})"
-                )
+                blockers.append(f"{profile} graph contains {label} module {entry.name} ({module_name}.{class_name})")
 
 
 def _validate_runtime_env_defaults(
@@ -618,9 +588,7 @@ def _validate_runtime_env_defaults(
         blockers.append(f"{rel_path}: runtime environment file is missing")
         return
 
-    defaults = _parse_shell_default_env(
-        RUNTIME_ENV_PATH.read_text(encoding="utf-8-sig", errors="ignore")
-    )
+    defaults = _parse_shell_default_env(RUNTIME_ENV_PATH.read_text(encoding="utf-8-sig", errors="ignore"))
     expected_defaults = {
         "LINGTU_PROFILE": str(manifest.get("profile") or "thunder-lite"),
         "LINGTU_MODULE_TRANSPORT": spec.module_transport,

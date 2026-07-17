@@ -1,0 +1,33 @@
+[Unit]
+Description=LingTu native GNSS DDS publisher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lingtu/current
+Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_GNSS_DDS_BIN=/opt/lingtu/current/build/gnss_dds/lingtu_gnss_dds
+Environment=LINGTU_GNSS_DEVICE=/dev/wtrtk980
+Environment=LINGTU_GNSS_BAUD=115200
+Environment=LINGTU_GNSS_TIMEOUT_MS=1000
+Environment=LINGTU_GNSS_FRAME_ID=gnss_antenna
+Environment=LINGTU_GNSS_MAP_FRAME_ID=map
+Environment=LINGTU_GNSS_STATUS_FILE=/dev/shm/lingtu/gnss_status.json
+Environment=LINGTU_GNSS_FIX_TOPIC=rt/gnss/fix
+Environment=LINGTU_GNSS_STATUS_TOPIC=rt/gnss/status
+Environment=LINGTU_GNSS_ODOM_TOPIC=rt/gnss/odom
+Environment=LINGTU_GNSS_PUBLISH_ODOM=0
+Environment=LINGTU_GNSS_ORIGIN_LAT=
+Environment=LINGTU_GNSS_ORIGIN_LON=
+Environment=LINGTU_GNSS_ORIGIN_ALT=0
+Environment=LINGTU_DDS_DOMAIN_ID=0
+Environment=LINGTU_CYCLONEDDS_PREFIX=
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_gnss_dds.sh
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

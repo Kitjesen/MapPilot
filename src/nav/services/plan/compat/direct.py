@@ -5,13 +5,13 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from runtime.msgs.numpy_compat import np
+from nav.services.plan.compat.direct_path import DirectPathBackend
 from nav.services.plan.contracts import (
     GlobalPlanRequest,
     GlobalPlanResult,
     require_global_planner_backend,
 )
-from nav.services.plan.compat.direct_path import DirectPathBackend
+from runtime.msgs.numpy_compat import np
 
 
 class MaplessDirectPlannerService:
@@ -25,7 +25,7 @@ class MaplessDirectPlannerService:
     def __init__(
         self,
         planner_name: str = "direct",
-        tomogram: str = "",
+        map_path: str = "",
         obstacle_thr: float = 49.9,
         downsample_dist: float = 2.0,
         plan_safety_policy: str = "off",
@@ -33,7 +33,7 @@ class MaplessDirectPlannerService:
         expected_saved_map_frame_id: str | None = None,
     ) -> None:
         self._planner_name = str(planner_name or "direct")
-        self._tomogram = str(tomogram or "")
+        self._map_path = str(map_path or "")
         self._obstacle_thr = float(obstacle_thr)
         self._downsample_dist = float(downsample_dist)
         self._plan_safety_policy = str(plan_safety_policy or "off")
@@ -52,7 +52,7 @@ class MaplessDirectPlannerService:
         self._backend = require_global_planner_backend(
             self._planner_name,
             DirectPathBackend(
-                tomogram_path=self._tomogram,
+                map_path=self._map_path,
                 obstacle_thr=self._obstacle_thr,
             ),
         )
@@ -155,11 +155,8 @@ class MaplessDirectPlannerService:
             "degraded_reason": "",
         }
 
-    def reload_tomogram(self, tomogram: str) -> dict[str, Any]:
-        self._tomogram = str(tomogram or "")
-        if self._backend is not None:
-            self._backend._tomogram_path = self._tomogram
-        return {"ok": True, "backend": self.planner_name, "mode": "mapless_direct"}
-
     def reload_map(self, map_path: str = "") -> dict[str, Any]:
-        return self.reload_tomogram(map_path)
+        self._map_path = str(map_path or "")
+        if self._backend is not None:
+            self._backend._map_path = self._map_path
+        return {"ok": True, "backend": self.planner_name, "mode": "mapless_direct"}

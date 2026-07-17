@@ -5,11 +5,13 @@ import hashlib
 import json
 import shutil
 import struct
+import subprocess
+import sys
+import time
 import uuid
 from pathlib import Path
 
 import pytest
-
 
 pytest.importorskip("fastapi")
 
@@ -22,6 +24,48 @@ def _payload(response_or_payload):
     if hasattr(response_or_payload, "body"):
         return json.loads(response_or_payload.body)
     return response_or_payload
+
+
+def _activate_map(map_root: Path, name: str) -> None:
+    map_root.mkdir(parents=True, exist_ok=True)
+    (map_root / "active_map.txt").write_text(f"{name}\n", encoding="utf-8")
+
+
+def _fake_octomap_converter_command(tmp_path: Path) -> str:
+    script = tmp_path / "fake_octomap_converter.py"
+    script.write_text(
+        "from __future__ import annotations\n"
+        "import argparse\n"
+        "from pathlib import Path\n"
+        "parser = argparse.ArgumentParser()\n"
+        "parser.add_argument('--input', required=True)\n"
+        "parser.add_argument('--output', required=True)\n"
+        "parser.add_argument('--resolution', required=True)\n"
+        "parser.add_argument('--free-layers-above', required=True)\n"
+        "parser.add_argument('--free-dilation-cells', required=True)\n"
+        "parser.add_argument('--frame', required=True)\n"
+        "args = parser.parse_args()\n"
+        "Path(args.output).write_bytes(Path(args.input).read_bytes())\n",
+        encoding="utf-8",
+    )
+    return subprocess.list2cmdline(
+        [
+            sys.executable,
+            str(script),
+            "--input",
+            "{input}",
+            "--output",
+            "{output}",
+            "--resolution",
+            "{resolution}",
+            "--free-layers-above",
+            "{free_layers_above}",
+            "--free-dilation-cells",
+            "{free_dilation_cells}",
+            "--frame",
+            "{frame}",
+        ]
+    )
 
 
 class _FakeRelocalizationService:
@@ -93,44 +137,46 @@ def _seed_map_artifacts(map_dir: Path) -> None:
     tomogram_sha = hashlib.sha256(tomogram_path.read_bytes()).hexdigest()
     octomap_sha = hashlib.sha256(octomap_path.read_bytes()).hexdigest()
     (map_dir / "metadata.json").write_text(
-        json.dumps({
-            "schema_version": "lingtu.saved_map_artifacts.v1",
-            "source_profile": "thunder_field",
-            "data_source": "thunder_field",
-            "slam_source": "fastlio2",
-            "localization_source": "fastlio2",
-            "mapping_source": "fastlio2",
-            "frame_id": "map",
-            "created_at": "2026-05-25T00:00:00Z",
-            "artifacts": {
-                "map_pcd": {
-                    "path": "map.pcd",
-                    "sha256": map_sha,
-                    "source_profile": "thunder_field",
-                    "data_source": "thunder_field",
-                    "slam_source": "fastlio2",
-                    "frame_id": "map",
-                    "point_count": 1,
+        json.dumps(
+            {
+                "schema_version": "lingtu.saved_map_artifacts.v1",
+                "source_profile": "thunder_field",
+                "data_source": "thunder_field",
+                "slam_source": "fastlio2",
+                "localization_source": "fastlio2",
+                "mapping_source": "fastlio2",
+                "frame_id": "map",
+                "created_at": "2026-05-25T00:00:00Z",
+                "artifacts": {
+                    "map_pcd": {
+                        "path": "map.pcd",
+                        "sha256": map_sha,
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
+                        "slam_source": "fastlio2",
+                        "frame_id": "map",
+                        "point_count": 1,
+                    },
+                    "tomogram": {
+                        "path": "tomogram.pickle",
+                        "sha256": tomogram_sha,
+                        "source_map_sha256": map_sha,
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
+                        "frame_id": "map",
+                        "shape": [1],
+                    },
+                    "octomap": {
+                        "path": "octomap.ot",
+                        "sha256": octomap_sha,
+                        "source_map_sha256": map_sha,
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
+                        "frame_id": "map",
+                    },
                 },
-                "tomogram": {
-                    "path": "tomogram.pickle",
-                    "sha256": tomogram_sha,
-                    "source_map_sha256": map_sha,
-                    "source_profile": "thunder_field",
-                    "data_source": "thunder_field",
-                    "frame_id": "map",
-                    "shape": [1],
-                },
-                "octomap": {
-                    "path": "octomap.ot",
-                    "sha256": octomap_sha,
-                    "source_map_sha256": map_sha,
-                    "source_profile": "thunder_field",
-                    "data_source": "thunder_field",
-                    "frame_id": "map",
-                },
-            },
-        })
+            }
+        )
     )
 
 
@@ -155,35 +201,37 @@ def _seed_octomap_only_artifacts(map_dir: Path) -> None:
     map_sha = hashlib.sha256(map_path.read_bytes()).hexdigest()
     octomap_sha = hashlib.sha256(octomap_path.read_bytes()).hexdigest()
     (map_dir / "metadata.json").write_text(
-        json.dumps({
-            "schema_version": "lingtu.saved_map_artifacts.v1",
-            "source_profile": "thunder_field",
-            "data_source": "thunder_field",
-            "slam_source": "fastlio2",
-            "localization_source": "fastlio2",
-            "mapping_source": "fastlio2",
-            "frame_id": "map",
-            "created_at": "2026-05-25T00:00:00Z",
-            "artifacts": {
-                "map_pcd": {
-                    "path": "map.pcd",
-                    "sha256": map_sha,
-                    "source_profile": "thunder_field",
-                    "data_source": "thunder_field",
-                    "slam_source": "fastlio2",
-                    "frame_id": "map",
-                    "point_count": 1,
+        json.dumps(
+            {
+                "schema_version": "lingtu.saved_map_artifacts.v1",
+                "source_profile": "thunder_field",
+                "data_source": "thunder_field",
+                "slam_source": "fastlio2",
+                "localization_source": "fastlio2",
+                "mapping_source": "fastlio2",
+                "frame_id": "map",
+                "created_at": "2026-05-25T00:00:00Z",
+                "artifacts": {
+                    "map_pcd": {
+                        "path": "map.pcd",
+                        "sha256": map_sha,
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
+                        "slam_source": "fastlio2",
+                        "frame_id": "map",
+                        "point_count": 1,
+                    },
+                    "octomap": {
+                        "path": "octomap.ot",
+                        "sha256": octomap_sha,
+                        "source_map_sha256": map_sha,
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
+                        "frame_id": "map",
+                    },
                 },
-                "octomap": {
-                    "path": "octomap.ot",
-                    "sha256": octomap_sha,
-                    "source_map_sha256": map_sha,
-                    "source_profile": "thunder_field",
-                    "data_source": "thunder_field",
-                    "frame_id": "map",
-                },
-            },
-        })
+            }
+        )
     )
 
 
@@ -205,27 +253,29 @@ def _seed_pcd_only_metadata(map_dir: Path) -> None:
     map_path.write_text(pcd_content, encoding="ascii")
     map_sha = hashlib.sha256(map_path.read_bytes()).hexdigest()
     (map_dir / "metadata.json").write_text(
-        json.dumps({
-            "schema_version": "lingtu.saved_map_artifacts.v1",
-            "source_profile": "thunder_field",
-            "data_source": "thunder_field",
-            "slam_source": "fastlio2",
-            "localization_source": "fastlio2",
-            "mapping_source": "fastlio2",
-            "frame_id": "map",
-            "created_at": "2026-05-25T00:00:00Z",
-            "artifacts": {
-                "map_pcd": {
-                    "path": "map.pcd",
-                    "sha256": map_sha,
-                    "source_profile": "thunder_field",
-                    "data_source": "thunder_field",
-                    "slam_source": "fastlio2",
-                    "frame_id": "map",
-                    "point_count": 1,
+        json.dumps(
+            {
+                "schema_version": "lingtu.saved_map_artifacts.v1",
+                "source_profile": "thunder_field",
+                "data_source": "thunder_field",
+                "slam_source": "fastlio2",
+                "localization_source": "fastlio2",
+                "mapping_source": "fastlio2",
+                "frame_id": "map",
+                "created_at": "2026-05-25T00:00:00Z",
+                "artifacts": {
+                    "map_pcd": {
+                        "path": "map.pcd",
+                        "sha256": map_sha,
+                        "source_profile": "thunder_field",
+                        "data_source": "thunder_field",
+                        "slam_source": "fastlio2",
+                        "frame_id": "map",
+                        "point_count": 1,
+                    },
                 },
-            },
-        }),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -286,6 +336,234 @@ class _FakeMapManager:
         self.map_response = _FakeMapResponse()
         self.map_command = _FakeMapCommand(self.map_response)
 
+    def execute(self, request):
+        command = request.to_mapping()
+        self.map_command.delivered.append(command)
+        return {
+            "action": command["action"],
+            "success": True,
+            "name": command.get("name"),
+        }
+
+
+class _TypedFilesystemMapsService:
+    """Test-only typed maps endpoint backed by an isolated fixture directory."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.commands: list[dict] = []
+
+    def execute(self, request):
+        command = request.to_mapping()
+        self.commands.append(command)
+        action = str(command.get("action") or "")
+        name = str(command.get("name") or command.get("map_id") or "")
+        if action == "list":
+            active = self._active()
+            maps = [self._map_summary(path, active) for path in self._map_dirs()]
+            return {
+                "action": action,
+                "success": True,
+                "active": active,
+                "map_dir": str(self.root),
+                "maps": maps,
+            }
+        if action in {"get_active", "get_active_map"}:
+            return {"action": action, "success": True, "active": self._active()}
+        if action == "set_active":
+            map_dir = self._map_dir(name)
+            if map_dir is None:
+                return self._failure(action, "map_not_found", f"map not found: {name}")
+            self.root.mkdir(parents=True, exist_ok=True)
+            (self.root / "active_map.txt").write_text(f"{name}\n", encoding="utf-8")
+            return {
+                "action": action,
+                "success": True,
+                "active": name,
+                "pcd": str(map_dir / "map.pcd") if (map_dir / "map.pcd").is_file() else "",
+                "octomap": self._artifact_path(map_dir, "navigation_safety_3d"),
+                "occupancy": self._artifact_path(map_dir, "path_planning_2d"),
+            }
+        if action == "get_map_bundle":
+            map_dir = self._map_dir(name)
+            if map_dir is None:
+                return self._failure(action, "map_not_found", f"map not found: {name}")
+            capability = str(command.get("capability") or "")
+            artifact = self._artifact_path(map_dir, capability)
+            if not artifact:
+                return self._failure(
+                    action,
+                    "missing_capability",
+                    f"map {name} has no artifact for {capability}",
+                )
+            path = Path(artifact)
+            artifact_type = {
+                "source_pointcloud": "POINTCLOUD",
+                "path_planning": "OCCUPANCY_2D",
+                "path_planning_2d": "OCCUPANCY_2D",
+                "navigation_safety": "OCTOMAP_3D",
+                "navigation_safety_3d": "OCTOMAP_3D",
+            }.get(capability, "UNKNOWN")
+            return {
+                "action": action,
+                "success": True,
+                "map_id": name,
+                "map_dir": str(map_dir),
+                "capability": capability,
+                "artifact": {"type": artifact_type, "uri": path.name},
+            }
+        if action == "validate_artifacts":
+            from maps.artifacts import validate_saved_map_artifact_dir
+
+            map_dir = self._map_dir(name)
+            if map_dir is None:
+                return self._failure(action, "map_not_found", f"map not found: {name}")
+            gate = validate_saved_map_artifact_dir(
+                map_dir,
+                require_octomap=bool(command.get("require_octomap", False)),
+                require_occupancy=bool(command.get("require_occupancy", False)),
+                expected_data_source=command.get("expected_data_source"),
+                expected_source_profile=command.get("expected_source_profile"),
+                expected_frame_id=command.get("expected_frame_id"),
+            )
+            return {"action": action, "success": True, "gate": gate}
+        if action == "get_map_points":
+            map_dir = self._map_dir(name)
+            if map_dir is None:
+                return self._failure(action, "map_not_found", f"map not found: {name}")
+            points = self._read_points(map_dir / "map.pcd")
+            limit = max(0, int(command.get("max_points") or 0))
+            if limit:
+                points = points[:limit]
+            map_pcd_sha256 = hashlib.sha256((map_dir / "map.pcd").read_bytes()).hexdigest()
+            return {
+                "action": action,
+                "success": True,
+                "map_id": name,
+                "version_id": f"{name}-lineage:v1",
+                "frame_id": self._map_frame_id(map_dir),
+                "map_pcd_sha256": map_pcd_sha256,
+                "returned": len(points),
+                "points": points,
+            }
+        return self._failure(action, "unsupported_test_action", f"unsupported action: {action}")
+
+    def _active(self) -> str:
+        state = self.root / "active_map.txt"
+        if not state.is_file():
+            return ""
+        name = state.read_text(encoding="utf-8").strip()
+        return name if self._map_dir(name) is not None else ""
+
+    def _map_dir(self, name: str) -> Path | None:
+        if not name or Path(name).name != name or name.startswith("."):
+            return None
+        candidate = self.root / name
+        return candidate if candidate.is_dir() else None
+
+    def _map_dirs(self) -> list[Path]:
+        if not self.root.is_dir():
+            return []
+        return sorted(
+            path
+            for path in self.root.iterdir()
+            if path.is_dir() and not path.is_symlink() and self._map_dir(path.name) is not None
+        )
+
+    def _map_summary(self, map_dir: Path, active: str) -> dict:
+        metadata = {}
+        metadata_path = map_dir / "metadata.json"
+        if metadata_path.is_file():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                metadata = {}
+        has_pcd = (map_dir / "map.pcd").is_file()
+        has_octomap = bool(self._artifact_path(map_dir, "navigation_safety_3d"))
+        return {
+            "name": map_dir.name,
+            "has_pcd": has_pcd,
+            "has_occupancy": (map_dir / "occupancy.npz").is_file(),
+            "has_octomap": has_octomap,
+            "navigation_ready": has_pcd and has_octomap and metadata_path.is_file(),
+            "state": metadata.get("state") or ("READY" if has_octomap else "STALE"),
+            "is_active": map_dir.name == active,
+            "patch_count": 0,
+        }
+
+    @staticmethod
+    def _map_frame_id(map_dir: Path) -> str:
+        metadata_path = map_dir / "metadata.json"
+        if metadata_path.is_file():
+            try:
+                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                frame_id = str(metadata.get("frame_id") or "").strip().lstrip("/")
+                if frame_id:
+                    return frame_id
+            except (OSError, ValueError):
+                pass
+        return "map"
+
+    @staticmethod
+    def _artifact_path(map_dir: Path, capability: str) -> str:
+        candidates = {
+            "source_pointcloud": ("map.pcd",),
+            "path_planning": ("occupancy.npz",),
+            "path_planning_2d": ("occupancy.npz",),
+            "navigation_safety": ("octomap.ot", "octomap.bt"),
+            "navigation_safety_3d": ("octomap.ot", "octomap.bt"),
+        }.get(capability, ())
+        for filename in candidates:
+            path = map_dir / filename
+            if path.is_file():
+                return str(path)
+        return ""
+
+    @staticmethod
+    def _read_points(path: Path) -> list[list[float]]:
+        if not path.is_file():
+            return []
+        payload = path.read_bytes()
+        marker = b"DATA binary\n"
+        if marker in payload:
+            body = payload.split(marker, 1)[1]
+            return [list(struct.unpack_from("<fff", body, offset)) for offset in range(0, len(body) - 11, 12)]
+        marker = b"DATA ascii\n"
+        if marker in payload:
+            rows = []
+            for line in payload.split(marker, 1)[1].decode("ascii", errors="ignore").splitlines():
+                values = line.split()
+                if len(values) >= 3:
+                    rows.append([float(values[0]), float(values[1]), float(values[2])])
+            return rows
+        return []
+
+    @staticmethod
+    def _failure(action: str, reason_code: str, message: str) -> dict:
+        return {
+            "action": action,
+            "success": False,
+            "reason_code": reason_code,
+            "message": message,
+        }
+
+
+def _attach_test_maps_service(gateway, map_root: Path) -> _TypedFilesystemMapsService:
+    service = _TypedFilesystemMapsService(map_root)
+    gateway._map_mgr = service
+    modules = dict(getattr(gateway, "_all_modules", {}) or {})
+    modules["maps.service"] = service
+    gateway._all_modules = modules
+    original_attach = gateway.on_system_modules
+
+    def attach_with_maps(next_modules):
+        merged = dict(next_modules)
+        merged.setdefault("maps.service", service)
+        return original_attach(merged)
+
+    gateway.on_system_modules = attach_with_maps
+    return service
+
 
 class _FakeMapOnlyPreviewNav:
     def __init__(self):
@@ -305,16 +583,8 @@ class _FakeMapOnlyPreviewNav:
     ):
         self.calls.append((x, y, z, map_only, dict(planner_constraints or {})))
         ts = 1.0
-        adjusted_goal = (
-            {"x": 0.5, "y": 0.3, "z": z, "frame_id": "map", "ts": ts}
-            if self.adjust_goal
-            else None
-        )
-        reached_goal = (
-            self.reached_goal_override
-            if self.reached_goal_override is not None
-            else not self.adjust_goal
-        )
+        adjusted_goal = {"x": 0.5, "y": 0.3, "z": z, "frame_id": "map", "ts": ts} if self.adjust_goal else None
+        reached_goal = self.reached_goal_override if self.reached_goal_override is not None else not self.adjust_goal
         return {
             "schema_version": 1,
             "ok": True,
@@ -376,9 +646,7 @@ def test_auth_routes_validate_response_contracts(monkeypatch):
     gateway.setup()
 
     check_payload = asyncio.run(_endpoint(gateway, "/api/v1/auth/check")())
-    login_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/auth/login")(AuthLoginRequest(key=""))
-    )
+    login_response = asyncio.run(_endpoint(gateway, "/api/v1/auth/login")(AuthLoginRequest(key="")))
 
     check = AuthCheckResponse.model_validate(check_payload)
     login = AuthLoginResponse.model_validate(_payload(login_response))
@@ -432,9 +700,7 @@ def test_auth_login_invalid_key_preserves_legacy_message(monkeypatch):
     gateway = GatewayModule()
     gateway.setup()
 
-    login_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/auth/login")(AuthLoginRequest(key="bad"))
-    )
+    login_response = asyncio.run(_endpoint(gateway, "/api/v1/auth/login")(AuthLoginRequest(key="bad")))
     login = AuthLoginResponse.model_validate(_payload(login_response))
 
     assert login_response.status_code == 403
@@ -444,22 +710,15 @@ def test_auth_login_invalid_key_preserves_legacy_message(monkeypatch):
 
 def test_lease_route_validates_success_and_conflict_payloads():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import LeaseRequest
-    from gateway.schemas import GatewayErrorResponse, LeaseResponse
+    from gateway.schemas import GatewayErrorResponse, LeaseRequest, LeaseResponse
 
     gateway = GatewayModule()
     gateway.setup()
     post_lease = _endpoint(gateway, "/api/v1/lease")
 
-    acquired_payload = asyncio.run(
-        post_lease(LeaseRequest(action="acquire", client_id="web", ttl=30.0))
-    )
-    conflict_response = asyncio.run(
-        post_lease(LeaseRequest(action="acquire", client_id="phone", ttl=30.0))
-    )
-    released_payload = asyncio.run(
-        post_lease(LeaseRequest(action="release", client_id="web", ttl=30.0))
-    )
+    acquired_payload = asyncio.run(post_lease(LeaseRequest(action="acquire", client_id="web", ttl=30.0)))
+    conflict_response = asyncio.run(post_lease(LeaseRequest(action="acquire", client_id="phone", ttl=30.0)))
+    released_payload = asyncio.run(post_lease(LeaseRequest(action="release", client_id="web", ttl=30.0)))
 
     acquired = LeaseResponse.model_validate(acquired_payload)
     conflict_payload = _payload(conflict_response)
@@ -515,9 +774,7 @@ def test_session_start_rejects_invalid_mode_with_stable_contract():
     gateway = GatewayModule()
     gateway.setup()
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/session/start")({"mode": "bad"})
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "bad"}))
 
     rejected = SessionTransitionResponse.model_validate(_payload(response))
 
@@ -530,10 +787,181 @@ def test_session_start_rejects_invalid_mode_with_stable_contract():
     assert "Unknown mode" in (rejected.message or "")
 
 
+def test_external_session_start_rejects_cross_product_profile_bypass(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_PROFILE", "nav")
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+    gateway._runtime_product_profile = "map"  # stale pre-restart in-memory target
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            {
+                "mode": "mapping",
+                "profile": "map",
+                "product_session": "mapping",
+            }
+        )
+    )
+
+    rejected = SessionTransitionResponse.model_validate(_payload(response))
+    assert response.status_code == 409
+    assert rejected.ok is False
+    assert rejected.detail is not None
+    assert rejected.detail["reason_code"] == "product_profile_mismatch"
+    assert rejected.detail["current_profile"] == "nav"
+    assert rejected.detail["requested_profile"] == "map"
+
+
+def test_external_session_start_rejects_unknown_runtime_profile(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.delenv("LINGTU_PROFILE", raising=False)
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+
+    response = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "mapping"}))
+
+    rejected = SessionTransitionResponse.model_validate(_payload(response))
+    assert response.status_code == 409
+    assert rejected.detail is not None
+    assert rejected.detail["reason_code"] == "product_mode_switch_required"
+    assert rejected.detail["current_profile"] is None
+
+
+def test_external_mapping_session_rejects_wrong_native_control_mode(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    status_file = tmp_path / "nav_endpoint_status.json"
+    status_file.write_text(
+        json.dumps({"stamp_s": time.time(), "control_mode": "autonomy"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_PROFILE", "map")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            {
+                "mode": "mapping",
+                "profile": "map",
+                "product_session": "mapping",
+            }
+        )
+    )
+
+    rejected = SessionTransitionResponse.model_validate(_payload(response))
+    assert response.status_code == 409
+    assert rejected.ok is False
+    assert rejected.detail is not None
+    assert rejected.detail["reason_code"] == "native_control_mode_not_ready"
+    assert rejected.detail["expected_control_mode"] == "teleop"
+    assert rejected.detail["actual_control_mode"] == "autonomy"
+
+
+def test_external_session_rejects_requested_profile_that_differs_from_runtime(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    status_file = tmp_path / "nav_endpoint_status.json"
+    status_file.write_text(
+        json.dumps({"stamp_s": time.time(), "control_mode": "autonomy"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_PROFILE", "nav")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "profile": "tracking", "map_name": "demo"})
+    )
+
+    rejected = SessionTransitionResponse.model_validate(_payload(response))
+    assert response.status_code == 409
+    assert rejected.detail is not None
+    assert rejected.detail["reason_code"] == "product_profile_mismatch"
+    assert rejected.detail["current_profile"] == "nav"
+    assert rejected.detail["requested_profile"] == "tracking"
+
+
+def test_external_mapping_session_accepts_matching_product_and_control_mode(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    status_file = tmp_path / "nav_endpoint_status.json"
+    status_file.write_text(
+        json.dumps({"stamp_s": time.time(), "control_mode": "teleop"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_PROFILE", "map")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            {
+                "mode": "mapping",
+                "product_session": "mapping",
+            }
+        )
+    )
+
+    accepted = SessionTransitionResponse.model_validate(_payload(response))
+    assert accepted.ok is True
+    assert accepted.session is not None
+    assert accepted.session.mode == "mapping"
+    assert accepted.session.product_profile == "map"
+
+    second_response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            {
+                "mode": "mapping",
+                "product_session": "mapping",
+            }
+        )
+    )
+    second = SessionTransitionResponse.model_validate(_payload(second_response))
+    assert second.ok is True
+    assert second.session is not None
+    assert second.session.mode == "mapping"
+    assert second.session.product_profile == "map"
+
+    ended_payload = asyncio.run(_endpoint(gateway, "/api/v1/session/end")())
+    ended = SessionTransitionResponse.model_validate(_payload(ended_payload))
+    assert ended.ok is True
+    assert ended.session is not None
+    assert ended.session.mode == "idle"
+    assert ended.session.product_profile == "map"
+    assert ended.session.product_session == "idle"
+
+
 def test_session_start_accepts_legacy_map_field(monkeypatch):
-    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -552,9 +980,7 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
             return True
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -569,14 +995,11 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
-        monkeypatch.setattr(gateway_module, "active_map_name", lambda: "demo")
+        _attach_test_maps_service(gateway, map_root)
+        _activate_map(map_root, "demo")
         monkeypatch.setattr(gateway, "_spawn_auto_relocalize", lambda _: None)
 
-        payload = asyncio.run(
-            _endpoint(gateway, "/api/v1/session/start")(
-                {"mode": "navigating", "map": "demo"}
-            )
-        )
+        payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "map": "demo"}))
 
         payload = _payload(payload)
         transition = SessionTransitionResponse.model_validate(payload)
@@ -590,7 +1013,7 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
         assert transition.session.product_session == "navigation"
         assert transition.session.active_map == "demo"
         assert transition.session.map_has_pcd is True
-        assert transition.session.map_has_tomogram is True
+        assert transition.session.map_has_octomap is True
         assert transition.session.map_has_octomap is True
         assert gateway._session_map == "demo"
         assert ("ensure", ("slam",)) in fake_service_manager.calls
@@ -599,9 +1022,9 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
 
 
 def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(monkeypatch):
-    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -620,9 +1043,7 @@ def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(mon
             return True
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -637,13 +1058,12 @@ def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(mon
 
         gateway = GatewayModule()
         gateway.setup()
-        monkeypatch.setattr(gateway_module, "active_map_name", lambda: "octomap_only")
+        _attach_test_maps_service(gateway, map_root)
+        _activate_map(map_root, "octomap_only")
         monkeypatch.setattr(gateway, "_spawn_auto_relocalize", lambda _: None)
 
         payload = asyncio.run(
-            _endpoint(gateway, "/api/v1/session/start")(
-                {"mode": "navigating", "map": "octomap_only"}
-            )
+            _endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "map": "octomap_only"})
         )
 
         transition = SessionTransitionResponse.model_validate(_payload(payload))
@@ -653,16 +1073,15 @@ def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(mon
         assert transition.session.product_profile == "nav"
         assert transition.session.product_session == "navigation"
         assert transition.session.map_has_pcd is True
-        assert transition.session.map_has_tomogram is False
         assert transition.session.map_has_octomap is True
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypatch):
-    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -684,7 +1103,8 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
 
         gateway = GatewayModule(manage_session_services=False)
         gateway.setup()
-        monkeypatch.setattr(gateway_module, "active_map_name", lambda: "dds_external")
+        _attach_test_maps_service(gateway, map_root)
+        _activate_map(map_root, "dds_external")
         with gateway._state_lock:
             gateway._localization_status = {
                 "backend": "fastlio2",
@@ -693,9 +1113,7 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
             }
 
         payload = asyncio.run(
-            _endpoint(gateway, "/api/v1/session/start")(
-                {"mode": "navigating", "map": "dds_external"}
-            )
+            _endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "map": "dds_external"})
         )
 
         transition = SessionTransitionResponse.model_validate(_payload(payload))
@@ -720,7 +1138,7 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_session_start_normalizes_active_map_symlink(monkeypatch):
+def test_session_start_rejects_legacy_active_map_symlink_alias(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -741,6 +1159,7 @@ def test_session_start_normalizes_active_map_symlink(monkeypatch):
 
         gateway = GatewayModule(manage_session_services=False)
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         with gateway._state_lock:
             gateway._localization_status = {
                 "backend": "fastlio2",
@@ -748,27 +1167,304 @@ def test_session_start_normalizes_active_map_symlink(monkeypatch):
                 "confidence": 1.0,
             }
 
-        payload = asyncio.run(
-            _endpoint(gateway, "/api/v1/session/start")(
-                {"mode": "navigating", "map": "active"}
-            )
-        )
+        payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "map": "active"}))
 
         transition = SessionTransitionResponse.model_validate(_payload(payload))
-        assert transition.ok is True
-        assert transition.session is not None
-        assert transition.session.active_map == "demo"
-        assert gateway._session_map == "demo"
+        assert transition.ok is False
+        assert transition.session is None
+        assert "no active map" in (transition.message or "")
         assert active.is_symlink()
-        assert active.readlink() == Path("demo")
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
+def test_session_start_prefers_maps_service_bundle(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    class FakeMapsService:
+        def __init__(self, map_root: Path):
+            self.map_root = map_root
+            self.bundle_calls = []
+            self.active_calls = []
+
+        def get_map_bundle(self, name: str, capability: str):
+            self.bundle_calls.append((name, capability))
+            return {
+                "success": True,
+                "map_id": name,
+                "map_dir": str(self.map_root / name),
+                "capability": capability,
+                "artifact": {
+                    "type": "OCTOMAP_3D",
+                    "uri": "octomap.ot",
+                },
+            }
+
+        def set_active_map(self, name: str):
+            self.active_calls.append(name)
+            return {
+                "success": True,
+                "active": name,
+                "octomap": str(self.map_root / name / "octomap.ot"),
+            }
+
+    class FakeNav:
+        def __init__(self):
+            self.reloads = []
+
+        def reload_planner_map(self, map_path: str):
+            self.reloads.append(map_path)
+            return {"ok": True}
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "demo"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+
+        gateway = GatewayModule(manage_session_services=False)
+        gateway.setup()
+        maps = _attach_test_maps_service(gateway, map_root)
+        nav = FakeNav()
+        gateway._all_modules["nav.mission"] = nav
+        with gateway._state_lock:
+            gateway._localization_status = {
+                "backend": "fastlio2",
+                "state": "TRACKING",
+                "confidence": 1.0,
+            }
+
+        def fail_symlink(*_args, **_kwargs):
+            raise AssertionError("session start must not mutate active symlink directly when maps service is present")
+
+        import gateway.routes.session as session_routes
+
+        monkeypatch.setattr(session_routes.os, "symlink", fail_symlink)
+
+        payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "map": "demo"}))
+
+        transition = SessionTransitionResponse.model_validate(_payload(payload))
+        assert transition.ok is True
+        assert transition.session is not None
+        assert transition.session.mode == "navigating"
+        assert transition.session.active_map == "demo"
+        bundle_calls = [
+            (item.get("name"), item.get("capability"))
+            for item in maps.commands
+            if item.get("action") == "get_map_bundle"
+        ]
+        assert bundle_calls[0] == ("demo", "navigation_safety_3d")
+        assert ("demo", "source_pointcloud") in bundle_calls
+        assert ("demo", "navigation_safety_3d") in bundle_calls
+        assert [item.get("name") for item in maps.commands if item.get("action") == "set_active"] == ["demo"]
+        assert nav.reloads == [str(map_dir / "octomap.ot")]
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_session_snapshot_uses_maps_service_bundles_for_navigation_readiness():
+    from gateway.gateway_module import GatewayModule
+
+    class FakeMapsService:
+        def __init__(self):
+            self.bundle_calls: list[tuple[str, str]] = []
+
+        def execute(self, request):
+            command = request.to_mapping()
+            if command["action"] == "get_active":
+                return self.get_active_map()
+            if command["action"] == "get_map_bundle":
+                return self.get_map_bundle(
+                    str(command.get("name") or ""),
+                    str(command.get("capability") or ""),
+                )
+            return {"success": False, "reason_code": "unsupported_test_action"}
+
+        def get_active_map(self):
+            return {"success": True, "active": "native_active"}
+
+        def get_map_bundle(self, name: str, capability: str):
+            self.bundle_calls.append((name, capability))
+            if name != "native_active":
+                return {"success": False, "reason_code": "wrong_map"}
+            if capability not in {"source_pointcloud", "navigation_safety_3d"}:
+                return {"success": False, "reason_code": "missing_capability"}
+            return {
+                "success": True,
+                "map_id": name,
+                "capability": capability,
+                "artifact": {
+                    "type": "POINTCLOUD" if capability == "source_pointcloud" else "OCTOMAP_3D",
+                    "uri": f"{capability}.artifact",
+                },
+            }
+
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+    maps = FakeMapsService()
+    gateway._all_modules = {"maps.service": maps}
+    _seed_ready_navigation(gateway)
+
+    snapshot = gateway._session_snapshot()
+
+    assert snapshot["saved_active_map"] == "native_active"
+    assert snapshot["active_map"] is None
+    assert snapshot["map_has_pcd"] is True
+    assert snapshot["map_has_octomap"] is True
+    assert snapshot["can_start_navigating"] is True
+    assert ("native_active", "source_pointcloud") in maps.bundle_calls
+    assert ("native_active", "navigation_safety_3d") in maps.bundle_calls
+
+
+def test_session_snapshot_exposes_runtime_switch_pending():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+    gateway._get_slam_profile = lambda: "bridge"
+    gateway._runtime_switch_pending = {
+        "command_id": "switch-in-flight",
+        "started_monotonic": time.monotonic(),
+    }
+
+    snapshot = gateway._session_snapshot()
+
+    assert snapshot["pending"] is True
+    assert snapshot["can_start_mapping"] is False
+    assert snapshot["can_start_navigating"] is False
+
+    gateway._runtime_switch_pending["started_monotonic"] = time.monotonic() - 301.0
+    expired = gateway._session_snapshot()
+
+    assert expired["pending"] is False
+    assert getattr(gateway, "_runtime_switch_pending", None) is None
+
+
+def test_session_snapshot_does_not_guess_navigation_readiness_without_maps_service(
+    monkeypatch,
+):
+    import gateway.services.session_view as session_view
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+    gateway._all_modules = {}
+    gateway._session_active_map_name = lambda: "orphaned_disk_map"
+    _seed_ready_navigation(gateway)
+
+    def fail_file_map_lookup(*_args, **_kwargs):
+        raise AssertionError("Gateway must not infer map readiness from files")
+
+    monkeypatch.setattr(
+        session_view,
+        "map_dir_for",
+        fail_file_map_lookup,
+        raising=False,
+    )
+
+    snapshot = gateway._session_snapshot()
+
+    assert snapshot["saved_active_map"] == "orphaned_disk_map"
+    assert snapshot["map_has_pcd"] is False
+    assert snapshot["map_has_octomap"] is False
+    assert snapshot["can_start_navigating"] is False
+
+
+def test_gateway_saved_map_points_prefer_maps_service_contract():
+    from gateway.gateway_module import GatewayModule
+
+    class FakeMapsService:
+        def __init__(self):
+            self.active_calls = 0
+            self.points_calls = []
+
+        def execute(self, request):
+            command = request.to_mapping()
+            if command["action"] == "get_active":
+                return self.get_active_map()
+            if command["action"] == "get_map_points":
+                return self.get_map_points(
+                    str(command.get("name") or ""),
+                    max_points=int(command.get("max_points") or 0),
+                )
+            return {"success": False, "reason_code": "unsupported_test_action"}
+
+        def get_active_map(self):
+            self.active_calls += 1
+            return {"success": True, "active": "demo"}
+
+        def get_map_points(self, name: str, *, max_points: int = 0):
+            self.points_calls.append((name, max_points))
+            return {
+                "success": True,
+                "points": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                "returned": 2,
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    maps = FakeMapsService()
+    gateway._map_mgr = maps
+
+    assert gateway._active_map_from_maps_service() == "demo"
+    pts = gateway._saved_map_points_from_maps_service("demo", max_points=80000)
+
+    assert pts is not None
+    assert pts.shape == (2, 3)
+    assert pts.dtype.name == "float32"
+    assert maps.active_calls == 1
+    assert maps.points_calls == [("demo", 80000)]
+
+
+def test_saved_map_loader_never_reads_pcd_outside_maps_service():
+    from gateway.services.saved_map_loader import load_saved_maps_loop
+
+    class OneShotStop:
+        def __init__(self):
+            self.stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, _seconds):
+            self.stopped = True
+
+    class FakeGateway:
+        _stop_event = OneShotStop()
+        _last_saved_map_event = None
+
+        @staticmethod
+        def _active_map_from_maps_service():
+            return "demo"
+
+        @staticmethod
+        def _saved_map_points_from_maps_service(_name, *, max_points):
+            assert max_points == 80_000
+            return None
+
+        @staticmethod
+        def _load_pcd_xyz(_path):
+            raise AssertionError("Gateway must not parse saved-map PCD files")
+
+        @staticmethod
+        def push_event(_event):
+            raise AssertionError("no map event is expected without service data")
+
+    gateway = FakeGateway()
+    load_saved_maps_loop(gateway, stop_event=gateway._stop_event)
+
+    assert gateway._last_saved_map_event is None
+
+
 def test_session_start_preserves_product_session_for_tracking(monkeypatch):
-    import runtime.service_manager as service_manager
     import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -790,7 +1486,8 @@ def test_session_start_preserves_product_session_for_tracking(monkeypatch):
 
         gateway = GatewayModule(manage_session_services=False)
         gateway.setup()
-        monkeypatch.setattr(gateway_module, "active_map_name", lambda: "tracking_map")
+        _attach_test_maps_service(gateway, map_root)
+        _activate_map(map_root, "tracking_map")
         with gateway._state_lock:
             gateway._localization_status = {
                 "backend": "fastlio2",
@@ -818,6 +1515,75 @@ def test_session_start_preserves_product_session_for_tracking(monkeypatch):
         assert gateway._session_product_session == "tracking"
     finally:
         shutil.rmtree(root, ignore_errors=True)
+
+
+def test_session_start_fails_when_planner_map_reload_fails(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    class FakeNav:
+        def reload_planner_map(self, map_path: str):
+            return {
+                "ok": False,
+                "reason": "planner_reload_failed",
+                "map_path": map_path,
+            }
+
+    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
+    try:
+        monkeypatch.setenv("HOME", str(root))
+        monkeypatch.setenv("USERPROFILE", str(root))
+        map_root = root / "custom_maps"
+        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
+        map_dir = map_root / "demo"
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+        previous_dir = map_root / "previous"
+        previous_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(previous_dir)
+        _activate_map(map_root, "previous")
+
+        gateway = GatewayModule(manage_session_services=False)
+        gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
+        gateway._all_modules["nav.mission"] = FakeNav()
+        with gateway._state_lock:
+            gateway._localization_status = {
+                "backend": "fastlio2",
+                "state": "TRACKING",
+                "confidence": 1.0,
+            }
+
+        response = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "navigating", "map": "demo"}))
+        transition = SessionTransitionResponse.model_validate(_payload(response))
+
+        assert getattr(response, "status_code", 200) == 409
+        assert transition.ok is False
+        assert transition.session is None
+        assert "planner" in (transition.message or "").lower()
+        assert gateway._session_mode == "idle"
+        assert (map_root / "active_map.txt").read_text(encoding="utf-8").strip() == "previous"
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_session_identity_tolerates_legacy_contract_without_product_session(monkeypatch):
+    import gateway.routes.session as session_routes
+
+    monkeypatch.setitem(session_routes.PRODUCT_MODE_CONTRACTS, "map", object())
+
+    assert session_routes._normalize_product_identity(
+        {
+            "mode": "mapping",
+            "profile": "map",
+            "product_session": "mapping",
+        },
+        "mapping",
+    ) == ("map", "mapping")
+    assert session_routes._normalize_product_identity(
+        {"mode": "mapping", "profile": "map"},
+        "mapping",
+    ) == ("map", "mapping")
 
 
 def test_gateway_session_service_management_can_be_disabled_by_env(monkeypatch):
@@ -849,9 +1615,10 @@ def test_map_validate_plan_rejects_missing_octomap_before_preview(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         nav = _FakeMapOnlyPreviewNav()
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "pcd_only")
+        _activate_map(map_root, "pcd_only")
 
         response = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -892,12 +1659,13 @@ def test_map_validate_plan_is_explicit_no_motion_octoplanner_preview(monkeypatch
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
         nav = _FakeMapOnlyPreviewNav()
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -910,18 +1678,12 @@ def test_map_validate_plan_is_explicit_no_motion_octoplanner_preview(monkeypatch
         assert payload["motion_published"] is False
         assert payload["no_motion_gate"]["map_only"] is True
         assert payload["no_motion_gate"]["motion_published"] is False
-        assert (
-            "real_runtime_evidence_missing_or_stale"
-            in payload["no_motion_gate"]["ignored_readiness_blockers"]
-        )
+        assert "real_runtime_evidence_missing_or_stale" in payload["no_motion_gate"]["ignored_readiness_blockers"]
         assert payload["no_motion_gate"]["selected_planner"] == "octoplanner3d"
         assert payload["preview"]["selected_planner"] == "octoplanner3d"
         assert payload["preview"]["fallback_reason"] == ""
         assert len(payload["preview"]["path"]) >= 2
-        assert (
-            payload["executable_preview"]["source"]
-            == "map_only_path_with_live_safety_overlay"
-        )
+        assert payload["executable_preview"]["source"] == "map_only_path_with_live_safety_overlay"
         assert nav.calls == [(2.0, 1.0, 0.0, True, {})]
         assert gateway.goal_pose.msg_count == 0
         assert gateway.cmd_vel.msg_count == 0
@@ -947,6 +1709,7 @@ def test_map_validate_plan_sanitizes_nonfinite_preview_payload(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
@@ -961,7 +1724,7 @@ def test_map_validate_plan_sanitizes_nonfinite_preview_payload(monkeypatch):
 
         nav.preview_plan = nonfinite_preview
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1003,13 +1766,14 @@ def test_map_validate_plan_live_safety_blocks_no_motion_gate(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
         nav = _FakeMapOnlyPreviewNav()
         nav._planner_svc = LiveSafetyPlanner()
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1052,6 +1816,7 @@ def test_map_validate_plan_blocks_large_start_snap(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
@@ -1070,7 +1835,7 @@ def test_map_validate_plan_blocks_large_start_snap(monkeypatch):
             "goal_snap_accepted": True,
         }
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1110,6 +1875,7 @@ def test_map_validate_plan_allows_vertical_start_snap_when_xy_is_close(monkeypat
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
@@ -1130,7 +1896,7 @@ def test_map_validate_plan_allows_vertical_start_snap_when_xy_is_close(monkeypat
             "goal_snap_accepted": True,
         }
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1169,6 +1935,7 @@ def test_map_validate_plan_structures_octoplanner_start_out_of_map(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
@@ -1206,8 +1973,7 @@ def test_map_validate_plan_structures_octoplanner_start_out_of_map(monkeypatch):
                             "runtime_map_path": "/home/sunrise/data/nova/maps/active/octomap.ot",
                             "returncode": 2,
                             "stdout": (
-                                "GlobalPlanner::startPlan() Start is occupied/out of "
-                                "map and no nearby free cell."
+                                "GlobalPlanner::startPlan() Start is occupied/out of map and no nearby free cell."
                             ),
                         },
                     }
@@ -1216,7 +1982,7 @@ def test_map_validate_plan_structures_octoplanner_start_out_of_map(monkeypatch):
 
         nav.preview_plan = failed_preview
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1258,12 +2024,13 @@ def test_map_validate_plan_forwards_planner_constraints(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
         nav = _FakeMapOnlyPreviewNav()
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1313,13 +2080,14 @@ def test_map_validate_plan_rejects_adjusted_goal(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
         nav = _FakeMapOnlyPreviewNav()
         nav.adjust_goal = True
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1359,6 +2127,7 @@ def test_map_validate_plan_accepts_adjusted_goal_within_planner_tolerance(monkey
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         gateway._session_mode = "navigating"
         gateway._session_active_map_name = lambda: "octomap_ready"
         _seed_ready_navigation(gateway)
@@ -1366,7 +2135,7 @@ def test_map_validate_plan_accepts_adjusted_goal_within_planner_tolerance(monkey
         nav.adjust_goal = True
         nav.reached_goal_override = True
         gateway.on_system_modules({"nav.mission": nav})
-        monkeypatch.setattr(map_routes, "active_map_name", lambda: "octomap_ready")
+        _activate_map(map_root, "octomap_ready")
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/maps/{name}/validate_plan")(
@@ -1417,18 +2186,12 @@ def test_session_start_can_select_super_lio_backend(monkeypatch):
             return {name: self.services.get(name, "stopped") for name in names}
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
 
     gateway = GatewayModule()
     gateway.setup()
 
-    payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/session/start")(
-            {"mode": "mapping", "slam_profile": "super_lio"}
-        )
-    )
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "mapping", "slam_profile": "super_lio"}))
 
     transition = SessionTransitionResponse.model_validate(payload)
     assert transition.schema_version == 1
@@ -1448,8 +2211,8 @@ def test_session_start_can_select_super_lio_backend(monkeypatch):
 
 
 def test_session_start_can_select_super_lio_relocation_backend(monkeypatch):
-    import runtime.service_manager as service_manager
     import gateway.routes.session as session_routes
+    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
@@ -1479,9 +2242,7 @@ def test_session_start_can_select_super_lio_relocation_backend(monkeypatch):
             return {name: self.services.get(name, "stopped") for name in names}
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -1496,10 +2257,9 @@ def test_session_start_can_select_super_lio_relocation_backend(monkeypatch):
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_root)
         auto_relocalize_calls: list[str] = []
-        monkeypatch.setattr(
-            gateway, "_spawn_auto_relocalize", auto_relocalize_calls.append
-        )
+        monkeypatch.setattr(gateway, "_spawn_auto_relocalize", auto_relocalize_calls.append)
 
         payload = asyncio.run(
             _endpoint(gateway, "/api/v1/session/start")(
@@ -1526,24 +2286,20 @@ def test_session_start_can_select_super_lio_relocation_backend(monkeypatch):
             "stop",
             ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio"),
         ) in fake_service_manager.calls
-        assert ("ensure", ("legacy_lidar", "super_lio_relocation")) in (
-            fake_service_manager.calls
-        )
-        assert ("wait_ready", ("legacy_lidar", "super_lio_relocation")) in (
-            fake_service_manager.calls
-        )
+        assert ("ensure", ("legacy_lidar", "super_lio_relocation")) in (fake_service_manager.calls)
+        assert ("wait_ready", ("legacy_lidar", "super_lio_relocation")) in (fake_service_manager.calls)
         assert auto_relocalize_calls == []
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_map_routes_validate_json_contracts(monkeypatch):
-    from gateway.gateway_module import GatewayModule, MapRequest
+    from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
-        GatewayErrorResponse,
         MapLifecycleResponse,
         MapListResponse,
         MapPointsResponse,
+        MapRequest,
     )
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -1552,37 +2308,36 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         demo = map_dir / "demo"
         demo.mkdir(parents=True)
         _write_binary_xyz_pcd(demo / "map.pcd")
-        (demo / "tomogram.pickle").write_bytes(b"tomogram")
         (demo / "octomap.ot").write_bytes(b"octomap")
-        (demo / "metadata.json").write_text('{"state":"READY"}', encoding="utf-8")
+        (demo / "metadata.json").write_text(
+            '{"state":"READY","frame_id":"odom"}',
+            encoding="utf-8",
+        )
+        (map_dir / "active_map.txt").write_text("demo\n", encoding="utf-8")
         monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
 
         gateway = GatewayModule()
         gateway.setup()
+        _attach_test_maps_service(gateway, map_dir)
 
         maps_payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
         live_points_payload = asyncio.run(_endpoint(gateway, "/api/v1/map/points")())
-        saved_points_payload = asyncio.run(
-            _endpoint(gateway, "/api/v1/maps/{name}/points")("demo")
-        )
+        saved_points_payload = asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/points")("demo"))
+        pcd_response = asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/pcd")("demo"))
         reset_payload = asyncio.run(_endpoint(gateway, "/api/v1/map_cloud/reset")())
-        missing_manager_response = asyncio.run(
-            _endpoint(gateway, "/api/v1/maps")(MapRequest(action="list"))
-        )
-        missing_manager_payload = _payload(missing_manager_response)
+        map_command_response = asyncio.run(_endpoint(gateway, "/api/v1/maps")(MapRequest(action="list")))
+        map_command_payload = _payload(map_command_response)
 
         maps = MapListResponse.model_validate(maps_payload)
         live_points = MapPointsResponse.model_validate(live_points_payload)
         saved_points = MapPointsResponse.model_validate(saved_points_payload)
         reset = MapLifecycleResponse.model_validate(reset_payload)
-        missing_manager = GatewayErrorResponse.model_validate(missing_manager_payload)
 
         assert [item.name for item in maps.maps] == ["demo"]
         assert maps.schema_version == 1
         assert maps.count == 1
         assert maps.ts > 0
         assert maps.maps[0].has_pcd is True
-        assert maps.maps[0].has_tomogram is True
         assert maps.maps[0].has_octomap is True
         assert maps.maps[0].navigation_ready is True
         assert maps.maps[0].state == "READY"
@@ -1595,25 +2350,100 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         assert live_points.points == []
         assert saved_points.schema_version == 1
         assert saved_points.count == 2
-        assert saved_points.layout == "flat_xyz"
-        assert saved_points.frame_id == "map"
-        assert saved_points.source == "saved_map_pcd"
+        assert saved_points.layout == "xyz_rows"
+        assert saved_points.protocol_version == 2
+        assert saved_points.frame_id == "odom"
+        assert saved_points.epoch == 2
+        assert saved_points.sequence >= 1
+        assert saved_points.stream_kind == "map"
+        assert saved_points.source == "maps_service"
         assert saved_points.name == "demo"
+        assert saved_points.version_id == "demo-lineage:v1"
+        assert saved_points.map_pcd_sha256 == hashlib.sha256((demo / "map.pcd").read_bytes()).hexdigest()
         assert saved_points.ts > 0
-        assert saved_points.points == [1, 2, 3, 4, 5, 6]
+        assert saved_points.points == [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]
+        assert Path(pcd_response.path).name == "map.pcd"
         assert reset.schema_version == 1
         assert reset.ok is True
         assert reset.success is True
         assert reset.ts > 0
-        assert missing_manager_response.status_code == 503
-        assert missing_manager_payload["schema_version"] == 1
-        assert missing_manager_payload["ok"] is False
-        assert missing_manager.error == "MapService not running"
+        assert map_command_payload["schema_version"] == 1
+        assert map_command_payload["ok"] is True
+        assert map_command_payload["maps"]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_slam_maps_uses_guarded_active_map_resolution(monkeypatch, tmp_path):
+def test_saved_map_points_require_stable_authoritative_active_scene(monkeypatch, tmp_path):
+    from fastapi import HTTPException
+
+    from gateway.gateway_module import GatewayModule
+
+    map_dir = tmp_path / "maps"
+    for name in ("map_a", "map_b"):
+        target = map_dir / name
+        target.mkdir(parents=True)
+        _write_binary_xyz_pcd(target / "map.pcd")
+        (target / "metadata.json").write_text(
+            '{"state":"READY","frame_id":"map"}',
+            encoding="utf-8",
+        )
+    (map_dir / "active_map.txt").write_text("map_b\n", encoding="utf-8")
+    monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+
+    gateway = GatewayModule()
+    gateway.setup()
+    manager = _TypedFilesystemMapsService(map_dir)
+    gateway._map_mgr = manager
+    endpoint = _endpoint(gateway, "/api/v1/maps/{name}/points")
+
+    with pytest.raises(HTTPException) as inactive:
+        asyncio.run(endpoint("map_a"))
+    assert inactive.value.status_code == 409
+    assert "authoritative active map" in str(inactive.value.detail)
+
+    original_execute = manager.execute
+
+    def switch_scene_during_read(request):
+        if request.to_mapping().get("action") == "get_map_points":
+            gateway.clear_map_cloud_cache(reason="test_concurrent_scene_change")
+        return original_execute(request)
+
+    manager.execute = switch_scene_during_read
+    with pytest.raises(HTTPException) as changed:
+        asyncio.run(endpoint("map_b"))
+    assert changed.value.status_code == 409
+    assert "scene changed" in str(changed.value.detail).lower()
+
+
+def test_saved_map_point_mutations_advance_viewer_epoch():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._map_mgr = _FakeMapManager()
+    initial_epoch = gateway._cloud_viewer.scene_identity()["epoch"]
+
+    crop_response = asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/{name}/crop")(
+            "demo",
+            {"bounds": {"min": [0, 0, 0], "max": [1, 1, 1]}},
+        )
+    )
+    crop_payload = _payload(crop_response)
+    crop_epoch = gateway._cloud_viewer.scene_identity()["epoch"]
+
+    restore_response = asyncio.run(_endpoint(gateway, "/api/v1/map/restore_predufo")({"name": "demo"}))
+    restore_payload = _payload(restore_response)
+    restore_epoch = gateway._cloud_viewer.scene_identity()["epoch"]
+
+    assert crop_payload["live_cloud_reset"] is True
+    assert restore_payload["live_cloud_reset"] is True
+    assert crop_epoch == initial_epoch + 1
+    assert restore_epoch == crop_epoch + 1
+
+
+def test_slam_maps_uses_native_active_map_state(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapListResponse
 
@@ -1627,6 +2457,8 @@ def test_slam_maps_uses_guarded_active_map_resolution(monkeypatch, tmp_path):
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_test_maps_service(gateway, tmp_path)
+    (tmp_path / "active_map.txt").write_text("demo\n", encoding="utf-8")
     active = tmp_path / "active"
     try:
         active.symlink_to(demo, target_is_directory=True)
@@ -1641,11 +2473,13 @@ def test_slam_maps_uses_guarded_active_map_resolution(monkeypatch, tmp_path):
         "demo": True,
         "other": False,
     }
+    assert "active" not in {item.name for item in maps.maps}
 
     active.unlink()
     nested = tmp_path / "nested" / "child"
     nested.mkdir(parents=True)
     active.symlink_to(nested, target_is_directory=True)
+    (tmp_path / "active_map.txt").write_text("nested/child\n", encoding="utf-8")
 
     payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
     maps = MapListResponse.model_validate(payload)
@@ -1658,6 +2492,7 @@ def test_slam_maps_uses_guarded_active_map_resolution(monkeypatch, tmp_path):
     try:
         outside.mkdir()
         active.symlink_to(outside, target_is_directory=True)
+        (tmp_path / "active_map.txt").write_text("../outside\n", encoding="utf-8")
 
         payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
         maps = MapListResponse.model_validate(payload)
@@ -1666,6 +2501,57 @@ def test_slam_maps_uses_guarded_active_map_resolution(monkeypatch, tmp_path):
         assert all(item.is_active is False for item in maps.maps)
     finally:
         shutil.rmtree(outside, ignore_errors=True)
+
+
+def test_slam_maps_derives_legacy_navigation_readiness_without_overriding_false(tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import MapListResponse
+
+    for name in (
+        "legacy_ready",
+        "legacy_incomplete",
+        "legacy_occupancy_only",
+        "explicit_blocked",
+    ):
+        map_dir = tmp_path / name
+        map_dir.mkdir()
+        (map_dir / "map.pcd").write_bytes(b"pcd")
+    (tmp_path / "legacy_ready" / "octomap.ot").write_bytes(b"octomap")
+    (tmp_path / "legacy_occupancy_only" / "occupancy.npz").write_bytes(b"grid")
+    (tmp_path / "explicit_blocked" / "octomap.ot").write_bytes(b"octomap")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    service = _attach_test_maps_service(gateway, tmp_path)
+    original_execute = service.execute
+
+    def legacy_list_contract(request):
+        response = original_execute(request)
+        if request.to_mapping().get("action") != "list":
+            return response
+        for item in response["maps"]:
+            if item["name"] in {
+                "legacy_ready",
+                "legacy_incomplete",
+                "legacy_occupancy_only",
+            }:
+                item.pop("navigation_ready", None)
+            elif item["name"] == "explicit_blocked":
+                item["navigation_ready"] = False
+        return response
+
+    service.execute = legacy_list_contract
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
+    maps = MapListResponse.model_validate(payload)
+    readiness = {item.name: item.navigation_ready for item in maps.maps}
+
+    assert readiness == {
+        "explicit_blocked": False,
+        "legacy_incomplete": False,
+        "legacy_occupancy_only": False,
+        "legacy_ready": True,
+    }
 
 
 def test_map_lifecycle_error_responses_use_stable_envelope(monkeypatch, tmp_path):
@@ -1677,9 +2563,7 @@ def test_map_lifecycle_error_responses_use_stable_envelope(monkeypatch, tmp_path
     gateway = GatewayModule()
     gateway.setup()
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="../bad"))
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="../bad")))
     model = MapLifecycleResponse.model_validate(_payload(response))
 
     assert response.status_code == 400
@@ -1709,41 +2593,92 @@ def test_map_activate_route_uses_map_service_gate():
     gateway._map_mgr = manager
     gateway._all_modules = {"nav.mission": nav}
 
-    payload = _payload(asyncio.run(
-        _endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="demo"))
-    ))
+    payload = _payload(asyncio.run(_endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="demo"))))
 
     assert payload["ok"] is True
-    assert manager.map_command.delivered == [{"action": "set_active", "name": "demo"}]
+    assert manager.map_command.delivered == [
+        {"action": "get_active"},
+        {"action": "get_active"},
+        {"action": "set_active", "name": "demo"},
+        {"action": "get_active"},
+    ]
     assert nav.reloads == [""]
     assert payload["planner_reload"]["ok"] is True
 
 
-def test_map_save_requires_map_service_and_does_not_fallback_to_gateway_snapshot(
-    monkeypatch,
-    tmp_path,
-):
+def test_map_activate_rejects_cross_map_switch_during_navigation():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import MapNameRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    manager = _FakeMapManager()
+    gateway._map_mgr = manager
+    gateway._session_mode = "navigating"
+    gateway._session_map = "active_demo"
+
+    response = asyncio.run(_endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="other_demo")))
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["ok"] is False
+    assert "runtime switch" in payload["message"].lower()
+    assert all(command.get("action") != "set_active" for command in manager.map_command.delivered)
+
+
+def test_map_activate_rolls_back_when_planner_reload_fails(tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import MapNameRequest
+
+    class FailingNav:
+        def __init__(self):
+            self.reloads = []
+
+        def reload_planner_map(self, map_path: str = ""):
+            self.reloads.append(map_path)
+            if "previous" in map_path:
+                return {"ok": True, "map_path": map_path}
+            return {
+                "ok": False,
+                "reason": "planner_reload_failed",
+                "map_path": map_path,
+            }
+
+    map_root = tmp_path / "maps"
+    for name in ("previous", "target"):
+        map_dir = map_root / name
+        map_dir.mkdir(parents=True)
+        _seed_octomap_only_artifacts(map_dir)
+    _activate_map(map_root, "previous")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    manager = _TypedFilesystemMapsService(map_root)
+    gateway._map_mgr = manager
+    nav = FailingNav()
+    gateway._all_modules = {"nav.mission": nav}
+
+    response = asyncio.run(_endpoint(gateway, "/api/v1/map/activate")(MapNameRequest(name="target")))
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["ok"] is False
+    assert payload["planner_reload"]["ok"] is False
+    assert payload["rollback"]["success"] is True
+    assert payload["rollback"]["planner_reload"]["ok"] is True
+    assert len(nav.reloads) == 2
+    assert (map_root / "active_map.txt").read_text(encoding="utf-8").strip() == "previous"
+
+
+def test_map_save_requires_injected_maps_service():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse
 
-    class FakeMapSaveAdapter:
-        def save_nav_map(self, *args, **kwargs):
-            raise AssertionError("Gateway map/save must not call adapter directly")
-
-        def save_pgo_map(self, *args, **kwargs):
-            raise AssertionError("Gateway map/save must not call adapter directly")
-
-    monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-
-    gateway = GatewayModule(map_save_adapter=FakeMapSaveAdapter())
+    gateway = GatewayModule()
     gateway.setup()
-    monkeypatch.setattr(gateway, "_get_slam_profile", lambda: "super_lio")
-    with gateway._map_cloud_lock:
-        gateway._map_points = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]
+    gateway._get_slam_profile = lambda: "fastlio2"
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/map/save")({"name": "super_lio_demo"})
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/map/save")({"name": "native_dds_demo"}))
     payload = _payload(response)
     model = MapLifecycleResponse.model_validate(payload)
 
@@ -1752,53 +2687,9 @@ def test_map_save_requires_map_service_and_does_not_fallback_to_gateway_snapshot
     assert model.ok is False
     assert model.success is False
     assert model.ts > 0
-    assert model.name == "super_lio_demo"
-    assert model.message == "MapService not running"
-    assert not (tmp_path / "super_lio_demo").exists()
-
-
-def test_binary_xyz_pcd_writer_keeps_numpy_fast_path(monkeypatch, tmp_path):
-    import subprocess
-    import sys
-
-    probe = subprocess.run(
-        [sys.executable, "-c", "import numpy"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=10,
-    )
-    if probe.returncode != 0:
-        pytest.skip("NumPy import is unsafe in this host Python")
-
-    import numpy as np
-    from gateway.routes import maps as map_routes
-
-    called = {"array": False}
-    real_array_writer = map_routes._write_binary_xyz_pcd_array
-
-    def wrapped_array_writer(path, points):
-        called["array"] = True
-        return real_array_writer(path, points)
-
-    monkeypatch.setattr(map_routes, "_write_binary_xyz_pcd_array", wrapped_array_writer)
-
-    pcd_path = tmp_path / "map.pcd"
-    count = map_routes._write_binary_xyz_pcd(
-        pcd_path,
-        np.array(
-            [
-                [1.0, 2.0, 3.0],
-                [float("nan"), 4.0, 5.0],
-                [4.0, 5.0, 6.0],
-            ],
-            dtype=np.float32,
-        ),
-    )
-
-    assert called["array"] is True
-    assert count == 2
-    body = pcd_path.read_bytes().split(b"DATA binary\n", 1)[1]
-    assert struct.unpack("<ffffff", body) == (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    assert model.name == "native_dds_demo"
+    assert "ProductGraph/Blueprint must inject maps.service" in model.message
+    assert gateway._map_mgr is None
 
 
 def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
@@ -1812,8 +2703,8 @@ def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
             calls.append(("nav", args, kwargs))
             raise AssertionError("relocation map save should fail before adapter calls")
 
-        def save_pgo_map(self, *args, **kwargs):
-            calls.append(("pgo", args, kwargs))
+        def save_slam_map(self, *args, **kwargs):
+            calls.append(("slam", args, kwargs))
             raise AssertionError("relocation map save should fail before adapter calls")
 
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
@@ -1822,24 +2713,22 @@ def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
     gateway.setup()
     monkeypatch.setattr(gateway, "_get_slam_profile", lambda: "super_lio_relocation")
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/map/save")({"name": "relocation_demo"})
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/map/save")({"name": "relocation_demo"}))
     payload = _payload(response)
     model = MapLifecycleResponse.model_validate(payload)
 
-    assert response.status_code == 503
+    assert response.status_code == 409
     assert model.ok is False
     assert model.success is False
     assert model.name == "relocation_demo"
-    assert model.message == "MapService not running"
+    assert "not supported" in model.message
     assert calls == []
     assert not (tmp_path / "relocation_demo").exists()
 
 
-def test_maps_route_accepts_legacy_and_canonical_actions():
-    from gateway.gateway_module import GatewayModule, MapRequest
-    from gateway.schemas import MapLifecycleResponse
+def test_maps_route_normalizes_public_action_aliases():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import MapLifecycleResponse, MapRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1849,12 +2738,8 @@ def test_maps_route_accepts_legacy_and_canonical_actions():
 
     use_payload = asyncio.run(post_maps(MapRequest(action="use", name="demo")))
     build_payload = asyncio.run(post_maps(MapRequest(action="build", name="demo")))
-    canonical_payload = asyncio.run(
-        post_maps(MapRequest(action="build_tomogram", name="demo"))
-    )
-    occupancy_payload = asyncio.run(
-        post_maps(MapRequest(action="build_occupancy", name="demo"))
-    )
+    canonical_payload = asyncio.run(post_maps(MapRequest(action="build_octomap", name="demo")))
+    occupancy_payload = asyncio.run(post_maps(MapRequest(action="build_occupancy", name="demo")))
 
     for payload in (use_payload, build_payload, canonical_payload, occupancy_payload):
         model = MapLifecycleResponse.model_validate(payload)
@@ -1864,40 +2749,49 @@ def test_maps_route_accepts_legacy_and_canonical_actions():
         assert model.ts > 0
     assert manager.map_command.delivered == [
         {"action": "set_active", "name": "demo"},
-        {"action": "build_tomogram", "name": "demo"},
-        {"action": "build_tomogram", "name": "demo"},
+        {"action": "build_octomap", "name": "demo"},
+        {"action": "build_octomap", "name": "demo"},
         {"action": "build_occupancy", "name": "demo"},
     ]
 
 
-def test_map_workbench_routes_forward_to_map_service():
+def test_map_workbench_routes_forward_to_map_service(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
     gateway.setup()
     manager = _FakeMapManager()
     gateway._map_mgr = manager
+    import_root = tmp_path / "imports"
+    import_root.mkdir()
+    source = import_root / "demo.pcd"
+    source.write_bytes(b"pcd")
+    monkeypatch.setenv("LINGTU_MAP_IMPORT_DIR", str(import_root))
 
-    import_payload = _payload(asyncio.run(
-        _endpoint(gateway, "/api/v1/maps/import_pcd")(
-            {"name": "demo", "source_path": "/tmp/demo.pcd", "voxel_size": 0.2}
+    import_payload = _payload(
+        asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/import_pcd")(
+                {"name": "demo", "source_path": str(source), "voxel_size": 0.2}
+            )
         )
-    ))
-    crop_payload = _payload(asyncio.run(
-        _endpoint(gateway, "/api/v1/maps/{name}/crop")(
-            "demo",
-            {"bounds": {"min": [0, 0, 0], "max": [1, 1, 1]}},
+    )
+    crop_payload = _payload(
+        asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/{name}/crop")(
+                "demo",
+                {"bounds": {"min": [0, 0, 0], "max": [1, 1, 1]}},
+            )
         )
-    ))
-    mark_payload = _payload(asyncio.run(
-        _endpoint(gateway, "/api/v1/maps/{name}/mark_zone")(
-            "demo",
-            {"state": "preblocked", "center": [0, 0, 0], "radius": 0.5},
+    )
+    mark_payload = _payload(
+        asyncio.run(
+            _endpoint(gateway, "/api/v1/maps/{name}/mark_zone")(
+                "demo",
+                {"state": "preblocked", "center": [0, 0, 0], "radius": 0.5},
+            )
         )
-    ))
-    build_payload = _payload(asyncio.run(
-        _endpoint(gateway, "/api/v1/maps/{name}/build_octomap")("demo")
-    ))
+    )
+    build_payload = _payload(asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/build_octomap")("demo")))
 
     assert import_payload["ok"] is True
     assert crop_payload["ok"] is True
@@ -1907,7 +2801,7 @@ def test_map_workbench_routes_forward_to_map_service():
         {
             "action": "import_pcd",
             "name": "demo",
-            "source_path": "/tmp/demo.pcd",
+            "source_path": str(source.resolve()),
             "voxel_size": 0.2,
             "bounds": None,
         },
@@ -1918,6 +2812,7 @@ def test_map_workbench_routes_forward_to_map_service():
             "invert": False,
             "voxel_size": 0.0,
         },
+        {"action": "get_active"},
         {
             "action": "edit_voxels",
             "state": "preblocked",
@@ -1932,23 +2827,24 @@ def test_map_workbench_routes_forward_to_map_service():
 def test_map_workbench_import_route_writes_real_map_package(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import MapLifecycleResponse, MapListResponse
-    from nav.services.maps import MapService
+    from maps.modules.service import MapsModule
 
-    source = tmp_path / "source.pcd"
+    import_root = tmp_path / "imports"
+    import_root.mkdir()
+    source = import_root / "source.pcd"
     _write_binary_xyz_pcd(source)
     map_dir = tmp_path / "maps"
     monkeypatch.setenv("NAV_MAP_DIR", str(map_dir))
+    monkeypatch.setenv("LINGTU_MAP_IMPORT_DIR", str(import_root))
 
     gateway = GatewayModule()
     gateway.setup()
-    manager = MapService(map_dir=str(map_dir), data_dir=str(tmp_path / "data"))
+    manager = MapsModule(map_dir=str(map_dir), data_dir=str(tmp_path / "data"))
     manager.setup()
     gateway._map_mgr = manager
 
     response = asyncio.run(
-        _endpoint(gateway, "/api/v1/maps/import_pcd")(
-            {"name": "demo", "source_path": str(source), "voxel_size": 0.0}
-        )
+        _endpoint(gateway, "/api/v1/maps/import_pcd")({"name": "demo", "source_path": str(source), "voxel_size": 0.0})
     )
     payload = _payload(response)
     model = MapLifecycleResponse.model_validate(payload)
@@ -1970,32 +2866,49 @@ def test_map_workbench_import_route_writes_real_map_package(monkeypatch, tmp_pat
     assert entry.state == "STALE"
 
 
+def test_map_workbench_import_rejects_host_path_escape(monkeypatch, tmp_path):
+    from gateway.gateway_module import GatewayModule
+
+    import_root = tmp_path / "imports"
+    import_root.mkdir()
+    outside = tmp_path / "outside.pcd"
+    outside.write_bytes(b"pcd")
+    monkeypatch.setenv("LINGTU_MAP_IMPORT_DIR", str(import_root))
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._map_mgr = _FakeMapManager()
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/maps/import_pcd")({"name": "demo", "source_path": str(outside), "voxel_size": 0.0})
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 400
+    assert payload["ok"] is False
+    assert "escapes configured root" in payload["message"]
+
+
 def test_maps_route_error_response_matches_openapi_contract():
-    from gateway.gateway_module import GatewayModule, MapRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse, MapRequest
 
     gateway = GatewayModule()
     gateway.setup()
     manager = _FakeMapManager()
     gateway._map_mgr = manager
 
-    def fail(raw: str):
-        command = json.loads(raw)
+    def fail(request):
+        command = request.to_mapping()
         manager.map_command.delivered.append(command)
-        for callback in list(manager.map_response._callbacks):
-            callback(
-                {
-                    "action": command["action"],
-                    "success": False,
-                    "message": "map save failed",
-                }
-            )
+        return {
+            "action": command["action"],
+            "success": False,
+            "message": "map save failed",
+        }
 
-    manager.map_command._deliver = fail
+    manager.execute = fail
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/maps")(MapRequest(action="save", name="demo"))
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/maps")(MapRequest(action="save", name="demo")))
     payload = _payload(response)
     model = GatewayErrorResponse.model_validate(payload)
 
@@ -2010,7 +2923,6 @@ def test_maps_route_error_response_matches_openapi_contract():
 
 def test_operational_routes_validate_idle_json_contracts():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import BitrateRequest
     from gateway.schemas import (
         BagOperationResponse,
         BagStatusResponse,
@@ -2019,8 +2931,6 @@ def test_operational_routes_validate_idle_json_contracts():
         SlamOperationResponse,
         SlamStatusResponse,
         TemporalMemoryResponse,
-        WebRTCControlResponse,
-        WebRTCStatsResponse,
     )
 
     gateway = GatewayModule()
@@ -2037,25 +2947,15 @@ def test_operational_routes_validate_idle_json_contracts():
 
     temporal_payload = asyncio.run(_endpoint(gateway, "/api/v1/memory/temporal")())
     semantic_payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/memory/temporal/semantic")(
-            {"embedding": [0.1, 0.2], "top_k": 1}
-        )
+        _endpoint(gateway, "/api/v1/memory/temporal/semantic")({"embedding": [0.1, 0.2], "top_k": 1})
     )
-    semantic_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/memory/temporal/semantic")({})
-    )
+    semantic_response = asyncio.run(_endpoint(gateway, "/api/v1/memory/temporal/semantic")({}))
     explore_status_payload = asyncio.run(_endpoint(gateway, "/api/v1/explore/status")())
     explore_start_response = asyncio.run(_endpoint(gateway, "/api/v1/explore/start")())
     slam_status_payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/status")())
-    slam_switch_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/switch")({"profile": "bad"})
-    )
+    slam_switch_response = asyncio.run(_endpoint(gateway, "/api/v1/slam/switch")({"profile": "bad"}))
     bag_status_payload = asyncio.run(_endpoint(gateway, "/api/v1/bag/status")())
     bag_stop_response = asyncio.run(_endpoint(gateway, "/api/v1/bag/stop")())
-    webrtc_stats_payload = asyncio.run(_endpoint(gateway, "/api/v1/webrtc/stats")())
-    webrtc_bitrate_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/webrtc/bitrate")(BitrateRequest(bps=1_000_000))
-    )
 
     temporal = TemporalMemoryResponse.model_validate(temporal_payload)
     semantic_ok = TemporalMemoryResponse.model_validate(semantic_payload)
@@ -2066,10 +2966,6 @@ def test_operational_routes_validate_idle_json_contracts():
     slam_switch = SlamOperationResponse.model_validate(_payload(slam_switch_response))
     bag_status = BagStatusResponse.model_validate(bag_status_payload)
     bag_stop = BagOperationResponse.model_validate(_payload(bag_stop_response))
-    webrtc_stats = WebRTCStatsResponse.model_validate(webrtc_stats_payload)
-    webrtc_bitrate = WebRTCControlResponse.model_validate(
-        _payload(webrtc_bitrate_response)
-    )
 
     assert temporal.count == 1
     assert temporal.observations[0]["label"] == "door"
@@ -2098,8 +2994,6 @@ def test_operational_routes_validate_idle_json_contracts():
     assert slam_switch.ts > 0
     assert bag_status.recording is False
     assert bag_stop.error == "not_recording"
-    assert webrtc_stats.enabled is False
-    assert webrtc_bitrate.error == "webrtc_unavailable"
 
 
 def test_tare_explorer_is_available_through_exploration_contracts():
@@ -2388,9 +3282,7 @@ def test_exploring_session_start_rejects_localization_recovery_blocker(monkeypat
             return {"started": self.started}
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2400,9 +3292,7 @@ def test_exploring_session_start_rejects_localization_recovery_blocker(monkeypat
     with gateway._state_lock:
         gateway._localization_status["recovery_signal"] = "LOC_DIVERGED"
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/session/start")({"mode": "exploring"})
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "exploring"}))
     started = SessionTransitionResponse.model_validate(_payload(response))
 
     assert response.status_code == 409
@@ -2438,9 +3328,7 @@ def test_exploring_session_start_rejects_safety_stop_before_backend_start():
     with gateway._state_lock:
         gateway._safety = {"level": 2}
 
-    response = asyncio.run(
-        _endpoint(gateway, "/api/v1/session/start")({"mode": "exploring"})
-    )
+    response = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "exploring"}))
     started = SessionTransitionResponse.model_validate(_payload(response))
 
     assert response.status_code == 409
@@ -2491,9 +3379,7 @@ def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
             return {"started": self.started}
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2501,9 +3387,7 @@ def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
     gateway.on_system_modules({"TAREExplorerModule": tare})
     _seed_ready_navigation(gateway)
 
-    start_payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/session/start")({"mode": "exploring"})
-    )
+    start_payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "exploring"}))
     started = SessionTransitionResponse.model_validate(start_payload)
 
     assert started.ok is True
@@ -2580,9 +3464,7 @@ def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeyp
             return {"started": self.started}
 
     fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: fake_service_manager
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2590,11 +3472,7 @@ def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeyp
     gateway.on_system_modules({"TAREExplorerModule": tare})
     _seed_ready_navigation(gateway)
 
-    payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/session/start")(
-            {"mode": "exploring", "slam_profile": "none"}
-        )
-    )
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "exploring", "slam_profile": "none"}))
     transition = SessionTransitionResponse.model_validate(payload)
 
     assert transition.ok is True
@@ -2618,9 +3496,7 @@ def test_tare_external_session_get_preserves_exploring_with_none_slam(monkeypatc
         def get_tare_status(self):
             return {"started": True}
 
-    monkeypatch.setattr(
-        service_manager, "get_service_manager", lambda: FakeServiceManager()
-    )
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: FakeServiceManager())
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2654,7 +3530,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             assert names == (
                 "lidar",
                 "slam",
-                "nav_dds",
+                "traversability",
+                "nav",
+                "explore",
                 "slam_pgo",
                 "localizer",
                 "genz_icp",
@@ -2668,7 +3546,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             canonical = {
                 "lidar": "lingtu-livox-dds.service",
                 "slam": "lingtu-slam-dds.service",
-                "nav_dds": "lingtu-nav-dds.service",
+                "traversability": "lingtu-traversability-dds.service",
+                "nav": "lingtu-nav-dds.service",
+                "explore": "lingtu-explore-dds.service",
             }
             return {
                 name: {
@@ -2677,9 +3557,7 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
                     "selected_unit": canonical.get(name, f"{name}.service"),
                     "installed_units": [canonical.get(name, f"{name}.service")],
                     "active_units": (
-                        [canonical.get(name, f"{name}.service")]
-                        if self._services.get(name) == "running"
-                        else []
+                        [canonical.get(name, f"{name}.service")] if self._services.get(name) == "running" else []
                     ),
                     "candidate_units": [f"{name}.service"],
                 }
@@ -2702,7 +3580,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             {
                 "lidar": "running",
                 "slam": "running",
-                "nav_dds": "running",
+                "traversability": "running",
+                "nav": "running",
+                "explore": "stopped",
                 "slam_pgo": "stopped",
                 "localizer": "stopped",
                 "genz_icp": "stopped",
@@ -2718,8 +3598,19 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
     assert native_localizer_payload["product_runtime"] == "native_dds"
     assert native_localizer_payload["ros2_required"] is False
     assert native_localizer_payload["manual_systemctl_required"] is False
-    assert native_localizer_payload["service_groups"]["native_dds"] == ["lidar", "slam", "nav_dds"]
+    assert native_localizer_payload["service_groups"]["native_dds"] == [
+        "lidar",
+        "slam",
+        "traversability",
+        "nav",
+        "driver",
+        "explore",
+    ]
     assert "legacy_ros2_compat" in native_localizer_payload["service_groups"]
+    assert native_localizer_payload["service_metadata"]["slam_pgo"]["role"] == "map_optimization"
+    assert native_localizer_payload["service_metadata"]["slam_pgo"]["ros2_compat"] is True
+    assert native_localizer_payload["service_metadata"]["hba"]["role"] == "map_optimization"
+    assert native_localizer_payload["service_metadata"]["hba"]["experimental"] is True
     assert native_localizer_payload["service_details"]["slam"]["status"] == "running"
 
     gateway._localization_status = {}
@@ -2730,7 +3621,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             {
                 "lidar": "running",
                 "slam": "stopped",
-                "nav_dds": "running",
+                "traversability": "running",
+                "nav": "running",
+                "explore": "stopped",
                 "slam_pgo": "stopped",
                 "localizer": "running",
                 "genz_icp": "stopped",
@@ -2751,7 +3644,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             {
                 "lidar": "running",
                 "slam": "running",
-                "nav_dds": "running",
+                "traversability": "running",
+                "nav": "running",
+                "explore": "stopped",
                 "slam_pgo": "stopped",
                 "localizer": "stopped",
                 "genz_icp": "stopped",
@@ -2771,7 +3666,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             {
                 "lidar": "running",
                 "slam": "stopped",
-                "nav_dds": "running",
+                "traversability": "running",
+                "nav": "running",
+                "explore": "stopped",
                 "slam_pgo": "stopped",
                 "localizer": "stopped",
                 "genz_icp": "stopped",
@@ -2792,7 +3689,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             {
                 "lidar": "running",
                 "slam": "stopped",
-                "nav_dds": "running",
+                "traversability": "running",
+                "nav": "running",
+                "explore": "stopped",
                 "slam_pgo": "stopped",
                 "localizer": "stopped",
                 "genz_icp": "running",
@@ -2813,7 +3712,9 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
             {
                 "lidar": "running",
                 "slam": "stopped",
-                "nav_dds": "running",
+                "traversability": "running",
+                "nav": "running",
+                "explore": "stopped",
                 "slam_pgo": "stopped",
                 "localizer": "stopped",
                 "genz_icp": "stopped",
@@ -2826,6 +3727,152 @@ def test_slam_status_uses_logical_service_states(monkeypatch):
     relocation_payload = asyncio.run(endpoint())
     assert relocation_payload["mode"] == "super_lio_relocation"
     assert relocation_payload["services"]["super_lio_relocation"] == "running"
+
+
+def test_service_status_exposes_catalog_readiness_contract(monkeypatch):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ServiceStatusResponse
+    from runtime.service_catalogs.thunder import thunder_service_metadata
+
+    metadata = thunder_service_metadata()
+
+    class _FakeServiceManager:
+        def status(self, *names):
+            assert names == ("camera", "lidar")
+            return {"camera": "running", "lidar": "stopped"}
+
+        def status_details(self, *names):
+            assert names == ("camera", "lidar")
+            return {
+                name: {
+                    "status": "running" if name == "camera" else "stopped",
+                    "ready": False,
+                    "blockers": ["dds_unchecked"] if name == "camera" else ["systemd_inactive", "dds_unchecked"],
+                    "observed": {
+                        "systemd": name == "camera",
+                        "native_binary": {
+                            "ok": True,
+                            "binaries": metadata[name].get("binaries", []),
+                            "blockers": [],
+                        },
+                        "status_file": {
+                            "ok": name == "camera",
+                            "files": [
+                                {
+                                    "path": "/dev/shm/lingtu/camera_status.json",
+                                    "exists": name == "camera",
+                                }
+                            ],
+                            "blockers": []
+                            if name == "camera"
+                            else ["status_file_missing:/dev/shm/lingtu/camera_status.json"],
+                        },
+                        "dds": {
+                            "ok": False,
+                            "checked": False,
+                            "enabled": False,
+                            "reason": "set LINGTU_SERVICE_DDS_CHECK=1 to sample DDS topics",
+                            "topics": metadata[name]["dds_topics"],
+                            "samples": {},
+                            "blockers": ["dds_unchecked"],
+                        },
+                    },
+                    "contract": {
+                        "checks": metadata[name]["checks"],
+                        "topics": metadata[name]["topics"],
+                        "dds_topics": metadata[name]["dds_topics"],
+                        "files": metadata[name]["files"],
+                        "binaries": metadata[name].get("binaries", []),
+                    },
+                }
+                for name in names
+            }
+
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: _FakeServiceManager())
+
+    gateway = GatewayModule()
+    gateway.setup()
+    endpoint = _endpoint(gateway, "/api/v1/services/status")
+
+    payload = asyncio.run(endpoint(names="camera,lidar"))
+    status = ServiceStatusResponse.model_validate(payload)
+
+    assert status.services == {"camera": "running", "lidar": "stopped"}
+    assert status.service_metadata["camera"]["checks"] == [
+        "systemd",
+        "native_binary",
+        "dds",
+        "status_file",
+    ]
+    assert status.service_metadata["camera"]["binaries"][0]["name"] == "camera_dds"
+    assert status.service_metadata["camera"]["topics"] == ["/camera/color/camera_info"]
+    assert status.service_metadata["camera"]["dds_topics"] == ["rt/camera/info"]
+    assert status.service_details["camera"]["contract"]["dds_topics"] == ["rt/camera/info"]
+    assert status.service_details["camera"]["contract"]["files"] == ["/dev/shm/lingtu/camera_status.json"]
+    assert status.service_details["camera"]["contract"]["binaries"][1]["name"] == ("orbbec_capture")
+    assert status.service_details["camera"]["observed"]["systemd"] is True
+    assert status.service_details["camera"]["observed"]["native_binary"]["ok"] is True
+    assert status.service_details["camera"]["observed"]["status_file"]["ok"] is True
+    assert status.service_details["camera"]["observed"]["dds"] == {
+        "ok": False,
+        "checked": False,
+        "enabled": False,
+        "reason": "set LINGTU_SERVICE_DDS_CHECK=1 to sample DDS topics",
+        "topics": ["rt/camera/info"],
+        "samples": {},
+        "blockers": ["dds_unchecked"],
+    }
+    assert status.service_details["camera"]["ready"] is False
+    assert status.service_details["camera"]["blockers"] == ["dds_unchecked"]
+    assert status.service_details["lidar"]["blockers"] == [
+        "systemd_inactive",
+        "dds_unchecked",
+    ]
+
+
+def test_service_status_default_names_follow_field_readiness_catalog(monkeypatch):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+    from runtime.service_catalogs.thunder import thunder_field_readiness_services
+
+    expected = tuple(dict.fromkeys((*thunder_field_readiness_services(), "gateway")))
+
+    class _FakeServiceManager:
+        def status(self, *names):
+            assert names == expected
+            return {name: "running" for name in names}
+
+        def status_details(self, *names):
+            assert names == expected
+            return {
+                name: {
+                    "status": "running",
+                    "ready": True,
+                    "blockers": [],
+                    "observed": {"systemd": True},
+                    "contract": {
+                        "checks": ["systemd"],
+                        "topics": [],
+                        "dds_topics": [],
+                        "files": [],
+                    },
+                }
+                for name in names
+            }
+
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: _FakeServiceManager())
+
+    gateway = GatewayModule()
+    gateway.setup()
+    endpoint = _endpoint(gateway, "/api/v1/services/status")
+
+    payload = asyncio.run(endpoint())
+
+    assert tuple(payload["services"]) == expected
+    assert "explore" not in payload["services"]
+    assert "camera" in payload["service_metadata"]
+    assert "gateway" in payload["service_metadata"]
 
 
 def test_slam_switch_can_select_super_lio(monkeypatch):
@@ -2965,13 +4012,9 @@ def test_super_lio_relocalize_endpoints_fail_fast_without_ros_call(monkeypatch):
         "recovery_method": "restart_super_lio",
     }
 
-    auto_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/auto_relocalize")()
-    )
+    auto_response = asyncio.run(_endpoint(gateway, "/api/v1/slam/auto_relocalize")())
     relocalize_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
 
     auto_payload = _payload(auto_response)
@@ -3010,13 +4053,9 @@ def test_super_lio_relocation_relocalize_endpoints_fail_fast_without_ros_call(
         "recovery_method": "restart_super_lio_relocation",
     }
 
-    auto_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/auto_relocalize")()
-    )
+    auto_response = asyncio.run(_endpoint(gateway, "/api/v1/slam/auto_relocalize")())
     relocalize_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
 
     auto_payload = _payload(auto_response)
@@ -3038,8 +4077,8 @@ def test_super_lio_relocation_relocalize_endpoints_fail_fast_without_ros_call(
 def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_path):
     import subprocess
 
-    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
+    from runtime.relocalization import RelocalizationResult
 
     map_dir = tmp_path / "maps"
     (map_dir / "demo").mkdir(parents=True)
@@ -3048,14 +4087,13 @@ def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_test_maps_service(gateway, map_dir)
     gateway._localization_status = {
         "backend": "localizer",
         "saved_map_relocalization_supported": True,
     }
     gateway._persist_last_nav_pose = lambda *_args, **_kwargs: None
-    service = _FakeRelocalizationService(
-        saved_result=RelocalizationResult(True, "success=True\n")
-    )
+    service = _FakeRelocalizationService(saved_result=RelocalizationResult(True, "success=True\n"))
     gateway._relocalization_service = service
 
     monkeypatch.setattr(
@@ -3066,9 +4104,7 @@ def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_
         ),
     )
     payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
 
     assert payload["schema_version"] == 1
@@ -3076,9 +4112,7 @@ def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_
     assert payload["success"] is True
     assert payload["ts"] > 0
     assert payload["message"] == "Relocalized to demo"
-    assert service.saved_calls == [
-        (map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 30.0)
-    ]
+    assert service.saved_calls == [(map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 30.0)]
 
 
 def test_auto_relocalize_delegates_to_service_and_preserves_success_payload(
@@ -3086,8 +4120,8 @@ def test_auto_relocalize_delegates_to_service_and_preserves_success_payload(
 ):
     import subprocess
 
-    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
+    from runtime.relocalization import RelocalizationResult
 
     subprocess_calls = []
 
@@ -3126,8 +4160,8 @@ def test_relocalize_delegates_validated_request_and_persists_on_success(
 ):
     import subprocess
 
-    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
+    from runtime.relocalization import RelocalizationResult
 
     persisted = []
     subprocess_calls = []
@@ -3142,27 +4176,22 @@ def test_relocalize_delegates_validated_request_and_persists_on_success(
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_test_maps_service(gateway, map_dir)
     gateway._localization_status = {
         "backend": "localizer",
         "saved_map_relocalization_supported": True,
     }
     gateway._get_slam_profile = lambda: "localizer"
     gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
-    service = _FakeRelocalizationService(
-        saved_result=RelocalizationResult(True, "service ok", quality=0.123)
-    )
+    service = _FakeRelocalizationService(saved_result=RelocalizationResult(True, "service ok", quality=0.123))
     gateway._relocalization_service = service
 
     monkeypatch.setattr(subprocess, "run", fail_run)
     payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
 
-    assert service.saved_calls == [
-        (map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 30.0)
-    ]
+    assert service.saved_calls == [(map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 30.0)]
     assert persisted == [("demo", 1.0, 2.0, 0.3, 0.123)]
     assert subprocess_calls == []
     assert payload["schema_version"] == 1
@@ -3179,8 +4208,8 @@ def test_track_against_map_delegates_validated_request_to_service(
 ):
     import subprocess
 
-    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
+    from runtime.relocalization import RelocalizationResult
 
     subprocess_calls = []
     map_dir = tmp_path / "maps"
@@ -3194,6 +4223,7 @@ def test_track_against_map_delegates_validated_request_to_service(
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_test_maps_service(gateway, map_dir)
     gateway._localization_status = {
         "backend": "localizer",
         "saved_map_relocalization_supported": True,
@@ -3211,14 +4241,10 @@ def test_track_against_map_delegates_validated_request_to_service(
 
     monkeypatch.setattr(subprocess, "run", fail_run)
     payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/track_against_map")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/track_against_map")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
 
-    assert service.track_calls == [
-        (map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 10.0)
-    ]
+    assert service.track_calls == [(map_dir / "demo" / "map.pcd", 1.0, 2.0, 0.3, 10.0)]
     assert subprocess_calls == []
     assert payload["schema_version"] == 1
     assert payload["ok"] is True
@@ -3233,8 +4259,8 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
     monkeypatch,
     tmp_path,
 ):
-    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
+    from runtime.relocalization import RelocalizationResult
 
     persisted = []
     map_dir = tmp_path / "maps"
@@ -3244,6 +4270,7 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_test_maps_service(gateway, map_dir)
     gateway._localization_status = {
         "backend": "localizer",
         "saved_map_relocalization_supported": True,
@@ -3254,9 +4281,7 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
     )
 
     payload = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
 
     assert persisted == []
@@ -3267,8 +4292,8 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
 
 
 def test_relocalize_service_timeout_maps_to_504_payload(monkeypatch, tmp_path):
-    from runtime.relocalization import RelocalizationResult
     from gateway.gateway_module import GatewayModule
+    from runtime.relocalization import RelocalizationResult
 
     persisted = []
     map_dir = tmp_path / "maps"
@@ -3284,19 +4309,16 @@ def test_relocalize_service_timeout_maps_to_504_payload(monkeypatch, tmp_path):
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_test_maps_service(gateway, map_dir)
     gateway._localization_status = {
         "backend": "localizer",
         "saved_map_relocalization_supported": True,
     }
     gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
-    gateway._relocalization_service = _FakeRelocalizationService(
-        saved_result=timeout_result
-    )
+    gateway._relocalization_service = _FakeRelocalizationService(saved_result=timeout_result)
 
     response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
     payload = _payload(response)
 
@@ -3327,9 +4349,7 @@ def test_localizer_relocalize_rejects_unsafe_map_name(monkeypatch, tmp_path):
     }
 
     response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")(
-            {"map_name": "../outside", "x": 1.0, "y": 2.0, "yaw": 0.3}
-        )
+        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "../outside", "x": 1.0, "y": 2.0, "yaw": 0.3})
     )
     payload = _payload(response)
 

@@ -20,6 +20,7 @@ adapter normalizes into the same runtime frames, topics, and algorithm inputs.
 | `lidar_link` | LingTu canonical LiDAR frame after source-adapter normalization. | runtime contract |
 | `livox_frame` | Physical MID-360/raw driver frame alias accepted only at adapter/calibration boundaries. | hardware adapter |
 | `camera_link` | LingTu canonical camera frame. | runtime contract |
+| `gnss_antenna` | LingTu canonical GNSS antenna frame. | runtime contract |
 | `world` | Simulator world frame only. It must be aliased into `map` or `odom` before entering LingTu runtime topics. | simulator |
 
 `body` and `base_link` are not interchangeable inside the codebase. The bridge
@@ -37,6 +38,7 @@ bridge contract:  base_link == body, published as odom -> body
 map -> odom -> body
                  -> lidar_link
                  -> camera_link
+                 -> gnss_antenna
 ```
 
 Body axes are fixed as `x` forward, `y` left, `z` up. LiDAR source adapters
@@ -63,12 +65,22 @@ table and the mirror tests.
 | --- | --- | --- | --- | --- |
 | `/lidar/raw_frame` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
 | `/imu/raw` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
+| `/driver/odometry` | `odom` | `odom` | no | `odom` |
 | `/slam/odometry` | `odom` | `odom`, `map` | yes | `odom`, `map` |
 | `/slam/state_at_scan` | `odom` | `odom` | no | `odom` |
 | `/slam/registered_cloud` | `body` | `body` | yes | `body` |
 | `/slam/map_cloud` | `map` | `map`, `odom` | yes | `map` |
 | `/slam/cumulative_map_cloud` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/slam/saved_map_cloud` | `map` | `map`, `odom` | no | `map`, `odom` |
+| `/maps/voxel_cloud` | `map` | `map`, `odom` | no | `map` |
+| `/maps/occupancy` | `map` | `map`, `odom` | no | `map` |
+| `/maps/elevation` | `map` | `map`, `odom` | no | `map` |
+| `/maps/esdf` | `map` | `map`, `odom` | no | `map` |
+| `/maps/traversability` | `map` | `map`, `odom` | no | `map` |
+| `/maps/scene` | `map` | `map`, `odom` | no | `map` |
+| `/gnss/fix` | `gnss_antenna` | `gnss_antenna` | no | `gnss_antenna` |
+| `/gnss/status` | `gnss_antenna` | `gnss_antenna` | no | `gnss_antenna` |
+| `/gnss/odom` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/exploration_grid` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/traversable_frontiers` | `map` | `map`, `odom` | no | `map` |
 | `/nav/frontier_candidate` | `map` | `map`, `odom` | no | `map` |
@@ -76,6 +88,14 @@ table and the mirror tests.
 | `/nav/terrain_map_ext` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/traversability` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/height_rays` | `body` | `body` | no | `body` |
+| `/nav/teleop_cmd_vel` | `body` | `body` | no | `body` |
+| `/nav/command/request` | `map` | `map`, `body` | no | `map`, `body` |
+| `/nav/command/ack` | `map` | `map` | no | `map` |
+| `/nav/inspection/command` | `map` | `map` | no | `map` |
+| `/nav/inspection/ack` | `map` | `map` | no | `map` |
+| `/nav/inspection/status` | `map` | `map` | no | `map` |
+| `/nav/inspection/evidence/request` | `map` | `map` | no | `map` |
+| `/nav/inspection/evidence/result` | `map` | `map` | no | `map` |
 | `/nav/global_path` | `map` | `map`, `odom` | yes | `map` |
 | `/nav/local_path` | `map` | `map`, `odom`, `body` | yes | `map`, `odom`, `body` |
 | `/exploration/way_point` | `map` | `map`, `odom` | no | `map`, `odom` |

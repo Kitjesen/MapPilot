@@ -2,20 +2,19 @@
  * @file      octo_planner/include/global_planner.h
  * @brief     3D A star Planner
  * @author    juchunyu <juchunyu@qq.com>
- * @date      2026-05-31 12:00:01 
- * @copyright Copyright (c) 2025-2026 Institute of Robotics Planning and Control (IRPC). 
+ * @date      2026-05-31 12:00:01
+ * @copyright Copyright (c) 2025-2026 Institute of Robotics Planning and Control (IRPC).
  *            All rights reserved.
  */
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
+#include <functional>
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
-#include <queue>
 
 #include "octomap/OcTree.h"
 
@@ -67,12 +66,44 @@ struct PointPose
     double z;
 };
 
-class GlobalPlanner
+struct PlannerConfig
+{
+  double robot_radius{0.20};
+  double body_clearance_below_m{0.0};
+  double body_clearance_above_m{0.0};
+  int max_iterations{250000};
+  int snap_search_radius_cells{8};
+  bool require_ground_support{true};
+  bool strict_direct_ground_support{true};
+  int ground_support_xy_radius_cells{2};
+  int ground_support_depth_cells{2};
+  double support_height_m{0.0};
+  double support_height_tolerance_m{0.0};
+  int support_patch_radius_cells{0};
+  int support_patch_min_samples{0};
+  bool enable_preblocked_costmap{true};
+  int preblocked_costmap_radius_cells{3};
+  double preblocked_costmap_weight{1.5};
+  bool lowest_traversable_only{false};
+  double floor_change_penalty{4.0};
+  double max_step_height{0.45};
+  double max_slope{0.0};
+  bool same_floor_preference{true};
+  double same_floor_z_tolerance{0.75};
+  int obstacle_clearance_radius_cells{4};
+  double obstacle_clearance_weight{2.0};
+};
+
+class OctoPlanner3D
 {
 public:
-  GlobalPlanner();
-  
-  ~GlobalPlanner();
+  OctoPlanner3D();
+
+  ~OctoPlanner3D();
+
+  void setConfig(const PlannerConfig & config);
+
+  void setCancelCheck(std::function<bool()> cancel_check);
 
   void setOctomap(std::shared_ptr<octomap::OcTree> map);
 
@@ -81,10 +112,15 @@ public:
   void getPlannerResults(std::vector<PointPose>& plannerResults);
 
 private:
-
-  void fillBounds(PointPose & min_bound,PointPose & max_bound) const;
-
-  void onGoalPose(const PointPose goal);
+  enum class TraversabilityFailure
+  {
+    None,
+    OutsideBounds,
+    GroundSupport,
+    ExternalPreblockedBelow,
+    ExternalPreblockedBody,
+    OccupiedBody,
+  };
 
   void tryPlan();
 
@@ -99,18 +135,22 @@ private:
     bool strict_direct_ground_support,
     int support_xy_radius_cells,
     int support_depth_cells) const;
+  std::pair<int, int> supportDepthRange(int support_depth_cells) const;
+  bool isSupportPatch(const GridIndex & support) const;
+  bool isSupportCell(const GridIndex & support) const;
+  bool hasOccupiedNearZ(const GridIndex & index, int z_tolerance_cells) const;
+  bool hasFootprintGroundSupport(
+    const GridIndex & idx,
+    double robot_radius,
+    int support_depth_cells) const;
 
   bool isOccupiedCell(const GridIndex & idx) const;
 
   bool hasNonOccupiedNeighborSameLevel(const GridIndex & idx) const;
 
-  bool hasSameLevelNeighborWithOccupiedBelow(const GridIndex & idx) const;
-
   bool hasSameLevelNeighborWithOccupiedAbove(const GridIndex & idx) const;
 
   void rebuildPreblockedCells();
-
-//   void onExternalPreblockedMarker(const visualization_msgs::msg::Marker::SharedPtr msg);
 
   void rebuildPreblockedCostmap();
 
@@ -122,19 +162,6 @@ private:
 
   bool isMotionAllowed(const GridIndex & from, const GridIndex & to) const;
 
-//   void publishCellSetMarker(
-//     const std::unordered_set<GridIndex, GridIndexHash> & cells,
-//     const rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr & publisher,
-//     const std::string & ns,
-//     float r_color,
-//     float g_color,
-//     float b_color,
-//     float a_color) const;
-
-  void publishPreblockedCellsMarker();
-
-  void publishRiskCostCloud() const;
-
   void rebuildDerivedLayers();
 
   bool isCellTraversable(
@@ -144,6 +171,24 @@ private:
     bool strict_direct_ground_support,
     int support_xy_radius_cells,
     int support_depth_cells) const;
+
+  bool isCellTraversableDetailed(
+    const GridIndex & idx,
+    double robot_radius,
+    bool require_ground_support,
+    bool strict_direct_ground_support,
+    int support_xy_radius_cells,
+    int support_depth_cells,
+    TraversabilityFailure * failure) const;
+
+  bool isPlanningCellTraversableDetailed(
+    const GridIndex & idx,
+    double robot_radius,
+    bool require_ground_support,
+    bool strict_direct_ground_support,
+    int support_xy_radius_cells,
+    int support_depth_cells,
+    TraversabilityFailure * failure) const;
 
   bool findNearestFreeCell(
     const GridIndex & seed,
@@ -155,6 +200,8 @@ private:
     int support_depth_cells,
     GridIndex & out) const;
 
+  bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal) const;
+
   std::vector<GridIndex> make26Directions() const;
 
   std::vector<GridIndex> reconstructPath(
@@ -162,10 +209,6 @@ private:
     GridIndex current) const;
 
   bool startPlan();
-
-  void publishPath(
-    const std::vector<GridIndex> & cells,
-    const std::string & frame_id);
 
   double euclidean(const GridIndex & a, const GridIndex & b)
   {
@@ -175,18 +218,19 @@ private:
     return std::sqrt(dx * dx + dy * dy + dz * dz);
   }
 
-
-private:
- 
-  std::string source_world_file_;
-
   double robot_radius_ = 0.20;
+  double body_clearance_below_m_ = 0.0;
+  double body_clearance_above_m_ = 0.0;
   int max_iterations_ = 250000;
   int snap_search_radius_cells_ = 8;
   bool require_ground_support_ = true;
   bool strict_direct_ground_support_ = true;
-  int ground_support_xy_radius_cells_ = 1;
+  int ground_support_xy_radius_cells_ = 2;
   int ground_support_depth_cells_ = 2;
+  double support_height_m_ = 0.0;
+  double support_height_tolerance_m_ = 0.0;
+  int support_patch_radius_cells_ = 0;
+  int support_patch_min_samples_ = 0;
   bool enable_preblocked_costmap_ = true;
   int preblocked_costmap_radius_cells_ = 3;
   double preblocked_costmap_weight_ = 1.5;
@@ -202,18 +246,14 @@ private:
   bool map_ready_ = false;
   bool has_start_ = false;
   bool has_goal_ = false;
-  bool has_goal_pose_ = false;
   bool planning_in_progress_ = false;
-
-  std::uint64_t plan_seq_ = 0;
-  std::uint64_t last_success_seq_ = 0;
-  std::uint64_t last_octomap_hash_ = 0;
 
   PointPose start_point_;
   PointPose goal_point_;
-  PointPose goal_pose_;
 
   std::vector<PointPose> planner_results_;
+
+  std::function<bool()> cancel_check_;
 
   std::shared_ptr<octomap::OcTree> octree_;
 
@@ -223,5 +263,9 @@ private:
   std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
   std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;
 };
+
+// Compatibility name for the original standalone demo. Product code uses the
+// algorithm-specific name so the generic LingTu planner contract stays clear.
+using GlobalPlanner = OctoPlanner3D;
 
 }  // namespace global_planner

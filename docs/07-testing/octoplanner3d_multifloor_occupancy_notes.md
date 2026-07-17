@@ -2,6 +2,39 @@
 
 Date: 2026-07-04
 
+## Current Product Verdict (2026-07-16)
+
+Multifloor navigation is **not yet a closed-loop product capability**. The
+saved-map/OctoPlanner3D side can produce XYZ routes over supported geometry,
+but the downstream execution chain still contains planar assumptions:
+
+- native local target selection and goal arrival primarily compare XY;
+- the sampled-path local planner receives a planar target and a 2 cm XY
+  correspondence map;
+- PathFollower tracks XY lookahead and heading;
+- occupancy, elevation, and traversability local products collapse evidence
+  into robot-centric 2D/2.5D grids;
+- the Web path renderer currently presents global/local paths at display
+  heights rather than using their full Z geometry.
+
+Consequently, two floors sharing the same XY can alias, a same-XY goal on the
+wrong floor can be declared reached, and a vertical connector can be skipped
+by planar lookahead. Existing global-route and kinematic diagnostics do not
+prove ONNX locomotion, local obstacle avoidance, or arrival on another floor.
+
+The required product model is:
+
+```text
+per-floor metric map + support-surface/local cost layer
+  <-> typed connector portal (stairs/ramp/elevator, entry and exit XYZ/yaw)
+  <-> building topology graph
+```
+
+Mission execution must select a floor/room first, navigate to the connector,
+execute the connector transition, verify floor/map localization, and only then
+dispatch the target-floor metric goal. A single XY-flattened building map is
+not an acceptable substitute.
+
 ## Corrected Finding
 
 The original OctoPlanner3D/jie_3d_nav planner is not a free-space "fly in Z"
@@ -29,6 +62,69 @@ The old `building2_9` route image mixed two different map products:
 Using the thin tomogram as a visual explanation for a full 3D route hides the
 real planner state. Do not treat that figure as proof that the native
 OctoPlanner3D planner is flying through open air.
+
+## 2026-07-07 Multifloor Stair Finding
+
+The current MuJoCo three-floor stair test exposed a different problem:
+increasing point-cloud density alone does not fix stair routing quality.
+
+DimOS' Go2 navigation notes are a useful comparison point. That stack does not
+use OctoMap as the primary planning substrate. It keeps a live 5 cm sparse voxel
+hash map, clears stale observations by column carving, derives a terrain/cost
+map from height change, and runs replanning A* on the cost layer. The important
+lesson for LingTu is the map semantics, not the exact dependency:
+
+```text
+LiDAR frame
+  -> live voxel map with stale-column clearing
+  -> support / height / traversability cost layer
+  -> replanning global/local planner
+```
+
+Our current saved-map gate still does this:
+
+```text
+synthetic/static scene
+  -> map.pcd
+  -> octomap.ot occupied voxels
+  -> OctoPlanner3D 3D A*
+```
+
+That is acceptable for static obstacle occupancy, but it is not sufficient for
+legged multifloor stair navigation by itself. A raw occupied tree does not know
+which occupied voxels are stair treads, risers, rails, floor slabs, side walls,
+or safe landing support. When those semantics are conflated, a valid-looking 3D
+A* path can cut around a stair edge or appear to climb through a side face.
+
+Latest MuJoCo evidence:
+
+| Resolution | PCD points | OctoMap occupied voxels | Result |
+| --- | ---: | ---: | --- |
+| 0.09 m | 73,968 | 15,662 | Passes current OctoPlanner3D gate after support/landing fixes |
+| 0.075 m | 105,904 | 23,669 | Headless OctoPlanner3D timed out after 90 s |
+| 0.06 m | 197,377 | 36,313 | Headless OctoPlanner3D timed out after 90 s |
+
+This means the short-term fix is not "make the point cloud denser." Denser
+OctoMap input improves visual fidelity but explodes the 3D A* search space in
+the current implementation.
+
+Required product direction:
+
+- Keep `octomap.ot` as the saved static 3D occupancy artifact for collision and
+  map-package compatibility.
+- Add a derived `support_surface` or `traversability_surface` artifact that
+  classifies floor, tread, ramp, landing, obstacle, riser, wall, and unknown.
+- Let OctoPlanner3D consume the occupancy tree plus that support/cost layer,
+  instead of searching all free 3D cells equally.
+- Use live registered cloud/traversability as an overlay for local replanning
+  and dynamic obstacle avoidance; do not bake moving obstacles into the saved
+  OctoMap.
+
+For stair scenes, the validation artifact must show both:
+
+- body/global path at robot reference height;
+- nearest support-surface projection, so a body-height path is not mistaken for
+  foot contact or "flying."
 
 ## Rule Going Forward
 

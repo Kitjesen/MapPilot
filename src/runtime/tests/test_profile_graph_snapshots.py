@@ -1,37 +1,45 @@
 import builtins
-import sys
 
 import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.introspection.profile_graph import (
-    LIGHTWEIGHT_PRODUCT_PROFILES,
-    OPTIONAL_NATIVE_PRODUCT_PROFILES,
-    PROFILE_SNAPSHOT_TARGETS,
-    PRODUCT_PROFILES,
-    SIMULATION_PROFILES,
-    blueprint_for_profile,
-    graph_for_profile,
-    resolve_profile_config,
+from runtime.blueprints.stacks.navigation import (
+    autonomy_stack_config,
+    frontier_module_config,
+    navigation_config,
 )
-from runtime.profiles.endpoints import (
-    RuntimeEndpointError,
-    runtime_endpoint,
-    runtime_endpoint_names,
-    resolve_runtime_run_spec,
-)
-from runtime.profiles.binding_policy import resolved_autonomy_backend_selection
 from runtime.contracts.simulation import (
     CANONICAL_NAV_TOPICS,
     SIMULATION_RUNTIME_CONTRACTS,
     runtime_contracts_for_profile,
     simulation_runtime_contract,
 )
-from runtime.blueprints.stacks.navigation import (
-    autonomy_stack_config,
-    frontier_module_config,
-    navigation_config,
+from runtime.introspection.profile_graph import (
+    LIGHTWEIGHT_PRODUCT_PROFILES,
+    OPTIONAL_NATIVE_PRODUCT_PROFILES,
+    PRODUCT_PROFILES,
+    PROFILE_SNAPSHOT_TARGETS,
+    SIMULATION_PROFILES,
+    blueprint_for_profile,
+    graph_for_profile,
+    resolve_profile_config,
+)
+from runtime.profiles.binding_policy import (
+    LEGACY_SENSOR_BINDING_KEYS,
+    legacy_sensor_binding_violations,
+    resolved_autonomy_backend_selection,
+)
+from runtime.profiles.endpoints import (
+    RUNTIME_ENDPOINTS,
+    RuntimeEndpointError,
+    resolve_runtime_run_spec,
+    runtime_endpoint,
+    runtime_endpoint_names,
+)
+from runtime.profiles.product_mode_contracts import (
+    PRODUCT_MODE_CONTRACTS,
+    product_mode_switch_plan,
 )
 from runtime.runtime_interface import (
     DATA_SOURCE_CONTRACTS,
@@ -39,12 +47,7 @@ from runtime.runtime_interface import (
     TOPICS,
     profile_data_source,
 )
-from runtime.profiles.product_mode_contracts import (
-    PRODUCT_MODE_CONTRACTS,
-    product_mode_switch_plan,
-)
 from runtime.runtime_profiles import PROFILES, ROBOT_PRESETS
-
 
 REAL_LOCALIZATION_PROFILES = (
     "teleop_avoid",
@@ -96,12 +99,6 @@ SIMULATION_PROFILE_RUNTIME_MATRIX = {
         "runtime_contract": "mujoco_fastlio2_live",
     },
     "sim_mujoco_octo_live": {
-        "data_source": "mujoco_fastlio2_live",
-        "profile_contracts": ("mujoco_fastlio2_live",),
-        "external_launcher": "sim/scripts/mujoco/launch_fastlio2_live.sh",
-        "runtime_contract": "mujoco_fastlio2_live",
-    },
-    "sim_mujoco_pct_live": {
         "data_source": "mujoco_fastlio2_live",
         "profile_contracts": ("mujoco_fastlio2_live",),
         "external_launcher": "sim/scripts/mujoco/launch_fastlio2_live.sh",
@@ -193,15 +190,12 @@ def test_product_mode_contracts_lock_operator_session_vocabulary():
         "tare_explore": "exploration",
     }
 
-    assert {
-        profile: contract.product_session
-        for profile, contract in PRODUCT_MODE_CONTRACTS.items()
-    } == expected
+    assert {profile: contract.product_session for profile, contract in PRODUCT_MODE_CONTRACTS.items()} == expected
     for profile, contract in PRODUCT_MODE_CONTRACTS.items():
         assert contract.as_dict()["product_session"] == expected[profile]
 
 
-def test_mapped_teleop_modes_wire_cmd_vel_collision_monitor():
+def test_endpoint_only_modes_move_collision_avoidance_out_of_python_mux():
     from lingtu.plugin_seed import install_builtin_plugin_catalog
 
     install_builtin_plugin_catalog()
@@ -214,10 +208,7 @@ def test_mapped_teleop_modes_wire_cmd_vel_collision_monitor():
         "super_lio",
         "super_lio_relocation",
     )
-    collision_costmap_wire = (
-        "TraversabilityCostModule.fused_cost->"
-        "nav.velocity_mux.collision_costmap"
-    )
+    collision_costmap_wire = "TraversabilityCostModule.fused_cost->nav.velocity_mux.collision_costmap"
     for mode in ("static", "runtime"):
         kwargs = (
             {
@@ -234,31 +225,28 @@ def test_mapped_teleop_modes_wire_cmd_vel_collision_monitor():
 
         assert "nav.local_planner" not in modules
         assert "nav.path_follower" not in modules
-        assert (
-            f"SlamAdapterModule.odometry->nav.velocity_mux.collision_odometry"
-            f"@{TOPICS.odometry}"
-            in wires
-        )
-        assert collision_costmap_wire in wires
+        assert "nav.velocity_mux" not in modules
+        assert not any("nav.velocity_mux" in wire for wire in wires)
         assert "TraversabilityCostModule.fused_cost->nav.mission.costmap" not in wires
 
     for profile in mapped_teleop_profiles:
-        profile_wires = _wire_set(graph_for_profile(profile))
-        assert collision_costmap_wire in profile_wires, profile
+        profile_graph = graph_for_profile(profile)
+        assert "nav.velocity_mux" not in profile_graph.modules, profile
+        assert not any("nav.velocity_mux" in wire for wire in _wire_set(profile_graph)), profile
 
     for profile in ("teleop", "tracking", "inspection"):
         profile_wires = _wire_set(graph_for_profile(profile))
         assert collision_costmap_wire not in profile_wires, profile
 
+    # A managed/local runtime still owns velocity arbitration in Python.
     for profile in mapped_teleop_profiles:
         bp = blueprint_for_profile(
             profile,
             run_startup_checks=False,
             manage_external_services=False,
+            robot_preset="thunder",
         )
-        mux = next(
-            entry.config for entry in bp._entries if entry.name == "nav.velocity_mux"
-        )
+        mux = next(entry.config for entry in bp._entries if entry.name == "nav.velocity_mux")
         assert mux["enable_collision_monitor"] is True, profile
 
 
@@ -331,13 +319,8 @@ def test_static_profile_graph_does_not_import_runtime_message_stack(monkeypatch)
     monkeypatch.setattr(builtins, "__import__", guarded_import)
 
     graph = graph_for_profile("explore")
-    config = resolve_profile_config("explore")
-
     assert "nav.mission" in graph.modules
-    if config.get("native_navigation_endpoint"):
-        assert "nav.out" not in graph.modules
-    else:
-        assert "nav.out" in graph.modules
+    assert "nav.out" not in graph.modules
     assert "ThunderDriver" not in graph.modules
 
 
@@ -370,20 +353,14 @@ def test_runtime_product_profile_uses_product_blueprint_entrypoint():
         manage_external_services=False,
     )
     modules = {entry.name for entry in bp._entries}
-    wires = {
-        f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-        for wire in bp._wires
-    }
+    wires = {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires}
 
     assert "nav.out" not in modules
     assert "nav.local_planner" not in modules
     assert "nav.path_follower" not in modules
     assert config.get("native_navigation_endpoint") == "lingtu-nav-dds"
     assert "ThunderDriver" not in modules
-    # "nav" defaults to the native cpp_slam_status localization adapter (see
-    # docs/architecture/LINGTU_RUNTIME_BUS_DECISION.md); the ROS2 SLAM bridge
-    # alias "SlamBridgeModule" only applies when localization_adapter is
-    # explicitly "ros2"/"ros2_slam_bridge".
+    # "nav" uses the native cpp_slam_status localization adapter.
     assert "SlamAdapterModule" in modules
     assert "nav.safety.stop_cmd->nav.mission.stop_signal" in wires
     assert "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel" not in wires
@@ -401,15 +378,9 @@ def test_simulation_profiles_match_runtime_data_source_matrix():
 
         assert binding.data_source == expected["data_source"], profile
         assert source.provider != "hardware", profile
-        assert tuple(contract.name for contract in contracts) == expected[
-            "profile_contracts"
-        ], profile
-        assert PROFILES[profile].get("_external_launcher") == expected[
-            "external_launcher"
-        ], profile
-        assert PROFILES[profile].get("_runtime_contract") == expected[
-            "runtime_contract"
-        ], profile
+        assert tuple(contract.name for contract in contracts) == expected["profile_contracts"], profile
+        assert PROFILES[profile].get("_external_launcher") == expected["external_launcher"], profile
+        assert PROFILES[profile].get("_runtime_contract") == expected["runtime_contract"], profile
         assert "_external_launcher" not in config, profile
         assert "_runtime_contract" not in config, profile
         for contract in contracts:
@@ -420,7 +391,6 @@ def test_simulation_profiles_match_runtime_data_source_matrix():
 def test_simulation_endpoints_generate_coherent_runtime_run_specs():
     for endpoint_name in (
         "mujoco_live",
-        "replay",
         "gazebo",
         "cmu_unity",
     ):
@@ -459,7 +429,6 @@ def test_simulation_endpoints_generate_coherent_runtime_run_specs():
 
 def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
     for profile in PROFILE_SNAPSHOT_TARGETS:
-        config = resolve_profile_config(profile)
         graph = graph_for_profile(profile)
         wires = _wire_set(graph)
         modules = set(graph.modules)
@@ -468,9 +437,7 @@ def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
             (
                 module
                 for module in modules
-                if module.endswith("Driver")
-                or module.endswith("DriverModule")
-                or module.endswith("DogModule")
+                if module.endswith("Driver") or module.endswith("DriverModule") or module.endswith("DogModule")
             ),
             None,
         )
@@ -480,39 +447,30 @@ def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
         if "GatewayModule" in modules:
             if "nav.mission" in modules:
                 assert "GatewayModule.stop_cmd->nav.mission.stop_signal" in wires
-            assert "GatewayModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel" in wires
+            if "nav.velocity_mux" in modules:
+                assert "GatewayModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel" in wires
+            else:
+                assert "GatewayModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel" not in wires
             if "nav.mission" in modules:
                 assert "nav.mission.mission_status->GatewayModule.mission_status" in wires
             if "nav.goals" in modules and "nav.mission" in modules:
-                assert (
-                    "GatewayModule.goal_pose->nav.goals.goal_request"
-                    in wires
-                )
-                assert (
-                    "GatewayModule.cancel->nav.goals.cancel_request"
-                    in wires
-                )
-                assert (
-                    "nav.goals.goal_pose->nav.mission.goal_pose"
-                    in wires
-                )
-                assert (
-                    "nav.goals.cancel->nav.mission.cancel"
-                    in wires
-                )
+                assert "GatewayModule.goal_pose->nav.goals.goal_request" in wires
+                assert "GatewayModule.cancel->nav.goals.cancel_request" in wires
+                assert "nav.goals.goal_pose->nav.mission.goal_pose" in wires
+                assert "nav.goals.cancel->nav.mission.cancel" in wires
             elif "nav.mission" in modules:
                 assert "GatewayModule.cancel->nav.mission.cancel" in wires
         if "MCPServerModule" in modules:
             if "nav.mission" in modules:
                 assert "MCPServerModule.stop_cmd->nav.mission.stop_signal" in wires
-            assert "MCPServerModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel" in wires
+            if "nav.velocity_mux" in modules:
+                assert "MCPServerModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel" in wires
+            else:
+                assert "MCPServerModule.cmd_vel->nav.velocity_mux.teleop_cmd_vel" not in wires
             if "nav.mission" in modules:
                 assert "nav.mission.mission_status->MCPServerModule.mission_status" in wires
             if "nav.goals" in modules and "nav.mission" in modules:
-                assert (
-                    "MCPServerModule.goal_pose->nav.goals.goal_request"
-                    in wires
-                )
+                assert "MCPServerModule.goal_pose->nav.goals.goal_request" in wires
         if "GeofenceManagerModule" in modules and "nav.mission" in modules:
             assert "GeofenceManagerModule.stop_cmd->nav.mission.stop_signal" in wires
         if driver is not None:
@@ -523,19 +481,11 @@ def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
                 assert f"MCPServerModule.stop_cmd->{driver}.stop_signal" in wires
             if "GeofenceManagerModule" in modules:
                 assert f"GeofenceManagerModule.stop_cmd->{driver}.stop_signal" in wires
-            assert f"nav.velocity_mux.driver_cmd_vel->{driver}.cmd_vel" in wires
-        elif config.get("native_navigation_endpoint"):
-            assert "nav.out" not in modules
-            assert (
-                f"nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@{TOPICS.cmd_vel}"
-                not in wires
-            )
+            if "nav.velocity_mux" in modules:
+                assert f"nav.velocity_mux.driver_cmd_vel->{driver}.cmd_vel" in wires
         else:
-            assert "nav.out" in modules
-            assert (
-                f"nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@{TOPICS.cmd_vel}"
-                in wires
-            )
+            assert "nav.out" not in modules
+            assert f"nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@{TOPICS.cmd_vel}" not in wires
         if {"nav.mission", "nav.local_planner"} <= modules:
             assert "nav.mission.clear_path->nav.local_planner.clear_path" in wires
             assert "nav.mission.global_path->nav.local_planner.global_path" in wires
@@ -571,10 +521,7 @@ def test_profile_graph_snapshot_locks_mapping_and_algorithm_edges():
         if {"TraversabilityCostModule", "GatewayModule"} <= modules:
             assert "TraversabilityCostModule.fused_cost->GatewayModule.costmap" in wires
         if {"SemanticMapperModule", "SemanticPlannerModule"} <= modules:
-            assert (
-                "SemanticMapperModule.topo_summary->SemanticPlannerModule.topo_summary"
-                in wires
-            )
+            assert "SemanticMapperModule.topo_summary->SemanticPlannerModule.topo_summary" in wires
             assert "SemanticMapperModule.room_graph->SemanticPlannerModule.room_graph" in wires
 
 
@@ -600,27 +547,15 @@ def test_navigation_compute_contract_layer_main_edges():
         wires = _wire_set(graph_for_profile(profile))
 
         # L2 safety gating: fused_cost (risk grid) -> global gate only.
-        assert (
-            "TraversabilityCostModule.fused_cost->nav.mission.costmap" in wires
-        ), profile
+        assert "TraversabilityCostModule.fused_cost->nav.mission.costmap" in wires, profile
         # L2 local planning: terrain_map (local geometry) is the main local input.
-        assert (
-            "nav.terrain.terrain_map->nav.local_planner.terrain_map" in wires
-        ), profile
-        assert (
-            "nav.terrain.traversability->nav.local_planner.traversability" in wires
-        ), profile
+        assert "nav.terrain.terrain_map->nav.local_planner.terrain_map" in wires, profile
+        assert "nav.terrain.traversability->nav.local_planner.traversability" in wires, profile
         # L5 -> L2 command dispatch (global_path + waypoint as staged goals).
-        assert (
-            "nav.mission.global_path->nav.local_planner.global_path" in wires
-        ), profile
-        assert (
-            "nav.mission.waypoint->nav.local_planner.waypoint" in wires
-        ), profile
+        assert "nav.mission.global_path->nav.local_planner.global_path" in wires, profile
+        assert "nav.mission.waypoint->nav.local_planner.waypoint" in wires, profile
         # L2 control tracking: local_path -> path follower -> cmd_vel.
-        assert (
-            "nav.local_planner.local_path->nav.path_follower.local_path" in wires
-        ), profile
+        assert "nav.local_planner.local_path->nav.path_follower.local_path" in wires, profile
 
 
 def test_navigation_compute_contract_forbids_role_drift_edges():
@@ -632,12 +567,12 @@ def test_navigation_compute_contract_forbids_role_drift_edges():
     for profile in PROFILE_SNAPSHOT_TARGETS:
         wires = _wire_set(graph_for_profile(profile))
         for wire in wires:
-            assert not wire.startswith(
-                "TraversabilityCostModule.fused_cost->LocalPlanner"
-            ), f"{profile}: costmap must not be a local-planner input ({wire})"
-            assert not wire.startswith(
-                "nav.terrain.terrain_map->Navigation"
-            ), f"{profile}: terrain_map must not drive global planning ({wire})"
+            assert not wire.startswith("TraversabilityCostModule.fused_cost->LocalPlanner"), (
+                f"{profile}: costmap must not be a local-planner input ({wire})"
+            )
+            assert not wire.startswith("nav.terrain.terrain_map->Navigation"), (
+                f"{profile}: terrain_map must not drive global planning ({wire})"
+            )
 
 
 def test_nav_profile_uses_slam_adapter_localization_health_edges():
@@ -649,13 +584,10 @@ def test_nav_profile_uses_slam_adapter_localization_health_edges():
 
     assert f"SlamAdapterModule.localization_status->nav.safety.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_status->nav.mission.localization_status@{health}" in wires
-    assert (
-        "SlamAdapterModule.localization_status->DepthVisualOdomModule.localization_status"
-        f"@{health}"
-        in wires
-    )
+    assert f"SlamAdapterModule.localization_status->DepthVisualOdomModule.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_status->GatewayModule.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_quality->GatewayModule.localization_quality@{quality}" in wires
+    assert f"SlamAdapterModule.lidar_scan->GatewayModule.lidar_scan[local]@{TOPICS.lidar_scan}" in wires
     assert "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf" in wires
     assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
     if "nav.local_planner" in graph.modules:
@@ -667,84 +599,105 @@ def test_nav_profile_uses_slam_adapter_localization_health_edges():
 
 
 def test_thunder_field_profiles_use_endpoint_only_command_boundary_by_default():
-    for profile in (
-        "map",
-        "nav",
-        "explore",
-        "tare_explore",
-        "super_lio",
-        "super_lio_relocation",
-    ):
+    for profile in RUNTIME_ENDPOINTS["thunder_field"].supported_profiles:
         config = resolve_profile_config(profile)
         graph = graph_for_profile(profile)
         wires = _wire_set(graph)
 
         assert config["_runtime_endpoint"] == "thunder_field"
+        assert config["_endpoint_data_source"] == "thunder_field"
         assert config["_endpoint_transport"] == "dds"
+        assert config["_endpoint_contract"] == "thunder_field_dds_v1"
         assert config["localization_adapter"] == "cpp_slam_status"
-        assert config["enable_device_manager"] is False
+        assert config["enable_hw"] is False
         assert config["enable_robot_driver"] is False
         assert config["enable_lidar"] is False
+        assert config["enable_imu"] is False
+        assert "lidar_backend" not in config
+        assert "imu_backend" not in config
         assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
-        assert config["enable_nav_in"] is False
-        assert config["enable_nav_out"] is False
+        assert "enable_nav_in" not in config
+        assert "enable_nav_out" not in config
         assert config["enable_map_out"] is False
+        assert legacy_sensor_binding_violations(config) == []
+        for key in LEGACY_SENSOR_BINDING_KEYS:
+            assert key not in config or config[key] is False, (profile, key)
         assert "nav.in" not in graph.modules
         assert "nav.out" not in graph.modules
         assert "map.out" not in graph.modules
         assert "nav.terrain" not in graph.modules
         assert "nav.local_planner" not in graph.modules
         assert "nav.path_follower" not in graph.modules
-        assert "DeviceManager" not in graph.modules
+        assert "hw" not in graph.modules
+        assert "lidar" not in graph.modules
+        assert "imu" not in graph.modules
         assert "ThunderDriver" not in graph.modules
         assert "LidarModule" not in graph.modules
+        assert "MujocoDriverModule" not in graph.modules
         assert "GnssBridgeModule" not in graph.modules
         assert "ROS2SimDriverModule" not in graph.modules
-        assert "SlamAdapterModule" in graph.modules
-        assert (
-            f"nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@{TOPICS.cmd_vel}"
-            not in wires
+        assert "nav.velocity_mux" not in graph.modules
+        assert not any("nav.velocity_mux" in wire for wire in wires)
+        if profile != "teleop":
+            assert "SlamAdapterModule" in graph.modules
+        assert not any(
+            wire.startswith(
+                (
+                    "lidar.",
+                    "imu.",
+                    "LidarModule.",
+                    "ThunderDriver.",
+                    "MujocoDriverModule.",
+                )
+            )
+            for wire in wires
         )
+        assert f"nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel@{TOPICS.cmd_vel}" not in wires
         assert "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel" not in wires
         assert "nav.mission.global_path->nav.local_planner.global_path" not in wires
         assert "nav.mission.waypoint->nav.local_planner.waypoint" not in wires
         assert "nav.terrain.terrain_map->nav.local_planner.terrain_map" not in wires
         assert "nav.local_planner.local_path->nav.path_follower.local_path" not in wires
-        assert (
-            "nav.path_follower.cmd_vel->nav.velocity_mux.path_follower_cmd_vel"
-            not in wires
-        )
+        assert "nav.path_follower.cmd_vel->nav.velocity_mux.path_follower_cmd_vel" not in wires
 
         has_mission_stack = "nav.mission" in graph.modules
         if has_mission_stack:
-            assert (
-                f"nav.mission.global_path->nav.out.global_path@{TOPICS.global_path}"
-                not in wires
-            )
-            assert (
-                f"nav.local_planner.local_path->nav.out.local_path@{TOPICS.local_path}"
-                not in wires
-            )
-            assert (
-                f"nav.mission.waypoint->nav.out.waypoint@{TOPICS.nav_way_point}"
-                not in wires
-            )
+            assert f"nav.mission.global_path->nav.out.global_path@{TOPICS.global_path}" not in wires
+            assert f"nav.local_planner.local_path->nav.out.local_path@{TOPICS.local_path}" not in wires
+            assert f"nav.mission.waypoint->nav.out.waypoint@{TOPICS.nav_way_point}" not in wires
             assert f"SlamAdapterModule.odometry->nav.mission.odometry@{TOPICS.odometry}" in wires
             assert (
                 "SlamAdapterModule.localization_status->nav.mission.localization_status"
-                f"@{TOPICS.localization_health}"
-                in wires
+                f"@{TOPICS.localization_health}" in wires
             )
         else:
-            # "map" runs mapping-only: its contract forbids nav.mission /
-            # nav.local_planner, so there is no global_path/waypoint/local_path
-            # to forward through nav.out.
+            # "map" runs mapping-only: its contract forbids nav.mission and
+            # nav.local_planner, so it has no navigation execution outputs.
             assert "nav.local_planner" not in graph.modules
 
 
-def test_thunder_field_semantic_profiles_use_orbbec_camera_bridge():
+def test_managed_map_profile_uses_canonical_lidar_when_field_endpoint_is_bypassed():
+    graph = graph_for_profile("map", robot_preset="thunder")
+    wires = _wire_set(graph)
+    config = resolve_profile_config("map", robot_preset="thunder")
+
+    assert "_runtime_endpoint" not in config
+    assert config["robot"] == "thunder"
+    assert config["slam_profile"] == "fastlio2"
+    assert "lidar" in graph.modules
+    assert "LidarModule" not in graph.modules
+    assert "ThunderDriver" in graph.modules
+    assert "SlamModule" in graph.modules
+    assert f"lidar.raw_scan->SlamModule.lidar_raw_scan[dds]@{TOPICS.raw_lidar_points}" in wires
+    assert f"lidar.imu->SlamModule.lidar_imu[dds]@{TOPICS.raw_imu}" in wires
+    assert not any(wire.startswith("ThunderDriver.raw_scan->SlamModule.lidar_raw_scan") for wire in wires)
+    assert not any(wire.startswith("ThunderDriver.imu->SlamModule.lidar_imu") for wire in wires)
+
+
+def test_thunder_field_semantic_profiles_use_dds_camera_role():
     for profile in (
         "nav",
+        "inspection",
         "explore",
         "tare_explore",
         "super_lio",
@@ -755,12 +708,63 @@ def test_thunder_field_semantic_profiles_use_orbbec_camera_bridge():
         wires = _wire_set(graph)
 
         assert config["_runtime_endpoint"] == "thunder_field"
-        assert config["camera_backend"] == "orbbec_native"
+        assert config["camera_backend"] == "dds"
         assert config["enable_camera"] is True
-        assert "CameraBridgeModule" in graph.modules
-        assert "CameraBridgeModule.color_image->PerceptionModule.color_image" in wires
-        assert "CameraBridgeModule.depth_image->PerceptionModule.depth_image" in wires
-        assert "CameraBridgeModule.camera_info->PerceptionModule.camera_info" in wires
+        assert "camera" in graph.modules
+        assert "camera.color_image->PerceptionModule.color_image" in wires
+        assert "camera.depth_image->PerceptionModule.depth_image" in wires
+        assert "camera.camera_info->PerceptionModule.camera_info" in wires
+
+
+def test_thunder_field_map_profile_keeps_camera_without_semantic_stack():
+    config = resolve_profile_config("map")
+    graph = graph_for_profile("map")
+    wires = _wire_set(graph)
+
+    assert config["enable_semantic"] is False
+    assert config["camera_backend"] == "dds"
+    assert config["enable_camera"] is True
+    assert "camera" in graph.modules
+    assert "PerceptionModule" not in graph.modules
+    assert "camera.color_image->TeleopModule.color_image" in wires
+
+
+def test_static_profile_graph_honors_gnss_backend_without_hw_bridge(monkeypatch):
+    class FakeConfig:
+        raw = {
+            "gnss": {
+                "enabled": True,
+                "model": "WTRTK-980",
+                "device": "/dev/wtrtk980",
+                "gnss_backend": "replay",
+            }
+        }
+
+    monkeypatch.setattr("runtime.config.get_config", lambda: FakeConfig())
+
+    graph = graph_for_profile("nav", enable_gnss=True, gnss_backend="replay")
+
+    assert "GnssModule" in graph.modules
+    assert "GnssBridgeModule" not in graph.modules
+
+
+def test_static_profile_graph_omits_native_wtrtk980_python_module(monkeypatch):
+    class FakeConfig:
+        raw = {
+            "gnss": {
+                "enabled": True,
+                "model": "WTRTK-980",
+                "device": "/dev/wtrtk980",
+                "gnss_backend": "wtrtk980",
+            }
+        }
+
+    monkeypatch.setattr("runtime.config.get_config", lambda: FakeConfig())
+
+    graph = graph_for_profile("nav", enable_gnss=True, gnss_backend="wtrtk980")
+
+    assert "GnssModule" not in graph.modules
+    assert "GnssBridgeModule" not in graph.modules
 
 
 @pytest.mark.sim
@@ -781,7 +785,7 @@ def test_sim_gazebo_profile_uses_endpoint_driver_and_map_planning_frame():
     assert config["cloud_topic"] == TOPICS.map_cloud
     assert "SimEndpointDriverModule" in graph.modules
     assert "ROS2SimDriverModule" not in graph.modules
-    assert "CameraBridgeModule" not in graph.modules
+    assert "camera" not in graph.modules
     assert "MujocoDriverModule" not in graph.modules
     assert "ThunderDriver" not in graph.modules
     assert "SimEndpointDriverModule.map_cloud->OccupancyGridModule.map_cloud" in wires
@@ -850,7 +854,7 @@ def test_portable_mujoco_profile_is_no_ros_planning_sensor_entry():
     assert "ROS2SimDriverModule" not in graph.modules
     assert "GatewayModule" not in graph.modules
     assert "MCPServerModule" not in graph.modules
-    assert "CameraBridgeModule" not in graph.modules
+    assert "camera" not in graph.modules
     assert "MujocoDriverModule.odometry->nav.mission.odometry" in wires
     assert "MujocoDriverModule.map_cloud->OccupancyGridModule.map_cloud" in wires
     assert "nav.mission.global_path->nav.local_planner.global_path" in wires
@@ -867,9 +871,7 @@ def test_sim_mujoco_live_profile_is_raw_fastlio_simulation_entry():
 
     assert config["robot"] == "sim_endpoint"
     assert config["slam_profile"] == "none"
-    assert PROFILES["sim_mujoco_live"]["_external_launcher"] == (
-        "sim/scripts/mujoco/launch_fastlio2_live.sh"
-    )
+    assert PROFILES["sim_mujoco_live"]["_external_launcher"] == ("sim/scripts/mujoco/launch_fastlio2_live.sh")
     assert PROFILES["sim_mujoco_live"]["_runtime_contract"] == "mujoco_fastlio2_live"
     assert config["planning_frame_id"] == "map"
     assert config["enable_frontier"] is True
@@ -906,13 +908,11 @@ def test_sim_mujoco_octo_live_profile_is_octoplanner3d_closed_loop_entry():
 
     assert config["robot"] == "sim_endpoint"
     assert config["slam_profile"] == "none"
-    assert PROFILES["sim_mujoco_octo_live"]["_external_launcher"] == (
-        "sim/scripts/mujoco/launch_fastlio2_live.sh"
-    )
+    assert PROFILES["sim_mujoco_octo_live"]["_external_launcher"] == ("sim/scripts/mujoco/launch_fastlio2_live.sh")
     assert PROFILES["sim_mujoco_octo_live"]["_runtime_contract"] == "mujoco_fastlio2_live"
     assert config["planner"] == "octoplanner3d"
     assert config["planner_backend"] == "octoplanner3d"
-    assert config["tomogram"].endswith(".bt")
+    assert config["map_path"].endswith((".ot", ".bt"))
     assert config["plan_safety_policy"] == "reject"
     assert config["fallback_planner_name"] == ""
     assert config["planning_frame_id"] == "map"
@@ -1013,27 +1013,12 @@ def test_runtime_run_spec_carries_endpoint_command_and_safety_boundary():
     ]
 
 
-def test_replay_endpoint_is_no_actuation_runtime():
-    from runtime.profiles.endpoints import runtime_endpoint, resolve_runtime_run_spec
+def test_rosbag_replay_endpoint_is_removed():
+    from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS
 
-    endpoint = runtime_endpoint("replay")
-    config = resolve_profile_config("nav", runtime_endpoint="replay")
-    spec = resolve_runtime_run_spec("nav", config, extra_args=("status",))
-
-    assert endpoint.simulation_only is True
-    assert endpoint.data_source == "rosbag_fastlio2_replay"
-    assert endpoint.robot_preset == "sim_endpoint"
-    assert DATA_SOURCE_CONTRACTS["rosbag_fastlio2_replay"].command_sink == (
-        "no_actuation_replay_sink"
-    )
-    assert spec.command_sink == "no_actuation_replay_sink"
-    assert spec.simulation_only is True
-    assert spec.env["LINGTU_SIMULATION_ONLY"] == "1"
-    assert spec.as_command() == [
-        sys.executable,
-        "sim/scripts/fastlio2_rosbag_replay_gate.py",
-        "status",
-    ]
+    assert "replay" not in RUNTIME_ENDPOINTS
+    assert "rosbag_fastlio2_replay" not in DATA_SOURCE_CONTRACTS
+    assert "rosbag_fastlio2_replay" not in SIMULATION_RUNTIME_CONTRACTS
 
 
 def test_real_runtime_run_spec_carries_hardware_contract_boundary():
@@ -1046,7 +1031,7 @@ def test_real_runtime_run_spec_carries_hardware_contract_boundary():
     assert spec.data_source == "thunder_field"
     assert spec.runtime_contract == "thunder_field"
     assert spec.simulation_only is False
-    assert spec.command_sink == "hardware_driver_after_cmd_vel_mux"
+    assert spec.command_sink == "driver"
     assert spec.slam_source == "lingtu_fastlio_or_external_robot_slam"
     assert spec.localization_source == "slam_localizer"
     assert spec.mapping_source == "slam_map_cloud"
@@ -1058,7 +1043,7 @@ def test_real_runtime_run_spec_carries_hardware_contract_boundary():
     assert spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
     assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert spec.env["LINGTU_RUNTIME_CONTRACT"] == "thunder_field"
-    assert spec.env["LINGTU_COMMAND_SINK"] == "hardware_driver_after_cmd_vel_mux"
+    assert spec.env["LINGTU_COMMAND_SINK"] == "driver"
     assert spec.env["LINGTU_SIMULATION_ONLY"] == "0"
 
 
@@ -1081,7 +1066,7 @@ def test_product_tare_can_run_on_mujoco_live_endpoint():
     assert config["goal_frame_id"] == "odom"
     assert config["exploration_backend"] == "tare"
     assert config["enable_map_out"] is False
-    assert config["enable_nav_out"] is False
+    assert "enable_nav_out" not in config
     assert config["enable_frontier"] is False
     assert config["hold_active_goal_until_terminal"] is True
 
@@ -1103,7 +1088,7 @@ def test_product_tare_can_run_on_cmu_unity_endpoint():
     assert config["_external_record_args"] == ("start", "--gate", "--rviz")
     assert config["planner"] == "octoplanner3d"
     assert config["exploration_backend"] == "tare_external"
-    assert config["enable_nav_out"] is False
+    assert "enable_nav_out" not in config
     assert "enable_ros2_bridge" not in config
     assert "SimEndpointDriverModule" in graph.modules
     assert "ROS2SimDriverModule" not in graph.modules
@@ -1128,13 +1113,11 @@ def test_sim_cmu_tare_profile_is_external_tare_simulation_entry():
 
     assert config["robot"] == "sim_endpoint"
     assert config["slam_profile"] == "none"
-    assert PROFILES["sim_cmu_tare"]["_external_launcher"] == (
-        "sim/scripts/launch_cmu_unity_lingtu_runtime.sh"
-    )
+    assert PROFILES["sim_cmu_tare"]["_external_launcher"] == ("sim/scripts/launch_cmu_unity_lingtu_runtime.sh")
     assert PROFILES["sim_cmu_tare"]["_runtime_contract"] == "cmu_unity_external"
     assert config["planner"] == "octoplanner3d"
     assert config["planning_frame_id"] == "map"
-    assert config["enable_nav_out"] is False
+    assert "enable_nav_out" not in config
     assert "enable_ros2_bridge" not in config
     assert config["exploration_backend"] == "tare_external"
     assert config["enable_native"] is False
@@ -1182,12 +1165,8 @@ def test_sim_profiles_keep_autonomy_inside_module_graph():
         assert autonomy_config["backend"] == "nanobind"
         assert autonomy_config["path_follower_backend"] == "nav_kernel"
         if profile == "sim_cmu_tare":
-            assert autonomy_config["local_planner_config"][
-                "allow_direct_track_fallback"
-            ] is True
-            assert autonomy_config["local_planner_config"][
-                "ignore_near_field_stop"
-            ] is True
+            assert autonomy_config["local_planner_config"]["allow_direct_track_fallback"] is True
+            assert autonomy_config["local_planner_config"]["ignore_near_field_stop"] is True
 
 
 def test_real_robot_profiles_do_not_auto_actuate_on_startup():
@@ -1227,10 +1206,9 @@ def test_lite_profile_graph_stays_lightweight_and_python_only():
         "nav.velocity_mux",
     } <= modules
     assert {
-        "DeviceManager",
-        "LidarModule",
+        "hw",
+        "lidar",
         "SLAMModule",
-        "SlamBridgeModule",
         "SlamAdapterModule",
         "DepthVisualOdomModule",
         "OccupancyGridModule",
@@ -1238,8 +1216,8 @@ def test_lite_profile_graph_stays_lightweight_and_python_only():
         "ESDFModule",
         "ElevationMapModule",
         "TraversabilityCostModule",
-        "nav.maps",
-        "CameraBridgeModule",
+        "maps.service",
+        "camera",
         "PerceptionModule",
         "ReconstructionModule",
         "SemanticPlannerModule",
@@ -1252,7 +1230,7 @@ def test_lite_profile_graph_stays_lightweight_and_python_only():
         "nav.out",
         "ExternalServiceManagerModule",
     }.isdisjoint(modules)
-    assert config["enable_device_manager"] is False
+    assert config["enable_hw"] is False
     assert not graph.dangling_wires()
 
     bp = blueprint_for_profile(
@@ -1273,7 +1251,7 @@ def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
         source = "SlamAdapterModule"
         graph = graph_for_profile(profile)
         wires = _wire_set(graph)
-        slam_topic = source in {"SlamModule", "SlamBridgeModule", "SlamAdapterModule"}
+        slam_topic = source in {"SlamModule", "SlamAdapterModule"}
         odom_suffix = f"@{TOPICS.odometry}" if slam_topic else ""
         map_suffix = f"@{TOPICS.map_cloud}" if slam_topic else ""
         health_suffix = f"@{TOPICS.localization_health}" if slam_topic else ""
@@ -1287,6 +1265,7 @@ def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
         assert f"{source}.map_cloud->VoxelGridModule.map_cloud{map_suffix}" in wires
         assert f"{source}.map_cloud->ElevationMapModule.map_cloud{map_suffix}" in wires
         assert f"{source}.map_cloud->GatewayModule.map_cloud{map_suffix}" in wires
+        assert f"{source}.lidar_scan->GatewayModule.lidar_scan[local]@{TOPICS.lidar_scan}" in wires
         assert f"{source}.localization_status->nav.safety.localization_status{health_suffix}" in wires
         assert f"{source}.localization_status->GatewayModule.localization_status{health_suffix}" in wires
         assert f"{source}.localization_quality->GatewayModule.localization_quality{quality_suffix}" in wires
@@ -1302,16 +1281,12 @@ def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
             assert f"{source}.map_cloud->nav.terrain.map_cloud{map_suffix}" in wires
         if not has_mission_stack:
             # teleop_avoid / map contracts forbid nav.mission / local_planner /
-            # path_follower; map_cloud feeds nav.maps directly instead of
+            # path_follower; map_cloud feeds maps.service directly instead of
             # going through the (absent) nav.terrain local-autonomy stage.
-            assert f"{source}.map_cloud->nav.maps.map_cloud{map_suffix}" in wires
+            assert f"{source}.map_cloud->maps.service.map_cloud{map_suffix}" in wires
 
         if "DepthVisualOdomModule" in graph.modules:
-            assert (
-                f"{source}.localization_status->DepthVisualOdomModule.localization_status"
-                f"{health_suffix}"
-                in wires
-            )
+            assert f"{source}.localization_status->DepthVisualOdomModule.localization_status{health_suffix}" in wires
 
 
 def test_super_lio_profiles_wire_adapter_localization_status_to_gateway():
@@ -1322,8 +1297,7 @@ def test_super_lio_profiles_wire_adapter_localization_status_to_gateway():
         assert "SlamAdapterModule" in graph.modules
         assert (
             "SlamAdapterModule.localization_status->GatewayModule.localization_status"
-            f"@{TOPICS.localization_health}"
-            in wires
+            f"@{TOPICS.localization_health}" in wires
         )
         assert "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf" in wires
         assert "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event" in wires
@@ -1338,11 +1312,7 @@ def test_super_lio_profiles_wire_adapter_localization_status_to_gateway():
 
 def test_profile_groups_make_simulation_boundary_explicit():
     assert set(PROFILE_SNAPSHOT_TARGETS) == (
-        (
-            set(PRODUCT_PROFILES)
-            - set(OPTIONAL_NATIVE_PRODUCT_PROFILES)
-            - set(LIGHTWEIGHT_PRODUCT_PROFILES)
-        )
+        (set(PRODUCT_PROFILES) - set(OPTIONAL_NATIVE_PRODUCT_PROFILES) - set(LIGHTWEIGHT_PRODUCT_PROFILES))
         | set(SIMULATION_PROFILES)
     )
     assert not set(PRODUCT_PROFILES) & set(SIMULATION_PROFILES)
@@ -1364,11 +1334,7 @@ def test_non_optional_product_graphs_do_not_include_native_modules():
 
     for profile in sorted(checked):
         graph = graph_for_profile(profile)
-        native_modules = [
-            module_name
-            for module_name in graph.modules
-            if module_name.endswith("NativeModule")
-        ]
+        native_modules = [module_name for module_name in graph.modules if module_name.endswith("NativeModule")]
         assert native_modules == [], profile
 
 
@@ -1376,11 +1342,7 @@ def test_tare_explore_product_graph_uses_lingtu_tare_policy():
     graph = graph_for_profile("tare_explore")
     wires = _wire_set(graph)
 
-    assert {
-        module_name
-        for module_name in graph.modules
-        if module_name.endswith("NativeModule")
-    } == set()
+    assert {module_name for module_name in graph.modules if module_name.endswith("NativeModule")} == set()
     assert "WavefrontFrontierExplorer" not in graph.modules
     assert "TraversableFrontierModule" not in graph.modules
     assert "TAREPlannerNativeModule" not in graph.modules
@@ -1394,37 +1356,26 @@ def test_tare_explore_product_graph_uses_lingtu_tare_policy():
     assert "nav.path_follower" not in graph.modules
     assert "SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud" in wires
     assert "SlamAdapterModule.odometry->OccupancyGridModule.odometry@/slam/odometry" in wires
-    assert "SlamAdapterModule.map_cloud->nav.maps.map_cloud@/slam/map_cloud" in wires
+    assert "SlamAdapterModule.map_cloud->maps.service.map_cloud@/slam/map_cloud" in wires
     assert "TAREExplorerModule.exploration_goal->nav.mission.goal_pose" in wires
     assert "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid" in wires
 
 
 def test_only_sanctioned_external_simulator_profiles_are_first_class():
-    external_profiles = {
-        profile
-        for profile, config in PROFILES.items()
-        if config.get("_external_launcher")
-    }
+    external_profiles = {profile for profile, config in PROFILES.items() if config.get("_external_launcher")}
 
     assert external_profiles == {
         "sim_cmu_tare",
         "sim_mujoco_live",
         "sim_mujoco_octo_live",
-        "sim_mujoco_pct_live",
     }
 
 
 def test_profile_robot_presets_resolve_through_driver_stack():
     from runtime.blueprints.stacks.driver import RobotProfile
 
-    profile_presets = {
-        config.get("_default_robot", "stub")
-        for config in PROFILES.values()
-    }
-    endpoint_presets = {
-        runtime_endpoint(endpoint_name).robot_preset
-        for endpoint_name in runtime_endpoint_names()
-    }
+    profile_presets = {config.get("_default_robot", "stub") for config in PROFILES.values()}
+    endpoint_presets = {runtime_endpoint(endpoint_name).robot_preset for endpoint_name in runtime_endpoint_names()}
     used_presets = profile_presets | endpoint_presets
 
     assert used_presets <= set(ROBOT_PRESETS)
@@ -1521,9 +1472,7 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert set(DATA_SOURCE_CONTRACTS["cmu_unity_external"].source_outputs) <= set(cmu.native_topics)
     assert TOPICS.exploration_way_point in cmu.required_runtime_topics
     assert TOPICS.map_cloud in cmu.required_runtime_topics
-    assert set(DATA_SOURCE_CONTRACTS["cmu_unity_external"].algorithm_entry_outputs) <= set(
-        cmu.required_runtime_topics
-    )
+    assert set(DATA_SOURCE_CONTRACTS["cmu_unity_external"].algorithm_entry_outputs) <= set(cmu.required_runtime_topics)
     assert cmu.required_path_topics == (TOPICS.global_path, TOPICS.local_path)
     assert cmu.required_map_growth_topics == (TOPICS.map_cloud, TOPICS.terrain_map_ext)
     assert cmu.required_scan_topics == ("/registered_scan", TOPICS.registered_cloud)
@@ -1555,9 +1504,9 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert fastlio.world == "sim/worlds/mujoco/industrial_park_scene.xml"
     assert fastlio.launch_script == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert fastlio.data_source_contract == "mujoco_fastlio2_live"
-    assert set(fastlio.canonical_topics) == set(
-        DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"].source_outputs
-    ) | set(DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"].algorithm_entry_outputs)
+    assert set(fastlio.canonical_topics) == set(DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"].source_outputs) | set(
+        DATA_SOURCE_CONTRACTS["mujoco_fastlio2_live"].algorithm_entry_outputs
+    )
     assert "/Odometry" in fastlio.native_topics
     assert "/cloud_map" in fastlio.native_topics
     assert "/Odometry" not in fastlio.canonical_topics
@@ -1589,7 +1538,7 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert "gazebo_industrial" in SIMULATION_RUNTIME_CONTRACTS
     assert "cmu_unity_baseline" in SIMULATION_RUNTIME_CONTRACTS
     assert "mujoco_fastlio2_live" in SIMULATION_RUNTIME_CONTRACTS
-    assert "rosbag_fastlio2_replay" in SIMULATION_RUNTIME_CONTRACTS
+    assert "rosbag_fastlio2_replay" not in SIMULATION_RUNTIME_CONTRACTS
     assert "portable_fastlio2_replay" not in SIMULATION_RUNTIME_CONTRACTS
 
     for profile in (*SIMULATION_PROFILES, *PRODUCT_PROFILES):
@@ -1605,11 +1554,6 @@ def test_simulation_runtime_contracts_lock_simulator_boundary():
     assert profile_data_source("lite").data_source == "thunder_lite_local"
     assert profile_data_source("map").data_source == "thunder_field"
 
-    replay = simulation_runtime_contract("rosbag_fastlio2_replay")
-    assert replay.command_topic == "no_actuation_replay_sink"
-    assert replay.data_source_contract == "rosbag_fastlio2_replay"
-    assert replay.simulation_only is True
-    assert replay.cmd_vel_owner == "lingtu_cmd_vel_mux_to_no_actuation_sink"
 
 def test_lingtu_simulation_runtime_contracts_mirror_data_source_boundaries():
     for contract in SIMULATION_RUNTIME_CONTRACTS.values():
@@ -1641,11 +1585,12 @@ def test_real_robot_profiles_plan_in_client_map_frame():
         config = resolve_profile_config(profile)
         nav_config = dict(config)
         planner = nav_config.pop("planner", "octoplanner3d")
-        tomogram = nav_config.pop("tomogram", "")
+        nav_config.pop("tomogram", "")
+        map_path = nav_config.pop("map_path", "")
         nav_config.pop("enable_native", False)
         nav_entry_config = navigation_config(
             planner,
-            tomogram,
+            map_path,
             **nav_config,
         )
 
@@ -1656,12 +1601,13 @@ def test_navigation_plan_safety_policy_is_profile_visible():
     sim_config = resolve_profile_config("sim")
     sim_nav_config = dict(sim_config)
     sim_planner = sim_nav_config.pop("planner", "octoplanner3d")
-    sim_tomogram = sim_nav_config.pop("tomogram", "")
+    sim_nav_config.pop("tomogram", "")
+    sim_map_path = sim_nav_config.pop("map_path", "")
     sim_nav_config.pop("planner_backend", None)
     sim_nav_config.pop("enable_native", False)
     sim_entry_config = navigation_config(
         sim_planner,
-        sim_tomogram,
+        sim_map_path,
         **sim_nav_config,
     )
 
@@ -1672,10 +1618,11 @@ def test_navigation_plan_safety_policy_is_profile_visible():
         config = resolve_profile_config(profile)
         nav_config = dict(config)
         planner = nav_config.pop("planner", "octoplanner3d")
-        tomogram = nav_config.pop("tomogram", "")
+        nav_config.pop("tomogram", "")
+        map_path = nav_config.pop("map_path", "")
         nav_config.pop("planner_backend", None)
         nav_config.pop("enable_native", False)
-        nav_entry_config = navigation_config(planner, tomogram, **nav_config)
+        nav_entry_config = navigation_config(planner, map_path, **nav_config)
 
         assert nav_entry_config["plan_safety_policy"] == "reject"
         assert nav_entry_config["fallback_planner_name"] == ""
@@ -1763,8 +1710,5 @@ def test_autonomy_stack_config_matches_runtime_backend_policy_selection():
 
     assert stack_config["terrain_backend"] == backend_selection["terrain_backend"]
     assert stack_config["backend"] == backend_selection["local_planner_backend"]
-    assert (
-        stack_config["path_follower_backend"]
-        == backend_selection["path_follower_backend"]
-    )
+    assert stack_config["path_follower_backend"] == backend_selection["path_follower_backend"]
     assert stack_config["path_follower_config"]["two_way_drive"] is False

@@ -1,8 +1,8 @@
-"""Simulated LiDAR stack: generate PointCloud2 from MuJoCo XML scene geometry.
+"""Legacy simulated map-cloud stack for pure-Python navigation tests.
 
-Replaces real LiDAR + SLAM for pure-Python simulation.  The output
-``map_cloud`` is identical to the canonical SLAM map-cloud stream, so
-OccupancyGridModule and the rest of the navigation pipeline work unchanged.
+New MuJoCo sensor profiles should use the canonical ``lidar`` role with backend
+``mujoco``. This stack remains for ``sim_nav`` and older pure-Python tests that
+need a direct map-cloud provider without running a LiDAR or SLAM role.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def sim_lidar(scene_xml: str = "", **config) -> Blueprint:
-    """Simulated LiDAR from MuJoCo XML scene.
+    """Legacy simulated map-cloud provider from MuJoCo XML scene.
 
     Args:
         scene_xml: Path to MuJoCo XML world file.

@@ -33,14 +33,14 @@ layers:
       - src/runtime/runtime_policy.py
       - src/runtime/runtime_profiles.py
       - src/runtime/runtime_switch.py
-      - src/runtime/diagnostics/runtime_validation_gates.py
-      - src/runtime/diagnostics/runtime_evidence.py
+      - src/diagnostics/
+      - src/diagnostics/field/gates.py
+      - src/diagnostics/field/evidence.py
       - src/runtime/algorithm_gates.py
       - src/runtime/backend_status.py
-      - src/runtime/diagnostics/efficiency_status.py
-      - src/runtime/diagnostics/product_field_check.py
-      - src/runtime/diagnostics/gateway_runtime_acceptance.py
-      - src/runtime/diagnostics/inspection_acceptance.py
+      - src/diagnostics/field/field_check.py
+      - src/diagnostics/field/gateway_acceptance.py
+      - src/diagnostics/field/inspection.py
       - config/topic_contract.yaml
       - config/endpoints.yaml
       - config/devices.yaml
@@ -56,17 +56,12 @@ layers:
 
   - id: L3_adapter_layer
     title: Adapter Layer
-    intent: LCM, ROS2 compatibility, simulator, replay, runtime shims, and external protocol conversion.
+    intent: Native DDS, simulator, replay, runtime shims, and external protocol conversion.
     owns:
       - src/runtime/adapters/
-      - src/drivers/adapters/
+      - src/external_adapters/
       - src/nav/adapters/
-      - src/localization/adapters/
-      - src/perception/adapters/
-      - src/lingtu/ros2_plugin_seed.py
-      - src/lingtu/ros2_shutdown.py
-      - src/localization/bridge.py
-      - src/localization/relocalization.py
+      - src/maps/adapters/
       - src/gateway/rerun_bridge_module.py
 
   - id: L4_capability_modules
@@ -80,6 +75,8 @@ layers:
       - src/decision/
       - src/memory/
       - src/localization/
+      - src/explore/
+      - src/maps/
       - src/lingtu/__init__.py
       - src/lingtu/README.md
       - src/lingtu/robot.py
@@ -93,6 +90,7 @@ layers:
     intent: Hot-path algorithm implementations and future Rust/FFI/native kernels, kept below Module adapters.
     owns:
       - src/kernels/
+      - src/native/
       - src/nav/kernel/
       - src/nav/services/plan/local_planner/paths/
       - src/nav/services/plan/
@@ -116,8 +114,9 @@ import_boundaries:
     gateway: [nav, perception, decision, drivers, slam]
     nav: [perception, decision, drivers, gateway]
     perception: [nav, decision, drivers, gateway]
-    decision: [nav, drivers, gateway]
+    decision: [nav, drivers, gateway, localization]
     drivers: [nav, perception, decision, gateway]
+    maps: [nav, perception, decision, drivers, gateway]
     runtime:
       - nav
       - perception
@@ -153,10 +152,10 @@ import_boundaries:
       - memory
   composition_exceptions:
     - runtime/blueprints/
-    - runtime/diagnostics/gateway_runtime_acceptance.py
+    - diagnostics/field/gateway_acceptance.py
     - runtime/msgs/scene.py
-    - runtime/diagnostics/product_field_check.py
-    - runtime/same_source_map_artifacts.py
+    - diagnostics/field/field_check.py
+    - gateway/routes/maps.py
     - nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/launch/system_launch.py
     - nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
   hardware_compat_forbidden_import_roots:

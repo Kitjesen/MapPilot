@@ -1,9 +1,13 @@
 """Exploration stack: LingTu module bridges for exploration goal sources.
 
-Wavefront frontier lives in the navigation stack. This stack only owns TARE
-integration modules. TARE is treated as an external/endpoint-owned runtime:
-LingTu consumes its DDS outputs and publishes start/stop hints, but no longer
-starts a ROS 2 NativeModule process from the Module graph.
+Wavefront frontier still lives in the navigation stack for the `explore`
+profile. This stack owns the `tare_explore` product path:
+
+- `backend="tare"` runs LingTu's in-process TARE-style viewpoint policy.
+- `backend="tare_external"` consumes endpoint-owned CMU/TARE DDS outputs.
+
+Neither path lets exploration directly control the robot. Exploration emits
+goals; navigation owns planning, tracking, safety, and command output.
 """
 
 from __future__ import annotations
@@ -21,8 +25,8 @@ def exploration(backend: str = "tare", **kw) -> Blueprint:
 
     Args:
         backend: "tare" | "tare_external" | "none". "tare" is the canonical
-            TARE bridge selection; "tare_external" is kept as an explicit
-            compatibility alias for endpoint-owned TARE runtimes.
+            TARE-style policy selection; "tare_external" is the explicit
+            compatibility alias for endpoint-owned CMU/TARE runtimes.
         **kw: forwarded to the module constructors.
     """
     bp = Blueprint()
@@ -46,7 +50,7 @@ def exploration(backend: str = "tare", **kw) -> Blueprint:
     raise ValueError(
         f"Unknown exploration backend {backend!r}. "
         "Options: 'tare', 'tare_external', 'none'. "
-        "'wavefront' lives in nav.exploration.frontier_explorer_module."
+        "'wavefront' lives in explore.frontier and is enabled by navigation()."
     )
 
 
@@ -56,13 +60,13 @@ def _add_tare_bridge(bp: Blueprint, **kw) -> None:
         "exploration",
         "tare",
         seed_group="exploration",
-        fallback="nav.exploration.tare.module.TAREExplorerModule",
+        fallback="explore.tare.module.TAREExplorerModule",
     )
     ExplorationSupervisorModule = stack_module(
         "exploration",
         "supervisor",
         seed_group="exploration",
-        fallback="nav.exploration.tare.supervisor.ExplorationSupervisorModule",
+        fallback="explore.tare.supervisor.ExplorationSupervisorModule",
     )
 
     kw.setdefault("prefer_path_strategy", False)

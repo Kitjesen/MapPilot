@@ -16,36 +16,45 @@ test_semantic_planner_live.py — 语义规划器轻量级集成测试
 用法:
   python3 test_semantic_planner_live.py [--timeout 60]
 """
+
+import argparse
 import json
 import sys
-import time
-import argparse
 import threading
+import time
 from typing import Optional
 
+import pytest
+
+pytest.importorskip("rclpy", reason="ROS2 integration test — requires rclpy")
+
 import rclpy
-from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
-from std_msgs.msg import String
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import String
 
 from runtime.runtime_interface import TOPICS
 
 # ── 工厂场景图 (机器人在 2,2,0.35) ────────────────────────
-FACTORY_SCENE_GRAPH = json.dumps({
-    "objects": [
-        {"id": "obj_01", "label": "传送带",   "position": [10.0, 3.0, 0.35], "score": 0.92, "detection_count": 5},
-        {"id": "obj_02", "label": "工厂大门", "position": [5.0, 2.0, 0.35],  "score": 0.92, "detection_count": 5},
-        {"id": "obj_03", "label": "楼梯",     "position": [4.0, 8.0, 0.35],  "score": 0.92, "detection_count": 5},
-        {"id": "obj_04", "label": "目标区域", "position": [9.0, 3.0, 0.35],  "score": 0.95, "detection_count": 5},
-        {"id": "obj_05", "label": "控制室",   "position": [12.0, 5.0, 0.35], "score": 0.92, "detection_count": 5},
-        {"id": "obj_06", "label": "仓储区",   "position": [18.0, 2.0, 0.35], "score": 0.92, "detection_count": 5},
-        {"id": "obj_07", "label": "机械设备", "position": [8.0, 4.0, 0.35],  "score": 0.92, "detection_count": 5},
-    ],
-    "relations": [],
-    "regions": [{"name": "一楼生产区", "object_ids": ["obj_01", "obj_02", "obj_03", "obj_04", "obj_05", "obj_06", "obj_07"]}],
-})
+FACTORY_SCENE_GRAPH = json.dumps(
+    {
+        "objects": [
+            {"id": "obj_01", "label": "传送带", "position": [10.0, 3.0, 0.35], "score": 0.92, "detection_count": 5},
+            {"id": "obj_02", "label": "工厂大门", "position": [5.0, 2.0, 0.35], "score": 0.92, "detection_count": 5},
+            {"id": "obj_03", "label": "楼梯", "position": [4.0, 8.0, 0.35], "score": 0.92, "detection_count": 5},
+            {"id": "obj_04", "label": "目标区域", "position": [9.0, 3.0, 0.35], "score": 0.95, "detection_count": 5},
+            {"id": "obj_05", "label": "控制室", "position": [12.0, 5.0, 0.35], "score": 0.92, "detection_count": 5},
+            {"id": "obj_06", "label": "仓储区", "position": [18.0, 2.0, 0.35], "score": 0.92, "detection_count": 5},
+            {"id": "obj_07", "label": "机械设备", "position": [8.0, 4.0, 0.35], "score": 0.92, "detection_count": 5},
+        ],
+        "relations": [],
+        "regions": [
+            {"name": "一楼生产区", "object_ids": ["obj_01", "obj_02", "obj_03", "obj_04", "obj_05", "obj_06", "obj_07"]}
+        ],
+    }
+)
 
 
 class SemanticPlannerTestNode(Node):
@@ -57,8 +66,9 @@ class SemanticPlannerTestNode(Node):
         self._pub_instr = self.create_publisher(String, TOPICS.semantic_instruction, 10)
         self._pub_cancel = self.create_publisher(String, TOPICS.semantic_cancel, 10)
         self._pub_odom = self.create_publisher(
-            Odometry, TOPICS.odometry,
-            QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=5)
+            Odometry,
+            TOPICS.odometry,
+            QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST, depth=5),
         )
 
         # Subscribers
@@ -66,10 +76,17 @@ class SemanticPlannerTestNode(Node):
         self._statuses = []
         self._latest_status = None
 
-        self.create_subscription(PoseStamped, TOPICS.goal_pose, self._goal_cb,
-            QoSProfile(reliability=ReliabilityPolicy.RELIABLE,
-                       durability=DurabilityPolicy.VOLATILE,
-                       history=HistoryPolicy.KEEP_LAST, depth=5))
+        self.create_subscription(
+            PoseStamped,
+            TOPICS.goal_pose,
+            self._goal_cb,
+            QoSProfile(
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+                history=HistoryPolicy.KEEP_LAST,
+                depth=5,
+            ),
+        )
         self.create_subscription(String, TOPICS.semantic_status, self._status_cb, 10)
 
         # 1Hz 场景图 + 10Hz fake odom
@@ -112,11 +129,13 @@ class SemanticPlannerTestNode(Node):
         self._pub_odom.publish(msg)
 
     def send_instruction(self, text: str, explore: bool = False):
-        payload = json.dumps({
-            "instruction": text,
-            "language": "zh",
-            "explore_if_unknown": explore,
-        })
+        payload = json.dumps(
+            {
+                "instruction": text,
+                "language": "zh",
+                "explore_if_unknown": explore,
+            }
+        )
         msg = String()
         msg.data = payload
         self._pub_instr.publish(msg)
@@ -133,7 +152,7 @@ class SemanticPlannerTestNode(Node):
         self._statuses.clear()
         self._latest_status = None
 
-    def wait_for_goal(self, timeout: float = 30.0) -> Optional[dict]:
+    def wait_for_goal(self, timeout: float = 30.0) -> dict | None:
         """等待 goal_pose 消息"""
         start = time.time()
         initial_count = len(self._goals_received)
@@ -143,7 +162,7 @@ class SemanticPlannerTestNode(Node):
                 return self._goals_received[-1]
         return None
 
-    def wait_for_status(self, target_state: str, timeout: float = 30.0) -> Optional[dict]:
+    def wait_for_status(self, target_state: str, timeout: float = 30.0) -> dict | None:
         """等待特定状态"""
         start = time.time()
         while time.time() - start < timeout:
@@ -185,11 +204,13 @@ def run_tests(node: SemanticPlannerTestNode, timeout: float):
         else:
             goal = node.wait_for_goal(timeout=10.0)
             alive = goal is not None
-    results.append({
-        "name": "T1_planner_alive",
-        "pass": alive,
-        "detail": f"statuses={len(node._statuses)}, goals={len(node._goals_received)}"
-    })
+    results.append(
+        {
+            "name": "T1_planner_alive",
+            "pass": alive,
+            "detail": f"statuses={len(node._statuses)}, goals={len(node._goals_received)}",
+        }
+    )
     print(f"  {'PASS' if alive else 'FAIL'}: statuses={len(node._statuses)}, goals={len(node._goals_received)}")
 
     if not alive:
@@ -303,11 +324,13 @@ def run_tests(node: SemanticPlannerTestNode, timeout: float):
         state = node._latest_status.get("state", "")
         idle = state in ("IDLE", "CANCELLED", "")
     # 即使不是 IDLE，只要没崩溃就算部分通过
-    results.append({
-        "name": "T6_cancel",
-        "pass": True,  # 不崩溃就算过
-        "detail": f"last_state={node._latest_status.get('state', '?') if node._latest_status else 'none'}"
-    })
+    results.append(
+        {
+            "name": "T6_cancel",
+            "pass": True,  # 不崩溃就算过
+            "detail": f"last_state={node._latest_status.get('state', '?') if node._latest_status else 'none'}",
+        }
+    )
     print(f"  PASS: cancel sent, state={node._latest_status.get('state', '?') if node._latest_status else 'none'}")
 
     return results
@@ -328,6 +351,7 @@ def main():
     except Exception as e:
         print(f"\n[ERROR] {e}")
         import traceback
+
         traceback.print_exc()
         results = [{"name": "EXCEPTION", "pass": False, "detail": str(e)}]
     finally:

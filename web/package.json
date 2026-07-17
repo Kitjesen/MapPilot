@@ -7,6 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:cloud-decoder": "node --experimental-strip-types --test tests/cloudDecoderCore.test.ts",
+    "test:camera-transport": "node --experimental-strip-types --test tests/cameraTransport.test.ts",
+    "test:map-navigation": "node --experimental-strip-types --test tests/mapNavigationFlow.test.ts",
+    "test:inspection": "node --experimental-strip-types --test tests/inspectionWorkbench.test.ts",
     "preview": "vite preview",
     "smoke:gateway": "node scripts/gateway-smoke.mjs",
     "smoke:dataflow-ui": "node scripts/dataflow-ui-contract.mjs"

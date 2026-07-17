@@ -3,8 +3,10 @@
 Wraps sim/engine/mujoco/engine.py directly in-process.
 No TCP bridge, no separate process. Data flows through In/Out ports.
 
-Provides: odometry, lidar_cloud, map_cloud, imu, height_rays, camera_image,
-depth_image
+Provides motion outputs by default. Legacy in-driver sensor ports remain for
+compatibility but are silent unless publish_camera/publish_lidar/publish_imu are
+explicitly enabled; canonical camera/lidar/imu roles should bind the same
+MuJoCo engine for new profiles.
 Consumes: cmd_vel, stop_signal
 
 Usage::
@@ -27,15 +29,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+from drivers.sim.camera.impl.mujoco.camera import sample_from_camera
 from runtime.module import Module
-from runtime.msgs.numpy_compat import np
 from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
-from runtime.msgs.sensor import CameraIntrinsics, Image, ImageFormat, Imu, PointCloud2
+from runtime.msgs.numpy_compat import np
+from runtime.msgs.sensor import CameraIntrinsics, Image, Imu, PointCloud2
 from runtime.registry import register
 from runtime.runtime_interface import FRAMES, TOPICS, topic_default_frame_id
 from runtime.stream import In, Out
-from message.livox_frame import POINT_DTYPE, LivoxPointFrame
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +46,7 @@ _SIM_ROOT = Path(__file__).resolve().parents[4] / "sim"
 _WORLDS_DIR = _SIM_ROOT / "worlds" / "mujoco"
 _THUNDER_MJCF = _SIM_ROOT / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
 _THUNDERV4_POLICY = (
-    _SIM_ROOT
-    / "robots"
-    / "thunderv4"
-    / "policy"
-    / "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
+    _SIM_ROOT / "robots" / "thunderv4" / "policy" / "pose_flat_low_kpkd_microterrain_model29600_policy.pt"
 )
 _LEGACY_ROBOTS_DIR = _SIM_ROOT / "robots" / "nova_dog"
 _ROBOT_XML = _THUNDER_MJCF
@@ -73,6 +71,16 @@ MUJOCO_MODULE_MAP_CLOUD_FRAME_ID = MUJOCO_MODULE_ODOM_FRAME_ID
 MUJOCO_MODULE_CAMERA_FRAME_ID = FRAMES.camera
 MUJOCO_MODULE_IMU_FRAME_ID = topic_default_frame_id(TOPICS.imu)
 MUJOCO_MODULE_LIDAR_FRAME_ID = topic_default_frame_id(TOPICS.lidar_scan)
+MUJOCO_LEGACY_SENSOR_PORTS = {
+    "camera": ("camera_image", "depth_image", "camera_info"),
+    "lidar": ("lidar_cloud", "map_cloud", "raw_scan"),
+    "imu": ("imu",),
+}
+MUJOCO_CANONICAL_SENSOR_ROLES = {
+    "camera": {"role": "camera", "backend": "sim"},
+    "lidar": {"role": "lidar", "backend": "mujoco"},
+    "imu": {"role": "imu", "backend": "mujoco"},
+}
 _NUMPY_RUNTIME_AVAILABLE: bool | None = None
 
 
@@ -221,6 +229,8 @@ def _xyzi_to_livox_frame(
     line_ids: np.ndarray | None = None,
     tag_values: np.ndarray | None = None,
 ) -> LivoxPointFrame:
+    from message.livox_frame import POINT_DTYPE, LivoxPointFrame
+
     xyzi = np.asarray(points, dtype=np.float32)
     count = 0 if xyzi.ndim != 2 else int(xyzi.shape[0])
     raw = np.zeros(count, dtype=POINT_DTYPE)
@@ -242,14 +252,18 @@ def _xyzi_to_livox_frame(
                 raise ValueError(f"offset_time_ns must have {count} entries")
             raw["offset_time_ns"] = np.minimum(offsets, np.iinfo(np.uint32).max).astype(np.uint32)
         if line_ids is None:
-            raw["line"] = (np.arange(count, dtype=np.uint16) % 4).astype(np.uint8)
+            # The imported scan pattern does not encode the physical channel.
+            # Zero is an honest unknown/default; cycling 0..3 fabricates data.
+            raw["line"] = np.zeros(count, dtype=np.uint8)
         else:
             lines = np.asarray(line_ids, dtype=np.uint16).reshape(-1)
             if lines.shape[0] != count:
                 raise ValueError(f"line_ids must have {count} entries")
             raw["line"] = np.minimum(lines, np.iinfo(np.uint8).max).astype(np.uint8)
         if tag_values is None:
-            raw["tag"] = np.full(count, 0x10, dtype=np.uint8)
+            # MID-360 tag 0x00 means all three confidence classes are normal.
+            # 0x10 specifically means a moderate-confidence "other" return.
+            raw["tag"] = np.zeros(count, dtype=np.uint8)
         else:
             tags = np.asarray(tag_values, dtype=np.uint16).reshape(-1)
             if tags.shape[0] != count:
@@ -271,6 +285,8 @@ WORLDS = {
     "industrial_park_scene": "industrial_park_scene.xml",
     "industrial_demo": "industrial_demo_scene.xml",
     "industrial_demo_scene": "industrial_demo_scene.xml",
+    "lift_building": "lift_building_scene.xml",
+    "lift_building_scene": "lift_building_scene.xml",
     "open_field": "open_field.xml",
     "spiral": "spiral_terrain.xml",
     "spiral_terrain": "spiral_terrain.xml",
@@ -310,6 +326,9 @@ class MujocoDriverModule(Module, layer=1):
         world: str = "building_scene",
         render: bool = False,
         enable_camera: bool = False,
+        publish_camera: bool | None = None,
+        publish_lidar: bool | None = None,
+        publish_imu: bool | None = None,
         sim_rate: float = 50.0,
         policy_path: str = "",
         robot_xml: str = "",
@@ -330,16 +349,15 @@ class MujocoDriverModule(Module, layer=1):
         self._world_name = world
         self._render = render
         self._enable_camera = bool(enable_camera or render)
+        self._publish_camera = False if publish_camera is None else bool(publish_camera)
+        self._publish_lidar = False if publish_lidar is None else bool(publish_lidar)
+        self._publish_imu = False if publish_imu is None else bool(publish_imu)
         self._sim_rate = sim_rate
-        self._drive_mode = (
-            drive_mode or os.environ.get("LINGTU_SIM_DRIVE_MODE", "policy")
-        ).strip().lower()
+        self._drive_mode = (drive_mode or os.environ.get("LINGTU_SIM_DRIVE_MODE", "policy")).strip().lower()
         if self._drive_mode not in {"policy", "kinematic"}:
             raise ValueError(f"Unsupported MuJoCo drive_mode: {self._drive_mode}")
         default_policy = _first_existing_path(_POLICY_CANDIDATES)
-        self._policy_path = (
-            _resolve_sim_path(policy_path) if policy_path else default_policy
-        )
+        self._policy_path = _resolve_sim_path(policy_path) if policy_path else default_policy
         if self._drive_mode == "kinematic":
             self._policy_path = ""
         self._max_linear_vel = max_linear_vel
@@ -364,16 +382,18 @@ class MujocoDriverModule(Module, layer=1):
         self._stopped = False
         self._camera_warned = False
 
+    @property
+    def engine(self):
+        """Expose the owned MuJoCo engine for same-process sensor modules."""
+        return self._engine
+
     def setup(self) -> None:
         self.cmd_vel.subscribe(self._on_cmd_vel)
         self.stop_signal.subscribe(self._on_stop)
 
         try:
             if not _numpy_runtime_available():
-                logger.error(
-                    "MujocoDriverModule: NumPy runtime unavailable; "
-                    "simulation engine not loaded"
-                )
+                logger.error("MujocoDriverModule: NumPy runtime unavailable; simulation engine not loaded")
                 self._engine = None
                 return
 
@@ -406,8 +426,8 @@ class MujocoDriverModule(Module, layer=1):
                 robot_cfg.max_angular_vel = float(self._max_angular_vel)
             scene_start = _scene_placeholder_start(world_path)
             start_pos = (
-                scene_start if scene_start is not None
-                and _is_default_start_pos(self._start_pos)
+                scene_start
+                if scene_start is not None and _is_default_start_pos(self._start_pos)
                 else list(self._start_pos)
             )
             robot_cfg.init_position = [float(v) for v in start_pos[:3]]
@@ -417,6 +437,7 @@ class MujocoDriverModule(Module, layer=1):
                 robot_cfg.policy_onnx = self._policy_path
 
             from sim.engine.core.world import ObstacleConfig
+
             obs_cfgs = []
             for o in self._obstacles:
                 if isinstance(o, dict):
@@ -429,9 +450,7 @@ class MujocoDriverModule(Module, layer=1):
             # semantic stack can run in headless simulation.
             camera_cfgs = []
             if self._enable_camera:
-                camera_cfg = CameraConfig(
-                    name="front_camera", width=640, height=480,
-                    fovy=60.0, render_depth=True)
+                camera_cfg = CameraConfig(name="front_camera", width=640, height=480, fovy=60.0, render_depth=True)
                 camera_cfgs = [camera_cfg]
 
             self._engine = MuJoCoEngine(
@@ -471,8 +490,7 @@ class MujocoDriverModule(Module, layer=1):
             return
 
         self._running = True
-        self._sim_thread = threading.Thread(
-            target=self._sim_loop, name="mujoco_sim", daemon=True)
+        self._sim_thread = threading.Thread(target=self._sim_loop, name="mujoco_sim", daemon=True)
         self._sim_thread.start()
         self.alive.publish(True)
         self._publish_robot_state()
@@ -496,9 +514,9 @@ class MujocoDriverModule(Module, layer=1):
         # MuJoCo engine: linear_x = forward, linear_y = lateral (verified by Step 2 test)
         # Nav stack: vx = forward, vy = lateral; same convention, direct passthrough.
         with self._cmd_lock:
-            self._cmd_vx = twist.linear.x if hasattr(twist.linear, 'x') else 0.0
-            self._cmd_vy = twist.linear.y if hasattr(twist.linear, 'y') else 0.0
-            self._cmd_wz = twist.angular.z if hasattr(twist.angular, 'z') else 0.0
+            self._cmd_vx = twist.linear.x if hasattr(twist.linear, "x") else 0.0
+            self._cmd_vy = twist.linear.y if hasattr(twist.linear, "y") else 0.0
+            self._cmd_wz = twist.angular.z if hasattr(twist.angular, "z") else 0.0
 
     def _on_stop(self, level: int):
         if level >= 1:
@@ -526,57 +544,58 @@ class MujocoDriverModule(Module, layer=1):
                     cmd_vx = self._cmd_vx
                     cmd_vy = self._cmd_vy
                     cmd_wz = self._cmd_wz
-                cmd = VelocityCommand(
-                    linear_x=cmd_vx, linear_y=cmd_vy, angular_z=cmd_wz)
+                cmd = VelocityCommand(linear_x=cmd_vx, linear_y=cmd_vy, angular_z=cmd_wz)
                 state = self._engine.step(cmd)
 
                 # Publish odometry
                 ts = time.time()
                 quat = state.orientation  # [x, y, z, w]
-                self.odometry.publish(Odometry(
-                    pose=Pose(
-                        position=Vector3(
-                            float(state.position[0]),
-                            float(state.position[1]),
-                            float(state.position[2])),
-                        orientation=Quaternion(
-                            float(quat[0]), float(quat[1]),
-                            float(quat[2]), float(quat[3]))),
-                    twist=Twist(
-                        linear=Vector3(
-                            float(state.linear_velocity[0]),
-                            float(state.linear_velocity[1]),
-                            float(state.linear_velocity[2])),
-                        angular=Vector3(
-                            float(state.angular_velocity[0]),
-                            float(state.angular_velocity[1]),
-                            float(state.angular_velocity[2]))),
-                    ts=ts,
-                    frame_id=self._odom_frame_id,
-                    child_frame_id=self._child_frame_id,
-                ))
-
-                gyro = np.asarray(getattr(state, "imu_gyro", (0.0, 0.0, 0.0)), dtype=float)
-                accel = np.asarray(
-                    getattr(state, "imu_linear_acceleration", (0.0, 0.0, 0.0)),
-                    dtype=float,
+                self.odometry.publish(
+                    Odometry(
+                        pose=Pose(
+                            position=Vector3(
+                                float(state.position[0]), float(state.position[1]), float(state.position[2])
+                            ),
+                            orientation=Quaternion(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])),
+                        ),
+                        twist=Twist(
+                            linear=Vector3(
+                                float(state.linear_velocity[0]),
+                                float(state.linear_velocity[1]),
+                                float(state.linear_velocity[2]),
+                            ),
+                            angular=Vector3(
+                                float(state.angular_velocity[0]),
+                                float(state.angular_velocity[1]),
+                                float(state.angular_velocity[2]),
+                            ),
+                        ),
+                        ts=ts,
+                        frame_id=self._odom_frame_id,
+                        child_frame_id=self._child_frame_id,
+                    )
                 )
-                self.imu.publish(Imu(
-                    orientation=Quaternion(
-                        float(quat[0]), float(quat[1]),
-                        float(quat[2]), float(quat[3])),
-                    angular_velocity=Vector3(
-                        float(gyro[0]), float(gyro[1]), float(gyro[2])),
-                    linear_acceleration=Vector3(
-                        float(accel[0]), float(accel[1]), float(accel[2])),
-                    ts=ts,
-                    frame_id=MUJOCO_MODULE_IMU_FRAME_ID,
-                ))
+
+                if self._publish_imu:
+                    gyro = np.asarray(getattr(state, "imu_gyro", (0.0, 0.0, 0.0)), dtype=float)
+                    accel = np.asarray(
+                        getattr(state, "imu_linear_acceleration", (0.0, 0.0, 0.0)),
+                        dtype=float,
+                    )
+                    self.imu.publish(
+                        Imu(
+                            orientation=Quaternion(float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])),
+                            angular_velocity=Vector3(float(gyro[0]), float(gyro[1]), float(gyro[2])),
+                            linear_acceleration=Vector3(float(accel[0]), float(accel[1]), float(accel[2])),
+                            ts=ts,
+                            frame_id=MUJOCO_MODULE_IMU_FRAME_ID,
+                        )
+                    )
 
                 # Publish LiDAR (default every 5th step = ~10 Hz). Nav-only
                 # gates can raise this interval after the first scan so heavy
                 # raycasting does not starve the motion loop.
-                if step_count % self._lidar_publish_every == 0:
+                if self._publish_lidar and step_count % self._lidar_publish_every == 0:
                     try:
                         pts = self._engine.get_lidar_points()
                         if pts is not None and len(pts) > 0:
@@ -592,22 +611,26 @@ class MujocoDriverModule(Module, layer=1):
                                 state.position,
                                 state.orientation,
                             )
-                            scan_duration_s = (
-                                self._lidar_publish_every
-                                / max(float(self._sim_rate), 1e-6)
+                            # This Module captures one full cloud at one MuJoCo
+                            # state. Do not fabricate rolling point times. The
+                            # native DDS sensor gate owns the physical_rolling
+                            # subscan approximation used for sensor acceptance.
+                            self.raw_scan.publish(
+                                _xyzi_to_livox_frame(
+                                    pts_lidar,
+                                    timestamp_ns=int(ts * 1_000_000_000),
+                                    sequence=step_count // self._lidar_publish_every,
+                                    frame_id=MUJOCO_MODULE_LIDAR_FRAME_ID,
+                                    scan_duration_ns=0,
+                                )
                             )
-                            self.raw_scan.publish(_xyzi_to_livox_frame(
-                                pts_lidar,
-                                timestamp_ns=int(max(0.0, ts - scan_duration_s) * 1_000_000_000),
-                                sequence=step_count // self._lidar_publish_every,
-                                frame_id=MUJOCO_MODULE_LIDAR_FRAME_ID,
-                                scan_duration_ns=int(1_000_000_000 * scan_duration_s),
-                            ))
-                            self.lidar_cloud.publish(PointCloud2(
-                                points=pts_body,
-                                frame_id=MUJOCO_MODULE_BODY_FRAME_ID,
-                                ts=ts,
-                            ))
+                            self.lidar_cloud.publish(
+                                PointCloud2(
+                                    points=pts_body,
+                                    frame_id=MUJOCO_MODULE_BODY_FRAME_ID,
+                                    ts=ts,
+                                )
+                            )
                             world_cloud = PointCloud2(
                                 points=pts_world,
                                 frame_id=self._map_cloud_frame_id,
@@ -621,49 +644,36 @@ class MujocoDriverModule(Module, layer=1):
                 if self._enable_height_rays and step_count % self._height_ray_publish_every == 0:
                     try:
                         rays = self._engine.get_discrete_rays()
-                        self.height_rays.publish({
-                            "pattern": rays.pattern,
-                            "heights": rays.heights,
-                            "points_body": rays.points_body,
-                            "points_world": rays.points_world,
-                            "valid_mask": rays.valid_mask,
-                            "metadata": rays.metadata,
-                            "ts": ts,
-                            "frame_id": MUJOCO_MODULE_BODY_FRAME_ID,
-                        })
+                        self.height_rays.publish(
+                            {
+                                "pattern": rays.pattern,
+                                "heights": rays.heights,
+                                "points_body": rays.points_body,
+                                "points_world": rays.points_world,
+                                "valid_mask": rays.valid_mask,
+                                "metadata": rays.metadata,
+                                "ts": ts,
+                                "frame_id": MUJOCO_MODULE_BODY_FRAME_ID,
+                            }
+                        )
                     except Exception:
                         logger.debug("mujoco_driver: height-ray publish error", exc_info=True)
 
                 # Publish camera (every 10th step = ~5 Hz)
-                if step_count % 10 == 0:
+                if self._publish_camera and step_count % 10 == 0:
                     try:
                         cam = self._engine.get_camera_data("front_camera")
                         if cam is not None:
-                            h, w = (cam.rgb.shape[:2] if cam.rgb is not None
-                                    else cam.depth.shape[:2])
-                            self.camera_image.publish(Image(
-                                data=cam.rgb,
-                                format=ImageFormat.RGB,
-                                ts=ts,
+                            sample = sample_from_camera(
+                                cam,
                                 frame_id=MUJOCO_MODULE_CAMERA_FRAME_ID,
-                            ))
-                            if cam.depth is not None:
-                                self.depth_image.publish(Image(
-                                    data=cam.depth,
-                                    format=ImageFormat.DEPTH_F32,
-                                    ts=ts,
-                                    frame_id=MUJOCO_MODULE_CAMERA_FRAME_ID,
-                                ))
-                            fx, fy, cx, cy = cam.intrinsics
-                            self.camera_info.publish(CameraIntrinsics(
-                                fx=float(fx),
-                                fy=float(fy),
-                                cx=float(cx),
-                                cy=float(cy),
-                                width=int(w),
-                                height=int(h),
-                                depth_scale=1.0,
-                            ))
+                            )
+                            if sample.color is not None:
+                                self.camera_image.publish(sample.color)
+                            if sample.depth is not None:
+                                self.depth_image.publish(sample.depth)
+                            if sample.intrinsics is not None:
+                                self.camera_info.publish(sample.intrinsics)
                     except Exception as e:
                         if not self._camera_warned:
                             logger.warning("MujocoDriverModule: camera publish failed: %s", e)
@@ -688,6 +698,7 @@ class MujocoDriverModule(Module, layer=1):
     def _publish_robot_state(self) -> None:
         """Publish sim operational state."""
         from drivers.sim import build_sim_robot_state
+
         self.robot_state.publish(build_sim_robot_state())
 
     def health(self) -> dict[str, Any]:
@@ -698,6 +709,29 @@ class MujocoDriverModule(Module, layer=1):
             "has_engine": self._engine is not None,
             "sim_rate": self._sim_rate,
             "render": self._render,
+            "camera_enabled": self._enable_camera,
+            "camera_published_by_driver": self._publish_camera,
+            "lidar_published_by_driver": self._publish_lidar,
+            "imu_published_by_driver": self._publish_imu,
+            "sensor_ports_legacy": True,
+            "canonical_sensor_roles": MUJOCO_CANONICAL_SENSOR_ROLES,
+            "legacy_sensor_ports": {
+                "camera": {
+                    "ports": list(MUJOCO_LEGACY_SENSOR_PORTS["camera"]),
+                    "published_by_driver": self._publish_camera,
+                    "canonical_role": "camera",
+                },
+                "lidar": {
+                    "ports": list(MUJOCO_LEGACY_SENSOR_PORTS["lidar"]),
+                    "published_by_driver": self._publish_lidar,
+                    "canonical_role": "lidar",
+                },
+                "imu": {
+                    "ports": list(MUJOCO_LEGACY_SENSOR_PORTS["imu"]),
+                    "published_by_driver": self._publish_imu,
+                    "canonical_role": "imu",
+                },
+            },
             "drive_mode": self._drive_mode,
             "lidar_publish_every": self._lidar_publish_every,
             "height_ray_publish_every": self._height_ray_publish_every,

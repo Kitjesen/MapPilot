@@ -13,16 +13,18 @@ import os
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
 # â”€â”€â”€ GnssConfig â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-class TestGnssConfigDataclass(unittest.TestCase):
 
+class TestGnssConfigDataclass(unittest.TestCase):
     def test_defaults(self):
         from runtime.config import GnssConfig
+
         c = GnssConfig()
         self.assertFalse(c.enabled)
         self.assertEqual(c.antenna_offset.x, 0.0)
@@ -33,6 +35,7 @@ class TestGnssConfigDataclass(unittest.TestCase):
 
     def test_fill_from_raw_yaml_dict(self):
         from runtime.config import _fill_gnss_config
+
         raw = {
             "enabled": True,
             "model": "TestRx",
@@ -54,6 +57,7 @@ class TestGnssConfigDataclass(unittest.TestCase):
 
     def test_missing_sections_fill_with_defaults(self):
         from runtime.config import _fill_gnss_config
+
         c = _fill_gnss_config({"enabled": True})
         self.assertEqual(c.antenna_offset.z, 0.0)
         self.assertEqual(c.quality.min_sat_used, 8)
@@ -61,43 +65,43 @@ class TestGnssConfigDataclass(unittest.TestCase):
 
     def test_unknown_keys_ignored(self):
         from runtime.config import _fill_gnss_config
-        c = _fill_gnss_config({
-            "enabled": True,
-            "bogus_key": "unused",
-            "quality": {"min_sat_used": 10, "not_a_real_key": 7},
-        })
+
+        c = _fill_gnss_config(
+            {
+                "enabled": True,
+                "bogus_key": "unused",
+                "quality": {"min_sat_used": 10, "not_a_real_key": 7},
+            }
+        )
         self.assertTrue(c.enabled)
         self.assertEqual(c.quality.min_sat_used, 10)
 
     def test_validate_bad_alpha_reports_error(self):
         from runtime.config import GnssConfig, RobotConfig, validate_config
+
         c = RobotConfig()
         c.gnss = GnssConfig()
         c.gnss.enabled = True
         c.gnss.fusion.alpha_healthy = 1.5
         errs = validate_config(c)
-        self.assertTrue(
-            any("alpha_healthy" in e for e in errs),
-            f"expected alpha_healthy error, got {errs}"
-        )
+        self.assertTrue(any("alpha_healthy" in e for e in errs), f"expected alpha_healthy error, got {errs}")
 
     def test_validate_bad_residual_reports_error(self):
         from runtime.config import GnssConfig, RobotConfig, validate_config
+
         c = RobotConfig()
         c.gnss = GnssConfig()
         c.gnss.enabled = True
         c.gnss.fusion.residual_warn_m = -1.0
         errs = validate_config(c)
-        self.assertTrue(
-            any("residual_warn_m" in e for e in errs),
-            f"expected residual_warn_m error, got {errs}"
-        )
+        self.assertTrue(any("residual_warn_m" in e for e in errs), f"expected residual_warn_m error, got {errs}")
 
     def test_validate_disabled_gnss_skips_checks(self):
         """Robots without GNSS must not trip on default 0s."""
         from runtime.config import GnssConfig, RobotConfig, validate_config
+
         c = RobotConfig()
-        c.gnss = GnssConfig()      # enabled=False
+        c.gnss = GnssConfig()  # enabled=False
         c.gnss.fusion.alpha_healthy = 99.0  # bad, but gated out
         errs = validate_config(c)
         self.assertFalse(any("alpha_healthy" in e for e in errs))
@@ -105,10 +109,11 @@ class TestGnssConfigDataclass(unittest.TestCase):
 
 # â”€â”€â”€ NtripClientModule â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-class TestNtripClient(unittest.TestCase):
 
+class TestNtripClient(unittest.TestCase):
     def _make(self, **kw):
         from localization.ntrip_client_module import NtripClientModule
+
         return NtripClientModule(**kw)
 
     def test_defaults_are_inert(self):
@@ -124,8 +129,7 @@ class TestNtripClient(unittest.TestCase):
         self.assertFalse(m._enabled)
 
     def test_full_config_enables(self):
-        m = self._make(enabled=True, host="caster.example.com",
-                       mount="RTCM32", user="u", password="p")
+        m = self._make(enabled=True, host="caster.example.com", mount="RTCM32", user="u", password="p")
         self.assertTrue(m._enabled)
 
     def test_disabled_start_does_not_spawn_threads(self):
@@ -139,12 +143,16 @@ class TestNtripClient(unittest.TestCase):
             m.stop()
 
     def test_format_gga_returns_valid_nmea(self):
-        from runtime.msgs.gnss import GnssFix, GnssFixType
         from localization.ntrip_client_module import _format_gga
+        from runtime.msgs.gnss import GnssFix, GnssFixType
+
         fix = GnssFix(
-            lat=31.0, lon=121.0, alt=10.0,
+            lat=31.0,
+            lon=121.0,
+            alt=10.0,
             fix_type=GnssFixType.RTK_FIXED,
-            num_sat=12, num_sat_used=12,
+            num_sat=12,
+            num_sat_used=12,
             ts=time.time(),
         )
         gga = _format_gga(fix)
@@ -160,15 +168,25 @@ class TestNtripClient(unittest.TestCase):
 
     def test_status_snapshot_keys(self):
         import json
+
         m = self._make(enabled=True, host="x", mount="y")
         snap = json.loads(m.get_ntrip_status())
-        for key in ("enabled", "connected", "host", "mount",
-                    "attempts", "failures", "rtcm_bytes_rx",
-                    "gga_sent", "last_error"):
+        for key in (
+            "enabled",
+            "connected",
+            "host",
+            "mount",
+            "attempts",
+            "failures",
+            "rtcm_bytes_rx",
+            "gga_sent",
+            "last_error",
+        ):
             self.assertIn(key, snap)
 
 
 # â”€â”€â”€ GnssModule â†?NTRIP wiring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
 
 class TestNtripRtcmAutoWire(unittest.TestCase):
     """The rtcm_bytes port should auto-connect GnssModule â†?NtripClientModule.
@@ -176,6 +194,7 @@ class TestNtripRtcmAutoWire(unittest.TestCase):
 
     def test_gnss_module_subscribes_to_rtcm_bytes(self):
         from localization.gnss_module import GnssModule
+
         m = GnssModule(auto_init_origin=False, status_rate_hz=0.0)
         m.setup()
         # Even in stub mode the subscription is installed so publish works
@@ -183,11 +202,137 @@ class TestNtripRtcmAutoWire(unittest.TestCase):
 
     def test_rtcm_forward_to_serial_no_crash_when_stub(self):
         from localization.gnss_module import GnssModule
+
         m = GnssModule(auto_init_origin=False, status_rate_hz=0.0)
         m.setup()
         # No serial driver; write must be a safe no-op
         m._on_rtcm_bytes(b"\xd3\x00\x04\x4c\xe0\x00\x80\x00")
         # If we didn't crash, the contract holds
+
+    def test_gnss_health_reports_backend_source_and_staleness_contract(self):
+        from localization.gnss_module import GnssModule
+        from runtime.contracts import GNSS_BACKEND_HW
+
+        m = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            source_backend=GNSS_BACKEND_HW,
+        )
+
+        health = m.health()
+
+        self.assertEqual(health["role"], "gnss")
+        self.assertEqual(health["device_model"], "WTRTK-980")
+        self.assertEqual(health["backend"], "hw")
+        self.assertEqual(health["source"], "hw")
+        self.assertEqual(health["dataflow_owner"], "gnss")
+        self.assertEqual(health["product_owner"], "python_compat")
+        self.assertIs(health["python_compat"], True)
+        self.assertIs(health["uses_hw_inventory"], True)
+        self.assertIs(health["requires_hw_bridge"], True)
+        self.assertIs(health["dds_compat_reader"], False)
+        self.assertIs(health["replay_source"], False)
+        self.assertIs(health["direct_serial"], False)
+        self.assertIs(health["link_ok"], False)
+        self.assertIs(health["origin_initialised"], False)
+        self.assertIsNone(health["stale_ms"])
+        self.assertEqual(health["error"], "")
+
+    def test_gnss_health_distinguishes_direct_dds_and_replay_backends(self):
+        from localization.gnss_module import GnssModule
+        from runtime.contracts import (
+            GNSS_BACKEND_DDS,
+            GNSS_BACKEND_REPLAY,
+            GNSS_BACKEND_WTRTK980,
+        )
+
+        native = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            serial_port="/dev/wtrtk980",
+            source_backend=GNSS_BACKEND_WTRTK980,
+        ).health()
+        dds = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            source_backend=GNSS_BACKEND_DDS,
+        ).health()
+        replay = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            source_backend=GNSS_BACKEND_REPLAY,
+        ).health()
+
+        self.assertEqual(native["backend"], GNSS_BACKEND_WTRTK980)
+        self.assertEqual(native["serial_port"], "/dev/wtrtk980")
+        self.assertEqual(native["product_owner"], "lingtu_gnss_dds")
+        self.assertIs(native["python_compat"], False)
+        self.assertIs(native["direct_serial"], False)
+        self.assertIs(native["uses_hw_inventory"], False)
+        self.assertIs(native["dds_compat_reader"], False)
+        self.assertIs(native["replay_source"], False)
+
+        self.assertEqual(dds["backend"], GNSS_BACKEND_DDS)
+        self.assertIs(dds["direct_serial"], False)
+        self.assertIs(dds["uses_hw_inventory"], False)
+        self.assertIs(dds["dds_compat_reader"], True)
+        self.assertIs(dds["replay_source"], False)
+
+        self.assertEqual(replay["backend"], GNSS_BACKEND_REPLAY)
+        self.assertIs(replay["direct_serial"], False)
+        self.assertIs(replay["uses_hw_inventory"], False)
+        self.assertIs(replay["dds_compat_reader"], False)
+        self.assertIs(replay["replay_source"], True)
+
+    def test_hw_backend_waits_for_hw_bridge_without_dds_fallback(self):
+        from localization.gnss_module import GnssModule
+        from runtime.contracts import GNSS_BACKEND_HW
+
+        m = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            source_backend=GNSS_BACKEND_HW,
+        )
+
+        with patch.object(m, "_try_start_dds", side_effect=AssertionError("no dds")):
+            m.setup()
+
+    def test_wtrtk980_backend_without_serial_does_not_fallback_to_dds(self):
+        from localization.gnss_module import GnssModule
+        from runtime.contracts import GNSS_BACKEND_WTRTK980
+
+        m = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            source_backend=GNSS_BACKEND_WTRTK980,
+        )
+
+        with patch.object(m, "_try_start_dds", side_effect=AssertionError("no dds")):
+            with patch.object(m, "_try_start_serial", side_effect=AssertionError("no serial")):
+                m.setup()
+
+        self.assertEqual(m._last_error, "native_gnss_service_required")
+
+    def test_replay_backend_waits_for_injected_fixes_without_dds_or_serial(self):
+        from localization.gnss_module import GnssModule
+        from runtime.contracts import GNSS_BACKEND_REPLAY
+
+        m = GnssModule(
+            auto_init_origin=False,
+            status_rate_hz=0.0,
+            serial_port="/dev/wtrtk980",
+            source_backend=GNSS_BACKEND_REPLAY,
+        )
+
+        with patch.object(m, "_try_start_dds", side_effect=AssertionError("no dds")):
+            with patch.object(m, "_try_start_serial", side_effect=AssertionError("no serial")):
+                m.setup()
+
+        health = m.health()
+        self.assertEqual(health["backend"], GNSS_BACKEND_REPLAY)
+        self.assertEqual(health["source"], GNSS_BACKEND_REPLAY)
+        self.assertIsNone(m._dds_reader)
+        self.assertIsNone(m._serial_driver)
 
 
 if __name__ == "__main__":

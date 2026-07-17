@@ -54,7 +54,10 @@ struct Config
     double max_update_rotation_rad = 0.35;
     double max_update_velocity_mps = 3.0;
     double max_update_velocity_delta_mps = 1.0;
-    bool reject_nonconverged_update = true;
+    // Reaching the iteration limit is advisory when the LiDAR residual is
+    // valid, bounded, and observable.  Rejecting every such update reduces
+    // FAST-LIO to IMU propagation in scenes that need one more iteration.
+    bool reject_nonconverged_update = false;
     bool reject_degenerate_nonconverged_update = true;
     bool gravity_align = true;
     bool esti_il = false;

@@ -84,6 +84,15 @@ struct TwistStamped {
   Twist twist;
 };
 
+struct FinalVelocityCommand {
+  string host_boot_id;
+  string producer_boot_id;
+  unsigned long long output_seq;
+  unsigned long long source_boottime_ns;
+  unsigned long long source_wall_ns;
+  Twist twist;
+};
+
 struct Transform {
   Vector3 translation;
   Quaternion rotation;
@@ -130,6 +139,70 @@ struct PointCloud2 {
   boolean is_dense;
 };
 
+struct Image {
+  Header header;
+  unsigned long height;
+  unsigned long width;
+  string encoding;
+  boolean is_bigendian;
+  unsigned long step;
+  sequence<octet> data;
+};
+
+struct CameraInfo {
+  Header header;
+  unsigned long height;
+  unsigned long width;
+  double depth_scale;
+  string distortion_model;
+  sequence<double> d;
+  double k[9];
+  double r[9];
+  double p[12];
+};
+
+struct GnssFix {
+  Header header;
+  double latitude;
+  double longitude;
+  double altitude;
+  long fix_type;
+  double position_covariance[9];
+  unsigned long num_sat;
+  unsigned long num_sat_used;
+  double hdop;
+  double rtcm_age_s;
+};
+
+struct GnssStatus {
+  Header header;
+  string device;
+  long fix_type;
+  boolean link_ok;
+  boolean rtk;
+  unsigned long num_sat;
+  unsigned long num_sat_used;
+  double hdop;
+  double rtcm_age_s;
+  string error;
+};
+
+struct DriverControlState {
+  Header header;
+  boolean connected;
+  boolean ready;
+  boolean motors_enabled;
+  boolean critical_fault;
+  boolean lease_valid;
+  unsigned long lease_remaining_ms;
+  unsigned long long accepted_sequence;
+  boolean last_command_accepted;
+  string fsm;
+  string owner;
+  string owner_id;
+  string reason;
+};
+
 struct Float32 {
   float data;
 };
@@ -140,6 +213,84 @@ struct Bool {
 
 struct Text {
   string data;
+};
+
+struct NavigationCommandRequest {
+  Header header;
+  string request_id;
+  long kind;
+  Pose goal;
+  Twist velocity;
+  string reason;
+};
+
+struct NavigationCommandAck {
+  Header header;
+  string request_id;
+  long kind;
+  boolean accepted;
+  string reason;
+};
+
+struct InspectionCommandRequest {
+  Header header;
+  string request_id;
+  long kind;
+  string route_id;
+  unsigned long long route_revision;
+  string reason;
+};
+
+struct InspectionCommandAck {
+  Header header;
+  string request_id;
+  long kind;
+  boolean accepted;
+  string reason;
+  string run_id;
+};
+
+struct InspectionEvidenceRequest {
+  Header header;
+  string request_id;
+  string run_id;
+  string route_id;
+  unsigned long long revision;
+  string map_id;
+  long long map_version;
+  unsigned long point_index;
+  string point_id;
+  string action;
+  double deadline_s;
+};
+
+struct InspectionEvidenceResult {
+  Header header;
+  string request_id;
+  string evidence_id;
+  boolean persisted;
+  string reason;
+  string analysis_verdict;
+};
+
+struct InspectionStatus {
+  Header header;
+  string run_id;
+  string route_id;
+  unsigned long long route_revision;
+  long state;
+  unsigned long point_index;
+  unsigned long point_count;
+  unsigned long loop_index;
+  unsigned long retry_count;
+  string point_id;
+  string action;
+  string action_request_id;
+  string evidence_id;
+  double phase_started_at;
+  double stable_since;
+  double deadline;
+  string reason;
 };
 
 struct RelocalizationRequest {

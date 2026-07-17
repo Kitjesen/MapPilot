@@ -15,7 +15,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[4]
 SIM_ROOT = ROOT / "sim"
 DEFAULT_MID360_PATTERN = SIM_ROOT / "assets" / "livox" / "mid360.npy"
-DEFAULT_MID360_SAMPLES_PER_FRAME = 15000
+DEFAULT_MID360_SAMPLES_PER_FRAME = 20000
 
 
 def resolve_mid360_pattern(path: Path | str | None) -> Path | None:

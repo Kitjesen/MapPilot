@@ -33,6 +33,9 @@ class NativeRelocalizer {
   bool supportsSeededRelocalization() const;
   bool supportsGlobalRelocalization() const;
 
+  // Registration is safe to run on copied scan/pose inputs while the SLAM
+  // estimator continues on its owning thread. MapIcp serializes its mutable
+  // localizer and rejects a result if the loaded-map generation changes.
   NativeRelocalizationResult relocalize(
       const Cloud& scan_body,
       const Pose3d& map_body_guess,

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
-import xml.etree.ElementTree as ET
 import math
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
@@ -21,14 +21,14 @@ from runtime.runtime_interface import (
     FRAMES,
     LIDAR_EXTRINSICS,
     MESSAGE_FORMATS,
-    REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
     REAL_RUNTIME_CONTRACT,
+    REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
     REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS,
     RUNTIME_DATA_FLOW,
     RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
-    TOPICS,
     TOPIC_ALLOWED_FRAME_IDS,
     TOPIC_FORMATS,
+    TOPICS,
     adapter_remappings,
     expand_frame_id_aliases,
     frame_id_aliases,
@@ -44,7 +44,6 @@ from runtime.runtime_interface import (
 )
 from sim.engine.bridge.gazebo_bridge import GazeboBridgeConfig
 from sim.engine.bridge.gazebo_runtime_adapter import Pose3, _odom_xyz_to_body, _transform_xyz
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -90,10 +89,7 @@ def test_ros_frame_contract_topic_frame_table_mirrors_runtime_contract():
         )
         assert row in doc
 
-    assert (
-        "`/slam/map_cloud` and `/nav/global_path` are deliberately stricter "
-        "on real"
-    ) in doc
+    assert ("`/slam/map_cloud` and `/nav/global_path` are deliberately stricter on real") in doc
     assert "real S100P evidence must reject `/slam/map_cloud` outside `map`" in doc
 
 
@@ -145,8 +141,7 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     from runtime.config import LidarConfig
 
     assert (
-        runtime_data_flow_topics.__doc__
-        == "Return unique canonical runtime stream tokens in one resolved data-flow."
+        runtime_data_flow_topics.__doc__ == "Return unique canonical runtime stream tokens in one resolved data-flow."
     )
     assert FRAMES.body_alias_note == "base_link == body"
     assert FRAMES.axis_convention == "x_forward_y_left_z_up"
@@ -206,15 +201,11 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
         TOPICS.traversable_frontiers,
         TOPICS.frontier_candidate,
     )
-    assert "traversable_frontier_preview" in (
-        RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES["map_layers_and_exploration"]
+    assert (
+        "traversable_frontier_preview" in (RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES["map_layers_and_exploration"])
     )
-    assert "support_type" in MESSAGE_FORMATS[
-        "traversable_frontier_candidates"
-    ].required_fields
-    assert "semantic_value" in MESSAGE_FORMATS[
-        "traversable_frontier_candidates"
-    ].required_fields
+    assert "support_type" in MESSAGE_FORMATS["traversable_frontier_candidates"].required_fields
+    assert "semantic_value" in MESSAGE_FORMATS["traversable_frontier_candidates"].required_fields
     global_stage = next(stage for stage in RUNTIME_DATA_FLOW if stage.name == "global_planning")
     assert global_stage.map_dependency == (
         "octoplanner3d_uses_headless_octomap_or_point_cloud;"
@@ -279,37 +270,18 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
     assert manifest["real_runtime_topic_allowed_frame_ids"][TOPICS.map_cloud] == [
         FRAMES.map,
     ]
-    assert tuple(manifest["real_runtime_required_topic_frame_ids"]) == (
-        REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS
-    )
-    assert tuple(manifest["runtime_data_flow_topics"]["real_s100p"]) == (
-        runtime_data_flow_topics("real_s100p")
-    )
-    assert (
-        TOPICS.map_cloud
-        in manifest["algorithm_interfaces"]["exploration_strategy"]["inputs"]
-    )
-    assert (
-        TOPICS.lidar_scan
-        in manifest["data_sources"]["real_s100p"]["normalized_outputs"]
-    )
+    assert tuple(manifest["real_runtime_required_topic_frame_ids"]) == (REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS)
+    assert tuple(manifest["runtime_data_flow_topics"]["real_s100p"]) == (runtime_data_flow_topics("real_s100p"))
+    assert TOPICS.map_cloud in manifest["algorithm_interfaces"]["exploration_strategy"]["inputs"]
+    assert TOPICS.lidar_scan in manifest["data_sources"]["real_s100p"]["normalized_outputs"]
     assert manifest["artifact_formats"]["tomogram"]["path"] == "tomogram.pickle"
-    assert (
-        manifest["profile_data_sources"]["sim_mujoco_live"]["data_source"]
-        == "mujoco_fastlio2_live"
-    )
+    assert manifest["profile_data_sources"]["sim_mujoco_live"]["data_source"] == "mujoco_fastlio2_live"
     assert manifest["profile_data_sources"]["sim_cmu_tare"]["data_source"] == "cmu_unity_external"
-    fastlio_aliases = {
-        item["source"]: item["target"]
-        for item in manifest["adapter_aliases"]["fastlio2"]
-    }
+    fastlio_aliases = {item["source"]: item["target"] for item in manifest["adapter_aliases"]["fastlio2"]}
     assert fastlio_aliases["/cloud_registered"] == TOPICS.registered_cloud
     assert fastlio_aliases["/cloud_map"] == TOPICS.map_cloud
     assert fastlio_aliases["/Odometry"] == TOPICS.odometry
-    cmu_relays = {
-        item["source"]: item["target"]
-        for item in manifest["adapter_relays"]["cmu_unity"]
-    }
+    cmu_relays = {item["source"]: item["target"] for item in manifest["adapter_relays"]["cmu_unity"]}
     assert cmu_relays["/state_estimation_at_scan"] == TOPICS.state_estimation_at_scan
     assert cmu_relays[TOPICS.cmd_vel] == "/cmd_vel"
 
@@ -358,19 +330,16 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
     assert set(contract["adapter_aliases"]) == set(manifest["adapter_aliases"])
     assert set(contract["adapter_relays"]) == set(manifest["adapter_relays"])
     assert set(contract["profile_data_sources"]) == set(manifest["profile_data_sources"])
-    assert set(contract["topic_allowed_frame_ids"]) == set(
-        manifest["topic_allowed_frame_ids"]
-    )
+    assert set(contract["topic_allowed_frame_ids"]) == set(manifest["topic_allowed_frame_ids"])
     assert set(contract["real_runtime_topic_allowed_frame_ids"]) == set(
         manifest["real_runtime_topic_allowed_frame_ids"]
     )
     assert tuple(contract["real_runtime_required_topic_frame_ids"]) == tuple(
         manifest["real_runtime_required_topic_frame_ids"]
     )
-    assert {
-        name: tuple(topics)
-        for name, topics in contract["runtime_data_flow_topics"].items()
-    } == manifest["runtime_data_flow_topics"]
+    assert {name: tuple(topics) for name, topics in contract["runtime_data_flow_topics"].items()} == manifest[
+        "runtime_data_flow_topics"
+    ]
 
     yaml_nav_topics: set[str] = set()
 
@@ -386,41 +355,24 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
 
     _walk_topics(contract)
     runtime_nav_topics = {
-        value
-        for value in manifest["topics"].values()
-        if isinstance(value, str) and value.startswith("/nav/")
+        value for value in manifest["topics"].values() if isinstance(value, str) and value.startswith("/nav/")
     }
     assert yaml_nav_topics == runtime_nav_topics
-
 
     for name, format_spec in manifest["message_formats"].items():
         yaml_spec = contract["data_formats"][name]
         assert yaml_spec["ros_type"] == format_spec["ros_type"]
         assert yaml_spec["frame_role"] == format_spec["frame_role"].replace("->", "_to_")
-        assert tuple(yaml_spec.get("required_fields") or ()) == tuple(
-            format_spec.get("required_fields") or ()
-        )
+        assert tuple(yaml_spec.get("required_fields") or ()) == tuple(format_spec.get("required_fields") or ())
 
-    assert {
-        topic: tuple(formats)
-        for topic, formats in contract["topic_formats"].items()
-    } == {
-        topic: tuple(formats)
-        for topic, formats in manifest["topic_formats"].items()
+    assert {topic: tuple(formats) for topic, formats in contract["topic_formats"].items()} == {
+        topic: tuple(formats) for topic, formats in manifest["topic_formats"].items()
     }
-    assert {
-        topic: tuple(frames)
-        for topic, frames in contract["topic_allowed_frame_ids"].items()
-    } == {
-        topic: tuple(frames)
-        for topic, frames in manifest["topic_allowed_frame_ids"].items()
+    assert {topic: tuple(frames) for topic, frames in contract["topic_allowed_frame_ids"].items()} == {
+        topic: tuple(frames) for topic, frames in manifest["topic_allowed_frame_ids"].items()
     }
-    assert {
-        topic: tuple(frames)
-        for topic, frames in contract["real_runtime_topic_allowed_frame_ids"].items()
-    } == {
-        topic: tuple(frames)
-        for topic, frames in manifest["real_runtime_topic_allowed_frame_ids"].items()
+    assert {topic: tuple(frames) for topic, frames in contract["real_runtime_topic_allowed_frame_ids"].items()} == {
+        topic: tuple(frames) for topic, frames in manifest["real_runtime_topic_allowed_frame_ids"].items()
     }
 
     for name, format_spec in manifest["artifact_formats"].items():
@@ -428,12 +380,8 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
         assert yaml_spec["path"] == format_spec["path"]
         assert yaml_spec["artifact_type"] == format_spec["artifact_type"]
         assert yaml_spec["frame_role"] == format_spec["frame_role"]
-        assert tuple(yaml_spec.get("required_fields") or ()) == tuple(
-            format_spec.get("required_fields") or ()
-        )
-        assert tuple(yaml_spec.get("required_metadata") or ()) == tuple(
-            format_spec.get("required_metadata") or ()
-        )
+        assert tuple(yaml_spec.get("required_fields") or ()) == tuple(format_spec.get("required_fields") or ())
+        assert tuple(yaml_spec.get("required_metadata") or ()) == tuple(format_spec.get("required_metadata") or ())
 
     for name, interface in manifest["algorithm_interfaces"].items():
         yaml_spec = contract["algorithm_interfaces"][name]
@@ -443,13 +391,9 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
         assert yaml_spec["map_dependency"] == interface["map_dependency"]
 
     assert {
-        name: tuple(interfaces)
-        for name, interfaces in contract["runtime_data_flow_stage_algorithm_interfaces"].items()
+        name: tuple(interfaces) for name, interfaces in contract["runtime_data_flow_stage_algorithm_interfaces"].items()
     } == {
-        name: tuple(interfaces)
-        for name, interfaces in manifest[
-            "runtime_data_flow_stage_algorithm_interfaces"
-        ].items()
+        name: tuple(interfaces) for name, interfaces in manifest["runtime_data_flow_stage_algorithm_interfaces"].items()
     }
 
     for name, source in manifest["data_sources"].items():
@@ -459,12 +403,8 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
         assert tuple(yaml_spec["normalized_outputs"]) == tuple(source["normalized_outputs"])
         assert yaml_spec["command_sink"] == source["command_sink"]
         assert tuple(yaml_spec["source_outputs"]) == tuple(source["source_outputs"])
-        assert tuple(yaml_spec["algorithm_entry_outputs"]) == tuple(
-            source["algorithm_entry_outputs"]
-        )
-        assert tuple(yaml_spec["algorithm_context_outputs"]) == tuple(
-            source["algorithm_context_outputs"]
-        )
+        assert tuple(yaml_spec["algorithm_entry_outputs"]) == tuple(source["algorithm_entry_outputs"])
+        assert tuple(yaml_spec["algorithm_context_outputs"]) == tuple(source["algorithm_context_outputs"])
         assert yaml_spec.get("lidar_extrinsic_profile") == source["lidar_extrinsic_profile"]
         assert yaml_spec["slam_source"] == source["slam_source"]
         assert yaml_spec["localization_source"] == source["localization_source"]
@@ -472,14 +412,8 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
 
     for name, aliases in manifest["adapter_aliases"].items():
         yaml_aliases = contract["adapter_aliases"][name]
-        expected = {
-            item["source"]: (item["target"], item["msg_format"], item["scope"])
-            for item in aliases
-        }
-        observed = {
-            item["source"]: (item["target"], item["msg_format"], item["scope"])
-            for item in yaml_aliases
-        }
+        expected = {item["source"]: (item["target"], item["msg_format"], item["scope"]) for item in aliases}
+        observed = {item["source"]: (item["target"], item["msg_format"], item["scope"]) for item in yaml_aliases}
         assert observed == expected
 
     for name, binding in manifest["profile_data_sources"].items():
@@ -490,14 +424,8 @@ def test_topic_contract_yaml_mirrors_runtime_interface_manifest():
 
     for name, aliases in manifest["adapter_relays"].items():
         yaml_aliases = contract["adapter_relays"][name]
-        expected = {
-            item["source"]: (item["target"], item["msg_format"], item["scope"])
-            for item in aliases
-        }
-        observed = {
-            item["source"]: (item["target"], item["msg_format"], item["scope"])
-            for item in yaml_aliases
-        }
+        expected = {item["source"]: (item["target"], item["msg_format"], item["scope"]) for item in aliases}
+        observed = {item["source"]: (item["target"], item["msg_format"], item["scope"]) for item in yaml_aliases}
         assert observed == expected
 
 
@@ -530,23 +458,14 @@ def test_travexplorer_adoption_doc_preserves_module_first_boundary():
 def test_runtime_contract_references_declared_topics_formats_and_artifacts():
     manifest = runtime_contract_manifest()
     declared_topics = {
-        value
-        for value in manifest["topics"].values()
-        if isinstance(value, str) and value.startswith("/")
+        value for value in manifest["topics"].values() if isinstance(value, str) and value.startswith("/")
     }
     declared_artifacts = set(manifest["artifact_formats"])
     declared_formats = set(manifest["message_formats"])
-    topic_format_map = {
-        topic: tuple(formats)
-        for topic, formats in manifest["topic_formats"].items()
-    }
+    topic_format_map = {topic: tuple(formats) for topic, formats in manifest["topic_formats"].items()}
 
     def _format_is_declared(format_name: str) -> bool:
-        return (
-            format_name in declared_formats
-            or format_name == "service"
-            or "/msg/" in format_name
-        )
+        return format_name in declared_formats or format_name == "service" or "/msg/" in format_name
 
     for name, interface in manifest["algorithm_interfaces"].items():
         for topic in tuple(interface["inputs"]) + tuple(interface["outputs"]):
@@ -623,15 +542,8 @@ def test_all_product_data_sources_reach_same_navigation_algorithm_entry_topics()
 def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placeholders():
     for name in DATA_SOURCE_CONTRACTS:
         stages = resolved_runtime_data_flow(name)
-        assert [stage.name for stage in stages] == [
-            stage["name"]
-            for stage in manifest_stages()
-        ]
-        tokens = [
-            token
-            for stage in stages
-            for token in (*stage.inputs, *stage.outputs)
-        ]
+        assert [stage.name for stage in stages] == [stage["name"] for stage in manifest_stages()]
+        tokens = [token for stage in stages for token in (*stage.inputs, *stage.outputs)]
         assert not any(token.startswith("source:data_source.") for token in tokens), name
         assert not any(token.startswith("sink:data_source.") for token in tokens), name
 
@@ -642,12 +554,9 @@ def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placehol
         TOPICS.lidar_scan,
         TOPICS.imu,
     )
-    assert real["command_boundary"].outputs == ("hardware_driver_after_cmd_vel_mux",)
+    assert real["command_boundary"].outputs == ("driver",)
 
-    mujoco_live = {
-        stage.name: stage
-        for stage in resolved_runtime_data_flow("mujoco_fastlio2_live")
-    }
+    mujoco_live = {stage.name: stage for stage in resolved_runtime_data_flow("mujoco_fastlio2_live")}
     assert mujoco_live["endpoint_adapter"].inputs == (
         TOPICS.raw_lidar_points,
         TOPICS.raw_imu,
@@ -659,10 +568,7 @@ def test_resolved_runtime_data_flow_expands_endpoint_boundaries_without_placehol
     )
     assert mujoco_live["command_boundary"].outputs == ("mujoco_velocity_adapter",)
 
-    gazebo = {
-        stage.name: stage
-        for stage in resolved_runtime_data_flow("gazebo_industrial")
-    }
+    gazebo = {stage.name: stage for stage in resolved_runtime_data_flow("gazebo_industrial")}
     assert gazebo["endpoint_adapter"].inputs == (
         "/model/thunder/odometry",
         "/lingtu/gazebo/raw/lidar_points",
@@ -814,8 +720,8 @@ def test_src_mujoco_bridges_use_runtime_contract_frames():
     assert 'MUJOCO_BODY_FRAME_ID = FRAME_LINKS["odom_to_body"].child' in sensor_bridge
     assert "msg.header.frame_id = MUJOCO_ODOM_FRAME_ID" in sensor_bridge
     assert "msg.child_frame_id = MUJOCO_BODY_FRAME_ID" in sensor_bridge
-    assert "parent=FRAME_LINKS[\"odom_to_body\"].parent" in sensor_bridge
-    assert "child=FRAME_LINKS[\"odom_to_body\"].child" in sensor_bridge
+    assert 'parent=FRAME_LINKS["odom_to_body"].parent' in sensor_bridge
+    assert 'child=FRAME_LINKS["odom_to_body"].child' in sensor_bridge
     assert "FRAMES.odom" not in sensor_bridge
     assert "FRAMES.body" not in sensor_bridge
 
@@ -834,6 +740,7 @@ def test_src_mujoco_bridges_use_runtime_contract_frames():
     assert "frame_id=MUJOCO_MODULE_CAMERA_FRAME_ID" in driver
     assert "FRAMES.odom" not in driver
     assert "FRAMES.body" not in driver
+
 
 def test_gazebo_bridge_config_exposes_lingtu_runtime_topics():
     cfg = GazeboBridgeConfig(world_name="test_world", robot_name="thunder")
@@ -973,13 +880,10 @@ def test_gazebo_proxy_model_matches_bridge_frame_and_topic_contract():
     tree = ET.parse(model_path)
     root = tree.getroot()
     text = model_path.read_text(encoding="utf-8")
-    link_names = {
-        elem.attrib.get("name")
-        for elem in root.findall(".//link")
-    }
+    link_names = {elem.attrib.get("name") for elem in root.findall(".//link")}
 
     assert {"base_link", "lidar_link", "camera_link"} <= link_names
-    assert 'front_marker_visual' in text
+    assert "front_marker_visual" in text
     assert 'name="gz::sim::systems::DiffDrive"' in text
     assert 'type="gpu_lidar"' in text
     assert "<samples>16</samples>" in text
@@ -1153,10 +1057,10 @@ def test_tf_contract_smoke_is_read_only_and_checks_runtime_chain():
     assert "--require-camera" in smoke
     assert "--json-out" in smoke
     assert "required_observations_ready" in smoke
-    assert "lookup_transform(\"map\", \"odom\"" in smoke
-    assert "lookup_transform(\"odom\", \"body\"" in smoke
-    assert "lookup_transform(\"body\", \"lidar_link\"" in smoke
-    assert "lookup_transform(\"body\", \"camera_link\"" in smoke
+    assert 'lookup_transform("map", "odom"' in smoke
+    assert 'lookup_transform("odom", "body"' in smoke
+    assert 'lookup_transform("body", "lidar_link"' in smoke
+    assert 'lookup_transform("body", "camera_link"' in smoke
     assert "create_publisher" not in smoke
     assert '"/nav/cmd_vel"' not in smoke
     assert '"/nav/goal_pose"' not in smoke
@@ -1271,7 +1175,7 @@ def test_gazebo_nav_loop_gate_publishes_only_goal_and_checks_motion():
     assert "cmd_vel_angular_z_abs_max" in smoke
     assert "stop_max" in smoke
     assert "goal_pub.publish(goal)" in smoke
-    assert "create_publisher(PoseStamped, \"/nav/goal_pose\"" in smoke
+    assert 'create_publisher(PoseStamped, "/nav/goal_pose"' in smoke
     assert "create_publisher(Twist" not in smoke
     assert "--check-nav-loop" in gate
     assert "--check-cumulative-map" in gate
@@ -1330,11 +1234,14 @@ def test_gazebo_industrial_demo_uses_lingtu_module_stack_navigation():
     demo = _read("sim/scripts/launch_lingtu_gazebo_industrial_demo.sh")
 
     assert "gazebo_lingtu_stack.py" in demo
-    assert "--profile \"$LINGTU_PROFILE\"" in demo
-    assert "sim_navigation.launch.py" not in demo.split("start_demo() {", 1)[1].split(
-        "stop_demo() {",
-        1,
-    )[0]
+    assert '--profile "$LINGTU_PROFILE"' in demo
+    assert (
+        "sim_navigation.launch.py"
+        not in demo.split("start_demo() {", 1)[1].split(
+            "stop_demo() {",
+            1,
+        )[0]
+    )
     assert "mapping_source" in frontier_smoke
     assert "sensor_map_area_delta_m2" in frontier_smoke
     assert "lidar_map_updates" in frontier_smoke
@@ -1400,7 +1307,7 @@ def test_gazebo_industrial_demo_uses_lingtu_module_stack_navigation():
     assert "--frontier-tomogram-out" in gate
     assert "explored_map.pcd" in gate
     assert "tomogram.pickle" in gate
-    assert "scripts\" / \"planning\" / \"plan_preview.py" in gate
+    assert 'scripts" / "planning" / "plan_preview.py' in gate
     assert '"pct"' in gate
     assert '"--internal-only"' in gate
     assert '"--strict"' in gate

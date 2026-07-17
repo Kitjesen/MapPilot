@@ -86,12 +86,9 @@ Rules:
   `localization_adapter=cpp_slam_status` (C++ SLAM status/localization
   ingress) and `native_navigation_endpoint=lingtu-nav-dds` (native DDS
   goal/path/cmd_vel exchange); neither uses an LCM adapter.
-- LCM `nav_out_adapter`/`nav_in_adapter` Module implementations were removed;
-  `src/runtime/profiles/binding_policy.py` no longer has an
-  `navigation_output_uses_lcm`/`navigation_input_uses_lcm` resolution path
-  (only ROS2 nav-bridge selectors resolve there today). Native DDS
-  (`lingtu-nav-dds`) is the only in-graph-replacement path for endpoint
-  goal/path/cmd_vel exchange.
+- Python `nav.in`/`nav.out` DDS and LCM Module implementations were removed,
+  together with their Blueprint assembly and run-spec fields. Native C++ DDS
+  (`lingtu-nav-dds`) is the only field goal/path/cmd_vel process boundary.
 - `localization_adapter=lcm_endpoint` remains a registered compat backend
   (`src/runtime/adapters/lcm/localization_adapter.py`) for Thunder LCM
   odometry, map cloud, registered cloud, and health streams, but no current
@@ -151,22 +148,15 @@ Rules:
   `lingtu-slam-dds` C++ service status/health stream.
   `src/runtime/adapters/dds/localization_adapter.py` (`dds_endpoint` backend)
   is a separate, generic typed-DDS localization/map bridge available for
-  other endpoint compositions. `src/runtime/adapters/lcm/localization_adapter.py`
-  keeps the legacy `SlamBridgeModule` blueprint alias and `lcm_endpoint`
-  backend only as a compat/smoke-test path; no current catalog endpoint
-  selects it.
+  other endpoint compositions. Legacy LCM/ROS localization aliases are no
+  longer product entry points; no current catalog endpoint selects them.
 - The canonical `thunder_field` navigation goal/path/cmd_vel exchange is the
   standalone native `lingtu-nav-dds` C++ service
   (`native_navigation_endpoint=lingtu-nav-dds`), not a Python adapter module.
-- The LCM `nav.out` (global path, local path, active waypoint, muxed command
-  velocity egress) and `nav.in` (goal, cancel, semantic instruction ingress)
-  Module adapters described in earlier revisions of this plan
-  (`lcm_nav_output`, `lcm_nav_input`) have been removed; there is no
-  `src/runtime/adapters/lcm/nav_output.py` or `nav_input.py` in the current
-  tree, and `src/runtime/profiles/binding_policy.py` only resolves ROS2
-  nav-bridge selectors (`navigation_output_uses_ros2`,
-  `navigation_input_uses_ros2`) today, with no LCM equivalent. Native DDS is
-  the only supported in-graph replacement for endpoint nav egress/ingress.
+- Earlier Python `nav.out` and `nav.in` adapters have been removed across DDS,
+  LCM, Blueprint assembly, static profile graphs, and runtime run specs.
+  Legacy selector names are recognized only by architecture validation so an
+  old config fails explicitly instead of silently restoring a second writer.
 - Standalone Thunder endpoint processes should use the typed DDS C++ endpoint
   binaries as the primary path. `src/runtime/adapters/lcm/endpoint_service.py`
   and the runnable `src/runtime/adapters/lcm/endpoint_runner.py` entrypoint
@@ -238,19 +228,18 @@ Contract:
   Layer above). The current `thunder_field` catalog entry instead routes
   goal/path/cmd_vel through the standalone native `lingtu-nav-dds` C++
   service, so no Python nav-egress module is wired in the graph at all.
-- The endpoint process runs separately through
-  `scripts/deploy/thunder/run_dds_endpoint_service.py` and the
-  `lingtu-thunder-dds-endpoint.service` systemd unit (typed DDS, canonical for
-  field deployment). `scripts/deploy/thunder/run_lcm_endpoint_service.py`
+- The product command sink runs as the native C++ `lingtu-driver.service`.
+  `scripts/deploy/thunder/run_dds_endpoint_service.py` and
+  `lingtu-thunder-dds-endpoint.service` remain Python compatibility tools.
+  `scripts/deploy/thunder/run_lcm_endpoint_service.py`
   (`python -m runtime.adapters.lcm.endpoint_runner`) remains available as a
   standalone script for LCM compatibility/smoke/replay checks only; there is
   no corresponding LCM systemd unit in the current tree. Real sensor/SLAM
   ownership attaches as a source plugin at this endpoint boundary, not inside
   normal LingTu modules.
-- The default endpoint command source is `thunder_brainstem`. It owns the
-  Brainstem motion sink only. The default service now names the product source
-  group `thunder_field`, which expands to that sink and optional configured
-  no-ROS localization/sensor providers.
+- The product `driver` consumes `rt/nav/cmd_vel` and owns only the Brainstem
+  motion sink. It validates body frame and finite values, applies the command
+  watchdog, and never enables motors or changes posture.
 - `lingtu-thunder-dds-endpoint.service` uses `LINGTU_ENDPOINT_SOURCES` for the
   comma-separated endpoint source list and keeps `LINGTU_ENDPOINT_SOURCE` only
   as a compatibility fallback.
@@ -261,7 +250,7 @@ Contract:
 - `tools/validate/validate_thunder_field_deployment.py` is the deployment
   gate for the default endpoint path. It checks the resolved `thunder-nav`
   runtime spec, endpoint-only graph shape, `thunder_field_dds_v1` DDS
-  endpoint contract, the `lingtu-thunder-dds-endpoint.service` systemd unit,
+  endpoint contract, the `lingtu-driver.service` systemd unit,
   and deploy script defaults.
 - Cross-platform endpoint smoke test (LCM compat path, no ROS/DDS required):
   `python scripts/deploy/thunder/run_lcm_endpoint_service.py --transport local --source smoke --once --json`.
@@ -292,6 +281,7 @@ Contract:
   in `src/runtime/adapters/native/localization_adapter.py`) for C++ SLAM
   status and localization ingress.
 - Use `lingtu-nav-dds` for native navigation goal/path/cmd_vel exchange.
+- Use `lingtu-driver` as the only product `/nav/cmd_vel` hardware consumer.
 - Keep `command_output_mode=endpoint_only` for Thunder endpoints so the
   module graph has one command sink and no duplicate in-process hardware
   driver.

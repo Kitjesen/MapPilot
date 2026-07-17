@@ -61,7 +61,7 @@ _NAVIGATION_CONFIG_KEYS = (
 
 def navigation_config(
     planner_backend: str = "octoplanner3d",
-    tomogram: str = "",
+    map_path: str = "",
     **config,
 ) -> dict:
     """Return Navigation constructor kwargs without resolving classes."""
@@ -69,7 +69,7 @@ def navigation_config(
     nav_config = {key: config[key] for key in _NAVIGATION_CONFIG_KEYS if key in config}
     return {
         "planner": planner_backend,
-        "tomogram": tomogram,
+        "map_path": map_path,
         **nav_config,
     }
 
@@ -78,20 +78,15 @@ def add_navigation_core(
     bp: Blueprint,
     *,
     planner_backend: str = "octoplanner3d",
-    tomogram: str = "",
+    map_path: str = "",
     **config,
 ) -> Blueprint:
     """Add the mission/navigation Module to a Blueprint."""
 
-    Navigation = stack_module(
-        "navigation",
-        "default",
-        seed_group="navigation",
-        fallback="nav.mission.navigation.Navigation",
-    )
+    Navigation = stack_module("navigation", "default", seed_group="navigation", fallback="nav.navigation.Navigation")
     bp.add(
         Navigation,
         alias="nav.mission",
-        **navigation_config(planner_backend, tomogram, **config),
+        **navigation_config(planner_backend, map_path, **config),
     )
     return bp

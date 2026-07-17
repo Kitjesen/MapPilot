@@ -1,0 +1,16 @@
+%YAML:1.0
+# LingTu S100P camera intrinsics (factory defaults from robot_config.yaml)
+# These should be replaced with actual calibration results when available.
+camera_matrix: !!opencv-matrix
+  rows: 3
+  cols: 3
+  dt: d
+  data: [615.0, 0.0, 320.0,
+         0.0, 615.0, 240.0,
+         0.0,   0.0,   1.0]
+
+dist_coeffs: !!opencv-matrix
+  rows: 1
+  cols: 5
+  dt: d
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]

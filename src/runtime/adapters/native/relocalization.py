@@ -7,7 +7,12 @@ import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
-from runtime.adapters.native.map_save import _control_binary, _last_json_line
+from localization.slam_control import (
+    last_json_object as _last_json_line,
+)
+from localization.slam_control import (
+    slam_control_binary as _control_binary,
+)
 from runtime.relocalization import RelocalizationResult
 
 
@@ -53,9 +58,7 @@ def _run_control(
 
     payload = _last_json_line(completed.stdout)
     success = completed.returncode == 0 and payload.get("success") is True
-    quality = _float_or_none(
-        payload.get("relocalization_quality", payload.get("quality"))
-    )
+    quality = _float_or_none(payload.get("relocalization_quality", payload.get("quality")))
     message = str(
         payload.get("last_relocalization_message")
         or payload.get("message")

@@ -1,24 +1,20 @@
-"""GnssModule â€?bridges WTRTK-980 GNSS into the LingTu Module pipeline.
+"""Compatibility GNSS module for in-process tests and legacy adapters.
 
 Architecture
 ------------
     WTRTK-980 (UART)
-         â†?
-    GnssSerialDriver (pyserial + NMEA, default product path)
-         â†?
-    direct NMEA fixes, or /gps/fix DDS compatibility samples
-         â†?
-    GnssModule (this file)
-      â”œâ”€ serial or DDS fix ingest
-      â”œâ”€ LLA â†?local ENU conversion (against map origin)
-      â”œâ”€ Quality filter (fix_type, sat count, age)
-      â””â”€ publish {gnss_fix, gnss_status, gnss_odom}
-         â†?
-    SLAM backend (fastlio2_gnss) â€?uses gnss_odom as global PGO factor
+         |
+    C++ lingtu_gnss_dds (native product path)
+         |
+    rt/gnss/fix, rt/gnss/status, optional rt/gnss/odom
+         |
+    DDS/replay/compat adapters, or this Python module in non-product profiles
+         |
+    SLAM backend (fastlio2_gnss) uses gnss_odom as global PGO factor
 
-Runs gracefully when pyserial/cyclonedds is absent (stub mode for Windows dev
-and unit tests). Real robot products default to direct UART; DDS ``/gps/fix``
-remains a compatibility fallback.
+This Python module remains for tests, replay, hw-bridge compatibility, and
+legacy in-process adapters. Real robot products should use the C++ native DDS
+service in ``src/drivers/real/gnss``.
 
 Usage::
 
@@ -38,6 +34,13 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from runtime.contracts import (
+    GNSS_BACKEND_DDS,
+    GNSS_BACKEND_HW,
+    GNSS_BACKEND_REPLAY,
+    GNSS_BACKEND_WTRTK980,
+    GNSS_ROLE,
+)
 from runtime.module import Module
 from runtime.msgs.gnss import GnssFix, GnssFixType, GnssOdom, GnssStatus
 from runtime.registry import register
@@ -45,14 +48,14 @@ from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
 
-# WGS84 ellipsoid constants â€?used for LLAâ†’ENU conversion
-_WGS84_A = 6378137.0          # semi-major axis (m)
+# WGS84 ellipsoid constants â�?used for LLAâ†’ENU conversion
+_WGS84_A = 6378137.0  # semi-major axis (m)
 _WGS84_F = 1.0 / 298.257223563  # flattening
 _WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)  # first eccentricity squared
 
 
 # ---------------------------------------------------------------------------
-# WGS84 â†?ENU math (self-contained, no pyproj dependency)
+# WGS84 â�?ENU math (self-contained, no pyproj dependency)
 # ---------------------------------------------------------------------------
 
 
@@ -70,8 +73,12 @@ def lla_to_ecef(lat_deg: float, lon_deg: float, alt_m: float) -> tuple[float, fl
 
 
 def ecef_to_enu(
-    x: float, y: float, z: float,
-    ref_lat_deg: float, ref_lon_deg: float, ref_alt_m: float,
+    x: float,
+    y: float,
+    z: float,
+    ref_lat_deg: float,
+    ref_lon_deg: float,
+    ref_alt_m: float,
 ) -> tuple[float, float, float]:
     """Convert ECEF point to local ENU tangent plane at reference origin."""
     ref_x, ref_y, ref_z = lla_to_ecef(ref_lat_deg, ref_lon_deg, ref_alt_m)
@@ -93,10 +100,14 @@ def ecef_to_enu(
 
 
 def lla_to_enu(
-    lat: float, lon: float, alt: float,
-    ref_lat: float, ref_lon: float, ref_alt: float,
+    lat: float,
+    lon: float,
+    alt: float,
+    ref_lat: float,
+    ref_lon: float,
+    ref_alt: float,
 ) -> tuple[float, float, float]:
-    """Direct LLA â†?ENU conversion against reference origin."""
+    """Direct LLA â�?ENU conversion against reference origin."""
     x, y, z = lla_to_ecef(lat, lon, alt)
     return ecef_to_enu(x, y, z, ref_lat, ref_lon, ref_alt)
 
@@ -108,13 +119,13 @@ def lla_to_enu(
 
 @dataclass
 class QualityConfig:
-    """GNSS quality gate parameters â€?all fixes below these thresholds
+    """GNSS quality gate parameters â�?all fixes below these thresholds
     are down-weighted or dropped before reaching the fusion backend."""
 
     min_sat_used: int = 8
     max_hdop: float = 2.5
     max_age_s: float = 2.0
-    require_fix_type: int = 1     # minimum accepted fix type (1=SINGLE, 4=RTK_FIX)
+    require_fix_type: int = 1  # minimum accepted fix type (1=SINGLE, 4=RTK_FIX)
     allow_float: bool = True
 
 
@@ -164,11 +175,7 @@ class MapOrigin:
 
     @property
     def is_initialised(self) -> bool:
-        return (
-            self.lat is not None
-            and self.lon is not None
-            and self.alt is not None
-        )
+        return self.lat is not None and self.lon is not None and self.alt is not None
 
     def initialise(self, lat: float, lon: float, alt: float) -> None:
         self.lat = lat
@@ -182,7 +189,7 @@ class MapOrigin:
 
 
 # ---------------------------------------------------------------------------
-# DDS IDL types (lazy load â€?only if cyclonedds is available)
+# DDS IDL types (lazy load â�?only if cyclonedds is available)
 # ---------------------------------------------------------------------------
 
 
@@ -228,27 +235,31 @@ def _try_load_dds_types():
 # ---------------------------------------------------------------------------
 
 
-@register("gnss", "wtrtk980", description="WTRTK-980 GNSS bridge (UM980 chipset)")
+@register("gnss", "compat", description="compat in-process GNSS module")
+@register("gnss", "dds", description="compat DDS GNSS reader")
+@register("gnss", "replay", description="compat replay GNSS source")
+@register("gnss", "hw", description="compat hw GNSS bridge target")
 class GnssModule(Module, layer=1):
     """Bridges GNSS fixes into the Module pipeline.
 
-    Real robot products read the configured UART through ``GnssSerialDriver``.
-    DDS ``/gps/fix`` subscription is retained as a ROS2 compatibility fallback.
+    Real robot products read the configured UART through the C++ native
+    ``lingtu_gnss_dds`` service. DDS ``/gps/fix`` subscription and injected
+    fixes are retained as compatibility and diagnostic paths only.
 
     Windows / offline: starts in stub mode (no DDS, no data published).
     Unit tests inject fixes directly via :meth:`inject_fix`.
     """
 
     # â”€â”€ outputs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    gnss_fix:    Out[GnssFix]
+    gnss_fix: Out[GnssFix]
     gnss_status: Out[GnssStatus]
-    gnss_odom:   Out[GnssOdom]
-    alive:       Out[bool]
+    gnss_odom: Out[GnssOdom]
+    alive: Out[bool]
 
     # â”€â”€ inputs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    # RTCM corrections from NtripClientModule â€?auto-wired, forwarded to
+    # RTCM corrections from NtripClientModule â�?auto-wired, forwarded to
     # the serial driver so the receiver can reach RTK_FIXED.
-    rtcm_bytes:  In[bytes]
+    rtcm_bytes: In[bytes]
 
     def __init__(
         self,
@@ -268,6 +279,7 @@ class GnssModule(Module, layer=1):
         status_rate_hz: float = 2.0,
         serial_port: str | None = None,
         serial_baud: int = 115200,
+        source_backend: str | None = None,
         **kw: Any,
     ) -> None:
         super().__init__(**kw)
@@ -279,7 +291,9 @@ class GnssModule(Module, layer=1):
         self._serial_baud = serial_baud
 
         self._origin = MapOrigin(
-            lat=origin_lat, lon=origin_lon, alt=origin_alt,
+            lat=origin_lat,
+            lon=origin_lon,
+            alt=origin_alt,
             auto_init=auto_init_origin,
         )
         self._quality = QualityConfig(
@@ -300,6 +314,8 @@ class GnssModule(Module, layer=1):
         self._status_thread: threading.Thread | None = None
         self._status_rate_hz = status_rate_hz
         self._shutdown_event = threading.Event()
+        self._source = source_backend or (GNSS_BACKEND_WTRTK980 if serial_port else GNSS_BACKEND_DDS)
+        self._last_error = ""
 
         # most recent fix (for status publishing)
         self._last_fix: GnssFix | None = None
@@ -307,21 +323,34 @@ class GnssModule(Module, layer=1):
     # -- lifecycle ----------------------------------------------------------
 
     def setup(self) -> None:
-        """Try serial driver first (if configured), then DDS, then stub.
-
-        Serial is preferred because it doesn't need a separate ROS2
-        GNSS driver service â€?just pyserial reading the UART directly.
-        """
-        # RTCM forwarding: subscribe regardless of transport â€?when NTRIP
-        # module publishes, we forward bytes to the serial driver.
+        """Start the selected GNSS source, or stay idle for injected fixes."""
+        # RTCM forwarding: subscribe regardless of transport; when NTRIP
+        # publishes, direct serial mode forwards bytes to the receiver.
         self.rtcm_bytes.subscribe(self._on_rtcm_bytes)
 
+        if self._source == GNSS_BACKEND_HW:
+            logger.info("GnssModule: source=hw; waiting for hw bridge fixes")
+            return
+        if self._source == GNSS_BACKEND_REPLAY:
+            logger.info("GnssModule: source=replay; waiting for injected replay fixes")
+            return
+        if self._source == GNSS_BACKEND_WTRTK980:
+            self._last_error = "native_gnss_service_required"
+            logger.info(
+                "GnssModule: source=wtrtk980 is native-service owned; start lingtu_gnss_dds instead of Python serial"
+            )
+            return
+        if self._source == GNSS_BACKEND_DDS:
+            if self._try_start_dds():
+                return
+            logger.info("GnssModule: DDS unavailable; stub mode")
+            return
         if self._serial_port:
             if self._try_start_serial():
                 return
-        if self._try_start_dds():
+            logger.info("GnssModule: serial unavailable; stub mode")
             return
-        logger.info("GnssModule: no serial and no DDS â€?stub mode")
+        logger.info("GnssModule: no serial configured; stub mode")
 
     def _on_rtcm_bytes(self, data: bytes) -> None:
         """Forward RTCM corrections to the receiver via serial.
@@ -341,6 +370,7 @@ class GnssModule(Module, layer=1):
         """Start direct serial NMEA reader as DDS fallback."""
         try:
             from localization.gnss_serial_driver import GnssSerialDriver
+
             driver = GnssSerialDriver(
                 port=self._serial_port,
                 baud=self._serial_baud,
@@ -350,11 +380,13 @@ class GnssModule(Module, layer=1):
                 self._serial_driver = driver
                 logger.info(
                     "GnssModule: serial driver started on %s @ %d baud",
-                    self._serial_port, self._serial_baud,
+                    self._serial_port,
+                    self._serial_baud,
                 )
                 return True
             return False
         except Exception as e:
+            self._last_error = str(e)
             logger.warning("GnssModule: serial driver failed: %s", e)
             return False
 
@@ -363,12 +395,11 @@ class GnssModule(Module, layer=1):
         fix_type = _try_load_dds_types()
         if fix_type is None:
             logger.info(
-                "GnssModule: cyclonedds not available â€?running in stub mode "
-                "(inject fixes via inject_fix for testing)"
+                "GnssModule: cyclonedds not available â�?running in stub mode (inject fixes via inject_fix for testing)"
             )
             return False
         try:
-            from runtime.dds import DDSReader  # reuse existing reader
+            from runtime.adapters.dds.reader import DDSReader  # reuse existing reader
 
             reader = DDSReader(domain_id=0)
             reader.subscribe(self._fix_topic, fix_type, self._on_dds_fix)
@@ -377,12 +408,15 @@ class GnssModule(Module, layer=1):
                 return False
             reader.spin_background()
             self._dds_reader = reader
+            self._source = GNSS_BACKEND_DDS
             logger.info(
                 "GnssModule: subscribed to %s via DDS (receiver=%s)",
-                self._fix_topic, self._device_model,
+                self._fix_topic,
+                self._device_model,
             )
             return True
         except Exception as e:
+            self._last_error = str(e)
             logger.warning("GnssModule: DDS setup failed: %s", e)
             return False
 
@@ -390,10 +424,12 @@ class GnssModule(Module, layer=1):
         super().start()
         self._running = True
         self.alive.publish(True)
-        # periodic status publisher â€?even without DDS, reports link_ok=False
+        # periodic status publisher â�?even without DDS, reports link_ok=False
         self._shutdown_event.clear()
         self._status_thread = threading.Thread(
-            target=self._status_loop, daemon=True, name="gnss-status",
+            target=self._status_loop,
+            daemon=True,
+            name="gnss-status",
         )
         self._status_thread.start()
 
@@ -424,7 +460,7 @@ class GnssModule(Module, layer=1):
         try:
             # Convert NavSatStatus.status (-1=no fix, 0=SINGLE, 1=DGPS, 2=RTK)
             # into our GnssFixType. The ironoa driver maps Unicore PVTSLN into
-            # these values â€?see its README for exact mapping.
+            # these values â�?see its README for exact mapping.
             status_int = int(getattr(msg.status, "status", -1))
             if status_int < 0:
                 fix_type = GnssFixType.NO_FIX
@@ -451,7 +487,7 @@ class GnssModule(Module, layer=1):
                 alt=float(msg.altitude),
                 fix_type=fix_type,
                 covariance=cov_tuple,
-                num_sat=0,             # not in standard NavSatFix
+                num_sat=0,  # not in standard NavSatFix
                 num_sat_used=0,
                 seq=self._seq,
                 ts=ts,
@@ -478,27 +514,24 @@ class GnssModule(Module, layer=1):
         self.gnss_fix.publish(fix)
 
         if weight <= 0.0:
-            # Fix too poor â€?publish status but no odom
+            # Fix too poor â�?publish status but no odom
             return
 
         # Auto-initialise origin from first good fix
         if not self._origin.is_initialised:
             if not self._origin.auto_init:
-                logger.warning(
-                    "GnssModule: fix received but no origin set and auto_init=False"
-                )
+                logger.warning("GnssModule: fix received but no origin set and auto_init=False")
                 return
             self._origin.initialise(fix.lat, fix.lon, fix.alt)
             logger.info(
-                "GnssModule: map origin auto-initialised to "
-                "(%.7f, %.7f, %.2f). Pin this in robot_config.yaml.",
-                fix.lat, fix.lon, fix.alt,
+                "GnssModule: map origin auto-initialised to (%.7f, %.7f, %.2f). Pin this in robot_config.yaml.",
+                fix.lat,
+                fix.lon,
+                fix.alt,
             )
 
-        # LLA â†?ENU
-        e, n, u = lla_to_enu(
-            fix.lat, fix.lon, fix.alt, *self._origin.as_tuple()
-        )
+        # LLA â�?ENU
+        e, n, u = lla_to_enu(fix.lat, fix.lon, fix.alt, *self._origin.as_tuple())
 
         # Covariance: extract diagonal, scale by inverse of weight
         cov_e = fix.covariance[0] / max(weight, 1e-3)
@@ -506,9 +539,15 @@ class GnssModule(Module, layer=1):
         cov_u = fix.covariance[8] / max(weight, 1e-3)
 
         odom = GnssOdom(
-            east=e, north=n, up=u,
-            ve=0.0, vn=0.0, vu=0.0,  # WTRTK-980 velocity comes from separate topic
-            cov_e=cov_e, cov_n=cov_n, cov_u=cov_u,
+            east=e,
+            north=n,
+            up=u,
+            ve=0.0,
+            vn=0.0,
+            vu=0.0,  # WTRTK-980 velocity comes from separate topic
+            cov_e=cov_e,
+            cov_n=cov_n,
+            cov_u=cov_u,
             fix_type=fix.fix_type,
             ts=fix.ts,
             frame_id=self._map_frame,
@@ -548,8 +587,23 @@ class GnssModule(Module, layer=1):
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
         info["device_model"] = self._device_model
+        info["role"] = GNSS_ROLE
+        info["backend"] = self._source
+        info["source"] = self._source
+        info["dataflow_owner"] = GNSS_ROLE
+        info["product_owner"] = "lingtu_gnss_dds" if self._source == GNSS_BACKEND_WTRTK980 else "python_compat"
+        info["python_compat"] = self._source != GNSS_BACKEND_WTRTK980
+        info["serial_port"] = self._serial_port
+        info["uses_hw_inventory"] = self._source == GNSS_BACKEND_HW
+        info["requires_hw_bridge"] = self._source == GNSS_BACKEND_HW
+        info["dds_compat_reader"] = self._source == GNSS_BACKEND_DDS
+        info["replay_source"] = self._source == GNSS_BACKEND_REPLAY
+        info["direct_serial"] = False
         info["link_ok"] = self._link_ok
         info["origin_initialised"] = self._origin.is_initialised
+        age_s = time.time() - self._last_fix_ts if self._last_fix_ts > 0 else None
+        info["stale_ms"] = None if age_s is None else int(max(age_s, 0.0) * 1000)
+        info["error"] = self._last_error
         if self._origin.is_initialised:
             info["origin"] = {
                 "lat": self._origin.lat,

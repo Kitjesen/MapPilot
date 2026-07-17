@@ -13,7 +13,7 @@ html, body, #root {
 body {
   background: #0a0e17;
   color: #e2e8f0;
-  font-family: 'Inter', 'Geist', system-ui, -apple-system, sans-serif;
+  font-family: var(--font-ui, 'Inter', 'Geist', 'Segoe UI', 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif);
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;

@@ -65,6 +65,7 @@ using lingtu::nav::endpoint::PlanDiagnostics;
 using lingtu::nav::endpoint::TransformBuffer;
 using lingtu::nav::endpoint::RigidTransform;
 using lingtu::nav::endpoint::SensorOrigin;
+using lingtu::nav::endpoint::SourceStampDecision;
 using lingtu::nav::endpoint::StatusSnapshotFileWriter;
 using lingtu::nav::endpoint::StatusWriterConfig;
 using lingtu::nav::endpoint::TeleopDiagnostics;
@@ -365,6 +366,8 @@ int main(int argc, char** argv) {
     double map_odom_epoch_start_s = 0.0;
     LocalizationHealthSample localization_health;
     double driver_control_stamp_s = 0.0;
+    SteadyClock::time_point driver_control_receive_time{};
+    bool driver_control_received = false;
     bool driver_control_ready = false;
     std::string driver_control_reason{"not_received"};
     bool driver_authority_previous = false;
@@ -492,14 +495,18 @@ int main(int argc, char** argv) {
       last_terrain_ext_s = 0.0;
       last_traversability_s = 0.0;
     };
-    auto driver_control_blocker = [&](double now_s) -> std::string {
-      if (driver_control_stamp_s <= 0.0) {
+    auto driver_control_receive_age_s = [&]() -> double {
+      if (!driver_control_received) {
+        return std::numeric_limits<double>::infinity();
+      }
+      return std::chrono::duration<double>(
+          SteadyClock::now() - driver_control_receive_time).count();
+    };
+    auto driver_control_blocker = [&]() -> std::string {
+      if (driver_control_stamp_s <= 0.0 || !driver_control_received) {
         return "driver_control_missing";
       }
-      const double age_s = now_s - driver_control_stamp_s;
-      if (age_s < -cfg.input_future_tolerance_s) {
-        return "driver_control_future";
-      }
+      const double age_s = driver_control_receive_age_s();
       if (cfg.driver_control_max_age_s > 0.0 &&
           age_s > cfg.driver_control_max_age_s) {
         return "driver_control_stale";
@@ -759,9 +766,14 @@ int main(int argc, char** argv) {
       dds.drainDriverControlState(
           [&](const lingtu_dds_DriverControlState& msg) {
             const double stamp_s = headerStampSeconds(msg.header);
-            if (!std::isfinite(stamp_s) || stamp_s <= 0.0 ||
-                (driver_control_stamp_s > 0.0 &&
-                 stamp_s + 1e-9 < driver_control_stamp_s)) {
+            const auto stamp_decision =
+                lingtu::nav::endpoint::classifySourceStamp(
+                    driver_control_stamp_s,
+                    stamp_s,
+                    nowSeconds(),
+                    cfg.input_future_tolerance_s,
+                    cfg.driver_control_max_age_s);
+            if (stamp_decision == SourceStampDecision::kReject) {
               frames.last_error = "driver_control_stamp_invalid";
               return;
             }
@@ -769,6 +781,8 @@ int main(int argc, char** argv) {
             const std::string owner = stringValue(msg.owner);
             const std::string owner_id = stringValue(msg.owner_id);
             driver_control_stamp_s = stamp_s;
+            driver_control_receive_time = SteadyClock::now();
+            driver_control_received = true;
             driver_control_reason = stringValue(msg.reason);
             driver_control_ready = msg.connected && msg.ready &&
                 msg.motors_enabled && !msg.critical_fault &&
@@ -828,7 +842,7 @@ int main(int argc, char** argv) {
           ++plan_fail_count;
           return {false, last_plan.reason};
         }
-        if (const std::string blocker = driver_control_blocker(nowSeconds());
+        if (const std::string blocker = driver_control_blocker();
             !blocker.empty()) {
           last_plan.reason = blocker;
           ++frames.goal_rejected;
@@ -1014,8 +1028,7 @@ int main(int argc, char** argv) {
               std::string("path_not_allowed_in_") + controlModeName(cfg.control_mode);
           return;
         }
-        const std::string path_driver_blocker =
-            driver_control_blocker(nowSeconds());
+        const std::string path_driver_blocker = driver_control_blocker();
         if (!path_driver_blocker.empty()) {
           ++frames.path_rejected;
           frames.last_error = path_driver_blocker;
@@ -1515,7 +1528,11 @@ int main(int argc, char** argv) {
       input_snapshot.traversability_generation = traversability_generation;
       input_snapshot.localization_health_stamp_s = localization_health.stamp_s;
       input_snapshot.localization_health_generation = localization_health_generation;
-      input_snapshot.driver_control_stamp_s = driver_control_stamp_s;
+      const double driver_receive_age_s = driver_control_receive_age_s();
+      input_snapshot.driver_control_stamp_s =
+          driver_control_received && std::isfinite(driver_receive_age_s)
+          ? input_now - std::max(0.0, driver_receive_age_s)
+          : 0.0;
       input_snapshot.driver_control_generation = driver_control_generation;
       input_snapshot.odom_requires_tf = odom_requires_tf;
       input_snapshot.localization_healthy = localization_health.healthy;
@@ -1751,7 +1768,7 @@ int main(int argc, char** argv) {
           }
         }
       }
-      const std::string driver_blocker = driver_control_blocker(input_now);
+      const std::string driver_blocker = driver_control_blocker();
       const bool driver_authority_now = driver_blocker.empty();
       if (driver_authority_previous && !driver_authority_now) {
         control_authority.cancel();

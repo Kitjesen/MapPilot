@@ -18,6 +18,12 @@ public:
     BuilderStatus status() { return m_status; }
     std::shared_ptr<LidarProcessor> lidar_processor(){return m_lidar_processor;}
     std::shared_ptr<IMUProcessor> imu_processor(){return m_imu_processor;}
+    bool lastLidarUpdateAttempted() const { return m_lidar_processor->lastUpdateAttempted(); }
+    bool lastLidarUpdateAccepted() const { return m_lidar_processor->lastUpdateAccepted(); }
+    std::size_t consecutiveLidarUpdateRejections() const
+    {
+        return m_lidar_processor->consecutiveUpdateRejections();
+    }
     void saveMap(const std::string &path);
 
 private:

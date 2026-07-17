@@ -24,25 +24,28 @@ import threading
 import time
 from concurrent import futures
 
-import grpc
-from grpc import aio as grpc_aio
+import pytest
 
-import rclpy
-from rclpy.node import Node
-from nav_msgs.msg import Odometry
-from geometry_msgs.msg import TwistStamped
-from std_msgs.msg import Bool, Int8
+pytest.importorskip("grpc", reason="Integration test — requires grpc")
+pytest.importorskip("rclpy", reason="ROS2 integration test — requires rclpy")
 
 import brainstem_api as dog_msg
-
+import grpc
+import rclpy
+from geometry_msgs.msg import TwistStamped
+from grpc import aio as grpc_aio
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from std_msgs.msg import Bool, Int8
 
 # ─── Mock CMS Server ───────────────────────────────────────
+
 
 class MockCmsServicer(dog_msg.RobotControlServicer):
     """Mock brainstem CMS that records all gRPC calls."""
 
     def __init__(self):
-        self.walk_calls = []      # list of (x, y, z) tuples
+        self.walk_calls = []  # list of (x, y, z) tuples
         self.enable_count = 0
         self.standup_count = 0
         self.sitdown_count = 0
@@ -132,7 +135,7 @@ def start_mock_server(servicer, port=13199):
     async def serve():
         server = grpc_aio.server()
         dog_msg.add_RobotControlServicer_to_server(servicer, server)
-        server.add_insecure_port(f'0.0.0.0:{port}')
+        server.add_insecure_port(f"0.0.0.0:{port}")
         await server.start()
         await server.wait_for_termination()
 
@@ -148,24 +151,22 @@ def start_mock_server(servicer, port=13199):
 
 # ─── Test Harness Node ──────────────────────────────────────
 
+
 class BridgeTestNode(Node):
     def __init__(self):
-        super().__init__('bridge_test_node')
+        super().__init__("bridge_test_node")
         self._lock = threading.Lock()
 
         # Publishers
-        self.pub_cmd_vel = self.create_publisher(
-            TwistStamped, '/cmd_vel', 10)
-        self.pub_stop = self.create_publisher(Int8, '/stop', 10)
+        self.pub_cmd_vel = self.create_publisher(TwistStamped, "/cmd_vel", 10)
+        self.pub_stop = self.create_publisher(Int8, "/stop", 10)
 
         # Subscribers
         self.odom_msgs = []
         self.watchdog_msgs = []
 
-        self.create_subscription(
-            Odometry, '/Odometry', self._odom_cb, 10)
-        self.create_subscription(
-            Bool, '/driver/watchdog_active', self._wd_cb, 10)
+        self.create_subscription(Odometry, "/Odometry", self._odom_cb, 10)
+        self.create_subscription(Bool, "/driver/watchdog_active", self._wd_cb, 10)
 
     def _odom_cb(self, msg):
         with self._lock:
@@ -178,7 +179,7 @@ class BridgeTestNode(Node):
     def send_cmd_vel(self, vx, vy, wz):
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'body'
+        msg.header.frame_id = "body"
         msg.twist.linear.x = float(vx)
         msg.twist.linear.y = float(vy)
         msg.twist.angular.z = float(wz)
@@ -200,20 +201,21 @@ class BridgeTestNode(Node):
 
 # ─── Main Test ──────────────────────────────────────────────
 
+
 def main():
     MOCK_PORT = 13199
 
-    print('=' * 60)
-    print('  han_dog_bridge Integration Test (T8) — Mock CMS')
-    print('=' * 60)
+    print("=" * 60)
+    print("  han_dog_bridge Integration Test (T8) — Mock CMS")
+    print("=" * 60)
 
     # 1. Start mock CMS server
-    print('\n[Step 1] Starting mock CMS server on port', MOCK_PORT)
+    print("\n[Step 1] Starting mock CMS server on port", MOCK_PORT)
     servicer = MockCmsServicer()
     mock_loop = start_mock_server(servicer, MOCK_PORT)
 
     # 2. Start han_dog_bridge via subprocess (it's a ROS2 node)
-    print('[Step 2] Starting han_dog_bridge → localhost:', MOCK_PORT)
+    print("[Step 2] Starting han_dog_bridge → localhost:", MOCK_PORT)
 
     rclpy.init()
     test_node = BridgeTestNode()
@@ -225,10 +227,8 @@ def main():
 
     # Find han_dog_bridge.py
     bridge_paths = [
-        os.path.expanduser(
-            '~/data/SLAM/navigation/install/robot_driver/lib/robot_driver/han_dog_bridge.py'),
-        os.path.expanduser(
-            '~/data/SLAM/navigation/src/drivers/robot_driver/han_dog_bridge.py'),
+        os.path.expanduser("~/data/SLAM/navigation/install/robot_driver/lib/robot_driver/han_dog_bridge.py"),
+        os.path.expanduser("~/data/SLAM/navigation/src/drivers/robot_driver/han_dog_bridge.py"),
     ]
     bridge_path = None
     for p in bridge_paths:
@@ -237,14 +237,14 @@ def main():
             break
 
     if bridge_path is None:
-        print('[ERROR] Cannot find han_dog_bridge.py')
+        print("[ERROR] Cannot find han_dog_bridge.py")
         rclpy.shutdown()
         sys.exit(1)
 
-    print(f'  Using: {bridge_path}')
+    print(f"  Using: {bridge_path}")
 
     # Load module dynamically
-    spec = importlib.util.spec_from_file_location('han_dog_bridge', bridge_path)
+    spec = importlib.util.spec_from_file_location("han_dog_bridge", bridge_path)
     bridge_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge_mod)
 
@@ -254,28 +254,42 @@ def main():
     # We need to init it with correct params pointing to localhost
     # Use rclpy override: set params before init
     from rclpy.parameter import Parameter
+
     param_overrides = [
-        Parameter('dog_host', Parameter.Type.STRING, '127.0.0.1'),
-        Parameter('dog_port', Parameter.Type.INTEGER, MOCK_PORT),
-        Parameter('cmd_vel_timeout_ms', Parameter.Type.DOUBLE, 200.0),
-        Parameter('auto_enable', Parameter.Type.BOOL, True),
-        Parameter('auto_standup', Parameter.Type.BOOL, True),
+        Parameter("dog_host", Parameter.Type.STRING, "127.0.0.1"),
+        Parameter("dog_port", Parameter.Type.INTEGER, MOCK_PORT),
+        Parameter("cmd_vel_timeout_ms", Parameter.Type.DOUBLE, 200.0),
+        Parameter("auto_enable", Parameter.Type.BOOL, True),
+        Parameter("auto_standup", Parameter.Type.BOOL, True),
     ]
 
     # Re-init properly
     # Use rclpy.create_node alternative: just create fresh with overrides
     import subprocess
+
     # Actually, simpler: start han_dog_bridge as a subprocess with --ros-args
     bridge_proc = subprocess.Popen(
-        ['python3', bridge_path, '--ros-args',
-         '-p', 'dog_host:=127.0.0.1',
-         '-p', f'dog_port:={MOCK_PORT}',
-         '-p', 'cmd_vel_timeout_ms:=200.0',
-         '-p', 'auto_enable:=true',
-         '-p', 'auto_standup:=true',
-         '-p', 'odom_pub_rate:=10.0'],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    print(f'  Bridge PID: {bridge_proc.pid}')
+        [
+            "python3",
+            bridge_path,
+            "--ros-args",
+            "-p",
+            "dog_host:=127.0.0.1",
+            "-p",
+            f"dog_port:={MOCK_PORT}",
+            "-p",
+            "cmd_vel_timeout_ms:=200.0",
+            "-p",
+            "auto_enable:=true",
+            "-p",
+            "auto_standup:=true",
+            "-p",
+            "odom_pub_rate:=10.0",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    print(f"  Bridge PID: {bridge_proc.pid}")
 
     executor = rclpy.executors.SingleThreadedExecutor()
     executor.add_node(test_node)
@@ -285,19 +299,17 @@ def main():
     results = {}
 
     # Wait for bridge to connect to mock CMS
-    print('\n[Warmup] Waiting 5s for bridge to connect + auto enable/standup...')
+    print("\n[Warmup] Waiting 5s for bridge to connect + auto enable/standup...")
     time.sleep(5.0)
 
     # Check auto-enable and auto-standup
-    results['auto_enable'] = servicer.enable_count > 0
-    results['auto_standup'] = servicer.standup_count > 0
-    print(f'  [{"PASS" if results["auto_enable"] else "FAIL"}] auto_enable: '
-          f'{servicer.enable_count} Enable() calls')
-    print(f'  [{"PASS" if results["auto_standup"] else "FAIL"}] auto_standup: '
-          f'{servicer.standup_count} StandUp() calls')
+    results["auto_enable"] = servicer.enable_count > 0
+    results["auto_standup"] = servicer.standup_count > 0
+    print(f"  [{'PASS' if results['auto_enable'] else 'FAIL'}] auto_enable: {servicer.enable_count} Enable() calls")
+    print(f"  [{'PASS' if results['auto_standup'] else 'FAIL'}] auto_standup: {servicer.standup_count} StandUp() calls")
 
     # ── Phase 1: cmd_vel → Walk() ──
-    print('\n[Phase 1] cmd_vel → Walk() normalization (3s)...')
+    print("\n[Phase 1] cmd_vel → Walk() normalization (3s)...")
     n_before = len(servicer.get_walk_calls())
     for _ in range(30):  # 3s at 10Hz
         test_node.send_cmd_vel(0.5, 0.0, 0.1)
@@ -305,60 +317,63 @@ def main():
 
     walks = servicer.get_walk_calls()[n_before:]
     walk_received = len(walks) > 0
-    results['walk_calls_received'] = walk_received
-    print(f'  [{"PASS" if walk_received else "FAIL"}] walk_calls_received: '
-          f'{len(walks)} Walk() calls')
+    results["walk_calls_received"] = walk_received
+    print(f"  [{'PASS' if walk_received else 'FAIL'}] walk_calls_received: {len(walks)} Walk() calls")
 
     if walks:
         # Check normalization: vx=0.5 / max_linear=1.0 → nx=0.5
         last_walk = walks[-1]
         nx_correct = abs(last_walk[0] - 0.5) < 0.01
         nz_correct = abs(last_walk[2] - 0.1) < 0.01
-        results['walk_normalization'] = nx_correct and nz_correct
-        print(f'  [{"PASS" if nx_correct and nz_correct else "FAIL"}] '
-              f'walk_normalization: nx={last_walk[0]:.3f} (expect 0.5), '
-              f'nz={last_walk[2]:.3f} (expect 0.1)')
+        results["walk_normalization"] = nx_correct and nz_correct
+        print(
+            f"  [{'PASS' if nx_correct and nz_correct else 'FAIL'}] "
+            f"walk_normalization: nx={last_walk[0]:.3f} (expect 0.5), "
+            f"nz={last_walk[2]:.3f} (expect 0.1)"
+        )
     else:
-        results['walk_normalization'] = False
-        print('  [FAIL] walk_normalization: no Walk() calls')
+        results["walk_normalization"] = False
+        print("  [FAIL] walk_normalization: no Walk() calls")
 
     # ── Phase 2: Watchdog ──
-    print('\n[Phase 2] Watchdog — stop sending cmd_vel (2s)...')
+    print("\n[Phase 2] Watchdog — stop sending cmd_vel (2s)...")
     time.sleep(2.0)
 
     # Check for zero-velocity Walk calls
     recent_walks = servicer.get_walk_calls()[-10:]
-    has_zero = any(abs(w[0]) < 0.01 and abs(w[1]) < 0.01 and abs(w[2]) < 0.01
-                   for w in recent_walks)
-    results['watchdog_zero_vel'] = has_zero
-    print(f'  [{"PASS" if has_zero else "FAIL"}] watchdog_zero_vel: '
-          f'zero Walk() found in last {len(recent_walks)} calls')
+    has_zero = any(abs(w[0]) < 0.01 and abs(w[1]) < 0.01 and abs(w[2]) < 0.01 for w in recent_walks)
+    results["watchdog_zero_vel"] = has_zero
+    print(
+        f"  [{'PASS' if has_zero else 'FAIL'}] watchdog_zero_vel: zero Walk() found in last {len(recent_walks)} calls"
+    )
 
     # Check watchdog_active topic
     wd_states = test_node.get_watchdog_states()
     has_wd_true = True in wd_states
-    results['watchdog_topic_active'] = has_wd_true
-    print(f'  [{"PASS" if has_wd_true else "FAIL"}] watchdog_topic_active: '
-          f'{wd_states[-5:] if wd_states else "no msgs"}')
+    results["watchdog_topic_active"] = has_wd_true
+    print(
+        f"  [{'PASS' if has_wd_true else 'FAIL'}] watchdog_topic_active: {wd_states[-5:] if wd_states else 'no msgs'}"
+    )
 
     # ── Phase 3: Odometry from IMU ──
-    print('\n[Phase 3] Odometry publishing (check IMU → /Odometry)...')
+    print("\n[Phase 3] Odometry publishing (check IMU → /Odometry)...")
     odom_count = test_node.get_odom_count()
     odom_received = odom_count > 0
-    results['odom_published'] = odom_received
-    print(f'  [{"PASS" if odom_received else "FAIL"}] odom_published: '
-          f'{odom_count} Odometry msgs')
+    results["odom_published"] = odom_received
+    print(f"  [{'PASS' if odom_received else 'FAIL'}] odom_published: {odom_count} Odometry msgs")
 
     # ── Phase 4: stop=2 → SitDown ──
-    print('\n[Phase 4] stop=2 → SitDown...')
+    print("\n[Phase 4] stop=2 → SitDown...")
     sitdown_before = servicer.sitdown_count
     test_node.send_stop(2)
     time.sleep(1.0)
     sitdown_after = servicer.sitdown_count
     sitdown_triggered = sitdown_after > sitdown_before
-    results['stop_triggers_sitdown'] = sitdown_triggered
-    print(f'  [{"PASS" if sitdown_triggered else "FAIL"}] stop_triggers_sitdown: '
-          f'SitDown count {sitdown_before} → {sitdown_after}')
+    results["stop_triggers_sitdown"] = sitdown_triggered
+    print(
+        f"  [{'PASS' if sitdown_triggered else 'FAIL'}] stop_triggers_sitdown: "
+        f"SitDown count {sitdown_before} → {sitdown_after}"
+    )
 
     # ── Cleanup ──
     bridge_proc.terminate()
@@ -370,15 +385,15 @@ def main():
 
     # ── Summary ──
     all_pass = all(results.values())
-    print('\n' + '=' * 60)
+    print("\n" + "=" * 60)
     for k, v in results.items():
-        print(f'  [{"PASS" if v else "FAIL"}] {k}')
-    print(f'\n  {sum(results.values())}/{len(results)} passed')
-    print('=' * 60)
+        print(f"  [{'PASS' if v else 'FAIL'}] {k}")
+    print(f"\n  {sum(results.values())}/{len(results)} passed")
+    print("=" * 60)
     print(json.dumps(results, indent=2))
 
     sys.exit(0 if all_pass else 1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

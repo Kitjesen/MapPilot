@@ -2,7 +2,7 @@
 
 Covers:
 - Port declarations for all 5 modules (MapManager, Patrol, Geofence, TaskScheduler, Reconstruction)
-- MapService basic command handling (list, delete, poi)
+- MapsModule basic command handling (list, delete, poi)
 - PatrolManagerModule port types (In[str], In[Odometry], Out[list], Out[str])
 """
 
@@ -10,21 +10,22 @@ import json
 import os
 import tempfile
 
-
-from runtime import In, Out
-from runtime.msgs.nav import Odometry
-from runtime.msgs.semantic import SceneGraph
-from runtime.msgs.sensor import CameraIntrinsics, Image
+from maps.modules.service import MapsModule
 from nav.services.geofence import GeofenceManagerModule
 from nav.services.goals import GoalService
-from nav.services.maps import MapService
 from nav.services.patrol import PatrolManagerModule
 from nav.services.scheduler import TaskSchedulerModule
 from perception.reconstruction.reconstruction_module import ReconstructionModule
+from runtime import In, Out
+from runtime.msgs.map import MapControlRequest
+from runtime.msgs.nav import Odometry
+from runtime.msgs.semantic import SceneGraph
+from runtime.msgs.sensor import CameraIntrinsics, Image
 
 # ============================================================================
 # Helpers
 # ============================================================================
+
 
 def _collect(module, port_name):
     """Attach a collector callback to an Out port and return the events list."""
@@ -38,13 +39,13 @@ def _collect(module, port_name):
 # Port declaration tests
 # ============================================================================
 
-class TestPortDeclarations:
 
+class TestPortDeclarations:
     def test_map_manager_ports(self):
-        m = MapService(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
+        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
         assert "map_command" in m.ports_in
         assert "map_response" in m.ports_out
-        assert m.ports_in["map_command"].msg_type is str
+        assert m.ports_in["map_command"].msg_type is MapControlRequest
         assert m.ports_out["map_response"].msg_type is dict
         assert m.layer == 6
 
@@ -109,39 +110,60 @@ class TestPortDeclarations:
 
 
 # ============================================================================
-# MapService functional tests
+# MapsModule functional tests
 # ============================================================================
 
-class TestMapService:
 
+class TestMapsModule:
     def test_list_empty(self):
-        m = MapService(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
+        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
         m.setup()
         events = _collect(m, "map_response")
-        m.map_command._deliver(json.dumps({"action": "list"}))
+        m.map_command._deliver(MapControlRequest.from_mapping({"action": "list"}))
         assert len(events) == 1
         assert events[0]["success"] is True
         assert events[0]["maps"] == []
 
     def test_delete_nonexistent(self):
-        m = MapService(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
+        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
         m.setup()
         events = _collect(m, "map_response")
-        m.map_command._deliver(json.dumps({"action": "delete", "name": "ghost"}))
+        m.map_command._deliver(MapControlRequest.from_mapping({"action": "delete", "name": "ghost"}))
         assert events[0]["success"] is False
 
     def test_poi_crud(self):
-        m = MapService(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
+        m = MapsModule(data_dir=tempfile.mkdtemp(), map_dir=tempfile.mkdtemp())
         m.setup()
         events = _collect(m, "map_response")
 
-        m.map_command._deliver(json.dumps({"action": "poi_set", "name": "office", "x": 1.0, "y": 2.0}))
+        m.map_command._deliver(MapControlRequest.from_mapping({"action": "create", "name": "poi_map"}))
         assert events[-1]["success"] is True
 
-        m.map_command._deliver(json.dumps({"action": "poi_list"}))
+        m.map_command._deliver(
+            MapControlRequest.from_mapping(
+                {
+                    "action": "poi_set",
+                    "map_id": "poi_map",
+                    "name": "office",
+                    "x": 1.0,
+                    "y": 2.0,
+                }
+            )
+        )
+        assert events[-1]["success"] is True
+
+        m.map_command._deliver(MapControlRequest.from_mapping({"action": "poi_list", "map_id": "poi_map"}))
         assert "office" in events[-1]["pois"]
 
-        m.map_command._deliver(json.dumps({"action": "poi_delete", "name": "office"}))
+        m.map_command._deliver(
+            MapControlRequest.from_mapping(
+                {
+                    "action": "poi_delete",
+                    "map_id": "poi_map",
+                    "name": "office",
+                }
+            )
+        )
         assert events[-1]["success"] is True
 
 
@@ -149,8 +171,8 @@ class TestMapService:
 # PatrolManagerModule port type tests
 # ============================================================================
 
-class TestPatrolManagerModule:
 
+class TestPatrolManagerModule:
     def test_port_types_correct(self):
         m = PatrolManagerModule(routes_dir=tempfile.mkdtemp())
         assert isinstance(m.patrol_command, In)

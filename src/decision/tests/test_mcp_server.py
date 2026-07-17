@@ -1,26 +1,4 @@
-"""test_mcp_server.py 鈥?MCPServerModule unit tests (Module-First / @skill dispatch)
-
-Coverage
---------
-1. Port declarations (In / Out types, layer)
-2. Telemetry callbacks: _on_odom, _on_sg, _on_safety, _on_mission
-3. on_system_modules(): dynamic @skill discovery 鈫?_tool_registry / _tool_list
-4. Built-in @skill tools reachable through _tool_registry
-5. Deduplication: nav.mission.navigate_to overrides MCPServerModule's own stub
-6. health() summary structure
-
-Architecture note
------------------
-MCPServerModule no longer has a static TOOLS list or _execute_tool().
-All tools are discovered via on_system_modules() which walks every module's
-get_skill_infos() and populates _tool_registry (name 鈫?bound method) and
-_tool_list (MCP JSON descriptor list).  The HTTP handler calls:
-
-    fn = mcp._tool_registry[name]
-    result = fn(**args)
-
-These tests exercise that same code path directly, without starting a server.
-"""
+"""Decision module."""
 
 from __future__ import annotations
 
@@ -28,9 +6,10 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 # ---------------------------------------------------------------------------
-# Path bootstrap 鈥?allow running from any working directory
+
 # ---------------------------------------------------------------------------
 _here = os.path.dirname(os.path.abspath(__file__))
 _repo = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
@@ -39,21 +18,23 @@ for _p in [_repo, _src]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from gateway.mcp_server import MCPServerModule
 from runtime.msgs.geometry import Pose, Vector3
 from runtime.msgs.nav import Odometry
 from runtime.msgs.semantic import SafetyState, SceneGraph
 from runtime.stream import In, Out
-from gateway.mcp_server import MCPServerModule
+
 # ^ Cross-layer: semantic test imports from gateway/.
 #   Acceptable: MCPServerModule is a framework-level module (L6 Interface)
 #   with no dependency on semantic internals.  This test only uses core
-#   framework types and fake modules 鈥?no semantic-specific imports.
+
 #   Architecturally this test belongs in gateway/tests/ but lives here
 #   for historical reasons.  No circular dependency is created.
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_mcp(**kw) -> MCPServerModule:
     mod = MCPServerModule(**kw)
@@ -69,6 +50,7 @@ def _odom(x: float = 1.0, y: float = 2.0, z: float = 0.0) -> Odometry:
 
 def _scene_graph() -> SceneGraph:
     from runtime.msgs.semantic import Detection3D, Region
+
     return SceneGraph(
         objects=[
             Detection3D(id="1", label="chair", position=Vector3(1, 2, 0)),
@@ -110,6 +92,7 @@ def _fake_nav_module():
 # 1. Port declarations
 # ===========================================================================
 
+
 class TestMCPPorts(unittest.TestCase):
     def setUp(self):
         self.mod = MCPServerModule()
@@ -138,6 +121,7 @@ class TestMCPPorts(unittest.TestCase):
 # ===========================================================================
 # 2. Telemetry callbacks
 # ===========================================================================
+
 
 class TestMCPTelemetry(unittest.TestCase):
     def setUp(self):
@@ -170,18 +154,28 @@ class TestMCPTelemetry(unittest.TestCase):
 # 3. Dynamic @skill discovery via on_system_modules
 # ===========================================================================
 
-class TestMCPSkillDiscovery(unittest.TestCase):
 
+class TestMCPSkillDiscovery(unittest.TestCase):
     def test_builtin_skills_registered_with_self(self):
         """MCPServerModule's own @skills appear after on_system_modules."""
         m = _make_mcp()
         m.on_system_modules({"MCPServerModule": m})
         self.assertGreaterEqual(len(m._tool_list), 12)
         names = {t["name"] for t in m._tool_list}
-        for expected in ("stop", "get_health", "get_config", "get_robot_position",
-                         "get_scene_graph", "detect_objects", "query_memory",
-                         "list_tagged_locations", "tag_location",
-                         "navigate_to_object", "send_instruction", "set_mode"):
+        for expected in (
+            "stop",
+            "get_health",
+            "get_config",
+            "get_robot_position",
+            "get_scene_graph",
+            "detect_objects",
+            "query_memory",
+            "list_tagged_locations",
+            "tag_location",
+            "navigate_to_object",
+            "send_instruction",
+            "set_mode",
+        ):
             with self.subTest(tool=expected):
                 self.assertIn(expected, names)
 
@@ -211,7 +205,7 @@ class TestMCPSkillDiscovery(unittest.TestCase):
         """nav.mission.navigate_to must override MCPServerModule's navigate_to_object stub."""
         m = _make_mcp()
         nav = _fake_nav_module()
-        # Register MCP first, then Navigation 鈥?nav's version must win
+
         m.on_system_modules({"MCPServerModule": m, "nav.mission": nav})
         fn = m._tool_registry.get("navigate_to")
         self.assertIsNotNone(fn)
@@ -230,14 +224,17 @@ class TestMCPSkillDiscovery(unittest.TestCase):
 # 4. Calling tools through _tool_registry (same path as HTTP handler)
 # ===========================================================================
 
+
 class TestMCPToolExecution(unittest.TestCase):
     def setUp(self):
         self.mod = _make_mcp()
         self.nav = _fake_nav_module()
-        self.mod.on_system_modules({
-            "MCPServerModule": self.mod,
-            "nav.mission": self.nav,
-        })
+        self.mod.on_system_modules(
+            {
+                "MCPServerModule": self.mod,
+                "nav.mission": self.nav,
+            }
+        )
         self.mod._on_odom(_odom(1.0, 2.0))
         self.mod._on_sg(_scene_graph())
 
@@ -252,6 +249,17 @@ class TestMCPToolExecution(unittest.TestCase):
         result = self._call("stop")
         self.assertEqual(result["status"], "stopped")
         self.assertIn(2, stops)
+
+    def test_emergency_stop_uses_native_latched_boundary_when_available(self):
+        stops = []
+        self.mod.stop_cmd._add_callback(stops.append)
+        with patch("gateway.mcp_server.native_estop", return_value=True) as send:
+            result = json.loads(self.mod.emergency_stop())
+
+        self.assertEqual(result["status"], "emergency_stopped")
+        self.assertEqual(result["control_boundary"], "native_estop")
+        send.assert_called_once_with("mcp_emergency_stop")
+        self.assertEqual(stops, [])
 
     # -- navigate_to (from Navigation) --
     def test_navigate_to_dispatches_to_nav(self):
@@ -330,6 +338,7 @@ class TestMCPToolExecution(unittest.TestCase):
 
     def test_get_health_with_mock_handle(self):
         import types
+
         handle = types.SimpleNamespace(
             health=lambda: {"modules": 3, "ok": True},
             modules={"MCPServerModule": self.mod},
@@ -351,6 +360,7 @@ class TestMCPToolExecution(unittest.TestCase):
 # ===========================================================================
 # 5. health()
 # ===========================================================================
+
 
 class TestMCPHealth(unittest.TestCase):
     def test_health_contains_mcp_section(self):

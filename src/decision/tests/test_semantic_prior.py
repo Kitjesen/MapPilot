@@ -1,16 +1,4 @@
-"""
-test_semantic_prior.py — SemanticPriorEngine 单元测试
-
-覆盖:
-  - predict_target_rooms: 英文/中文指令
-  - score_rooms_for_target: 直接标签匹配 / 先验知识 / 未访问加分
-  - get_unexplored_priors: 拓扑感知 + BFS 跳数 + 可达性
-  - get_room_expected_objects: 已知/未知房间类型
-  - get_exploration_summary: 摘要格式
-  - TopologyEdge.to_dict: 序列化
-  - _normalize_room_type: 标准化
-  - _extract_target_keywords: 关键词提取
-"""
+"""Decision module."""
 
 import unittest
 
@@ -107,13 +95,11 @@ class TestScoreRoomsForTarget(unittest.TestCase):
             self.assertIn("office", top_names)
 
     def test_direct_label_match_boosts_score(self):
-        """Room with direct label match in semantic_labels gets score≥0.95."""
+        """Test direct label match boosts score."""
         rooms = [
             _room(0, "unknown_area", ["fire extinguisher", "door"]),
         ]
-        result = self.engine.score_rooms_for_target(
-            "find fire extinguisher", rooms
-        )
+        result = self.engine.score_rooms_for_target("find fire extinguisher", rooms)
         self.assertEqual(len(result), 1)
         self.assertGreaterEqual(result[0].prior_score, 0.95)
 
@@ -121,9 +107,7 @@ class TestScoreRoomsForTarget(unittest.TestCase):
         """Unvisited rooms get +0.15 bonus vs visited."""
         rooms = [_room(0, "office", []), _room(1, "office", [])]
         visited = {0}  # only room 0 visited
-        result = self.engine.score_rooms_for_target(
-            "find desk", rooms, visited_room_ids=visited
-        )
+        result = self.engine.score_rooms_for_target("find desk", rooms, visited_room_ids=visited)
         room_map = {r.room_id: r for r in result}
         if 0 in room_map and 1 in room_map:
             self.assertGreater(room_map[1].prior_score, room_map[0].prior_score)
@@ -131,9 +115,7 @@ class TestScoreRoomsForTarget(unittest.TestCase):
     def test_visited_flag_set_correctly(self):
         rooms = [_room(0, "office", []), _room(1, "kitchen", [])]
         visited = {0}
-        result = self.engine.score_rooms_for_target(
-            "find desk", rooms, visited_room_ids=visited
-        )
+        result = self.engine.score_rooms_for_target("find desk", rooms, visited_room_ids=visited)
         room_map = {r.room_id: r for r in result}
         if 0 in room_map:
             self.assertTrue(room_map[0].is_visited)
@@ -208,23 +190,28 @@ class TestGetUnexploredPriors(unittest.TestCase):
         # Both rooms should appear; closer one (room 1) should have higher combined_score
         id_map = {r["room_id"]: r for r in result}
         if 1 in id_map and 2 in id_map:
-            self.assertGreaterEqual(id_map[1]["combined_score"],
-                                    id_map[2]["combined_score"])
+            self.assertGreaterEqual(id_map[1]["combined_score"], id_map[2]["combined_score"])
 
     def test_result_fields_present(self):
         rooms = [_room(1, "office", [])]
         result = self.engine.get_unexplored_priors(
-            "find chair", rooms, [], visited_room_ids=set(), current_room_id=-1,
+            "find chair",
+            rooms,
+            [],
+            visited_room_ids=set(),
+            current_room_id=-1,
         )
         for r in result:
-            for key in ["room_id", "room_name", "prior_score", "combined_score",
-                        "hops", "reasoning"]:
+            for key in ["room_id", "room_name", "prior_score", "combined_score", "hops", "reasoning"]:
                 self.assertIn(key, r)
 
     def test_sorted_by_combined_score(self):
         rooms = [_room(i, "office") for i in range(4)]
         result = self.engine.get_unexplored_priors(
-            "find desk", rooms, [], visited_room_ids=set(),
+            "find desk",
+            rooms,
+            [],
+            visited_room_ids=set(),
         )
         scores = [r["combined_score"] for r in result]
         self.assertEqual(scores, sorted(scores, reverse=True))
@@ -264,22 +251,16 @@ class TestGetExplorationSummary(unittest.TestCase):
         ]
 
     def test_returns_string(self):
-        summary = self.engine.get_exploration_summary(
-            "find desk", self.rooms, visited_room_ids={0}
-        )
+        summary = self.engine.get_exploration_summary("find desk", self.rooms, visited_room_ids={0})
         self.assertIsInstance(summary, str)
 
     def test_contains_target(self):
         # Use single-word instruction so keyword extractor finds a match
-        summary = self.engine.get_exploration_summary(
-            "desk", self.rooms, visited_room_ids=set()
-        )
+        summary = self.engine.get_exploration_summary("desk", self.rooms, visited_room_ids=set())
         self.assertIn("desk", summary)
 
     def test_no_matching_target_returns_fallback(self):
-        summary = self.engine.get_exploration_summary(
-            "go to", [], visited_room_ids=set()
-        )
+        summary = self.engine.get_exploration_summary("go to", [], visited_room_ids=set())
         self.assertIsInstance(summary, str)
 
 
@@ -314,7 +295,9 @@ class TestTopologyEdgeToDict(unittest.TestCase):
 
     def test_traversals_included_when_positive(self):
         edge = TopologyEdge(
-            from_room_id=0, to_room_id=1, edge_type="door",
+            from_room_id=0,
+            to_room_id=1,
+            edge_type="door",
             traversal_count=3,
         )
         d = edge.to_dict()

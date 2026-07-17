@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import time
 
 import pytest
-
 
 pytest.importorskip("fastapi")
 
@@ -47,6 +48,326 @@ def test_health_and_devices_routes_tolerate_missing_module_inventory():
     assert health["modules"] == {}
     assert health["modules_ok"] == 0
     assert health["modules_fail"] == 0
+
+
+def test_metrics_route_returns_operator_snapshot():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._localization_status = {
+        "state": "TRACKING",
+        "backend": "native_dds",
+        "mode": "localization",
+        "processed_scan_hz": 9.5,
+        "lidar_input_hz": 9.1,
+        "imu_input_hz": 200.0,
+        "slam_tick_hz": 50.0,
+    }
+    gateway.replace_map_cloud_points([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+
+    metrics = asyncio.run(_endpoint(gateway, "/api/v1/metrics")())
+
+    assert metrics["ok"] is True
+    assert metrics["gateway"]["port"] == gateway._port
+    assert metrics["slam"]["hz"] == 9.5
+    assert metrics["slam"]["backend"] == "native_dds"
+    assert metrics["map"]["points"] == 2
+    assert "traffic" in metrics
+    assert "commands" in metrics
+
+
+def test_devices_route_uses_hw_module_name():
+    from gateway.gateway_module import GatewayModule
+
+    class Hw:
+        def health(self):
+            return {
+                "spec_count": 1,
+                "opened_count": 1,
+                "devices": [{"id": "gnss", "status": "ready"}],
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._all_modules = {"hw": Hw()}
+
+    devices = asyncio.run(_endpoint(gateway, "/api/v1/devices")())
+
+    assert devices["manager"] == "ok"
+    assert devices["spec_count"] == 1
+    assert devices["opened_count"] == 1
+    assert devices["devices"] == [{"id": "gnss", "status": "ready"}]
+
+
+def test_service_status_marks_current_gateway_http_observed(monkeypatch):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+
+    class FakeServiceManager:
+        def status(self, *names):
+            return {name: "running" for name in names}
+
+        def status_details(self, *names):
+            return {
+                name: {
+                    "status": "running",
+                    "ready": False,
+                    "blockers": ["http_unchecked"],
+                    "observed": {"systemd": True},
+                    "contract": {
+                        "checks": ["systemd", "http"],
+                        "topics": [],
+                        "dds_topics": [],
+                        "files": [],
+                    },
+                }
+                for name in names
+            }
+
+    monkeypatch.setattr(
+        service_manager,
+        "get_service_manager",
+        lambda: FakeServiceManager(),
+    )
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/services/status")("gateway,lingtu"))
+
+    assert payload["services"] == {"gateway": "running", "lingtu": "running"}
+    assert payload["readiness"] == {
+        "ok": True,
+        "ready": True,
+        "selected": ["gateway", "lingtu"],
+        "ready_services": ["gateway", "lingtu"],
+        "not_ready_services": [],
+        "blockers": [],
+        "blocker_count": 0,
+    }
+    for name in ("gateway", "lingtu"):
+        detail = payload["service_details"][name]
+        assert detail["ready"] is True
+        assert detail["blockers"] == []
+        assert detail["observed"]["http"] == {
+            "ok": True,
+            "checked": True,
+            "enabled": True,
+            "source": "current_gateway_route",
+            "path": "/api/v1/services/status",
+            "blockers": [],
+        }
+
+
+def test_service_status_summarizes_service_readiness_blockers(monkeypatch):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ServiceStatusResponse
+
+    class FakeServiceManager:
+        def status(self, *names):
+            return {name: ("running" if name == "lidar" else "stopped") for name in names}
+
+        def status_details(self, *names):
+            details = {}
+            for name in names:
+                if name == "camera":
+                    details[name] = {
+                        "status": "stopped",
+                        "ready": False,
+                        "blockers": [
+                            "systemd_unit_missing:lingtu-camera-dds.service",
+                            "status_file_missing:/dev/shm/lingtu/camera_status.json",
+                            "dds_unchecked",
+                        ],
+                        "observed": {"systemd": False},
+                        "contract": {
+                            "checks": ["systemd", "status_file", "dds"],
+                            "topics": [],
+                            "dds_topics": [],
+                            "files": ["/dev/shm/lingtu/camera_status.json"],
+                        },
+                    }
+                else:
+                    details[name] = {
+                        "status": "running",
+                        "ready": True,
+                        "blockers": [],
+                        "observed": {"systemd": True},
+                        "contract": {
+                            "checks": ["systemd"],
+                            "topics": [],
+                            "dds_topics": [],
+                            "files": [],
+                        },
+                    }
+            return details
+
+    monkeypatch.setattr(
+        service_manager,
+        "get_service_manager",
+        lambda: FakeServiceManager(),
+    )
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/services/status")("lidar,camera"))
+    model = ServiceStatusResponse.model_validate(payload)
+
+    assert model.readiness["ok"] is False
+    assert model.readiness["ready_services"] == ["lidar"]
+    assert model.readiness["not_ready_services"] == ["camera"]
+    assert model.readiness["blockers"] == [
+        "camera:systemd_unit_missing:lingtu-camera-dds.service",
+        "camera:status_file_missing:/dev/shm/lingtu/camera_status.json",
+        "camera:dds_unchecked",
+    ]
+
+
+def test_service_status_can_require_field_readiness_evidence(monkeypatch, tmp_path):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+
+    class FakeServiceManager:
+        def status(self, *names):
+            return {name: "running" for name in names}
+
+        def status_details(self, *names):
+            return {
+                name: {
+                    "status": "running",
+                    "ready": True,
+                    "blockers": [],
+                    "observed": {"systemd": True},
+                    "contract": {"checks": ["systemd"], "topics": [], "dds_topics": [], "files": []},
+                }
+                for name in names
+            }
+
+    missing = tmp_path / "missing_service_readiness.json"
+    monkeypatch.setenv("LINGTU_SERVICE_READINESS_JSON", str(missing))
+    monkeypatch.setenv("LINGTU_REQUIRE_FIELD_SERVICE_READINESS", "1")
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: FakeServiceManager())
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/services/status")("lidar"))
+
+    assert payload["field_readiness"]["required"] is True
+    assert payload["field_readiness"]["available"] is False
+    assert payload["readiness"]["ok"] is False
+    assert payload["readiness"]["blockers"] == [f"field_readiness:field_readiness_missing:{missing}"]
+
+
+def test_service_status_includes_fresh_field_readiness_summary(monkeypatch, tmp_path):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ServiceStatusResponse
+
+    class FakeServiceManager:
+        def status(self, *names):
+            return {name: "running" for name in names}
+
+        def status_details(self, *names):
+            return {
+                name: {
+                    "status": "running",
+                    "ready": True,
+                    "blockers": [],
+                    "observed": {"systemd": True},
+                    "contract": {"checks": ["systemd"], "topics": [], "dds_topics": [], "files": []},
+                }
+                for name in names
+            }
+
+    evidence = tmp_path / "service_readiness.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": "lingtu.thunder.service_readiness.v1",
+                "stamp_s": 123.0,
+                "summary": {
+                    "ok": False,
+                    "blockers": [
+                        "native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+                    ],
+                    "blocker_count": 1,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    now = time.time()
+    os.utime(evidence, (now, now))
+    monkeypatch.setenv("LINGTU_SERVICE_READINESS_JSON", str(evidence))
+    monkeypatch.setenv("LINGTU_REQUIRE_FIELD_SERVICE_READINESS", "1")
+    monkeypatch.setenv("LINGTU_SERVICE_READINESS_MAX_AGE_S", "300")
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: FakeServiceManager())
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/services/status")("lidar"))
+    model = ServiceStatusResponse.model_validate(payload)
+
+    assert model.field_readiness["available"] is True
+    assert model.field_readiness["fresh"] is True
+    assert model.field_readiness["summary"]["blocker_count"] == 1
+    assert model.readiness["ok"] is False
+    assert model.readiness["blockers"] == [
+        "field_readiness:native_binaries:native_binary_missing_or_not_executable:camera_dds:/opt/lingtu/current/build/camera_dds/lingtu_camera_dds"
+    ]
+
+
+def test_service_status_marks_stale_field_readiness_evidence(monkeypatch, tmp_path):
+    import runtime.service_manager as service_manager
+    from gateway.gateway_module import GatewayModule
+
+    class FakeServiceManager:
+        def status(self, *names):
+            return {name: "running" for name in names}
+
+        def status_details(self, *names):
+            return {
+                name: {
+                    "status": "running",
+                    "ready": True,
+                    "blockers": [],
+                    "observed": {"systemd": True},
+                    "contract": {"checks": ["systemd"], "topics": [], "dds_topics": [], "files": []},
+                }
+                for name in names
+            }
+
+    evidence = tmp_path / "stale_service_readiness.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": "lingtu.thunder.service_readiness.v1",
+                "stamp_s": 1.0,
+                "summary": {"ok": True, "blockers": [], "blocker_count": 0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    old = time.time() - 1000.0
+    os.utime(evidence, (old, old))
+    monkeypatch.setenv("LINGTU_SERVICE_READINESS_JSON", str(evidence))
+    monkeypatch.setenv("LINGTU_REQUIRE_FIELD_SERVICE_READINESS", "1")
+    monkeypatch.setenv("LINGTU_SERVICE_READINESS_MAX_AGE_S", "1")
+    monkeypatch.setattr(service_manager, "get_service_manager", lambda: FakeServiceManager())
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    payload = asyncio.run(_endpoint(gateway, "/api/v1/services/status")("lidar"))
+
+    assert payload["field_readiness"]["fresh"] is False
+    assert payload["readiness"]["ok"] is False
+    assert payload["readiness"]["blockers"] == [f"field_readiness:field_readiness_stale:{evidence}"]
 
 
 def test_health_schema_keeps_top_level_app_contract_flexible():
@@ -96,9 +417,8 @@ def test_health_uses_live_point_count_and_module_slam_rate(monkeypatch):
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway._all_modules = {"SlamBridgeModule": _Slam()}
-    gateway._map_points = [(0.0, 0.0, 0.0)] * 42
-    gateway._map_cloud_count = 99
+    gateway._all_modules = {"SlamAdapterModule": _Slam()}
+    gateway.replace_map_cloud_points([(0.0, 0.0, 0.0)] * 42)
 
     def _fail_shell_hz():
         raise AssertionError("health should prefer module port rate")
@@ -129,6 +449,51 @@ def test_health_prefers_cpp_processed_scan_rate_over_gateway_odom_rate(monkeypat
     assert health["slam_hz"] == 10.0
     assert health["sensors"]["slam"]["source"] == "processed_scan_hz"
     assert health["sensors"]["slam"]["odom_hz"] == 4.9
+
+
+def test_health_reports_gateway_cloud_debug():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._publish_cloud_frame(
+        b"PCLD",
+        metadata={
+            "point_count": 7,
+            "source": "slam_map_cloud",
+            "session_mode": "mapping",
+            "z_min": -6.9,
+            "z_max": -2.8,
+        },
+    )
+    gateway._all_modules = {}
+
+    health = asyncio.run(_endpoint(gateway, "/api/v1/health")())
+    cloud = health["gateway"]["cloud"]
+
+    assert cloud["has_latest_binary_frame"] is True
+    assert cloud["latest_frame"]["point_count"] == 7
+    assert cloud["latest_frame"]["source"] == "slam_map_cloud"
+    assert cloud["latest_frame"]["z_min"] == pytest.approx(-6.9)
+    assert cloud["latest_frame"]["z_max"] == pytest.approx(-2.8)
+
+
+def test_liveness_reports_lightweight_health_summary():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._publish_cloud_frame(
+        b"PCLD",
+        metadata={"point_count": 5, "source": "slam_map_cloud"},
+    )
+
+    health = asyncio.run(_endpoint(gateway, "/health")())
+
+    assert health["status"] == "ok"
+    assert health["details_url"] == "/api/v1/health?details=true"
+    assert health["gateway"]["cloud"]["latest_frame"]["point_count"] == 5
+    assert "slam" in health["sensors"]
 
 
 def test_health_reports_stale_cpp_slam_status(monkeypatch):
@@ -169,22 +534,23 @@ def test_health_falls_back_to_cached_slam_rate_when_module_rate_missing(monkeypa
 
 
 def test_gateway_slam_rate_uses_existing_odometry_window(monkeypatch):
-    import gateway.gateway_module as gateway_module
+    import gateway.services.slam_profile as slam_profile
+    from gateway.gateway_module import GatewayModule
 
-    gateway = gateway_module.GatewayModule()
+    gateway = GatewayModule()
     gateway._odom_timestamps = [100.0 + i * 0.1 for i in range(20)]
 
-    monkeypatch.setattr(gateway_module.time, "time", lambda: 101.95)
+    monkeypatch.setattr(slam_profile.time, "time", lambda: 101.95)
     assert gateway._get_slam_hz_cached() == 10.0
 
-    monkeypatch.setattr(gateway_module.time, "time", lambda: 104.0)
+    monkeypatch.setattr(slam_profile.time, "time", lambda: 104.0)
     assert gateway._get_slam_hz_cached() == 0.0
 
 
-def test_health_reports_camera_idle_reason_from_bridge_health(monkeypatch):
+def test_health_reports_camera_idle_reason_from_camera_health(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
-    class _CameraBridge:
+    class _Camera:
         def health(self):
             return {
                 "backend": "dds",
@@ -205,7 +571,7 @@ def test_health_reports_camera_idle_reason_from_bridge_health(monkeypatch):
 
     gateway = GatewayModule()
     gateway.setup()
-    gateway._all_modules = {"CameraBridgeModule": _CameraBridge()}
+    gateway._all_modules = {"camera": _Camera()}
     monkeypatch.setattr(gateway, "_get_slam_hz_cached", lambda: 0.0)
 
     health = asyncio.run(_endpoint(gateway, "/api/v1/health")())
@@ -259,8 +625,8 @@ def test_health_details_query_runs_full_module_diagnostics(monkeypatch):
 
 
 def test_health_uses_cached_brainstem_probe_for_short_app_polling_window(monkeypatch):
-    from gateway.gateway_module import GatewayModule
     import gateway.routes.status as status_routes
+    from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
     gateway.setup()
@@ -291,8 +657,8 @@ def test_health_uses_cached_brainstem_probe_for_short_app_polling_window(monkeyp
 
 
 def test_health_returns_stale_brainstem_cache_and_refreshes_in_background(monkeypatch):
-    from gateway.gateway_module import GatewayModule
     import gateway.routes.status as status_routes
+    from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
     gateway.setup()
@@ -330,8 +696,8 @@ def test_health_returns_stale_brainstem_cache_and_refreshes_in_background(monkey
 
 
 def test_health_default_brainstem_probe_does_not_block_without_cache(monkeypatch):
-    from gateway.gateway_module import GatewayModule
     import gateway.routes.status as status_routes
+    from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
     gateway.setup()
@@ -362,8 +728,8 @@ def test_health_default_brainstem_probe_does_not_block_without_cache(monkeypatch
 
 
 def test_health_details_query_waits_for_live_brainstem_probe(monkeypatch):
-    from gateway.gateway_module import GatewayModule
     import gateway.routes.status as status_routes
+    from gateway.gateway_module import GatewayModule
 
     gateway = GatewayModule()
     gateway.setup()

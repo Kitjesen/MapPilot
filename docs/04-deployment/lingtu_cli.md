@@ -201,6 +201,34 @@ Profile-level switching may still require restart depending on the endpoint.
 Visual-servo target/mode switching is the explicit hot-switch entry inside
 profiles that already load `VisualServoModule`.
 
+### Operator-assisted local avoidance
+
+`teleop_avoid` enables the native assisted LocalPlanner. The autonomous product
+modes `tracking`, `nav`, `inspection`, and `tare_explore` enable the same branch
+when a non-zero teleop command latches operator takeover. This is a hot control
+handoff inside the existing C++ endpoint; it is not a product-mode restart.
+
+The systemd product-mode drop-in sets:
+
+```bash
+LINGTU_TELEOP_LOCAL_PLANNER=1
+LINGTU_TELEOP_PLANNER_HORIZON_M=2.0
+LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG=55.0
+```
+
+The joystick direction and magnitude are treated as operator intent. The native
+LocalPlanner searches a short local detour, PathFollower generates the command,
+and the final curved-path safety gate may still stop it. A blocked scene always
+produces zero; assisted teleop does not autonomously reverse or run recovery
+rotation. Pure `teleop` intentionally leaves this planner disabled.
+
+Before live motion, run the endpoint with `LINGTU_NAV_PUBLISH_CMD_VEL=0` and
+verify `teleop_local_planner: true`, `/nav/local_path`, and
+`teleop_assist_detour` in the native status. Then restore publishing and begin
+with a low operator speed. Releasing the WebSocket deadman sends zero and keeps
+manual hold; use `POST /api/v1/navigation/resume` and submit a fresh goal to
+return to autonomy.
+
 The Web dashboard exposes the same contract in the `Runtime` tab:
 
 - Product mode cards call `POST /api/v1/runtime/switch`.

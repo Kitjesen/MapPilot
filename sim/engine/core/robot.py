@@ -1,4 +1,5 @@
 """Robot configuration — RobotConfig."""
+
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -7,12 +8,23 @@ import numpy as np
 
 from runtime.runtime_interface import FRAMES
 
-
 THUNDER_V3_JOINT_NAMES = [
-    "FR_hip_joint", "FR_thigh_joint", "FR_calf_joint", "FR_foot_joint",
-    "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint", "FL_foot_joint",
-    "RR_hip_joint", "RR_thigh_joint", "RR_calf_joint", "RR_foot_joint",
-    "RL_hip_joint", "RL_thigh_joint", "RL_calf_joint", "RL_foot_joint",
+    "FR_hip_joint",
+    "FR_thigh_joint",
+    "FR_calf_joint",
+    "FR_foot_joint",
+    "FL_hip_joint",
+    "FL_thigh_joint",
+    "FL_calf_joint",
+    "FL_foot_joint",
+    "RR_hip_joint",
+    "RR_thigh_joint",
+    "RR_calf_joint",
+    "RR_foot_joint",
+    "RL_hip_joint",
+    "RL_thigh_joint",
+    "RL_calf_joint",
+    "RL_foot_joint",
 ]
 
 
@@ -26,59 +38,130 @@ class RobotConfig:
     """
 
     # Model files
-    robot_xml: str = ""           # robot.xml path (relative to sim/ or absolute)
-    policy_onnx: str = ""         # policy.onnx path
+    robot_xml: str = ""  # robot.xml path (relative to sim/ or absolute)
+    policy_onnx: str = ""  # policy.onnx path
 
     # Initial pose
-    init_position: List[float] = field(default_factory=lambda: [0.0, 0.0, 0.55])
-    init_orientation_wxyz: List[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
+    init_position: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.55])
+    init_orientation_wxyz: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
 
     # Physical parameters (from global CLAUDE.md memory)
-    pd_kp: float = 65.0           # position gain (hip)
-    pd_kv: float = 5.0            # velocity gain (damping)
+    pd_kp: float = 65.0  # position gain (hip)
+    pd_kv: float = 5.0  # velocity gain (damping)
     leg_control_mode: str = "auto"  # auto, position, or torque
-    torque_kp: List[float] = field(default_factory=lambda: [
-        50.0, 50.0, 50.0, 50.0, 50.0, 50.0,
-        50.0, 50.0, 50.0, 50.0, 50.0, 50.0,
-        0.0, 0.0, 0.0, 0.0,
-    ])
-    torque_kd: List[float] = field(default_factory=lambda: [
-        7.5, 7.5, 7.5, 7.5, 7.5, 7.5,
-        7.5, 7.5, 7.5, 7.5, 7.5, 7.5,
-        1.0, 1.0, 1.0, 1.0,
-    ])
-    torque_limit: List[float] = field(default_factory=lambda: [
-        120.0, 120.0, 120.0, 120.0, 120.0, 120.0,
-        120.0, 120.0, 120.0, 120.0, 120.0, 120.0,
-        60.0, 60.0, 60.0, 60.0,
-    ])
+    torque_kp: list[float] = field(
+        default_factory=lambda: [
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            50.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+        ]
+    )
+    torque_kd: list[float] = field(
+        default_factory=lambda: [
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            7.5,
+            1.0,
+            1.0,
+            1.0,
+            1.0,
+        ]
+    )
+    torque_limit: list[float] = field(
+        default_factory=lambda: [
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            120.0,
+            60.0,
+            60.0,
+            60.0,
+            60.0,
+        ]
+    )
 
     # Policy parameters (consistent with brainstem StandardObservationBuilder)
     # Extracted from src/drivers/sim/nova_nav_bridge.py
-    action_scale: List[float] = field(default_factory=lambda: [
-        0.125, 0.25, 0.25,   # FR: hip, thigh, calf
-        0.125, 0.25, 0.25,   # FL
-        0.125, 0.25, 0.25,   # RR
-        0.125, 0.25, 0.25,   # RL
-        5.0, 5.0, 5.0, 5.0  # foot
-    ])
+    action_scale: list[float] = field(
+        default_factory=lambda: [
+            0.125,
+            0.25,
+            0.25,  # FR: hip, thigh, calf
+            0.125,
+            0.25,
+            0.25,  # FL
+            0.125,
+            0.25,
+            0.25,  # RR
+            0.125,
+            0.25,
+            0.25,  # RL
+            5.0,
+            5.0,
+            5.0,
+            5.0,  # foot
+        ]
+    )
     imu_gyro_scale: float = 0.25
     joint_vel_scale: float = 0.05
-    policy_freq_hz: float = 50.0  # policy inference frequency
+    policy_freq_hz: float = 100.0  # ThunderV4 HIM policy default: dt=0.001, decimation=10
     obs_dim: int = 57
     history_len: int = 5
 
     # Standing pose (Dart order, use as-is, no sign flip)
-    standing_pose: List[float] = field(default_factory=lambda: [
-        -0.1, -0.8,  1.8,     # FR: hip, thigh, calf
-         0.1,  0.8, -1.8,     # FL
-         0.1,  0.8, -1.8,     # RR
-        -0.1, -0.8,  1.8,     # RL
-         0.0,  0.0,  0.0, 0.0 # foot
-    ])
+    standing_pose: list[float] = field(
+        default_factory=lambda: [
+            -0.1,
+            -0.8,
+            1.8,  # FR: hip, thigh, calf
+            0.1,
+            0.8,
+            -1.8,  # FL
+            0.1,
+            0.8,
+            -1.8,  # RR
+            -0.1,
+            -0.8,
+            1.8,  # RL
+            0.0,
+            0.0,
+            0.0,
+            0.0,  # foot
+        ]
+    )
 
     # Joint names (MuJoCo order)
-    leg_joint_names: List[str] = field(default_factory=lambda: THUNDER_V3_JOINT_NAMES.copy())
+    leg_joint_names: list[str] = field(default_factory=lambda: THUNDER_V3_JOINT_NAMES.copy())
 
     # Body names
     # Thunder v3 uses base_link as the root body. The LingTu runtime MJCF adds
@@ -92,19 +175,15 @@ class RobotConfig:
     # Joint order mapping (from nova_nav_bridge.py original constants)
     # MuJoCo (4+4+4+4): FR(h,t,c,f), FL(...), RR(...), RL(...)
     # Dart   (3+3+3+3+4): FR(h,t,c), FL(h,t,c), RR, RL, FR_f, FL_f, RR_f, RL_f
-    mj_to_dart: List[int] = field(default_factory=lambda: [
-        0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15
-    ])
-    dart_to_mj: List[int] = field(default_factory=lambda: [
-        0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15
-    ])
+    mj_to_dart: list[int] = field(default_factory=lambda: [0, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14, 3, 7, 11, 15])
+    dart_to_mj: list[int] = field(default_factory=lambda: [0, 1, 2, 12, 3, 4, 5, 13, 6, 7, 8, 14, 9, 10, 11, 15])
 
     # Velocity command limits
-    max_linear_vel: float = 1.0    # m/s
-    max_angular_vel: float = 1.0   # rad/s
+    max_linear_vel: float = 1.0  # m/s
+    max_angular_vel: float = 1.0  # rad/s
     cmd_vel_watchdog_sec: float = 0.2  # zero-out timeout
 
-    def resolve_paths(self, base_dir: Optional[str] = None) -> "RobotConfig":
+    def resolve_paths(self, base_dir: str | None = None) -> "RobotConfig":
         """Resolve relative paths to absolute paths.
 
         Args:

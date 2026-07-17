@@ -91,21 +91,31 @@ class TestLatestPolicy:
 class TestAsyncPolicy:
     def test_publisher_does_not_block(self):
         """publish() must return immediately even with a slow callback."""
+        callback_started = threading.Event()
+        release_callback = threading.Event()
         called = threading.Event()
+        publish_returned = threading.Event()
 
         def slow_cb(msg):
-            time.sleep(0.1)
+            callback_started.set()
+            release_callback.wait(timeout=2)
             called.set()
 
         out, inp = _make_pair("async")
         inp.subscribe(slow_cb)
 
-        t0 = time.time()
-        out.publish(42)
-        elapsed = time.time() - t0
-
-        # publish must return well before the 100ms callback finishes
-        assert elapsed < 0.05, f"publish blocked for {elapsed:.3f}s"
+        publisher = threading.Thread(
+            target=lambda: (out.publish(42), publish_returned.set()),
+            daemon=True,
+        )
+        publisher.start()
+        assert callback_started.wait(timeout=1), "async callback never started"
+        try:
+            assert publish_returned.wait(timeout=0.5), "publish waited for the callback to finish"
+            assert not called.is_set(), "callback completed before its release signal"
+        finally:
+            release_callback.set()
+        publisher.join(timeout=2)
         assert called.wait(timeout=2), "async callback never fired"
 
     def test_callback_receives_correct_value(self):

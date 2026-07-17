@@ -1,0 +1,45 @@
+schema_version: lingtu.runtime_graph.product.v1
+name: tracking
+summary: Follow supplied waypoints or paths with native local planning and safety, without semantic goal selection.
+data_plane: typed_dds
+control_owner: autonomy
+autonomy_owner: native_nav_endpoint
+required_topics:
+  - /tf
+  - /slam/odometry
+  - /slam/registered_cloud
+  - /slam/localization_health
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/traversability
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
+  - /nav/cmd_vel
+required_capabilities:
+  - saved_map_relocalization
+  - supplied_goal_or_path_tracking
+  - local_planner_collision_and_traversability_scoring
+  - path_follower_pre_command_output
+  - final_cmd_vel_single_writer
+  - operator_teleop_takeover_with_safety_veto
+  - operator_assisted_local_planner_takeover
+forbidden_modules:
+  - SimEndpointDriverModule
+  - SemanticPlannerModule
+  - nav.local_planner
+  - nav.path_follower
+forbidden_claims:
+  - semantic_autonomy
+  - module_sim_real_equivalence
+  - ros2_bridge_required
+transport_rules:
+  product_bus: typed_dds
+  same_process_algorithms: direct_function_calls
+  lcm_allowed: false
+target_chain:
+  - Gateway/MCP sends explicit tracking goals through /nav/command/request; an externally computed tracking path may still enter /nav/global_path.
+  - Native nav endpoint performs local planning and path follower pre-command output.
+  - PathFollower consumes the local path in memory; the endpoint publishes /nav/local_path telemetry, /nav/way_point, and final /nav/cmd_vel.
+  - A deliberate non-zero operator command may latch manual takeover, cancel the old path, and remain stopped after release until explicit resume.
+  - During takeover, joystick translation is treated as a short-horizon motion intent; native LocalPlanner and PathFollower may detour within the configured deviation, while no-path remains a hard stop.

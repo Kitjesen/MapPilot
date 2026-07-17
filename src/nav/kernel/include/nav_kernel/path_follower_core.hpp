@@ -19,7 +19,9 @@ struct PathFollowerParams {
   double stopYawRateGain  = 7.5;
   double maxYawRate        = 45.0;  // degrees
   double maxSpeed          = 1.0;
-  double maxAccel          = 1.0;
+  double maxAccel          = 1.0;   // m/s^2
+  double nominalDt         = 0.01;
+  double maxDt             = 0.10;
   double turnSpeedYawRateStart = 0.0;  // rad/s; <=0 disables turn-speed coupling
   double turnSpeedMinScale = 1.0;      // [0,1], applied at maxYawRate
   double switchTimeThre    = 1.0;
@@ -39,6 +41,7 @@ struct PathFollowerState {
   int    lastPathSize     = 0;
   bool   navFwd           = true;
   double switchTime       = 0;
+  double lastControlTime  = -1;
 };
 
 struct PathFollowerOutput {
@@ -60,6 +63,7 @@ PathFollowerOutput computeControl(
     double slowFactor,             // speed multiplier [0, 1], 1=normal
     int safetyStop,                // 0=none, 1=stop linear, 2=stop all
     const PathFollowerParams& p,
-    PathFollowerState& state);
+    PathFollowerState& state,
+    double goalDistance = -1.0);
 
 }  // namespace nav_kernel

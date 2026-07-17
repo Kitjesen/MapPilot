@@ -8,6 +8,7 @@ contracts (ports, skills, waypoint to PoseStamped conversion).
 from __future__ import annotations
 
 import ast
+
 import pytest
 
 pytestmark = [pytest.mark.ros2]
@@ -58,7 +59,7 @@ def _call_name(node: ast.Call) -> str:
 def test_tare_endpoint_bridge_does_not_launch_ros2_or_native_modules():
     forbidden_import_prefixes = (
         "runtime.adapters.ros2",
-        "runtime.native_module",
+        "runtime.adapters.ros2.native_module",
         "rclpy",
         "subprocess",
     )
@@ -77,10 +78,7 @@ def test_tare_endpoint_bridge_does_not_launch_ros2_or_native_modules():
         rel = path.relative_to(ROOT).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
         for lineno, imported in _absolute_imports(tree):
-            if any(
-                imported == prefix or imported.startswith(f"{prefix}.")
-                for prefix in forbidden_import_prefixes
-            ):
+            if any(imported == prefix or imported.startswith(f"{prefix}.") for prefix in forbidden_import_prefixes):
                 violations.append(f"{rel}:{lineno}: imports {imported}")
         for node in ast.walk(tree):
             if isinstance(node, ast.Name) and node.id in {
@@ -105,12 +103,14 @@ def _odom(x: float, y: float, z: float = 0.0) -> Odometry:
         frame_id="map",
     )
 
+
 # Bridge module
 
-class TestTAREExplorerModulePorts(unittest.TestCase):
 
+class TestTAREExplorerModulePorts(unittest.TestCase):
     def _make(self, **kw):
         from nav.exploration.tare.module import TAREExplorerModule
+
         return TAREExplorerModule(**kw)
 
     def test_ports_declared(self):
@@ -126,8 +126,9 @@ class TestTAREExplorerModulePorts(unittest.TestCase):
     def test_exploration_goal_port_mirrors_wavefront(self):
         """Drop-in: port name + msg type must match the wavefront module
         so autoconnect can wire either backend to nav.mission."""
-        from nav.exploration.tare.module import TAREExplorerModule
         from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
+        from nav.exploration.tare.module import TAREExplorerModule
+
         tare = TAREExplorerModule()
         wave = WavefrontFrontierExplorer()
         tare_port = tare.ports_out["exploration_goal"]
@@ -144,9 +145,9 @@ class TestTAREExplorerModulePorts(unittest.TestCase):
 
 
 class TestTAREWaypointEmission(unittest.TestCase):
-
     def test_emit_waypoint_publishes_pose_stamped(self):
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False)
         received: list[PoseStamped] = []
         m.exploration_goal._add_callback(received.append)
@@ -211,11 +212,13 @@ class TestTAREWaypointEmission(unittest.TestCase):
         self.assertEqual(received[0].pose.position.x, 1.0)
         self.assertEqual(m._suppressed_waypoint_count, 1)
 
-        m._on_navigation_status({
-            "state": "FAILED",
-            "goal": [1.0, 0.0, 0.0],
-            "ts": 10.0,
-        })
+        m._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [1.0, 0.0, 0.0],
+                "ts": 10.0,
+            }
+        )
         m._emit_waypoint(2.0, 0.0, 0.0, frame_id="map")
 
         self.assertEqual(len(received), 2)
@@ -223,6 +226,7 @@ class TestTAREWaypointEmission(unittest.TestCase):
 
     def test_waypoint_count_increments(self):
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False)
         self.assertEqual(m._waypoint_count, 0)
         m._emit_waypoint(1.0, 1.0, 0.0)
@@ -256,20 +260,24 @@ class TestTAREWaypointEmission(unittest.TestCase):
             path_strategy_fallback_to_waypoint=False,
         )
         m._on_odom(_odom(0.0, 0.0))
-        m._publish_strategy_path_if_ready([
-            {"x": 0.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
-            {"x": 1.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
-            {"x": 2.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
-        ])
+        m._publish_strategy_path_if_ready(
+            [
+                {"x": 0.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
+                {"x": 1.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
+                {"x": 2.0, "y": 0.0, "z": 0.0, "frame_id": "map"},
+            ]
+        )
 
         self.assertEqual(m._last_goal_candidates, [(1.0, 0.0), (2.0, 0.0)])
 
         m._emit_waypoint(9.0, 9.0, 0.0, frame_id="map")
-        m._on_navigation_status({
-            "state": "SUCCESS",
-            "goal": [1.0, 0.0, 0.0],
-            "ts": 10.0,
-        })
+        m._on_navigation_status(
+            {
+                "state": "SUCCESS",
+                "goal": [1.0, 0.0, 0.0],
+                "ts": 10.0,
+            }
+        )
 
         self.assertEqual(m._last_goal_candidates, [(1.0, 0.0), (2.0, 0.0)])
         self.assertEqual(m._navigation_success_count, 1)
@@ -311,14 +319,28 @@ class TestTAREWaypointEmission(unittest.TestCase):
 
         from nav.exploration.tare.module import TAREExplorerModule
 
-        msg = SimpleNamespace(poses=[
-            SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(
-                x=0.0, y=0.0, z=0.0,
-            ))),
-            SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(
-                x=1.0, y=0.0, z=0.0,
-            ))),
-        ])
+        msg = SimpleNamespace(
+            poses=[
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(
+                            x=0.0,
+                            y=0.0,
+                            z=0.0,
+                        )
+                    )
+                ),
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(
+                            x=1.0,
+                            y=0.0,
+                            z=0.0,
+                        )
+                    )
+                ),
+            ]
+        )
         m = TAREExplorerModule(auto_start=False, prefer_path_strategy=False)
         received: list[list[dict]] = []
         m.exploration_path._add_callback(received.append)
@@ -333,20 +355,46 @@ class TestTAREWaypointEmission(unittest.TestCase):
 
         from nav.exploration.tare.module import TAREExplorerModule
 
-        msg = SimpleNamespace(poses=[
-            SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(
-                x=0.0, y=0.0, z=0.0,
-            ))),
-            SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(
-                x=0.2, y=0.0, z=0.0,
-            ))),
-            SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(
-                x=1.2, y=0.0, z=0.0,
-            ))),
-            SimpleNamespace(pose=SimpleNamespace(position=SimpleNamespace(
-                x=2.2, y=0.0, z=0.0,
-            ))),
-        ])
+        msg = SimpleNamespace(
+            poses=[
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(
+                            x=0.0,
+                            y=0.0,
+                            z=0.0,
+                        )
+                    )
+                ),
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(
+                            x=0.2,
+                            y=0.0,
+                            z=0.0,
+                        )
+                    )
+                ),
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(
+                            x=1.2,
+                            y=0.0,
+                            z=0.0,
+                        )
+                    )
+                ),
+                SimpleNamespace(
+                    pose=SimpleNamespace(
+                        position=SimpleNamespace(
+                            x=2.2,
+                            y=0.0,
+                            z=0.0,
+                        )
+                    )
+                ),
+            ]
+        )
         m = TAREExplorerModule(
             auto_start=False,
             prefer_path_strategy=True,
@@ -416,11 +464,13 @@ class TestTAREWaypointEmission(unittest.TestCase):
         m = TAREExplorerModule(auto_start=False)
         m._emit_waypoint(3.0, 4.0, 0.0, frame_id="map")
 
-        m._on_navigation_status({
-            "state": "SUCCESS",
-            "goal": [3.05, 3.95, 0.0],
-            "ts": 10.0,
-        })
+        m._on_navigation_status(
+            {
+                "state": "SUCCESS",
+                "goal": [3.05, 3.95, 0.0],
+                "ts": 10.0,
+            }
+        )
 
         self.assertEqual(m._navigation_terminal_count, 1)
         self.assertEqual(m._navigation_success_count, 1)
@@ -433,17 +483,21 @@ class TestTAREWaypointEmission(unittest.TestCase):
         m = TAREExplorerModule(auto_start=False)
         m._emit_waypoint(3.0, 4.0, 0.0, frame_id="map")
 
-        m._on_navigation_status({
-            "state": "FAILED",
-            "goal": [3.05, 3.95, 0.0],
-            "failure_reason": "empty_path",
-            "ts": 10.0,
-        })
-        m._on_navigation_status({
-            "state": "SUCCESS",
-            "goal": [3.05, 3.95, 0.0],
-            "ts": 12.0,
-        })
+        m._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [3.05, 3.95, 0.0],
+                "failure_reason": "empty_path",
+                "ts": 10.0,
+            }
+        )
+        m._on_navigation_status(
+            {
+                "state": "SUCCESS",
+                "goal": [3.05, 3.95, 0.0],
+                "ts": 12.0,
+            }
+        )
 
         self.assertEqual(m._navigation_terminal_count, 1)
         self.assertEqual(m._navigation_success_count, 1)
@@ -456,17 +510,21 @@ class TestTAREWaypointEmission(unittest.TestCase):
         m = TAREExplorerModule(auto_start=False)
         m._emit_waypoint(3.0, 4.0, 0.0, frame_id="map")
 
-        m._on_navigation_status({
-            "state": "SUCCESS",
-            "goal": [3.05, 3.95, 0.0],
-            "ts": 10.0,
-        })
-        m._on_navigation_status({
-            "state": "FAILED",
-            "goal": [3.05, 3.95, 0.0],
-            "failure_reason": "late_duplicate",
-            "ts": 12.0,
-        })
+        m._on_navigation_status(
+            {
+                "state": "SUCCESS",
+                "goal": [3.05, 3.95, 0.0],
+                "ts": 10.0,
+            }
+        )
+        m._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [3.05, 3.95, 0.0],
+                "failure_reason": "late_duplicate",
+                "ts": 12.0,
+            }
+        )
 
         self.assertEqual(m._navigation_terminal_count, 1)
         self.assertEqual(m._navigation_success_count, 1)
@@ -479,35 +537,46 @@ class TestTAREWaypointEmission(unittest.TestCase):
         m = TAREExplorerModule(auto_start=False, navigation_goal_match_tolerance_m=0.5)
         m._emit_waypoint(3.0, 4.0, 0.0, frame_id="map")
 
-        m._on_navigation_status({
-            "state": "FAILED",
-            "goal": [10.0, 10.0, 0.0],
-            "failure_reason": "planner_failed",
-            "ts": 10.0,
-        })
+        m._on_navigation_status(
+            {
+                "state": "FAILED",
+                "goal": [10.0, 10.0, 0.0],
+                "failure_reason": "planner_failed",
+                "ts": 10.0,
+            }
+        )
 
         self.assertEqual(m._navigation_terminal_count, 0)
         self.assertEqual(m._navigation_failure_count, 0)
 
 
 class TestTAREStatsSnapshot(unittest.TestCase):
-
     def test_stats_schema(self):
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False)
         received: list[dict] = []
         m.tare_stats._add_callback(received.append)
         m._publish_stats()
         self.assertEqual(len(received), 1)
         snap = received[-1]
-        for key in ("alive", "started", "healthy", "waypoint_count",
-                    "waypoint_age_s", "last_runtime_ms", "finished",
-                    "navigation_terminal_count",
-                    "navigation_success_count",
-                    "navigation_failure_count",
-                    "last_navigation_status",
-                    "configured_backend", "backend",
-                    "degraded", "degraded_reason"):
+        for key in (
+            "alive",
+            "started",
+            "healthy",
+            "waypoint_count",
+            "waypoint_age_s",
+            "last_runtime_ms",
+            "finished",
+            "navigation_terminal_count",
+            "navigation_success_count",
+            "navigation_failure_count",
+            "last_navigation_status",
+            "configured_backend",
+            "backend",
+            "degraded",
+            "degraded_reason",
+        ):
             self.assertIn(key, snap)
         self.assertEqual(snap["configured_backend"], "tare")
         self.assertEqual(snap["backend"], "tare")
@@ -516,6 +585,7 @@ class TestTAREStatsSnapshot(unittest.TestCase):
 
     def test_stats_report_unhealthy_before_first_waypoint(self):
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False, way_point_timeout_s=1.0)
         received: list[dict] = []
         m.tare_stats._add_callback(received.append)
@@ -541,9 +611,9 @@ class TestTAREStatsSnapshot(unittest.TestCase):
 
 
 class TestTAREskills(unittest.TestCase):
-
     def test_skills_discoverable(self):
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False)
         names = {info.func_name for info in m.get_skill_infos()}
         self.assertIn("start_tare_exploration", names)
@@ -552,6 +622,7 @@ class TestTAREskills(unittest.TestCase):
 
     def test_start_stop_toggles_exploring_flag(self):
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False)
         received: list[bool] = []
         m.exploring._add_callback(received.append)
@@ -564,6 +635,7 @@ class TestTAREskills(unittest.TestCase):
         import json
 
         from nav.exploration.tare.module import TAREExplorerModule
+
         m = TAREExplorerModule(auto_start=False)
         parsed = json.loads(m.get_tare_status())
         self.assertIn("alive", parsed)
@@ -576,25 +648,28 @@ class TestTAREskills(unittest.TestCase):
 
 # Stack factory
 
+
 def _module_names(bp) -> set[str]:
     """Return the set of registered module names/aliases in a Blueprint."""
     return {e.name for e in bp._entries}
 
 
 class TestExplorationStackFactory(unittest.TestCase):
-
     def test_none_returns_empty_blueprint(self):
         from runtime.blueprints.stacks.exploration import exploration
+
         bp = exploration(backend="none")
         self.assertEqual(len(bp._entries), 0)
 
     def test_empty_backend_returns_empty(self):
         from runtime.blueprints.stacks.exploration import exploration
+
         bp = exploration(backend="")
         self.assertEqual(len(bp._entries), 0)
 
     def test_unknown_backend_raises(self):
         from runtime.blueprints.stacks.exploration import exploration
+
         with self.assertRaises(ValueError):
             exploration(backend="bogus")
 
@@ -604,6 +679,7 @@ class TestExplorationStackFactory(unittest.TestCase):
         via navigation(enable_frontier=True)). exploration() should reject
         the legacy backend name explicitly."""
         from runtime.blueprints.stacks.exploration import exploration
+
         with self.assertRaises(ValueError):
             exploration(backend="wavefront")
 
@@ -640,9 +716,7 @@ class TestExplorationStackFactory(unittest.TestCase):
             tare_supervisor_hz=2.0,
         )
 
-        supervisor = next(
-            e for e in bp._entries if e.name == "ExplorationSupervisorModule"
-        )
+        supervisor = next(e for e in bp._entries if e.name == "ExplorationSupervisorModule")
         self.assertEqual(supervisor.config["warn_timeout_s"], 45.0)
         self.assertEqual(supervisor.config["fallback_timeout_s"], 180.0)
         self.assertEqual(supervisor.config["poll_hz"], 2.0)
@@ -772,10 +846,7 @@ class TestExplorationStackFactory(unittest.TestCase):
             system.connections,
         )
         self.assertTrue(
-            any(
-                conn[1:] == ("odometry", "TAREExplorerModule", "odometry")
-                for conn in system.connections
-            ),
+            any(conn[1:] == ("odometry", "TAREExplorerModule", "odometry") for conn in system.connections),
             system.connections,
         )
         self.assertIn(
@@ -804,8 +875,8 @@ class TestExplorationStackFactory(unittest.TestCase):
 
 # --- TARE source boundary ----------------------------------------------------
 
-class TestTareTopicContract(unittest.TestCase):
 
+class TestTareTopicContract(unittest.TestCase):
     def test_tare_planner_source_tree_is_not_vendored(self):
         self.assertFalse((ROOT / "src/nav/exploration/tare/planner").exists())
         self.assertTrue((ROOT / "src/nav/exploration/tare/policy.py").exists())
@@ -830,6 +901,7 @@ class TestTareTopicContract(unittest.TestCase):
             "/exploration/to_nearest_global_subspace_path",
         )
         self.assertEqual(remaps.get("/start_exploration"), "/exploration/start")
+
 
 if __name__ == "__main__":
     unittest.main()

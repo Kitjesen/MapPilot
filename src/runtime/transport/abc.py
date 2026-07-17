@@ -31,6 +31,10 @@ class TopicConfig:
     buffer_size: int = 0
     qos_depth: int = 10
     reliable: bool = False
+    # Optional named QoS profile from config/qos_profiles.yaml. When set it
+    # takes priority over qos_depth/reliable on DDS backends. None keeps the
+    # existing default behavior (opt-in).
+    qos_profile: str | None = None
 
 
 class Publisher(ABC):
@@ -44,8 +48,7 @@ class Publisher(ABC):
         return self._topic.name
 
     @abstractmethod
-    def publish(self, msg: Any) -> None:
-        ...
+    def publish(self, msg: Any) -> None: ...
 
     def close(self) -> None:
         pass
@@ -63,8 +66,7 @@ class Subscriber(ABC):
         return self._topic.name
 
     @abstractmethod
-    def start(self) -> None:
-        ...
+    def start(self) -> None: ...
 
     def close(self) -> None:
         pass
@@ -74,18 +76,14 @@ class TransportABC(ABC):
     """Transport layer factory."""
 
     @abstractmethod
-    def create_publisher(self, topic: TopicConfig) -> Publisher:
-        ...
+    def create_publisher(self, topic: TopicConfig) -> Publisher: ...
 
     @abstractmethod
-    def create_subscriber(self, topic: TopicConfig, callback: Callable) -> Subscriber:
-        ...
+    def create_subscriber(self, topic: TopicConfig, callback: Callable) -> Subscriber: ...
 
     @abstractmethod
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
     @property
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...

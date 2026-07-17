@@ -1,4 +1,4 @@
-"""SLAM stack: native SlamModule by default, explicit compatibility adapters.
+"""SLAM stack: native SlamModule or an explicit native transport adapter.
 
 This stack only creates Module graph nodes. Starting external services belongs
 to runtime.blueprints.stacks.system.external_services.
@@ -9,8 +9,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from runtime.adapters.localization import localization_adapter_module
 from runtime.blueprint import Blueprint
-from runtime.adapters.mapping_slam import localization_adapter_module
 from runtime.blueprints.stacks._registry import optional_stack_module
 
 logger = logging.getLogger(__name__)
@@ -25,8 +25,8 @@ def slam(
 ) -> Blueprint:
     """Build the SLAM/localization stack.
 
-    Native ``SlamModule`` is the product path. ROS2/LCM bridges are only used
-    when ``localization_adapter`` explicitly selects them.
+    Native ``SlamModule`` is the managed path. Field profiles use explicit
+    native DDS/status adapters owned by the external SLAM endpoint.
     """
 
     bp = Blueprint()
@@ -34,11 +34,8 @@ def slam(
 
     if not profile or profile == "none":
         return bp
-    if profile == "bridge" and not _uses_compat_adapter(localization_adapter):
-        logger.warning(
-            "slam_profile='bridge' requires an explicit localization_adapter; "
-            "skipping SLAM module"
-        )
+    if profile == "bridge" and not _uses_external_adapter(localization_adapter):
+        logger.warning("slam_profile='bridge' requires an explicit localization_adapter; skipping SLAM module")
         return bp
     if manage_services:
         logger.debug(
@@ -49,7 +46,7 @@ def slam(
     module_alias = "SlamModule"
     has_slam_module = False
     try:
-        if _uses_compat_adapter(localization_adapter):
+        if _uses_external_adapter(localization_adapter):
             module_cls = _localization_adapter_module(localization_adapter)
             module_alias = slam_adapter_module_name(localization_adapter)
         else:
@@ -94,21 +91,14 @@ def _localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
     return localization_adapter_module(adapter_name)
 
 
-def _uses_compat_adapter(adapter_name: str | None) -> bool:
+def _uses_external_adapter(adapter_name: str | None) -> bool:
     adapter = str(adapter_name or "").strip().lower()
     return bool(adapter and adapter not in {"native", "native_slam", "slam"})
 
 
 def slam_adapter_module_name(adapter_name: str | None) -> str:
-    """Return the graph alias for an explicit localization adapter.
+    """Return the graph alias for an explicit localization adapter."""
 
-    Only the ROS2 adapter is a bridge. DDS endpoints are native transport
-    adapters and should not appear in product graphs as ``SlamBridgeModule``.
-    """
-
-    adapter = str(adapter_name or "").strip().lower()
-    if adapter in {"ros2", "ros2_slam_bridge"}:
-        return "SlamBridgeModule"
     return "SlamAdapterModule"
 
 

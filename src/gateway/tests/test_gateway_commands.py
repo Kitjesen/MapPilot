@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import json
 import math
-import subprocess
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,7 +13,6 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 from pydantic import ValidationError
-
 
 pytest.importorskip("fastapi")
 
@@ -28,11 +27,11 @@ def _payload(response_or_payload):
     return response_or_payload
 
 
-def _write_active_same_source_tomogram(map_root: Path) -> Path:
+def _write_active_same_source_octomap(map_root: Path) -> Path:
     active_dir = map_root / "active"
     active_dir.mkdir(parents=True)
     map_path = active_dir / "map.pcd"
-    tomogram_path = active_dir / "tomogram.pickle"
+    octomap_path = active_dir / "octomap.ot"
     map_path.write_text(
         "\n".join(
             [
@@ -53,9 +52,9 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
         + "\n",
         encoding="ascii",
     )
-    tomogram_path.write_bytes(b"gateway-active-tomogram")
+    octomap_path.write_bytes(b"gateway-active-octomap")
     map_sha = hashlib.sha256(map_path.read_bytes()).hexdigest()
-    tomogram_sha = hashlib.sha256(tomogram_path.read_bytes()).hexdigest()
+    octomap_sha = hashlib.sha256(octomap_path.read_bytes()).hexdigest()
     (active_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -77,14 +76,14 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
                         "frame_id": "map",
                         "point_count": 1,
                     },
-                    "tomogram": {
-                        "path": "tomogram.pickle",
-                        "sha256": tomogram_sha,
+                    "octomap": {
+                        "path": "octomap.ot",
+                        "sha256": octomap_sha,
                         "source_map_sha256": map_sha,
                         "source_profile": "thunder_field",
                         "data_source": "thunder_field",
                         "frame_id": "map",
-                        "shape": [1, 1, 1],
+                        "resolution": 0.2,
                     },
                 },
             },
@@ -93,6 +92,41 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
         encoding="utf-8",
     )
     return active_dir
+
+
+class _TypedActiveMapsService:
+    def __init__(self, map_root: Path):
+        self.map_root = map_root
+
+    def execute(self, request):
+        command = request.to_mapping()
+        action = command["action"]
+        if action == "get_active":
+            return {"action": action, "success": True, "active": "active"}
+        if action == "validate_artifacts":
+            from maps.artifacts import validate_saved_map_artifact_dir
+
+            gate = validate_saved_map_artifact_dir(
+                self.map_root / "active",
+                require_octomap=bool(command.get("require_octomap", False)),
+                require_occupancy=bool(command.get("require_occupancy", False)),
+                expected_data_source=command.get("expected_data_source"),
+                expected_source_profile=command.get("expected_source_profile"),
+                expected_frame_id=command.get("expected_frame_id"),
+            )
+            return {"action": action, "success": True, "gate": gate}
+        return {
+            "action": action,
+            "success": False,
+            "reason_code": "unsupported_test_action",
+        }
+
+
+def _attach_active_maps_service(gateway, map_root: Path) -> _TypedActiveMapsService:
+    service = _TypedActiveMapsService(map_root)
+    gateway._map_mgr = service
+    gateway._all_modules = {"maps.service": service}
+    return service
 
 
 def _mark_navigation_ready(gateway) -> None:
@@ -225,12 +259,10 @@ def _write_algorithm_benchmark_summary(root: Path) -> Path:
                 "algorithm_validation": {
                     "claim_allowed": True,
                     "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
-                    "validation_flow": [
-                        {"gate": "dynamic_obstacle_local_planner", "ok": True}
-                    ],
+                    "validation_flow": [{"gate": "dynamic_obstacle_local_planner", "ok": True}],
                     "claim_boundary": {
                         "simulation_only": True,
-                        "global_planning_source": "static_saved_map_tomogram",
+                        "global_planning_source": "static_saved_map_octomap",
                         "live_costmap_role": "local_planning_and_safety_only",
                     },
                     "blocking_categories": {},
@@ -304,13 +336,11 @@ def test_server_sim_acceptance_chain_reads_algorithm_artifact_without_motion_pub
     assert acceptance.status_code == 200
     acceptance_body = acceptance.json()
     assert acceptance_body["mode"] == "simulation"
-    assert acceptance_body["evidence"]["field_check"]["algorithm"][
-        "strict_benchmark"
-    ]["summary_path"] == algorithm_body["summary_path"]
-    assert all(
-        target["command_published"] is False
-        for target in acceptance_body["targets"]
+    assert (
+        acceptance_body["evidence"]["field_check"]["algorithm"]["strict_benchmark"]["summary_path"]
+        == algorithm_body["summary_path"]
     )
+    assert all(target["command_published"] is False for target in acceptance_body["targets"])
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.stop_cmd.msg_count == 0
@@ -635,18 +665,19 @@ def test_product_field_check_uses_active_map_when_map_dir_is_omitted(
     from gateway.schemas import ProductFieldCheckRequest, ProductFieldCheckResponse
 
     map_root = tmp_path / "maps"
-    active_dir = _write_active_same_source_tomogram(map_root)
+    active_dir = _write_active_same_source_octomap(map_root)
     monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
 
     gateway = GatewayModule()
     gateway.setup()
+    _attach_active_maps_service(gateway, map_root)
     post_field_check = _endpoint(gateway, "/api/v1/diagnostics/field-check")
 
     result = asyncio.run(
         post_field_check(
             ProductFieldCheckRequest(
                 mode="non_motion",
-                require_tomogram=True,
+                require_octomap=True,
             )
         )
     )
@@ -654,10 +685,10 @@ def test_product_field_check_uses_active_map_when_map_dir_is_omitted(
 
     assert model.map["active"] == str(active_dir)
     assert model.map["provenance"] == "PASS"
-    assert model.map["tomogram"] == "PASS"
+    assert model.map["octomap"] == "PASS"
     assert result["evidence"]["map"]["ok"] is True
     assert result["evidence"]["map"]["map_dir"] == str(active_dir)
-    assert result["evidence"]["map"]["artifacts"]["tomogram"]["sha256_ok"] is True
+    assert result["evidence"]["map"]["artifacts"]["octomap"]["sha256_ok"] is True
     assert "map provenance not checked" not in "\n".join(result["advisories"])
 
 
@@ -672,13 +703,14 @@ def test_inspection_acceptance_uses_active_map_when_map_dir_is_omitted(
     )
 
     map_root = tmp_path / "maps"
-    active_dir = _write_active_same_source_tomogram(map_root)
+    active_dir = _write_active_same_source_octomap(map_root)
     monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
 
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"nav.mission": nav})
+    maps_service = _attach_active_maps_service(gateway, map_root)
+    gateway.on_system_modules({"nav.mission": nav, "maps.service": maps_service})
     _install_saved_location(gateway, name="pump")
     _mark_navigation_ready(gateway)
     post_acceptance = _endpoint(gateway, "/api/v1/inspection/acceptance")
@@ -688,7 +720,7 @@ def test_inspection_acceptance_uses_active_map_when_map_dir_is_omitted(
             InspectionAcceptanceRequest(
                 mode="non_motion",
                 points=["pump"],
-                require_tomogram=True,
+                require_octomap=True,
                 client_id="web",
             )
         )
@@ -697,7 +729,7 @@ def test_inspection_acceptance_uses_active_map_when_map_dir_is_omitted(
 
     assert model.evidence["field_check"]["map"]["active"] == str(active_dir)
     assert model.evidence["field_check"]["map"]["provenance"] == "PASS"
-    assert model.evidence["field_check"]["map"]["tomogram"] == "PASS"
+    assert model.evidence["field_check"]["map"]["octomap"] == "PASS"
     assert result["targets"][0]["command_published"] is False
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
@@ -789,7 +821,7 @@ def test_runtime_switch_plan_endpoint_is_read_only_and_typed():
     assert model.from_["runtime_contract"] == "mujoco_fastlio2_live"
     assert model.to["runtime_contract"] == "thunder_field"
     assert model.from_["command_sink"] == "mujoco_velocity_adapter"
-    assert model.to["command_sink"] == "hardware_driver_after_cmd_vel_mux"
+    assert model.to["command_sink"] == "driver"
     assert "command_sink" in model.changed
     assert "simulation_only" in model.changed
     assert "resolved_runtime_data_flow" in model.changed
@@ -798,17 +830,11 @@ def test_runtime_switch_plan_endpoint_is_read_only_and_typed():
     assert {
         "dynamic_obstacle_gate",
         "command_boundary",
-    } <= {
-        str(stage.get("name"))
-        for stage in model.from_["resolved_runtime_data_flow"]
-    }
+    } <= {str(stage.get("name")) for stage in model.from_["resolved_runtime_data_flow"]}
     assert {
         "dynamic_obstacle_gate",
         "command_boundary",
-    } <= {
-        str(stage.get("name"))
-        for stage in model.to["resolved_runtime_data_flow"]
-    }
+    } <= {str(stage.get("name")) for stage in model.to["resolved_runtime_data_flow"]}
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.stop_cmd.msg_count == 0
@@ -822,11 +848,11 @@ def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
     from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "replay")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "rosbag_fastlio2_replay")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "rosbag_fastlio2_replay")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "no_actuation_replay_sink")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
+    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
+    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
     gateway = GatewayModule()
     gateway.setup()
@@ -848,11 +874,11 @@ def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
     assert model.publishes == []
     assert model.inputs["current_endpoint_source"] == "env"
     assert model.from_["profile"] == "nav"
-    assert model.from_["endpoint"] == "replay"
-    assert model.from_["data_source"] == "rosbag_fastlio2_replay"
-    assert model.from_["command_sink"] == "no_actuation_replay_sink"
+    assert model.from_["endpoint"] == "thunder_field"
+    assert model.from_["data_source"] == "thunder_field"
+    assert model.from_["command_sink"] == "driver"
     assert model.to["endpoint"] == "thunder_field"
-    assert model.to["command_sink"] == "hardware_driver_after_cmd_vel_mux"
+    assert model.to["command_sink"] == "driver"
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.stop_cmd.msg_count == 0
@@ -860,10 +886,10 @@ def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
 
 
 def test_runtime_switch_plan_endpoint_reports_invalid_current_boundary(monkeypatch):
-    from runtime.runtime_switch import RuntimeSwitchValidation
+    import gateway.services.runtime_switch_plan as switch_plan_mod
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
-    import gateway.services.runtime_switch_plan as switch_plan_mod
+    from runtime.runtime_switch import RuntimeSwitchValidation
 
     original_validate = switch_plan_mod.validate_runtime_switch
 
@@ -1010,7 +1036,7 @@ def test_runtime_switch_endpoint_hot_executes_same_graph_without_subprocess(
     assert gateway.stop_cmd.msg_count == 1
     assert gateway.cmd_vel.msg_count == 1
     assert gateway.mode_cmd.msg_count == 1
-    assert getattr(gateway, "_runtime_product_profile") == "inspection"
+    assert gateway._runtime_product_profile == "inspection"
     assert gateway._session_product_profile == "inspection"
     assert gateway._session_product_session == "inspection"
     assert gateway._cmd_vel_mux.calls == ["freeze", "unfreeze"]
@@ -1079,6 +1105,32 @@ def test_runtime_switch_endpoint_accepts_tare_explore_product_mode():
     assert "--map" not in model.command
     assert gateway.goal_pose.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
+
+
+def test_navigation_plan_preview_runs_outside_the_event_loop_thread():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import PlanPreviewRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    nav = _FakePlanPreviewNav()
+    worker_threads: list[int] = []
+    original_preview = nav.preview_plan
+
+    def preview_plan(*args, **kwargs):
+        worker_threads.append(threading.get_ident())
+        return original_preview(*args, **kwargs)
+
+    nav.preview_plan = preview_plan
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    post_plan = _endpoint(gateway, "/api/v1/navigation/plan")
+    event_loop_thread = threading.get_ident()
+
+    asyncio.run(post_plan(PlanPreviewRequest(x=1.0, y=2.0, z=0.0)))
+
+    assert worker_threads
+    assert worker_threads[0] != event_loop_thread
     assert gateway.stop_cmd.msg_count == 0
 
 
@@ -1099,6 +1151,17 @@ def test_runtime_switch_endpoint_can_launch_robot_side_mode_switch(
             calls.append((command, kwargs))
 
     monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(switch_execute, "_requires_transient_unit", lambda: False)
+    monkeypatch.setattr(
+        switch_execute,
+        "build_runtime_switch_plan",
+        lambda raw: {
+            "ok": True,
+            "blockers": [],
+            "inputs": {"current_profile": raw.get("current_profile")},
+            "product_mode_switch": {"required_lifecycle": "cold_restart"},
+        },
+    )
     monkeypatch.setattr(switch_execute.subprocess, "Popen", FakePopen)
 
     gateway = GatewayModule()
@@ -1133,10 +1196,33 @@ def test_runtime_switch_endpoint_can_launch_robot_side_mode_switch(
     assert "field_map" in command
     assert "--relocalize" in command
     assert calls[0][1]["stdin"] is switch_execute.subprocess.DEVNULL
+    assert calls[0][1]["close_fds"] is (switch_execute.os.name != "nt")
+    if switch_execute.os.name != "nt":
+        assert calls[0][1]["start_new_session"] is True
     assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
+    assert gateway.cancel.msg_count == 1
+    assert gateway.cmd_vel.msg_count == 1
+    assert gateway.stop_cmd.msg_count == 1
     assert gateway.instruction.msg_count == 0
+    assert gateway._runtime_switch_pending is not None
+
+    duplicate = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="nav",
+                map_name="other_field_map",
+                allow_restart=True,
+                request_id="switch-test-duplicate",
+            )
+        )
+    )
+    duplicate_model = RuntimeSwitchResponse.model_validate(duplicate)
+
+    assert duplicate_model.ok is False
+    assert duplicate_model.status == "rejected"
+    assert duplicate_model.blockers == ["runtime switch already in progress: switch-test"]
+    assert len(calls) == 1
 
 
 def test_navigation_goal_requests_are_map_frame_only():
@@ -1243,8 +1329,7 @@ def test_navigation_plan_preview_preserves_non_map_start_frame_when_blocked():
 
 def test_command_journal_replays_duplicate_request_id_without_republish():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import ControlCommandResponse
+    from gateway.schemas import ControlCommandResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1267,7 +1352,7 @@ def test_command_journal_replays_duplicate_request_id_without_republish():
     model = ControlCommandResponse.model_validate(first)
 
     assert gateway.goal_pose.msg_count == 1
-    assert gateway.instruction.msg_count == 1
+    assert gateway.instruction.msg_count == 0
     assert nav.calls == [(1.0, 2.0, 0.0)]
     assert model.schema_version == 1
     assert model.ok is True
@@ -1281,6 +1366,180 @@ def test_command_journal_replays_duplicate_request_id_without_republish():
     assert second["command"]["replay"] is True
     assert second["goal"] == [1.0, 2.0, 0.0]
     assert second["command"]["request_id"] == "goal-001"
+
+
+def test_runtime_switch_cold_restart_uses_independent_systemd_unit(
+    monkeypatch,
+    tmp_path,
+):
+    import gateway.services.runtime_switch_execute as switch_execute
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return type(
+            "Result",
+            (),
+            {"returncode": 0, "stdout": "", "stderr": ""},
+        )()
+
+    def fail_popen(*_args, **_kwargs):
+        raise AssertionError("cold switch must escape lingtu.service cgroup")
+
+    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        switch_execute,
+        "_requires_transient_unit",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        switch_execute,
+        "build_runtime_switch_plan",
+        lambda raw: {
+            "ok": True,
+            "blockers": [],
+            "inputs": {"current_profile": raw.get("current_profile")},
+            "product_mode_switch": {"required_lifecycle": "cold_restart"},
+        },
+    )
+    monkeypatch.setattr(switch_execute.subprocess, "run", fake_run)
+    monkeypatch.setattr(switch_execute.subprocess, "Popen", fail_popen)
+
+    stale_log = tmp_path / "systemd-switch-test.log"
+    stale_log.write_text("stale", encoding="utf-8")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    result = asyncio.run(
+        _endpoint(gateway, "/api/v1/runtime/switch")(
+            RuntimeSwitchRequest(
+                current_profile="map",
+                target_profile="nav",
+                map_name="field_map",
+                allow_restart=True,
+                request_id="systemd-switch-test",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.accepted is True
+    assert len(calls) == 2
+    assert calls[0][0] == ["sudo", "-n", "true"]
+    launch = calls[1][0]
+    assert launch[:3] == ["sudo", "-n", "systemd-run"]
+    assert "--collect" in launch
+    assert "--no-block" in launch
+    assert "--unit=lingtu-runtime-switch-systemd-switch-test" in launch
+    assert "bash" in launch
+    assert "mode" in launch
+    assert "switch" in launch
+    assert "nav" in launch
+    assert "HOME=/home/sunrise" in launch
+    assert "USER=sunrise" in launch
+    assert "LOGNAME=sunrise" in launch
+    assert not stale_log.exists()
+
+
+def test_runtime_switch_linux_dev_process_does_not_require_transient_unit(
+    monkeypatch,
+):
+    import gateway.services.runtime_switch_execute as switch_execute
+
+    monkeypatch.setattr(switch_execute.os, "name", "posix")
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    monkeypatch.delenv("SYSTEMD_EXEC_PID", raising=False)
+    monkeypatch.delenv("JOURNAL_STREAM", raising=False)
+
+    assert switch_execute._requires_transient_unit() is False
+
+
+def test_runtime_switch_linux_systemd_process_requires_transient_unit(
+    monkeypatch,
+):
+    import gateway.services.runtime_switch_execute as switch_execute
+
+    monkeypatch.setattr(switch_execute.os, "name", "posix")
+    monkeypatch.setenv("INVOCATION_ID", "systemd-invocation")
+    monkeypatch.delenv("SYSTEMD_EXEC_PID", raising=False)
+
+    assert switch_execute._requires_transient_unit() is True
+
+
+def test_runtime_switch_log_path_cannot_escape_configured_directory(
+    monkeypatch,
+    tmp_path,
+):
+    import gateway.services.runtime_switch_execute as switch_execute
+
+    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
+
+    log_path = switch_execute._log_path("../../outside/runtime-switch")
+
+    assert log_path.parent == tmp_path
+    assert log_path.name == "outside-runtime-switch.log"
+
+
+def test_runtime_switch_transient_unit_name_is_unique_and_sanitized():
+    import gateway.services.runtime_switch_execute as switch_execute
+
+    first = switch_execute._transient_unit_name("switch/one")
+    second = switch_execute._transient_unit_name("switch two")
+
+    assert first == "lingtu-runtime-switch-switch-one"
+    assert second == "lingtu-runtime-switch-switch-two"
+    assert first != second
+
+
+def test_runtime_switch_requires_native_stop_ack_and_clears_pending_on_failure(
+    monkeypatch,
+    tmp_path,
+):
+    import gateway.services.native_control as native_control
+    import gateway.services.runtime_switch_execute as switch_execute
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        native_control,
+        "stop",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("native stop ack timeout")),
+    )
+    monkeypatch.setattr(
+        switch_execute.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: pytest.fail("switch must not launch without stop ack"),
+    )
+
+    gateway = GatewayModule()
+    gateway.setup()
+    result = asyncio.run(
+        _endpoint(gateway, "/api/v1/runtime/switch")(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="nav",
+                map_name="field_map",
+                allow_restart=True,
+                request_id="stop-ack-failure",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is False
+    assert model.status == "error"
+    assert "native stop ack timeout" in (model.error or "")
+    assert getattr(gateway, "_runtime_switch_pending", None) is None
+    assert gateway.cancel.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
 
 
 def test_control_commands_publish_command_ack_events():
@@ -1326,8 +1585,7 @@ def test_control_commands_publish_command_ack_events():
 
 def test_goal_request_yaw_is_published_as_pose_orientation():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import ControlCommandResponse
+    from gateway.schemas import ControlCommandResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1367,21 +1625,20 @@ def test_goal_request_yaw_is_published_as_pose_orientation():
     assert result["target"]["source"] == "coordinate"
 
 
-def test_goal_route_uses_native_nav_control_when_configured(monkeypatch, tmp_path):
+def test_goal_route_uses_persistent_native_client_when_configured(monkeypatch):
     from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
     from gateway.schemas import ControlCommandResponse, GoalRequest
 
-    binary = tmp_path / "lingtu_nav_control"
-    binary.write_text("stub", encoding="ascii")
-    monkeypatch.setenv("LINGTU_NAV_CONTROL_BIN", str(binary))
-    monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
-    calls = []
+    class FakeClient:
+        def __init__(self) -> None:
+            self.goals = []
 
-    def fake_run(argv, *, check, timeout):
-        calls.append((argv, check, timeout))
-        return subprocess.CompletedProcess(argv, 0)
+        def send_goal(self, x, y, z, yaw, *, request_id=None) -> None:
+            self.goals.append((x, y, z, yaw, request_id))
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    client = FakeClient()
+    monkeypatch.setattr(commands, "_native_navigation_client", lambda: client)
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1408,33 +1665,130 @@ def test_goal_route_uses_native_nav_control_when_configured(monkeypatch, tmp_pat
     assert model.ok is True
     assert gateway.goal_pose.msg_count == 0
     assert gateway.instruction.msg_count == 0
-    assert calls == [
-        (
-            [
-                str(binary),
-                "goal",
-                "1",
-                "2",
-                "0.3",
-                "1.57079633",
-                "--domain-id",
-                "7",
-            ],
-            True,
-            5.0,
+    assert client.goals == [(1.0, 2.0, 0.3, math.pi / 2, "native-goal")]
+
+
+def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypatch, tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
+
+    status_file = tmp_path / "nav_endpoint_status.json"
+    status_file.write_text(
+        json.dumps(
+            {
+                "stamp_s": time.time(),
+                "control_mode": "autonomy",
+                "input_gate": {"ready": True},
+                "publish_cmd_vel": True,
+            }
         ),
-        (
-            [str(binary), "instruction", "go", "--domain-id", "7"],
-            True,
-            5.0,
-        ),
-    ]
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
+    monkeypatch.setattr(commands, "get_native_navigation_client", lambda *, required=False: None)
+
+    gateway = GatewayModule()
+    gateway.setup()
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    response = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                z=0.0,
+                request_id="endpoint-only-missing",
+                client_id="web",
+            )
+        )
+    )
+    payload = _payload(response)
+    model = GatewayErrorResponse.model_validate(payload)
+
+    assert response.status_code == 409
+    assert model.error == "native_command_rejected"
+    assert "native navigation command boundary is unavailable" in model.detail["reason"]
+    assert gateway.goal_pose.msg_count == 0
+
+
+def test_goal_route_surfaces_native_business_rejection(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import GoalRequest
+    from runtime.adapters.native.navigation import NavigationClientError
+
+    class RejectingClient:
+        def send_goal(self, *_args, **_kwargs) -> None:
+            raise NavigationClientError("navigation command rejected: active_octomap_not_configured")
+
+    monkeypatch.setattr(
+        commands,
+        "_native_navigation_client",
+        lambda: RejectingClient(),
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.mission": _FakePlanPreviewNav()})
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    response = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                request_id="native-reject",
+                client_id="web",
+            )
+        )
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["error"] == "native_command_rejected"
+    assert payload["command"]["request_id"] == "native-reject"
+    assert "active_octomap_not_configured" in payload["detail"]["reason"]
+
+
+def test_instruction_route_stays_on_semantic_module_path(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import InstructionRequest
+
+    monkeypatch.setattr(
+        commands,
+        "_native_navigation_client",
+        lambda: pytest.fail("instruction must not enter native navigation directly"),
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    received = []
+    gateway.instruction.subscribe(received.append)
+    post_instruction = _endpoint(gateway, "/api/v1/instruction")
+
+    result = asyncio.run(
+        post_instruction(
+            InstructionRequest(
+                text="go to the charging dock",
+                request_id="semantic-001",
+                client_id="web",
+            )
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert received == ["go to the charging dock"]
 
 
 def test_goal_route_rejects_infeasible_plan_preview_without_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1500,8 +1854,7 @@ def test_goal_route_rejects_infeasible_plan_preview_without_publishing():
 )
 def test_goal_route_rejects_inconsistent_or_unsafe_feasible_preview(nav):
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1534,8 +1887,7 @@ def test_goal_route_rejects_inconsistent_or_unsafe_feasible_preview(nav):
 
 def test_goal_route_rejects_infeasible_preview_with_instruction_without_any_publish():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1568,8 +1920,7 @@ def test_goal_route_rejects_infeasible_preview_with_instruction_without_any_publ
 
 def test_goal_route_rejects_safety_stop_without_planning_or_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1608,8 +1959,7 @@ def test_goal_route_rejects_safety_stop_without_planning_or_publishing():
 
 def test_goal_route_rejects_inactive_navigation_session_without_planning_or_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1646,8 +1996,7 @@ def test_goal_route_rejects_inactive_navigation_session_without_planning_or_publ
 
 def test_click_navigation_rejects_infeasible_plan_preview_without_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import ClickNavRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import ClickNavRequest, GatewayErrorResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1683,10 +2032,44 @@ def test_click_navigation_rejects_infeasible_plan_preview_without_publishing():
     assert gateway.goal_pose.msg_count == 0
 
 
+def test_click_navigation_rejects_selected_map_that_is_not_active():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ClickNavRequest, GatewayErrorResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    gateway._session_map = "active_map"
+    post_click = _endpoint(gateway, "/api/v1/navigate/click")
+
+    response = asyncio.run(
+        post_click(
+            ClickNavRequest(
+                x=3.0,
+                y=4.0,
+                z=0.0,
+                request_id="wrong-map-click",
+                client_id="web",
+                metadata={"map_name": "previewed_other_map"},
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "active_map_mismatch"
+    assert model.detail["reason_code"] == "active_map_mismatch"
+    assert model.detail["requested_map"] == "previewed_other_map"
+    assert model.detail["active_map"] == "active_map"
+    assert nav.calls == []
+    assert gateway.goal_pose.msg_count == 0
+
+
 def test_click_navigation_rejects_safety_stop_without_planning_or_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import ClickNavRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import ClickNavRequest, GatewayErrorResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1720,8 +2103,7 @@ def test_click_navigation_rejects_safety_stop_without_planning_or_publishing():
 
 def test_click_navigation_previews_publishes_and_replays_request_id_once():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import ClickNavRequest
-    from gateway.schemas import ControlCommandResponse
+    from gateway.schemas import ClickNavRequest, ControlCommandResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1765,8 +2147,7 @@ def test_click_navigation_previews_publishes_and_replays_request_id_once():
 
 def test_goal_route_rejects_missing_plan_preview_without_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GoalRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1801,8 +2182,7 @@ def test_goal_route_rejects_missing_plan_preview_without_publishing():
 
 def test_direct_motion_commands_reject_safety_stop_without_publishing():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import CmdVelRequest, InstructionRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import CmdVelRequest, GatewayErrorResponse, InstructionRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1831,9 +2211,7 @@ def test_direct_motion_commands_reject_safety_stop_without_publishing():
         )
     )
     cmd_model = GatewayErrorResponse.model_validate(_payload(cmd_response))
-    instruction_model = GatewayErrorResponse.model_validate(
-        _payload(instruction_response)
-    )
+    instruction_model = GatewayErrorResponse.model_validate(_payload(instruction_response))
 
     assert cmd_response.status_code == 409
     assert cmd_model.error == "safety_stop"
@@ -1849,8 +2227,7 @@ def test_direct_motion_commands_reject_safety_stop_without_publishing():
 
 def test_visual_servo_hot_command_publishes_servo_target():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import ControlCommandResponse
-    from gateway.schemas import VisualServoRequest
+    from gateway.schemas import ControlCommandResponse, VisualServoRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1878,8 +2255,7 @@ def test_visual_servo_hot_command_publishes_servo_target():
 
 def test_visual_servo_stop_allowed_under_safety_stop_but_find_rejected():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GatewayErrorResponse
-    from gateway.schemas import VisualServoRequest
+    from gateway.schemas import GatewayErrorResponse, VisualServoRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1920,8 +2296,7 @@ def test_visual_servo_stop_allowed_under_safety_stop_but_find_rejected():
 
 def test_visual_servo_hot_command_rejects_when_module_unavailable():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GatewayErrorResponse
-    from gateway.schemas import VisualServoRequest
+    from gateway.schemas import GatewayErrorResponse, VisualServoRequest
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1946,8 +2321,7 @@ def test_visual_servo_hot_command_rejects_when_module_unavailable():
 
 def test_cmd_vel_rejects_safety_stop_without_publishing_and_emits_rejected_ack():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import CmdVelRequest
-    from gateway.schemas import GatewayErrorResponse
+    from gateway.schemas import CmdVelRequest, GatewayErrorResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -1985,8 +2359,7 @@ def test_cmd_vel_rejects_safety_stop_without_publishing_and_emits_rejected_ack()
 
 def test_cmd_vel_replays_duplicate_request_id_without_republish():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import CmdVelRequest
-    from gateway.schemas import ControlCommandResponse
+    from gateway.schemas import CmdVelRequest, ControlCommandResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2009,6 +2382,81 @@ def test_cmd_vel_replays_duplicate_request_id_without_republish():
     assert first_model.command.replay is False
     assert second_model.command.replay is True
     assert gateway.cmd_vel.msg_count == 1
+
+
+def test_field_cmd_vel_rejects_missing_native_boundary_without_local_fallback():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CmdVelRequest, GatewayErrorResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    gateway._teleop_native_client = None
+    post_cmd_vel = _endpoint(gateway, "/api/v1/cmd_vel")
+
+    response = asyncio.run(
+        post_cmd_vel(
+            CmdVelRequest(
+                vx=0.2,
+                wz=0.1,
+                request_id="native-boundary-missing",
+                client_id="web",
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "native_command_rejected"
+    assert "boundary is unavailable" in model.detail["reason"]
+    assert gateway.cmd_vel.msg_count == 0
+
+
+def test_native_cmd_vel_ack_does_not_block_gateway_event_loop():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CmdVelRequest
+
+    entered = threading.Event()
+    release = threading.Event()
+    ack_threads: list[int] = []
+
+    def blocking_publish(_twist, *, request_id=None):
+        ack_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(timeout=1.0)
+        return True
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.publish_remote_velocity_request = blocking_publish
+    post_cmd_vel = _endpoint(gateway, "/api/v1/cmd_vel")
+
+    async def run_request():
+        loop_thread = threading.get_ident()
+        started_at = time.perf_counter()
+        request_task = asyncio.create_task(
+            post_cmd_vel(
+                CmdVelRequest(
+                    vx=0.2,
+                    wz=0.1,
+                    request_id="nonblocking-cmd-vel",
+                    client_id="web",
+                )
+            )
+        )
+        await asyncio.sleep(0.02)
+        heartbeat_delay = time.perf_counter() - started_at
+        release.set()
+        response = await request_task
+        return loop_thread, heartbeat_delay, response
+
+    loop_thread, heartbeat_delay, response = asyncio.run(run_request())
+
+    assert entered.is_set()
+    assert heartbeat_delay < 0.15
+    assert len(ack_threads) == 1
+    assert ack_threads[0] != loop_thread
+    assert response["teleop_cmd_vel_dds"] is True
 
 
 def test_cmd_vel_rejects_non_finite_vy():
@@ -2037,10 +2485,164 @@ def test_stop_command_remains_available_when_safety_stop_is_active():
     assert gateway.cmd_vel.msg_count == 1
 
 
+def test_field_stop_reports_missing_native_boundary_without_local_cmd_vel():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse, StopRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    gateway._teleop_native_client = None
+    post_stop = _endpoint(gateway, "/api/v1/stop")
+
+    response = asyncio.run(
+        post_stop(
+            StopRequest(
+                request_id="native-stop-missing",
+                client_id="web",
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "native_command_rejected"
+    assert gateway.cmd_vel.msg_count == 0
+
+
+def test_field_emergency_stop_uses_native_estop_latch(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import ControlCommandResponse, StopRequest
+
+    calls = []
+    monkeypatch.setattr(
+        commands,
+        "native_estop",
+        lambda reason="estop", *, request_id=None: calls.append((reason, request_id)) or True,
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    post_stop = _endpoint(gateway, "/api/v1/stop")
+
+    result = asyncio.run(post_stop(StopRequest(request_id="native-stop", client_id="web")))
+    model = ControlCommandResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.status == "stopped"
+    assert calls == [("rest_emergency_stop", "native-stop")]
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+
+
+def test_native_stop_ack_does_not_block_gateway_event_loop(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import StopRequest
+
+    entered = threading.Event()
+    release = threading.Event()
+    ack_threads: list[int] = []
+
+    def blocking_estop(reason="estop", *, request_id=None):
+        ack_threads.append(threading.get_ident())
+        entered.set()
+        release.wait(timeout=1.0)
+        return True
+
+    monkeypatch.setattr(commands, "native_estop", blocking_estop)
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    post_stop = _endpoint(gateway, "/api/v1/stop")
+
+    async def run_request():
+        loop_thread = threading.get_ident()
+        started_at = time.perf_counter()
+        request_task = asyncio.create_task(
+            post_stop(
+                StopRequest(
+                    request_id="nonblocking-stop",
+                    client_id="web",
+                )
+            )
+        )
+        await asyncio.sleep(0.02)
+        heartbeat_delay = time.perf_counter() - started_at
+        release.set()
+        response = await request_task
+        return loop_thread, heartbeat_delay, response
+
+    loop_thread, heartbeat_delay, response = asyncio.run(run_request())
+
+    assert entered.is_set()
+    assert heartbeat_delay < 0.15
+    assert len(ack_threads) == 1
+    assert ack_threads[0] != loop_thread
+    assert response["status"] == "stopped"
+
+
+def test_mode_estop_and_explicit_reset_use_native_boundary(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import ControlCommandResponse, ModeRequest, StopRequest
+
+    calls = []
+    monkeypatch.setattr(
+        commands,
+        "native_estop",
+        lambda reason="estop", *, request_id=None: calls.append(("estop", reason, request_id)) or True,
+    )
+    monkeypatch.setattr(
+        commands,
+        "native_clear_estop",
+        lambda reason="clear_estop", *, request_id=None: calls.append(("clear", reason, request_id)) or True,
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    post_mode = _endpoint(gateway, "/api/v1/mode")
+    post_reset = _endpoint(gateway, "/api/v1/estop/reset")
+
+    estop_result = asyncio.run(post_mode(ModeRequest(mode="estop", request_id="estop-1", client_id="web")))
+    reset_result = asyncio.run(post_reset(StopRequest(request_id="reset-1", client_id="web")))
+
+    assert ControlCommandResponse.model_validate(estop_result).mode == "estop"
+    assert ControlCommandResponse.model_validate(reset_result).status == "estop_cleared"
+    assert calls == [
+        ("estop", "mode_estop", "estop-1"),
+        ("clear", "operator_reset", "reset-1"),
+    ]
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+
+
+def test_field_estop_mode_failure_does_not_claim_mode_change(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import GatewayErrorResponse, ModeRequest
+
+    monkeypatch.setattr(
+        commands,
+        "native_estop",
+        lambda *args, **kwargs: False,
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    post_mode = _endpoint(gateway, "/api/v1/mode")
+
+    response = asyncio.run(post_mode(ModeRequest(mode="estop", request_id="estop-fail", client_id="web")))
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "native_command_rejected"
+    assert gateway._mode != "estop"
+
+
 def test_navigation_cancel_publishes_cancel_without_motion_outputs():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import CancelRequest
-    from gateway.schemas import ControlCommandResponse
+    from gateway.schemas import CancelRequest, ControlCommandResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2071,6 +2673,97 @@ def test_navigation_cancel_publishes_cancel_without_motion_outputs():
     assert gateway.stop_cmd.msg_count == 0
 
 
+def test_navigation_resume_releases_takeover_without_replaying_old_motion(
+    monkeypatch,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import ControlCommandResponse, StopRequest
+
+    calls: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(
+        commands,
+        "native_resume_autonomy",
+        lambda reason, *, request_id=None: calls.append((reason, request_id)) or True,
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    post_resume = _endpoint(gateway, "/api/v1/navigation/resume")
+
+    result = asyncio.run(post_resume(StopRequest(request_id="resume-001", client_id="web")))
+    model = ControlCommandResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.status == "autonomy_resume_ready"
+    assert result["goal_reissue_required"] is True
+    assert calls == [("operator_resume", "resume-001")]
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+
+
+def test_active_control_lease_blocks_other_rest_motion_clients():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CmdVelRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    assert gateway._lease.acquire("operator-a", 30.0) is True
+    post_cmd_vel = _endpoint(gateway, "/api/v1/cmd_vel")
+
+    response = _payload(
+        asyncio.run(
+            post_cmd_vel(
+                CmdVelRequest(
+                    vx=0.2,
+                    vy=0.0,
+                    wz=0.1,
+                    request_id="blocked-motion",
+                    client_id="operator-b",
+                )
+            )
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == "control_lease"
+    assert response["detail"]["lease"]["holder"] == "operator-a"
+    assert gateway.cmd_vel.msg_count == 0
+
+
+def test_active_control_lease_blocks_other_rest_resume_clients(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.routes import commands
+    from gateway.schemas import StopRequest
+
+    calls = []
+    monkeypatch.setattr(
+        commands,
+        "native_resume_autonomy",
+        lambda reason, *, request_id=None: calls.append((reason, request_id)) or True,
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+    assert gateway._lease.acquire("operator-a", 30.0) is True
+    post_resume = _endpoint(gateway, "/api/v1/navigation/resume")
+
+    response = _payload(
+        asyncio.run(
+            post_resume(
+                StopRequest(
+                    request_id="blocked-resume",
+                    client_id="operator-b",
+                )
+            )
+        )
+    )
+
+    assert response["ok"] is False
+    assert response["error"] == "control_lease"
+    assert response["detail"]["lease"]["holder"] == "operator-a"
+    assert calls == []
+
+
 def test_commands_without_request_id_preserve_existing_execute_every_time_behavior():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import ControlCommandResponse
@@ -2095,8 +2788,7 @@ def test_commands_without_request_id_preserve_existing_execute_every_time_behavi
 
 def test_lease_command_uses_receipt_and_replays_duplicate_request_id():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import LeaseRequest
-    from gateway.schemas import LeaseResponse
+    from gateway.schemas import LeaseRequest, LeaseResponse
 
     gateway = GatewayModule()
     gateway.setup()

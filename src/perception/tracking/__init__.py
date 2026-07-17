@@ -2,8 +2,8 @@
 
 ``instance_tracker.py`` is the production scene-graph tracker consumed by
 ``PerceptionModule``. ``projection.py`` turns 2D detections + depth into the
-``Detection3D`` records that feed the tracker. ``bpu_tracker.py`` and
-``bpu_qp_bridge.py`` are BPU-hardware-specific 2D tracking/re-id adapters.
+``Detection3D`` records that feed the tracker. ``bpu_tracker.py`` is a
+BPU-hardware-specific 2D tracking/re-id adapter.
 """
 
 __all__: list[str] = []

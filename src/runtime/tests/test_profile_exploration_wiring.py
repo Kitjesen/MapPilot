@@ -8,6 +8,23 @@ def _wire_set(graph):
     return {wire.as_snapshot() for wire in graph.explicit_wires}
 
 
+def test_exploration_package_is_primary_with_nav_compat_aliases():
+    from explore.frontier import WavefrontFrontierExplorer
+    from explore.tare.module import TAREExplorerModule
+    from explore.traversable_frontier import TraversableFrontierModule
+    from nav.exploration.frontier_explorer_module import (
+        WavefrontFrontierExplorer as CompatWavefrontFrontierExplorer,
+    )
+    from nav.exploration.tare.module import TAREExplorerModule as CompatTAREExplorerModule
+    from nav.exploration.traversable_frontier_module import (
+        TraversableFrontierModule as CompatTraversableFrontierModule,
+    )
+
+    assert WavefrontFrontierExplorer is CompatWavefrontFrontierExplorer
+    assert TAREExplorerModule is CompatTAREExplorerModule
+    assert TraversableFrontierModule is CompatTraversableFrontierModule
+
+
 def test_explore_profile_owns_wavefront_frontier_through_navigation_stack():
     config = resolve_profile_config("explore")
     graph = graph_for_profile("explore")
@@ -22,18 +39,9 @@ def test_explore_profile_owns_wavefront_frontier_through_navigation_stack():
     assert "TAREPlannerNativeModule" not in graph.modules
     assert "ExplorationSupervisorModule" not in graph.modules
     assert "WavefrontFrontierExplorer.exploration_goal->nav.mission.goal_pose" in wires
-    assert (
-        "nav.mission.mission_status->WavefrontFrontierExplorer.navigation_status"
-        in wires
-    )
-    assert (
-        "TraversableFrontierModule.traversable_frontiers->GatewayModule.traversable_frontiers"
-        in wires
-    )
-    assert (
-        "TraversableFrontierModule.frontier_candidate->nav.mission.goal_pose"
-        not in wires
-    )
+    assert "nav.mission.mission_status->WavefrontFrontierExplorer.navigation_status" in wires
+    assert "TraversableFrontierModule.traversable_frontiers->GatewayModule.traversable_frontiers" in wires
+    assert "TraversableFrontierModule.frontier_candidate->nav.mission.goal_pose" not in wires
     assert not graph.dangling_wires()
 
 
@@ -67,7 +75,7 @@ def test_tare_explore_cmu_unity_endpoint_uses_external_tare_bridge():
 
     assert config["enable_frontier"] is False
     assert config["exploration_backend"] == "tare_external"
-    assert config["enable_nav_out"] is False
+    assert "enable_nav_out" not in config
     assert "enable_ros2_bridge" not in config
     assert "SimEndpointDriverModule" in graph.modules
     assert "ROS2SimDriverModule" not in graph.modules

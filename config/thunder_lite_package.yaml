@@ -83,8 +83,10 @@ package:
     - src/drivers/real/__init__.py
     - src/drivers/real/thunder/
     - src/nav/__init__.py
-    - src/nav/mission/navigation.py
-    - src/nav/mission/
+    - src/nav/navigation.py
+    - src/nav/runtime/
+    - src/nav/model/
+    - src/nav/tracking/
     - src/nav/services/plan/__init__.py
     - src/nav/services/plan/contracts.py
     - src/nav/services/plan/factory.py
@@ -100,19 +102,14 @@ package:
     - src/nav/services/__init__.py
     - src/nav/services/frame_transforms.py
     - src/nav/services/goals.py
-    - src/nav/mission/model/frame_contract.py
     - src/nav/services/geofence.py
-    - src/nav/mission/tracking/waypoint_tracker.py
     - src/nav/local/
     - src/nav/kernel/__init__.py
     - src/nav/kernel/loader.py
     - src/nav/kernel/paths.py
   exclude_paths:
     - src/*/adapters/ros2/
-    - src/runtime/adapters/ros2/
-    - src/nav/adapters/ros2/
-    - src/localization/adapters/ros2/
-    - src/perception/adapters/ros2/
+    - src/nav/adapters/dds/
     - src/gateway/visualization/
     - src/localization/
     - src/perception/
@@ -121,7 +118,6 @@ package:
     - src/gateway/
     - src/gateway/media/
     - src/drivers/sim/
-    - src/drivers/real/lidar/livox_ros_driver2/
     - sim/
     - web/
     - third_party/
@@ -153,9 +149,8 @@ package:
     - src/runtime/blueprints/stacks/exploration.py
     - src/runtime/blueprints/stacks/gateway.py
     - src/runtime/blueprints/stacks/lidar.py
-    - src/runtime/blueprints/adapters/driver_ros2_runtime.py
-    - src/runtime/blueprints/adapters/mapping_slam.py
-    - src/runtime/blueprints/adapters/navigation_io.py
+    - src/runtime/adapters/localization.py
+    - src/runtime/adapters/navigation_io.py
     - src/runtime/blueprints/stacks/maps.py
     - src/runtime/blueprints/stacks/memory.py
     - src/runtime/blueprints/adapters/perception_gateway.py
@@ -165,31 +160,23 @@ package:
     - src/runtime/blueprints/stacks/slam.py
     - src/runtime/blueprints/stacks/system.py
     - src/runtime/blueprints/wires/
-    - src/runtime/dds.py
+    - src/runtime/adapters/dds/reader.py
     - src/runtime/devices/
-    - src/runtime/diagnostics/dimos_gap.py
-    - src/runtime/diagnostics/dimos_runtime_dataflow.py
-    - src/runtime/dynamic_filter.py
+    - sim/diagnostics/gap_report.py
+    - sim/diagnostics/dataflow_report.py
     - src/runtime/external_service_module.py
-    - src/runtime/diagnostics/gateway_runtime_acceptance.py
-    - src/runtime/diagnostics/inspection_acceptance.py
-    - src/runtime/map_save.py
-    - src/runtime/native_module.py
-    - src/runtime/native_install.py
-    - src/runtime/diagnostics/product_field_check.py
+    - src/diagnostics/field/gateway_acceptance.py
+    - src/diagnostics/field/inspection.py
+    - src/diagnostics/field/field_check.py
     - src/runtime/rerun_module.py
-    - src/runtime/diagnostics/runtime_evidence.py
-    - src/runtime/diagnostics/runtime_validation_gates.py
-    - src/runtime/same_source_map_artifacts.py
+    - src/diagnostics/field/evidence.py
+    - src/diagnostics/field/gates.py
     - src/runtime/transport/dds.py
     - src/runtime/transport/shm.py
-    - src/runtime/adapters/native/map_save.py
     - src/runtime/adapters/native/relocalization.py
     - src/drivers/real/thunder/blueprints.py
     - src/drivers/real/thunder/connection.py
     - src/lingtu/sdk/
-    - src/lingtu/ros2_plugin_seed.py
-    - src/lingtu/ros2_shutdown.py
   forbidden_markers:
     - rclpy
     - sensor_msgs
@@ -209,7 +196,7 @@ runtime:
     endpoint_contract: null
     localization_adapter: null
     simulation_only: false
-    command_sink: hardware_driver_after_cmd_vel_mux
+    command_sink: driver
   expected_config:
     runtime_mode: lite
     slam_profile: none

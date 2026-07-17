@@ -1,16 +1,7 @@
-"""LingTu Device Registry — unified hardware device framework.
+"""LingTu hardware device framework.
 
-Three-layer design:
-
-    Device      — hardware abstraction (lifecycle: detect/open/read/close)
-    Decoder     — protocol parser (NMEA / Livox custom / ROS2 NavSatFix / ...)
-    DeviceManager — orchestrator (loads devices.yaml, hot-plug, status)
-
-Usage::
-
-    from runtime.devices import DeviceManager
-    mgr = DeviceManager(config_path="config/devices.yaml")
-    bp.add(mgr)
+Use ``Hw`` as the runtime inventory/status module. ``DeviceManager`` remains a
+compatibility alias for older imports.
 """
 
 from runtime.devices.base import (
@@ -23,7 +14,7 @@ from runtime.devices.decoder import (
     decoder_registry,
     register_decoder,
 )
-from runtime.devices.manager import DeviceManager
+from runtime.devices.manager import DeviceManager, Hw
 from runtime.devices.spec import DeviceSpec, load_device_specs
 
 __all__ = [
@@ -33,6 +24,7 @@ __all__ = [
     "DeviceSpec",
     "DeviceStatus",
     "DeviceType",
+    "Hw",
     "decoder_registry",
     "load_device_specs",
     "register_decoder",

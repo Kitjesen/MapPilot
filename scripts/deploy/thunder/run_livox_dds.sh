@@ -12,9 +12,10 @@ source /opt/lingtu/config/thunder-runtime-env.sh
 : "${LINGTU_LIVOX_BIN:=/opt/lingtu/current/build/livox_sdk2_stream/livox_sdk2_stream}"
 : "${LINGTU_LIVOX_CONFIG_DIR:=/opt/lingtu/config/livox}"
 : "${LINGTU_LIVOX_NET_IFACE:=eth1}"
-: "${LINGTU_LIVOX_LIDAR_FRAME:=livox_frame}"
+: "${LINGTU_LIVOX_LIDAR_FRAME:=lidar_link}"
 : "${LINGTU_LIVOX_IMU_FRAME:=imu_link}"
 : "${LINGTU_LIVOX_SCAN_HZ:=10}"
+: "${LINGTU_LIVOX_IMU_HZ:=0}"
 : "${LINGTU_DDS_DOMAIN_ID:=0}"
 : "${LINGTU_CYCLONEDDS_PREFIX:=}"
 : "${LINGTU_PYTHON:=python3}"
@@ -31,10 +32,37 @@ fi
 
 if [ -z "${LINGTU_LIVOX_HOST_IP:-}" ] && [ -n "${LINGTU_LIVOX_NET_IFACE}" ]; then
     detected_ip="$(
-        ip -4 -o addr show dev "${LINGTU_LIVOX_NET_IFACE}" 2>/dev/null \
-            | awk '{print $4}' \
-            | cut -d/ -f1 \
-            | head -n 1
+        "${LINGTU_PYTHON}" - <<'PY'
+import os
+import subprocess
+
+from runtime.config import load_config
+from runtime.utils.livox_config import select_livox_host_ip
+
+iface = os.environ.get("LINGTU_LIVOX_NET_IFACE", "").strip()
+addresses = []
+if iface:
+    result = subprocess.run(
+        ["ip", "-4", "-o", "addr", "show", "dev", iface],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 4:
+                addresses.append(parts[3])
+
+host_ip = select_livox_host_ip(
+    load_config(),
+    addresses,
+    lidar_ip=os.environ.get("LINGTU_LIVOX_LIDAR_IP") or None,
+)
+if host_ip:
+    print(host_ip)
+PY
     )"
     if [ -n "${detected_ip}" ]; then
         export LINGTU_LIVOX_HOST_IP="${detected_ip}"
@@ -63,11 +91,19 @@ fi
 
 echo "LingTu Livox DDS config: ${LINGTU_LIVOX_CONFIG}"
 echo "LingTu Livox host IP: ${LINGTU_LIVOX_HOST_IP:-from robot_config.yaml}"
+echo "LingTu Livox scan Hz: ${LINGTU_LIVOX_SCAN_HZ}"
+echo "LingTu Livox IMU Hz: ${LINGTU_LIVOX_IMU_HZ:-0} (0 means SDK rate)"
 
-exec "${LINGTU_LIVOX_BIN}" \
+args=(
     --dds \
     --domain-id "${LINGTU_DDS_DOMAIN_ID}" \
     --publish-freq "${LINGTU_LIVOX_SCAN_HZ}" \
     --lidar-frame "${LINGTU_LIVOX_LIDAR_FRAME}" \
-    --imu-frame "${LINGTU_LIVOX_IMU_FRAME}" \
-    "${LINGTU_LIVOX_CONFIG}"
+    --imu-frame "${LINGTU_LIVOX_IMU_FRAME}"
+)
+
+if [ -n "${LINGTU_LIVOX_IMU_HZ}" ] && [ "${LINGTU_LIVOX_IMU_HZ}" != "0" ]; then
+    args+=(--imu-publish-freq "${LINGTU_LIVOX_IMU_HZ}")
+fi
+
+exec "${LINGTU_LIVOX_BIN}" "${args[@]}" "${LINGTU_LIVOX_CONFIG}"

@@ -1,20 +1,4 @@
-"""
-test_fast_slow_efficiency.py — Fast-Slow 双进程推理效率量化
-
-量化指标 (论文 Table 用):
-  1. Fast Path 命中率 — 按指令复杂度分层 (简单/空间/中文/模糊)
-  2. Fast Path 延迟 — 不同场景规模 (10/50/100/200 物体)
-  3. ESCA 选择性 Grounding 过滤率 — 物体和 token 减少比例
-  4. 融合权重消融 — 标签/检测/空间 各源贡献度
-  5. AdaNav 熵触发统计 — 高熵 → Slow Path 升级频率
-
-参考:
-  - VLingNav (2026): Fast Path 命中率 70%+, <200ms
-  - ESCA (NeurIPS 2025): Token 减少 90%
-  - AdaNav (ICLR 2026): 不确定性自适应路由
-
-无需 ROS2, 纯 Python 测试。
-"""
+"""Decision module."""
 
 import json
 import math
@@ -24,19 +8,42 @@ import unittest
 
 import numpy as np
 
-from decision.goal_resolution.goal_resolver import GoalResolver
-from decision.llm.llm_client import LLMConfig
+from decision.goals.resolver import GoalResolver
+from decision.llm.client import LLMConfig
 
 # ============================================================
-#  场景生成工具
+
 # ============================================================
 
 COMMON_OBJECTS = [
-    "chair", "table", "door", "window", "trash can", "sign",
-    "box", "shelf", "monitor", "lamp", "plant", "bottle",
-    "sofa", "desk", "cabinet", "poster", "clock", "phone",
-    "bag", "book", "keyboard", "mouse", "fire extinguisher",
-    "refrigerator", "microwave", "sink", "projector", "whiteboard",
+    "chair",
+    "table",
+    "door",
+    "window",
+    "trash can",
+    "sign",
+    "box",
+    "shelf",
+    "monitor",
+    "lamp",
+    "plant",
+    "bottle",
+    "sofa",
+    "desk",
+    "cabinet",
+    "poster",
+    "clock",
+    "phone",
+    "bag",
+    "book",
+    "keyboard",
+    "mouse",
+    "fire extinguisher",
+    "refrigerator",
+    "microwave",
+    "sink",
+    "projector",
+    "whiteboard",
 ]
 
 
@@ -50,59 +57,67 @@ def make_scene_scaled(
     seed: int = 42,
     include_regions: bool = False,
 ) -> str:
-    """构建场景图, 支持可变规模。"""
+    """Make scene scaled."""
     rng = random.Random(seed)
     objects = []
     obj_id = 0
 
-    objects.append({
-        "id": obj_id,
-        "label": target_label,
-        "position": target_pos,
-        "score": target_score,
-        "detection_count": target_det_count,
-    })
+    objects.append(
+        {
+            "id": obj_id,
+            "label": target_label,
+            "position": target_pos,
+            "score": target_score,
+            "detection_count": target_det_count,
+        }
+    )
     obj_id += 1
 
     available = [o for o in COMMON_OBJECTS if o != target_label]
     for _ in range(num_distractors):
         label = rng.choice(available)
-        objects.append({
-            "id": obj_id,
-            "label": label,
-            "position": {
-                "x": round(rng.uniform(-20, 20), 1),
-                "y": round(rng.uniform(-20, 20), 1),
-                "z": 0.0,
-            },
-            "score": round(rng.uniform(0.4, 0.95), 2),
-            "detection_count": rng.randint(1, 8),
-        })
+        objects.append(
+            {
+                "id": obj_id,
+                "label": label,
+                "position": {
+                    "x": round(rng.uniform(-20, 20), 1),
+                    "y": round(rng.uniform(-20, 20), 1),
+                    "z": 0.0,
+                },
+                "score": round(rng.uniform(0.4, 0.95), 2),
+                "detection_count": rng.randint(1, 8),
+            }
+        )
         obj_id += 1
 
     rel_list = relations or []
     regions = []
     if include_regions and len(objects) > 5:
-        regions = [{
-            "name": "main_area",
-            "object_ids": [o["id"] for o in objects[:5]],
-        }]
+        regions = [
+            {
+                "name": "main_area",
+                "object_ids": [o["id"] for o in objects[:5]],
+            }
+        ]
 
-    return json.dumps({
-        "timestamp": 0,
-        "object_count": len(objects),
-        "objects": objects,
-        "relations": rel_list,
-        "regions": regions,
-        "summary": f"scene with {len(objects)} objects",
-    })
+    return json.dumps(
+        {
+            "timestamp": 0,
+            "object_count": len(objects),
+            "objects": objects,
+            "relations": rel_list,
+            "regions": regions,
+            "summary": f"scene with {len(objects)} objects",
+        }
+    )
 
 
 # ============================================================
-#  测试指令集 (分层)
+
 # ============================================================
 
-# 简单指令: 精确标签匹配
+
 SIMPLE_INSTRUCTIONS = [
     ("go to the chair", "chair", 0.90),
     ("find the door", "door", 0.85),
@@ -116,20 +131,32 @@ SIMPLE_INSTRUCTIONS = [
     ("find the lamp", "lamp", 0.84),
 ]
 
-# 空间关系指令: 需要解析主语和修饰语
+
 SPATIAL_INSTRUCTIONS = [
-    ("find chair near the door", "chair", 0.80,
-     [{"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.5}],
-     {"extra_label": "door", "extra_pos": {"x": 3.5, "y": 2.5, "z": 0}, "extra_score": 0.88}),
-    ("go to the desk next to window", "desk", 0.82,
-     [{"subject_id": 0, "relation": "near", "object_id": 1, "distance": 2.0}],
-     {"extra_label": "window", "extra_pos": {"x": 5, "y": 6, "z": 0}, "extra_score": 0.9}),
-    ("find lamp behind the sofa", "lamp", 0.78,
-     [{"subject_id": 0, "relation": "behind", "object_id": 1, "distance": 1.0}],
-     {"extra_label": "sofa", "extra_pos": {"x": 4, "y": 3, "z": 0}, "extra_score": 0.85}),
+    (
+        "find chair near the door",
+        "chair",
+        0.80,
+        [{"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.5}],
+        {"extra_label": "door", "extra_pos": {"x": 3.5, "y": 2.5, "z": 0}, "extra_score": 0.88},
+    ),
+    (
+        "go to the desk next to window",
+        "desk",
+        0.82,
+        [{"subject_id": 0, "relation": "near", "object_id": 1, "distance": 2.0}],
+        {"extra_label": "window", "extra_pos": {"x": 5, "y": 6, "z": 0}, "extra_score": 0.9},
+    ),
+    (
+        "find lamp behind the sofa",
+        "lamp",
+        0.78,
+        [{"subject_id": 0, "relation": "behind", "object_id": 1, "distance": 1.0}],
+        {"extra_label": "sofa", "extra_pos": {"x": 4, "y": 3, "z": 0}, "extra_score": 0.85},
+    ),
 ]
 
-# 中文指令
+
 CHINESE_INSTRUCTIONS = [
     ("找到椅子", "椅子", 0.88),
     ("导航到桌子", "桌子", 0.85),
@@ -138,29 +165,32 @@ CHINESE_INSTRUCTIONS = [
     ("找到沙发", "沙发", 0.87),
 ]
 
-# 模糊指令: 目标不在场景中或部分匹配
+
 AMBIGUOUS_INSTRUCTIONS = [
-    ("find something to sit on", "chair", 0.85),   # 需要语义理解
-    ("go to the red chair", "blue chair", 0.80),    # 属性不匹配
-    ("find the elephant", None, 0.0),                # 目标不存在
+    ("find something to sit on", "chair", 0.85),
+    ("go to the red chair", "blue chair", 0.80),
+    ("find the elephant", None, 0.0),
 ]
 
 
 # ============================================================
-#  Fast Path 效率测试
+
 # ============================================================
 
+
 class TestFastPathHitRateByComplexity(unittest.TestCase):
-    """Fast Path 命中率分层统计 — 论文 Table: 指令复杂度 vs 命中率。"""
+    """Test Fast Path Hit Rate By Complexity."""
 
     def setUp(self):
         self.config = LLMConfig(backend="openai", model="test")
         self.resolver = GoalResolver(self.config, fast_path_threshold=0.75)
 
     def _run_hit_rate(
-        self, cases: list[tuple], category: str,
+        self,
+        cases: list[tuple],
+        category: str,
     ) -> tuple[float, list[str]]:
-        """运行命中率测试, 返回 (rate, details)。"""
+        """Run hit rate."""
         hits = 0
         total = 0
         details = []
@@ -173,44 +203,50 @@ class TestFastPathHitRateByComplexity(unittest.TestCase):
             else:
                 instr, target, score, relations, extra = case
 
-            # 构建场景
             target_pos = {"x": 3 + i, "y": 2 + i, "z": 0}
             det_count = 4
             scene_objects_extra = []
 
             if extra and "extra_label" in extra:
-                scene_objects_extra = [{
-                    "id": 1,
-                    "label": extra["extra_label"],
-                    "position": extra["extra_pos"],
-                    "score": extra["extra_score"],
-                    "detection_count": 5,
-                }]
+                scene_objects_extra = [
+                    {
+                        "id": 1,
+                        "label": extra["extra_label"],
+                        "position": extra["extra_pos"],
+                        "score": extra["extra_score"],
+                        "detection_count": 5,
+                    }
+                ]
 
             sg_data = {
                 "timestamp": 0,
-                "objects": [{
-                    "id": 0,
-                    "label": target if target else "nonexistent",
-                    "position": target_pos,
-                    "score": score,
-                    "detection_count": det_count,
-                }, *scene_objects_extra],
+                "objects": [
+                    {
+                        "id": 0,
+                        "label": target if target else "nonexistent",
+                        "position": target_pos,
+                        "score": score,
+                        "detection_count": det_count,
+                    },
+                    *scene_objects_extra,
+                ],
                 "relations": relations or [],
                 "regions": [],
                 "summary": "test",
             }
-            # 添加干扰物体
+
             rng = random.Random(100 + i)
             available = [o for o in COMMON_OBJECTS if o != target]
             for j in range(8):
-                sg_data["objects"].append({
-                    "id": 10 + j,
-                    "label": rng.choice(available),
-                    "position": {"x": rng.uniform(-10, 10), "y": rng.uniform(-10, 10), "z": 0},
-                    "score": round(rng.uniform(0.4, 0.9), 2),
-                    "detection_count": rng.randint(1, 6),
-                })
+                sg_data["objects"].append(
+                    {
+                        "id": 10 + j,
+                        "label": rng.choice(available),
+                        "position": {"x": rng.uniform(-10, 10), "y": rng.uniform(-10, 10), "z": 0},
+                        "score": round(rng.uniform(0.4, 0.9), 2),
+                        "detection_count": rng.randint(1, 6),
+                    }
+                )
             sg_data["object_count"] = len(sg_data["objects"])
             sg = json.dumps(sg_data)
 
@@ -218,7 +254,6 @@ class TestFastPathHitRateByComplexity(unittest.TestCase):
             total += 1
 
             if target is None:
-                # 目标不存在时, None 是正确行为
                 hit = result is None
             else:
                 hit = result is not None and target.lower() in result.target_label.lower()
@@ -234,33 +269,37 @@ class TestFastPathHitRateByComplexity(unittest.TestCase):
         return rate, details
 
     def test_simple_hit_rate(self):
-        """简单指令命中率 >= 70%。"""
+        """Test simple hit rate."""
         rate, details = self._run_hit_rate(SIMPLE_INSTRUCTIONS, "Simple")
-        print(f"\n=== Simple Instructions: {rate*100:.0f}% ({int(rate*len(SIMPLE_INSTRUCTIONS))}/{len(SIMPLE_INSTRUCTIONS)}) ===")
+        print(
+            f"\n=== Simple Instructions: {rate * 100:.0f}% ({int(rate * len(SIMPLE_INSTRUCTIONS))}/{len(SIMPLE_INSTRUCTIONS)}) ==="
+        )
         print("\n".join(details))
         self.assertGreaterEqual(rate, 0.70)
 
     def test_spatial_hit_rate(self):
-        """空间关系指令命中率 (记录, 不强制阈值)。"""
+        """Test spatial hit rate."""
         rate, details = self._run_hit_rate(SPATIAL_INSTRUCTIONS, "Spatial")
-        print(f"\n=== Spatial Instructions: {rate*100:.0f}% ({int(rate*len(SPATIAL_INSTRUCTIONS))}/{len(SPATIAL_INSTRUCTIONS)}) ===")
+        print(
+            f"\n=== Spatial Instructions: {rate * 100:.0f}% ({int(rate * len(SPATIAL_INSTRUCTIONS))}/{len(SPATIAL_INSTRUCTIONS)}) ==="
+        )
         print("\n".join(details))
-        # 空间指令较难, 50% 以上即可
+
         self.assertGreaterEqual(rate, 0.50)
 
     def test_chinese_hit_rate(self):
-        """中文指令命中率 >= 60%。"""
-        # 构建中文场景
+        """Test chinese hit rate."""
+
         cases_cn = []
         for instr, label, score in CHINESE_INSTRUCTIONS:
             cases_cn.append((instr, label, score))
         rate, details = self._run_hit_rate(cases_cn, "Chinese")
-        print(f"\n=== Chinese Instructions: {rate*100:.0f}% ({int(rate*len(cases_cn))}/{len(cases_cn)}) ===")
+        print(f"\n=== Chinese Instructions: {rate * 100:.0f}% ({int(rate * len(cases_cn))}/{len(cases_cn)}) ===")
         print("\n".join(details))
         self.assertGreaterEqual(rate, 0.60)
 
     def test_print_hit_rate_summary(self):
-        """打印分层命中率汇总表 (论文用)。"""
+        """Test print hit rate summary."""
         results = {}
         for name, cases in [
             ("Simple", SIMPLE_INSTRUCTIONS),
@@ -312,23 +351,27 @@ class TestFastPathHitRateByComplexity(unittest.TestCase):
 
 
 class TestFastPathLatencyScaling(unittest.TestCase):
-    """Fast Path 延迟随场景规模变化 — 论文 Figure: latency vs scene size。"""
+    """Test Fast Path Latency Scaling."""
 
     def setUp(self):
         self.config = LLMConfig(backend="openai", model="test")
         self.resolver = GoalResolver(self.config, fast_path_threshold=0.75)
 
     def test_latency_scaling(self):
-        """测量不同场景规模下的 Fast Path 延迟。"""
+        """Test latency scaling."""
         sizes = [10, 50, 100, 200]
         results = {}
 
         for size in sizes:
             sg = make_scene_scaled(
-                "chair", {"x": 5, "y": 5, "z": 0}, 0.9, 5,
-                num_distractors=size - 1, seed=42,
+                "chair",
+                {"x": 5, "y": 5, "z": 0},
+                0.9,
+                5,
+                num_distractors=size - 1,
+                seed=42,
             )
-            # 预热
+
             self.resolver.fast_resolve("go to the chair", sg)
 
             times = []
@@ -377,21 +420,23 @@ class TestFastPathLatencyScaling(unittest.TestCase):
         print(r"\end{tabular}")
         print(r"\end{table}")
 
-        # 所有规模 P99 应 < 200ms (VLingNav 论文目标)
         for size in sizes:
-            self.assertLess(results[size]["p99_ms"], 200.0,
-                f"P99 latency for {size} objects = {results[size]['p99_ms']:.2f}ms >= 200ms")
+            self.assertLess(
+                results[size]["p99_ms"],
+                200.0,
+                f"P99 latency for {size} objects = {results[size]['p99_ms']:.2f}ms >= 200ms",
+            )
 
 
 class TestESCAFilteringEfficiency(unittest.TestCase):
-    """ESCA 选择性 Grounding 过滤效率 — 论文 Table: token 减少比例。"""
+    """Test E S C A Filtering Efficiency."""
 
     def setUp(self):
         self.config = LLMConfig(backend="openai", model="test")
         self.resolver = GoalResolver(self.config, fast_path_threshold=0.75)
 
     def test_esca_filter_rates(self):
-        """测量不同场景规模下的 ESCA 过滤率。"""
+        """Test esca filter rates."""
         test_cases = [
             ("find the door", "door", 50),
             ("go to the chair near table", "chair", 100),
@@ -402,13 +447,18 @@ class TestESCAFilteringEfficiency(unittest.TestCase):
 
         for instr, target, num_objects in test_cases:
             sg = make_scene_scaled(
-                target, {"x": 5, "y": 5, "z": 0}, 0.85, 4,
-                num_distractors=num_objects - 1, seed=42,
+                target,
+                {"x": 5, "y": 5, "z": 0},
+                0.85,
+                4,
+                num_distractors=num_objects - 1,
+                seed=42,
             )
 
-            # 调用 _selective_grounding
             filtered_sg_json = self.resolver._selective_grounding(
-                instr, sg, max_objects=15,
+                instr,
+                sg,
+                max_objects=15,
             )
             filtered_sg = json.loads(filtered_sg_json)
             original_sg = json.loads(sg)
@@ -417,20 +467,21 @@ class TestESCAFilteringEfficiency(unittest.TestCase):
             filt_count = len(filtered_sg["objects"])
             reduction = 1.0 - filt_count / max(orig_count, 1)
 
-            # Token 估算: 每物体约 50 tokens (label + position + score)
             orig_tokens = orig_count * 50
             filt_tokens = filt_count * 50
             token_reduction = 1.0 - filt_tokens / max(orig_tokens, 1)
 
-            results.append({
-                "instruction": instr,
-                "orig_objects": orig_count,
-                "filt_objects": filt_count,
-                "obj_reduction": reduction,
-                "orig_tokens": orig_tokens,
-                "filt_tokens": filt_tokens,
-                "token_reduction": token_reduction,
-            })
+            results.append(
+                {
+                    "instruction": instr,
+                    "orig_objects": orig_count,
+                    "filt_objects": filt_count,
+                    "obj_reduction": reduction,
+                    "orig_tokens": orig_tokens,
+                    "filt_tokens": filt_tokens,
+                    "token_reduction": token_reduction,
+                }
+            )
 
         print("\n" + "=" * 85)
         print("ESCA Selective Grounding Filtering Efficiency")
@@ -464,18 +515,18 @@ class TestESCAFilteringEfficiency(unittest.TestCase):
         print(r"Scene Size & Before & After & Reduction \\")
         print(r"\midrule")
         for r in results:
-            print(f"{r['orig_objects']} objects & {r['orig_objects']} & {r['filt_objects']} & {r['obj_reduction']:.1%} \\\\")
+            print(
+                f"{r['orig_objects']} objects & {r['orig_objects']} & {r['filt_objects']} & {r['obj_reduction']:.1%} \\\\"
+            )
         print(r"\bottomrule")
         print(r"\end{tabular}")
         print(r"\end{table}")
 
-        # ESCA 论文目标: 90% token 减少 (我们用关键词匹配, 预期 70%+)
-        self.assertGreater(avg_reduction, 0.50,
-            f"Average ESCA reduction {avg_reduction:.1%} < 50%")
+        self.assertGreater(avg_reduction, 0.50, f"Average ESCA reduction {avg_reduction:.1%} < 50%")
 
 
 class TestAdaNavEntropyTrigger(unittest.TestCase):
-    """AdaNav 熵触发统计 — 高不确定性 → Slow Path 升级。"""
+    """Test Ada Nav Entropy Trigger."""
 
     def setUp(self):
         self.config = LLMConfig(backend="openai", model="test")
@@ -496,7 +547,7 @@ class TestAdaNavEntropyTrigger(unittest.TestCase):
         return h
 
     def test_entropy_distribution(self):
-        """统计不同场景下的得分熵分布。"""
+        """Test entropy distribution."""
         scenarios = {
             "clear_target": {
                 "instr": "find the chair",
@@ -531,7 +582,8 @@ class TestAdaNavEntropyTrigger(unittest.TestCase):
             sg = make_scene_scaled(
                 sc["target"],
                 {"x": 5, "y": 5, "z": 0},
-                sc["score"], 4,
+                sc["score"],
+                4,
                 num_distractors=sc["distractors"],
                 seed=42,
             )
@@ -539,27 +591,24 @@ class TestAdaNavEntropyTrigger(unittest.TestCase):
             entropy = getattr(result, "score_entropy", 0.0) if result else 0.0
 
             hit = result is not None and sc["target"].lower() in result.target_label.lower()
-            print(
-                f"{name:<20s} | {entropy:>8.3f} | {'Yes' if hit else 'No':>9s} | {sc['desc']:<25s}"
-            )
+            print(f"{name:<20s} | {entropy:>8.3f} | {'Yes' if hit else 'No':>9s} | {sc['desc']:<25s}")
 
         print("=" * 70)
         print("Note: AdaNav escalates to Slow Path when entropy > 1.5 and confidence < 0.85")
 
 
 class TestEfficiencySummary(unittest.TestCase):
-    """综合效率对比表 — 论文 Table: 系统 vs 论文基线。"""
+    """Test Efficiency Summary."""
 
     def setUp(self):
         self.config = LLMConfig(backend="openai", model="test")
         self.resolver = GoalResolver(self.config, fast_path_threshold=0.75)
 
     def test_print_system_comparison(self):
-        """打印系统效率与论文基线对比。"""
-        # 实测数据
-        sg_50 = make_scene_scaled("chair", {"x": 5, "y": 5, "z": 0}, 0.9, 5,
-                                   num_distractors=49, seed=42)
-        # 预热
+        """Test print system comparison."""
+
+        sg_50 = make_scene_scaled("chair", {"x": 5, "y": 5, "z": 0}, 0.9, 5, num_distractors=49, seed=42)
+
         self.resolver.fast_resolve("go to the chair", sg_50)
 
         times = []
@@ -571,20 +620,16 @@ class TestEfficiencySummary(unittest.TestCase):
 
         avg_latency = np.mean(times)
 
-        # 命中率 (简单指令)
         hits = 0
         total = len(SIMPLE_INSTRUCTIONS)
         for i, (instr, target, score) in enumerate(SIMPLE_INSTRUCTIONS):
-            sg = make_scene_scaled(target, {"x": 3 + i, "y": 2 + i, "z": 0},
-                                    score, 4, num_distractors=8, seed=100 + i)
+            sg = make_scene_scaled(target, {"x": 3 + i, "y": 2 + i, "z": 0}, score, 4, num_distractors=8, seed=100 + i)
             result = self.resolver.fast_resolve(instr, sg)
             if result is not None and target in result.target_label:
                 hits += 1
         hit_rate = hits / total
 
-        # ESCA 过滤率
-        sg_200 = make_scene_scaled("door", {"x": 5, "y": 5, "z": 0}, 0.85, 4,
-                                    num_distractors=199, seed=42)
+        sg_200 = make_scene_scaled("door", {"x": 5, "y": 5, "z": 0}, 0.85, 4, num_distractors=199, seed=42)
         filtered = self.resolver._selective_grounding("find the door", sg_200, max_objects=15)
         filt_count = len(json.loads(filtered)["objects"])
         esca_reduction = 1.0 - filt_count / 200.0
@@ -600,7 +645,7 @@ class TestEfficiencySummary(unittest.TestCase):
         print(f"{'CLIP Required':<30s} | {'No*':>12s} | {'Yes':>12s} | {'Yes':>12s}")
         print(f"{'LLM for Fast Path':<30s} | {'No':>12s} | {'No':>12s} | {'No':>12s}")
         print("=" * 75)
-        print("* CLIP optional — weights redistributed to label+detector when absent")
+        print("* CLIP optional - weights redistributed to label+detector when absent")
 
         # LaTeX
         print("\n% --- LaTeX Table ---")

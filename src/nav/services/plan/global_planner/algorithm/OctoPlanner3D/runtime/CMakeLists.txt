@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(octoplanner3d_runtime LANGUAGES CXX)
+project(octoplanner3d_runtime LANGUAGES C CXX)
 include(CTest)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(OCTOPLANNER3D_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." CACHE PATH "Path to the local OctoPlanner3D source")
+get_filename_component(LINGTU_PLAN_CPP_DIR "${OCTOPLANNER3D_SOURCE_DIR}/../../../cpp" ABSOLUTE)
 option(OCTOPLANNER3D_REQUIRE_PCL "Require the PCL-backed octoplanner3d_pcd_to_octomap target" OFF)
 
 if(NOT EXISTS "${OCTOPLANNER3D_SOURCE_DIR}/planner/include/global_planner.h")
@@ -96,6 +97,7 @@ add_library(octoplanner3d_runtime STATIC
 target_include_directories(octoplanner3d_runtime
   PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${LINGTU_PLAN_CPP_DIR}"
 )
 target_link_libraries(octoplanner3d_runtime
   PRIVATE
@@ -126,6 +128,17 @@ target_link_libraries(octoplanner3d_edit_octomap
     octomath_vendor
 )
 set_target_properties(octoplanner3d_edit_octomap PROPERTIES
+  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+  INSTALL_RPATH "$ORIGIN"
+)
+
+add_executable(octoplanner3d_dump_octomap dump_octomap.cpp)
+target_link_libraries(octoplanner3d_dump_octomap
+  PRIVATE
+    octomap_vendor
+    octomath_vendor
+)
+set_target_properties(octoplanner3d_dump_octomap PROPERTIES
   BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
   INSTALL_RPATH "$ORIGIN"
 )
@@ -170,23 +183,25 @@ if(BUILD_TESTING)
     COMMAND octoplanner3d_no_air_climb_smoke)
 endif()
 
+add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)
+target_link_libraries(octoplanner3d_pcd_to_octomap
+  PRIVATE
+    octomap_vendor
+    octomath_vendor
+)
 if(OCTOPLANNER3D_ENABLE_PCD)
-  add_executable(octoplanner3d_pcd_to_octomap pcd_to_octomap.cpp)
-  target_link_libraries(octoplanner3d_pcd_to_octomap
-    PRIVATE
-      octoplanner3d_pcd_converter
-  )
-  set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
-    BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
-    INSTALL_RPATH "$ORIGIN"
-  )
+  target_compile_definitions(octoplanner3d_pcd_to_octomap PRIVATE OCTOPLANNER3D_ENABLE_PCD=1)
+  target_link_libraries(octoplanner3d_pcd_to_octomap PRIVATE octoplanner3d_pcd_converter)
 endif()
+set_target_properties(octoplanner3d_pcd_to_octomap PROPERTIES
+  BUILD_RPATH "${OCTOPLANNER3D_SOURCE_DIR}/lib"
+  INSTALL_RPATH "$ORIGIN"
+)
 
 install(TARGETS
   octoplanner3d_headless
   octoplanner3d_edit_octomap
+  octoplanner3d_dump_octomap
   octoplanner3d_make_test_octomap
   RUNTIME DESTINATION bin)
-if(OCTOPLANNER3D_ENABLE_PCD)
-  install(TARGETS octoplanner3d_pcd_to_octomap RUNTIME DESTINATION bin)
-endif()
+install(TARGETS octoplanner3d_pcd_to_octomap RUNTIME DESTINATION bin)

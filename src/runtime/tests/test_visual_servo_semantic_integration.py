@@ -1,9 +1,9 @@
 import numpy as np
 
+from decision.modules.visual_servo import VisualServoModule
 from runtime.msgs.geometry import Vector3
 from runtime.msgs.semantic import Detection3D, SceneGraph
 from runtime.msgs.sensor import Image, ImageFormat
-from decision.modules.visual_servo_module import VisualServoModule
 
 
 def test_find_target_bbox_reads_bbox_2d():
@@ -65,9 +65,7 @@ def test_follow_path_uses_scene_graph_bbox_2d():
     )
 
     captured = {}
-    mod._person_tracker.update = lambda scene_objects, rgb: captured.setdefault(
-        "scene_objects", scene_objects
-    )
+    mod._person_tracker.update = lambda scene_objects, rgb: captured.setdefault("scene_objects", scene_objects)
     mod._person_tracker.get_follow_waypoint = lambda robot_pos: None
 
     mod._tick_follow()

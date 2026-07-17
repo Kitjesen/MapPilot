@@ -578,7 +578,7 @@ Expected result: PASS.
 **Files:**
 - Modify: `src/runtime/module.py`
 - Modify: `src/perception/semantic_perception/perception_module.py`
-- Modify: `src/decision/semantic_planner/llm_module.py`
+- Modify: `src/decision/modules/llm.py`
 - Modify: `src/gateway/gateway_module.py`
 - Modify: `src/gateway/mcp_server.py`
 - Create: `src/runtime/tests/test_runtime_backend_switch.py`
@@ -942,4 +942,3 @@ Stop the implementation only when:
 - Dimos/Gateway required gate definitions cannot drift.
 - Boundary tests cover all four package directions.
 - Fresh Dimos and S100P artifacts are either passing or explicitly reported as missing/stale claim blockers.
-

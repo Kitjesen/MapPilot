@@ -1,4 +1,4 @@
-﻿"""
+"""
 Slow Path (System 2) end-to-end validation script.
 
 Validates using the Moonshot / Kimi API:
@@ -21,10 +21,9 @@ from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from decision.llm_client import LLMConfig, create_llm_client, LLMError
-from decision.goal_resolver import GoalResolver, GoalResult
-from decision.prompt_templates import build_goal_resolution_prompt
-
+from decision.goals.resolver import GoalResolver, GoalResult
+from decision.llm.client import LLMConfig, LLMError, create_llm_client
+from decision.llm.prompts import build_goal_resolution_prompt
 
 SCENE_GRAPH = {
     "summary": "Indoor corridor with offices. 12 objects across 2 rooms.",
@@ -49,15 +48,45 @@ SCENE_GRAPH = {
     ],
     "objects": [
         {"id": 1, "label": "door", "position": {"x": 0.0, "y": 0.0, "z": 0.0}, "score": 0.95, "detection_count": 5},
-        {"id": 2, "label": "fire extinguisher", "position": {"x": 1.2, "y": 0.5, "z": 0.8}, "score": 0.92, "detection_count": 3},
-        {"id": 3, "label": "exit sign", "position": {"x": 2.0, "y": 0.0, "z": 2.5}, "score": 0.88, "detection_count": 2},
-        {"id": 4, "label": "trash can", "position": {"x": 0.5, "y": 1.0, "z": 0.0}, "score": 0.85, "detection_count": 4},
-        {"id": 5, "label": "red chair", "position": {"x": 5.0, "y": 3.0, "z": 0.0}, "score": 0.93, "detection_count": 6},
+        {
+            "id": 2,
+            "label": "fire extinguisher",
+            "position": {"x": 1.2, "y": 0.5, "z": 0.8},
+            "score": 0.92,
+            "detection_count": 3,
+        },
+        {
+            "id": 3,
+            "label": "exit sign",
+            "position": {"x": 2.0, "y": 0.0, "z": 2.5},
+            "score": 0.88,
+            "detection_count": 2,
+        },
+        {
+            "id": 4,
+            "label": "trash can",
+            "position": {"x": 0.5, "y": 1.0, "z": 0.0},
+            "score": 0.85,
+            "detection_count": 4,
+        },
+        {
+            "id": 5,
+            "label": "red chair",
+            "position": {"x": 5.0, "y": 3.0, "z": 0.0},
+            "score": 0.93,
+            "detection_count": 6,
+        },
         {"id": 6, "label": "desk", "position": {"x": 5.5, "y": 3.5, "z": 0.0}, "score": 0.97, "detection_count": 8},
         {"id": 7, "label": "monitor", "position": {"x": 5.5, "y": 3.5, "z": 0.7}, "score": 0.91, "detection_count": 5},
         {"id": 8, "label": "keyboard", "position": {"x": 5.5, "y": 3.3, "z": 0.6}, "score": 0.89, "detection_count": 4},
         {"id": 9, "label": "cup", "position": {"x": 6.0, "y": 3.0, "z": 0.6}, "score": 0.78, "detection_count": 2},
-        {"id": 10, "label": "bookshelf", "position": {"x": 7.0, "y": 2.0, "z": 0.0}, "score": 0.90, "detection_count": 3},
+        {
+            "id": 10,
+            "label": "bookshelf",
+            "position": {"x": 7.0, "y": 2.0, "z": 0.0},
+            "score": 0.90,
+            "detection_count": 3,
+        },
         {"id": 11, "label": "window", "position": {"x": 5.0, "y": 5.0, "z": 1.5}, "score": 0.95, "detection_count": 7},
         {"id": 12, "label": "plant", "position": {"x": 7.5, "y": 2.5, "z": 0.0}, "score": 0.82, "detection_count": 2},
     ],
@@ -83,40 +112,47 @@ class TestCase:
     instruction: str
     language: str
     expected_action: str
-    expected_labels: List[str]  # any of these counts as a match
+    expected_labels: list[str]  # any of these counts as a match
     difficulty: str  # L1/L2/L3
 
 
 TEST_CASES = [
     # --- EN Fast Path (no LLM needed) ---
-    TestCase("EN_L1_find_chair", "find the chair", "en",
-             "navigate", ["red chair", "chair"], "L1"),
-    TestCase("EN_L1_find_door", "go to the door", "en",
-             "navigate", ["door"], "L1"),
-    TestCase("EN_L2_chair_near_desk", "find the chair near the desk", "en",
-             "navigate", ["red chair", "chair"], "L2"),
-    TestCase("EN_L2_cup_on_desk", "find the cup on the desk", "en",
-             "navigate", ["cup"], "L2"),
-    TestCase("EN_L3_office_bookshelf", "go to the bookshelf in the office", "en",
-             "navigate", ["bookshelf"], "L3"),
-    TestCase("EN_L3_plant_near_bookshelf", "find the plant near the bookshelf in the office", "en",
-             "navigate", ["plant"], "L3"),
-
+    TestCase("EN_L1_find_chair", "find the chair", "en", "navigate", ["red chair", "chair"], "L1"),
+    TestCase("EN_L1_find_door", "go to the door", "en", "navigate", ["door"], "L1"),
+    TestCase("EN_L2_chair_near_desk", "find the chair near the desk", "en", "navigate", ["red chair", "chair"], "L2"),
+    TestCase("EN_L2_cup_on_desk", "find the cup on the desk", "en", "navigate", ["cup"], "L2"),
+    TestCase("EN_L3_office_bookshelf", "go to the bookshelf in the office", "en", "navigate", ["bookshelf"], "L3"),
+    TestCase(
+        "EN_L3_plant_near_bookshelf",
+        "find the plant near the bookshelf in the office",
+        "en",
+        "navigate",
+        ["plant"],
+        "L3",
+    ),
     # --- ZH Slow Path (needs LLM for cross-lingual) ---
-    TestCase("ZH_L1_find_chair", "\u627e\u5230\u6905\u5b50", "zh",
-             "navigate", ["red chair", "chair"], "L1"),
-    TestCase("ZH_L1_find_door", "\u53bb\u95e8\u90a3\u91cc", "zh",
-             "navigate", ["door"], "L1"),
-    TestCase("ZH_L2_fire_ext_near_door", "\u627e\u5230\u95e8\u65c1\u8fb9\u7684\u706d\u706b\u5668", "zh",
-             "navigate", ["fire extinguisher"], "L2"),
-    TestCase("ZH_L3_corridor_sign", "\u8d70\u5eca\u91cc\u7684\u51fa\u53e3\u6807\u5fd7\u5728\u54ea\u91cc", "zh",
-             "navigate", ["exit sign", "sign"], "L3"),
-
+    TestCase("ZH_L1_find_chair", "\u627e\u5230\u6905\u5b50", "zh", "navigate", ["red chair", "chair"], "L1"),
+    TestCase("ZH_L1_find_door", "\u53bb\u95e8\u90a3\u91cc", "zh", "navigate", ["door"], "L1"),
+    TestCase(
+        "ZH_L2_fire_ext_near_door",
+        "\u627e\u5230\u95e8\u65c1\u8fb9\u7684\u706d\u706b\u5668",
+        "zh",
+        "navigate",
+        ["fire extinguisher"],
+        "L2",
+    ),
+    TestCase(
+        "ZH_L3_corridor_sign",
+        "\u8d70\u5eca\u91cc\u7684\u51fa\u53e3\u6807\u5fd7\u5728\u54ea\u91cc",
+        "zh",
+        "navigate",
+        ["exit sign", "sign"],
+        "L3",
+    ),
     # --- Explore: target not in scene (needs LLM) ---
-    TestCase("EN_explore_fridge", "find the refrigerator", "en",
-             "explore", [], "L3"),
-    TestCase("ZH_explore_sofa", "\u627e\u5230\u6c99\u53d1", "zh",
-             "explore", [], "L3"),
+    TestCase("EN_explore_fridge", "find the refrigerator", "en", "explore", [], "L3"),
+    TestCase("ZH_explore_sofa", "\u627e\u5230\u6c99\u53d1", "zh", "explore", [], "L3"),
 ]
 
 
@@ -196,7 +232,7 @@ async def run_single_test(resolver: GoalResolver, tc: TestCase) -> TestResult:
         )
 
 
-async def run_all_tests() -> List[TestResult]:
+async def run_all_tests() -> list[TestResult]:
     api_key = os.environ.get("MOONSHOT_API_KEY", "")
     if not api_key:
         print("[ERROR] MOONSHOT_API_KEY not set. Run:")
@@ -204,15 +240,15 @@ async def run_all_tests() -> List[TestResult]:
         sys.exit(1)
 
     print(f"API key found: {api_key[:8]}...{api_key[-4:]}")
-    print(f"Model: kimi-k2.5, Base URL: https://api.moonshot.cn/v1")
+    print("Model: kimi-k2.5, Base URL: https://api.moonshot.cn/v1")
     print(f"Running {len(TEST_CASES)} test cases...\n")
 
     config = make_moonshot_config()
     resolver = GoalResolver(primary_config=config)
 
-    results: List[TestResult] = []
+    results: list[TestResult] = []
     for i, tc in enumerate(TEST_CASES):
-        print(f"  [{i+1}/{len(TEST_CASES)}] {tc.name} ({tc.difficulty}, {tc.language})...", end=" ", flush=True)
+        print(f"  [{i + 1}/{len(TEST_CASES)}] {tc.name} ({tc.difficulty}, {tc.language})...", end=" ", flush=True)
 
         # Rate-limit between LLM-requiring tests to avoid API throttling
         needs_llm = not _is_fast_path_case(tc)
@@ -240,11 +276,11 @@ def _is_fast_path_case(tc: TestCase) -> bool:
     return tc.language == "en" and tc.expected_action == "navigate"
 
 
-def generate_report(results: List[TestResult]) -> str:
+def generate_report(results: list[TestResult]) -> str:
     lines = ["# Slow Path (Kimi-k2.5) Validation Report\n"]
     total = len(results)
     passed = sum(1 for r in results if r.passed)
-    lines.append(f"**Overall: {passed}/{total} passed ({100*passed/total:.0f}%)**\n")
+    lines.append(f"**Overall: {passed}/{total} passed ({100 * passed / total:.0f}%)**\n")
 
     avg_lat = sum(r.latency_ms for r in results) / total if total else 0
     avg_conf = sum(r.confidence for r in results if r.passed) / max(passed, 1)
@@ -275,7 +311,7 @@ def generate_report(results: List[TestResult]) -> str:
         lbl = "Y" if r.label_correct else "N"
         err = r.error[:40] if r.error else "-"
         lines.append(
-            f"| {i+1} | {r.name} | {r.difficulty} | {mark} | "
+            f"| {i + 1} | {r.name} | {r.difficulty} | {mark} | "
             f"{act} | {lbl} | {r.confidence:.2f} | {r.latency_ms:.0f}ms | {err} |"
         )
 
@@ -301,7 +337,7 @@ async def main():
     print("=" * 60)
     total = len(results)
     passed = sum(1 for r in results if r.passed)
-    print(f"  Total:   {passed}/{total} ({100*passed/total:.0f}%)")
+    print(f"  Total:   {passed}/{total} ({100 * passed / total:.0f}%)")
 
     for diff in ["L1", "L2", "L3"]:
         subset = [r for r in results if r.difficulty == diff]

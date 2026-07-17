@@ -21,13 +21,15 @@ deployment.
 | Thunder field deploy | `bash scripts/deploy/deploy_thunder.sh` |
 | Cut Thunder release | `bash scripts/deploy/cut_release.sh v2.1.1` |
 | Install Thunder DDS endpoint service | `bash scripts/deploy/thunder/install_services.sh field-cpp` |
-| Run Thunder field endpoint source group | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field` |
-| Run Thunder Brainstem endpoint source | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_brainstem` |
+| Build native Thunder driver | `bash scripts/build/build_driver.sh` |
+| Run native Thunder driver | `build/driver/lingtu_driver` |
+| Run compatibility Python field endpoint | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field` |
+| Run compatibility Python Brainstem sink | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_brainstem` |
 | Run no-ROS JSONL localization source | `LINGTU_ENDPOINT_JSONL_PATH=/data/thunder/localization.jsonl python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field` |
 | Validate Thunder JSONL endpoint feed | `python tools/validate/validate_lcm_jsonl_feed.py /data/thunder/localization.jsonl --require-field-inputs` |
 | Smoke Thunder endpoint without hardware | `python scripts/deploy/thunder/run_dds_endpoint_service.py --transport local --source smoke --once --json` |
 | Install Thunder Lite service | `bash scripts/deploy/thunder/install_services.sh lite` |
-| Install legacy ROS compatibility services | `bash scripts/deploy/thunder/install_services.sh ros-compat` |
+| Install legacy ROS compatibility services | `LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1 bash scripts/deploy/thunder/install_services.sh ros-compat` |
 | Legacy deploy alias | `bash scripts/deploy/deploy_s100p.sh` |
 | Run tests | `bash scripts/dev/run_tests.sh` |
 | Validate Thunder field deployment | `python tools/validate/validate_thunder_field_deployment.py` |
@@ -57,13 +59,12 @@ New operator docs should use canonical profiles: `nav`, `map`, and
 | `ota/` | Legacy colcon/ROS OTA compatibility package, push, install, and service startup | `build_nav_package.sh`, `deploy_to_robot.sh`, `generate_manifest.py` |
 | `monitor/` | Feishu / Telegram status bots | `feishu_monitor_bot.py`, `telegram_monitor_bot.py` |
 | `proto/` | Protobuf code generation | `proto_gen.sh`, `proto_gen.ps1` |
-| `manager/` | Lightweight web management service | `manager.py` |
 | `diagnostics/` | Local and robot diagnostics | `doctor.py`, `dufomap_offline_test.py`, `soak.py`, `static_localization_probe.py` |
 | `gates/` | Runtime contracts, saved-map gates, and field evidence gates | `runtime_contract_audit.py`, `saved_map_artifact_gate.py`, `real_runtime_evidence_collect.py` |
-| `planning/` | Planning preview and gate helpers | `plan_preview.py` |
+| `planning/` | Retired legacy PCT/tomogram preview area | none |
 | `perception/` | ROS2 compatibility live perception demos and tracking tools | `live_detect.py`, `live_track.py` |
 | `visualization/` | Rerun visualization entrypoints | `rerun_gateway_live.py`, `rerun_live.py` (ROS2 compat), `run_rerun_mapping.py` |
-| `gateway/media/` | go2rtc/WebRTC helpers | `install_go2rtc.sh` |
+| `webrtc/` | go2rtc/WHEP setup helper | `install_go2rtc.sh` |
 | `hardware/` | Sensor bagging and IMU calibration helpers | `record_bag.sh`, `run_allan_variance.sh` |
 | `docs/` | Documentation generation scripts | `extract_api_docs.py` |
 | `dev/` | Developer convenience scripts | `run_tests.sh`, `scaffold_robot.py` |
@@ -98,4 +99,5 @@ New operator docs should use canonical profiles: `nav`, `map`, and
 - Validate the field deployment boundary with
   `python tools/validate/validate_thunder_field_deployment.py` before claiming
   Thunder navigation is endpoint-only/no-ROS by default.
-  `ros-compat` only for the old ROS service chain.
+  `ros-compat` is only for the old ROS service chain and requires
+  `LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1`.

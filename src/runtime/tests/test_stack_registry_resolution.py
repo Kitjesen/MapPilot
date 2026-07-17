@@ -20,12 +20,8 @@ def _entry_names(bp) -> list[str]:
 
 
 def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
-    driver_stack_source = Path("src/runtime/blueprints/stacks/driver.py").read_text(
-        encoding="utf-8"
-    )
-    driver_runtime_source = Path("src/runtime/adapters/driver_runtime.py").read_text(
-        encoding="utf-8"
-    )
+    driver_stack_source = Path("src/runtime/blueprints/stacks/driver.py").read_text(encoding="utf-8")
+    driver_runtime_source = Path("src/runtime/adapters/driver_runtime.py").read_text(encoding="utf-8")
 
     removed_driver_adapter = "drivers" + ".adapters"
 
@@ -128,7 +124,7 @@ def test_lidar_stack_prefers_registered_mid360_module():
         bp = lidar(ip="192.0.2.10")
 
         assert _entry_classes(bp) == [FakeLidar]
-        assert _entry_names(bp) == ["LidarModule"]
+        assert _entry_names(bp) == ["lidar"]
         assert bp._entries[0].config == {"ip": "192.0.2.10"}
     finally:
         restore(saved)
@@ -175,6 +171,95 @@ def test_lidar_stack_uses_default_source_without_transport_config():
         restore(saved)
 
 
+def test_lidar_stack_can_select_mujoco_backend():
+    from runtime.blueprints.stacks.lidar import lidar
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("lidar", "mujoco")
+        class FakeMujocoLidar(Module, layer=1):
+            pass
+
+        bp = lidar(enabled=True, backend="mujoco")
+
+        assert _entry_classes(bp) == [FakeMujocoLidar]
+        assert _entry_names(bp) == ["lidar"]
+        assert bp._entries[0].config == {}
+    finally:
+        restore(saved)
+
+
+def test_lidar_stack_rejects_unknown_backend_without_mid360_fallback():
+    from runtime.blueprints.stacks.lidar import lidar
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("lidar", "mid360")
+        class FakeLidar(Module, layer=1):
+            pass
+
+        with pytest.raises(ValueError, match="Unsupported lidar backend"):
+            lidar(enabled=True, backend="ros2")
+    finally:
+        restore(saved)
+
+
+@pytest.mark.parametrize("backend", ["dds", "replay"])
+def test_lidar_stack_rejects_declared_unimplemented_backends(backend):
+    from runtime.blueprints.stacks.lidar import lidar
+
+    with pytest.raises(ValueError, match="declared but not implemented"):
+        lidar(enabled=True, backend=backend)
+
+
+def test_imu_stack_can_select_mujoco_backend():
+    from runtime.blueprints.stacks.imu import imu
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("imu", "mujoco")
+        class FakeMujocoImu(Module, layer=1):
+            pass
+
+        bp = imu(enabled=True, backend="mujoco")
+
+        assert _entry_classes(bp) == [FakeMujocoImu]
+        assert _entry_names(bp) == ["imu"]
+        assert bp._entries[0].config == {}
+    finally:
+        restore(saved)
+
+
+def test_imu_stack_rejects_unknown_backend_without_livox_fallback():
+    from runtime.blueprints.stacks.imu import imu
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("imu", "livox")
+        class FakeImu(Module, layer=1):
+            pass
+
+        with pytest.raises(ValueError, match="Unsupported imu backend"):
+            imu(enabled=True, backend="serial")
+    finally:
+        restore(saved)
+
+
+def test_imu_stack_rejects_declared_unimplemented_replay_backend():
+    from runtime.blueprints.stacks.imu import imu
+
+    with pytest.raises(ValueError, match="declared but not implemented"):
+        imu(enabled=True, backend="replay")
+
+
 def test_gateway_stack_prefers_registered_interface_modules():
     from runtime.blueprints.stacks.gateway import gateway
 
@@ -194,10 +279,6 @@ def test_gateway_stack_prefers_registered_interface_modules():
         class FakeTeleop(Module, layer=6):
             pass
 
-        @register("webrtc", "aiortc")
-        class FakeWebRtc(Module, layer=6):
-            pass
-
         @register("visualization", "rerun")
         class FakeRerun(Module, layer=6):
             pass
@@ -208,14 +289,12 @@ def test_gateway_stack_prefers_registered_interface_modules():
             FakeGateway,
             FakeMcp,
             FakeTeleop,
-            FakeWebRtc,
             FakeRerun,
         ]
         assert _entry_names(bp) == [
             "GatewayModule",
             "MCPServerModule",
             "TeleopModule",
-            "WebRTCStreamModule",
             "RerunBridgeModule",
         ]
         assert bp._entries[0].config == {
@@ -224,7 +303,7 @@ def test_gateway_stack_prefers_registered_interface_modules():
         }
         assert bp._entries[1].config == {"port": 8091}
         assert bp._entries[2].config == {"port": 5051}
-        assert bp._entries[4].config == {"web_port": 9090}
+        assert bp._entries[3].config == {"web_port": 9090}
     finally:
         restore(saved)
 
@@ -353,9 +432,7 @@ def test_navigation_stack_prefers_registered_modules_with_canonical_aliases():
             "TraversableFrontierModule",
         ]
         assert any(
-            wire.out_module == "WavefrontFrontierExplorer"
-            and wire.in_module == "nav.mission"
-            for wire in bp._wires
+            wire.out_module == "WavefrontFrontierExplorer" and wire.in_module == "nav.mission" for wire in bp._wires
         )
     finally:
         restore(saved)
@@ -427,15 +504,15 @@ def test_tare_stack_prefers_registered_bridge_modules_with_canonical_aliases():
         restore(saved)
 
 
-def test_perception_stack_prefers_registered_scene_and_camera_bridge_modules():
+def test_perception_stack_prefers_registered_scene_and_camera_modules():
     from runtime.blueprints.stacks.perception import perception
 
     saved = snapshot()
     try:
         clear()
 
-        @register("camera_bridge", "default")
-        class FakeCameraBridge(Module, layer=1):
+        @register("camera", "orbbec")
+        class FakeCamera(Module, layer=1):
             pass
 
         @register("perception", "scene")
@@ -446,12 +523,12 @@ def test_perception_stack_prefers_registered_scene_and_camera_bridge_modules():
             detector="bpu",
             encoder="mobileclip",
             manage_services=False,
-            force_camera_bridge=True,
+            force_camera=True,
             camera_rotate=90,
         )
 
-        assert _entry_classes(bp)[:2] == [FakeCameraBridge, FakePerception]
-        assert _entry_names(bp)[:2] == ["CameraBridgeModule", "PerceptionModule"]
+        assert _entry_classes(bp)[:2] == [FakeCamera, FakePerception]
+        assert _entry_names(bp)[:2] == ["camera", "PerceptionModule"]
         assert bp._entries[0].config == {"rotate": 90}
         assert bp._entries[1].config["detector_type"] == "bpu"
         assert bp._entries[1].config["encoder_type"] == "mobileclip"
@@ -474,11 +551,13 @@ def test_perception_stack_does_not_default_external_camera_to_ros2_bridge():
             detector="bpu",
             encoder="mobileclip",
             manage_services=False,
-            force_camera_bridge=True,
+            force_camera=True,
         )
 
         assert FakePerception in _entry_classes(bp)
-        assert "CameraBridgeModule" not in _entry_names(bp)
+        if "camera" in _entry_names(bp):
+            camera_cls = bp._entries[_entry_names(bp).index("camera")].module_cls
+            assert ".adapters.ros2." not in camera_cls.__module__
         assert "PerceptionModule" in _entry_names(bp)
     finally:
         restore(saved)
@@ -499,11 +578,11 @@ def test_perception_stack_ignores_removed_explicit_ros2_camera_bridge():
             detector="bpu",
             encoder="mobileclip",
             manage_services=False,
-            force_camera_bridge=True,
+            force_camera=True,
             enable_ros2_camera_bridge=True,
         )
 
-        assert "CameraBridgeModule" not in _entry_names(bp)
+        assert "camera" not in _entry_names(bp)
         assert "PerceptionModule" in _entry_names(bp)
     finally:
         restore(saved)
@@ -524,10 +603,12 @@ def test_perception_stack_ignores_registered_ros2_camera_bridge_without_flag():
             detector="bpu",
             encoder="mobileclip",
             manage_services=False,
-            force_camera_bridge=True,
+            force_camera=True,
         )
 
-        assert "CameraBridgeModule" not in _entry_names(bp)
+        if "camera" in _entry_names(bp):
+            camera_cls = bp._entries[_entry_names(bp).index("camera")].module_cls
+            assert ".adapters.ros2." not in camera_cls.__module__
         assert "PerceptionModule" in _entry_names(bp)
     finally:
         restore(saved)
@@ -536,11 +617,10 @@ def test_perception_stack_ignores_registered_ros2_camera_bridge_without_flag():
 @pytest.mark.parametrize(
     "config",
     [
-        {"_driver_cls_name": "MujocoDriverModule"},
         {"_driver_cls_name": "ROS2SimDriverModule", "use_driver_camera": True},
     ],
 )
-def test_perception_stack_skips_camera_bridge_resolution_for_driver_camera(
+def test_perception_stack_skips_camera_resolution_for_driver_camera(
     monkeypatch,
     config,
 ):
@@ -556,14 +636,14 @@ def test_perception_stack_skips_camera_bridge_resolution_for_driver_camera(
 
         calls: list[str] = []
 
-        def recording_camera_bridge_module():
-            calls.append("camera_bridge")
-            raise AssertionError("camera bridge should not be resolved")
+        def recording_camera_module():
+            calls.append("camera")
+            raise AssertionError("camera should not be resolved")
 
         monkeypatch.setattr(
             perception_stack,
-            "camera_bridge_module",
-            recording_camera_bridge_module,
+            "camera_module",
+            recording_camera_module,
         )
         monkeypatch.setattr(perception_stack, "optional_stack_module", lambda *a, **kw: None)
         monkeypatch.setattr(
@@ -586,32 +666,80 @@ def test_perception_stack_skips_camera_bridge_resolution_for_driver_camera(
         restore(saved)
 
 
-def test_perception_stack_resolves_camera_bridge_for_external_camera(monkeypatch):
+def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
     perception_stack = importlib.import_module("runtime.blueprints.stacks.perception")
 
     saved = snapshot()
     try:
         clear()
 
-        @register("camera_bridge", "default")
-        class FakeCameraBridge(Module, layer=1):
+        @register("camera", "sim")
+        class FakeCamera(Module, layer=1):
             pass
 
         @register("perception", "scene")
         class FakePerception(Module, layer=3):
             pass
 
-        original_camera_bridge_module = perception_stack.camera_bridge_module
-        calls: list[str] = []
+        calls: list[dict] = []
+        original_camera_module = perception_stack.camera_module
 
-        def recording_camera_bridge_module(**kwargs):
-            calls.append("camera_bridge")
-            return original_camera_bridge_module(**kwargs)
+        def recording_camera_module(**kwargs):
+            calls.append(dict(kwargs))
+            return original_camera_module(**kwargs)
 
         monkeypatch.setattr(
             perception_stack,
-            "camera_bridge_module",
-            recording_camera_bridge_module,
+            "camera_module",
+            recording_camera_module,
+        )
+        monkeypatch.setattr(perception_stack, "optional_stack_module", lambda *a, **kw: None)
+        monkeypatch.setattr(
+            perception_stack,
+            "optional_fallback_module",
+            lambda *a, **kw: None,
+        )
+
+        bp = perception_stack.perception(
+            detector="bpu",
+            encoder="mobileclip",
+            manage_services=False,
+            _driver_cls_name="MujocoDriverModule",
+        )
+
+        assert calls == [{"enable_ros2": False, "backend": "sim"}]
+        assert _entry_classes(bp) == [FakeCamera, FakePerception]
+        assert _entry_names(bp) == ["camera", "PerceptionModule"]
+    finally:
+        restore(saved)
+
+
+def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
+    perception_stack = importlib.import_module("runtime.blueprints.stacks.perception")
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("camera", "orbbec")
+        class FakeCamera(Module, layer=1):
+            pass
+
+        @register("perception", "scene")
+        class FakePerception(Module, layer=3):
+            pass
+
+        original_camera_module = perception_stack.camera_module
+        calls: list[str] = []
+
+        def recording_camera_module(**kwargs):
+            calls.append("camera")
+            return original_camera_module(**kwargs)
+
+        monkeypatch.setattr(
+            perception_stack,
+            "camera_module",
+            recording_camera_module,
         )
         monkeypatch.setattr(perception_stack, "optional_stack_module", lambda *a, **kw: None)
         monkeypatch.setattr(
@@ -628,11 +756,26 @@ def test_perception_stack_resolves_camera_bridge_for_external_camera(monkeypatch
             use_driver_camera=False,
         )
 
-        assert calls == ["camera_bridge"]
-        assert _entry_classes(bp) == [FakeCameraBridge, FakePerception]
-        assert _entry_names(bp) == ["CameraBridgeModule", "PerceptionModule"]
+        assert calls == ["camera"]
+        assert _entry_classes(bp) == [FakeCamera, FakePerception]
+        assert _entry_names(bp) == ["camera", "PerceptionModule"]
     finally:
         restore(saved)
+
+
+def test_wiring_context_accepts_canonical_camera_name():
+    from runtime.blueprints.wires.context import camera_source
+    from runtime.contracts import CAMERA_COMPAT_ALIAS
+
+    assert camera_source({"camera"}, driver_module="Driver") == (
+        "camera",
+        "color_image",
+    )
+    assert camera_source({CAMERA_COMPAT_ALIAS}, driver_module="Driver") == (
+        CAMERA_COMPAT_ALIAS,
+        "color_image",
+    )
+    assert camera_source(set(), driver_module="Driver") == ("Driver", "camera_image")
 
 
 def test_perception_stack_prefers_registered_optional_tool_modules():
@@ -642,8 +785,8 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
     try:
         clear()
 
-        @register("camera_bridge", "default")
-        class FakeCameraBridge(Module, layer=1):
+        @register("camera", "orbbec")
+        class FakeCamera(Module, layer=1):
             pass
 
         @register("perception", "scene")
@@ -670,14 +813,14 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
             detector="bpu",
             encoder="mobileclip",
             manage_services=False,
-            force_camera_bridge=True,
+            force_camera=True,
             enable_standalone_encoder=True,
             recon_save_dir="/tmp/lingtu-recon",
             recon_server_url="http://127.0.0.1:7890",
         )
 
         assert _entry_classes(bp) == [
-            FakeCameraBridge,
+            FakeCamera,
             FakePerception,
             FakeEncoder,
             FakeReconstruction,
@@ -685,7 +828,7 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
             FakeKeyframeExporter,
         ]
         assert _entry_names(bp) == [
-            "CameraBridgeModule",
+            "camera",
             "PerceptionModule",
             "EncoderModule",
             "ReconstructionModule",
@@ -700,7 +843,7 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
 
 
 def test_maps_stack_does_not_default_map_output_to_ros2():
-    from runtime.adapters.mapping_slam import map_output_adapter_module
+    from maps.adapters.resolver import map_output_adapter_module
     from runtime.blueprints.stacks.maps import maps
 
     saved = snapshot()
@@ -713,6 +856,10 @@ def test_maps_stack_does_not_default_map_output_to_ros2():
 
         @register("map", "voxel")
         class FakeVoxelGrid(Module, layer=2):
+            pass
+
+        @register("map", "semantic")
+        class FakeSemanticMap(Module, layer=2):
             pass
 
         @register("map", "esdf")
@@ -731,8 +878,8 @@ def test_maps_stack_does_not_default_map_output_to_ros2():
         class FakeMapOut(Module, layer=2):
             exploration_grid: In[dict]
 
-        @register("map", "manager")
-        class FakeMapManager(Module, layer=2):
+        @register("map", "service")
+        class FakeMapsModule(Module, layer=2):
             pass
 
         assert map_output_adapter_module() is None
@@ -740,106 +887,41 @@ def test_maps_stack_does_not_default_map_output_to_ros2():
         bp = maps(
             grid_resolution=0.25,
             grid_radius=8.0,
+            voxel_backend="cpp",
             map_dir="/tmp/lingtu-test-maps",
+            octomap_resolution=0.1,
+            octomap_free_layers_above=6,
+            octomap_free_dilation_cells=1,
             enable_map_out=True,
         )
 
         assert _entry_classes(bp) == [
             FakeOccupancyGrid,
             FakeVoxelGrid,
+            FakeSemanticMap,
             FakeEsdf,
             FakeElevationMap,
             FakeTraversabilityCost,
-            FakeMapManager,
+            FakeMapsModule,
         ]
         assert _entry_names(bp) == [
             "OccupancyGridModule",
             "VoxelGridModule",
+            "SemanticMapModule",
             "ESDFModule",
             "ElevationMapModule",
             "TraversabilityCostModule",
-            "nav.maps",
+            "maps.service",
         ]
         assert bp._entries[0].config["resolution"] == 0.25
-        assert bp._entries[-1].config == {"map_dir": "/tmp/lingtu-test-maps"}
-        assert {
-            f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-            for wire in bp._wires
-        } == set()
-    finally:
-        restore(saved)
-
-
-def test_maps_stack_prefers_registered_explicit_ros2_map_output_module():
-    from runtime.blueprints.stacks.maps import maps
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("map", "occupancy_grid")
-        class FakeOccupancyGrid(Module, layer=2):
-            exploration_grid: Out[dict]
-
-        @register("map", "voxel")
-        class FakeVoxelGrid(Module, layer=2):
-            pass
-
-        @register("map", "esdf")
-        class FakeEsdf(Module, layer=2):
-            pass
-
-        @register("map", "elevation")
-        class FakeElevationMap(Module, layer=2):
-            pass
-
-        @register("map", "traversability_cost")
-        class FakeTraversabilityCost(Module, layer=2):
-            pass
-
-        @register("map", "ros2_map_output")
-        class FakeMapOut(Module, layer=2):
-            exploration_grid: In[dict]
-
-        @register("map", "manager")
-        class FakeMapManager(Module, layer=2):
-            pass
-
-        bp = maps(
-            grid_resolution=0.25,
-            grid_radius=8.0,
-            map_dir="/tmp/lingtu-test-maps",
-            enable_map_out=True,
-            map_out_adapter="ros2_map_output",
-        )
-
-        assert _entry_classes(bp) == [
-            FakeOccupancyGrid,
-            FakeMapOut,
-            FakeVoxelGrid,
-            FakeEsdf,
-            FakeElevationMap,
-            FakeTraversabilityCost,
-            FakeMapManager,
-        ]
-        assert _entry_names(bp) == [
-            "OccupancyGridModule",
-            "map.out",
-            "VoxelGridModule",
-            "ESDFModule",
-            "ElevationMapModule",
-            "TraversabilityCostModule",
-            "nav.maps",
-        ]
-        assert bp._entries[0].config["resolution"] == 0.25
-        assert bp._entries[-1].config == {"map_dir": "/tmp/lingtu-test-maps"}
-        assert {
-            f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-            for wire in bp._wires
-        } == {
-            "OccupancyGridModule.exploration_grid->map.out.exploration_grid",
+        assert bp._entries[1].config["backend"] == "cpp"
+        assert bp._entries[-1].config == {
+            "map_dir": "/tmp/lingtu-test-maps",
+            "octomap_resolution": 0.1,
+            "octomap_free_layers_above": 6,
+            "octomap_free_dilation_cells": 1,
         }
-        assert {wire.topic for wire in bp._wires} == {"/nav/exploration_grid"}
+        assert {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires} == set()
     finally:
         restore(saved)
 
@@ -859,6 +941,10 @@ def test_maps_stack_prefers_registered_explicit_dds_map_output_module():
         class FakeVoxelGrid(Module, layer=2):
             pass
 
+        @register("map", "semantic")
+        class FakeSemanticMap(Module, layer=2):
+            pass
+
         @register("map", "esdf")
         class FakeEsdf(Module, layer=2):
             pass
@@ -875,7 +961,7 @@ def test_maps_stack_prefers_registered_explicit_dds_map_output_module():
         class FakeMapOut(Module, layer=2):
             exploration_grid: In[dict]
 
-        @register("map", "manager")
+        @register("map", "service")
         class FakeMapManager(Module, layer=2):
             pass
 
@@ -891,138 +977,17 @@ def test_maps_stack_prefers_registered_explicit_dds_map_output_module():
             FakeOccupancyGrid,
             FakeMapOut,
             FakeVoxelGrid,
+            FakeSemanticMap,
             FakeEsdf,
             FakeElevationMap,
             FakeTraversabilityCost,
             FakeMapManager,
         ]
         assert _entry_names(bp)[1] == "map.out"
-        assert {
-            f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}"
-            for wire in bp._wires
-        } == {
+        assert {f"{wire.out_module}.{wire.out_port}->{wire.in_module}.{wire.in_port}" for wire in bp._wires} == {
             "OccupancyGridModule.exploration_grid->map.out.exploration_grid",
         }
         assert {wire.topic for wire in bp._wires} == {"/nav/exploration_grid"}
-    finally:
-        restore(saved)
-
-
-def test_navigation_stack_routes_explicit_ros2_waypoint_to_nav_out():
-    from runtime.blueprints.stacks.navigation import navigation
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("navigation", "default")
-        class FakeNavigation(Module, layer=5):
-            pass
-
-        @register("navigation", "ros2_nav_output")
-        class FakeNavOutput(Module, layer=5):
-            pass
-
-        bp = navigation(
-            enable_ros2_bridge=True,
-            enable_native=False,
-            planning_frame_id="map",
-        )
-
-        assert _entry_classes(bp)[:2] == [
-            FakeNavigation,
-            FakeNavOutput,
-        ]
-        assert _entry_names(bp)[:2] == [
-            "nav.mission",
-            "nav.out",
-        ]
-        assert bp._entries[1].config == {"default_frame_id": "map"}
-    finally:
-        restore(saved)
-
-
-def test_navigation_stack_does_not_default_nav_out_to_ros2():
-    from runtime.blueprints.stacks.navigation import navigation
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("navigation", "default")
-        class FakeNavigation(Module, layer=5):
-            pass
-
-        @register("navigation", "ros2_nav_output")
-        class FakeNavOutput(Module, layer=5):
-            pass
-
-        bp = navigation(
-            enable_nav_out=True,
-            enable_native=False,
-            planning_frame_id="map",
-        )
-
-        assert FakeNavOutput not in _entry_classes(bp)
-        assert "nav.out" not in _entry_names(bp)
-    finally:
-        restore(saved)
-
-
-def test_navigation_stack_prefers_registered_explicit_ros2_nav_output_module():
-    from runtime.blueprints.stacks.navigation import navigation
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("navigation", "default")
-        class FakeNavigation(Module, layer=5):
-            pass
-
-        @register("navigation", "ros2_nav_output")
-        class FakeNavOutput(Module, layer=5):
-            pass
-
-        bp = navigation(
-            enable_nav_out=True,
-            nav_out_adapter="ros2_nav_output",
-            enable_native=False,
-            planning_frame_id="map",
-        )
-
-        assert _entry_classes(bp)[:2] == [FakeNavigation, FakeNavOutput]
-        assert _entry_names(bp)[:2] == ["nav.mission", "nav.out"]
-        assert bp._entries[1].config == {"default_frame_id": "map"}
-    finally:
-        restore(saved)
-
-
-def test_navigation_stack_prefers_registered_explicit_ros2_nav_input_module():
-    from runtime.blueprints.stacks.navigation import navigation
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("navigation", "default")
-        class FakeNavigation(Module, layer=5):
-            pass
-
-        @register("navigation", "ros2_nav_input")
-        class FakeNavInput(Module, layer=5):
-            pass
-
-        bp = navigation(
-            enable_nav_in=True,
-            nav_in_adapter="ros2_nav_input",
-            enable_native=False,
-            planning_frame_id="map",
-        )
-
-        assert _entry_classes(bp)[:2] == [FakeNavigation, FakeNavInput]
-        assert _entry_names(bp)[:2] == ["nav.mission", "nav.in"]
-        assert bp._entries[1].config == {"default_frame_id": "map"}
     finally:
         restore(saved)
 
@@ -1042,16 +1007,26 @@ def test_planner_stack_prefers_registered_modules_with_canonical_aliases():
         class FakeLlm(Module, layer=4):
             pass
 
+        @register("agent_planner", "default")
+        class FakeAgentPlanner(Module, layer=4):
+            pass
+
         @register("visual_servo", "default")
         class FakeVisualServo(Module, layer=4):
             pass
 
         bp = planner(llm="mock", save_dir="/tmp/lingtu-semantic")
 
-        assert _entry_classes(bp) == [FakeSemanticPlanner, FakeLlm, FakeVisualServo]
+        assert _entry_classes(bp) == [
+            FakeSemanticPlanner,
+            FakeLlm,
+            FakeAgentPlanner,
+            FakeVisualServo,
+        ]
         assert _entry_names(bp) == [
             "SemanticPlannerModule",
             "LLMModule",
+            "AgentPlannerModule",
             "VisualServoModule",
         ]
         assert bp._entries[0].config == {
@@ -1059,6 +1034,7 @@ def test_planner_stack_prefers_registered_modules_with_canonical_aliases():
             "llm_backend": "mock",
         }
         assert bp._entries[1].config == {"backend": "mock"}
+        assert bp._entries[2].config == {"llm_backend": "mock"}
     finally:
         restore(saved)
 
@@ -1169,9 +1145,40 @@ def test_navigation_stack_prefers_registered_autonomy_modules_with_canonical_ali
         restore(saved)
 
 
-def test_slam_stack_prefers_registered_localization_adapter():
+def test_lidar_stack_keeps_legacy_driver_start_opt_in():
+    from runtime.blueprints.stacks.lidar import lidar
+
+    saved = snapshot()
+    try:
+        clear()
+
+        @register("lidar", "mid360")
+        class FakeLidar(Module, layer=1):
+            pass
+
+        default_bp = lidar(enabled=True, backend="mid360", ip="192.0.2.30")
+        legacy_bp = lidar(
+            enabled=True,
+            backend="mid360",
+            ip="192.0.2.30",
+            start_driver=True,
+        )
+
+        assert _entry_classes(default_bp) == [FakeLidar]
+        assert _entry_names(default_bp) == ["lidar"]
+        assert default_bp._entries[0].config == {"ip": "192.0.2.30"}
+        assert legacy_bp._entries[0].config == {
+            "ip": "192.0.2.30",
+            "start_driver": True,
+        }
+    finally:
+        restore(saved)
+
+
+def test_slam_stack_rejects_removed_ros2_adapter_even_if_registered(monkeypatch):
     from runtime.blueprints.stacks.slam import slam
 
+    monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     saved = snapshot()
     try:
         clear()
@@ -1180,14 +1187,6 @@ def test_slam_stack_prefers_registered_localization_adapter():
         class FakeLocalizationAdapter(Module, layer=1):
             pass
 
-        @register("slam_bridge", "default")
-        class FakeLegacySlamBridge(Module, layer=1):
-            pass
-
-        @register("visual_odom", "depth")
-        class FakeDepthVisualOdom(Module, layer=1):
-            pass
-
         bp = slam(
             "bridge",
             enable_visual_backup=True,
@@ -1195,16 +1194,16 @@ def test_slam_stack_prefers_registered_localization_adapter():
             localization_adapter="ros2_slam_bridge",
         )
 
-        assert _entry_classes(bp) == [FakeLocalizationAdapter, FakeDepthVisualOdom]
-        assert _entry_names(bp) == ["SlamBridgeModule", "DepthVisualOdomModule"]
-        assert bp._entries[0].config["backend_profile"] == "bridge"
+        assert _entry_classes(bp) == []
+        assert _entry_names(bp) == []
     finally:
         restore(saved)
 
 
-def test_slam_stack_accepts_legacy_registered_bridge_and_visual_odom_modules():
-    from runtime.blueprints.stacks.slam import slam
+def test_slam_stack_rejects_removed_legacy_bridge_registry(monkeypatch):
+    from runtime.adapters.localization import localization_adapter_module
 
+    monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     saved = snapshot()
     try:
         clear()
@@ -1213,20 +1212,8 @@ def test_slam_stack_accepts_legacy_registered_bridge_and_visual_odom_modules():
         class FakeSlamBridge(Module, layer=1):
             pass
 
-        @register("visual_odom", "depth")
-        class FakeDepthVisualOdom(Module, layer=1):
-            pass
-
-        bp = slam(
-            "bridge",
-            enable_visual_backup=True,
-            manage_services=False,
-            localization_adapter="ros2_slam_bridge",
-        )
-
-        assert _entry_classes(bp) == [FakeSlamBridge, FakeDepthVisualOdom]
-        assert _entry_names(bp) == ["SlamBridgeModule", "DepthVisualOdomModule"]
-        assert bp._entries[0].config["backend_profile"] == "bridge"
+        with pytest.raises(ImportError, match="were removed"):
+            localization_adapter_module("ros2_slam_bridge")
     finally:
         restore(saved)
 

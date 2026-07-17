@@ -60,7 +60,7 @@ def setup_logging(level: str) -> None:
 
 
 def cmd_reconstruct(args) -> int:
-    """浠庢暟鎹泦鐩綍杩愯閲嶅缓銆?""
+    """Run reconstruction from a recorded RGB-D dataset directory."""
     from perception.reconstruction.dataset_io import (
         load_dataset, dataset_stats, export_tum
     )
@@ -83,7 +83,8 @@ def cmd_reconstruct(args) -> int:
           f"{stats.get('duration_s', 0):.1f}s | "
           f"depth={'yes' if stats['has_depth'] else 'no'}")
 
-    # 浠呭鍑烘牸寮忚浆鎹?    if args.export_tum:
+    # Optional dataset-format export.
+    if args.export_tum:
         out = Path(args.export_tum).expanduser()
         export_tum(keyframes, out)
         print(f"Exported TUM dataset to: {out}")
@@ -136,7 +137,7 @@ def cmd_reconstruct(args) -> int:
 
 
 def cmd_from_bag(args) -> int:
-    """浠?bag 鎻愬彇甯у悗閲嶅缓锛堟垨鐩存帴鍚堝苟鐐逛簯锛夈€?""
+    """Extract a ROS bag for RGB-D reconstruction or LiDAR PLY export."""
     bag_path = Path(args.bag).expanduser()
     if not bag_path.exists():
         print(f"[ERROR] Bag not found: {bag_path}")
@@ -144,7 +145,7 @@ def cmd_from_bag(args) -> int:
 
     if args.lidar:
         # 鐩存帴浠庣偣浜?bag 鐢熸垚 PLY
-        from perception.adapters.ros2.bag_reader import read_lidar_bag
+        from tools.reconstruction.bag_reader import read_lidar_bag
         out_ply = Path(args.output or f"outputs/reconstruction/{bag_path.stem}_lidar.ply")
         out_ply.parent.mkdir(parents=True, exist_ok=True)
         print(f"Extracting LiDAR point cloud from {bag_path} 鈫?{out_ply}")
@@ -161,7 +162,7 @@ def cmd_from_bag(args) -> int:
             return 1
 
     # RGB-D bag 鈫?鎻愬彇甯?鈫?閲嶅缓
-    from perception.adapters.ros2.bag_reader import read_rgb_d_bag
+    from tools.reconstruction.bag_reader import read_rgb_d_bag
 
     frames_dir = Path(args.frames_dir or
                       f"outputs/reconstruction/{bag_path.stem}_frames").expanduser()
@@ -202,7 +203,7 @@ def cmd_list_backends(args) -> int:
         cls  = get_backend(name)
         inst = cls()
         ok, reason = inst.check_dependencies()
-        mark = "鉁? if ok else "鉁?
+        mark = "OK" if ok else "MISSING"
         print(f"  {mark} {name:<20s}  {reason}")
     print()
     print("Install instructions:")
@@ -224,36 +225,61 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command")
 
     # 鈹€鈹€ reconstruct锛堥粯璁ゅ懡浠わ級鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    rec = sub.add_parser("reconstruct", aliases=["r"],
-                         help="浠庢暟鎹泦鐩綍閲嶅缓锛圖atasetRecorderModule 杈撳嚭锛?)
+    rec = sub.add_parser(
+        "reconstruct",
+        aliases=["r"],
+        help="Reconstruct a DatasetRecorderModule output directory",
+    )
     rec.add_argument("--dataset", required=True,
                      help="鍚?transforms.json 鐨勬暟鎹泦鐩綍")
     rec.add_argument("--backend", default="tsdf",
                      help="閲嶅缓鍚庣: tsdf / open3d / nerfstudio / gsfusion")
     rec.add_argument("--method", default="",
                      help="nerfstudio 鏂规硶: instant-ngp / nerfacto / splatfacto / depth-nerfacto")
-    rec.add_argument("--output", default="",
-                     help="杈撳嚭鐩綍锛堥粯璁? outputs/reconstruction/<dataset_name>锛?)
-    rec.add_argument("--voxel-size", type=float, dest="voxel_size", default=0.0,
-                     help="TSDF/Open3D 浣撶礌澶у皬锛坢锛夛紝0=浣跨敤鍚庣榛樿鍊?)
-    rec.add_argument("--extract-mesh", action="store_true", dest="extract_mesh",
-                     help="鍚屾椂鎻愬彇涓夎缃戞牸锛圱SDF 鍚庣锛?)
+    rec.add_argument(
+        "--output",
+        default="",
+        help="Output directory (default: outputs/reconstruction/<dataset_name>)",
+    )
+    rec.add_argument(
+        "--voxel-size",
+        type=float,
+        dest="voxel_size",
+        default=0.0,
+        help="TSDF/Open3D voxel size in metres; 0 uses the backend default",
+    )
+    rec.add_argument(
+        "--extract-mesh",
+        action="store_true",
+        dest="extract_mesh",
+        help="Also extract a triangle mesh when supported",
+    )
     rec.add_argument("--export-tum", metavar="OUT_DIR", dest="export_tum",
                      help="浠呭皢鏁版嵁闆嗗鍑轰负 TUM 鏍煎紡锛屼笉杩愯閲嶅缓")
 
     # 鈹€鈹€ bag锛堜粠 bag 鏂囦欢澶勭悊锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    bag = sub.add_parser("bag", aliases=["b"],
-                         help="浠?ROS2 bag 鎻愬彇甯у悗閲嶅缓锛堟垨鐩存帴鍚堝苟鐐逛簯锛?)
+    bag = sub.add_parser(
+        "bag",
+        aliases=["b"],
+        help="Extract RGB-D frames or a merged LiDAR cloud from a ROS2 bag",
+    )
     bag.add_argument("--bag", required=True,
                      help="ROS2 bag 鐩綍鎴?.db3 鏂囦欢璺緞")
-    bag.add_argument("--lidar", action="store_true",
-                     help="鐩存帴浠庣偣浜戣瘽棰樺悎骞?PLY锛屼笉鍋氬浘鍍忛噸寤?)
+    bag.add_argument(
+        "--lidar",
+        action="store_true",
+        help="Merge the point-cloud topic directly into PLY",
+    )
     bag.add_argument("--backend", default="tsdf")
     bag.add_argument("--method", default="")
     bag.add_argument("--output", default="",
                      help="杈撳嚭鏂囦欢/鐩綍")
-    bag.add_argument("--frames-dir", default="", dest="frames_dir",
-                     help="鍏抽敭甯ф彁鍙栫洰褰曪紙榛樿: outputs/reconstruction/<bag_name>_frames锛?)
+    bag.add_argument(
+        "--frames-dir",
+        default="",
+        dest="frames_dir",
+        help="Extracted keyframe directory",
+    )
     bag.add_argument("--color-topic",  default="", dest="color_topic")
     bag.add_argument("--depth-topic",  default="", dest="depth_topic")
     bag.add_argument("--odom-topic",   default="", dest="odom_topic")
@@ -269,16 +295,21 @@ def main() -> int:
                      help="浠呮彁鍙栧抚锛屼笉杩愯閲嶅缓")
 
     # 鈹€鈹€ backends锛堝垪鍑哄悗绔級鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    sub.add_parser("backends", aliases=["ls"],
-                   help="鍒楀嚭鎵€鏈夊彲鐢ㄥ悗绔強鍏朵緷璧栫姸鎬?)
+    sub.add_parser(
+        "backends",
+        aliases=["ls"],
+        help="List reconstruction backends and dependency status",
+    )
 
     # 鈹€鈹€ 鍏煎鏃ч鏍硷細鐩存帴浼?--dataset 鎴?--bag锛堜笉鍔犲瓙鍛戒护锛夆攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     parser.add_argument("--dataset", default="",
                         help="锛堟棫椋庢牸锛夊惈 transforms.json 鐨勬暟鎹泦鐩綍")
-    parser.add_argument("--bag",      default="",
-                        help="锛堟棫椋庢牸锛塕OS2 bag 璺緞")
-    parser.add_argument("--lidar",    action="store_true",
-                        help="锛堟棫椋庢牸锛夌偣浜?bag 妯″紡")
+    parser.add_argument("--bag", default="", help="Legacy ROS2 bag path")
+    parser.add_argument(
+        "--lidar",
+        action="store_true",
+        help="Legacy direct LiDAR bag mode",
+    )
     parser.add_argument("--backend",  default="tsdf")
     parser.add_argument("--method",   default="")
     parser.add_argument("--output",   default="")

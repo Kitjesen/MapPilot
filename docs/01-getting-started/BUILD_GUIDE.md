@@ -1,214 +1,356 @@
 # Build Guide
 
-This guide covers a fresh machine setup for LingTu. The default product path is
-native Python/C++ plus DDS services. ROS 2 is optional and only needed for
-explicit compatibility packages and replay checks.
+This guide sets up LingTu on a fresh development host or prepares the native
+artifacts required by a supported field deployment. Choose the smallest build
+track that covers the work you are doing. A successful compile is not
+authorization to start a robot service or issue a motion command.
 
-Product default: native planner kernels, no ROS2.
-ROS 2 Humble Desktop is optional and only needed for compatibility services.
+> **Status:** Current<br>
+> **Audience:** Contributors, integrators, and deployment maintainers<br>
+> **Runs on:** Local development hosts, Linux/WSL native-build hosts, and supported field robots
+
+## Build tracks at a glance
+
+| Track | Use it for | Native hardware needed | What it does not prove |
+| --- | --- | --- | --- |
+| Portable Python | Framework, docs, contracts, and unit tests | No | C++ artifacts, simulation, or field runtime |
+| MuJoCo simulation | In-process simulation and simulation tests | No | Real sensor timing, calibration, gait, or field readiness |
+| Linux/WSL native | Navigation kernel, SLAM, planner, and endpoint artifacts | No during build | A deployed robot service or safe motion |
+| Field deployment | Installing the native DDS product services on a target | Supported target, controlled session | Readiness until no-motion and field gates pass |
+
+The default product direction is native Python/C++ plus typed DDS. ROS 2 is
+optional and only belongs to explicit compatibility, replay, or evaluation
+work. Do not source a ROS 2/colcon environment or install ROS packages merely
+to run the normal local or native Thunder product path.
 
 ## Prerequisites
 
-- Ubuntu 22.04 on S100P/aarch64 for field deployment.
-- x86_64 Linux or Windows development hosts for framework, docs, and some
-  simulation work.
-- Python 3.10.12, matching `.python-version`.
-- At least 8 GB RAM and 4 CPU cores.
+### Repository and interpreter
 
-`$NAV_DIR` below means the repository root. On the robot it is usually:
-
-```text
-/home/sunrise/data/SLAM/navigation
-```
-
-## Python Environment
-
-Preferred:
+Start in the repository root. LingTu requires Python 3.10 or newer;
+[`.python-version`](../../.python-version) records the current project default.
+Use a supported `uv` installation to create the environment.
 
 ```bash
-cd $NAV_DIR
-uv sync --locked
-uv run --locked python lingtu.py --list
-```
-
-Install optional extras only for the profiles you need:
-
-```bash
+uv --version
 uv sync --locked --extra dev
-uv sync --locked --extra vision --extra ml --extra llm --extra nlp
-uv sync --locked --extra perception --extra vector
+uv run --locked python lingtu.py --list --all
 ```
 
-## System Packages
+Expected result:
 
-Product/native build basics:
+- `uv sync --locked` completes without modifying `uv.lock`.
+- The list command prints the current checkout's profile catalog.
+- No LingTu runtime modules or hardware services are started by these checks.
+
+If `uv` says the lockfile needs an update, stop. The lockfile and project
+metadata are inconsistent for that checkout. Restore the intended revision or
+make an explicit, reviewed dependency update; do not use an unlocked run as a
+workaround.
+
+### Host scope
+
+| Host | Supported first work | Notes |
+| --- | --- | --- |
+| Windows | Portable Python, documentation, static checks, selected tooling | Build Linux-native C++ planner/endpoint artifacts in WSL or Linux. |
+| Linux/WSL | Portable work plus native C++ build tracks | OctoPlanner3D's headless wrapper is a Linux/WSL/S100P build. |
+| S100P/Linux controller | Native services and supervised field deployment | Treat as a controlled deployment target, not a general development shell. |
+
+## Select the Python environment
+
+Extras are intentionally separated so a workstation does not acquire robot,
+ML, or web dependencies by accident. Add only the extras needed for the
+profile or test you intend to run.
+
+| Need | Locked sync command | Notes |
+| --- | --- | --- |
+| Framework tests and developer tools | `uv sync --locked --extra dev` | Includes pytest, lint/type tooling, and Gateway runtime dependencies used by development. |
+| Gateway without all developer tools | `uv sync --locked --extra gateway` | Adds FastAPI, Uvicorn, and WebSocket support. |
+| MuJoCo simulation | `uv sync --locked --extra sim-mujoco --extra dev` | Required before the `sim` profile. |
+| Common local semantic backends | `uv sync --locked --extra vision --extra ml --extra llm --extra nlp` | Install only when the selected detector/LLM path needs them. |
+| Heavy perception or vector storage | `uv sync --locked --extra perception --extra vector` | Optional; do not add to a lightweight framework environment by default. |
+| Thunder Python integration | `uv sync --locked --extra thunder` | Field-target dependency group; use only in the approved target environment. |
+
+After changing extras, verify configuration without starting a profile:
+
+```bash
+uv run --locked python lingtu.py show-config stub --json
+uv run --locked python lingtu.py runtime-audit
+```
+
+The local command convention remains:
+
+```bash
+uv run --locked python lingtu.py <command-or-profile> [options]
+```
+
+## Portable Python verification
+
+Use this track before native work. It is the fastest way to prove that the
+checkout, profile resolver, and Module contracts are coherent.
+
+```bash
+uv run --locked python -m pytest src/runtime/tests/ -q
+uv run --locked python lingtu.py --list --all
+uv run --locked python lingtu.py runtime-contract
+uv run --locked python lingtu.py runtime-audit
+```
+
+Expected result:
+
+- Framework tests cover the runtime surface without needing hardware.
+- `runtime-contract` and `runtime-audit` inspect declarations and contracts;
+  they do not create a robot session.
+- Passing this track does not prove the simulation or field runtime.
+
+For a safe interactive framework smoke after the checks pass:
+
+```bash
+uv run --locked python lingtu.py stub --no-gateway
+```
+
+Use `health`, `connections`, and `quit` in the TTY REPL. See
+[Quick Start](../QUICKSTART.md#local-prove-the-framework-path) for expected
+behavior and boundaries.
+
+## MuJoCo simulation setup
+
+The in-process `sim` profile uses the MuJoCo dependency group. It can move a
+simulated robot, but it has no permission to command field hardware.
+
+```bash
+uv sync --locked --extra dev --extra sim-mujoco
+uv run --locked python lingtu.py runtime-spec sim --json
+uv run --locked python lingtu.py sim
+```
+
+Before recording an evaluation result, verify that the resolved runtime uses the
+simulation source and sink. Do not attach a field endpoint to this command as a
+shortcut to hardware validation.
+
+Use [`sim/README.md`](../../sim/README.md) for worlds, drive modes, saved-map
+quality gates, and simulation claim boundaries. The
+[simulation integration contract](../architecture/SIMULATION_INTEGRATION_CONTRACT.md)
+defines the adapter and command-sink rules.
+
+## Native Linux/WSL prerequisites
+
+Native builds should run in Linux, WSL, or the target S100P environment. The
+exact package set depends on the selected artifacts; the following baseline is
+grounded in the native SLAM, navigation endpoint, and driver build scripts.
 
 ```bash
 sudo apt update
 sudo apt install -y \
-  git \
-  cmake \
   build-essential \
-  python3-pip \
+  cmake \
+  pkg-config \
+  python3-dev \
   libeigen3-dev \
-  libboost-all-dev \
   libpcl-dev \
-  libyaml-cpp-dev
+  libyaml-cpp-dev \
+  cyclonedds-dev \
+  cyclonedds-tools \
+  libgrpc++-dev \
+  libprotobuf-dev \
+  protobuf-compiler-grpc \
+  libgtest-dev
 ```
 
-Optional packages:
+Why these packages matter:
 
-| Package | Used By |
+| Dependency | Native surface |
 | --- | --- |
-| `ros-humble-desktop`, `ros-humble-pcl-conversions`, `ros-humble-tf2-geometry-msgs` | legacy ROS-compatible SLAM/services only |
-| `cyclonedds-dev`, `cyclonedds-tools` | native DDS service builds and diagnostics |
-| `libgrpc++-dev`, `protobuf-compiler-grpc` | gRPC compatibility/monitoring surfaces |
-| `libssl-dev`, `libcurl4-openssl-dev` | OTA/service tooling |
-| `ros-humble-joy` | ROS joystick compatibility checks |
+| C++ compiler, CMake, Python headers | Navigation kernel and nanobind extension build |
+| Eigen3, PCL, yaml-cpp | ROS-free Fast-LIO2 SLAM core |
+| CycloneDDS development/tools | Typed DDS SLAM, navigation endpoint, and diagnostics |
+| gRPC and protobuf toolchain | Native Thunder driver integration |
+| GoogleTest development files | Required CTest coverage in the navigation endpoint build |
 
-## Third-Party Components
+The scripts perform their own dependency probes. For example,
+`build_slam_core.sh` checks Eigen3, the required PCL components, and yaml-cpp
+before configuring Fast-LIO2. Prefer the script's explicit error over manually
+changing CMake cache entries.
 
-### Sophus
+## Build native artifacts in dependency order
 
-Required by SLAM/localization C++ code:
+Run all commands below from the repository root. They build artifacts and run
+their configured tests; they do not install or start field services.
 
-```bash
-cd ~
-git clone https://github.com/strasdat/Sophus.git
-cd Sophus
-git checkout 1.22.10
-cmake -B build -DSOPHUS_USE_BASIC_LOGGING=ON
-cmake --build build -j
-sudo cmake --install build
-```
+### 1. Optional local navigation kernel
 
-### Livox SDK2
-
-Required only for real Livox hardware ingestion:
+Use this for the nanobind navigation-kernel extension on a Linux/WSL build
+host. It requires CMake, a C++17 compiler, and Python development headers.
 
 ```bash
-cd ~
-git clone https://github.com/Livox-SDK/Livox-SDK2.git
-cd Livox-SDK2
-cmake -B build
-cmake --build build -j
-sudo cmake --install build
-```
-
-### DUFOMap
-
-Optional save-time cleanup helper:
-
-```bash
-cd $NAV_DIR
-bash scripts/build/build_dufomap.sh
-```
-
-### TARE
-
-The product `tare_explore` profile uses LingTu's current exploration contract.
-External CMU TARE benchmark runs must provide their own external workspace and
-should be treated as compatibility/evaluation work.
-
-## Product Build
-
-Native navigation kernel:
-
-```bash
-cd $NAV_DIR
 bash scripts/build/build_nav_kernel.sh --clean
 ```
 
-OctoPlanner3D:
+The script verifies the generated `lingtu_nav_kernel` import after building. It
+uses the host Python selected by the script, so do not assume that an artifact
+built under one interpreter can be imported by an unrelated environment.
+
+### 2. Native SLAM and Livox DDS ingress
+
+Build the process-split native path when the target will ingest real MID-360
+data through typed DDS:
 
 ```bash
-bash scripts/build/build_octoplanner3d.sh
+LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON \
+  bash scripts/build/build_livox_sdk2_stream.sh
+
+LINGTU_SLAM_BUILD_DDS_RUNTIME=ON \
+LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF \
+  bash scripts/build/build_slam_core.sh
 ```
 
-Convenience target:
+Expected outputs include the Livox stream executable and
+`build/slam_core/lingtu_slam_cyclone_runtime`. The default Fast-LIO2 build is
+ROS-free; its dependency probe checks the native C++ libraries listed above.
+
+For global saved-map relocalization without an initial pose, build the optional
+CPU 3D-BBS library before requiring it:
 
 ```bash
-make nav_kernel
+bash scripts/build/build_3d_bbs.sh
+LINGTU_REQUIRE_BBS3D=ON bash scripts/build/build_slam_core.sh
 ```
 
-ROS compatibility workspace, only when needed:
+### 3. Native navigation and driver boundaries
+
+Build the navigation endpoint and the Thunder driver:
 
 ```bash
-bash scripts/build/build_ros_workspace.sh
+bash scripts/build/build_nav_endpoint.sh
+bash scripts/build/build_driver.sh
 ```
 
-Do not treat `make build` or a sourced ROS/colcon overlay as the default
-product build. Use it only when working on ROS-backed compatibility packages.
+`build_nav_endpoint.sh` runs CTest by default and requires its navigation,
+teleop-safety, path-follower, and local-planner tests to be present. It verifies
+the expected native navigation endpoint binaries and client library. The driver
+build similarly runs its fail-closed safety and typed DDS-to-Brainstem tests by
+default.
 
-## Tests
+### 4. OctoPlanner3D and saved-map tools
 
-Framework tests, no ROS 2 or hardware:
+Build the Linux/WSL/S100P headless planner. Require PCL only when the host must
+convert PCD inputs to OctoMap artifacts:
 
 ```bash
-python -m pytest src/runtime/tests/ -q
+bash scripts/build/build_octoplanner3d.sh --require-pcl
 ```
 
-Focused product contract tests:
+If the PCL-backed build cannot find the correct libraries, use the script's
+diagnostic mode before changing paths:
 
 ```bash
-python -m pytest src/localization/tests/test_native_slam_contract.py -q
-python -m pytest sim/tests/test_mujoco_saved_map_quality_gate.py -q
+bash scripts/build/build_octoplanner3d.sh --diagnose
 ```
 
-C++ nav kernel:
+The repository includes a separate vendored-PCL flow for this converter scope;
+follow [`scripts/build/README.md`](../../scripts/build/README.md) when a
+system PCL installation is not appropriate.
+
+For the native map-save optimizer commands used by deployed services:
 
 ```bash
-cd src/nav/kernel
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/test_path_follower_core
-./build/test_benchmark
+bash scripts/build/build_native_runtime.sh --install-user-bin
 ```
 
-C++ local planner:
+For LingTu's default clean-room saved-map cleaner:
 
 ```bash
-cd src/nav/services/plan/local_planner/cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
-cmake --build build -j
-./build/test_local_planner_core
+bash scripts/build/build_prune.sh
 ```
 
-ROS compatibility tests:
+DUFOMap and ERASOR2 remain optional compatibility or comparison surfaces. Do
+not add them to a field build unless the selected map-cleaning plan explicitly
+requires them.
+
+## Verify a native build without commanding a robot
+
+Use the smallest checks that validate the artifacts you built:
 
 ```bash
-make test
+uv run --locked python -m pytest src/runtime/tests/ -q
+uv run --locked python lingtu.py runtime-audit
+uv run --locked python lingtu.py runtime-spec nav --endpoint thunder_field --json
+bash scripts/build/build_octoplanner3d.sh --diagnose
 ```
 
-## Verification
+The first three commands inspect Python contracts and the resolved field
+boundary; they do not start a field session. The final diagnostic reports the
+configured planner build and linkage state. Native build scripts also run their
+targeted tests unless their documented test control environment variable has
+been deliberately changed.
+
+A green build means the artifacts compiled and their local checks passed. It
+does not prove that the target robot has correct calibration, live sensor data,
+localization, a valid map, route safety, or permission to move.
+
+## Deploy native field services only in a controlled session
+
+Service installation changes the target system. Perform it only on the approved
+Linux controller, with no active mission, and according to the
+[Thunder deployment guide](../04-deployment/README.md).
 
 ```bash
-python lingtu.py --list
-python lingtu.py stub
-python lingtu.py runtime-audit
+LINGTU_BRAINSTEM_HOST=<remote-brainstem-ip> \
+LINGTU_BRAINSTEM_PORT=13145 \
+  bash scripts/deploy/thunder/install_services.sh field-cpp
 ```
 
-On the robot:
+This endpoint is mandatory because Brainstem runs on the separate robot-control
+computer. The installer rejects loopback and persists the validated endpoint
+to `/opt/lingtu/config/brainstem.env`.
+
+The normal product service chain is native DDS:
+
+```text
+lingtu-livox-dds
+  -> lingtu-slam-dds
+  -> LingTu Modules / Gateway / MCP
+  -> lingtu-nav-dds
+  -> typed DDS command boundary
+```
+
+After the deployment procedure starts the services, use the robot-side CLI for
+observation before making any session change:
 
 ```bash
-bash scripts/lingtu status
 bash scripts/lingtu svc status
+bash scripts/lingtu status
+bash scripts/lingtu doctor
+bash scripts/lingtu dataflow /nav/odometry
+bash scripts/lingtu dataflow /nav/map_cloud
 ```
 
-## Common Errors
+These checks are necessary but do not authorize motion. Continue with saved-map
+artifact validation, relocalization, a no-motion route preview, and the
+applicable field gate as described in
+[Quick Start](../QUICKSTART.md#field-prepare-validate-then-supervise) and
+[`lingtu_cli.md`](../04-deployment/lingtu_cli.md).
 
-| Symptom | Fix |
-| --- | --- |
-| `ModuleNotFoundError: runtime` | Set `PYTHONPATH=src:.` or run through `uv run --locked`. |
-| `Livox SDK2 not found` | Build/install Livox SDK2 and verify `/usr/local/lib/liblivox_lidar_sdk_shared.so`. |
-| `Sophus`/`fmt` build errors | Rebuild Sophus with `-DSOPHUS_USE_BASIC_LOGGING=ON`. |
-| `planner_py` missing | PCT compatibility was not built; prefer `octoplanner3d` for product runtime. |
-| `_nav_kernel` import fails | Re-run `scripts/build/build_nav_kernel.sh --clean`. |
-| `ros2: command not found` | Normal for product builds; only ROS compatibility work needs ROS 2. |
+## Troubleshooting by boundary
 
-## Scope
+| Symptom | Likely boundary | First response |
+| --- | --- | --- |
+| `uv --locked` refuses to run | Dependency lock integrity | Restore/reconcile the intended lockfile change; do not run unlocked. |
+| `FastAPI not installed` | Optional Gateway dependency | Sync the `gateway` or `dev` extra if Gateway is intentionally required. |
+| Fast-LIO CMake probe fails | Native SLAM C++ dependencies | Install/repair Eigen3, PCL components, and yaml-cpp; rerun the script. |
+| Native endpoint test catalog is incomplete | C++ test dependency/build configuration | Install GoogleTest development files and reconfigure with the build script. |
+| OctoPlanner3D PCL converter cannot link | PCL prefix/configuration | Run `build_octoplanner3d.sh --diagnose`; follow the vendored-PCL guide if needed. |
+| A product launch asks for ROS 2 | Compatibility configuration leaked into a native path | Check the selected profile/endpoint; ROS 2 is not a normal native field prerequisite. |
+| A field service is running but navigation is blocked | Runtime readiness, not compilation | Stop treating it as a build issue; inspect localization, map artifacts, route preview, and safety via `scripts/lingtu`. |
 
-This guide deliberately does not cover removed launch files, deleted service
-installers, or legacy root-level navigation facades. Use `scripts/lingtu` for
-field operations and the architecture documents under `docs/architecture/` for
-runtime contracts.
+## Related references
+
+- [Get Started](./README.md) — staged onboarding and motion boundaries.
+- [Quick Start](../QUICKSTART.md) — profile selection, lifecycle, and field
+  preflight.
+- [`scripts/build/README.md`](../../scripts/build/README.md) — detailed
+  build-script behavior and specialized native flows.
+- [Thunder deployment](../04-deployment/README.md) — service installation,
+  release, diagnostics, and recovery.
+- [Architecture index](../architecture/README.md) — the current contracts that
+  native artifacts must satisfy.

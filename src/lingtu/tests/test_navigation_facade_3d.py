@@ -20,10 +20,12 @@ class _FakeNav:
         return json.dumps({"status": "sent", "instruction": instruction})
 
     def get_navigation_status(self) -> str:
-        return json.dumps({
-            "state": "EXECUTING",
-            "position": {"x": 1.0, "y": 2.0, "z": 0.4, "yaw": 0.1},
-        })
+        return json.dumps(
+            {
+                "state": "EXECUTING",
+                "position": {"x": 1.0, "y": 2.0, "z": 0.4, "yaw": 0.1},
+            }
+        )
 
     def reload_planner_tomogram(self, tomogram: str) -> dict:
         self.reloads.append(tomogram)
@@ -37,20 +39,31 @@ class _FailingMapManager:
 
 class _FakeSemanticPlanner:
     def get_scene_objects(self) -> str:
-        return json.dumps([
-            {
-                "label": "chair",
-                "confidence": 0.8,
-                "position": [1.0, 2.0, 0.3],
-            }
-        ])
+        return json.dumps(
+            [
+                {
+                    "label": "chair",
+                    "confidence": 0.8,
+                    "position": [1.0, 2.0, 0.3],
+                }
+            ]
+        )
+
+
+class _FakeSafety:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def emergency_stop(self) -> str:
+        self.calls += 1
+        return "estop"
 
 
 class _FakeSystem:
     def __init__(self, nav: _FakeNav, map_manager=None) -> None:
         self.modules = {"nav.mission": nav}
         if map_manager is not None:
-            self.modules["nav.maps"] = map_manager
+            self.modules["maps.service"] = map_manager
         self.started = False
         self.stopped = False
 
@@ -94,6 +107,32 @@ def test_robot_go_to_keeps_old_2d_call_compatible() -> None:
     assert nav.calls == [((1.0, 2.0, 0.0), {})]
 
 
+def test_robot_navigation_commands_prefer_nav_skills() -> None:
+    mission = _FakeNav()
+    skills = _FakeNav()
+    robot = Robot("nav")
+    system = _FakeSystem(mission)
+    system.modules["nav.skills"] = skills
+    robot._system = system
+
+    assert robot.go_to(1.0, 2.0) == "ok"
+    assert robot.status() == "EXECUTING"
+    assert skills.calls == [((1.0, 2.0, 0.0), {})]
+    assert mission.calls == []
+
+
+def test_robot_stop_motion_prefers_safety_estop() -> None:
+    nav = _FakeNav()
+    safety = _FakeSafety()
+    robot = Robot("nav")
+    system = _FakeSystem(nav)
+    system.modules["nav.safety"] = safety
+    robot._system = system
+
+    assert robot.stop_motion() == "estop"
+    assert safety.calls == 1
+
+
 def test_robot_status_and_pose_use_navigation_status() -> None:
     nav = _FakeNav()
     robot = Robot("nav")
@@ -110,17 +149,14 @@ def test_robot_detect_uses_semantic_planner_skill() -> None:
     system.modules["SemanticPlannerModule"] = _FakeSemanticPlanner()
     robot._system = system
 
-    assert robot.detect() == [
-        {"label": "chair", "confidence": 0.8, "position": [1.0, 2.0, 0.3]}
-    ]
+    assert robot.detect() == [{"label": "chair", "confidence": 0.8, "position": [1.0, 2.0, 0.3]}]
 
 
 def test_robot_map_skill_honors_success_false() -> None:
     nav = _FakeNav()
     robot = Robot("nav")
     system = _FakeSystem(nav)
-    system.modules["nav.maps"] = _FailingMapManager()
+    system.modules["maps.service"] = _FailingMapManager()
     robot._system = system
 
     assert robot.save_map("bad") is False
-

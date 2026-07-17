@@ -59,15 +59,26 @@ class LidarConfig:
     vfov_min_deg: float = -7.0      # vertical FoV lower bound degrees
     vfov_max_deg: float = 52.0      # vertical FoV upper bound degrees
     range_min: float = 0.10         # minimum valid range m
-    range_max: float = 70.0         # maximum valid range m
+    # MID-360 reaches 70 m only on 80% targets. MuJoCo currently has no
+    # calibrated material reflectivity model, so the nominal profile uses the
+    # official 10%-reflectivity daylight range instead of granting 70 m to
+    # every geometry.
+    range_max: float = 40.0         # conservative nominal range m
     add_noise: bool = True          # whether to add range noise
-    noise_std: float = 0.03         # range noise standard deviation m
-    angle_noise_std_rad: float = 0.15 / 180.0 * pi  # OmniPerception-style angle jitter
-    pixel_dropout_prob: float = 0.01                 # random return dropout
-    distance_dropout_prob_at_max: float = 0.08       # extra dropout near range_max
-    intensity_base: float = 180.0                    # near-field reflectivity proxy
+    noise_std: float = 0.02         # radial range-noise standard deviation m
+    range_noise_near_std_m: float = 0.03  # official envelope at 0.2 m
+    range_noise_far_std_m: float = 0.02   # official envelope at 10 m
+    range_noise_near_m: float = 0.2
+    range_noise_far_m: float = 10.0
+    angle_noise_std_rad: float = 0.10 / 180.0 * pi  # below official 1-sigma limit
+    # Dropout is a stress-injection control, not a published MID-360 nominal.
+    pixel_dropout_prob: float = 0.0
+    distance_dropout_prob_at_max: float = 0.0
+    # With no calibrated material model, assume a conservative 10% Lambertian
+    # target: MID-360 maps 0..100% diffuse reflectivity into raw 0..150.
+    intensity_base: float = 15.0
     intensity_range_scale_m: float = 25.0            # distance falloff scale
-    intensity_noise_std: float = 3.0
+    intensity_noise_std: float = 0.0                  # stress-only when non-zero
     intensity_min: float = 1.0
     intensity_max: float = 255.0
     fps: float = 10.0               # scan frequency Hz

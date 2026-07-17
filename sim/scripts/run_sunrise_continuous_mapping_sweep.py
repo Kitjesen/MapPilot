@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -195,7 +196,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="192.168.66.13")
     parser.add_argument("--user", default="sunrise")
-    parser.add_argument("--password", default="sunrise")
+    parser.add_argument("--password", default=os.environ.get("S100P_PASSWORD"))
     parser.add_argument("--start-domain-id", type=int, default=226)
     parser.add_argument(
         "--cases",
@@ -207,6 +208,8 @@ def main() -> int:
     parser.add_argument("--no-kill-stale", action="store_true")
     parser.add_argument("--json-out", default="", help="Write sweep matrix summary JSON locally.")
     args = parser.parse_args()
+    if not args.password:
+        raise SystemExit("--password or S100P_PASSWORD is required")
 
     if str(args.cases).strip().lower() == "all":
         cases = list(DEFAULT_CASES)

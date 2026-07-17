@@ -5,6 +5,7 @@ Original source: src/drivers/sim/nova_nav_bridge.py
 Extracted content: PolicyRunner class + all related constants
 Logic preserved exactly as-is.
 """
+
 from collections import deque
 from pathlib import Path
 from typing import Optional
@@ -15,37 +16,93 @@ import numpy as np
 # Extracted from src/drivers/sim/nova_nav_bridge.py
 
 # Dart standingPose (use as-is, no sign flip)
-STANDING_POSE = np.array([
-    -0.1, -0.8,  1.8,     # FR: hip, thigh, calf
-     0.1,  0.8, -1.8,     # FL
-     0.1,  0.8, -1.8,     # RR
-    -0.1, -0.8,  1.8,     # RL
-     0.0,  0.0,  0.0, 0.0 # foot
-], dtype=np.float64)
+STANDING_POSE = np.array(
+    [
+        -0.1,
+        -0.8,
+        1.8,  # FR: hip, thigh, calf
+        0.1,
+        0.8,
+        -1.8,  # FL
+        0.1,
+        0.8,
+        -1.8,  # RR
+        -0.1,
+        -0.8,
+        1.8,  # RL
+        0.0,
+        0.0,
+        0.0,
+        0.0,  # foot
+    ],
+    dtype=np.float64,
+)
 
-ACTION_SCALE = np.array([
-    0.125, 0.25, 0.25,  # FR
-    0.125, 0.25, 0.25,  # FL
-    0.125, 0.25, 0.25,  # RR
-    0.125, 0.25, 0.25,  # RL
-    5.0, 5.0, 5.0, 5.0  # foot
-], dtype=np.float64)
+ACTION_SCALE = np.array(
+    [
+        0.125,
+        0.25,
+        0.25,  # FR
+        0.125,
+        0.25,
+        0.25,  # FL
+        0.125,
+        0.25,
+        0.25,  # RR
+        0.125,
+        0.25,
+        0.25,  # RL
+        5.0,
+        5.0,
+        5.0,
+        5.0,  # foot
+    ],
+    dtype=np.float64,
+)
 
-THUNDERV4_STANDING_POSE = np.array([
-    -0.1, -0.8, 1.8,
-     0.1,  0.8, -1.8,
-     0.1,  0.8, -1.8,
-    -0.1, -0.8, 1.8,
-     0.0,  0.0, 0.0, 0.0,
-], dtype=np.float64)
+THUNDERV4_STANDING_POSE = np.array(
+    [
+        -0.1,
+        -0.8,
+        1.8,
+        0.1,
+        0.8,
+        -1.8,
+        0.1,
+        0.8,
+        -1.8,
+        -0.1,
+        -0.8,
+        1.8,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    ],
+    dtype=np.float64,
+)
 
-THUNDERV4_ACTION_SCALE = np.array([
-    0.15, 0.25, 0.25,
-    0.15, 0.25, 0.25,
-    0.15, 0.25, 0.25,
-    0.15, 0.25, 0.25,
-    5.0, 5.0, 5.0, 5.0,
-], dtype=np.float64)
+THUNDERV4_ACTION_SCALE = np.array(
+    [
+        0.15,
+        0.25,
+        0.25,
+        0.15,
+        0.25,
+        0.25,
+        0.15,
+        0.25,
+        0.25,
+        0.15,
+        0.25,
+        0.25,
+        5.0,
+        5.0,
+        5.0,
+        5.0,
+    ],
+    dtype=np.float64,
+)
 
 JOINT_VEL_SCALE = np.array([0.05, 0.05, 0.05, 0.05], dtype=np.float64)
 IMU_GYRO_SCALE = 0.25
@@ -69,15 +126,15 @@ class PolicyRunner:
     # Extracted from src/drivers/sim/nova_nav_bridge.py — logic preserved exactly.
     """
 
-    def __init__(self, onnx_path: str):
+    def __init__(self, onnx_path: str, *, session=None):
         import onnxruntime as ort
-        self.session = ort.InferenceSession(
-            onnx_path, providers=['CPUExecutionProvider'])
+
+        self.session = session or ort.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
         inp = self.session.get_inputs()[0]
         out = self.session.get_outputs()[0]
-        print(f'[Policy] Loaded {onnx_path}')
-        print(f'  input:  {inp.name} {inp.shape}')
-        print(f'  output: {out.name} {out.shape}')
+        print(f"[Policy] Loaded {onnx_path}")
+        print(f"  input:  {inp.name} {inp.shape}")
+        print(f"  output: {out.name} {out.shape}")
         self.input_name = inp.name
         self.output_name = out.name
 
@@ -86,10 +143,13 @@ class PolicyRunner:
         self._history_len = self._resolve_history_len(self._policy_input_dim)
         self.history: deque = deque(maxlen=self._history_len)
         self.last_action = STANDING_POSE.copy()
+        self.run_at_idle = True
+        self.zero_wheels_at_idle = True
+        self.wheel_torque_limit = 60.0
         # Will be filled with real sensor data in warm_up()
 
     @staticmethod
-    def _extract_input_dim(shape: list | tuple) -> Optional[int]:
+    def _extract_input_dim(shape: list | tuple) -> int | None:
         if not shape:
             return None
         dim = shape[1] if len(shape) > 1 else shape[0]
@@ -111,27 +171,36 @@ class PolicyRunner:
             "before it can be run safely."
         )
 
-    def warm_up(self, gyroscope: np.ndarray, projected_gravity: np.ndarray,
-                joint_pos_16: np.ndarray, joint_vel_16: np.ndarray) -> None:
+    def warm_up(
+        self, gyroscope: np.ndarray, projected_gravity: np.ndarray, joint_pos_16: np.ndarray, joint_vel_16: np.ndarray
+    ) -> None:
         """Fill history buffer with real sensor data (matches brainstem Memory init)."""
         init_obs = self.build_obs(
-            gyroscope, projected_gravity,
+            gyroscope,
+            projected_gravity,
             np.zeros(3),  # direction = 0 (idle)
-            joint_pos_16, joint_vel_16)
+            joint_pos_16,
+            joint_vel_16,
+        )
         init_obs = self._adapt_obs_to_policy_input(init_obs)
         self.history.clear()
         for _ in range(self._history_len):
             self.history.append(init_obs.copy())
-        print(f'[Policy] History warmed up: pg={projected_gravity[:3]}')
+        print(f"[Policy] History warmed up: pg={projected_gravity[:3]}")
 
     @staticmethod
     def clamp_action(action: np.ndarray) -> np.ndarray:
         """Return real action unchanged, matching brainstem Walk.clampAction()."""
         return np.asarray(action, dtype=np.float64).copy()
 
-    def build_obs(self, gyroscope: np.ndarray, projected_gravity: np.ndarray,
-                  direction: np.ndarray, joint_pos_16: np.ndarray,
-                  joint_vel_16: np.ndarray) -> np.ndarray:
+    def build_obs(
+        self,
+        gyroscope: np.ndarray,
+        projected_gravity: np.ndarray,
+        direction: np.ndarray,
+        joint_pos_16: np.ndarray,
+        joint_vel_16: np.ndarray,
+    ) -> np.ndarray:
         """Build 57-dim observation, fully matching brainstem StandardObservationBuilder.
 
         Note: joint_pos_16/joint_vel_16 are in MuJoCo order (4+4+4+4).
@@ -172,8 +241,7 @@ class PolicyRunner:
         if obs.size == OBS_DIM:
             return obs
         raise ValueError(
-            f"PolicyRunner expected one {OBS_DIM}-D observation frame before "
-            f"history stacking, got {obs.size} values."
+            f"PolicyRunner expected one {OBS_DIM}-D observation frame before history stacking, got {obs.size} values."
         )
 
     def infer(self, obs: np.ndarray) -> np.ndarray:
@@ -183,8 +251,7 @@ class PolicyRunner:
         while len(self.history) < self._history_len:
             self.history.appendleft(obs.copy())
         obs_history = np.concatenate(list(self.history)).reshape(1, -1).astype(np.float32)
-        result = self.session.run([self.output_name],
-                                  {self.input_name: obs_history})[0]
+        result = self.session.run([self.output_name], {self.input_name: obs_history})[0]
         raw_action = result[0]  # (16,)
 
         # realAction = clamp(onnxOutput * actionScale + standingPose)
@@ -209,12 +276,16 @@ class TorchScriptPolicyRunner:
         self.model = torch.jit.load(policy_path, map_location="cpu")
         self.model.eval()
         self.last_action = np.zeros(16, dtype=np.float64)
-        self._startup_hold_steps = 6
+        self.run_at_idle = True
+        self.zero_wheels_at_idle = True
+        self.wheel_torque_limit = 17.0
+        self._startup_hold_steps = 10
         self._startup_hold_remaining = self._startup_hold_steps
         print(f"[Policy] Loaded TorchScript {policy_path}")
 
-    def warm_up(self, gyroscope: np.ndarray, projected_gravity: np.ndarray,
-                joint_pos_16: np.ndarray, joint_vel_16: np.ndarray) -> None:
+    def warm_up(
+        self, gyroscope: np.ndarray, projected_gravity: np.ndarray, joint_pos_16: np.ndarray, joint_vel_16: np.ndarray
+    ) -> None:
         del gyroscope, projected_gravity, joint_pos_16, joint_vel_16
         self.last_action = np.zeros(16, dtype=np.float64)
         self._startup_hold_remaining = self._startup_hold_steps
@@ -223,9 +294,14 @@ class TorchScriptPolicyRunner:
     def clamp_action(action: np.ndarray) -> np.ndarray:
         return np.asarray(action, dtype=np.float64).copy()
 
-    def build_obs(self, gyroscope: np.ndarray, projected_gravity: np.ndarray,
-                  direction: np.ndarray, joint_pos_16: np.ndarray,
-                  joint_vel_16: np.ndarray) -> np.ndarray:
+    def build_obs(
+        self,
+        gyroscope: np.ndarray,
+        projected_gravity: np.ndarray,
+        direction: np.ndarray,
+        joint_pos_16: np.ndarray,
+        joint_vel_16: np.ndarray,
+    ) -> np.ndarray:
         jp_dart = joint_pos_16[MJ_TO_DART]
         jv_dart = joint_vel_16[MJ_TO_DART]
         q = jp_dart - THUNDERV4_STANDING_POSE
@@ -233,14 +309,16 @@ class TorchScriptPolicyRunner:
         q += np.random.uniform(-0.01, 0.01, q.shape)
         q[12:] = 0.0
         dq = jv_dart * 0.05
-        return np.concatenate([
-            gyroscope * IMU_GYRO_SCALE,
-            projected_gravity,
-            direction,
-            q,
-            dq,
-            self.last_action,
-        ]).astype(np.float32)
+        return np.concatenate(
+            [
+                gyroscope * IMU_GYRO_SCALE,
+                projected_gravity,
+                direction,
+                q,
+                dq,
+                self.last_action,
+            ]
+        ).astype(np.float32)
 
     def infer(self, obs: np.ndarray) -> np.ndarray:
         obs = np.asarray(obs, dtype=np.float32).reshape(1, -1)
@@ -266,14 +344,20 @@ class TorchScriptPolicyRunner:
 class ThunderV4OnnxPolicyRunner(TorchScriptPolicyRunner):
     """ONNX runtime for the converted ThunderV4 TorchScript policy."""
 
-    def __init__(self, policy_path: str):
+    def __init__(self, policy_path: str, *, session=None):
         import onnxruntime as ort
 
-        self.session = ort.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
+        self.session = session or ort.InferenceSession(
+            policy_path,
+            providers=["CPUExecutionProvider"],
+        )
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
         self.last_action = np.zeros(16, dtype=np.float64)
-        self._startup_hold_steps = 6
+        self.run_at_idle = True
+        self.zero_wheels_at_idle = True
+        self.wheel_torque_limit = 17.0
+        self._startup_hold_steps = 10
         self._startup_hold_remaining = self._startup_hold_steps
         print(f"[Policy] Loaded ThunderV4 ONNX {policy_path}")
 
@@ -301,6 +385,15 @@ def load_policy_runner(policy_path: str):
     path = Path(policy_path)
     if path.suffix.lower() in {".pt", ".pth", ".jit"}:
         return TorchScriptPolicyRunner(policy_path)
-    if path.suffix.lower() == ".onnx" and _is_thunderv4_policy(path):
-        return ThunderV4OnnxPolicyRunner(policy_path)
+    if path.suffix.lower() == ".onnx":
+        import onnxruntime as ort
+
+        session = ort.InferenceSession(
+            policy_path,
+            providers=["CPUExecutionProvider"],
+        )
+        input_dim = PolicyRunner._extract_input_dim(session.get_inputs()[0].shape)
+        if input_dim == OBS_DIM and _is_thunderv4_policy(path):
+            return ThunderV4OnnxPolicyRunner(policy_path, session=session)
+        return PolicyRunner(policy_path, session=session)
     return PolicyRunner(policy_path)

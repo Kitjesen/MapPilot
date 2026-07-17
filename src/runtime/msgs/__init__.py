@@ -7,7 +7,13 @@ Every message class satisfies the :class:`LingtuMsg` protocol:
 """
 
 from .geometry import Pose, PoseStamped, Quaternion, Transform, Twist, TwistStamped, Vector3
-from .map import MapCloudFrame
+from .map import (
+    MapCloudFrame,
+    MapObservationFrame,
+    SemanticLabelsFrame,
+    SemanticSaveRequest,
+    SemanticSaveResult,
+)
 from .nav import OccupancyGrid, Odometry, Path
 from .protocol import LingtuMsg, is_lingtu_msg, resolve_msg_type
 from .robot import BatteryState, FootForces, JointState, RobotState
@@ -39,6 +45,7 @@ __all__ = [
     "JointState",
     "LingtuMsg",
     "MapCloudFrame",
+    "MapObservationFrame",
     "MissionStatus",
     "NavigationCommand",
     "OccupancyGrid",
@@ -54,6 +61,9 @@ __all__ = [
     "RobotState",
     "SafetyState",
     "SceneGraph",
+    "SemanticLabelsFrame",
+    "SemanticSaveRequest",
+    "SemanticSaveResult",
     "Transform",
     "Twist",
     "TwistStamped",

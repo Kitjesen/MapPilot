@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
 from runtime.msgs.numpy_compat import np
 from runtime.registry import register
-from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
 
 
 def _as_xyz(value: Sequence[float]) -> np.ndarray:
@@ -25,8 +25,8 @@ def _as_xyz(value: Sequence[float]) -> np.ndarray:
 class DirectPathBackend:
     """Mapless planner for lightweight local deployments."""
 
-    def __init__(self, tomogram_path: str = "", obstacle_thr: float = 49.9) -> None:
-        self._tomogram_path = str(tomogram_path or "")
+    def __init__(self, map_path: str = "", obstacle_thr: float = 49.9) -> None:
+        self._map_path = str(map_path or "")
         self._obstacle_thr = float(obstacle_thr)
         self._grid = None
         self._resolution = 0.2
@@ -93,9 +93,7 @@ class DirectPathBackend:
         )
 
     def plan(self, start: Sequence[float], goal: Sequence[float]) -> list[np.ndarray]:
-        return self.plan_request(
-            GlobalPlanRequest(start=np.asarray(start), goal=np.asarray(goal))
-        ).points()
+        return self.plan_request(GlobalPlanRequest(start=np.asarray(start), goal=np.asarray(goal))).points()
 
     def update_map(self, *_args, **_kwargs) -> None:
         """Accept live-map updates without making Lite depend on map modules."""

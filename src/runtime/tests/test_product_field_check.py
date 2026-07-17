@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import pytest
 
@@ -9,11 +9,11 @@ import json
 from pathlib import Path
 
 
-def _write_active_same_source_tomogram(map_root: Path) -> Path:
+def _write_active_same_source_octomap(map_root: Path) -> Path:
     active_dir = map_root / "active"
     active_dir.mkdir(parents=True)
     map_path = active_dir / "map.pcd"
-    tomogram_path = active_dir / "tomogram.pickle"
+    octomap_path = active_dir / "octomap.ot"
     map_path.write_text(
         "\n".join(
             [
@@ -34,9 +34,9 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
         + "\n",
         encoding="ascii",
     )
-    tomogram_path.write_bytes(b"product-field-active-tomogram")
+    octomap_path.write_bytes(b"product-field-active-octomap")
     map_sha = hashlib.sha256(map_path.read_bytes()).hexdigest()
-    tomogram_sha = hashlib.sha256(tomogram_path.read_bytes()).hexdigest()
+    octomap_sha = hashlib.sha256(octomap_path.read_bytes()).hexdigest()
     (active_dir / "metadata.json").write_text(
         json.dumps(
             {
@@ -58,14 +58,14 @@ def _write_active_same_source_tomogram(map_root: Path) -> Path:
                         "frame_id": "map",
                         "point_count": 1,
                     },
-                    "tomogram": {
-                        "path": "tomogram.pickle",
-                        "sha256": tomogram_sha,
+                    "octomap": {
+                        "path": "octomap.ot",
+                        "sha256": octomap_sha,
                         "source_map_sha256": map_sha,
                         "source_profile": "thunder_field",
                         "data_source": "thunder_field",
                         "frame_id": "map",
-                        "shape": [1, 1, 1],
+                        "resolution": 0.2,
                     },
                 },
             },
@@ -87,7 +87,7 @@ def _gateway_acceptance(*, ok: bool = True, mode: str = "field") -> dict:
             "gateway_contract": {"ok": True},
             "runtime_mode": {
                 "ok": True,
-                "command_sink": "hardware_driver_after_cmd_vel_mux",
+                "command_sink": "driver",
             },
             "module_first_dataflow": {
                 "ok": True,
@@ -205,7 +205,7 @@ def _runtime_switch_plan(*, ok: bool = True, dry_run: bool = True) -> dict:
             "endpoint": "thunder_field",
             "data_source": "thunder_field",
             "runtime_contract": "thunder_field",
-            "command_sink": "hardware_driver_after_cmd_vel_mux",
+            "command_sink": "driver",
             "simulation_only": False,
         },
         "changed": ["command_sink", "data_source", "endpoint"],
@@ -214,7 +214,7 @@ def _runtime_switch_plan(*, ok: bool = True, dry_run: bool = True) -> dict:
 
 
 def test_product_field_check_passes_with_gateway_and_map_evidence():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(),
@@ -222,7 +222,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
             "ok": True,
             "map_dir": "maps/active",
             "artifacts": {
-                "tomogram": {"exists": True, "sha256_ok": True},
+                "octomap": {"exists": True, "sha256_ok": True},
                 "occupancy_grid": {"exists": True, "sha256_ok": True},
             },
             "blockers": [],
@@ -236,7 +236,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
     assert payload["map"] == {
         "active": "maps/active",
         "provenance": "PASS",
-        "tomogram": "PASS",
+        "octomap": "PASS",
         "occupancy": "PASS",
     }
     assert payload["runtime"]["command_boundary"] == "PASS"
@@ -278,7 +278,7 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
 
 
 def test_product_field_check_rejects_stateful_runtime_switch_preflight():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     switch_plan = _runtime_switch_plan(dry_run=False)
 
@@ -298,10 +298,10 @@ def test_collect_product_field_check_defaults_to_active_map_provenance(
     monkeypatch,
     tmp_path,
 ):
-    import runtime.diagnostics.gateway_runtime_acceptance as acceptance_mod
-    from runtime.diagnostics.product_field_check import collect_product_field_check
+    import diagnostics.field.gateway_acceptance as acceptance_mod
+    from diagnostics.field.field_check import collect_product_field_check
 
-    active_dir = _write_active_same_source_tomogram(tmp_path / "maps")
+    active_dir = _write_active_same_source_octomap(tmp_path / "maps")
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path / "maps"))
     monkeypatch.setattr(
         acceptance_mod,
@@ -314,19 +314,19 @@ def test_collect_product_field_check_defaults_to_active_map_provenance(
         timeout_sec=1.0,
         mode="non_motion",
         map_dir=None,
-        require_tomogram=True,
+        require_octomap=True,
     )
 
     assert payload["map"]["active"] == str(active_dir)
     assert payload["map"]["provenance"] == "PASS"
-    assert payload["map"]["tomogram"] == "PASS"
+    assert payload["map"]["octomap"] == "PASS"
     assert payload["evidence"]["map"]["ok"] is True
-    assert payload["evidence"]["map"]["artifacts"]["tomogram"]["sha256_ok"] is True
+    assert payload["evidence"]["map"]["artifacts"]["octomap"]["sha256_ok"] is True
     assert "map provenance not checked" not in "\n".join(payload["advisories"])
 
 
 def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     acceptance = _gateway_acceptance()
     acceptance["checks"]["routecheck_latest"]["ok"] = False
@@ -343,12 +343,10 @@ def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
 
 
 def test_product_field_check_fails_field_command_boundary_on_non_hardware_sink():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     acceptance = _gateway_acceptance(ok=False)
-    acceptance["blockers"] = [
-        "field acceptance requires hardware command sink after VelocityMux"
-    ]
+    acceptance["blockers"] = ["field acceptance requires hardware command sink after VelocityMux"]
     acceptance["checks"]["runtime_mode"] = {
         "ok": False,
         "command_sink": "mujoco_velocity_adapter",
@@ -358,14 +356,12 @@ def test_product_field_check_fails_field_command_boundary_on_non_hardware_sink()
 
     assert payload["ok"] is False
     assert payload["runtime"]["command_boundary"] == "FAIL"
-    assert "field acceptance requires hardware command sink after VelocityMux" in (
-        payload["blockers"]
-    )
+    assert "field acceptance requires hardware command sink after VelocityMux" in (payload["blockers"])
 
 
 def test_product_field_check_formats_one_screen_summary():
     from cli.runtime_display import format_product_field_check
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(),
@@ -378,10 +374,7 @@ def test_product_field_check_formats_one_screen_summary():
     assert "LingTu Field Ready: PASS" in output
     assert "Map: active=unchecked provenance=UNCHECKED" in output
     assert "Runtime: gateway=PASS readiness=PASS localization=PASS" in output
-    assert (
-        "stages=PASS command_boundary=PASS frontier_preview=PASS "
-        "runtime_switch=PASS"
-    ) in output
+    assert ("stages=PASS command_boundary=PASS frontier_preview=PASS runtime_switch=PASS") in output
     assert (
         "Stage evidence: "
         "live=slam_or_relayed_localization_map,traversable_frontier_preview,"
@@ -390,19 +383,15 @@ def test_product_field_check_formats_one_screen_summary():
     ) in output
     assert "Frontier preview: status=PASS source=traversable_frontier command_published=false" in output
     assert (
-        "Runtime switch: status=PASS dry_run=true motion=false publishes=none "
-        "from=mujoco_live to=thunder_field"
+        "Runtime switch: status=PASS dry_run=true motion=false publishes=none from=mujoco_live to=thunder_field"
     ) in output
     assert "Navigation: can_send_goal=PASS route_preview=PASS" in output
     assert "Evidence: thunder_field=PASS age=12.0s mode=field" in output
-    assert (
-        "Algorithm: strict_benchmark=PASS claim_allowed=true missing=none"
-        in output
-    )
+    assert "Algorithm: strict_benchmark=PASS claim_allowed=true missing=none" in output
 
 
 def test_product_field_check_field_mode_requires_algorithm_benchmark():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(),
@@ -427,7 +416,7 @@ def test_product_field_check_field_mode_requires_algorithm_benchmark():
 
 
 def test_product_field_check_preserves_product_algorithm_profile():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(mode="simulation"),
@@ -455,7 +444,7 @@ def test_product_field_check_preserves_product_algorithm_profile():
 
 
 def test_product_field_check_non_motion_keeps_algorithm_as_advisory():
-    from runtime.diagnostics.product_field_check import build_product_field_check
+    from diagnostics.field.field_check import build_product_field_check
 
     payload = build_product_field_check(
         _gateway_acceptance(mode="non_motion"),

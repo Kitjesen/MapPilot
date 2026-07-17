@@ -12,6 +12,7 @@ fi
 
 cmake -S "$ROOT/src/drivers/real/lidar/sdk2_stream" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+  -DLIVOX_SDK2_DIR="$ROOT/src/drivers/real/lidar/deps/livox/Livox-SDK2" \
   -DLINGTU_LIVOX_SDK2_STREAM_BUILD_DDS="${LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON}"
 cmake --build "$BUILD_DIR" --parallel "$JOBS"
 

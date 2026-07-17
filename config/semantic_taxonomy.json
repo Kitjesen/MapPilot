@@ -1,0 +1,29 @@
+{
+  "name": "lingtu.semantic",
+  "version": 1,
+  "classes": [
+    {"id": 0, "name": "unknown", "color": "#707782", "aliases": ["background"]},
+    {"id": 1, "name": "ground", "color": "#6f78a8", "aliases": ["floor"]},
+    {"id": 2, "name": "wall", "color": "#e0c36e", "aliases": []},
+    {"id": 3, "name": "vegetation", "color": "#48a868", "aliases": ["tree", "plant", "grass", "bush"]},
+    {"id": 4, "name": "door", "color": "#d88745", "aliases": []},
+    {"id": 5, "name": "stairs", "color": "#af78d2", "aliases": ["stair", "staircase"]},
+    {"id": 6, "name": "chair", "color": "#4ba6c8", "aliases": []},
+    {"id": 7, "name": "table", "color": "#c8904a", "aliases": ["desk"]},
+    {"id": 8, "name": "vehicle", "color": "#d04f54", "aliases": ["car", "truck", "bus", "bicycle", "motorcycle"]},
+    {"id": 9, "name": "person", "color": "#ed6b9a", "aliases": ["people", "pedestrian"]},
+    {"id": 10, "name": "animal", "color": "#9c6bd6", "aliases": ["dog", "cat"]},
+    {"id": 11, "name": "obstacle", "color": "#e34b3f", "aliases": []},
+    {"id": 12, "name": "building", "color": "#a9aeb8", "aliases": []},
+    {"id": 13, "name": "pole", "color": "#74a6a0", "aliases": ["post"]},
+    {"id": 14, "name": "rock", "color": "#8d8172", "aliases": ["stone"]},
+    {"id": 15, "name": "water", "color": "#398bc5", "aliases": []},
+    {"id": 16, "name": "road", "color": "#565c66", "aliases": []},
+    {"id": 17, "name": "sidewalk", "color": "#8f98a6", "aliases": ["pavement"]},
+    {"id": 18, "name": "ceiling", "color": "#d8dce3", "aliases": []},
+    {"id": 19, "name": "shelf", "color": "#a77b4d", "aliases": ["cabinet"]},
+    {"id": 20, "name": "computer", "color": "#596ed8", "aliases": ["monitor"]},
+    {"id": 21, "name": "box", "color": "#b98551", "aliases": ["carton"]},
+    {"id": 22, "name": "fire_extinguisher", "color": "#d93232", "aliases": ["extinguisher"]}
+  ]
+}

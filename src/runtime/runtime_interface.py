@@ -45,6 +45,7 @@ class RuntimeFrames:
     lidar: str = "lidar_link"
     real_lidar: str = "livox_frame"
     camera: str = "camera_link"
+    gnss: str = "gnss_antenna"
     simulator_world: str = "world"
     axis_convention: str = "x_forward_y_left_z_up"
     body_aliases: tuple[str, ...] = ("base_link",)
@@ -79,6 +80,10 @@ class RuntimeFrames:
         return self.camera
 
     @property
+    def gnss_frame(self) -> str:
+        return self.gnss
+
+    @property
     def world(self) -> str:
         return self.simulator_world
 
@@ -103,12 +108,18 @@ class RuntimeTopics:
     map_cloud: str = "/slam/map_cloud"
     cumulative_map_cloud: str = "/slam/cumulative_map_cloud"
     saved_map_cloud: str = "/slam/saved_map_cloud"
+    maps_voxel_cloud: str = "/maps/voxel_cloud"
+    maps_occupancy: str = "/maps/occupancy"
+    maps_elevation: str = "/maps/elevation"
+    maps_esdf: str = "/maps/esdf"
+    maps_traversability: str = "/maps/traversability"
+    maps_scene: str = "/maps/scene"
     slam_map_command: str = "/slam/map_command"
     slam_map_event: str = "/slam/map_event"
     slam_relocalization_request: str = "/slam/relocalization/request"
     slam_relocalization_response: str = "/slam/relocalization/response"
     save_map_service: str = "/slam/save_map"
-    dog_odometry: str = "/nav/dog_odometry"
+    driver_odometry: str = "/driver/odometry"
     localization_quality: str = "/slam/localization_quality"
     localization_health: str = "/slam/localization_health"
     state_estimation_at_scan: str = "/slam/state_at_scan"
@@ -124,9 +135,7 @@ class RuntimeTopics:
     exploration_global_path: str = "/exploration/global_path"
     exploration_local_path: str = "/exploration/local_path"
     exploration_old_global_path: str = "/exploration/old_global_path"
-    exploration_nearest_global_subspace_path: str = (
-        "/exploration/to_nearest_global_subspace_path"
-    )
+    exploration_nearest_global_subspace_path: str = "/exploration/to_nearest_global_subspace_path"
     exploration_path: str = "/exploration/path"
     exploration_cmu_local_planner_path: str = "/exploration/cmu_local_planner_path"
     exploration_runtime_breakdown: str = "/exploration/runtime_breakdown"
@@ -146,6 +155,14 @@ class RuntimeTopics:
     terrain_map_ext: str = "/nav/terrain_map_ext"
     traversability: str = "/nav/traversability"
     height_rays: str = "/nav/height_rays"
+    teleop_cmd_vel: str = "/nav/teleop_cmd_vel"
+    nav_command_request: str = "/nav/command/request"
+    nav_command_ack: str = "/nav/command/ack"
+    inspection_command: str = "/nav/inspection/command"
+    inspection_ack: str = "/nav/inspection/ack"
+    inspection_status: str = "/nav/inspection/status"
+    inspection_evidence_request: str = "/nav/inspection/evidence/request"
+    inspection_evidence_result: str = "/nav/inspection/evidence/result"
     cmd_vel: str = "/nav/cmd_vel"
     stop: str = "/nav/stop"
     slow_down: str = "/nav/slow_down"
@@ -205,6 +222,19 @@ class RuntimeTopics:
     camera_color: str = "/camera/color/image_raw"
     camera_depth: str = "/camera/depth/image_raw"
     camera_info: str = "/camera/color/camera_info"
+    gnss_fix: str = "/gnss/fix"
+    gnss_status: str = "/gnss/status"
+    gnss_odom: str = "/gnss/odom"
+
+    @property
+    def dog_odometry(self) -> str:
+        """Legacy alias for the driver odometry stream.
+
+        New code must use ``driver_odometry``. This property exists for one
+        compatibility cycle so old imports do not need a flag day.
+        """
+
+        return self.driver_odometry
 
 
 @dataclass(frozen=True)
@@ -379,6 +409,11 @@ FRAME_LINKS = {
         child=FRAMES.camera,
         required=True,
     ),
+    "body_to_gnss": FrameLinkContract(
+        parent=FRAMES.body,
+        child=FRAMES.gnss,
+        required=False,
+    ),
 }
 
 RUNTIME_DATA_FLOW = (
@@ -407,7 +442,7 @@ RUNTIME_DATA_FLOW = (
         owner="slam_or_source_adapter",
         frame_role="map_odom_body",
         map_dependency="declared_by_data_source",
-        producer="SlamModule_or_SlamAdapterModule_or_compat_SlamBridgeModule",
+        producer="SlamModule_or_SlamAdapterModule",
         consumers=("map_layers", "navigation", "safety", "gateway"),
         frequency="odometry_50_200hz_cloud_5_20hz",
         transport_policy="direct_or_shm_for_clouds_dds_for_endpoint_bridge",
@@ -447,19 +482,15 @@ RUNTIME_DATA_FLOW = (
             TOPICS.exploration_grid,
             TOPICS.exploration_way_point,
             TOPICS.goal_pose,
-            "artifact:tomogram",
             "artifact:octomap",
             "artifact:point_cloud",
         ),
         outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_navigation_or_planner_backend",
         frame_role=FRAMES.map,
-        map_dependency=(
-            "octoplanner3d_uses_headless_octomap_or_point_cloud;"
-            "pct_uses_same_source_tomogram"
-        ),
+        map_dependency=("octoplanner3d_uses_headless_octomap_or_point_cloud"),
         producer="Navigation_global_planner",
-        consumers=("LocalPlanner", "GatewayModule", "NAV_OUT"),
+        consumers=("LocalPlanner", "GatewayModule", "lingtu-nav-dds"),
         frequency="on_goal_or_replan",
         transport_policy="direct_in_process_module_chain; typed_dds_endpoint_for_process_boundary",
     ),
@@ -498,13 +529,13 @@ RUNTIME_DATA_FLOW = (
         name="command_boundary",
         inputs=(TOPICS.cmd_vel,),
         outputs=("sink:data_source.command_sink",),
-        owner="cmd_vel_mux_to_endpoint_sink",
+        owner="command_arbiter_to_driver",
         frame_role="body_twist",
         map_dependency="none",
-        producer="VelocityMux",
-        consumers=("robot_driver_or_endpoint_command_sink",),
+        producer="command_arbiter",
+        consumers=("driver",),
         frequency="20_50hz",
-        transport_policy="direct_to_driver_endpoint_transport_only_at_hardware_boundary",
+        transport_policy="direct_or_dds_to_driver_at_hardware_boundary",
     ),
 )
 
@@ -512,9 +543,12 @@ LIDAR_EXTRINSICS = {
     "real_mid360": Transform3D(
         parent=FRAMES.body,
         child=FRAMES.real_lidar,
-        x=-0.011,
-        y=-0.02329,
-        z=0.04412,
+        x=0.402876074867229,
+        y=0.0,
+        z=0.0582019450665819,
+        roll=-3.141592653589793,
+        pitch=-0.7853981633974483,
+        yaw=0.0,
     ),
     "gazebo_proxy": Transform3D(
         parent=FRAMES.body,
@@ -526,9 +560,12 @@ LIDAR_EXTRINSICS = {
     "mujoco_thunder_v3": Transform3D(
         parent=FRAMES.body,
         child=FRAMES.lidar,
-        x=0.0,
+        # Compiled thunderv4.xml lidar_site pose in the base_link frame.
+        # Keep this synchronized with the compiled-site acceptance test rather
+        # than copying a nested MJCF local position by inspection.
+        x=-0.30638,
         y=0.0,
-        z=0.28,
+        z=0.19417,
     ),
     "portable_mid360_like": Transform3D(
         parent=FRAMES.body,
@@ -568,6 +605,53 @@ MESSAGE_FORMATS = {
         required_fields=("x", "y", "z"),
         note="World/local-map cloud; never body-relative.",
     ),
+    "lingtu.dds.Image": MessageFormat(
+        name="lingtu.dds.Image",
+        ros_type="sensor_msgs/msg/Image",
+        frame_role=FRAMES.camera,
+        required_fields=("header", "height", "width", "encoding", "step", "data"),
+        note="Native DDS camera image payload; ROS Image is compatibility only.",
+    ),
+    "lingtu.dds.CameraInfo": MessageFormat(
+        name="lingtu.dds.CameraInfo",
+        ros_type="sensor_msgs/msg/CameraInfo",
+        frame_role=FRAMES.camera,
+        required_fields=("header", "height", "width", "depth_scale", "k", "p"),
+        note="Native DDS camera calibration payload; ROS CameraInfo is compatibility only.",
+    ),
+    "lingtu.dds.GnssFix": MessageFormat(
+        name="lingtu.dds.GnssFix",
+        ros_type="sensor_msgs/msg/NavSatFix",
+        frame_role=FRAMES.gnss,
+        required_fields=(
+            "header",
+            "latitude",
+            "longitude",
+            "altitude",
+            "fix_type",
+            "position_covariance",
+        ),
+        note="Native DDS GNSS WGS84 fix; ROS NavSatFix is compatibility only.",
+    ),
+    "lingtu.dds.GnssStatus": MessageFormat(
+        name="lingtu.dds.GnssStatus",
+        ros_type="diagnostic_msgs/msg/DiagnosticStatus",
+        frame_role=FRAMES.gnss,
+        required_fields=("header", "device", "fix_type", "link_ok", "rtk"),
+        note="Native DDS GNSS receiver health; diagnostics are compatibility only.",
+    ),
+    "lingtu.dds.Imu": MessageFormat(
+        name="lingtu.dds.Imu",
+        ros_type="sensor_msgs/msg/Imu",
+        frame_role="imu",
+        required_fields=(
+            "header",
+            "orientation",
+            "angular_velocity",
+            "linear_acceleration",
+        ),
+        note="Native DDS IMU payload; ROS Imu is compatibility only.",
+    ),
     "odometry": MessageFormat(
         name="odometry",
         ros_type="nav_msgs/msg/Odometry",
@@ -586,6 +670,86 @@ MESSAGE_FORMATS = {
         frame_role=FRAMES.body,
         note="Muxed command; endpoint adapters decide whether to relay it.",
     ),
+    "teleop_cmd_vel": MessageFormat(
+        name="teleop_cmd_vel",
+        ros_type="geometry_msgs/msg/TwistStamped",
+        frame_role=FRAMES.body,
+        note=(
+            "Operator velocity request from Web, joystick, SDK, or MCP. "
+            "It is not a motor command until the native command arbiter "
+            "checks freshness, localization, obstacles, traversability, and "
+            "publishes the final command on /nav/cmd_vel."
+        ),
+    ),
+    "nav_command_request": MessageFormat(
+        name="nav_command_request",
+        ros_type="lingtu.dds.NavigationCommandRequest",
+        frame_role="request_dependent",
+        required_fields=("request_id", "kind"),
+        note=(
+            "Typed C++ field command envelope. Goal, cancel, and operator velocity "
+            "requests share this reliable volatile request channel."
+        ),
+    ),
+    "nav_command_ack": MessageFormat(
+        name="nav_command_ack",
+        ros_type="lingtu.dds.NavigationCommandAck",
+        frame_role=FRAMES.map,
+        required_fields=("request_id", "kind", "accepted", "reason"),
+        note="Endpoint business acceptance or rejection with a native map-frame Header.",
+    ),
+    "inspection_command": MessageFormat(
+        name="inspection_command",
+        ros_type="lingtu.dds.InspectionCommandRequest",
+        frame_role=FRAMES.map,
+        required_fields=("request_id", "kind", "route_id", "route_revision"),
+        note="Typed start/pause/resume/cancel command referencing a native C++ route.",
+    ),
+    "inspection_ack": MessageFormat(
+        name="inspection_ack",
+        ros_type="lingtu.dds.InspectionCommandAck",
+        frame_role=FRAMES.map,
+        required_fields=("request_id", "kind", "accepted", "reason", "run_id"),
+        note="Native inspection command acceptance or rejection with a map-frame Header.",
+    ),
+    "inspection_status": MessageFormat(
+        name="inspection_status",
+        ros_type="lingtu.dds.InspectionStatus",
+        frame_role=FRAMES.map,
+        required_fields=("run_id", "route_id", "state", "point_index", "point_count"),
+        note="Live status from the native C++ multi-point inspection executor.",
+    ),
+    "inspection_evidence_request": MessageFormat(
+        name="inspection_evidence_request",
+        ros_type="lingtu.dds.InspectionEvidenceRequest",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "request_id",
+            "run_id",
+            "route_id",
+            "revision",
+            "map_id",
+            "map_version",
+            "point_index",
+            "point_id",
+            "action",
+            "deadline_s",
+        ),
+        note="Native inspection action request consumed by the evidence worker.",
+    ),
+    "inspection_evidence_result": MessageFormat(
+        name="inspection_evidence_result",
+        ros_type="lingtu.dds.InspectionEvidenceResult",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "request_id",
+            "evidence_id",
+            "persisted",
+            "reason",
+            "analysis_verdict",
+        ),
+        note="Durable evidence result returned to the native inspection executor.",
+    ),
     "height_rays": MessageFormat(
         name="height_rays",
         ros_type="application/json",
@@ -602,6 +766,27 @@ MESSAGE_FORMATS = {
             "Module graph payloads are dicts; native DDS carries the grid form as "
             "lingtu.dds.OccupancyGrid on the same runtime topic."
         ),
+    ),
+    "maps_elevation": MessageFormat(
+        name="maps_elevation",
+        ros_type="application/json",
+        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
+        required_fields=("grid", "resolution", "origin"),
+        note="Map-domain elevation product; Python Module payload is a dict.",
+    ),
+    "maps_esdf": MessageFormat(
+        name="maps_esdf",
+        ros_type="application/json",
+        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
+        required_fields=("distance", "resolution", "origin"),
+        note="Map-domain ESDF product; Python Module payload is a dict.",
+    ),
+    "maps_scene": MessageFormat(
+        name="maps_scene",
+        ros_type="application/json",
+        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
+        required_fields=("schema_version", "layers"),
+        note="Layered map visualization/product snapshot for Gateway/Rerun-style consumers.",
     ),
     "lingtu.dds.Bool": MessageFormat(
         name="lingtu.dds.Bool",
@@ -660,16 +845,26 @@ MESSAGE_FORMATS = {
 
 TOPIC_FORMATS = {
     TOPICS.raw_lidar_points: ("raw_livox_custom", "raw_timed_pointcloud2"),
-    TOPICS.raw_imu: ("sensor_msgs/msg/Imu",),
+    TOPICS.raw_imu: ("lingtu.dds.Imu",),
+    TOPICS.driver_odometry: ("odometry",),
     TOPICS.odometry: ("odometry",),
     TOPICS.state_estimation_at_scan: ("state_estimation_at_scan",),
     TOPICS.registered_cloud: ("registered_cloud",),
     TOPICS.map_cloud: ("map_cloud",),
-    TOPICS.camera_color: ("sensor_msgs/msg/Image",),
-    TOPICS.camera_depth: ("sensor_msgs/msg/Image",),
-    TOPICS.camera_info: ("sensor_msgs/msg/CameraInfo",),
+    TOPICS.camera_color: ("lingtu.dds.Image",),
+    TOPICS.camera_depth: ("lingtu.dds.Image",),
+    TOPICS.camera_info: ("lingtu.dds.CameraInfo",),
+    TOPICS.gnss_fix: ("lingtu.dds.GnssFix",),
+    TOPICS.gnss_status: ("lingtu.dds.GnssStatus",),
+    TOPICS.gnss_odom: ("odometry",),
     TOPICS.cumulative_map_cloud: ("map_cloud",),
     TOPICS.saved_map_cloud: ("map_cloud",),
+    TOPICS.maps_voxel_cloud: ("map_cloud",),
+    TOPICS.maps_occupancy: ("nav_msgs/msg/OccupancyGrid",),
+    TOPICS.maps_elevation: ("maps_elevation",),
+    TOPICS.maps_esdf: ("maps_esdf",),
+    TOPICS.maps_traversability: ("traversability",),
+    TOPICS.maps_scene: ("maps_scene",),
     TOPICS.slam_map_command: ("std_msgs/msg/String",),
     TOPICS.slam_map_event: ("std_msgs/msg/String",),
     TOPICS.slam_relocalization_request: ("lingtu.dds.RelocalizationRequest",),
@@ -690,6 +885,14 @@ TOPIC_FORMATS = {
     TOPICS.terrain_map_ext: ("map_cloud",),
     TOPICS.traversability: ("traversability", "nav_msgs/msg/OccupancyGrid"),
     TOPICS.height_rays: ("height_rays",),
+    TOPICS.teleop_cmd_vel: ("teleop_cmd_vel",),
+    TOPICS.nav_command_request: ("nav_command_request",),
+    TOPICS.nav_command_ack: ("nav_command_ack",),
+    TOPICS.inspection_command: ("inspection_command",),
+    TOPICS.inspection_ack: ("inspection_ack",),
+    TOPICS.inspection_status: ("inspection_status",),
+    TOPICS.inspection_evidence_request: ("inspection_evidence_request",),
+    TOPICS.inspection_evidence_result: ("inspection_evidence_result",),
     TOPICS.cmd_vel: ("cmd_vel",),
     TOPICS.stop: ("std_msgs/msg/Bool",),
     TOPICS.slow_down: ("std_msgs/msg/Float32",),
@@ -767,20 +970,27 @@ def _ros_types_for_formats(formats: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(resolved)
 
 
-TOPIC_ROS_TYPES = {
-    topic: _ros_types_for_formats(formats)
-    for topic, formats in TOPIC_FORMATS.items()
-}
+TOPIC_ROS_TYPES = {topic: _ros_types_for_formats(formats) for topic, formats in TOPIC_FORMATS.items()}
 
 TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.lidar_scan: (FRAMES.lidar,),
     TOPICS.imu: (FRAMES.lidar,),
+    TOPICS.driver_odometry: (FRAMES.odom,),
     TOPICS.odometry: (FRAMES.odom, FRAMES.map),
     TOPICS.state_estimation_at_scan: (FRAMES.odom,),
     TOPICS.registered_cloud: (FRAMES.body,),
     TOPICS.map_cloud: (FRAMES.map, FRAMES.odom),
     TOPICS.cumulative_map_cloud: (FRAMES.map, FRAMES.odom),
     TOPICS.saved_map_cloud: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_voxel_cloud: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_occupancy: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_elevation: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_esdf: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_traversability: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_scene: (FRAMES.map, FRAMES.odom),
+    TOPICS.gnss_fix: (FRAMES.gnss,),
+    TOPICS.gnss_status: (FRAMES.gnss,),
+    TOPICS.gnss_odom: (FRAMES.map, FRAMES.odom),
     TOPICS.exploration_grid: (FRAMES.map, FRAMES.odom),
     TOPICS.traversable_frontiers: (FRAMES.map, FRAMES.odom),
     TOPICS.frontier_candidate: (FRAMES.map, FRAMES.odom),
@@ -788,6 +998,14 @@ TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.terrain_map_ext: (FRAMES.map, FRAMES.odom),
     TOPICS.traversability: (FRAMES.map, FRAMES.odom),
     TOPICS.height_rays: (FRAMES.body,),
+    TOPICS.teleop_cmd_vel: (FRAMES.body,),
+    TOPICS.nav_command_request: (FRAMES.map, FRAMES.body),
+    TOPICS.nav_command_ack: (FRAMES.map,),
+    TOPICS.inspection_command: (FRAMES.map,),
+    TOPICS.inspection_ack: (FRAMES.map,),
+    TOPICS.inspection_status: (FRAMES.map,),
+    TOPICS.inspection_evidence_request: (FRAMES.map,),
+    TOPICS.inspection_evidence_result: (FRAMES.map,),
     TOPICS.global_path: (FRAMES.map, FRAMES.odom),
     TOPICS.local_path: (FRAMES.map, FRAMES.odom, FRAMES.body),
     TOPICS.exploration_way_point: (FRAMES.map, FRAMES.odom),
@@ -799,6 +1017,12 @@ TOPIC_ALLOWED_FRAME_IDS = {
 REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS = {
     **TOPIC_ALLOWED_FRAME_IDS,
     TOPICS.map_cloud: (FRAMES.map,),
+    TOPICS.maps_voxel_cloud: (FRAMES.map,),
+    TOPICS.maps_occupancy: (FRAMES.map,),
+    TOPICS.maps_elevation: (FRAMES.map,),
+    TOPICS.maps_esdf: (FRAMES.map,),
+    TOPICS.maps_traversability: (FRAMES.map,),
+    TOPICS.maps_scene: (FRAMES.map,),
     TOPICS.traversable_frontiers: (FRAMES.map,),
     TOPICS.frontier_candidate: (FRAMES.map,),
     TOPICS.global_path: (FRAMES.map,),
@@ -840,21 +1064,6 @@ ARTIFACT_FORMATS = {
             "sha256",
         ),
         note="Saved map point cloud. PCT/relocalization may consume it only with same-source metadata.",
-    ),
-    "tomogram": ArtifactFormat(
-        name="tomogram",
-        path="tomogram.pickle",
-        artifact_type="pct_tomogram",
-        frame_role=FRAMES.map,
-        required_fields=("tomogram", "resolution", "origin"),
-        required_metadata=(
-            "source_map_sha256",
-            "source_profile",
-            "data_source",
-            "frame_id",
-            "shape",
-        ),
-        note="PCT global-planning volume derived from the same map source.",
     ),
     "octomap": ArtifactFormat(
         name="octomap",
@@ -944,9 +1153,7 @@ ALGORITHM_INTERFACES = {
         ),
         outputs=(TOPICS.traversable_frontiers, TOPICS.frontier_candidate),
         owner="lingtu_traversable_frontier",
-        map_dependency=(
-            "live_occupancy_grid_and_traversability_layers_read_only_preview"
-        ),
+        map_dependency=("live_occupancy_grid_and_traversability_layers_read_only_preview"),
     ),
     "tare_exploration": AlgorithmInterface(
         name="tare_exploration",
@@ -960,26 +1167,25 @@ ALGORITHM_INTERFACES = {
         inputs=(TOPICS.odometry, TOPICS.map_cloud, TOPICS.exploration_way_point, TOPICS.goal_pose),
         outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_navigation",
-        map_dependency="planner_specific_octoplanner3d_octomap_or_pct_tomogram",
+        map_dependency="planner_specific_octoplanner3d_octomap",
     ),
     "pct_global_planning": AlgorithmInterface(
         name="pct_global_planning",
-        inputs=(TOPICS.odometry, "artifact:tomogram", TOPICS.goal_pose),
+        inputs=(TOPICS.odometry, "artifact:point_cloud", TOPICS.goal_pose),
         outputs=(TOPICS.global_path, TOPICS.nav_way_point),
-        owner="lingtu_pct",
-        map_dependency="same_source_saved_tomogram_required",
+        owner="lingtu_pct_legacy",
+        map_dependency="saved_point_cloud_pcd_legacy_pct",
     ),
     "octoplanner3d_global_planning": AlgorithmInterface(
         name="octoplanner3d_global_planning",
         inputs=(
             TOPICS.odometry,
             "artifact:octomap",
-            "artifact:point_cloud",
             TOPICS.goal_pose,
         ),
         outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_octoplanner3d",
-        map_dependency="headless_octomap_bt_or_point_cloud_pcd",
+        map_dependency="saved_octomap_ot_or_bt",
     ),
     "local_planning_and_following": AlgorithmInterface(
         name="local_planning_and_following",
@@ -1013,9 +1219,7 @@ RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES = {
         "pct_global_planning",
         "octoplanner3d_global_planning",
     ),
-    "local_planning_and_following": (
-        "local_planning_and_following",
-    ),
+    "local_planning_and_following": ("local_planning_and_following",),
 }
 
 DATA_SOURCE_CONTRACTS = {
@@ -1038,7 +1242,7 @@ DATA_SOURCE_CONTRACTS = {
         provider="hardware",
         owns=("mid360_lidar", "imu", "robot_actuation"),
         normalized_outputs=(TOPICS.lidar_scan, TOPICS.imu),
-        command_sink="hardware_driver_after_cmd_vel_mux",
+        command_sink="driver",
         source_outputs=(TOPICS.lidar_scan, TOPICS.imu),
         algorithm_entry_outputs=(
             TOPICS.odometry,
@@ -1058,7 +1262,7 @@ DATA_SOURCE_CONTRACTS = {
         provider="hardware",
         owns=("robot_actuation", "local_module_graph"),
         normalized_outputs=(),
-        command_sink="hardware_driver_after_cmd_vel_mux",
+        command_sink="driver",
         source_outputs=(),
         algorithm_entry_outputs=(),
         algorithm_context_outputs=(),
@@ -1118,20 +1322,6 @@ DATA_SOURCE_CONTRACTS = {
         slam_source="lingtu_fastlio2",
         localization_source="fastlio2_odometry",
         mapping_source="fastlio2_map_cloud",
-    ),
-    "rosbag_fastlio2_replay": DataSourceContract(
-        name="rosbag_fastlio2_replay",
-        provider="replay",
-        owns=("recorded_lidar_imu", "recorded_slam_outputs", "no_actuation"),
-        normalized_outputs=(TOPICS.raw_lidar_points, TOPICS.raw_imu),
-        command_sink="no_actuation_replay_sink",
-        source_outputs=(TOPICS.raw_lidar_points, TOPICS.raw_imu),
-        algorithm_entry_outputs=(TOPICS.odometry, TOPICS.registered_cloud, TOPICS.map_cloud),
-        algorithm_context_outputs=(),
-        lidar_extrinsic_profile="mujoco_thunder_v3",
-        slam_source="fastlio2_replay_or_recorded_slam",
-        localization_source="replayed_fastlio2_odometry",
-        mapping_source="replayed_fastlio2_map_cloud",
     ),
     "gazebo_industrial": DataSourceContract(
         name="gazebo_industrial",
@@ -1481,7 +1671,8 @@ ADAPTER_TOPIC_ALIASES = {
         AdapterTopicAlias(source="/terrain_map", target=TOPICS.terrain_map, msg_format="map_cloud"),
         AdapterTopicAlias(source="/terrain_map_ext", target=TOPICS.terrain_map_ext, msg_format="map_cloud"),
         AdapterTopicAlias(
-            source="/way_point", target=TOPICS.nav_way_point,
+            source="/way_point",
+            target=TOPICS.nav_way_point,
             msg_format="geometry_msgs/msg/PointStamped",
         ),
         AdapterTopicAlias(source="/speed", target=TOPICS.speed, msg_format="std_msgs/msg/Float32"),
@@ -1489,11 +1680,13 @@ ADAPTER_TOPIC_ALIASES = {
         AdapterTopicAlias(source="/stop", target=TOPICS.stop, msg_format="std_msgs/msg/Bool"),
         AdapterTopicAlias(source="/slow_down", target=TOPICS.slow_down, msg_format="std_msgs/msg/Float32"),
         AdapterTopicAlias(
-            source="/navigation_boundary", target=TOPICS.navigation_boundary,
+            source="/navigation_boundary",
+            target=TOPICS.navigation_boundary,
             msg_format="geometry_msgs/msg/PolygonStamped",
         ),
         AdapterTopicAlias(
-            source="/added_obstacles", target=TOPICS.added_obstacles,
+            source="/added_obstacles",
+            target=TOPICS.added_obstacles,
             msg_format="sensor_msgs/msg/PointCloud2",
         ),
         AdapterTopicAlias(source="/check_obstacle", target=TOPICS.check_obstacle, msg_format="std_msgs/msg/Bool"),
@@ -1580,13 +1773,11 @@ PROFILE_DATA_SOURCE_BINDINGS = {
         profile="sim_mujoco_octo_live",
         data_source="mujoco_fastlio2_live",
         mode="mujoco_raw_mid360_fastlio_octoplanner3d_closed_loop",
-        note="OctoPlanner3D MuJoCo path: MID-360 + Fast-LIO source, OctoPlanner3D global plan, local planner/path follower, and simulated cmd_vel closure.",
-    ),
-    "sim_mujoco_pct_live": ProfileDataSourceBinding(
-        profile="sim_mujoco_pct_live",
-        data_source="mujoco_fastlio2_live",
-        mode="mujoco_raw_mid360_fastlio_pct_closed_loop",
-        note="PCT MuJoCo path: MID-360 + Fast-LIO source, PCT global plan, local planner/path follower, and simulated cmd_vel closure.",
+        note=(
+            "OctoPlanner3D MuJoCo path: MID-360 + Fast-LIO source, "
+            "OctoPlanner3D global plan, local planner/path follower, "
+            "and simulated cmd_vel closure."
+        ),
     ),
     "sim_gazebo": ProfileDataSourceBinding(
         profile="sim_gazebo",
@@ -1689,10 +1880,7 @@ def adapter_source_for_target(surface: str, target: str) -> str:
         if alias.target == target:
             return alias.source
     available = ", ".join(alias.target for alias in adapter_aliases(surface))
-    raise ValueError(
-        f"surface {surface!r} has no adapter alias targeting {target!r}; "
-        f"available targets: {available}"
-    )
+    raise ValueError(f"surface {surface!r} has no adapter alias targeting {target!r}; available targets: {available}")
 
 
 def adapter_relay_aliases(surface: str) -> tuple[AdapterTopicAlias, ...]:
@@ -1744,11 +1932,7 @@ def runtime_topic_default_frame_id(runtime_contract: str | None, topic: str) -> 
 def runtime_topic_default_frame_ids(runtime_contract: str | None) -> dict[str, str]:
     """Return the default frame_id for every framed topic in one runtime contract."""
 
-    return {
-        topic: frames[0]
-        for topic, frames in runtime_topic_allowed_frame_ids(runtime_contract).items()
-        if frames
-    }
+    return {topic: frames[0] for topic, frames in runtime_topic_allowed_frame_ids(runtime_contract).items() if frames}
 
 
 def runtime_frames_contract() -> dict[str, Any]:
@@ -1764,10 +1948,7 @@ def normalize_runtime_frames_contract(
 
     if not isinstance(frames, Mapping):
         return {}
-    return {
-        str(key): list(value) if isinstance(value, tuple) else value
-        for key, value in frames.items()
-    }
+    return {str(key): list(value) if isinstance(value, tuple) else value for key, value in frames.items()}
 
 
 def runtime_topic_default_frame_contract(
@@ -1783,10 +1964,7 @@ def runtime_topic_allowed_frame_contract(
 ) -> dict[str, list[str]]:
     """Return JSON-ready allowed frame_id contract for one runtime."""
 
-    return {
-        topic: list(frames)
-        for topic, frames in runtime_topic_allowed_frame_ids(runtime_contract).items()
-    }
+    return {topic: list(frames) for topic, frames in runtime_topic_allowed_frame_ids(runtime_contract).items()}
 
 
 def normalize_algorithm_interface_contract(
@@ -1823,10 +2001,7 @@ def runtime_algorithm_interface_contract() -> dict[str, dict[str, Any]]:
 def runtime_stage_algorithm_interface_contract() -> dict[str, list[str]]:
     """Return JSON-ready runtime data-flow stage to algorithm interface binding."""
 
-    return {
-        stage: list(interfaces)
-        for stage, interfaces in RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items()
-    }
+    return {stage: list(interfaces) for stage, interfaces in RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES.items()}
 
 
 def _jsonable_string_list(value: Any) -> list[str]:
@@ -1871,6 +2046,12 @@ def camera_frame_id() -> str:
     """Return the canonical camera frame used at runtime boundaries."""
 
     return FRAMES.camera
+
+
+def gnss_frame_id() -> str:
+    """Return the canonical GNSS antenna frame used at runtime boundaries."""
+
+    return FRAMES.gnss
 
 
 def topic_default_frame_id(topic: str) -> str:
@@ -2016,77 +2197,33 @@ def runtime_contract_manifest() -> dict[str, object]:
         "frames": runtime_frames_contract(),
         "topics": asdict(TOPICS),
         "core_required_topics": CORE_REQUIRED_TOPICS,
-        "frame_links": {
-            name: asdict(link)
-            for name, link in FRAME_LINKS.items()
-        },
-        "runtime_data_flow": [
-            asdict(stage)
-            for stage in RUNTIME_DATA_FLOW
-        ],
+        "frame_links": {name: asdict(link) for name, link in FRAME_LINKS.items()},
+        "runtime_data_flow": [asdict(stage) for stage in RUNTIME_DATA_FLOW],
         "resolved_runtime_data_flow": {
-            name: [
-                asdict(stage)
-                for stage in resolved_runtime_data_flow(name)
-            ]
-            for name in DATA_SOURCE_CONTRACTS
+            name: [asdict(stage) for stage in resolved_runtime_data_flow(name)] for name in DATA_SOURCE_CONTRACTS
         },
-        "lidar_extrinsics": {
-            name: asdict(transform)
-            for name, transform in LIDAR_EXTRINSICS.items()
-        },
-        "message_formats": {
-            name: asdict(format_spec)
-            for name, format_spec in MESSAGE_FORMATS.items()
-        },
-        "topic_formats": {
-            topic: formats
-            for topic, formats in TOPIC_FORMATS.items()
-        },
-        "topic_ros_types": {
-            topic: ros_types
-            for topic, ros_types in TOPIC_ROS_TYPES.items()
-        },
+        "lidar_extrinsics": {name: asdict(transform) for name, transform in LIDAR_EXTRINSICS.items()},
+        "message_formats": {name: asdict(format_spec) for name, format_spec in MESSAGE_FORMATS.items()},
+        "topic_formats": {topic: formats for topic, formats in TOPIC_FORMATS.items()},
+        "topic_ros_types": {topic: ros_types for topic, ros_types in TOPIC_ROS_TYPES.items()},
         "topic_allowed_frame_ids": runtime_topic_allowed_frame_contract(None),
         "topic_default_frame_ids": runtime_topic_default_frame_ids(None),
-        "real_runtime_topic_allowed_frame_ids": runtime_topic_allowed_frame_contract(
-            REAL_RUNTIME_CONTRACT
-        ),
-        "real_runtime_topic_default_frame_ids": runtime_topic_default_frame_ids(
-            REAL_RUNTIME_CONTRACT
-        ),
+        "real_runtime_topic_allowed_frame_ids": runtime_topic_allowed_frame_contract(REAL_RUNTIME_CONTRACT),
+        "real_runtime_topic_default_frame_ids": runtime_topic_default_frame_ids(REAL_RUNTIME_CONTRACT),
         "real_runtime_required_topic_frame_ids": REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
-        "real_runtime_required_endpoint_input_topics": (
-            REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS
-        ),
-        "runtime_data_flow_topics": {
-            name: runtime_data_flow_topics(name)
-            for name in DATA_SOURCE_CONTRACTS
-        },
-        "artifact_formats": {
-            name: asdict(format_spec)
-            for name, format_spec in ARTIFACT_FORMATS.items()
-        },
+        "real_runtime_required_endpoint_input_topics": (REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS),
+        "runtime_data_flow_topics": {name: runtime_data_flow_topics(name) for name in DATA_SOURCE_CONTRACTS},
+        "artifact_formats": {name: asdict(format_spec) for name, format_spec in ARTIFACT_FORMATS.items()},
         "algorithm_interfaces": runtime_algorithm_interface_contract(),
-        "runtime_data_flow_stage_algorithm_interfaces": (
-            runtime_stage_algorithm_interface_contract()
-        ),
-        "data_sources": {
-            name: asdict(source)
-            for name, source in DATA_SOURCE_CONTRACTS.items()
-        },
+        "runtime_data_flow_stage_algorithm_interfaces": (runtime_stage_algorithm_interface_contract()),
+        "data_sources": {name: asdict(source) for name, source in DATA_SOURCE_CONTRACTS.items()},
         "adapter_aliases": {
-            name: [asdict(alias) for alias in aliases]
-            for name, aliases in ADAPTER_TOPIC_ALIASES.items()
+            name: [asdict(alias) for alias in aliases] for name, aliases in ADAPTER_TOPIC_ALIASES.items()
         },
         "adapter_relays": {
-            name: [asdict(alias) for alias in aliases]
-            for name, aliases in ADAPTER_RELAY_ALIASES.items()
+            name: [asdict(alias) for alias in aliases] for name, aliases in ADAPTER_RELAY_ALIASES.items()
         },
-        "profile_data_sources": {
-            name: asdict(binding)
-            for name, binding in PROFILE_DATA_SOURCE_BINDINGS.items()
-        },
+        "profile_data_sources": {name: asdict(binding) for name, binding in PROFILE_DATA_SOURCE_BINDINGS.items()},
     }
 
 

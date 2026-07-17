@@ -16,7 +16,7 @@ Use these paths for new commands, docs, and tests:
 | `mujoco/saved_map_plan_gate.py` | Same-source saved-map planning gate |
 | `mujoco/saved_map_tracking_gate.py` | Saved-map global path plus MuJoCo tracking gate |
 | `mujoco/saved_map_quality_gate.py` | Saved-map PCD/plan quality gate |
-| `mujoco/continuous_mapping_quality_gate.py` | 3–5 min continuous native DDS mapping gate (bridge + continuity + scale + map quality) |
+| `mujoco/continuous_mapping_quality_gate.py` | 3�? min continuous native DDS mapping gate (bridge + continuity + scale + map quality) |
 | `run_sunrise_continuous_mapping_gate.py` | SSH runner for the continuous mapping gate on sunrise |
 | `mujoco/native_pct_gate.py` | Native PCT + MuJoCo gate |
 | `mujoco/navigation_audit.py` | MuJoCo navigation wiring audit |
@@ -67,7 +67,6 @@ Use the safety class before running a script:
 - `dynamic_obstacle_local_planner_gate.py` - Dynamic-obstacle nanobind local planner gate.
 - `large_loop_closure_gate.py` - Large-loop closure report validator.
 - `moving_obstacle_sweep_gate.py` - Moving-obstacle sweep report validator.
-- `fastlio2_rosbag_replay_gate.py` - Fast-LIO2 rosbag replay gate.
 - `fastlio_speed_boundary_gate.py` - Fast-LIO speed-boundary gate.
 - `mujoco/live_gate.py` - MuJoCo live LiDAR/IMU plus Fast-LIO2 simulation gate.
 - `policy_nav_smoke.py` - Current product-style simulated motion smoke: OctoPlanner is the configured global planner, LocalPlanner runs the nanobind backend, PathFollower runs nav_kernel, and commands stay inside the MuJoCo policy driver through nav.velocity_mux.
@@ -141,5 +140,4 @@ Use the safety class before running a script:
 
 ## Tooling
 
-- `algorithm_dataflow_summary.py` - Thin CLI wrapper around `runtime.diagnostics.dimos_runtime_dataflow` for flat live Fast-LIO reports; `dimos_gap_report.py --include-dataflow` and Gateway benchmark diagnostics use the same core parser for aggregate/wrapper/native gate reports.
-- `rosbag_slam_bridge_replay.py` - Raw rosbag to `SlamBridgeModule` replay.
+- `algorithm_dataflow_summary.py` - Thin CLI wrapper around `sim.diagnostics.dataflow_report` for flat live Fast-LIO reports; `dimos_gap_report.py --include-dataflow` and Gateway benchmark diagnostics use the same core parser for aggregate/wrapper/native gate reports.

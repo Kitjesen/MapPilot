@@ -1,4 +1,5 @@
 #include "message/cpp/dds_topics.hpp"
+#include "message/cpp/dds_qos_profiles.hpp"
 
 #include "dds/dds.h"
 #include "lingtu_slam.h"

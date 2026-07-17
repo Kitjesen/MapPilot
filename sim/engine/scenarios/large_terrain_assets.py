@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from runtime.same_source_map_artifacts import build_saved_map_metadata, sha256_file
+from maps.artifacts import build_saved_map_metadata, sha256_file
 
 
 @dataclass(frozen=True)
@@ -419,7 +419,7 @@ def _scene_xml(start: tuple[float, float, float], goal: tuple[float, float, floa
     <light pos="2 -7 10" dir="-0.25 0.45 -1" diffuse="0.92 0.90 0.84" castshadow="false"/>
     <geom name="field_floor" type="plane" size="13 9 0.1" material="field_mat"
           contype="1" conaffinity="1" condim="3" friction="1 0.5 0.5" group="1"/>
-{''.join(geoms)}    <geom name="goal_marker" type="sphere" size="0.18"
+{"".join(geoms)}    <geom name="goal_marker" type="sphere" size="0.18"
           pos="{_format_vec(goal_marker)}" contype="0" conaffinity="0"
           rgba="0.1 0.34 1 0.75" group="1"/>
   </worldbody>
@@ -613,12 +613,10 @@ def sample_large_terrain_map_points(
     map_frame_origin_world_xy: tuple[float, float] = (0.0, 0.0),
 ) -> np.ndarray:
     blocks = [
-        _sample_box_surfaces(_map_frame_box(box, map_frame_origin_world_xy), step=step)
-        for box in large_terrain_boxes()
+        _sample_box_surfaces(_map_frame_box(box, map_frame_origin_world_xy), step=step) for box in large_terrain_boxes()
     ]
     blocks.extend(
-        _sample_zone_points(_map_frame_zone(zone, map_frame_origin_world_xy))
-        for zone in large_terrain_zones()
+        _sample_zone_points(_map_frame_zone(zone, map_frame_origin_world_xy)) for zone in large_terrain_zones()
     )
     points = np.concatenate(blocks, axis=0)
     return np.asarray(points[np.all(np.isfinite(points), axis=1)], dtype=np.float32)
@@ -665,10 +663,7 @@ def build_large_terrain_assets(
     map_pcd = out / "map.pcd"
     metadata = out / "metadata.json"
     routes = tuple(large_terrain_routes())
-    map_frame_origin_world_xy = tuple(
-        float(value)
-        for value in (map_frame_origin_world_xy or (0.0, 0.0))
-    )
+    map_frame_origin_world_xy = tuple(float(value) for value in (map_frame_origin_world_xy or (0.0, 0.0)))
     tomogram_origin = (
         float(origin[0]) - float(map_frame_origin_world_xy[0]),
         float(origin[1]) - float(map_frame_origin_world_xy[1]),
@@ -699,13 +694,7 @@ def build_large_terrain_assets(
     _write_ascii_pcd(map_pcd, map_frame_origin_world_xy=map_frame_origin_world_xy)
     map_sha = sha256_file(map_pcd)
     tomogram_sha = sha256_file(tomogram_path)
-    point_count = int(
-        len(
-            sample_large_terrain_map_points(
-                map_frame_origin_world_xy=map_frame_origin_world_xy
-            )
-        )
-    )
+    point_count = int(len(sample_large_terrain_map_points(map_frame_origin_world_xy=map_frame_origin_world_xy)))
     metadata_payload = build_saved_map_metadata(
         source_profile="large_terrain_synthetic_assets",
         data_source="synthetic_large_terrain_geometry",
@@ -752,19 +741,14 @@ def build_large_terrain_assets(
             "obstacle_thr": obstacle_thr,
             "obstacles": [asdict(box) for box in large_terrain_boxes()],
             "map_frame_obstacles": [
-                asdict(_map_frame_box(box, map_frame_origin_world_xy))
-                for box in large_terrain_boxes()
+                asdict(_map_frame_box(box, map_frame_origin_world_xy)) for box in large_terrain_boxes()
             ],
             "terrain_zones": [asdict(zone) for zone in large_terrain_zones()],
             "map_frame_terrain_zones": [
-                asdict(_map_frame_zone(zone, map_frame_origin_world_xy))
-                for zone in large_terrain_zones()
+                asdict(_map_frame_zone(zone, map_frame_origin_world_xy)) for zone in large_terrain_zones()
             ],
             "routes": [asdict(route) for route in routes],
-            "map_frame_routes": [
-                asdict(_map_frame_route(route, map_frame_origin_world_xy))
-                for route in routes
-            ],
+            "map_frame_routes": [asdict(_map_frame_route(route, map_frame_origin_world_xy)) for route in routes],
         },
     )
     metadata.write_text(

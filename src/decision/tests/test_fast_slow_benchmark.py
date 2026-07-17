@@ -21,18 +21,36 @@ import unittest
 
 import numpy as np
 
-from decision.goal_resolution.goal_resolver import GoalResolver
-from decision.llm.llm_client import LLMConfig
+from decision.goals.resolver import GoalResolver
+from decision.llm.client import LLMConfig
 
 # ============================================================
 #  \u573a\u666f\u6784\u5efa\u5de5\u5177
 # ============================================================
 
 COMMON_OBJECTS = [
-    "chair", "table", "door", "window", "trash can", "sign",
-    "box", "shelf", "monitor", "lamp", "plant", "bottle",
-    "sofa", "desk", "cabinet", "poster", "clock", "phone",
-    "bag", "book", "keyboard", "mouse",
+    "chair",
+    "table",
+    "door",
+    "window",
+    "trash can",
+    "sign",
+    "box",
+    "shelf",
+    "monitor",
+    "lamp",
+    "plant",
+    "bottle",
+    "sofa",
+    "desk",
+    "cabinet",
+    "poster",
+    "clock",
+    "phone",
+    "bag",
+    "book",
+    "keyboard",
+    "mouse",
 ]
 
 
@@ -55,45 +73,52 @@ def make_scene(
     obj_id = 0
 
     # \u76ee\u6807\u7269\u4f53
-    objects.append({
-        "id": obj_id,
-        "label": target_label,
-        "position": target_pos,
-        "score": target_score,
-        "detection_count": target_det_count,
-    })
+    objects.append(
+        {
+            "id": obj_id,
+            "label": target_label,
+            "position": target_pos,
+            "score": target_score,
+            "detection_count": target_det_count,
+        }
+    )
     obj_id += 1
 
     # \u5e72\u6270\u7269\u4f53 (\u968f\u673a\u4f4d\u7f6e\u548c\u5206\u6570)
     available = [o for o in COMMON_OBJECTS if o != target_label]
     for _ in range(num_distractors):
         label = rng.choice(available)
-        objects.append({
-            "id": obj_id,
-            "label": label,
-            "position": {
-                "x": round(rng.uniform(-10, 10), 1),
-                "y": round(rng.uniform(-10, 10), 1),
-                "z": 0.0,
-            },
-            "score": round(rng.uniform(0.4, 0.95), 2),
-            "detection_count": rng.randint(1, 8),
-        })
+        objects.append(
+            {
+                "id": obj_id,
+                "label": label,
+                "position": {
+                    "x": round(rng.uniform(-10, 10), 1),
+                    "y": round(rng.uniform(-10, 10), 1),
+                    "z": 0.0,
+                },
+                "score": round(rng.uniform(0.4, 0.95), 2),
+                "detection_count": rng.randint(1, 8),
+            }
+        )
         obj_id += 1
 
-    return json.dumps({
-        "timestamp": 0,
-        "object_count": len(objects),
-        "objects": objects,
-        "relations": relations or [],
-        "regions": [],
-        "summary": "benchmark scene",
-    })
+    return json.dumps(
+        {
+            "timestamp": 0,
+            "object_count": len(objects),
+            "objects": objects,
+            "relations": relations or [],
+            "regions": [],
+            "summary": "benchmark scene",
+        }
+    )
 
 
 # ============================================================
 #  \u6838\u5fc3\u6d4b\u8bd5\u5957\u4ef6
 # ============================================================
+
 
 class TestFastPathHitRate(unittest.TestCase):
     """
@@ -142,23 +167,20 @@ class TestFastPathHitRate(unittest.TestCase):
 
         rate = hits / len(cases)
         report = "\n".join(details)
-        print(f"\n=== Simple Fast Path Hit Rate: {rate*100:.0f}% ({hits}/{len(cases)}) ===")
+        print(f"\n=== Simple Fast Path Hit Rate: {rate * 100:.0f}% ({hits}/{len(cases)}) ===")
         print(report)
 
         # \u65e0 CLIP \u65f6\u7b80\u5355\u6307\u4ee4\u5e94\u8fbe 70%
-        self.assertGreaterEqual(rate, 0.70,
-            f"Simple instruction hit rate {rate*100:.0f}% < 70%. Details:\n{report}")
+        self.assertGreaterEqual(rate, 0.70, f"Simple instruction hit rate {rate * 100:.0f}% < 70%. Details:\n{report}")
 
     def test_target_absent_should_defer(self):
         """
         \u76ee\u6807\u4e0d\u5728\u573a\u666f\u4e2d \u2192 \u5e94\u8fd4\u56de None (defer to Slow Path)\u3002
         """
         # \u573a\u666f\u4e2d\u6ca1\u6709 elephant, \u53ea\u6709\u666e\u901a\u7269\u4f53
-        sg = make_scene("chair", {"x": 3, "y": 2, "z": 0}, 0.9, 5,
-                        num_distractors=8, seed=200)
+        sg = make_scene("chair", {"x": 3, "y": 2, "z": 0}, 0.9, 5, num_distractors=8, seed=200)
         result = self.resolver.fast_resolve("find the elephant near the stairs", sg)
-        self.assertIsNone(result,
-            "Target 'elephant' not in scene, should defer to Slow Path")
+        self.assertIsNone(result, "Target 'elephant' not in scene, should defer to Slow Path")
 
     def test_attribute_mismatch_known_limitation(self):
         """
@@ -167,13 +189,13 @@ class TestFastPathHitRate(unittest.TestCase):
         \u5f53\u524d\u7cfb\u7edf\u65e0\u6cd5\u533a\u5206\u989c\u8272\u5c5e\u6027: "find red chair" \u4f1a\u5339\u914d "blue chair"
         \u56e0\u4e3a "chair" \u5b50\u4e32\u5339\u914d\u3002\u8fd9\u662f\u65e0 CLIP \u7684\u5df2\u77e5\u5c40\u9650\u3002
         """
-        sg = make_scene("blue chair", {"x": 3, "y": 2, "z": 0}, 0.9, 5,
-                        num_distractors=5, seed=200)
+        sg = make_scene("blue chair", {"x": 3, "y": 2, "z": 0}, 0.9, 5, num_distractors=5, seed=200)
         result = self.resolver.fast_resolve("find the red chair", sg)
         # \u8bb0\u5f55\u8fd9\u4e2a\u5df2\u77e5\u5c40\u9650 \u2014 \u4e0d\u505a\u65ad\u8a00, \u53ea\u8bb0\u5f55\u884c\u4e3a
         if result is not None:
-            print(f"  KNOWN LIMITATION: 'find red chair' matched '{result.target_label}' "
-                  f"(attribute mismatch, needs CLIP)")
+            print(
+                f"  KNOWN LIMITATION: 'find red chair' matched '{result.target_label}' (attribute mismatch, needs CLIP)"
+            )
         else:
             print("  OK: correctly deferred to Slow Path")
 
@@ -193,26 +215,34 @@ class TestSpatialReasoning(unittest.TestCase):
     def test_chair_near_door_selects_chair(self):
         """'find chair near the door' \u5e94\u9009\u62e9 chair, \u4e0d\u662f door\u3002"""
         sg_data = {
-            "timestamp": 0, "object_count": 3,
+            "timestamp": 0,
+            "object_count": 3,
             "objects": [
-                {"id": 0, "label": "chair", "position": {"x": 3, "y": 2, "z": 0},
-                 "score": 0.8, "detection_count": 3},
-                {"id": 1, "label": "door", "position": {"x": 3, "y": 3, "z": 0},
-                 "score": 0.9, "detection_count": 5},
-                {"id": 2, "label": "table", "position": {"x": 10, "y": 10, "z": 0},
-                 "score": 0.85, "detection_count": 4},
+                {"id": 0, "label": "chair", "position": {"x": 3, "y": 2, "z": 0}, "score": 0.8, "detection_count": 3},
+                {"id": 1, "label": "door", "position": {"x": 3, "y": 3, "z": 0}, "score": 0.9, "detection_count": 5},
+                {
+                    "id": 2,
+                    "label": "table",
+                    "position": {"x": 10, "y": 10, "z": 0},
+                    "score": 0.85,
+                    "detection_count": 4,
+                },
             ],
             "relations": [
                 {"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.0},
             ],
-            "regions": [], "summary": "test",
+            "regions": [],
+            "summary": "test",
         }
         sg = json.dumps(sg_data)
 
         result = self.resolver.fast_resolve("find chair near the door", sg)
         self.assertIsNotNone(result)
-        self.assertEqual(result.target_label, "chair",
-            f"Should select 'chair' (subject) not 'door' (modifier). Got: {result.target_label}")
+        self.assertEqual(
+            result.target_label,
+            "chair",
+            f"Should select 'chair' (subject) not 'door' (modifier). Got: {result.target_label}",
+        )
 
     def test_chair_near_door_chair_has_higher_score(self):
         """
@@ -221,49 +251,78 @@ class TestSpatialReasoning(unittest.TestCase):
         door \u5e94\u83b7\u5f97: label=0.3 (modifier) + spatial=0.3 (near relation)
         """
         sg_data = {
-            "timestamp": 0, "object_count": 2,
+            "timestamp": 0,
+            "object_count": 2,
             "objects": [
-                {"id": 0, "label": "chair", "position": {"x": 3, "y": 2, "z": 0},
-                 "score": 0.7, "detection_count": 2},  # \u6545\u610f\u7ed9 chair \u66f4\u4f4e\u7684\u68c0\u6d4b\u5206
-                {"id": 1, "label": "door", "position": {"x": 3, "y": 3, "z": 0},
-                 "score": 0.95, "detection_count": 8},  # door \u68c0\u6d4b\u5206\u8fdc\u9ad8\u4e8e chair
+                {
+                    "id": 0,
+                    "label": "chair",
+                    "position": {"x": 3, "y": 2, "z": 0},
+                    "score": 0.7,
+                    "detection_count": 2,
+                },  # \u6545\u610f\u7ed9 chair \u66f4\u4f4e\u7684\u68c0\u6d4b\u5206
+                {
+                    "id": 1,
+                    "label": "door",
+                    "position": {"x": 3, "y": 3, "z": 0},
+                    "score": 0.95,
+                    "detection_count": 8,
+                },  # door \u68c0\u6d4b\u5206\u8fdc\u9ad8\u4e8e chair
             ],
             "relations": [
                 {"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.0},
             ],
-            "regions": [], "summary": "test",
+            "regions": [],
+            "summary": "test",
         }
         sg = json.dumps(sg_data)
 
         result = self.resolver.fast_resolve("find chair near the door", sg)
         self.assertIsNotNone(result)
-        self.assertEqual(result.target_label, "chair",
+        self.assertEqual(
+            result.target_label,
+            "chair",
             f"Even with lower detection score, subject 'chair' should win over modifier 'door'. "
-            f"Got: {result.target_label}")
+            f"Got: {result.target_label}",
+        )
 
     def test_chinese_spatial_relation(self):
         """\u4e2d\u6587\u7a7a\u95f4\u6307\u4ee4: '\u627e\u95e8\u65c1\u8fb9\u7684\u6905\u5b50'\u3002"""
         sg_data = {
-            "timestamp": 0, "object_count": 3,
+            "timestamp": 0,
+            "object_count": 3,
             "objects": [
-                {"id": 0, "label": "\u6905\u5b50", "position": {"x": 3, "y": 2, "z": 0},
-                 "score": 0.8, "detection_count": 3},
-                {"id": 1, "label": "\u95e8", "position": {"x": 3, "y": 3, "z": 0},
-                 "score": 0.9, "detection_count": 5},
-                {"id": 2, "label": "\u684c\u5b50", "position": {"x": 8, "y": 8, "z": 0},
-                 "score": 0.85, "detection_count": 4},
+                {
+                    "id": 0,
+                    "label": "\u6905\u5b50",
+                    "position": {"x": 3, "y": 2, "z": 0},
+                    "score": 0.8,
+                    "detection_count": 3,
+                },
+                {"id": 1, "label": "\u95e8", "position": {"x": 3, "y": 3, "z": 0}, "score": 0.9, "detection_count": 5},
+                {
+                    "id": 2,
+                    "label": "\u684c\u5b50",
+                    "position": {"x": 8, "y": 8, "z": 0},
+                    "score": 0.85,
+                    "detection_count": 4,
+                },
             ],
             "relations": [
                 {"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.0},
             ],
-            "regions": [], "summary": "test",
+            "regions": [],
+            "summary": "test",
         }
         sg = json.dumps(sg_data, ensure_ascii=False)
 
         result = self.resolver.fast_resolve("\u627e\u95e8\u65c1\u8fb9\u7684\u6905\u5b50", sg)
         self.assertIsNotNone(result)
-        self.assertEqual(result.target_label, "\u6905\u5b50",
-            f"Chinese spatial instruction should select '\u6905\u5b50' not '\u95e8'. Got: {result.target_label}")
+        self.assertEqual(
+            result.target_label,
+            "\u6905\u5b50",
+            f"Chinese spatial instruction should select '\u6905\u5b50' not '\u95e8'. Got: {result.target_label}",
+        )
 
 
 class TestResponseTime(unittest.TestCase):
@@ -291,8 +350,7 @@ class TestResponseTime(unittest.TestCase):
         \u5b9e\u9645\u90e8\u7f72\u65f6\u52a0\u4e0a CLIP \u63a8\u7406\u4f1a\u663e\u8457\u589e\u52a0\u3002
         """
         # 50 \u7269\u4f53\u573a\u666f
-        sg = make_scene("chair", {"x": 10, "y": 10, "z": 0}, 0.9, 5,
-                        num_distractors=49, seed=42)
+        sg = make_scene("chair", {"x": 10, "y": 10, "z": 0}, 0.9, 5, num_distractors=49, seed=42)
 
         # \u9884\u70ed
         self.resolver.fast_resolve("go to chair", sg)
@@ -315,13 +373,11 @@ class TestResponseTime(unittest.TestCase):
         print("  NOTE: Real deployment with CLIP inference will add ~20-50ms on Jetson")
 
         # \u5b57\u7b26\u4e32\u5339\u914d\u5e94\u5728 <10ms
-        self.assertLess(avg, 10.0,
-            f"String-match Fast Path should be <10ms, got {avg:.2f}ms")
+        self.assertLess(avg, 10.0, f"String-match Fast Path should be <10ms, got {avg:.2f}ms")
 
     def test_large_scene_latency(self):
         """200 \u7269\u4f53\u573a\u666f\u7684\u5ef6\u8fdf\u3002"""
-        sg = make_scene("fire extinguisher", {"x": 50, "y": 50, "z": 0},
-                        0.88, 5, num_distractors=199, seed=99)
+        sg = make_scene("fire extinguisher", {"x": 50, "y": 50, "z": 0}, 0.88, 5, num_distractors=199, seed=99)
 
         times = []
         for _ in range(20):
@@ -334,8 +390,7 @@ class TestResponseTime(unittest.TestCase):
         print("\n=== Large Scene (200 objects) Latency ===")
         print(f"  Avg: {avg:.3f} ms")
 
-        self.assertLess(avg, 50.0,
-            f"Large scene should be <50ms, got {avg:.2f}ms")
+        self.assertLess(avg, 50.0, f"Large scene should be <50ms, got {avg:.2f}ms")
 
 
 class TestMultiSourceFusion(unittest.TestCase):
@@ -356,32 +411,38 @@ class TestMultiSourceFusion(unittest.TestCase):
         - red box: \u4e0d\u5339\u914d, \u68c0\u6d4b\u5206=0.95
         """
         sg_data = {
-            "timestamp": 0, "object_count": 5,
+            "timestamp": 0,
+            "object_count": 5,
             "objects": [
-                {"id": 0, "label": "fire extinguisher",
-                "position": {"x": 5, "y": 3, "z": 0},
-                 "score": 0.7, "detection_count": 3},
-                {"id": 1, "label": "red box",
-                "position": {"x": 6, "y": 4, "z": 0},
-                 "score": 0.95, "detection_count": 8},
-                {"id": 2, "label": "door",
-                 "position": {"x": 1, "y": 1, "z": 0},
-                 "score": 0.9, "detection_count": 5},
-                {"id": 3, "label": "chair",
-                 "position": {"x": 8, "y": 2, "z": 0},
-                 "score": 0.88, "detection_count": 4},
-                {"id": 4, "label": "sign",
-                 "position": {"x": 3, "y": 7, "z": 0},
-                 "score": 0.82, "detection_count": 3},
+                {
+                    "id": 0,
+                    "label": "fire extinguisher",
+                    "position": {"x": 5, "y": 3, "z": 0},
+                    "score": 0.7,
+                    "detection_count": 3,
+                },
+                {
+                    "id": 1,
+                    "label": "red box",
+                    "position": {"x": 6, "y": 4, "z": 0},
+                    "score": 0.95,
+                    "detection_count": 8,
+                },
+                {"id": 2, "label": "door", "position": {"x": 1, "y": 1, "z": 0}, "score": 0.9, "detection_count": 5},
+                {"id": 3, "label": "chair", "position": {"x": 8, "y": 2, "z": 0}, "score": 0.88, "detection_count": 4},
+                {"id": 4, "label": "sign", "position": {"x": 3, "y": 7, "z": 0}, "score": 0.82, "detection_count": 3},
             ],
-            "relations": [], "regions": [], "summary": "test",
+            "relations": [],
+            "regions": [],
+            "summary": "test",
         }
         sg = json.dumps(sg_data)
 
         result = self.resolver.fast_resolve("find fire extinguisher", sg)
         self.assertIsNotNone(result)
-        self.assertEqual(result.target_label, "fire extinguisher",
-            "Label match should beat high detector score without CLIP")
+        self.assertEqual(
+            result.target_label, "fire extinguisher", "Label match should beat high detector score without CLIP"
+        )
 
     def test_no_clip_weight_redistribution(self):
         """
@@ -394,39 +455,39 @@ class TestMultiSourceFusion(unittest.TestCase):
         # label=1.0, det=0.9*1.0=0.9, spatial=0.0
         # fused = 0.75*1.0 + 0.15*0.9 + 0.10*0.0 = 0.885
         sg_data = {
-            "timestamp": 0, "object_count": 1,
+            "timestamp": 0,
+            "object_count": 1,
             "objects": [
-                {"id": 0, "label": "chair",
-                 "position": {"x": 3, "y": 2, "z": 0},
-                 "score": 0.9, "detection_count": 5},
+                {"id": 0, "label": "chair", "position": {"x": 3, "y": 2, "z": 0}, "score": 0.9, "detection_count": 5},
             ],
-            "relations": [], "regions": [], "summary": "test",
+            "relations": [],
+            "regions": [],
+            "summary": "test",
         }
         sg = json.dumps(sg_data)
 
         result = self.resolver.fast_resolve("go to chair", sg)
         self.assertIsNotNone(result)
-        self.assertAlmostEqual(result.confidence, 0.885, places=2,
-            msg=f"No-CLIP fused score should be ~0.885, got {result.confidence:.3f}")
+        self.assertAlmostEqual(
+            result.confidence, 0.885, places=2, msg=f"No-CLIP fused score should be ~0.885, got {result.confidence:.3f}"
+        )
 
     def test_spatial_relation_boost(self):
         """
         \u7a7a\u95f4\u5173\u7cfb\u5e94\u589e\u52a0\u4e3b\u8bed\u5f97\u5206, \u800c\u975e\u4fee\u9970\u8bed\u3002
         """
         sg_data = {
-            "timestamp": 0, "object_count": 2,
+            "timestamp": 0,
+            "object_count": 2,
             "objects": [
-                {"id": 0, "label": "chair",
-                 "position": {"x": 3, "y": 2, "z": 0},
-                 "score": 0.8, "detection_count": 3},
-                {"id": 1, "label": "door",
-                 "position": {"x": 3, "y": 3, "z": 0},
-                 "score": 0.9, "detection_count": 5},
+                {"id": 0, "label": "chair", "position": {"x": 3, "y": 2, "z": 0}, "score": 0.8, "detection_count": 3},
+                {"id": 1, "label": "door", "position": {"x": 3, "y": 3, "z": 0}, "score": 0.9, "detection_count": 5},
             ],
             "relations": [
                 {"subject_id": 0, "relation": "near", "object_id": 1, "distance": 1.0},
             ],
-            "regions": [], "summary": "test",
+            "regions": [],
+            "summary": "test",
         }
         sg = json.dumps(sg_data)
 
@@ -456,26 +517,37 @@ class TestESCATokenReduction(unittest.TestCase):
     def test_200_objects_reduction(self):
         """\u5927\u573a\u666f\u8fc7\u6ee4\u5e94\u4fdd\u7559\u76ee\u6807\u3002"""
         objects = [
-            {"id": i, "label": f"random_obj_{i}",
-             "position": {"x": i % 20, "y": i // 20, "z": 0},
-             "score": 0.5, "detection_count": 2}
+            {
+                "id": i,
+                "label": f"random_obj_{i}",
+                "position": {"x": i % 20, "y": i // 20, "z": 0},
+                "score": 0.5,
+                "detection_count": 2,
+            }
             for i in range(200)
         ]
-        objects.append({
-            "id": 999, "label": "fire extinguisher",
-            "position": {"x": 50, "y": 50, "z": 0},
-            "score": 0.9, "detection_count": 5,
-        })
-
-        sg = json.dumps({
-            "timestamp": 0, "object_count": len(objects),
-            "objects": objects, "relations": [], "regions": [],
-            "summary": "large scene",
-        })
-
-        filtered_sg = self.resolver._selective_grounding(
-            "find the fire extinguisher", sg, max_objects=15
+        objects.append(
+            {
+                "id": 999,
+                "label": "fire extinguisher",
+                "position": {"x": 50, "y": 50, "z": 0},
+                "score": 0.9,
+                "detection_count": 5,
+            }
         )
+
+        sg = json.dumps(
+            {
+                "timestamp": 0,
+                "object_count": len(objects),
+                "objects": objects,
+                "relations": [],
+                "regions": [],
+                "summary": "large scene",
+            }
+        )
+
+        filtered_sg = self.resolver._selective_grounding("find the fire extinguisher", sg, max_objects=15)
         filtered = json.loads(filtered_sg)
 
         original = len(objects)
@@ -485,13 +557,12 @@ class TestESCATokenReduction(unittest.TestCase):
         print("\n=== ESCA Token Reduction ===")
         print(f"  Original: {original} objects")
         print(f"  Filtered: {kept} objects")
-        print(f"  Reduction: {reduction*100:.1f}%")
+        print(f"  Reduction: {reduction * 100:.1f}%")
         print("  NOTE: Our ESCA is keyword-based, not CLIP-feature-based like the paper")
 
         # \u76ee\u6807\u4fdd\u7559
         labels = [o["label"] for o in filtered["objects"]]
-        self.assertIn("fire extinguisher", labels,
-            "Target must be retained after filtering")
+        self.assertIn("fire extinguisher", labels, "Target must be retained after filtering")
 
         # \u51cf\u5c11\u7387 >= 90%
         self.assertGreaterEqual(reduction, 0.90)
@@ -546,30 +617,42 @@ class TestHonestPerformanceSummary(unittest.TestCase):
         print("=" * 70)
 
         rows = [
-            ("Fast Path \u547d\u4e2d\u7387",
-             "\u226570%",
-             "~70-80% (\u7b80\u5355\u6307\u4ee4)",
-             "\u65e0CLIP, \u4ec5\u5b57\u7b26\u4e32\u5339\u914d. \u8bba\u6587\u6709\u771f\u5b9eCLIP\u7279\u5f81."),
-            ("Fast Path \u54cd\u5e94\u65f6\u95f4",
-             "<200ms",
-             "<1ms (\u5b57\u7b26\u4e32\u5339\u914d)",
-             "\u4e0d\u53ef\u6bd4: \u8bba\u6587\u542b CLIP \u63a8\u7406(~50ms). \u6211\u4eec\u7684<1ms\u4ec5\u56e0\u65e0CLIP."),
-            ("ESCA Token \u51cf\u5c11\u7387",
-             "\u226590%",
-             "~92%",
-             "\u7b80\u5316\u7248(keyword+1hop). \u8bba\u6587\u7528CLIP\u7279\u5f81\u7b5b\u9009."),
-            ("\u591a\u6e90\u878d\u5408\u51c6\u786e\u7387",
-             "+15-20%",
-             "\u65e0\u6cd5\u91cf\u5316",
-             "\u65e0\u57fa\u7ebf\u5bf9\u6bd4. \u9700\u8981\u771f\u5b9e\u6570\u636e\u96c6\u6d4b\u8bd5."),
-            ("\u7a7a\u95f4\u5173\u7cfb\u63a8\u7406",
-             "N/A",
-             "\u5df2\u4fee\u590d",
-             "\u4e3b\u8bed/\u4fee\u9970\u8bed\u533a\u5206\u5df2\u5b9e\u73b0, \u4f46\u4ec5\u652f\u6301\u7b80\u5355\u4ecb\u8bcd\u6a21\u5f0f."),
-            ("\u4e2d\u6587\u5206\u8bcd",
-             "+30-50%",
-             "\u6709\u6548",
-             "jieba\u5206\u8bcd\u5df2\u96c6\u6210, \u4f46\u65e0\u91cf\u5316\u57fa\u7ebf\u5bf9\u6bd4."),
+            (
+                "Fast Path \u547d\u4e2d\u7387",
+                "\u226570%",
+                "~70-80% (\u7b80\u5355\u6307\u4ee4)",
+                "\u65e0CLIP, \u4ec5\u5b57\u7b26\u4e32\u5339\u914d. \u8bba\u6587\u6709\u771f\u5b9eCLIP\u7279\u5f81.",
+            ),
+            (
+                "Fast Path \u54cd\u5e94\u65f6\u95f4",
+                "<200ms",
+                "<1ms (\u5b57\u7b26\u4e32\u5339\u914d)",
+                "\u4e0d\u53ef\u6bd4: \u8bba\u6587\u542b CLIP \u63a8\u7406(~50ms). \u6211\u4eec\u7684<1ms\u4ec5\u56e0\u65e0CLIP.",
+            ),
+            (
+                "ESCA Token \u51cf\u5c11\u7387",
+                "\u226590%",
+                "~92%",
+                "\u7b80\u5316\u7248(keyword+1hop). \u8bba\u6587\u7528CLIP\u7279\u5f81\u7b5b\u9009.",
+            ),
+            (
+                "\u591a\u6e90\u878d\u5408\u51c6\u786e\u7387",
+                "+15-20%",
+                "\u65e0\u6cd5\u91cf\u5316",
+                "\u65e0\u57fa\u7ebf\u5bf9\u6bd4. \u9700\u8981\u771f\u5b9e\u6570\u636e\u96c6\u6d4b\u8bd5.",
+            ),
+            (
+                "\u7a7a\u95f4\u5173\u7cfb\u63a8\u7406",
+                "N/A",
+                "\u5df2\u4fee\u590d",
+                "\u4e3b\u8bed/\u4fee\u9970\u8bed\u533a\u5206\u5df2\u5b9e\u73b0, \u4f46\u4ec5\u652f\u6301\u7b80\u5355\u4ecb\u8bcd\u6a21\u5f0f.",
+            ),
+            (
+                "\u4e2d\u6587\u5206\u8bcd",
+                "+30-50%",
+                "\u6709\u6548",
+                "jieba\u5206\u8bcd\u5df2\u96c6\u6210, \u4f46\u65e0\u91cf\u5316\u57fa\u7ebf\u5bf9\u6bd4.",
+            ),
         ]
 
         for metric, paper_target, our_result, honest_note in rows:
@@ -581,8 +664,12 @@ class TestHonestPerformanceSummary(unittest.TestCase):
         print("\n" + "=" * 70)
         print("  \u5173\u952e\u5dee\u8ddd")
         print("=" * 70)
-        print("  1. \u65e0\u771f\u5b9e CLIP \u63a8\u7406 \u2014 \u6240\u6709 CLIP \u76f8\u5173\u6307\u6807\u4e0d\u53ef\u76f4\u63a5\u5bf9\u6bd4\u8bba\u6587")
-        print("  2. \u65e0\u771f\u5b9e\u573a\u666f\u6570\u636e\u96c6 (R2R, REVERIE, MP3D) \u2014 \u65e0\u6cd5\u8ba1\u7b97 SR/SPL")
+        print(
+            "  1. \u65e0\u771f\u5b9e CLIP \u63a8\u7406 \u2014 \u6240\u6709 CLIP \u76f8\u5173\u6307\u6807\u4e0d\u53ef\u76f4\u63a5\u5bf9\u6bd4\u8bba\u6587"
+        )
+        print(
+            "  2. \u65e0\u771f\u5b9e\u573a\u666f\u6570\u636e\u96c6 (R2R, REVERIE, MP3D) \u2014 \u65e0\u6cd5\u8ba1\u7b97 SR/SPL"
+        )
         print("  3. Slow Path \u672a\u6d4b\u8bd5 (\u65e0 LLM API key)")
         print("  4. \u672a\u8fdb\u884c\u7aef\u5230\u7aef ROS2 \u96c6\u6210\u6d4b\u8bd5")
         print("  5. \u672a\u5728\u771f\u5b9e\u673a\u5668\u4eba\u4e0a\u6d4b\u8bd5 (Jetson + \u56db\u8db3)")

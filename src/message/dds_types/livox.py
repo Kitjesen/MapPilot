@@ -1,9 +1,8 @@
 """Native LingTu DDS Livox frame type and lossless conversions."""
 
-from dataclasses import dataclass
+from __future__ import annotations
 
-from message.livox_frame import POINT_DTYPE, LivoxPointFrame
-from runtime.msgs.numpy_compat import np
+from dataclasses import dataclass
 
 from ._base import IdlStruct, types
 from .common import Header, Time
@@ -41,6 +40,9 @@ def _make_time(timestamp_ns: int) -> Time:
 
 
 def livox_frame_to_msg(frame) -> LivoxFrame:
+    from message.livox_frame import POINT_DTYPE
+    from runtime.msgs.numpy_compat import np
+
     if isinstance(frame, LivoxFrame):
         return frame
     if hasattr(frame, "timebase") and hasattr(frame, "points"):
@@ -73,7 +75,10 @@ def livox_frame_to_msg(frame) -> LivoxFrame:
     )
 
 
-def livox_msg_to_frame(msg) -> LivoxPointFrame | None:
+def livox_msg_to_frame(msg):
+    from message.livox_frame import POINT_DTYPE, LivoxPointFrame
+    from runtime.msgs.numpy_compat import np
+
     pts = msg.points
     if not pts:
         return None

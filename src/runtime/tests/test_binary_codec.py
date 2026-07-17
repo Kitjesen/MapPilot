@@ -12,6 +12,7 @@ from runtime.utils.binary_codec import (
     HEADER_SIZE,
     MAGIC,
     decode_pointcloud,
+    decode_pointcloud_frame,
     encode_pointcloud,
 )
 
@@ -24,8 +25,8 @@ def _rand_cloud(n: int, seed: int = 0) -> np.ndarray:
 def test_header_layout_is_stable():
     buf = encode_pointcloud(_rand_cloud(128))
     assert buf[:4] == MAGIC
-    assert buf[4] == 1                 # version
-    assert buf[5] == 0                 # flags (no color)
+    assert buf[4] == 1  # version
+    assert buf[5] == 0  # flags (no color)
     # 28 bytes header + 128 * 6 bytes payload
     assert len(buf) == HEADER_SIZE + 128 * 6
 
@@ -58,6 +59,45 @@ def test_empty_cloud_yields_header_only():
     assert decoded.shape == (0, 3)
 
 
+def test_v2_cloud_frame_preserves_viewer_frame_and_epoch_metadata():
+    pts = _rand_cloud(8)
+    buf = encode_pointcloud(
+        pts,
+        frame_id="map",
+        epoch=7,
+        stamp_s=12.5,
+        sequence=42,
+        stream_kind="scan",
+    )
+
+    decoded = decode_pointcloud_frame(buf)
+
+    assert buf[4] == 2
+    assert decoded.frame_id == "map"
+    assert decoded.epoch == 7
+    assert decoded.stamp_s == pytest.approx(12.5)
+    assert decoded.sequence == 42
+    assert decoded.stream_kind == "scan"
+    assert decoded.colors is None
+    assert np.max(np.abs(decoded.points - pts)) < 0.005
+
+
+def test_long_outdoor_extent_does_not_saturate_int16_coordinates():
+    pts = np.asarray([[0.0, 0.0, 0.0], [200.0, 0.0, 0.0]], dtype=np.float32)
+
+    decoded, _ = decode_pointcloud(encode_pointcloud(pts, scale=0.005))
+
+    assert np.max(np.abs(decoded - pts)) < 0.005
+
+
+def test_very_large_extent_adapts_wire_scale_instead_of_clipping():
+    pts = np.asarray([[-500.0, 0.0, 0.0], [500.0, 0.0, 0.0]], dtype=np.float32)
+
+    decoded, _ = decode_pointcloud(encode_pointcloud(pts, scale=0.005))
+
+    assert np.max(np.abs(decoded - pts)) < 0.02
+
+
 def test_binary_is_dramatically_smaller_than_json():
     pts = _rand_cloud(60_000)
     binary = encode_pointcloud(pts)
@@ -65,9 +105,7 @@ def test_binary_is_dramatically_smaller_than_json():
         {"type": "map_cloud", "points": pts.flatten().tolist()},
     ).encode()
     # Binary should be at least 3x smaller than JSON for a 60k cloud.
-    assert len(binary) * 3 < len(json_bytes), (
-        f"binary={len(binary)} json={len(json_bytes)}"
-    )
+    assert len(binary) * 3 < len(json_bytes), f"binary={len(binary)} json={len(json_bytes)}"
 
 
 def test_bad_magic_raises():

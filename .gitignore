@@ -64,9 +64,33 @@ src/nav/core/build_nb*/
 src/localization/fastlio2/portable/build/
 src/nav/kernel/build_py/
 src/nav/kernel/build_nb*/
+src/maps/build*/
+!src/maps/cpp/build/
+!src/maps/cpp/build/**
+!src/maps/include/lingtu/maps/build/
+!src/maps/include/lingtu/maps/build/**
 src/localization/slam/cpp/build*/
 src/nav/services/plan/**/build/
 src/nav/services/plan/**/CMakeFiles/
+/src/nav/inspection/build_review/
+
+# Accidental root-level CMake/configure output and local diagnostics.
+/ -DCMAKE_BUILD_TYPE=Release/
+/CMakeFiles/
+/C*Users99563/
+/qos_smoke.txt
+/qos_test_out.txt
+/.codex/visualizations/
+/.codex/
+/.codex_tmp/
+
+# Third-party calibration sample datasets and rendered paper assets. Keep the
+# calibration source/build files, but do not vendor hundreds of MiB of media.
+/calibration/camera_lidar/mlcc/scene*/
+/calibration/camera_lidar/mlcc/figure/
+/calibration/camera_lidar/mlcc/paper/
+/calibration/camera_lidar/livox_camera_calib/pics/
+/calibration/camera_lidar/livox_camera_lidar_calibration/doc_resources/
 src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
 
 # C++ build artifacts in global_planning
@@ -178,6 +202,11 @@ sim/datasets/legkilo_all/
 # 鈹€鈹€ Research reference repos (clone manually, see research/README.md) 鈹€鈹€
 research/semantic_map_refs/
 !research/README.md
+
+# Local outputs from the vehicle parking research package. Keep the package
+# source, configuration, and tests; regenerate these result bundles locally.
+/research/vehicle_parking_detection_package/sample_results/
+/research/vehicle_parking_detection_package/validation/
 
 # 鈹€鈹€ MuJoCo temp XML 鈹€鈹€
 sim/robots/*/tmp*.xml

@@ -17,7 +17,6 @@ import sys
 import time
 from pathlib import Path
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -56,7 +55,7 @@ def _log_dependency_status(detector: str, encoder: str) -> None:
 
     checks = [
         ("runtime_utils", "runtime.utils.sanitize"),
-        ("decision", "decision.llm_client"),
+        ("decision", "decision.llm.client"),
         ("tracker", "perception.tracking.instance_tracker"),
     ]
     if detector in detector_modules:
@@ -91,18 +90,21 @@ def main() -> int:
     from runtime.blueprints.profile_builder import build_system_for_profile
     from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
-    system = build_system_for_profile("sim", dict(
-        robot="sim_mujoco",
-        world=args.world,
-        slam_profile=args.slam_profile,
-        detector=args.detector,
-        encoder=args.encoder,
-        llm=args.llm,
-        enable_native=False,
-        enable_semantic=True,
-        enable_gateway=args.enable_gateway,
-        render=args.render,
-    ))
+    system = build_system_for_profile(
+        "sim",
+        dict(
+            robot="sim_mujoco",
+            world=args.world,
+            slam_profile=args.slam_profile,
+            detector=args.detector,
+            encoder=args.encoder,
+            llm=args.llm,
+            enable_native=False,
+            enable_semantic=True,
+            enable_gateway=args.enable_gateway,
+            render=args.render,
+        ),
+    )
 
     driver = system.get_module("MujocoDriverModule")
     nav = system.get_module("nav.mission")
@@ -118,15 +120,11 @@ def main() -> int:
     }
 
     driver.odometry._add_callback(lambda _: stats.__setitem__("odom", stats["odom"] + 1))
-    perception.scene_graph._add_callback(
-        lambda _: stats.__setitem__("scene_graph", stats["scene_graph"] + 1)
-    )
+    perception.scene_graph._add_callback(lambda _: stats.__setitem__("scene_graph", stats["scene_graph"] + 1))
     perception.detections_3d._add_callback(
         lambda dets: stats.__setitem__("detections", stats["detections"] + len(dets))
     )
-    semantic.goal_pose._add_callback(
-        lambda _: stats.__setitem__("semantic_goals", stats["semantic_goals"] + 1)
-    )
+    semantic.goal_pose._add_callback(lambda _: stats.__setitem__("semantic_goals", stats["semantic_goals"] + 1))
     nav.waypoint._add_callback(lambda _: stats.__setitem__("waypoints", stats["waypoints"] + 1))
 
     logger.info("Starting semantic full stack: world=%s render=%s", args.world, args.render)

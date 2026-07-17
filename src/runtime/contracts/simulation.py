@@ -41,11 +41,7 @@ def _mapping_source(name: str) -> str:
 
 
 def _runtime_topics_for(name: str, *extra: str) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            (*_algorithm_entry_outputs(name), *_algorithm_context_outputs(name), *extra)
-        )
-    )
+    return tuple(dict.fromkeys((*_algorithm_entry_outputs(name), *_algorithm_context_outputs(name), *extra)))
 
 
 @dataclass(frozen=True)
@@ -199,14 +195,8 @@ SIMULATION_RUNTIME_CONTRACTS = {
         provider="cmu_unity",
         profile=None,
         world=None,
-        launch_script=(
-            "external:autonomy_stack_mecanum_wheel_platform/"
-            "system_simulation_with_exploration_planner.sh"
-        ),
-        rviz_config=(
-            "external:autonomy_stack_mecanum_wheel_platform/rviz/"
-            "vehicle_simulator.rviz"
-        ),
+        launch_script=("external:autonomy_stack_mecanum_wheel_platform/system_simulation_with_exploration_planner.sh"),
+        rviz_config=("external:autonomy_stack_mecanum_wheel_platform/rviz/vehicle_simulator.rviz"),
         adapter_script=None,
         data_source_contract="cmu_unity_external",
         command_topic="/cmd_vel",
@@ -399,57 +389,6 @@ SIMULATION_RUNTIME_CONTRACTS = {
             "real_robot_readiness",
         ),
     ),
-    "rosbag_fastlio2_replay": SimulationRuntimeContract(
-        name="rosbag_fastlio2_replay",
-        provider="replay",
-        profile=None,
-        world=None,
-        launch_script="sim/scripts/fastlio2_rosbag_replay_gate.py",
-        rviz_config=None,
-        adapter_script="sim/scripts/rosbag_slam_bridge_replay.py",
-        data_source_contract="rosbag_fastlio2_replay",
-        command_topic="no_actuation_replay_sink",
-        canonical_topics=CANONICAL_NAV_TOPICS,
-        native_topics=_source_outputs("rosbag_fastlio2_replay"),
-        lingtu_owns=(
-            "recorded_input_adapter",
-            "navigation_graph_replay",
-            "local_planning",
-            "path_following",
-            "cmd_vel_mux_to_no_actuation_sink",
-        ),
-        simulator_owns=(
-            "recorded_sensor_log",
-            "recorded_slam_outputs",
-            "no_actuation",
-        ),
-        required_runtime_topics=_runtime_topics_for(
-            "rosbag_fastlio2_replay",
-            TOPICS.global_path,
-            TOPICS.local_path,
-            TOPICS.cmd_vel,
-        ),
-        required_path_topics=(TOPICS.global_path, TOPICS.local_path),
-        required_slam_topics=(
-            *_source_outputs("rosbag_fastlio2_replay"),
-            "/Odometry",
-            "/cloud_map",
-        ),
-        simulation_only=True,
-        contract_role="no_actuation_replay_validation",
-        runtime_stage="recorded_sensor_or_slam_replay",
-        map_dependency="replayed_same_source_map",
-        world_sensor_owner="recorded_log",
-        slam_source=_slam_source("rosbag_fastlio2_replay"),
-        localization_source=_localization_source("rosbag_fastlio2_replay"),
-        mapping_source=_mapping_source("rosbag_fastlio2_replay"),
-        slam_validated=True,
-        requires_live_slam=False,
-        requires_saved_map=False,
-        cmd_vel_owner="lingtu_cmd_vel_mux_to_no_actuation_sink",
-        validated_claims=("same_graph_no_actuation_replay",),
-        forbidden_claims=("real_robot_motion", "hardware_command_output"),
-    ),
 }
 
 
@@ -467,6 +406,5 @@ def runtime_contracts_for_profile(profile: str) -> tuple[SimulationRuntimeContra
     return tuple(
         contract
         for contract in SIMULATION_RUNTIME_CONTRACTS.values()
-        if contract.profile == profile
-        or (declared_contract and contract.name == declared_contract)
+        if contract.profile == profile or (declared_contract and contract.name == declared_contract)
     )

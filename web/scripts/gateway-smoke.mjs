@@ -339,12 +339,12 @@ try {
     'runtime_switch_plan should expose command_sink change',
   )
   ensure(
-    switchPlan.body?.from?.command_sink !== 'hardware_driver_after_cmd_vel_mux',
+    switchPlan.body?.from?.command_sink !== 'driver',
     failures,
     'runtime_switch_plan sim side should not use hardware command sink',
   )
   ensure(
-    switchPlan.body?.to?.command_sink === 'hardware_driver_after_cmd_vel_mux',
+    switchPlan.body?.to?.command_sink === 'driver',
     failures,
     'runtime_switch_plan real side should use hardware command sink',
   )

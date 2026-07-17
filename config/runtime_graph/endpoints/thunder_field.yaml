@@ -9,22 +9,55 @@ profile_defaults:
   runtime_endpoint: thunder_field
   localization_adapter: cpp_slam_status
   command_output_mode: endpoint_only
+  hardware_control_boundary: driver
 native_services:
+  - lingtu-livox-dds.service
   - lingtu-slam-dds.service
+  - lingtu-traversability-dds.service
   - lingtu-nav-dds.service
+  - lingtu-driver.service
+mode_specific_services:
+  tare_explore:
+    - lingtu-explore-dds.service
+inspection_command_boundary:
+  request: /nav/inspection/command
+  ack: /nav/inspection/ack
+  status: /nav/inspection/status
+  client_completion: business_ack_required
+inspection_evidence_boundary:
+  request: /nav/inspection/evidence/request
+  result: /nav/inspection/evidence/result
+  client_completion: matching_persisted_result_required
 source_topics:
+  - /tf
+  - /tf_static
   - /lidar/raw_frame
   - /imu/raw
+  - /nav/command/request
+  - /nav/inspection/command
+  - /nav/inspection/evidence/result
+  - /nav/traversability
 exposed_topics:
   - /slam/odometry
   - /slam/registered_cloud
   - /slam/map_cloud
+  - /slam/saved_map_cloud
   - /slam/localization_health
   - /slam/localization_quality
+  - /nav/global_path
+  - /nav/local_path
+  - /nav/way_point
   - /nav/cmd_vel
+  - /nav/command/ack
+  - /nav/inspection/ack
+  - /nav/inspection/status
+  - /nav/inspection/evidence/request
+compatibility_topics:
+  - /nav/teleop_cmd_vel
+  - /nav/goal_pose
+  - /nav/cancel
 forbidden_modules:
   - SimEndpointDriverModule
-  - SlamBridgeModule
 forbidden_claims:
   - module_sim_real_equivalence
   - ros2_bridge_required

@@ -25,7 +25,6 @@ from typing import Any
 
 import numpy as np
 
-
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -33,10 +32,6 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from runtime.msgs.nav import Odometry, Path as NavPath
-from nav.services.plan.global_planner.service import GlobalPlanner
-from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
 from sim.engine.scenarios.multifloor_assets import (
     DEFAULT_GOAL,
     DEFAULT_START,
@@ -44,6 +39,11 @@ from sim.engine.scenarios.multifloor_assets import (
     sample_multifloor_map_points,
 )
 
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import inspect_pct_runtime
+from nav.services.plan.global_planner.service import GlobalPlanner
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import Path as NavPath
 
 VALIDATION_LEVEL = "kinematic_module_ports"
 VALIDATION_SCOPE = {
@@ -161,16 +161,10 @@ def _algorithm_backend_evidence(
     native_backend: str | None = None,
 ) -> dict[str, Any]:
     status = getattr(module, "_backend_status", None)
-    actual = str(
-        getattr(status, "effective", "")
-        or getattr(module, "_backend", "")
-        or requested
-    )
+    actual = str(getattr(status, "effective", "") or getattr(module, "_backend", "") or requested)
     configured = str(getattr(status, "configured", "") or requested)
     degraded = bool(getattr(status, "degraded", False) or actual != requested)
-    degraded_reason = str(
-        getattr(status, "degraded_reason", "") or getattr(status, "reason", "") or ""
-    )
+    degraded_reason = str(getattr(status, "degraded_reason", "") or getattr(status, "reason", "") or "")
     if degraded and not degraded_reason and actual != requested:
         degraded_reason = f"effective backend changed from {requested} to {actual}"
     evidence: dict[str, Any] = {
@@ -341,7 +335,9 @@ def _run_lidar_localization_replay(
             }
         )
 
-    final_state = "LOCKED" if frames[-1]["localization_state"] in {"LOCKED", "RECOVERED"} else frames[-1]["localization_state"]
+    final_state = (
+        "LOCKED" if frames[-1]["localization_state"] in {"LOCKED", "RECOVERED"} else frames[-1]["localization_state"]
+    )
     expected_states = [frame["localization_state"] for frame in frames]
     ok = (
         ok
@@ -565,8 +561,7 @@ def validate_transition_against_metadata(
     upper = np.asarray(transition["upper_xy"], dtype=np.float64)
     width = float(transition.get("width_m", 0.0))
     distances = [
-        _point_segment_distance(np.asarray(point[:2], dtype=np.float64), lower, upper)
-        for point in transition_path
+        _point_segment_distance(np.asarray(point[:2], dtype=np.float64), lower, upper) for point in transition_path
     ]
     zs = [float(point[2]) if len(point) > 2 else 0.0 for point in transition_path]
     max_distance = max(distances) if distances else float("inf")
@@ -661,11 +656,7 @@ def run_global_planner(
         arr = np.asarray(pts, dtype=np.float64)
         distance = float(np.sum(np.linalg.norm(np.diff(arr, axis=0), axis=1))) if len(arr) > 1 else 0.0
         backend_reached_goal_raw = plan_report.get("reached_goal", True)
-        backend_reached_goal = (
-            bool(backend_reached_goal_raw)
-            if backend_reached_goal_raw is not None
-            else True
-        )
+        backend_reached_goal = bool(backend_reached_goal_raw) if backend_reached_goal_raw is not None else True
         safe_goal = plan_report.get("safe_goal") or (pts[-1] if pts else None)
         safe_goal_distance_m: float | None = None
         if safe_goal is not None:
@@ -676,9 +667,7 @@ def run_global_planner(
             except Exception:
                 safe_goal_distance_m = None
         projection_limit_m = max(0.35, float(safe_goal_tolerance))
-        goal_projection_within_tolerance = (
-            safe_goal_distance_m is None or safe_goal_distance_m <= projection_limit_m
-        )
+        goal_projection_within_tolerance = safe_goal_distance_m is None or safe_goal_distance_m <= projection_limit_m
         reached_goal = bool(backend_reached_goal and goal_projection_within_tolerance)
         feasible = bool(pts) and reached_goal
         selected_planner = _planner_value(plan_report.get("selected_planner"), planner)
@@ -709,9 +698,7 @@ def run_global_planner(
             "fallback_reason": str(plan_report.get("fallback_reason") or ""),
             "plan_safety_policy": str(plan_report.get("policy") or ""),
             "rejected_plans": (
-                plan_report.get("rejected_plans")
-                if isinstance(plan_report.get("rejected_plans"), list)
-                else []
+                plan_report.get("rejected_plans") if isinstance(plan_report.get("rejected_plans"), list) else []
             ),
             "status": status,
             "blocked": status == "blocked",
@@ -723,23 +710,15 @@ def run_global_planner(
             "backend_requested_class": backend.__class__.__name__ if backend is not None else None,
             "native_runtime": native_runtime,
             "native_backend_used": (
-                selected_planner == "pct"
-                and bool(getattr(selected_backend, "available", False))
-                and feasible
+                selected_planner == "pct" and bool(getattr(selected_backend, "available", False)) and feasible
             ),
             "tomogram": str(tomogram),
             "tomogram_sha256": _tomogram_sha256(tomogram),
-            "planner_scope": (
-                "native_pct_single_route"
-                if planner == "pct"
-                else "ground_floor_dev_sim_astar"
-            ),
+            "planner_scope": ("native_pct_single_route" if planner == "pct" else "ground_floor_dev_sim_astar"),
             "safe_goal_tolerance": float(safe_goal_tolerance),
             "safe_goal": safe_goal,
             "safe_goal_distance_m": (
-                round(float(safe_goal_distance_m), 4)
-                if safe_goal_distance_m is not None
-                else None
+                round(float(safe_goal_distance_m), 4) if safe_goal_distance_m is not None else None
             ),
             "safe_goal_projection_limit_m": round(float(projection_limit_m), 4),
             "goal_projection_within_tolerance": goal_projection_within_tolerance,
@@ -779,9 +758,7 @@ def run_global_planner(
             "fallback_reason": str(plan_report.get("fallback_reason") or ""),
             "plan_safety_policy": str(plan_report.get("policy") or ""),
             "rejected_plans": (
-                plan_report.get("rejected_plans")
-                if isinstance(plan_report.get("rejected_plans"), list)
-                else []
+                plan_report.get("rejected_plans") if isinstance(plan_report.get("rejected_plans"), list) else []
             ),
             "status": status,
             "blocked": status == "blocked",
@@ -795,11 +772,7 @@ def run_global_planner(
             "native_backend_used": False,
             "tomogram": str(tomogram),
             "tomogram_sha256": _tomogram_sha256(tomogram) if Path(tomogram).exists() else "",
-            "planner_scope": (
-                "native_pct_single_route"
-                if planner == "pct"
-                else "ground_floor_dev_sim_astar"
-            ),
+            "planner_scope": ("native_pct_single_route" if planner == "pct" else "ground_floor_dev_sim_astar"),
             "safe_goal_tolerance": float(safe_goal_tolerance),
             "safe_goal": None,
             "safe_goal_distance_m": None,
@@ -843,10 +816,7 @@ def _stair_transition_path(
 ) -> list[list[float]]:
     lower_arr = np.asarray(lower, dtype=np.float64)
     upper_arr = np.asarray(upper, dtype=np.float64)
-    return [
-        [float(v) for v in (lower_arr + (upper_arr - lower_arr) * alpha)]
-        for alpha in np.linspace(0.0, 1.0, 7)
-    ]
+    return [[float(v) for v in (lower_arr + (upper_arr - lower_arr) * alpha)] for alpha in np.linspace(0.0, 1.0, 7)]
 
 
 def run_route_planner(
@@ -1062,10 +1032,13 @@ def _thin_nav_path(path: NavPath, *, min_xy_step: float = 0.12) -> NavPath:
     if len(path.poses) <= 2:
         return path
     kept = [path.poses[0]]
-    last_xy = np.asarray([
-        path.poses[0].pose.position.x,
-        path.poses[0].pose.position.y,
-    ], dtype=float)
+    last_xy = np.asarray(
+        [
+            path.poses[0].pose.position.x,
+            path.poses[0].pose.position.y,
+        ],
+        dtype=float,
+    )
     for pose in path.poses[1:-1]:
         xy = np.asarray([pose.pose.position.x, pose.pose.position.y], dtype=float)
         if float(np.linalg.norm(xy - last_xy)) >= min_xy_step:
@@ -1233,7 +1206,9 @@ def _split_bridge_motion_segments(
                     float(point[1]),
                     prev_z,
                 ]
-                if not np.allclose(np.asarray(current[-1][:2], dtype=float), np.asarray(projected_endpoint[:2], dtype=float)):
+                if not np.allclose(
+                    np.asarray(current[-1][:2], dtype=float), np.asarray(projected_endpoint[:2], dtype=float)
+                ):
                     current.append(projected_endpoint)
                 elif len(current[-1]) > 2:
                     current[-1][2] = prev_z
@@ -1306,10 +1281,7 @@ def _sample_xyz_trace(points: list[list[float]], max_points: int = 240) -> list[
     else:
         indices = np.linspace(0, len(points) - 1, limit, dtype=int)
         selected = [points[int(index)] for index in np.unique(indices)]
-    return [
-        [round(float(point[0]), 4), round(float(point[1]), 4), round(float(point[2]), 4)]
-        for point in selected
-    ]
+    return [[round(float(point[0]), 4), round(float(point[1]), 4), round(float(point[2]), 4)] for point in selected]
 
 
 def _run_mujoco_bridge_segment(
@@ -1320,11 +1292,11 @@ def _run_mujoco_bridge_segment(
     max_speed: float,
     local_planner_backend: str,
 ) -> dict[str, Any]:
-    from nav.services.plan.local_planner.service import LocalPlanner
-    from nav.local.path_follower import PathFollower
     from drivers.sim.mujoco.driver import MujocoDriverModule
+    from nav.local.path_follower import PathFollower
+    from nav.services.plan.local_planner.service import LocalPlanner
     from nav.services.safety.velocity_mux import VelocityMux
-    from nav.mission.tracking.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
+    from nav.tracking.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
 
     start = segment[0]
     goal = segment[-1]
@@ -1367,11 +1339,13 @@ def _run_mujoco_bridge_segment(
 
     def _on_odom(odom: Odometry) -> None:
         nonlocal last_waypoint_idx, last_waypoint_publish, path_complete
-        odom_samples.append([
-            float(odom.pose.position.x),
-            float(odom.pose.position.y),
-            float(odom.pose.position.z),
-        ])
+        odom_samples.append(
+            [
+                float(odom.pose.position.x),
+                float(odom.pose.position.y),
+                float(odom.pose.position.z),
+            ]
+        )
         local_planner.odometry._deliver(odom)
         follower.odometry._deliver(odom)
         status = tracker.update(
@@ -1388,12 +1362,8 @@ def _run_mujoco_bridge_segment(
 
         waypoint = tracker.current_waypoint
         now = time.time()
-        should_publish_wp = (
-            waypoint is not None
-            and (
-                status.wp_index != last_waypoint_idx
-                or now - last_waypoint_publish >= 0.20
-            )
+        should_publish_wp = waypoint is not None and (
+            status.wp_index != last_waypoint_idx or now - last_waypoint_publish >= 0.20
         )
         if should_publish_wp:
             last_waypoint_idx = status.wp_index
@@ -1490,9 +1460,7 @@ def _run_mujoco_bridge_segment(
         mean_abs_vx = float(np.mean([abs(cmd["linear_x"]) for cmd in mux_cmds])) if mux_cmds else 0.0
         mean_abs_vy = float(np.mean([abs(cmd["linear_y"]) for cmd in mux_cmds])) if mux_cmds else 0.0
         mean_abs_linear_xy = (
-            float(np.mean([math.hypot(cmd["linear_x"], cmd["linear_y"]) for cmd in mux_cmds]))
-            if mux_cmds
-            else 0.0
+            float(np.mean([math.hypot(cmd["linear_x"], cmd["linear_y"]) for cmd in mux_cmds])) if mux_cmds else 0.0
         )
         distance_reduced = start_dist - best_dist
         final_odom = odom_samples[-1] if odom_samples else None
@@ -1627,8 +1595,8 @@ def run_command_flow(
     *,
     local_planner_backend: str = "simple",
 ) -> dict[str, Any]:
-    from nav.services.plan.local_planner.service import LocalPlanner
     from nav.local.path_follower import PathFollower
+    from nav.services.plan.local_planner.service import LocalPlanner
     from nav.services.safety.velocity_mux import VelocityMux
 
     path_follower_backend = "pid"
@@ -1802,7 +1770,7 @@ def _odom_at_path_start(path_points: list[list[float]]) -> Odometry:
 
 
 def run_frontier_exploration_probe() -> dict[str, Any]:
-    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
+    from explore.frontier import WavefrontFrontierExplorer
 
     explorer = WavefrontFrontierExplorer(
         min_frontier_size=2,
@@ -1814,9 +1782,7 @@ def run_frontier_exploration_probe() -> dict[str, Any]:
     frontiers_seen: list[list[dict[str, Any]]] = []
     goals: list[list[float]] = []
     explorer.frontiers._add_callback(frontiers_seen.append)
-    explorer.exploration_goal._add_callback(
-        lambda goal: goals.append([float(goal.x), float(goal.y), float(goal.z)])
-    )
+    explorer.exploration_goal._add_callback(lambda goal: goals.append([float(goal.x), float(goal.y), float(goal.z)]))
     explorer.setup()
     explorer.start()
     try:
@@ -1957,7 +1923,7 @@ def run_frontier_navigation_closed_loop_probe(
     downsample_dist: float = 0.5,
     local_planner_backend: str = "simple",
 ) -> dict[str, Any]:
-    from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
+    from explore.frontier import WavefrontFrontierExplorer
 
     rounds = max(0, int(rounds))
     assets_dir = output_dir or (ROOT / "artifacts" / "multifloor_frontier_loop")
@@ -1984,9 +1950,7 @@ def run_frontier_navigation_closed_loop_probe(
     explorer.start()
     try:
         for round_index in range(rounds):
-            explorer.odometry._deliver(
-                Odometry(pose=Pose(pose[0], pose[1], pose[2]), frame_id="map")
-            )
+            explorer.odometry._deliver(Odometry(pose=Pose(pose[0], pose[1], pose[2]), frame_id="map"))
             explorer.costmap._deliver(costmap)
             frontiers = explorer.get_frontiers()
             if not frontiers:
@@ -2071,7 +2035,9 @@ def run_frontier_navigation_closed_loop_probe(
 
     final_known = _known_cell_count(grid)
     rounds_completed = sum(1 for item in round_reports if item.get("ok"))
-    ok = bool(rounds > 0 and rounds_completed == rounds and goal_reached_events == rounds and final_known > initial_known)
+    ok = bool(
+        rounds > 0 and rounds_completed == rounds and goal_reached_events == rounds and final_known > initial_known
+    )
     return {
         "ok": ok,
         "closed_loop": True,
@@ -2173,7 +2139,9 @@ def _native_pct_gate(
 
     ok = _required_planner_ok(planners=planners, planning=planning, case=case)
     required_segments = int(selected.get("native_pct_required_segments") or 1)
-    feasible_segments = int(selected.get("native_pct_feasible_segments") or (1 if selected.get("native_backend_used") else 0))
+    feasible_segments = int(
+        selected.get("native_pct_feasible_segments") or (1 if selected.get("native_backend_used") else 0)
+    )
     runtime = selected.get("native_runtime") or {}
     status = "pass" if ok else str(selected.get("status") or "fail")
     blocked = status == "blocked" or bool(selected.get("blocked"))
@@ -2201,16 +2169,22 @@ def _native_pct_gate(
         "tomogram": selected.get("tomogram"),
         "tomogram_sha256": selected.get("tomogram_sha256"),
         "route_strategy": selected.get("route_strategy") or selected.get("planner_scope"),
-        "native_pct_single_plan_verified": bool(selected.get("native_pct_single_plan_verified", selected.get("planner_scope") == "native_pct_single_route")),
+        "native_pct_single_plan_verified": bool(
+            selected.get("native_pct_single_plan_verified", selected.get("planner_scope") == "native_pct_single_route")
+        ),
         "floor_graph_composition_verified": selected.get("route_strategy") == "floor_graph_pct_segments",
         "cross_floor_physical_verified": bool(selected.get("cross_floor_physical_verified", False)),
         "transition_motion_verified": bool(selected.get("transition_motion_verified", False)),
         "native_pct_required_segments": required_segments,
         "native_pct_feasible_segments": feasible_segments,
-        "path_validation_ok": isinstance(selected.get("path_validation"), dict) and selected["path_validation"].get("ok") is True,
+        "path_validation_ok": isinstance(selected.get("path_validation"), dict)
+        and selected["path_validation"].get("ok") is True,
         "transition_validation_ok": (
             not selected.get("transition")
-            or (isinstance(selected.get("transition_validation"), dict) and selected["transition_validation"].get("ok") is True)
+            or (
+                isinstance(selected.get("transition_validation"), dict)
+                and selected["transition_validation"].get("ok") is True
+            )
         ),
         "z_min": selected.get("z_min"),
         "z_max": selected.get("z_max"),
@@ -2258,26 +2232,38 @@ def run_route_case(
             )
     native_pct_gate = _native_pct_gate(planners=planners, planning=planning, case=case)
     best_path = next((p["path"] for p in planning if p.get("feasible") and p.get("path")), [])
-    command_flow = run_command_flow(best_path, local_planner_backend=local_planner_backend) if best_path else {
-        "ok": False,
-        "error": "no feasible path available for command-flow probe",
-    }
-    tracking_replay = run_tracking_replay(best_path) if best_path else {
-        "ok": False,
-        "error": "no feasible path available for tracking replay",
-    }
+    command_flow = (
+        run_command_flow(best_path, local_planner_backend=local_planner_backend)
+        if best_path
+        else {
+            "ok": False,
+            "error": "no feasible path available for command-flow probe",
+        }
+    )
+    tracking_replay = (
+        run_tracking_replay(best_path)
+        if best_path
+        else {
+            "ok": False,
+            "error": "no feasible path available for tracking replay",
+        }
+    )
     mujoco_bridge_loop = None
     if bridge_loop:
-        mujoco_bridge_loop = run_mujoco_bridge_loop(
-            best_path,
-            scene_xml=assets.scene_xml,
-            timeout_s=bridge_loop_timeout_s,
-            max_speed=bridge_loop_max_speed,
-            local_planner_backend=local_planner_backend,
-        ) if best_path else {
-            "ok": False,
-            "error": "no feasible path available for MuJoCo bridge loop",
-        }
+        mujoco_bridge_loop = (
+            run_mujoco_bridge_loop(
+                best_path,
+                scene_xml=assets.scene_xml,
+                timeout_s=bridge_loop_timeout_s,
+                max_speed=bridge_loop_max_speed,
+                local_planner_backend=local_planner_backend,
+            )
+            if best_path
+            else {
+                "ok": False,
+                "error": "no feasible path available for MuJoCo bridge loop",
+            }
+        )
     local_planner_backend_actual = str(
         command_flow.get(
             "local_planner_backend_actual",
@@ -2410,10 +2396,7 @@ def run_route_matrix(
         for name in routes
     ]
     local_planner_backend_actuals = sorted(
-        {
-            str(case.get("local_planner_backend_verified", local_planner_backend))
-            for case in cases
-        }
+        {str(case.get("local_planner_backend_verified", local_planner_backend)) for case in cases}
     )
     local_planner_backend_verified: str | list[str]
     if len(local_planner_backend_actuals) == 1:
@@ -2427,9 +2410,7 @@ def run_route_matrix(
         "local_planner_backend_verified": local_planner_backend_verified,
         "local_planner_backend_actuals": local_planner_backend_actuals,
         "production_local_planner_required": require_production_local_planner,
-        "production_local_planner_verified": all(
-            case.get("production_local_planner_verified") for case in cases
-        ),
+        "production_local_planner_verified": all(case.get("production_local_planner_verified") for case in cases),
         "non_motion": True,
         "driver_used": False,
         "simulated_driver_used": bool(bridge_loop),
@@ -2481,9 +2462,7 @@ def run_route_matrix(
             "native_pct_gate_reason": case.get("native_pct_gate", {}).get("reason"),
             "production_local_planner_verified": case.get("production_local_planner_verified"),
             "mujoco_bridge_loop_ok": (
-                None
-                if case.get("mujoco_bridge_loop") is None
-                else case.get("mujoco_bridge_loop", {}).get("ok")
+                None if case.get("mujoco_bridge_loop") is None else case.get("mujoco_bridge_loop", {}).get("ok")
             ),
         }
         for case in cases

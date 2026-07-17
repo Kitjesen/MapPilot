@@ -33,6 +33,7 @@ import numpy as np
 # Helpers to mock heavy deps before importing modules under test
 # ---------------------------------------------------------------------------
 
+
 def _stub_modules(*names: str) -> dict:
     """Return a dict of stub modules suitable for patch.dict(sys.modules, ...)."""
     stubs = {}
@@ -50,6 +51,7 @@ def _stub_modules(*names: str) -> dict:
 # W3-5 — OSNetReIDEncoder tests
 # ---------------------------------------------------------------------------
 
+
 class TestOSNetReIDEncoder(unittest.TestCase):
     """W3-5: OSNetReIDEncoder — backend selection, output shape, normalisation."""
 
@@ -60,10 +62,8 @@ class TestOSNetReIDEncoder(unittest.TestCase):
             base.update(extra_stubs)
         with patch.dict(sys.modules, base):
             # Remove any cached import so patch takes effect
-            sys.modules.pop(
-                "decision.vision.osnet_reid", None
-            )
-            from decision.vision.osnet_reid import OSNetReIDEncoder
+            sys.modules.pop("decision.vision.reid", None)
+            from decision.vision.reid import OSNetReIDEncoder
         return OSNetReIDEncoder
 
     def test_osnet_raises_when_no_backend(self):
@@ -93,9 +93,9 @@ class TestOSNetReIDEncoder(unittest.TestCase):
         stubs["PIL"] = pil_stub
         stubs["PIL.Image"] = pil_image_stub
 
-        sys.modules.pop("decision.vision.osnet_reid", None)
+        sys.modules.pop("decision.vision.reid", None)
         with patch.dict(sys.modules, stubs):
-            from decision.vision.osnet_reid import OSNetReIDEncoder
+            from decision.vision.reid import OSNetReIDEncoder
 
             # Create a temp file to simulate the .hbm existing
             with tempfile.NamedTemporaryFile(suffix=".hbm", delete=False) as tmp:
@@ -121,15 +121,24 @@ class TestPersonTrackerReID(unittest.TestCase):
     def _make_tracker(self):
         """Build a PersonTracker with minimal deps mocked."""
         stubs = _stub_modules(
-            "torch", "torchvision", "clip", "PIL", "PIL.Image",
-            "open3d", "chromadb", "qp_perception",
-            "qp_perception.reid", "qp_perception.reid.extractor",
-            "qp_perception.tracking", "qp_perception.tracking.fusion",
-            "qp_perception.selection", "qp_perception.selection.person_following",
+            "torch",
+            "torchvision",
+            "clip",
+            "PIL",
+            "PIL.Image",
+            "open3d",
+            "chromadb",
+            "qp_perception",
+            "qp_perception.reid",
+            "qp_perception.reid.extractor",
+            "qp_perception.tracking",
+            "qp_perception.tracking.fusion",
+            "qp_perception.selection",
+            "qp_perception.selection.person_following",
         )
-        sys.modules.pop("decision.vision.person_tracker", None)
+        sys.modules.pop("decision.vision.person", None)
         with patch.dict(sys.modules, stubs):
-            from decision.vision.person_tracker import PersonTracker
+            from decision.vision.person import PersonTracker
         return PersonTracker()
 
     def test_person_tracker_adaptive_threshold_sparse(self):
@@ -163,7 +172,8 @@ class TestPersonTrackerReID(unittest.TestCase):
         tracker._osnet_encoder = mock_osnet
 
         # Set up a locked target with matching osnet_feat
-        from decision.vision.person_tracker import TrackedPerson
+        from decision.vision.person import TrackedPerson
+
         tracker._person = TrackedPerson(
             position=[1.0, 1.0, 0.0],
             velocity=[0.0, 0.0],
@@ -173,13 +183,15 @@ class TestPersonTrackerReID(unittest.TestCase):
 
         # Candidate person far away (distance > MATCH_DIST_THRESHOLD) but matching appearance
         # Position is 5m away so distance matching fails and Re-ID is triggered
-        candidates = [{
-            "id": "unknown",
-            "label": "person",
-            "position": [6.0, 6.0, 0.0],
-            "bbox": [100, 100, 200, 300],
-            "confidence": 0.9,
-        }]
+        candidates = [
+            {
+                "id": "unknown",
+                "label": "person",
+                "position": [6.0, 6.0, 0.0],
+                "bbox": [100, 100, 200, 300],
+                "confidence": 0.9,
+            }
+        ]
 
         # Provide a fake rgb frame so _crop_person works
         rgb = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -188,7 +200,8 @@ class TestPersonTrackerReID(unittest.TestCase):
         tracker._match_person(candidates, rgb)
         # osnet_match should have incremented (score = 1.0 > any threshold)
         self.assertGreater(
-            tracker._reid_stats["osnet_match"], initial_count,
+            tracker._reid_stats["osnet_match"],
+            initial_count,
             "osnet_match counter should increment on successful OSNet Re-ID",
         )
 
@@ -196,7 +209,8 @@ class TestPersonTrackerReID(unittest.TestCase):
         """Motion prediction advances position by velocity * dt."""
         tracker = self._make_tracker()
 
-        from decision.vision.person_tracker import TrackedPerson
+        from decision.vision.person import TrackedPerson
+
         tracker._person = TrackedPerson(
             position=[2.0, 3.0, 0.0],
             velocity=[1.0, -0.5],
@@ -222,6 +236,7 @@ class TestPersonTrackerReID(unittest.TestCase):
 # W3-4 — GainAutoTuner + BBoxNavigator persistence + skill wire
 # ---------------------------------------------------------------------------
 
+
 class TestGainAutoTuner(unittest.TestCase):
     """W3-4: GainAutoTuner — ZN math correctness and oscillation analysis."""
 
@@ -232,8 +247,8 @@ class TestGainAutoTuner(unittest.TestCase):
         config_mock.camera.T_camera_body = np.eye(4)
         with patch.dict(sys.modules, stubs):
             with patch("runtime.config.get_config", return_value=config_mock):
-                sys.modules.pop("decision.vision.bbox_navigator", None)
-                from decision.vision.bbox_navigator import GainAutoTuner
+                sys.modules.pop("decision.vision.bbox", None)
+                from decision.vision.bbox import GainAutoTuner
         return GainAutoTuner(relay_amplitude=0.3)
 
     def test_zn_math_on_known_values(self):
@@ -265,17 +280,16 @@ class TestGainAutoTuner(unittest.TestCase):
     def test_analyse_oscillation_detects_period(self):
         """Sinusoidal yaw series → T_u close to the true period."""
         tuner = self._make_tuner()
-        true_T = 1.0   # 1-second oscillation
-        dt = 0.02      # 50 Hz
-        t = np.arange(0, 4.0, dt)   # 4 seconds → 4 full cycles
+        true_T = 1.0  # 1-second oscillation
+        dt = 0.02  # 50 Hz
+        t = np.arange(0, 4.0, dt)  # 4 seconds → 4 full cycles
         yaw = np.sin(2 * math.pi / true_T * t)
 
         T_u, a_u = tuner.analyse_oscillation(yaw.tolist(), dt)
 
         # Period should be within 10% of true period
         self.assertGreater(T_u, 0.0, "T_u should be positive")
-        self.assertAlmostEqual(T_u, true_T, delta=true_T * 0.10,
-                               msg=f"Expected T_u ≈ {true_T}s, got {T_u:.4f}s")
+        self.assertAlmostEqual(T_u, true_T, delta=true_T * 0.10, msg=f"Expected T_u ≈ {true_T}s, got {T_u:.4f}s")
         # Amplitude should be close to 1.0 (half peak-to-peak of sin)
         self.assertAlmostEqual(a_u, 1.0, delta=0.05)
 
@@ -289,8 +303,8 @@ class TestBBoxNavigatorGainPersistence(unittest.TestCase):
         config_mock.camera.T_camera_body = np.eye(4)
         with patch.dict(sys.modules, stubs):
             with patch("runtime.config.get_config", return_value=config_mock):
-                sys.modules.pop("decision.vision.bbox_navigator", None)
-                from decision.vision.bbox_navigator import (
+                sys.modules.pop("decision.vision.bbox", None)
+                from decision.vision.bbox import (
                     BBoxNavConfig,
                     BBoxNavigator,
                 )
@@ -312,8 +326,8 @@ class TestBBoxNavigatorGainPersistence(unittest.TestCase):
 
             with patch.dict(sys.modules, stubs):
                 with patch("runtime.config.get_config", return_value=config_mock):
-                    sys.modules.pop("decision.vision.bbox_navigator", None)
-                    from decision.vision.bbox_navigator import (
+                    sys.modules.pop("decision.vision.bbox", None)
+                    from decision.vision.bbox import (
                         BBoxNavConfig,
                         BBoxNavigator,
                     )
@@ -346,7 +360,9 @@ class TestBBoxNavigatorGainPersistence(unittest.TestCase):
             # If tuning converged, nav2 angular_gain must match nav1's
             if report.get("converged"):
                 self.assertAlmostEqual(
-                    nav2._cfg.angular_gain, saved_angular_gain, places=6,
+                    nav2._cfg.angular_gain,
+                    saved_angular_gain,
+                    places=6,
                     msg="Loaded gain must match persisted value",
                 )
 
@@ -361,11 +377,12 @@ class TestBBoxNavigatorGainPersistence(unittest.TestCase):
 
             with patch.dict(sys.modules, stubs):
                 with patch("runtime.config.get_config", return_value=config_mock):
-                    sys.modules.pop("decision.vision.bbox_navigator", None)
-                    from decision.vision.bbox_navigator import (
+                    sys.modules.pop("decision.vision.bbox", None)
+                    from decision.vision.bbox import (
                         BBoxNavConfig,
                         BBoxNavigator,
                     )
+
                     nav = BBoxNavigator(
                         config=BBoxNavConfig(linear_gain=0.8, angular_gain=1.5),
                         gains_path=gains_path,
@@ -382,12 +399,24 @@ class TestTuneBboxGainsSkillWired(unittest.TestCase):
     def test_tune_skill_is_registered_as_skill(self):
         """VisualServoModule.tune_bbox_gains must carry __skill__ or __rpc__ marker."""
         stubs = _stub_modules(
-            "cv2", "torch", "torchvision", "clip", "PIL", "PIL.Image",
-            "open3d", "chromadb", "rclpy", "rclpy.node", "rclpy.qos",
-            "qp_perception", "qp_perception.reid",
+            "cv2",
+            "torch",
+            "torchvision",
+            "clip",
+            "PIL",
+            "PIL.Image",
+            "open3d",
+            "chromadb",
+            "rclpy",
+            "rclpy.node",
+            "rclpy.qos",
+            "qp_perception",
+            "qp_perception.reid",
             "qp_perception.reid.extractor",
-            "qp_perception.tracking", "qp_perception.tracking.fusion",
-            "qp_perception.selection", "qp_perception.selection.person_following",
+            "qp_perception.tracking",
+            "qp_perception.tracking.fusion",
+            "qp_perception.selection",
+            "qp_perception.selection.person_following",
         )
         config_mock = MagicMock()
         config_mock.camera.T_camera_body = np.eye(4)
@@ -397,7 +426,7 @@ class TestTuneBboxGainsSkillWired(unittest.TestCase):
                 for mod_name in list(sys.modules.keys()):
                     if "visual_servo_module" in mod_name or "bbox_navigator" in mod_name:
                         sys.modules.pop(mod_name, None)
-                from decision.modules.visual_servo_module import (
+                from decision.modules.visual_servo import (
                     VisualServoModule,
                 )
 

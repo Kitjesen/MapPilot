@@ -1,5 +1,5 @@
-[submodule "src/drivers/real/camera/OrbbecSDK_ROS2"]
-	path = src/drivers/real/camera/OrbbecSDK_ROS2
+[submodule "src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2"]
+	path = src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2
 	url = https://github.com/orbbec/OrbbecSDK_ROS2.git
 	ignore = dirty
 [submodule "research/semantic_map_refs/DualMap"]

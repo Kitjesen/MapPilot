@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from nav.navigation import Navigation
 from nav.services.plan.global_planner.service import GlobalPlanner
-from nav.mission.navigation import Navigation
 from nav.services.safety.plan_safety import (
     PlanSafetyGrid,
     evaluate_backend_path_safety,
@@ -191,7 +191,10 @@ def test_plan_safety_reports_z_out_of_bounds_samples() -> None:
 
 def test_pct_wrapper_preserves_optimizer_height_when_converting_xy() -> None:
     root = Path(__file__).resolve().parents[3]
-    wrapper = root / "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/planner_wrapper.py"
+    wrapper = (
+        root
+        / "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/planner_wrapper.py"
+    )
     text = wrapper.read_text(encoding="utf-8")
 
     assert "world[:, 2] = heights" in text
@@ -842,4 +845,3 @@ def test_navigation_exposes_plan_safety_policy() -> None:
 
     assert summary["planner"] == "pct"
     assert summary["plan_safety_policy"] == "fallback_astar"
-

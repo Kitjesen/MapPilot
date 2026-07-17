@@ -606,6 +606,8 @@ class SlamRunner {
             : nb::none();
     result["registered_cloud_body"_s] =
         out.registered_cloud_body.has_value() ? nb::cast(cloudDict(*out.registered_cloud_body)) : nb::none();
+    result["observation_sequence"_s] = out.observation_sequence;
+    result["source_epoch"_s] = out.source_epoch;
     result["map_cloud_map"_s] =
         out.map_cloud_map.has_value() ? nb::cast(cloudDict(*out.map_cloud_map)) : nb::none();
     result["saved_map_cloud_map"_s] =

@@ -6,23 +6,27 @@ All tests are pure-Python, no ROS2 / hardware required.
 
 from __future__ import annotations
 
-import time
-import unittest
 import math
 import threading
+import time
+import unittest
+from unittest.mock import MagicMock
 
-from runtime.msgs.geometry import Twist, Vector3
+import numpy as np
+
 from nav.services.safety.velocity_mux import VelocityMux
+from runtime.msgs.geometry import Twist, Vector3
+from runtime.msgs.sensor import Image, ImageFormat
 
 
 def _twist(vx: float = 0.0, wz: float = 0.0) -> Twist:
-    return Twist(linear=Vector3(x=vx, y=0.0, z=0.0),
-                 angular=Vector3(x=0.0, y=0.0, z=wz))
+    return Twist(linear=Vector3(x=vx, y=0.0, z=0.0), angular=Vector3(x=0.0, y=0.0, z=wz))
 
 
 # ---------------------------------------------------------------------------
 # VelocityMux tests
 # ---------------------------------------------------------------------------
+
 
 class TestVelocityMux(unittest.TestCase):
     """Test priority-based cmd_vel arbitration."""
@@ -192,7 +196,9 @@ class TestTeleopModule(unittest.TestCase):
 
     def _make_teleop(self) -> TeleopModule:
         tm = TeleopModule(
-            max_speed=1.0, max_yaw_rate=2.0, release_timeout=0.2,
+            max_speed=1.0,
+            max_yaw_rate=2.0,
+            release_timeout=0.2,
         )
         tm.setup()
         return tm
@@ -205,7 +211,7 @@ class TestTeleopModule(unittest.TestCase):
 
         tm._on_joy({"lx": 0.5, "ly": 0.0, "az": -0.5})
         self.assertEqual(len(published), 1)
-        self.assertAlmostEqual(published[0].linear.x, 0.5)   # 0.5 * 1.0
+        self.assertAlmostEqual(published[0].linear.x, 0.5)  # 0.5 * 1.0
         self.assertAlmostEqual(published[0].angular.z, -1.0)  # -0.5 * 2.0
 
     def test_joy_clamps_input(self):
@@ -254,8 +260,7 @@ class TestTeleopModule(unittest.TestCase):
         self.assertTrue(tm._active)
         time.sleep(0.25)  # > release_timeout (0.2)
         # Simulate idle check (normally runs in background thread)
-        if (tm._active
-                and time.monotonic() - tm._last_joy_time > tm._release_timeout):
+        if tm._active and time.monotonic() - tm._last_joy_time > tm._release_timeout:
             tm._release()
         self.assertFalse(tm._active)
 
@@ -290,11 +295,34 @@ class TestTeleopModule(unittest.TestCase):
     def test_get_teleop_status(self):
         """Skill method returns correct status."""
         import json
+
         tm = self._make_teleop()
         tm._on_joy({"lx": 0.1})
         status = json.loads(tm.get_teleop_status())
         self.assertTrue(status["active"])
         self.assertIsNotNone(status["last_joy_age_ms"])
+
+    def test_pure_red_rgb_camera_frame_stays_red_in_jpeg(self):
+        try:
+            import cv2
+        except ImportError:
+            self.skipTest("cv2 is required for JPEG color regression")
+
+        tm = self._make_teleop()
+        tm._gateway = MagicMock()
+        pure_red_rgb = np.zeros((32, 32, 3), dtype=np.uint8)
+        pure_red_rgb[..., 0] = 255
+        tm._on_image(Image(data=pure_red_rgb, format=ImageFormat.RGB))
+
+        jpeg = tm.snapshot_jpeg()
+
+        self.assertIsNotNone(jpeg)
+        decoded_bgr = cv2.imdecode(
+            np.frombuffer(jpeg, dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        self.assertGreater(int(decoded_bgr[..., 2].mean()), 240)
+        self.assertLess(int(decoded_bgr[..., 0].mean()), 15)
 
 
 if __name__ == "__main__":

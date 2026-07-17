@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
-import os
 from pathlib import Path
 
 import pytest
@@ -26,20 +26,27 @@ _NUMPY_IMPORT_SAFE = _module_import_is_safe("numpy")
 from drivers.sim.pointcloud import SimPointCloudProvider
 
 
+def test_pointcloud_provider_health_marks_legacy_sim_lidar_role():
+    provider = SimPointCloudProvider(scene_xml="sim/worlds/test_scene.xml")
+
+    health = provider.health()["sim_lidar"]
+
+    assert health == {
+        "legacy": True,
+        "canonical_role": "lidar",
+        "canonical_backend": "mujoco",
+        "map_cloud_only": True,
+        "scene_xml": "sim/worlds/test_scene.xml",
+        "has_cloud": False,
+    }
+
+
 def test_pointcloud_provider_import_does_not_load_numpy():
     repo_root = Path(__file__).resolve().parents[2]
     src_root = repo_root / "src"
     env = dict(os.environ)
-    env["PYTHONPATH"] = (
-        str(src_root)
-        if not env.get("PYTHONPATH")
-        else f"{src_root}{os.pathsep}{env['PYTHONPATH']}"
-    )
-    code = (
-        "import sys; "
-        "import drivers.sim.pointcloud; "
-        "raise SystemExit(1 if 'numpy' in sys.modules else 0)"
-    )
+    env["PYTHONPATH"] = str(src_root) if not env.get("PYTHONPATH") else f"{src_root}{os.pathsep}{env['PYTHONPATH']}"
+    code = "import sys; import drivers.sim.pointcloud; raise SystemExit(1 if 'numpy' in sys.modules else 0)"
     probe = subprocess.run(
         [sys.executable, "-c", code],
         cwd=str(repo_root),

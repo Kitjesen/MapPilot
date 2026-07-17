@@ -3,13 +3,11 @@
  *
  * Targets the go2rtc sidecar behind the FastAPI gateway's
  * /api/v1/webrtc/whep reverse-proxy endpoint.  Why go2rtc? It handles the
- * media hot path natively in Go, skipping aiortc's Python SRTP/RTP
- * overhead and yielding 30–60 ms glass-to-glass on LAN vs 80–150 ms for
- * the pure-Python path.
+ * media hot path natively in Go and keeps Python out of SRTP/RTP processing.
  *
  * Returns ``stream`` (null until connected), ``connected``, ``error``,
  * and a ``reconnect()`` trigger.  On any failure the consumer should
- * fall through to useWebRTC (aiortc) or useCamera (JPEG).
+ * fall through directly to useCamera (JPEG).
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -62,7 +60,7 @@ export function useWHEP(
 
     // Probe first: if go2rtc isn't running, don't even open a
     // PeerConnection — bail fast so the caller can fall through to
-    // aiortc / JPEG without eating a 10s ICE timeout.
+    // JPEG without eating a 10s ICE timeout.
     ;(async () => {
       try {
         const status = await fetch('/api/v1/webrtc/go2rtc/status', {

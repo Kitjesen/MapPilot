@@ -33,7 +33,7 @@ def test_thunder_field_navigation_resolves_octoplanner3d_without_fallback_profil
     config = resolve_profile_config("thunder-nav")
 
     assert config["planner"] == "octoplanner3d"
-    assert config["tomogram"].endswith((".bt", ".ot", ".octomap", ".pcd"))
+    assert config["map_path"].endswith((".bt", ".ot", ".octomap", ".pcd"))
     assert config["fallback_planner_name"] == ""
     assert config["planner_profile"]["profile"] == "nav"
     assert config["planner_profile"]["primary"] == "octoplanner3d"
@@ -52,10 +52,13 @@ def test_thunder_field_navigation_resolves_octoplanner3d_without_fallback_profil
     assert config["path_follower_max_speed"] == 0.20
     assert config["path_follower_min_speed"] == 0.08
     assert config["octoplanner3d_robot_radius"] == 0.25
+    assert config["octomap_resolution"] == 0.1
+    assert config["octomap_free_layers_above"] == 6
+    assert config["octoplanner3d_snap_search_radius_cells"] == 24
     assert config["octoplanner3d_require_ground_support"] is True
     assert config["octoplanner3d_strict_direct_ground_support"] is False
-    assert config["octoplanner3d_ground_support_xy_radius_cells"] == 1
-    assert config["octoplanner3d_ground_support_depth_cells"] == 1
+    assert config["octoplanner3d_ground_support_xy_radius_cells"] == 2
+    assert config["octoplanner3d_ground_support_depth_cells"] == 2
     assert config["octoplanner3d_max_step_height"] == 0.45
     assert config["octoplanner3d_max_slope"] == 0.0
 

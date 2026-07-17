@@ -1,3 +1,4 @@
+#include "message/cpp/dds_qos_profiles.hpp"
 #include "message/cpp/dds_topics.hpp"
 
 #include "dds/dds.h"
@@ -55,6 +56,10 @@ dds_entity_t checked(dds_return_t value, const char* what) {
     throw std::runtime_error(std::string(what) + ": " + dds_strretcode(-value));
   }
   return static_cast<dds_entity_t>(value);
+}
+
+lingtu::dds::UniqueQos qosFor(const lingtu::message::TopicContract& contract) {
+  return lingtu::dds::make_qos(lingtu::dds::qos_for_topic(contract.dds_topic));
 }
 
 void logDdsError(dds_return_t value, const char* what) {
@@ -249,10 +254,12 @@ class DdsRuntime {
     publisher_ = checked(dds_create_publisher(participant_, nullptr, nullptr),
                          "dds_create_publisher");
     cmd_vel_reader_ = reader(
-        lingtu::message::kNavCmdVel.dds_topic.data(), &lingtu_dds_TwistStamped_desc, "cmd_vel");
+        lingtu::message::kNavCmdVel,
+        &lingtu_dds_FinalVelocityCommand_desc,
+        "cmd_vel");
     odom_writer_ = writer(
-        lingtu::message::kSlamOdometry.dds_topic.data(), &lingtu_dds_Odometry_desc, "odom");
-    tf_writer_ = writer(lingtu::message::kTf.dds_topic.data(), &lingtu_dds_TFMessage_desc, "tf");
+        lingtu::message::kSlamOdometry, &lingtu_dds_Odometry_desc, "odom");
+    tf_writer_ = writer(lingtu::message::kTf, &lingtu_dds_TFMessage_desc, "tf");
   }
 
   ~DdsRuntime() {
@@ -263,8 +270,10 @@ class DdsRuntime {
 
   template <typename Handler>
   void drainCmdVel(Handler&& handler) {
-    drainReader<lingtu_dds_TwistStamped>(
-        cmd_vel_reader_, lingtu_dds_TwistStamped_desc, std::forward<Handler>(handler));
+    drainReader<lingtu_dds_FinalVelocityCommand>(
+        cmd_vel_reader_,
+        lingtu_dds_FinalVelocityCommand_desc,
+        std::forward<Handler>(handler));
   }
 
   void writeOdom(const lingtu_dds_Odometry& msg) {
@@ -277,26 +286,28 @@ class DdsRuntime {
 
  private:
   dds_entity_t reader(
-      const char* topic_name,
+      const lingtu::message::TopicContract& contract,
       const dds_topic_descriptor_t* desc,
       const char* label) {
     const dds_entity_t topic = checked(
-        dds_create_topic(participant_, desc, topic_name, nullptr, nullptr),
+        dds_create_topic(participant_, desc, contract.dds_topic.data(), nullptr, nullptr),
         (std::string("dds_create_topic(") + label + ")").c_str());
+    auto qos = qosFor(contract);
     return checked(
-        dds_create_reader(subscriber_, topic, nullptr, nullptr),
+        dds_create_reader(subscriber_, topic, qos.get(), nullptr),
         (std::string("dds_create_reader(") + label + ")").c_str());
   }
 
   dds_entity_t writer(
-      const char* topic_name,
+      const lingtu::message::TopicContract& contract,
       const dds_topic_descriptor_t* desc,
       const char* label) {
     const dds_entity_t topic = checked(
-        dds_create_topic(participant_, desc, topic_name, nullptr, nullptr),
+        dds_create_topic(participant_, desc, contract.dds_topic.data(), nullptr, nullptr),
         (std::string("dds_create_topic(") + label + ")").c_str());
+    auto qos = qosFor(contract);
     return checked(
-        dds_create_writer(publisher_, topic, nullptr, nullptr),
+        dds_create_writer(publisher_, topic, qos.get(), nullptr),
         (std::string("dds_create_writer(") + label + ")").c_str());
   }
 
@@ -335,7 +346,7 @@ int main(int argc, char** argv) {
         pose.yaw);
 
     while (g_running) {
-      dds.drainCmdVel([&](const lingtu_dds_TwistStamped& msg) {
+      dds.drainCmdVel([&](const lingtu_dds_FinalVelocityCommand& msg) {
         cmd.vx = std::clamp(msg.twist.linear.x, -cfg.max_linear, cfg.max_linear);
         cmd.vy = std::clamp(msg.twist.linear.y, -cfg.max_linear, cfg.max_linear);
         cmd.wz = std::clamp(msg.twist.angular.z, -cfg.max_angular, cfg.max_angular);

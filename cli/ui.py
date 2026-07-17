@@ -29,7 +29,7 @@ from .runtime_display import (
 
 def _vlen(s: str) -> int:
     """Visible length of a string — strips ANSI escape codes."""
-    return len(re.sub(r'\033\[[0-9;]*m', '', s))
+    return len(re.sub(r"\033\[[0-9;]*m", "", s))
 
 
 # ── LOGO ──────────────────────────────────────────────────────────────────────
@@ -48,22 +48,22 @@ _TAGLINE = "  Autonomous Navigation for Quadruped Robots"
 _PROFILE_META = {
     "teleop": ("T", "Remote control only", T.green),
     "teleop_avoid": ("A", "Remote control with safety obstacle avoidance", T.green),
-    "lite":    ("L", "Lightweight Thunder runtime",                  T.green),
+    "lite": ("L", "Lightweight Thunder runtime", T.green),
     "tracking": ("K", "Track supplied path or waypoint", T.green),
     "inspection": ("I", "Saved-map patrol and semantic inspection", T.green),
     "tare_explore": ("E", "TARE exploration", T.cyan),
-    "nav":     ("◉", "Navigate using a saved map",                  T.green),
-    "explore": ("◎", "Explore unknown area",                         T.cyan),
-    "map":     ("⊕", "Build a new map",                              T.yellow),
-    "sim":     ("◈", "MuJoCo simulation",                            T.blue),
+    "nav": ("◉", "Navigate using a saved map", T.green),
+    "explore": ("◎", "Explore unknown area", T.cyan),
+    "map": ("⊕", "Build a new map", T.yellow),
+    "sim": ("◈", "MuJoCo simulation", T.blue),
     "portable_mujoco": ("μ", "Portable no-ROS MuJoCo planning + sensors", T.blue),
-    "sim_gazebo": ("▣", "Gazebo/GZ ROS-native simulation",            T.blue),
+    "sim_gazebo": ("▣", "Gazebo/GZ ROS-native simulation", T.blue),
     "sim_mujoco_live": ("M", "MuJoCo MID-360 + Fast-LIO live simulation", T.blue),
     "sim_mujoco_octo_live": ("O", "MuJoCo Fast-LIO + OctoPlanner3D closed-loop simulation", T.blue),
     "sim_industrial": ("#", "Gazebo industrial-yard delivery simulation", T.blue),
-    "sim_cmu_tare": ("C", "CMU Unity + external TARE simulation",      T.blue),
-    "dev":     ("◇", "Test perception & planning without a robot",   T.navy),
-    "stub":    ("○", "Framework testing only",                       T.dim),
+    "sim_cmu_tare": ("C", "CMU Unity + external TARE simulation", T.blue),
+    "dev": ("◇", "Test perception & planning without a robot", T.navy),
+    "stub": ("○", "Framework testing only", T.dim),
 }
 
 _PRODUCT_PROFILE_NAMES = (
@@ -113,22 +113,22 @@ def _profile_alias_note(name: str) -> str:
 # Keys: "semantic", "gateway", "teleop"
 _PROFILE_WIZARD: dict[str, tuple[bool, bool, bool]] = {
     #                  semantic  gateway  teleop
-    "teleop":  (False, True,  True),
+    "teleop": (False, True, True),
     "teleop_avoid": (False, True, True),
-    "nav":     (True,  True,  True),   # full stack
+    "nav": (True, True, True),  # full stack
     "tracking": (False, True, False),
     "inspection": (True, True, False),
-    "explore": (True,  True,  False),  # exploring — no joystick needed
-    "map":     (False, True,  True),   # mapping needs teleop to move while saving map
-    "sim":     (True,  True,  True),   # full stack in sim
+    "explore": (True, True, False),  # exploring — no joystick needed
+    "map": (False, True, True),  # mapping needs teleop to move while saving map
+    "sim": (True, True, True),  # full stack in sim
     "portable_mujoco": (False, False, False),  # no-ROS/no-gateway desktop gate
     "sim_gazebo": (True, True, True),  # ROS-native Gazebo simulation
     "sim_mujoco_live": (False, True, False),  # external MuJoCo/Fast-LIO live gate
     "sim_mujoco_octo_live": (False, True, False),  # external MuJoCo/Fast-LIO/OctoPlanner3D gate
     "sim_industrial": (True, True, False),  # ROS-native delivery simulation
     "sim_cmu_tare": (False, True, False),  # external CMU Unity/TARE graph
-    "dev":     (True,  True,  False),  # no robot → no teleop
-    "stub":    (False, True,  False),  # bare framework
+    "dev": (True, True, False),  # no robot → no teleop
+    "stub": (False, True, False),  # bare framework
 }
 
 
@@ -156,6 +156,7 @@ def _panel(lines: list[str], *, color) -> None:
 def _local_ip() -> str:
     """Best-effort local LAN IP (not 127.0.0.1)."""
     import socket
+
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -167,20 +168,17 @@ def _local_ip() -> str:
 
 
 def print_banner(profile_name, cfg, system, log_dir: str) -> None:
-    n   = len(system.modules)
-    nc  = len(system.connections)
+    n = len(system.modules)
+    nc = len(system.connections)
     desc = cfg.get("_desc", "custom")
-    gw   = cfg.get("gateway_port", 5050)
+    gw = cfg.get("gateway_port", 5050)
 
-    robot    = cfg.get("robot", "?")
-    planner  = cfg.get("planner", "?")
+    robot = cfg.get("robot", "?")
+    planner = cfg.get("planner", "?")
     detector = cfg.get("detector", "?")
-    llm      = cfg.get("llm", "?")
+    llm = cfg.get("llm", "?")
 
-    # Wait briefly for TeleopModule to finish binding its port
-    import time as _time
-    tomogram  = cfg.get("tomogram", "")
-    tomo_note = T.yellow(" ⚠ sample map") if (tomogram and "building2_9.pickle" in str(tomogram)) else ""
+    planner_map = cfg.get("planner_map") or cfg.get("map_path") or cfg.get("octomap", "")
 
     icon, _, color = _PROFILE_META.get(profile_name, ("·", desc, T.dim))
     W = 58
@@ -198,25 +196,24 @@ def print_banner(profile_name, cfg, system, log_dir: str) -> None:
         pad = max(0, W - _vlen(inner))
         print(T.navy("  │") + inner + " " * pad + T.navy("│"))
 
-    _row("profile",  color(f"{icon} {profile_name}") + T.dim(f"  {desc}"))
-    _row("robot",    f"{robot}  {T.dim('planner:')} {planner}")
+    _row("profile", color(f"{icon} {profile_name}") + T.dim(f"  {desc}"))
+    _row("robot", f"{robot}  {T.dim('planner:')} {planner}")
     if cfg.get("enable_semantic"):
         _row("semantic", f"{T.dim('detector:')} {detector}  {T.dim('llm:')} {llm}")
     else:
         _row("semantic", T.dim("disabled"))
-    if tomogram:
-        tomo_short = os.path.basename(tomogram)
-        _row("map",      T.dim(tomo_short) + tomo_note)
+    if planner_map:
+        _row("map", T.dim(os.path.basename(str(planner_map))))
     if cfg.get("enable_gateway"):
-        _row("gateway",  T.cyan(f"http://{lan_ip}:{gw}"))
+        _row("gateway", T.cyan(f"http://{lan_ip}:{gw}"))
         # Teleop is served by GatewayModule on the same port
         try:
             system.get_module("TeleopModule")
-            _row("teleop",   T.cyan(f"ws://{lan_ip}:{gw}/ws/teleop"))
+            _row("teleop", T.cyan(f"ws://{lan_ip}:{gw}/ws/teleop"))
         except (KeyError, Exception):
             pass
-    _row("health",   T.green(f"OK {n} modules") + T.dim(f"  {nc} connections"))
-    _row("logs",     T.dim(log_dir))
+    _row("health", T.green(f"OK {n} modules") + T.dim(f"  {nc} connections"))
+    _row("logs", T.dim(log_dir))
 
     print(T.navy(f"  ├{'─' * W}┤"))
     hint_raw = "info · chat · agent · history · map list · help · Ctrl+C"
@@ -242,8 +239,8 @@ def select_interactive() -> str:
 
     for i, name in enumerate(names, 1):
         icon, desc, color = _PROFILE_META.get(name, ("·", PROFILES[name].get("_desc", ""), T.dim))
-        num  = T.dim(f" {i} ")
-        tag  = color(f" {icon} {name:<9}")
+        num = T.dim(f" {i} ")
+        tag = color(f" {icon} {name:<9}")
         body = T.dim(f" {desc}")
         inner = f"{num}{tag}{body}"
         pad = max(0, W - _vlen(inner))
@@ -315,9 +312,7 @@ def wizard_interactive(profile_name: str, cfg: dict) -> None:
     if not sys.stdin.isatty():
         return
 
-    ask_sem, ask_gw, ask_tp = _PROFILE_WIZARD.get(
-        profile_name, (True, True, True)
-    )
+    ask_sem, ask_gw, ask_tp = _PROFILE_WIZARD.get(profile_name, (True, True, True))
 
     # Nothing to ask — skip the wizard entirely
     if not (ask_sem or ask_gw or ask_tp):
@@ -338,8 +333,8 @@ def wizard_interactive(profile_name: str, cfg: dict) -> None:
     print()
 
     sem_def = bool(cfg.get("enable_semantic", True))
-    gw_def  = bool(cfg.get("enable_gateway",  True))
-    tp_def  = bool(cfg.get("enable_teleop",   True))
+    gw_def = bool(cfg.get("enable_gateway", True))
+    tp_def = bool(cfg.get("enable_teleop", True))
 
     if ask_sem:
         cfg["enable_semantic"] = ask_bool(
@@ -453,9 +448,7 @@ def cmd_status_external(as_json: bool = False) -> None:
         report = dict(state)
         report["alive"] = alive
         report["uptime_seconds"] = uptime
-        report["runtime_status"] = (
-            state.get("status", "running") if alive else "dead"
-        )
+        report["runtime_status"] = state.get("status", "running") if alive else "dead"
         print(json.dumps(report, indent=2, default=str))
         return
 
@@ -486,8 +479,8 @@ def cmd_status_external(as_json: bool = False) -> None:
         print(f"  Frame ids: {format_runtime_frames(runtime)}")
         print(f"  Frames:   {format_frame_links(runtime)}")
         print(f"  Topic frames: {format_runtime_topic_frames(runtime)}")
-        print(f"  Flow:     {format_runtime_flow(runtime)}")
-        print(f"  Flow stages: {format_runtime_flow_stages(runtime)}")
+        print(f"  Path:     {format_runtime_flow(runtime)}")
+        print(f"  Path stages: {format_runtime_flow_stages(runtime)}")
     print(f"  Started:   {started}")
     if uptime is not None:
         print(f"  Uptime:    {format_uptime(uptime)}")
@@ -597,13 +590,15 @@ def cmd_health_external(as_json: bool = False) -> None:
     status = data.get("status", "?")
     status_color = T.green(status) if status == "ok" else T.red(status)
     print(f"\n  系统状态:  {status_color}")
-    print(f"  模块:      {T.green(str(data.get('modules_ok', '?')))} 正常"
-          f"  {T.red(str(data.get('modules_fail', 0))) if data.get('modules_fail') else '0'} 异常")
+    print(
+        f"  模块:      {T.green(str(data.get('modules_ok', '?')))} 正常"
+        f"  {T.red(str(data.get('modules_fail', 0))) if data.get('modules_fail') else '0'} 异常"
+    )
 
     sensors = data.get("sensors", {})
     if sensors:
         print(f"\n  {'传感器':<12} {'状态':<12} {'详情'}")
-        print(f"  {'─'*12} {'─'*12} {'─'*24}")
+        print(f"  {'─' * 12} {'─' * 12} {'─' * 24}")
         for name, info in sensors.items():
             s = info.get("status", "?")
             s_colored = T.green(s) if s in ("streaming", "active", "connected") else T.yellow(s)

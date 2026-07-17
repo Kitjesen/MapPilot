@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from runtime.blueprint import Blueprint
+from runtime.blueprints.stacks._registry import stack_module
 from runtime.blueprints.stacks.autonomy_chain import (
     add_autonomy_chain,
     autonomy_stack_config,
@@ -15,15 +16,11 @@ from runtime.blueprints.stacks.navigation_core import (
     add_navigation_core,
     navigation_config,
 )
-from runtime.blueprints.stacks.navigation_io import (
-    add_navigation_io_adapter_stack,
-    wire_navigation_output_adapter_stack,
-)
 
 
 def navigation(
     planner_backend: str = "octoplanner3d",
-    tomogram: str = "",
+    map_path: str = "",
     enable_native: bool = False,
     **config,
 ) -> Blueprint:
@@ -33,14 +30,33 @@ def navigation(
     add_navigation_core(
         bp,
         planner_backend=planner_backend,
-        tomogram=tomogram,
+        map_path=map_path,
         **config,
     )
-    add_navigation_io_adapter_stack(bp, **config)
     add_exploration_goal_sources(bp, **config)
     if not config.get("native_navigation_endpoint"):
         add_autonomy_chain(bp, enable_native=enable_native, **config)
-    wire_navigation_output_adapter_stack(bp)
+
+    # -- Supporting modules ------------------------------------------------
+
+    # L6 MCP/agent adapter. Product commands still enter through nav.goals.
+    NavSkills = stack_module(
+        "navigation_skills",
+        "default",
+        seed_group="navigation",
+        fallback="nav.skills.skills_module.NavSkills",
+    )
+    bp.add(NavSkills, alias="nav.skills")
+
+    # LocalizationMonitorModule: localization health monitoring (always included)
+    LocalizationMonitorModule = stack_module(
+        "localization_monitor",
+        "default",
+        seed_group="navigation",
+        fallback="nav.localization_monitor.monitor_module.LocalizationMonitorModule",
+    )
+    bp.add(LocalizationMonitorModule, alias="nav.localization_monitor")
+
     return bp
 
 

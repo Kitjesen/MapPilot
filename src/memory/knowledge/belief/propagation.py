@@ -52,7 +52,7 @@ class BeliefPropagationMixin:
     self.compute_regions() (由 RoomManagerMixin 提供)。
     """
 
-    def propagate_beliefs(self) -> None:
+    def propagate_beliefs(self, regions: list["Region"] | None = None) -> None:
         """KG-Augmented Iterative Loopy Belief Propagation (BA-HSG v2 核心).
 
         与 BSG (ICRA 2024) 的本质区别:
@@ -71,11 +71,16 @@ class BeliefPropagationMixin:
           Phase 3 — 横向: Spatial neighbor belief sharing (distance-weighted)
           Phase 4 — 生成: Room posterior → Phantom nodes for unseen expected objects
           Phase 5 — 收敛检查: max |Δ P_exist| < ε
+
+        Args:
+            regions: Optional pre-computed regions.  When None, the mixin falls
+                     back to ``self.compute_regions()`` for backward compatibility.
         """
         if not self._objects:
             return
 
-        regions = self.compute_regions()
+        if regions is None:
+            regions = self.compute_regions()
         self._cached_regions = regions
 
         # 每轮 BP 从头开始计算房间后验和 phantom (避免跨调用残留)
@@ -83,9 +88,7 @@ class BeliefPropagationMixin:
         self._phantom_nodes.clear()
 
         # 记录迭代前的 P_exist 快照 (收敛判据)
-        prev_beliefs: dict[int, float] = {
-            oid: obj.existence_prob for oid, obj in self._objects.items()
-        }
+        prev_beliefs: dict[int, float] = {oid: obj.existence_prob for oid, obj in self._objects.items()}
         self._bp_messages_log.clear()
 
         for iteration in range(BP_MAX_ITERATIONS):
@@ -125,7 +128,7 @@ class BeliefPropagationMixin:
     #  Phase 1: 上行传播 — Object → Room Type Posterior
     # ──────────────────────────────────────────────────────────
 
-    def _bp_phase_upward(self, regions: list['Region']) -> None:
+    def _bp_phase_upward(self, regions: list["Region"]) -> None:
         """Phase 1: 用观测到的物体标签更新房间类型贝叶斯后验。
 
         数学公式 (对数域):
@@ -145,19 +148,32 @@ class BeliefPropagationMixin:
             return
 
         room_types = [
-            "office", "kitchen", "corridor", "meeting_room", "bathroom",
-            "stairwell", "lobby", "storage", "server_room", "warehouse",
-            "lab", "parking", "outdoor", "elevator_hall", "factory",
-            "hospital", "entrance", "utility_room", "bedroom", "living_room",
-            "break_room", "laundry",
+            "office",
+            "kitchen",
+            "corridor",
+            "meeting_room",
+            "bathroom",
+            "stairwell",
+            "lobby",
+            "storage",
+            "server_room",
+            "warehouse",
+            "lab",
+            "parking",
+            "outdoor",
+            "elevator_hall",
+            "factory",
+            "hospital",
+            "entrance",
+            "utility_room",
+            "bedroom",
+            "living_room",
+            "break_room",
+            "laundry",
         ]
 
         for region in regions:
-            labels_in_room = [
-                self._objects[oid].label.lower()
-                for oid in region.object_ids
-                if oid in self._objects
-            ]
+            labels_in_room = [self._objects[oid].label.lower() for oid in region.object_ids if oid in self._objects]
             if not labels_in_room:
                 continue
 
@@ -195,7 +211,7 @@ class BeliefPropagationMixin:
     #  Phase 2: 下行传播 — Room Type Posterior → Object Prior
     # ──────────────────────────────────────────────────────────
 
-    def _bp_phase_downward(self, regions: list['Region']) -> None:
+    def _bp_phase_downward(self, regions: list["Region"]) -> None:
         """Phase 2: 下行传播 — 房间后验 → 物体先验注入。
 
         两种模式 (自动切换):
@@ -221,7 +237,7 @@ class BeliefPropagationMixin:
         # ── 模式 B: KG 查表 fallback ──
         self._bp_phase_downward_kg_lookup(regions)
 
-    def _bp_phase_downward_gcn(self, regions: list['Region']) -> None:
+    def _bp_phase_downward_gcn(self, regions: list["Region"]) -> None:
         """Phase 2A: 用 KG-BELIEF GCN 推理完整直方图。
 
         GCN 输出: per-room predicted probability for each object class
@@ -234,11 +250,7 @@ class BeliefPropagationMixin:
         region_list: list = []
 
         for region in regions:
-            labels = [
-                self._objects[oid].label
-                for oid in region.object_ids
-                if oid in self._objects
-            ]
+            labels = [self._objects[oid].label for oid in region.object_ids if oid in self._objects]
             posterior = self._room_type_posteriors.get(region.region_id)
             rtype = posterior.best_type if posterior else "unknown"
             room_labels.append(labels)
@@ -276,26 +288,36 @@ class BeliefPropagationMixin:
                     obj.is_kg_expected = True
                     obj.kg_prior_source = f"gcn:{best_type}(p={gcn_prob:.2f})"
 
-                    self._bp_messages_log.append(BeliefMessage(
-                        source_type="room", source_id=region.region_id,
-                        target_type="object", target_id=oid,
-                        message_type="existence",
-                        delta_alpha=delta_a, weight=gcn_prob,
-                    ))
+                    self._bp_messages_log.append(
+                        BeliefMessage(
+                            source_type="room",
+                            source_id=region.region_id,
+                            target_type="object",
+                            target_id=oid,
+                            message_type="existence",
+                            delta_alpha=delta_a,
+                            weight=gcn_prob,
+                        )
+                    )
 
                 elif gcn_prob < 0.2 and obj.detection_count <= 2:
                     delta_b = BP_KG_UNEXPECTED_PENALTY * (1.0 - gcn_prob)
                     obj.belief_beta += delta_b
                     obj.is_kg_expected = False
 
-                    self._bp_messages_log.append(BeliefMessage(
-                        source_type="room", source_id=region.region_id,
-                        target_type="object", target_id=oid,
-                        message_type="existence",
-                        delta_beta=delta_b, weight=1.0 - gcn_prob,
-                    ))
+                    self._bp_messages_log.append(
+                        BeliefMessage(
+                            source_type="room",
+                            source_id=region.region_id,
+                            target_type="object",
+                            target_id=oid,
+                            message_type="existence",
+                            delta_beta=delta_b,
+                            weight=1.0 - gcn_prob,
+                        )
+                    )
 
-    def _bp_phase_downward_kg_lookup(self, regions: list['Region']) -> None:
+    def _bp_phase_downward_kg_lookup(self, regions: list["Region"]) -> None:
         """Phase 2B: KG 查表 fallback (无训练模型时使用)。
 
         用 KG.get_room_expected_objects + 房间后验 → 启发式 alpha/beta.
@@ -317,8 +339,7 @@ class BeliefPropagationMixin:
 
                 p_expected = 0.0
                 for rtype, rprob in posterior.hypotheses.items():
-                    rt_expected = set(
-                        self._knowledge_graph.get_room_expected_objects(rtype))
+                    rt_expected = set(self._knowledge_graph.get_room_expected_objects(rtype))
                     if obj.label.lower() in rt_expected:
                         p_expected += rprob
 
@@ -329,24 +350,34 @@ class BeliefPropagationMixin:
                     obj.is_kg_expected = True
                     obj.kg_prior_source = f"room_type:{best_type}(p={best_conf:.2f})"
 
-                    self._bp_messages_log.append(BeliefMessage(
-                        source_type="room", source_id=region.region_id,
-                        target_type="object", target_id=oid,
-                        message_type="existence",
-                        delta_alpha=delta_a, weight=p_expected,
-                    ))
+                    self._bp_messages_log.append(
+                        BeliefMessage(
+                            source_type="room",
+                            source_id=region.region_id,
+                            target_type="object",
+                            target_id=oid,
+                            message_type="existence",
+                            delta_alpha=delta_a,
+                            weight=p_expected,
+                        )
+                    )
 
                 elif p_expected < 0.1 and obj.detection_count <= 2:
                     delta_b = BP_KG_UNEXPECTED_PENALTY * (1.0 - p_expected)
                     obj.belief_beta += delta_b
                     obj.is_kg_expected = False
 
-                    self._bp_messages_log.append(BeliefMessage(
-                        source_type="room", source_id=region.region_id,
-                        target_type="object", target_id=oid,
-                        message_type="existence",
-                        delta_beta=delta_b, weight=1.0 - p_expected,
-                    ))
+                    self._bp_messages_log.append(
+                        BeliefMessage(
+                            source_type="room",
+                            source_id=region.region_id,
+                            target_type="object",
+                            target_id=oid,
+                            message_type="existence",
+                            delta_beta=delta_b,
+                            weight=1.0 - p_expected,
+                        )
+                    )
 
     # ──────────────────────────────────────────────────────────
     #  Phase 3: 横向传播 — Spatial Neighbor Belief Sharing
@@ -375,6 +406,7 @@ class BeliefPropagationMixin:
         if n > 30:
             try:
                 from scipy.spatial import cKDTree
+
                 tree = cKDTree(positions[:, :2])
                 pairs = tree.query_pairs(r=RELATION_NEAR_THRESHOLD)
             except ImportError:
@@ -383,9 +415,12 @@ class BeliefPropagationMixin:
                 ii, jj = np.where((dists_2d < RELATION_NEAR_THRESHOLD) & (dists_2d > 0))
                 pairs = {(min(a, b), max(a, b)) for a, b in zip(ii, jj)}
         else:
-            pairs = [(i, j) for i in range(n) for j in range(i + 1, n)
-                     if np.linalg.norm(obj_list[i].position[:2] - obj_list[j].position[:2])
-                     < RELATION_NEAR_THRESHOLD]
+            pairs = [
+                (i, j)
+                for i in range(n)
+                for j in range(i + 1, n)
+                if np.linalg.norm(obj_list[i].position[:2] - obj_list[j].position[:2]) < RELATION_NEAR_THRESHOLD
+            ]
 
         for i, j in pairs:
             o1, o2 = obj_list[i], obj_list[j]
@@ -405,7 +440,7 @@ class BeliefPropagationMixin:
     #  Phase 4: Phantom Node Generation (Blind Nodes)
     # ──────────────────────────────────────────────────────────
 
-    def _bp_phase_phantom_generation(self, regions: list['Region']) -> None:
+    def _bp_phase_phantom_generation(self, regions: list["Region"]) -> None:
         """Phase 4: 基于房间后验 + KG 生成 phantom (blind) 节点。
 
         与 BSG (ICRA 2024) blind nodes 的本质区别:
@@ -431,11 +466,7 @@ class BeliefPropagationMixin:
             if posterior is None or posterior.best_confidence < BP_PHANTOM_MIN_ROOM_CONFIDENCE:
                 continue
 
-            observed_labels = {
-                self._objects[oid].label.lower()
-                for oid in region.object_ids
-                if oid in self._objects
-            }
+            observed_labels = {self._objects[oid].label.lower() for oid in region.object_ids if oid in self._objects}
 
             # 对每个高概率房间假设, 收集期望但未见的物体
             phantom_candidates: dict[str, float] = {}  # label → aggregated P
@@ -447,18 +478,14 @@ class BeliefPropagationMixin:
                 expected = self._knowledge_graph.get_room_expected_objects(rtype)
                 for obj_label in expected:
                     if obj_label.lower() not in observed_labels:
-                        phantom_candidates[obj_label] = (
-                            phantom_candidates.get(obj_label, 0.0) + rprob
-                        )
+                        phantom_candidates[obj_label] = phantom_candidates.get(obj_label, 0.0) + rprob
                         # 从 KG 获取安全等级
                         if obj_label not in phantom_safety:
                             props = self._knowledge_graph.enrich_object_properties(obj_label)
                             phantom_safety[obj_label] = props.get("safety_level", "safe")
 
             # 创建 phantom 节点 (只保留聚合概率 > 阈值的)
-            for label, agg_prob in sorted(
-                phantom_candidates.items(), key=lambda x: -x[1]
-            ):
+            for label, agg_prob in sorted(phantom_candidates.items(), key=lambda x: -x[1]):
                 if agg_prob < BP_PHANTOM_MIN_ROOM_CONFIDENCE:
                     continue
 
@@ -471,7 +498,7 @@ class BeliefPropagationMixin:
                     label=label,
                     room_id=region.region_id,
                     room_type=posterior.best_type,
-                    position=region.center.copy() if hasattr(region, 'center') else np.zeros(3),
+                    position=region.center.copy() if hasattr(region, "center") else np.zeros(3),
                     belief_alpha=alpha,
                     belief_beta=1.0,
                     kg_prior_strength=agg_prob,
@@ -503,6 +530,7 @@ class BeliefPropagationMixin:
             return None
 
         import time as _time
+
         obj = TrackedObject(
             object_id=self._next_id,
             label=detection.label,
@@ -539,34 +567,38 @@ class BeliefPropagationMixin:
         for rtp in self._room_type_posteriors.values():
             if rtp.entropy > 1.5:
                 region = None
-                for r in getattr(self, '_cached_regions', []):
+                for r in getattr(self, "_cached_regions", []):
                     if r.region_id == rtp.room_id:
                         region = r
                         break
                 if region is not None:
-                    targets.append({
-                        "type": "explore_room",
-                        "room_id": rtp.room_id,
-                        "reason": f"high_uncertainty (H={rtp.entropy:.2f})",
-                        "position": region.center.tolist(),
-                        "priority": rtp.entropy,
-                    })
+                    targets.append(
+                        {
+                            "type": "explore_room",
+                            "room_id": rtp.room_id,
+                            "reason": f"high_uncertainty (H={rtp.entropy:.2f})",
+                            "position": region.center.tolist(),
+                            "priority": rtp.entropy,
+                        }
+                    )
 
         for phantom in self.get_phantom_nodes()[:10]:
             priority = phantom.existence_prob
             if phantom.safety_level in ("dangerous", "forbidden"):
                 priority *= 3.0  # 危险物体优先探索确认
-            targets.append({
-                "type": "confirm_phantom",
-                "phantom_id": phantom.phantom_id,
-                "label": phantom.label,
-                "room_id": phantom.room_id,
-                "room_type": phantom.room_type,
-                "reason": f"expected_{phantom.label} (P={phantom.existence_prob:.2f})",
-                "position": phantom.position.tolist(),
-                "priority": priority,
-                "safety_level": phantom.safety_level,
-            })
+            targets.append(
+                {
+                    "type": "confirm_phantom",
+                    "phantom_id": phantom.phantom_id,
+                    "label": phantom.label,
+                    "room_id": phantom.room_id,
+                    "room_type": phantom.room_type,
+                    "reason": f"expected_{phantom.label} (P={phantom.existence_prob:.2f})",
+                    "position": phantom.position.tolist(),
+                    "priority": priority,
+                    "safety_level": phantom.safety_level,
+                }
+            )
 
         targets.sort(key=lambda t: -t["priority"])
         return targets

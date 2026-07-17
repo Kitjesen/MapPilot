@@ -7,6 +7,7 @@ namespace nav_kernel {
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr double kSpeedEpsilon = 1e-4;
 
 double wrapPi(double angle) {
   angle = std::fmod(angle + kPi, 2.0 * kPi);
@@ -34,7 +35,8 @@ PathFollowerOutput computeControl(
     double slowFactor,
     int safetyStop,
     const PathFollowerParams& p,
-    PathFollowerState& state) {
+    PathFollowerState& state,
+    double goalDistance) {
   PathFollowerOutput out;
 
   if (!std::isfinite(vehicleRel.x) || !std::isfinite(vehicleRel.y) ||
@@ -47,7 +49,10 @@ PathFollowerOutput computeControl(
 
   const double endDisX = pathPoints[pathSize - 1].x - vehicleRel.x;
   const double endDisY = pathPoints[pathSize - 1].y - vehicleRel.y;
-  const double endDis = std::sqrt(endDisX * endDisX + endDisY * endDisY);
+  const double localEndDis = std::sqrt(endDisX * endDisX + endDisY * endDisY);
+  const double endDis = std::isfinite(goalDistance) && goalDistance >= 0.0
+      ? goalDistance
+      : localEndDis;
   out.endDis = endDis;
 
   const double lookAheadDis = adaptiveLookAhead(state.vehicleSpeed, p);
@@ -77,6 +82,19 @@ PathFollowerOutput computeControl(
   const double pathDir = std::atan2(disY, disX);
   double dirDiff = wrapPi(vehicleYawDiff - pathDir);
 
+  const double nominalDt = clamp(p.nominalDt, 1e-4, 1.0);
+  const double maxDt = std::max(nominalDt, p.maxDt);
+  double dt = nominalDt;
+  if (std::isfinite(currentTime) && state.lastControlTime >= 0.0 &&
+      currentTime > state.lastControlTime) {
+    dt = clamp(currentTime - state.lastControlTime, 1e-4, maxDt);
+  }
+  if (std::isfinite(currentTime)) {
+    state.lastControlTime = currentTime;
+  }
+  const double accelStep = std::max(0.0, p.maxAccel) * dt;
+  const double nominalAccelStep = std::max(0.0, p.maxAccel) * nominalDt;
+
   if (p.twoWayDrive) {
     constexpr double kHysteresis = 0.1;
     if (std::fabs(dirDiff) > kPi / 2.0 + kHysteresis &&
@@ -98,7 +116,7 @@ PathFollowerOutput computeControl(
   out.dirDiff = dirDiff;
 
   double vehicleYawRate = -(
-      std::fabs(state.vehicleSpeed) < 2.0 * p.maxAccel / 100.0
+      std::fabs(state.vehicleSpeed) < 2.0 * nominalAccelStep
       ? p.stopYawRateGain
       : p.yawRateGain) * dirDiff;
   const double maxYawRateRad = p.maxYawRate * kPi / 180.0;
@@ -130,9 +148,8 @@ PathFollowerOutput computeControl(
 
   const double commandedSpeed = targetSpeed * slowFactor * turnSpeedScale;
   auto stepToward = [&](double cur, double tgt) {
-    const double step = p.maxAccel / 100.0;
-    return (cur < tgt) ? std::min(cur + step, tgt)
-         : (cur > tgt) ? std::max(cur - step, tgt) : cur;
+    return (cur < tgt) ? std::min(cur + accelStep, tgt)
+         : (cur > tgt) ? std::max(cur - accelStep, tgt) : cur;
   };
 
   const bool canAccel = (std::fabs(dirDiff) < p.dirDiffThre ||
@@ -147,7 +164,7 @@ PathFollowerOutput computeControl(
   if (safetyStop >= 2) vehicleYawRate = 0;
 
   out.cmd.wz = vehicleYawRate;
-  if (std::fabs(state.vehicleSpeed) > p.maxAccel / 100.0) {
+  if (std::fabs(state.vehicleSpeed) > kSpeedEpsilon) {
     if (p.omniDirGoalThre > 0) {
       out.cmd.vx = std::cos(dirDiff) * state.vehicleSpeed;
       out.cmd.vy = -std::sin(dirDiff) * state.vehicleSpeed;

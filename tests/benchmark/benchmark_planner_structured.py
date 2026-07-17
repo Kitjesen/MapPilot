@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Structured planner benchmark 闂?runs A* and PCT on a synthetic map fixture.
+"""Structured planner benchmark — runs A* and PCT on a synthetic map fixture.
 
 Emits structured JSON results per planner/route pair (schema_version=1)
 for CI/analysis ingestion.  Runs without ROS2.
@@ -33,8 +33,8 @@ for _p in [str(_REPO_ROOT), str(_SRC)]:
         sys.path.insert(0, _p)
 
 # ---- imports after path setup ----
-from runtime.diagnostics.efficiency_status import benchmark_claim_metadata
-from runtime.diagnostics.efficiency_status import classify_benchmark_error
+from tests.benchmark.efficiency_status import benchmark_claim_metadata
+from tests.benchmark.efficiency_status import classify_benchmark_error
 
 IMPORT_ERROR: str | None = None
 GlobalPlanner: Any | None = None

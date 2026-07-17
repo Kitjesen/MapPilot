@@ -2,13 +2,6 @@
 
 from __future__ import annotations
 
-from .resolver import (
-    PROFILE_ALIASES,
-    ResolvedRuntimeConfig,
-    canonical_profile_name,
-    resolve_profile_config,
-    resolve_runtime_config,
-)
 from .endpoints import (
     RuntimeEndpointError,
     RuntimeEndpointSpec,
@@ -16,6 +9,7 @@ from .endpoints import (
     apply_runtime_endpoint_config,
     compile_runtime_run_spec,
     resolve_runtime_run_spec,
+    route_contract_for_config,
     runtime_endpoint,
     runtime_endpoint_names,
 )
@@ -24,6 +18,13 @@ from .launcher import (
     RuntimeProcessContext,
     build_external_launch_context,
     resolve_runtime_process_context,
+)
+from .resolver import (
+    PROFILE_ALIASES,
+    ResolvedRuntimeConfig,
+    canonical_profile_name,
+    resolve_profile_config,
+    resolve_runtime_config,
 )
 
 __all__ = [
@@ -38,10 +39,11 @@ __all__ = [
     "build_external_launch_context",
     "canonical_profile_name",
     "compile_runtime_run_spec",
-    "resolve_runtime_process_context",
-    "resolve_runtime_run_spec",
     "resolve_profile_config",
     "resolve_runtime_config",
+    "resolve_runtime_process_context",
+    "resolve_runtime_run_spec",
+    "route_contract_for_config",
     "runtime_endpoint",
     "runtime_endpoint_names",
 ]

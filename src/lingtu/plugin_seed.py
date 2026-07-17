@@ -10,7 +10,7 @@ It is deliberately not a planner, profile, or module orchestrator:
 - profiles decide which capabilities a launch wants;
 - ``runtime.plugin_seed`` owns the generic import/seed mechanics;
 - this catalog owns LingTu's concrete built-in module list;
-- optional ROS2 compatibility groups live in ``lingtu.ros2_plugin_seed``.
+- transport adapters are native DDS or process-local implementations.
 
 The product global-planner backend group is intentionally narrow: production
 startup registers OctoPlanner3D only. Legacy PCT/A*/direct code may still exist
@@ -27,11 +27,8 @@ from runtime.plugin_seed import (
 )
 
 CATALOG_NAME = "lingtu_builtin"
-
 BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
-    "device": (
-        "runtime.devices.manager",
-    ),
+    "device": ("runtime.devices.manager",),
     "driver": (
         "runtime.blueprints.stub",
         "drivers.real.thunder.han_dog_module",
@@ -46,45 +43,46 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "drivers.sim.mujoco.driver",
         "drivers.sim.endpoint",
     ),
-    "driver_legacy": (
-        "drivers.real.thunder.connection",
-    ),
+    "driver_legacy": ("drivers.real.thunder.connection",),
     "lidar": (
+        "drivers.real.lidar.module",
         "drivers.real.lidar.lidar_module",
+        "drivers.sim.lidar.module",
     ),
-    "teleop": (
-        "drivers.real.teleop_module",
+    "imu": (
+        "drivers.real.imu.module",
+        "drivers.real.imu.dds_module",
+        "drivers.sim.imu.module",
     ),
+    "teleop": ("drivers.real.teleop_module",),
     "camera": (
+        "drivers.real.camera.module",
         "drivers.real.camera.native_camera_module",
+        "drivers.real.camera.dds_module",
     ),
+    "camera_sim": ("drivers.sim.camera.module",),
     "map": (
-        "nav.services.map_layers.occupancy_grid_module",
-        "nav.services.map_layers.voxel_grid_module",
-        "nav.services.map_layers.esdf_module",
-        "nav.services.map_layers.elevation_map_module",
-        "nav.services.map_layers.traversability_cost_module",
-        "nav.services.maps",
+        "maps.modules.occupancy",
+        "maps.modules.voxel_grid",
+        "maps.modules.semantic",
+        "maps.modules.esdf",
+        "maps.modules.elevation",
+        "maps.modules.traversability",
+        "maps.modules.service",
     ),
-    "map_save_adapter": (
-        "runtime.adapters.native.map_save",
-    ),
+    "map_save_adapter": ("maps.adapters.native.map_save",),
     "safety": (
         "nav.services.safety.safety_ring",
         "nav.services.safety.velocity_mux",
         "nav.services.geofence",
     ),
-    "planner_backend": (
-        "nav.services.plan.global_planner.algorithm.octoplanner3d",
-    ),
+    "planner_backend": ("nav.services.plan.global_planner.algorithm.octoplanner3d",),
     "navigation": (
-        "nav.mission.navigation",
-        "nav.exploration.frontier_explorer_module",
-        "nav.exploration.traversable_frontier_module",
+        "nav.navigation",
+        "explore.frontier",
+        "explore.traversable_frontier",
     ),
-    "map_dds": (
-        "runtime.adapters.dds.map_output",
-    ),
+    "map_dds": ("maps.adapters.dds.output",),
     "autonomy": (
         "nav.local.terrain",
         "nav.services.plan.local_planner.service",
@@ -99,12 +97,10 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "localization.ntrip_client_module",
         "runtime.adapters.native.localization_adapter",
     ),
-    "sim_lidar": (
-        "drivers.sim.pointcloud",
-    ),
+    "sim_lidar": ("drivers.sim.pointcloud",),
     "exploration": (
-        "nav.exploration.tare.module",
-        "nav.exploration.tare.supervisor",
+        "explore.tare.module",
+        "explore.tare.supervisor",
     ),
     "perception": (
         "perception.perception_module",
@@ -118,12 +114,12 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "perception.reconstruction.keyframe_exporter_module",
     ),
     "decision": (
-        "decision.modules.semantic_planner_module",
-        "decision.modules.visual_servo_module",
+        "decision.modules.semantic_planner",
+        "decision.modules.visual_servo",
     ),
     "llm": (
-        "decision.llm.llm_client",
-        "decision.modules.llm_module",
+        "decision.llm.client",
+        "decision.modules.llm",
     ),
     "memory": (
         "memory.modules.semantic_mapper_module",
@@ -138,39 +134,11 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "gateway.gateway_module",
         "gateway.mcp_server",
     ),
-    "visualization": (
-        "runtime.rerun_module",
-    ),
-    "webrtc": (
-        "gateway.media.webrtc_stream",
-    ),
+    "visualization": ("runtime.rerun_module",),
 }
 
 
-def _optional_ros2_plugin_modules() -> Mapping[str, tuple[str, ...]]:
-    try:
-        from lingtu.ros2_plugin_seed import ROS2_PLUGIN_MODULES
-    except ModuleNotFoundError as exc:
-        if exc.name != "lingtu.ros2_plugin_seed":
-            raise
-        return {}
-    return ROS2_PLUGIN_MODULES
-
-
-def _merge_plugin_modules(
-    base: Mapping[str, tuple[str, ...]],
-    optional: Mapping[str, tuple[str, ...]],
-) -> Mapping[str, tuple[str, ...]]:
-    merged: dict[str, tuple[str, ...]] = {key: tuple(value) for key, value in base.items()}
-    for key, modules in optional.items():
-        merged[key] = tuple(dict.fromkeys((*merged.get(key, ()), *modules)))
-    return merged
-
-
-BUILTIN_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = _merge_plugin_modules(
-    BASE_PLUGIN_MODULES,
-    _optional_ros2_plugin_modules(),
-)
+BUILTIN_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = BASE_PLUGIN_MODULES
 
 
 DEFAULT_BUILTIN_PLUGIN_GROUPS: tuple[str, ...] = (

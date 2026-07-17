@@ -1,13 +1,4 @@
-"""
-test_topological_memory.py — 拓扑记忆单元测试
-
-覆盖:
-  - 节点创建与合并
-  - 边连接
-  - 文本查询
-  - 回溯
-  - 最少探索方向
-"""
+"""Decision module."""
 
 import unittest
 
@@ -17,7 +8,7 @@ from memory.spatial.topological import TopologicalMemory
 
 
 class TestNodeCreation(unittest.TestCase):
-    """节点创建与位置更新测试。"""
+    """Test Node Creation."""
 
     def test_first_position_creates_node(self):
         mem = TopologicalMemory(new_node_distance=2.0)
@@ -30,9 +21,9 @@ class TestNodeCreation(unittest.TestCase):
         mem = TopologicalMemory(new_node_distance=2.0)
         mem.update_position(np.array([0.0, 0.0, 0.0]))
         result = mem.update_position(np.array([0.5, 0.5, 0.0]))
-        self.assertIsNone(result)  # 太近, 不创建新节点
+        self.assertIsNone(result)
         self.assertEqual(len(mem.nodes), 1)
-        # 但 visit_count 应增加
+
         self.assertEqual(next(iter(mem.nodes.values())).visit_count, 2)
 
     def test_far_position_creates_new_node(self):
@@ -69,12 +60,12 @@ class TestNodeCreation(unittest.TestCase):
         node = next(iter(mem.nodes.values()))
         self.assertIn("chair", node.visible_labels)
         self.assertIn("desk", node.visible_labels)
-        # 不应重复
+
         self.assertEqual(node.visible_labels.count("chair"), 1)
 
 
 class TestTextQuery(unittest.TestCase):
-    """文本查询匹配测试。"""
+    """Test Text Query."""
 
     def test_query_matches_visible_labels(self):
         mem = TopologicalMemory(new_node_distance=2.0)
@@ -98,7 +89,7 @@ class TestTextQuery(unittest.TestCase):
 
 
 class TestBacktrack(unittest.TestCase):
-    """回溯功能测试。"""
+    """Test Backtrack."""
 
     def test_backtrack_one_step(self):
         mem = TopologicalMemory(new_node_distance=2.0)
@@ -117,7 +108,7 @@ class TestBacktrack(unittest.TestCase):
 
 
 class TestLeastVisitedDirection(unittest.TestCase):
-    """最少探索方向测试。"""
+    """Test Least Visited Direction."""
 
     def test_returns_none_for_empty_memory(self):
         mem = TopologicalMemory()
@@ -126,22 +117,23 @@ class TestLeastVisitedDirection(unittest.TestCase):
 
     def test_returns_direction_vector(self):
         mem = TopologicalMemory(new_node_distance=1.0)
-        # 在东方添加多个节点
+
         for x in range(1, 6):
             mem.update_position(np.array([float(x), 0.0, 0.0]))
         direction = mem.get_least_visited_direction(np.array([3.0, 0.0]))
         self.assertIsNotNone(direction)
         self.assertEqual(direction.shape, (2,))
-        # 方向应是单位向量级别
+
         norm = np.linalg.norm(direction)
         self.assertGreater(norm, 0.5)
 
 
 class TestGraphExport(unittest.TestCase):
-    """图导出测试。"""
+    """Test Graph Export."""
 
     def test_graph_json_valid(self):
         import json
+
         mem = TopologicalMemory(new_node_distance=2.0)
         mem.update_position(np.array([0.0, 0.0, 0.0]), visible_labels=["a"])
         mem.update_position(np.array([5.0, 0.0, 0.0]), visible_labels=["b"])
@@ -159,7 +151,7 @@ class TestGraphExport(unittest.TestCase):
 
 
 class TestPruning(unittest.TestCase):
-    """节点上限裁剪测试。"""
+    """Test Pruning."""
 
     def test_prune_exceeding_max(self):
         mem = TopologicalMemory(new_node_distance=0.5, max_nodes=5)

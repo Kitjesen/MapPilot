@@ -345,7 +345,7 @@ The summary must report:
 - `cmd_vel_sent_to_hardware=false`
 
 For gates that declare `runtime_contract`, the server closure summary must also
-surface `evidence.runtime_evidence` from `runtime.diagnostics.runtime_evidence`; this is the
+surface `evidence.runtime_evidence` from `diagnostics.field.evidence`; this is the
 shared check for simulation-only status, hardware command isolation, path
 evidence, command evidence, runtime contract name/health, and any required
 `frame_evidence` links such as `map->odom`, `odom->body`, and `body->lidar`.
@@ -454,7 +454,7 @@ gate's command, collector/gate commands, ROS/endpoint requirements, validates
 list, checks, and coverage map so UI and operations tooling do not need to infer
 the validation sequence from ad hoc text.
 The gate uses
-`runtime.diagnostics.runtime_evidence.validate_real_runtime_evidence` and requires
+`diagnostics.field.evidence.validate_real_runtime_evidence` and requires
 `runtime_contract.name=thunder_field`, the configured command boundary,
 `map->odom->body->lidar_link` frame
 evidence, concrete `resolved_runtime_data_flow.thunder_field` stage evidence, and

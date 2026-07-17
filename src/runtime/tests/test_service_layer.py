@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 # Mock components
 # ---------------------------------------------------------------------------
 
+
 class MockDetector:
     def detect(self, bgr, text_prompt):
         det = MagicMock()
@@ -26,17 +27,26 @@ class MockDetector:
         det.mask = None
         det.features = np.zeros(512)
         return [det]
-    def load_model(self): pass
-    def shutdown(self): pass
+
+    def load_model(self):
+        pass
+
+    def shutdown(self):
+        pass
 
 
 class MockEncoder:
     def encode_image(self, img):
         return np.random.randn(512).astype(np.float32)
+
     def encode_text(self, text):
         return np.random.randn(512).astype(np.float32)
-    def load_model(self): pass
-    def shutdown(self): pass
+
+    def load_model(self):
+        pass
+
+    def shutdown(self):
+        pass
 
 
 class MockTracker:
@@ -51,10 +61,12 @@ class MockTracker:
 
     def get_scene_graph_json(self):
         import json
-        return json.dumps({
-            "objects": [{"label": k, "position": [0, 0, 0]}
-                       for k in self._tracked_objects],
-        })
+
+        return json.dumps(
+            {
+                "objects": [{"label": k, "position": [0, 0, 0]} for k in self._tracked_objects],
+            }
+        )
 
     def clear(self):
         self._tracked_objects.clear()
@@ -126,17 +138,17 @@ class MockActionExecutor:
 # PerceptionService tests
 # ---------------------------------------------------------------------------
 
-class TestPerceptionService(unittest.TestCase):
 
+class TestPerceptionService(unittest.TestCase):
     def _make_service(self, detector=True, encoder=True, tracker=True):
-        from perception.tracking.projection import CameraIntrinsics
         from perception.service import PerceptionService
+        from perception.tracking.projection import CameraIntrinsics
+
         svc = PerceptionService(
             detector=MockDetector() if detector else None,
             encoder=MockEncoder() if encoder else None,
             tracker=MockTracker() if tracker else None,
-            intrinsics=CameraIntrinsics(fx=500, fy=500, cx=320, cy=240,
-                                        width=640, height=480),
+            intrinsics=CameraIntrinsics(fx=500, fy=500, cx=320, cy=240, width=640, height=480),
             max_depth=6.0,
             min_depth=0.3,
             depth_scale=0.001,
@@ -199,6 +211,7 @@ class TestPerceptionService(unittest.TestCase):
         svc.intrinsics = None
         self.assertIsNone(svc.intrinsics)
         from perception.tracking.projection import CameraIntrinsics
+
         svc.set_intrinsics(CameraIntrinsics(600, 600, 320, 240, 640, 480))
         self.assertIsNotNone(svc.intrinsics)
 
@@ -215,30 +228,34 @@ class TestPerceptionService(unittest.TestCase):
 # GoalResolutionService tests
 # ---------------------------------------------------------------------------
 
-class TestGoalResolutionService(unittest.TestCase):
 
+class TestGoalResolutionService(unittest.TestCase):
     def test_resolve_fast(self):
-        from decision.tasking.service import GoalResolutionService
+        from decision.tasks.services import GoalResolutionService
+
         svc = GoalResolutionService(resolver=MockGoalResolver())
         result = svc.resolve_fast("find the chair", '{"objects":[]}')
         self.assertIsNotNone(result)
         self.assertEqual(result.confidence, 0.9)
 
     def test_resolve_auto(self):
-        from decision.tasking.service import GoalResolutionService
+        from decision.tasks.services import GoalResolutionService
+
         svc = GoalResolutionService(resolver=MockGoalResolver())
         result = svc.resolve("find the chair", '{"objects":[]}')
         self.assertIsNotNone(result)
 
     def test_resolve_by_tag(self):
-        from decision.tasking.service import GoalResolutionService
+        from decision.tasks.services import GoalResolutionService
+
         svc = GoalResolutionService(resolver=MockGoalResolver())
         result = svc.resolve_by_tag("go to the office")
         self.assertIsNotNone(result)
         self.assertEqual(result.label, "office")
 
     def test_resolve_by_tag_miss(self):
-        from decision.tasking.service import GoalResolutionService
+        from decision.tasks.services import GoalResolutionService
+
         svc = GoalResolutionService(resolver=MockGoalResolver())
         result = svc.resolve_by_tag("find a dog")
         self.assertIsNone(result)
@@ -248,19 +265,20 @@ class TestGoalResolutionService(unittest.TestCase):
 # FrontierExplorationService tests
 # ---------------------------------------------------------------------------
 
-class TestFrontierExplorationService(unittest.TestCase):
 
+class TestFrontierExplorationService(unittest.TestCase):
     def test_evaluate(self):
-        from decision.tasking.service import FrontierExplorationService
+        from decision.tasks.services import FrontierExplorationService
+
         svc = FrontierExplorationService(scorer=MockFrontierScorer())
         costmap = np.zeros((100, 100), dtype=np.int8)
-        best = svc.evaluate(costmap, 0.05, 0.0, 0.0,
-                           np.array([0.0, 0.0]), "explore")
+        best = svc.evaluate(costmap, 0.05, 0.0, 0.0, np.array([0.0, 0.0]), "explore")
         self.assertIsNotNone(best)
         self.assertAlmostEqual(best.score, 0.8)
 
     def test_record_failure(self):
-        from decision.tasking.service import FrontierExplorationService
+        from decision.tasks.services import FrontierExplorationService
+
         svc = FrontierExplorationService(scorer=MockFrontierScorer())
         svc.record_failure(np.array([1.0, 2.0]))  # should not crash
 
@@ -269,22 +287,25 @@ class TestFrontierExplorationService(unittest.TestCase):
 # ActionExecutionService tests
 # ---------------------------------------------------------------------------
 
-class TestActionExecutionService(unittest.TestCase):
 
+class TestActionExecutionService(unittest.TestCase):
     def test_navigate(self):
-        from decision.tasking.service import ActionExecutionService
+        from decision.tasks.services import ActionExecutionService
+
         svc = ActionExecutionService(executor=MockActionExecutor())
         cmd = svc.navigate(np.array([5, 3, 0]), np.array([0, 0, 0]))
         self.assertEqual(cmd.action_type, "navigate")
 
     def test_approach(self):
-        from decision.tasking.service import ActionExecutionService
+        from decision.tasks.services import ActionExecutionService
+
         svc = ActionExecutionService(executor=MockActionExecutor())
         cmd = svc.approach(np.array([5, 3, 0]), np.array([0, 0, 0]))
         self.assertEqual(cmd.action_type, "approach")
 
     def test_look_around(self):
-        from decision.tasking.service import ActionExecutionService
+        from decision.tasks.services import ActionExecutionService
+
         svc = ActionExecutionService(executor=MockActionExecutor())
         cmd = svc.look_around(np.array([0, 0, 0]))
         self.assertEqual(cmd.action_type, "look_around")

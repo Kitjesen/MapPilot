@@ -29,9 +29,9 @@
 - Modify: `tests/README.md`
   - Correct canonical simulation closure test path.
 - Modify: `src/runtime/blueprints/stacks/perception.py`
-  - Resolve CameraBridge only when the active driver path needs it.
+  - Resolve camera only when the active driver path needs it.
 - Modify: `src/runtime/tests/test_stack_registry_resolution.py`
-  - Lock CameraBridge resolution and driver-camera skip behavior.
+  - Lock camera resolution and driver-camera skip behavior.
 - Modify: `src/drivers/sim/mujoco/driver.py`
   - Avoid duplicating the repo import root during MuJoCo setup.
 - Modify: `src/drivers/tests/test_mujoco_driver_contract.py`
@@ -149,13 +149,13 @@ Expected on a healthy runtime: tests pass without launching real robot services.
 - Modify: `src/drivers/sim/mujoco/driver.py`
 - Modify: `src/drivers/tests/test_mujoco_driver_contract.py`
 
-- [x] **Step 1: Lazy-resolve CameraBridge**
+- [x] **Step 1: Lazy-resolve camera**
 
-Move `stack_module("camera_bridge", ...)` inside the `needs_camera_bridge` branch so sim drivers with native camera ports do not import the real camera bridge at blueprint construction time.
+Move camera module resolution inside the external-camera branch so sim drivers with native camera ports do not import the real camera module at blueprint construction time.
 
-- [x] **Step 2: Lock CameraBridge resolution behavior**
+- [x] **Step 2: Lock camera resolution behavior**
 
-Assert MuJoCo native camera and ROS2 sim driver-camera paths do not resolve CameraBridge, while external camera paths still do.
+Assert MuJoCo native camera and ROS2 sim driver-camera paths do not resolve camera, while external camera paths still do.
 
 - [x] **Step 3: Fix MuJoCo setup import-root guard**
 
@@ -243,7 +243,7 @@ Verification:
 ```bash
 python -m pytest src\\localization\tests\test_relocalization.py -q
 python -m pytest src\runtime\tests\test_module_boundaries.py::test_core_blueprints_do_not_import_cli_profile_surfaces src\runtime\tests\test_module_boundaries.py::test_package_does_not_import_forbidden_layers_directly -q --tb=short -p no:cacheprovider
-python -m pytest src\runtime\tests\test_stack_registry_resolution.py::test_perception_stack_skips_camera_bridge_resolution_for_driver_camera src\runtime\tests\test_stack_registry_resolution.py::test_perception_stack_resolves_camera_bridge_for_external_camera -q --tb=short -p no:cacheprovider
+python -m pytest src\runtime\tests\test_stack_registry_resolution.py::test_perception_stack_skips_camera_resolution_for_driver_camera src\runtime\tests\test_stack_registry_resolution.py::test_perception_stack_resolves_camera_for_external_camera -q --tb=short -p no:cacheprovider
 python -m pytest src\runtime\tests\test_profile_graph_snapshots.py::test_top_level_blueprint_api_exposes_all_stack_factories src\runtime\tests\test_profile_graph_snapshots.py::test_simulation_profiles_match_runtime_data_source_matrix src\runtime\tests\test_profile_graph_snapshots.py::test_simulation_endpoints_generate_coherent_runtime_run_specs -q --tb=short -p no:cacheprovider
 python -m pytest sim\tests\test_sim_full_system_validation.py::test_scene_catalog_identifies_multifloor_building_contract sim\tests\test_sim_full_system_validation.py::test_timed_marks_missing_environment_dependency_as_blocked sim\tests\test_sim_full_system_validation.py::test_timed_keeps_internal_missing_module_as_failure -q --tb=short -p no:cacheprovider
 ```

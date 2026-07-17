@@ -1,6 +1,6 @@
 # LingTu Navigation — build shortcuts
 
-.PHONY: help build nav_kernel test clean install health benchmark format lint
+.PHONY: help build nav_kernel test clean install health benchmark format lint codegen-idl
 
 .DEFAULT_GOAL := help
 ROS_DISTRO ?= humble
@@ -12,6 +12,7 @@ help:
 	@echo "  Build:"
 	@echo "    make build       - colcon build (full workspace, needs ROS2)"
 	@echo "    make nav_kernel    - build LingTu native navigation kernel (no ROS2 needed)"
+	@echo "    make codegen-idl - generate Python DDS types from IDL"
 	@echo "    make build-debug - colcon build in Debug mode"
 	@echo ""
 	@echo "  Test:"
@@ -40,6 +41,10 @@ build:
 nav_kernel:
 	@echo "Building LingTu native navigation kernel (nanobind, no ROS2 needed)..."
 	@bash scripts/build/build_nav_kernel.sh
+
+# Windows: .\scripts\codegen\run_codegen.ps1
+codegen-idl:
+	python scripts/codegen/idl_to_python.py src/message/idl/lingtu_slam.idl --output src/message/dds_types_generated/
 
 build-debug:
 	@echo "Building workspace (Debug)..."

@@ -1,0 +1,46 @@
+"""Gateway stream subscription wiring."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+def setup_subscriptions(gw: Any) -> None:
+    gw.odometry.subscribe(gw._on_odometry)
+    gw.lidar_scan.subscribe(gw._on_lidar_scan)
+    gw.lidar_scan.set_policy("latest")
+    gw.map_cloud.subscribe(gw._on_map_cloud)
+    gw.map_cloud.set_policy("latest")
+    gw.map_scene.subscribe(gw._on_map_scene)
+    gw.map_scene.set_policy("latest")
+    gw.voxel_cloud.subscribe(gw._on_voxel_cloud)
+    gw.voxel_cloud.set_policy("latest")
+    gw.saved_map.subscribe(gw._on_saved_map)
+    gw.saved_map.set_policy("latest")
+    gw.localization_quality.subscribe(gw._on_icp_quality)
+    gw.localization_quality.set_policy("latest")
+    gw.map_odom_tf.subscribe(gw._on_map_odom_tf)
+    gw.map_odom_tf.set_policy("latest")
+    gw.scene_graph.subscribe(gw._on_scene_graph)
+    gw.safety_state.subscribe(gw._on_safety)
+    gw.mission_status.subscribe(gw._on_mission)
+    gw.map_event.subscribe(gw._on_map_event)
+    gw.execution_eval.subscribe(gw._on_eval)
+    gw.dialogue_state.subscribe(gw._on_dialogue)
+    gw.global_path.subscribe(gw._on_global_path)
+    gw.local_path.subscribe(gw._on_local_path)
+    gw.costmap.subscribe(gw._on_costmap)
+    gw.costmap.set_policy("latest")
+    gw.slope_grid.subscribe(gw._on_slope_grid)
+    gw.slope_grid.set_policy("latest")
+    gw.agent_message.subscribe(gw._on_agent_message)
+    gw.gnss_fusion_health.subscribe(gw._on_gnss_fusion_health)
+    gw.localization_status.subscribe(gw._on_localization_status)
+    gw.localization_status.set_policy("latest")
+    gw.tare_stats.subscribe(gw._on_tare_stats)
+    gw.supervisor_state.subscribe(gw._on_exploration_supervisor)
+    gw.traversable_frontiers.subscribe(gw._on_traversable_frontiers)
+    gw.traversable_frontiers.set_policy("latest")
+    gw.frontier_candidate.subscribe(gw._on_frontier_candidate)
+    gw.frontier_candidate.set_policy("latest")
+    gw._app = gw._build_app()

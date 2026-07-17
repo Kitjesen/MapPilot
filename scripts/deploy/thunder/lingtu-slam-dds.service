@@ -4,7 +4,11 @@ After=network-online.target lingtu-livox-dds.service
 Wants=network-online.target lingtu-livox-dds.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
+WatchdogSec=6s
+WatchdogSignal=SIGTERM
+KillMode=control-group
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
 Environment=LINGTU_SLAM_BIN=/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime
@@ -12,10 +16,6 @@ Environment=LINGTU_SLAM_BACKEND=fastlio2
 Environment=LINGTU_SLAM_MODE=localization
 Environment=LINGTU_SLAM_CONFIG=/opt/lingtu/current/src/localization/fastlio2/config/mid360_s100p.yaml
 Environment=LINGTU_SLAM_MAP=/home/sunrise/data/nova/maps/active/map.pcd
-Environment=LINGTU_SLAM_TRACK_INITIAL_X=0
-Environment=LINGTU_SLAM_TRACK_INITIAL_Y=0
-Environment=LINGTU_SLAM_TRACK_INITIAL_Z=0
-Environment=LINGTU_SLAM_TRACK_INITIAL_YAW=-0.496
 Environment=LINGTU_SLAM_TICK_HZ=50
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_SLAM_LOG_STATUS_S=5
@@ -23,9 +23,10 @@ Environment=LINGTU_SLAM_STATUS_JSON=/tmp/lingtu_slam_status.json
 Environment=LINGTU_SLAM_STATUS_JSON_HZ=10
 Environment=LINGTU_SLAM_CLOUD_SNAPSHOT_DIR=/dev/shm/lingtu_slam
 Environment=LINGTU_SLAM_CLOUD_SNAPSHOT_HZ=5
+Environment=LINGTU_SLAM_LIDAR_SCAN_SNAPSHOT_HZ=10
 Environment=LINGTU_SLAM_TRACK_AGAINST_MAP_PERIOD_S=5
 Environment=LINGTU_CYCLONEDDS_PREFIX=
-ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_slam_dds.sh
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_status_file_watchdog.sh --status-file ${LINGTU_SLAM_STATUS_JSON} --startup-timeout-s 30 --poll-interval-s 0.5 -- /bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_slam_dds.sh
 Restart=on-failure
 RestartSec=3
 KillSignal=SIGINT

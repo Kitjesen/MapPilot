@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -12,11 +12,11 @@ from runtime.profiles.binding_policy import (
     endpoint_transport_for_config,
     exploration_backend_for_config,
     global_planner_backend_selection,
-    map_output_uses_dds,
-    nav_kernel_backend_required,
+    legacy_sensor_binding_violations,
     localization_adapter_for_config,
+    map_output_uses_dds,
     module_transport_for_config,
-    navigation_io_adapters_enabled,
+    nav_kernel_backend_required,
     resolved_autonomy_backend_selection,
     ros2_autonomy_backend_violations,
     ros2_camera_bridge_violations,
@@ -56,17 +56,6 @@ def test_runtime_binding_policy_derives_dds_localization_from_endpoint_transport
     config = {"_endpoint_transport": "dds"}
 
     assert localization_adapter_for_config(config) == "dds_endpoint"
-
-
-def test_runtime_binding_policy_owns_navigation_adapter_enablement() -> None:
-    assert not navigation_io_adapters_enabled({})
-    assert navigation_io_adapters_enabled({"enable_nav_in": True})
-    assert navigation_io_adapters_enabled({"enable_nav_out": True})
-
-
-def test_runtime_binding_policy_keeps_legacy_navigation_adapter_flags_compatible() -> None:
-    assert navigation_io_adapters_enabled({"enable_endpoint_path_bridge": True})
-    assert navigation_io_adapters_enabled({"enable_ros2_bridge": True})
 
 
 def test_runtime_binding_policy_keeps_nav_adapter_keys_canonical() -> None:
@@ -171,9 +160,7 @@ def test_ros2_autonomy_backend_violations_allows_ros_free_defaults() -> None:
 
 
 def test_ros2_driver_runtime_violations_report_ros2_driver_boundary() -> None:
-    assert ros2_driver_runtime_violations(
-        {"robot": "sim_ros2", "driver_module": "ROS2SimDriverModule"}
-    ) == [
+    assert ros2_driver_runtime_violations({"robot": "sim_ros2", "driver_module": "ROS2SimDriverModule"}) == [
         "robot=sim_ros2 selects a ROS2 driver runtime",
         "driver_module=ros2simdrivermodule selects a ROS2 driver runtime",
     ]
@@ -187,9 +174,7 @@ def test_ros2_driver_runtime_violations_allow_product_and_portable_drivers() -> 
 
 
 def test_ros2_lidar_driver_violations_report_legacy_driver_start() -> None:
-    assert ros2_lidar_driver_violations(
-        {"lidar_start_driver": True, "start_lidar_driver": True}
-    ) == [
+    assert ros2_lidar_driver_violations({"lidar_start_driver": True, "start_lidar_driver": True}) == [
         "lidar_start_driver=true starts the legacy local Livox ROS2 driver",
         "start_lidar_driver=true starts the legacy local Livox ROS2 driver",
     ]
@@ -197,6 +182,40 @@ def test_ros2_lidar_driver_violations_report_legacy_driver_start() -> None:
 
 def test_ros2_lidar_driver_violations_allow_endpoint_subscription() -> None:
     assert ros2_lidar_driver_violations({"enable_lidar": True}) == []
+
+
+def test_legacy_sensor_binding_violations_report_driver_sensor_paths() -> None:
+    assert legacy_sensor_binding_violations(
+        {
+            "use_driver_camera": True,
+            "use_driver_lidar": True,
+            "use_driver_imu": True,
+            "legacy_driver_sensor_fallback": True,
+            "enable_legacy_sim_lidar": True,
+        }
+    ) == [
+        "use_driver_camera=true enables a legacy driver sensor path",
+        "use_driver_lidar=true enables a legacy driver sensor path",
+        "use_driver_imu=true enables a legacy driver sensor path",
+        "legacy_driver_sensor_fallback=true enables a legacy driver sensor path",
+        "enable_legacy_sim_lidar=true enables a legacy driver sensor path",
+    ]
+
+
+def test_legacy_sensor_binding_violations_allow_short_sensor_roles() -> None:
+    assert (
+        legacy_sensor_binding_violations(
+            {
+                "enable_camera": True,
+                "camera_backend": "orbbec",
+                "enable_lidar": True,
+                "lidar_backend": "mid360",
+                "enable_imu": True,
+                "imu_backend": "livox",
+            }
+        )
+        == []
+    )
 
 
 def test_ros2_camera_bridge_violations_report_explicit_ros2_bridge() -> None:
@@ -396,9 +415,7 @@ def test_ros2_runtime_binding_violations_reports_endpoint_enablement_without_ada
 
 def test_map_output_can_use_typed_dds_adapter() -> None:
     assert map_output_uses_dds({"map_out_adapter": "dds_map_output"})
-    assert map_output_uses_dds(
-        {"enable_map_out": True, "_endpoint_transport": "dds"}
-    )
+    assert map_output_uses_dds({"enable_map_out": True, "_endpoint_transport": "dds"})
     assert (
         ros2_runtime_binding_violations(
             {
@@ -443,11 +460,10 @@ def test_ros2_runtime_binding_violations_rejects_removed_endpoint_nav_adapters()
         "enable_nav_out=true without explicit non-ROS navigation output adapter has no safe default",
     ]
 
+
 def test_runtime_binding_policy_is_the_blueprint_delivery_seam() -> None:
     checked_files = [
-        ROOT / "src/runtime/adapters/navigation_io.py",
         ROOT / "src/runtime/introspection/profile_graph.py",
-        ROOT / "src/runtime/blueprints/stacks/navigation_io.py",
         ROOT / "src/runtime/blueprints/stacks/composition.py",
     ]
 
@@ -459,32 +475,21 @@ def test_runtime_binding_policy_is_the_blueprint_delivery_seam() -> None:
         assert "def _localization_adapter_for_config" not in source
 
 
-def test_navigation_stack_does_not_own_endpoint_adapter_enable_keys() -> None:
-    source = (ROOT / "src/runtime/blueprints/stacks/navigation.py").read_text(
-        encoding="utf-8-sig"
-    )
-    adapter_stack_source = (
-        ROOT / "src/runtime/blueprints/stacks/navigation_io.py"
-    ).read_text(encoding="utf-8-sig")
+def test_navigation_stack_has_no_python_endpoint_adapter_hooks() -> None:
+    source = (ROOT / "src/runtime/blueprints/stacks/navigation.py").read_text(encoding="utf-8-sig")
 
     assert "enable_ros2_" not in source
     assert "enable_endpoint_" not in source
-    assert "navigation_io_adapters_enabled" not in source
-    assert "navigation_io_adapters_enabled" in adapter_stack_source
+    assert "navigation_io" not in source
 
 
 def test_autonomy_chain_delegates_backend_selection_to_runtime_policy() -> None:
-    source = (ROOT / "src/runtime/blueprints/stacks/autonomy_chain.py").read_text(
-        encoding="utf-8-sig"
-    )
+    source = (ROOT / "src/runtime/blueprints/stacks/autonomy_chain.py").read_text(encoding="utf-8-sig")
 
-    assert (
-        "from runtime.profiles.binding_policy import resolved_autonomy_backend_selection"
-        in source
-    )
+    assert "from runtime.profiles.binding_policy import resolved_autonomy_backend_selection" in source
     assert "resolved_autonomy_backend_selection(" in source
     assert "from runtime.profiles.binding_policy import autonomy_backend_selection" not in source
     assert "\nautonomy_backend_selection(" not in source
-    assert "config.get(\"local_planner_backend\", \"cmu\")" not in source
-    assert "config.get(\"python_autonomy_backend\", \"nanobind\")" not in source
-    assert "config.get(\"python_path_follower_backend\", \"nav_kernel\")" not in source
+    assert 'config.get("local_planner_backend", "cmu")' not in source
+    assert 'config.get("python_autonomy_backend", "nanobind")' not in source
+    assert 'config.get("python_path_follower_backend", "nav_kernel")' not in source

@@ -42,10 +42,10 @@ from perception.tracking.instance_tracker import (
     TrackedObject, InstanceTracker, BELIEF_FRESHNESS_TAU,
 )
 from perception.tracking.projection import Detection3D
-from decision.goal_resolution.goal_resolver import (
+from decision.goals.resolver import (
     GoalResolver, GoalResult, TargetBeliefManager, TargetHypothesis,
 )
-from decision.tasking.task_decomposer import (
+from decision.tasks.decomposition import (
     TaskDecomposer, SubGoalAction, SubGoalStatus,
 )
 from memory.scheduling.voi_scheduler import (
@@ -247,7 +247,7 @@ class TestFastPathResolution:
 
     @classmethod
     def setup_class(cls):
-        from decision.llm.llm_client import LLMConfig
+        from decision.llm.client import LLMConfig
         cls.resolver = GoalResolver(
             primary_config=LLMConfig(backend="openai", model="gpt-4o-mini"),
             fast_path_threshold=0.55,
@@ -379,10 +379,10 @@ class TestFastPathResolution:
         assert r is not None
         assert "exit" in r.target_label.lower() or "door" in r.target_label.lower()
 
-    # 鈹€鈹€ L1 涓枃: 楠岃瘉鍙岃琛屼负 鈹€鈹€
-    # 娉ㄦ剰: 鍘熻璁″亣璁句腑鏂囨寚浠ゆ棤娉曠洿鎺ュ仛 label match 鈫?Fast Path 杩斿洖 None銆?
-    # 瀹為檯: CLIP 澶氳瑷€宓屽叆鍙皢涓枃鎸囦护鐩存帴鏄犲皠鍒拌嫳鏂囨爣绛?(confidence~0.84)锛?
-    #       Fast Path 鍙垚鍔熻В鏋愶紝鏃犻渶 Slow Path銆傛娴嬭瘯鏍囪涓?xfail 璁板綍璁捐婕旇繘銆?
+    # L1 Chinese: verify bilingual behavior.
+    # The original design assumed Chinese instructions with English labels would
+    # fall through Fast Path and require Slow Path. CLIP multilingual embeddings
+    # may now resolve these directly, so this xfail records the behavior change.
 
     @pytest.mark.xfail(
         reason="CLIP multilingual embeddings resolve Chinese queries in Fast Path "
@@ -390,8 +390,8 @@ class TestFastPathResolution:
         strict=False,
     )
     def test_L1_zh_falls_through_to_slow_path(self):
-        """涓枃鎸囦护 + 鑻辨枃鏍囩 鈫?Fast Path 搴旇繑鍥?None (闇€瑕?Slow Path)銆?""
-        for text in ["鎵惧埌闂?, "鎵炬瀛?, "鎵剧伃鐏櫒"]:
+        """Chinese instructions + English labels should fall through to Slow Path."""
+        for text in ["找到门", "找椅子", "找灭火器"]:
             r, _ = self._resolve(text)
             assert r is None, (
                 f"Chinese '{text}' with English labels should NOT resolve via Fast Path "
@@ -428,10 +428,10 @@ class TestFastPathResolution:
         assert r is not None
         assert "table" in r.target_label.lower()
 
-    # 鈹€鈹€ 鎬ц兘: Fast Path 寤惰繜 鈹€鈹€
+    # Performance: Fast Path latency.
 
     def test_fast_path_latency_under_5ms(self):
-        """Fast Path 骞冲潎寤惰繜搴?< 5ms (鏃?LLM)銆?""
+        """Fast Path average latency should stay under 5 ms without LLM calls."""
         latencies = []
         for _ in range(50):
             _, ms = self._resolve("find the chair")
@@ -443,11 +443,11 @@ class TestFastPathResolution:
 
 
 # ================================================================
-#  Test Suite 2: 浠诲姟鍒嗚В
+#  Test Suite 2: Task decomposition
 # ================================================================
 
 class TestTaskDecomposition:
-    """娴嬭瘯浠诲姟鍒嗚В瀵规墍鏈?45 鏉℃寚浠ょ殑姝ｇ‘鎬с€?""
+    """Test task decomposition behavior for offline commands."""
 
     @classmethod
     def setup_class(cls):
@@ -728,7 +728,7 @@ class TestVoIFullEpisode:
 
     def test_episode_decision_distribution(self):
         """妯℃嫙 50 姝ュ鑸? 缁熻 continue/reperceive/slow_reason 鍒嗗竷銆?
-        
+
         鍦烘櫙: 鐩爣淇″康鍦ㄤ腑娈垫€ュ墽涓嬮檷 (妯℃嫙璇/鐜鍙樺寲), 瑙﹀彂 VoI 鍐嶆劅鐭ャ€?
         VoI 鐨勫畨鍏ㄨ鍒? credibility < 0.3 鈫?寮哄埗 reperceive銆?
         """
@@ -826,7 +826,7 @@ class TestAttributeDisambiguation:
 
     @classmethod
     def setup_class(cls):
-        from decision.llm.llm_client import LLMConfig
+        from decision.llm.client import LLMConfig
         cls.resolver = GoalResolver(
             primary_config=LLMConfig(backend="openai", model="gpt-4o-mini"),
             fast_path_threshold=0.55,
@@ -997,7 +997,7 @@ class TestComparativeRanking:
 
     @classmethod
     def setup_class(cls):
-        from decision.llm.llm_client import LLMConfig
+        from decision.llm.client import LLMConfig
         cls.resolver = GoalResolver(
             primary_config=LLMConfig(backend="openai", model="gpt-4o-mini"),
             fast_path_threshold=0.55,
@@ -1294,7 +1294,7 @@ class TestConversationalParsing:
 
     @classmethod
     def setup_class(cls):
-        from decision.tasking.task_decomposer import TaskDecomposer
+        from decision.tasks.decomposition import TaskDecomposer
         cls.decomposer = TaskDecomposer.__new__(TaskDecomposer)
 
     @pytest.mark.parametrize("instruction,expected_target", [
@@ -2079,7 +2079,7 @@ class TestKGIntegrationWithDecomposer:
     def setup_method(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-        from decision.tasking.task_decomposer import TaskDecomposer, SubGoalAction
+        from decision.tasks.decomposition import TaskDecomposer, SubGoalAction
         from memory.knowledge.knowledge_graph import IndustrialKnowledgeGraph
         self.kg = IndustrialKnowledgeGraph()
         TaskDecomposer.set_knowledge_graph(self.kg)
@@ -2273,7 +2273,7 @@ class TestSceneGraphDynamic:
 
 def generate_offline_report():
     """杩愯鎵€鏈夋祴璇曞苟鐢熸垚閲忓寲鎶ュ憡銆?""
-    from decision.llm.llm_client import LLMConfig
+    from decision.llm.client import LLMConfig
 
     print("=" * 70)
     print("NaviMind Offline Pipeline Evaluation Report (108 instructions)")

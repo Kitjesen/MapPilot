@@ -1,34 +1,13 @@
 <!--
     LingTu 3D Map Viewer
     ====================
-    This template is served by GatewayModule._generate_viewer_html().
+    Static HTML shell. Dynamic data arrives through:
+      - /api/v1/events   SSE metadata, odometry, costmap, paths
+      - /ws/cloud        binary PCLD point-cloud frames
+      - /api/v1/*        control/query endpoints
 
-    DYNAMIC VARIABLES (interpolated by the Python server at runtime)
-    -- Point cloud data --
-    {n}          : int   — number of points in the subsampled cloud
-    {n*3}        : int   — n * 3 (for Float32Array size)
-    {coords}     : str   — comma-separated "x,y,z" coordinates string
-    {zmin:.3f}   : float — minimum Z value of point cloud
-    {zmax:.3f}   : float — maximum Z value of point cloud
-
-    -- Camera / view center --
-    {cx+5:.1f}   : float — camera X position (center X + 5)
-    {cy-28:.1f}  : float — camera Y position (center Y - 28)
-    {cx:.1f}     : float — orbit controls target X (point cloud center X)
-    {cy:.1f}     : float — orbit controls target Y (point cloud center Y)
-    {cx:.4f}     : float — grid position X (point cloud center X, high precision)
-    {cy:.4f}     : float — grid position Y (point cloud center Y, high precision)
-    {zmin:.2f}   : float — grid Z position (point cloud min Z)
-
-    -- Robot pose --
-    {rx:.3f}     : float — robot X position
-    {ry:.3f}     : float — robot Y position
-    {ryaw:.4f}   : float — robot yaw angle (radians)
-    {robot_visible} : str — "true" or "false" string for JS
-
-    To regenerate: these are set in _generate_viewer_html() before the
-    template is read. If adding new dynamic variables, update both this
-    header and the Python method.
+    Do not add Python f-string placeholders here. This file is served as a
+    static response and cached by the Gateway route.
 -->
 <!DOCTYPE html>
 <html>
@@ -56,9 +35,6 @@ body{background:#05060d;overflow:hidden;font-family:-apple-system,BlinkMacSystem
 #toast{position:fixed;bottom:78px;left:50%;transform:translateX(-50%);padding:9px 22px;font-size:11.5px;letter-spacing:.5px;display:none;pointer-events:none;z-index:200;color:#7ab8ff;}
 .dot{width:6px;height:6px;border-radius:50%;background:#ff4444;display:inline-block;margin-right:8px;flex-shrink:0;transition:background .4s,box-shadow .4s;}
 .dot.live{background:#44cc88;box-shadow:0 0 7px #44cc8899;}
-#camPanel{position:fixed;bottom:22px;right:16px;padding:12px 14px;z-index:50;}
-#camPanel img{width:216px;height:122px;object-fit:cover;border-radius:8px;background:#060c20;display:block;}
-#camStatus{font-size:9px;color:rgba(80,140,255,0.50);margin-top:5px;letter-spacing:1px;text-align:center;}
 #locPanel{position:fixed;top:16px;right:16px;padding:12px 14px;z-index:50;min-width:138px;display:none;}
 #locBtns{display:flex;flex-direction:column;gap:5px;margin-top:2px;}
 #editPanel{position:fixed;top:136px;right:16px;padding:12px 14px;z-index:50;min-width:178px;}
@@ -91,13 +67,6 @@ body{background:#05060d;overflow:hidden;font-family:-apple-system,BlinkMacSystem
 
 <div id="hint">单击地图发送导航目标 · 拖拽旋转 · 滚轮缩放 · WASD手动驾驶</div>
 <div id="toast" class="glass"></div>
-
-<!-- Camera live feed panel -->
-<div id="camPanel" class="glass">
-  <div class="lbl">摄像头</div>
-  <img id="camImg" alt="">
-  <div id="camStatus">连接中...</div>
-</div>
 
 <!-- Tagged location shortcuts -->
 <div id="locPanel" class="glass">
@@ -137,7 +106,7 @@ scene.background = new THREE.Color(0x05060d);
 scene.fog = new THREE.FogExp2(0x05060d, 0.0055);
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth/innerHeight, 0.1, 600);
-camera.position.set({cx+5:.1f}, {cy-28:.1f}, 28);
+camera.position.set(5, -28, 28);
 camera.up.set(0, 0, 1);
 
 const renderer = new THREE.WebGLRenderer({antialias:true});
@@ -148,7 +117,7 @@ renderer.toneMappingExposure = 1.1;
 document.body.appendChild(renderer.domElement);
 
 const controls = new THREE.OrbitControls(camera, renderer.domElement);
-controls.target.set({cx:.1f}, {cy:.1f}, 1.5);
+controls.target.set(0, 0, 1.5);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.minDistance = 2;
@@ -166,13 +135,16 @@ scene.add(dLight2);
 
 // ── Point cloud — cold blue height gradient ────────────────────────────────
 let _pointCloud = null;
+const _cloudMat = new THREE.PointsMaterial({
+  size:0.035, vertexColors:true, sizeAttenuation:true, transparent:true, opacity:0.88
+});
 (function(){
   const geo = new THREE.BufferGeometry();
-  const pos = new Float32Array({n*3});
-  const col = new Float32Array({n*3});
-  const pts = [{coords}];
-  const zmin={zmin:.3f}, zmax={zmax:.3f}, zr = zmax-zmin || 1;
-  for(let i=0; i<{n}; i++){
+  const pos = new Float32Array(0);
+  const col = new Float32Array(0);
+  const pts = [];
+  const zmin=0, zmax=1, zr = zmax-zmin || 1;
+  for(let i=0; i<0; i++){
     pos[i*3]   = pts[i*3];
     pos[i*3+1] = pts[i*3+1];
     pos[i*3+2] = pts[i*3+2];
@@ -192,23 +164,94 @@ let _pointCloud = null;
   }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-  _pointCloud = new THREE.Points(geo, new THREE.PointsMaterial({
-    size:0.035, vertexColors:true, sizeAttenuation:true, transparent:true, opacity:0.88
-  }));
+  _pointCloud = new THREE.Points(geo, _cloudMat);
   scene.add(_pointCloud);
 })();
+
+function _heightColor(t, col, off){
+  const x = Math.max(0, Math.min(1, t));
+  if(x < 0.5){
+    const u = x * 2;
+    col[off]   = 0.18 + (0.55 - 0.18) * u;
+    col[off+1] = 0.55;
+    col[off+2] = 0.50 + (0.55 - 0.50) * u;
+  } else {
+    const u = (x - 0.5) * 2;
+    col[off]   = 0.55 + (0.78 - 0.55) * u;
+    col[off+1] = 0.55 + (0.60 - 0.55) * u;
+    col[off+2] = 0.55 + (0.35 - 0.55) * u;
+  }
+}
+
+function _setPointCloud(pos, col, count){
+  const old = _pointCloud;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
+  _pointCloud = new THREE.Points(geo, _cloudMat);
+  _pointCloud.frustumCulled = false;
+  scene.add(_pointCloud);
+  if(old){
+    scene.remove(old);
+    old.geometry.dispose();
+  }
+  if(count > 0 && typeof grid !== 'undefined'){
+    let cx=0, cy=0;
+    for(let i=0;i<count;i++){cx+=pos[i*3];cy+=pos[i*3+1];}
+    grid.position.set(cx/count, cy/count, -0.01);
+  }
+}
+
+function _decodePcld(buf){
+  if(!buf || buf.byteLength < 28) return null;
+  const dv = new DataView(buf);
+  if(dv.getUint32(0, true) !== 0x444c4350 || dv.getUint8(4) !== 1) return null;
+  const count = dv.getUint32(8, true);
+  const scale = dv.getFloat32(12, true);
+  const ox = dv.getFloat32(16, true);
+  const oy = dv.getFloat32(20, true);
+  const oz = dv.getFloat32(24, true);
+  const pos = new Float32Array(count*3);
+  const col = new Float32Array(count*3);
+  let zmin=Infinity, zmax=-Infinity;
+  for(let i=0;i<count;i++){
+    const off=28+i*6;
+    const x=dv.getInt16(off, true)*scale+ox;
+    const y=dv.getInt16(off+2, true)*scale+oy;
+    const z=dv.getInt16(off+4, true)*scale+oz;
+    pos[i*3]=x; pos[i*3+1]=y; pos[i*3+2]=z;
+    if(z<zmin) zmin=z;
+    if(z>zmax) zmax=z;
+  }
+  const span = Math.max(zmax-zmin, 0.1);
+  for(let i=0;i<count;i++) _heightColor((pos[i*3+2]-zmin)/span, col, i*3);
+  return {pos, col, count};
+}
+
+function _connectCloudWs(){
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto+'//'+location.host+'/ws/cloud');
+  ws.binaryType = 'arraybuffer';
+  ws.onmessage = e => {
+    if(!(e.data instanceof ArrayBuffer)) return;
+    const frame = _decodePcld(e.data);
+    if(frame) _setPointCloud(frame.pos, frame.col, frame.count);
+  };
+  ws.onclose = () => setTimeout(_connectCloudWs, 2500);
+}
 
 // ── Ground grid ────────────────────────────────────────────────────────────
 const grid = new THREE.GridHelper(100, 100, 0x0c1830, 0x070e1d);
 grid.rotation.x = Math.PI/2;
-grid.position.set({cx:.1f}, {cy:.1f}, {zmin:.2f}-0.01);
+grid.position.set(0, 0, -0.01);
 scene.add(grid);
+_connectCloudWs();
 
 // ── Robot group ────────────────────────────────────────────────────────────
 const robotGroup = new THREE.Group();
-robotGroup.position.set({rx:.3f}, {ry:.3f}, 0.0);
-robotGroup.rotation.z = {ryaw:.4f};
-robotGroup.visible = {robot_visible};
+robotGroup.position.set(0, 0, 0.0);
+robotGroup.rotation.z = 0;
+robotGroup.visible = false;
 scene.add(robotGroup);
 
 // Wireframe fallback shown while STLs load
@@ -261,8 +304,8 @@ const _ringMat = new THREE.MeshBasicMaterial({
 });
 const _ringMesh = new THREE.Mesh(new THREE.RingGeometry(0.38, 0.52, 56), _ringMat);
 _ringMesh.rotation.x = Math.PI/2;
-_ringMesh.position.set({rx:.3f}, {ry:.3f}, 0.015);
-_ringMesh.visible = {robot_visible};
+_ringMesh.position.set(0, 0, 0.015);
+_ringMesh.visible = false;
 scene.add(_ringMesh);
 
 // ── Goal marker ────────────────────────────────────────────────────────────
@@ -572,26 +615,6 @@ renderer.domElement.addEventListener('mouseup',   e=>{
     });
   }
   _connect();
-})();
-
-// ── Camera snapshot panel ──────────────────────────────────────────────────
-(function(){
-  const img=document.getElementById('camImg');
-  const status=document.getElementById('camStatus');
-  let _ok=false;
-  function refresh(){
-    fetch('/api/v1/camera/snapshot?t='+Date.now())
-      .then(r=>{if(!r.ok)throw new Error(r.status);return r.blob();})
-      .then(blob=>{
-        const prev=img.src; img.src=URL.createObjectURL(blob);
-        if(prev&&prev.startsWith('blob:'))URL.revokeObjectURL(prev);
-        status.textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});
-        _ok=true;
-      })
-      .catch(()=>{status.textContent='摄像头离线';_ok=false;})
-      .finally(()=>setTimeout(refresh,_ok?900:4000));
-  }
-  refresh();
 })();
 
 // ── Tagged location shortcuts ──────────────────────────────────────────────

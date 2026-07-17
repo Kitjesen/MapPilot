@@ -13,10 +13,14 @@
  */
 #pragma once
 
-#include <cmath>
-#include <vector>
 #include <algorithm>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
+#include <limits>
+#include <unordered_map>
+#include <vector>
 
 #if defined(_OPENMP)
 #include <omp.h>
@@ -35,6 +39,8 @@ struct TerrainParams {
   double scanVoxelSize = 0.05;
   double terrainVoxelSize = 1.0;
   int terrainVoxelHalfWidth = 10;   // grid is (2*half+1)^2
+  std::size_t maxPointsPerVoxel = 512;
+  std::size_t maxStoredPoints = 0;
 
   // Decay
   double decayTime = 2.0;
@@ -96,7 +102,7 @@ struct TerrainResult {
   float map_resolution = 0;
 };
 
-// ── Core Algorithm (stateful �?maintains rolling voxel grid) ──
+// ── Core Algorithm (stateful --maintains rolling voxel grid) ──
 
 class TerrainAnalysisCore {
 public:
@@ -248,8 +254,40 @@ public:
 
   const TerrainParams& params() const { return p_; }
 
+  std::size_t storedPointCount() const {
+    std::size_t count = 0;
+    for (const auto& voxel : terrainVoxelCloud_) {
+      count += voxel.size();
+    }
+    return count;
+  }
+
 private:
   struct Point4 { float x, y, z, t; };
+
+  struct ScanVoxelKey {
+    int x = 0;
+    int y = 0;
+    int z = 0;
+
+    bool operator==(const ScanVoxelKey& other) const {
+      return x == other.x && y == other.y && z == other.z;
+    }
+  };
+
+  struct ScanVoxelHash {
+    std::size_t operator()(const ScanVoxelKey& key) const {
+      std::size_t h = 1469598103934665603ULL;
+      auto mix = [&](int value) {
+        h ^= static_cast<std::uint64_t>(static_cast<std::int64_t>(value));
+        h *= 1099511628211ULL;
+      };
+      mix(key.x);
+      mix(key.y);
+      mix(key.z);
+      return h;
+    }
+  };
 
   TerrainParams p_;
 
@@ -351,16 +389,18 @@ private:
     int pointThre = p_.voxelPointUpdateThre;
     double timeThre = p_.voxelTimeUpdateThre;
 
-    // Each voxel is independent �?parallel-safe (no shared writes)
+    // Each voxel is independent -- parallel-safe (no shared writes)
     #pragma omp parallel for schedule(dynamic, 16) if(terrainVoxelNum_ >= 100)
     for (int idx = 0; idx < terrainVoxelNum_; idx++) {
-      if (terrainVoxelUpdateNum_[idx] < pointThre &&
+      auto& vc = terrainVoxelCloud_[idx];
+      const bool over_limit =
+          p_.maxPointsPerVoxel > 0 && vc.size() > p_.maxPointsPerVoxel;
+      if (!over_limit && terrainVoxelUpdateNum_[idx] < pointThre &&
           relTime - terrainVoxelUpdateTime_[idx] < timeThre)
         continue;
 
-      auto& vc = terrainVoxelCloud_[idx];
       std::vector<Point4> filtered;
-      filtered.reserve(vc.size() / 2);
+      filtered.reserve(vc.size());
       for (auto& pt : vc) {
         float dx = pt.x - fvx, dy = pt.y - fvy;
         float disSq = dx * dx + dy * dy;
@@ -372,9 +412,130 @@ private:
           filtered.push_back(pt);
         }
       }
+      compactPoints(filtered);
       vc = std::move(filtered);
       terrainVoxelUpdateNum_[idx] = 0;
       terrainVoxelUpdateTime_[idx] = relTime;
+    }
+    enforceGlobalPointLimit();
+  }
+
+  void compactPoints(std::vector<Point4>& points) const {
+    compactPointsTo(points, p_.maxPointsPerVoxel, p_.maxPointsPerVoxel > 0);
+  }
+
+  void compactPointsTo(
+      std::vector<Point4>& points,
+      std::size_t limit,
+      bool bounded) const {
+    if (points.empty()) {
+      return;
+    }
+    if (bounded && limit == 0) {
+      points.clear();
+      return;
+    }
+    double leaf = std::max(0.01, p_.scanVoxelSize);
+    std::unordered_map<ScanVoxelKey, Point4, ScanVoxelHash> compact;
+    std::size_t previous_size = std::numeric_limits<std::size_t>::max();
+    for (;;) {
+      compact.clear();
+      compact.reserve(
+          bounded ? std::min(points.size(), limit * 2) : points.size());
+      const double inv = 1.0 / leaf;
+      for (const auto& point : points) {
+        const ScanVoxelKey key{
+            static_cast<int>(std::floor(static_cast<double>(point.x) * inv)),
+            static_cast<int>(std::floor(static_cast<double>(point.y) * inv)),
+            static_cast<int>(std::floor(static_cast<double>(point.z) * inv)),
+        };
+        auto [it, inserted] = compact.emplace(key, point);
+        if (!inserted) {
+          const bool higher = point.z > it->second.z + 1e-4f;
+          const bool same_height = std::abs(point.z - it->second.z) <= 1e-4f;
+          if (higher || (same_height && point.t > it->second.t)) {
+            it->second = point;
+          }
+        }
+      }
+      if (!bounded || compact.size() <= limit) {
+        break;
+      }
+      const double ratio = std::cbrt(
+          static_cast<double>(compact.size()) / static_cast<double>(limit));
+      leaf *= compact.size() >= previous_size ? 2.0 : std::max(1.15, ratio);
+      previous_size = compact.size();
+    }
+
+    points.clear();
+    points.reserve(compact.size());
+    for (const auto& entry : compact) {
+      points.push_back(entry.second);
+    }
+  }
+
+  void enforceGlobalPointLimit() {
+    const std::size_t limit = p_.maxStoredPoints;
+    if (limit == 0) {
+      return;
+    }
+    const std::size_t total = storedPointCount();
+    if (total <= limit) {
+      return;
+    }
+
+    std::vector<int> active;
+    active.reserve(terrainVoxelCloud_.size());
+    for (int idx = 0; idx < terrainVoxelNum_; ++idx) {
+      if (!terrainVoxelCloud_[idx].empty()) {
+        active.push_back(idx);
+      }
+    }
+    std::sort(active.begin(), active.end(), [&](int a, int b) {
+      const int ax = a / terrainVoxelWidth_ - p_.terrainVoxelHalfWidth;
+      const int ay = a % terrainVoxelWidth_ - p_.terrainVoxelHalfWidth;
+      const int bx = b / terrainVoxelWidth_ - p_.terrainVoxelHalfWidth;
+      const int by = b % terrainVoxelWidth_ - p_.terrainVoxelHalfWidth;
+      const int ad = ax * ax + ay * ay;
+      const int bd = bx * bx + by * by;
+      return ad == bd ? a < b : ad < bd;
+    });
+
+    std::vector<std::size_t> targets(terrainVoxelCloud_.size(), 0);
+    if (limit < active.size()) {
+      for (std::size_t i = 0; i < limit; ++i) {
+        targets[active[i]] = 1;
+      }
+    } else {
+      std::size_t remaining = limit - active.size();
+      std::size_t extra_total = total - active.size();
+      for (const int idx : active) {
+        targets[idx] = 1;
+        if (extra_total == 0) {
+          continue;
+        }
+        const std::size_t capacity = terrainVoxelCloud_[idx].size() - 1;
+        const std::size_t extra = capacity * remaining / extra_total;
+        targets[idx] += std::min(capacity, extra);
+      }
+      std::size_t assigned = 0;
+      for (const int idx : active) {
+        assigned += targets[idx];
+      }
+      remaining = limit - std::min(limit, assigned);
+      for (const int idx : active) {
+        if (remaining == 0) {
+          break;
+        }
+        if (targets[idx] < terrainVoxelCloud_[idx].size()) {
+          ++targets[idx];
+          --remaining;
+        }
+      }
+    }
+
+    for (const int idx : active) {
+      compactPointsTo(terrainVoxelCloud_[idx], targets[idx], true);
     }
   }
 
@@ -436,7 +597,7 @@ private:
       float quantileZ = static_cast<float>(p_.quantileZ);
       bool limitLift = p_.limitGroundLift;
       float maxLift = static_cast<float>(p_.maxGroundLift);
-      // 2601 voxels, each nth_element is independent �?embarrassingly parallel
+      // 2601 voxels, each nth_element is independent --embarrassingly parallel
       #pragma omp parallel for schedule(dynamic, 64) if(planarVoxelNum_ >= 256)
       for (int i = 0; i < planarVoxelNum_; i++) {
         auto& elev = planarPointElev_[i];

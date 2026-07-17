@@ -44,7 +44,6 @@ triage map, not another architecture contract.
 | `SIMULATION_INTEGRATION_CONTRACT.md` | keep current, review later | Current sim boundary, but long and likely needs condensation. |
 | `ROS_ROLE_REPLACEMENT_MAP.md` | migration reference | Useful during ROS replacement, not core architecture entry. |
 | `DART_RUST_PACKAGE_MIGRATION.md` | plan/proposal | Future UI/package direction. |
-| `MAPSERVICE_SPATIAL_DATA_OS.md` | plan/proposal | Needs current map-service contract extraction before becoming authority. |
 | `PORTABLE_LEAN_PACKAGE_MATRIX.md` | plan/proposal | Packaging decision support, not runtime contract. |
 | `POSE_GRAPH_OPT_GTSAM_COVERAGE.md` | evidence/reference | Large coverage note, not architecture entry. |
 | `THUNDER_RUNTIME_REFACTOR_PLAN.md` | plan/proposal | Refactor plan. |
@@ -76,6 +75,4 @@ historical plans were removed; use git history when old context is needed.
 2. Move or clearly mark `REVIEW_2026Q2.md` as historical.
 3. Condense `SIMULATION_INTEGRATION_CONTRACT.md` into a short current contract,
    leave evidence details in `07-testing/`.
-4. Extract map-service current contract from `MAPSERVICE_SPATIAL_DATA_OS.md`.
-5. Split oversized PRDs only after their implementation boundaries stabilize.
-
+4. Split oversized PRDs only after their implementation boundaries stabilize.

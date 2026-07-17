@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import pytest
 
 pytestmark = [pytest.mark.sim]
@@ -42,9 +43,7 @@ def test_large_terrain_assets_write_schema_and_route_catalog(tmp_path):
     assert metadata["shape_xy"] == [121, 81]
     assert len(metadata["obstacles"]) >= 10
     localization_landmarks = [
-        obstacle
-        for obstacle in metadata["obstacles"]
-        if obstacle.get("kind") == "localization_landmark"
+        obstacle for obstacle in metadata["obstacles"] if obstacle.get("kind") == "localization_landmark"
     ]
     assert {landmark["name"] for landmark in localization_landmarks} >= {
         "localization_start_south_panel",
@@ -74,7 +73,7 @@ def test_large_terrain_assets_write_schema_and_route_catalog(tmp_path):
 
 
 def test_large_terrain_assets_publish_same_source_saved_map_metadata(tmp_path):
-    from runtime.same_source_map_artifacts import validate_saved_map_artifact_dir
+    from maps.artifacts import validate_saved_map_artifact_dir
 
     assets = build_large_terrain_assets(tmp_path)
 
@@ -210,7 +209,10 @@ def test_large_terrain_validation_report_is_non_motion_and_route_safe(tmp_path):
     assert case["planning"][0]["feasible"] is True
     assert case["planning"][0]["route_ok"] is True
     assert case["planning"][0]["path_safety"]["ok"] is True
-    assert case["planning"][0]["metrics"]["route_distance_m"] >= case["planning"][0]["metrics"]["min_required_route_distance_m"]
+    assert (
+        case["planning"][0]["metrics"]["route_distance_m"]
+        >= case["planning"][0]["metrics"]["min_required_route_distance_m"]
+    )
     assert case["path_safety"]["ok"] is True
     assert case["gate_crossing"]["passed_gate"] is True
 

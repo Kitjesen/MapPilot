@@ -5,31 +5,82 @@ should consume their Module ports, not ROS topics or vendor SDK APIs directly.
 
 ## `thunder/` - Thunder Robot
 
-- `connection.py` - gRPC channel lifecycle to the Brainstem control service.
-- `han_dog_module.py` - quadruped motion driver Module.
+- `native/` - canonical product C++ `driver`: reads typed DDS
+  `rt/nav/cmd_vel`, enforces frame/finite/watchdog rules, and calls the
+  Brainstem `RobotControl.Walk` RPC. It never enables motors or changes pose.
+- `han_dog_module.py` - compatibility in-process `ThunderDriver`, registered
+  as `("driver", "thunder")` for lite/local Module graphs.
+- `connection.py` - **DEPRECATED**: `NovaDogConnection` legacy gRPC bridge.
+  Superseded by `ThunderDriver`. Kept only for backward compatibility.
+- `blueprints.py` - Legacy blueprint helpers (`nova_dog_basic`, `nova_dog_nav`,
+  `nova_dog_semantic`).
 
 ## `camera/` - Orbbec RGB-D Camera
 
-- `native/capture_process.cpp` - no-ROS Orbbec SDK capture process.
-- `native_camera_module.py` - converts native C++ records into LingTu
-  `color_image`, `depth_image`, and `camera_info` streams.
-- `OrbbecSDK_ROS2/` - local Orbbec SDK/ROS2 source used by the native build
-  and kept beside the camera driver instead of under `third_party/`.
+- `module.py` - `OrbbecNativeCameraModule` (also aliased as `CameraModule`):
+  spawns the native C++ capture process and decodes its stdout binary stream
+  into `color_image`, `depth_image`, `camera_info`, and `alive` ports.
+  Registered as `("camera", "orbbec")`.
+- `dds_module.py` - `DdsCameraModule`: subscribes to native DDS camera topics
+  and republishes as canonical camera ports. Registered as `("camera", "dds")`.
+- `native_camera_module.py` - compatibility re-export of
+  `OrbbecNativeCameraModule` for old import paths.
+- `native/capture_process.cpp` - no-ROS Orbbec SDK capture process (stdout
+  IPC boundary).
+- `native/camera.cpp`, `native/camera_dds.cpp` - C++ camera and DDS
+  publishing sources.
+- `native/sdk.cpp` / `sdk.hpp` - C++ SDK wrapper.
+- `impl/orbbec/camera.cpp` / `camera.hpp` - Orbbec SDK C++ implementation.
+- `deps/orbbec/OrbbecSDK/` - preferred no-ROS Orbbec SDK checkout.
+- `deps/orbbec/OrbbecSDK_ROS2/` - temporary ROS2 wrapper fallback,
+  quarantined below the camera driver.
 
-The ROS2 `orbbec_camera` launch remains a compatibility path. Product dataflow
-should prefer the native module when `build/orbbec_native/orbbec_capture` is
-available. The C++ process uses stdout as a local IPC boundary; LingTu dataflow
-starts at the Python Module ports.
+The ROS2 `orbbec_camera` launch remains a compatibility path only. Product
+dataflow should prefer the native module when `build/orbbec_native/orbbec_capture`
+is available.
 
 ## `lidar/` - Livox MID-360 LiDAR
 
-- `lidar.py` - configuration and scan-pattern utilities.
-- `lidar_module.py` - LiDAR Module.
-- `_dds.py` - DDS publishing helper for cross-process consumers.
-- `Livox-SDK2/` - official Livox SDK2 source.
-- `livox_ros_driver2/` - official ROS2 driver compatibility package.
+- `module.py` - `LidarModule`: canonical LiDAR Module registered as
+  `("lidar", "mid360")`. Delegates to a `LidarSource` protocol. Ports:
+  `scan`, `raw_scan`, `imu`, `alive`.
+- `native/sdk.py` - `LidarSource` protocol and factory used by `LidarModule`.
+- `sdk2_stream/main.cpp` - C++ Livox SDK2 stream executable (product hot path).
+- `impl/livox/sdk2_stream_source.py` - Python-managed SDK2 process source for
+  local runs.
+- `api/frames.py` - `LivoxPointFrame` and `POINT_DTYPE` re-exports.
+- `api/frame_stream.py` - `LidarFrameStream` ring buffer.
+- `compat/lidar.py` - legacy `Lidar` class (DDS subscriber interface).
+- `compat/dds.py` - Livox CustomMsg + Imu DDS IDL types for CycloneDDS.
+- `compat/dds_adapter.py` - `LivoxDdsAdapter` for DDS topic subscription.
+- `native/dds_module.hpp` / `dds_module.cpp` - C++ native DDS publisher.
+- `deps/livox/Livox-SDK2/` - official Livox SDK2 source.
+- The former ROS2 Livox compatibility fallback has been removed. Product
+  LiDAR transport is native CycloneDDS through `sdk2_stream/`.
 
-## `gnss/` - GNSS ROS2 Compatibility
+## `imu/` - IMU (Livox MID-360 Facade)
 
-- `wtrtk980_ros2_reader/` - GNSS reader package kept with real hardware
-  sources.
+- `module.py` - `ImuModule`: documents the field IMU role without opening a
+  second hardware reader. The actual IMU stream is carried by the LiDAR source.
+  Registered as `("imu", "livox")`.
+- `dds_module.py` - native DDS IMU subscriber for cross-process consumers.
+- `native/sdk.py` - IMU source interface.
+- `impl/livox/` - Livox IMU backend placeholder (data flows through LiDAR).
+
+## `gnss/` - GNSS Native DDS
+
+- `native/module.hpp` / `module.cpp` - C++ GNSS service boundary.
+- `native/dds_module.hpp` / `dds_module.cpp` - C++ DDS publisher for GNSS
+  topics (`/gnss/fix`, `/gnss/status`, `/gnss/odom`).
+- `native/gnss_dds.cpp` - process entrypoint.
+- `native/sdk.hpp` - C++ `FixSample`, `StatusSample`, and `FixType` types.
+- `impl/wtrtk980/` - WTRTK-980 serial/NMEA backend (`nmea.cpp`, `serial.cpp`).
+- `src/drivers/adapters/ros2/gnss/wtrtk980_reader/` - quarantined ROS2
+  compatibility fallback, outside the real GNSS driver tree.
+
+## `teleop_module.py` - Joystick Teleop
+
+- `TeleopModule`: joystick remote control with live camera stream. Scales
+  joystick inputs to `Twist`, manages active/idle state (3s auto-release),
+  and encodes camera frames for Gateway. Ports: `color_image`, `joy_input`
+  (in); `cmd_vel`, `teleop_active` (out).

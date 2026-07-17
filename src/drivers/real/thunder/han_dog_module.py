@@ -178,9 +178,11 @@ class ThunderDriver(Module, layer=1):
             except Exception as e:
                 logger.warning("Shutdown cleanup failed: %s", e)
         if loop:
-            loop.call_soon_threadsafe(loop.stop)
+            loop.call_soon_threadsafe(self._cancel_loop_tasks, loop)
         if self._grpc_thread:
             self._grpc_thread.join(timeout=3.0)
+        if self._watchdog_thread:
+            self._watchdog_thread.join(timeout=1.0)
         if loop:
             try:
                 loop.close()
@@ -333,7 +335,15 @@ class ThunderDriver(Module, layer=1):
 
     def _run_async_loop(self):
         asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._async_main())
+        try:
+            self._loop.run_until_complete(self._async_main())
+        except asyncio.CancelledError:
+            pass
+
+    @staticmethod
+    def _cancel_loop_tasks(loop: asyncio.AbstractEventLoop) -> None:
+        for task in asyncio.all_tasks(loop):
+            task.cancel()
 
     async def _async_main(self):
         while not self._shutdown:

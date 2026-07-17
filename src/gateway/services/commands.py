@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
-
+from typing import Any, Callable
 
 COMMAND_IDEMPOTENCY_RETENTION_S = 120.0
 COMMAND_JOURNAL_MAX_ENTRIES = 512
@@ -21,6 +20,64 @@ COMMAND_RATE_POLICY_HZ: dict[str, float] = {
     "mode": 1.0,
     "lease": 1.0,
 }
+
+
+class ControlLease:
+    """Small mutex-protected control lease shared by command routes."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._holder: str | None = None
+        self._expiry: float = 0.0
+
+    def acquire(self, client_id: str, ttl: float) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            if self._holder and self._holder != client_id and now < self._expiry:
+                return False
+            self._holder = client_id
+            self._expiry = now + ttl
+            return True
+
+    def release(self, client_id: str) -> bool:
+        with self._lock:
+            if self._holder == client_id:
+                self._holder = None
+                self._expiry = 0.0
+                return True
+            return False
+
+    def renew(self, client_id: str, ttl: float) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            if self._holder is not None and now >= self._expiry:
+                self._holder = None
+                self._expiry = 0.0
+                return False
+            if self._holder == client_id:
+                self._expiry = now + ttl
+                return True
+            return False
+
+    def check(self, client_id: str) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            if self._holder is not None and now >= self._expiry:
+                self._holder = None
+                self._expiry = 0.0
+                return True
+            if self._holder is None:
+                return True
+            return self._holder == client_id
+
+    def to_dict(self) -> dict[str, Any]:
+        with self._lock:
+            now = time.monotonic()
+            return {
+                "holder": self._holder,
+                "active": self._holder is not None and now < self._expiry,
+                "expires_in": max(0.0, self._expiry - now) if self._holder else 0.0,
+            }
 
 
 class CommandJournal:
@@ -105,10 +162,7 @@ class CommandJournal:
             }
 
     def _purge_locked(self, now: float) -> None:
-        expired = [
-            key for key, record in self._records.items()
-            if now - float(record["ts"]) > self._retention_s
-        ]
+        expired = [key for key, record in self._records.items() if now - float(record["ts"]) > self._retention_s]
         for key in expired:
             self._records.pop(key, None)
 
@@ -157,3 +211,51 @@ def _clean_client_id(value: str | None) -> str:
         return "unknown"
     cleaned = str(value).strip()
     return cleaned or "unknown"
+
+
+def publish_command_ack(
+    gw: Any,
+    payload: dict[str, Any],
+    *,
+    status_code: int | None = None,
+) -> None:
+    """Publish a lightweight command acknowledgement for App/Web clients."""
+    if not isinstance(payload, dict):
+        return
+    command = payload.get("command")
+    if not isinstance(command, dict):
+        return
+    data = {
+        "schema_version": 1,
+        "ok": bool(payload.get("ok", False)),
+        "status": payload.get("status"),
+        "error": payload.get("error"),
+        "message": payload.get("message"),
+        "command": command,
+        "detail": payload.get("detail"),
+        "status_code": status_code,
+        "ts": time.time(),
+    }
+    gw.push_event({"type": "command_ack", "data": data})
+
+
+def run_control_command(
+    gw: Any,
+    command: str,
+    body: Any,
+    action: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    request_id = getattr(body, "request_id", None) if body is not None else None
+    client_id = getattr(body, "client_id", None) if body is not None else None
+    replay = gw._command_journal.replay(command, request_id)
+    if replay is not None:
+        publish_command_ack(gw, replay, status_code=200)
+        return replay
+    response = gw._command_journal.accept(
+        command,
+        request_id,
+        client_id,
+        action(),
+    )
+    publish_command_ack(gw, response, status_code=200)
+    return response
