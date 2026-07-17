@@ -27,6 +27,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -37,7 +38,14 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROBOT_CONFIG = REPO_ROOT / "config" / "robot_config.yaml"
-FASTLIO2_CONFIG = REPO_ROOT / "src" / "slam" / "fastlio2" / "config" / "lio.yaml"
+FASTLIO2_CONFIG = (
+    REPO_ROOT
+    / "src"
+    / "localization"
+    / "fastlio2"
+    / "config"
+    / "mid360_s100p.yaml"
+)
 POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
 
 
@@ -66,9 +74,102 @@ def load_yaml(path: Path) -> dict:
 
 
 def save_yaml(path: Path, data: dict) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False,
-                  allow_unicode=True)
+    """Atomically replace a YAML file using a temporary sibling file."""
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        text=True,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            yaml.dump(
+                data,
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+            f.flush()
+            os.fsync(f.fileno())
+        if path.exists():
+            shutil.copymode(path, temp_path)
+        os.replace(temp_path, path)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+def _restore_bytes_atomically(path: Path, payload: bytes | None) -> None:
+    """Restore one file during a failed multi-file calibration update."""
+    if payload is None:
+        path.unlink(missing_ok=True)
+        return
+
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.rollback.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            shutil.copymode(path, temp_path)
+        os.replace(temp_path, path)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
+
+
+def save_yaml_batch(updates: list[tuple[Path, dict]]) -> None:
+    """Replace related YAML files and roll back earlier writes on failure.
+
+    Each individual replacement is atomic. Cross-file atomic rename is not
+    available, so the batch retains exact original bytes and restores every
+    already-replaced file if a later replacement fails.
+    """
+    normalized = [(Path(path), data) for path, data in updates]
+    paths = [path for path, _ in normalized]
+    if len(set(paths)) != len(paths):
+        raise ValueError("YAML batch contains duplicate target paths")
+
+    # Serialize all payloads before the first write so representation errors
+    # cannot leave a partially updated calibration set.
+    for _, data in normalized:
+        yaml.dump(
+            data,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
+    originals = {
+        path: path.read_bytes() if path.exists() else None
+        for path in paths
+    }
+    replaced: list[Path] = []
+    try:
+        for path, data in normalized:
+            save_yaml(path, data)
+            replaced.append(path)
+    except BaseException as write_error:
+        rollback_errors: list[str] = []
+        for path in reversed(replaced):
+            try:
+                _restore_bytes_atomically(path, originals[path])
+            except BaseException as rollback_error:
+                rollback_errors.append(f"{path}: {rollback_error}")
+        if rollback_errors:
+            raise RuntimeError(
+                "calibration update failed and rollback was incomplete: "
+                + "; ".join(rollback_errors)
+            ) from write_error
+        raise
+
 
 
 def pointlio_section(cfg: dict, section: str) -> dict:
@@ -82,6 +183,57 @@ def pointlio_section(cfg: dict, section: str) -> dict:
     root = cfg.setdefault("/**", {})
     params = root.setdefault("ros__parameters", {})
     return params.setdefault(section, {})
+
+
+def derive_body_from_imu(
+    lidar_mount: dict,
+    r_il: list[float],
+    t_il: list[float],
+) -> tuple[list[float], list[float]]:
+    """Derive ``T_body_imu`` while preserving the fixed ``T_body_lidar`` mount.
+
+    Fast-LIO uses ``T_imu_lidar``:
+    ``p_imu = R_il * p_lidar + t_il``. Robot configuration stores the separate
+    mechanical mount ``T_body_lidar``. Therefore:
+
+    ``T_body_imu = T_body_lidar * inverse(T_imu_lidar)``.
+    """
+
+    r_il_matrix = np.asarray(r_il, dtype=np.float64).reshape(3, 3)
+    t_il_vector = np.asarray(t_il, dtype=np.float64).reshape(3)
+    if not np.all(np.isfinite(r_il_matrix)) or not np.all(np.isfinite(t_il_vector)):
+        raise ValueError("LiDAR-IMU extrinsics must be finite")
+    if not np.allclose(r_il_matrix.T @ r_il_matrix, np.eye(3), atol=1e-6):
+        raise ValueError("r_il must be an orthonormal rotation matrix")
+    if not np.isclose(np.linalg.det(r_il_matrix), 1.0, atol=1e-6):
+        raise ValueError("r_il determinant must be +1")
+
+    roll = float(lidar_mount.get("roll", 0.0))
+    pitch = float(lidar_mount.get("pitch", 0.0))
+    yaw = float(lidar_mount.get("yaw", 0.0))
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    r_body_lidar = np.asarray(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ],
+        dtype=np.float64,
+    )
+    t_body_lidar = np.asarray(
+        [
+            float(lidar_mount.get("offset_x", 0.0)),
+            float(lidar_mount.get("offset_y", 0.0)),
+            float(lidar_mount.get("offset_z", 0.0)),
+        ],
+        dtype=np.float64,
+    )
+
+    r_body_imu = r_body_lidar @ r_il_matrix.T
+    t_body_imu = t_body_lidar - r_body_imu @ t_il_vector
+    return r_body_imu.reshape(-1).tolist(), t_body_imu.tolist()
 
 
 def apply_camera_intrinsics(calib_path: str, dry_run: bool = False) -> None:
@@ -243,9 +395,31 @@ def apply_imu_noise(calib_path: str, dry_run: bool = False) -> None:
 
 
 def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
-    """Apply LiDAR-IMU extrinsics to robot_config.yaml and SLAM configs."""
+    """Apply internal LiDAR-IMU extrinsics without changing the body mount."""
     logger.info("\n== LiDAR-IMU Extrinsics ==")
-    calib = load_yaml(Path(calib_path))
+    try:
+        calib = load_yaml(Path(calib_path))
+        fastlio_exists = FASTLIO2_CONFIG.exists()
+        pointlio_exists = POINTLIO_CONFIG.exists()
+        fastlio_cfg = load_yaml(FASTLIO2_CONFIG) if fastlio_exists else {}
+        robot_cfg = load_yaml(ROBOT_CONFIG)
+        pointlio_cfg = load_yaml(POINTLIO_CONFIG) if pointlio_exists else {}
+    except (OSError, UnicodeError, yaml.YAMLError) as exc:
+        logger.error("  Cannot read calibration target configs: %s", exc)
+        return
+
+    configs = {
+        "calibration result": calib,
+        ROBOT_CONFIG.name: robot_cfg,
+    }
+    if fastlio_exists:
+        configs[FASTLIO2_CONFIG.name] = fastlio_cfg
+    if pointlio_exists:
+        configs[POINTLIO_CONFIG.name] = pointlio_cfg
+    for name, cfg in configs.items():
+        if not isinstance(cfg, dict):
+            logger.error("  %s must contain a YAML mapping", name)
+            return
 
     t_il = calib.get("t_il")
     r_il = calib.get("r_il")
@@ -255,36 +429,46 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
         logger.error("  Missing t_il in %s", calib_path)
         return
 
-    logger.info("  Translation: [%.5f, %.5f, %.5f]", *t_il)
-    if r_il:
-        R = np.array(r_il).reshape(3, 3)
+    effective_r_il = r_il or fastlio_cfg.get("r_il")
+    if effective_r_il is None:
+        logger.error("  Missing r_il in %s and %s", calib_path, FASTLIO2_CONFIG)
+        return
+
+    lidar_mount = robot_cfg.get("lidar")
+    if not isinstance(lidar_mount, dict) or not lidar_mount:
+        logger.error("  Missing fixed body-to-LiDAR mount in %s", ROBOT_CONFIG)
+        return
+
+    try:
+        r_body_imu, t_body_imu = derive_body_from_imu(
+            lidar_mount,
+            effective_r_il,
+            t_il,
+        )
+    except (TypeError, ValueError) as exc:
+        logger.error("  Invalid LiDAR-IMU extrinsics: %s", exc)
+        return
+
+    logger.info("  T_imu_lidar translation: [%.5f, %.5f, %.5f]", *t_il)
+    if effective_r_il:
+        R = np.array(effective_r_il).reshape(3, 3)
         angle = np.degrees(np.arccos(np.clip((np.trace(R) - 1) / 2, -1, 1)))
-        logger.info("  Rotation angle: %.2f deg", angle)
+        logger.info("  T_imu_lidar rotation angle: %.2f deg", angle)
+    logger.info(
+        "  Preserving T_body_lidar mount: [%.5f, %.5f, %.5f]",
+        lidar_mount.get("offset_x", 0.0),
+        lidar_mount.get("offset_y", 0.0),
+        lidar_mount.get("offset_z", 0.0),
+    )
+    logger.info("  Derived T_body_imu translation: [%.5f, %.5f, %.5f]", *t_body_imu)
     logger.info("  Time offset: %.6f s", time_offset)
 
     if dry_run:
-        logger.info("  [DRY RUN] Would update configs")
+        logger.info(
+            "  [DRY RUN] Would update internal SLAM extrinsics; "
+            "robot_config.yaml LiDAR mount remains unchanged"
+        )
         return
-
-    # Update robot_config.yaml lidar section
-    backup_file(ROBOT_CONFIG)
-    cfg = load_yaml(ROBOT_CONFIG)
-    lidar = cfg.setdefault("lidar", {})
-    lidar["offset_x"] = round(t_il[0], 6)
-    lidar["offset_y"] = round(t_il[1], 6)
-    lidar["offset_z"] = round(t_il[2], 6)
-    if r_il:
-        # Convert rotation to Rodrigues for config
-        try:
-            import cv2
-            rvec, _ = cv2.Rodrigues(np.array(r_il).reshape(3, 3))
-            lidar["roll"] = round(float(rvec[0]), 6)
-            lidar["pitch"] = round(float(rvec[1]), 6)
-            lidar["yaw"] = round(float(rvec[2]), 6)
-        except ImportError:
-            logger.warning("  cv2 not available, skipping rotation update")
-    save_yaml(ROBOT_CONFIG, cfg)
-    logger.info("  Updated: %s lidar section", ROBOT_CONFIG.name)
 
     if abs(time_offset) > 0.1:
         logger.warning(
@@ -294,31 +478,38 @@ def apply_lidar_imu(calib_path: str, dry_run: bool = False) -> None:
     else:
         write_time_offset = True
 
-    # Update Fast-LIO2 config
-    if FASTLIO2_CONFIG.exists():
-        backup_file(FASTLIO2_CONFIG)
-        cfg = load_yaml(FASTLIO2_CONFIG)
-        if r_il:
-            cfg["r_il"] = r_il
-        cfg["t_il"] = t_il
+    # Build every target update before creating backups or replacing files.
+    if fastlio_exists:
+        fastlio_cfg["r_il"] = effective_r_il
+        fastlio_cfg["t_il"] = t_il
+        fastlio_cfg["navigation_body_from_imu_rotation"] = r_body_imu
+        fastlio_cfg["navigation_body_from_imu_translation"] = t_body_imu
         if write_time_offset:
-            cfg["time_diff_lidar_to_imu"] = round(time_offset, 6)
-        save_yaml(FASTLIO2_CONFIG, cfg)
-        logger.info("  Updated: %s", FASTLIO2_CONFIG.name)
+            fastlio_cfg["time_diff_lidar_to_imu"] = round(time_offset, 6)
 
-    # Update Point-LIO config (ROS2 nested layout)
-    if POINTLIO_CONFIG.exists():
+    if pointlio_exists:
+        try:
+            mapping = pointlio_section(pointlio_cfg, "mapping")
+            mapping["extrinsic_R"] = effective_r_il
+            mapping["extrinsic_T"] = t_il
+            if write_time_offset:
+                common = pointlio_section(pointlio_cfg, "common")
+                common["time_diff_lidar_to_imu"] = round(time_offset, 6)
+        except (AttributeError, TypeError) as exc:
+            logger.error("  Invalid Point-LIO configuration structure: %s", exc)
+            return
+
+    updates: list[tuple[Path, dict]] = []
+    if fastlio_exists:
+        backup_file(FASTLIO2_CONFIG)
+        updates.append((FASTLIO2_CONFIG, fastlio_cfg))
+
+    if pointlio_exists:
         backup_file(POINTLIO_CONFIG)
-        cfg = load_yaml(POINTLIO_CONFIG)
-        mapping = pointlio_section(cfg, "mapping")
-        if r_il:
-            mapping["extrinsic_R"] = r_il
-        mapping["extrinsic_T"] = t_il
-        if write_time_offset:
-            common = pointlio_section(cfg, "common")
-            common["time_diff_lidar_to_imu"] = round(time_offset, 6)
-        save_yaml(POINTLIO_CONFIG, cfg)
-        logger.info("  Updated: %s", POINTLIO_CONFIG.name)
+        updates.append((POINTLIO_CONFIG, pointlio_cfg))
+    save_yaml_batch(updates)
+    for path, _ in updates:
+        logger.info("  Updated: %s", path.name)
 
 
 def apply_camera_lidar(calib_path: str, dry_run: bool = False) -> None:

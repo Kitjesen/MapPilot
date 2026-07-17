@@ -23,7 +23,14 @@ logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ROBOT_CONFIG = REPO_ROOT / "config" / "robot_config.yaml"
-FASTLIO2_CONFIG = REPO_ROOT / "src" / "slam" / "fastlio2" / "config" / "lio.yaml"
+FASTLIO2_CONFIG = (
+    REPO_ROOT
+    / "src"
+    / "localization"
+    / "fastlio2"
+    / "config"
+    / "mid360_s100p.yaml"
+)
 POINTLIO_CONFIG = REPO_ROOT / "config" / "pointlio.yaml"
 
 # ANSI colors
@@ -39,6 +46,22 @@ def load_yaml(path: Path) -> dict:
         return {}
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _rotation_from_rpy(roll: float, pitch: float, yaw: float) -> np.ndarray:
+    """Return the URDF fixed-axis ``Rz(yaw) @ Ry(pitch) @ Rx(roll)`` rotation."""
+
+    cr, sr = np.cos(roll), np.sin(roll)
+    cp, sp = np.cos(pitch), np.sin(pitch)
+    cy, sy = np.cos(yaw), np.sin(yaw)
+    return np.asarray(
+        [
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr],
+        ],
+        dtype=np.float64,
+    )
 
 
 class CheckResult:
@@ -235,19 +258,65 @@ def check_consistency(cfg: dict, result: CheckResult) -> None:
         elif cam_z == 0:
             result.warn("Camera Z is 0 — likely uncalibrated")
 
-    # Check SLAM configs match robot_config
+    # Check the composed SLAM transforms match the fixed mechanical mount:
+    # T_body_lidar = T_body_imu * T_imu_lidar.
     if FASTLIO2_CONFIG.exists() and lidar:
         lio = load_yaml(FASTLIO2_CONFIG)
-        t_il_lio = lio.get("t_il")
-        if t_il_lio:
-            t_cfg = [lidar.get("offset_x", 0), lidar.get("offset_y", 0),
-                     lidar.get("offset_z", 0)]
-            if np.allclose(t_il_lio, t_cfg, atol=0.001):
-                result.ok("LiDAR offsets match between robot_config.yaml and lio.yaml")
-            else:
-                result.warn(
-                    f"LiDAR offset mismatch: robot_config={t_cfg} vs lio.yaml={t_il_lio}"
-                )
+        required = (
+            "r_il",
+            "t_il",
+            "navigation_body_from_imu_rotation",
+            "navigation_body_from_imu_translation",
+        )
+        missing = [name for name in required if lio.get(name) is None]
+        if missing:
+            result.fail(f"Fast-LIO2 transform chain missing: {', '.join(missing)}")
+            return
+
+        try:
+            r_il = np.asarray(lio["r_il"], dtype=np.float64).reshape(3, 3)
+            t_il = np.asarray(lio["t_il"], dtype=np.float64).reshape(3)
+            r_body_imu = np.asarray(
+                lio["navigation_body_from_imu_rotation"],
+                dtype=np.float64,
+            ).reshape(3, 3)
+            t_body_imu = np.asarray(
+                lio["navigation_body_from_imu_translation"],
+                dtype=np.float64,
+            ).reshape(3)
+        except (TypeError, ValueError) as exc:
+            result.fail(f"Invalid Fast-LIO2 transform chain: {exc}")
+            return
+
+        r_composed = r_body_imu @ r_il
+        t_composed = t_body_imu + r_body_imu @ t_il
+        r_mount = _rotation_from_rpy(
+            float(lidar.get("roll", 0.0)),
+            float(lidar.get("pitch", 0.0)),
+            float(lidar.get("yaw", 0.0)),
+        )
+        t_mount = np.asarray(
+            [
+                float(lidar.get("offset_x", 0.0)),
+                float(lidar.get("offset_y", 0.0)),
+                float(lidar.get("offset_z", 0.0)),
+            ],
+            dtype=np.float64,
+        )
+        translation_error = float(np.linalg.norm(t_composed - t_mount))
+        rotation_cos = np.clip((np.trace(r_mount.T @ r_composed) - 1.0) / 2.0, -1.0, 1.0)
+        rotation_error_deg = float(np.degrees(np.arccos(rotation_cos)))
+        if translation_error <= 0.001 and rotation_error_deg <= 0.1:
+            result.ok(
+                "Composed T_body_imu * T_imu_lidar matches "
+                "robot_config T_body_lidar"
+            )
+        else:
+            result.fail(
+                "LiDAR mount transform mismatch: "
+                f"translation={translation_error:.6f}m, "
+                f"rotation={rotation_error_deg:.4f}deg"
+            )
 
 
 def check_lidar_camera_projection(cfg: dict, result: CheckResult, verbose: bool) -> None:
@@ -283,24 +352,14 @@ def check_lidar_camera_projection(cfg: dict, result: CheckResult, verbose: bool)
                   [0, fy, cy],
                   [0,  0,  1]], dtype=np.float64)
 
-    # Build T_body_lidar (LiDAR → body transform)
-    def _rpy_to_R(roll, pitch, yaw):
-        cr, sr = np.cos(roll), np.sin(roll)
-        cp, sp = np.cos(pitch), np.sin(pitch)
-        cy_, sy = np.cos(yaw), np.sin(yaw)
-        Rz = np.array([[cy_, -sy, 0], [sy, cy_, 0], [0, 0, 1]])
-        Ry = np.array([[cp, 0, sp], [0, 1, 0], [-sp, 0, cp]])
-        Rx = np.array([[1, 0, 0], [0, cr, -sr], [0, sr, cr]])
-        return Rz @ Ry @ Rx
-
     T_body_lidar = np.eye(4)
-    T_body_lidar[:3, :3] = _rpy_to_R(
+    T_body_lidar[:3, :3] = _rotation_from_rpy(
         lidar.get("roll", 0), lidar.get("pitch", 0), lidar.get("yaw", 0))
     T_body_lidar[:3, 3] = [
         lidar.get("offset_x", 0), lidar.get("offset_y", 0), lidar.get("offset_z", 0)]
 
     T_body_camera = np.eye(4)
-    T_body_camera[:3, :3] = _rpy_to_R(
+    T_body_camera[:3, :3] = _rotation_from_rpy(
         cam.get("roll", 0), cam.get("pitch", 0), cam.get("yaw", 0))
     T_body_camera[:3, 3] = [
         cam.get("position_x", 0), cam.get("position_y", 0), cam.get("position_z", 0)]
