@@ -194,6 +194,24 @@ struct GroupSelectionResult {
   double maxScore        = 0;
 };
 
+inline bool rotationPassesObstacleGate(
+    int rotDir,
+    double minObsAngCW,
+    double minObsAngCCW,
+    bool twoWayDrive,
+    bool checkRotObstacle) noexcept {
+  if (!checkRotObstacle) {
+    return true;
+  }
+  const double rotAngDeg = 10.0 * rotDir - 180.0;
+  double rotDeg = 10.0 * rotDir;
+  if (rotDeg > 180.0) {
+    rotDeg -= 360.0;
+  }
+  return (rotAngDeg > minObsAngCW && rotAngDeg < minObsAngCCW) ||
+         (twoWayDrive && rotDeg > minObsAngCW && rotDeg < minObsAngCCW);
+}
+
 inline GroupSelectionResult selectBestGroup(
     const std::vector<double>& groupScores,
     int groupNum,
@@ -206,13 +224,8 @@ inline GroupSelectionResult selectBestGroup(
 
   for (int i = 0; i < total; i++) {
     int rotDir = i / groupNum;
-    double rotAngDeg = 10.0 * rotDir - 180.0;
-    double rotDeg    = 10.0 * rotDir;
-    if (rotDeg > 180.0) rotDeg -= 360.0;
-
-    bool rotOk = (rotAngDeg > minObsAngCW && rotAngDeg < minObsAngCCW) ||
-                 (rotDeg > minObsAngCW && rotDeg < minObsAngCCW && twoWayDrive) ||
-                 !checkRotObstacle;
+    const bool rotOk = rotationPassesObstacleGate(
+        rotDir, minObsAngCW, minObsAngCCW, twoWayDrive, checkRotObstacle);
 
     if (rotOk && groupScores[i] > result.maxScore) {
       result.maxScore = groupScores[i];

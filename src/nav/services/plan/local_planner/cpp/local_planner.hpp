@@ -20,6 +20,7 @@
 #include <array>
 #include <string>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <algorithm>
 
@@ -35,6 +36,7 @@ struct LocalPlannerParams {
   bool   twoWayDrive        = true;
   double adjacentRange      = 3.5;
   double obstacleHeightThre = 0.2;
+  double obstacleHeightMax  = 1.2;
   double groundHeightThre   = 0.1;
   double costHeightThre1    = 0.15;
   double costHeightThre2    = 0.1;
@@ -73,6 +75,7 @@ struct LocalPlannerParams {
   double traversabilityHardCost = 90.0;
   double traversabilitySoftCost = 40.0;
   double traversabilityWeight   = 0.01;
+  int    debugCandidateLimit    = 0;
 
   // Recovery
   double recoveryBlockedThre = 2.0;
@@ -89,6 +92,67 @@ struct LocalPlanResult {
   bool pathFound   = false;
   bool nearFieldStop = false;
   int  recoveryState = 0;   // 0=normal, 1=rotating, 2=backing_up
+  bool recoveryExhausted = false;
+};
+
+enum class LocalCandidateState {
+  Feasible,
+  CollisionBlocked,
+  RotationBlocked,
+  TerrainCost,
+  TerrainBlocked,
+  DirectionRejected,
+};
+
+inline const char* localCandidateStateName(LocalCandidateState state) {
+  switch (state) {
+    case LocalCandidateState::Feasible:
+      return "feasible";
+    case LocalCandidateState::CollisionBlocked:
+      return "collision_blocked";
+    case LocalCandidateState::RotationBlocked:
+      return "rotation_blocked";
+    case LocalCandidateState::TerrainCost:
+      return "terrain_cost";
+    case LocalCandidateState::TerrainBlocked:
+      return "terrain_blocked";
+    case LocalCandidateState::DirectionRejected:
+      return "direction_rejected";
+  }
+  return "direction_rejected";
+}
+
+struct LocalPlanCandidate {
+  int rotationIndex{-1};
+  int groupId{-1};
+  double rotationDeg{0.0};
+  double aggregateScore{0.0};
+  double terrainRisk{-1.0};
+  int totalPathCount{0};
+  int collisionFreePathCount{0};
+  int directionAllowedPathCount{0};
+  int terrainAllowedPathCount{0};
+  int directionScoredPathCount{0};
+  int heightCostAllowedPathCount{0};
+  int terrainSoftPenalizedPathCount{0};
+  int contributingPathCount{0};
+  bool rotationAllowed{true};
+  bool selected{false};
+  LocalCandidateState state{LocalCandidateState::DirectionRejected};
+  std::vector<Vec3> path;
+};
+
+struct LocalPlannerDebugSnapshot {
+  bool valid{false};
+  double timestampS{0.0};
+  double pathScale{0.0};
+  double pathRange{0.0};
+  double relativeGoalDistanceM{0.0};
+  double traversabilitySoftCost{0.0};
+  double traversabilityHardCost{0.0};
+  int validRotationCount{0};
+  int selectedGroupId{-1};
+  std::vector<LocalPlanCandidate> candidates;
 };
 
 // 鈹€鈹€ Core Algorithm 鈹€鈹€
@@ -114,6 +178,8 @@ public:
   }
 
   bool pathsLoaded() const { return pathsLoaded_; }
+
+  LocalPlannerDebugSnapshot debugSnapshot() const { return debugSnapshot_; }
 
   /// Update vehicle pose (odom frame). Call before plan().
   void setVehicle(double x, double y, double z, double yaw) {
@@ -159,13 +225,10 @@ public:
   }
 
   /// Run one planning cycle.
-  /// obstacle_pts: Nx4 float array [x,y,z,intensity] in odom frame.
+  /// obstacle_pts: Nx4 float array [x,y,z,height] in odom frame.
   /// timestamp: monotonic seconds.
   LocalPlanResult plan(const float* obstacle_pts, int n_pts, double timestamp) {
     if (!pathsLoaded_) return {};
-
-    LocalPlanResult result;
-    odomTime_ = timestamp;
 
     // Joy speed for autonomy mode
     double joySpeed = p_.autonomySpeed / p_.maxSpeed;
@@ -189,11 +252,65 @@ public:
     } else {
       freezeStatus_ = 0;
     }
+    return planForIntent(
+        obstacle_pts,
+        n_pts,
+        timestamp,
+        relGoalDis,
+        joyDir,
+        joySpeed,
+        p_.dirThre,
+        false,
+        true);
+  }
+
+  /// Plan from an operator motion intent without requiring a global path.
+  /// Automatic recovery rotation/back-up is disabled for assisted teleop.
+  LocalPlanResult planIntent(const float* obstacle_pts,
+                             int n_pts,
+                             double timestamp,
+                             double dir_body_deg,
+                             double speed_norm,
+                             double horizon_m,
+                             double max_dir_deviation_deg) {
+    if (!pathsLoaded_) return {};
+    freezeStatus_ = 0;
+    recoveryState_ = 0;
+    blockedStartTime_ = -1.0;
+    recoveryCycleCount_ = 0;
+    return planForIntent(
+        obstacle_pts,
+        n_pts,
+        timestamp,
+        std::max(0.0, horizon_m),
+        std::remainder(dir_body_deg, 360.0),
+        std::clamp(speed_norm, 0.0, 1.0),
+        std::clamp(max_dir_deviation_deg, 0.0, 180.0),
+        true,
+        false);
+  }
+
+ private:
+  LocalPlanResult planForIntent(const float* obstacle_pts,
+                                int n_pts,
+                                double timestamp,
+                                double relGoalDis,
+                                 double joyDir,
+                                 double joySpeed,
+                                 double dirThre,
+                                 bool hardPathDirectionLimit,
+                                 bool allowRecovery) {
+    LocalPlanResult result;
+    odomTime_ = timestamp;
+    debugSnapshot_ = {};
+
     // Near-field stop check covers explicit obstacle points and native
     // traversability risk cells in front of the body.
+    const double intentDirRad = joyDir * M_PI / 180.0;
     result.nearFieldStop =
-        checkNearFieldStop(obstacle_pts, n_pts) ||
-        (p_.traversabilityNearFieldStop && checkNearFieldTraversability());
+        checkNearFieldStop(obstacle_pts, n_pts, intentDirRad) ||
+        (p_.traversabilityNearFieldStop &&
+         checkNearFieldTraversability(intentDirRad));
 
     // Transform obstacles to body frame and crop
     buildPlannerCloud(obstacle_pts, n_pts);
@@ -212,7 +329,23 @@ public:
 
     while (curPathScale >= p_.minPathScale && pathRange >= p_.minPathRange) {
       int selectedGroupID = scoreAndSelect(
-          curPathScale, pathRange, relGoalDis, joyDir, joySpeed, result.slowDown);
+          curPathScale,
+          pathRange,
+          relGoalDis,
+          joyDir,
+          joySpeed,
+          dirThre,
+          hardPathDirectionLimit,
+          result.slowDown);
+      captureDebugSnapshot(
+          selectedGroupID,
+          curPathScale,
+          pathRange,
+          relGoalDis,
+          joyDir,
+          dirThre,
+          hardPathDirectionLimit,
+          timestamp);
 
       if (selectedGroupID >= 0) {
         buildOutputPath(selectedGroupID, curPathScale, pathRange, relGoalDis, result);
@@ -221,6 +354,7 @@ public:
           recoveryState_ = 0;
           blockedStartTime_ = -1.0;
           recoveryCycleCount_ = 0;
+          result.recoveryExhausted = false;
         }
         break;
       }
@@ -234,7 +368,7 @@ public:
 
     result.pathFound = pathFound;
 
-    if (!pathFound) {
+    if (!pathFound && allowRecovery) {
       buildRecoveryPath(result);
     }
 
@@ -242,6 +376,7 @@ public:
     return result;
   }
 
+ public:
   LocalPlanResult planFrame(double x,
                             double y,
                             double z,
@@ -278,9 +413,12 @@ public:
 
   const LocalPlannerParams& params() const { return p_; }
 
-private:
+ private:
   LocalPlannerParams p_;
   bool pathsLoaded_ = false;
+  LocalPlannerDebugSnapshot debugSnapshot_;
+  double lastMinObstacleAngleCw_{-180.0};
+  double lastMinObstacleAngleCcw_{180.0};
 
   // Vehicle state
   double vx_ = 0, vy_ = 0, vz_ = 0, vyaw_ = 0;
@@ -451,19 +589,49 @@ private:
     }
   }
 
-  bool checkNearFieldStop(const float* pts, int n) {
+  bool pointInIntentSweep(float bx,
+                          float by,
+                          double intentDirRad,
+                          double inflation = 0.0) const {
+    const double sweepDistance = std::max(0.0, p_.nearFieldStopDis);
+    if (sweepDistance <= 0.0) return false;
+
+    const double halfLength = footprintHalfLength() + std::max(0.0, inflation);
+    const double halfWidth = footprintHalfWidth() + std::max(0.0, inflation);
+    const double ux = std::cos(intentDirRad);
+    const double uy = std::sin(intentDirRad);
+    double enter = 0.0;
+    double exit = sweepDistance;
+
+    auto clipAxis = [&](double coordinate, double direction, double halfExtent) {
+      constexpr double kDirectionEpsilon = 1e-9;
+      if (std::fabs(direction) < kDirectionEpsilon) {
+        return std::fabs(coordinate) <= halfExtent;
+      }
+      double t0 = (coordinate - halfExtent) / direction;
+      double t1 = (coordinate + halfExtent) / direction;
+      if (t0 > t1) std::swap(t0, t1);
+      enter = std::max(enter, t0);
+      exit = std::min(exit, t1);
+      return enter <= exit + kDirectionEpsilon;
+    };
+
+    return clipAxis(static_cast<double>(bx), ux, halfLength) &&
+           clipAxis(static_cast<double>(by), uy, halfWidth) &&
+           exit > 0.0;
+  }
+
+  bool checkNearFieldStop(const float* pts, int n, double intentDirRad) {
     if (!p_.checkObstacle) return false;
-    const double halfW = footprintHalfWidth();
-    const double frontEdge = footprintFrontEdge();
     for (int i = 0; i < n; i++) {
-      float px = pts[i*4], py = pts[i*4+1], pz = pts[i*4+2], h = pts[i*4+3];
+      float px = pts[i*4], py = pts[i*4+1], h = pts[i*4+3];
+      if (!heightInsideBodyEnvelope(h)) continue;
       float dx = px - (float)vx_, dy = py - (float)vy_;
       // To body frame
       float bx = dx * (float)cosYaw_ + dy * (float)sinYaw_;
       float by = -dx * (float)sinYaw_ + dy * (float)cosYaw_;
       if (insideFootprint(bx, by)) continue;
-      if (bx > (float)frontEdge && bx < (float)(frontEdge + p_.nearFieldStopDis) &&
-          std::fabs(by) < halfW &&
+      if (pointInIntentSweep(bx, by, intentDirRad) &&
           (h > (float)p_.obstacleHeightThre || !p_.useTerrainAnalysis)) {
         return true;
       }
@@ -493,27 +661,76 @@ private:
     return traversabilityRiskAtWorld(wx, wy);
   }
 
-  bool checkNearFieldTraversability() const {
+  bool checkNearFieldTraversability(double intentDirRad) const {
     if (!p_.checkObstacle || !p_.useTraversabilityCost ||
         traversabilityGrid_.empty() || traversabilityResolution_ <= 0.0) {
       return false;
     }
-    const double halfW = footprintHalfWidth();
-    const double frontEdge = footprintFrontEdge();
-    double step = std::clamp(
-        traversabilityResolution_, 0.05, std::max(0.05, p_.nearFieldStopDis));
-    for (double bx = frontEdge + step * 0.5;
-         bx < frontEdge + p_.nearFieldStopDis;
-         bx += step) {
-      if (traversabilityRiskAtBody(bx, 0.0) >=
-          static_cast<float>(p_.traversabilityHardCost)) {
-        return true;
+
+    const double ux = std::cos(intentDirRad);
+    const double uy = std::sin(intentDirRad);
+    const double travel = std::max(0.0, p_.nearFieldStopDis);
+    const double halfLength = footprintHalfLength();
+    const double halfWidth = footprintHalfWidth();
+    const double endX = travel * ux;
+    const double endY = travel * uy;
+
+    double minWorldX = std::numeric_limits<double>::infinity();
+    double maxWorldX = -std::numeric_limits<double>::infinity();
+    double minWorldY = std::numeric_limits<double>::infinity();
+    double maxWorldY = -std::numeric_limits<double>::infinity();
+    for (double centerX : {0.0, endX}) {
+      for (double centerY : {0.0, endY}) {
+        for (double cornerX : {-halfLength, halfLength}) {
+          for (double cornerY : {-halfWidth, halfWidth}) {
+            const double bx = centerX + cornerX;
+            const double by = centerY + cornerY;
+            const double wx = vx_ + bx * cosYaw_ - by * sinYaw_;
+            const double wy = vy_ + bx * sinYaw_ + by * cosYaw_;
+            minWorldX = std::min(minWorldX, wx);
+            maxWorldX = std::max(maxWorldX, wx);
+            minWorldY = std::min(minWorldY, wy);
+            maxWorldY = std::max(maxWorldY, wy);
+          }
+        }
       }
-      for (double by = step; by <= halfW; by += step) {
-        if (traversabilityRiskAtBody(bx, by) >=
-                static_cast<float>(p_.traversabilityHardCost) ||
-            traversabilityRiskAtBody(bx, -by) >=
-                static_cast<float>(p_.traversabilityHardCost)) {
+    }
+
+    const int minCol = std::max(
+        0,
+        static_cast<int>(std::floor(
+            (minWorldX - traversabilityOriginX_) / traversabilityResolution_)));
+    const int maxCol = std::min(
+        traversabilityCols_ - 1,
+        static_cast<int>(std::floor(
+            (maxWorldX - traversabilityOriginX_) / traversabilityResolution_)));
+    const int minRow = std::max(
+        0,
+        static_cast<int>(std::floor(
+            (minWorldY - traversabilityOriginY_) / traversabilityResolution_)));
+    const int maxRow = std::min(
+        traversabilityRows_ - 1,
+        static_cast<int>(std::floor(
+            (maxWorldY - traversabilityOriginY_) / traversabilityResolution_)));
+    const double cellInflation = traversabilityResolution_ * 0.5;
+
+    for (int row = minRow; row <= maxRow; ++row) {
+      const double wy = traversabilityOriginY_ +
+          (static_cast<double>(row) + 0.5) * traversabilityResolution_;
+      for (int col = minCol; col <= maxCol; ++col) {
+        const float risk = traversabilityGrid_[row * traversabilityCols_ + col];
+        if (!std::isfinite(risk) ||
+            risk < static_cast<float>(p_.traversabilityHardCost)) {
+          continue;
+        }
+        const double wx = traversabilityOriginX_ +
+            (static_cast<double>(col) + 0.5) * traversabilityResolution_;
+        const double dx = wx - vx_;
+        const double dy = wy - vy_;
+        const float bx = static_cast<float>(dx * cosYaw_ + dy * sinYaw_);
+        const float by = static_cast<float>(-dx * sinYaw_ + dy * cosYaw_);
+        if (insideFootprint(bx, by)) continue;
+        if (pointInIntentSweep(bx, by, intentDirRad, cellInflation)) {
           return true;
         }
       }
@@ -538,6 +755,11 @@ private:
            std::fabs(by) <= static_cast<float>(footprintHalfWidth());
   }
 
+  bool heightInsideBodyEnvelope(float relative_height) const {
+    return std::isfinite(relative_height) &&
+           relative_height <= static_cast<float>(p_.obstacleHeightMax);
+  }
+
   void buildPlannerCloud(const float* pts, int n) {
     cloud_.clear();
     cloud_.reserve(n);
@@ -550,12 +772,13 @@ private:
     // Two-pass: 1) gather dx/dy into temp SoA, 2) SIMD batch disSq + rotate
     // For small clouds, scalar is fine. For large clouds, avoid AoS stride-4 penalty.
     if (n >= 256 && useTerrain) {
-      // Phase 1: gather from AoS �?SoA, apply range filter
+      // Phase 1: gather from AoS �?SoA, apply range filter
       bpcDx_.resize(n); bpcDy_.resize(n); bpcH_.resize(n);
       int kept = 0;
       for (int i = 0; i < n; i++) {
         float dx = pts[i*4] - fx, dy = pts[i*4+1] - fy;
         if (dx*dx + dy*dy >= adjRangeSq) continue;
+        if (!heightInsideBodyEnvelope(pts[i*4+3])) continue;
         float bx = dx * cosY + dy * sinY;
         float by = -dx * sinY + dy * cosY;
         if (insideFootprint(bx, by)) continue;
@@ -577,6 +800,7 @@ private:
         float px = pts[i*4], py = pts[i*4+1], pz = pts[i*4+2], h = pts[i*4+3];
         float dx = px - fx, dy = py - fy, dz = pz - fz;
         if (dx*dx + dy*dy >= adjRangeSq) continue;
+        if (!heightInsideBodyEnvelope(h)) continue;
         if (!((dz > minZ && dz < maxZ) || useTerrain)) continue;
         float bx = dx * cosY + dy * sinY;
         float by = -dx * sinY + dy * cosY;
@@ -590,7 +814,9 @@ private:
   std::vector<float> bpcDx_, bpcDy_, bpcH_;
 
   int scoreAndSelect(double pathScale, double pathRange, double relGoalDis,
-                     double joyDir, double joySpeed, int& slowDown) {
+                     double joyDir, double joySpeed, double dirThre,
+                     bool hardPathDirectionLimit,
+                     int& slowDown) {
     const auto& lut = rotLUT();
     int totalPaths = kRotDirs * kPathNum;
     int totalGroups = kRotDirs * kGroupNum;
@@ -608,9 +834,9 @@ private:
       float a = std::fabs(static_cast<float>(joyDir) - lut.rotAngDeg[d]);
       if (a > 180.0f) a = 360.0f - a;
       float rotDeg = 10.0f * d;
-      bool skip = (a > p_.dirThre && !p_.dirToVehicle) ||
-                  (std::fabs(lut.rotAngDeg[d]) > p_.dirThre && std::fabs(joyDir) <= 90.0 && p_.dirToVehicle) ||
-                  ((rotDeg > p_.dirThre && 360.0f - rotDeg > p_.dirThre) && std::fabs(joyDir) > 90.0 && p_.dirToVehicle);
+      bool skip = (a > dirThre && !p_.dirToVehicle) ||
+                  (std::fabs(lut.rotAngDeg[d]) > dirThre && std::fabs(joyDir) <= 90.0 && p_.dirToVehicle) ||
+                  ((rotDeg > dirThre && 360.0f - rotDeg > dirThre) && std::fabs(joyDir) > 90.0 && p_.dirToVehicle);
       if (!skip) {
         validRotDirs_[nValidRotDirs_++] = d;
       }
@@ -637,11 +863,10 @@ private:
     double minObsAngCW = -180.0;
     double minObsAngCCW = 180.0;
     if (p_.checkRotObstacle && cloudSize > 0) {
-      const float halfLenScale = static_cast<float>(p_.vehicleLength * 0.5) * invPS;
-      const float halfWidScale = static_cast<float>(p_.vehicleWidth * 0.5) * invPS;
+      const float halfLenScale = static_cast<float>(footprintHalfLength()) * invPS;
+      const float halfWidScale = static_cast<float>(footprintHalfWidth()) * invPS;
       const float diameterScaleSq = halfLenScale * halfLenScale + halfWidScale * halfWidScale;
-      const float angOffset = std::atan2(static_cast<float>(p_.vehicleWidth),
-                                         static_cast<float>(p_.vehicleLength)) *
+      const float angOffset = std::atan2(halfWidScale, halfLenScale) *
                               180.0f / static_cast<float>(M_PI);
       for (int i = 0; i < cloudSize; i++) {
         const float x = cloud_.x[i] * invPS;
@@ -664,6 +889,8 @@ private:
       if (minObsAngCW > 0) minObsAngCW = 0;
       if (minObsAngCCW < 0) minObsAngCCW = 0;
     }
+    lastMinObstacleAngleCw_ = minObsAngCW;
+    lastMinObstacleAngleCcw_ = minObsAngCCW;
 
     // 鈹€鈹€ Obstacle scoring: ROTATION-MAJOR loop with SIMD batch rotation 鈹€鈹€
     if (p_.checkObstacle && cloudSize > 0) {
@@ -765,6 +992,7 @@ private:
     sp.slopeWeight = p_.slopeWeight;
     sp.omniDirGoalThre = p_.omniDirGoalThre;
     std::vector<float> traversabilityRiskCache(totalGroups, -1.0f);
+    std::vector<float> outputEndDirectionCache(totalGroups, 1000.0f);
 
     for (int vi = 0; vi < nValidRotDirs_; vi++) {
       int rotDir = validRotDirs_[vi];
@@ -780,8 +1008,17 @@ private:
         // angDiffDeg hoisted: only rotAng changes per outer loop
         double dirDiff = angDiffDeg(joyDir,
                                     static_cast<double>(endDirPathList_[pathIdx]) + rotAng);
+        if (hardPathDirectionLimit && dirDiff > dirThre) continue;
         int grp = pathList_[pathIdx];
         int riskIdx = groupBase + grp;
+        if (hardPathDirectionLimit) {
+          float& outputEndDirection = outputEndDirectionCache[riskIdx];
+          if (outputEndDirection > 360.0f) {
+            outputEndDirection = static_cast<float>(outputPathEndDirectionDeg(
+                rotDir, grp, pathScale, pathRange, relGoalDis));
+          }
+          if (angDiffDeg(joyDir, outputEndDirection) > dirThre) continue;
+        }
         float travRisk = traversabilityRiskCache[riskIdx];
         if (travRisk < 0.0f) {
           travRisk = traversabilityRiskForGroup(
@@ -829,6 +1066,346 @@ private:
     }
 
     return selectedGroupID;
+  }
+
+  int collisionFreePathCount(int rotDir, int groupId) const {
+    if (rotDir < 0 || rotDir >= kRotDirs || groupId < 0 || groupId >= kGroupNum) {
+      return 0;
+    }
+    int count = 0;
+    const int pathBase = rotDir * kPathNum;
+    for (int pathIdx = 0; pathIdx < kPathNum; ++pathIdx) {
+      if (pathList_[pathIdx] == groupId &&
+          clearPathList_[pathBase + pathIdx] < p_.pointPerPathThre) {
+        ++count;
+      }
+    }
+    return count;
+  }
+
+  std::vector<Vec3> buildDebugCandidatePath(
+      int rotDir,
+      int groupId,
+      double pathScale,
+      double pathRange,
+      double relGoalDis) const {
+    constexpr std::size_t kDebugPointLimit = 16;
+    std::vector<Vec3> full;
+    if (rotDir < 0 || rotDir >= kRotDirs || groupId < 0 || groupId >= kGroupNum) {
+      return full;
+    }
+    const auto& segment = startPaths_[groupId];
+    if (segment.empty()) {
+      return full;
+    }
+    const auto& lut = rotLUT();
+    const double rc = lut.c[rotDir];
+    const double rs = lut.s[rotDir];
+    const double pathRangeScaleSq =
+        (pathRange / pathScale) * (pathRange / pathScale);
+    const double relGoalScaledSq =
+        (relGoalDis / pathScale) * (relGoalDis / pathScale);
+    full.reserve(segment.size());
+    for (const auto& point : segment) {
+      const double distanceSq = point.x * point.x + point.y * point.y;
+      if (distanceSq > pathRangeScaleSq || distanceSq > relGoalScaledSq) {
+        break;
+      }
+      full.push_back({
+          pathScale * (rc * point.x - rs * point.y),
+          pathScale * (rs * point.x + rc * point.y),
+          pathScale * point.z,
+      });
+    }
+    if (full.size() <= kDebugPointLimit) {
+      return full;
+    }
+    std::vector<Vec3> sampled;
+    sampled.reserve(kDebugPointLimit);
+    for (std::size_t index = 0; index < kDebugPointLimit; ++index) {
+      const std::size_t source =
+          index * (full.size() - 1) / (kDebugPointLimit - 1);
+      sampled.push_back(full[source]);
+    }
+    return sampled;
+  }
+
+  void traceDebugCandidateGates(
+      LocalPlanCandidate& candidate,
+      double pathScale,
+      double pathRange,
+      double relGoalDis,
+      double joyDir,
+      double dirThre,
+      bool hardPathDirectionLimit) const {
+    const int rotDir = candidate.rotationIndex;
+    const int groupId = candidate.groupId;
+    const int pathBase = rotDir * kPathNum;
+    const auto& lut = rotLUT();
+    PathScoreParams scoreParams;
+    scoreParams.dirWeight = p_.dirWeight;
+    scoreParams.slopeWeight = p_.slopeWeight;
+    scoreParams.omniDirGoalThre = p_.omniDirGoalThre;
+    const double rotWeight4 = lut.rotDirW4[rotDir];
+    const double groupWeight2 = lut.groupDirW2[groupId];
+    const float rotAngle = lut.rotAngDeg[rotDir];
+    double outputEndDirection = 1000.0;
+
+    candidate.rotationAllowed = rotationPassesObstacleGate(
+        rotDir,
+        lastMinObstacleAngleCw_,
+        lastMinObstacleAngleCcw_,
+        p_.twoWayDrive,
+        p_.checkRotObstacle);
+    candidate.terrainRisk = -1.0;
+    for (int pathIdx = 0; pathIdx < kPathNum; ++pathIdx) {
+      if (pathList_[pathIdx] != groupId) {
+        continue;
+      }
+      ++candidate.totalPathCount;
+      const int flatPath = pathBase + pathIdx;
+      if (clearPathList_[flatPath] >= p_.pointPerPathThre) {
+        continue;
+      }
+      ++candidate.collisionFreePathCount;
+
+      const double directionDifference = angDiffDeg(
+          joyDir, static_cast<double>(endDirPathList_[pathIdx]) + rotAngle);
+      if (hardPathDirectionLimit && directionDifference > dirThre) {
+        continue;
+      }
+      if (hardPathDirectionLimit) {
+        if (outputEndDirection > 360.0) {
+          outputEndDirection = outputPathEndDirectionDeg(
+              rotDir, groupId, pathScale, pathRange, relGoalDis);
+        }
+        if (angDiffDeg(joyDir, outputEndDirection) > dirThre) {
+          continue;
+        }
+      }
+      ++candidate.directionAllowedPathCount;
+
+      if (candidate.terrainRisk < 0.0) {
+        candidate.terrainRisk = traversabilityRiskForGroup(
+            rotDir, groupId, pathScale, pathRange, relGoalDis);
+      }
+      if (p_.useTraversabilityCost &&
+          candidate.terrainRisk >= p_.traversabilityHardCost) {
+        continue;
+      }
+      ++candidate.terrainAllowedPathCount;
+
+      const double directionScore = scorePathFast(
+          directionDifference,
+          rotWeight4,
+          groupWeight2,
+          0.0f,
+          relGoalDis,
+          scoreParams,
+          lut);
+      if (directionScore <= 0.0) {
+        continue;
+      }
+      ++candidate.directionScoredPathCount;
+
+      double score = scorePathFast(
+          directionDifference,
+          rotWeight4,
+          groupWeight2,
+          pathPenaltyList_[flatPath],
+          relGoalDis,
+          scoreParams,
+          lut);
+      if (score <= 0.0) {
+        continue;
+      }
+      ++candidate.heightCostAllowedPathCount;
+
+      if (p_.useTraversabilityCost &&
+          candidate.terrainRisk > p_.traversabilitySoftCost) {
+        const double penalty = std::clamp(
+            1.0 - p_.traversabilityWeight *
+                (candidate.terrainRisk - p_.traversabilitySoftCost),
+            0.0,
+            1.0);
+        if (penalty < 1.0) {
+          ++candidate.terrainSoftPenalizedPathCount;
+        }
+        score *= penalty;
+      }
+      if (score > 0.0) {
+        ++candidate.contributingPathCount;
+      }
+    }
+
+    if (!candidate.rotationAllowed) {
+      candidate.state = LocalCandidateState::RotationBlocked;
+    } else if (candidate.totalPathCount > 0 &&
+               candidate.collisionFreePathCount == 0) {
+      candidate.state = LocalCandidateState::CollisionBlocked;
+    } else if (candidate.directionAllowedPathCount == 0) {
+      candidate.state = LocalCandidateState::DirectionRejected;
+    } else if (candidate.terrainAllowedPathCount == 0) {
+      candidate.state = LocalCandidateState::TerrainBlocked;
+    } else if (candidate.directionScoredPathCount == 0) {
+      candidate.state = LocalCandidateState::DirectionRejected;
+    } else if (candidate.heightCostAllowedPathCount == 0 ||
+               candidate.contributingPathCount == 0) {
+      candidate.state = LocalCandidateState::TerrainBlocked;
+    } else if (candidate.terrainSoftPenalizedPathCount > 0) {
+      candidate.state = LocalCandidateState::TerrainCost;
+    } else {
+      candidate.state = LocalCandidateState::Feasible;
+    }
+  }
+
+  void captureDebugSnapshot(
+      int selectedGroupId,
+      double pathScale,
+      double pathRange,
+      double relGoalDis,
+      double joyDir,
+      double dirThre,
+      bool hardPathDirectionLimit,
+      double timestamp) {
+    debugSnapshot_ = {};
+    if (p_.debugCandidateLimit <= 0) {
+      return;
+    }
+    debugSnapshot_.valid = true;
+    debugSnapshot_.timestampS = timestamp;
+    debugSnapshot_.pathScale = pathScale;
+    debugSnapshot_.pathRange = pathRange;
+    debugSnapshot_.relativeGoalDistanceM = relGoalDis;
+    debugSnapshot_.traversabilitySoftCost = p_.traversabilitySoftCost;
+    debugSnapshot_.traversabilityHardCost = p_.traversabilityHardCost;
+    debugSnapshot_.validRotationCount = nValidRotDirs_;
+    debugSnapshot_.selectedGroupId = selectedGroupId;
+
+    std::vector<LocalPlanCandidate> candidates;
+    candidates.reserve(static_cast<std::size_t>(nValidRotDirs_));
+    const auto& lut = rotLUT();
+    const int selectedRotation =
+        selectedGroupId >= 0 ? selectedGroupId / kGroupNum : -1;
+    const int selectedGroup =
+        selectedGroupId >= 0 ? selectedGroupId % kGroupNum : -1;
+    for (int validIndex = 0; validIndex < nValidRotDirs_; ++validIndex) {
+      const int rotDir = validRotDirs_[validIndex];
+      int representativeGroup = 3;
+      double bestScore = -1.0;
+      int bestCollisionFree = -1;
+      for (int groupId = 0; groupId < kGroupNum; ++groupId) {
+        const int flatGroup = rotDir * kGroupNum + groupId;
+        const double score = clearPathPerGroupScore_[flatGroup];
+        const int collisionFree = collisionFreePathCount(rotDir, groupId);
+        if (score > bestScore + 1e-12 ||
+            (std::abs(score - bestScore) <= 1e-12 &&
+             collisionFree > bestCollisionFree) ||
+            (std::abs(score - bestScore) <= 1e-12 &&
+             collisionFree == bestCollisionFree &&
+             std::abs(groupId - 3) < std::abs(representativeGroup - 3))) {
+          representativeGroup = groupId;
+          bestScore = score;
+          bestCollisionFree = collisionFree;
+        }
+      }
+      if (rotDir == selectedRotation) {
+        representativeGroup = selectedGroup;
+      }
+
+      const int flatGroup = rotDir * kGroupNum + representativeGroup;
+      LocalPlanCandidate candidate;
+      candidate.rotationIndex = rotDir;
+      candidate.groupId = representativeGroup;
+      candidate.rotationDeg = lut.rotAngDeg[rotDir];
+      candidate.aggregateScore = clearPathPerGroupScore_[flatGroup];
+      candidate.selected = flatGroup == selectedGroupId;
+      traceDebugCandidateGates(
+          candidate,
+          pathScale,
+          pathRange,
+          relGoalDis,
+          joyDir,
+          dirThre,
+          hardPathDirectionLimit);
+      candidate.path = buildDebugCandidatePath(
+          rotDir,
+          representativeGroup,
+          pathScale,
+          pathRange,
+          relGoalDis);
+      candidates.push_back(std::move(candidate));
+    }
+
+    const std::size_t limit = static_cast<std::size_t>(
+        std::clamp(p_.debugCandidateLimit, 0, kRotDirs));
+    if (candidates.size() <= limit) {
+      debugSnapshot_.candidates = std::move(candidates);
+      return;
+    }
+    std::vector<LocalPlanCandidate> sampled;
+    sampled.reserve(limit);
+    for (std::size_t index = 0; index < limit; ++index) {
+      const std::size_t source = limit == 1
+          ? candidates.size() / 2
+          : index * (candidates.size() - 1) / (limit - 1);
+      sampled.push_back(candidates[source]);
+    }
+    const auto selectedIt = std::find_if(
+        candidates.begin(),
+        candidates.end(),
+        [](const LocalPlanCandidate& candidate) { return candidate.selected; });
+    if (selectedIt != candidates.end() &&
+        std::none_of(
+            sampled.begin(),
+            sampled.end(),
+            [](const LocalPlanCandidate& candidate) { return candidate.selected; })) {
+      sampled.back() = *selectedIt;
+      std::sort(
+          sampled.begin(),
+          sampled.end(),
+          [](const LocalPlanCandidate& lhs, const LocalPlanCandidate& rhs) {
+            return lhs.rotationIndex < rhs.rotationIndex;
+          });
+    }
+    debugSnapshot_.candidates = std::move(sampled);
+  }
+
+  double outputPathEndDirectionDeg(int rotDir,
+                                   int groupID,
+                                   double pathScale,
+                                   double pathRange,
+                                   double relGoalDis) const {
+    if (groupID < 0 || groupID >= kGroupNum) return 0.0;
+    const auto& segment = startPaths_[groupID];
+    if (segment.size() < 2) return rotLUT().rotAngDeg[rotDir];
+
+    const double pathRangeScaleSq =
+        (pathRange / pathScale) * (pathRange / pathScale);
+    const double relGoalScaledSq =
+        (relGoalDis / pathScale) * (relGoalDis / pathScale);
+    double previousX = 0.0;
+    double previousY = 0.0;
+    double lastX = 0.0;
+    double lastY = 0.0;
+    int pointCount = 0;
+    for (const auto& point : segment) {
+      const double distanceSq = point.x * point.x + point.y * point.y;
+      if (distanceSq > pathRangeScaleSq || distanceSq > relGoalScaledSq) break;
+      previousX = lastX;
+      previousY = lastY;
+      lastX = point.x;
+      lastY = point.y;
+      ++pointCount;
+    }
+    if (pointCount < 2) return rotLUT().rotAngDeg[rotDir];
+
+    const double dx = lastX - previousX;
+    const double dy = lastY - previousY;
+    const auto& lut = rotLUT();
+    const double rotatedDx = lut.c[rotDir] * dx - lut.s[rotDir] * dy;
+    const double rotatedDy = lut.s[rotDir] * dx + lut.c[rotDir] * dy;
+    return std::atan2(rotatedDy, rotatedDx) * 180.0 / M_PI;
   }
 
   float traversabilityRiskForGroup(int rotDir,
@@ -892,7 +1469,10 @@ private:
 
     if (recoveryState_ == 0 && blockedDur >= p_.recoveryBlockedThre) {
       if (recoveryCycleCount_ >= p_.recoveryMaxCycles) {
-        // Exhausted recovery cycles; stop and wait.
+        result.recoveryExhausted = true;
+        recoveryState_ = 0;
+        result.path.clear();
+        return;
       } else {
         recoveryState_ = 1;
         recoveryPhaseStart_ = odomTime_;

@@ -2,6 +2,12 @@
 
 `LocalPlanner` is the local path planning Module.
 
+The scoring math, fixed 343/7/36 path-library cardinalities, output-path
+semantics, PathFollower boundary, and native-endpoint/Python parameter
+differences are defined once in
+[Local Planning and Tracking Contract](../../../../../docs/architecture/LOCAL_PLANNING_AND_TRACKING_CONTRACT.md).
+This file documents Module ports and wiring only.
+
 - Runtime name: `nav.local_planner`
 - Code: `src/nav/services/plan/local_planner/service.py`
 - Port source of truth: `nav.services.plan.contracts.LOCAL_PLAN_PORT_CONTRACT`
@@ -105,7 +111,7 @@ Current gap:
 
 | Port | Type | Consumer | Wired today | Meaning |
 | --- | --- | --- | --- | --- |
-| `local_path` | `Path` | `nav.path_follower.local_path`, `nav.safety.path`, `NAV_OUT.local_path` | Yes | Trackable local path in the planning frame. Empty path means stop/failed local plan. |
+| `local_path` | `Path` | `nav.path_follower.local_path`, `nav.safety.path`; native endpoint publishes `/nav/local_path` | Yes | Trackable local path in the planning frame. Empty path means stop/failed local plan. |
 | `control_hint` | `dict` | `nav.path_follower.control_hint` | Yes | `slow_down`, `near_field_stop`, `safety_stop`, `path_found`, `recovery_state`, `reason`, traversability summary. |
 | `alive` | `bool` | runtime health | Module-local | Module liveness signal. |
 
@@ -148,6 +154,10 @@ odometry + waypoint/global_path
   -> score candidate path groups with obstacle + terrain + traversability risk
   -> publish local_path + control_hint
 ```
+
+The 343 primitives are scoring/voting templates. The emitted `local_path` is
+the rotated/scaled canonical `startPath` of the selected rotation/group bin;
+it is not one of the 343 primitive trajectories copied verbatim.
 
 ## Required Fixes
 

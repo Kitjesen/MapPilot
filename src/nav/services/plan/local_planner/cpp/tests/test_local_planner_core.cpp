@@ -300,6 +300,28 @@ TEST(SelectBestGroup, RotObstacleFilter) {
   EXPECT_DOUBLE_EQ(result.maxScore, 50.0);
 }
 
+TEST(SelectBestGroup, RotationGateHelperExactlyMatchesSelection) {
+  const std::vector<std::pair<double, double>> windows = {
+      {-180.0, 180.0}, {0.0, 125.0}, {-125.0, 0.0}, {-10.0, 10.0}};
+  for (bool check_obstacle : {false, true}) {
+    for (bool two_way : {false, true}) {
+      for (const auto& [cw, ccw] : windows) {
+        for (int rotation = 0; rotation < kRotDirs; ++rotation) {
+          std::vector<double> scores(kRotDirs * kGroupNum, 0.0);
+          scores[rotation * kGroupNum + 3] = 1.0;
+          const auto selected = selectBestGroup(
+              scores, kGroupNum, cw, ccw, two_way, check_obstacle);
+          EXPECT_EQ(selected.selectedGroupID >= 0,
+                    rotationPassesObstacleGate(
+                        rotation, cw, ccw, two_way, check_obstacle))
+              << "rotation=" << rotation << " window=(" << cw << "," << ccw
+              << ") two_way=" << two_way << " check=" << check_obstacle;
+        }
+      }
+    }
+  }
+}
+
 // 閳光偓閳光偓 LocalPlannerCore 閳光偓閳光偓
 
 TEST(LocalPlannerCore, CheckRotObstacleFiltersPlanSelection) {
@@ -311,6 +333,7 @@ TEST(LocalPlannerCore, CheckRotObstacleFiltersPlanSelection) {
   p.checkRotObstacle = true;
   p.pathScaleBySpeed = false;
   p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
 
   LocalPlannerCore planner(p);
   ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
@@ -318,7 +341,7 @@ TEST(LocalPlannerCore, CheckRotObstacleFiltersPlanSelection) {
   planner.setGoal(5, 0);
 
   const float angle = -10.0f * static_cast<float>(M_PI) / 180.0f;
-  const float radius = 0.35f;
+  const float radius = 0.45f;
   std::vector<float> cloud = {
       radius * std::cos(angle), radius * std::sin(angle), 0.0f, 1.0f};
 
@@ -328,6 +351,21 @@ TEST(LocalPlannerCore, CheckRotObstacleFiltersPlanSelection) {
   ASSERT_FALSE(result.path.empty());
   EXPECT_GT(result.path.front().y, 0.1);
   EXPECT_GT(result.path.front().x, 0.9);
+  const auto snapshot = planner.debugSnapshot();
+  ASSERT_TRUE(snapshot.valid);
+  EXPECT_TRUE(std::any_of(
+      snapshot.candidates.begin(),
+      snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) {
+        return candidate.state == LocalCandidateState::RotationBlocked;
+      }));
+  EXPECT_TRUE(std::none_of(
+      snapshot.candidates.begin(),
+      snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) {
+        return candidate.selected &&
+               candidate.state == LocalCandidateState::RotationBlocked;
+      }));
 }
 
 TEST(LocalPlannerCore, TwoWayDriveKeepsCloseBehindGoalTrackable) {
@@ -404,6 +442,70 @@ TEST(LocalPlannerCore, TraversabilityGridTriggersNearFieldStop) {
   EXPECT_TRUE(result.nearFieldStop);
 }
 
+TEST(LocalPlannerCore, FrontTraversabilityDoesNotStopReverseIntent) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_reverse_ignores_front_traversability_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = true;
+  p.useTraversabilityCost = true;
+  p.traversabilityNearFieldStop = true;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(-5, 0);
+
+  constexpr int kSize = 25;
+  constexpr double kResolution = 0.1;
+  constexpr double kOrigin = -1.25;
+  std::vector<float> riskGrid(kSize * kSize, 0.0f);
+  const int row = static_cast<int>((0.0 - kOrigin) / kResolution);
+  const int frontCol = static_cast<int>((0.6 - kOrigin) / kResolution);
+  riskGrid[row * kSize + frontCol] = 100.0f;
+  planner.setTraversabilityGrid(
+      riskGrid.data(), kSize, kSize, kResolution, kOrigin, kOrigin);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+
+  EXPECT_FALSE(result.nearFieldStop);
+}
+
+TEST(LocalPlannerCore, RearTraversabilityStopsReverseIntent) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_reverse_checks_rear_traversability_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = true;
+  p.useTraversabilityCost = true;
+  p.traversabilityNearFieldStop = true;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(-5, 0);
+
+  constexpr int kSize = 25;
+  constexpr double kResolution = 0.1;
+  constexpr double kOrigin = -1.25;
+  std::vector<float> riskGrid(kSize * kSize, 0.0f);
+  const int row = static_cast<int>((0.0 - kOrigin) / kResolution);
+  const int rearCol = static_cast<int>((-0.6 - kOrigin) / kResolution);
+  riskGrid[row * kSize + rearCol] = 100.0f;
+  planner.setTraversabilityGrid(
+      riskGrid.data(), kSize, kSize, kResolution, kOrigin, kOrigin);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+
+  EXPECT_TRUE(result.nearFieldStop);
+}
+
 TEST(LocalPlannerCore, FootprintPointsDoNotTriggerNearFieldStop) {
   auto pathsDir = writeMinimalPlannerPaths("nav_kernel_footprint_filter_fixture");
 
@@ -454,6 +556,108 @@ TEST(LocalPlannerCore, ObstacleAheadOfFootprintTriggersNearFieldStop) {
   EXPECT_TRUE(result.nearFieldStop);
 }
 
+TEST(LocalPlannerCore, FrontObstacleDoesNotStopReverseIntent) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_reverse_ignores_front_obstacle_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 1.0;
+  p.vehicleWidth = 0.6;
+  p.checkObstacle = true;
+  p.useTraversabilityCost = false;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(-5, 0);
+
+  std::vector<float> cloud = {0.72f, 0.0f, 0.45f, 0.45f};
+  const auto result = planner.plan(
+      cloud.data(), static_cast<int>(cloud.size() / 4), 0.0);
+
+  EXPECT_FALSE(result.nearFieldStop);
+}
+
+TEST(LocalPlannerCore, RearObstacleStopsReverseIntent) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_reverse_checks_rear_obstacle_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 1.0;
+  p.vehicleWidth = 0.6;
+  p.checkObstacle = true;
+  p.useTraversabilityCost = false;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(-5, 0);
+
+  std::vector<float> cloud = {-0.72f, 0.0f, 0.45f, 0.45f};
+  const auto result = planner.plan(
+      cloud.data(), static_cast<int>(cloud.size() / 4), 0.0);
+
+  EXPECT_TRUE(result.nearFieldStop);
+}
+
+TEST(LocalPlannerCore, OverheadPointAboveDefaultBodyEnvelopeDoesNotStop) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_overhead_filter_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 1.0;
+  p.vehicleWidth = 0.6;
+  p.checkObstacle = true;
+  p.useTerrainAnalysis = false;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> cloud = {0.72f, 0.0f, 2.5f, 2.5f};
+
+  const auto result = planner.plan(
+      cloud.data(), static_cast<int>(cloud.size() / 4), 0.0);
+
+  EXPECT_FALSE(result.nearFieldStop);
+  EXPECT_TRUE(result.pathFound);
+}
+
+TEST(LocalPlannerCore, OverheadHeightLimitIsConfigurable) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_configurable_overhead_filter_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 1.0;
+  p.vehicleWidth = 0.6;
+  p.checkObstacle = true;
+  p.useTerrainAnalysis = false;
+  p.obstacleHeightMax = 3.0;
+  p.nearFieldStopDis = 0.6;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> cloud = {0.72f, 0.0f, 2.5f, 2.5f};
+  const auto result = planner.plan(
+      cloud.data(), static_cast<int>(cloud.size() / 4), 0.0);
+
+  EXPECT_TRUE(result.nearFieldStop);
+}
+
 TEST(LocalPlannerCore, TraversabilityHardCostBlocksPathSelection) {
   auto pathsDir = writeMinimalPlannerPaths("nav_kernel_traversability_block_fixture");
 
@@ -475,6 +679,243 @@ TEST(LocalPlannerCore, TraversabilityHardCostBlocksPathSelection) {
   auto result = planner.plan(nullptr, 0, 0.0);
 
   EXPECT_FALSE(result.pathFound);
+}
+
+TEST(LocalPlannerCore, ReportsRecoveryExhaustedWithoutChangingRecoveryStateAbi) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_recovery_exhausted_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilityHardCost = 90.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.recoveryBlockedThre = 0.0;
+  p.recoveryMaxCycles = 0;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> riskGrid(9 * 9, 95.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 9, 9, 0.5, -2.0, -2.0);
+
+  const auto result = planner.plan(nullptr, 0, 1.0);
+
+  EXPECT_FALSE(result.pathFound);
+  EXPECT_TRUE(result.recoveryExhausted);
+  EXPECT_EQ(result.recoveryState, 0);
+  EXPECT_TRUE(result.path.empty());
+}
+TEST(LocalPlannerCore, DebugSnapshotShowsRepresentativeCandidatesAndSelection) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_debug_candidates_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = false;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+  const auto snapshot = planner.debugSnapshot();
+
+  ASSERT_TRUE(result.pathFound);
+  ASSERT_TRUE(snapshot.valid);
+  ASSERT_FALSE(snapshot.candidates.empty());
+  EXPECT_EQ(snapshot.validRotationCount, static_cast<int>(snapshot.candidates.size()));
+  EXPECT_DOUBLE_EQ(snapshot.traversabilitySoftCost, p.traversabilitySoftCost);
+  EXPECT_DOUBLE_EQ(snapshot.traversabilityHardCost, p.traversabilityHardCost);
+  EXPECT_LE(snapshot.candidates.size(), static_cast<std::size_t>(kRotDirs));
+  const auto selected_count = std::count_if(
+      snapshot.candidates.begin(),
+      snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) { return candidate.selected; });
+  ASSERT_EQ(selected_count, 1);
+  const auto selected = std::find_if(
+      snapshot.candidates.begin(),
+      snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) { return candidate.selected; });
+  ASSERT_NE(selected, snapshot.candidates.end());
+  EXPECT_EQ(selected->state, LocalCandidateState::Feasible);
+  ASSERT_FALSE(selected->path.empty());
+  EXPECT_NEAR(selected->path.front().x, result.path.front().x, 1e-9);
+  EXPECT_NEAR(selected->path.front().y, result.path.front().y, 1e-9);
+}
+
+TEST(LocalPlannerCore, DebugSnapshotMarksSoftTerrainCostWithoutHardBlocking) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_debug_soft_terrain_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilitySoftCost = 40.0;
+  p.traversabilityHardCost = 90.0;
+  p.traversabilityWeight = 0.02;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+  std::vector<float> riskGrid(9 * 9, 45.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 9, 9, 0.5, -2.0, -2.0);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+  const auto snapshot = planner.debugSnapshot();
+
+  ASSERT_TRUE(result.pathFound);
+  ASSERT_TRUE(snapshot.valid);
+  EXPECT_TRUE(std::any_of(
+      snapshot.candidates.begin(),
+      snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) {
+        return candidate.state == LocalCandidateState::TerrainCost &&
+               candidate.terrainRisk >= 40.0 &&
+               candidate.terrainRisk < 90.0;
+      }));
+}
+
+TEST(LocalPlannerCore, DebugSnapshotDoesNotClaimTerrainCostWhenWeightIsZero) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_debug_zero_terrain_weight_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilitySoftCost = 40.0;
+  p.traversabilityHardCost = 90.0;
+  p.traversabilityWeight = 0.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+  std::vector<float> riskGrid(9 * 9, 45.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 9, 9, 0.5, -2.0, -2.0);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+  const auto snapshot = planner.debugSnapshot();
+
+  ASSERT_TRUE(result.pathFound);
+  const auto selected = std::find_if(
+      snapshot.candidates.begin(), snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) { return candidate.selected; });
+  ASSERT_NE(selected, snapshot.candidates.end());
+  EXPECT_EQ(selected->state, LocalCandidateState::Feasible);
+  EXPECT_EQ(selected->terrainSoftPenalizedPathCount, 0);
+}
+
+TEST(LocalPlannerCore, DebugSnapshotClassifiesSoftTerrainZeroingAsTerrainBlocked) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_debug_soft_zero_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilitySoftCost = 40.0;
+  p.traversabilityHardCost = 90.0;
+  p.traversabilityWeight = 1.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+  std::vector<float> riskGrid(9 * 9, 45.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 9, 9, 0.5, -2.0, -2.0);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+  const auto snapshot = planner.debugSnapshot();
+
+  EXPECT_FALSE(result.pathFound);
+  EXPECT_TRUE(std::any_of(
+      snapshot.candidates.begin(), snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) {
+        return candidate.state == LocalCandidateState::TerrainBlocked &&
+               candidate.terrainAllowedPathCount > 0 &&
+               candidate.heightCostAllowedPathCount > 0 &&
+               candidate.contributingPathCount == 0;
+      }));
+}
+
+TEST(LocalPlannerCore, DebugSnapshotCollisionGatePrecedesHardTerrainGate) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_debug_collision_before_terrain_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = true;
+  p.pointPerPathThre = 0;
+  p.useTraversabilityCost = true;
+  p.traversabilityHardCost = 80.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+  std::vector<float> riskGrid(9 * 9, 95.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 9, 9, 0.5, -2.0, -2.0);
+  (void)planner.plan(nullptr, 0, 0.0);
+  const auto snapshot = planner.debugSnapshot();
+  const auto forward = std::find_if(
+      snapshot.candidates.begin(), snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) {
+        return candidate.rotationIndex == 18;
+      });
+
+  ASSERT_NE(forward, snapshot.candidates.end());
+  EXPECT_EQ(forward->state, LocalCandidateState::CollisionBlocked);
+  EXPECT_GT(forward->totalPathCount, 0);
+  EXPECT_EQ(forward->collisionFreePathCount, 0);
+  EXPECT_LT(forward->terrainRisk, 0.0);
+}
+
+TEST(LocalPlannerCore, DebugSnapshotDistinguishesTerrainBlockedCandidates) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_debug_terrain_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilityHardCost = 80.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.debugCandidateLimit = kRotDirs;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+  std::vector<float> riskGrid(9 * 9, 95.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 9, 9, 0.5, -2.0, -2.0);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+  const auto snapshot = planner.debugSnapshot();
+
+  EXPECT_FALSE(result.pathFound);
+  ASSERT_TRUE(snapshot.valid);
+  ASSERT_FALSE(snapshot.candidates.empty());
+  EXPECT_TRUE(std::any_of(
+      snapshot.candidates.begin(),
+      snapshot.candidates.end(),
+      [](const LocalPlanCandidate& candidate) {
+        return candidate.state == LocalCandidateState::TerrainBlocked &&
+               candidate.terrainRisk >= 80.0;
+      }));
 }
 
 TEST(RotLUT, PrecomputedRotDirW) {
