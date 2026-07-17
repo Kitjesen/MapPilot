@@ -1,0 +1,316 @@
+{
+  "schema_version": "lingtu.slam.public_datasets.v1",
+  "priority_sets": {
+    "mid360": [
+      "aist-driving-mid360",
+      "iilabs3d-mid360",
+      "rtk-slam-mid360",
+      "aist-hard-localization-mid360",
+      "aliw-farm-mid360"
+    ],
+    "degeneracy": [
+      "aist-flatwall-avia",
+      "tiers-enhanced-livox",
+      "geode"
+    ]
+  },
+  "datasets": [
+    {
+      "id": "aist-driving-mid360",
+      "title": "AIST Driving SLAM Test with Livox MID360",
+      "official_url": "https://zenodo.org/records/14841855",
+      "license": {
+        "name": "CC BY 4.0",
+        "terms_url": "https://zenodo.org/records/14841855",
+        "redistribution_allowed": true,
+        "review_required": false
+      },
+      "sensor_model": "Livox MID360",
+      "source_format": "ros2_bag",
+      "lidar": {
+        "topic": "/livox/lidar",
+        "message_type": "sensor_msgs/msg/PointCloud2"
+      },
+      "imu": {
+        "topic": "/livox/imu",
+        "message_type": "sensor_msgs/msg/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": false
+      },
+      "recommended_uses": [
+        "transport_replay",
+        "importer_smoke",
+        "runtime_stability"
+      ],
+      "conversion_adapter": "ros2_bag_to_normalized_jsonl",
+      "download_hint": "Download rosbag2_2024_04_16-14_17_01.zip from the official Zenodo record.",
+      "notes": "The official bag metadata contains /livox/lidar PointCloud2 and /livox/imu. Point-level time fields are not asserted by the catalog, so this sequence is not frontend accuracy evidence until the fields are inspected."
+    },
+    {
+      "id": "iilabs3d-mid360",
+      "title": "IILABS 3D LiDAR SLAM Benchmark - Livox MID360",
+      "official_url": "https://jorgedfr.github.io/3d_lidar_slam_benchmark_at_iilab/content/dataset/",
+      "license": {
+        "name": "Creative Commons Attribution Share-Alike (version unverified)",
+        "terms_url": "https://rdm.inesctec.pt/dataset/nis-2025-001",
+        "redistribution_allowed": false,
+        "review_required": true
+      },
+      "sensor_model": "Livox MID360",
+      "source_format": "ros1_bag",
+      "lidar": {
+        "topic": "/eve/lidar3d",
+        "message_type": "sensor_msgs/PointCloud2"
+      },
+      "imu": {
+        "topic": "/eve/livox/imu",
+        "message_type": "sensor_msgs/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": true,
+        "format": "tum",
+        "path": "ground_truth.tum",
+        "canonical_format": "tum"
+      },
+      "recommended_uses": [
+        "imu_calibration",
+        "indoor_loop_closure",
+        "multilevel_motion"
+      ],
+      "conversion_adapter": "ros1_pointcloud2_to_normalized_jsonl",
+      "download_hint": "iilabs3d download ~/slam_data loop livox_mid_360",
+      "notes": "Start with the loop and calibration sequences and preserve the supplied calibration YAML. Inspect the PointCloud2 fields before enabling deskew-dependent Fast-LIO frontend scoring."
+    },
+    {
+      "id": "rtk-slam-mid360",
+      "title": "ISPRS RTK-SLAM Benchmark",
+      "official_url": "https://www.isprs.org/resources/datasets/benchmarks/RTK-SLAM/Default.aspx",
+      "license": {
+        "name": "CC BY 4.0",
+        "terms_url": "https://huggingface.co/datasets/Willyzw/rtk-slam-dataset",
+        "redistribution_allowed": true,
+        "review_required": false
+      },
+      "sensor_model": "Livox MID360",
+      "source_format": "ros1_ros2_or_euroc",
+      "lidar": {
+        "topic": "/livox/lidar",
+        "message_type": "livox_ros_driver2/msg/CustomMsg",
+        "point_time_field": "offset_time",
+        "point_time_unit": "ns"
+      },
+      "imu": {
+        "topic": "/livox/imu",
+        "message_type": "sensor_msgs/msg/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": true,
+        "format": "checkpoint_csv",
+        "path": "ground_truth/{sequence}.csv",
+        "canonical_format": "checkpoint_csv"
+      },
+      "recommended_uses": [
+        "lio_frontend",
+        "long_range_drift",
+        "z_axis_drift",
+        "tunnel_degeneracy"
+      ],
+      "conversion_adapter": "rtk_slam_to_normalized_jsonl",
+      "notes": "The independent truth is sparse surveyed checkpoints, not a continuous trajectory. Report absolute checkpoint error without alignment; do not relabel it as TUM ATE."
+    },
+    {
+      "id": "aist-hard-localization-mid360",
+      "title": "AIST Hard Point Cloud Localization Dataset",
+      "official_url": "https://zenodo.org/records/10122133",
+      "license": {
+        "name": "CC BY 4.0",
+        "terms_url": "https://zenodo.org/records/10122133",
+        "redistribution_allowed": true,
+        "review_required": false
+      },
+      "sensor_model": "Livox MID360",
+      "source_format": "ros2_bag",
+      "lidar": {
+        "topic": "/livox/lidar",
+        "message_type": "livox_ros_driver2/msg/CustomMsg",
+        "point_time_field": "offset_time",
+        "point_time_unit": "ns"
+      },
+      "imu": {
+        "topic": "/livox/imu",
+        "message_type": "sensor_msgs/msg/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": true,
+        "format": "tum",
+        "path": "ground_truth.tum",
+        "canonical_format": "tum"
+      },
+      "recommended_uses": [
+        "lio_frontend",
+        "saved_map_localization",
+        "kidnap_recovery",
+        "fast_motion"
+      ],
+      "conversion_adapter": "ros2_bag_to_normalized_jsonl",
+      "notes": "Treat the supplied PLY map as an input artifact, not as data generated by LingTu mapping."
+    },
+    {
+      "id": "aliw-farm-mid360",
+      "title": "ALIW Farm Multi-Sensor Dataset",
+      "official_url": "https://data.mendeley.com/datasets/cyzj2bd9n2/1",
+      "license": {
+        "name": "CC BY 4.0",
+        "terms_url": "https://data.mendeley.com/datasets/cyzj2bd9n2/1",
+        "redistribution_allowed": true,
+        "review_required": false
+      },
+      "sensor_model": "Livox MID360",
+      "source_format": "ros_bag",
+      "lidar": {
+        "topic": "/livox/lidar",
+        "message_type": "livox_ros_driver2/CustomMsg",
+        "point_time_field": "offset_time",
+        "point_time_unit": "ns"
+      },
+      "imu": {
+        "topic": "/livox/imu",
+        "message_type": "sensor_msgs/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": false
+      },
+      "recommended_uses": [
+        "lio_frontend",
+        "offroad_robustness",
+        "vegetation",
+        "wheel_odom_comparison"
+      ],
+      "conversion_adapter": "ros_bag_to_normalized_jsonl",
+      "notes": "Use for robustness and regression only because the release does not provide an absolute trajectory reference."
+    },
+    {
+      "id": "aist-flatwall-avia",
+      "title": "AIST Flat-wall LiDAR-Inertial Degeneracy Dataset",
+      "official_url": "https://staff.aist.go.jp/k.koide/projects/glimsupp/flatwall.html",
+      "license": {
+        "name": "CC BY 4.0",
+        "terms_url": "https://zenodo.org/records/7641866",
+        "redistribution_allowed": true,
+        "review_required": false
+      },
+      "sensor_model": "Livox Avia",
+      "source_format": "ros_bag",
+      "lidar": {
+        "topic": "/livox/lidar",
+        "message_type": "livox_ros_driver/CustomMsg",
+        "point_time_field": "offset_time",
+        "point_time_unit": "ns"
+      },
+      "imu": {
+        "topic": "/livox/imu",
+        "message_type": "sensor_msgs/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": true,
+        "format": "aist_apriltag_archive",
+        "path": "gt.tar.gz",
+        "canonical_format": "source_archive"
+      },
+      "recommended_uses": [
+        "lio_frontend",
+        "degeneracy_detection",
+        "update_rejection_policy"
+      ],
+      "conversion_adapter": "ros_bag_to_normalized_jsonl",
+      "notes": "This is an intentionally fully degenerate scene; use it to measure observability handling, not general accuracy."
+    },
+    {
+      "id": "tiers-enhanced-livox",
+      "title": "TIERS LiDAR Dataset Enhanced",
+      "official_url": "https://github.com/TIERS/tiers-lidars-dataset-enhanced",
+      "license": {
+        "name": "Repository MIT; dataset usage terms require confirmation",
+        "terms_url": "https://github.com/TIERS/tiers-lidars-dataset-enhanced",
+        "redistribution_allowed": false,
+        "review_required": true
+      },
+      "sensor_model": "Livox Avia and Livox Horizon",
+      "source_format": "ros1_bag",
+      "lidar": {
+        "topic": "/livox/lidar",
+        "message_type": "livox_ros_driver/CustomMsg",
+        "point_time_field": "offset_time",
+        "point_time_unit": "ns"
+      },
+      "imu": {
+        "topic": "/livox/imu",
+        "message_type": "sensor_msgs/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": false
+      },
+      "recommended_uses": [
+        "lio_frontend",
+        "corridor_degeneracy",
+        "forest_robustness",
+        "cross_livox_generalization"
+      ],
+      "conversion_adapter": "ros1_bag_to_normalized_jsonl",
+      "notes": "Do not mirror or redistribute raw data until the dataset-specific terms are confirmed with the authors."
+    },
+    {
+      "id": "geode",
+      "title": "GEODE Multi-LiDAR Degeneracy Dataset",
+      "official_url": "https://thisparticle.github.io/geode/",
+      "license": {
+        "name": "License not verified",
+        "terms_url": "https://thisparticle.github.io/geode/",
+        "redistribution_allowed": false,
+        "review_required": true
+      },
+      "sensor_model": "Multiple LiDARs with Xsens IMU",
+      "source_format": "ros_bag_or_raw",
+      "lidar": {
+        "topic": "/lidar_points",
+        "message_type": "sensor_msgs/PointCloud2",
+        "point_time_field": "time",
+        "point_time_unit": "s"
+      },
+      "imu": {
+        "topic": "/imu/data",
+        "message_type": "sensor_msgs/Imu",
+        "acceleration_unit": "m/s^2",
+        "angular_velocity_unit": "rad/s"
+      },
+      "ground_truth": {
+        "available": true,
+        "format": "ros_odometry",
+        "topic": "/ground_truth/odometry",
+        "canonical_format": "tum"
+      },
+      "recommended_uses": [
+        "degeneracy_detection",
+        "cross_sensor_generalization",
+        "robustness_matrix"
+      ],
+      "conversion_adapter": "geode_to_normalized_jsonl",
+      "notes": "Keep this out of redistributed test bundles until the dataset license is explicitly verified."
+    }
+  ]
+}
