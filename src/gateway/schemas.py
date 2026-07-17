@@ -102,9 +102,7 @@ class RealRuntimeEvidenceLatestResponse(GatewayResponseModel):
 
 
 class AlgorithmBenchmarkLatestResponse(GatewayResponseModel):
-    schema_version: Literal["lingtu.algorithm_benchmark_latest.v1"] = (
-        "lingtu.algorithm_benchmark_latest.v1"
-    )
+    schema_version: Literal["lingtu.algorithm_benchmark_latest.v1"] = "lingtu.algorithm_benchmark_latest.v1"
     ok: bool
     read_only: bool = True
     ros2_topic_required: bool = False
@@ -139,10 +137,6 @@ class RuntimeContractResponse(GatewayResponseModel):
     source: str
     manifest: RuntimeContractManifest
     ts: float
-
-
-class BitrateRequest(BaseModel):
-    bps: int
 
 
 GoalSource = Literal[
@@ -257,7 +251,7 @@ class GoalCandidateRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def require_coordinates_or_location(self) -> "GoalCandidateRequest":
+    def require_coordinates_or_location(self) -> GoalCandidateRequest:
         if self.location_name is None and (self.x is None or self.y is None):
             raise ValueError("x and y are required unless location_name is provided")
         return self
@@ -293,7 +287,7 @@ class VisualServoRequest(BaseModel):
     client_id: str = Field(default="unknown", max_length=128)
 
     @model_validator(mode="after")
-    def validate_command(self) -> "VisualServoRequest":
+    def validate_command(self) -> VisualServoRequest:
         self.mode = self.mode.strip().lower()
         if self.mode not in {"find", "follow", "stop"}:
             raise ValueError("mode must be find|follow|stop")
@@ -360,7 +354,8 @@ class MapRequest(BaseModel):
             "set_active",
             "build_occupancy",
             "build_occupancy_snapshot",
-            "build_tomogram",
+            "build_octomap",
+            "build_artifact",
         }
         if v not in allowed:
             raise ValueError(f"action must be one of {allowed}")
@@ -389,13 +384,23 @@ class MapRenameRequest(BaseModel):
 
 class MapSaveRequest(BaseModel):
     name: str | None = Field(default=None, max_length=128)
+    optimization: str | None = Field(default=None, max_length=32)
+    request_id: str | None = Field(
+        default=None,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_][A-Za-z0-9_-]*$",
+    )
 
-
-class WebRTCOfferRequest(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    sdp: str | None = None
-    type: str | None = None
+    @field_validator("optimization")
+    @classmethod
+    def valid_optimization(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        value = str(v).strip().lower()
+        allowed = {"pgo", "hba", "none", "auto"}
+        if value not in allowed:
+            raise ValueError(f"optimization must be one of {allowed}")
+        return value
 
 
 class TemporalSemanticRequest(BaseModel):
@@ -565,44 +570,24 @@ class RuntimeContractManifest(GatewayResponseModel):
     frame_links: dict[str, RuntimeFrameLinkSummary] = Field(default_factory=dict)
     lidar_extrinsics: dict[str, RuntimeTransform3D] = Field(default_factory=dict)
     runtime_data_flow: list[RuntimeDataFlowStageSummary] = Field(default_factory=list)
-    resolved_runtime_data_flow: dict[str, list[RuntimeDataFlowStageSummary]] = Field(
-        default_factory=dict
-    )
-    message_formats: dict[str, RuntimeMessageFormatSummary] = Field(
-        default_factory=dict
-    )
+    resolved_runtime_data_flow: dict[str, list[RuntimeDataFlowStageSummary]] = Field(default_factory=dict)
+    message_formats: dict[str, RuntimeMessageFormatSummary] = Field(default_factory=dict)
     topic_formats: dict[str, list[str]] = Field(default_factory=dict)
     topic_ros_types: dict[str, list[str]] = Field(default_factory=dict)
-    artifact_formats: dict[str, RuntimeArtifactFormatSummary] = Field(
-        default_factory=dict
-    )
+    artifact_formats: dict[str, RuntimeArtifactFormatSummary] = Field(default_factory=dict)
     topic_allowed_frame_ids: dict[str, list[str]] = Field(default_factory=dict)
     topic_default_frame_ids: dict[str, str] = Field(default_factory=dict)
-    real_runtime_topic_allowed_frame_ids: dict[str, list[str]] = Field(
-        default_factory=dict
-    )
+    real_runtime_topic_allowed_frame_ids: dict[str, list[str]] = Field(default_factory=dict)
     real_runtime_topic_default_frame_ids: dict[str, str] = Field(default_factory=dict)
     real_runtime_required_topic_frame_ids: list[str] = Field(default_factory=list)
-    real_runtime_required_endpoint_input_topics: list[str] = Field(
-        default_factory=list
-    )
+    real_runtime_required_endpoint_input_topics: list[str] = Field(default_factory=list)
     runtime_data_flow_topics: dict[str, list[str]] = Field(default_factory=dict)
-    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(
-        default_factory=dict
-    )
+    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(default_factory=dict)
     data_sources: dict[str, RuntimeDataSourceSummary] = Field(default_factory=dict)
-    adapter_aliases: dict[str, list[RuntimeAdapterAliasSummary]] = Field(
-        default_factory=dict
-    )
-    adapter_relays: dict[str, list[RuntimeAdapterAliasSummary]] = Field(
-        default_factory=dict
-    )
-    algorithm_interfaces: dict[str, RuntimeAlgorithmInterfaceSummary] = Field(
-        default_factory=dict
-    )
-    profile_data_sources: dict[str, RuntimeProfileDataSourceBinding] = Field(
-        default_factory=dict
-    )
+    adapter_aliases: dict[str, list[RuntimeAdapterAliasSummary]] = Field(default_factory=dict)
+    adapter_relays: dict[str, list[RuntimeAdapterAliasSummary]] = Field(default_factory=dict)
+    algorithm_interfaces: dict[str, RuntimeAlgorithmInterfaceSummary] = Field(default_factory=dict)
+    profile_data_sources: dict[str, RuntimeProfileDataSourceBinding] = Field(default_factory=dict)
 
 
 class RuntimeDataflowPortSummary(GatewayResponseModel):
@@ -620,9 +605,7 @@ class RuntimeDataflowPortSummary(GatewayResponseModel):
 class RuntimeDataflowObservability(GatewayResponseModel):
     observable: bool
     observable_via: list[str] = Field(default_factory=list)
-    module_port_candidates: list[RuntimeDataflowPortSummary] = Field(
-        default_factory=list
-    )
+    module_port_candidates: list[RuntimeDataflowPortSummary] = Field(default_factory=list)
     gateway_channels: list[dict[str, Any]] = Field(default_factory=list)
     live_module_samples: bool = False
     has_fresh_module_sample: bool = False
@@ -715,9 +698,7 @@ class RuntimeDataflowSubscribeRequest(GatewayResponseModel):
 
 
 class RuntimeDataflowSubscribeResponse(GatewayResponseModel):
-    schema_version: Literal["lingtu.runtime_dataflow_subscription.v1"] = (
-        "lingtu.runtime_dataflow_subscription.v1"
-    )
+    schema_version: Literal["lingtu.runtime_dataflow_subscription.v1"] = "lingtu.runtime_dataflow_subscription.v1"
     ok: bool
     ts: float
     read_only: bool = True
@@ -750,9 +731,7 @@ class RuntimeSwitchValidationSummary(GatewayResponseModel):
 
 
 class RuntimeSwitchPlanResponse(GatewayResponseModel):
-    schema_version: Literal["lingtu.runtime_switch_plan.v1"] = (
-        "lingtu.runtime_switch_plan.v1"
-    )
+    schema_version: Literal["lingtu.runtime_switch_plan.v1"] = "lingtu.runtime_switch_plan.v1"
     ok: bool
     ts: float
     read_only: bool = True
@@ -809,9 +788,7 @@ class RuntimeSwitchRequest(GatewayResponseModel):
 
 
 class RuntimeSwitchResponse(GatewayResponseModel):
-    schema_version: Literal["lingtu.runtime_switch.v1"] = (
-        "lingtu.runtime_switch.v1"
-    )
+    schema_version: Literal["lingtu.runtime_switch.v1"] = "lingtu.runtime_switch.v1"
     ok: bool
     ts: float
     accepted: bool = False
@@ -858,16 +835,12 @@ class ReadinessLocalizationRuntime(GatewayResponseModel):
     pose_freshness: str | None = None
     algorithm_healthy: bool | None = None
     runtime_contract: str | None = None
-    frames: ReadinessLocalizationFrameSummary = Field(
-        default_factory=ReadinessLocalizationFrameSummary
-    )
+    frames: ReadinessLocalizationFrameSummary = Field(default_factory=ReadinessLocalizationFrameSummary)
     topic_allowed_frame_ids: dict[str, list[str]] = Field(default_factory=dict)
     topic_default_frame_ids: dict[str, str] = Field(default_factory=dict)
     required_topic_frame_ids: list[str] = Field(default_factory=list)
     runtime_data_flow_topics: list[str] = Field(default_factory=list)
-    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(
-        default_factory=dict
-    )
+    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(default_factory=dict)
     reasons: list[str] = Field(default_factory=list)
     error: str | None = None
 
@@ -896,12 +869,8 @@ class ReadinessRuntimeBoundary(GatewayResponseModel):
     topic_default_frame_ids: dict[str, str] = Field(default_factory=dict)
     required_topic_frame_ids: list[str] = Field(default_factory=list)
     runtime_data_flow_topics: list[str] = Field(default_factory=list)
-    resolved_runtime_data_flow: list[RuntimeDataFlowStageSummary] = Field(
-        default_factory=list
-    )
-    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(
-        default_factory=dict
-    )
+    resolved_runtime_data_flow: list[RuntimeDataFlowStageSummary] = Field(default_factory=list)
+    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(default_factory=dict)
     blockers: list[str] = Field(default_factory=list)
 
 
@@ -942,6 +911,9 @@ class ReadinessResponse(GatewayResponseModel):
 class LivenessResponse(GatewayResponseModel):
     status: str
     ts: float
+    details_url: str = "/api/v1/health?details=true"
+    gateway: dict[str, Any] = Field(default_factory=dict)
+    sensors: dict[str, Any] = Field(default_factory=dict)
 
 
 class DevicesResponse(GatewayResponseModel):
@@ -1071,6 +1043,10 @@ class LocationEntry(GatewayResponseModel):
     tags: list[str] = Field(default_factory=list)
     source: str | None = None
     ts: float | None = None
+    map_id: str | None = None
+    map_version: int | None = None
+    frame_id: str = GATEWAY_MAP_FRAME_ID
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class LocationUpsertRequest(BaseModel):
@@ -1096,7 +1072,7 @@ class LocationUpsertRequest(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def require_coordinates_or_current_pose(self) -> "LocationUpsertRequest":
+    def require_coordinates_or_current_pose(self) -> LocationUpsertRequest:
         if not self.use_current_pose and (self.x is None or self.y is None):
             raise ValueError("x and y are required unless use_current_pose is true")
         return self
@@ -1218,7 +1194,7 @@ class InspectionAcceptanceRequest(BaseModel):
     points: list[str] = Field(default_factory=list)
     tag: str | None = Field(default=None, max_length=128)
     map_dir: str | None = None
-    require_tomogram: bool = False
+    require_octomap: bool = False
     require_occupancy: bool = False
     expected_data_source: str | None = None
     expected_source_profile: str | None = None
@@ -1229,7 +1205,7 @@ class InspectionAcceptanceRequest(BaseModel):
 class ProductFieldCheckRequest(BaseModel):
     mode: Literal["non_motion", "simulation", "field"] = "simulation"
     map_dir: str | None = None
-    require_tomogram: bool = False
+    require_octomap: bool = False
     require_occupancy: bool = False
     expected_data_source: str | None = None
     expected_source_profile: str | None = None
@@ -1290,6 +1266,95 @@ class InspectionAcceptanceResponse(GatewayResponseModel):
     ts: float
 
 
+InspectionFailurePolicy = Literal["stop", "retry", "skip"]
+
+
+class InspectionRoutePointRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    x: float
+    y: float
+    z: float = 0.0
+    yaw: float | None = None
+    tolerance: float = Field(default=0.35, gt=0.0, le=5.0)
+    dwell: float = Field(default=0.0, ge=0.0, le=3600.0)
+    action: str = Field(default="", max_length=128)
+    enabled: bool = True
+
+
+_UINT64_MAX = (1 << 64) - 1
+
+
+class InspectionRouteRequest(BaseModel):
+    id: str = Field(min_length=1, max_length=128)
+    name: str | None = Field(default=None, max_length=128)
+    map_id: str = Field(min_length=1, max_length=128)
+    map_version: int | None = Field(default=None, ge=0)
+    revision: int = Field(ge=1, le=_UINT64_MAX)
+    points: list[InspectionRoutePointRequest] = Field(min_length=1)
+    loop_count: int = Field(default=1, ge=1)
+    failure_policy: InspectionFailurePolicy = "stop"
+    max_retries: int = Field(default=0, ge=0)
+
+
+class InspectionStartRequest(BaseModel):
+    map_id: str | None = Field(default=None, max_length=128)
+    revision: int = Field(default=0, ge=0, le=_UINT64_MAX)
+    request_id: str | None = Field(default=None, max_length=128)
+
+
+class InspectionRunControlRequest(BaseModel):
+    map_id: str | None = Field(default=None, max_length=128)
+    reason: str = Field(default="operator", max_length=128)
+    request_id: str | None = Field(default=None, max_length=128)
+
+
+class InspectionRouteRecord(GatewayResponseModel):
+    id: str
+    name: str | None = None
+    map_id: str | None = None
+    map_version: int | None = None
+    revision: int | None = None
+    points: list[dict[str, Any]] = Field(default_factory=list)
+    loop_count: int | None = None
+    failure_policy: str | None = None
+    max_retries: int | None = None
+
+
+class InspectionRouteResponse(GatewayResponseModel):
+    schema_version: Literal["lingtu.inspection.v1"] = "lingtu.inspection.v1"
+    ok: bool = True
+    route: InspectionRouteRecord
+    ts: float = Field(default_factory=time.time)
+
+
+class InspectionRouteListResponse(GatewayResponseModel):
+    schema_version: Literal["lingtu.inspection.v1"] = "lingtu.inspection.v1"
+    ok: bool = True
+    map_id: str
+    routes: list[InspectionRouteRecord] = Field(default_factory=list)
+    count: int
+    ts: float = Field(default_factory=time.time)
+
+
+class InspectionCommandResponse(GatewayResponseModel):
+    schema_version: Literal["lingtu.inspection.v1"] = "lingtu.inspection.v1"
+    ok: bool = True
+    accepted: bool = True
+    action: Literal["start", "pause", "resume", "cancel", "delete"]
+    route_id: str | None = None
+    map_id: str | None = None
+    revision: int | None = None
+    request_id: str | None = None
+    ts: float = Field(default_factory=time.time)
+
+
+class InspectionStatusResponse(GatewayResponseModel):
+    schema_version: Literal["lingtu.inspection.v1"] = "lingtu.inspection.v1"
+    ok: bool = True
+    status: dict[str, Any] = Field(default_factory=dict)
+    ts: float = Field(default_factory=time.time)
+
+
 class NavigationRuntimeBoundary(GatewayResponseModel):
     ok: bool = True
     declared: bool = False
@@ -1309,12 +1374,8 @@ class NavigationRuntimeBoundary(GatewayResponseModel):
     topic_default_frame_ids: dict[str, str] = Field(default_factory=dict)
     required_topic_frame_ids: list[str] = Field(default_factory=list)
     runtime_data_flow_topics: list[str] = Field(default_factory=list)
-    resolved_runtime_data_flow: list[RuntimeDataFlowStageSummary] = Field(
-        default_factory=list
-    )
-    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(
-        default_factory=dict
-    )
+    resolved_runtime_data_flow: list[RuntimeDataFlowStageSummary] = Field(default_factory=list)
+    runtime_data_flow_stage_algorithm_interfaces: dict[str, list[str]] = Field(default_factory=dict)
     blockers: list[str] = Field(default_factory=list)
 
 
@@ -1352,8 +1413,11 @@ class LocalizationStatusResponse(GatewayResponseModel):
     cloud_age_ms: float | None = None
     degeneracy: str | None = None
     icp_fitness: float | None = None
+    degeneracy_detected: bool | None = None
     effective_ratio: float | None = None
     condition_number: float | None = None
+    min_eigenvalue: float | None = None
+    max_eigenvalue: float | None = None
     degenerate_dof_count: int | None = None
     pos_cov_trace: float | None = None
     ieskf_iter_num: int | None = None
@@ -1364,6 +1428,8 @@ class LocalizationStatusResponse(GatewayResponseModel):
     lidar_input_hz: float | None = None
     slam_tick_hz: float | None = None
     processed_scan_hz: float | None = None
+    runtime_instance_id: str | None = None
+    observation_sequence: int | None = None
     registered_points: int | None = None
     map_points: int | None = None
     imu_buffer: int | None = None
@@ -1379,6 +1445,7 @@ class LocalizationStatusResponse(GatewayResponseModel):
     lidar_rollback_count: int | None = None
     map_loaded: bool | None = None
     map_frame_jump: bool | None = None
+    map_frame_jump_sequence: int | None = None
     scene_mode: str | None = None
     gnss_fusion_health: dict[str, Any] = Field(default_factory=dict)
     map_odom_tf: dict[str, Any] | None = None
@@ -1563,8 +1630,8 @@ class SessionResponse(GatewayResponseModel):
     localization_backend: str | None = None
     health_source: str | None = None
     active_map: str | None = None
+    saved_active_map: str | None = None
     map_has_pcd: bool = False
-    map_has_tomogram: bool = False
     map_has_octomap: bool = False
     since: float | None = None
     pending: bool = False
@@ -1610,7 +1677,6 @@ class SessionTransitionResponse(GatewayResponseModel):
 class MapInfo(GatewayResponseModel):
     name: str
     has_pcd: bool = False
-    has_tomogram: bool = False
     has_occupancy: bool = False
     has_octomap: bool = False
     navigation_ready: bool = False
@@ -1641,12 +1707,13 @@ class MapLifecycleResponse(GatewayResponseModel):
     path: str | None = None
     map_dir: str | None = None
     pcd: str | None = None
-    tomogram: str | None = None
-    tomogram_ok: bool | None = None
-    tomogram_message: str | None = None
+    octomap: str | None = None
+    octomap_ok: bool | None = None
+    octomap_message: str | None = None
     occupancy: str | None = None
     occupancy_ok: bool | None = None
     occupancy_message: str | None = None
+    navigation_ready: bool | None = None
     size: str | None = None
     restored_size: int | None = None
     replaced_backups_kept: int | None = None
@@ -1662,20 +1729,28 @@ class MapLifecycleResponse(GatewayResponseModel):
     restart_recovery_supported: bool | None = None
     recovery_method: str | None = None
     dynamic_filter: Any = None
+    map_optimization: Any = None
+    map_optimization_ok: bool | None = None
     maps: list[Any] | None = None
+    live_cloud_reset: bool | None = None
     ts: float = Field(default_factory=time.time)
 
 
 class MapPointsResponse(GatewayResponseModel):
     schema_version: int = 1
+    protocol_version: int | None = None
     count: int
     layout: Literal["flat_xyz", "xyz_rows"] = "xyz_rows"
     frame_id: str = GATEWAY_MAP_FRAME_ID
+    epoch: int | None = None
+    sequence: int | None = None
+    stamp_s: float | None = None
+    stream_kind: Literal["cloud", "map", "scan", "reset"] | None = None
     source: str = "unknown"
     name: str | None = None
-    points: list[float] | list[tuple[float, float, float]] = Field(
-        default_factory=list
-    )
+    version_id: str | None = None
+    map_pcd_sha256: str | None = None
+    points: list[float] | list[tuple[float, float, float]] = Field(default_factory=list)
     bounds: dict[str, list[float]] | None = None
     ts: float = Field(default_factory=time.time)
 
@@ -1712,10 +1787,23 @@ class SlamStatusResponse(GatewayResponseModel):
     services: dict[str, str] = Field(default_factory=dict)
     service_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
     service_groups: dict[str, list[str]] = Field(default_factory=dict)
+    service_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
     product_runtime: str = "native_dds"
     ros2_required: bool = False
     manual_systemctl_required: bool = False
     control_entrypoint: str = "lingtu svc restart slam"
+
+
+class ServiceStatusResponse(GatewayResponseModel):
+    schema_version: int = 1
+    services: dict[str, str] = Field(default_factory=dict)
+    service_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    readiness: dict[str, Any] = Field(default_factory=dict)
+    field_readiness: dict[str, Any] = Field(default_factory=dict)
+    service_groups: dict[str, list[str]] = Field(default_factory=dict)
+    service_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    product_runtime: str = "native_dds"
+    control_entrypoint: str = "lingtu svc status"
 
 
 class SlamOperationResponse(GatewayResponseModel):
@@ -1750,25 +1838,11 @@ class BagStatusResponse(GatewayResponseModel):
     disk_total: int = 0
 
 
-class WebRTCStatsResponse(GatewayResponseModel):
-    enabled: bool = False
-    active_peers: int = 0
-    error: str | None = None
-
-
 class Go2RTCStatusResponse(GatewayResponseModel):
     available: bool
     reason: str | None = None
     status: int | None = None
     streams: list[str] = Field(default_factory=list)
-
-
-class WebRTCControlResponse(GatewayResponseModel):
-    error: str | None = None
-    enabled: bool | None = None
-    sdp: str | None = None
-    type: str | None = None
-    bps: int | None = None
 
 
 class ClientLinks(GatewayResponseModel):
@@ -1785,19 +1859,20 @@ class ClientLinks(GatewayResponseModel):
     runtime_dataflow: str | None = None
     runtime_dataflow_topic: str | None = None
     runtime_dataflow_subscribe: str | None = None
+    runtime_switch_plan: str | None = None
+    runtime_switch: str | None = None
     algorithm_benchmark_latest: str | None = None
     devices: str | None = None
     readiness: str | None = None
+    metrics: str | None = None
     auth_login: str | None = None
     auth_check: str | None = None
     events: str | None = None
     teleop_ws: str | None = None
     camera_ws: str | None = None
     cloud_ws: str | None = None
+    scan_ws: str | None = None
     camera_snapshot: str | None = None
-    webrtc_stats: str | None = None
-    webrtc_offer: str | None = None
-    webrtc_bitrate: str | None = None
     webrtc_whep: str | None = None
     go2rtc_status: str | None = None
     health: str | None = None
@@ -1807,11 +1882,20 @@ class ClientLinks(GatewayResponseModel):
     navigation_goal_candidate: str | None = None
     navigation_plan: str | None = None
     inspection_acceptance: str | None = None
+    inspection_routes: str | None = None
+    inspection_route_detail: str | None = None
+    inspection_route_start: str | None = None
+    inspection_status: str | None = None
+    inspection_pause: str | None = None
+    inspection_resume: str | None = None
+    inspection_cancel: str | None = None
     navigation_cancel: str | None = None
+    navigation_resume: str | None = None
     goal: str | None = None
     navigate_click: str | None = None
     stop: str | None = None
     instruction: str | None = None
+    visual_servo: str | None = None
     mode: str | None = None
     lease: str | None = None
     maps: str | None = None
@@ -1819,6 +1903,11 @@ class ClientLinks(GatewayResponseModel):
     map_activate: str | None = None
     map_rename: str | None = None
     map_save: str | None = None
+    map_import_pcd: str | None = None
+    map_crop: str | None = None
+    map_mark_zone: str | None = None
+    map_build_octomap: str | None = None
+    map_validate_plan: str | None = None
     map_restore_predufo: str | None = None
     map_cloud_reset: str | None = None
     map_points: str | None = None
@@ -1826,8 +1915,10 @@ class ClientLinks(GatewayResponseModel):
     explore_status: str | None = None
     explore_start: str | None = None
     explore_stop: str | None = None
+    service_status: str | None = None
     slam_status: str | None = None
     slam_switch: str | None = None
+    slam_restart: str | None = None
     slam_auto_relocalize: str | None = None
     slam_relocalize: str | None = None
     slam_track_against_map: str | None = None
@@ -1882,12 +1973,9 @@ class CameraMediaStatus(GatewayResponseModel):
     error: str | None = None
 
 
-class WebRTCMediaStatus(GatewayResponseModel):
-    available: bool
-    stats: str
-    offer: str
-    bitrate: str
-    whep: str
+class WHEPMediaStatus(GatewayResponseModel):
+    supported: bool
+    endpoint: str
     go2rtc_status: str
 
 
@@ -1896,15 +1984,12 @@ class AppMediaLinks(GatewayResponseModel):
     teleop_ws: str
     camera_ws: str
     cloud_ws: str
+    scan_ws: str | None = None
     camera_snapshot: str
-    webrtc_available: bool
-    webrtc_stats: str | None = None
-    webrtc_offer: str | None = None
-    webrtc_bitrate: str | None = None
     webrtc_whep: str | None = None
     go2rtc_status: str | None = None
     camera: CameraMediaStatus
-    webrtc: WebRTCMediaStatus
+    whep: WHEPMediaStatus
 
 
 class RealtimeEventsCapability(GatewayResponseModel):
@@ -1949,6 +2034,7 @@ class RealtimeCloudCapability(GatewayResponseModel):
     path: str
     transport: Literal["websocket"]
     binary_point_cloud_frames: bool
+    semantic: str | None = None
     drop_policy: str | None = None
 
 
@@ -1957,6 +2043,8 @@ class AppRealtimeCapabilities(GatewayResponseModel):
     teleop: RealtimeTeleopCapability
     camera: RealtimeCameraCapability
     cloud: RealtimeCloudCapability
+    scan: RealtimeCloudCapability | None = None
+    scene_layers: dict[str, Any] = Field(default_factory=dict)
 
 
 class ValidationGateCapability(GatewayResponseModel):
@@ -2016,6 +2104,7 @@ class AppTrafficResponse(GatewayResponseModel):
     status: Literal["ok", "degraded"]
     sse: TrafficSSEStats
     cloud: TrafficCloudStats
+    scan: TrafficCloudStats | None = None
     recommended_client_rates_hz: dict[str, float] = Field(default_factory=dict)
     client_policy: dict[str, Any]
     warnings: list[str] = Field(default_factory=list)
