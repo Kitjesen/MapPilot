@@ -77,6 +77,34 @@ the same native DDS sensor boundary used by the field robot, then native C++
 SLAM publishes `/slam/*` for map/nav/explore validation. Runtime Graph names
 this endpoint `mujoco_native_dds`.
 
+For an interactive assisted-teleop obstacle demo on Windows + WSL2:
+
+```powershell
+$env:PYTHONPATH = "src;."
+python sim/scripts/mujoco/teleop_avoid_wasd.py --scenario obstacle_stop
+```
+
+The demo defaults to the existing `mujoco_navigation_fixture` state provider.
+It publishes MuJoCo ground-truth pose, TF, localization health and the live
+registered LiDAR cloud over typed DDS so the run isolates the local avoidance
+chain; it is not evidence that Fast-LIO2 localization passed. Use
+`--state-provider fastlio2` to validate the full simulated SLAM chain too.
+
+The demo opens a passive MuJoCo viewer. Hold `Shift` as the deadman and use
+`W/S` for forward/reverse, `A/D` for lateral intent, `Q/E` for yaw, `Space`
+to command zero, and `Esc` to exit. Keyboard input uses one persistent native
+command client, so direction changes do not relaunch WSL processes. A 350 ms
+keyboard-heartbeat timeout sends typed zero plus stop and ends the stream if
+the operator process stalls; restart the demo before motion can resume.
+
+The native endpoint still owns LocalPlanner, PathFollower, final safety, and
+`/nav/cmd_vel`. Use
+`--scenario free|obstacle_slow|obstacle_stop|terrain_soft|terrain_hard` to
+compare behavior. `mujoco_him_keyboard.py --keyboard` is a gait-policy debug
+tool that bypasses LingTu planning and must not be used as local-avoidance
+evidence.
+
+
 ### Product Tasks On Simulation Endpoints
 
 Product profiles can bind to explicit simulation endpoints:

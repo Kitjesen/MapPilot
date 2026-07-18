@@ -15,6 +15,15 @@ This folder contains C++ native navigation processes.
 | `motion_mock_dds.cpp` | Motion mock endpoint for tests/simulation. |
 | `nav_status_writer.*` | JSON status file writer. |
 
+`lingtu_nav_control teleop-stream` is the terminal/simulation diagnostic
+ingress. It keeps one native command client alive, accepts latest `VX VY WZ`
+lines on stdin, and drains queued input to the newest state. A 350 ms
+input-heartbeat timeout sends typed zero plus stop and ends the stream; a fresh
+process is required before motion can resume. `quit`, EOF, and error cleanup
+use the same fail-closed zero-plus-stop boundary. It remains an intent client;
+it never publishes final `/nav/cmd_vel` directly.
+
+
 The heavy planning/following logic should stay outside this endpoint shell.
 Current split:
 

@@ -6,16 +6,25 @@
 #include "lingtu_slam.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <fcntl.h>
+#include <filesystem>
+#include <fstream>
+#include <poll.h>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -82,6 +91,8 @@ struct CliConfig {
   double duration_s = 0.0;
   double rate_hz = 20.0;
   int timeout_ms = 3000;
+  int input_timeout_ms = 350;
+  std::string ready_file;
   std::uint32_t width = 50;
   std::uint32_t height = 50;
   int domain_id = 0;
@@ -92,6 +103,8 @@ CliConfig parseArgs(int argc, char** argv) {
     throw std::runtime_error(
         "usage: lingtu_nav_control goal X Y [Z YAW] [--domain-id N] [--timeout-ms N] | "
         "teleop VX VY WZ [--duration-s S] [--rate-hz HZ] [--domain-id N] | "
+        "teleop-stream [--rate-hz HZ] [--input-timeout-ms N] [--domain-id N] "
+        "[--ready-file PATH] | "
         "cloud X Y Z [HEIGHT] [--domain-id N] | "
         "trav COST [--domain-id N] | "
         "path X1 Y1 Z1 X2 Y2 Z2 [X Y Z ...] [--domain-id N] | "
@@ -122,6 +135,9 @@ CliConfig parseArgs(int argc, char** argv) {
     cfg.x = std::stod(argv[i++]);
     cfg.y = std::stod(argv[i++]);
     cfg.yaw = std::stod(argv[i++]);
+  } else if (cfg.command == "teleop-stream") {
+    // Commands arrive on stdin as `VX VY WZ` lines. `quit [REASON]`
+    // performs a typed stop and exits cleanly.
   } else if (cfg.command == "cloud") {
     if (argc < 5) {
       throw std::runtime_error("cloud requires X Y Z");
@@ -205,6 +221,16 @@ CliConfig parseArgs(int argc, char** argv) {
         throw std::runtime_error("missing value for --timeout-ms");
       }
       cfg.timeout_ms = std::stoi(argv[i++]);
+    } else if (arg == "--input-timeout-ms") {
+      if (i >= argc) {
+        throw std::runtime_error("missing value for --input-timeout-ms");
+      }
+      cfg.input_timeout_ms = std::stoi(argv[i++]);
+    } else if (arg == "--ready-file") {
+      if (i >= argc) {
+        throw std::runtime_error("missing value for --ready-file");
+      }
+      cfg.ready_file = argv[i++];
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -212,7 +238,292 @@ CliConfig parseArgs(int argc, char** argv) {
   cfg.duration_s = std::max(0.0, cfg.duration_s);
   cfg.rate_hz = std::max(1.0, cfg.rate_hz);
   cfg.timeout_ms = std::max(1, cfg.timeout_ms);
+  cfg.input_timeout_ms = std::max(50, cfg.input_timeout_ms);
   return cfg;
+}
+
+void writeReadyFile(const std::string& path) {
+  if (path.empty()) {
+    return;
+  }
+  const std::filesystem::path target(path);
+  std::error_code ec;
+  if (!target.parent_path().empty()) {
+    std::filesystem::create_directories(target.parent_path(), ec);
+  }
+  const std::filesystem::path temporary = target.string() + ".tmp";
+  {
+    std::ofstream output(temporary, std::ios::trunc);
+    if (!output) {
+      throw std::runtime_error("failed to write teleop stream ready file: " + path);
+    }
+    output << "ready\n";
+  }
+  std::filesystem::rename(temporary, target, ec);
+  if (ec) {
+    std::filesystem::remove(target, ec);
+    ec.clear();
+    std::filesystem::rename(temporary, target, ec);
+  }
+  if (ec) {
+    throw std::runtime_error("failed to publish teleop stream ready file: " + path);
+  }
+}
+
+struct TeleopStreamLine {
+  bool has_update{false};
+  bool quit{false};
+  double vx{0.0};
+  double vy{0.0};
+  double wz{0.0};
+  std::string reason{"teleop_stream_eof"};
+};
+
+TeleopStreamLine parseTeleopStreamLine(const std::string& line) {
+  TeleopStreamLine update;
+  std::istringstream input(line);
+  std::string first;
+  if (!(input >> first)) {
+    return update;
+  }
+  if (first == "quit") {
+    update.quit = true;
+    update.reason = "teleop_stream_quit";
+    std::string reason;
+    if (input >> reason) {
+      update.reason = reason;
+    }
+    std::string trailing;
+    if (input >> trailing) {
+      throw std::runtime_error("teleop-stream quit accepts at most one reason token");
+    }
+    return update;
+  }
+  try {
+    update.vx = std::stod(first);
+  } catch (const std::exception&) {
+    throw std::runtime_error("teleop-stream line must be `VX VY WZ` or `quit [REASON]`");
+  }
+  if (!(input >> update.vy >> update.wz)) {
+    throw std::runtime_error("teleop-stream line requires VX VY WZ");
+  }
+  std::string trailing;
+  if (input >> trailing) {
+    throw std::runtime_error("teleop-stream line has trailing fields");
+  }
+  if (!std::isfinite(update.vx) || !std::isfinite(update.vy) || !std::isfinite(update.wz)) {
+    throw std::runtime_error("teleop-stream values must be finite");
+  }
+  update.has_update = true;
+  return update;
+}
+
+int runTeleopStream(
+    lingtu::nav::commands::Client& client,
+    const CliConfig& cfg) {
+  using SteadyClock = std::chrono::steady_clock;
+  const auto period = std::chrono::duration_cast<SteadyClock::duration>(
+      std::chrono::duration<double>(1.0 / cfg.rate_hz));
+  const auto input_timeout = std::chrono::milliseconds(cfg.input_timeout_ms);
+  double vx = 0.0;
+  double vy = 0.0;
+  double wz = 0.0;
+  std::uint64_t count = 0;
+  std::uint64_t received_updates = 0;
+  std::uint64_t superseded_updates = 0;
+  std::string stop_reason{"teleop_stream_eof"};
+  bool stop_sent = false;
+  std::string input_buffer;
+
+  const auto removeReadyFile = [&cfg]() {
+    if (!cfg.ready_file.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(cfg.ready_file, ec);
+    }
+  };
+  const auto bestEffortErrorStop = [&]() {
+    bool zero_ok = false;
+    bool stop_ok = false;
+    try {
+      client.navigation().sendTeleop(0.0, 0.0, 0.0, cfg.timeout_ms);
+      ++count;
+      zero_ok = true;
+    } catch (const std::exception& exc) {
+      std::fprintf(stderr, "teleop-stream error cleanup zero failed: %s\n", exc.what());
+    } catch (...) {
+      std::fprintf(stderr, "teleop-stream error cleanup zero failed\n");
+    }
+    try {
+      client.navigation().stop("teleop_stream_error", cfg.timeout_ms);
+      stop_ok = true;
+    } catch (const std::exception& exc) {
+      std::fprintf(stderr, "teleop-stream error cleanup stop failed: %s\n", exc.what());
+    } catch (...) {
+      std::fprintf(stderr, "teleop-stream error cleanup stop failed\n");
+    }
+    std::fprintf(
+        stderr,
+        "LT_TELEOP_STREAM_ERROR_CLEANUP_V1 zero=%s stop=%s\n",
+        zero_ok ? "ok" : "failed",
+        stop_ok ? "ok" : "failed");
+    std::fflush(stderr);
+  };
+
+  try {
+    const int input_flags = ::fcntl(STDIN_FILENO, F_GETFL, 0);
+    if (input_flags < 0 || ::fcntl(STDIN_FILENO, F_SETFL, input_flags | O_NONBLOCK) < 0) {
+      throw std::runtime_error("teleop-stream failed to configure nonblocking stdin");
+    }
+
+    client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+    ++count;
+    writeReadyFile(cfg.ready_file);
+    std::printf("LT_TELEOP_STREAM_READY_V1\n");
+    std::fflush(stdout);
+
+    auto last_input = SteadyClock::now();
+    auto next_publish = last_input + period;
+    while (true) {
+      const auto now = SteadyClock::now();
+      const bool watchdog_armed =
+          std::abs(vx) > 1e-9 || std::abs(vy) > 1e-9 || std::abs(wz) > 1e-9;
+      const auto wake_at = watchdog_armed
+          ? std::min(next_publish, last_input + input_timeout)
+          : next_publish;
+      const auto remaining = wake_at > now
+          ? std::chrono::duration_cast<std::chrono::milliseconds>(wake_at - now).count()
+          : 0;
+      pollfd input_fd{};
+      input_fd.fd = STDIN_FILENO;
+      input_fd.events = POLLIN | POLLHUP;
+      const int poll_result = ::poll(
+          &input_fd,
+          1,
+          static_cast<int>(std::clamp<long long>(remaining, 0, 1000)));
+      if (poll_result < 0) {
+        if (errno == EINTR) {
+          continue;
+        }
+        throw std::runtime_error("teleop-stream stdin poll failed");
+      }
+      if (poll_result > 0 && (input_fd.revents & (POLLERR | POLLNVAL))) {
+        throw std::runtime_error("teleop-stream stdin became invalid");
+      }
+      bool input_eof = false;
+      if (poll_result > 0 && (input_fd.revents & (POLLIN | POLLHUP))) {
+        char buffer[4096];
+        while (true) {
+          const ssize_t read_count = ::read(STDIN_FILENO, buffer, sizeof(buffer));
+          if (read_count > 0) {
+            input_buffer.append(buffer, static_cast<std::size_t>(read_count));
+            continue;
+          }
+          if (read_count == 0) {
+            input_eof = true;
+            break;
+          }
+          if (errno == EINTR) {
+            continue;
+          }
+          if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            break;
+          }
+          throw std::runtime_error("teleop-stream stdin read failed");
+        }
+      }
+
+      TeleopStreamLine latest_update;
+      bool has_latest_update = false;
+      bool quit = false;
+      const auto consumeLine = [&](std::string line) {
+        if (!line.empty() && line.back() == '\r') {
+          line.pop_back();
+        }
+        const TeleopStreamLine update = parseTeleopStreamLine(line);
+        if (update.quit) {
+          stop_reason = update.reason;
+          quit = true;
+          return;
+        }
+        if (update.has_update) {
+          ++received_updates;
+          if (has_latest_update) {
+            ++superseded_updates;
+          }
+          latest_update = update;
+          has_latest_update = true;
+        }
+      };
+      std::size_t newline = std::string::npos;
+      while (!quit && (newline = input_buffer.find('\n')) != std::string::npos) {
+        consumeLine(input_buffer.substr(0, newline));
+        input_buffer.erase(0, newline + 1);
+      }
+      if (!quit && input_eof && !input_buffer.empty()) {
+        consumeLine(input_buffer);
+        input_buffer.clear();
+      }
+      if (quit) {
+        break;
+      }
+      if (has_latest_update) {
+        vx = latest_update.vx;
+        vy = latest_update.vy;
+        wz = latest_update.wz;
+        last_input = SteadyClock::now();
+        client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+        ++count;
+        next_publish = SteadyClock::now() + period;
+      }
+      if (input_eof) {
+        break;
+      }
+
+      const auto after_input = SteadyClock::now();
+      const bool input_timed_out =
+          (std::abs(vx) > 1e-9 || std::abs(vy) > 1e-9 || std::abs(wz) > 1e-9) &&
+          after_input >= last_input + input_timeout;
+      if (input_timed_out) {
+        vx = 0.0;
+        vy = 0.0;
+        wz = 0.0;
+        stop_reason = "teleop_stream_input_timeout";
+        client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+        ++count;
+        client.navigation().stop(stop_reason, cfg.timeout_ms);
+        stop_sent = true;
+        std::printf(
+            "LT_TELEOP_STREAM_TIMEOUT_STOP_V1\n"
+            "teleop-stream input timeout; forced zero+stop; restart required\n");
+        std::fflush(stdout);
+        break;
+      }
+      if (SteadyClock::now() >= next_publish) {
+        client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+        ++count;
+        next_publish = SteadyClock::now() + period;
+      }
+    }
+
+    if (!stop_sent) {
+      client.navigation().sendTeleop(0.0, 0.0, 0.0, cfg.timeout_ms);
+      ++count;
+      client.navigation().stop(stop_reason, cfg.timeout_ms);
+    }
+    removeReadyFile();
+    std::printf(
+        "accepted teleop-stream stop=%s samples=%llu updates=%llu superseded=%llu\n",
+        stop_reason.c_str(),
+        static_cast<unsigned long long>(count),
+        static_cast<unsigned long long>(received_updates),
+        static_cast<unsigned long long>(superseded_updates));
+    return 0;
+  } catch (...) {
+    const std::exception_ptr failure = std::current_exception();
+    bestEffortErrorStop();
+    removeReadyFile();
+    std::rethrow_exception(failure);
+  }
 }
 
 }  // namespace
@@ -222,7 +533,7 @@ int main(int argc, char** argv) {
     const CliConfig cfg = parseArgs(argc, argv);
     if (
         cfg.command == "goal" || cfg.command == "cancel" ||
-        cfg.command == "teleop" || cfg.command == "stop" ||
+        cfg.command == "teleop" || cfg.command == "teleop-stream" || cfg.command == "stop" ||
         cfg.command == "estop" || cfg.command == "clear-estop" ||
         cfg.command == "resume") {
       lingtu::nav::commands::Client client(cfg.domain_id);
@@ -257,6 +568,8 @@ int main(int argc, char** argv) {
             cfg.y,
             cfg.yaw,
             static_cast<unsigned long long>(count));
+      } else if (cfg.command == "teleop-stream") {
+        return runTeleopStream(client, cfg);
       } else if (cfg.command == "stop") {
         client.navigation().stop(cfg.text, cfg.timeout_ms);
         std::printf("accepted stop: %s\n", cfg.text.c_str());

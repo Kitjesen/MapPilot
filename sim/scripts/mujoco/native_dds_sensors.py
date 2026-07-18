@@ -547,6 +547,21 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--slam-status-json", default=os.environ.get("LINGTU_SLAM_STATUS_JSON", ""))
     parser.add_argument("--drive-mode", choices=["kinematic", "policy"], default="policy")
     parser.add_argument(
+        "--viewer",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Open a passive MuJoCo viewer. The viewer is presentation-only; "
+            "motion still comes from --command-source and the physics loop."
+        ),
+    )
+    parser.add_argument(
+        "--viewer-hz",
+        type=float,
+        default=30.0,
+        help="Maximum passive-viewer refresh rate.",
+    )
+    parser.add_argument(
         "--command-source",
         choices=["profile", "dds"],
         default="profile",
@@ -2188,6 +2203,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
 
     engine = None
+    viewer = None
+    viewer_closed_early = False
     policy_loaded = False
     pacing_controller: SimHardwareCatchUpController | None = None
     pacing_stats: dict[str, Any] = {
@@ -2215,6 +2232,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             allow_legacy_lidar_fallback=bool(args.allow_legacy_lidar_fallback),
             policy_path=policy_path,
         )
+        if bool(getattr(args, "viewer", False)):
+            import mujoco.viewer
+
+            viewer = mujoco.viewer.launch_passive(engine.model, engine.data)
         lidar_backend_report = engine.get_lidar_backend_report()
         policy_loaded = bool(getattr(engine, "has_policy", False))
         hold_cmd = VelocityCommand()
@@ -2298,6 +2319,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 lidar_period_s=lidar_period_s,
             )
         next_lidar_sim_s = sim_start_s
+        viewer_period_s = 1.0 / max(1.0, float(getattr(args, "viewer_hz", 30.0) or 30.0))
+        next_viewer_sim_s = sim_start_s
         previous_loop_end_wall_s: float | None = None
         while True:
             loop_start = time.monotonic()
@@ -2381,6 +2404,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sim_time_s,
             )
             last_sim_time_s = sim_time_s
+            if viewer is not None and sim_time_s + 1e-9 >= next_viewer_sim_s:
+                if not viewer.is_running():
+                    viewer_closed_early = True
+                    break
+                viewer.sync()
+                next_viewer_sim_s = sim_time_s + viewer_period_s
             if state is None:
                 position = anchor_position.copy()
                 yaw = yaw_from_quat_xyzw(anchor_orientation)
@@ -2733,6 +2762,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "clean": False,
                 "errors": [cleanup_errors[-1]],
             }
+        if viewer is not None:
+            try:
+                viewer.close()
+            except Exception as exc:
+                cleanup_errors.append(f"mujoco_viewer_cleanup_failed:{type(exc).__name__}:{exc}")
         if engine is not None:
             try:
                 engine.close()
@@ -2817,6 +2851,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["drive_duration_s"] = duration_s
     report["drive_mode"] = str(args.drive_mode)
     report["command_source"] = str(args.command_source)
+    report["viewer"] = {
+        "enabled": bool(getattr(args, "viewer", False)),
+        "refresh_hz": float(getattr(args, "viewer_hz", 30.0) or 30.0),
+        "closed_early": viewer_closed_early,
+        "control_authority": "none_presentation_only",
+    }
     report["cmd_vel"] = cmd_vel_stats
     report["native_sensor_publisher_process"] = publisher_cleanup
     report["policy_loaded"] = policy_loaded
