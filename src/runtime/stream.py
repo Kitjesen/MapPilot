@@ -26,6 +26,7 @@ from typing import (
     Any,
     Generic,
     TypeVar,
+    cast,
 )
 
 from .transport.local import Transport  # canonical location
@@ -33,6 +34,7 @@ from .transport.local import Transport  # canonical location
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+_NO_PENDING = object()
 
 
 # ---------------------------------------------------------------------------
@@ -243,10 +245,10 @@ class In(Generic[T]):
 
     - "all" (default): every message triggers the callback immediately.
     - "latest": only the most recent message is kept. If the callback is
-      still running from a previous delivery, new messages update ``latest``
-      but do NOT re-enter the callback. This prevents slow consumers
-      (e.g. LLM at 2s) from being overwhelmed by fast publishers (e.g. IMU
-      at 50Hz). The consumer reads ``self.latest`` when ready.
+      still running, new messages update ``latest`` in a single pending
+      mailbox without re-entering the callback. This prevents slow consumers
+      from being overwhelmed while ensuring the newest pending state is
+      eventually delivered.
 
     Set the policy after construction via ``set_policy("latest")``.
     """
@@ -268,11 +270,13 @@ class In(Generic[T]):
         "_latency_idx",
         "_latency_ring",
         "_latest",
+        "_latest_active",
         "_lock",
         "_max_callback_ms",
         "_msg_count",
         "_msg_type",
         "_name",
+        "_pending_latest",
         "_policy",
         "_rate_hz",
         "_rate_window_count",
@@ -294,8 +298,10 @@ class In(Generic[T]):
         self._latest: T | None = None
         self._lock = threading.Lock()
         self._policy: str = "all"
-        self._in_callback: bool = False  # kept for "all" policy reentrancy guard
-        self._deliver_lock = threading.Lock()  # atomic guard for "latest" policy
+        self._in_callback: bool = False
+        self._deliver_lock = threading.Lock()
+        self._latest_active: bool = False
+        self._pending_latest: T | object = _NO_PENDING
         self._executor: Any = None  # ThreadPoolExecutor for "async" policy
         self._drop_count: int = 0
         # Throttle state
@@ -332,14 +338,16 @@ class In(Generic[T]):
 
     def _clear_subscriber(self) -> None:
         """Remove callback. Called on Module.stop() to break reference cycles."""
-        self._callback = None
+        with self._deliver_lock:
+            self._callback = None
+            self._pending_latest = _NO_PENDING
 
     def set_policy(self, policy: str, **kwargs) -> None:
         """Set delivery policy with optional parameters.
 
         Policies:
             "all"      — deliver every message (default)
-            "latest"   — drop if callback busy (non-reentrant)
+            "latest"   — coalesce busy input to one newest pending message
             "throttle" — max N messages/sec (interval=seconds between delivers)
             "sample"   — deliver every Nth message (n=skip count)
             "buffer"   — collect N messages, deliver as batch list (size=batch size)
@@ -397,30 +405,65 @@ class In(Generic[T]):
             self._executor.submit(self._callback, msg)
             return
 
-        # -- Policy: latest (atomic lock — thread-safe drop if busy) --
+        # -- Policy: latest (single-callback drainer + newest pending mailbox) --
         if self._policy == "latest":
-            if not self._deliver_lock.acquire(blocking=False):
-                with self._lock:
-                    self._drop_count += 1
+            queued = False
+            replaced = False
+            with self._deliver_lock:
+                callback = self._callback
+                if callback is None:
+                    return
+                if self._latest_active:
+                    replaced = self._pending_latest is not _NO_PENDING
+                    self._pending_latest = msg
+                    queued = True
+                else:
+                    self._latest_active = True
+                    current = msg
+
+            if queued:
+                if replaced:
+                    with self._lock:
+                        self._drop_count += 1
                 return
-            with self._lock:
-                self._deliver_count += 1
-            t0 = time.time()
+
             try:
-                self._callback(msg)
-            except Exception:
-                with self._lock:
-                    self._callback_errors += 1
-                logger.exception("In[%s] callback error", self._name)
-            finally:
-                dt_ms = (time.time() - t0) * 1000.0
-                with self._lock:
-                    self._total_callback_ms += dt_ms
-                    if dt_ms > self._max_callback_ms:
-                        self._max_callback_ms = dt_ms
-                    self._record_latency(dt_ms)
-                self._deliver_lock.release()
-            return
+                while True:
+                    with self._lock:
+                        self._deliver_count += 1
+                    t0 = time.time()
+                    try:
+                        callback(current)
+                    except Exception:
+                        with self._lock:
+                            self._callback_errors += 1
+                        logger.exception("In[%s] callback error", self._name)
+                    finally:
+                        dt_ms = (time.time() - t0) * 1000.0
+                        with self._lock:
+                            self._total_callback_ms += dt_ms
+                            if dt_ms > self._max_callback_ms:
+                                self._max_callback_ms = dt_ms
+                            self._record_latency(dt_ms)
+
+                    with self._deliver_lock:
+                        if self._callback is not callback:
+                            self._pending_latest = _NO_PENDING
+                            self._latest_active = False
+                            return
+                        pending = self._pending_latest
+                        if pending is _NO_PENDING:
+                            self._latest_active = False
+                            return
+                        self._pending_latest = _NO_PENDING
+                        current = cast(T, pending)
+            except BaseException:
+                # Never leave the mailbox permanently active on process-level
+                # exceptions such as KeyboardInterrupt or SystemExit.
+                with self._deliver_lock:
+                    self._latest_active = False
+                    self._pending_latest = _NO_PENDING
+                raise
 
         # -- Policy: throttle (rate limit) --
         if self._policy == "throttle":

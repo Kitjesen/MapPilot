@@ -1344,43 +1344,41 @@ class TestBackpressure:
         assert received == list(range(10))
         assert inp.drop_count == 0
 
-    def test_latest_policy_drops_when_busy(self):
-        """With 'latest' policy, messages are dropped if callback is running."""
+    def test_latest_policy_coalesces_to_newest_when_busy(self):
+        """A busy callback receives the newest pending message after it returns."""
         import threading
 
         inp = In(int, "val")
         inp.set_policy("latest")
 
-        barrier = threading.Event()
+        entered = threading.Event()
+        release = threading.Event()
         received = []
 
         def slow_callback(msg):
             received.append(msg)
             if msg == 1:
-                barrier.wait(timeout=2.0)  # block on first real message
+                entered.set()
+                release.wait(timeout=2.0)
 
         inp.subscribe(slow_callback)
 
-        # Deliver from a background thread so it blocks
         t = threading.Thread(target=inp._deliver, args=(1,))
         t.start()
-        import time
-        time.sleep(0.02)  # let it enter callback
+        assert entered.wait(timeout=1.0)
 
-        # These should be dropped (callback busy)
         inp._deliver(2)
         inp._deliver(3)
         inp._deliver(4)
 
-        # Release the blocked callback
-        barrier.set()
+        release.set()
         t.join(timeout=2.0)
 
-        # Only message 1 was processed, 2-4 dropped
-        assert received == [1]
-        assert inp.drop_count == 3
-        assert inp.latest == 4  # latest always updated
-        assert inp.msg_count == 4  # all counted
+        assert received == [1, 4]
+        assert inp.drop_count == 2
+        assert inp.deliver_count == 2
+        assert inp.latest == 4
+        assert inp.msg_count == 4
 
     def test_latest_policy_normal_when_not_busy(self):
         """With 'latest' policy, sequential messages all deliver normally."""

@@ -118,23 +118,33 @@ class TestInStats(unittest.TestCase):
         self.assertGreater(p.stale_ms, 0.0)
 
     def test_drop_count_with_latest_policy(self):
+        import threading
+
         p = In(int, "test_in")
         p.set_policy("latest")
         results = []
+        entered = threading.Event()
+        release = threading.Event()
+
         def slow_cb(msg):
-            time.sleep(0.05)
             results.append(msg)
+            if msg == 1:
+                entered.set()
+                release.wait(timeout=2.0)
+
         p.subscribe(slow_cb)
-        # First delivery blocks in callback
-        import threading
         t = threading.Thread(target=p._deliver, args=(1,))
         t.start()
-        time.sleep(0.01)
-        # Second delivery should be dropped (busy)
+        self.assertTrue(entered.wait(timeout=1.0))
+
         p._deliver(2)
-        t.join()
+        p._deliver(3)
+        release.set()
+        t.join(timeout=2.0)
+
         self.assertEqual(p.drop_count, 1)
-        self.assertEqual(len(results), 1)
+        self.assertEqual(results, [1, 3])
+        self.assertEqual(p.deliver_count, 2)
 
     def test_buffer_policy_tracks_latency(self):
         p = In(int, "test_in")

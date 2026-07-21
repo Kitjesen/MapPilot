@@ -83,6 +83,121 @@ class TestLatestPolicy:
 
         assert inp.drop_count >= 1
 
+    def test_final_pending_message_drains_without_another_publish(self):
+        entered = threading.Event()
+        release = threading.Event()
+        received = []
+
+        def blocking_cb(msg):
+            received.append(msg)
+            if msg == "A":
+                entered.set()
+                release.wait(timeout=2.0)
+
+        out, inp = _make_pair("latest")
+        inp.subscribe(blocking_cb)
+        first = threading.Thread(target=out.publish, args=("A",))
+        first.start()
+        assert entered.wait(timeout=1.0)
+
+        try:
+            out.publish("B")
+            out.publish("STOP")
+        finally:
+            release.set()
+            first.join(timeout=2.0)
+
+        assert not first.is_alive()
+        assert received == ["A", "STOP"]
+        assert inp.drop_count == 1
+        assert inp.deliver_count == 2
+
+    def test_clear_subscriber_cancels_pending_latest_message(self):
+        entered = threading.Event()
+        release = threading.Event()
+        received = []
+
+        def blocking_cb(msg):
+            received.append(msg)
+            if msg == "A":
+                entered.set()
+                release.wait(timeout=2.0)
+
+        out, inp = _make_pair("latest")
+        inp.subscribe(blocking_cb)
+        first = threading.Thread(target=out.publish, args=("A",))
+        first.start()
+        assert entered.wait(timeout=1.0)
+
+        try:
+            out.publish("B")
+            inp._clear_subscriber()
+        finally:
+            release.set()
+            first.join(timeout=2.0)
+
+        assert not first.is_alive()
+        assert received == ["A"]
+        assert inp.connected is False
+
+        out.publish("C")
+        assert received == ["A"]
+
+    def test_reentrant_publish_is_serialized_and_coalesced(self):
+        inp = In(int, "latest")
+        inp.set_policy("latest")
+        received = []
+        active = 0
+        max_active = 0
+
+        def callback(msg):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            received.append(msg)
+            if msg == 1:
+                inp._deliver(2)
+                inp._deliver(3)
+            active -= 1
+
+        inp.subscribe(callback)
+
+        inp._deliver(1)
+
+        assert received == [1, 3]
+        assert max_active == 1
+        assert inp.drop_count == 1
+        assert inp.deliver_count == 2
+
+    def test_callback_error_does_not_strand_pending_message(self):
+        entered = threading.Event()
+        release = threading.Event()
+        received = []
+
+        def failing_cb(msg):
+            received.append(msg)
+            if msg == "A":
+                entered.set()
+                release.wait(timeout=2.0)
+                raise RuntimeError("expected test failure")
+
+        out, inp = _make_pair("latest")
+        inp.subscribe(failing_cb)
+        first = threading.Thread(target=out.publish, args=("A",))
+        first.start()
+        assert entered.wait(timeout=1.0)
+
+        try:
+            out.publish("STOP")
+        finally:
+            release.set()
+            first.join(timeout=2.0)
+
+        assert not first.is_alive()
+        assert received == ["A", "STOP"]
+        assert inp.callback_errors == 1
+        assert inp.deliver_count == 2
+
 
 # ---------------------------------------------------------------------------
 # "async" policy
