@@ -319,13 +319,13 @@ class TomogramPlanner(object):
                 return raw_world
             _safe_print(
                 f"[planner_wrapper] optimized trajectory crosses {blocked} hard-obstacle samples; "
-                f"raw path blocked={raw_blocked}",
+                f"raw path blocked={raw_blocked}; rejecting all candidates",
                 flush=True,
             )
-            self.last_path_mode = "optimized_trajectory"
+            self.last_path_mode = "collision_rejected"
             self.last_optimizer_accepted = False
-            self.last_optimizer_reject_reason = "optimized_trajectory_hard_obstacle"
-            return traj_3d
+            self.last_optimizer_reject_reason = "all_candidate_paths_hard_obstacle"
+            return None
 
         self.last_path_mode = "optimized_trajectory"
         self.last_optimizer_accepted = True

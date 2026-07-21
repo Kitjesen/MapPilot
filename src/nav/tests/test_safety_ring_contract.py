@@ -10,6 +10,7 @@ import json
 import math
 import time
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -74,6 +75,26 @@ class TestSafetyRingContract(unittest.TestCase):
         m._on_cmdvel(Twist(linear=Vector3(0.1, 0.0, 0.0)))
         self.assertEqual(m._safety_level.name, "SAFE")
 
+    def test_wall_clock_jump_does_not_expire_live_safety_links(self):
+        """NTP or operator wall-clock changes must not affect link deadlines."""
+        m = self._make()
+        m.setup()
+        healthy_odom = Odometry(
+            pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+            twist=Twist(linear=Vector3(0.1, 0.0, 0.0)),
+        )
+        m._on_odom(healthy_odom)
+        m._on_cmdvel(Twist(linear=Vector3(0.1, 0.0, 0.0)))
+        m._on_localization_status({"state": "TRACKING", "confidence": 1.0})
+
+        with patch(
+            "nav.services.safety.safety_ring.time.time",
+            return_value=time.time() + 3600.0,
+        ):
+            m._publish_safety()
+
+        self.assertEqual(m._safety_level.name, "SAFE")
+
     def test_stop_level_on_odom_timeout(self):
         """When odometry times out, level should be STOP and stop_cmd=2."""
         m = self._make(odom_timeout_ms=50.0)
@@ -83,7 +104,7 @@ class TestSafetyRingContract(unittest.TestCase):
         # Publish odometry once, then wait for timeout
         m._on_odom(Odometry(pose=Pose(position=Vector3(1.0, 2.0, 0.0))))
         # Simulate timeout
-        m._last_odom_time = time.time() - 1.0
+        m._last_odom_time = time.monotonic() - 1.0
         m._publish_safety()
         self.assertEqual(m._safety_level.name, "STOP")
         self.assertEqual(stops[-1], 2)
@@ -117,7 +138,7 @@ class TestSafetyRingContract(unittest.TestCase):
         # Publish recent odometry
         m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
         # Simulate cmd_vel timeout by setting last_cmdvel_time far in past
-        m._last_cmdvel_time = time.time() - 1.0
+        m._last_cmdvel_time = time.monotonic() - 1.0
         m._publish_safety()
         self.assertEqual(m._safety_level.name, "WARN")
         self.assertEqual(stops[-1], 1)
@@ -186,6 +207,53 @@ class TestSafetyRingContract(unittest.TestCase):
         self.assertEqual(result["status"], "estop_triggered")
         self.assertEqual(stops[-1], 2)
 
+    def test_emergency_stop_stays_latched_until_explicit_reset(self):
+        """Healthy inputs must not auto-clear an operator emergency stop."""
+        m = self._make()
+        m.setup()
+        stops = []
+        m.stop_cmd._add_callback(stops.append)
+        healthy_odom = Odometry(
+            pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+            twist=Twist(linear=Vector3(0.1, 0.0, 0.0)),
+        )
+        healthy_cmd = Twist(linear=Vector3(0.1, 0.0, 0.0))
+        m._on_odom(healthy_odom)
+        m._on_cmdvel(healthy_cmd)
+        m._on_localization_status({"state": "TRACKING", "confidence": 1.0})
+        stops.clear()
+
+        triggered = json.loads(m.emergency_stop())
+        m._on_odom(healthy_odom)
+        m._on_cmdvel(healthy_cmd)
+        m._on_localization_status({"state": "TRACKING", "confidence": 1.0})
+
+        self.assertEqual(triggered["status"], "estop_triggered")
+        self.assertTrue(m._estop_latched)
+        self.assertEqual(m._safety_level.name, "STOP")
+        self.assertEqual(stops[-1], 2)
+
+        reset = json.loads(m.reset_emergency_stop())
+
+        self.assertEqual(reset["status"], "estop_reset")
+        self.assertFalse(m._estop_latched)
+        self.assertEqual(m._safety_level.name, "SAFE")
+        self.assertEqual(stops[-1], 0)
+
+    def test_emergency_stop_reset_is_rejected_while_base_stop_is_active(self):
+        """Reset cannot bypass an independent hard safety fault."""
+        m = self._make()
+        stops = []
+        m.stop_cmd._add_callback(stops.append)
+        m.emergency_stop()
+
+        result = json.loads(m.reset_emergency_stop())
+
+        self.assertEqual(result["status"], "estop_reset_rejected")
+        self.assertTrue(m._estop_latched)
+        self.assertEqual(m._safety_level.name, "STOP")
+        self.assertEqual(stops[-1], 2)
+
     def test_safety_state_published_fields(self):
         """safety_state output must be a SafetyState with correct level."""
         m = self._make()
@@ -218,6 +286,38 @@ class TestSafetyRingContract(unittest.TestCase):
         m._on_localization_status({"state": "DEGRADED", "confidence": 0.5})
         self.assertEqual(m._safety_level.name, "WARN")
         self.assertEqual(stops[-1], 1)
+
+    def test_unknown_received_localization_state_fails_closed(self):
+        """A typo or future unknown localization state must never permit motion."""
+        m = self._make()
+        m.setup()
+        stops = []
+        m.stop_cmd._add_callback(stops.append)
+        m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        m._on_cmdvel(Twist(linear=Vector3(0.1, 0.0, 0.0)))
+
+        m._on_localization_status({"state": "TRAKCING", "confidence": 1.0})
+
+        self.assertEqual(m._safety_level.name, "STOP")
+        self.assertEqual(stops[-1], 2)
+
+    def test_mcp_emergency_stop_resolves_to_safety_ring_latch(self):
+        from gateway.mcp_server import MCPServerModule
+
+        ring = self._make()
+        mcp = MCPServerModule(port=0)
+        mcp.on_system_modules(
+            {
+                "nav.safety": ring,
+                "MCPServerModule": mcp,
+            }
+        )
+
+        selected = mcp._tool_registry["emergency_stop"]
+        self.assertIs(selected.__self__, ring)
+        result = json.loads(selected())
+        self.assertTrue(result["latched"])
+        self.assertTrue(ring.health()["safety_ring"]["estop_latched"])
 
 
 if __name__ == "__main__":

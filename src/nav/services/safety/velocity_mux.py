@@ -130,9 +130,11 @@ class VelocityMux(Module, layer=0):
         self._last_publish_time: float = 0.0
         self._last_driver_twist: Twist = Twist.zero()
         self._lock = threading.RLock()
+        self._output_lock = threading.RLock()
         self._stop_event = threading.Event()
         self._monitor_thread: threading.Thread | None = None
         self._frozen: bool = False
+        self._freeze_epoch: int = 0
         self._latest_costmap: dict[str, Any] | None = None
         self._latest_native_costmap: Any | None = None
         self._latest_costmap_time: float = 0.0
@@ -179,21 +181,62 @@ class VelocityMux(Module, layer=0):
         return "native" if self._collision_native_runtime is not None else "python"
 
     def freeze(self) -> None:
-        self._frozen = True
         zero = Twist.zero()
-        with self._lock:
-            self._last_driver_twist = zero
-            self._last_publish_time = time.time()
-        self.driver_cmd_vel.publish(zero)
+        with self._output_lock:
+            with self._lock:
+                self._freeze_epoch += 1
+                self._frozen = True
+                active_changed = bool(self._active)
+                self._active = ""
+                for source in self._sources.values():
+                    source["last_time"] = 0.0
+                    source["last_twist"] = Twist.zero()
+                self._last_driver_twist = zero
+                self._last_publish_time = time.time()
+            if active_changed:
+                self.active_source.publish("")
+            self.driver_cmd_vel.publish(zero)
         logger.info("VelocityMux: frozen")
 
     def unfreeze(self) -> None:
-        self._frozen = False
+        with self._output_lock:
+            with self._lock:
+                if not self._frozen:
+                    return
+                self._freeze_epoch += 1
+                self._frozen = False
         logger.info("VelocityMux: unfrozen")
 
     @property
     def is_frozen(self) -> bool:
-        return self._frozen
+        with self._lock:
+            return self._frozen
+
+    def _publish_arbitrated_outputs(
+        self,
+        *,
+        epoch: int,
+        active_update: str | None,
+        driver_twist: Twist | None,
+        now: float,
+    ) -> None:
+        """Publish only if arbitration still belongs to the current freeze epoch."""
+        with self._output_lock:
+            with self._lock:
+                if self._frozen or epoch != self._freeze_epoch:
+                    return
+                if driver_twist is not None:
+                    self._last_driver_twist = driver_twist
+                    self._last_publish_time = time.time()
+
+            if active_update is not None:
+                self.active_source.publish(active_update)
+
+            if driver_twist is not None:
+                with self._lock:
+                    if self._frozen or epoch != self._freeze_epoch:
+                        return
+                self.driver_cmd_vel.publish(driver_twist)
 
     def setup(self) -> None:
         self.teleop_cmd_vel.subscribe(lambda t: self._on_source("teleop", t))
@@ -261,9 +304,7 @@ class VelocityMux(Module, layer=0):
 
     def _on_source(self, name: str, twist: Twist) -> None:
         """Handle incoming cmd_vel from a named source."""
-        if self._frozen:
-            return
-        now = time.time()
+        now = time.monotonic()
         invalid_source = not self._is_finite_twist(twist)
         twist = self._sanitize_twist(twist)
         release_source = invalid_source or (name != "teleop" and self._is_zero_twist(twist))
@@ -271,6 +312,9 @@ class VelocityMux(Module, layer=0):
         driver_twist: Twist | None = None
 
         with self._lock:
+            if self._frozen:
+                return
+            epoch = self._freeze_epoch
             src = self._sources[name]
             src["last_time"] = 0.0 if release_source else now
             src["last_twist"] = twist
@@ -301,20 +345,19 @@ class VelocityMux(Module, layer=0):
             elif invalid_source and previous_active in ("", name):
                 driver_twist = Twist.zero()
 
-            if driver_twist is not None:
-                self._last_driver_twist = driver_twist
-                self._last_publish_time = now
-
-        if active_update is not None:
-            self.active_source.publish(active_update)
-        if driver_twist is not None:
-            self.driver_cmd_vel.publish(driver_twist)
+        self._publish_arbitrated_outputs(
+            epoch=epoch,
+            active_update=active_update,
+            driver_twist=driver_twist,
+            now=now,
+        )
 
     def _check_timeout(self, now: float | None = None) -> None:
-        if self._frozen:
-            return
-        now = time.time() if now is None else now
+        now = time.monotonic() if now is None else now
         with self._lock:
+            if self._frozen:
+                return
+            epoch = self._freeze_epoch
             winner = self._select_active(now)
             if winner == self._active:
                 return
@@ -322,11 +365,13 @@ class VelocityMux(Module, layer=0):
             driver_twist = self._sanitize_twist(self._sources[winner]["last_twist"]) if winner else Twist.zero()
             if winner:
                 driver_twist = self._apply_collision_monitor(driver_twist, now)
-            self._last_driver_twist = driver_twist
-            self._last_publish_time = now
 
-        self.active_source.publish(winner)
-        self.driver_cmd_vel.publish(driver_twist)
+        self._publish_arbitrated_outputs(
+            epoch=epoch,
+            active_update=winner,
+            driver_twist=driver_twist,
+            now=now,
+        )
 
     def _select_active(self, now: float) -> str:
         """Return the name of the highest-priority source that is still active."""
@@ -341,14 +386,14 @@ class VelocityMux(Module, layer=0):
             return best_name
 
     def _on_odometry(self, odom: Odometry) -> None:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._latest_odom = odom
             self._latest_odom_time = now
         self._reevaluate_active_collision(now)
 
     def _on_costmap(self, costmap: dict) -> None:
-        now = time.time()
+        now = time.monotonic()
         native_costmap = self._make_native_collision_costmap(costmap)
         with self._lock:
             self._latest_costmap = costmap
@@ -357,17 +402,23 @@ class VelocityMux(Module, layer=0):
         self._reevaluate_active_collision(now)
 
     def _reevaluate_active_collision(self, now: float) -> None:
-        if not self._collision_monitor_enabled or self._frozen:
+        if not self._collision_monitor_enabled:
             return
         with self._lock:
+            if self._frozen:
+                return
+            epoch = self._freeze_epoch
             winner = self._select_active(now)
             if not winner or winner != self._active:
                 return
             twist = self._sanitize_twist(self._sources[winner]["last_twist"])
             driver_twist = self._apply_collision_monitor(twist, now)
-            self._last_driver_twist = driver_twist
-            self._last_publish_time = now
-        self.driver_cmd_vel.publish(driver_twist)
+        self._publish_arbitrated_outputs(
+            epoch=epoch,
+            active_update=None,
+            driver_twist=driver_twist,
+            now=now,
+        )
 
     def _apply_collision_monitor(self, twist: Twist, now: float) -> Twist:
         if not self._collision_monitor_enabled:
@@ -549,6 +600,7 @@ class VelocityMux(Module, layer=0):
     ) -> None:
         emit_event = False
         rounded_cost = None if cost is None else round(float(cost), 3)
+        wall_ts = time.time()
         with self._lock:
             costmap_age = now - self._latest_costmap_time if self._latest_costmap_time > 0.0 else None
             odom_age = now - self._latest_odom_time if self._latest_odom_time > 0.0 else None
@@ -561,7 +613,7 @@ class VelocityMux(Module, layer=0):
                     "costmap_age_ms": (None if costmap_age is None else round(costmap_age * 1000)),
                     "odometry_age_ms": (None if odom_age is None else round(odom_age * 1000)),
                     "backend": backend,
-                    "ts": now,
+                    "ts": wall_ts,
                 }
             )
             signature = (action, reason, rounded_cost)
@@ -578,7 +630,7 @@ class VelocityMux(Module, layer=0):
                     "source": "nav.velocity_mux.projected_collision",
                     "reason": reason,
                     "cost": rounded_cost,
-                    "ts": now,
+                    "ts": wall_ts,
                 }
             )
 
@@ -698,7 +750,7 @@ class VelocityMux(Module, layer=0):
     # -- health ---------------------------------------------------------
 
     def health(self) -> dict:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             sources = {}
             for name, src in self._sources.items():

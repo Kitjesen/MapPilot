@@ -450,6 +450,19 @@ class PCTPlanner:
             start,
             goal,
         )
+        if self._wrapper_reports_known_collision():
+            self._last_plan_error = "pct planner rejected known-collision path"
+            self._last_plan_reached_goal = False
+            self._last_plan_diagnostics.update(
+                {
+                    "stage": "native_plan_collision_rejected",
+                    "error_message": self._last_plan_error,
+                    "unsafe_path_discarded": True,
+                    "goal_reached": False,
+                }
+            )
+            logger.error("%s: start=%s goal=%s", self._last_plan_error, start, goal)
+            return []
         if result is None and self._last_plan_error:
             return []
 
@@ -604,6 +617,26 @@ class PCTPlanner:
         ):
             if hasattr(planner, attr):
                 self._last_plan_diagnostics[key] = getattr(planner, attr)
+
+    def _wrapper_reports_known_collision(self) -> bool:
+        """Reject any wrapper result whose final candidate is known to be blocked."""
+        diagnostics = self._last_plan_diagnostics
+        optimized_blocked = int(
+            diagnostics.get("pct_optimizer_blocked_sample_count", 0) or 0
+        )
+        raw_blocked = int(
+            diagnostics.get("pct_optimizer_raw_blocked_sample_count", 0) or 0
+        )
+        path_mode = str(diagnostics.get("pct_planner_path_mode", "") or "")
+        optimizer_accepted = diagnostics.get("pct_optimizer_accepted")
+
+        if raw_blocked > 0:
+            return True
+        return bool(
+            path_mode == "optimized_trajectory"
+            and optimizer_accepted is False
+            and optimized_blocked > 0
+        )
 
     def _plan_native_with_reload_retry(
         self,

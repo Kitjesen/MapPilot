@@ -258,7 +258,7 @@ class TestMCPToolExecution(unittest.TestCase):
 
         self.assertEqual(result["status"], "emergency_stopped")
         self.assertEqual(result["control_boundary"], "native_estop")
-        send.assert_called_once_with("mcp_emergency_stop")
+        send.assert_called_once_with(self.mod, "mcp_emergency_stop")
         self.assertEqual(stops, [])
 
     # -- navigate_to (from Navigation) --

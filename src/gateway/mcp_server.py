@@ -19,6 +19,7 @@ Module blueprint usage::
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import threading
@@ -45,6 +46,7 @@ _MOTION_BACKEND_CATEGORIES = {
     "slam",
 }
 _BACKEND_RECONFIGURE_TARGETS = backend_reconfigure_targets()
+_BUILTIN_FALLBACK_TOOLS = frozenset({"emergency_stop", "send_instruction"})
 
 
 def _navigation_state(nav: Any) -> str:
@@ -78,6 +80,10 @@ def _ok(req_id: Any, result: Any) -> dict:
 
 def _text(req_id: Any, text: str) -> dict:
     return _ok(req_id, {"content": [{"type": "text", "text": str(text)}]})
+
+
+def _tool_error(req_id: Any, text: str) -> dict:
+    return _ok(req_id, {"content": [{"type": "text", "text": str(text)}], "isError": True})
 
 
 def _error(req_id: Any, code: int, msg: str) -> dict:
@@ -164,6 +170,7 @@ class MCPServerModule(Module, layer=6):
         """
         self._tool_registry = {}
         self._tool_list = []
+        candidates: dict[str, dict[int, dict[str, Any]]] = {}
         self._all_modules = modules
         self._navigation = modules.get("nav.mission")
         self._nav_commands = modules.get("nav.commands")
@@ -180,7 +187,7 @@ class MCPServerModule(Module, layer=6):
         self._episodic_mod = modules.get("EpisodicMemoryModule")
 
         # Discover @skill from every module (including self)
-        for mod_name, mod in modules.items():
+        for mod_name, mod in sorted(modules.items()):
             if not hasattr(mod, "get_skill_infos"):
                 continue
             try:
@@ -192,24 +199,44 @@ class MCPServerModule(Module, layer=6):
                 method = getattr(mod, info.func_name, None)
                 if method is None:
                     continue
-                self._tool_registry[info.func_name] = method
                 schema = json.loads(info.args_schema)
                 desc = schema.pop("description", "")
-                self._tool_list.append(
-                    {
+                by_module = candidates.setdefault(info.func_name, {})
+                existing = by_module.get(id(mod))
+                if existing is not None:
+                    existing["module_names"].add(mod_name)
+                    continue
+                by_module[id(mod)] = {
+                    "module": mod,
+                    "module_names": {mod_name},
+                    "method": method,
+                    "tool": {
                         "name": info.func_name,
                         "description": f"[{info.class_name}] {desc}".strip(),
                         "inputSchema": schema,
-                    }
-                )
+                    },
+                }
 
-        # Deduplicate: if a module @skill has the same name as a built-in,
-        # the module-native version takes priority (last write in _tool_registry wins).
-        # Rebuild _tool_list to reflect the deduplicated registry.
-        seen: dict = {}
-        for tool in self._tool_list:
-            seen[tool["name"]] = tool  # last one wins (matches _tool_registry)
-        self._tool_list = list(seen.values())
+        tool_registry: dict[str, Any] = {}
+        tool_list: list[dict[str, Any]] = []
+        for tool_name in sorted(candidates):
+            entries = list(candidates[tool_name].values())
+            peer_entries = [entry for entry in entries if entry["module"] is not self]
+            self_entries = [entry for entry in entries if entry["module"] is self]
+
+            if len(entries) == 1:
+                selected = entries[0]
+            elif tool_name in _BUILTIN_FALLBACK_TOOLS and len(peer_entries) == 1 and len(self_entries) == 1:
+                selected = peer_entries[0]
+            else:
+                owners = sorted("/".join(sorted(entry["module_names"])) for entry in entries)
+                raise ValueError(f"duplicate MCP tool '{tool_name}' from modules: {', '.join(owners)}")
+
+            tool_registry[tool_name] = selected["method"]
+            tool_list.append(selected["tool"])
+
+        self._tool_registry = tool_registry
+        self._tool_list = tool_list
         self._install_legacy_tool_aliases()
 
         logger.info(
@@ -619,17 +646,33 @@ class MCPServerModule(Module, layer=6):
                 return JSONResponse(_ok(req_id, {"tools": mcp._tool_list}))
 
             if method == "tools/call":
+                if not isinstance(params, dict):
+                    return JSONResponse(_error(req_id, -32602, "tools/call params must be an object"))
                 name = params.get("name", "")
-                args = params.get("arguments") or {}
+                args = params.get("arguments", {})
+                if not isinstance(name, str) or not name:
+                    return JSONResponse(_error(req_id, -32602, "Tool name must be a non-empty string"))
+                if not isinstance(args, dict):
+                    return JSONResponse(_error(req_id, -32602, "Tool arguments must be an object"))
                 fn = mcp._tool_registry.get(name)
                 if fn is None:
-                    return JSONResponse(_text(req_id, f"Unknown tool: {name!r}"))
+                    return JSONResponse(_error(req_id, -32602, f"Unknown tool: {name!r}"))
+                try:
+                    inspect.signature(fn).bind(**args)
+                except (TypeError, ValueError) as exc:
+                    return JSONResponse(
+                        _error(
+                            req_id,
+                            -32602,
+                            f"Invalid arguments for tool {name!r}: {exc}",
+                        )
+                    )
                 try:
                     result = fn(**args)
                     return JSONResponse(_text(req_id, result if result is not None else "Done."))
-                except Exception as exc:
+                except Exception:
                     logger.exception("MCP tool error: %s", name)
-                    return JSONResponse(_text(req_id, f"Error in '{name}': {exc}"))
+                    return JSONResponse(_tool_error(req_id, f"Tool {name!r} failed."))
 
             return JSONResponse(_error(req_id, -32601, f"Unknown method: {method}"))
 

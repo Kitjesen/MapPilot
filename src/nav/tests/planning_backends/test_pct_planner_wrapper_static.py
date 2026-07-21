@@ -1,6 +1,11 @@
 """Static regression checks for the original PCT planner wrapper."""
 
+import importlib.util
 from pathlib import Path
+import sys
+import types
+
+import numpy as np
 
 
 NAV_ROOT = Path(__file__).resolve().parents[2]
@@ -71,6 +76,93 @@ def test_pct_planner_wrapper_records_actual_optimizer_path_mode():
     assert "optimized_trajectory_hard_obstacle" in text
     assert 'self.last_path_mode = "native_astar_raw_path"' in text
     assert 'self.last_path_mode = "optimized_trajectory"' in text
+
+
+def test_pct_planner_wrapper_rejects_when_optimized_and_raw_paths_are_blocked(monkeypatch):
+    wrapper_path = PCT_PLANNER_ROOT / "planner" / "scripts" / "planner_wrapper.py"
+    fake_lib = types.ModuleType("lib")
+    fake_lib.a_star = types.SimpleNamespace(Astar=object)
+    fake_lib.ele_planner = types.SimpleNamespace(OfflineElePlanner=object)
+    fake_lib.traj_opt = types.SimpleNamespace(GPMPOptimizer=object)
+    monkeypatch.setitem(sys.modules, "lib", fake_lib)
+
+    spec = importlib.util.spec_from_file_location("_pct_wrapper_safety_test", wrapper_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    raw_native_path = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+        dtype=np.float64,
+    )
+    raw_world = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
+        dtype=np.float64,
+    )
+    optimized_world = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.5, 0.0]],
+        dtype=np.float64,
+    )
+
+    class FakePathFinder:
+        def get_result_matrix(self):
+            return raw_native_path
+
+    class FakeOptimizer:
+        def get_opt_init_value(self):
+            return np.zeros((2, 2), dtype=np.float64)
+
+        def get_opt_init_layer(self):
+            return np.zeros(2, dtype=np.float64)
+
+        def get_result_matrix(self):
+            return np.zeros((2, 2), dtype=np.float64)
+
+        def get_layers(self):
+            return np.zeros(2, dtype=np.float64)
+
+        def get_heights(self):
+            return np.zeros(2, dtype=np.float64)
+
+    class FakeNativePlanner:
+        def plan(self, _start, _goal, _optimize):
+            return None
+
+        def get_path_finder(self):
+            return FakePathFinder()
+
+        def get_trajectory_optimizer_wnoj(self):
+            return FakeOptimizer()
+
+    planner = module.TomogramPlanner.__new__(module.TomogramPlanner)
+    planner.optimize_trajectory = True
+    planner.use_quintic = True
+    planner.start_idx = np.zeros(3, dtype=np.float64)
+    planner.end_idx = np.zeros(3, dtype=np.float64)
+    planner.obstacle_thr = 50.0
+    planner.map_dim = [8, 8]
+    planner.center = np.zeros(2, dtype=np.float64)
+    planner.planner = FakeNativePlanner()
+    planner.pos2idx = lambda _pos: np.zeros(2, dtype=np.float64)
+    planner.pos2slice = lambda _height: 0.0
+    planner._raw_path_to_world = lambda _path: raw_world
+    planner._optimized_traj_to_world = lambda _xy, _height: optimized_world
+    planner._hard_obstacle_sample_count = (
+        lambda path: 3 if path is optimized_world else 2
+    )
+
+    result = planner.plan(
+        np.array([0.0, 0.0], dtype=np.float64),
+        np.array([1.0, 1.0], dtype=np.float64),
+    )
+
+    assert result is None
+    assert planner.last_path_mode == "collision_rejected"
+    assert planner.last_optimizer_accepted is False
+    assert planner.last_optimizer_reject_reason == "all_candidate_paths_hard_obstacle"
+    assert planner.last_optimizer_blocked_sample_count == 3
+    assert planner.last_raw_path_blocked_sample_count == 2
 
 
 def test_pct_gpmp_factors_guard_each_optional_jacobian_separately():

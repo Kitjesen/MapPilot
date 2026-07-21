@@ -1163,6 +1163,56 @@ class TestMCPServerModule(unittest.TestCase):
         self.assertIn("get_health", names)
         self.assertIn("get_config", names)
 
+    def test_duplicate_peer_tool_names_fail_build(self):
+        from runtime.module import Module, skill
+
+        class AlphaInspector(Module, layer=4):
+            @skill
+            def inspect_area(self) -> str:
+                """Inspect the current area."""
+                return "alpha"
+
+        class BetaInspector(Module, layer=4):
+            @skill
+            def inspect_area(self) -> str:
+                """Inspect the current area."""
+                return "beta"
+
+        m = self._make()
+        with self.assertRaisesRegex(
+            ValueError,
+            r"duplicate MCP tool 'inspect_area'.*alpha.*beta",
+        ):
+            m.on_system_modules(
+                {
+                    "MCPServerModule": m,
+                    "beta": BetaInspector(),
+                    "alpha": AlphaInspector(),
+                }
+            )
+
+    def test_peer_tool_deterministically_overrides_builtin_fallback(self):
+        from runtime.module import Module, skill
+
+        class PeerSafety(Module, layer=0):
+            @skill
+            def emergency_stop(self) -> str:
+                """Latch the safety controller."""
+                return "peer-estop"
+
+        m = self._make()
+        peer = PeerSafety()
+        m.on_system_modules(
+            {
+                "peer_safety": peer,
+                "MCPServerModule": m,
+            }
+        )
+
+        selected = m._tool_registry["emergency_stop"]
+        self.assertIs(selected.__self__, peer)
+        self.assertEqual(selected(), "peer-estop")
+
     def test_stop_via_skill(self):
         import json
 
@@ -1186,7 +1236,7 @@ class TestMCPServerModule(unittest.TestCase):
 
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["control_boundary"], "native_stop")
-        stop.assert_called_once_with("mcp_stop")
+        stop.assert_called_once_with(m, "mcp_stop")
         estop.assert_not_called()
 
     def test_get_position_no_odom(self):

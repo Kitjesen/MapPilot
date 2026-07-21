@@ -6,8 +6,10 @@ All tests are pure-Python, no ROS2 / hardware / MuJoCo required.
 
 from __future__ import annotations
 
+import threading
 import time
 import unittest
+from unittest.mock import patch
 
 from runtime.msgs.geometry import Pose, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
@@ -177,6 +179,23 @@ class TestVelocityMuxContract(unittest.TestCase):
         m._on_source("path_follower", self._twist(vx=0.5))
         self.assertEqual(active_sources[-1], "path_follower")
 
+    def test_wall_clock_jump_does_not_expire_active_source(self):
+        """Source leases use monotonic time and survive wall-clock jumps."""
+        m = self._make(source_timeout=5.0)
+        m.setup()
+        driver_twists = []
+        m.driver_cmd_vel._add_callback(driver_twists.append)
+        m._on_source("teleop", self._twist(vx=1.0))
+
+        with patch(
+            "nav.services.safety.velocity_mux.time.time",
+            return_value=time.time() + 3600.0,
+        ):
+            m._check_timeout()
+
+        self.assertEqual(m.health()["active_source"], "teleop")
+        self.assertAlmostEqual(driver_twists[-1].linear.x, 1.0)
+
     def test_freeze_stops_outputs(self):
         """When frozen, VelocityMux must publish zero twist and reject inputs."""
         m = self._make(source_timeout=5.0)
@@ -223,6 +242,44 @@ class TestVelocityMuxContract(unittest.TestCase):
         self.assertFalse(m.is_frozen)
         m.unfreeze()  # second call (no-op)
         self.assertFalse(m.is_frozen)
+
+    def test_freeze_linearizes_against_inflight_nonzero_publish(self):
+        """No pre-freeze command may be published after freeze completes."""
+        m = self._make(source_timeout=5.0)
+        m.setup()
+        source_publish_entered = threading.Event()
+        release_source_publish = threading.Event()
+        zero_published = threading.Event()
+        published = []
+
+        def controlled_output(twist):
+            if twist.is_zero():
+                published.append(twist)
+                zero_published.set()
+                return
+            source_publish_entered.set()
+            release_source_publish.wait(timeout=2.0)
+            published.append(twist)
+
+        m.driver_cmd_vel._add_callback(controlled_output)
+        source_thread = threading.Thread(
+            target=m._on_source,
+            args=("teleop", self._twist(vx=1.0)),
+        )
+        source_thread.start()
+        self.assertTrue(source_publish_entered.wait(timeout=1.0))
+
+        freeze_thread = threading.Thread(target=m.freeze)
+        freeze_thread.start()
+        zero_published.wait(timeout=0.1)
+        release_source_publish.set()
+        source_thread.join(timeout=1.0)
+        freeze_thread.join(timeout=1.0)
+
+        self.assertFalse(source_thread.is_alive())
+        self.assertFalse(freeze_thread.is_alive())
+        self.assertTrue(m.is_frozen)
+        self.assertTrue(published[-1].is_zero())
 
     def test_health_returns_sources_and_active(self):
         """health() must include active_source and per-source status."""

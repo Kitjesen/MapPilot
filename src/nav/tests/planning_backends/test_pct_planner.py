@@ -322,6 +322,78 @@ class TestPCTBackend:
         assert diagnostics["pct_optimizer_raw_blocked_sample_count"] == 0
         assert diagnostics["pct_planner_path_mode"] == "native_astar_raw_path"
 
+    def test_native_pct_adapter_discards_result_when_all_candidates_are_blocked(self):
+        """A wrapper result with known hard-obstacle collisions must fail closed."""
+        from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner
+
+        class FakePlanner:
+            def __init__(self):
+                self.layers_t = np.full((1, 8, 8), 10.0, dtype=np.float32)
+                self.layers_g = np.zeros((1, 8, 8), dtype=np.float32)
+                self.optimize_trajectory = True
+                self.last_path_mode = "optimized_trajectory"
+                self.last_optimizer_enabled = True
+                self.last_optimizer_attempted = True
+                self.last_optimizer_accepted = False
+                self.last_optimizer_reject_reason = "optimized_trajectory_hard_obstacle"
+                self.last_optimizer_blocked_sample_count = 3
+                self.last_raw_path_blocked_sample_count = 2
+
+            def pos2idx(self, pos):
+                return np.array([float(pos[0]), float(pos[1])], dtype=np.float64)
+
+            def pos2slice(self, _z):
+                return 0.0
+
+            def get_surface_height(self, _pos):
+                return 0.0
+
+            def plan(self, start_pos, goal_pos, start_h, goal_h):
+                return np.array(
+                    [
+                        [start_pos[0], start_pos[1], start_h],
+                        [goal_pos[0], goal_pos[1], goal_h],
+                    ],
+                    dtype=np.float64,
+                )
+
+        planner = FakePlanner()
+        backend = PCTPlanner.__new__(PCTPlanner)
+        backend._planner = planner
+        backend._tomogram_path = "/tmp/tomogram.pickle"
+        backend._obstacle_thr = 49.9
+        backend._available = True
+        backend._load_error = ""
+        backend._last_plan_error = ""
+        backend._last_plan_diagnostics = {}
+        backend._last_plan_reached_goal = False
+        backend._last_plan_path_mode = ""
+        backend._grid = None
+        backend._trav_3d = planner.layers_t
+        backend._elev_3d = planner.layers_g
+        backend._grid_is_projection = True
+        backend._resolution = 0.2
+        backend._origin = np.array([0.0, 0.0])
+        backend._slice_h0 = 0.0
+        backend._slice_dh = 0.5
+        backend._costmap = None
+        backend._costmap_resolution = 1.0
+        backend._costmap_origin = np.array([0.0, 0.0])
+
+        path = backend.plan(
+            np.array([0.0, 0.0, 0.0]),
+            np.array([2.0, 0.0, 0.0]),
+        )
+
+        assert path == []
+        assert backend._last_plan_reached_goal is False
+        assert backend._last_plan_error == "pct planner rejected known-collision path"
+        diagnostics = backend._last_plan_diagnostics
+        assert diagnostics["stage"] == "native_plan_collision_rejected"
+        assert diagnostics["unsafe_path_discarded"] is True
+        assert diagnostics["pct_optimizer_blocked_sample_count"] == 3
+        assert diagnostics["pct_optimizer_raw_blocked_sample_count"] == 2
+
     def test_blocked_start_cell_projects_to_nearby_traversable_pct_cell(self):
         """PCT should plan from a nearby traversable start cell, not fall back."""
         from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner

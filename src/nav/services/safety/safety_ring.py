@@ -50,6 +50,9 @@ class Assessment(Enum):
     REGRESSING = "REGRESSING"
 
 
+_LOCALIZATION_HEALTHY_STATES = frozenset({"TRACKING", "OK"})
+_LOCALIZATION_WARN_STATES = frozenset({"DEGRADED", "FALLBACK_GNSS_ONLY"})
+
 @register("safety", "ring", description="Unified safety ring (reflex + eval + dialogue)")
 class SafetyRing(Module, layer=0):
     """Three-ring safety architecture in one Module.
@@ -98,11 +101,14 @@ class SafetyRing(Module, layer=0):
 
         # Ring 1 state
         self._last_odom_time = 0.0
-        self._last_cmdvel_time = time.time()
+        self._last_cmdvel_time = time.monotonic()
         self._invalid_odom = False
         self._invalid_cmd_vel = False
         self._safety_level = SafetyLevel.SAFE
         self._publishing_stop_cmd_level: int | None = None
+        self._estop_lock = threading.RLock()
+        self._estop_latched = False
+        self._estop_reason = ""
 
         # Ring 2 state
         self._robot_xy = [0.0, 0.0]
@@ -119,6 +125,7 @@ class SafetyRing(Module, layer=0):
         # Localization state
         self._loc_state: str = "UNINIT"
         self._loc_confidence: float = 0.0
+        self._loc_status_received = False
 
         # GNSS fusion state (populated from gnss_fusion_health port)
         self._gnss_enabled: bool = False
@@ -191,7 +198,7 @@ class SafetyRing(Module, layer=0):
 
     def _check_links(self) -> SafetyLevel:
         """Check communication link health + localization status."""
-        now = time.time()
+        now = time.monotonic()
         odom_alive = (now - self._last_odom_time) < self._odom_timeout
         cmd_alive = (now - self._last_cmdvel_time) < self._cmdvel_timeout
 
@@ -201,16 +208,20 @@ class SafetyRing(Module, layer=0):
             self._path_points = None
             self._goal_xy = None
             return SafetyLevel.STOP
-        if self._loc_state == "LOST":
-            return SafetyLevel.STOP
+        if self._loc_status_received:
+            if self._loc_state not in _LOCALIZATION_HEALTHY_STATES | _LOCALIZATION_WARN_STATES:
+                return SafetyLevel.STOP
         if not cmd_alive and self._has_motion_intent():
             return SafetyLevel.WARN
-        if self._loc_state == "DEGRADED":
+        if self._loc_status_received and self._loc_state in _LOCALIZATION_WARN_STATES:
             return SafetyLevel.WARN
         return SafetyLevel.SAFE
 
     def _publish_safety(self):
         level = self._check_links()
+        with self._estop_lock:
+            if self._estop_latched:
+                level = SafetyLevel.STOP
         self._safety_level = level
         if level == SafetyLevel.STOP:
             stop_level = 2
@@ -329,7 +340,7 @@ class SafetyRing(Module, layer=0):
     # -- Input callbacks -----------------------------------------------------
 
     def _on_odom(self, odom: Odometry):
-        self._last_odom_time = time.time()
+        self._last_odom_time = time.monotonic()
         x, y = odom.x, odom.y
         self._invalid_odom = not all(
             math.isfinite(float(v))
@@ -366,7 +377,7 @@ class SafetyRing(Module, layer=0):
             self._goal_xy = None
 
     def _on_cmdvel(self, msg: Twist):
-        self._last_cmdvel_time = time.time()
+        self._last_cmdvel_time = time.monotonic()
         values = (
             msg.linear.x, msg.linear.y, msg.linear.z,
             msg.angular.x, msg.angular.y, msg.angular.z,
@@ -383,8 +394,13 @@ class SafetyRing(Module, layer=0):
         self._latest_mission = status
 
     def _on_localization_status(self, msg: dict) -> None:
-        self._loc_state = msg.get("state", "UNINIT")
-        self._loc_confidence = msg.get("confidence", 0.0)
+        self._loc_status_received = True
+        state_text = str(msg.get("state", "UNINIT")).strip().upper()
+        self._loc_state = state_text or "UNINIT"
+        try:
+            self._loc_confidence = float(msg.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            self._loc_confidence = 0.0
         self._publish_safety()
 
     def _on_gnss_fusion_health(self, msg: dict) -> None:
@@ -427,6 +443,7 @@ class SafetyRing(Module, layer=0):
         """Get current safety state: level, cross-track error, distance to goal, and module health."""
         return json.dumps({
             "level": self._safety_level.name,
+            "estop_latched": self._estop_latched,
             "cross_track_error": round(self._cross_track_error(), 3),
             "distance_to_goal": round(self._distance_to_goal(), 3),
             "modules_ok": self._check_links() != SafetyLevel.STOP,
@@ -435,15 +452,38 @@ class SafetyRing(Module, layer=0):
     @skill
     def emergency_stop(self) -> str:
         """Trigger an emergency stop (safety level STOP). Use for immediate halt."""
-        self._safety_level = SafetyLevel.STOP
-        self.stop_cmd.publish(2)
-        self.safety_state.publish(SafetyState(level=SafetyLevel.STOP.value))
-        return json.dumps({"status": "estop_triggered"})
+        with self._estop_lock:
+            self._estop_latched = True
+            self._estop_reason = "operator_request"
+        self._publish_safety()
+        return json.dumps({"status": "estop_triggered", "latched": True})
+
+    @skill
+    def reset_emergency_stop(self) -> str:
+        """Clear a latched emergency stop only when base safety checks allow it."""
+        with self._estop_lock:
+            if not self._estop_latched:
+                return json.dumps({"status": "estop_not_latched"})
+            base_level = self._check_links()
+            if base_level == SafetyLevel.STOP:
+                return json.dumps({
+                    "status": "estop_reset_rejected",
+                    "reason": "base_safety_stop_active",
+                })
+            self._estop_latched = False
+            self._estop_reason = ""
+        self._publish_safety()
+        return json.dumps({
+            "status": "estop_reset",
+            "safety_level": self._safety_level.name,
+        })
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()
         info["safety_ring"] = {
             "level": self._safety_level.name,
+            "estop_latched": self._estop_latched,
+            "estop_reason": self._estop_reason,
             "assessment": self._assessment.value,
             "has_path": self._path_points is not None,
             "localization_state": self._loc_state,
