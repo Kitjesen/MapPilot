@@ -1,7 +1,12 @@
-"""runtime.blueprint -Declarative module orchestration.
+"""Declarative assembly for one LingTu Python application runtime.
 
-Blueprint assembles a system from Module classes and explicit or auto-matched
-wiring rules.  build() instantiates everything and returns a SystemHandle.
+Blueprint is a runtime mechanism, not a product definition or native process
+manager. It materializes a Module graph from classes and wiring rules. The
+default graph runs in one process; optional worker subprocesses are an internal
+execution detail owned by the same Blueprint and SystemHandle.
+
+Product recipes belong in :mod:`lingtu.assembly`. Native service lifecycle
+belongs to :class:`runtime.graph.plan.RuntimePlan`.
 
 Typical usage::
 
@@ -30,6 +35,7 @@ from __future__ import annotations
 import logging
 import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, is_typeddict
 
@@ -94,10 +100,12 @@ class _ModuleEntry:
 
 
 class Blueprint:
-    """Declarative module orchestration builder.
+    """Build one application-owned Module graph.
 
-    All configuration methods return *self* to support method chaining.
-    A Blueprint should not be modified after build() is called.
+    A Blueprint may partition selected Modules into Python workers, but it does
+    not install, launch, supervise, or stop native product services. All
+    configuration methods return *self* to support method chaining. A
+    Blueprint should not be modified after :meth:`build` is called.
     """
 
     def __init__(self, name: str | None = None) -> None:
@@ -110,10 +118,25 @@ class Blueprint:
         self._route_name: str | None = None
         self._route_spec: Any | None = None
         self._routed_delivery_enabled: bool = False
+        self._build_checks: list[Callable[[], None]] = []
         # Per-module worker deployment descriptors (populated via worker()).
         from .worker_config import WorkerDeploymentRegistry
 
         self._worker_deployments: WorkerDeploymentRegistry = WorkerDeploymentRegistry()
+
+    @property
+    def module_names(self) -> tuple[str, ...]:
+        """Return declared Module aliases without instantiating the graph."""
+
+        return tuple(entry.name for entry in self._entries)
+
+    def before_build(self, check: Callable[[], None]) -> Blueprint:
+        """Register a side-effecting startup check deferred until ``build()``."""
+
+        if not callable(check):
+            raise TypeError("Blueprint before_build check must be callable")
+        self._build_checks.append(check)
+        return self
 
     # -- registration -------------------------------------------------------
 
@@ -235,14 +258,15 @@ class Blueprint:
         return self
 
     def global_config(self, n_workers: int = 0, **kwargs: Any) -> Blueprint:
-        """Set system-level configuration.
+        """Set application graph execution configuration.
 
         Supports the dimos-style chained build::
 
             autoconnect(...).global_config(n_workers=4).build()
 
         Args:
-            n_workers: Worker subprocess count.  0 = single-process (default).
+            n_workers: Blueprint-owned Python worker count. 0 keeps all Modules
+                in the host process. This is unrelated to RuntimePlan services.
         """
         self._global_cfg = {"n_workers": n_workers, **kwargs}
         return self
@@ -363,6 +387,7 @@ class Blueprint:
             self._route_name = other._route_name
             self._route_spec = other._route_spec
         self._routed_delivery_enabled = self._routed_delivery_enabled or other._routed_delivery_enabled
+        self._build_checks.extend(other._build_checks)
         return self
 
     # -- build --------------------------------------------------------------
@@ -372,11 +397,12 @@ class Blueprint:
         transport: Transport | None = None,
         n_workers: int = 0,
     ) -> SystemHandle:
-        """Instantiate all modules, apply wiring, and return a runtime handle.
+        """Instantiate the Module graph and return its application handle.
 
         Args:
             transport: Optional shared Transport.  Defaults to LocalTransport.
-            n_workers: Worker subprocess count.  0 = single-process (default).
+            n_workers: Blueprint-owned Python worker count. 0 keeps all Modules
+                in the host process. Native processes are outside this API.
 
         Returns:
             SystemHandle (n_workers=0) or WorkerSystemHandle (n_workers>0)
@@ -385,6 +411,9 @@ class Blueprint:
             ValueError: Unknown module or port in an explicit wire().
             TypeError:  Type mismatch in an explicit wire().
         """
+        for check in self._build_checks:
+            check()
+
         n_workers = self._global_cfg.get("n_workers", n_workers)
         # Worker mode: only activate when explicitly requested via n_workers > 0
         # or LINGTU_WORKERS env var. Auto-detect is disabled until BPU/CLIP

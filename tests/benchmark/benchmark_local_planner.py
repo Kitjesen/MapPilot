@@ -25,9 +25,9 @@ for _p in (str(_REPO_ROOT), str(_SRC), str(_NB_WIN)):
 
 import numpy as np
 
-from nav.services.plan.local_planner.cmu_py import plan_cmu_py_local_path
-from nav.services.plan.local_planner.models import CmuPyLocalPlannerRequest
-from nav.services.plan.local_planner.path_tables import (
+from nav.local.cmu_py import plan_cmu_py_local_path
+from nav.local.models import CmuPyLocalPlannerRequest
+from nav.local.path_tables import (
     load_cmu_py_paths,
     local_planner_paths_dir,
 )

@@ -4,7 +4,7 @@ import ast
 import subprocess
 from pathlib import Path
 
-from runtime.adapters.native.relocalization import NativeSlamRelocalizationService
+from localization.adapters.relocalization import NativeSlamRelocalizationService
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -53,7 +53,7 @@ def _capture_native_call(monkeypatch, result: str):
         return subprocess.CompletedProcess(args, 0, stdout=result, stderr="")
 
     monkeypatch.setattr(
-        "runtime.adapters.native.relocalization.subprocess.run",
+        "localization.adapters.relocalization.subprocess.run",
         fake_run,
     )
     return calls

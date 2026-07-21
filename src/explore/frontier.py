@@ -1,4 +1,4 @@
-"""WavefrontFrontierExplorer 鈥?autonomous frontier-based exploration planner.
+"""WavefrontFrontierExplorer — autonomous frontier-based exploration planner.
 
 Finds boundaries between known-free and unknown space (frontiers) via BFS,
 clusters them, scores each cluster, and publishes the best goal for exploration.

@@ -1,5 +1,3 @@
-"""Thin Python adapters for the native C++ inspection domain."""
+"""Inspection domain package; the runtime service lives in ``service.py``."""
 
-from .native import InspectionNativeError, NativeInspectionStore
-
-__all__ = ["InspectionNativeError", "NativeInspectionStore"]
+__all__: list[str] = []

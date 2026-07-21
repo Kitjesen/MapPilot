@@ -36,6 +36,8 @@ The main runtime concepts are:
 
 ## Current Runtime Shape
 
+Status: current product contract as of 2026-07-18.
+
 The runtime is split by responsibility:
 
 | Layer | Owns |
@@ -55,7 +57,7 @@ not import lower-level implementation details directly.
 ## Composable Blueprint API
 
 This API is implemented and usable. The stack factories are exported from
-`runtime.blueprints.stacks`, and `autoconnect()` builds a module graph by
+`lingtu.assembly.stacks`, and `autoconnect()` builds a module graph by
 combining explicit wires with type/name-based port matching.
 
 Verified locally with:
@@ -64,7 +66,7 @@ Verified locally with:
 $env:PYTHONPATH="src"
 @'
 from runtime.blueprint import autoconnect
-from runtime.blueprints.stacks import driver, planner, safety
+from lingtu.assembly.stacks import driver, planner, safety
 
 system = autoconnect(
     driver("stub"),
@@ -80,7 +82,7 @@ Example API:
 
 ```python
 from runtime.blueprint import autoconnect
-from runtime.blueprints.stacks import driver, planner, safety
+from lingtu.assembly.stacks import driver, planner, safety
 
 system = autoconnect(
     driver("stub"),
@@ -109,8 +111,8 @@ Common stack factories:
 | `perception(detector, encoder)` | Detection, embeddings, reconstruction. |
 | `memory()` | Semantic, episodic, tagged, vector, and temporal memory modules. |
 | `planner(llm)` | Semantic planner, LLM module, visual servo module. |
-| `navigation(planner_backend)` | Mission, global planner, local planner, path follower, command output. |
-| `exploration(backend)` | Exploration supervisor or strategy integration. |
+| `navigation(planner_backend)` | Mission, global planner, local planner, path follower, command output. Product default: `octoplanner3d`. |
+| `exploration(backend)` | `none` or TARE; wavefront is enabled from the navigation stack, not this factory. |
 | `safety()` | Safety ring, geofence, velocity mux. |
 | `gateway(port)` | REST, SSE, WebSocket, MCP, teleop/status surface. |
 
@@ -172,12 +174,15 @@ checkout.
 | `sim` | MuJoCo simulation path. |
 | `sim_nav` | Pure-Python navigation simulation. |
 | `map` | Build and save a map. |
-| `nav` | Saved-map navigation. |
-| `teleop` | Manual control through Gateway/MCP/teleop. |
+| `nav` | Saved-map navigation through OctoPlanner3D. |
+| `teleop` / `teleop_avoid` / `lite` | Manual or lightweight field control modes with different safety/localization scope. |
 | `tracking` | Visual or semantic target tracking. |
 | `inspection` | Patrol and scheduled inspection workflows. |
-| `explore` | Frontier exploration/debug entry. |
-| `tare_explore` | TARE-style exploration integration. |
+| `explore` | Wavefront frontier exploration/debug entry. |
+| `tare_explore` | TARE/traversable-frontier exploration integration. |
+| `portable_mujoco` | Portable no-ROS MuJoCo planning/sensor path. |
+| `sim_gazebo`, `sim_industrial`, `sim_mujoco_live`, `sim_mujoco_octo_live`, `sim_cmu_tare` | Advanced simulation and validation profiles shown by `--list --all`. |
+| `super_lio`, `super_lio_relocation` | Explicit Super-LIO evaluation profiles. |
 
 Some compatibility and validation profiles are intentionally visible only in
 the full catalog. They are useful for replay, ROS 2 checks, and algorithm
@@ -192,14 +197,20 @@ Web / CLI / MCP
   -> Gateway and semantic planner
   -> mission goal/status
   -> native navigation service
-  -> typed DDS command topic
-  -> robot controller
+  -> logical /nav/cmd_vel (typed DDS wire topic rt/nav/cmd_vel)
+  -> lingtu-driver
+  -> remote Brainstem gRPC
 ```
 
-The robot-side navigation service owns the final velocity writer in the physical
-runtime. Python modules keep mission state, semantic planning, maps, status,
-and safety policy, but they do not directly write competing velocity commands
-to the robot.
+The physical `thunder_field` endpoint is `endpoint_only + driver`: the native
+navigation endpoint owns logical `/nav/cmd_vel`, encoded on DDS as
+`rt/nav/cmd_vel`, and the unique `lingtu-driver` service forwards checked
+commands to the remote Brainstem controller. Python modules
+keep mission state, semantic planning, maps, status, and safety policy, but
+they do not start a competing robot velocity writer in the field default path.
+The driver will not become ready unless Brainstem is remote, mutually
+authenticated when TLS is configured, lease-owned by `lingtu-driver`, motor
+output is enabled, and a checked zero command has been acknowledged.
 
 ### Sensor, SLAM, And Maps
 
@@ -277,7 +288,6 @@ cmake -S src/nav/cpp -B build/nav-cpp -DCMAKE_BUILD_TYPE=Release \
 cmake --build build/nav-cpp -j
 ctest --test-dir build/nav-cpp --output-on-failure
 ```
-
 Robot builds should run on the target Linux environment with the required
 native dependencies and DDS services installed.
 
@@ -289,6 +299,8 @@ Start here:
 - [`docs/architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md`](docs/architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
 - [`docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md`](docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md)
 - [`docs/architecture/MAP_SERVICE_CONTRACT.md`](docs/architecture/MAP_SERVICE_CONTRACT.md)
+- [`docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md`](docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md)
+- [`docs/07-testing/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`](docs/07-testing/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md)
 - [`docs/04-deployment/lingtu_cli.md`](docs/04-deployment/lingtu_cli.md)
 - [`docs/07-testing/ALGORITHM_VALIDATION_FLOW.md`](docs/07-testing/ALGORITHM_VALIDATION_FLOW.md)
 - [`sim/README.md`](sim/README.md)
@@ -299,6 +311,9 @@ Start here:
   simulation.
 - MuJoCo validates software flow, but not physical LiDAR timing, calibration,
   network behavior, or gait stability.
+- The accepted MuJoCo native-DDS navigation gate proves a bounded simulated
+  navigation/control chain. It is not a substitute for field fault injection or
+  a hardware motion campaign.
 - ROS 2 PGO/HBA/PCT paths are compatibility or experiment surfaces unless a
   profile explicitly selects them.
 - ChromaDB, LLMs, WebRTC, Rerun, and heavy perception backends are optional.

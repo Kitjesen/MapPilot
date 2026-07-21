@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from nav.services.plan.local_planner.backend import create_nanobind_backend
-from nav.services.plan.local_planner.service import LocalPlanner
+from nav.local.local_planner_backend import create_nanobind_backend
+from nav.local.local_planner import LocalPlanner
 from nav.local.terrain import Terrain
 from runtime.config import load_config
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
@@ -156,8 +156,8 @@ def test_terrain_nanobind_preserves_height_intensity_for_local_planner():
 
 
 def test_nanobind_local_planner_applies_cmu_parity_config(monkeypatch):
-    from nav.services.plan.local_planner import runtime
-    from nav.services.plan.local_planner.backend import (
+    from nav.local import local_planner_runtime as runtime
+    from nav.local.local_planner_backend import (
         create_nanobind_backend,
     )
 
@@ -307,9 +307,7 @@ def test_nanobind_local_planner_uses_adjacent_range_not_path_range_step():
             _REPO_ROOT
             / "src"
             / "nav"
-            / "services"
-            / "plan"
-            / "local_planner"
+            / "local"
             / "paths"
         ),
     )

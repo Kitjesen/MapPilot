@@ -2,7 +2,12 @@
 
 Date: 2026-07-07
 
-Robot tested: `192.168.66.13:5050`
+Historical robot tested: private lab Gateway on port `5050`.
+
+> Current note, 2026-07-18: this file preserves a July 7 live smoke record.
+> The authoritative current route inventory is
+> [`gateway_rest.md`](gateway_rest.md), regenerated from source on 2026-07-18.
+> Use `LINGTU_GATEWAY=http://ROBOT_IP_OR_HOSTNAME:5050` in new commands.
 
 This document records the Web-facing Gateway API surface exposed to the LingTu
 dashboard. It is based on the live `openapi.json` route list plus the fallback
@@ -10,12 +15,15 @@ URLs declared in `web/src/services/api.ts`.
 
 ## Current Result
 
-- Backend OpenAPI paths: 88
+- Backend OpenAPI paths at the time: 88
+- Current generated REST endpoints: 107
 - Web-declared API URLs: 57
 - Web URLs missing from OpenAPI: 0
 - Safe live smoke checks: passed
 - Camera snapshot and camera WebSocket: route exists, but the current robot
   runtime reports `camera_unavailable` / `no_color_frames`.
+- Current camera fast path is the go2rtc WHEP proxy:
+  `POST /api/v1/webrtc/whep`; `/ws/camera` remains the Gateway JPEG fallback.
 - Risky state-changing commands were not executed during the smoke pass:
   navigation goals, stop/mode/lease, session start/end, SLAM switch/restart,
   auto relocalize, active-map switch, map-cloud reset, and bag recording.
@@ -50,6 +58,9 @@ URLs declared in `web/src/services/api.ts`.
 | GET | `/api/v1/diagnostics/runtime-contract` | Runtime contract summary | Pass |
 | POST | `/api/v1/diagnostics/field-check` | Field/simulation readiness check | Pass |
 | POST | `/api/v1/inspection/acceptance` | Inspection acceptance gate | Pass |
+| GET | `/api/v1/inspection/routes` | List native inspection routes | Current generated route |
+| POST | `/api/v1/inspection/routes` | Create/update native inspection route | Current generated route; state-changing |
+| GET | `/api/v1/inspection/status` | Native inspection route/status snapshot | Current generated route |
 | GET | `/api/v1/diagnostic_pack` | Gzip diagnostic pack | Pass |
 
 ## Navigation And Control
@@ -64,6 +75,7 @@ URLs declared in `web/src/services/api.ts`.
 | POST | `/api/v1/navigate/click` | Dispatch clicked goal | Skipped: motion/state-changing |
 | POST | `/api/v1/navigation/cancel` | Cancel navigation | Skipped: state-changing |
 | POST | `/api/v1/stop` | Stop command | Skipped: state-changing |
+| POST | `/api/v1/estop/reset` | Release native software estop latch | Current generated route; state-changing |
 | POST | `/api/v1/mode` | Runtime mode command | Skipped: state-changing |
 | POST | `/api/v1/lease` | Command lease | Skipped: state-changing |
 
@@ -82,7 +94,10 @@ URLs declared in `web/src/services/api.ts`.
 Current robot service status during test:
 
 - Product path: `native_dds`
-- Running: `lingtu-livox-dds`, `lingtu-slam-dds`, `lingtu-nav-dds`, `lingtu.service`
+- Current product chain: `lingtu-livox-dds`, `lingtu-slam-dds`,
+  `lingtu-nav-dds`, `lingtu-driver`, `lingtu.service`
+- Status files: `/dev/shm/lingtu/nav_endpoint_status.json` and
+  `/dev/shm/lingtu/driver_status.json`
 - Stopped: `slam_pgo`, `hba`, `localizer`, `genz_icp`, `super_lio`, `super_lio_relocation`
 
 ## Maps
@@ -117,11 +132,8 @@ non-empty points and was deleted afterward.
 | WS | `/ws/cloud` | Binary point cloud stream | Pass |
 | WS | `/ws/camera` | Camera frame stream | Route exists; no frames in current runtime |
 | GET | `/api/v1/camera/snapshot` | Camera snapshot | Expected 503: `no_color_frames` |
-| GET | `/api/v1/webrtc/stats` | WebRTC stats | Pass |
 | GET | `/api/v1/webrtc/go2rtc/status` | go2rtc status | Pass |
-| POST | `/api/v1/webrtc/offer` | WebRTC offer | Negative pass with invalid SDP |
 | POST | `/api/v1/webrtc/whep` | WHEP proxy | Negative pass when sidecar unavailable |
-| POST | `/api/v1/webrtc/bitrate` | Set WebRTC bitrate | Not exercised; requires active WebRTC |
 
 ## Memory, Locations, And Auth
 

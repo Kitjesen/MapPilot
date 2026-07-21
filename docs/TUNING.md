@@ -5,11 +5,16 @@ files such as `config/perception.yaml`, `config/decision.yaml`,
 `config/semantic_scoring.yaml`, `config/pointlio.yaml`, and `config/dufomap.toml`
 are secondary overrides.
 
-After editing, restart the affected service:
+After editing, restart only the affected service. The physical
+`thunder_field` stack normally uses the native services below:
 
 ```bash
-sudo systemctl restart lingtu
-sudo systemctl restart robot-fastlio2
+sudo systemctl restart lingtu-livox-dds       # LiDAR source
+sudo systemctl restart lingtu-slam-dds        # SLAM / localization
+sudo systemctl restart lingtu-traversability-dds
+sudo systemctl restart lingtu-nav-dds         # native planner and tracker
+sudo systemctl restart lingtu-driver          # unique Brainstem speed exit
+sudo systemctl restart lingtu                 # gateway and product modules
 ```
 
 ## 1. Robot Speed Inputs - `config/robot_config.yaml`
@@ -18,8 +23,8 @@ sudo systemctl restart robot-fastlio2
 | --- | --- | --- | --- |
 | `speed.max_linear` | 1.0 m/s | robot-specific | Chassis/legacy linear limit; not the native endpoint path-follower limit |
 | `speed.max_angular` | 1.0 rad/s | robot-specific | Chassis/legacy angular limit |
-| `speed.max_speed` | 0.875 m/s | 0.3-1.0 | Python `LocalPlanner` normalization denominator |
-| `speed.autonomy_speed` | 0.875 m/s | 0.3-1.0 | Python `LocalPlanner` requested planning speed |
+| `speed.max_speed` | 0.875 m/s | 0.3-1.0 | Python Module/dev/compat planner normalization denominator |
+| `speed.autonomy_speed` | 0.875 m/s | 0.3-1.0 | Python Module/dev/compat requested planning speed |
 
 The native endpoint owns a separate speed surface. Its defaults are
 `--max-speed-mps 0.4` and `--max-accel-mps2 1.0`; it does not read the Python
@@ -27,9 +32,11 @@ Module's `speed.max_speed` as its command ceiling.
 
 ## 2. Local Planner - `local_planner.*`
 
-The production local planner is the in-process `nav_kernel LocalPlanner` exposed
-through the private `_nav_kernel` nanobind extension. It is not a ROS2 node.
-The exact algorithm and runtime-lane differences are defined in
+On the physical `thunder_field` endpoint, the production local planner runs
+inside the native C++ Nav Endpoint and uses the `nav_kernel` planning cores. The
+Python `LocalPlannerModule` remains available for simulation, development, and
+explicit compatibility profiles. Neither product path is a ROS2 node. The exact
+algorithm and runtime-lane differences are defined in
 [Local Planning and Tracking Contract](architecture/LOCAL_PLANNING_AND_TRACKING_CONTRACT.md).
 
 | Key | Default | Effect |
@@ -94,10 +101,9 @@ reachable lookahead is `0.30-0.50 m`. `max_accel` does not limit yaw
 acceleration, jerk, or `vx/vy` components independently.
 
 Do not confuse the follower stop band with `local_planner.near_field_stop_dis`
-(`0.5 m`) or the native mission goal-reached threshold (`0.35 m`). Python
-product profiles can override the follower separately; the current
-`thunder_nav` Module profile uses `max_speed=0.20 m/s`, adapter
-`lookahead=0.35 m`, `goal_tolerance=0.05 m`, and `native_max_accel=10.0 m/s^2`.
+(`0.5 m`) or the native mission goal-reached threshold (`0.35 m`). Profile and
+endpoint overrides must be checked from the resolved runtime config instead of
+copying historical `thunder_nav` values into field deployments.
 
 ## 4. Global Planner Backend
 
@@ -117,8 +123,9 @@ python lingtu.py nav --planner pct
 
 ```bash
 python -m pytest src/runtime/tests/ -q
-ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'lingtu status'
-ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'lingtu health'
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+ssh sunrise@${LINGTU_HOST} 'bash /opt/lingtu/current/scripts/lingtu status'
+ssh sunrise@${LINGTU_HOST} 'bash /opt/lingtu/current/scripts/lingtu health'
 ```
 
-Gateway config snapshot: `http://<robot>:5050/api/v1/config`.
+Gateway config snapshot: `http://<robot-ip>:5050/api/v1/config`.

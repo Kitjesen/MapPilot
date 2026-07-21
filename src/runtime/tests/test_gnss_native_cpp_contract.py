@@ -90,7 +90,7 @@ def test_gnss_native_dds_entrypoint_is_product_service() -> None:
 
 def test_python_gnss_module_is_not_wtrtk980_product_backend() -> None:
     source = _read("src/localization/gnss_module.py")
-    stack = _read("src/runtime/blueprints/stacks/system.py")
+    stack = _read("src/lingtu/assembly/stacks/system.py")
 
     assert '@register("gnss", "wtrtk980"' not in source
     assert '@register("gnss", "compat"' in source

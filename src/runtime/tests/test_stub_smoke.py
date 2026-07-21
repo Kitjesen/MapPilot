@@ -28,7 +28,7 @@ for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_
 
 
 def _build_stub():
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
     return thunder_blueprint(
         robot="stub",
         slam_profile="none",

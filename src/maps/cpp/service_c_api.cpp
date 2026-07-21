@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -1334,6 +1335,46 @@ int32_t lingtu_maps_service_build_semantic_artifact_json(
   }
   return WriteCommandProtected(
       [&]() { return handle->service.BuildSemanticArtifactJson(map_id); },
+      out,
+      capacity,
+      out_size);
+}
+
+int32_t lingtu_maps_service_import_unity_semantic_artifact_json(
+    LingtuMapsServiceHandle* handle,
+    const char* map_id,
+    const char* scene_dir,
+    const LingtuMapsUnitySemanticImportOptions* options,
+    char* out,
+    uint64_t capacity,
+    uint64_t* out_size) {
+  if (handle == nullptr || EmptyOrNull(map_id) || EmptyOrNull(scene_dir) ||
+      options == nullptr ||
+      options->struct_size < sizeof(LingtuMapsUnitySemanticImportOptions) ||
+      options->abi_version != LINGTU_MAPS_UNITY_SEMANTIC_IMPORT_ABI_VERSION ||
+      EmptyOrNull(options->taxonomy_path) ||
+      options->max_objects > std::numeric_limits<std::size_t>::max() ||
+      options->max_voxels > std::numeric_limits<std::size_t>::max() ||
+      options->max_voxel_checks > std::numeric_limits<std::size_t>::max()) {
+    return -1;
+  }
+  lingtu::maps::sources::UnitySemanticImportConfig config;
+  config.taxonomy_path = options->taxonomy_path;
+  config.frame_id = EmptyOrNull(options->frame_id) ? "map" : options->frame_id;
+  config.voxel_size_m = static_cast<float>(options->voxel_size_m);
+  config.occupied_probability = static_cast<float>(options->occupied_probability);
+  config.shell_thickness_voxels = static_cast<float>(options->shell_thickness_voxels);
+  config.generation = options->generation;
+  config.max_objects = static_cast<std::size_t>(options->max_objects);
+  config.max_voxels = static_cast<std::size_t>(options->max_voxels);
+  config.max_voxel_checks = static_cast<std::size_t>(options->max_voxel_checks);
+  config.include_unknown_geometry = options->include_unknown_geometry != 0U;
+  config.exclude_dynamic_classes = options->exclude_dynamic_classes != 0U;
+  return WriteCommandProtected(
+      [&]() {
+        return handle->service.ImportUnitySemanticArtifactJson(
+            map_id, scene_dir, config);
+      },
       out,
       capacity,
       out_size);

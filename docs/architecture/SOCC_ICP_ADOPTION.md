@@ -2,6 +2,8 @@
 
 Status: native geometry baseline implemented on 2026-07-10; S100P field
 validation and semantic-weighted ICP remain gated.
+Audience: mapping/localization research and product adoption maintainers
+Replaced by: `MAP_SERVICE_CONTRACT.md` and `NATIVE_RUNTIME.md` for current product boundaries
 
 ## Decision
 

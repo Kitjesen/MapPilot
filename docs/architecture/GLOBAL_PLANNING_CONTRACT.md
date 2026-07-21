@@ -1,6 +1,8 @@
 # Global Planning Contract
 
 Status: current contract
+Audience: navigation/planner maintainers, Gateway/UI preview maintainers
+Replaced by: not replaced
 
 This document defines LingTu's global planning boundary. The goal is fast
 backend replacement without leaking OctoPlanner3D, PCT, subprocess, or payload
@@ -17,9 +19,13 @@ details into Navigation, Gateway, UI, or transport code.
 | Mapless/direct service | `src/nav/services/plan/compat/direct.py` |
 | Backend runtime adapter | `src/nav/services/plan/global_planner/backend_runtime.py` |
 | OctoPlanner3D backend | `src/nav/services/plan/global_planner/algorithm/octoplanner3d_planner.py` |
+| Native planning contract | `src/nav/cpp/planning/global/global_planner_contract.hpp` |
+| Native OctoPlanner3D | `src/nav/cpp/planning/global/octoplanner/` |
+| Native FAR option | `src/nav/cpp/planning/global/far/` |
+| Active map gates | `src/nav/cpp/endpoint/active_octomap_gate.*`, `active_occupancy_gate.*` |
 | PCT legacy backend | `src/nav/services/plan/global_planner/algorithm/pct/planner.py` |
 | Preview API helper | `src/nav/services/plan/preview.py` |
-| Mission integration | `src/nav/mission/runtime/planning.py` |
+| Mission integration | `src/nav/runtime/planning.py` |
 
 ## 2. Boundary
 
@@ -44,9 +50,14 @@ active map_record.json
 ```
 
 For OctoPlanner3D, the selected product artifact is the
-`navigation_safety_3d` capability, currently backed by `octomap.bt`. `map.pcd`
+`navigation_safety_3d` capability, currently backed by `octomap.ot`. `map.pcd`
 is the source point-cloud artifact and rebuild input; it is not the normal
 planning-time input once the bundle has a valid 3D occupancy artifact.
+
+FAR consumes the active `occupancy.npz` trinary grid. It is an explicit 2D
+option, not an automatic fallback from OctoPlanner3D. Both native backends must
+validate the active Maps record, artifact hash, source, frame, and version and
+plan from a private immutable snapshot.
 
 Explicit map paths still win for tests and emergency operation. Legacy active
 filenames remain fallback for older saved maps.
@@ -59,6 +70,8 @@ GlobalPlanRequest
   frame_id: string
   request_id: string
   map_version: string
+  map_generation: uint64
+  expected_map_identity: MapIdentity
 ```
 
 All coordinates are in the planning frame. Frame mismatch is blocked before
@@ -73,6 +86,7 @@ GlobalPlanningMap
   origin: [x, y] | null
   frame_id: string
   map_version: string
+  generation: uint64
   source: string
 ```
 
@@ -127,6 +141,7 @@ and return `GlobalPlanResult`.
 | Backend | Role |
 | --- | --- |
 | `octoplanner3d` | Default map-backed product planner. |
+| `far` | Explicit native 2D visibility-graph planner over validated occupancy. |
 | `pct` | Legacy/manual experiment planner. |
 | `direct` | Mapless direct path for explicit lightweight or fallback use. |
 
@@ -135,17 +150,21 @@ must be normalized before leaving the planner service boundary.
 
 ## 7. Runtime Data Flow
 
+The physical product path is native:
+
 ```text
-Gateway / MCP / SemanticPlanner / REPL
-  -> Navigation.goal_pose
-  -> Navigation._plan()
-  -> PlannerService.plan_request()
-  -> GlobalPlanResult
-  -> Navigation.global_path
-  -> LocalPlannerModule.global_path
-  -> PathFollowerModule
-  -> CmdVelMux
+typed Goal DDS
+  -> navd
+  -> selected active artifact gate
+  -> OctoPlanner3D or FAR
+  -> GlobalPlanResult identity/epoch check
+  -> NavLoop
+  -> final safety and control authority
+  -> /nav/cmd_vel
 ```
+
+Python `Navigation -> PlannerService -> LocalPlanner -> PathFollower` remains
+the Module/simulation path. It is not the owner of the field endpoint.
 
 The preview path is non-motion:
 
@@ -178,4 +197,6 @@ python -m pytest src/nav/tests/test_planning_service_factory.py -q
 python -m pytest src/nav/tests/test_global_planner_diagnostics.py -q
 python -m pytest src/runtime/tests/test_nav_chain_efficiency.py -q
 python -m pytest src/gateway/tests/test_gateway_commands.py -k "preview or click_navigation" -q
+python -m pytest tests/contracts/test_nav_cpp_build_boundaries.py -q
+bash scripts/build/build_nav_endpoint.sh
 ```

@@ -1,5 +1,9 @@
 # Local Planning and Tracking Contract
 
+Status: current algorithm/control contract
+Audience: native endpoint, Python compatibility, and navigation test maintainers
+Replaced by: not replaced
+
 This document is the canonical human-readable contract for LingTu local path
 planning algorithms, scoring, path tracking, and their parameter surfaces. It
 complements `local_planner_io_contract.md`, which remains authoritative for
@@ -35,7 +39,7 @@ The executable implementation paths are:
 - scoring helpers: `src/nav/cpp/planning/local/local_planner_scoring.hpp`
 - path follower: `src/nav/cpp/control/path_follower_core.cpp`
 - native endpoint assembly: `src/nav/cpp/endpoint/nav_native_endpoint.cpp`
-- Python adapters: `src/nav/services/plan/local_planner/parameters.py` and
+- Python adapters: `src/nav/local/parameters.py` and
   `src/nav/local/path_follower_backend.py`
 
 ## 2. LocalPlanner path-library model

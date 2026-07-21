@@ -17,7 +17,7 @@ __all__ = [
 
 _EXPORTS = {
     "Terrain": "nav.local.terrain",
-    "LocalPlanner": "nav.services.plan.local_planner.service",
+    "LocalPlanner": "nav.local.local_planner",
     "PathFollower": "nav.local.path_follower",
 }
 

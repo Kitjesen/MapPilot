@@ -124,29 +124,22 @@ def restart_after_drift(
 ) -> None:
     """Restart SLAM services after odometry divergence."""
     stop_event = stop_event or gw._stop_event
-    if not gw._manage_session_services:
-        return
     if stop_event.is_set():
         return
     try:
-        from runtime.service_manager import get_service_manager
+        from lingtu.control import ProductControl
 
-        svc = get_service_manager()
+        control = ProductControl()
     except Exception as exc:
-        logger.error("drift_watchdog: service_manager unavailable: %s", exc)
+        logger.error("drift_watchdog: product control unavailable: %s", exc)
         return
 
     mode = gw._session_mode
-    running_before = {name: False for name in _RESTART_SERVICE_NAMES}
-    for name in _RESTART_SERVICE_NAMES:
-        try:
-            running_before[name] = bool(svc.is_running(name))
-        except Exception as exc:
-            logger.warning(
-                "drift_watchdog: failed to read service state for %s: %s",
-                name,
-                exc,
-            )
+    running_before = (
+        control.legacy_states(tuple(_RESTART_SERVICE_NAMES))
+        if gw._manage_session_services
+        else {}
+    )
 
     dump_path = None
     try:
@@ -163,10 +156,11 @@ def restart_after_drift(
     except Exception as exc:
         logger.warning("drift_watchdog: blackbox dump failed (continuing): %s", exc)
 
-    try:
-        svc.stop(*_RESTART_SERVICE_NAMES)
-    except Exception as exc:
-        logger.warning("drift_watchdog: svc.stop failed (continuing): %s", exc)
+    if gw._manage_session_services:
+        try:
+            control.legacy_stop(tuple(_RESTART_SERVICE_NAMES))
+        except Exception as exc:
+            logger.warning("drift_watchdog: compatibility stop failed (continuing): %s", exc)
 
     gw.clear_localization_runtime_cache(reason="drift_watchdog")
 
@@ -182,6 +176,17 @@ def restart_after_drift(
         event["dump_path"] = str(dump_path)
     gw.push_event(event)
 
+    if not gw._manage_session_services:
+        try:
+            report = control.restart("slam")
+            logger.info(
+                "drift_watchdog: RuntimePlan restart complete (ready=%s)",
+                bool(report.ok),
+            )
+        except Exception as exc:
+            logger.error("drift_watchdog: RuntimePlan restart failed: %s", exc)
+        return
+
     if stop_event.wait(gw._drift_restart_delay_s):
         return
     try:
@@ -190,8 +195,7 @@ def restart_after_drift(
             running_before=running_before,
         )
         if restart_services and not stop_event.is_set():
-            svc.ensure(*restart_services)
-            svc.wait_ready(*restart_services, timeout=10.0)
+            control.legacy_ensure(tuple(restart_services), timeout_s=10.0)
         logger.info(
             "drift_watchdog: restart complete (mode=%s, restored=%s)",
             mode,

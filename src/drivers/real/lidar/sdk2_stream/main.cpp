@@ -429,14 +429,11 @@ int run_stdin_records(
       return source_timestamp_ns;
     }
     if (navigation_fixture) {
-      // The MuJoCo producer is already wall-paced and the pipe provides
-      // backpressure. Windows and WSL steady clocks can run at measurably
-      // different rates, so treating their elapsed time as one replay clock
-      // creates false lateness. Stamp at native receipt for this simulation-
-      // only state fixture; an actual dropout still ages the last DDS sample
-      // and closes the endpoint input gate.
-      return replay_restamper.stamp_ns(
-          source_timestamp_ns, std::chrono::steady_clock::now());
+      // Navigation fixtures already provide one monotonic simulated-hardware
+      // clock for IMU, odometry, TF and clouds. Preserve it so interpolation
+      // and source-order checks cannot inherit WSL CLOCK_REALTIME steps.
+      // Receiver freshness is measured independently from DDS receipt time.
+      return source_timestamp_ns;
     }
     // Re-evaluate the realtime/steady offset for every source timestamp. WSL
     // can slew or step CLOCK_REALTIME while the replay is running; retaining a

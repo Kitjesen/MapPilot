@@ -1,8 +1,8 @@
-# LingTu Local Facade
+# LingTu Product API
 
-`src/lingtu` is intentionally small. It exposes one high-level facade,
-`Robot`, the direct runtime builder, the remote SDK, and the product plugin
-catalog used during startup.
+`src/lingtu` is the product-facing package. It compiles a Profile and Endpoint
+into one `Product`, builds its application Blueprint, and delegates native
+process lifecycle to Launcher. Domain algorithms do not live here.
 
 Remote control of an already deployed robot belongs to `lingtu.sdk`, not this
 package.
@@ -26,11 +26,16 @@ robot.shutdown()
 |-------|------|---------|
 | `Robot` | `robot.py` | All-in-one local robot facade over the runtime profile builder |
 | `lingtu.runtime` | `runtime.py` | Resolve profiles and build Module-First systems directly |
+| `lingtu.assembly` | `assembly/` | LingTu product recipes: products, stacks, wires, and static graph inspection |
+| `ProductControl` | `control.py` | Resolve the active Profile/Endpoint and perform plan-owned process operations |
+| `Launcher` | `launcher.py` | Apply, stop, or restart native RuntimePlan processes with readiness evidence |
 | `lingtu.plugin_seed` | `plugin_seed.py` | Product plugin catalog; imports built-in module groups so their `@register` decorators populate `runtime.registry` |
 | `lingtu.sdk` | `sdk/` | Remote client SDK for an already running robot or gateway |
 
 Standalone camera, LiDAR, SLAM, navigator, and detector wrappers were removed.
-Those capabilities live in the normal Blueprint stacks and module packages.
+Those capabilities live in domain Module packages and are selected by
+`lingtu.assembly`; the generic Blueprint mechanism remains in
+`runtime.blueprint`.
 
 ## Plugin Seed Boundary
 
@@ -39,9 +44,10 @@ product package?" It does not select the active profile and does not build a
 system. Runtime code calls `seed_builtin_plugins(groups=(...))` when it needs a
 category in the registry.
 
-The product global-planner category currently seeds only `octoplanner3d`.
-Legacy PCT/A*/direct planning code is kept outside the product backend catalog
-unless a dedicated compatibility entry explicitly opts into it.
+The product global-planner category seeds `octoplanner3d` and the explicit
+native `far` option. OctoPlanner3D remains the default; FAR selection must come
+from the resolved product/runtime contract. Legacy PCT/A*/direct planning code
+stays outside the product backend catalog.
 
 ## Testing
 

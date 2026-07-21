@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from gateway.services import teleop
-from runtime.adapters.native.navigation import NavigationClientError
+from gateway.services.command_boundary import CommandBoundaryError
 from runtime.msgs.geometry import Twist, Vector3
 
 
@@ -23,8 +23,9 @@ class _Client:
     def __init__(self) -> None:
         self.commands = []
 
-    def send_teleop(self, vx, vy, wz, *, request_id=None) -> None:
+    def send_teleop(self, vx, vy, wz, *, request_id=None) -> bool:
         self.commands.append((vx, vy, wz, request_id))
+        return True
 
 
 class _BlockingClient(_Client):
@@ -33,15 +34,16 @@ class _BlockingClient(_Client):
         self.entered = threading.Event()
         self.release = threading.Event()
 
-    def send_teleop(self, vx, vy, wz, *, request_id=None) -> None:
+    def send_teleop(self, vx, vy, wz, *, request_id=None) -> bool:
         self.commands.append((vx, vy, wz, request_id))
         self.entered.set()
         self.release.wait(timeout=2.0)
+        return True
 
 
 class _FailingClient(_Client):
-    def send_teleop(self, vx, vy, wz, *, request_id=None) -> None:
-        raise NavigationClientError("endpoint rejected teleop")
+    def send_teleop(self, vx, vy, wz, *, request_id=None) -> bool:
+        raise CommandBoundaryError("endpoint rejected teleop")
 
 
 def _wait_until(predicate, timeout: float = 1.0) -> bool:
@@ -53,13 +55,8 @@ def _wait_until(predicate, timeout: float = 1.0) -> bool:
     return bool(predicate())
 
 
-def test_teleop_uses_shared_native_navigation_client(monkeypatch):
+def test_teleop_uses_assembled_navigation_command_capability():
     client = _Client()
-    monkeypatch.setattr(
-        teleop,
-        "get_native_navigation_client",
-        lambda *, required=False: client,
-    )
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
         gateway,
@@ -69,6 +66,7 @@ def test_teleop_uses_shared_native_navigation_client(monkeypatch):
         bridge_addr_raw="",
         dds_enabled=True,
     )
+    teleop.bind_navigation_commands(gateway, client)
     command = Twist(
         linear=Vector3(x=0.2, y=-0.1),
         angular=Vector3(z=0.4),
@@ -85,12 +83,7 @@ def test_teleop_uses_shared_native_navigation_client(monkeypatch):
     assert gateway.cmd_vel.messages == []
 
 
-def test_field_teleop_fails_closed_when_native_client_is_unavailable(monkeypatch):
-    monkeypatch.setattr(
-        teleop,
-        "get_native_navigation_client",
-        lambda *, required=False: (_ for _ in ()).throw(NavigationClientError("native client missing")),
-    )
+def test_field_teleop_fails_closed_when_native_capability_is_unavailable():
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
         gateway,
@@ -102,7 +95,7 @@ def test_field_teleop_fails_closed_when_native_client_is_unavailable(monkeypatch
     )
     command = Twist(linear=Vector3(x=0.2), angular=Vector3(z=0.1))
 
-    with pytest.raises(NavigationClientError, match="boundary is unavailable"):
+    with pytest.raises(CommandBoundaryError, match="capability is unavailable"):
         teleop.publish_remote_velocity_request(gateway, command)
 
     teleop.on_joy(gateway, 0.4, 0.0, 0.1)
@@ -139,13 +132,8 @@ def test_native_command_policy_rejects_conflicting_legacy_override():
         )
 
 
-def test_native_joystick_is_nonblocking_and_keeps_only_latest_pending(monkeypatch):
+def test_native_joystick_is_nonblocking_and_keeps_only_latest_pending():
     client = _BlockingClient()
-    monkeypatch.setattr(
-        teleop,
-        "get_native_navigation_client",
-        lambda *, required=False: client,
-    )
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
         gateway,
@@ -155,6 +143,7 @@ def test_native_joystick_is_nonblocking_and_keeps_only_latest_pending(monkeypatc
         bridge_addr_raw="",
         dds_enabled=True,
     )
+    teleop.bind_navigation_commands(gateway, client)
     try:
         started = time.monotonic()
         teleop.on_joy(gateway, 0.1, 0.0, 0.0)
@@ -171,13 +160,8 @@ def test_native_joystick_is_nonblocking_and_keeps_only_latest_pending(monkeypatc
         teleop.shutdown_teleop(gateway)
 
 
-def test_native_release_orders_zero_after_inflight_and_drops_pending(monkeypatch):
+def test_native_release_orders_zero_after_inflight_and_drops_pending():
     client = _BlockingClient()
-    monkeypatch.setattr(
-        teleop,
-        "get_native_navigation_client",
-        lambda *, required=False: client,
-    )
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
         gateway,
@@ -187,6 +171,7 @@ def test_native_release_orders_zero_after_inflight_and_drops_pending(monkeypatch
         bridge_addr_raw="",
         dds_enabled=True,
     )
+    teleop.bind_navigation_commands(gateway, client)
     release_thread = None
     try:
         teleop.on_joy(gateway, 0.3, 0.0, 0.0)
@@ -209,13 +194,8 @@ def test_native_release_orders_zero_after_inflight_and_drops_pending(monkeypatch
         teleop.shutdown_teleop(gateway)
 
 
-def test_native_publish_failure_disables_followup_joystick_commands(monkeypatch):
+def test_native_publish_failure_disables_followup_joystick_commands():
     client = _FailingClient()
-    monkeypatch.setattr(
-        teleop,
-        "get_native_navigation_client",
-        lambda *, required=False: client,
-    )
     gateway = SimpleNamespace(cmd_vel=_Port())
     teleop.init_teleop_state(
         gateway,
@@ -225,6 +205,7 @@ def test_native_publish_failure_disables_followup_joystick_commands(monkeypatch)
         bridge_addr_raw="",
         dds_enabled=True,
     )
+    teleop.bind_navigation_commands(gateway, client)
     try:
         assert teleop.on_joy(gateway, 0.2, 0.0, 0.0) is True
         assert _wait_until(lambda: gateway._teleop_native_publisher.last_error is not None)

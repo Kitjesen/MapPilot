@@ -1,5 +1,9 @@
 # Portable Lean Package Matrix
 
+Status: packaging proposal / dependency audit note, not current runtime contract
+Audience: package split and portability maintainers
+Replaced by: `PRODUCT_MODE_RUNTIME_CONTRACT.md`, `SYSTEM_DESIGN.md`, binding-policy tests
+
 This matrix tracks the bottom-level dependencies LingTu must remove from the default runtime path while keeping optional capabilities available as explicit packages or sidecars.
 
 ## Target

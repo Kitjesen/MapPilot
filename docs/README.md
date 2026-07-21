@@ -21,10 +21,13 @@ live OpenAPI UI; do not use it as the public product-documentation route.
 
 LingTu assembles robot hardware, localization, map products, perception,
 semantic decision making, planning, safety, and operator interfaces into one
-runtime. Its primary design rule is **Module-First**:
+runtime. Its primary design rule is **scoped orchestration**:
 
-- `Module` is the only runtime unit.
-- `Blueprint` is the only orchestration unit.
+- `Module` is the Python runtime unit.
+- `lingtu.assembly` declares the product Module graph.
+- `Blueprint` materializes one application graph; optional Python workers stay
+  under the same Blueprint lifecycle.
+- `RuntimePlan` only resolves and controls managed native product processes.
 - Typed ports and explicit wires are the product data boundary.
 - DDS, shared memory, simulators, and ROS 2 compatibility components are
   transports or adapters, not the business API.
@@ -57,8 +60,10 @@ flowchart LR
 For the physical robot, high-rate sensor, SLAM, and final navigation paths use
 native C++ services and typed DDS at explicit process boundaries. Python owns
 the Module graph, mission coordination, semantic behavior, API surfaces, and
-product contracts. Read [System design](./architecture/SYSTEM_DESIGN.md) for
-the complete layer and ownership model.
+product contracts. The current Thunder command chain is
+`lingtu-nav-dds -> /nav/cmd_vel -> lingtu-driver -> remote Brainstem gRPC`.
+Read [System design](./architecture/SYSTEM_DESIGN.md) for the complete layer
+and ownership model.
 
 ## Start with your goal
 

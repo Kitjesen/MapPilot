@@ -16,6 +16,12 @@ is the orchestration unit. Typed ports and explicit wires carry product data;
 native DDS is used at deliberate process boundaries. ROS 2 is a compatibility
 surface, not the normal product runtime or operator entry point.
 
+On the current Thunder field endpoint, the final hardware command path is
+native-owned: `lingtu-nav-dds` publishes `/nav/cmd_vel`, the single
+`lingtu-driver` consumes it, and `lingtu-driver` forwards checked commands to a
+remote Brainstem controller configured by `/opt/lingtu/config/brainstem.env`.
+Do not add another Python or ROS velocity writer to that field path.
+
 Treat these environments as different evidence levels:
 
 | Environment | Safe first use | What a successful run demonstrates | What it does not demonstrate |
@@ -201,6 +207,7 @@ Start with read-only or no-motion checks on the robot:
 bash scripts/lingtu status
 bash scripts/lingtu doctor
 bash scripts/lingtu dataflow /nav/odometry
+bash scripts/lingtu dataflow /nav/cmd_vel
 bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
 ```
 

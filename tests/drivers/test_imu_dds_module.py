@@ -130,7 +130,7 @@ def test_livox_imu_facade_and_dds_reader_expose_different_risk_boundaries():
 def test_imu_dds_backend_is_registered():
     import lingtu.plugin_seed as plugin_seed
     from drivers.real.imu.dds_module import DdsImuModule
-    from runtime.blueprints.stacks.imu import imu
+    from lingtu.assembly.stacks.imu import imu
     from runtime.registry import get
 
     plugin_seed.seed_builtin_plugins(("imu",))

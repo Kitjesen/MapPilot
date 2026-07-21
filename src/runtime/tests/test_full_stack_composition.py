@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.blueprints.products.thunder import thunder_blueprint
-from runtime.blueprints.stacks.composition import compose_full_stack_modules
-from runtime.blueprints.stacks.system import gnss
+from lingtu.assembly.products.thunder import thunder_blueprint
+from lingtu.assembly.stacks.composition import compose_full_stack_modules
+from lingtu.assembly.stacks.system import gnss
 
 
 def _entry_names(bp) -> set[str]:
@@ -47,7 +47,7 @@ def test_compose_full_stack_modules_builds_minimal_stub_graph() -> None:
     assert "StubDogModule" in names
     assert "nav.mission" in names
     assert "nav.goals" in names
-    assert "PatrolManagerModule" in names
+    assert "PatrolManagerModule" not in names
     assert "TaskSchedulerModule" not in names
     assert "nav.safety" in names
     assert "nav.velocity_mux" in names
@@ -56,7 +56,7 @@ def test_compose_full_stack_modules_builds_minimal_stub_graph() -> None:
     assert "GatewayModule" not in names
 
 
-def test_compose_endpoint_only_stack_keeps_safety_without_python_velocity_mux() -> None:
+def test_compose_endpoint_only_stack_uses_native_safety_and_omits_python_control() -> None:
     bp = compose_full_stack_modules(
         robot="stub",
         driver_module="StubDogModule",
@@ -76,8 +76,8 @@ def test_compose_endpoint_only_stack_keeps_safety_without_python_velocity_mux() 
     )
     names = _entry_names(bp)
 
-    assert "nav.safety" in names
-    assert "GeofenceManagerModule" in names
+    assert "nav.safety" not in names
+    assert "GeofenceManagerModule" not in names
     assert "nav.velocity_mux" not in names
 
 

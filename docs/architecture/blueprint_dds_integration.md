@@ -1,5 +1,9 @@
 # Blueprint–DDS Integration Architecture
 
+Status: current for Module/Blueprint transport mechanics; field product DDS uses native typed endpoint contracts
+Audience: runtime/Blueprint maintainers
+Replaced by: not replaced
+
 This document describes how LingTu's Blueprint orchestration system and DDS
 transport layer work together as a unified communication fabric.
 
@@ -118,14 +122,21 @@ Current profiles:
 | `lidar_pointcloud` | BEST_EFFORT | VOLATILE | 2 | `/slam/registered_cloud`, `/nav/terrain_map` |
 | `high_freq_state` | BEST_EFFORT | VOLATILE | 5 | `/slam/odometry`, `/imu/raw` |
 | `localization_health` | RELIABLE | VOLATILE | 10 | `/slam/localization_health` |
-| `control_commands` | RELIABLE | VOLATILE | 1 | `/nav/cmd_vel`, `/nav/stop` |
+| `final_velocity_command` | RELIABLE | VOLATILE | 1 | `/nav/cmd_vel` |
+| `control_commands` | RELIABLE | VOLATILE | 1 | `/nav/stop`, `/nav/way_point`, `/nav/teleop_cmd_vel` |
+| `navigation_command_request` | RELIABLE | VOLATILE | 32 | `/nav/command/request`, `/nav/exploration/command`, `/nav/inspection/command` |
+| `navigation_command_ack` | RELIABLE | TRANSIENT_LOCAL | 64 | `/nav/command/ack`, `/nav/exploration/ack`, `/nav/inspection/ack` |
+| `inspection_status` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/inspection/status` |
 | `global_path` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/global_path`, `/nav/local_path` |
-| `system_status` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/health_status`, `/robot_state` |
-| `geofence_events` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/geofence_boundary`, `/nav/goal_pose` |
-| `image_stream` | BEST_EFFORT | VOLATILE | 1 | `/camera/image_raw` |
+| `map_grid` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/traversability`, `/nav/exploration_grid` |
+| `system_status` | RELIABLE | TRANSIENT_LOCAL | 1 | `/robot_state`, `/gnss/status`, `/driver/control_state` |
+| `geofence_events` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/goal_pose` |
 | `semantic_scene_graph` | RELIABLE | TRANSIENT_LOCAL | 2 | `/nav/semantic/scene_graph` |
 | `semantic_detections` | BEST_EFFORT | VOLATILE | 2 | `/nav/semantic/detections_3d` |
-| `semantic_nav_events` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/semantic/instruction`, `/nav/semantic/resolved_goal` |
+| `semantic_nav_events` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/semantic/instruction`, `/nav/semantic/status` |
+| `sensor_stream` | BEST_EFFORT | VOLATILE | 256 | `/lidar/raw_frame`, `/imu/raw`, `/slam/odom_prior` |
+| `camera_stream` | BEST_EFFORT | VOLATILE | 1 | `/camera/color/image_raw`, `/camera/depth/image_raw` |
+| `camera_info` | RELIABLE | TRANSIENT_LOCAL | 1 | `/camera/color/camera_info` |
 | `tf` | (ROS 2 defaults) | — | — | `/tf`, `/tf_static` (do not override) |
 
 ### src/runtime/transport/qos.py — QoS Loader
@@ -175,7 +186,7 @@ from runtime.worker_config import WorkerDeployment
 
 dep = WorkerDeployment(
     module_name="PerceptionModule",
-    host="192.168.66.200",     # remote host → DDS auto-selected
+    host="192.0.2.20",         # example remote host -> DDS auto-selected
     transport="auto",          # "shm" | "dds" | "auto" | None
     domain_id=42,              # DDS domain override
     qos_profile="sensor_stream",
@@ -203,7 +214,7 @@ system = (
     Blueprint()
     .add(PerceptionModule)
     .add(NavigationModule)
-    .worker("PerceptionModule", host="192.168.66.200", transport="dds", domain_id=42)
+    .worker("PerceptionModule", host="192.0.2.20", transport="dds", domain_id=42)
     .build(n_workers=2)
 )
 ```
@@ -217,7 +228,7 @@ domain participants based on `fnmatch` pattern rules:
 from runtime.transport.domain_router import DomainRouter, set_global_router
 
 router = DomainRouter({
-    "/slam/*":        {"domain_id": 42, "host": "192.168.66.190"},
+    "/slam/*":        {"domain_id": 42, "host": "192.0.2.10"},
     "/perception/*":  {"domain_id": 0},
     "*":              {"domain_id": 0},
 })
@@ -225,8 +236,11 @@ set_global_router(router)
 
 # Resolve a topic
 route = router.resolve("/slam/map_cloud")
-# route == DomainRoute(domain_id=42, host="192.168.66.190")
+# route == DomainRoute(domain_id=42, host="192.0.2.10")
 ```
+
+The `192.0.2.0/24` addresses above are RFC 5737 documentation examples, not
+LingTu field robot addresses.
 
 Key API:
 - `DomainRouter.resolve(topic) → DomainRoute` — first-match pattern routing.
@@ -299,7 +313,7 @@ Gateway or other modules can expose the snapshot over REST/SSE.
 ## 7. Data Flow Integration Guide
 
 Adding a new data flow to the LingTu blueprint follows a 5-step process.
-Reference template: `src/runtime/blueprints/wires/template.py`.
+Reference template: `src/lingtu/assembly/wires/template.py`.
 
 ### Step 1 — Define Producer and Consumer Modules
 
@@ -321,7 +335,7 @@ Both modules must be registered via `@register(category, name)`.
 Copy `template_specs` from the template, rename, and adjust:
 
 ```python
-from runtime.blueprints.wires.types import WireSpec
+from lingtu.assembly.wires.types import WireSpec
 
 MY_SENSOR_TOPIC = "/my/sensor_data"
 
@@ -343,10 +357,10 @@ def my_sensor_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 ### Step 3 — Register in Full-Stack Wiring
 
 Import and call the new specs function from
-`src/runtime/blueprints/full_stack_wiring.py`:
+`src/lingtu/assembly/full_stack_wiring.py`:
 
 ```python
-from runtime.blueprints.wires.my_flow import my_sensor_specs
+from lingtu.assembly.wires.my_flow import my_sensor_specs
 ...
 specs.extend(my_sensor_specs(ctx))
 ```
@@ -495,7 +509,8 @@ generation — not for runtime data flow.
 | `src/runtime/route_contract/routes.py` | Built-in presets: `robot()`, `replay()`, `sim()` |
 | `src/runtime/route_contract/loader.py` | Route contract YAML loader |
 | `src/runtime/route_contract/validator.py` | Route contract validation |
-| `src/runtime/blueprints/wires/template.py` | WireSpec template for new data-flow integration |
-| `src/runtime/blueprints/full_stack.py` | Full-stack assembly and critical explicit wires |
+| `src/lingtu/assembly/wires/template.py` | WireSpec template for new data-flow integration |
+| `src/lingtu/assembly/profile_builder.py` | Profile-driven full-stack assembly |
+| `src/lingtu/assembly/full_stack_wiring.py` | Critical explicit wires for the full stack |
 | `config/qos_profiles.yaml` | QoS profile definitions (single source of truth) |
 | `scripts/codegen/idl_to_python.py` | IDL → Python dataclass code generator |

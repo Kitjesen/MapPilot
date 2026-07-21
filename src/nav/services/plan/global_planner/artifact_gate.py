@@ -18,7 +18,7 @@ class GlobalPlannerArtifactGateMixin:
         override = getattr(self, "_map_artifact_gate_required", None)
         if override is not None:
             return bool(override)
-        return self._is_octoplanner3d()
+        return self._is_octoplanner3d() or self._is_far()
 
     def _default_map_artifact_gate(self) -> dict[str, Any]:
         required = self._map_artifact_gate_required_by_config()
@@ -77,6 +77,36 @@ class GlobalPlannerArtifactGateMixin:
             gate["required"] = True
             gate["planner"] = self._planner_name
             gate["octomap"] = str(octomap_path)
+            if bundle:
+                gate["map_bundle"] = bundle
+            gate["expected_frame_id"] = expected_frame_id
+            gate["reason"] = (
+                "saved_map_artifact_ok" if gate.get("ok") is True else "saved_map_artifact_missing_or_invalid"
+            )
+            return gate
+
+        if self._is_far():
+            bundle = self._saved_map_artifacts().planner_map_bundle("far")
+            occupancy_path = self._resolve_map_path("far")
+            if not occupancy_path:
+                return {
+                    "schema_version": "lingtu.saved_map_artifacts.gate.v1",
+                    "required": True,
+                    "ok": False,
+                    "reason": "occupancy_required_for_far_planner",
+                    "planner": self._planner_name,
+                    "occupancy": "",
+                    "expected_frame_id": expected_frame_id,
+                    "blockers": ["occupancy grid required for FAR planner"],
+                }
+            gate = self._saved_map_artifacts().validate_artifact_path(
+                occupancy_path,
+                require_occupancy=True,
+                expected_frame_id=expected_frame_id,
+            )
+            gate["required"] = True
+            gate["planner"] = self._planner_name
+            gate["occupancy"] = str(occupancy_path)
             if bundle:
                 gate["map_bundle"] = bundle
             gate["expected_frame_id"] = expected_frame_id

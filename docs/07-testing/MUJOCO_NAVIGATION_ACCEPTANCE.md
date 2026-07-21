@@ -1,6 +1,6 @@
 # MuJoCo Navigation Acceptance
 
-Status: 2026-07-16
+Status: current contract plus accepted evidence as of 2026-07-18
 
 LiDAR optical and scan-time fidelity is a separate gate. See
 [`MUJOCO_MID360_FIDELITY.md`](MUJOCO_MID360_FIDELITY.md) before interpreting a
@@ -89,6 +89,70 @@ failing to render a decodable video blocks the 60 m acceptance result.
 
 This is one accepted run, not the requested `10/10` repeatability result. The
 ten-run campaign starts from zero after the single-run chain is stable.
+
+### Accepted 2026-07-18 complete-stream regression
+
+The complete-observation-stream regression reran the same bounded function
+claim after separating producer timestamps from receiver-side steady-clock
+freshness and removing the local-planner side/rear false-stop veto.
+
+| Check | Result |
+| --- | ---: |
+| Overall | passed; `blockers=[]` |
+| Requested goal distance / final XY error | `59.942 / 0.068 m` |
+| Executed XY path | `67.346 m` |
+| Native goal state | `goal_reached=true` |
+| Input-gate ready samples | `2,368 / 2,368` |
+| Longest motion-period non-ready interval | `0.0 s` |
+| Odom-TF / cloud-pose rejections | `0 / 0` |
+| Navigation loop overrun P99 / peak | `35.91 / 57.93 ms` |
+| Navigation-fixture LiDAR | `2,384` frames in `238.31 s`; no catch-up drops |
+| Final video | H.264, 1920x1080, 5,239 frames, 218.29 s; full decode passed |
+| Candidate / selected-candidate frames | `4,556 / 4,556` |
+| Local-map / visibly populated local-map frames | `5,215 / 3,974` |
+
+Video planner state is joined only by the exact `planner_debug_id` captured in
+the motion row. Missing sidecar IDs fail closed instead of falling back to a
+cross-clock timestamp guess. The video gate requires a complete decode,
+brightness compliance, candidate and selected-path overlays, and local-map
+content that actually lands inside the inset.
+
+Evidence:
+
+```text
+artifacts/mujoco_industrial_park_60m_full_video_20260718_d224/report.json
+artifacts/mujoco_industrial_park_60m_full_video_20260718_d224/motion/motion_complete.json
+artifacts/mujoco_industrial_park_60m_full_video_20260718_d224/motion/native_navigation_final.mp4
+artifacts/mujoco_industrial_park_60m_full_video_20260718_d224/motion/native_navigation_final_report.json
+```
+
+This remains one accepted navigation run. It does not advance the `10/10`
+campaign count and does not promote rolling-scan, SLAM-scale, dynamic-obstacle,
+or map-quality gates.
+
+### Current 10-run long-range campaign command
+
+Use the wrapper when the claim is repeatability across ten 50-70 m native-DDS
+MuJoCo navigation attempts:
+
+```powershell
+$env:PYTHONPATH='src;.'
+python sim/scripts/mujoco/long_range_navigation_acceptance.py `
+  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json `
+  --attempts 10 `
+  --min-distance-m 50 `
+  --max-distance-m 70 `
+  --record-video `
+  --strict `
+  --artifact-dir artifacts/mujoco_long_range_navigation `
+  --json-out artifacts/mujoco_long_range_navigation/long_range_acceptance_report.json `
+  --html-summary artifacts/mujoco_long_range_navigation/summary.html
+```
+
+The wrapper writes one per-attempt manifest and run directory, then aggregates
+successes, failures, blockers, video paths, and per-attempt goal metrics. A
+`10/10` claim requires the aggregate report to have `ok=true`,
+`all_success=true`, and `successes=10`.
 
 This gate consumes a prebuilt deterministic MuJoCo scene map whose metadata
 truthfully records `mujoco_synthetic_map`. That is permitted because the gate

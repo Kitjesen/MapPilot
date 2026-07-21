@@ -477,6 +477,8 @@ def build_interactive_plan(
         command_vx=0.0,
         manifest=manifest,
     )
+    if scenario == "obstacle_stop" and state_provider == "mujoco_fixture":
+        plan["scene_variant"] = "obstacle_stop_demo"
     sensor = next(item for item in plan["processes"] if item["name"] == "sensor")
     command = list(sensor["command"])
     if state_provider == "mujoco_fixture":

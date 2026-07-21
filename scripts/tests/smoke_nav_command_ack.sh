@@ -7,7 +7,7 @@ domain_id="${LINGTU_TEST_DDS_DOMAIN_ID:-191}"
 status_file="${TMPDIR:-/tmp}/lingtu_nav_command_ack_status.json"
 log_file="${TMPDIR:-/tmp}/lingtu_nav_command_ack.log"
 
-endpoint="${build_dir}/lingtu_nav_native_endpoint"
+endpoint="${build_dir}/navd"
 control="${build_dir}/lingtu_nav_control"
 path_library="${source_dir}/src/nav/local/paths"
 

@@ -127,14 +127,14 @@ class TestLocalPlanner:
     @pytest.mark.parametrize("backend", ["simple"])
     def test_instantiation_with_backend(self, backend: str):
         """Creating a LocalPlanner with a valid backend should succeed."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend=backend)
         assert mod._backend == backend
 
     def test_ports(self):
         """All In/Out ports declared on the class must be registered."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
         from runtime.msgs.geometry import PoseStamped
         from runtime.msgs.nav import Odometry, Path
         from runtime.msgs.sensor import PointCloud2
@@ -183,7 +183,7 @@ class TestLocalPlanner:
 
     def test_lifecycle(self):
         """setup() -> start() -> stop() transitions without error (simple backend)."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         assert not mod._running
@@ -201,14 +201,14 @@ class TestLocalPlanner:
 
     def test_unknown_backend_raises(self):
         """Passing a bogus backend name must raise ValueError."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         with pytest.raises(ValueError, match="Unknown local_planner backend 'bogus'"):
             LocalPlanner(backend="bogus")
 
     def test_alive_toggles_on_start_stop(self):
         """alive Out[bool] must publish True on start(), False on stop()."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         mod.setup()
@@ -331,7 +331,7 @@ class TestPathFollower:
 
 def test_all_three_modules_have_alive_port():
     """Every autonomy module must expose an alive Out[bool] port."""
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
     from nav.local.path_follower import PathFollower
     from nav.local.terrain import Terrain
 
@@ -380,7 +380,7 @@ def test_three_module_blueprint_wiring():
     Verifies that Terrain, LocalPlanner, and PathFollower
     can be added to a Blueprint and built without wiring conflicts.
     """
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
     from nav.local.path_follower import PathFollower
     from nav.local.terrain import Terrain
     from runtime.blueprint import Blueprint

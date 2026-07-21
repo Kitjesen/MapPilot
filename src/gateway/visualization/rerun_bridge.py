@@ -1,4 +1,4 @@
-"""RerunBridgeModule 鈥?on-demand Rerun visualization as a Module.
+"""RerunBridgeModule — on-demand Rerun visualization as a Module.
 
 Logs Module port data to the Rerun web viewer. This module is a visualization
 consumer, not the product runtime communication boundary.

@@ -29,7 +29,7 @@ def _load_coverage_audit():
 def test_first_wave_targets_cover_deployment_blockers():
     first_wave = {target.key for target in first_wave_targets()}
 
-    assert first_wave == {"path_safety"}
+    assert first_wave == {"path_safety", "gateway_pointcloud_codec"}
 
 
 def test_every_kernel_has_stable_boundary_and_target_path():

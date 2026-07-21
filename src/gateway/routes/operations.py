@@ -328,8 +328,7 @@ def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
 
 
 def _relocalization_service_unavailable_response(gw) -> Any | None:
-    service = getattr(gw, "_relocalization_service", None)
-    if service is not None:
+    if gw.localization.available:
         return None
     return _slam_operation_response(
         False,
@@ -532,7 +531,21 @@ def register_operation_routes(app, gw) -> None:
                 },
             )
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, gw._begin_exploration)
+        try:
+            result = await loop.run_in_executor(None, gw._begin_exploration)
+        except RuntimeError as exc:
+            message = str(exc)
+            rejected = "rejected:" in message.lower()
+            return JSONResponse(
+                status_code=409 if rejected else 503,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": ("exploration_command_rejected" if rejected else "exploration_command_unavailable"),
+                    "message": message,
+                    "detail": {"source": ("native_exploration_ack" if rejected else "exploration_command_boundary")},
+                },
+            )
         gw._exploring = True
         gw.push_event({"type": "exploring", "active": True})
         return {"status": result}
@@ -544,7 +557,7 @@ def register_operation_routes(app, gw) -> None:
         responses={503: {"model": GatewayErrorResponse}},
     )
     async def explore_stop():
-        if not gw._explorer_available():
+        if not gw._explorer_stop_available():
             return JSONResponse(
                 status_code=503,
                 content={
@@ -556,7 +569,21 @@ def register_operation_routes(app, gw) -> None:
                 },
             )
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, gw._end_exploration)
+        try:
+            result = await loop.run_in_executor(None, gw._end_exploration)
+        except RuntimeError as exc:
+            message = str(exc)
+            rejected = "rejected:" in message.lower()
+            return JSONResponse(
+                status_code=409 if rejected else 503,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": ("exploration_command_rejected" if rejected else "exploration_command_unavailable"),
+                    "message": message,
+                    "detail": {"source": ("native_exploration_ack" if rejected else "exploration_command_boundary")},
+                },
+            )
         gw._exploring = False
         gw.push_event({"type": "exploring", "active": False})
         return {"status": result}
@@ -578,16 +605,13 @@ def register_operation_routes(app, gw) -> None:
         selected = _parse_service_names(names)
         service_details: dict[str, Any] = {}
         try:
-            from runtime.service_manager import get_service_manager
+            from lingtu.control import ProductControl
 
-            svc = get_service_manager()
-            services = svc.status(*selected)
-            if hasattr(svc, "status_details"):
-                try:
-                    service_details = svc.status_details(*selected, dds_check=dds_check)
-                except TypeError:
-                    service_details = svc.status_details(*selected)
-                _mark_gateway_http_observed(service_details)
+            services, service_details = ProductControl().status(
+                tuple(selected),
+                dds_check=dds_check,
+            )
+            _mark_gateway_http_observed(service_details)
         except Exception:
             services = {name: "unknown" for name in selected}
         field_readiness = _load_field_service_readiness()
@@ -616,12 +640,11 @@ def register_operation_routes(app, gw) -> None:
     async def slam_status():
         service_details: dict[str, Any] = {}
         try:
-            from runtime.service_manager import get_service_manager
+            from lingtu.control import ProductControl
 
-            svc = get_service_manager()
-            services = svc.status(*_SLAM_STATUS_SERVICES)
-            if hasattr(svc, "status_details"):
-                service_details = svc.status_details(*_SLAM_STATUS_SERVICES)
+            services, service_details = ProductControl().status(
+                tuple(_SLAM_STATUS_SERVICES),
+            )
         except Exception:
             services = {
                 "lidar": "unknown",
@@ -696,6 +719,7 @@ def register_operation_routes(app, gw) -> None:
         response_model=SlamOperationResponse,
         responses={
             400: {"model": SlamOperationResponse},
+            409: {"model": SlamOperationResponse},
             500: {"model": SlamOperationResponse},
         },
     )
@@ -709,15 +733,20 @@ def register_operation_routes(app, gw) -> None:
                 message=f"Unknown profile: {requested_profile}",
                 status_code=400,
             )
+        if not gw._manage_session_services:
+            return _slam_operation_response(
+                False,
+                message=(
+                    "SLAM is owned by the active Profile/Endpoint; switch the "
+                    "product instead of hot-switching Gateway services"
+                ),
+                status_code=409,
+            )
         try:
-            from runtime.service_manager import get_service_manager
+            from lingtu.control import ProductControl
 
-            svc = get_service_manager()
             plan = slam_switch_plan(profile)
-            svc.stop(*plan.stop)
-            if plan.ensure:
-                svc.ensure(*plan.ensure)
-            ok = svc.wait_ready(*plan.wait_ready, timeout=10.0) if plan.wait_ready else True
+            ok = ProductControl().legacy_transition(plan, timeout_s=10.0)
             if ok:
                 gw._cached_slam_profile = "stopped" if profile == "stop" else profile
                 gw._slam_profile_ts = time.time()
@@ -739,16 +768,32 @@ def register_operation_routes(app, gw) -> None:
         },
     )
     async def slam_restart():
-        try:
-            from runtime.service_manager import get_service_manager
+        if not gw._manage_session_services:
+            try:
+                from lingtu.control import ProductControl
 
-            svc = get_service_manager()
-            svc.stop("slam")
+                report = ProductControl().restart("slam")
+                clear_cache = getattr(gw, "clear_localization_runtime_cache", None)
+                if callable(clear_cache):
+                    clear_cache(reason="manual_localization_restart")
+                gw._cached_slam_profile = "native_dds"
+                gw._slam_profile_ts = time.time()
+                return slam_operation_payload(
+                    report.ok,
+                    profile="native_dds",
+                    message="Native SLAM restarted",
+                    details=report.as_dict(),
+                )
+            except Exception as e:
+                return _slam_operation_response(False, message=str(e), status_code=500)
+        try:
+            from lingtu.control import ProductControl
+
+            control = ProductControl()
             clear_cache = getattr(gw, "clear_localization_runtime_cache", None)
             if callable(clear_cache):
                 clear_cache(reason="manual_localization_restart")
-            svc.ensure("slam")
-            ok = svc.wait_ready("slam", timeout=20.0)
+            ok = control.legacy_restart("slam", timeout_s=20.0)
             if ok:
                 gw._cached_slam_profile = "native_dds"
                 gw._slam_profile_ts = time.time()
@@ -780,7 +825,7 @@ def register_operation_routes(app, gw) -> None:
             return unavailable_response
 
         try:
-            result = gw._relocalization_service.trigger_global_relocalize(timeout_s=10.0)
+            result = gw.localization.trigger_global_relocalize(timeout_s=10.0)
             if result.timed_out:
                 return _slam_operation_response(
                     False,
@@ -850,7 +895,7 @@ def register_operation_routes(app, gw) -> None:
         if unavailable_response is not None:
             return unavailable_response
         try:
-            result = gw._relocalization_service.relocalize_saved_map(
+            result = gw.localization.relocalize_saved_map(
                 pcd_path,
                 x,
                 y,
@@ -933,7 +978,7 @@ def register_operation_routes(app, gw) -> None:
         if unavailable_response is not None:
             return unavailable_response
         try:
-            result = gw._relocalization_service.track_against_map(
+            result = gw.localization.track_against_map(
                 pcd_path,
                 x,
                 y,

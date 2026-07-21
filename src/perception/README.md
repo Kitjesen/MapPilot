@@ -20,7 +20,8 @@ changed.
 | `research/` | Offline evaluation/benchmark harness (USS-Nav vs. PCT-A* on HM3D/Gibson) | paper tooling, not part of the robot pipeline |
 | `reconstruction/` | 3D volumetric (TSDF) reconstruction pipeline | production, unchanged by this reorg |
 | `api/` + `impl/` | Alternate factory-pattern construction path for `yolo_world` + `clip` + `instance` tracker | production (narrow), unchanged by this reorg |
-| `adapters/ros2/` | ROS2 bag-reader + publisher protocol adapters | production, unchanged by this reorg |
+| `inspection/` | Native parking/inspection evidence bridge and runtime Module adapter | production interface |
+| `adapters/ros2/` | ROS2 bag-reader + publisher protocol adapters | compatibility/offline only; not the product default |
 | `examples/` | Usage demos and offline analysis scripts | dev tooling |
 | `tests/` | Unit tests (flat, mirrors repo convention) | -- |
 
@@ -32,6 +33,11 @@ entry points that span more than one subpackage:
 | `perception_module.py` | The production `PerceptionModule` (`@register("perception", "scene")`): detector + encoder + tracker + scene graph, wired into the runtime blueprint. |
 | `service.py` | `PerceptionService` -- a framework-free (no ROS/GPU setup) detect->project->encode->track coordinator used by tests and standalone tooling. |
 | `__init__.py` | Package docstring only. |
+
+Inspection-specific evidence analysis is intentionally separate from the main
+scene-graph tracker. `inspection/bridge_module.py` is the Module boundary for
+native inspection evidence, and `inspection/native_bridge.*` is the C++ bridge
+used by the current parking/inspection contract.
 
 ### `detection/`
 
@@ -107,8 +113,9 @@ imported by any Module, blueprint, or registry entry.
   perception concrete classes directly except `memory.modules.vector_memory_module`
   and `memory.spatial.topology_graph`, both of which go through
   `runtime.registry` / duck typing rather than a direct `import perception...`.
-- ROS 2 code stays under `adapters/ros2/`; the top-level perception package is
-  not a ROS package and should not own `package.xml`, `setup.py`, or `srv/`.
+- ROS 2 code stays under `adapters/ros2/` as compatibility/offline tooling. The
+  top-level perception package is not a ROS package and should not own
+  `package.xml`, `setup.py`, or `srv/`.
 
 ## History: why this layout, and what was here before
 
@@ -222,18 +229,15 @@ but the directories themselves did not move).
   representation that lives here, and (3) moving code across top-level
   domain packages (`perception/` -> `nav/`) is a bigger, separately-reviewable
   change than an intra-package reorg. Flagged for a follow-up decision.
-- **`keyframe_selector.py` and `bpu_qp_bridge.py` appear unused**: no
-  production, test, or example code imports `keyframe_selector.py`. No
-  production code path or CLI script calls `bpu_qp_bridge.create_perception_pipeline()`
-  either -- `scripts/perception/live_track.py` re-implements the same
-  FusionMOT/OSNet wiring inline instead of reusing it. Neither was deleted in
-  this pass (out of scope for a structural reorg), but both are candidates
-  for removal or for wiring in if still wanted.
+- **Legacy cleanup completed**: the unused `keyframe_selector.py` gate was
+  removed. The former all-in-one `bpu_qp_bridge.py` was replaced by the
+  explicit tracker modules and services under `tracking/`; live demos should
+  use those current boundaries instead of reviving the retired bridge.
 
 ## C++/native rewrite candidates (recommended, not yet implemented)
 
 This repo already has a working pattern for moving hot Python paths to native
-code: `src/nav/kernel/` (header-only C++ exposed to Python via nanobind,
+code: `src/nav/cpp/` (C++ hot paths exposed through the `src/nav/kernel/` nanobind loader,
 additive `@register(...)` backends so the pure-Python path stays as a
 fallback -- see `terrain`, `local_planner`, and `path_follower` backends, and
 the SoA layout / CSR sparse format / `scorePathFast` LUT / OpenMP scoring

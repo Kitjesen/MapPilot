@@ -1,5 +1,9 @@
 # Thunder Runtime Refactor Plan
 
+Status: superseded field-deployment plan; historical context only
+Audience: maintainers auditing old Thunder/LCM migration decisions
+Replaced by: `NATIVE_RUNTIME.md`, `NAVIGATION_RUNTIME_DATAFLOW.md`, `PRODUCT_MODE_RUNTIME_CONTRACT.md`
+
 Superseded for field deployment: Thunder now uses the typed DDS C++ services
 (`lingtu-livox-dds`, `lingtu-slam-dds`, `lingtu-traversability-dds`,
 `lingtu-nav-dds`). Historical LCM nav adapter notes below are kept as context
@@ -48,7 +52,7 @@ Product profiles answer: what should Thunder do?
 Owned by:
 
 - `src/runtime/profiles/catalog/products.py`
-- `src/runtime/blueprints/products/thunder.py`
+- `src/lingtu/assembly/products/thunder.py`
 
 Rules:
 
@@ -133,7 +137,7 @@ Owned by:
 - `src/*/adapters/ros2/`
 - `src/runtime/adapters/dds/`
 - `src/runtime/adapters/lcm/`
-- `src/runtime/adapters/native/`
+- `src/nav/adapters/native/` and `src/localization/adapters/`
 - future endpoint-specific adapter packages
 
 Rules:
@@ -143,7 +147,7 @@ Rules:
 - LCM and DDS endpoint contracts live in compat code and must use
   product-neutral schemas rather than ROS message type names.
 - The canonical `thunder_field` localization ingress is
-  `CppSlamStatusAdapterModule` in `src/runtime/adapters/native/localization_adapter.py`
+  `CppSlamStatusAdapterModule` in `src/localization/adapters/status.py`
   (`localization_adapter=cpp_slam_status`), consuming the typed
   `lingtu-slam-dds` C++ service status/health stream.
   `src/runtime/adapters/dds/localization_adapter.py` (`dds_endpoint` backend)
@@ -278,7 +282,7 @@ Contract:
   command velocity.
 - Keep LCM endpoint code only for smoke/replay compatibility paths.
 - Use `CppSlamStatusAdapterModule` (`localization_adapter=cpp_slam_status`,
-  in `src/runtime/adapters/native/localization_adapter.py`) for C++ SLAM
+  in `src/localization/adapters/status.py`) for C++ SLAM
   status and localization ingress.
 - Use `lingtu-nav-dds` for native navigation goal/path/cmd_vel exchange.
 - Use `lingtu-driver` as the only product `/nav/cmd_vel` hardware consumer.

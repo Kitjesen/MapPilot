@@ -23,7 +23,7 @@ Gateway / GoalService / Explore
   `navigation()` and `inspection()`.
 - `client_c.h` is the stable cross-language ABI. Version and capability checks
   fail early when Python and the deployed shared library do not match.
-- `runtime/adapters/native/navigation_abi.py` owns the process-wide ctypes
+- `nav/adapters/native/abi.py` owns the process-wide ctypes
   handle. `navigation.py` and `inspection_commands.py` are small Python-facing
   interfaces over that same handle; they never create Python DDS writers.
 - The endpoint is the authority. A successful DDS write is not admission; only

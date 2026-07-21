@@ -1,13 +1,22 @@
-# LingTu: Module-First Autonomous Navigation Runtime
+# LingTu Product Runtime Architecture
+
+Status: current system design
+Audience: all architecture, runtime, product, and field-readiness contributors
+Replaced by: not replaced
 
 ## Abstract
 
-LingTu is an autonomous navigation runtime for outdoor quadruped robots. Its
-central design decision is to make `Module` the only runtime unit and
-`Blueprint` the only orchestration unit. Perception, mapping, planning, safety,
-and gateway functions communicate through typed ports and explicit wires. ROS 2,
-DDS, LCM, shared memory, and simulator bridges are treated as transports or
-compatibility adapters rather than the application contract.
+LingTu is an autonomous navigation runtime for outdoor quadruped robots. It has
+two deliberately separate orchestration scopes. Inside one Python application
+runtime, `Module` is the runtime unit and `Blueprint` materializes typed ports
+and explicit wires. The default graph is in-process; optional Python workers
+remain owned by the same Blueprint and are not product services. At the host
+process boundary, Runtime Graph Product and Endpoint
+contracts compile one `Product` containing its Blueprint and optional
+`RuntimePlan`; the external `Launcher` applies that process plan. The product
+data boundary is native typed CycloneDDS. ROS 2, LCM, shared
+memory, and simulator bridges are compatibility or optimization adapters rather
+than the application contract.
 
 This document records the current architecture, the reason for the main
 boundaries, and the validation surface that prevents navigation internals from
@@ -30,10 +39,14 @@ replaceable without turning every module into a ROS/DDS/topic-specific client.
 
 | Principle | Meaning |
 | --- | --- |
-| Module-First | Runtime behavior lives in `Module` classes with typed `In[T]` and `Out[T]` ports. |
-| Blueprint-only orchestration | Profiles assemble modules and explicit wires; modules do not discover the system graph. |
+| Module-First, in process | Python runtime behavior lives in `Module` classes with typed `In[T]` and `Out[T]` ports. |
+| Blueprint mechanism | `runtime.blueprint` materializes one application-owned Module graph. It may use internal Python workers, but it does not own native services. |
+| Product assembly | `lingtu.assembly` chooses LingTu products, stacks, adapters, and wires, then produces a Blueprint. |
+| RuntimePlan scope | Product declares logical process roles; Endpoint maps them to deployment targets; RuntimePlan orders startup, shutdown, timeout, and lifecycle ownership. |
+| Launcher scope | `lingtu.launcher` is the only process-plan executor. It applies systemd order, mandatory readiness, fail-closed rollback, and guarded single-process restart. Full-plan apply runs outside the managed application service. |
+| Product control | `lingtu.control.ProductControl` recompiles the active Profile/Endpoint and delegates process restart to Launcher; it never invents a unit name or readiness rule. |
 | Contract before backend | Navigation depends on `GlobalPlanRequest` and `GlobalPlanResult`, not OctoPlanner3D internals. |
-| Adapter isolation | ROS 2, DDS, LCM, simulators, and hardware SDKs stay at explicit adapter boundaries. |
+| Adapter isolation | Native DDS, ROS 2, LCM, simulators, and hardware SDKs stay at explicit adapter boundaries. Product native DDS is typed and schema-owned; ROS/LCM are opt-in compatibility only. |
 | Safety as a first-class layer | Stop signals, geofence checks, local planner stops, and velocity mux arbitration remain outside planner internals. |
 | Evidence over claims | Simulation, endpoint communication, and hardware readiness are separate validation claims. |
 
@@ -41,25 +54,37 @@ replaceable without turning every module into a ROS/DDS/topic-specific client.
 
 ```text
 Profile
-  -> resolved runtime spec
-  -> Blueprint
-  -> Module graph
-  -> ports and wires
-  -> selected transports
+  -> resolved config + Endpoint
+  -> compile_product()
+       -> Product
+            -> Blueprint -> Module graph -> ports and wires
+            -> RuntimePlan -> Launcher -> native processes -> typed DDS
+                              ^
+                              ProductControl (status / guarded restart)
 ```
 
-`Profile` decides product intent. `Blueprint` decides module composition.
-`Wire` decides which output feeds which input. `Transport` decides how bytes or
-objects move between endpoints.
+`Profile` selects product intent and endpoint. `compile_product()` is the only
+compiler and produces both orchestration scopes without starting either one.
+`RuntimePlan` decides which managed native processes run on that endpoint;
+`Launcher` executes it. `ProductControl` is the operational API for a running
+product and may restart only a process present in that compiled plan.
+`lingtu.assembly` decides product composition.
+`Blueprint` materializes that application Module graph.
+`Wire` decides which output feeds which input. `Transport`
+decides how bytes or objects move between endpoints. Acceptance endpoints may
+delegate lifecycle ownership to one bounded acceptance runner; they must not
+publish a partial RuntimePlan.
 
 ```text
 Port:      Module declares In[T] / Out[T].
 Wire:      Blueprint declares A.out -> B.in.
-Transport: Local, DDS, LCM, shared memory, ROS adapter, replay, or future binary schema.
+Transport: Local, native typed DDS, shared memory, replay, or explicit ROS/LCM compatibility adapter.
 ```
 
-This is not DDS. DDS can be one transport behind a wire. The product contract is
-the module message and channel contract.
+For Module-to-Module traffic this is not automatically DDS: local callbacks are
+the default. For product cross-process field traffic, DDS is the typed endpoint
+transport and must use LingTu IDL/message contracts rather than generic Python
+payloads.
 
 ## 4. Layered System
 
@@ -108,9 +133,9 @@ GlobalPlanResult:
   report
 ```
 
-OctoPlanner3D is the default map-backed algorithm backend. PCT/tomogram is
-retired from the product runtime. Direct path planning is used only for
-explicit mapless modes.
+OctoPlanner3D is the default map-backed algorithm backend. PCT/tomogram,
+A*/direct, and ROS planner adapters are compatibility or diagnostic backends
+only; they must not become the default field product path.
 
 ## 6. Mapping and Planning Artifacts
 
@@ -135,9 +160,9 @@ must declare transport explicitly.
 | Transport | Current role | Constraint |
 | --- | --- | --- |
 | local port | default module graph | Python object boundary only. |
-| DDS | selected typed boundaries | Must use schema/version/frame/time, not long-term pickle payloads. |
-| LCM | endpoint/field bridge | Useful at robot boundary; not the universal internal bus. |
-| shared memory | high-volume candidate | Needs stable point-cloud/image schemas and performance gates. |
+| DDS | product cross-process field boundary | Must use LingTu IDL/schema/version/frame/time; generic Python DDS is compatibility/diagnostics only. |
+| LCM | replay/debug compatibility | Not a product data plane and not selected by field product profiles. |
+| shared memory | high-volume same-host payloads, especially camera frames | Needs DDS/status metadata and explicit readiness gates. |
 | ROS 2 | compatibility adapter | Not allowed as normal module business logic. |
 
 ## 8. UI and SDK Surface
@@ -176,8 +201,8 @@ mux validation on the selected target.
 
 - Some historical docs still describe ROS 2 as the primary runtime model.
 - Some simulation evidence documents are valid as simulation evidence only.
-- DDS and shared-memory transports need stable cross-language schemas before
-  they become long-term product interfaces.
+- DDS product topics now use typed LingTu IDL; remaining generic DDS/LCM
+  adapters are compatibility or diagnostics surfaces.
 - UI contracts are being normalized; planner internals should not be exposed
   directly to frontend code.
 
@@ -185,6 +210,7 @@ mux validation on the selected target.
 
 1. Complete typed planner/map/status contracts for UI and SDK consumption.
 2. Make transport selection visible in profile resolution.
-3. Replace pickle-like DDS payloads with schema-versioned typed messages.
-4. Keep ROS 2 compatibility only at explicit adapters.
+3. Keep ROS 2 and LCM compatibility only at explicit adapters.
+4. Keep camera/image bulk payloads on the SHM-backed native path with typed DDS
+   metadata/status where practical.
 5. Move stale design notes into `archive/` once a current replacement exists.

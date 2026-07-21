@@ -14,7 +14,7 @@ from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_PLANNING_FRAME_ID,
     _resolve_octoplanner3d_map,
 )
-from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
+from runtime.profiles.product_mode_contracts import PRODUCT_CONTRACTS, PRODUCT_MODE_CONTRACTS
 
 _ACTIVE_OCTOPLANNER3D_MAP = _resolve_octoplanner3d_map()
 THUNDER_MAP_ARTIFACT_CONFIG = dict(
@@ -54,7 +54,6 @@ THUNDER_OCTO_CONFIG = dict(
 PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     "teleop": dict(
         _desc="Remote-control mode: operator command through Gateway/Teleop, no navigation decisions",
-        product_mode="teleop",
         slam_profile="none",
         llm="mock",
         planner="direct",
@@ -74,9 +73,8 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         gateway_port=DEFAULT_GATEWAY_PORT,
     ),
     "teleop_avoid": dict(
-        _desc="Remote-control obstacle-avoidance mode: operator drives, SLAM/maps/safety may veto unsafe motion",
-        product_mode="teleop_avoid",
-        slam_profile="localizer",
+        _desc="Native assisted teleoperation with live SLAM, local obstacle detours, and final command safety",
+        slam_profile="fastlio2",
         llm="mock",
         planner="direct",
         enable_navigation=False,
@@ -114,14 +112,9 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     ),
     "map": dict(
         _desc="Build a new map of the environment",
-        product_mode="mapping",
         slam_profile="fastlio2",
         llm="mock",
         planner="direct",
-        map_path=_ACTIVE_OCTOPLANNER3D_MAP,
-        plan_safety_policy="reject",
-        fallback_planner_name="",
-        **THUNDER_OCTO_CONFIG,
         enable_navigation=False,
         enable_native=False,
         enable_semantic=False,
@@ -135,8 +128,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         gateway_port=DEFAULT_GATEWAY_PORT,
     ),
     "tracking": dict(
-        _desc="Tracking mode: follow supplied path/waypoint with local planning and safety, no semantic decisions",
-        product_mode="tracking",
+        _desc="Follow explicit map-frame goals with native planning and safety, without semantic goal selection",
         slam_profile="localizer",
         llm="mock",
         planner="octoplanner3d",
@@ -153,7 +145,6 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     ),
     "nav": dict(
         _desc="Navigate using a saved map",
-        product_mode="navigation",
         llm="qwen",
         planner="octoplanner3d",
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
@@ -171,9 +162,8 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         path_follower_max_speed=0.20,
         path_follower_min_speed=0.08,
         **THUNDER_OCTO_CONFIG,
-        # Keep autonomy inside the Module graph. The default local planner and
-        # path follower are ROS-free nanobind/nav_kernel backends; legacy ROS2
-        # NativeModule backends stay explicit compatibility choices only.
+        # This historical flag only disables legacy Python NativeModule
+        # backends. The thunder_field endpoint still owns navigation in C++.
         enable_native=False,
         enable_semantic=True,
         enable_gateway=True,
@@ -220,7 +210,6 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     ),
     "explore": dict(
         _desc="Explore unknown area (wavefront frontier under navigation stack)",
-        product_mode="exploration",
         slam_profile="fastlio2",
         llm="qwen",
         planner="octoplanner3d",
@@ -243,9 +232,8 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     ),
     "tare_explore": dict(
         _desc="Explore via LingTu-owned TARE-style frontier/viewpoint selection",
-        product_mode="exploration",
-        # Native TARE selects coverage goals from live snapshots, while the
-        # current global planner still requires a validated saved OctoMap.
+        # The current native global planner consumes a validated saved OctoMap.
+        # Live ExplorationGrid snapshots select coverage goals but do not yet replace it.
         slam_profile="localizer",
         llm="qwen",
         planner="octoplanner3d",
@@ -266,7 +254,6 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     ),
     "inspection": dict(
         _desc="Inspection mode: native C++ multi-point routes over saved-map navigation",
-        product_mode="inspection",
         slam_profile="localizer",
         llm="qwen",
         planner="octoplanner3d",
@@ -288,34 +275,15 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     ),
 }
 
+for _profile_name, _contract in PRODUCT_CONTRACTS.items():
+    if _profile_name not in PRODUCT_PROFILE_CONFIGS:
+        continue
+    PRODUCT_PROFILE_CONFIGS[_profile_name]["product_mode"] = _contract.product_mode
+
 PRODUCT_INTENT_PROFILES = PRODUCT_PROFILE_CONFIGS
 
-PRODUCT_PROFILES = (
-    "teleop",
-    "teleop_avoid",
-    "lite",
-    "map",
-    "tracking",
-    "nav",
-    "inspection",
-    "explore",
-    "tare_explore",
-    "super_lio",
-    "super_lio_relocation",
-)
-
-PRODUCT_MODE_PROFILES = (
-    "teleop",
-    "teleop_avoid",
-    "map",
-    "tracking",
-    "nav",
-    "inspection",
-    "tare_explore",
-)
-
-if set(PRODUCT_MODE_PROFILES) != set(PRODUCT_MODE_CONTRACTS):
-    raise RuntimeError("product mode profiles and product mode contracts differ")
+PRODUCT_PROFILES = tuple(PRODUCT_PROFILE_CONFIGS)
+PRODUCT_MODE_PROFILES = tuple(PRODUCT_MODE_CONTRACTS)
 
 LIGHTWEIGHT_PRODUCT_PROFILES = ("lite",)
 OPTIONAL_NATIVE_PRODUCT_PROFILES: tuple[str, ...] = ()

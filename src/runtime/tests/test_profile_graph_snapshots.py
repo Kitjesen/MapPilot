@@ -4,7 +4,17 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.blueprints.stacks.navigation import (
+from lingtu.assembly.graph import (
+    LIGHTWEIGHT_PRODUCT_PROFILES,
+    OPTIONAL_NATIVE_PRODUCT_PROFILES,
+    PRODUCT_PROFILES,
+    PROFILE_SNAPSHOT_TARGETS,
+    SIMULATION_PROFILES,
+    blueprint_for_profile,
+    graph_for_profile,
+    resolve_profile_config,
+)
+from lingtu.assembly.stacks.navigation import (
     autonomy_stack_config,
     frontier_module_config,
     navigation_config,
@@ -15,16 +25,7 @@ from runtime.contracts.simulation import (
     runtime_contracts_for_profile,
     simulation_runtime_contract,
 )
-from runtime.introspection.profile_graph import (
-    LIGHTWEIGHT_PRODUCT_PROFILES,
-    OPTIONAL_NATIVE_PRODUCT_PROFILES,
-    PRODUCT_PROFILES,
-    PROFILE_SNAPSHOT_TARGETS,
-    SIMULATION_PROFILES,
-    blueprint_for_profile,
-    graph_for_profile,
-    resolve_profile_config,
-)
+from runtime.graph.loader import load_runtime_graph
 from runtime.profiles.binding_policy import (
     LEGACY_SENSOR_BINDING_KEYS,
     legacy_sensor_binding_violations,
@@ -153,7 +154,6 @@ def test_runtime_data_flow_stages_define_operator_relevant_contract():
 def test_product_modes_start_and_forbid_expected_module_groups():
     for profile, contract in PRODUCT_MODE_CONTRACTS.items():
         modules = set(graph_for_profile(profile).modules)
-        assert contract.required_modules <= modules, profile
         assert contract.forbidden_modules.isdisjoint(modules), profile
 
 
@@ -169,14 +169,14 @@ def test_runtime_product_modes_start_and_forbid_expected_module_groups():
             manage_external_services=False,
         )
         modules = set(graph.modules)
-        assert contract.required_modules <= modules, profile
         assert contract.forbidden_modules.isdisjoint(modules), profile
 
 
-def test_product_modes_required_wires_are_contract_locked():
-    for profile, contract in PRODUCT_MODE_CONTRACTS.items():
-        wires = _wire_set(graph_for_profile(profile))
-        assert contract.required_wires <= wires, profile
+def test_product_mode_contracts_do_not_encode_blueprint_implementation_details():
+    for contract in PRODUCT_MODE_CONTRACTS.values():
+        payload = contract.as_dict()
+        assert "required_modules" not in payload
+        assert "required_wires" not in payload
 
 
 def test_product_mode_contracts_lock_operator_session_vocabulary():
@@ -272,11 +272,11 @@ def test_visual_servo_profiles_wire_gateway_hot_entry():
         assert hot_entry_wire not in _wire_set(graph), profile
 
 
-def test_product_mode_switch_contracts_allow_same_nav_graph_hot_switch():
+def test_product_mode_switch_contracts_require_cold_restart():
     plan = product_mode_switch_plan("tracking", "inspection")
-    assert plan["same_graph_candidate"] is True
-    assert plan["online_hot_switch_supported"] is True
-    assert plan["required_lifecycle"] == "hot_switch"
+    assert plan["same_graph_candidate"] is False
+    assert plan["online_hot_switch_supported"] is False
+    assert plan["required_lifecycle"] == "cold_restart"
 
     teleop_to_nav = product_mode_switch_plan("teleop", "nav")
     assert teleop_to_nav["same_graph_candidate"] is False
@@ -284,7 +284,7 @@ def test_product_mode_switch_contracts_allow_same_nav_graph_hot_switch():
 
 
 def test_top_level_blueprint_api_exposes_all_stack_factories():
-    import runtime.blueprints as blueprints
+    import lingtu.assembly as blueprints
 
     for name in (
         "driver",
@@ -335,7 +335,12 @@ def test_profile_graphs_compile_for_primary_profiles():
             assert "nav.mission" not in graph.modules
         else:
             assert "nav.mission" in graph.modules
-        assert "nav.safety" in graph.modules
+        if config.get("command_output_mode") == "endpoint_only":
+            assert "nav.safety" not in graph.modules
+            assert "nav.velocity_mux" not in graph.modules
+            assert "GeofenceManagerModule" not in graph.modules
+        else:
+            assert "nav.safety" in graph.modules
         if config.get("enable_gateway", True):
             assert "GatewayModule" in graph.modules
             assert "MCPServerModule" in graph.modules
@@ -362,7 +367,9 @@ def test_runtime_product_profile_uses_product_blueprint_entrypoint():
     assert "ThunderDriver" not in modules
     # "nav" uses the native cpp_slam_status localization adapter.
     assert "SlamAdapterModule" in modules
-    assert "nav.safety.stop_cmd->nav.mission.stop_signal" in wires
+    assert "nav.safety" not in modules
+    assert not any(wire.startswith("nav.safety.") for wire in wires)
+    assert "GatewayModule.stop_cmd->nav.mission.stop_signal" in wires
     assert "nav.velocity_mux.driver_cmd_vel->nav.out.cmd_vel" not in wires
     assert "nav.velocity_mux.driver_cmd_vel->ThunderDriver.cmd_vel" not in wires
 
@@ -442,8 +449,10 @@ def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
             None,
         )
 
-        if "nav.mission" in modules:
+        if {"nav.safety", "nav.mission"} <= modules:
             assert "nav.safety.stop_cmd->nav.mission.stop_signal" in wires
+        elif "nav.safety" not in modules:
+            assert not any(wire.startswith("nav.safety.") for wire in wires)
         if "GatewayModule" in modules:
             if "nav.mission" in modules:
                 assert "GatewayModule.stop_cmd->nav.mission.stop_signal" in wires
@@ -474,7 +483,8 @@ def test_profile_graph_snapshot_locks_safety_gateway_and_mux_edges():
         if "GeofenceManagerModule" in modules and "nav.mission" in modules:
             assert "GeofenceManagerModule.stop_cmd->nav.mission.stop_signal" in wires
         if driver is not None:
-            assert f"nav.safety.stop_cmd->{driver}.stop_signal" in wires
+            if "nav.safety" in modules:
+                assert f"nav.safety.stop_cmd->{driver}.stop_signal" in wires
             if "GatewayModule" in modules:
                 assert f"GatewayModule.stop_cmd->{driver}.stop_signal" in wires
             if "MCPServerModule" in modules:
@@ -582,7 +592,7 @@ def test_nav_profile_uses_slam_adapter_localization_health_edges():
     health = TOPICS.localization_health
     quality = TOPICS.localization_quality
 
-    assert f"SlamAdapterModule.localization_status->nav.safety.localization_status@{health}" in wires
+    assert f"SlamAdapterModule.localization_status->nav.safety.localization_status@{health}" not in wires
     assert f"SlamAdapterModule.localization_status->nav.mission.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_status->DepthVisualOdomModule.localization_status@{health}" in wires
     assert f"SlamAdapterModule.localization_status->GatewayModule.localization_status@{health}" in wires
@@ -1044,6 +1054,7 @@ def test_real_runtime_run_spec_carries_hardware_contract_boundary():
     assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
     assert spec.env["LINGTU_RUNTIME_CONTRACT"] == "thunder_field"
     assert spec.env["LINGTU_COMMAND_SINK"] == "driver"
+    assert spec.env["LINGTU_NAV_GLOBAL_PLANNER"] == "octoplanner3d"
     assert spec.env["LINGTU_SIMULATION_ONLY"] == "0"
 
 
@@ -1061,6 +1072,8 @@ def test_product_tare_can_run_on_mujoco_live_endpoint():
     assert config["_external_default_args"] == ("tare",)
     assert config["_external_record_args"] == ("tare-video",)
     assert config["planner"] == "octoplanner3d"
+    assert config["map_path"].endswith((".ot", ".bt"))
+    assert config["map_artifact_gate_required"] is True
     assert "planner_backend" not in config
     assert config["planning_frame_id"] == "odom"
     assert config["goal_frame_id"] == "odom"
@@ -1260,13 +1273,19 @@ def test_navigation_profiles_use_localization_odometry_for_runtime_consumers():
 
         assert source in graph.modules
         assert f"{source}.odometry->GatewayModule.odometry{odom_suffix}" in wires
-        assert f"{source}.odometry->nav.safety.odometry{odom_suffix}" in wires
+        if "nav.safety" in graph.modules:
+            assert f"{source}.odometry->nav.safety.odometry{odom_suffix}" in wires
+        else:
+            assert f"{source}.odometry->nav.safety.odometry{odom_suffix}" not in wires
         assert f"{source}.map_cloud->OccupancyGridModule.map_cloud{map_suffix}" in wires
         assert f"{source}.map_cloud->VoxelGridModule.map_cloud{map_suffix}" in wires
         assert f"{source}.map_cloud->ElevationMapModule.map_cloud{map_suffix}" in wires
         assert f"{source}.map_cloud->GatewayModule.map_cloud{map_suffix}" in wires
         assert f"{source}.lidar_scan->GatewayModule.lidar_scan[local]@{TOPICS.lidar_scan}" in wires
-        assert f"{source}.localization_status->nav.safety.localization_status{health_suffix}" in wires
+        if "nav.safety" in graph.modules:
+            assert f"{source}.localization_status->nav.safety.localization_status{health_suffix}" in wires
+        else:
+            assert f"{source}.localization_status->nav.safety.localization_status{health_suffix}" not in wires
         assert f"{source}.localization_status->GatewayModule.localization_status{health_suffix}" in wires
         assert f"{source}.localization_quality->GatewayModule.localization_quality{quality_suffix}" in wires
 
@@ -1338,27 +1357,33 @@ def test_non_optional_product_graphs_do_not_include_native_modules():
         assert native_modules == [], profile
 
 
-def test_tare_explore_product_graph_uses_lingtu_tare_policy():
+def test_tare_explore_product_graph_delegates_policy_to_native_endpoint():
     graph = graph_for_profile("tare_explore")
     wires = _wire_set(graph)
+    product = load_runtime_graph().products["tare_explore"]
 
     assert {module_name for module_name in graph.modules if module_name.endswith("NativeModule")} == set()
+    assert "nav.commands" in graph.modules
     assert "WavefrontFrontierExplorer" not in graph.modules
     assert "TraversableFrontierModule" not in graph.modules
     assert "TAREPlannerNativeModule" not in graph.modules
-    assert "TAREExplorerModule" in graph.modules
-    assert "OccupancyGridModule" in graph.modules
-    assert "VoxelGridModule" in graph.modules
-    assert "ElevationMapModule" in graph.modules
-    assert "TraversabilityCostModule" in graph.modules
+    assert "TAREExplorerModule" not in graph.modules
+    assert "ExplorationSupervisorModule" not in graph.modules
     assert "nav.terrain" not in graph.modules
     assert "nav.local_planner" not in graph.modules
     assert "nav.path_follower" not in graph.modules
-    assert "SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@/slam/map_cloud" in wires
-    assert "SlamAdapterModule.odometry->OccupancyGridModule.odometry@/slam/odometry" in wires
-    assert "SlamAdapterModule.map_cloud->maps.service.map_cloud@/slam/map_cloud" in wires
-    assert "TAREExplorerModule.exploration_goal->nav.mission.goal_pose" in wires
-    assert "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid" in wires
+    assert not any("TAREExplorerModule" in wire for wire in wires)
+    assert product["autonomy_owner"] == "explore_endpoint"
+    assert "explore" in product["processes"]
+
+
+@pytest.mark.parametrize("endpoint", ["mujoco_live", "cmu_unity"])
+def test_tare_non_field_endpoints_keep_the_module_bridge(endpoint: str):
+    graph = graph_for_profile("tare_explore", runtime_endpoint=endpoint)
+
+    assert "nav.commands" not in graph.modules
+    assert "TAREExplorerModule" in graph.modules
+    assert "ExplorationSupervisorModule" in graph.modules
 
 
 def test_only_sanctioned_external_simulator_profiles_are_first_class():
@@ -1372,7 +1397,7 @@ def test_only_sanctioned_external_simulator_profiles_are_first_class():
 
 
 def test_profile_robot_presets_resolve_through_driver_stack():
-    from runtime.blueprints.stacks.driver import RobotProfile
+    from lingtu.assembly.stacks.driver import RobotProfile
 
     profile_presets = {config.get("_default_robot", "stub") for config in PROFILES.values()}
     endpoint_presets = {runtime_endpoint(endpoint_name).robot_preset for endpoint_name in runtime_endpoint_names()}

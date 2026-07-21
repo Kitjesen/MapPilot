@@ -1,6 +1,8 @@
 # Camera Transport Decision
 
 Status: accepted (2026-07-13)
+Audience: Gateway/Web/media maintainers
+Replaced by: not replaced
 
 ## Decision
 
@@ -8,6 +10,13 @@ Use go2rtc WHEP as the low-latency browser camera path and Gateway
 JPEG-over-WebSocket as the fallback. The Gateway bootstrap advertises WHEP
 support; live sidecar health is queried separately through
 `GET /api/v1/webrtc/go2rtc/status`.
+
+This decision is browser transport only. The robot-side camera data plane is a
+native camera service with POSIX SHM for image payloads and typed DDS/status
+metadata such as `rt/camera/info`; readiness checks reject field claims when
+the camera status does not report `data_plane=posix_shm`. Gateway may cache and
+serve JPEG frames for `/ws/camera` and `/api/v1/camera/snapshot`, but that is
+the UI fallback, not the primary field image transport.
 
 The old in-process Python WebRTC module, signalling routes, bitrate control,
 stats endpoint, and browser hook are removed as one vertical slice.

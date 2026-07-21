@@ -11,7 +11,7 @@ For field operation commands, see
 
 Implementation:
 
-- C++ core: `src/nav/kernel/include/nav_kernel/path_follower_core.hpp`
+- C++ core: `src/nav/cpp/include/nav_kernel/path_follower_core.hpp`
 - Module wrapper: `src/nav/local/path_follower.py`
 
 Key parameters:
@@ -82,7 +82,7 @@ verify the active backend received the expected values.
 
 Implementation:
 
-- C++ core: `src/nav/kernel/include/nav_kernel/terrain_core.hpp`
+- C++ core: `src/nav/cpp/include/nav_kernel/terrain_core.hpp`
 - Module wrapper: `src/nav/local/terrain.py`
 
 Key parameters:
@@ -194,9 +194,10 @@ diagnostic tools only. Product localization still needs the real SLAM chain.
 Gateway:
 
 ```bash
-curl http://192.168.66.13:5050/api/v1/config | jq '.local_planner'
-curl http://192.168.66.13:5050/api/v1/config | jq '.path_follower'
-curl http://192.168.66.13:5050/api/v1/health | jq '.'
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+curl "http://${LINGTU_HOST}:5050/api/v1/config" | jq '.local_planner'
+curl "http://${LINGTU_HOST}:5050/api/v1/config" | jq '.path_follower'
+curl "http://${LINGTU_HOST}:5050/api/v1/health" | jq '.'
 ```
 
 REPL:

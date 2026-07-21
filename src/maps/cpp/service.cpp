@@ -1867,6 +1867,13 @@ std::string MapsServiceCore::BuildSemanticArtifactJson(const std::string& map_id
   return pipeline_.BuildSemanticArtifactJson(map_id);
 }
 
+std::string MapsServiceCore::ImportUnitySemanticArtifactJson(
+    const std::string& map_id,
+    const std::filesystem::path& scene_dir,
+    const sources::UnitySemanticImportConfig& options) {
+  return pipeline_.ImportUnitySemanticArtifactJson(map_id, scene_dir, options);
+}
+
 std::string MapsServiceCore::BeginSaveMapJson(const SaveMapRequest& request) {
   return save_map_.BeginJson(request);
 }

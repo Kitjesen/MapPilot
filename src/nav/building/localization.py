@@ -109,7 +109,11 @@ class NativeFloorLocalizationAdapter:
         except Exception:
             return False, "target_map_activation_error"
         if not isinstance(activation, Mapping) or activation.get("success") is not True:
-            message = str(activation.get("message") or "activation rejected") if isinstance(activation, Mapping) else "activation rejected"
+            message = (
+                str(activation.get("message") or "activation rejected")
+                if isinstance(activation, Mapping)
+                else "activation rejected"
+            )
             return False, f"target_map_activation_failed:{message}"
         if str(activation.get("active") or "").strip() != floor.map_id:
             return False, "target_map_activation_unverified"
@@ -150,12 +154,9 @@ class NativeFloorLocalizationAdapter:
             return False
         if status.get("status_snapshot_stale") is True:
             return False
-        state = str(
-            status.get("state")
-            or status.get("status")
-            or status.get("localization_state")
-            or ""
-        ).strip().upper()
+        state = (
+            str(status.get("state") or status.get("status") or status.get("localization_state") or "").strip().upper()
+        )
         if state not in {"TRACKING", "LOCALIZED", "READY"}:
             return False
         if status.get("ready") is not True:

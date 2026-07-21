@@ -1,9 +1,25 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: map
 summary: Build live map artifacts from native LiDAR-inertial SLAM output.
+operator_switchable: true
+product_mode: mapping
+product_session: mapping
+session_mode: mapping
+default_for_session_mode: true
+native_control_mode: teleop
+slam_mode: mapping
+requires_map: false
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+processes:
+  - lidar
+  - slam
+  - nav
+  - driver
+  - runtime
 required_topics:
   - /lidar/raw_frame
   - /imu/raw
@@ -12,10 +28,17 @@ required_topics:
   - /slam/map_cloud
   - /slam/saved_map_cloud
   - /slam/localization_health
+  - /nav/command/request
+  - /nav/command/ack
+  - /nav/cmd_vel
 required_capabilities:
   - native_slam_mapping
   - map_artifact_save
   - map_pcd_to_octomap_artifact
+  - teleop
+  - command_staleness_gate
+  - velocity_limit
+  - final_cmd_vel_single_writer
 forbidden_modules:
   - SimEndpointDriverModule
   - nav.mission
@@ -28,4 +51,5 @@ forbidden_claims:
 target_chain:
   - Livox DDS publishes /lidar/raw_frame and /imu/raw.
   - Fast-LIO2 native SLAM publishes /slam/odometry, /slam/registered_cloud, and /slam/map_cloud.
+  - Native command endpoint accepts gated operator velocity requests while mapping and remains the sole writer of /nav/cmd_vel.
   - Gateway/MapService saves map.pcd and builds metadata plus octomap.ot for later navigation.

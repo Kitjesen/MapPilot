@@ -18,6 +18,47 @@ DEFAULT_MID360_PATTERN = SIM_ROOT / "assets" / "livox" / "mid360.npy"
 DEFAULT_MID360_SAMPLES_PER_FRAME = 20000
 
 
+def launch_presentation_viewer(model: Any, data: Any) -> Any:
+    """Open the operator viewer without MuJoCo's model-inspection sidebars."""
+
+    import mujoco.viewer
+
+    return mujoco.viewer.launch_passive(
+        model,
+        data,
+        show_left_ui=False,
+        show_right_ui=False,
+    )
+
+
+def focus_presentation_viewer(
+    viewer: Any,
+    robot_position: Any,
+    *,
+    initialize: bool = False,
+) -> None:
+    """Keep a passive MuJoCo viewer centered on the robot.
+
+    Initial framing chooses a useful quadruped demonstration view. Later calls
+    update only the focal point so mouse-controlled orbit and zoom remain under
+    the operator's control.
+    """
+
+    position = [float(value) for value in robot_position]
+    if len(position) < 3:
+        raise ValueError("robot_position must contain x, y, and z")
+    viewer.cam.lookat[:] = position[:3]
+    if initialize:
+        # MuJoCoLidar moves the articulated robot into the final geom group so
+        # rays do not hit the robot itself. MuJoCo's default viewer hides that
+        # group, so presentation viewers must explicitly make it visible.
+        if hasattr(viewer, "opt") and len(viewer.opt.geomgroup) > 0:
+            viewer.opt.geomgroup[-1] = 1
+        viewer.cam.distance = 2.5
+        viewer.cam.azimuth = 30.0
+        viewer.cam.elevation = -20.0
+
+
 def resolve_mid360_pattern(path: Path | str | None) -> Path | None:
     """Resolve the official MID-360 pattern asset, or return ``None`` explicitly."""
 

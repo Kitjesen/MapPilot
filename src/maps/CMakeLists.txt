@@ -28,6 +28,7 @@ add_library(lingtu_maps STATIC
   cpp/maintenance.cpp
   cpp/map_graph.cpp
   cpp/scene.cpp
+  cpp/semantic_taxonomy.cpp
   cpp/build/grid_artifacts.cpp
   cpp/build/occupancy_snapshot.cpp
   cpp/build/pcd.cpp
@@ -42,6 +43,7 @@ add_library(lingtu_maps STATIC
   cpp/layers/exploration_projection.cpp
   cpp/layers/semantic_occupancy.cpp
   cpp/layers/voxel.cpp
+  cpp/sources/unity_scene.cpp
 )
 target_link_libraries(lingtu_maps PUBLIC lingtu_maps_contract Threads::Threads)
 if(octomap_FOUND)
@@ -63,6 +65,7 @@ set_target_properties(lingtu_maps PROPERTIES
 add_library(lingtu_maps_c_api SHARED
   cpp/grid_layers_c_api.cpp
   cpp/pcd_c_api.cpp
+  cpp/rolling_occupancy_c_api.cpp
   cpp/semantic_c_api.cpp
   cpp/service_c_api.cpp
   cpp/store_c_api.cpp
@@ -73,6 +76,19 @@ target_compile_definitions(lingtu_maps_c_api PRIVATE LINGTU_MAPS_C_API_BUILD)
 set_target_properties(lingtu_maps_c_api PROPERTIES
   OUTPUT_NAME "lingtu_maps"
 )
+
+option(LINGTU_MAPS_BUILD_TOOLS "Build LingTu maps command-line tools" ON)
+
+if(LINGTU_MAPS_BUILD_TOOLS)
+  add_executable(
+    lingtu_maps_import_unity
+    cpp/tools/import_unity_semantics.cpp
+  )
+  target_link_libraries(lingtu_maps_import_unity PRIVATE lingtu_maps)
+  set_target_properties(lingtu_maps_import_unity PROPERTIES
+    OUTPUT_NAME "lingtu-maps-import-unity"
+  )
+endif()
 
 option(LINGTU_MAPS_BUILD_TESTS "Build LingTu maps contract tests" OFF)
 
@@ -110,6 +126,22 @@ if(LINGTU_MAPS_BUILD_TESTS)
     NAME lingtu_maps_exploration_projection_test
     COMMAND lingtu_maps_exploration_projection_test
   )
+
+  add_executable(
+    lingtu_maps_rolling_occupancy_c_api_test
+    tests/cpp/rolling_occupancy_c_api_test.cpp
+  )
+  target_link_libraries(
+    lingtu_maps_rolling_occupancy_c_api_test
+    PRIVATE
+      lingtu_maps_c_api
+      lingtu_maps_contract
+  )
+  add_test(
+    NAME lingtu_maps_rolling_occupancy_c_api_test
+    COMMAND lingtu_maps_rolling_occupancy_c_api_test
+  )
+
   add_executable(
     lingtu_maps_semantic_occupancy_test
     tests/cpp/semantic_occupancy_test.cpp
@@ -123,6 +155,31 @@ if(LINGTU_MAPS_BUILD_TESTS)
   add_executable(
     lingtu_maps_semantic_map_persistence_test
     tests/cpp/semantic_map_persistence_test.cpp
+  )
+
+  add_executable(
+    lingtu_maps_unity_semantic_import_test
+    tests/cpp/unity_semantic_import_test.cpp
+  )
+  target_link_libraries(lingtu_maps_unity_semantic_import_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_unity_semantic_import_test
+    COMMAND lingtu_maps_unity_semantic_import_test
+  )
+
+  add_executable(
+    lingtu_maps_unity_semantic_service_c_api_test
+    tests/cpp/unity_semantic_service_c_api_test.cpp
+  )
+  target_link_libraries(
+    lingtu_maps_unity_semantic_service_c_api_test
+    PRIVATE
+      lingtu_maps_c_api
+      lingtu_maps_contract
+  )
+  add_test(
+    NAME lingtu_maps_unity_semantic_service_c_api_test
+    COMMAND lingtu_maps_unity_semantic_service_c_api_test
   )
   target_link_libraries(lingtu_maps_semantic_map_persistence_test PRIVATE lingtu_maps)
   add_test(
@@ -151,6 +208,10 @@ if(LINGTU_MAPS_BUILD_TESTS)
   add_executable(lingtu_maps_artifact_jobs_test tests/cpp/artifact_jobs_test.cpp)
   target_link_libraries(lingtu_maps_artifact_jobs_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_artifact_jobs_test COMMAND lingtu_maps_artifact_jobs_test)
+
+  add_executable(lingtu_maps_process_test tests/cpp/process_test.cpp)
+  target_link_libraries(lingtu_maps_process_test PRIVATE lingtu_maps)
+  add_test(NAME lingtu_maps_process_test COMMAND lingtu_maps_process_test)
 
   add_executable(
     lingtu_maps_block_grid_scene_test
@@ -279,13 +340,16 @@ if(LINGTU_MAPS_BUILD_TESTS)
     lingtu_maps_grid_layers_test
     lingtu_maps_voxel_layer_test
     lingtu_maps_rolling_occupancy_test
-    lingtu_maps_exploration_projection_test
+    lingtu_maps_rolling_occupancy_c_api_test
     lingtu_maps_semantic_occupancy_test
     lingtu_maps_semantic_map_persistence_test
+    lingtu_maps_unity_semantic_import_test
+    lingtu_maps_unity_semantic_service_c_api_test
     lingtu_maps_semantic_performance_test
     lingtu_maps_store_test
     lingtu_maps_map_health_test
     lingtu_maps_artifact_jobs_test
+    lingtu_maps_process_test
     lingtu_maps_block_grid_scene_test
     lingtu_maps_maintenance_test
     lingtu_maps_map_graph_test

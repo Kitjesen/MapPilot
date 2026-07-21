@@ -88,7 +88,7 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "traversability_cost",
             "manager",
         } <= set(list_plugins("map"))
-        assert list_plugins("planner_backend") == ["octoplanner3d"]
+        assert list_plugins("planner_backend") == ["far", "octoplanner3d"]
         assert {"nanobind", "simple"} <= set(list_plugins("terrain"))
         assert {"nanobind", "cmu_py", "simple"} <= set(list_plugins("local_planner"))
         assert {"nav_kernel", "pid"} <= set(list_plugins("path_follower"))
@@ -126,7 +126,7 @@ def test_builtin_plugin_seed_can_seed_one_group_without_loading_unrelated_groups
 
         seed_builtin_plugins(groups=("planner_backend",), reload_loaded=True)
 
-        assert list_plugins("planner_backend") == ["octoplanner3d"]
+        assert list_plugins("planner_backend") == ["far", "octoplanner3d"]
         assert list_plugins("driver") == []
         assert list_plugins("detector") == []
     finally:
@@ -250,7 +250,7 @@ def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
         assert "ros2_slam_bridge" not in list_plugins("localization_adapter")
         assert "removed_endpoint" not in list_plugins("localization_adapter")
         assert list_plugins("map_save_adapter") == []
-        assert list_plugins("planner_backend") == ["octoplanner3d"]
+        assert list_plugins("planner_backend") == ["far", "octoplanner3d"]
         assert {"ring", "cmd_vel_mux", "geofence"} <= set(list_plugins("safety"))
         assert list_plugins("semantic_planner") == ["default"]
         assert list_plugins("visual_servo") == ["default"]
@@ -311,7 +311,7 @@ def test_optional_map_save_seed_reports_unavailable_for_lite_catalog(
         {
             "lite_test": (
                 {
-                    "driver": ("runtime.blueprints.stub",),
+                    "driver": ("lingtu.assembly.stub",),
                 },
                 (),
             )

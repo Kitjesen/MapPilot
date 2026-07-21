@@ -49,9 +49,9 @@ layers:
 
   - id: L2_product_composition
     title: Product Composition
-    intent: Thunder product blueprints and stack composition only choose which Modules run and how they are wired.
+    intent: LingTu product assembly only chooses which Modules run and how they are wired.
     owns:
-      - src/runtime/blueprints/
+      - src/lingtu/assembly/
       - src/drivers/real/thunder/blueprints.py
 
   - id: L3_adapter_layer
@@ -61,6 +61,7 @@ layers:
       - src/runtime/adapters/
       - src/external_adapters/
       - src/nav/adapters/
+      - src/localization/adapters/
       - src/maps/adapters/
       - src/gateway/rerun_bridge_module.py
 
@@ -108,6 +109,8 @@ layers:
       - pyproject.toml
       - config/thunder_lite_package.yaml
       - src/lingtu/plugin_seed.py
+      - src/lingtu/launcher.py
+      - src/lingtu/control.py
       - src/lingtu/sdk/
 
 import_boundaries:
@@ -152,7 +155,7 @@ import_boundaries:
       - slam
       - memory
   composition_exceptions:
-    - runtime/blueprints/
+    - lingtu/assembly/
     - diagnostics/field/gateway_acceptance.py
     - runtime/msgs/scene.py
     - diagnostics/field/field_check.py

@@ -1,320 +1,157 @@
-"""Product mode contracts for module graph and switch planning."""
+"""Product mode views loaded from the Runtime Graph source of truth."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
-from runtime.runtime_interface import TOPICS
+from runtime.graph.loader import load_runtime_graph
 
 
 @dataclass(frozen=True)
 class ProductModeContract:
+    """Operator-facing mode contract shared by CLI, Gateway, and tests."""
+
     profile: str
     label: str
     product_mode: str
     product_session: str
-    required_modules: frozenset[str]
-    forbidden_modules: frozenset[str]
-    required_wires: frozenset[str]
+    session_mode: str
+    native_control_mode: str
+    slam_mode: str
+    requires_map: bool
     switch_policy: str
+    default_for_session_mode: bool = False
+    processes: frozenset[str] = frozenset()
+    required_topics: frozenset[str] = frozenset()
+    required_capabilities: frozenset[str] = frozenset()
+    forbidden_modules: frozenset[str] = frozenset()
     hot_switch_candidates: frozenset[str] = frozenset()
     online_hot_switch_supported: bool = False
 
     def as_dict(self) -> dict[str, Any]:
+        """Return the operator-facing contract as deterministic JSON data."""
+
         return {
             "profile": self.profile,
             "label": self.label,
             "product_mode": self.product_mode,
             "product_session": self.product_session,
-            "required_modules": sorted(self.required_modules),
+            "session_mode": self.session_mode,
+            "native_control_mode": self.native_control_mode,
+            "slam_mode": self.slam_mode,
+            "requires_map": self.requires_map,
+            "default_for_session_mode": self.default_for_session_mode,
+            "processes": sorted(self.processes),
+            "required_topics": sorted(self.required_topics),
+            "required_capabilities": sorted(self.required_capabilities),
             "forbidden_modules": sorted(self.forbidden_modules),
-            "required_wires": sorted(self.required_wires),
             "switch_policy": self.switch_policy,
             "hot_switch_candidates": sorted(self.hot_switch_candidates),
             "online_hot_switch_supported": self.online_hot_switch_supported,
         }
 
 
-_TELEOP_CHAIN = frozenset()
+def _strings(value: Any) -> frozenset[str]:
+    if value is None:
+        return frozenset()
+    if isinstance(value, str):
+        return frozenset((value,))
+    if isinstance(value, list | tuple | set | frozenset):
+        return frozenset(str(item) for item in value if str(item))
+    raise TypeError(f"mode contract list must be a sequence, got {type(value).__name__}")
 
-_MAP_CHAIN = frozenset(
-    {
-        f"SlamAdapterModule.odometry->OccupancyGridModule.odometry@{TOPICS.odometry}",
-        f"SlamAdapterModule.odometry->VoxelGridModule.odometry@{TOPICS.odometry}",
-        f"SlamAdapterModule.odometry->ElevationMapModule.odometry@{TOPICS.odometry}",
-        f"SlamAdapterModule.map_cloud->OccupancyGridModule.map_cloud@{TOPICS.map_cloud}",
-        f"SlamAdapterModule.map_cloud->VoxelGridModule.map_cloud@{TOPICS.map_cloud}",
-        f"SlamAdapterModule.map_cloud->ElevationMapModule.map_cloud@{TOPICS.map_cloud}",
-        f"SlamAdapterModule.map_cloud->maps.service.map_cloud@{TOPICS.map_cloud}",
-        f"VoxelGridModule.scene->GatewayModule.map_scene@{TOPICS.maps_scene}",
-        "OccupancyGridModule.costmap->TraversabilityCostModule.costmap",
-        "ESDFModule.esdf->TraversabilityCostModule.esdf",
-        "TraversabilityCostModule.fused_cost->GatewayModule.costmap",
+
+def _required_text(product: Mapping[str, Any], field: str) -> str:
+    value = str(product.get(field) or "").strip()
+    if not value:
+        name = str(product.get("name") or "unknown")
+        raise ValueError(f"product mode {name!r} is missing {field}")
+    return value
+
+
+def _contract_from_product(name: str, product: Mapping[str, Any]) -> ProductModeContract:
+    return ProductModeContract(
+        profile=name,
+        label=str(product.get("label") or name.replace("_", " ").title()),
+        product_mode=_required_text(product, "product_mode"),
+        product_session=_required_text(product, "product_session"),
+        session_mode=_required_text(product, "session_mode"),
+        native_control_mode=_required_text(product, "native_control_mode"),
+        slam_mode=_required_text(product, "slam_mode"),
+        requires_map=bool(product.get("requires_map", False)),
+        switch_policy=_required_text(product, "switch_policy"),
+        default_for_session_mode=bool(product.get("default_for_session_mode", False)),
+        processes=_strings(product.get("processes")),
+        required_topics=_strings(product.get("required_topics")),
+        required_capabilities=_strings(product.get("required_capabilities")),
+        forbidden_modules=_strings(product.get("forbidden_modules")),
+        hot_switch_candidates=_strings(product.get("hot_switch_candidates")),
+        online_hot_switch_supported=bool(product.get("online_hot_switch_supported", False)),
+    )
+
+
+def _load_product_contracts(
+    products: Mapping[str, Mapping[str, Any]],
+) -> dict[str, ProductModeContract]:
+    return {
+        name: _contract_from_product(name, product)
+        for name, product in products.items()
     }
-)
 
-_SAFETY_CHAIN = frozenset(
-    {
-        "nav.safety.stop_cmd->nav.mission.stop_signal",
-        "GatewayModule.stop_cmd->nav.mission.stop_signal",
-        "nav.mission.mission_status->GatewayModule.mission_status",
-    }
-)
 
-_PYTHON_AUTONOMY_MODULES = frozenset(
-    {
-        "nav.terrain",
-        "nav.local_planner",
-        "nav.path_follower",
-    }
-)
-
-_NATIVE_NAV_MISSION_CHAIN = frozenset(
-    {
-        f"SlamAdapterModule.odometry->nav.mission.odometry@{TOPICS.odometry}",
-        f"SlamAdapterModule.localization_status->nav.mission.localization_status@{TOPICS.localization_health}",
-        "SlamAdapterModule.map_odom_tf->nav.mission.map_odom_tf",
-        "SlamAdapterModule.map_frame_jump_event->nav.mission.map_frame_jump_event",
-        "TraversabilityCostModule.fused_cost->nav.mission.costmap",
-    }
-)
-
-_GOAL_SERVICE_CHAIN = frozenset(
-    {
-        "GatewayModule.goal_pose->nav.goals.goal_request",
-        "GatewayModule.cancel->nav.goals.cancel_request",
-        "nav.goals.goal_pose->nav.mission.goal_pose",
-        "nav.goals.cancel->nav.mission.cancel",
-    }
-)
-
-_INSPECTION_EVIDENCE_CHAIN = frozenset(
-    {
-        f"SlamAdapterModule.odometry->InspectionEvidenceModule.odometry@{TOPICS.odometry}",
-        "camera.color_image->InspectionEvidenceModule.color_image",
-        "camera.depth_image->InspectionEvidenceModule.depth_image",
-        "camera.camera_info->InspectionEvidenceModule.camera_info",
-        "PerceptionModule.detections_3d->InspectionEvidenceModule.detections_3d",
-    }
-)
-
-_TARE_EXPLORATION_CHAIN = frozenset(
-    {
-        "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid",
-        "SlamAdapterModule.odometry->TAREExplorerModule.odometry",
-        "TAREExplorerModule.exploration_goal->nav.mission.goal_pose",
-        "TAREExplorerModule.exploration_path->nav.mission.patrol_goals",
-        "nav.mission.mission_status->TAREExplorerModule.navigation_status",
-    }
-)
-
-_NAV_HOT_CANDIDATES = frozenset({"tracking", "nav", "inspection"})
-
+_PRODUCT_DEFINITIONS = load_runtime_graph().products
+PRODUCT_CONTRACTS: dict[str, ProductModeContract] = _load_product_contracts(_PRODUCT_DEFINITIONS)
 PRODUCT_MODE_CONTRACTS: dict[str, ProductModeContract] = {
-    "teleop": ProductModeContract(
-        profile="teleop",
-        label="Teleop",
-        product_mode="teleop",
-        product_session="teleop",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "TeleopModule",
-                "nav.safety",
-            }
-        ),
-        forbidden_modules=frozenset(
-            {
-                "nav.mission",
-                "SlamModule",
-                "SlamAdapterModule",
-                "nav.velocity_mux",
-            }
-        )
-        | _PYTHON_AUTONOMY_MODULES,
-        required_wires=_TELEOP_CHAIN,
-        switch_policy="cold_restart",
-    ),
-    "teleop_avoid": ProductModeContract(
-        profile="teleop_avoid",
-        label="Teleop avoid",
-        product_mode="teleop_avoid",
-        product_session="teleop_avoid",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "TeleopModule",
-                "nav.safety",
-                "SlamAdapterModule",
-                "OccupancyGridModule",
-                "TraversabilityCostModule",
-            }
-        ),
-        forbidden_modules=frozenset(
-            {
-                "nav.mission",
-                "SemanticPlannerModule",
-                "nav.velocity_mux",
-            }
-        )
-        | _PYTHON_AUTONOMY_MODULES,
-        required_wires=_TELEOP_CHAIN | _MAP_CHAIN,
-        switch_policy="cold_restart",
-    ),
-    "map": ProductModeContract(
-        profile="map",
-        label="Mapping",
-        product_mode="mapping",
-        product_session="mapping",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "TeleopModule",
-                "SlamAdapterModule",
-                "OccupancyGridModule",
-                "TraversabilityCostModule",
-                "maps.service",
-            }
-        ),
-        forbidden_modules=frozenset(
-            {
-                "nav.mission",
-                "SemanticPlannerModule",
-                "nav.velocity_mux",
-            }
-        )
-        | _PYTHON_AUTONOMY_MODULES,
-        required_wires=_TELEOP_CHAIN | _MAP_CHAIN,
-        switch_policy="cold_restart",
-    ),
-    "tracking": ProductModeContract(
-        profile="tracking",
-        label="Tracking",
-        product_mode="tracking",
-        product_session="tracking",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "SlamAdapterModule",
-                "nav.goals",
-                "nav.mission",
-            }
-        ),
-        forbidden_modules=frozenset(
-            {
-                "SemanticPlannerModule",
-                "nav.velocity_mux",
-            }
-        )
-        | _PYTHON_AUTONOMY_MODULES,
-        required_wires=_SAFETY_CHAIN | _NATIVE_NAV_MISSION_CHAIN | _GOAL_SERVICE_CHAIN,
-        switch_policy="same_graph_candidate",
-        hot_switch_candidates=_NAV_HOT_CANDIDATES,
-        online_hot_switch_supported=True,
-    ),
-    "nav": ProductModeContract(
-        profile="nav",
-        label="Navigation",
-        product_mode="navigation",
-        product_session="navigation",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "SlamAdapterModule",
-                "nav.goals",
-                "nav.mission",
-                "SemanticPlannerModule",
-            }
-        ),
-        forbidden_modules=frozenset({"nav.velocity_mux"}) | _PYTHON_AUTONOMY_MODULES,
-        required_wires=_SAFETY_CHAIN | _NATIVE_NAV_MISSION_CHAIN | _GOAL_SERVICE_CHAIN,
-        switch_policy="same_graph_candidate",
-        hot_switch_candidates=_NAV_HOT_CANDIDATES,
-        online_hot_switch_supported=True,
-    ),
-    "inspection": ProductModeContract(
-        profile="inspection",
-        label="Inspection",
-        product_mode="inspection",
-        product_session="inspection",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "SlamAdapterModule",
-                "nav.goals",
-                "nav.mission",
-                "SemanticPlannerModule",
-                "PerceptionModule",
-                "InspectionEvidenceModule",
-            }
-        ),
-        forbidden_modules=frozenset({"nav.velocity_mux"}) | _PYTHON_AUTONOMY_MODULES,
-        required_wires=(
-            _SAFETY_CHAIN
-            | _NATIVE_NAV_MISSION_CHAIN
-            | _GOAL_SERVICE_CHAIN
-            | _INSPECTION_EVIDENCE_CHAIN
-        ),
-        switch_policy="same_graph_candidate",
-        hot_switch_candidates=_NAV_HOT_CANDIDATES,
-        online_hot_switch_supported=True,
-    ),
-    "tare_explore": ProductModeContract(
-        profile="tare_explore",
-        label="TARE exploration",
-        product_mode="exploration",
-        product_session="exploration",
-        required_modules=frozenset(
-            {
-                "GatewayModule",
-                "SlamAdapterModule",
-                "OccupancyGridModule",
-                "VoxelGridModule",
-                "ESDFModule",
-                "ElevationMapModule",
-                "TraversabilityCostModule",
-                "TAREExplorerModule",
-                "maps.service",
-                "nav.goals",
-                "nav.mission",
-            }
-        ),
-        forbidden_modules=frozenset(
-            {
-                "WavefrontFrontierExplorer",
-                "nav.velocity_mux",
-            }
-        )
-        | _PYTHON_AUTONOMY_MODULES,
-        required_wires=(
-            _SAFETY_CHAIN | _MAP_CHAIN | _NATIVE_NAV_MISSION_CHAIN | _GOAL_SERVICE_CHAIN | _TARE_EXPLORATION_CHAIN
-        ),
-        switch_policy="cold_restart",
-    ),
+    name: contract
+    for name, contract in PRODUCT_CONTRACTS.items()
+    if _PRODUCT_DEFINITIONS[name].get("operator_switchable") is True
 }
 
 
 def product_mode_contract(profile: str) -> ProductModeContract:
+    """Return the operator-switchable contract for *profile*."""
+
     return PRODUCT_MODE_CONTRACTS[profile]
 
 
-def product_mode_switch_plan(current_profile: str, target_profile: str) -> dict[str, Any]:
-    current = product_mode_contract(current_profile)
+def product_mode_switch_plan(
+    current_profile: str,
+    target_profile: str,
+    *,
+    runtime_plan: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Describe a product transition using an already compiled process plan.
+
+    Product mode contracts own lifecycle semantics only. Product assembly owns
+    compilation, so this view must never resolve an endpoint or build a second
+    RuntimePlan behind the caller's back.
+    """
+
     target = product_mode_contract(target_profile)
-    same_graph_candidate = target_profile in current.hot_switch_candidates
+    current = PRODUCT_MODE_CONTRACTS.get(current_profile)
+    same_graph_candidate = bool(current and target_profile in current.hot_switch_candidates)
     online_supported = (
-        current.online_hot_switch_supported and target.online_hot_switch_supported and same_graph_candidate
+        current is not None
+        and current.online_hot_switch_supported
+        and target.online_hot_switch_supported
+        and same_graph_candidate
     )
+    required_lifecycle = "hot_switch" if online_supported else target.switch_policy
     return {
-        "current": current.as_dict(),
+        "current": (
+            current.as_dict()
+            if current is not None
+            else {"profile": current_profile, "operator_switchable": False}
+        ),
         "target": target.as_dict(),
         "same_graph_candidate": same_graph_candidate,
         "online_hot_switch_supported": online_supported,
-        "required_lifecycle": "hot_switch" if online_supported else "cold_restart",
+        "runtime_plan": dict(runtime_plan) if runtime_plan is not None else None,
+        "required_lifecycle": required_lifecycle,
         "reason": (
-            "online hot switch is not enabled for product modes"
-            if not online_supported
-            else "same graph hot switch is supported"
+            "same graph hot switch is supported"
+            if online_supported
+            else f"target mode requires {required_lifecycle}"
         ),
     }

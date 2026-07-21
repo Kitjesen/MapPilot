@@ -14,6 +14,7 @@ Group=sunrise
 WorkingDirectory=/opt/lingtu/current
 Environment=HOME=/home/sunrise
 Environment=LINGTU_REPO=/opt/lingtu/current
+Environment=LINGTU_SYSTEMD_UNIT=lingtu.service
 Environment=LINGTU_PROFILE=nav
 Environment=LINGTU_PYTHON=python3
 Environment=LINGTU_MODULE_TRANSPORT=local

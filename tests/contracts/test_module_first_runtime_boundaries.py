@@ -56,50 +56,25 @@ ALGORITHM_KERNEL_SEAM_SOURCES = {
     "nav_kernel_cmake": SRC / "nav" / "kernel" / "CMakeLists.txt",
 }
 
-LOCAL_PLANNER_SERVICE_SOURCES = {
-    "local_planner_runtime": SRC
-    / "nav"
-    / "services"
-    / "plan"
-    / "local_planner"
-    / "runtime.py",
-    "local_planner_service": SRC
-    / "nav"
-    / "services"
-    / "plan"
-    / "local_planner"
-    / "service.py",
+LOCAL_PLANNER_SOURCES = {
+    "local_planner_runtime": SRC / "nav" / "local" / "local_planner_runtime.py",
+    "local_planner": SRC / "nav" / "local" / "local_planner.py",
 }
 
 BASE_AUTONOMY_BACKEND_ADAPTER_SOURCES = {
     "path_follower_backend": SRC / "nav" / "local" / "path_follower_backend.py",
-    "local_planner_backend": SRC
-    / "nav"
-    / "services"
-    / "plan"
-    / "local_planner"
-    / "backend.py",
+    "local_planner_backend": SRC / "nav" / "local" / "local_planner_backend.py",
     "terrain_backend": SRC / "nav" / "local" / "terrain_backend.py",
 }
 
 BASE_AUTONOMY_BACKEND_RUNTIME_SOURCES = {
     "path_follower_runtime": SRC / "nav" / "local" / "path_follower_runtime.py",
-    "local_planner_runtime": SRC
-    / "nav"
-    / "services"
-    / "plan"
-    / "local_planner"
-    / "runtime.py",
+    "local_planner_runtime": SRC / "nav" / "local" / "local_planner_runtime.py",
 }
 
 BASE_AUTONOMY_MODULE_SOURCES = {
     "path_follower": SRC / "nav" / "local" / "path_follower.py",
-    "local_planner": SRC
-    / "nav"
-    / "services"
-    / "plan"
-    / "local_planner"
-    / "service.py",
+    "local_planner": SRC / "nav" / "local" / "local_planner.py",
     "terrain": SRC / "nav" / "local" / "terrain.py",
 }
 
@@ -281,10 +256,10 @@ def test_directory_stage_keeps_nav_kernel_seam_under_nav_kernel() -> None:
     )
 
 
-def test_directory_stage_keeps_local_planner_runtime_under_plan_service() -> None:
+def test_directory_stage_keeps_local_planner_runtime_under_local_domain() -> None:
     _assert_sources_exist_under_owner(
-        LOCAL_PLANNER_SERVICE_SOURCES,
-        SRC / "nav" / "services" / "plan" / "local_planner",
+        LOCAL_PLANNER_SOURCES,
+        SRC / "nav" / "local",
     )
 
 

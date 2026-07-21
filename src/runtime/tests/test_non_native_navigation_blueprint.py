@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.blueprints.products.thunder import thunder_blueprint
+from lingtu.assembly.products.thunder import thunder_blueprint
 
 
 def _has_connection(system, out_mod: str, out_port: str, in_mod: str, in_port: str) -> bool:

@@ -1,4 +1,4 @@
-"""Navigation package; import runtime code from mission/planning/maps/safety/services/exploration."""
+"""Navigation package: mission execution, planning services, safety, exploration, and native C++ kernels."""
 
 from __future__ import annotations
 

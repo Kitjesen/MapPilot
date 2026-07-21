@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from runtime.blueprints.profile_builder import build_system_from_resolved_profile
+from lingtu.assembly.profile_builder import compile_product
 from runtime.profiles.resolver import ResolvedRuntimeConfig, resolve_runtime_config
 
 
@@ -54,4 +54,9 @@ def build_system(
         include_profile_metadata=include_profile_metadata,
         **inline_overrides,
     )
-    return build_system_from_resolved_profile(resolved.profile, resolved.config)
+    product = compile_product(
+        resolved.profile,
+        resolved.config,
+        endpoint=resolved.runtime_endpoint,
+    )
+    return product.build()

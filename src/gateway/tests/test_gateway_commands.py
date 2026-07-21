@@ -841,6 +841,42 @@ def test_runtime_switch_plan_endpoint_is_read_only_and_typed():
     assert gateway.instruction.msg_count == 0
 
 
+def test_runtime_switch_plan_exposes_resolved_endpoint_processes():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_switch_plan = _endpoint(gateway, "/api/v1/runtime/switch-plan")
+
+    result = asyncio.run(
+        post_switch_plan(
+            RuntimeSwitchPlanRequest(
+                current_profile="teleop",
+                target_profile="nav",
+                target_endpoint="thunder_field",
+            )
+        )
+    )
+    model = RuntimeSwitchPlanResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.product_mode_switch is not None
+    runtime_plan = model.product_mode_switch["runtime_plan"]
+    assert runtime_plan["endpoint"] == "thunder_field"
+    assert [process["name"] for process in runtime_plan["processes"]] == [
+        "lidar",
+        "slam",
+        "traversability",
+        "nav",
+        "driver",
+        "runtime",
+    ]
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+
+
 def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
     monkeypatch,
 ):
@@ -955,10 +991,10 @@ def test_runtime_switch_endpoint_defaults_to_plan_only_for_app_clients():
     assert model.dry_run is True
     assert model.motion is False
     assert model.status == "planned"
-    assert model.lifecycle == "hot_switch"
+    assert model.lifecycle == "cold_restart"
     assert model.strategy == "auto"
     assert model.product_mode_switch is not None
-    assert model.product_mode_switch["required_lifecycle"] == "hot_switch"
+    assert model.product_mode_switch["required_lifecycle"] == "cold_restart"
     assert model.effects == []
     assert model.target_profile == "inspection"
     assert model.command[:3] == ["bash", model.command[1], "mode"]
@@ -969,78 +1005,6 @@ def test_runtime_switch_endpoint_defaults_to_plan_only_for_app_clients():
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.stop_cmd.msg_count == 0
     assert gateway.instruction.msg_count == 0
-
-
-def test_runtime_switch_endpoint_hot_executes_same_graph_without_subprocess(
-    monkeypatch,
-):
-    import gateway.services.runtime_switch_execute as switch_execute
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    def fail_popen(*_args, **_kwargs):
-        raise AssertionError("hot switch must not launch scripts/lingtu")
-
-    monkeypatch.setattr(switch_execute.subprocess, "Popen", fail_popen)
-
-    class FakeMux:
-        def __init__(self):
-            self.calls = []
-
-        def freeze(self):
-            self.calls.append("freeze")
-
-        def unfreeze(self):
-            self.calls.append("unfreeze")
-
-    gateway = GatewayModule()
-    gateway.setup()
-    gateway._session_mode = "navigating"
-    gateway._session_map = "field_map"
-    gateway._cmd_vel_mux = FakeMux()
-    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
-
-    result = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="inspection",
-                execute=True,
-                strategy="hot",
-                request_id="hot-switch-test",
-            )
-        )
-    )
-    model = RuntimeSwitchResponse.model_validate(result)
-
-    assert model.ok is True
-    assert model.accepted is True
-    assert model.read_only is False
-    assert model.dry_run is False
-    assert model.status == "hot_switched"
-    assert model.lifecycle == "hot_switch"
-    assert model.strategy == "hot"
-    assert model.map_name == "field_map"
-    assert model.product_mode_switch is not None
-    assert model.product_mode_switch["required_lifecycle"] == "hot_switch"
-    assert model.effects == [
-        "velocity_mux.freeze",
-        "navigation.cancel",
-        "safety.soft_stop",
-        "cmd_vel.zero",
-        "mode.autonomous",
-        "velocity_mux.unfreeze",
-    ]
-    assert model.command == []
-    assert gateway.cancel.msg_count == 1
-    assert gateway.stop_cmd.msg_count == 1
-    assert gateway.cmd_vel.msg_count == 1
-    assert gateway.mode_cmd.msg_count == 1
-    assert gateway._runtime_product_profile == "inspection"
-    assert gateway._session_product_profile == "inspection"
-    assert gateway._session_product_session == "inspection"
-    assert gateway._cmd_vel_mux.calls == ["freeze", "unfreeze"]
-    assert gateway._mode == "autonomous"
 
 
 def test_runtime_switch_endpoint_rejects_hot_when_graph_requires_restart():
@@ -1073,6 +1037,30 @@ def test_runtime_switch_endpoint_rejects_hot_when_graph_requires_restart():
     assert gateway.cancel.msg_count == 0
     assert gateway.cmd_vel.msg_count == 0
     assert gateway.stop_cmd.msg_count == 0
+
+
+def test_runtime_switch_allows_map_free_teleop_avoid_plan():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
+
+    result = asyncio.run(
+        post_runtime_switch(
+            RuntimeSwitchRequest(
+                current_profile="nav",
+                target_profile="teleop_avoid",
+            )
+        )
+    )
+    model = RuntimeSwitchResponse.model_validate(result)
+
+    assert model.ok is True
+    assert model.status == "planned"
+    assert model.map_name is None
+    assert model.lifecycle == "cold_restart"
 
 
 def test_runtime_switch_endpoint_accepts_tare_explore_product_mode():
@@ -1627,23 +1615,36 @@ def test_goal_request_yaw_is_published_as_pose_orientation():
 
 def test_goal_route_uses_persistent_native_client_when_configured(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import ControlCommandResponse, GoalRequest
 
     class FakeClient:
         def __init__(self) -> None:
             self.goals = []
 
-        def send_goal(self, x, y, z, yaw, *, request_id=None) -> None:
+        def send_goal(self, x, y, z, yaw, *, request_id=None) -> bool:
             self.goals.append((x, y, z, yaw, request_id))
+            return True
+
+    class FakeGoals:
+        def __init__(self, commands) -> None:
+            self.commands = commands
+
+        def submit_goal(self, goal, *, request_id=None, action="goal"):
+            self.commands.send_goal(goal.x, goal.y, goal.z, goal.yaw, request_id=request_id)
+            return {"accepted": True, "success": True, "action": action}
 
     client = FakeClient()
-    monkeypatch.setattr(commands, "_native_navigation_client", lambda: client)
 
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"nav.mission": nav})
+    gateway.on_system_modules(
+        {
+            "nav.mission": nav,
+            "nav.commands": client,
+            "nav.goals": FakeGoals(client),
+        }
+    )
     _mark_navigation_ready(gateway)
     post_goal = _endpoint(gateway, "/api/v1/goal")
 
@@ -1665,12 +1666,14 @@ def test_goal_route_uses_persistent_native_client_when_configured(monkeypatch):
     assert model.ok is True
     assert gateway.goal_pose.msg_count == 0
     assert gateway.instruction.msg_count == 0
-    assert client.goals == [(1.0, 2.0, 0.3, math.pi / 2, "native-goal")]
+    assert len(client.goals) == 1
+    x, y, z, yaw, request_id = client.goals[0]
+    assert (x, y, z, request_id) == (1.0, 2.0, 0.3, "native-goal")
+    assert yaw == pytest.approx(math.pi / 2)
 
 
 def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import GatewayErrorResponse, GoalRequest
 
     status_file = tmp_path / "nav_endpoint_status.json"
@@ -1688,12 +1691,20 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
-    monkeypatch.setattr(commands, "get_native_navigation_client", lambda *, required=False: None)
+
+    class MissingGoals:
+        def submit_goal(self, goal, *, request_id=None, action="goal"):
+            del goal, request_id, action
+            return {
+                "accepted": False,
+                "success": False,
+                "message": "native navigation command boundary is unavailable",
+            }
 
     gateway = GatewayModule()
     gateway.setup()
     nav = _FakePlanPreviewNav()
-    gateway.on_system_modules({"nav.mission": nav})
+    gateway.on_system_modules({"nav.mission": nav, "nav.goals": MissingGoals()})
     _mark_navigation_ready(gateway)
     post_goal = _endpoint(gateway, "/api/v1/goal")
 
@@ -1719,22 +1730,25 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
 
 def test_goal_route_surfaces_native_business_rejection(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import GoalRequest
-    from runtime.adapters.native.navigation import NavigationClientError
 
-    class RejectingClient:
-        def send_goal(self, *_args, **_kwargs) -> None:
-            raise NavigationClientError("navigation command rejected: active_octomap_not_configured")
+    class RejectingGoals:
+        def submit_goal(self, goal, *, request_id=None, action="goal"):
+            del goal, request_id, action
+            return {
+                "accepted": False,
+                "success": False,
+                "message": "navigation command rejected: active_octomap_not_configured",
+            }
 
-    monkeypatch.setattr(
-        commands,
-        "_native_navigation_client",
-        lambda: RejectingClient(),
-    )
     gateway = GatewayModule()
     gateway.setup()
-    gateway.on_system_modules({"nav.mission": _FakePlanPreviewNav()})
+    gateway.on_system_modules(
+        {
+            "nav.mission": _FakePlanPreviewNav(),
+            "nav.goals": RejectingGoals(),
+        }
+    )
     _mark_navigation_ready(gateway)
     post_goal = _endpoint(gateway, "/api/v1/goal")
 
@@ -1758,14 +1772,7 @@ def test_goal_route_surfaces_native_business_rejection(monkeypatch):
 
 def test_instruction_route_stays_on_semantic_module_path(monkeypatch):
     from gateway.gateway_module import GatewayModule
-    from gateway.routes import commands
     from gateway.schemas import InstructionRequest
-
-    monkeypatch.setattr(
-        commands,
-        "_native_navigation_client",
-        lambda: pytest.fail("instruction must not enter native navigation directly"),
-    )
     gateway = GatewayModule()
     gateway.setup()
     received = []
@@ -2391,7 +2398,7 @@ def test_field_cmd_vel_rejects_missing_native_boundary_without_local_fallback():
     gateway = GatewayModule()
     gateway.setup()
     gateway._teleop_dds_enabled = True
-    gateway._teleop_native_client = None
+    gateway._nav_commands = None
     post_cmd_vel = _endpoint(gateway, "/api/v1/cmd_vel")
 
     response = asyncio.run(
@@ -2408,7 +2415,7 @@ def test_field_cmd_vel_rejects_missing_native_boundary_without_local_fallback():
 
     assert response.status_code == 409
     assert model.error == "native_command_rejected"
-    assert "boundary is unavailable" in model.detail["reason"]
+    assert "command capability is unavailable" in model.detail["reason"]
     assert gateway.cmd_vel.msg_count == 0
 
 
@@ -2492,7 +2499,7 @@ def test_field_stop_reports_missing_native_boundary_without_local_cmd_vel():
     gateway = GatewayModule()
     gateway.setup()
     gateway._teleop_dds_enabled = True
-    gateway._teleop_native_client = None
+    gateway._nav_commands = None
     post_stop = _endpoint(gateway, "/api/v1/stop")
 
     response = asyncio.run(
@@ -2519,7 +2526,7 @@ def test_field_emergency_stop_uses_native_estop_latch(monkeypatch):
     monkeypatch.setattr(
         commands,
         "native_estop",
-        lambda reason="estop", *, request_id=None: calls.append((reason, request_id)) or True,
+        lambda _gw, reason="estop", *, request_id=None: calls.append((reason, request_id)) or True,
     )
     gateway = GatewayModule()
     gateway.setup()
@@ -2545,7 +2552,7 @@ def test_native_stop_ack_does_not_block_gateway_event_loop(monkeypatch):
     release = threading.Event()
     ack_threads: list[int] = []
 
-    def blocking_estop(reason="estop", *, request_id=None):
+    def blocking_estop(_gw, reason="estop", *, request_id=None):
         ack_threads.append(threading.get_ident())
         entered.set()
         release.wait(timeout=1.0)
@@ -2592,12 +2599,12 @@ def test_mode_estop_and_explicit_reset_use_native_boundary(monkeypatch):
     monkeypatch.setattr(
         commands,
         "native_estop",
-        lambda reason="estop", *, request_id=None: calls.append(("estop", reason, request_id)) or True,
+        lambda _gw, reason="estop", *, request_id=None: calls.append(("estop", reason, request_id)) or True,
     )
     monkeypatch.setattr(
         commands,
         "native_clear_estop",
-        lambda reason="clear_estop", *, request_id=None: calls.append(("clear", reason, request_id)) or True,
+        lambda _gw, reason="clear_estop", *, request_id=None: calls.append(("clear", reason, request_id)) or True,
     )
     gateway = GatewayModule()
     gateway.setup()
@@ -2684,7 +2691,7 @@ def test_navigation_resume_releases_takeover_without_replaying_old_motion(
     monkeypatch.setattr(
         commands,
         "native_resume_autonomy",
-        lambda reason, *, request_id=None: calls.append((reason, request_id)) or True,
+        lambda _gw, reason, *, request_id=None: calls.append((reason, request_id)) or True,
     )
     gateway = GatewayModule()
     gateway.setup()
@@ -2740,7 +2747,7 @@ def test_active_control_lease_blocks_other_rest_resume_clients(monkeypatch):
     monkeypatch.setattr(
         commands,
         "native_resume_autonomy",
-        lambda reason, *, request_id=None: calls.append((reason, request_id)) or True,
+        lambda _gw, reason, *, request_id=None: calls.append((reason, request_id)) or True,
     )
     gateway = GatewayModule()
     gateway.setup()

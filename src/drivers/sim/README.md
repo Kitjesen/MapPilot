@@ -10,4 +10,4 @@ under `src/drivers/real/`.
 | `mujoco/` | In-process MuJoCo driver, runtime, scene, sensor, stack, and adapter helpers. |
 | `endpoint.py` | Driver-shaped module for externally owned simulation streams. |
 | `pointcloud.py` | Static point-cloud provider from MuJoCo scene geometry. |
-| `stub.py` | Legacy import shim; canonical stub driver lives in `runtime.blueprints.stub`. |
+| `stub.py` | Legacy import shim; canonical stub driver lives in `lingtu.assembly.stub`. |

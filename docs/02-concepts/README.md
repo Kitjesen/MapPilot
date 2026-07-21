@@ -201,14 +201,14 @@ out, and skips ambiguous input matches with a warning. It does not replace
 explicit safety, navigation, hardware, or external-boundary wiring.
 
 Critical full-stack wires are organized under
-[`src/runtime/blueprints/wires/`](../../src/runtime/blueprints/wires/). The
-[Blueprint guide](../../src/runtime/blueprints/README.md) explains the intended
+[`src/lingtu/assembly/wires/`](../../src/lingtu/assembly/wires/). The
+[Blueprint guide](../../src/lingtu/assembly/README.md) explains the intended
 order: profile -> product Blueprint -> stack factories -> explicit wires ->
 route contract -> build.
 
 ### Stack factories and product assembly
 
-Stack factories in `src/runtime/blueprints/stacks/` add small reusable groups,
+Stack factories in `src/lingtu/assembly/stacks/` add small reusable groups,
 such as maps, safety, navigation, or gateway. They do not decide a product
 mission. Product-level assembly lives in `products/`, and
 `profile_builder.py` is the profile-to-Blueprint entry point used by the CLI,
@@ -337,14 +337,16 @@ native sensor service
   -> native SLAM/localization service
   -> Module graph for mission, maps, status, and gateway
   -> native navigation endpoint
-  -> typed command boundary
+  -> typed DDS /nav/cmd_vel
+  -> unique lingtu-driver
+  -> remote Brainstem gRPC
 ```
 
 | Native product path | ROS 2 compatibility path |
 | --- | --- |
 | Typed DDS/IDL contracts at field service boundaries. | Explicit adapter, legacy service, simulator bridge, or comparison workflow. |
 | Normal product Modules use `runtime.msgs`, typed ports, and pure helpers. | ROS message conversion stays in `*/adapters/ros2/` or another quarantined boundary. |
-| The native field navigation endpoint owns the final field command writer. | A ROS topic is an adapter alias, not a new business API. |
+| The native field navigation endpoint owns the final `/nav/cmd_vel` writer, and `lingtu-driver` is the only hardware consumer in the default field chain. | A ROS topic is an adapter alias, not a new business API. |
 | Product diagnostics use Gateway, ModulePort/dataflow, runtime-contract, and native-service evidence first. | Use ROS inspection only when an explicit compatibility test calls for it. |
 
 Do not import ROS clients, ROS messages, or `cyclonedds` directly into a normal

@@ -1,5 +1,9 @@
 # LingTu Product Mode Runtime Contract
 
+Status: current product contract
+Audience: runtime/profile authors, Gateway/UI clients, deployment maintainers
+Replaced by: not replaced
+
 This document defines the runtime chains that top-level product profiles must
 wire together. The code contract lives in
 `src/runtime/profiles/product_mode_contracts.py`; graph tests live in
@@ -8,8 +12,10 @@ wire together. The code contract lives in
 ## General Rules
 
 Frontend, CLI, and MCP only submit requests and display state. They must not
-choose navigation paths directly, and they must not bypass `CmdVelMux` to
-control the robot.
+choose navigation paths directly. In Module-owned simulation/compatibility
+graphs, they must not bypass `CmdVelMux`; in the physical `thunder_field`
+graph, they must not bypass the native C++ navigation endpoint and
+`lingtu-driver`.
 
 ## Runtime Identity
 
@@ -80,7 +86,7 @@ Web / CLI / MCP
   -> lingtu-nav-dds
   -> DDS /nav/cmd_vel
   -> lingtu-driver
-  -> brainstem Walk(Vector3)
+  -> Brainstem gRPC WalkChecked(seq, Vector3)
 ```
 
 Key `thunder_field` runtime settings:
@@ -101,6 +107,14 @@ cmd_vel writers in `thunder_field`.
 In this default field branch, the Python graph has no navigation DDS adapter
 modules. It also does not load `map.out`, `nav.terrain`, `nav.local_planner`,
 or `nav.path_follower`; the C++ endpoint owns those runtime responsibilities.
+
+`lingtu-driver` is the only product hardware writer. It consumes
+`rt/nav/cmd_vel`, owns the remote Brainstem gRPC connection, acquires/renews
+the `grpc` lease as `lingtu-driver`, sends `WalkChecked`, publishes driver
+control status, and drops stale commands after the configured timeout. The
+native nav endpoint treats that driver control status as an input gate:
+autonomy and `teleop_avoid` do not move unless the driver is connected, ready,
+motors-enabled, lease-valid, and owned by `grpc`/`lingtu-driver`.
 
 External velocity entries:
 
@@ -210,7 +224,7 @@ local direct-driver chains:
 ```text
 nav.velocity_mux.driver_cmd_vel
   -> ThunderDriver.cmd_vel
-  -> brainstem gRPC RobotControlStub.Walk(Vector3)
+  -> compatibility Brainstem gRPC driver call
 ```
 
 This path exists in `ThunderDriver`, but it is not the default `thunder_field`
@@ -308,6 +322,8 @@ nav.mission.mission_status
 
 lingtu-nav-dds
   -> DDS /nav/cmd_vel
+  -> lingtu-driver
+  -> Brainstem gRPC WalkChecked
 ```
 
 ### TARE Exploration Chain

@@ -1,7 +1,7 @@
 from dataclasses import fields
 from pathlib import Path
 
-from runtime.adapters.native import inspection as native_inspection
+from nav.adapters.native import inspection_store as native_inspection
 from runtime.profiles.resolver import resolve_profile_config
 from runtime.runtime_interface import TOPIC_ALLOWED_FRAME_IDS, TOPIC_ROS_TYPES, TOPICS
 

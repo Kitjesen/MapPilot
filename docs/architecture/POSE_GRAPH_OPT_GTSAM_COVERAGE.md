@@ -1,5 +1,9 @@
 ﻿# Pose Graph Optimizer GTSAM Coverage
 
+Status: migration coverage note; product optimization policy lives in `NATIVE_RUNTIME.md`
+Audience: SLAM/map-optimization migration maintainers
+Replaced by: `NATIVE_RUNTIME.md` for product defaults; this file remains detailed migration evidence
+
 This note defines what the Rust `pose_graph_opt` kernel currently replaces,
 what the separate camera-LiDAR Rust optimizer replaces, and what still remains
 as explicit legacy GTSAM comparison surface.

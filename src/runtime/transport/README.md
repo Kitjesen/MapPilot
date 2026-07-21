@@ -12,8 +12,8 @@ Use the smallest delivery mode that matches the seam:
 | --- | --- |
 | Same-process Module graph | `local` callback / `LocalTransport` |
 | LiDAR, IMU, and other mature sensor buses across processes | typed CycloneDDS adapter |
-| Same-host high-bandwidth image or point-cloud IPC | `shm` |
-| Thunder endpoint commands, paths, status, and replay | typed DDS endpoint contract |
+| Same-host high-bandwidth image IPC | POSIX SHM rings with typed status/CameraInfo |
+| Thunder endpoint commands, paths, status, inspection, and replay | typed DDS endpoint contract |
 | ROS2 compatibility windows | explicit DDS/ROS2 adapter |
 
 DDS is suitable for sensor streams when the topic schema and QoS are explicit.
@@ -58,33 +58,40 @@ boundaries.
 Product Thunder field communication uses the typed DDS contract in
 `src/runtime/endpoints/dds/contracts.py`. The default contract is
 `thunder_field_dds_v1`, backed by the topic/type registry in
-`src/message/dds.py`. Registered product topics bind to concrete IDL/C++ message
-types such as Livox `CustomMsg`, `sensor_msgs/Imu`, `nav_msgs/Odometry`,
-`sensor_msgs/PointCloud2`, `nav_msgs/Path`, and `geometry_msgs/TwistStamped`.
+`src/message/dds.py` and the native IDL under `src/message/idl/`. Registered
+product topics bind to LingTu-owned DDS types for LiDAR, IMU, odometry,
+point-cloud, path, final velocity, inspection command/status/evidence, and
+camera metadata. ROS-compatible topic shapes are adapter windows, not the
+product ownership model.
 
 The default field graph uses:
 
-- `DDSLocalizationAdapterModule` for `/lidar/raw_frame`, `/imu/raw`, and
-  `/slam/*` localization/map streams.
-- C++ `lingtu-nav-dds` for navigation goal/path/cmd_vel DDS. The old Python
-  nav DDS Module adapters were removed to prevent field double writers.
+- Native LiDAR, SLAM, traversability, and navigation endpoint processes publish
+  and consume typed DDS topics directly.
+- Camera color/depth image payloads use SHM rings by default; optional image
+  DDS exists for diagnostics/compatibility only.
+- C++ `lingtu-nav-dds` owns navigation goal/path/status and final
+  `/nav/cmd_vel` publication. The old Python nav DDS Module adapters were
+  removed to prevent field double writers.
+- C++ `lingtu_driver` is the unique motor-command sink. It subscribes
+  `rt/nav/cmd_vel`, holds the Brainstem `lingtu-driver` lease, and calls
+  `WalkChecked`.
 
-External Thunder endpoint processes should use
-`src/runtime/endpoints/dds/endpoint_service.py` through the runnable
-`scripts/deploy/thunder/run_dds_endpoint_service.py` entrypoint only for the
-temporary Python Brainstem command sink. Product navigation planning uses the
-C++ `lingtu-nav-dds` service for goal/path/cmd_vel DDS.
+The Python endpoint runner in `src/runtime/endpoints/dds/endpoint_service.py`
+remains a replay/diagnostic/smoke surface. It is not the product Brainstem
+command sink and must not be used to create a second `/nav/cmd_vel` writer in a
+field deployment.
 
-For the default endpoint process, use the product source group. It always
-includes the Brainstem command sink and adds JSONL sensor/localization input
-when a JSONL provider is configured:
+For replay or endpoint-smoke diagnostics, the Python runner can publish
+contract-bound JSONL sensor/localization records. Do not run this as the field
+motor command sink:
 
 ```bash
 LINGTU_ENDPOINT_JSONL_PATH=/data/thunder/localization.jsonl \
-  python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field
+  python scripts/deploy/thunder/run_dds_endpoint_service.py --source jsonl --once
 ```
 
-Validate the default Thunder endpoint deployment boundary:
+Validate the Thunder field deployment boundary:
 
 ```bash
 python tools/validate/validate_thunder_field_deployment.py
@@ -100,23 +107,17 @@ replay adapters and tests, and carries:
 - `payload`: the message `to_dict()` payload, or a plain JSON value
 
 For `thunder_field`, the command output mode is `endpoint_only`: LingTu does
-not include an in-process `ThunderDriver` in the default field graph, and the
-endpoint source owns translation from DDS command velocity to robot hardware.
-This Python command sink currently needs `cyclonedds-python` if enabled, but it
-is not a main-path algorithm dependency; missing Python DDS must fail closed
-rather than restart-loop the robot services. Removing `cyclonedds-python` from
-real motor actuation requires a dedicated C++ Thunder control sink that
-subscribes `rt/nav/cmd_vel`; do not fold that hardware role into the planner
-endpoint.
+not include an in-process `ThunderDriver` in the default field graph. Real
+motor actuation is the native C++ `lingtu_driver` process, not a Python DDS
+command sink. If a replay endpoint or diagnostic source uses Python DDS, missing
+`cyclonedds-python` must fail closed and must not affect the native driver
+service.
 
-Source plugins live under `src/runtime/adapters/endpoint_sources/`.
-Deployment-specific motion command sinks are passed as `module:factory`
-sources outside the LingTu module graph. The runner accepts comma-separated
-source names, so control, localization publishing, sensor publishing, and
-replay can remain separate endpoint plugins while sharing one supervised
-endpoint process. The built-in JSONL source reads normalized JSONL records from
-a file or external process stdout, then publishes them as contract-bound
-endpoint messages. The built-in smoke source provides a data-flow check:
+Source plugins live under `src/runtime/adapters/endpoint_sources/`. They are
+for replay, simulation, and bounded diagnostics outside the normal Module graph.
+The built-in JSONL source reads normalized JSONL records from a file or
+external process stdout, then publishes them as contract-bound endpoint
+messages. The built-in smoke source provides a data-flow check:
 
 ```bash
 python scripts/deploy/thunder/run_dds_endpoint_service.py --transport local --source smoke --once --json

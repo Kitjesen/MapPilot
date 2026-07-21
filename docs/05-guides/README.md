@@ -245,7 +245,9 @@ can move the robot.
 
    The goal is in the map/planning frame and yaw is in radians. It enters the
    mission/planner path; it is not a direct motor command. In the field
-   endpoint, the native navigation service owns the final velocity writer.
+   endpoint, the native navigation service owns the final `/nav/cmd_vel`
+   writer, and the unique `lingtu-driver` service forwards checked commands to
+   the remote Brainstem controller.
    The [product mode contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
    and [navigation compute contract](../architecture/NAVIGATION_COMPUTE_CONTRACT.md)
    describe the safety and arbitration boundary.

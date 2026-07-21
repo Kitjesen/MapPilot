@@ -22,7 +22,7 @@ import numpy as np
 class TestW1LocalPlannerNoFallback(unittest.TestCase):
     def test_straight_line_fallback_method_removed(self):
         """`_publish_straight_line` must not exist as an attribute anymore."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         self.assertFalse(
             hasattr(LocalPlanner, "_publish_straight_line"),
@@ -33,9 +33,9 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
 
     def test_nanobind_backend_fails_when_nav_kernel_missing(self):
         """setup() must fail fast instead of silently selecting cmu_py/simple."""
-        from nav.services.plan.local_planner import runtime
-        from nav.services.plan.local_planner import service as mod
-        from nav.services.plan.local_planner.backend import (
+        from nav.local import local_planner_runtime as runtime
+        from nav.local import local_planner as mod
+        from nav.local.local_planner_backend import (
             LocalPlannerGridConfig,
             NanobindLocalPlannerBackend,
         )
@@ -70,9 +70,9 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
         self.assertIsNone(planner._core)
 
     def test_failed_nanobind_setup_health_does_not_report_degraded_cmu_py(self):
-        from nav.services.plan.local_planner import runtime
-        from nav.services.plan.local_planner import service as mod
-        from nav.services.plan.local_planner.backend import (
+        from nav.local import local_planner_runtime as runtime
+        from nav.local import local_planner as mod
+        from nav.local.local_planner_backend import (
             LocalPlannerGridConfig,
             NanobindLocalPlannerBackend,
         )
@@ -111,9 +111,9 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
         self.assertFalse(info["running"])
 
     def test_nanobind_missing_nav_kernel_does_not_try_cmu_py_paths(self):
-        from nav.services.plan.local_planner import runtime
-        from nav.services.plan.local_planner import service as mod
-        from nav.services.plan.local_planner.backend import (
+        from nav.local import local_planner_runtime as runtime
+        from nav.local import local_planner as mod
+        from nav.local.local_planner_backend import (
             LocalPlannerGridConfig,
             NanobindLocalPlannerBackend,
         )
@@ -148,7 +148,7 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
 
     def test_nanobind_backend_requires_symbols_before_claiming_nanobind(self):
         """A stale lingtu_nav_kernel extension must fail before claiming nanobind."""
-        from nav.services.plan.local_planner import runtime
+        from nav.local import local_planner_runtime as runtime
         from runtime.backend_status import BackendStatus
 
         calls = []

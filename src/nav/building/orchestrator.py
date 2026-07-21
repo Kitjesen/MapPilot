@@ -86,10 +86,12 @@ class BuildingMissionOrchestrator:
         navigation: BuildingNavigationPort,
         active_floor: ActiveFloor | Callable[[], ActiveFloor],
         transition_executor: FloorTransitionPort | None = None,
+        target_binding_validator: Callable[[BuildingMissionRequest], tuple[bool, str]] | None = None,
     ) -> None:
         self._navigation = navigation
         self._active_floor_provider = active_floor if callable(active_floor) else lambda: active_floor
         self._transition_executor = transition_executor
+        self._target_binding_validator = target_binding_validator
         self._request: BuildingMissionRequest | None = None
         self._goal_request_id = ""
         self._motion_active = False
@@ -103,6 +105,8 @@ class BuildingMissionOrchestrator:
         validation_error = self._validate_request(request)
         if validation_error:
             return self._reject(request, validation_error)
+        if self._has_target_binding(request) and self._target_binding_validator is None:
+            return self._reject(request, "target_binding_validator_unavailable")
         ready, readiness_reason = self._autonomy_ready()
         if not ready:
             return self._reject(
@@ -136,6 +140,9 @@ class BuildingMissionOrchestrator:
                 target_floor=request.target_floor,
             )
             return True, str(reason or "floor_transition_started")
+
+        if request.travel_mode in {"stairs", "elevator"}:
+            return self._reject(request, "connector_transition_not_required")
 
         return self._dispatch_target_goal(request)
 
@@ -242,6 +249,9 @@ class BuildingMissionOrchestrator:
 
     def _dispatch_target_goal(self, request: BuildingMissionRequest) -> tuple[bool, str]:
         self._goal_request_id = f"{request.request_id}:goal"
+        binding_error = self._validate_target_binding(request)
+        if binding_error:
+            return self._reject(request, binding_error)
         try:
             self._navigation.send_goal(
                 request.target.x,
@@ -305,6 +315,24 @@ class BuildingMissionOrchestrator:
             return False, "native_autonomy_status_error"
         return bool(ready), str(reason or "")
 
+    def _validate_target_binding(self, request: BuildingMissionRequest) -> str:
+        if not self._has_target_binding(request):
+            return ""
+        validator = self._target_binding_validator
+        if validator is None:
+            return "target_binding_validator_unavailable"
+        try:
+            valid, reason = validator(request)
+        except Exception:
+            return "target_binding_validation_error"
+        if not valid:
+            return str(reason or "target_binding_validation_failed")
+        return ""
+
+    @staticmethod
+    def _has_target_binding(request: BuildingMissionRequest) -> bool:
+        return request.map_version is not None or bool(request.version_id) or bool(request.map_pcd_sha256)
+
     @staticmethod
     def _validate_request(request: BuildingMissionRequest) -> str:
         if not isinstance(request, BuildingMissionRequest):
@@ -313,6 +341,8 @@ class BuildingMissionOrchestrator:
             return "request_id_required"
         if not request.building_id.strip() or not request.floor_id.strip() or not request.map_id.strip():
             return "building_floor_identity_required"
+        if request.travel_mode not in {"any", "stairs", "elevator"}:
+            return "invalid_travel_mode"
         if request.target.frame_id != "map":
             return "unsupported_navigation_frame"
         if not all(

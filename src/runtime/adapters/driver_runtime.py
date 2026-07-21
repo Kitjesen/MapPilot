@@ -22,8 +22,8 @@ _DRIVER_KEY_ALIASES = {
 }
 
 _DRIVER_FALLBACK_MODULES: dict[str, tuple[str, ...]] = {
-    "auto": ("runtime.blueprints.stub",),
-    "stub": ("runtime.blueprints.stub",),
+    "auto": ("drivers.sim.stub",),
+    "stub": ("drivers.sim.stub",),
     "thunder": (
         "drivers.real.thunder.han_dog_module",
     ),

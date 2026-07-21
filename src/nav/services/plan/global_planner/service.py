@@ -23,6 +23,7 @@ from nav.services.plan.global_planner.backend_runtime import (
     configure_backend,
     create_planner_backend,
     load_static_occupancy_into_backend,
+    normalize_far_constraints,
     normalize_octoplanner3d_constraints,
     plan_backend,
     push_backend_map_update,
@@ -56,6 +57,7 @@ class GlobalPlanner(
         fallback_planner_name: str = "",
         expected_saved_map_frame_id: str | None = None,
         map_artifact_gate_required: bool | None = None,
+        far_constraints: dict[str, Any] | None = None,
         octoplanner3d_constraints: dict[str, Any] | None = None,
         octoplanner3d_timeout_s: float | None = None,
     ) -> None:
@@ -68,6 +70,7 @@ class GlobalPlanner(
         self._expected_saved_map_frame_id = expected_saved_map_frame_id
         self._map_artifact_gate_required = map_artifact_gate_required
         self._octoplanner3d_timeout_s = octoplanner3d_timeout_s
+        self._far_constraints = normalize_far_constraints(far_constraints)
         self._octoplanner3d_constraints = normalize_octoplanner3d_constraints(octoplanner3d_constraints)
         self._backend = None
         self._fallback_backend = None
@@ -94,6 +97,7 @@ class GlobalPlanner(
             map_path,
             self._obstacle_thr,
             octoplanner3d_timeout_s=self._octoplanner3d_timeout_s,
+            far_options=self._far_constraints,
         )
         configure_backend(backend, name, self._octoplanner3d_constraints)
         load_static_occupancy_into_backend(backend, self._resolve_occupancy_path(map_path))
@@ -774,7 +778,20 @@ class GlobalPlanner(
             if self._map_artifact_gate_blocks():
                 raise RuntimeError(f"GlobalPlanner: {self._map_artifact_gate_failure_reason()}")
         gate_identity = self._map_artifact_gate_identity(self._map_artifact_gate) if guard_primary_map else None
-        execution = plan_backend(backend, GlobalPlanRequest(start=start, goal=goal))
+        planning_map = self._last_map_update
+        execution = plan_backend(
+            backend,
+            GlobalPlanRequest(
+                start=start,
+                goal=goal,
+                frame_id=(planning_map.frame_id if planning_map is not None else "map"),
+                map_version=(planning_map.map_version if planning_map is not None else ""),
+                map_generation=int(
+                    (planning_map.generation if planning_map is not None else 0)
+                    or getattr(backend, "_generation", 0)
+                ),
+            ),
+        )
         if guard_primary_map:
             self._refresh_map_artifact_gate()
             if self._map_artifact_gate_blocks():
@@ -789,7 +806,10 @@ class GlobalPlanner(
     def _evaluate_path_safety(self, backend: Any, path: list) -> dict[str, Any] | None:
         if self._plan_safety_policy == "off":
             return None
-        start_ignore_radius_m = float(self._octoplanner3d_constraints.get("robot_radius") or 0.35)
+        if self._is_far():
+            start_ignore_radius_m = float(self._far_constraints.get("robot_radius_m") or 0.35)
+        else:
+            start_ignore_radius_m = float(self._octoplanner3d_constraints.get("robot_radius") or 0.35)
         return evaluate_backend_path_safety(
             path,
             backend,
@@ -920,3 +940,6 @@ class GlobalPlanner(
 
     def _is_octoplanner3d(self, name: str | None = None) -> bool:
         return normalize_planner_name(name or self._planner_name) == "octoplanner3d"
+
+    def _is_far(self, name: str | None = None) -> bool:
+        return normalize_planner_name(name or self._planner_name) == "far"

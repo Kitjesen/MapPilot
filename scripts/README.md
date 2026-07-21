@@ -20,7 +20,7 @@ deployment.
 | Robot-side operations CLI | `scripts/lingtu health` / `scripts/lingtu status` / `scripts/lingtu doctor --ros2` for legacy ROS graph checks |
 | Thunder field deploy | `bash scripts/deploy/deploy_thunder.sh` |
 | Cut Thunder release | `bash scripts/deploy/cut_release.sh v2.1.1` |
-| Install Thunder DDS endpoint service | `bash scripts/deploy/thunder/install_services.sh field-cpp` |
+| Install Thunder field services | `bash scripts/deploy/thunder/install_services.sh field-cpp` |
 | Build native Thunder driver | `bash scripts/build/build_driver.sh` |
 | Run native Thunder driver | `build/driver/lingtu_driver` |
 | Run compatibility Python field endpoint | `python scripts/deploy/thunder/run_dds_endpoint_service.py --source thunder_field` |
@@ -43,8 +43,8 @@ deployment.
 
 | Script | Purpose |
 | --- | --- |
-| `lingtu` | Robot-side operations CLI（机器人�?`scripts/lingtu`�? status, watch, map, nav, svc, log, health. |
-| `lingtu.sh` | Shell compatibility wrapper around `python lingtu.py`（Shell 兼容入口�? |
+| `lingtu` | Robot-side operations CLI: `scripts/lingtu` status, watch, map, nav, svc, log, health. |
+| `lingtu.sh` | Shell compatibility wrapper around `python lingtu.py`. |
 
 ## Directory Map
 
@@ -79,18 +79,18 @@ New operator docs should use canonical profiles: `nav`, `map`, and
 - Manual hardware or ROS smoke checks go under `tests/scripts/smoke/`.
 - Keep product-facing field entrypoints named Thunder. Legacy board/path names
   may remain only as compatibility wrappers or stable robot-side contracts.
-- Prefer `--endpoint thunder-field` or `--endpoint field` in operator-facing
-  commands. `real_s100p` and `s100p` are compatibility aliases only.
+- Prefer canonical `--endpoint thunder_field` in operator-facing commands.
+  `thunder-field`, `field`, `real_s100p`, and `s100p` are compatibility aliases.
 - Prefer `--robot thunder` or `--robot thunder_remote` for physical robot
   presets. `s100p` and `navigate` are compatibility aliases only.
-- Thunder service installation defaults to the no-ROS typed DDS endpoint path. Use
-  `LINGTU_COMMAND_OUTPUT_MODE=endpoint_only` for field navigation so the
-  endpoint source, not the LingTu module graph, owns hardware actuation. Use
-  `LINGTU_ENDPOINT_SOURCES` for comma-separated field endpoint plugins, such
-  as the `thunder_field` product source group. That group expands to
-  Brainstem command sinking and automatically adds a `jsonl`
-  localization/sensor provider when `LINGTU_ENDPOINT_JSONL_PATH` or
-  `LINGTU_ENDPOINT_JSONL_COMMAND` is configured.
+- Thunder service installation defaults to the no-ROS native DDS field path.
+  Use `LINGTU_COMMAND_OUTPUT_MODE=endpoint_only` and
+  `LINGTU_HARDWARE_CONTROL_BOUNDARY=driver` for field navigation. The native
+  nav endpoint owns logical `/nav/cmd_vel`, encoded on DDS wire topic
+  `rt/nav/cmd_vel`; `lingtu-driver` is the only speed exit to the remote
+  Brainstem gRPC endpoint configured by `brainstem.env`.
+  `LINGTU_ENDPOINT_SOURCES` and JSONL providers are compatibility/development
+  inputs, not the production motion sink.
 - Validate JSONL providers with
   `python tools/validate/validate_lcm_jsonl_feed.py <feed.jsonl> --require-field-inputs`
   before deploying them as a Thunder field endpoint source. The JSONL validator

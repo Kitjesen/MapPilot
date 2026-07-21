@@ -263,7 +263,7 @@ def test_traversable_frontier_uses_nearby_scene_graph_semantics_without_motion()
 
 
 def test_full_stack_can_add_traversable_frontier_without_wiring_it_to_control():
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
 
     system = thunder_blueprint(
         robot="stub",
@@ -342,7 +342,7 @@ def test_full_stack_can_add_traversable_frontier_without_wiring_it_to_control():
 
 
 def test_full_stack_wires_scene_graph_to_traversable_frontier_when_semantic_enabled():
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
 
     system = thunder_blueprint(
         robot="stub",

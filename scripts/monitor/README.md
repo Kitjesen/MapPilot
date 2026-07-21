@@ -23,7 +23,7 @@ export FEISHU_APP_ID="cli_xxx"
 export FEISHU_APP_SECRET="..."
 export FEISHU_RECEIVE_ID="ou_or_chat_id"
 export FEISHU_RECEIVE_ID_TYPE="open_id"  # or chat_id
-export LINGTU_GATEWAY_URL="http://localhost:5050"
+export LINGTU_GATEWAY_URL="http://ROBOT_IP_OR_HOSTNAME:5050"
 
 python3 scripts/monitor/feishu_monitor_bot.py
 ```
@@ -35,9 +35,11 @@ pip3 install -r scripts/monitor/requirements_telegram.txt
 
 export TELEGRAM_BOT_TOKEN="..."
 export TELEGRAM_CHAT_ID="..."
-export LINGTU_GATEWAY_URL="http://localhost:5050"
+export LINGTU_GATEWAY_URL="http://ROBOT_IP_OR_HOSTNAME:5050"
 
 python3 scripts/monitor/telegram_monitor_bot.py
 ```
 
-Both bots also honor `LINGTU_MONITOR_POLL_SEC` for the polling interval.
+Use `http://127.0.0.1:5050` only when the bot runs on the robot or in a local
+tunnel namespace. Both bots also honor `LINGTU_MONITOR_POLL_SEC` for the
+polling interval.

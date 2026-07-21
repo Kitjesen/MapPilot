@@ -24,6 +24,7 @@ import sys
 from typing import Any
 
 import yaml
+from yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", ".."))
@@ -62,13 +63,72 @@ RUNTIME_TOPIC_LITERAL_RE = re.compile(
 )
 
 
+def _yaml_path_has_topic_context(path: tuple[str, ...]) -> bool:
+    """Return whether a YAML key path describes runtime topic metadata."""
+
+    for key in path:
+        token = key.strip().lower()
+        if (
+            token in {"topic", "topics"}
+            or token.endswith("_topic")
+            or token.endswith("_topics")
+            or token.endswith("_boundary")
+        ):
+            return True
+    return False
+
+
+def _extract_topics_from_yaml_node(
+    node: Node,
+    *,
+    rel_path: str,
+    key_path: tuple[str, ...] = (),
+) -> dict[str, list[tuple[str, int]]]:
+    """Extract topic scalars from parsed YAML while preserving source lines."""
+
+    found: dict[str, list[tuple[str, int]]] = {}
+
+    def _add(value: str, source: ScalarNode) -> None:
+        found.setdefault(value, []).append((rel_path, source.start_mark.line + 1))
+
+    def _walk(current: Node, path: tuple[str, ...]) -> None:
+        if isinstance(current, MappingNode):
+            for key_node, value_node in current.value:
+                key = key_node.value if isinstance(key_node, ScalarNode) else ""
+                if (
+                    key
+                    and RUNTIME_TOPIC_VALUE_RE.fullmatch(key)
+                    and _yaml_path_has_topic_context(path)
+                ):
+                    _add(key, key_node)
+                _walk(value_node, path + ((key,) if key else ()))
+            return
+        if isinstance(current, SequenceNode):
+            for item in current.value:
+                _walk(item, path)
+            return
+        if (
+            isinstance(current, ScalarNode)
+            and RUNTIME_TOPIC_VALUE_RE.fullmatch(current.value)
+            and _yaml_path_has_topic_context(path)
+        ):
+            _add(current.value, current)
+
+    _walk(node, key_path)
+    return found
+
+
 def info(msg: str) -> None:
+    """Print a diagnostic message when verbose validation is enabled."""
+
     if VERBOSE:
         print(f"  [INFO] {msg}")
 
 
 def load_contract(path: str) -> dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as f:
+    """Load one YAML runtime-topic contract from disk."""
+
+    with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
 
@@ -294,7 +354,7 @@ def validate_topic_format_contract(data: dict[str, Any]) -> list[str]:
 def extract_nav_topics_from_yaml(path: str) -> dict[str, list[str]]:
     """Extract runtime topic strings from a YAML file."""
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     found: dict[str, list[str]] = {}
@@ -334,7 +394,7 @@ def extract_nav_topics_from_sources(paths: tuple[str, ...]) -> dict[str, list[tu
     found: dict[str, list[tuple[str, int]]] = {}
     for fpath in _candidate_source_files(paths):
         rel_path = os.path.relpath(fpath, ROOT_DIR)
-        with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+        with open(fpath, encoding="utf-8", errors="ignore") as f:
             for line_no, line in enumerate(f, 1):
                 for match in RUNTIME_TOPIC_LITERAL_RE.finditer(line):
                     found.setdefault(match.group(1), []).append((rel_path, line_no))
@@ -359,10 +419,20 @@ def extract_nav_topics_from_config(directory: str) -> dict[str, list[tuple[str, 
                 continue
             fpath = os.path.join(dirpath, fname)
             rel_path = os.path.relpath(fpath, ROOT_DIR)
-            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
-                for line_no, line in enumerate(f, 1):
+            with open(fpath, encoding="utf-8", errors="ignore") as f:
+                text = f.read()
+            try:
+                root = yaml.compose(text)
+            except yaml.YAMLError:
+                root = None
+                for line_no, line in enumerate(text.splitlines(), 1):
                     for match in RUNTIME_TOPIC_LITERAL_RE.finditer(line):
                         found.setdefault(match.group(1), []).append((rel_path, line_no))
+            if root is None:
+                continue
+            parsed = _extract_topics_from_yaml_node(root, rel_path=rel_path)
+            for topic, locations in parsed.items():
+                found.setdefault(topic, []).extend(locations)
     return found
 
 
@@ -386,6 +456,8 @@ def _check_topic_locations(
 
 
 def main() -> int:
+    """Validate runtime topic declarations and report contract drift."""
+
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -457,7 +529,7 @@ def main() -> int:
             errors=errors,
         )
     else:
-        print(f"\nChecking: launch/**/*.launch.py")
+        print("\nChecking: launch/**/*.launch.py")
         print(f"  SKIP: {LAUNCH_DIR} not found")
 
     config_topics = extract_nav_topics_from_config(CONFIG_DIR)

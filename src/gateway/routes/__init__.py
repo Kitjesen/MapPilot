@@ -25,9 +25,11 @@ _EXPORTS = {
         "gateway.routes.operations",
         "register_operation_routes",
     ),
+    "register_place_routes": ("gateway.routes.places", "register_place_routes"),
     "register_realtime_routes": ("gateway.routes.realtime", "register_realtime_routes"),
     "register_session_routes": ("gateway.routes.session", "register_session_routes"),
     "register_status_routes": ("gateway.routes.status", "register_status_routes"),
+    "register_voice_routes": ("gateway.routes.voice", "register_voice_routes"),
 }
 
 __all__ = list(_EXPORTS)

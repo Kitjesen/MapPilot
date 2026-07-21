@@ -223,8 +223,9 @@ isolation but failed endpoint displacement, yaw drift, and map ghosting together
 Sunrise remote runner (from dev machine on the same LAN):
 
 ```bash
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
 python sim/scripts/run_sunrise_continuous_mapping_gate.py \
-  --host 192.168.66.13 \
+  --host ${LINGTU_HOST} \
   --duration 180 \
   --domain-id 231
 ```

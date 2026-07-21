@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from runtime.blueprints.stacks.stack_config import (
+from lingtu.assembly.stacks.stack_config import (
     driver_stack_config,
+    exploration_owner,
     exploration_stack_config,
     needs_lidar_for_slam,
     perception_stack_config,
@@ -156,10 +157,21 @@ def test_exploration_stack_config_keeps_only_supported_bridge_keys() -> None:
 
     assert config == {
         "backend": "tare",
+        "owner": "module",
         "tare_scenario": "tunnel",
         "auto_start": False,
         "way_point_topic": "/waypoint",
     }
+
+
+def test_native_tare_endpoint_is_the_single_exploration_owner() -> None:
+    config = {
+        "exploration_backend": "tare",
+        "native_navigation_endpoint": "lingtu-nav-dds",
+    }
+
+    assert exploration_owner(config) == "native"
+    assert exploration_stack_config(config)["owner"] == "native"
 
 
 def test_needs_lidar_for_slam_only_for_managed_lidar_slam() -> None:

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "lingtu/maps/build/pcd.hpp"
+#include "lingtu/maps/sources/unity_scene.hpp"
 #include "lingtu/maps/store.hpp"
 
 namespace lingtu::maps {
@@ -93,6 +94,10 @@ class MapPipelineCore {
   std::string BuildEsdfArtifactJson(const std::string& map_id);
   std::string BuildTraversabilityArtifactJson(const std::string& map_id);
   std::string BuildSemanticArtifactJson(const std::string& map_id);
+  std::string ImportUnitySemanticArtifactJson(
+      const std::string& map_id,
+      const std::filesystem::path& scene_dir,
+      const sources::UnitySemanticImportConfig& options);
 
  private:
   std::filesystem::path BuildDir(const std::string& map_id) const;

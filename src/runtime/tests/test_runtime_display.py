@@ -81,7 +81,6 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
             ),
             "global_planning": (
                 "global_planning",
-                "pct_global_planning",
                 "octoplanner3d_global_planning",
             ),
         },
@@ -128,8 +127,7 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         "interfaces=fastlio_mapping,fastlio_raw_validation "
         "/nav/lidar_scan,/nav/imu->/nav/odometry,/nav/map_cloud | "
         "global_planning[lingtu_navigation_or_planner_backend|map] "
-        "interfaces=global_planning,pct_global_planning,"
-        "octoplanner3d_global_planning "
+        "interfaces=global_planning,octoplanner3d_global_planning "
         "/nav/odometry,/nav/goal_pose->/nav/global_path | "
         "command_boundary[command_arbiter_to_driver|body_twist] "
         "/nav/cmd_vel->driver"

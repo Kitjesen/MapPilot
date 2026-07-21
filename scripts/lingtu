@@ -99,6 +99,93 @@ except Exception:
 $2
 " 2>/dev/null || echo '-'; }
 
+slamcheck_sample_fields() {
+    python3 - "$@" <<'PY'
+import json
+import sys
+
+target, loc_raw, sess_raw, slam_raw, health_raw = sys.argv[1:6]
+
+
+def load(raw):
+    try:
+        value = json.loads(raw)
+    except Exception:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def pick(primary, secondary, *names):
+    for source in (primary, secondary):
+        for name in names:
+            value = source.get(name)
+            if value not in (None, "", "-"):
+                return value
+    return "-"
+
+
+def bool_pick(primary, secondary, *names):
+    value = pick(primary, secondary, *names)
+    return "-" if value == "-" else str(value).lower()
+
+
+loc = load(loc_raw)
+sess = load(sess_raw)
+slam = load(slam_raw)
+health = load(health_raw)
+
+backend = pick(loc, sess, "backend", "localization_backend")
+health_source = pick(loc, sess, "health_source", "localizer_health_source")
+map_save_source = pick(loc, sess, "map_save_source")
+saved_reloc = bool_pick(
+    loc,
+    sess,
+    "saved_map_relocalization_supported",
+    "relocalization_supported",
+)
+restart_recovery = bool_pick(loc, sess, "restart_recovery_supported")
+recovery_method = pick(loc, sess, "recovery_method")
+relocal_state = pick(loc, sess, "relocalization_state")
+recovery_signal = pick(loc, sess, "recovery_signal")
+recovery_action = pick(loc, sess, "recovery_action")
+expected_recovery = (
+    "restart_super_lio_relocation"
+    if target == "super_lio_relocation"
+    else "restart_super_lio"
+)
+recovery_signal_ok = "1" if recovery_signal in {"NONE", "RECOVERED"} else "0"
+recovery_action_ok = (
+    "1" if recovery_action in {"none", "-", expected_recovery} else "0"
+)
+mode = pick(slam, {}, "mode")
+services = slam.get("services") if isinstance(slam.get("services"), dict) else {}
+target_service = pick(services, {}, target)
+sensors = health.get("sensors") if isinstance(health.get("sensors"), dict) else {}
+slam_sensor = sensors.get("slam") if isinstance(sensors.get("slam"), dict) else {}
+slam_hz = pick(slam_sensor, health, "hz", "slam_hz")
+map_points = pick(health, {}, "map_points")
+
+values = (
+    backend,
+    health_source,
+    map_save_source,
+    saved_reloc,
+    restart_recovery,
+    recovery_method,
+    relocal_state,
+    recovery_signal,
+    recovery_action,
+    recovery_signal_ok,
+    recovery_action_ok,
+    mode,
+    target_service,
+    slam_hz,
+    map_points,
+)
+print("\t".join(str(value).replace("\t", " ").replace("\n", " ") for value in values))
+PY
+}
+
 resolve_relocation_map_name() {
     python3 - "$1" "$2" <<'PY'
 import sys
@@ -294,19 +381,6 @@ if profile:
     payload["slam_profile"] = profile
 print(json.dumps(payload, separators=(",", ":")))
 PY
-}
-
-mode_product_session_for_target() {
-    case "$1" in
-        teleop) echo "teleop" ;;
-        teleop_avoid) echo "teleop_avoid" ;;
-        map) echo "mapping" ;;
-        tracking) echo "tracking" ;;
-        nav) echo "navigation" ;;
-        inspection) echo "inspection" ;;
-        tare_explore|explore) echo "exploration" ;;
-        *) echo "$1" ;;
-    esac
 }
 
 nav_goal_precheck() {
@@ -726,16 +800,46 @@ PY
 }
 
 # -- Subcommand: mode --
-mode_switch_usage() {
-    echo "Usage: lingtu mode switch <teleop|teleop_avoid|map|tracking|nav|inspection|tare_explore> [--map NAME] [--current PROFILE] [--endpoint thunder_field] [--relocalize|--no-relocalize] [--initial-pose X Y YAW]"
-    echo "Cold-restart the product runtime after preflight, motion stop, session end, profile update, SLAM mode setup, and readiness checks."
+MODE_TARGET_PROFILE=""
+MODE_TARGET_PRODUCT_SESSION=""
+MODE_TARGET_SESSION_MODE=""
+MODE_TARGET_NATIVE_CONTROL_MODE=""
+MODE_TARGET_SLAM_MODE=""
+MODE_TARGET_REQUIRES_MAP="false"
+MODE_TARGET_NEEDS_NAV_ENDPOINT="false"
+MODE_TARGET_NEEDS_TRAVERSABILITY="false"
+MODE_TARGET_CHECK_OBSTACLE="false"
+MODE_TARGET_ALLOW_TELEOP_TAKEOVER="false"
+MODE_TARGET_TELEOP_LOCAL_PLANNER="false"
+MODE_TARGET_NEEDS_INSPECTION_EVIDENCE="false"
+MODE_TARGET_NEEDS_EXPLORATION_ENDPOINT="false"
+MODE_TARGET_PROCESS_ROWS=""
+MODE_TARGET_KNOWN_TARGETS=""
+MODE_TARGET_STOP_TARGETS=""
+
+mode_plan_bool() {
+    local expected="$1"
+    if printf '%s\n' "$MODE_TARGET_PROCESS_ROWS" | awk -F'|' -v name="$expected" '$1 == name { found=1 } END { exit !found }'; then
+        printf 'true\n'
+    else
+        printf 'false\n'
+    fi
 }
 
-mode_is_product_profile() {
-    case "$1" in
-        teleop|teleop_avoid|map|tracking|nav|inspection|tare_explore) return 0 ;;
-        *) return 1 ;;
-    esac
+mode_plan_process_target() {
+    local expected="$1"
+    printf '%s\n' "$MODE_TARGET_PROCESS_ROWS" | awk -F'|' -v name="$expected" '$1 == name { print $3; exit }'
+}
+
+mode_plan_target_selected() {
+    local expected="$1"
+    printf '%s\n' "$MODE_TARGET_PROCESS_ROWS" | awk -F'|' -v target="$expected" '$3 == target { found=1 } END { exit !found }'
+}
+
+mode_switch_usage() {
+    echo "Usage: lingtu mode switch <product-profile> [--map NAME] [--current PROFILE] [--endpoint thunder_field] [--relocalize|--no-relocalize] [--initial-pose X Y YAW]"
+    echo "Cold-restart the product runtime after preflight, motion stop, session end, profile update, SLAM mode setup, and readiness checks."
+    echo "Valid product profiles come from config/runtime_graph/products/*.yaml with operator_switchable: true."
 }
 
 mode_current_profile() {
@@ -769,31 +873,20 @@ mode_profile_dropin() {
 }
 
 mode_nav_endpoint_dropin() {
-    local profile="$1" control_mode="autonomy" check_obstacle=1 use_traversability=1
-    local allow_teleop_takeover=0 teleop_local_planner=0
-    local override_dir="/etc/systemd/system/lingtu-nav-dds.service.d"
-    case "$profile" in
-        teleop|map)
-            control_mode="teleop"
-            check_obstacle=0
-            use_traversability=0
-            allow_teleop_takeover=0 ;;
-        teleop_avoid)
-            control_mode="teleop_avoid"
-            allow_teleop_takeover=0
-            teleop_local_planner=1 ;;
-        tracking|nav|inspection|tare_explore)
-            allow_teleop_takeover=1
-            teleop_local_planner=1 ;;
-    esac
+    local control_mode="$1"
+    local nav_target override_dir
+    [ -n "$control_mode" ] || { echo "Missing native_control_mode in product contract" >&2; return 1; }
+    nav_target="$(mode_plan_process_target nav)"
+    [ -n "$nav_target" ] || { echo "Runtime plan has no navigation process" >&2; return 1; }
+    override_dir="/etc/systemd/system/${nav_target}.d"
     sudo mkdir -p "$override_dir" || return 1
     {
         echo "[Service]"
         echo "Environment=LINGTU_NAV_CONTROL_MODE=$control_mode"
-        echo "Environment=LINGTU_NAV_CHECK_OBSTACLE=$check_obstacle"
-        echo "Environment=LINGTU_NAV_USE_TRAVERSABILITY_COST=$use_traversability"
-        echo "Environment=LINGTU_NAV_ALLOW_TELEOP_TAKEOVER=$allow_teleop_takeover"
-        echo "Environment=LINGTU_TELEOP_LOCAL_PLANNER=$teleop_local_planner"
+        echo "Environment=LINGTU_NAV_CHECK_OBSTACLE=$MODE_TARGET_CHECK_OBSTACLE"
+        echo "Environment=LINGTU_NAV_USE_TRAVERSABILITY_COST=$MODE_TARGET_NEEDS_TRAVERSABILITY"
+        echo "Environment=LINGTU_NAV_ALLOW_TELEOP_TAKEOVER=$MODE_TARGET_ALLOW_TELEOP_TAKEOVER"
+        echo "Environment=LINGTU_TELEOP_LOCAL_PLANNER=$MODE_TARGET_TELEOP_LOCAL_PLANNER"
     } | sudo tee "$override_dir/product-mode.conf" >/dev/null || return 1
     sudo systemctl daemon-reload || return 1
 }
@@ -827,8 +920,14 @@ mode_unit_available() {
 }
 
 mode_set_unit_boot_enabled() {
-    local unit="$1" enabled="$2" action="disable"
-    mode_unit_available "$unit" || return 0
+    local unit="$1" enabled="$2" required="${3:-0}" action="disable"
+    if ! mode_unit_available "$unit"; then
+        if [ "$required" = "1" ]; then
+            echo "Required product service is not installed: $unit" >&2
+            return 1
+        fi
+        return 0
+    fi
     [ "$enabled" = "1" ] && action="enable"
     sudo systemctl "$action" "$unit" >/dev/null || {
         echo "Failed to $action product unit: $unit" >&2
@@ -837,70 +936,27 @@ mode_set_unit_boot_enabled() {
 }
 
 mode_persist_product_boot_ownership() {
-    local target="$1" lidar=1 slam=1 traversability=1 nav=1 explore=0 camera=0
-    local legacy_unit
-    case "$target" in
-        teleop)
-            lidar=0
-            slam=0
-            traversability=0 ;;
-        map)
-            traversability=0 ;;
-        inspection)
-            camera=1 ;;
-        tare_explore)
-            explore=1 ;;
-    esac
-
-    mode_set_unit_boot_enabled lingtu-livox-dds.service "$lidar" || return 1
-    mode_set_unit_boot_enabled lingtu-slam-dds.service "$slam" || return 1
-    mode_set_unit_boot_enabled lingtu-traversability-dds.service "$traversability" || return 1
-    mode_set_unit_boot_enabled lingtu-nav-dds.service "$nav" || return 1
-    mode_set_unit_boot_enabled lingtu-explore-dds.service "$explore" || return 1
-    mode_set_unit_boot_enabled lingtu-teleop-dds.service 0 || return 1
-    mode_set_unit_boot_enabled lingtu-camera-dds.service "$camera" || return 1
-    for legacy_unit in \
-        robot-super-lio-relocation.service \
-        robot-super-lio.service \
-        robot-hba.service \
-        robot-genz-icp.service \
-        robot-localizer.service \
-        robot-fastlio2.service \
-        robot-lidar.service \
-        lidar.service \
-        localization.service \
-        slam.service \
-        traversability-dds.service \
-        traversability.service \
-        nav-dds.service \
-        nav.service \
-        explore-dds.service \
-        explore.service \
-        lingtu-thunder-dds-endpoint.service \
-        thunder-dds-endpoint.service
-    do
-        mode_set_unit_boot_enabled "$legacy_unit" 0 || return 1
-    done
-}
-
-mode_start_unit_if_available() {
-    local unit="$1" timeout_s="${2:-20}"
-    mode_unit_available "$unit" || return 0
-    svc_start_unit "$unit" || return 1
-    svc_wait_unit_active "$unit" "$timeout_s" || {
-        journalctl -u "$unit" -n 40 --no-pager >&2 || true
-        return 1
-    }
+    local target enabled
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        enabled=0
+        mode_plan_target_selected "$target" && enabled=1
+        mode_set_unit_boot_enabled "$target" "$enabled" "$enabled" || return 1
+    done <<< "$MODE_TARGET_KNOWN_TARGETS"
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        printf '%s\n' "$MODE_TARGET_KNOWN_TARGETS" | grep -Fqx "$target" && continue
+        mode_set_unit_boot_enabled "$target" 0 0 || return 1
+    done <<< "$MODE_TARGET_STOP_TARGETS"
 }
 
 mode_wait_nav_control_mode() {
-    local profile="$1" timeout_s="${2:-10}" expected="autonomy"
+    local expected="$1" timeout_s="${2:-10}" nav_target
     local status_file="${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}"
     local deadline actual unit_environment
-    case "$profile" in
-        teleop|map) expected="teleop" ;;
-        teleop_avoid) expected="teleop_avoid" ;;
-    esac
+    [ -n "$expected" ] || { echo "Missing expected native control mode" >&2; return 1; }
+    nav_target="$(mode_plan_process_target nav)"
+    [ -n "$nav_target" ] || { echo "Runtime plan has no navigation process" >&2; return 1; }
     deadline=$((SECONDS + timeout_s))
     while [ "$SECONDS" -lt "$deadline" ]; do
         actual=$(python3 - "$status_file" <<'PY' 2>/dev/null || true
@@ -922,7 +978,7 @@ PY
             return 0
         fi
         if [ "$actual" = "__status_fresh_without_control_mode__" ]; then
-            unit_environment=$(systemctl show lingtu-nav-dds.service --property=Environment --value 2>/dev/null || true)
+            unit_environment=$(systemctl show "$nav_target" --property=Environment --value 2>/dev/null || true)
             case " $unit_environment " in
                 *" LINGTU_NAV_CONTROL_MODE=$expected "*)
                     echo "Native navigation endpoint status is fresh; control mode verified from systemd environment: $expected"
@@ -937,95 +993,28 @@ PY
 }
 
 mode_abort_product_switch() {
+    local target
     echo "Product mode switch failed; stopping motion and partially started services..." >&2
     mode_stop_motion_and_session
-    svc_force_stop_unit lingtu.service
-    svc_force_stop_unit lingtu-camera-dds.service
-    svc_force_stop_unit lingtu-explore-dds.service
-    svc_force_stop_unit lingtu-teleop-dds.service
-    svc_force_stop_unit lingtu-nav-dds.service
-    svc_force_stop_unit lingtu-traversability-dds.service
-    svc_force_stop_unit lingtu-slam-dds.service
-    svc_force_stop_unit lingtu-livox-dds.service
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        svc_force_stop_unit "$target"
+    done <<< "$MODE_TARGET_STOP_TARGETS"
 }
 
 mode_restart_product_stack() {
-    local target="$1"
-    echo "Stopping product runtime before mode switch..."
-    svc_force_stop_unit lingtu.service
-    svc_force_stop_unit robot-super-lio-relocation.service
-    svc_force_stop_unit robot-super-lio.service
-    svc_force_stop_unit robot-hba.service
-    svc_force_stop_unit robot-genz-icp.service
-    svc_force_stop_unit lingtu-explore-dds.service
-    svc_force_stop_unit lingtu-teleop-dds.service
-    svc_force_stop_unit lingtu-traversability-dds.service
-    svc_force_stop_unit lingtu-nav-dds.service
-    svc_force_stop_unit lingtu-slam-dds.service
-    svc_force_stop_unit lingtu-livox-dds.service
-    svc_force_stop_unit lingtu-camera-dds.service
-    svc_force_stop_unit robot-localizer.service
-    svc_force_stop_unit robot-fastlio2.service
-    svc_force_stop_unit robot-lidar.service
-    svc_force_stop_unit lidar.service
-    svc_force_stop_unit localization.service
-    svc_force_stop_unit slam.service
-    svc_force_stop_unit traversability-dds.service
-    svc_force_stop_unit traversability.service
-    svc_force_stop_unit nav-dds.service
-    svc_force_stop_unit nav.service
-    svc_force_stop_unit explore-dds.service
-    svc_force_stop_unit explore.service
-    svc_force_stop_unit lingtu-thunder-dds-endpoint.service
-    svc_force_stop_unit thunder-dds-endpoint.service
+    local product="$1" endpoint="$2" repo py
+    repo="$(lingtu_repo_root)"
+    py="$(lingtu_python)"
     sudo rm -f "${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}" || return 1
 
-    case "$target" in
-        teleop)
-            echo "Starting command endpoint for teleop..."
-            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1
-            mode_wait_nav_control_mode "$target" 10 || return 1 ;;
-        map)
-            echo "Starting native Livox DDS..."
-            svc_restart_lidar_chain || return 1
-            echo "Starting native SLAM DDS..."
-            mode_start_unit_if_available lingtu-slam-dds.service 35 || return 1
-            echo "Starting native command endpoint for mapping teleop..."
-            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1
-            mode_wait_nav_control_mode "$target" 10 || return 1 ;;
-        *)
-            echo "Starting native Livox DDS..."
-            svc_restart_lidar_chain || return 1
-            echo "Starting native SLAM DDS..."
-            mode_start_unit_if_available lingtu-slam-dds.service 35 || return 1
-            echo "Starting native traversability DDS..."
-            mode_start_unit_if_available lingtu-traversability-dds.service 20 || return 1
-            echo "Starting native navigation DDS endpoint..."
-            mode_start_unit_if_available lingtu-nav-dds.service 20 || return 1
-            mode_wait_nav_control_mode "$target" 10 || return 1
-            if [ "$target" = "inspection" ]; then
-                mode_unit_available lingtu-camera-dds.service || {
-                    echo "Inspection mode requires lingtu-camera-dds.service" >&2
-                    return 1
-                }
-                echo "Starting native camera DDS for inspection evidence..."
-                mode_start_unit_if_available lingtu-camera-dds.service 20 || return 1
-            fi
-            if [ "$target" = "tare_explore" ]; then
-                echo "Starting native exploration DDS endpoint..."
-                mode_start_unit_if_available lingtu-explore-dds.service 20 || return 1
-            fi ;;
-    esac
-
-    echo "Starting LingTu runtime profile: $target"
-    svc_start_unit lingtu.service || return 1
-    if svc_wait_gateway_available 45; then
-        echo "LingTu Gateway is available for product mode session setup: $target"
-        return 0
+    echo "Applying compiled product process plan: $product ($endpoint)..."
+    PYTHONPATH="$repo/src${PYTHONPATH:+:$PYTHONPATH}" \
+        "$py" -m lingtu.launcher apply "$product" --endpoint "$endpoint" --json || return 1
+    if mode_plan_bool nav; then
+        mode_wait_nav_control_mode "$MODE_TARGET_NATIVE_CONTROL_MODE" 10 || return 1
     fi
-    echo "LingTu started but Gateway /health did not become available in time" >&2
-    journalctl -u lingtu.service -n 60 --no-pager >&2 || true
-    return 1
+    echo "Product process plan is active: $product"
 }
 
 mode_switch_preflight() {
@@ -1050,72 +1039,107 @@ mode_switch_preflight() {
         echo "Unsupported product mode lifecycle: ${lifecycle:-unknown}" >&2
         return 1
     fi
+    MODE_TARGET_PROFILE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("profile") or "")')
+    MODE_TARGET_PRODUCT_SESSION=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("product_session") or "")')
+    MODE_TARGET_SESSION_MODE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("session_mode") or "")')
+    MODE_TARGET_NATIVE_CONTROL_MODE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("native_control_mode") or "")')
+    MODE_TARGET_SLAM_MODE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("slam_mode") or "")')
+    MODE_TARGET_REQUIRES_MAP=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(str(bool(t.get("requires_map", False))).lower())')
+    MODE_TARGET_PROCESS_ROWS=$(pjson "$plan_json" 'p=(d.get("product_mode_switch") or {}).get("runtime_plan") or {}; print("\n".join("|".join((str(x.get("name") or ""), str(x.get("manager") or ""), str(x.get("target") or ""), str(x.get("timeout_s") or ""), str(x.get("lifecycle") or ""))) for x in p.get("processes") or []))')
+    MODE_TARGET_KNOWN_TARGETS=$(pjson "$plan_json" 'p=(d.get("product_mode_switch") or {}).get("runtime_plan") or {}; print("\n".join(str(x) for x in p.get("known_targets") or []))')
+    MODE_TARGET_STOP_TARGETS=$(pjson "$plan_json" 'p=(d.get("product_mode_switch") or {}).get("runtime_plan") or {}; print("\n".join(str(x) for x in p.get("stop_targets") or []))')
+    MODE_TARGET_NEEDS_NAV_ENDPOINT=$(mode_plan_bool nav)
+    MODE_TARGET_NEEDS_TRAVERSABILITY=$(mode_plan_bool traversability)
+    MODE_TARGET_CHECK_OBSTACLE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; c=set(t.get("required_capabilities") or []); print(str(bool(c & {"registered_cloud_collision_check", "local_planner_collision_and_traversability_scoring"})).lower())')
+    MODE_TARGET_ALLOW_TELEOP_TAKEOVER=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(str("operator_teleop_takeover_with_safety_veto" in (t.get("required_capabilities") or [])).lower())')
+    MODE_TARGET_TELEOP_LOCAL_PLANNER=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(str("operator_assisted_local_planner_control" in (t.get("required_capabilities") or []) or "operator_assisted_local_planner_takeover" in (t.get("required_capabilities") or [])).lower())')
+    MODE_TARGET_NEEDS_INSPECTION_EVIDENCE=$(mode_plan_bool camera)
+    MODE_TARGET_NEEDS_EXPLORATION_ENDPOINT=$(mode_plan_bool explore)
+    if [ "$MODE_TARGET_PROFILE" != "$target" ] || [ -z "$MODE_TARGET_PRODUCT_SESSION" ] || \
+       [ -z "$MODE_TARGET_SESSION_MODE" ] || [ -z "$MODE_TARGET_NATIVE_CONTROL_MODE" ] || \
+       [ -z "$MODE_TARGET_SLAM_MODE" ] || [ -z "$MODE_TARGET_PROCESS_ROWS" ] || \
+       [ -z "$MODE_TARGET_KNOWN_TARGETS" ] || [ -z "$MODE_TARGET_STOP_TARGETS" ]; then
+        echo "Target is not an operator-switchable product contract: $target" >&2
+        return 1
+    fi
+    if [ "$MODE_TARGET_NEEDS_NAV_ENDPOINT" != "true" ]; then
+        echo "Product runtime plan has no navigation process: $target" >&2
+        return 1
+    fi
     printf '%s\n' "$plan_json" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$plan_json"
 }
 
 mode_start_session_for_target() {
     local target="$1" map_name="$2" relocalize="$3" initial_explicit="$4" initial_x="$5" initial_y="$6" initial_yaw="$7"
-    local raw ok msg active_session active_map session_mode
-    case "$target" in
-        teleop)
-            return 0 ;;
-        map)
-            curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
-                -d '{"mode":"mapping","profile":"map","product_session":"mapping"}' \
-                "$GW/api/v1/session/start" | python3 -m json.tool
-            return ${PIPESTATUS[0]} ;;
-        tare_explore)
-            curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
-                -d '{"mode":"exploring","profile":"tare_explore","product_session":"exploration"}' \
-                "$GW/api/v1/session/start" | python3 -m json.tool
-            return ${PIPESTATUS[0]} ;;
-        teleop_avoid|tracking|nav|inspection)
-            local product_session
-            product_session="$(mode_product_session_for_target "$target")"
-            raw=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
-                -d "{\"mode\":\"navigating\",\"map_name\":\"$map_name\",\"profile\":\"$target\",\"product_session\":\"$product_session\"}" \
-                "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
-            printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
-            ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
-            msg=$(pjson "$raw" 'print(d.get("message") or "")')
-            if [ "$ok" != "true" ]; then
-                active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
-                session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
-                active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
-                if [ "$msg" = "Already in navigating. Call /session/end first." ] && [ "$session_mode" = "navigating" ] && [ "$active_map" = "$map_name" ]; then
-                    echo "Already navigating on $map_name; reusing active session."
-                else
-                    echo -e "${R}FAIL${N}: product mode session did not start${msg:+: $msg}" >&2
-                    return 1
-                fi
-            fi
-            if [ "$relocalize" = "1" ]; then
-                if [ "$initial_explicit" = "1" ]; then
-                    nav_relocalize_saved_map "$map_name" "$initial_x" "$initial_y" "$initial_yaw" || return 1
-                else
-                    nav_global_relocalize_saved_map "$map_name" || return 1
-                fi
-            elif nav_relocalization_ready_without_request "$map_name"; then
-                echo "Reusing current TRACKING localization for $map_name."
-            else
-                echo "Current localization is not reusable; trying global saved-map relocalization..."
-                nav_global_relocalize_saved_map "$map_name" || return 1
-            fi ;;
-    esac
+    local payload raw ok msg active_session active_map session_mode
+    [ "$MODE_TARGET_SESSION_MODE" != "none" ] || return 0
+    payload=$(python3 - "$target" "$MODE_TARGET_SESSION_MODE" "$MODE_TARGET_PRODUCT_SESSION" "$map_name" <<'PY'
+import json
+import sys
+
+payload = {
+    "profile": sys.argv[1],
+    "mode": sys.argv[2],
+    "product_session": sys.argv[3],
+}
+if sys.argv[4]:
+    payload["map_name"] = sys.argv[4]
+print(json.dumps(payload, separators=(",", ":")))
+PY
+)
+    raw=$(curl -s --max-time 30 -X POST -H "Content-Type: application/json" \
+        -d "$payload" "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
+    printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
+    ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
+    msg=$(pjson "$raw" 'print(d.get("message") or "")')
+    if [ "$ok" != "true" ]; then
+        active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
+        session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
+        active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
+        if [ "$session_mode" = "$MODE_TARGET_SESSION_MODE" ] && \
+           { [ -z "$map_name" ] || [ "$active_map" = "$map_name" ]; }; then
+            echo "Product session is already active; reusing mode $session_mode."
+        else
+            echo -e "${R}FAIL${N}: product mode session did not start${msg:+: $msg}" >&2
+            return 1
+        fi
+    fi
+    [ "$MODE_TARGET_SLAM_MODE" = "localization" ] || return 0
+    if [ "$relocalize" = "1" ]; then
+        if [ "$initial_explicit" = "1" ]; then
+            nav_relocalize_saved_map "$map_name" "$initial_x" "$initial_y" "$initial_yaw" || return 1
+        else
+            nav_global_relocalize_saved_map "$map_name" || return 1
+        fi
+    elif nav_relocalization_ready_without_request "$map_name"; then
+        echo "Reusing current localization for $map_name."
+    else
+        echo "Current localization is not reusable; trying global saved-map relocalization..."
+        nav_global_relocalize_saved_map "$map_name" || return 1
+    fi
 }
 
 mode_wait_navigation_ready() {
-    local expected_map="$1" timeout_s="${2:-45}"
-    local deadline navj sessionj can active_map blockers state native_reason
+    local expected_map="$1" timeout_s="${2:-45}" expected_control_mode="${3:-autonomy}"
+    local deadline navj sessionj can active_map blockers state native_reason map_ok
     deadline=$((SECONDS + timeout_s))
     navj='{}'
     sessionj='{}'
     while [ "$SECONDS" -lt "$deadline" ]; do
         navj=$(curl -s --max-time 3 "$GW/api/v1/navigation/status" 2>/dev/null || echo '{}')
         sessionj=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
-        can=$(pjson "$navj" 'r=d.get("readiness") or {}; print(str(bool(r.get("can_accept_goal", d.get("can_accept_goal", False)))).lower())')
+        if [ "$expected_control_mode" != "autonomy" ]; then
+            can=$(pjson "$navj" 'r=d.get("readiness") or {}; n=r.get("native_endpoint") or {}; print(str(bool(n.get("ok", False))).lower())')
+        else
+            can=$(pjson "$navj" 'r=d.get("readiness") or {}; print(str(bool(r.get("can_accept_goal", d.get("can_accept_goal", False)))).lower())')
+        fi
         active_map=$(pjson "$sessionj" 'print(d.get("active_map") or d.get("saved_active_map") or "")')
-        if [ "$can" = "true" ] && [ "$active_map" = "$expected_map" ]; then
+        if [ -z "$expected_map" ] || [ "$active_map" = "$expected_map" ]; then
+            map_ok=true
+        else
+            map_ok=false
+        fi
+        if [ "$can" = "true" ] && [ "$map_ok" = "true" ]; then
             return 0
         fi
         sleep 0.25
@@ -1154,7 +1178,6 @@ cmd_mode() {
             local target="${1:-}" current="" endpoint="${LINGTU_ENDPOINT:-thunder_field}" map_name=""
             local relocalize=1 initial_explicit=0 initial_x=0 initial_y=0 initial_yaw=0
             [ -n "$target" ] || { mode_switch_usage; return 1; }
-            mode_is_product_profile "$target" || { mode_switch_usage; return 1; }
             shift
             while [ "$#" -gt 0 ]; do
                 case "$1" in
@@ -1185,10 +1208,11 @@ cmd_mode() {
                 esac
             done
             [ -n "$current" ] || current="$(mode_current_profile)"
-            case "$target" in
-                teleop_avoid|tracking|nav|inspection)
-                    [ -n "$map_name" ] || { echo "Mode $target requires --map NAME"; return 1; } ;;
-            esac
+            mode_switch_preflight "$current" "$target" "$endpoint" || return 1
+            if [ "$MODE_TARGET_REQUIRES_MAP" = "true" ] && [ -z "$map_name" ]; then
+                echo "Mode $target requires --map NAME"
+                return 1
+            fi
 
             local map_pcd="" maps_root raw_map_name
             if [ -n "$map_name" ]; then
@@ -1209,53 +1233,40 @@ cmd_mode() {
             echo "Endpoint: $endpoint"
             [ -n "$map_name" ] && echo "Map: $map_name"
             mode_stop_motion_and_session
-            mode_switch_preflight "$current" "$target" "$endpoint" || return 1
-            case "$target" in
-                teleop_avoid|tracking|nav|inspection)
-                    mode_activate_saved_map_for_nav "$map_name" || return 1 ;;
-            esac
+            if [ "$MODE_TARGET_REQUIRES_MAP" = "true" ]; then
+                mode_activate_saved_map_for_nav "$map_name" || return 1
+            fi
             mode_profile_dropin "$target" "$endpoint" || return 1
-            mode_nav_endpoint_dropin "$target" || return 1
+            mode_nav_endpoint_dropin "$MODE_TARGET_NATIVE_CONTROL_MODE" || return 1
 
-            case "$target" in
-                map)
-                    slam_dds_set_mode mapping "" || return 1 ;;
-                teleop)
-                    ;;
-                tare_explore)
-                    slam_dds_set_mode mapping "" || return 1 ;;
-                teleop_avoid|tracking|nav|inspection)
-                    slam_dds_set_mode localization "$map_pcd" || return 1 ;;
+            case "$MODE_TARGET_SLAM_MODE" in
+                none) ;;
+                mapping) slam_dds_set_mode mapping "" || return 1 ;;
+                localization) slam_dds_set_mode localization "$map_pcd" || return 1 ;;
+                *) echo "Unsupported SLAM mode in product contract: $MODE_TARGET_SLAM_MODE" >&2; return 1 ;;
             esac
 
-            mode_persist_product_boot_ownership "$target" || return 1
-            if ! mode_restart_product_stack "$target"; then
+            mode_persist_product_boot_ownership || return 1
+            if ! mode_restart_product_stack "$target" "$endpoint"; then
                 mode_abort_product_switch
                 return 1
             fi
-            case "$target" in
-                map)
-                    slam_dds_wait_status mapping 0 35 || return 1 ;;
-                tare_explore)
-                    slam_dds_wait_status mapping 0 35 || return 1 ;;
-                teleop_avoid|tracking|nav|inspection)
-                    slam_dds_wait_status localization 1 35 || return 1 ;;
+            case "$MODE_TARGET_SLAM_MODE" in
+                none) ;;
+                mapping) slam_dds_wait_status mapping 0 35 || return 1 ;;
+                localization) slam_dds_wait_status localization 1 35 || return 1 ;;
             esac
             if ! mode_start_session_for_target "$target" "$map_name" "$relocalize" "$initial_explicit" "$initial_x" "$initial_y" "$initial_yaw"; then
-                case "$target" in
-                    teleop_avoid|tracking|nav|inspection)
-                        mode_stop_motion_and_session ;;
-                esac
+                [ "$MODE_TARGET_SESSION_MODE" = "none" ] || mode_stop_motion_and_session
                 return 1
             fi
-            case "$target" in
-                teleop_avoid|tracking|nav|inspection)
-                    mode_wait_navigation_ready "$map_name" 45 || {
-                        mode_stop_motion_and_session
-                        return 1
-                    } ;;
-            esac
-            if [ "$target" = "inspection" ]; then
+            if [ "$MODE_TARGET_SESSION_MODE" = "navigating" ]; then
+                mode_wait_navigation_ready "$map_name" 45 "$MODE_TARGET_NATIVE_CONTROL_MODE" || {
+                    mode_stop_motion_and_session
+                    return 1
+                }
+            fi
+            if [ "$MODE_TARGET_NEEDS_INSPECTION_EVIDENCE" = "true" ]; then
                 mode_wait_inspection_evidence_ready 45 || {
                     mode_stop_motion_and_session
                     return 1
@@ -1357,78 +1368,35 @@ cmd_nav() {
     case "$action" in
         start)
             local map="${2:-}"
-            [ -z "$map" ] && { echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize]"; exit 1; }
+            [ -z "$map" ] && { echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize|--no-relocalize]"; return 1; }
             shift 2
             local relocalize=0 initial_pose_explicit=0 initial_x=0 initial_y=0 initial_yaw=0
             while [ "$#" -gt 0 ]; do
                 case "$1" in
                     --initial-pose|--init-pose)
-                        [ "$#" -ge 4 ] || { echo "Usage: lingtu nav start <map> --initial-pose X Y YAW"; exit 1; }
+                        [ "$#" -ge 4 ] || { echo "Usage: lingtu nav start <map> --initial-pose X Y YAW"; return 1; }
                         initial_x="$2"; initial_y="$3"; initial_yaw="$4"; relocalize=1; initial_pose_explicit=1
                         shift 4 ;;
                     --relocalize)
                         relocalize=1
                         shift ;;
+                    --no-relocalize)
+                        relocalize=0
+                        shift ;;
                     -h|--help)
-                        echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize]"
+                        echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize|--no-relocalize]"
                         return 0 ;;
                     *)
-                        echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize]"
-                        exit 1 ;;
+                        echo "Usage: lingtu nav start <map> [--initial-pose X Y YAW|--relocalize|--no-relocalize]"
+                        return 1 ;;
                 esac
             done
-            local maps_root raw_map map_pcd
-            maps_root="$(lingtu_maps_root)"
-            raw_map="$map"
-            map=$(resolve_relocation_map_name "$maps_root" "$raw_map") || {
-                echo "map.pcd not found or unsafe map name: $raw_map"
-                exit 1
-            }
-            map_pcd="$maps_root/$map/map.pcd"
-            [ -f "$map_pcd" ] || {
-                echo "map.pcd not found: $map_pcd"
-                exit 1
-            }
-            slam_dds_set_mode localization "$map_pcd" || exit 1
-            slam_dds_wait_status localization 1 35 || exit 1
-            local raw ok msg active_session active_map session_mode
-            raw=$(curl -s -X POST -H "Content-Type: application/json" \
-                -d "{\"mode\":\"navigating\",\"map_name\":\"$map\",\"profile\":\"nav\",\"product_session\":\"navigation\"}" \
-                "$GW/api/v1/session/start" 2>/dev/null || echo '{}')
-            printf '%s\n' "$raw" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$raw"
-            ok=$(pjson "$raw" 'print(str(bool(d.get("success", d.get("ok", False)))).lower())')
-            msg=$(pjson "$raw" 'print(d.get("message") or "")')
-            if [ "$ok" != "true" ]; then
-                active_session=$(curl -s --max-time 3 "$GW/api/v1/session" 2>/dev/null || echo '{}')
-                session_mode=$(pjson "$active_session" 'print(d.get("mode") or "")')
-                active_map=$(pjson "$active_session" 'print(d.get("active_map") or d.get("map_name") or "")')
-                if [ "$msg" = "Already in navigating. Call /session/end first." ] && [ "$session_mode" = "navigating" ] && [ "$active_map" = "$map" ]; then
-                    echo "Already navigating on $map; reusing active session."
-                else
-                    echo -e "${R}FAIL${N}: navigation session did not start${msg:+: $msg}"
-                    exit 1
-                fi
-            fi
-            if [ "$relocalize" = "1" ]; then
-                if [ "$initial_pose_explicit" = "1" ]; then
-                    nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || {
-                        mode_stop_motion_and_session
-                        exit 1
-                    }
-                else
-                    nav_global_relocalize_saved_map "$map" || {
-                        mode_stop_motion_and_session
-                        exit 1
-                    }
-                fi
-            elif nav_relocalization_ready_without_request "$map"; then
-                echo "Reusing current TRACKING localization for $map."
+            if [ "$initial_pose_explicit" = "1" ]; then
+                cmd_mode switch nav --map "$map" --initial-pose "$initial_x" "$initial_y" "$initial_yaw"
+            elif [ "$relocalize" = "1" ]; then
+                cmd_mode switch nav --map "$map" --relocalize
             else
-                echo "Current localization is not reusable; trying global saved-map relocalization..."
-                nav_global_relocalize_saved_map "$map" || {
-                    mode_stop_motion_and_session
-                    exit 1
-                }
+                cmd_mode switch nav --map "$map" --no-relocalize
             fi ;;
         smoke|motion-smoke|motioncheck)
             local map="${2:-}" forward="0.08" goal_x="" goal_y="" goal_yaw="" timeout="25" evidence_duration="12" min_motion_m="0.01" allow_motion=0
@@ -1596,20 +1564,6 @@ svc_force_stop_unit() {
 svc_start_unit() {
     local unit="$1"
     sudo systemctl start "$unit"
-}
-
-svc_wait_topic_publishers() {
-    local topic="$1" min_pubs="${2:-1}" timeout_s="${3:-15}" pubs i
-    source_robot_env
-    for i in $(seq 1 "$timeout_s"); do
-        pubs=$(ros2 topic info "$topic" 2>/dev/null | awk '/Publisher count:/ {print $3}' | tail -1)
-        pubs="${pubs:-0}"
-        if [ "$pubs" -ge "$min_pubs" ] 2>/dev/null; then
-            return 0
-        fi
-        sleep 1
-    done
-    return 1
 }
 
 svc_wait_gateway_ready() {
@@ -3639,7 +3593,7 @@ cmd_slamcheck() {
 
     local deadline now ok=0 ok_samples=0 bad_after_ready=0 contract_ok=0 LOCJ SESS SLAMJ HEALTH
     local backend health_source map_save_source saved_reloc restart_recovery recovery_method
-    local relocal_state recovery_signal recovery_action recovery_signal_ok recovery_action_ok
+    local relocal_state recovery_signal recovery_action recovery_signal_ok recovery_action_ok sample_fields
     local mode target_service slam_hz map_points
     local expected_save_source expected_recovery
     expected_save_source="live_map_cloud_snapshot"
@@ -3655,36 +3609,11 @@ cmd_slamcheck() {
         SLAMJ=$(curl -s --max-time 4 "$GW/api/v1/slam/status" 2>/dev/null || echo '{}')
         HEALTH=$(curl -s --max-time 4 "$GW/api/v1/health" 2>/dev/null || echo '{}')
 
-        backend=$(pjson "$LOCJ" 'print(d.get("backend") or d.get("localization_backend") or "-")')
-        [ "$backend" = "-" ] && backend=$(pjson "$SESS" 'print(d.get("localization_backend") or d.get("backend") or "-")')
-        health_source=$(pjson "$LOCJ" 'print(d.get("health_source") or d.get("localizer_health_source") or "-")')
-        [ "$health_source" = "-" ] && health_source=$(pjson "$SESS" 'print(d.get("health_source") or "-")')
-        map_save_source=$(pjson "$LOCJ" 'print(d.get("map_save_source") or "-")')
-        [ "$map_save_source" = "-" ] && map_save_source=$(pjson "$SESS" 'print(d.get("map_save_source") or "-")')
-        saved_reloc=$(pjson "$LOCJ" 'v=d.get("saved_map_relocalization_supported", d.get("relocalization_supported")); print(str(v).lower() if v is not None else "-")')
-        [ "$saved_reloc" = "-" ] && saved_reloc=$(pjson "$SESS" 'v=d.get("saved_map_relocalization_supported", d.get("relocalization_supported")); print(str(v).lower() if v is not None else "-")')
-        restart_recovery=$(pjson "$LOCJ" 'v=d.get("restart_recovery_supported"); print(str(v).lower() if v is not None else "-")')
-        [ "$restart_recovery" = "-" ] && restart_recovery=$(pjson "$SESS" 'v=d.get("restart_recovery_supported"); print(str(v).lower() if v is not None else "-")')
-        recovery_method=$(pjson "$LOCJ" 'print(d.get("recovery_method") or "-")')
-        [ "$recovery_method" = "-" ] && recovery_method=$(pjson "$SESS" 'print(d.get("recovery_method") or "-")')
-        relocal_state=$(pjson "$LOCJ" 'print(d.get("relocalization_state") or "-")')
-        [ "$relocal_state" = "-" ] && relocal_state=$(pjson "$SESS" 'print(d.get("relocalization_state") or "-")')
-        recovery_signal=$(pjson "$LOCJ" 'print(d.get("recovery_signal") or "-")')
-        [ "$recovery_signal" = "-" ] && recovery_signal=$(pjson "$SESS" 'print(d.get("recovery_signal") or "-")')
-        recovery_action=$(pjson "$LOCJ" 'print(d.get("recovery_action") or "-")')
-        [ "$recovery_action" = "-" ] && recovery_action=$(pjson "$SESS" 'print(d.get("recovery_action") or "-")')
-        recovery_signal_ok=0
-        if [ "$recovery_signal" = "NONE" ] || [ "$recovery_signal" = "RECOVERED" ]; then
-            recovery_signal_ok=1
-        fi
-        recovery_action_ok=0
-        if [ "$recovery_action" = "none" ] || [ "$recovery_action" = "-" ] || [ "$recovery_action" = "$expected_recovery" ]; then
-            recovery_action_ok=1
-        fi
-        mode=$(pjson "$SLAMJ" 'print(d.get("mode") or "-")')
-        target_service=$(pjson "$SLAMJ" "print((d.get('services') or {}).get('$target', '-'))")
-        slam_hz=$(pjson "$HEALTH" 'print(d.get("sensors",{}).get("slam",{}).get("hz", d.get("slam_hz", "-")))')
-        map_points=$(pjson "$HEALTH" 'print(d.get("map_points", "-"))')
+        sample_fields=$(slamcheck_sample_fields "$target" "$LOCJ" "$SESS" "$SLAMJ" "$HEALTH")
+        IFS=$'\t' read -r backend health_source map_save_source saved_reloc \
+            restart_recovery recovery_method relocal_state recovery_signal recovery_action \
+            recovery_signal_ok recovery_action_ok mode target_service slam_hz map_points \
+            <<< "$sample_fields"
 
         printf "  mode=%s service=%s backend=%s health_src=%s save_src=%s hz=%s pts=%s saved_reloc=%s restart_rec=%s recovery=%s relocal=%s signal=%s action=%s\n" \
             "$mode" "$target_service" "$backend" "$health_source" "$map_save_source" "$slam_hz" "$map_points" \

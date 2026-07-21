@@ -23,20 +23,36 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import importlib.util
+
+# Bind the repo-root examples/dds_dataflow_example.py explicitly. The regular
+# package src/perception/examples shadows the repo-root ``examples`` namespace
+# package once another test puts src/perception on sys.path, so a plain
+# ``import examples.dds_dataflow_example`` fails in full-suite runs.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_EXAMPLE_SPEC = importlib.util.spec_from_file_location(
+    "examples.dds_dataflow_example",
+    _REPO_ROOT / "examples" / "dds_dataflow_example.py",
+)
+assert _EXAMPLE_SPEC is not None and _EXAMPLE_SPEC.loader is not None
+_EXAMPLE_MODULE = importlib.util.module_from_spec(_EXAMPLE_SPEC)
+sys.modules["examples.dds_dataflow_example"] = _EXAMPLE_MODULE
+_EXAMPLE_SPEC.loader.exec_module(_EXAMPLE_MODULE)
+
 from runtime.blueprint import Blueprint
-from runtime.blueprints.wires.context import WiringContext
-from runtime.blueprints.wires.example_flow import (
+from lingtu.assembly.wires.context import WiringContext
+from lingtu.assembly.wires.example_flow import (
     CONSUMER_MODULE,
     PRODUCER_MODULE,
     TOPIC_EXAMPLE_SENSOR,
     example_flow_specs,
 )
-from runtime.blueprints.wires.template import (
+from lingtu.assembly.wires.template import (
     TEMPLATE_DATA_CONSUMERS,
     TOPIC_TEMPLATE_DATA,
     template_specs,
 )
-from runtime.blueprints.wires.types import WireSpec, wire_key
+from lingtu.assembly.wires.types import WireSpec, wire_key
 from runtime.module import Module
 from runtime.stream import In, Out
 from runtime.wiring import WireDelivery

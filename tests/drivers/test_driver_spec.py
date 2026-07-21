@@ -23,7 +23,7 @@ from tests.drivers.driver_contract import (
 
 _DRIVER_MODULES = (
     "drivers.real.thunder.han_dog_module",
-    "runtime.blueprints.stub",
+    "lingtu.assembly.stub",
     "drivers.sim.mujoco.driver",
     "drivers.sim.endpoint",
 )

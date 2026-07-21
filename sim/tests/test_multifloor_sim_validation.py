@@ -681,7 +681,7 @@ def test_bridge_loop_rejects_zero_cmd_vel_segment_even_with_message_counts(monke
 
 
 def test_local_planner_short_simple_path_still_has_two_points():
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
 
     planner = LocalPlanner(backend="simple")
     start = np.asarray([1.0, 2.0, 0.0], dtype=float)
@@ -695,7 +695,7 @@ def test_local_planner_short_simple_path_still_has_two_points():
 
 
 def test_nanobind_local_planner_skips_untrackable_placeholder_path():
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
 
     class FakeVec:
         def __init__(self, x, y, z):

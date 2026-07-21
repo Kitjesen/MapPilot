@@ -61,7 +61,7 @@ def _load_runtime() -> None:
 
         np = _np
     if LocalPlanner is None:
-        from nav.services.plan.local_planner.service import (
+        from nav.local.local_planner import (
             LocalPlanner as _LocalPlanner,
         )
 

@@ -1,98 +1,100 @@
-# Plan: sim 鈫?鐢熶骇 鍏ㄥ眬瑙勫垝閾捐矾瀵归綈 (鏂瑰悜 C)
+# Plan: sim ↔ 生产 全局规划链路对齐 (方向 C)
 
-## 1. 鐩爣涓庢垚鍔熸爣鍑?
+> **Historical plan status**: Restored from commit `df57d5b6`, the last clean UTF-8 version found in git history. Treat this as a 2026-05-29 historical planning record; re-verify all referenced paths and status claims before using it as current implementation guidance.
 
-**鐩爣**锛氭秷闄?sim 涓庣敓浜?nav 鍦ㄣ€屽叏灞€瑙勫垝灞傘€嶇殑鍒嗗弶锛岃涓よ€呰蛋鍚屼竴鏉?
-PCT 鍏ㄥ眬閾捐矾锛沗astar` 閫€鍖栦负銆屾棤 PCT native 鏃剁殑鏄惧紡 fallback銆嶏紝鑰屼笉鏄?
-sim 榛樿瑙勫垝鍣ㄣ€?
+## 1. 目标与成功标准
 
-**鎴愬姛鏍囧噯**锛?
-- 浠讳綍 profile 閫?`planner="pct"` 鏃讹細鏈?native 鈫?璺?PCT锛涙棤 native锛圵indows/
-  Mac/缂?.so锛夆啋 **鑷姩銆佹樉寮忛檷绾у埌 astar**锛堜笉鍐?RuntimeError 宕╂簝锛夛紝骞跺湪
-  status 閲岃兘鏌ュ埌 `active_planner` 涓?`degraded_reason`銆?
-- sim 瀹舵棌鍦?Linux/CI 涓婅窇鐨勫氨鏄?PCT锛堜笌鐪熸満鍚屾瀯锛夛紱鍦?Windows 寮€鍙戞満涓?
-  鑷姩闄嶇骇 astar锛堣涓轰笌浠婂ぉ绛変环锛屼絾璇箟鏄惧紡锛夈€?
-- `costmap` 闂ㄦ帶琛屼负涓嶅啀 sim/鐪熸満鍒嗗弶锛坰im 璧?pct 鍚?`replan_on_costmap_update`
-  鑷姩涓庣湡鏈轰竴鑷达級銆?
-- 濂戠害鏂囨。 + 娴嬭瘯閿佹鏂拌竟鐣屻€?
+**目标**：消除 sim 与生产 nav 在「全局规划层」的分叉，让两者走同一条
+PCT 全局链路；`astar` 退化为「无 PCT native 时的显式 fallback」，而不是
+sim 默认规划器。
 
-## 2. 鑼冨洿杈圭晫
+**成功标准**：
+- 任何 profile 选 `planner="pct"` 时：有 native → 跑 PCT；无 native（Windows/
+  Mac/缺 .so）→ **自动、显式降级到 astar**（不再 RuntimeError 崩溃），并在
+  status 里能查到 `active_planner` 与 `degraded_reason`。
+- sim 家族在 Linux/CI 上跑的就是 PCT（与真机同构）；在 Windows 开发机上
+  自动降级 astar（行为与今天等价，但语义显式）。
+- `costmap` 门控行为不再 sim/真机分叉（sim 走 pct 后 `replan_on_costmap_update`
+  自动与真机一致）。
+- 契约文档 + 测试锁死新边界。
 
-**鍋?*锛?
-- GlobalPlannerService 澧炲姞銆屼富瑙勫垝鍣ㄤ笉鍙敤 鈫?鏄惧紡闄嶇骇 fallback銆嶉€昏緫 + 鐘舵€佹毚闇层€?
-- sim 瀹舵棌 profile 鐨?`planner` 鐢?`astar` 鍒囧埌 `pct`锛堥樁娈?2锛夈€?
-- 濂戠害鏂囨。鏂板銆宻im鈫旂敓浜у榻?+ 闄嶇骇璇箟銆嶇珷鑺傘€?
-- 娴嬭瘯锛氶檷绾у崟娴嬨€乸rofile 蹇収鏇存柊銆佸绾︽祴璇曘€?
+## 2. 范围边界
 
-**涓嶅仛**锛?
-- 涓嶆敼 PCT/A* 绠楁硶鏈韩銆?
-- 涓嶆敼灞€閮ㄨ鍒掗摼锛坱errain鈫抣ocal_planner鈫抪ath_follower锛屽凡瀵归綈锛夈€?
-- 涓嶉噸缂栬瘧 .so锛屼笉寮曞叆鏂颁緷璧栥€?
+**做**：
+- GlobalPlannerService 增加「主规划器不可用 → 显式降级 fallback」逻辑 + 状态暴露。
+- sim 家族 profile 的 `planner` 由 `astar` 切到 `pct`（阶段 2）。
+- 契约文档新增「sim↔生产对齐 + 降级语义」章节。
+- 测试：降级单测、profile 快照更新、契约测试。
 
-## 3. 鐜扮姸涓庤瘉鎹?
+**不做**：
+- 不改 PCT/A* 算法本身。
+- 不改局部规划链（terrain→local_planner→path_follower，已对齐）。
+- 不重编译 .so，不引入新依赖。
 
-- `cli/profiles_data.py`锛歴im/sim_gazebo/sim_industrial/sim_mujoco_live 鍧?`planner="astar"`锛?
-  鐢熶骇 nav/explore `planner="pct"`銆?
-- `GlobalPlannerService.setup()` (`src/nav/services/plan/global_planner/service.py:54-57`)锛?
-  `_create_backend()` 鍚?*鏃?available 妫€娴?*锛孭CT .so 缂哄け鏃?backend.available=False锛?
-  plan() 杩斿洖 [] 鈫?鐜扮姸鐩存帴 RuntimeError锛屾棤鑷姩闄嶇骇銆?
-- `_PCTBackend.available`锛?so + tomogram 閮藉姞杞芥垚鍔熸墠 True銆?
-- `NavigationModule._on_costmap`锛歚update_map` 涓庨噸瑙勫垝閮藉湪 `replan_on_costmap_update`
-  瀹堝崼涓嬶紱PCT 榛樿 False锛孉* 榛樿 True 鈫?costmap 琛屼负鍒嗗弶銆?
-- tomogram `building2_9.pickle` 鐗╃悊瀛樺湪锛汸CT .so 鏈?aarch64 + x86_64 + x86_64_py312銆?
+## 3. 现状与证据
 
-## 4. 瀹炴柦姝ラ (涓ら樁娈?
+- `cli/profiles_data.py`：sim/sim_gazebo/sim_industrial/sim_mujoco_live 均 `planner="astar"`；
+  生产 nav/explore `planner="pct"`。
+- `GlobalPlannerService.setup()` (`src/nav/global_planner_service.py:54-57`)：
+  `_create_backend()` 后**无 available 检测**，PCT .so 缺失时 backend.available=False，
+  plan() 返回 [] → 现状直接 RuntimeError，无自动降级。
+- `_PCTBackend.available`：.so + tomogram 都加载成功才 True。
+- `NavigationModule._on_costmap`：`update_map` 与重规划都在 `replan_on_costmap_update`
+  守卫下；PCT 默认 False，A* 默认 True → costmap 行为分叉。
+- tomogram `building2_9.pickle` 物理存在；PCT .so 有 aarch64 + x86_64 + x86_64_py312。
 
-### 闃舵 1 鈥?闄嶇骇鏀跺彛 (绾寮猴紝鏃犵牬鍧忥紝鍙嫭绔嬮獙璇?
+## 4. 实施步骤 (两阶段)
 
-1. `GlobalPlannerService.__init__`锛氭柊澧?`_active_planner_name`銆乣_degraded_reason`銆?
-2. `GlobalPlannerService.setup()`锛氬垱寤轰富 backend 鍚庢娴嬪彲鐢ㄦ€?
-   锛坄getattr(backend, "available", True)` 鈥斺€?闈?PCT backend 鎭掑彲鐢級銆?
-   涓讳笉鍙敤涓?fallback 涓庝富涓嶅悓 鈫?鍒囧埌 fallback backend锛岃褰?degraded_reason锛?
-   骞?*閲嶇畻 map_artifact_gate**锛坅ctive=astar 鏃?pct 鐨?tomogram gate 涓嶅啀 block锛夈€?
-3. 鏆撮湶鐘舵€侊細`active_planner` / `degraded_reason` 杩?`last_plan_report` 涓?
-   `NavigationModule` 鐨?mission/health status銆?
-4. 濂戠害鏂囨。 搂4/搂9 澧炶ˉ銆孭CT 涓嶅彲鐢ㄩ檷绾?astar銆嶈涔夈€?
-5. 娴嬭瘯锛歚test_planner_backends.py` 鎴栨柊寤猴紝瑕嗙洊銆孭CT 涓嶅彲鐢?鈫?闄嶇骇 astar 鍙鍒掋€?
-   + 銆岄檷绾у悗 status 鏍囨敞銆嶃€?
+### 阶段 1 — 降级收口 (纯增强，无破坏，可独立验证)
 
-### 闃舵 2 鈥?sim 鍒?PCT (琛屼负鍙樻洿锛岄渶 CI/鐪熸満鍥炲綊锛屽崟鐙‘璁?
+1. `GlobalPlannerService.__init__`：新增 `_active_planner_name`、`_degraded_reason`。
+2. `GlobalPlannerService.setup()`：创建主 backend 后检测可用性
+   （`getattr(backend, "available", True)` —— 非 PCT backend 恒可用）。
+   主不可用且 fallback 与主不同 → 切到 fallback backend，记录 degraded_reason，
+   并**重算 map_artifact_gate**（active=astar 时 pct 的 tomogram gate 不再 block）。
+3. 暴露状态：`active_planner` / `degraded_reason` 进 `last_plan_report` 与
+   `NavigationModule` 的 mission/health status。
+4. 契约文档 §4/§9 增补「PCT 不可用降级 astar」语义。
+5. 测试：`test_planner_backends.py` 或新建，覆盖「PCT 不可用 → 降级 astar 可规划」
+   + 「降级后 status 标注」。
 
-6. sim/sim_gazebo/sim_industrial `planner` astar鈫抪ct锛坱omogram 宸查厤 building2_9锛夈€?
-   sim_mujoco_live 鏃?tomogram锛氫繚鐣?astar 鎴栬ˉ tomogram锛堝緟瀹氾級銆?
-7. 鍒犻櫎 sim 涓娿€屾樉寮?astar銆嶇殑闅愬惈鍋囪锛屼緷璧栭樁娈?1 鐨勮嚜鍔ㄩ檷绾у湪 Windows 涓婂厹搴曘€?
-8. 鏇存柊 `test_profile_graph_snapshots.py` 涓?sim 鐨?planner 鏈熸湜鍊笺€?
-9. CI锛圠inux锛夊洖褰掔‘璁?sim e2e 鍦?PCT 涓嬩粛閫氳繃锛涗笉閫氳繃鍒欏畾浣嶆槸鐪熼棶棰樿繕鏄?
-   娴嬭瘯鍩虹嚎闇€鏇存柊銆?
+### 阶段 2 — sim 切 PCT (行为变更，需 CI/真机回归，单独确认)
 
-## 5. 娑夊強鏂囦欢娓呭崟
+6. sim/sim_gazebo/sim_industrial `planner` astar→pct（tomogram 已配 building2_9）。
+   sim_mujoco_live 无 tomogram：保留 astar 或补 tomogram（待定）。
+7. 删除 sim 上「显式 astar」的隐含假设，依赖阶段 1 的自动降级在 Windows 上兜底。
+8. 更新 `test_profile_graph_snapshots.py` 中 sim 的 planner 期望值。
+9. CI（Linux）回归确认 sim e2e 在 PCT 下仍通过；不通过则定位是真问题还是
+   测试基线需更新。
 
-- `src/nav/services/plan/global_planner/service.py`锛堥樁娈?鏍稿績锛?
-- `src/nav/mission/navigation_module.py`锛坰tatus 鏆撮湶 active_planner锛?
-- `docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md`锛堣涔夊琛ワ級
-- `cli/profiles_data.py`锛堥樁娈?锛?
-- `src/runtime/tests/test_planner_backends.py` / 鏂板闄嶇骇娴嬭瘯锛堥樁娈?锛?
-- `src/runtime/tests/test_profile_graph_snapshots.py`锛堥樁娈?锛?
+## 5. 涉及文件清单
 
-## 6. 楠屾敹娓呭崟
+- `src/nav/global_planner_service.py`（阶段1核心）
+- `src/nav/navigation_module.py`（status 暴露 active_planner）
+- `docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md`（语义增补）
+- `cli/profiles_data.py`（阶段2）
+- `src/core/tests/test_planner_backends.py` / 新增降级测试（阶段1）
+- `src/core/tests/test_profile_graph_snapshots.py`（阶段2）
 
-- [ ] PCT 涓嶅彲鐢ㄦ椂 GlobalPlannerService 闄嶇骇 astar 鑰岄潪宕╂簝
-- [ ] status 鏆撮湶 active_planner + degraded_reason
-- [ ] 闄嶇骇鍚?map_artifact_gate 涓嶈 block
-- [ ] 濂戠害鏂囨。鏇存柊闄嶇骇璇箟
-- [ ] 闃舵1 娴嬭瘯閫氳繃 + 鐜版湁 plan_safety/profile 蹇収涓嶅洖褰?
-- [ ] (闃舵2) sim planner=pct锛屽揩鐓ф祴璇曟洿鏂帮紝CI 閫氳繃
+## 6. 验收清单
 
-## 7. 椋庨櫓涓庡洖婊?
+- [ ] PCT 不可用时 GlobalPlannerService 降级 astar 而非崩溃
+- [ ] status 暴露 active_planner + degraded_reason
+- [ ] 降级后 map_artifact_gate 不误 block
+- [ ] 契约文档更新降级语义
+- [ ] 阶段1 测试通过 + 现有 plan_safety/profile 快照不回归
+- [ ] (阶段2) sim planner=pct，快照测试更新，CI 通过
 
-- **椋庨櫓**锛氶樁娈? 鍦?Linux CI 涓婃妸 sim 浠?astar 鍒?pct锛屽彲鑳借Е鍙?PCT 鐩稿叧
-  鏂拌涓?娴嬭瘯鍩虹嚎鍙樺寲銆?
-  **缂撹В**锛氶樁娈?鍏堢嫭绔嬪悎鍏ラ獙璇侊紱闃舵2鍗曠嫭鎻愪氦锛孋I 绾㈠垯鍗曠嫭鍥炴粴 profile 鏀瑰姩銆?
-- **椋庨櫓**锛氶檷绾ч€昏緫鏀瑰彉浜嗐€孭CT 缂哄け銆嶇殑澶辫触妯″紡锛堝穿婧冣啋闄嶇骇杩愯锛夈€?
-  **缂撹В**锛氱敤 status 鏄惧紡鏍囨敞 degraded锛岄伩鍏嶃€岄潤榛樹互涓哄湪璺?PCT銆嶃€?
-- **鍥炴粴**锛氶樁娈?/闃舵2 鍒嗘彁浜わ紝鍚勮嚜鍙嫭绔?revert锛屼笉浜掔浉渚濊禆銆?
+## 7. 风险与回滚
 
-## 8. 渚濊禆涓庣幆澧冨彉鏇?
+- **风险**：阶段2 在 Linux CI 上把 sim 从 astar 切 pct，可能触发 PCT 相关
+  新行为/测试基线变化。
+  **缓解**：阶段1先独立合入验证；阶段2单独提交，CI 红则单独回滚 profile 改动。
+- **风险**：降级逻辑改变了「PCT 缺失」的失败模式（崩溃→降级运行）。
+  **缓解**：用 status 显式标注 degraded，避免「静默以为在跑 PCT」。
+- **回滚**：阶段1/阶段2 分提交，各自可独立 revert，不互相依赖。
 
-- 鏃犳柊澧炰緷璧栥€?
-- 鏈満 `uv run` 鍥?brainstem-api 瑕佹眰 py鈮?.13 瑙ｆ瀽澶辫触锛屽洖褰掔敤 `python -m pytest`銆?
+## 8. 依赖与环境变更
+
+- 无新增依赖。
+- 本机 `uv run` 因 brainstem-api 要求 py≥3.13 解析失败，回归用 `python -m pytest`。

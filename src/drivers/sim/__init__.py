@@ -22,4 +22,6 @@ def build_sim_robot_state() -> dict[str, Any]:
     }
 
 
-from .stub import StubConnection  # noqa: E402
+from .stub import StubDogModule  # noqa: E402
+
+__all__ = ["StubDogModule", "build_sim_robot_state"]

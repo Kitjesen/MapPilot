@@ -68,8 +68,7 @@ class StaticLiftTransitionCatalog:
             key = (plan.source_floor, plan.target_floor)
             if key in self._plans:
                 raise ValueError(
-                    "duplicate lift transition route: "
-                    f"{plan.source_floor.map_id}->{plan.target_floor.map_id}"
+                    f"duplicate lift transition route: {plan.source_floor.map_id}->{plan.target_floor.map_id}"
                 )
             self._plans[key] = plan
 
@@ -103,9 +102,13 @@ class LiftTransitionService:
     ) -> tuple[bool, str]:
         """Resolve and start the configured transition for one mission."""
 
+        if request.travel_mode not in {"any", "elevator"}:
+            return False, "lift_transition_travel_mode_unsupported"
         plan = self._catalog.resolve(source_floor, request.target_floor)
         if plan is None:
             return False, "floor_transition_route_unavailable"
+        if request.connector_id and request.connector_id != plan.lift_id:
+            return False, "lift_connector_mismatch"
         return self._executor.start(plan, request_id=request.request_id)
 
     def tick(self) -> tuple[str, str]:
@@ -481,11 +484,7 @@ class LiftTransitionExecutor:
         return ""
 
     def _phase_timed_out(self) -> bool:
-        timeout_s = (
-            self._ride_timeout_s
-            if self._status.phase is LiftTransitionPhase.RIDE
-            else self._step_timeout_s
-        )
+        timeout_s = self._ride_timeout_s if self._status.phase is LiftTransitionPhase.RIDE else self._step_timeout_s
         return float(self._clock()) - self._phase_started_s > timeout_s
 
     def _fail(self, reason: str) -> LiftTransitionStatus:

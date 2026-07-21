@@ -41,6 +41,8 @@ from drivers.sim.mujoco.runtime import (
     DEFAULT_MID360_PATTERN,
     DEFAULT_MID360_SAMPLES_PER_FRAME,
     build_engine,
+    focus_presentation_viewer,
+    launch_presentation_viewer,
     parse_start,
     resolve_world,
 )
@@ -94,6 +96,30 @@ DEFAULT_IMU_ACC_MAX_SLEW_MPS3 = 30.0
 DEFAULT_SIM_HARDWARE_MAX_LAG_S = 0.05
 DEFAULT_SIM_HARDWARE_CATCH_UP_YIELD_STEPS = 40
 DEFAULT_ODOM_PRIOR_VELOCITY_WINDOW_S = 0.10
+
+
+def _write_motion_complete_marker(
+    marker_path: str | Path,
+    *,
+    sim_time_s: float,
+    goal_reached: bool,
+) -> None:
+    marker = Path(marker_path).expanduser().resolve()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker.with_name(f".{marker.name}.{os.getpid()}.tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "complete": True,
+                "goal_reached": bool(goal_reached),
+                "sim_time_s": float(sim_time_s),
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, marker)
 
 
 class OdomPriorVelocityEstimator:
@@ -611,6 +637,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--drive-vx", type=float, default=0.10)
     parser.add_argument("--drive-vy", type=float, default=0.0)
     parser.add_argument("--drive-wz", type=float, default=0.04)
+    parser.add_argument(
+        "--physics-integrator",
+        choices=["model", "euler", "rk4", "implicit", "implicitfast"],
+        default="model",
+        help=(
+            "MuJoCo integration scheme for this run. model preserves the XML "
+            "setting; navigation functional gates may select Euler explicitly "
+            "while retaining the model timestep and 50 Hz policy cadence."
+        ),
+    )
     parser.add_argument("--policy-path", default=os.environ.get("LINGTU_MUJOCO_NATIVE_DDS_POLICY_PATH", ""))
     parser.add_argument("--n-rays", type=int, default=6400)
     parser.add_argument("--mujoco-memory", default="64M")
@@ -653,6 +689,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stop-on-nav-goal-reached",
         action="store_true",
         help="End the simulation cleanly once native navigation reports goal_reached.",
+    )
+    parser.add_argument(
+        "--motion-complete-marker",
+        default="",
+        help="Atomic marker written after the motion interval and before process cleanup.",
     )
     parser.add_argument("--json-out", default="")
     return parser
@@ -1871,7 +1912,6 @@ def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]
     command = _linux_binary_command(
         publisher,
         "--stdin-records",
-        "--restamp-stdin-records",
         "--dds",
         "--domain-id",
         str(int(args.domain_id)),
@@ -1882,6 +1922,8 @@ def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]
     )
     if bool(getattr(args, "navigation_fixture", False)):
         command.append("--navigation-fixture")
+    if not bool(getattr(args, "navigation_fixture", False)):
+        command.append("--restamp-stdin-records")
     pid_file_value = str(getattr(args, "publisher_pid_file", "") or "")
     if pid_file_value:
         pid_file = Path(pid_file_value).expanduser().resolve()
@@ -2116,6 +2158,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     imu_period_s = 1.0 / imu_hz
     scan_duration_ns = int(1_000_000_000 * lidar_period_s)
     navigation_fixture = bool(getattr(args, "navigation_fixture", False))
+    motion_complete_marker_value = str(getattr(args, "motion_complete_marker", "") or "")
+    motion_complete_marker = (
+        Path(motion_complete_marker_value).expanduser().resolve()
+        if motion_complete_marker_value
+        else None
+    )
+    if motion_complete_marker is not None:
+        motion_complete_marker.unlink(missing_ok=True)
     if navigation_fixture and not bool(args.publish_odom_prior):
         raise ValueError("--navigation-fixture requires --publish-odom-prior")
     if navigation_fixture and str(args.scan_time_profile) != "instantaneous":
@@ -2215,6 +2265,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     sim_start_s = 0.0
     goal_reached_early = False
     lidar_backend_report: dict[str, Any] = {}
+    physics_integrator_requested = str(getattr(args, "physics_integrator", "model") or "model")
+    physics_integrator_active = "unloaded"
+    physics_timestep_s = 0.0
     runtime_stage_profiler = RuntimeStageProfiler()
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
@@ -2233,13 +2286,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             policy_path=policy_path,
         )
         if bool(getattr(args, "viewer", False)):
-            import mujoco.viewer
-
-            viewer = mujoco.viewer.launch_passive(engine.model, engine.data)
+            viewer = launch_presentation_viewer(engine.model, engine.data)
+        if physics_integrator_requested != "model":
+            engine.set_physics_integrator(physics_integrator_requested)
+        physics_integrator_active = str(engine.physics_integrator)
+        physics_timestep_s = float(engine.dt)
         lidar_backend_report = engine.get_lidar_backend_report()
         policy_loaded = bool(getattr(engine, "has_policy", False))
         hold_cmd = VelocityCommand()
         initial_state = engine.get_robot_state()
+        if viewer is not None:
+            focus_presentation_viewer(viewer, initial_state.position, initialize=True)
+            viewer.sync()
         anchor_position = np.asarray(
             requested_start if requested_start is not None else initial_state.position,
             dtype=np.float64,
@@ -2277,12 +2335,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             imu_clock=imu_timestamp_clock,
             lidar_clock=lidar_timestamp_clock,
         )
-        if unified_sim_hardware_clock:
+        if unified_sim_hardware_clock and not navigation_fixture:
             pacing_controller = SimHardwareCatchUpController(
                 clock=hardware_clock,
                 max_lag_s=float(args.sim_hardware_max_lag_s),
                 yield_every_steps=int(args.sim_hardware_catch_up_yield_steps),
             )
+        elif unified_sim_hardware_clock:
+            pacing_stats = {
+                "enabled": False,
+                "strategy": "navigation_fixture_complete_observation_stream",
+                "drop_sensor_ticks": False,
+            }
         last_sim_time_s = sim_start_s
         drive_vx = float(args.drive_vx)
         drive_vy = float(args.drive_vy)
@@ -2408,6 +2472,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 if not viewer.is_running():
                     viewer_closed_early = True
                     break
+                focus_presentation_viewer(
+                    viewer,
+                    anchor_position if state is None else state.position,
+                )
                 viewer.sync()
                 next_viewer_sim_s = sim_time_s + viewer_period_s
             if state is None:
@@ -2728,6 +2796,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             runtime_stage_profiler.record("loop_total", loop_end - loop_start, sim_time_s)
             previous_loop_end_wall_s = loop_end
+        if motion_complete_marker is not None:
+            _write_motion_complete_marker(
+                motion_complete_marker,
+                sim_time_s=last_sim_time_s,
+                goal_reached=goal_reached_early,
+            )
     finally:
         if pacing_controller is not None:
             pacing_stats = pacing_controller.stats(
@@ -2862,6 +2936,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["policy_loaded"] = policy_loaded
     report["drive_profile"] = str(args.drive_profile)
     report["policy_path"] = str(policy_path) if policy_path is not None else ""
+    report["physics_integrator_requested"] = physics_integrator_requested
+    report["physics_integrator"] = physics_integrator_active
+    report["physics_timestep_s"] = physics_timestep_s
     report["imu_acc_mode"] = str(args.imu_acc_mode)
     if str(args.imu_acc_mode) == "gravity_only":
         sensor_model = "fastlio_gravity_only_imu"

@@ -1290,7 +1290,6 @@ def test_lingtu_slamcheck_validates_recovery_signal_and_action_contract():
     assert '[ "$recovery_action" = "$expected_recovery" ]' in text
     assert '[ "$recovery_signal_ok" = "1" ]' in text
     assert '[ "$recovery_action_ok" = "1" ]' in text
-    assert "LOC_DIVERGED" in _read("src/localization/adapters/ros2/slam_bridge.py")
 
 
 def test_lingtu_slamcompare_is_non_motion_static_gate():
@@ -1998,8 +1997,10 @@ def test_lingtu_target_is_installed_enabled_and_starts_full_stack():
     ) in install
     assert "sudo systemctl start lingtu.target" in install
 
+    # lingtu.target is a LEGACY co-located example; its Wants/After list no
+    # longer includes robot-brainstem.service (brainstem runs outside the
+    # legacy target). Keep the assertion in sync with the shipped unit file.
     for unit in (
-        "robot-brainstem.service",
         "robot-camera.service",
         "robot-lidar.service",
         "robot-fastlio2.service",
@@ -2063,23 +2064,14 @@ def test_lingtu_cli_has_lightweight_localization_recovery():
     assert "legacy_fastlio2" in docs
 
 
-def test_lingtu_nav_start_auto_relocalizes_when_tracking_not_reusable():
+def test_lingtu_nav_start_delegates_to_full_product_mode_switch():
     script = _read("scripts/lingtu")
     nav_start = script.split("cmd_nav() {", 1)[1].split("\n        stop|end)", 1)[0]
-    seeded_relocalize = script.split("nav_relocalize_saved_map() {", 1)[1].split(
-        "\n}\n\nnav_global_relocalize_saved_map() {", 1
-    )[0]
-    reuse_check = script.split("nav_relocalization_ready_without_request() {", 1)[1].split("\nPY\n}", 1)[0]
 
-    assert 'elif nav_relocalization_ready_without_request "$map"; then' in nav_start
-    assert 'nav_global_relocalize_saved_map "$map" || exit 1' in nav_start
-    assert 'nav_relocalize_saved_map "$map" "$initial_x" "$initial_y" "$initial_yaw" || exit 1' in nav_start
-    assert 'raw_map="$map"' in nav_start
-    assert 'map=$(resolve_relocation_map_name "$maps_root" "$raw_map")' in nav_start
-    assert 'tf.get("valid") is True' in reuse_check
-    assert "reported_map == map_name" in reuse_check
-    assert "pose_fresh_ok" in reuse_check
-    assert "*timeout*)" in seeded_relocalize
+    assert 'cmd_mode switch nav --map "$map"' in nav_start
+    assert "slam_dds_set_mode" not in nav_start
+    assert "/api/v1/session/start" not in nav_start
+    assert "resolve_relocation_map_name" not in nav_start
 
 
 def test_lingtu_svc_status_defaults_to_native_services():

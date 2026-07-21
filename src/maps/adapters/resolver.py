@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.blueprints.stacks._registry import optional_stack_module
+from runtime.plugin_resolution import optional_stack_module
 
 
 def map_output_adapter_module(*, enable_dds: bool = False) -> type[Any] | None:

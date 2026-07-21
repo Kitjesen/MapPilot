@@ -1,5 +1,9 @@
 # Navigation Planner Transport Boundary
 
+Status: historical/dev transport note; not the current `thunder_field` product chain
+Audience: simulation and compatibility transport maintainers
+Replaced by: `NAVIGATION_RUNTIME_DATAFLOW.md`, `LOCAL_PLANNING_AND_TRACKING_CONTRACT.md`
+
 This document defines the execution boundary around LingTu local planning.  The
 goal is to let the current in-process `nav.local_planner` and a future standalone
 C++ local-planner process share the same data contract.

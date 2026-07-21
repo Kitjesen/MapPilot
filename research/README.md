@@ -17,6 +17,7 @@ Semantic map 相关论文实现参考。这些仓库 **不纳入 git 跟踪**，
 | HOV-SG | https://github.com/hovsg/HOV-SG | Hierarchical open-vocabulary 3D scene graph |
 | OVO | https://github.com/google/ovo | Open-vocabulary occupancy |
 | vlmaps | https://github.com/vlmaps/vlmaps | Visual language maps |
+| CORE Planner | https://github.com/BBD00/core_planner | Contextual-memory RL exploration research; local clone only |
 
 ## First-party research packages
 

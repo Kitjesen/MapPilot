@@ -2,6 +2,8 @@
 
 Status: accepted architecture memory
 Date: 2026-06-18
+Audience: runtime, endpoint, adapter, and deployment maintainers
+Replaced by: not replaced
 
 ## Decision
 
@@ -41,8 +43,8 @@ algorithm chains stay in-process.
 | Map to planner | MapService capability bundle | Native occupancy, ESDF, traversability and optional embedded OctoMap builders publish versioned bundles; external OctoMap conversion is an explicit build mode. | Remove the remaining planner-side legacy filesystem reader and validate on S100P. |
 | Global plan output | `GlobalPlanResult.to_wire()` JSON | Yes for Gateway/UI/replay payloads. | No binary planner protocol needed now. |
 | Endpoint/replay bridge | typed DDS for product, local/LCM only for replay or smoke | Partly: LCM adapters and JSONL validators still exist for replay/debug. | LCM must not be selected by field product profiles. |
-| DDS | Typed DDS for all field service boundaries | Livox, Fast-LIO2, traversability, native nav, exploration, camera publication, and teleop request/final-command ownership are C++ CycloneDDS paths. | Camera and GNSS still have bounded Python readers in the Module graph. |
-| SHM | High-volume same-host IPC | Point-cloud/status snapshots exist. | Camera color/depth still cross into the Module graph through Python DDS; add a versioned C++ SHM ring before retiring that reader. |
+| DDS | Typed DDS for all field service boundaries | Livox, Fast-LIO2, traversability, native nav, exploration, camera metadata/status, and teleop request/final-command ownership are C++ CycloneDDS paths. | GNSS and some compatibility readers still need retirement evidence. |
+| SHM | High-volume same-host IPC | Camera color/depth payloads use the native POSIX SHM data plane with typed DDS/status metadata; point-cloud/status snapshots also exist. | Continue field readiness checks for SHM sequence freshness and consumer coverage. |
 | Native SLAM hot path | C++ Fast-LIO2 with typed DDS ingress/egress | Live field runtime and scan/odometry/cloud contracts exist. | Continue hardware regression and map/localization acceptance; do not reintroduce Python DDS into SLAM. |
 
 ## Core Rules
@@ -121,8 +123,9 @@ Thunder Lite:
 Thunder Endpoint/Nav:
 
 - Keeps the module graph local where possible.
-- Uses typed DDS endpoint adapters (`dds_endpoint`, `thunder_field_dds_v1`) for
-  the production field boundary (native Livox SDK2 ingest + C++ CycloneDDS SLAM).
+- Uses the native typed DDS endpoint contract (`thunder_field_dds_v1`) and
+  `cpp_slam_status` localization adapter for the production field boundary
+  (native Livox SDK2 ingest + C++ CycloneDDS SLAM/status).
 - Uses LCM endpoint adapters for smoke/replay bridges and optional
   smoke/replay checks that do not require the native DDS sensor stack.
 - Uses ROS 2 only when integrating legacy SLAM, simulator, TARE, or existing
@@ -154,12 +157,12 @@ test now keeps the remaining `runtime.adapters.dds.reader` imports bounded to:
 Navigation goal/cancel/teleop writers are no longer part of this list. Their
 field owner is `liblingtu_nav_client.so`, reused by Gateway and `GoalService`.
 
-The remaining migration order is camera, GNSS, TARE, then compatibility adapters. Camera
-should move high-volume color/depth frames from the C++ camera service into a
-versioned SHM ring or snapshot contract, while low-rate camera metadata and
-health stay typed DDS. GNSS and TARE should move their consumers into C++
-endpoints. Diagnostic scripts may keep cyclonedds-python as an optional tool;
-it must never become a robot startup dependency.
+The remaining migration order is GNSS, TARE, then compatibility adapters.
+Camera high-volume color/depth frames are now a native SHM data plane with
+low-rate metadata and health on typed DDS/status. GNSS and TARE should move
+their consumers into C++ endpoints. Diagnostic scripts may keep
+cyclonedds-python as an optional tool; it must never become a robot startup
+dependency.
 
 ## Implementation Order
 
@@ -173,16 +176,16 @@ it must never become a robot startup dependency.
 4. **Done locally:** lock endpoint control modes to `autonomy`, `teleop`, or
    `teleop_avoid`; pure teleop has no SLAM dependency, while teleop avoidance
    fails closed on missing motion context.
-5. **Next:** add a shared final C++ command-safety gate after autonomous
-   PathFollower output. `teleop_avoid` already has `TeleopSafety`; autonomy
-   currently relies on input and local-path safety before control generation.
+5. **Done locally:** native endpoint motion passes input gates, local-path
+   safety, final command safety, driver-control readiness, and zero-on-loss
+   behavior before `/nav/cmd_vel` can remain non-zero.
 6. **Done locally:** typed navigation and inspection requests carry request IDs;
    the client completes submission only after a matching admission ACK and
    propagates the endpoint rejection reason. Goal admission means asynchronous
    planning started, not that planning or navigation completed. The C ABI
    exposes version and capability checks.
-7. **Next:** move camera color/depth Module ingestion to C++ DDS metadata plus a
-   versioned SHM ring; keep low-rate camera info/health on typed DDS.
+7. **Done locally:** move camera color/depth ingestion to C++ DDS metadata plus
+   a versioned SHM ring; keep low-rate camera info/health on typed DDS.
 8. **Next:** make MuJoCo publish sensor DDS and consume final `/nav/cmd_vel`
    through the same C++ services and learned locomotion sink used by field
    acceptance, with no Python planner substitute.

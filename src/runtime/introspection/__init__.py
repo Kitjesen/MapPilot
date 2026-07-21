@@ -1,7 +1,7 @@
 """Blueprint/SystemHandle visualization and graph inspection helpers.
 
 Graph contracts live in ``runtime.introspection.module_graph`` and profile
-graph snapshots live in ``runtime.introspection.profile_graph``.
+graph snapshots live in ``lingtu.assembly.graph``.
 """
 
 from .dot import render as render_dot

@@ -1,4 +1,4 @@
-"""ExplorationSupervisorModule 鈥?cross-process watchdog for TARE exploration.
+"""ExplorationSupervisorModule — cross-process watchdog for TARE exploration.
 
 Motivation
 ----------

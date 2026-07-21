@@ -32,6 +32,11 @@ from gateway.services.goal_builder import construct_goal_from_request
 from gateway.services.native_control import (
     clear_estop as native_clear_estop,
 )
+from gateway.services.command_boundary import (
+    CommandBoundaryError,
+    submit_cancel,
+    submit_goal,
+)
 from gateway.services.native_control import (
     endpoint_only_enabled,
 )
@@ -40,10 +45,6 @@ from gateway.services.native_control import (
 )
 from gateway.services.native_control import (
     resume_autonomy as native_resume_autonomy,
-)
-from runtime.adapters.native.navigation import (
-    NavigationClientError,
-    get_native_navigation_client,
 )
 from runtime.msgs.geometry import Twist, Vector3
 
@@ -57,7 +58,7 @@ LEASE_ERROR_RESPONSES = {
 }
 
 
-def _native_navigation_client():
+def _native_commands_required() -> bool:
     required_by_env = os.environ.get("LINGTU_NAV_COMMANDS_REQUIRED", "").strip().lower() in {
         "1",
         "true",
@@ -67,11 +68,8 @@ def _native_navigation_client():
     try:
         required = required_by_env or endpoint_only_enabled()
     except ValueError as exc:
-        raise NavigationClientError(str(exc)) from exc
-    client = get_native_navigation_client(required=required)
-    if client is None and required:
-        raise NavigationClientError("native navigation command boundary is unavailable")
-    return client
+        raise CommandBoundaryError(str(exc)) from exc
+    return required
 
 
 def _publish_goal(
@@ -81,17 +79,12 @@ def _publish_goal(
     ts: float,
     request_id: str | None = None,
 ) -> None:
-    client = _native_navigation_client()
-    if client is not None:
-        client.send_goal(
-            goal.x,
-            goal.y,
-            goal.z,
-            goal.yaw,
-            request_id=request_id,
-        )
+    typed_goal = goal.pose_stamped(ts=ts)
+    if submit_goal(gw, typed_goal, request_id=request_id):
         return
-    gw.goal_pose.publish(goal.pose_stamped(ts=ts))
+    if _native_commands_required():
+        raise CommandBoundaryError("goal service is unavailable")
+    gw.goal_pose.publish(typed_goal)
 
 
 def register_command_routes(app, gw) -> None:
@@ -252,11 +245,12 @@ def register_command_routes(app, gw) -> None:
         def _publish() -> dict[str, Any]:
             request_id = body.request_id if body is not None else None
             wrote_dds = native_estop(
+                gw,
                 "rest_emergency_stop",
                 request_id=request_id,
             )
             if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                raise NavigationClientError("native stop command boundary is unavailable")
+                raise CommandBoundaryError("native stop command boundary is unavailable")
             if not wrote_dds:
                 gw.stop_cmd.publish(2)
                 gw.cmd_vel.publish(Twist())
@@ -273,7 +267,7 @@ def register_command_routes(app, gw) -> None:
                 body,
                 _publish,
             )
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return command_service.rejected_response(
                 "stop",
@@ -296,10 +290,10 @@ def register_command_routes(app, gw) -> None:
     )
     async def post_navigation_cancel(body: CancelRequest):
         def _publish() -> dict[str, Any]:
-            client = _native_navigation_client()
-            if client is not None:
-                client.cancel(body.reason, request_id=body.request_id)
-            else:
+            wrote_native = submit_cancel(gw, body.reason, request_id=body.request_id)
+            if not wrote_native:
+                if _native_commands_required():
+                    raise CommandBoundaryError("goal service is unavailable")
                 gw.cancel.publish(body.reason)
             return {"status": "cancelled", "reason": body.reason}
 
@@ -310,7 +304,7 @@ def register_command_routes(app, gw) -> None:
                 body,
                 _publish,
             )
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return command_service.rejected_response(
                 "navigation_cancel",
@@ -353,11 +347,12 @@ def register_command_routes(app, gw) -> None:
         def _publish() -> dict[str, Any]:
             request_id = body.request_id if body is not None else None
             wrote_dds = native_resume_autonomy(
+                gw,
                 "operator_resume",
                 request_id=request_id,
             )
             if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                raise NavigationClientError("native autonomy resume boundary is unavailable")
+                raise CommandBoundaryError("native autonomy resume boundary is unavailable")
             return {
                 "status": "autonomy_resume_ready",
                 "dds": wrote_dds,
@@ -371,7 +366,7 @@ def register_command_routes(app, gw) -> None:
                 body,
                 _publish,
             )
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return command_service.rejected_response(
                 "navigation_resume",
@@ -455,11 +450,12 @@ def register_command_routes(app, gw) -> None:
         def _publish() -> dict[str, Any]:
             if body.mode == "estop":
                 wrote_dds = native_estop(
+                    gw,
                     "mode_estop",
                     request_id=body.request_id,
                 )
                 if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                    raise NavigationClientError("native estop command boundary is unavailable")
+                    raise CommandBoundaryError("native estop command boundary is unavailable")
                 if not wrote_dds:
                     gw.stop_cmd.publish(2)
                     gw.cmd_vel.publish(Twist())
@@ -475,7 +471,7 @@ def register_command_routes(app, gw) -> None:
                 body,
                 _publish,
             )
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return command_service.rejected_response(
                 "mode",
@@ -500,11 +496,12 @@ def register_command_routes(app, gw) -> None:
         def _publish() -> dict[str, Any]:
             request_id = body.request_id if body is not None else None
             wrote_dds = native_clear_estop(
+                gw,
                 "operator_reset",
                 request_id=request_id,
             )
             if not wrote_dds and bool(getattr(gw, "_teleop_dds_enabled", False)):
-                raise NavigationClientError("native estop reset boundary is unavailable")
+                raise CommandBoundaryError("native estop reset boundary is unavailable")
             with gw._state_lock:
                 if gw._mode == "estop":
                     gw._mode = "manual"
@@ -521,7 +518,7 @@ def register_command_routes(app, gw) -> None:
                 body,
                 _publish,
             )
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return command_service.rejected_response(
                 "estop_reset",

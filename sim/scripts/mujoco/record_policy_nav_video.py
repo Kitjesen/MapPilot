@@ -474,7 +474,7 @@ def record_full_stack_nav(
         PRODUCTION_PATH_FOLLOWER_BACKEND,
     )
 
-    from runtime.blueprints.profile_builder import build_system_for_profile
+    from lingtu.assembly.profile_builder import build_system_for_profile
     from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
     system = build_system_for_profile(

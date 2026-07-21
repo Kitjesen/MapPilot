@@ -15,7 +15,7 @@ from gateway.services.native_control import (
 )
 from gateway.services.safety_status import safety_stop_active
 from gateway.services.teleop import quiesce_native_teleop, resume_native_teleop
-from runtime.adapters.native.navigation import NavigationClientError
+from gateway.services.command_boundary import CommandBoundaryError
 from runtime.msgs.geometry import Twist
 
 logger = logging.getLogger(__name__)
@@ -188,13 +188,14 @@ def register_realtime_routes(app, gw) -> None:
                         def _stop_with_barrier():
                             held = quiesce_native_teleop(gw)
                             wrote = native_stop(
+                                gw,
                                 "websocket_stop",
                                 request_id=str(data.get("request_id") or "") or None,
                             )
                             return held, wrote
 
                         quiesced, wrote_native = await asyncio.to_thread(_stop_with_barrier)
-                    except NavigationClientError as exc:
+                    except CommandBoundaryError as exc:
                         await ws.send_text(
                             json.dumps(
                                 {
@@ -233,13 +234,14 @@ def register_realtime_routes(app, gw) -> None:
                         def _resume_with_barrier():
                             held = quiesce_native_teleop(gw)
                             wrote = native_resume_autonomy(
+                                gw,
                                 "websocket_resume",
                                 request_id=str(data.get("request_id") or "") or None,
                             )
                             return held, wrote
 
                         quiesced, wrote_native = await asyncio.to_thread(_resume_with_barrier)
-                    except NavigationClientError as exc:
+                    except CommandBoundaryError as exc:
                         await ws.send_text(
                             json.dumps(
                                 {

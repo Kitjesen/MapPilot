@@ -330,6 +330,16 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         description="LingTu Python runtime service.",
     ),
     ThunderServiceSpec(
+        name="runtime",
+        role="orchestrator_runtime",
+        units=("lingtu.service",),
+        start_units=("lingtu.service",),
+        group="runtime",
+        catalog_alias=True,
+        checks=("systemd", "http"),
+        description="RuntimePlan logical alias for the LingTu application service.",
+    ),
+    ThunderServiceSpec(
         name="slam",
         role="localization_runtime",
         units=(

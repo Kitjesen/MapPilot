@@ -33,8 +33,8 @@ dds_entity_t checked(dds_return_t value, const char* what) {
   return static_cast<dds_entity_t>(value);
 }
 
-double stampSeconds(const lingtu_dds_Time& stamp) {
-  return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
+double sourceWallSeconds(const lingtu_dds_FinalVelocityCommand& msg) {
+  return static_cast<double>(msg.source_wall_ns) * 1e-9;
 }
 
 double nowSeconds() {
@@ -134,7 +134,7 @@ int main(int argc, char** argv) {
     const dds_entity_t topic = checked(
         dds_create_topic(
             participant,
-            &lingtu_dds_TwistStamped_desc,
+            &lingtu_dds_FinalVelocityCommand_desc,
             contract.dds_topic.data(),
             nullptr,
             nullptr),
@@ -183,11 +183,12 @@ int main(int argc, char** argv) {
         if (!infos[i].valid_data || samples[i] == nullptr) {
           continue;
         }
-        const auto* msg = static_cast<const lingtu_dds_TwistStamped*>(samples[i]);
+        const auto* msg =
+            static_cast<const lingtu_dds_FinalVelocityCommand*>(samples[i]);
         std::printf(
             "LT_CMD_V1\t%llu\t%.9f\t%.9f\t%.9f\t%.9f\n",
             static_cast<unsigned long long>(++sequence),
-            stampSeconds(msg->header.stamp),
+            sourceWallSeconds(*msg),
             msg->twist.linear.x,
             msg->twist.linear.y,
             msg->twist.angular.z);

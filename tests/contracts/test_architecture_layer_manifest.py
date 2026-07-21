@@ -56,7 +56,7 @@ def test_architecture_layer_manifest_rejects_scalar_import_boundary_values(
 ) -> None:
     manifest = copy.deepcopy(load_architecture_layers())
     manifest["import_boundaries"]["package_forbidden_roots"]["nav"] = "semantic"
-    manifest["import_boundaries"]["composition_exceptions"] = "runtime/blueprints/"
+    manifest["import_boundaries"]["composition_exceptions"] = "lingtu/assembly/"
     manifest["import_boundaries"]["hardware_compat_forbidden_dirs"] = "src/drivers/real/thunder/"
 
     violations, _manifest = validate_architecture_layer_manifest(_write_manifest(tmp_path, manifest))

@@ -1,5 +1,9 @@
 # Simulation Integration Contract
 
+Status: simulation/validation contract; simulation evidence is not field readiness
+Audience: simulation, acceptance, and adapter maintainers
+Replaced by: not replaced
+
 LingTu is the product system. Simulation environments are external inputs and
 validation targets. They must not become product profiles, disable safety, or
 replace the navigation chain with demo-specific shortcuts.
@@ -70,14 +74,15 @@ python lingtu.py nav --endpoint replay status
 python lingtu.py tare_explore --endpoint cmu_unity --record
 python lingtu.py runtime-contract --json
 python lingtu.py runtime-spec explore --endpoint mujoco_live
-python lingtu.py nav --robot thunder --dog-host 192.168.66.190
+python lingtu.py nav --endpoint thunder_field
 ```
 
 The algorithm graph remains the same across these forms. The endpoint supplies
 the data source and owns the command sink. Simulation and replay endpoints must
-report `cmd_vel_sent_to_hardware=false`; real targets must route commands only
-through `CmdVelMux` and the hardware driver. Endpoint-specific evidence still
-controls what claims a run can support.
+report `cmd_vel_sent_to_hardware=false`. The current real Thunder endpoint uses
+`endpoint_only + driver`: the native endpoint publishes `/nav/cmd_vel`, and
+the unique `lingtu-driver` forwards checked commands to remote Brainstem.
+Endpoint-specific evidence still controls what claims a run can support.
 
 ## Unified Runtime Interface
 
@@ -101,7 +106,7 @@ checked against one frame contract instead of duplicating coordinate rules.
 Algorithm interfaces also expose `map_dependency`, which is the boundary that
 separates live SLAM/map use from saved artifacts such as a PCT tomogram.
 
-`src/runtime/blueprints/runtime_endpoint.py` defines the Dimos-style split between
+`src/runtime/profiles/endpoints.py` defines the Dimos-style split between
 task and connection layer. The product task remains `map`, `nav`, `explore`, or
 `tare_explore`; `--endpoint thunder-field|mujoco_live|gazebo|cmu_unity|replay`
 selects the runtime source/sink. Legacy board aliases such as `real_s100p`
@@ -117,7 +122,7 @@ Examples:
 python lingtu.py explore --endpoint mujoco_live --record
 python lingtu.py nav --endpoint replay status
 python lingtu.py tare_explore --endpoint cmu_unity --record
-python lingtu.py nav --robot thunder --dog-host 192.168.66.190
+python lingtu.py nav --endpoint thunder_field
 ```
 
 External runtime launchers and `lingtu status` print the resolved boundary:
@@ -163,14 +168,14 @@ publish access into ModulePorts, and not a ROS2 topic browser.
 | Localization/map output | `/nav/odometry`, `/nav/registered_cloud`, `/nav/map_cloud`, `/nav/localization_health` | LingTu SLAM or external-source adapter | Maps, exploration, navigation, gateway, safety | Live exploration and navigation |
 | Exploration | `/exploration/start`, `/exploration/way_point`, `/nav/exploration_grid`, `/exploration/status` | TARE, frontier, or external exploration adapter | Exploration bridge, Navigation, Gateway | No-map exploration |
 | Planning/execution | `/nav/goal_pose`, `/nav/patrol_goals`, `/nav/global_path`, `/nav/local_path`, `/nav/mission_status` | LingTu navigation stack | Path follower, safety, gateway, recorder | Goal navigation and route execution |
-| Command | `/nav/cmd_vel` | LingTu `CmdVelMux` | Endpoint command adapter only | Simulated or real actuation |
+| Command | `/nav/cmd_vel` | Product-specific final command owner | Simulation adapter or field `lingtu-driver` only | Simulated or real actuation |
 | Artifacts | `map.pcd`, `tomogram.pickle`, `occupancy.npz`, `metadata.json` | Map manager/save pipeline | Relocalization, PCT, diagnostics | Saved-map navigation |
 
 ### Endpoint Adapter Matrix
 
 | Endpoint | Native input | Adapter obligation | Canonical LingTu entry | Command sink | Product claim allowed |
 | --- | --- | --- | --- | --- | --- |
-| Real S100P | MID-360 LiDAR, IMU, robot driver | Publish canonical sensor topics, run Fast-LIO/localizer, relay only muxed safe commands | `/nav/lidar_scan + /nav/imu -> Fast-LIO -> /nav/*` | Real driver through safety/mux | Field mapping, relocalization, navigation after hardware validation |
+| Real Thunder field | MID-360 LiDAR, IMU, remote Brainstem driver boundary | Publish native DDS sensor topics, run native SLAM/localizer, require driver-control readiness, relay only native endpoint final commands through `lingtu-driver` | `/lidar/raw_frame + /imu/raw -> native SLAM -> /slam/* -> native nav endpoint` | `lingtu-driver` to remote Brainstem | Field mapping, relocalization, navigation after hardware validation |
 | MuJoCo raw MID-360 | Simulated MID-360 pattern cloud and IMU | Generate credible raw sensor topics and feed Fast-LIO | `/points_raw + /imu_raw -> Fast-LIO -> /nav/*` | MuJoCo command adapter | LingTu SLAM/map/exploration smoke when raw-source evidence is present |
 | Gazebo industrial | Gazebo world, physics, rendered LiDAR, sim odom | Convert Gazebo sensor/odom to `/nav/*`, isolate command relay | `/nav/odometry`, `/nav/registered_cloud`, `/nav/map_cloud`, `/nav/exploration_grid` | `/lingtu/gazebo/cmd_vel` | ROS/GZ integration, obstacle/map-growth, navigation smoke; not Fast-LIO quality |
 | CMU Unity external | CMU `/state_estimation`, `/registered_scan`, `/terrain_map_ext`, `/way_point` | Remap external state/map/TARE waypoints into LingTu execution contract | `/nav/odometry`, `/nav/registered_cloud`, `/nav/terrain_map_ext`, `/exploration/way_point` | `/cmd_vel` in isolated simulation domain | LingTu can consume external CMU/TARE waypoints and execute; not LingTu SLAM |
@@ -236,9 +241,11 @@ fields explicit:
 - `current_validation`, `target_validation`, and top-level `ok`
 
 A valid diff changes the endpoint boundary without changing the product task
-semantics. Simulation and replay targets must never use
-`driver`. Module-owned targets must reach `driver` only through `CmdVelMux`;
-direct hardware actuation paths are outside the contract.
+semantics. Simulation and replay targets must never use the physical `driver`.
+Field targets must expose exactly one hardware exit. For the current Thunder
+endpoint that exit is `lingtu-driver`, gated by native endpoint final command
+publication and driver-control readiness; direct hardware actuation paths are
+outside the contract.
 
 Compatibility profiles are resolved back to their runtime endpoint in the
 switch plan. For example, `sim_mujoco_live -> explore` should report
@@ -266,7 +273,7 @@ sensor/log/simulator source
   -> map layers and exploration
   -> global planner
   -> local planner and path follower
-  -> CmdVelMux
+  -> final command owner
   -> endpoint command sink
 ```
 
@@ -280,8 +287,8 @@ are `endpoint_adapter`, `slam_or_relayed_localization_map`,
 For an actual endpoint, use `resolved_runtime_data_flow.<data_source>` or
 `resolved_runtime_data_flow(data_source)`. That expanded contract replaces
 template placeholders with concrete source topics and command sinks. Examples:
-`thunder_field` resolves to `/nav/lidar_scan + /nav/imu -> /nav/odometry +
-/nav/registered_cloud + /nav/map_cloud -> driver`;
+`thunder_field` resolves to native `/lidar/raw_frame + /imu/raw -> /slam/* ->
+native nav endpoint -> /nav/cmd_vel -> lingtu-driver`;
 `mujoco_fastlio2_live` resolves to `/points_raw + /imu_raw -> Fast-LIO ->
 /nav/* -> mujoco_velocity_adapter`; `gazebo_industrial` resolves native Gazebo
 topics into `/nav/*` and ends at `/lingtu/gazebo/cmd_vel`.
@@ -373,7 +380,7 @@ The adapter boundary is:
 | `cmu_unity_external` | CMU Unity | External CMU TARE waypoint source | LingTu navigation, optionally PCT when the gate requires it | LingTu navigation | LingTu path follower | LingTu adapter relay to CMU simulator | LingTu can ingest CMU/TARE waypoints and execute in simulation |
 | `mujoco_native_dds` | MuJoCo MID-360/IMU through native DDS | LingTu frontier/TARE when enabled | LingTu navigation over native `/slam/*` contract | LingTu navigation | LingTu path follower | Native `/nav/cmd_vel` endpoint sink | Real-equivalent simulation endpoint; must share `/lidar/*`, `/imu/*`, `/slam/*`, `/nav/cmd_vel` with `thunder_field` |
 | `mujoco_fastlio2_live` | MuJoCo live harness | LingTu frontier when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu navigation when `explore/video` is used | LingTu path follower when `explore/video` is used | MuJoCo velocity adapter or fixed gate motion | Legacy downstream Module wiring/video gate; not field-runtime proof |
-| `thunder_field` | Thunder MID-360/IMU | LingTu frontier or TARE profile | LingTu navigation/PCT | LingTu navigation | LingTu path follower | LingTu `CmdVelMux` to hardware driver | Thunder field runtime boundary; field readiness still requires robot-side evidence |
+| `thunder_field` | Thunder MID-360/IMU through native DDS services | LingTu frontier or TARE profile | OctoPlanner3D through native navigation endpoint | Native endpoint local planning | Native endpoint path follower | `lingtu-nav-dds -> rt/nav/cmd_vel -> lingtu-driver -> Brainstem WalkChecked` | Thunder field runtime boundary; field readiness still requires robot-side evidence |
 
 Forbidden claims are part of the runtime contract:
 

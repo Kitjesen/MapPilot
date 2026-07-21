@@ -2,6 +2,8 @@
 
 Date: 2026-05-31
 
+> **Historical plan status**: This is a 2026-05-31 simulation folder contract and modularization plan. Treat status and path references as historical unless re-verified against the current tree.
+
 ## Goal
 
 Close the LingTu server-side simulation validation loop without real robot
@@ -37,7 +39,7 @@ motion command claim must preserve `simulation_only=true`,
 | `sim/datasets/` | Offline datasets and metadata. | Boundary README added; keep dataset/large-file policy locked. |
 | `sim/output/` | Generated local outputs. | Prefer `artifacts/` for reproducible evidence. |
 | `sim/external_scenes/` | External/license-constrained scene placeholders. | Keep. |
-| `sim/meshes/` | Legacy mesh path. | Removed 2026-05-31 �?duplicates of sim/assets/meshes/. No code references. |
+| `sim/meshes/` | Legacy mesh path. | Removed 2026-05-31 - duplicates of sim/assets/meshes/. No code references. |
 | `sim/maps/`, `sim/configs/` | Reserved placeholders. | Keep only if referenced; otherwise prune later. |
 | `sim/semantic/` | Legacy semantic simulation residue. | Move to tests or mark experimental later. |
 

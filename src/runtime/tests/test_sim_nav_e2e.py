@@ -50,7 +50,7 @@ def _wait_until(predicate, timeout_s: float, interval_s: float = 0.1) -> bool:
 
 
 def _build_sim_nav():
-    from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+    from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
     from runtime.profiles.resolver import resolve_profile_config
 
     config = resolve_profile_config(

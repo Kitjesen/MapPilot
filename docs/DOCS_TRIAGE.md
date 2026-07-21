@@ -1,7 +1,7 @@
 # LingTu Docs Triage
 
 Status: current cleanup decision
-Date: 2026-06-30
+Date: 2026-07-18
 
 This document decides how the docs tree should be read and cleaned. It is a
 triage map, not another architecture contract.
@@ -13,6 +13,9 @@ triage map, not another architecture contract.
 - Plans live in `plans/`. A plan is not current behavior.
 - Evidence lives in `07-testing/`. Evidence is date-bound.
 - Historical or branch-specific material lives in `archive/`.
+- Hidden tool-owned trees such as `.qoder/`, `.hermes/`, `.codex/`, and `.omx/`
+  are generated workspace memory, not maintained product documentation. Refresh
+  them with their owning tool instead of copying their claims into `docs/`.
 - If a document has mojibake, branch names, old robot names, or old ROS-first
   assumptions, it is not authoritative until rewritten.
 
@@ -22,7 +25,7 @@ triage map, not another architecture contract.
 | --- | --- | --- |
 | `README.md` | keep current | Main entrypoint. |
 | `CURRENT.md` | keep current | One-page authority map. |
-| `QUICKSTART.md` | keep, needs cleanup | Useful operator doc, but has old references and mojibake. |
+| `QUICKSTART.md` | keep current | Current staged local/sim/field entrypoint. |
 | `REPO_LAYOUT.md` | keep current | Placement rule source. |
 | `TUNING.md` | keep current | Current tuning summary. |
 | `known_gaps.md` | keep current | Current product gaps. |
@@ -71,8 +74,8 @@ historical plans were removed; use git history when old context is needed.
 
 ## 6. Next Cleanup Order
 
-1. Fix `QUICKSTART.md` current profile/source references and mojibake.
-2. Move or clearly mark `REVIEW_2026Q2.md` as historical.
-3. Condense `SIMULATION_INTEGRATION_CONTRACT.md` into a short current contract,
+1. Move or clearly mark `REVIEW_2026Q2.md` as historical.
+2. Condense `SIMULATION_INTEGRATION_CONTRACT.md` into a short current contract,
    leave evidence details in `07-testing/`.
-4. Split oversized PRDs only after their implementation boundaries stabilize.
+3. Split oversized PRDs only after their implementation boundaries stabilize.
+4. Recheck dated field-evidence links after each Sunrise deployment sweep.

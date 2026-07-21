@@ -1,6 +1,8 @@
 # Navigation Compute Contract
 
 Status: current contract
+Audience: navigation compute, planner, safety, and driver-boundary maintainers
+Replaced by: not replaced
 
 This document defines the compute boundary for global planning, local planning,
 safety checks, and velocity output. It is intentionally narrower than the full
@@ -10,13 +12,14 @@ system design.
 
 | Layer | Owner | Responsibility | Not responsible for |
 | --- | --- | --- | --- |
-| Mission | `src/nav/mission/navigation.py` | Goal lifecycle, mission FSM, recovery, status. | Algorithm internals. |
+| Mission | `src/nav/navigation.py` | Goal lifecycle, mission FSM, recovery, status. | Algorithm internals. |
 | Global planning service | `src/nav/services/plan/` | `GlobalPlanRequest -> GlobalPlanResult`, map-backed planner dispatch. | Module graph, UI schema, robot driver commands. |
-| Global planner backend | `src/nav/services/plan/global_planner/algorithm/` | OctoPlanner3D/PCT/direct algorithm implementation. | Registry, runtime discovery, diagnostics transport. |
+| Native global planner | `src/nav/cpp/planning/global/` | OctoPlanner3D default and explicit FAR implementation. | Map storage, transport, mission state. |
+| Module/sim planner adapters | `src/nav/services/plan/global_planner/algorithm/` | Python adapter/registry boundary and legacy manual planners. | Field motion authority. |
 | Map safety | `src/nav/services/safety/`, map modules | Costmap/traversability safety gates. | Local trajectory scoring. |
-| Local planning | `src/nav/services/plan/local_planner/`, `src/nav/local/` | Short-horizon trajectory and control hints. | Semantic goal resolution. |
+| Local planning | `src/nav/local/`, `src/nav/local/` | Short-horizon trajectory and control hints. | Semantic goal resolution. |
 | Path following | `src/nav/local/path_follower.py` | Convert local path into velocity intent. | Velocity priority arbitration. |
-| Velocity mux | `src/nav/safety/velocity_mux.py` | Choose the active velocity source. | Path generation. |
+| Velocity mux | `src/nav/services/safety/velocity_mux.py` | Choose the active velocity source. | Path generation. |
 
 ## 2. Global Planner Contract
 
@@ -143,6 +146,7 @@ The detailed frame rules live in `ros_frame_contract.md`.
 | Backend | Role |
 | --- | --- |
 | `octoplanner3d` | Default map-backed global planner. |
+| `far` | Explicit native 2D planner over validated active occupancy. No silent fallback. |
 | `pct` | Legacy/manual experiment backend. |
 | `direct` | Mapless or explicit direct-goal path only. |
 

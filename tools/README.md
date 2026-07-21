@@ -37,6 +37,9 @@ python tools/validate/validate_architecture_boundaries.py
 python tools/validate/validate_thunder_lite_package.py
 python tools/package_thunder_lite.py --output artifacts/thunder-lite-package --force
 
+# Thunder field native DDS / systemd deployment contract
+python tools/validate/validate_thunder_field_deployment.py
+
 # YOLO-World -> ONNX -> BPU
 python tools/perception/export_yoloworld_bpu.py
 bash tools/perception/convert_onnx_to_hbm.sh <onnx_path>
@@ -45,5 +48,6 @@ bash tools/perception/convert_onnx_to_hbm.sh <onnx_path>
 python tools/reconstruction/reconstruct_local.py --dataset datasets/recording/<id>
 ```
 
-Some field diagnostics may be copied to `/opt/nav/tools/` for manual robot-side
-use. They should not be installed as systemd services from this directory.
+Some field diagnostics may be copied into `/opt/lingtu/current/tools/` for
+manual robot-side use. They should not be installed as systemd services from
+this directory.

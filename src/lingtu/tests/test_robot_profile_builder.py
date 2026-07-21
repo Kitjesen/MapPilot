@@ -26,9 +26,16 @@ class _FakeBuilder:
         del transport
         return self._system
 
+    def route_contract(self, _name: str) -> _FakeBuilder:
+        return self
+
+    @property
+    def module_names(self) -> tuple[str, ...]:
+        return ("nav.mission",)
+
 
 def test_robot_nav_uses_product_profile_builder(monkeypatch):
-    import runtime.blueprints.products as products_mod
+    import lingtu.assembly.products as products_mod
     from lingtu import Robot
 
     case = unittest.TestCase()
@@ -91,5 +98,5 @@ def test_robot_facade_uses_lingtu_runtime_boundary():
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
 
-    case.assertNotIn("runtime.blueprints.profile_builder", imports)
+    case.assertNotIn("lingtu.assembly.profile_builder", imports)
     case.assertNotIn("runtime.profiles.resolver", imports)

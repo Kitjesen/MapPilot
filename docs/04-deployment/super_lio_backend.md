@@ -35,7 +35,8 @@ Expected S100P paths:
 Build or refresh Super-LIO on the robot:
 
 ```bash
-ssh sunrise@192.168.66.13
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+ssh sunrise@"$LINGTU_HOST"
 mkdir -p /home/sunrise/data/inovxio
 cd /home/sunrise/data/inovxio/super-lio
 git fetch --all --tags
@@ -65,8 +66,8 @@ cd /home/sunrise/data/inovxio/lingtu
 scp scripts/deploy/s100p/super_lio.service \
     scripts/deploy/s100p/super_lio_relocation.service \
     scripts/deploy/s100p/install_services.sh \
-    sunrise@192.168.66.13:/tmp/
-ssh sunrise@192.168.66.13 'bash /tmp/install_services.sh /tmp'
+    sunrise@"$LINGTU_HOST":/tmp/
+ssh sunrise@"$LINGTU_HOST" 'bash /tmp/install_services.sh /tmp'
 ```
 
 There are two installer lanes:
@@ -267,7 +268,8 @@ The current status fields are exposed through Gateway localization and health
 responses. The most direct endpoint is:
 
 ```bash
-curl -s http://localhost:5050/api/v1/localization/status | python3 -m json.tool
+export LINGTU_GATEWAY=http://ROBOT_IP_OR_HOSTNAME:5050
+curl -s "$LINGTU_GATEWAY/api/v1/localization/status" | python3 -m json.tool
 ```
 
 Check these fields in the response:
@@ -288,8 +290,8 @@ Check these fields in the response:
 Related endpoints:
 
 ```bash
-curl -s http://localhost:5050/api/v1/health | python3 -m json.tool
-curl -s http://localhost:5050/api/v1/slam/status | python3 -m json.tool
+curl -s "$LINGTU_GATEWAY/api/v1/health" | python3 -m json.tool
+curl -s "$LINGTU_GATEWAY/api/v1/slam/status" | python3 -m json.tool
 ```
 
 Use `/api/v1/localization/status` for the field contract above. Use
@@ -363,7 +365,8 @@ route-level drift/recovery validation is still required before promotion.
 
 ## 2026-05-04 Non-Motion Gate Evidence
 
-Robot: `sunrise@192.168.66.13`.
+Historical robot used for this evaluation: a private lab `sunrise@<robot-ip>`
+target.
 
 Active map:
 
@@ -483,7 +486,7 @@ Manual fallback commands:
 ```bash
 curl -s -X POST -H 'Content-Type: application/json' \
   -d '{"profile":"localizer"}' \
-  http://localhost:5050/api/v1/slam/switch | python3 -m json.tool
+  "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/slam/switch" | python3 -m json.tool
 
 sudo systemctl stop robot-super-lio robot-super-lio-relocation \
   super_lio super_lio_relocation
@@ -633,9 +636,9 @@ ART_ROOT=~/data/SLAM/navigation/artifacts/super_lio_route_$(date +%Y%m%d_%H%M%S)
 mkdir -p "$ART_ROOT"/{baseline,candidate,journals}
 
 bash scripts/lingtu status | tee "$ART_ROOT/status.before.txt"
-curl -s http://localhost:5050/api/v1/localization/status \
+curl -s "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/localization/status" \
   | tee "$ART_ROOT/localization.before.json" | python3 -m json.tool >/dev/null
-curl -s http://localhost:5050/api/v1/navigation/status \
+curl -s "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/navigation/status" \
   | tee "$ART_ROOT/navigation.before.json" | python3 -m json.tool >/dev/null
 ```
 
@@ -649,7 +652,7 @@ GOAL_YAW=0
 
 curl -s -X POST -H 'Content-Type: application/json' \
   -d '{"profile":"localizer"}' \
-  http://localhost:5050/api/v1/slam/switch | tee "$ART_ROOT/baseline/switch.json"
+  "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/slam/switch" | tee "$ART_ROOT/baseline/switch.json"
 bash scripts/lingtu nav start "$MAP" | tee "$ART_ROOT/baseline/nav_start.txt"
 bash scripts/lingtu nav goal "$GOAL_X" "$GOAL_Y" "$GOAL_YAW" \
   | tee "$ART_ROOT/baseline/nav_goal.txt"
@@ -682,11 +685,11 @@ Capture the same API and service snapshots after each run:
 
 ```bash
 PHASE=baseline  # or candidate
-curl -s http://localhost:5050/api/v1/localization/status \
+curl -s "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/localization/status" \
   | tee "$ART_ROOT/$PHASE/localization.after.json" | python3 -m json.tool >/dev/null
-curl -s http://localhost:5050/api/v1/navigation/status \
+curl -s "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/navigation/status" \
   | tee "$ART_ROOT/$PHASE/navigation.after.json" | python3 -m json.tool >/dev/null
-curl -s http://localhost:5050/api/v1/health \
+curl -s "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/health" \
   | tee "$ART_ROOT/$PHASE/health.after.json" | python3 -m json.tool >/dev/null
 systemctl show -p ActiveState -p SubState -p NRestarts \
   robot-fastlio2.service robot-localizer.service \
@@ -751,7 +754,7 @@ Expected service-level signs:
 For API-level verification, check the compact field set:
 
 ```bash
-curl -s http://localhost:5050/api/v1/localization/status \
+curl -s "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/localization/status" \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); keys=("backend","health_source","map_save_source","relocalization_supported","saved_map_relocalization_supported","restart_recovery_supported","recovery_method","relocalization_state","recovery_signal","recovery_action"); print({k:d.get(k) for k in keys})'
 ```
 
@@ -760,7 +763,7 @@ For map-save behavior in Super-LIO mode:
 ```bash
 curl -s -X POST -H 'Content-Type: application/json' \
   -d '{"action":"save","name":"super_lio_field_check"}' \
-  http://localhost:5050/api/v1/maps | python3 -m json.tool
+  "${LINGTU_GATEWAY:-http://127.0.0.1:5050}/api/v1/maps" | python3 -m json.tool
 ```
 
 The response should report `slam_profile` or source metadata indicating

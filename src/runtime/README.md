@@ -3,7 +3,8 @@
 `src/runtime/` is the runtime foundation of LingTu.
 
 Keep this folder small in meaning: it explains how modules exist, how modules
-talk, and how a product stack is assembled. It should not contain navigation
+talk, and how runtime execution works. Product stack recipes live in
+`src/lingtu/assembly`. Runtime should not contain navigation
 decisions, perception algorithms, robot behavior, HTTP endpoint logic, or ROS
 node logic.
 
@@ -12,8 +13,9 @@ node logic.
 | If you need to... | Start here |
 | --- | --- |
 | write or inspect a module | `module.py`, `stream.py` |
-| connect modules together | `blueprint.py`, `blueprints/wires/` |
-| understand product data flow | `blueprints/products/thunder.py`, then `blueprints/full_stack_wiring.py` |
+| understand the graph mechanism | `blueprint.py`, `wiring.py` |
+| connect LingTu product modules | `../lingtu/assembly/wires/` |
+| understand product data flow | `../lingtu/assembly/products/thunder.py`, then `../lingtu/assembly/full_stack_wiring.py` |
 | change profile defaults | `profiles/catalog/` |
 | find shared messages | `msgs/`, `contracts/` |
 | find topic, frame, or runtime contract names | `runtime_interface.py` |
@@ -26,9 +28,12 @@ node logic.
 Module      = one runtime unit
 In / Out    = typed input and output ports
 WireSpec    = one declared data-flow connection
-Blueprint   = a module graph before it starts
+Blueprint   = one application Module graph before it starts
 Route       = runtime contract (metadata) and optional routed delivery mode
 SystemHandle = the running graph
+RuntimePlan = endpoint-owned native process lifecycle plan
+Product     = one compiled Blueprint + optional RuntimePlan
+Launcher    = external process-plan executor; not part of runtime core
 ```
 
 Normal Module flow is:
@@ -63,6 +68,7 @@ lingtu-livox-dds
   -> lingtu-traversability-dds
   -> lingtu-nav-dds
   -> /nav/cmd_vel
+  -> lingtu-driver
 ```
 
 In that mode `src/runtime` still assembles Gateway, mission/status, map, and
@@ -110,8 +116,10 @@ system = (
 
 DDS itself is started by systemd services on real hardware (for example
 `lingtu-livox-dds.service`, `lingtu-slam-dds.service`, and
-`lingtu-nav-dds.service`). Internal validators still check DDS topic/type
-contracts against `src/message/dds.py` and C++ topic constants.
+`lingtu-nav-dds.service`). The hardware command sink is the separate
+`lingtu-driver.service`, which consumes the final typed DDS command and owns the
+Brainstem lease. Internal validators still check DDS topic/type contracts
+against `src/message/dds.py` and C++ topic constants.
 
 ## Minimal Example
 
@@ -138,7 +146,8 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 | --- | --- |
 | runtime unit model | `module.py`, `stream.py`, `blueprint.py` |
 | shared contracts | `msgs/`, `contracts/`, `runtime_interface.py` |
-| graph assembly | `blueprints/`, `profiles/catalog/`, `introspection/` |
+| graph mechanism | `blueprint.py`, `wiring.py`, generic `introspection/` |
+| runtime model | `profiles/`, `graph/`, endpoint and topic contracts |
 | backend lookup | `registry.py`, `plugin_seed.py` |
 | shared transports and frames | `transport/`, `portable/`, `tf/` |
 | small cross-cutting utilities | `utils/`, config helpers, device registry |
@@ -147,7 +156,7 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 
 | Logic | Put it in |
 | --- | --- |
-| global or local planning algorithms | `src/nav/services/plan/`, `src/nav/local/`, `src/nav/kernel/` |
+| global or local planning algorithms | `src/nav/services/plan/`, `src/nav/local/`, `src/nav/cpp/` |
 | navigation task policy and recovery | `src/nav/` |
 | perception and decision reasoning | `src/perception/`, `src/decision/` |
 | robot drivers and hardware behavior | `src/drivers/` |
@@ -161,7 +170,7 @@ bp.wire("SourceModule", "doubled", "SinkModule", "value")
 | Group | Status |
 | --- | --- |
 | core runtime | should stay here |
-| product assembly and runtime catalog | should stay here, but keep it declarative |
+| runtime profile and process contracts | should stay here, but keep them declarative |
 | audit and evidence helpers | moved to `src/diagnostics/field/` |
 | legacy compatibility helpers | isolated files or adapter packages; do not add product behavior there |
 

@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-import runtime.introspection.profile_graph as profile_graph
+import lingtu.assembly.graph as profile_graph
 from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS, RuntimeEndpointError
 from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_PLANNING_FRAME_ID,
@@ -88,6 +88,15 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "cpp_slam_status"
     assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
     assert spec.env["LINGTU_COMMAND_OUTPUT_MODE"] == "endpoint_only"
+    assert spec.env["LINGTU_NAV_GLOBAL_PLANNER"] == "octoplanner3d"
+
+
+def test_runtime_run_spec_propagates_explicit_far_selection() -> None:
+    config = resolve_profile_config("nav", overrides={"planner": "far"})
+    spec = resolve_runtime_run_spec("nav", config)
+
+    assert spec.global_planner == "far"
+    assert spec.env["LINGTU_NAV_GLOBAL_PLANNER"] == "far"
     assert spec.env["LINGTU_HARDWARE_CONTROL_BOUNDARY"] == "driver"
 
 

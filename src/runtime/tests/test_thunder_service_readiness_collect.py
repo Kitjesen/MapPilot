@@ -35,7 +35,7 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
         "lingtu.service",
     )
     assert module.NATIVE_BINARY_DEFAULTS["nav_dds"] == (
-        "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint"
+        "/opt/lingtu/current/build/nav_endpoint/navd"
     )
     assert module.NATIVE_BINARY_ENV["nav_dds"] == "LINGTU_NAV_DDS_BIN"
     assert module.NATIVE_BINARY_DEFAULTS["driver"] == ("/opt/lingtu/current/build/driver/lingtu_driver")

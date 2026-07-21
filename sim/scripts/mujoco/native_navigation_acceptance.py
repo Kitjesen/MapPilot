@@ -3,7 +3,7 @@
 
 The Python process owns MuJoCo physics, simulated sensors, process lifecycle,
 and acceptance reporting only. Global planning, local planning, path following,
-and command safety remain inside ``lingtu_nav_native_endpoint``.
+and command safety remain inside ``navd``.
 """
 
 from __future__ import annotations
@@ -24,10 +24,25 @@ ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_EVIDENCE_SAMPLE_PERIOD_S = 0.20
 
 
-def _phase_runtime_timeout_s(duration_s: float, shutdown_grace_s: float = 120.0) -> float:
+def _phase_runtime_timeout_s(
+    duration_s: float,
+    shutdown_grace_s: float = 120.0,
+    *,
+    realtime_factor: float = 1.0,
+) -> float:
     """Allow native Windows/WSL children to flush and terminate after simulation."""
 
-    return max(0.0, float(duration_s)) + max(60.0, float(shutdown_grace_s))
+    factor = max(0.05, float(realtime_factor))
+    return max(0.0, float(duration_s)) / factor + max(
+        60.0,
+        float(shutdown_grace_s),
+    )
+
+
+def _motion_health_collection_active(motion_complete_marker: Path) -> bool:
+    return not motion_complete_marker.is_file()
+
+
 SENSOR_PUBLISHER_PROBE_TIMEOUT_S = 60.0
 _NON_BLOCKING_SLAM_ACCURACY_GAP_PREFIXES = (
     "native_slam_not_tracking:",
@@ -340,7 +355,14 @@ class NativeEvidence:
     _motion_health_frozen: bool = field(default=False, repr=False)
     _last_loop_overrun_snapshot_key: tuple[str, Any] | None = field(default=None, repr=False)
 
-    def sample(self, *, nav_path: Path, slam_path: Path, traversability_path: Path) -> None:
+    def sample(
+        self,
+        *,
+        nav_path: Path,
+        slam_path: Path,
+        traversability_path: Path,
+        collect_motion_health: bool = True,
+    ) -> None:
         nav = _load_json(nav_path)
         slam = _load_json(slam_path)
         traversability = _load_json(traversability_path)
@@ -393,22 +415,26 @@ class NativeEvidence:
             )
             self.command_last_accepted = self.command_last_accepted or bool(command_boundary.get("last_accepted"))
             goal_reached_now = bool((nav.get("last_local") or {}).get("goal_reached"))
-            collect_motion_health = not self._motion_health_frozen
+            input_gate = nav.get("input_gate") or {}
+            track_motion_health = (
+                collect_motion_health
+                and self.command_last_accepted
+                and not self._motion_health_frozen
+                and "ready" in input_gate
+            )
             self.goal_reached_observed = self.goal_reached_observed or goal_reached_now
-            if collect_motion_health:
+            if track_motion_health:
                 self.motion_health_samples += 1
-                input_gate = nav.get("input_gate") or {}
-                if "ready" in input_gate:
-                    if input_gate.get("ready") is True:
-                        self.input_gate_ready_samples += 1
-                        self._input_gate_seen_ready = True
-                        self._current_input_stale_samples = 0
-                    elif self._input_gate_seen_ready:
-                        self._current_input_stale_samples += 1
-                        self.max_consecutive_input_stale_s = max(
-                            self.max_consecutive_input_stale_s,
-                            self._current_input_stale_samples * RUNTIME_EVIDENCE_SAMPLE_PERIOD_S,
-                        )
+                if input_gate.get("ready") is True:
+                    self.input_gate_ready_samples += 1
+                    self._input_gate_seen_ready = True
+                    self._current_input_stale_samples = 0
+                elif self._input_gate_seen_ready:
+                    self._current_input_stale_samples += 1
+                    self.max_consecutive_input_stale_s = max(
+                        self.max_consecutive_input_stale_s,
+                        self._current_input_stale_samples * RUNTIME_EVIDENCE_SAMPLE_PERIOD_S,
+                    )
                 frame_gate = nav.get("frame_gate") or {}
                 cloud_sync = nav.get("cloud_sync") or {}
                 timing_ms = nav.get("timing_ms") or {}
@@ -890,6 +916,7 @@ def _wait_for_startup(
             nav_path=nav_status,
             slam_path=slam_status,
             traversability_path=traversability_status,
+            collect_motion_health=False,
         )
         if sensor.poll() is not None:
             return False, "sensor_runner_exited_before_native_runtime_ready"
@@ -1078,6 +1105,7 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
         "odom_prior_velocity_window_s",
         "navigation_fixture_cloud_points",
         "stop_on_nav_goal_reached",
+        "physics_integrator",
     }
     unknown = sorted(set(config) - supported)
     if unknown:
@@ -1122,7 +1150,41 @@ def _sensor_runtime_args(manifest: dict[str, Any]) -> list[str]:
         )
     if bool(config.get("stop_on_nav_goal_reached")):
         arguments.append("--stop-on-nav-goal-reached")
+    if "physics_integrator" in config:
+        integrator = str(config["physics_integrator"]).strip().lower()
+        if integrator not in {"model", "euler", "rk4", "implicit", "implicitfast"}:
+            raise ValueError(f"unsupported MuJoCo physics integrator: {integrator}")
+        arguments.extend(["--physics-integrator", integrator])
     return arguments
+
+
+def _motion_capture_settings(
+    *,
+    record_video: bool,
+    record_telemetry: bool,
+    video_cfg: dict[str, Any],
+    telemetry_cfg: dict[str, Any],
+) -> tuple[float, int] | None:
+    if not record_video and not record_telemetry:
+        return None
+    if record_video:
+        # Encoding FPS is a presentation concern. The renderer already holds
+        # lower-rate source samples to a CFR timeline, so driving the live
+        # sensor loop at the encoder rate only adds load and sensor dropouts.
+        capture_hz = float(
+            video_cfg.get("capture_hz")
+            or telemetry_cfg.get("hz")
+            or 10.0
+        )
+        lidar_points = int(video_cfg.get("lidar_points") or 640)
+    else:
+        capture_hz = float(telemetry_cfg.get("hz") or 10.0)
+        lidar_points = int(telemetry_cfg.get("lidar_points") or 0)
+    if not math.isfinite(capture_hz) or capture_hz <= 0.0:
+        raise ValueError("motion capture rate must be positive and finite")
+    if lidar_points < 0:
+        raise ValueError("motion capture LiDAR point limit must be non-negative")
+    return capture_hz, lidar_points
 
 
 def _traversability_frame_contract(
@@ -1470,9 +1532,33 @@ def _video_artifact_blocker(
     required: bool,
     video_report: dict[str, Any],
 ) -> str | None:
-    """Return the video gate blocker, including when recording was not requested."""
+    """Return the video gate blocker, including presentation evidence gaps."""
 
-    if not required or video_report.get("ok") is True:
+    if not required:
+        return None
+    if "candidate_frames" in video_report and int(video_report.get("candidate_frames") or 0) <= 0:
+        return "native_navigation_video_candidates_missing"
+    if (
+        "selected_candidate_frames" in video_report
+        and int(video_report.get("selected_candidate_frames") or 0) <= 0
+    ):
+        return "native_navigation_video_selected_path_missing"
+    if "local_map_frames" in video_report and int(video_report.get("local_map_frames") or 0) <= 0:
+        return "native_navigation_video_local_map_missing"
+    if (
+        "visible_local_map_frames" in video_report
+        and int(video_report.get("visible_local_map_frames") or 0) <= 0
+    ):
+        return "native_navigation_video_local_map_not_visible"
+    if (
+        "exact_planner_join_frames" in video_report
+        and int(video_report.get("exact_planner_join_frames") or 0) <= 0
+    ):
+        return "native_navigation_video_exact_join_missing"
+    lighting = video_report.get("presentation_lighting")
+    if isinstance(lighting, dict) and lighting.get("brightness_ok") is not True:
+        return "native_navigation_video_brightness_failed"
+    if video_report.get("ok") is True:
         return None
     return "native_navigation_video_failed"
 
@@ -1503,9 +1589,17 @@ def _run_phase(
     nav_status = phase_dir / "nav_status.json"
     sensor_report_path = phase_dir / "sensor_report.json"
     motion_log_path = phase_dir / "motion.jsonl"
+    motion_complete_marker = phase_dir / "motion_complete.json"
     sensor_publisher_pid = phase_dir / "sensor_publisher.pid"
     cmd_vel_tap_pid = phase_dir / "cmd_vel_tap.pid"
-    for path in (slam_status, traversability_status, nav_status, sensor_report_path, motion_log_path):
+    for path in (
+        slam_status,
+        traversability_status,
+        nav_status,
+        sensor_report_path,
+        motion_log_path,
+        motion_complete_marker,
+    ):
         path.unlink(missing_ok=True)
 
     video_cfg = dict(manifest.get("acceptance_video") or {})
@@ -1699,6 +1793,8 @@ def _run_phase(
         "--domain-id",
         str(domain_id),
         "--nav-status-json", str(nav_status),
+        "--motion-complete-marker",
+        str(motion_complete_marker),
         "--json-out",
         str(sensor_report_path),
     ]
@@ -1727,11 +1823,14 @@ def _run_phase(
         sensor_args.extend(["--scan-time-profile", str(sensor_overrides["scan_time_profile"])])
     if bool(phase_cfg.get("require_nonzero_cmd_vel")):
         sensor_args.append("--require-cmd-vel")
-    if record_video or record_telemetry:
-        motion_log_hz = float(video_cfg.get("fps") or 24.0) if record_video else float(telemetry_cfg.get("hz") or 10.0)
-        motion_log_lidar_points = (
-            int(video_cfg.get("lidar_points") or 640) if record_video else int(telemetry_cfg.get("lidar_points") or 0)
-        )
+    motion_capture = _motion_capture_settings(
+        record_video=record_video,
+        record_telemetry=record_telemetry,
+        video_cfg=video_cfg,
+        telemetry_cfg=telemetry_cfg,
+    )
+    if motion_capture is not None:
+        motion_log_hz, motion_log_lidar_points = motion_capture
         sensor_args.extend(
             [
                 "--motion-log",
@@ -1810,12 +1909,18 @@ def _run_phase(
         deadline = time.monotonic() + _phase_runtime_timeout_s(
             phase_duration_s,
             float(thresholds.get("runner_shutdown_grace_s") or 120.0),
+            realtime_factor=float(
+                runtime_tolerances.get("sim_hardware_realtime_factor") or 1.0
+            ),
         )
         while sensor.poll() is None and time.monotonic() < deadline:
             evidence.sample(
                 nav_path=nav_status,
                 slam_path=slam_status,
                 traversability_path=traversability_status,
+                collect_motion_health=_motion_health_collection_active(
+                    motion_complete_marker
+                ),
             )
             time.sleep(RUNTIME_EVIDENCE_SAMPLE_PERIOD_S)
         if sensor.poll() is None:
@@ -1824,6 +1929,7 @@ def _run_phase(
             nav_path=nav_status,
             slam_path=slam_status,
             traversability_path=traversability_status,
+            collect_motion_health=False,
         )
     except Exception as exc:
         phase_error = f"{type(exc).__name__}: {exc}"
@@ -1903,7 +2009,7 @@ def _run_phase(
         "uses_ros": False,
         "python_planner_used": False,
         "python_role": "mujoco_physics_sensor_bridge_process_supervisor_acceptance_only",
-        "navigation_compute_owner": "lingtu_nav_native_endpoint",
+        "navigation_compute_owner": "navd",
         "navigation_state_provider": state_provider,
         "startup": {"ok": startup_ok, "reason": startup_reason},
         "goal_command": goal_result,
@@ -2058,7 +2164,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "acceptance_scope": manifest.get("acceptance_scope") or {},
         "chain": [
             "existing saved map",
-            "lingtu_nav_native_endpoint",
+            "navd",
             "OctoPlanner3D -> LocalPlanner -> embedded PathFollower",
             "native slow/stop + terrain cost + stale fail-safe",
             "rt/nav/cmd_vel",

@@ -1,9 +1,22 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: teleop
 summary: Operator teleoperation without autonomous navigation decisions.
+operator_switchable: true
+product_mode: teleop
+product_session: teleop
+session_mode: none
+native_control_mode: teleop
+slam_mode: none
+requires_map: false
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+processes:
+  - nav
+  - driver
+  - runtime
 required_topics:
   - /nav/command/request
   - /nav/command/ack

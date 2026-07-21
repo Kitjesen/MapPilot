@@ -119,7 +119,7 @@ def test_33_no_api_key_startup():
     for k in ["MOONSHOT_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "DASHSCOPE_API_KEY"]:
         os.environ.pop(k, None)
 
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
 
     # Build dev profile: stub driver, no C++ nodes, semantic enabled, mock LLM
     system = thunder_blueprint(
@@ -160,7 +160,7 @@ def test_34_no_clip_startup():
     from unittest.mock import patch
 
     from perception.encoding.encoder_module import EncoderModule
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
 
     # Build dev profile �?on Windows, open_clip is typically not installed.
     # EncoderModule should catch ImportError and set _backend = None.

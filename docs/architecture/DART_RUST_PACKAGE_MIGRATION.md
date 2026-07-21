@@ -1,5 +1,9 @@
 # Dart/Rust Package Migration Plan
 
+Status: proposal / future packaging direction, not current runtime contract
+Audience: packaging, SDK, and migration planning
+Replaced by: `SYSTEM_DESIGN.md`, `NATIVE_RUNTIME.md`, `PRODUCT_MODE_RUNTIME_CONTRACT.md`
+
 LingTu can move toward a Dart/Rust product shape, but not by rewriting every
 directory into one language. The target shape is:
 

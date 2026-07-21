@@ -41,7 +41,7 @@ echo "[L2 pre-push] running stub blueprint smoke ..."
 PYTHONIOENCODING=utf-8 python -c "
 import sys
 sys.path.insert(0, 'src')
-from runtime.blueprints.profile_builder import build_system_for_profile
+from lingtu.assembly.profile_builder import build_system_for_profile
 # Build a real lightweight stub: stub driver, no SLAM, no native C++ nodes,
 # no semantic stack - purely the framework wire-up smoke check.
 system = build_system_for_profile('stub', overrides={

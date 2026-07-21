@@ -1,5 +1,9 @@
 # Native Control Modes: Functional Ownership
 
+Status: current native endpoint functional contract
+Audience: native endpoint, safety, teleop, and field acceptance maintainers
+Replaced by: not replaced
+
 This document assigns each control issue to a product function. The native
 endpoint owns exactly one process-level control mode at a time:
 `autonomy`, `teleop`, or `teleop_avoid`. Python `CmdVelMux` is not part of any

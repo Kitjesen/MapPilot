@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 
 from runtime.adapters.dds.localization_adapter import DDSLocalizationAdapterModule
-from runtime.blueprints.stacks.slam import slam
+from lingtu.assembly.stacks.slam import slam
 from runtime.msgs.geometry import Transform, Vector3
 from runtime.msgs.numpy_compat import np
 from runtime.runtime_interface import TOPICS

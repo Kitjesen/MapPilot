@@ -191,6 +191,7 @@ class ServiceManager:
         self,
         *services: str,
         dds_check: bool | None = None,
+        http_check: bool | None = None,
     ) -> dict[str, dict[str, object]]:
         """Return logical service status plus concrete systemd unit evidence."""
         details: dict[str, dict[str, object]] = {}
@@ -251,7 +252,7 @@ class ServiceManager:
                 if not dds["ok"]:
                     blockers.extend(dds["blockers"])
             if "http" in checks:
-                http = self._http_observation(service)
+                http = self._http_observation(service, enabled_override=http_check)
                 observed["http"] = http
                 if not http["ok"]:
                     blockers.extend(http["blockers"])
@@ -452,13 +453,29 @@ class ServiceManager:
             "blockers": blockers,
         }
 
-    def _http_observation(self, service: str) -> dict[str, object]:
+    def _http_observation(
+        self,
+        service: str,
+        *,
+        enabled_override: bool | None = None,
+    ) -> dict[str, object]:
         """Optionally probe HTTP readiness for Gateway-owned services."""
-        if os.environ.get("LINGTU_SERVICE_HTTP_CHECK", "").strip().lower() not in {
+        enabled_by_env = os.environ.get("LINGTU_SERVICE_HTTP_CHECK", "").strip().lower() in {
             "1",
             "true",
             "yes",
-        }:
+        }
+        if enabled_override is False:
+            return {
+                "ok": True,
+                "checked": False,
+                "enabled": False,
+                "deferred": True,
+                "reason": "set http_check=1 to probe HTTP readiness",
+                "url": os.environ.get("LINGTU_SERVICE_HTTP_URL", "http://127.0.0.1:5050/health"),
+                "blockers": [],
+            }
+        if enabled_override is not True and not enabled_by_env:
             return {
                 "ok": False,
                 "checked": False,

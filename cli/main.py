@@ -224,6 +224,7 @@ def _run_external_profile_launcher(
 def _cmd_switch_plan(args: argparse.Namespace) -> None:
     import json
 
+    from lingtu.assembly.profile_builder import compile_product
     from runtime.profiles.endpoints import resolve_runtime_run_spec
     from runtime.profiles.product_mode_contracts import (
         PRODUCT_MODE_CONTRACTS,
@@ -247,12 +248,29 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
     target_cfg = _resolve_config(target_profile, target_args, allow_wizard=False)
     current_spec = resolve_runtime_run_spec(current_profile, current_cfg)
     target_spec = resolve_runtime_run_spec(target_profile, target_cfg)
+    target_product = (
+        compile_product(
+            target_profile,
+            target_cfg,
+            endpoint=target_spec.endpoint,
+        )
+        if target_profile in PRODUCT_MODE_CONTRACTS
+        else None
+    )
     current_validation = validate_runtime_switch(current_spec)
     target_validation = validate_runtime_switch(target_spec)
     payload = compare_runtime_switch(current_spec, target_spec)
     payload["product_mode_switch"] = (
-        product_mode_switch_plan(current_profile, target_profile)
-        if current_profile in PRODUCT_MODE_CONTRACTS and target_profile in PRODUCT_MODE_CONTRACTS
+        product_mode_switch_plan(
+            current_profile,
+            target_profile,
+            runtime_plan=(
+                target_product.plan.as_dict()
+                if target_product is not None and target_product.plan is not None
+                else None
+            ),
+        )
+        if target_profile in PRODUCT_MODE_CONTRACTS
         else None
     )
     payload["ok"] = current_validation.ok and target_validation.ok
@@ -1369,10 +1387,11 @@ def main() -> None:
     print(f"  Path stages: {format_runtime_flow_stages(runtime_spec)}")
     print(f"\n  Building system ({T.green(profile_name)})...")
 
-    from runtime.blueprints.profile_builder import build_system_from_resolved_profile
+    from lingtu.assembly.profile_builder import compile_product
 
     try:
-        system = build_system_from_resolved_profile(profile_name, blueprint_cfg)
+        product = compile_product(profile_name, blueprint_cfg)
+        system = product.build()
     except Exception as e:
         logger.error("Build failed: %s", e, exc_info=True)
         print(f"\n  {T.red('Build failed')}: {e}")

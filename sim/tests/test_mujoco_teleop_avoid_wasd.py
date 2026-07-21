@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from drivers.sim.mujoco.runtime import focus_presentation_viewer, launch_presentation_viewer
 from sim.scripts.mujoco.native_dds_sensors import _build_parser as build_sensor_parser
 from sim.scripts.mujoco import native_navigation_acceptance as native
 from sim.scripts.mujoco import teleop_avoid_wasd as wasd
@@ -315,12 +316,28 @@ def test_interactive_plan_keeps_native_avoidance_and_dds_output(tmp_path: Path) 
     assert plan["interactive_control"]["direct_mujoco_control"] is False
     assert plan["interactive_control"]["state_provider"] == "mujoco_fixture"
     assert plan["interactive_control"]["require_nonzero_cmd_vel"] is False
+    assert plan["scenario"] == "obstacle_stop"
+    assert plan["scene_variant"] == "obstacle_stop_demo"
     assert "slam" not in by_name
     assert "--navigation-fixture" in by_name["sensor"]
     assert "--publish-odom-prior" in by_name["sensor"]
     assert "--require-slam-output" not in by_name["sensor"]
     assert "--slam-status-json" not in by_name["sensor"]
     assert by_name["sensor"][by_name["sensor"].index("--scan-time-profile") + 1] == "instantaneous"
+
+    headless_plan = build_interactive_plan(
+        scenario="obstacle_stop",
+        domain_id=232,
+        binaries=binaries,
+        paths=paths,
+        case_dir=tmp_path / "headless_case",
+        duration_s=5.0,
+        warmup_s=1.0,
+        manifest={},
+        viewer=False,
+        viewer_hz=24.0,
+    )
+    assert headless_plan["scene_variant"] == "obstacle_stop_demo"
 
 
 def test_fastlio_state_provider_keeps_product_slam_process(tmp_path: Path) -> None:
@@ -451,6 +468,62 @@ def test_viewer_exit_is_clean_only_with_successful_sensor_report(tmp_path: Path)
         encoding="utf-8",
     )
     assert _clean_viewer_exit(_ExitedSensor(0), report_path) is False
+
+
+class _PresentationCamera:
+    def __init__(self) -> None:
+        self.lookat = [0.0, 0.0, 0.0]
+        self.distance = 12.0
+        self.azimuth = 0.0
+        self.elevation = 0.0
+
+
+class _PresentationViewer:
+    def __init__(self) -> None:
+        self.cam = _PresentationCamera()
+
+
+def test_presentation_viewer_launch_hides_debug_panels(monkeypatch: pytest.MonkeyPatch) -> None:
+    import mujoco.viewer
+
+    model = object()
+    data = object()
+    handle = object()
+    call: dict[str, object] = {}
+
+    def launch_passive(received_model: object, received_data: object, **kwargs: object) -> object:
+        call.update(model=received_model, data=received_data, kwargs=kwargs)
+        return handle
+
+    monkeypatch.setattr(mujoco.viewer, "launch_passive", launch_passive)
+
+    assert launch_presentation_viewer(model, data) is handle
+    assert call == {
+        "model": model,
+        "data": data,
+        "kwargs": {"show_left_ui": False, "show_right_ui": False},
+    }
+
+
+def test_presentation_viewer_starts_on_robot_then_follows_without_stealing_orbit() -> None:
+    viewer = _PresentationViewer()
+
+    focus_presentation_viewer(viewer, [1.25, -0.5, 0.62], initialize=True)
+
+    assert viewer.cam.lookat == pytest.approx([1.25, -0.5, 0.62])
+    assert viewer.cam.distance == pytest.approx(2.5)
+    assert viewer.cam.azimuth == pytest.approx(30.0)
+    assert viewer.cam.elevation == pytest.approx(-20.0)
+
+    viewer.cam.distance = 3.5
+    viewer.cam.azimuth = 95.0
+    viewer.cam.elevation = -12.0
+    focus_presentation_viewer(viewer, [2.0, 0.75, 0.7])
+
+    assert viewer.cam.lookat == pytest.approx([2.0, 0.75, 0.7])
+    assert viewer.cam.distance == pytest.approx(3.5)
+    assert viewer.cam.azimuth == pytest.approx(95.0)
+    assert viewer.cam.elevation == pytest.approx(-12.0)
 
 
 def test_native_sensor_parser_exposes_presentation_only_viewer() -> None:

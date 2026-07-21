@@ -109,7 +109,7 @@ def test_diagnostics_plugin_catalog_exposes_registered_backends():
     from decision.llm.client import MockLLMClient
     from gateway.routes.diagnostics import build_plugin_catalog, clear_diagnostics_cache
     from nav.local.path_follower import PathFollower
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
     # ^ Cross-layer: gateway test imports from decision/perception for registry setup.
     #   Acceptable: test needs to register a semantic backend in the global
     #   registry so build_plugin_catalog() can detect it.  No production
@@ -286,7 +286,7 @@ def test_gateway_on_system_modules_preserves_read_only_status_inventory():
     assert gateway._all_modules is not modules
     assert gateway._navigation is modules["nav.mission"]
     assert gateway._backend_reconfigure_modules["nav.mission"] is (modules["nav.mission"])
-    assert gateway._relocalization_service is modules["SlamAdapterModule"]
+    assert gateway.localization.backend is modules["SlamAdapterModule"]
 
 
 def test_gateway_runtime_backend_switch_dispatches_when_navigation_idle():
@@ -2404,7 +2404,7 @@ def test_navigation_status_blocks_when_native_input_gate_is_not_ready(
     assert payload["readiness"]["native_endpoint"]["input_gate"]["reason"] == ("localization_unhealthy")
 
 
-def test_native_endpoint_readiness_requires_autonomy_and_cmd_vel_publish(
+def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_publish(
     monkeypatch,
     tmp_path,
 ):
@@ -2415,13 +2415,21 @@ def test_native_endpoint_readiness_requires_autonomy_and_cmd_vel_publish(
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_path))
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "30")
 
-    def write_status(control_mode: str, publish_cmd_vel: bool) -> None:
+    def write_status(
+        control_mode: str,
+        publish_cmd_vel: bool,
+        *,
+        global_planner: str = "octoplanner3d",
+        planner_map: str = "/maps/active/octomap.ot",
+    ) -> None:
         status_path.write_text(
             json.dumps(
                 {
                     "stamp_s": time.time(),
                     "input_gate": {"ready": True, "reason": "ready"},
                     "control_mode": control_mode,
+                    "global_planner": global_planner,
+                    "planner_map": planner_map,
                     "publish_cmd_vel": publish_cmd_vel,
                 }
             ),
@@ -2433,7 +2441,7 @@ def test_native_endpoint_readiness_requires_autonomy_and_cmd_vel_publish(
 
     assert blocked["ok"] is False
     assert blocked["blockers"] == [
-        "native_control_mode_not_autonomy",
+        "native_control_mode_mismatch",
         "native_cmd_vel_publish_disabled",
     ]
 
@@ -2442,6 +2450,36 @@ def test_native_endpoint_readiness_requires_autonomy_and_cmd_vel_publish(
 
     assert ready["ok"] is True
     assert ready["blockers"] == []
+    assert ready["global_planner"] == "octoplanner3d"
+    assert ready["planner_map"] == "/maps/active/octomap.ot"
+
+    write_status("teleop_avoid", True)
+    assisted = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "teleop_avoid"}
+    )
+
+    assert assisted["ok"] is True
+    assert assisted["expected_control_mode"] == "teleop_avoid"
+    assert assisted["blockers"] == []
+
+    write_status(
+        "autonomy",
+        True,
+        global_planner="far",
+        planner_map="/maps/active/occupancy.npz",
+    )
+    far = _native_endpoint_readiness(
+        {"mode": "navigating", "global_planner": "far"}
+    )
+    assert far["ok"] is True
+    assert far["global_planner"] == "far"
+    assert far["planner_map"] == "/maps/active/occupancy.npz"
+
+    mismatch = _native_endpoint_readiness(
+        {"mode": "navigating", "global_planner": "octoplanner3d"}
+    )
+    assert mismatch["ok"] is False
+    assert "native_global_planner_mismatch" in mismatch["blockers"]
 
 
 def test_navigation_status_treats_diverged_slam_as_lost():
@@ -3056,6 +3094,31 @@ def test_drift_watchdog_restores_idle_running_native_slam_without_legacy_localiz
     ) in fake.calls
     assert ("ensure", ("slam",)) in fake.calls
     assert ("wait_ready", ("slam",)) in fake.calls
+    assert gateway._odom is None
+    assert gateway._odom_timestamps == []
+
+
+def test_native_product_drift_restart_uses_runtime_plan_control(monkeypatch):
+    import lingtu.control as product_control
+    from gateway.gateway_module import GatewayModule
+
+    calls: list[str] = []
+
+    class FakeProductControl:
+        def restart(self, process_name: str):
+            calls.append(process_name)
+            return type("Report", (), {"ok": True})()
+
+    monkeypatch.setattr(product_control, "ProductControl", FakeProductControl)
+
+    gateway = GatewayModule(manage_session_services=False)
+    with gateway._state_lock:
+        gateway._odom = {"x": 999.0}
+        gateway._odom_timestamps.append(123.0)
+
+    gateway._drift_restart_do_restart(xy=999.0, y_abs=0.0, v=0.0)
+
+    assert calls == ["slam"]
     assert gateway._odom is None
     assert gateway._odom_timestamps == []
 

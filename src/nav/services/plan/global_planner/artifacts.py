@@ -15,6 +15,7 @@ from runtime.profiles.planner_backends import normalize_planner_name
 
 PLANNER_CAPABILITY_ORDER = {
     "octoplanner3d": ("navigation_safety_3d",),
+    "far": ("path_planning_2d",),
     "astar": ("path_planning_2d",),
 }
 
@@ -89,6 +90,11 @@ class SavedMapArtifacts:
                 return octomap
             if explicit:
                 return explicit
+        elif planner == "far":
+            bundle = self.planner_map_bundle(planner)
+            if bundle:
+                return str((bundle.get("artifact") or {}).get("uri") or "")
+            return self.active_artifact("occupancy.npz")
         else:
             explicit = self.existing_explicit_path()
             if explicit:
@@ -100,7 +106,7 @@ class SavedMapArtifacts:
 
         if planner == "octoplanner3d":
             return ""
-        if planner == "astar":
+        if planner in {"astar", "far"}:
             return self.active_artifact("occupancy.npz")
         return ""
 

@@ -131,8 +131,12 @@ class TestDDSMetricsRate(unittest.TestCase):
             m.record_receive("t")
             time.sleep(0.001)
         rate = m.snapshot()["t"]["msg_rate_hz"]
-        # Rate should be dominated by the fast messages
-        self.assertGreater(rate, 50.0)
+        # Rate should be dominated by the fast messages. Windows timer
+        # granularity (~15ms) caps the effective fast-message rate well below
+        # the 1ms sleep target, so use a looser bound there; the slow messages
+        # run at ~20Hz, so 30Hz still proves the window slid.
+        threshold = 30.0 if sys.platform == "win32" else 50.0
+        self.assertGreater(rate, threshold)
 
     def test_rate_decreases_when_no_new_messages(self):
         """The rate reflects only messages in the window, not extrapolation."""
@@ -514,5 +518,7 @@ class TestErrorSafety(unittest.TestCase):
         self.assertEqual(snap["t"]["msg_count"], 1)
 
 
+if __name__ == "__main__":
+    unittest.main()
 if __name__ == "__main__":
     unittest.main()

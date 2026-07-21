@@ -88,27 +88,27 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "src/nav/services/plan/global_planner/path_feasibility.py",
     "cli/runtime_audit.py",
     "cli/runtime_extra.py",
-    "src/runtime/blueprints/full_stack.py",
-    "src/runtime/blueprints/full_stack_wiring.py",
-    "src/runtime/blueprints/multi_robot.py",
-    "src/runtime/blueprints/profile_graph.py",
-    "src/runtime/blueprints/simulation_contract.py",
-    "src/runtime/introspection/profile_graph.py",
-    "src/runtime/blueprints/stacks/composition.py",
-    "src/runtime/blueprints/stacks/exploration.py",
-    "src/runtime/blueprints/stacks/gateway.py",
-    "src/runtime/blueprints/stacks/lidar.py",
-    "src/runtime/adapters/localization.py",
+    "src/lingtu/assembly/full_stack.py",
+    "src/lingtu/assembly/full_stack_wiring.py",
+    "src/lingtu/assembly/multi_robot.py",
+    "src/lingtu/assembly/profile_graph.py",
+    "src/lingtu/assembly/simulation_contract.py",
+    "src/lingtu/assembly/graph.py",
+    "src/lingtu/assembly/stacks/composition.py",
+    "src/lingtu/assembly/stacks/exploration.py",
+    "src/lingtu/assembly/stacks/gateway.py",
+    "src/lingtu/assembly/stacks/lidar.py",
+    "src/localization/adapters/resolver.py",
     "src/runtime/adapters/navigation_io.py",
-    "src/runtime/blueprints/stacks/maps.py",
-    "src/runtime/blueprints/stacks/memory.py",
-    "src/runtime/blueprints/adapters/perception_gateway.py",
-    "src/runtime/blueprints/stacks/perception.py",
-    "src/runtime/blueprints/stacks/planner.py",
-    "src/runtime/blueprints/stacks/sim_lidar.py",
-    "src/runtime/blueprints/stacks/slam.py",
-    "src/runtime/blueprints/stacks/system.py",
-    "src/runtime/blueprints/wires/",
+    "src/lingtu/assembly/stacks/maps.py",
+    "src/lingtu/assembly/stacks/memory.py",
+    "src/lingtu/assembly/adapters/perception_gateway.py",
+    "src/lingtu/assembly/stacks/perception.py",
+    "src/lingtu/assembly/stacks/planner.py",
+    "src/lingtu/assembly/stacks/sim_lidar.py",
+    "src/lingtu/assembly/stacks/slam.py",
+    "src/lingtu/assembly/stacks/system.py",
+    "src/lingtu/assembly/wires/",
     "src/runtime/adapters/dds/reader.py",
     "src/runtime/devices/",
     "sim/diagnostics/gap_report.py",
@@ -122,7 +122,7 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "src/diagnostics/field/gates.py",
     "src/runtime/transport/dds.py",
     "src/runtime/transport/shm.py",
-    "src/runtime/adapters/native/relocalization.py",
+    "src/localization/adapters/relocalization.py",
     "src/drivers/real/thunder/blueprints.py",
     "src/drivers/real/thunder/connection.py",
     "src/lingtu/sdk/",
@@ -457,7 +457,7 @@ def _validate_runtime_contract(
     checked_files: list[str],
 ) -> None:
     from lingtu.plugin_seed import install_builtin_plugin_catalog
-    from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+    from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
     from runtime.profiles.endpoints import resolve_runtime_run_spec
     from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
 
@@ -494,7 +494,7 @@ def _validate_lite_runtime_defaults(
     spec: Any,
     blockers: list[str],
 ) -> None:
-    from runtime.blueprints.stacks.autonomy_chain import autonomy_stack_config
+    from lingtu.assembly.stacks.autonomy_chain import autonomy_stack_config
 
     if config.get("enable_native") is not False:
         blockers.append(f"profile config {profile}: enable_native must be false for Lite runtime")

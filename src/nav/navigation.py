@@ -154,6 +154,7 @@ class Navigation(
         safe_goal_tolerance: float = 4.0,
         plan_safety_policy: str = "observe",
         fallback_planner_name: str = "",
+        far_constraints: dict[str, Any] | None = None,
         octoplanner3d_robot_radius: float | None = None,
         octoplanner3d_max_iterations: int | None = None,
         octoplanner3d_snap_search_radius_cells: int | None = None,
@@ -259,6 +260,7 @@ class Navigation(
             fallback_planner_name=fallback_planner_name,
             expected_saved_map_frame_id=expected_saved_map_frame_id,
             map_artifact_gate_required=map_artifact_gate_required,
+            far_constraints=far_constraints,
             octoplanner3d_constraints=octoplanner3d_constraints,
             octoplanner3d_timeout_s=octoplanner3d_timeout_s,
         )

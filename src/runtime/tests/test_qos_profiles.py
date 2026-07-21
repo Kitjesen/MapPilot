@@ -5,9 +5,13 @@ is exercised with lightweight fakes injected into the module, and the graceful
 degradation path is verified by forcing cyclonedds unavailable.
 """
 
+from pathlib import Path
+
 import pytest
 
 from runtime.transport import qos as qos_mod
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +84,43 @@ class TestRawConfigAndMapping:
         assert mapping.get("rt/driver/odometry") == "high_freq_state"
         assert mapping.get("/slam/odometry") == "high_freq_state"
         assert mapping.get("/nav/cmd_vel") == "final_velocity_command"
+
+    def test_topic_mapping_uses_canonical_camera_and_navigation_topics(self):
+        mapping = qos_mod._topic_to_profile()
+
+        assert mapping["/camera/color/image_raw"] == "camera_stream"
+        assert mapping["/camera/depth/image_raw"] == "camera_stream"
+        assert mapping["/camera/color/camera_info"] == "camera_info"
+        assert mapping["/slam/odom_prior"] == "sensor_stream"
+        assert mapping["/nav/traversability"] == "map_grid"
+
+        stale_topics = {
+            "/camera/color",
+            "/camera/depth",
+            "/camera/info",
+            "/camera/image_raw",
+            "/camera/image_raw/compressed",
+            "/nav/geofence_boundary",
+            "/nav/health_status",
+            "/nav/pct_path",
+            "/nav/scan_cloud",
+            "/nav/semantic/resolved_goal",
+            "/nav/semantic/scene_diff",
+        }
+        assert stale_topics.isdisjoint(mapping)
+
+    def test_native_qos_lookup_excludes_removed_runtime_aliases(self):
+        header = (REPO_ROOT / "src/message/cpp/dds_qos_profiles.hpp").read_text(
+            encoding="utf-8"
+        )
+
+        for topic in (
+            "rt/nav/geofence_boundary",
+            "rt/nav/health_status",
+            "rt/nav/scan_cloud",
+            "rt/nav/semantic/resolved_goal",
+        ):
+            assert f'"{topic}"' not in header
 
     def test_missing_config_degrades_to_empty(self, monkeypatch, tmp_path):
         monkeypatch.setattr(qos_mod, "_QOS_CONFIG_PATH", tmp_path / "nope.yaml")

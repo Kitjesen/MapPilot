@@ -112,7 +112,8 @@ keeps the scoped key off the network. When the sidecar runs away from the robot,
 use HTTPS or create an SSH tunnel before starting it:
 
 ```bash
-ssh -N -L 5050:127.0.0.1:5050 sunrise@192.168.66.190
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+ssh -N -L 5050:127.0.0.1:5050 "sunrise@${LINGTU_HOST}"
 ```
 
 Keep `base_url: http://127.0.0.1:5050` when using the tunnel. Remote plaintext

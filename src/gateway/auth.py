@@ -17,6 +17,7 @@ Security model:
 
 Clients send the key as:
   - Header: ``X-API-Key: <key>``
+  - Header: ``Authorization: Bearer <key>`` (service-to-service clients)
   - Query param: ``?api_key=<key>`` (for WebSocket / SSE where setting
     headers is inconvenient)
   - Cookie: ``lingtu_api_key=<key>`` (set by the login page, HTTP only)
@@ -252,14 +253,21 @@ class APIKeyMiddleware:
         if key:
             return key
 
-        # 2. Query param ?api_key=
+        # 2. Standard Bearer authentication for service-to-service clients.
+        authorization = headers.get("authorization", "").strip()
+        if authorization:
+            scheme, separator, credentials = authorization.partition(" ")
+            if separator and scheme.lower() == "bearer" and credentials.strip():
+                return credentials.strip()
+
+        # 3. Query param ?api_key=
         query = scope.get("query_string", b"").decode("latin-1")
         if query:
             parsed = parse_qs(query)
             if parsed.get("api_key"):
                 return parsed["api_key"][0]
 
-        # 3. Cookie lingtu_api_key=
+        # 4. Cookie lingtu_api_key=
         cookie_header = headers.get("cookie", "")
         if cookie_header:
             for cookie in cookie_header.split(";"):

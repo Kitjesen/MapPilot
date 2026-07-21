@@ -66,16 +66,17 @@ def current_slam_profile(gw: Any) -> str:
         return gw._cached_slam_profile
     gw._slam_profile_ts = now
     try:
-        from runtime.service_manager import get_service_manager
+        from lingtu.control import ProductControl
 
-        svc = get_service_manager()
-        services = svc.status(
-            "super_lio_relocation",
-            "super_lio",
-            "genz_icp",
-            "slam_pgo",
-            "localizer",
-            "slam",
+        services, _ = ProductControl().status(
+            (
+                "super_lio_relocation",
+                "super_lio",
+                "genz_icp",
+                "slam_pgo",
+                "localizer",
+                "slam",
+            )
         )
         if services.get("super_lio_relocation") in ("running", "active"):
             profile = "super_lio_relocation"

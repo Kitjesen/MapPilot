@@ -68,7 +68,7 @@ from drivers.sim.go1_sim_driver import Go1SimDriverModule
 from nav.local.path_follower import PathFollower
 from nav.local.terrain import Terrain
 from nav.navigation import MissionState, Navigation
-from nav.services.plan.local_planner.service import LocalPlanner
+from nav.local.local_planner import LocalPlanner
 from runtime.blueprint import Blueprint
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3

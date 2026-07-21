@@ -3,7 +3,7 @@ from __future__ import annotations
 
 def test_product_blueprint_construction_does_not_touch_service_manager(monkeypatch):
     import runtime.service_manager as service_manager
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
 
     def fail_get_service_manager():
         raise AssertionError("service manager should not be touched while building Blueprint")
@@ -46,7 +46,7 @@ class _FakeServiceManager:
 
 def test_external_service_plan_runs_during_module_setup(monkeypatch):
     import runtime.service_manager as service_manager
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
 
     fake = _FakeServiceManager()
     monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
@@ -104,7 +104,7 @@ def test_external_service_setup_fails_when_wait_ready_fails(monkeypatch):
 
 
 def test_external_service_stack_uses_runtime_policy_for_slam_profiles():
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
     from runtime.runtime_policy import slam_switch_plan
 
     bp = external_services(
@@ -123,7 +123,7 @@ def test_external_service_stack_uses_runtime_policy_for_slam_profiles():
 
 
 def test_lidar_start_driver_starts_official_lidar_service_before_slam():
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
 
     bp = external_services(
         enabled=True,
@@ -145,7 +145,7 @@ def test_lidar_start_driver_starts_official_lidar_service_before_slam():
 
 
 def test_default_lidar_does_not_start_official_lidar_service():
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
 
     bp = external_services(
         enabled=True,
@@ -161,7 +161,7 @@ def test_default_lidar_does_not_start_official_lidar_service():
 
 
 def test_official_lidar_service_can_be_disabled_explicitly():
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
 
     bp = external_services(
         enabled=True,
@@ -179,7 +179,7 @@ def test_official_lidar_service_can_be_disabled_explicitly():
 
 
 def test_bridge_external_service_plan_only_starts_needed_camera():
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
 
     bp = external_services(
         enabled=True,

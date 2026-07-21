@@ -1,6 +1,8 @@
 # Topic Contract Policy
 
 Status: current guardrail
+Audience: runtime, adapter, diagnostics, and topic-contract maintainers
+Replaced by: not replaced
 
 This document defines how LingTu owns product/runtime topic names. The goal is
 not to make topic usage harder. The goal is to prevent ordinary modules from

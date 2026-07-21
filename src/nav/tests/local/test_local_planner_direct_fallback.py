@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nav.services.plan.local_planner.service import LocalPlanner
+from nav.local.local_planner import LocalPlanner
 from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 from runtime.msgs.numpy_compat import np
 

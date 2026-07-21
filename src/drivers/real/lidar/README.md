@@ -64,9 +64,10 @@ Python here is not the high-rate device driver.
 
 ## ROS2 fallback
 
-The ROS2 Livox driver is not part of the real LiDAR product path. It lives under
-`src/drivers/adapters/ros2/lidar/livox_driver2/` and is reachable only through
-explicit compatibility flags.
+The ROS2 Livox driver is not part of the real LiDAR product path and there is
+no current ROS2 adapter directory under `src/drivers/`. Use the native
+`sdk2_stream/` path for product capture/replay; keep any legacy ROS2 bridge
+outside this real-device backend.
 
 ## Capture And Replay
 

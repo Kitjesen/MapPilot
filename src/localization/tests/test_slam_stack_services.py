@@ -18,7 +18,7 @@ class _FakeServiceManager:
 
 def _run_external_service_plan(monkeypatch, slam_profile: str):
     import runtime.service_manager as service_manager
-    from runtime.blueprints.stacks.system import external_services
+    from lingtu.assembly.stacks.system import external_services
 
     fake = _FakeServiceManager()
     monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
@@ -41,7 +41,7 @@ def _run_external_service_plan(monkeypatch, slam_profile: str):
 
 def test_slam_stack_factory_does_not_touch_service_manager(monkeypatch):
     import runtime.service_manager as service_manager
-    from runtime.blueprints.stacks.slam import slam
+    from lingtu.assembly.stacks.slam import slam
 
     def fail_get_service_manager():
         raise AssertionError("stack factory should not touch service manager")
@@ -97,7 +97,7 @@ def test_fastlio2_profile_stops_super_lio_before_mapping(monkeypatch):
 
 
 def test_full_stack_treats_explicit_super_lio_relocation_as_external_lidar_owner():
-    from runtime.blueprints.products.thunder import thunder_blueprint
+    from lingtu.assembly.products.thunder import thunder_blueprint
 
     bp = thunder_blueprint(
         robot="stub",

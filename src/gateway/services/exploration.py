@@ -6,7 +6,25 @@ import json
 import logging
 from typing import Any
 
+from gateway.services.command_boundary import navigation_commands
+from gateway.services.native_exploration import read_fresh_status
+
 logger = logging.getLogger(__name__)
+
+
+def _native_commands(gw: Any) -> Any | None:
+    commands = navigation_commands(gw)
+    if commands is None:
+        return None
+    if not callable(getattr(commands, "start_exploration", None)):
+        return None
+    if not callable(getattr(commands, "stop_exploration", None)):
+        return None
+    return commands
+
+
+def _native_status() -> dict[str, Any] | None:
+    return read_fresh_status()
 
 
 def explorer_backend(gw: Any) -> str:
@@ -14,11 +32,22 @@ def explorer_backend(gw: Any) -> str:
         return "frontier"
     if gw._tare_explorer is not None:
         return "tare"
+    if _native_status() is not None:
+        return "tare"
     return "none"
 
 
 def explorer_available(gw: Any) -> bool:
-    return explorer_backend(gw) != "none"
+    backend = explorer_backend(gw)
+    if backend == "none":
+        return False
+    if gw._frontier_explorer is not None or gw._tare_explorer is not None:
+        return True
+    return _native_commands(gw) is not None and _native_status() is not None
+
+
+def explorer_stop_available(gw: Any) -> bool:
+    return gw._frontier_explorer is not None or gw._tare_explorer is not None or _native_commands(gw) is not None
 
 
 def explorer_unavailable_detail() -> dict[str, Any]:
@@ -50,6 +79,12 @@ def begin_exploration(gw: Any) -> Any:
         if starter is None:
             raise RuntimeError("TARE explorer has no start method")
         return coerce_explorer_result(starter())
+    commands = _native_commands(gw)
+    if commands is not None and _native_status() is not None:
+        accepted = commands.start_exploration(reason="gateway_start")
+        if accepted is False:
+            raise RuntimeError("native exploration start was rejected")
+        return {"accepted": True, "backend": "tare", "runtime": "native_dds"}
     raise RuntimeError("explorer_not_running")
 
 
@@ -63,24 +98,42 @@ def end_exploration(gw: Any) -> Any:
         if stopper is None:
             raise RuntimeError("TARE explorer has no stop method")
         return coerce_explorer_result(stopper())
+    commands = _native_commands(gw)
+    if commands is not None:
+        accepted = commands.stop_exploration(reason="gateway_stop")
+        if accepted is False:
+            raise RuntimeError("native exploration stop was rejected")
+        return {"accepted": True, "backend": "tare", "runtime": "native_dds"}
     raise RuntimeError("explorer_not_running")
 
 
 def tare_status_payload(gw: Any) -> dict[str, Any]:
-    if gw._tare_explorer is None:
+    if gw._tare_explorer is not None:
+        raw_status: Any = {}
+        status_fn = getattr(gw._tare_explorer, "get_tare_status", None)
+        if status_fn is not None:
+            try:
+                raw_status = coerce_explorer_result(status_fn())
+            except Exception as exc:
+                raw_status = {"error": str(exc)}
+        if not isinstance(raw_status, dict):
+            raw_status = {"raw": raw_status}
+        return {
+            "runtime": "python_module",
+            "status": raw_status,
+            "stats": gw._last_tare_stats or {},
+        }
+
+    status = _native_status()
+    if status is None:
         return {}
-    raw_status: Any = {}
-    status_fn = getattr(gw._tare_explorer, "get_tare_status", None)
-    if status_fn is not None:
-        try:
-            raw_status = coerce_explorer_result(status_fn())
-        except Exception as exc:
-            raw_status = {"error": str(exc)}
-    if not isinstance(raw_status, dict):
-        raw_status = {"raw": raw_status}
     return {
-        "status": raw_status,
-        "stats": gw._last_tare_stats or {},
+        "runtime": "native_dds",
+        "status": status,
+        "stats": {
+            "planner": status.get("planner") or {},
+            "counters": status.get("counters") or {},
+        },
     }
 
 
@@ -119,12 +172,23 @@ def exploration_status_payload(gw: Any) -> dict[str, Any]:
 
     tare = gw._tare_status_payload()
     tare_status = tare.get("status") if isinstance(tare, dict) else {}
-    tare_started = bool(tare_status.get("started")) if isinstance(tare_status, dict) else False
+    tare_runtime = str(tare.get("runtime") or "") if isinstance(tare, dict) else ""
+    tare_started = False
+    frontier_count = 0
+    if isinstance(tare_status, dict):
+        tare_started = bool(tare_status.get("active", tare_status.get("started", False)))
+        planner = tare_status.get("planner") or {}
+        if isinstance(planner, dict):
+            try:
+                frontier_count = int(planner.get("frontier_clusters", 0) or 0)
+            except (TypeError, ValueError):
+                frontier_count = 0
+    exploring = tare_started if tare_runtime == "native_dds" else bool(gw._exploring or tare_started)
     return {
-        "available": True,
+        "available": gw._explorer_available(),
         "backend": "tare",
-        "exploring": bool(gw._exploring or tare_started),
-        "frontier_count": 0,
+        "exploring": exploring,
+        "frontier_count": frontier_count,
         "tare": tare,
         "supervisor": gw._exploration_supervisor_state or {},
         **readiness,
@@ -137,11 +201,16 @@ def exploration_start_readiness(gw: Any) -> dict[str, Any]:
     navigation: dict[str, Any] = {}
     exploration_ignored_nav_blockers = {"navigation_session_inactive"}
 
+    native_status = _native_status()
+    native_active = bool(native_status and native_status.get("active") is True)
     if not gw._explorer_available():
-        blockers.append("explorer_backend_not_running")
+        if native_status is not None and _native_commands(gw) is None:
+            blockers.append("exploration_command_boundary_unavailable")
+        else:
+            blockers.append("explorer_backend_not_running")
     if gw._session_pending:
         blockers.append("session_transition_pending")
-    if gw._exploring:
+    if gw._exploring or native_active:
         blockers.append("exploration_already_active")
     if str(gw._session_mode or "idle").lower() != "idle":
         blockers.append("session_not_idle")

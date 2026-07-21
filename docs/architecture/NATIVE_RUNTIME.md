@@ -1,6 +1,8 @@
 # Native Runtime
 
 Status: current product boundary contract
+Audience: native runtime, deployment, Gateway operations, and field-readiness maintainers
+Replaced by: not replaced
 
 This document separates three things that were being mixed together:
 
@@ -33,7 +35,8 @@ own LiDAR ingestion, SLAM, PGO, HBA, or navigation compute.
 | LiDAR DDS | Product-native C++ implemented. | `livox_sdk2_stream` in `src/drivers/real/lidar/sdk2_stream/`; deployed as `lingtu-livox-dds.service`. |
 | SLAM DDS | Product-native C++ implemented. | `lingtu_slam_cyclone_runtime` and `lingtu_slam_control` in `src/localization/slam/cpp/`; deployed as `lingtu-slam-dds.service`. |
 | Relocalization | Product-native support exists in the SLAM C++ contract, with optional BBS3D/small_gicp build support. | `native_relocalizer.cpp` in `src/localization/slam/cpp/`. |
-| Navigation DDS | Product-native C++ implemented. | `navd`, `lingtu_nav_control`, `lingtu_traversability_dds` in `src/nav/cpp/endpoint/`; deployed as `lingtu-nav-dds.service` and `lingtu-traversability-dds.service`. |
+| Navigation DDS | Product-native C++ implemented. OctoPlanner3D is default; FAR is an explicit validated-occupancy option. | `navd`, `lingtu_nav_control`, `lingtu_traversability_dds` in `src/nav/cpp/endpoint/`; deployed as `lingtu-nav-dds.service` and `lingtu-traversability-dds.service`. |
+| Thunder driver | Product-native C++ implemented. | `lingtu_driver` in `src/drivers/real/thunder/native/`; deployed as `lingtu-driver.service`, conflicts with the old Python endpoint service, consumes `rt/nav/cmd_vel`, and calls remote Brainstem `WalkChecked`. |
 | Saved-map loop verification | `wip`: deterministic native shadow verifier exists; no map/pose mutation and no PGO feed yet. | `lt_loop_verify` emits versioned constraints/diagnostics, validates exact pose-patch provenance, and rejects changing inputs. |
 | PGO | `exp`: binary and solver exist; product save defaults to `off`. | `lt_pgo` refuses to rebuild a map when the graph has no independent geometric constraints and reports `skipped_no_independent_constraints`. |
 | HBA | `exp`: binary and solver exist; product save defaults to `off`. | `lt_hba` currently shares the same constraint gap; it is not a supported high-quality product action yet. |
@@ -108,14 +111,28 @@ native binaries exist.
 
 ## How To Use
 
-For current product runtime:
+Start a complete product through the Runtime Graph control plane:
 
 ```bash
-systemctl start lingtu-livox-dds.service
-systemctl start lingtu-slam-dds.service
-systemctl start lingtu-traversability-dds.service
-systemctl start lingtu-nav-dds.service
+bash scripts/lingtu nav start <map>
 ```
+
+`scripts/lingtu` resolves the selected Product and Endpoint into a typed
+`RuntimePlan`, then starts the declared processes in dependency order. Direct
+`systemctl` calls are reserved for service-level diagnosis; they are not a
+second product startup contract.
+
+`thunder_field` is an `endpoint_only + driver` product endpoint:
+`config/runtime_graph/endpoints/thunder_field.yaml` sets
+`localization_adapter=cpp_slam_status`,
+`command_output_mode=endpoint_only`, and
+`hardware_control_boundary=driver`. The deployed `lingtu.service` also sets
+`LINGTU_ENABLE_ROBOT_DRIVER=0`, so the Python process does not open a second
+robot hardware writer.
+
+`lingtu-thunder-dds-endpoint.service` remains in the repository as a
+compatibility Python endpoint, but `lingtu-driver.service` declares a systemd
+conflict against it. It is not part of the default field product chain.
 
 To inspect native component state from a local build:
 

@@ -4,27 +4,19 @@ from copy import deepcopy
 
 import pytest
 
+from lingtu.assembly.validation import validate_profile
 from runtime.graph import (
     RuntimeGraph,
+    build_runtime_plan,
     load_runtime_graph,
     render_endpoint_mermaid,
     render_product_markdown,
-    validate_profile_against_runtime_graph,
     validate_runtime_graph,
 )
 from runtime.profiles.catalog.products import PROFILES
 from runtime.runtime_interface import TOPICS
 
-REAL_PRODUCT_PROFILES = (
-    "teleop",
-    "teleop_avoid",
-    "map",
-    "tracking",
-    "nav",
-    "inspection",
-    "explore",
-    "tare_explore",
-)
+REAL_PRODUCT_PROFILES = tuple(sorted(load_runtime_graph().products))
 LEGACY_MODULE_SIM_PROFILES = ("sim_mujoco_live", "sim_mujoco_octo_live")
 INSPECTION_DDS_TOPICS = (
     TOPICS.inspection_command,
@@ -43,6 +35,125 @@ def test_runtime_graph_contracts_are_valid() -> None:
     assert "thunder_field" in graph.endpoints
     assert graph.endpoints["mujoco_native_dds"]["real_equivalent"] is True
     assert graph.endpoints["sim_mujoco_live"]["real_equivalent"] is False
+
+
+def test_field_runtime_plan_resolves_explicit_product_processes() -> None:
+    plan = build_runtime_plan("nav", "thunder_field")
+
+    assert plan.product == "nav"
+    assert plan.endpoint == "thunder_field"
+    assert [process.name for process in plan.processes] == [
+        "lidar",
+        "slam",
+        "traversability",
+        "nav",
+        "driver",
+        "runtime",
+    ]
+    assert [process.target for process in plan.managed_processes] == [
+        "lingtu-livox-dds.service",
+        "lingtu-slam-dds.service",
+        "lingtu-traversability-dds.service",
+        "lingtu-nav-dds.service",
+        "lingtu.service",
+    ]
+    assert plan.process("driver").lifecycle == "persistent"
+
+
+def test_runtime_plan_does_not_infer_processes_from_topics() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["nav"]["required_topics"] = []
+    isolated = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    plan = build_runtime_plan("nav", "thunder_field", graph=isolated)
+
+    assert plan.has_process("nav")
+    assert plan.has_process("traversability")
+
+
+def test_runtime_plan_rejects_unmapped_product_process() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["nav"]["processes"].append("missing")
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    with pytest.raises(ValueError, match="missing"):
+        build_runtime_plan("nav", "thunder_field", graph=broken)
+
+
+def test_runtime_plan_rejects_acceptance_runner_endpoint() -> None:
+    with pytest.raises(ValueError, match="not RuntimePlan-managed"):
+        build_runtime_plan("nav", "mujoco_native_dds")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("target", "--no-block.service", "invalid target"),
+        ("order", "10", "needs integer order"),
+        ("timeout_s", 0, "invalid order or timeout"),
+    ),
+)
+def test_runtime_plan_rejects_unsafe_process_specs(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    graph = load_runtime_graph()
+    endpoints = deepcopy(graph.endpoints)
+    endpoints["thunder_field"]["processes"]["nav"][field] = value
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=graph.products,
+        endpoints=endpoints,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        build_runtime_plan("nav", "thunder_field", graph=broken)
+
+
+def test_runtime_graph_rejects_process_contract_drift() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["nav"]["processes"].remove("traversability")
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(issue.code == "product_process_missing" and "traversability" in issue.message for issue in issues)
+
+
+def test_runtime_graph_rejects_legacy_service_lists() -> None:
+    graph = load_runtime_graph()
+    endpoints = deepcopy(graph.endpoints)
+    endpoints["thunder_field"]["native_services"] = ["legacy.service"]
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=graph.products,
+        endpoints=endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(issue.code == "endpoint_legacy_service_list" for issue in issues)
 
 
 def test_runtime_graph_native_dds_endpoints_share_core_contract() -> None:
@@ -84,12 +195,8 @@ def test_inspection_dds_topics_are_a_native_runtime_contract() -> None:
             },
         ],
     }
-    assert "persistent_cpp_navigation_client" in graph.topic_contracts[
-        TOPICS.inspection_ack
-    ]["consumers"]
-    assert graph.topic_contracts[TOPICS.inspection_status]["qos"] == (
-        "reliable_transient_local_keep_last_1"
-    )
+    assert "persistent_cpp_navigation_client" in graph.topic_contracts[TOPICS.inspection_ack]["consumers"]
+    assert graph.topic_contracts[TOPICS.inspection_status]["qos"] == ("reliable_transient_local_keep_last_1")
 
 
 def test_native_endpoints_close_the_inspection_command_ack_status_chain() -> None:
@@ -168,9 +275,101 @@ def test_runtime_graph_rejects_nav_without_odom_or_map_cloud() -> None:
     assert any(TOPICS.map_cloud in message for message in messages)
 
 
+def test_runtime_graph_rejects_incomplete_operator_mode_contract() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["teleop"].pop("native_control_mode")
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(
+        issue.code == "product_mode_field_missing" and "native_control_mode" in issue.message for issue in issues
+    )
+
+
+def test_runtime_graph_rejects_field_product_topic_without_endpoint_provider() -> None:
+    graph = load_runtime_graph()
+    endpoints = deepcopy(graph.endpoints)
+    endpoints["thunder_field"]["exposed_topics"].remove(TOPICS.exploration_snapshot)
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=graph.products,
+        endpoints=endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(
+        issue.code == "field_product_topic_missing"
+        and "tare_explore" in issue.message
+        and TOPICS.exploration_snapshot in issue.message
+        for issue in issues
+    )
+
+
+def test_runtime_graph_rejects_product_command_boundary_drift() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["map"]["required_topics"].remove(TOPICS.cmd_vel)
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(
+        issue.code == "product_command_boundary_incomplete"
+        and "map" in issue.message
+        and TOPICS.cmd_vel in issue.message
+        for issue in issues
+    )
+
+
+def test_runtime_graph_rejects_map_and_slam_mode_conflict() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["nav"]["requires_map"] = False
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(issue.code == "product_map_slam_conflict" and "nav" in issue.message for issue in issues)
+
+
+def test_runtime_graph_rejects_duplicate_session_defaults() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["tracking"]["default_for_session_mode"] = True
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        endpoints=graph.endpoints,
+    )
+
+    issues = validate_runtime_graph(broken)
+
+    assert any(issue.code == "product_session_default_invalid" and "navigating" in issue.message for issue in issues)
+
+
 @pytest.mark.parametrize("profile", REAL_PRODUCT_PROFILES)
 def test_real_product_profiles_match_runtime_graph(profile: str) -> None:
-    assert validate_profile_against_runtime_graph(profile) == []
+    assert validate_profile(profile) == []
 
 
 @pytest.mark.parametrize("profile", LEGACY_MODULE_SIM_PROFILES)
@@ -179,7 +378,7 @@ def test_legacy_mujoco_profiles_are_module_harnesses(profile: str) -> None:
 
     assert config["_runtime_graph_role"] == "module_sim_harness"
     assert config["_real_equivalent"] is False
-    assert validate_profile_against_runtime_graph(profile) == []
+    assert validate_profile(profile) == []
 
 
 def test_legacy_module_sim_profile_cannot_claim_real_equivalence(monkeypatch) -> None:
@@ -187,7 +386,7 @@ def test_legacy_module_sim_profile_cannot_claim_real_equivalence(monkeypatch) ->
     config["_real_equivalent"] = True
     monkeypatch.setitem(PROFILES, "sim_mujoco_live", config)
 
-    issues = validate_profile_against_runtime_graph("sim_mujoco_live")
+    issues = validate_profile("sim_mujoco_live")
 
     assert [issue.code for issue in issues] == ["legacy_module_sim_real_equivalent_flag"]
 
@@ -203,7 +402,7 @@ def test_real_profile_rejects_noncanonical_or_duplicate_driver(monkeypatch) -> N
         lambda _profile: broken,
     )
 
-    issues = validate_profile_against_runtime_graph("nav")
+    issues = validate_profile("nav")
     codes = {issue.code for issue in issues}
 
     assert "real_profile_driver_boundary_drift" in codes

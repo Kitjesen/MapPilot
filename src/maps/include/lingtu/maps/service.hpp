@@ -136,6 +136,10 @@ class MapsServiceCore {
   std::string BuildEsdfArtifactJson(const std::string& map_id);
   std::string BuildTraversabilityArtifactJson(const std::string& map_id);
   std::string BuildSemanticArtifactJson(const std::string& map_id);
+  std::string ImportUnitySemanticArtifactJson(
+      const std::string& map_id,
+      const std::filesystem::path& scene_dir,
+      const sources::UnitySemanticImportConfig& options);
   std::string BeginSaveMapJson(const SaveMapRequest& request);
   std::string ProvideSaveMapSnapshotJson(
       const std::string& job_id,

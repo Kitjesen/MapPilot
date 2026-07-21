@@ -116,6 +116,15 @@ class NavigationPlanningMixin:
             frame_blocker=frame_blocker,
         )
 
+    def evaluate_path_safety(self, path: list[list[float]]) -> dict[str, Any] | None:
+        """Evaluate a candidate path without exposing planner internals."""
+
+        evaluator = getattr(self._planner_svc, "evaluate_current_path_safety", None)
+        if not callable(evaluator):
+            return None
+        result = evaluator(path)
+        return dict(result) if isinstance(result, dict) else None
+
     def _current_plan_report(self) -> dict[str, Any]:
         if self._using_external_strategy_path:
             return {

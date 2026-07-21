@@ -1,5 +1,7 @@
 # `lingtu` Operations CLI
 
+Status: current robot-side operations CLI contract as of 2026-07-18.
+
 `scripts/lingtu` is the robot-side operations CLI. It is designed for SSH use
 on the S100P/sunrise board and replaces ad-hoc `curl`, `systemctl`, and
 `journalctl` commands during field work.
@@ -7,7 +9,7 @@ on the S100P/sunrise board and replaces ad-hoc `curl`, `systemctl`, and
 Deployment path on the robot:
 
 ```text
-/home/sunrise/data/SLAM/navigation/scripts/lingtu
+/opt/lingtu/current/scripts/lingtu
 ```
 
 The Python application entry is still `lingtu.py`. The shell CLI starts,
@@ -16,8 +18,9 @@ stops, inspects, and coordinates the native field services around it.
 ## Local Alias
 
 ```bash
-alias lingtu='ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc "bash ~/data/SLAM/navigation/scripts/lingtu"'
-alias lingwatch='ssh -t -p 12346 sunrise@fe91fae6a6756695.natapp.cc "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
+export LINGTU_ROBOT_HOST=ROBOT_IP_OR_HOSTNAME
+alias lingtu='ssh sunrise@"$LINGTU_ROBOT_HOST" "bash /opt/lingtu/current/scripts/lingtu"'
+alias lingwatch='ssh -t sunrise@"$LINGTU_ROBOT_HOST" "bash /opt/lingtu/current/scripts/lingtu watch"'
 ```
 
 Then:
@@ -45,11 +48,18 @@ lingtu-livox-dds
   -> lingtu-slam-dds
   -> LingTu Modules / Gateway / MCP
   -> lingtu-nav-dds
-  -> DDS /nav/cmd_vel
+  -> DDS rt/nav/cmd_vel
+  -> lingtu-driver
+  -> remote Brainstem gRPC WalkChecked
 ```
 
 Do not source ROS 2 or a colcon overlay for normal field navigation. ROS 2 is
 only for explicit compatibility checks or legacy replay gates.
+
+`lingtu-driver` is the unique speed exit in the current product profile. It
+reads `/opt/lingtu/config/brainstem.env`, requires a remote Brainstem endpoint,
+publishes `/dev/shm/lingtu/driver_status.json`, and fails closed if the lease,
+ACK, DDS freshness, or gRPC connection is not ready.
 
 ## Status
 
@@ -142,13 +152,15 @@ when save-time cleanup removed static structure. The replaced file is kept as
 Manual artifact rebuilds:
 
 ```bash
+export LINGTU_GATEWAY=http://ROBOT_IP_OR_HOSTNAME:5050
+
 curl -X POST -H 'Content-Type: application/json' \
   -d '{"action":"build_tomogram","name":"lab_0423"}' \
-  http://localhost:5050/api/v1/maps
+  "$LINGTU_GATEWAY/api/v1/maps"
 
 curl -X POST -H 'Content-Type: application/json' \
   -d '{"action":"build_occupancy","name":"lab_0423"}' \
-  http://localhost:5050/api/v1/maps
+  "$LINGTU_GATEWAY/api/v1/maps"
 ```
 
 ## Navigation
@@ -191,6 +203,25 @@ lingtu mode switch nav --map lab_0423
 lingtu mode switch inspection --map lab_0423
 lingtu mode switch tare_explore
 ```
+
+For an isolated native exploration lifecycle check, use the installed control
+binary. These commands wait for the typed endpoint ACK and return non-zero on
+rejection or timeout:
+
+```bash
+/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control \
+  explore start field-session --request-id field-start --domain-id 0
+/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control \
+  explore pause operator_pause --request-id field-pause --domain-id 0
+/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control \
+  explore resume operator_resume --request-id field-resume --domain-id 0
+/opt/lingtu/current/build/nav_endpoint/lingtu_nav_control \
+  explore stop operator_stop --request-id field-stop --domain-id 0
+```
+
+Use a non-production DDS domain for no-motion integration tests. Running
+`explore start` against the production domain can dispatch navigation goals
+when fresh map and localization inputs are present.
 
 `mode` is the low-level Gateway session (`mapping`, `navigating`, or
 `exploring`). `product_session` is the operator-facing mode:
@@ -258,7 +289,9 @@ explicitly uses PCT.
 
 ```bash
 lingtu svc status
+lingtu svc status-legacy
 lingtu svc restart slam
+lingtu svc restart localization
 lingtu svc restart lingtu
 lingtu svc restart all
 ```
@@ -268,7 +301,20 @@ Useful native services:
 - `lingtu-livox-dds`
 - `lingtu-slam-dds`
 - `lingtu-nav-dds`
+- `lingtu-driver`
 - `lingtu`
+
+Useful native status files:
+
+- `/dev/shm/lingtu/nav_endpoint_status.json`
+- `/dev/shm/lingtu/driver_status.json`
+
+For localization-chain recovery, `lingtu svc restart localization` restarts
+`lingtu-livox-dds.service` and `lingtu-slam-dds.service`, waits for the native
+SLAM status, force-stops the legacy `robot-localizer.service` and
+`robot-fastlio2.service` units, and waits for Gateway readiness. Use
+`legacy_fastlio2` / `legacy_localizer` explicitly when the native SLAM DDS
+service is not installed.
 
 ## Logs And Health
 
@@ -292,4 +338,4 @@ state, runtime contracts, active map, mission state, and safety state.
 | plan preview fails | Check `octomap.ot`, `metadata.json`, and the active map path. |
 | localization lost | Restart SLAM or relocalize before sending goals. |
 | map looks smeared | Inspect `map_optimization.json`, raw map, patch poses, and calibration. |
-| teleop does not move | Check mode, teleop lease, safety level, and native `/nav/cmd_vel` ownership. |
+| teleop does not move | Check mode, teleop lease, safety level, native `rt/nav/cmd_vel`, `nav_endpoint_status.json`, `driver_status.json`, and remote Brainstem readiness. |

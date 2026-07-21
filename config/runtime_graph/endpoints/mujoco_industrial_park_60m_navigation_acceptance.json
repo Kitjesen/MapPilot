@@ -81,8 +81,8 @@
     "navigation": {
       "env": "LINGTU_MUJOCO_NAV_BIN",
       "candidates": [
-        "build/nav_endpoint_wsl/lingtu_nav_native_endpoint",
-        "build/mujoco_native_nav/lingtu_nav_native_endpoint"
+        "build/nav_endpoint_wsl/navd",
+        "build/mujoco_native_nav/navd"
       ]
     },
     "navigation_control": {
@@ -124,6 +124,7 @@
     "imu_hz": 100.0,
     "mid360_samples_per_frame": 10000,
     "scan_time_profile": "instantaneous",
+    "physics_integrator": "euler",
     "publish_odom_prior": true,
     "odom_prior_velocity_window_s": 0.1,
     "navigation_fixture_cloud_points": 4000,
@@ -176,7 +177,7 @@
     "max_goal_error_m": 0.5
   },
   "runtime_tolerances": {
-    "sim_hardware_realtime_factor": 1.0,
+    "sim_hardware_realtime_factor": 0.5,
     "odom_max_age_s": 1.0,
     "tf_max_age_s": 1.0,
     "cloud_max_age_s": 1.5,

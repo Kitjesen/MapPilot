@@ -63,6 +63,7 @@ class MapPipelineService:
         map_opt_command: Any = None,
         map_opt_timeout_sec: float = 120.0,
         map_opt_required: bool = False,
+        semantic_taxonomy_path: str | Path | None = None,
     ) -> None:
         self.storage = storage
         self.runtime_bridge = runtime_bridge
@@ -82,6 +83,12 @@ class MapPipelineService:
             timeout_sec=map_opt_timeout_sec,
             required=map_opt_required,
         )
+        default_taxonomy = Path(__file__).resolve().parents[3] / "config" / "semantic_taxonomy.json"
+        self.semantic_taxonomy_path = Path(
+            semantic_taxonomy_path
+            or os.environ.get("LINGTU_SEMANTIC_TAXONOMY")
+            or default_taxonomy
+        ).expanduser()
 
     def build_artifact(self, name: str, artifact_type: str) -> dict[str, Any]:
         kind = self.resolve_artifact_build_type(artifact_type)
@@ -575,6 +582,62 @@ class MapPipelineService:
                 "action": "build_semantic_artifact",
                 "success": False,
                 "reason_code": "native_semantic_service_unavailable",
+                "message": str(exc),
+            }
+
+    def import_unity_semantic_artifact(
+        self,
+        name: str,
+        scene_dir: str | Path,
+        *,
+        taxonomy_path: str | Path | None = None,
+        frame_id: str = "map",
+        voxel_size_m: float = 0.20,
+        occupied_probability: float = 0.95,
+        shell_thickness_voxels: float = 0.75,
+        generation: int = 1,
+        max_objects: int = 100_000,
+        max_voxels: int = 2_000_000,
+        max_voxel_checks: int = 50_000_000,
+        include_unknown_geometry: bool = False,
+        exclude_dynamic_classes: bool = True,
+    ) -> dict[str, Any]:
+        """Import one Unity scene through the native transactional semantic pipeline."""
+        if not name:
+            return {
+                "action": "import_unity_semantic_artifact",
+                "success": False,
+                "reason_code": "missing_map_name",
+                "message": "missing map name",
+            }
+        if not str(scene_dir or "").strip():
+            return {
+                "action": "import_unity_semantic_artifact",
+                "success": False,
+                "reason_code": "missing_scene_dir",
+                "message": "missing Unity scene directory",
+            }
+        try:
+            return self.storage.native_service.import_unity_semantic_artifact(
+                name,
+                Path(scene_dir).expanduser(),
+                taxonomy_path=Path(taxonomy_path or self.semantic_taxonomy_path).expanduser(),
+                frame_id=frame_id,
+                voxel_size_m=voxel_size_m,
+                occupied_probability=occupied_probability,
+                shell_thickness_voxels=shell_thickness_voxels,
+                generation=generation,
+                max_objects=max_objects,
+                max_voxels=max_voxels,
+                max_voxel_checks=max_voxel_checks,
+                include_unknown_geometry=include_unknown_geometry,
+                exclude_dynamic_classes=exclude_dynamic_classes,
+            )
+        except Exception as exc:
+            return {
+                "action": "import_unity_semantic_artifact",
+                "success": False,
+                "reason_code": "native_unity_semantic_import_unavailable",
                 "message": str(exc),
             }
 

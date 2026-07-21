@@ -91,6 +91,7 @@ GLOBAL_PLAN_RESULT_SCHEMA: dict[str, Any] = {
         "frame_id": {"type": "string", "minLength": 1},
         "request_id": {"type": "string"},
         "map_version": {"type": "string"},
+        "map_generation": {"type": "integer", "minimum": 0},
         "adjusted_goal": {
             "anyOf": [
                 {"type": "null"},
@@ -121,6 +122,7 @@ class GlobalPlanningMap:
     origin: Any | None = None
     frame_id: str = field(default_factory=map_frame_id)
     map_version: str = ""
+    generation: int = 0
     source: str = ""
 
     def __post_init__(self) -> None:
@@ -130,6 +132,10 @@ class GlobalPlanningMap:
         self.grid = grid.copy()
         self.resolution = float(self.resolution)
         self.frame_id = str(self.frame_id or map_frame_id())
+        self.map_version = str(self.map_version or "")
+        self.generation = int(self.generation)
+        if self.generation < 0:
+            raise ValueError("planning map generation must be non-negative")
         if self.origin is None:
             return
         origin = np.asarray(self.origin, dtype=float).reshape(-1)
@@ -145,6 +151,7 @@ class GlobalPlanningMap:
             "origin": None if self.origin is None else self.origin.tolist(),
             "frame_id": self.frame_id,
             "map_version": self.map_version,
+            "generation": self.generation,
             "source": self.source,
         }
 
@@ -156,6 +163,7 @@ class GlobalPlanningMap:
             origin=payload.get("origin"),
             frame_id=str(payload.get("frame_id") or map_frame_id()),
             map_version=str(payload.get("map_version") or ""),
+            generation=int(payload.get("generation", 0) or 0),
             source=str(payload.get("source") or ""),
         )
 
@@ -200,12 +208,16 @@ class GlobalPlanRequest:
     frame_id: str = field(default_factory=map_frame_id)
     request_id: str = ""
     map_version: str = ""
+    map_generation: int = 0
 
     def __post_init__(self) -> None:
         self.start = _coerce_xyz(self.start, field_name="start")
         self.goal = _coerce_xyz(self.goal, field_name="goal")
         self.safe_goal_tolerance = float(self.safe_goal_tolerance)
         self.frame_id = str(self.frame_id or map_frame_id())
+        self.map_generation = int(self.map_generation)
+        if self.map_generation < 0:
+            raise ValueError("global plan map generation must be non-negative")
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -216,6 +228,7 @@ class GlobalPlanRequest:
             "frame_id": self.frame_id,
             "request_id": self.request_id,
             "map_version": self.map_version,
+            "map_generation": self.map_generation,
         }
 
     @classmethod
@@ -227,6 +240,7 @@ class GlobalPlanRequest:
             frame_id=str(payload.get("frame_id") or map_frame_id()),
             request_id=str(payload.get("request_id") or ""),
             map_version=str(payload.get("map_version") or ""),
+            map_generation=int(payload.get("map_generation", 0) or 0),
         )
 
 
@@ -241,12 +255,16 @@ class GlobalPlanResult:
     frame_id: str = field(default_factory=map_frame_id)
     request_id: str = ""
     map_version: str = ""
+    map_generation: int = 0
     adjusted_goal: Any | None = None
     diagnostics: dict[str, Any] = field(default_factory=dict)
     report: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.frame_id = str(self.frame_id or map_frame_id())
+        self.map_generation = int(self.map_generation)
+        if self.map_generation < 0:
+            raise ValueError("global plan result map generation must be non-negative")
         self.path = coerce_global_path(self.path, frame_id=self.frame_id)
 
     @property
@@ -268,6 +286,7 @@ class GlobalPlanResult:
             "frame_id": self.frame_id,
             "request_id": self.request_id,
             "map_version": self.map_version,
+            "map_generation": self.map_generation,
             "adjusted_goal": (None if self.adjusted_goal is None else point_to_xyz(self.adjusted_goal).tolist()),
             "diagnostics": dict(self.diagnostics),
             "report": dict(self.report),
@@ -283,6 +302,7 @@ class GlobalPlanResult:
             frame_id=str(payload.get("frame_id") or map_frame_id()),
             request_id=str(payload.get("request_id") or ""),
             map_version=str(payload.get("map_version") or ""),
+            map_generation=int(payload.get("map_generation", 0) or 0),
             adjusted_goal=payload.get("adjusted_goal"),
             diagnostics=dict(payload.get("diagnostics") or {}),
             report=dict(payload.get("report") or {}),
@@ -434,6 +454,10 @@ def validate_global_plan_result_wire(payload: Any) -> list[str]:
         issues.append("request_id: must be a string")
     if "map_version" in payload and not isinstance(payload["map_version"], str):
         issues.append("map_version: must be a string")
+    if "map_generation" in payload:
+        generation = payload["map_generation"]
+        if isinstance(generation, bool) or not isinstance(generation, int) or generation < 0:
+            issues.append("map_generation: must be an integer >= 0")
     if "diagnostics" in payload and not isinstance(payload["diagnostics"], Mapping):
         issues.append("diagnostics: must be an object")
     if "report" in payload and not isinstance(payload["report"], Mapping):
@@ -514,6 +538,7 @@ def coerce_planning_map(
     origin: Any | None = None,
     frame_id: str = "",
     map_version: str = "",
+    generation: int = 0,
     source: str = "",
 ) -> GlobalPlanningMap:
     """Return a canonical PlanningMap while keeping legacy grid calls valid."""
@@ -526,6 +551,7 @@ def coerce_planning_map(
         origin=origin,
         frame_id=frame_id or map_frame_id(),
         map_version=map_version,
+        generation=generation,
         source=source,
     )
 

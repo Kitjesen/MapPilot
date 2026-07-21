@@ -5,13 +5,13 @@ import time
 
 import pytest
 
-from runtime.adapters.native.localization_adapter import (
+from localization.adapters.status import (
     STATUS_SNAPSHOT_HEALTH_SOURCE,
     STATUS_SNAPSHOT_SCHEMA,
     CppSlamStatusAdapterModule,
 )
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
-from runtime.blueprints.stacks.slam import slam
+from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.stacks.slam import slam
 from runtime.msgs.map import MapObservationFrame
 from runtime.msgs.sensor import PointCloud2
 from runtime.profiles.resolver import resolve_profile_config
@@ -139,7 +139,7 @@ def test_cpp_slam_status_adapter_reads_lidar_scan_snapshot(tmp_path) -> None:
 
     assert scans_seen[-1].frame_id == "livox_frame"
     assert scans_seen[-1].num_points == 2
-    assert scans_seen[-1].points[0, 0] == 0.1
+    assert scans_seen[-1].points[0, 0] == pytest.approx(0.1)
     assert adapter.health()["message_counts"]["/lidar/raw_frame"] >= 1
 
 

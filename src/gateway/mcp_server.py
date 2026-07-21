@@ -147,6 +147,7 @@ class MCPServerModule(Module, layer=6):
         self._vector_memory_mod = None
         self._episodic_mod = None
         self._navigation = None
+        self._nav_commands = None
         self._backend_reconfigure_modules: dict[str, Any] = {}
 
     # -- lifecycle ----------------------------------------------------------
@@ -165,6 +166,7 @@ class MCPServerModule(Module, layer=6):
         self._tool_list = []
         self._all_modules = modules
         self._navigation = modules.get("nav.mission")
+        self._nav_commands = modules.get("nav.commands")
         self._backend_reconfigure_modules = {
             module_name: modules.get(module_name)
             for module_names in _BACKEND_RECONFIGURE_TARGETS.values()
@@ -467,7 +469,7 @@ class MCPServerModule(Module, layer=6):
         return self._publish_estop("emergency_stopped")
 
     def _legacy_stop_tool(self) -> str:
-        wrote_native = native_stop("mcp_stop")
+        wrote_native = native_stop(self, "mcp_stop")
         if not wrote_native:
             self.stop_cmd.publish(2)
             self.cmd_vel.publish(Twist())
@@ -479,7 +481,7 @@ class MCPServerModule(Module, layer=6):
         )
 
     def _publish_estop(self, status: str) -> str:
-        wrote_native = native_estop("mcp_emergency_stop")
+        wrote_native = native_estop(self, "mcp_emergency_stop")
         if not wrote_native:
             self.stop_cmd.publish(2)
             self.cmd_vel.publish(Twist())
@@ -497,7 +499,7 @@ class MCPServerModule(Module, layer=6):
             return json.dumps({"error": f"invalid mode: {mode!r}"})
         self.mode_cmd.publish(mode)
         if mode == "estop":
-            wrote_native = native_estop("mcp_mode_estop")
+            wrote_native = native_estop(self, "mcp_mode_estop")
             if not wrote_native:
                 self.stop_cmd.publish(2)
                 self.cmd_vel.publish(Twist())

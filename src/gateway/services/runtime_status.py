@@ -27,6 +27,8 @@ from gateway.services.safety_status import (
     safety_stop_active,
     safety_summary,
 )
+from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
+from runtime.profiles.resolver import canonical_profile_name
 from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, map_frame_id
 from runtime.runtime_policy import (
     backend_capability_defaults as _backend_capability_defaults,
@@ -1011,7 +1013,7 @@ _NAVIGATION_BLOCKER_CODES = {
     "real_runtime_evidence_missing_or_stale",
     "native_endpoint_status_missing_or_stale",
     "native_input_gate_not_ready",
-    "native_control_mode_not_autonomy",
+    "native_control_mode_mismatch",
     "native_cmd_vel_publish_disabled",
 }
 
@@ -1432,8 +1434,34 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
     if input_gate.get("ready") is not True:
         blockers.append("native_input_gate_not_ready")
     control_mode = str(snapshot.get("control_mode") or "").strip().lower()
-    if control_mode != "autonomy":
-        blockers.append("native_control_mode_not_autonomy")
+    raw_profile = str(
+        session.get("product_profile")
+        or session.get("profile")
+        or os.environ.get("LINGTU_PROFILE")
+        or ""
+    ).strip()
+    profile = canonical_profile_name(raw_profile) if raw_profile else ""
+    contract = PRODUCT_MODE_CONTRACTS.get(profile)
+    expected_control_mode = contract.native_control_mode if contract is not None else "autonomy"
+    if control_mode != expected_control_mode:
+        blockers.append("native_control_mode_mismatch")
+    global_planner = str(snapshot.get("global_planner") or "").strip().lower()
+    expected_global_planner = str(
+        session.get("global_planner")
+        or session.get("planner")
+        or os.environ.get("LINGTU_NAV_GLOBAL_PLANNER")
+        or "octoplanner3d"
+    ).strip().lower()
+    aliases = {"octo": "octoplanner3d", "octplanner": "octoplanner3d"}
+    global_planner = aliases.get(global_planner, global_planner)
+    expected_global_planner = aliases.get(expected_global_planner, expected_global_planner)
+    planner_map = str(snapshot.get("planner_map") or "").strip()
+    if not global_planner:
+        blockers.append("native_global_planner_missing")
+    elif global_planner != expected_global_planner:
+        blockers.append("native_global_planner_mismatch")
+    if not planner_map:
+        blockers.append("native_planner_map_missing")
     publish_cmd_vel = _as_optional_bool(snapshot.get("publish_cmd_vel"))
     if publish_cmd_vel is not True:
         blockers.append("native_cmd_vel_publish_disabled")
@@ -1444,8 +1472,13 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
         "stamp_s": _as_float(snapshot.get("stamp_s"), None),
         "input_gate": input_gate,
         "control_mode": control_mode,
+        "expected_control_mode": expected_control_mode,
+        "global_planner": global_planner,
+        "expected_global_planner": expected_global_planner,
+        "planner_map": planner_map,
         "publish_cmd_vel": publish_cmd_vel,
         "active_octomap": snapshot.get("active_octomap"),
+        "active_occupancy": snapshot.get("active_occupancy"),
     }
 
 

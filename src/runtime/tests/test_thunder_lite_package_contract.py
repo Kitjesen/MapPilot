@@ -12,8 +12,8 @@ from tools import package_thunder_lite as packager
 from tools.validate import validate_thunder_lite_package as validator
 
 from lingtu.plugin_seed import install_builtin_plugin_catalog
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
-from runtime.blueprints.stacks.autonomy_chain import autonomy_stack_config
+from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.stacks.autonomy_chain import autonomy_stack_config
 from runtime.profiles.endpoints import resolve_runtime_run_spec
 from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
 
@@ -343,18 +343,18 @@ def test_thunder_lite_packager_dry_run_applies_package_boundary(tmp_path: Path) 
     assert "src/diagnostics/field/evidence.py" not in copied_files
     assert "src/diagnostics/field/gates.py" not in copied_files
     assert not any(path.startswith("src/maps/") for path in copied_files)
-    assert "src/runtime/blueprints/full_stack_wiring.py" not in copied_files
-    assert "src/runtime/blueprints/adapters/driver_ros2_runtime.py" not in copied_files
-    assert "src/runtime/blueprints/adapters/mapping_slam.py" not in copied_files
-    assert "src/runtime/blueprints/adapters/navigation_io.py" not in copied_files
-    assert "src/runtime/blueprints/adapters/perception_gateway.py" not in copied_files
-    assert "src/runtime/blueprints/stacks/slam.py" not in copied_files
-    assert "src/runtime/blueprints/stacks/gateway.py" not in copied_files
-    assert "src/runtime/blueprints/stacks/navigation.py" in copied_files
-    assert "src/runtime/blueprints/stacks/navigation_core.py" in copied_files
-    assert "src/runtime/blueprints/stacks/autonomy_chain.py" in copied_files
-    assert "src/runtime/blueprints/stacks/exploration_goal_sources.py" in copied_files
-    assert "src/runtime/blueprints/wires/slam.py" not in copied_files
+    assert "src/lingtu/assembly/full_stack_wiring.py" not in copied_files
+    assert "src/lingtu/assembly/adapters/driver_ros2_runtime.py" not in copied_files
+    assert "src/lingtu/assembly/adapters/mapping_slam.py" not in copied_files
+    assert "src/lingtu/assembly/adapters/navigation_io.py" not in copied_files
+    assert "src/lingtu/assembly/adapters/perception_gateway.py" not in copied_files
+    assert "src/lingtu/assembly/stacks/slam.py" not in copied_files
+    assert "src/lingtu/assembly/stacks/gateway.py" not in copied_files
+    assert "src/lingtu/assembly/stacks/navigation.py" in copied_files
+    assert "src/lingtu/assembly/stacks/navigation_core.py" in copied_files
+    assert "src/lingtu/assembly/stacks/autonomy_chain.py" in copied_files
+    assert "src/lingtu/assembly/stacks/exploration_goal_sources.py" in copied_files
+    assert "src/lingtu/assembly/wires/slam.py" not in copied_files
     assert "src/lingtu/ros2_plugin_seed.py" not in copied_files
     assert "src/lingtu/ros2_shutdown.py" not in copied_files
     assert "src/drivers/real/thunder/blueprints.py" not in copied_files

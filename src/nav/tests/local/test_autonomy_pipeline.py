@@ -11,7 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from nav.services.plan.local_planner.service import LocalPlanner
+from nav.local.local_planner import LocalPlanner
 from nav.local.path_follower import PathFollower
 from nav.local.terrain import Terrain
 from runtime.blueprint import Blueprint

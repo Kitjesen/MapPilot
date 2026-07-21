@@ -2,7 +2,7 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.blueprints.products.thunder import thunder_blueprint
+from lingtu.assembly.products.thunder import thunder_blueprint
 
 
 def test_sim_blueprint_wires_real_semantic_pipeline():

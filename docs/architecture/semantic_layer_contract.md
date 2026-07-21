@@ -1,5 +1,9 @@
 # Semantic Layer Contract
 
+Status: current semantic runtime contract
+Audience: perception, memory, decision, and Gateway maintainers
+Replaced by: not replaced
+
 LingTu's semantic layer is not a linear `Detector -> Encoder -> Memory`
 pipeline. The runtime contract is centered on `PerceptionModule.scene_graph`.
 

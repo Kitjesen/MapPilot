@@ -107,7 +107,7 @@ Useful ideas to adapt into LingTu-owned code:
 - `sim/evaluation/slam/`: deterministic evaluation utilities and case manifests.
 - `sim/engine/`: robot/world stepping and sensor generation.
 - `src/localization/`: runtime SLAM modules and bridges.
-- `src/runtime/blueprints/`: profile composition and wiring.
+- `src/lingtu/assembly/`: profile composition and wiring.
 
 Future replay scripts should depend on this package for manifest parsing and
 metrics, then call existing LingTu runtime profiles instead of introducing a

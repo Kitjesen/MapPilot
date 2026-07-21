@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from runtime.contracts.building import LiftState
+from runtime.contracts.building import LiftState as LiftState
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,12 @@ class BuildingMissionRequest:
     floor_id: str
     map_id: str
     target: PoseTarget
+    travel_mode: str = "any"
+    connector_id: str = ""
+    place_id: str = ""
+    map_version: int | None = None
+    version_id: str = ""
+    map_pcd_sha256: str = ""
 
     @property
     def target_floor(self) -> ActiveFloor:

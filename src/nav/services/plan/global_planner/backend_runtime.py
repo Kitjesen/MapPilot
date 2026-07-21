@@ -19,7 +19,7 @@ from runtime.profiles.planner_backends import normalize_planner_name
 
 logger = logging.getLogger(__name__)
 
-_GLOBAL_PLANNERS = ("octoplanner3d",)
+_GLOBAL_PLANNERS = ("far", "octoplanner3d")
 
 _OCTOPLANNER3D_CONSTRAINT_KEYS = {
     "robot_radius",
@@ -49,6 +49,20 @@ _OCTOPLANNER3D_CONSTRAINT_KEYS = {
     "obstacle_clearance_weight",
 }
 
+_FAR_CONSTRAINT_KEYS = {
+    "robot_radius_m",
+    "obstacle_clearance_m",
+    "max_visibility_distance_m",
+    "unknown_cost_multiplier",
+    "corner_separation_cells",
+    "snap_search_radius_cells",
+    "max_graph_nodes",
+    "max_visibility_pairs",
+    "max_search_expansions",
+    "allow_unknown_fallback",
+    "simplify_path",
+}
+
 
 @dataclass(slots=True)
 class BackendPlanExecution:
@@ -67,12 +81,23 @@ def normalize_octoplanner3d_constraints(
     }
 
 
+def normalize_far_constraints(constraints: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only native FAR configuration keys understood by the stable C ABI."""
+
+    if not constraints:
+        return {}
+    return {
+        key: value for key, value in constraints.items() if key in _FAR_CONSTRAINT_KEYS and value is not None
+    }
+
+
 def create_planner_backend(
     name: str,
     map_path: str,
     obstacle_thr: float,
     *,
     octoplanner3d_timeout_s: float | None = None,
+    far_options: dict[str, Any] | None = None,
 ) -> Any:
     canonical = normalize_planner_name(name)
     if canonical == "octoplanner3d":
@@ -84,6 +109,16 @@ def create_planner_backend(
             map_path,
             obstacle_thr,
             timeout_s=octoplanner3d_timeout_s,
+        )
+    elif canonical == "far":
+        from nav.services.plan.global_planner.algorithm.far_planner import (
+            FarPlannerBackend,
+        )
+
+        backend = FarPlannerBackend(
+            map_path,
+            obstacle_thr,
+            options=normalize_far_constraints(far_options),
         )
     else:
         raise ValueError(f"Unknown planner: '{canonical}'. Available: {list(_GLOBAL_PLANNERS)}")
@@ -107,6 +142,11 @@ def load_static_occupancy_into_backend(backend: Any, occupancy_path: str) -> Non
             grid=np.asarray(data["grid"], dtype=np.float32),
             resolution=float(np.asarray(data["resolution"]).reshape(-1)[0]),
             origin=np.asarray(data["origin"], dtype=float).reshape(-1)[:2],
+            generation=(
+                int(np.asarray(data["generation"]).reshape(-1)[0])
+                if "generation" in getattr(data, "files", ())
+                else 1
+            ),
             source=str(occupancy_path),
         )
     except Exception as exc:
@@ -126,10 +166,17 @@ def load_static_occupancy_into_backend(backend: Any, occupancy_path: str) -> Non
 
 
 def push_backend_map_update(backend: Any, planning_map: Any) -> None:
-    if backend is None or not callable(getattr(backend, "update_map", None)):
+    if backend is None:
         return
     map_payload = coerce_planning_map(planning_map)
-    backend.update_map(
+    update_planning_map = getattr(backend, "update_planning_map", None)
+    if callable(update_planning_map):
+        update_planning_map(map_payload)
+        return
+    update_map = getattr(backend, "update_map", None)
+    if not callable(update_map):
+        return
+    update_map(
         map_payload.grid,
         resolution=map_payload.resolution,
         origin=map_payload.origin,
@@ -151,6 +198,7 @@ def plan_backend(backend: Any, request: GlobalPlanRequest) -> BackendPlanExecuti
                 frame_id=request.frame_id,
                 request_id=request.request_id,
                 map_version=request.map_version,
+                map_generation=request.map_generation,
                 diagnostics=backend_plan_diagnostics(backend),
             )
     except Exception as exc:  # pragma: no cover - exercised through service callers
@@ -160,6 +208,7 @@ def plan_backend(backend: Any, request: GlobalPlanRequest) -> BackendPlanExecuti
             frame_id=request.frame_id,
             request_id=request.request_id,
             map_version=request.map_version,
+            map_generation=request.map_generation,
             diagnostics={
                 "stage": "backend_plan_exception",
                 "error_type": type(exc).__name__,

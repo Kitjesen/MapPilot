@@ -1,139 +1,139 @@
-# Calibration �?传感器标定工具箱
+# Calibration — 传感器离线标定工具箱
 
-多传感器标定工具箱，�?S100P 四足机器人的三类传感器提供出厂标定支持�?
+本目录用于 S100P/Thunder 相关传感器的出厂、返修和现场复核标定。它不是产品运行时链路：LingTu 产品主路径保持 ROS-free，标定阶段可以在独立工位、容器或临时 ROS 环境里使用 ROS1/ROS2/rosbag 兼容工具，最后只把标定结果写回 LingTu 配置。
 
-## 传感�?
+## 标定对象
 
-| 传感�?| 型号 | 标定类型 |
-|--------|------|----------|
-| 相机 | Orbbec RGB-D | 内参 (棋盘�? |
-| IMU | Livox 内置 (200Hz) | 噪声参数 (Allan Variance) |
-| LiDAR | Livox Mid-360 | LiDAR-IMU 外参 + 时间偏移 |
-| 相机+LiDAR | �?| 相机-LiDAR 外参 (target-less) |
+| 传感器 | 型号/来源 | 标定类型 | 结果去向 |
+| --- | --- | --- | --- |
+| 相机 | Orbbec RGB-D | 相机内参、畸变 | `config/robot_config.yaml` |
+| IMU | Livox Mid-360 内置 IMU | Allan Variance 噪声参数 | Fast-LIO2 / Point-LIO 配置 |
+| LiDAR + IMU | Livox Mid-360 + 内置 IMU | 外参、时间偏移、初始 bias | SLAM/LIO 配置 |
+| 相机 + LiDAR | Orbbec + Livox Mid-360 | Camera-LiDAR 外参 | `config/robot_config.yaml` |
 
 ## 目录结构
 
-```
+```text
 calibration/
-├── camera/                    # 相机内参标定 (OpenCV)
-�?  └── calibrate_intrinsic.py
-├── imu/                       # IMU 噪声标定 (Allan Variance)
-�?  ├── allan_variance_ros2/   # 第三�? Autoliv-Research
-�?  └── config/                # 适配 Livox IMU 的配�?
-├── lidar_imu/                 # LiDAR-IMU 外参标定
-�?  ├── LiDAR_IMU_Init/        # 第三�? HKU-MARS (ROS1)
-�?  └── ros2_adapter/          # ROS2 适配�?(rosbag 回放 + 结果解析)
-├── camera_lidar/              # 相机-LiDAR 外参标定 (target-less)
-�?  └── direct_visual_lidar_calibration/  # 第三�? koide3 (ROS2 原生)
-├── apply_calibration.py       # 将所有标定结果写�?robot_config.yaml
-├── verify.py                  # 一键验证所有标定结�?
-└── README.md                  # 本文�?
+├── camera/                         # LingTu-owned OpenCV 相机内参工具
+│   └── calibrate_intrinsic.py
+├── imu/                            # IMU Allan Variance 包装文档和配置
+│   ├── allan_variance_ros2/         # 第三方 Autoliv-Research 离线工具
+│   ├── config/
+│   └── output/
+├── lidar_imu/                      # LiDAR-IMU 标定包装文档和配置
+│   ├── LiDAR_IMU_Init/              # 第三方 HKU-MARS ROS1 工具
+│   ├── config/
+│   ├── output/
+│   └── ros2_adapter/                # 结果解析/兼容脚本；非产品运行时
+├── camera_lidar/                   # Camera-LiDAR 标定工具集合
+│   ├── direct_visual_lidar_calibration/   # 第三方 koide3 ROS2 工具
+│   ├── livox_calib_standalone/            # ROS-free Livox wrapper/CLI
+│   ├── livox_camera_calib/                # 用户新增：HKU-MARS Livox targetless
+│   ├── livox_camera_lidar_calibration/    # 用户新增：Livox 官方 target-based
+│   └── mlcc/                             # 用户新增：HKU-MARS 多 LiDAR/Camera
+├── apply_calibration.py            # 将标定结果写入 LingTu 配置
+├── verify.py                       # 标定配置一致性检查
+└── README.md
 ```
 
-## 出厂标定流程 (SOP)
+## 运行边界
 
-### 前置条件
+- 产品运行时不依赖 ROS、rclpy、roslaunch 或 rosbag。
+- `allan_variance_ros2`、`LiDAR_IMU_Init`、`direct_visual_lidar_calibration`、`livox_camera_calib`、`livox_camera_lidar_calibration`、`mlcc` 都应视为离线标定/对比工具。
+- ROS1/ROS2 环境建议放在专用 Ubuntu 工位、容器或 WSL2，不要安装到 ThunderV4/S100P 的产品控制栈中。
+- 标定完成后的交付物是 YAML/JSON/TXT 参数文件，以及由 `apply_calibration.py` 写入的 LingTu 配置。
 
-```bash
-# 确保 ROS2 Humble 环境
-source /opt/ros/humble/setup.bash
+## 出厂标定 SOP
 
-# 编译标定工具 (Camera-LiDAR 需�?colcon build)
-cd calibration/camera_lidar/direct_visual_lidar_calibration
-colcon build --packages-select direct_visual_lidar_calibration
-```
+### Step 1: 相机内参标定
 
-### Step 1: 相机内参标定 (~5 分钟)
-
-打印一�?9×6 棋盘格，在相机前多角度展示�?
+打印 9×6 棋盘格，在相机前多角度展示。
 
 ```bash
 python calibration/camera/calibrate_intrinsic.py auto --device 0
 
-# 或者分步执�?
+# 或分步执行
 python calibration/camera/calibrate_intrinsic.py capture --device 0 --out calib_imgs/
 python calibration/camera/calibrate_intrinsic.py calibrate --images calib_imgs/ --out calibration/camera/output/camera_calib.yaml
 ```
 
-输出: `camera_calib.yaml` (fx, fy, cx, cy, 畸变系数)
+输出：`calibration/camera/output/camera_calib.yaml`。
 
-### Step 2: IMU 噪声标定 (~2-3 小时)
+### Step 2: IMU 噪声标定
 
-将机器人放在稳定平面上，静置录制 IMU 数据�?
+将机器人静置在稳定平面，采集 2–3 小时 Livox IMU 数据，再用 Allan Variance 拟合噪声模型。
 
 ```bash
-# 1. 录制静�?IMU 数据 (至少 2 小时)
-ros2 bag record /livox/imu -o imu_static_bag
+source /opt/ros/humble/setup.bash
+cd calibration/imu/allan_variance_ros2
+colcon build --packages-select allan_variance_ros2
+source install/setup.bash
 
-# 2. 运行 Allan Variance 分析
+ros2 bag record /livox/imu -o imu_static_bag --duration 7200
 ros2 run allan_variance_ros2 allan_variance \
-    imu_static_bag \
-    calibration/imu/config/livox_mid360_imu.yaml
+  imu_static_bag \
+  calibration/imu/config/livox_mid360_imu.yaml
 
-# 3. 拟合噪声模型
 python3 calibration/imu/allan_variance_ros2/src/allan_variance_ros2/scripts/analysis.py \
-    --data allan_variance.csv
+  --data allan_variance.csv
 ```
 
-输出: `imu.yaml` (accelerometer_noise_density, gyroscope_noise_density, random_walk)
+输出：`imu.yaml`，包含 `accelerometer_noise_density`、`gyroscope_noise_density` 和 random walk 参数。
 
-### Step 3: LiDAR-IMU 外参标定 (~2 分钟)
+### Step 3: LiDAR-IMU 外参标定
 
-让机器人�?8 字运动，激发所有轴的运动�?
+让机器人做 8 字运动，充分激发各轴。LI-Init 是 ROS1/catkin 工具；ROS2 bag 只能通过离线 replay/bridge 进入该工具。
 
 ```bash
-# 方法 A: 使用 ROS2 adapter (推荐)
-# 先录一段包�?/livox/lidar + /livox/imu �?rosbag
 ros2 bag record /livox/lidar /livox/imu -o lidar_imu_bag --duration 60
 
-# 通过 ros1_bridge 回放�?LI-Init (需�?ROS1 环境)
-# 或者用我们�?Python adapter:
-python calibration/lidar_imu/ros2_adapter/run_calibration.py \
-    --bag lidar_imu_bag \
-    --config calibration/lidar_imu/config/mid360.yaml
-
-# 方法 B: 直接�?ROS1 环境运行
+# ROS1 环境中运行 LI-Init
 roslaunch lidar_imu_init livox_mid360.launch
+
+# 解析结果
+python calibration/lidar_imu/ros2_adapter/parse_result.py \
+  --input calibration/lidar_imu/LiDAR_IMU_Init/result/Initialization_result.txt \
+  --output calibration/lidar_imu/output/lidar_imu_calib.yaml
 ```
 
-输出: `Initialization_result.txt` (r_il, t_il, time_offset, gravity, bias)
+输出：`calibration/lidar_imu/output/lidar_imu_calib.yaml` 或原始 `Initialization_result.txt`。
 
-### Step 4: 相机-LiDAR 外参标定 (~10 分钟)
+### Step 4: Camera-LiDAR 外参标定
 
-在有丰富纹理的环境中，静止录�?5-10 组数据�?
+默认优先使用 `direct_visual_lidar_calibration` 做 target-less 标定；对于 Livox 专用对比或需要标定板的场景，可使用下面“第三方工具”表中的替代工具。
 
 ```bash
-# 1. 录制数据 (每组静止 15 �?
+python scripts/build/build_rust_kernels.py --target camera_lidar_optimizer --release
+cd calibration/camera_lidar/direct_visual_lidar_calibration
+source /opt/ros/humble/setup.bash
+colcon build --packages-select direct_visual_lidar_calibration
+source install/setup.bash
+
 ros2 bag record /camera/color/image_raw /camera/camera_info /livox/lidar \
-    -o calib_bag_01 --duration 15
+  -o calib_bag_01 --duration 15
 
-# 2. 预处�?
 ros2 run direct_visual_lidar_calibration preprocess \
-    calib_bag_01 preprocessed_01 \
-    --image_topic /camera/color/image_raw \
-    --camera_info_topic /camera/camera_info \
-    --points_topic /livox/lidar
+  calib_bag_01 preprocessed_01 \
+  --image_topic /camera/color/image_raw \
+  --camera_info_topic /camera/camera_info \
+  --points_topic /livox/lidar
 
-# 3. 初始猜测 (手动点�?3+ 对应�?
 ros2 run direct_visual_lidar_calibration initial_guess_manual preprocessed_01
-
-# 4. 优化标定
 ros2 run direct_visual_lidar_calibration calibrate preprocessed_01
-
-# 5. 验证 (可视化点云投�?
 ros2 run direct_visual_lidar_calibration viewer preprocessed_01
 ```
 
-输出: `calib.json` (T_lidar_camera: [x, y, z, qx, qy, qz, qw])
+输出：`preprocessed_01/calib.json`。
 
-### Step 5: 一键应�?
+### Step 5: 写入 LingTu 配置
 
 ```bash
 python calibration/apply_calibration.py \
-    --camera calibration/camera/output/camera_calib.yaml \
-    --imu calibration/imu/output/imu.yaml \
-    --lidar-imu calibration/lidar_imu/output/Initialization_result.txt \
-    --camera-lidar calibration/camera_lidar/output/calib.json
+  --camera calibration/camera/output/camera_calib.yaml \
+  --imu calibration/imu/output/imu.yaml \
+  --lidar-imu calibration/lidar_imu/output/lidar_imu_calib.yaml \
+  --camera-lidar calibration/camera_lidar/output/calib.json
 ```
 
 ### Step 6: 验证
@@ -142,30 +142,40 @@ python calibration/apply_calibration.py \
 python calibration/verify.py
 ```
 
-## 第三方项�?
+## 第三方工具清单
 
-| 项目 | 来源 | License | 用�?|
-|------|------|---------|------|
-| allan_variance_ros2 | [Autoliv-Research](https://github.com/Autoliv-Research/allan_variance_ros2) | BSD-3 | IMU Allan Variance |
-| LiDAR_IMU_Init | [HKU-MARS](https://github.com/hku-mars/LiDAR_IMU_Init) | GPL-2.0 | LiDAR-IMU 外参 |
-| direct_visual_lidar_calibration | [koide3](https://github.com/koide3/direct_visual_lidar_calibration) | MIT | 相机-LiDAR 外参 |
+| 项目 | 来源 | License | 用途 | LingTu 使用边界 |
+| --- | --- | --- | --- | --- |
+| `allan_variance_ros2` | [Autoliv-Research](https://github.com/Autoliv-Research/allan_variance_ros2) | BSD-3 | IMU Allan Variance | 离线噪声拟合 |
+| `LiDAR_IMU_Init` | [HKU-MARS](https://github.com/hku-mars/LiDAR_IMU_Init) | GPL-2.0 | LiDAR-IMU 外参 | 离线工具；不要并入产品 runtime |
+| `direct_visual_lidar_calibration` | [koide3](https://github.com/koide3/direct_visual_lidar_calibration) | MIT | Camera-LiDAR target-less 外参 | 默认离线标定工具 |
+| `livox_calib_standalone` | LingTu wrapper around Livox calibration code | mixed/upstream-dependent | ROS-free Livox Camera-LiDAR wrapper | 优先用于无 ROS 工位验证 |
+| `livox_camera_calib` | [hku-mars](https://github.com/hku-mars/livox_camera_calib) | MIT | Livox 专用 target-less Camera-LiDAR 外参 | 用户新增；离线对比工具 |
+| `livox_camera_lidar_calibration` | [Livox-SDK](https://github.com/Livox-SDK/livox_camera_lidar_calibration) | MIT | Livox 官方 target-based Camera-LiDAR 外参 | 用户新增；需要标定板 |
+| `mlcc` | [hku-mars](https://github.com/hku-mars/mlcc) | GPL-2.0 | 多 LiDAR + 多 Camera 联合标定 | 用户新增；研究/离线工具 |
 
-## 标定参数输出到哪�?
+## 标定参数最终写到哪里
 
-所有标定结果最终写�?`config/robot_config.yaml`:
+所有可采纳结果最终应汇总到 `config/robot_config.yaml` 及相关 SLAM 配置：
 
 ```yaml
 camera:
-  fx, fy, cx, cy           # �?Step 1 相机内参
-  dist_k1..k3, dist_p1..p2 # �?Step 1 畸变系数
-  position_x/y/z           # �?Step 4 相机-LiDAR 外参 (�?LiDAR-body �?
-  roll, pitch, yaw         # �?Step 4 旋转
+  fx, fy, cx, cy           # Step 1 相机内参
+  dist_k1..k3, dist_p1..p2 # Step 1 畸变系数
+  position_x/y/z           # Step 4 Camera-LiDAR 外参
+  roll, pitch, yaw         # Step 4 旋转
 
 lidar:
-  offset_x/y/z             # �?Step 3 LiDAR-IMU 外参 (t_il)
-  roll, pitch, yaw         # �?Step 3 旋转 (r_il)
+  offset_x/y/z             # Step 3 LiDAR-IMU 外参 t_il
+  roll, pitch, yaw         # Step 3 旋转 r_il
 
-# Fast-LIO2 / Point-LIO 配置也同步更�?
-#   src/localization/fastlio2/config/lio.yaml  �?na, ng, nba, nbg, r_il, t_il
-#   config/pointlio.yaml               �?相应参数
+# Fast-LIO2 / Point-LIO 配置同步更新：
+#   src/localization/fastlio2/config/lio.yaml
+#   config/pointlio.yaml
 ```
+
+接受标定结果前至少完成：
+
+- `python calibration/verify.py`
+- Camera-LiDAR 点云投影目视检查
+- SLAM 启动后的静止漂移和短距离往返检查

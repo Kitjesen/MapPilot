@@ -36,6 +36,7 @@ from nav.building.orchestrator import (
     BuildingNavigationPort,
     FloorTransitionPort,
 )
+from nav.building.service import BuildingService
 
 __all__ = [
     "ActiveFloor",
@@ -45,6 +46,7 @@ __all__ = [
     "BuildingMissionRequest",
     "BuildingMissionStatus",
     "BuildingNavigationPort",
+    "BuildingService",
     "CorrelatedNativeNavigationPort",
     "FloorLocalizationPort",
     "FloorTransitionPort",

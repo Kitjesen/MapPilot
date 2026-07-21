@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from sim.engine.mujoco import robot_controller
+from sim.engine.mujoco.engine import MuJoCoEngine
 from sim.scripts.mujoco import native_dds_sensors as sensors
 from sim.scripts.mujoco import native_navigation_acceptance as acceptance
 from sim.scripts.mujoco import native_navigation_video as navigation_video
@@ -54,7 +55,10 @@ def test_cpp_cmd_vel_tap_consumes_canonical_typed_dds_topic():
     cmake = (ROOT / "sim" / "native_dds" / "CMakeLists.txt").read_text(encoding="utf-8")
 
     assert "lingtu::message::kNavCmdVel" in source
-    assert "lingtu_dds_TwistStamped_desc" in source
+    assert "lingtu_dds_FinalVelocityCommand_desc" in source
+    assert "lingtu_dds_TwistStamped_desc" not in source
+    assert "static_cast<const lingtu_dds_FinalVelocityCommand*>" in source
+    assert "sourceWallSeconds(*msg)" in source
     assert "qos_for_topic(contract.dds_topic)" in source
     assert "LT_CMD_V1" in source
     assert "src/message/idl/lingtu_slam.idl" in cmake
@@ -77,6 +81,11 @@ def test_cpp_cmd_vel_tap_publishes_simulated_thunder_control_readiness():
 def test_native_navigation_phase_timeout_includes_wsl_shutdown_grace():
     assert acceptance._phase_runtime_timeout_s(20.0, 120.0) == pytest.approx(140.0)
     assert acceptance._phase_runtime_timeout_s(20.0, 10.0) == pytest.approx(80.0)
+    assert acceptance._phase_runtime_timeout_s(
+        20.0,
+        10.0,
+        realtime_factor=0.5,
+    ) == pytest.approx(100.0)
 
 
 def test_compiled_lidar_offset_uses_final_site_pose_not_local_site_pos(tmp_path):
@@ -165,14 +174,18 @@ def test_acceptance_text_capture_tolerates_missing_subprocess_streams():
     assert acceptance._text_tail("abcdef", 3) == "def"
 
 
-def test_mujoco_sensor_records_are_restamped_inside_native_publisher():
+def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_replay():
     publisher = (ROOT / "src" / "drivers" / "real" / "lidar" / "sdk2_stream" / "main.cpp").read_text(encoding="utf-8")
     sensor_bridge = (ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py").read_text(encoding="utf-8")
+    endpoint = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    traversability = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "traversability_dds.cpp").read_text(encoding="utf-8")
 
     assert "--restamp-stdin-records" in publisher
     assert "replay_restamper.stamp_ns(source_timestamp_ns, target_deadline)" in publisher
     assert "if (navigation_fixture)" in publisher
-    assert "source_timestamp_ns, std::chrono::steady_clock::now()" in publisher
+    assert "return source_timestamp_ns;" in publisher.split("if (navigation_fixture)", 1)[1].split("}", 1)[0]
+    assert "replay_restamper.stamp_monotonic_ns(" not in publisher
+    assert "source_timestamp_ns, std::chrono::steady_clock::now()" not in publisher
     assert "replay_rate > 0.0 && !navigation_fixture" in publisher
     restamper = (
         ROOT
@@ -186,7 +199,50 @@ def test_mujoco_sensor_records_are_restamped_inside_native_publisher():
     assert "steady_now - target_deadline" in restamper
     assert "cached_source_ns_ == source_timestamp_ns" in restamper
     assert "*cached_output_ns_ <= realtime_now_ns" in restamper
-    assert '"--restamp-stdin-records"' in sensor_bridge
+    publisher_start = sensor_bridge.split("def _start_native_publisher", 1)[1].split(
+        "def ", 1
+    )[0]
+    assert "if not bool(getattr(args, \"navigation_fixture\", False))" in publisher_start
+    assert 'command.append("--restamp-stdin-records")' in publisher_start
+    assert "classifySourceOrder(\n              last_tf_s" in endpoint
+    assert "tf_stamp_decision == SourceStampDecision::kClockRebase" in endpoint
+    assert "classifySourceOrder(\n              last_odom_s" in endpoint
+    assert "odom_stamp_decision == SourceStampDecision::kClockRebase" in endpoint
+    assert 'reset_navigation_epoch(tf->stamp_s, "source_clock_rebase", false)' in endpoint
+    tf_handler = endpoint.split("dds.drainTf", 1)[1].split("dds.drainOdometry", 1)[0]
+    assert tf_handler.index("const bool map_frame_jump") < tf_handler.index(
+        "tf_stamp_decision == SourceStampDecision::kClockRebase"
+    )
+    assert "classifySourceOrder(\n              last_cloud_s" in endpoint
+    assert "classifySourceOrder(\n              last_traversability_s" in endpoint
+    assert "classifySourceOrder(\n              localization_health.stamp_s" in endpoint
+    assert "const double input_now = steadySeconds();" in endpoint
+    assert "input_snapshot.odom_receive_s = last_odom_receive_s;" in endpoint
+    assert "input_snapshot.tf_receive_s = last_tf_receive_s;" in endpoint
+    assert "input_snapshot.cloud_receive_s = last_cloud_receive_s;" in endpoint
+    assert "input_snapshot.traversability_receive_s = last_traversability_receive_s;" in endpoint
+    assert "input_snapshot.localization_health_receive_s = localization_health_receive_s;" in endpoint
+    cloud_handler = endpoint.split("dds.drainCloud", 1)[1].split("dds.drainTerrainMap", 1)[0]
+    traversability_handler = endpoint.split("dds.drainTraversability", 1)[1].split(
+        "dds.drainLocalizationHealth", 1
+    )[0]
+    health_handler = endpoint.split("dds.drainLocalizationHealth", 1)[1].split("auto handle_cancel", 1)[0]
+    assert "reset_navigation_epoch" not in cloud_handler
+    assert "reset_navigation_epoch" not in traversability_handler
+    assert "reset_navigation_epoch" not in health_handler
+    assert "nav.tickTeleopIntent(\n" in endpoint
+    assert "nav.tick(\n" in endpoint
+    assert endpoint.count("steadySeconds(),") >= 2
+    assert "teleop_receive_time" in endpoint
+    assert "const double schedule_now = steadySeconds();" in traversability
+    assert "last_publish = schedule_now;" in traversability
+    assert "last_map_odom_receive_s = steadySeconds();" in traversability
+    assert "schedule_now - last_map_odom_receive_s" in traversability
+    assert "now - map_odom->stamp_s" not in traversability
+    assert "const auto odom_stamp_decision" in traversability
+    assert "const auto cloud_stamp_decision" in traversability
+    assert traversability.count("classifySourceOrder(") >= 3
+    assert traversability.count("SourceStampDecision::kClockRebase") >= 3
 
 
 def test_motion_log_contract_captures_native_navigation_and_visual_state(tmp_path):
@@ -228,7 +284,7 @@ def test_sensor_loop_records_the_exact_terminal_goal_snapshot_before_breaking():
     assert "nav_status_snapshot" in sensor_source
 
 
-def test_motion_log_hydrates_deduplicated_planner_debug_sidecar(tmp_path):
+def test_motion_log_joins_exact_planner_debug_id_across_clock_domains(tmp_path):
     motion_log = tmp_path / "motion.jsonl"
     debug_log = tmp_path / "motion_planner_debug.jsonl"
     motion_log.write_text(
@@ -270,9 +326,16 @@ def test_motion_log_hydrates_deduplicated_planner_debug_sidecar(tmp_path):
             "local_planner_debug": {
                 "valid": True,
                 "timestamp_s": 12.55,
-                "candidates": [{"selected": False, "path": [[0, 0, 0], [2, 0, 0]]}],
+                "candidates": [{"selected": True, "path": [[0, 0, 0], [2, 0, 0]]}],
             },
             "local_map": {"enabled": True, "obstacle_points": [[2, 0, 0, 1]]},
+            "global_path": [[0, 0, 0], [8, 0, 0]],
+            "local_path": [[0, 0, 0], [2, 0, 0]],
+            "last_local": {"reason": "control_ready", "near_field_stop": False},
+            "input_gate": {"reason": "ready"},
+            "dynamic_objects": [
+                {"id": 8, "centroid": [2.0, 0.2, 0.3], "velocity": [0.2, 0.0, 0.0]}
+            ],
         },
     ]
     debug_log.write_text(
@@ -283,17 +346,124 @@ def test_motion_log_hydrates_deduplicated_planner_debug_sidecar(tmp_path):
     rows = navigation_video._load_jsonl(motion_log)
 
     assert len(rows) == 1
-    assert rows[0]["planner_debug_id"] == 7
-    assert rows[0]["nav_status_stamp_s"] == 12.4
-    assert rows[0]["nav_status_hold_age_s"] == pytest.approx(0.1)
+    assert rows[0]["planner_debug_id"] == 8
+    assert rows[0]["nav_status_stamp_s"] == 12.6
+    assert rows[0]["planner_debug_join"] == "exact_id"
+    assert rows[0]["nav_status_hold_age_s"] == pytest.approx(0.0)
     assert rows[0]["local_candidates"][0]["selected"] is True
     assert rows[0]["local_map"]["enabled"] is True
-    assert rows[0]["local_planner_debug"]["timestamp_s"] == 12.3
+    assert rows[0]["local_planner_debug"]["timestamp_s"] == 12.55
     assert rows[0]["local_reason"] == "control_ready"
-    assert rows[0]["global_path"][-1] == [4, 0, 0]
+    assert rows[0]["global_path"][-1] == [8, 0, 0]
     assert rows[0]["input_gate"]["reason"] == "ready"
-    assert rows[0]["dynamic_objects"][0]["id"] == 3
-    assert navigation_video._snapshot_age_s(rows[0]) == pytest.approx(0.2)
+    assert rows[0]["dynamic_objects"][0]["id"] == 8
+    assert navigation_video._snapshot_age_s(rows[0]) == pytest.approx(0.0)
+
+
+def test_exact_planner_debug_id_expires_on_motion_clock_when_status_stops(tmp_path):
+    motion_log = tmp_path / "motion.jsonl"
+    debug_log = tmp_path / "motion_planner_debug.jsonl"
+    motion_log.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "qpos": [0.0],
+                    "driving": True,
+                    "t": stamp,
+                    "planner_debug_id": 5,
+                }
+            )
+            + "\n"
+            for stamp in (100.0, 100.9)
+        ),
+        encoding="utf-8",
+    )
+    debug_log.write_text(
+        json.dumps(
+            {
+                "id": 5,
+                "nav_status_stamp_s": 200.0,
+                "local_planner_debug": {
+                    "valid": True,
+                    "timestamp_s": 50.0,
+                    "candidates": [
+                        {"selected": True, "path": [[0, 0, 0], [1, 0, 0]]}
+                    ],
+                },
+                "local_map": {"enabled": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    rows = navigation_video._load_jsonl(motion_log)
+
+    assert navigation_video._snapshot_age_s(rows[0]) == pytest.approx(0.0)
+    assert navigation_video._effective_local_candidates(rows[0])
+    assert navigation_video._snapshot_age_s(rows[1]) == pytest.approx(0.9)
+    assert navigation_video._effective_local_candidates(rows[1]) == []
+
+
+def test_missing_exact_planner_debug_id_does_not_guess_by_cross_clock_stamp(tmp_path):
+    motion_log = tmp_path / "motion.jsonl"
+    debug_log = tmp_path / "motion_planner_debug.jsonl"
+    motion_log.write_text(
+        json.dumps(
+            {
+                "qpos": [0.0],
+                "driving": True,
+                "t": 12.5,
+                "planner_debug_id": 99,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    debug_log.write_text(
+        json.dumps(
+            {
+                "id": 7,
+                "nav_status_stamp_s": 12.4,
+                "local_planner_debug": {
+                    "valid": True,
+                    "candidates": [
+                        {"selected": True, "path": [[0, 0, 0], [1, 0, 0]]}
+                    ],
+                },
+                "local_map": {"enabled": True},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = navigation_video._load_jsonl(motion_log)[0]
+
+    assert row.get("planner_debug_join") is None
+    assert navigation_video._effective_local_candidates(row) == []
+    assert navigation_video._effective_local_map(row) == {}
+
+
+def test_navigation_video_snapshot_age_uses_joined_status_clock_not_planner_steady_clock():
+    row = {
+        "t": 1_784_361_436.85,
+        "nav_status_stamp_s": 1_784_361_436.75,
+        "local_planner_debug": {
+            "valid": True,
+            "timestamp_s": 489.48,
+        },
+        "local_candidates": [
+            {
+                "selected": True,
+                "path": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+            }
+        ],
+    }
+
+    assert navigation_video._snapshot_age_s(row) == pytest.approx(0.1)
+    assert navigation_video._planner_snapshot_is_fresh(row) is True
+    assert navigation_video._effective_local_candidates(row)
 
 
 def test_native_navigation_video_preserves_source_timeline_with_cfr_holds():
@@ -758,6 +928,8 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     assert manifest["sensor_runtime"]["mid360_samples_per_frame"] == 10000
     assert manifest["sensor_runtime"]["imu_hz"] == 100.0
     assert manifest["sensor_runtime"]["scan_time_profile"] == "instantaneous"
+    assert manifest["runtime_tolerances"]["sim_hardware_realtime_factor"] == 0.5
+    assert manifest["sensor_runtime"]["physics_integrator"] == "euler"
     assert "physical_rolling_sample_mode" not in manifest["sensor_runtime"]
     assert manifest["telemetry_log"]["hz"] == 10.0
     assert manifest["telemetry_log"]["lidar_points"] == 640
@@ -789,6 +961,7 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     assert sensor_args[sensor_args.index("--scan-time-profile") + 1] == "instantaneous"
     assert sensor_args[sensor_args.index("--navigation-fixture-cloud-points") + 1] == "4000"
     assert sensor_args[sensor_args.index("--imu-hz") + 1] == "100.0"
+    assert sensor_args[sensor_args.index("--physics-integrator") + 1] == "euler"
     source = (ROOT / "sim" / "scripts" / "mujoco" / "native_navigation_acceptance.py").read_text(encoding="utf-8")
     assert '"--corridor-lookahead-m"' in source
     endpoint_source = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "nav_native_endpoint.cpp").read_text(
@@ -796,6 +969,46 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     )
     assert ("nav_config.local_planner.footprintPadding = safety_config.obstacle_margin_m;") in endpoint_source
     assert endpoint_source.count("const auto safety_config = commandSafetyConfig(cfg);") == 1
+
+
+def test_video_capture_uses_live_telemetry_rate_instead_of_encoder_fps():
+    settings = acceptance._motion_capture_settings(
+        record_video=True,
+        record_telemetry=True,
+        video_cfg={"fps": 24.0, "lidar_points": 640},
+        telemetry_cfg={"hz": 10.0, "lidar_points": 320},
+    )
+
+    assert settings == (10.0, 640)
+
+
+def test_video_only_capture_defaults_to_ten_hz_live_sampling():
+    settings = acceptance._motion_capture_settings(
+        record_video=True,
+        record_telemetry=False,
+        video_cfg={"fps": 30.0, "lidar_points": 512},
+        telemetry_cfg={},
+    )
+
+    assert settings == (10.0, 512)
+
+
+def test_mujoco_engine_exposes_explicit_integrator_override(monkeypatch):
+    integrators = SimpleNamespace(
+        mjINT_EULER=10,
+        mjINT_RK4=11,
+        mjINT_IMPLICIT=12,
+        mjINT_IMPLICITFAST=13,
+    )
+    monkeypatch.setitem(sys.modules, "mujoco", SimpleNamespace(mjtIntegrator=integrators))
+    engine = object.__new__(MuJoCoEngine)
+    engine._model = SimpleNamespace(opt=SimpleNamespace(integrator=integrators.mjINT_RK4))
+
+    assert engine.physics_integrator == "rk4"
+    assert engine.set_physics_integrator("euler") == "euler"
+    assert engine._model.opt.integrator == integrators.mjINT_EULER
+    with pytest.raises(ValueError, match="unsupported MuJoCo integrator"):
+        engine.set_physics_integrator("bogus")
 
 
 def test_required_video_artifact_blocks_when_not_requested_or_rendering_fails():
@@ -819,7 +1032,16 @@ def test_video_artifact_gate_accepts_success_and_optional_runs():
     assert (
         acceptance._video_artifact_blocker(
             required=True,
-            video_report={"requested": True, "ok": True},
+            video_report={
+                "requested": True,
+                "ok": True,
+                "candidate_frames": 12,
+                "selected_candidate_frames": 12,
+                "local_map_frames": 12,
+                "visible_local_map_frames": 8,
+                "exact_planner_join_frames": 12,
+                "presentation_lighting": {"brightness_ok": True},
+            },
         )
         is None
     )
@@ -830,6 +1052,67 @@ def test_video_artifact_gate_accepts_success_and_optional_runs():
         )
         is None
     )
+
+
+def test_required_video_artifact_blocks_missing_planner_presentation_evidence():
+    base = {
+        "requested": True,
+        "ok": True,
+        "candidate_frames": 12,
+        "selected_candidate_frames": 12,
+        "local_map_frames": 12,
+        "visible_local_map_frames": 8,
+        "exact_planner_join_frames": 12,
+        "presentation_lighting": {"brightness_ok": True},
+    }
+
+    assert acceptance._video_artifact_blocker(
+        required=True,
+        video_report={**base, "candidate_frames": 0},
+    ) == "native_navigation_video_candidates_missing"
+    assert acceptance._video_artifact_blocker(
+        required=True,
+        video_report={**base, "selected_candidate_frames": 0},
+    ) == "native_navigation_video_selected_path_missing"
+    assert acceptance._video_artifact_blocker(
+        required=True,
+        video_report={**base, "local_map_frames": 0},
+    ) == "native_navigation_video_local_map_missing"
+    assert acceptance._video_artifact_blocker(
+        required=True,
+        video_report={**base, "visible_local_map_frames": 0},
+    ) == "native_navigation_video_local_map_not_visible"
+    assert acceptance._video_artifact_blocker(
+        required=True,
+        video_report={**base, "exact_planner_join_frames": 0},
+    ) == "native_navigation_video_exact_join_missing"
+    assert acceptance._video_artifact_blocker(
+        required=True,
+        video_report={
+            **base,
+            "presentation_lighting": {"brightness_ok": False},
+        },
+    ) == "native_navigation_video_brightness_failed"
+
+
+def test_video_decode_validation_rejects_ffmpeg_decoder_errors(monkeypatch, tmp_path):
+    video_path = tmp_path / "navigation.mp4"
+    video_path.write_bytes(b"not-a-real-video")
+    monkeypatch.setattr(navigation_video.shutil, "which", lambda _name: "ffmpeg")
+    monkeypatch.setattr(
+        navigation_video.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="Invalid NAL unit size",
+        ),
+    )
+
+    result = navigation_video._validate_video_decode(video_path)
+
+    assert result["ok"] is False
+    assert result["method"] == "ffmpeg_full_decode"
+    assert "Invalid NAL unit size" in result["error"]
 
 
 def test_navigation_fixture_readiness_uses_native_nav_odom_without_slam_status():
@@ -1476,9 +1759,10 @@ def test_native_evidence_tracks_input_sync_rejections_stale_streak_and_loop_over
     def sample(*, ready, odom_rejected, cloud_pose_rejected, overrun_ms):
         nav_status.write_text(
             json.dumps(
-                {
-                    "input_gate": {"ready": ready},
-                    "frame_gate": {"odom_rejected": odom_rejected},
+                    {
+                        "input_gate": {"ready": ready},
+                        "command_boundary": {"last_accepted": True},
+                        "frame_gate": {"odom_rejected": odom_rejected},
                     "cloud_sync": {"pose_rejected": cloud_pose_rejected},
                     "timing_ms": {"overrun": overrun_ms},
                 }
@@ -1504,6 +1788,141 @@ def test_native_evidence_tracks_input_sync_rejections_stale_streak_and_loop_over
     assert evidence.to_dict()["max_consecutive_input_stale_s"] == pytest.approx(0.4)
 
 
+def test_native_evidence_excludes_startup_samples_without_explicit_input_gate(tmp_path):
+    nav_status = tmp_path / "nav.json"
+    missing_slam = tmp_path / "missing-slam.json"
+    missing_traversability = tmp_path / "missing-traversability.json"
+    evidence = acceptance.NativeEvidence()
+
+    nav_status.write_text(
+        json.dumps(
+            {
+                "frame_gate": {"odom_rejected": 90},
+                "cloud_sync": {"pose_rejected": 80},
+                "timing_ms": {"overrun": 700.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence.sample(
+        nav_path=nav_status,
+        slam_path=missing_slam,
+        traversability_path=missing_traversability,
+    )
+
+    nav_status.write_text(
+        json.dumps(
+                {
+                    "input_gate": {"ready": True, "reason": "ready"},
+                    "command_boundary": {"last_accepted": True},
+                    "frame_gate": {"odom_rejected": 1},
+                "cloud_sync": {"pose_rejected": 2},
+                "timing_ms": {"overrun": 4.0},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence.sample(
+        nav_path=nav_status,
+        slam_path=missing_slam,
+        traversability_path=missing_traversability,
+    )
+
+    assert evidence.samples == 2
+    assert evidence.motion_health_samples == 1
+    assert evidence.input_gate_ready_samples == 1
+    assert evidence.max_odom_tf_rejections == 1
+    assert evidence.max_cloud_pose_rejections == 2
+    assert evidence.max_navigation_loop_overrun_ms == pytest.approx(4.0)
+
+
+def test_native_evidence_starts_motion_health_only_after_command_is_accepted(tmp_path):
+    nav_status = tmp_path / "nav.json"
+    missing_slam = tmp_path / "missing-slam.json"
+    missing_traversability = tmp_path / "missing-traversability.json"
+    evidence = acceptance.NativeEvidence()
+
+    nav_status.write_text(
+        json.dumps({"input_gate": {"ready": True, "reason": "ready"}}),
+        encoding="utf-8",
+    )
+    evidence.sample(
+        nav_path=nav_status,
+        slam_path=missing_slam,
+        traversability_path=missing_traversability,
+    )
+    assert evidence.motion_health_samples == 0
+
+    nav_status.write_text(
+        json.dumps(
+            {
+                "input_gate": {"ready": True, "reason": "ready"},
+                "command_boundary": {"last_accepted": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence.sample(
+        nav_path=nav_status,
+        slam_path=missing_slam,
+        traversability_path=missing_traversability,
+    )
+    assert evidence.motion_health_samples == 1
+    assert evidence.input_gate_ready_samples == 1
+
+
+def test_native_evidence_can_read_final_status_without_polluting_motion_health(tmp_path):
+    nav_status = tmp_path / "nav.json"
+    missing_slam = tmp_path / "missing-slam.json"
+    missing_traversability = tmp_path / "missing-traversability.json"
+    evidence = acceptance.NativeEvidence()
+
+    nav_status.write_text(
+        json.dumps(
+            {
+                "input_gate": {"ready": True, "reason": "ready"},
+                "command_boundary": {"last_accepted": True},
+                "frame_gate": {"odom_rejected": 1},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence.sample(
+        nav_path=nav_status,
+        slam_path=missing_slam,
+        traversability_path=missing_traversability,
+    )
+
+    nav_status.write_text(
+        json.dumps(
+            {
+                "input_gate": {"ready": False, "reason": "driver_control_stale"},
+                "frame_gate": {"odom_rejected": 99},
+            }
+        ),
+        encoding="utf-8",
+    )
+    evidence.sample(
+        nav_path=nav_status,
+        slam_path=missing_slam,
+        traversability_path=missing_traversability,
+        collect_motion_health=False,
+    )
+
+    assert evidence.motion_health_samples == 1
+    assert evidence.input_gate_ready_samples == 1
+    assert evidence.max_odom_tf_rejections == 1
+    assert evidence.last_nav["input_gate"]["reason"] == "driver_control_stale"
+
+
+def test_motion_health_collection_stops_at_sensor_motion_complete_marker(tmp_path):
+    marker = tmp_path / "motion_complete.json"
+
+    assert acceptance._motion_health_collection_active(marker) is True
+    marker.write_text('{"complete":true}\n', encoding="utf-8")
+    assert acceptance._motion_health_collection_active(marker) is False
+
+
 def test_native_evidence_freezes_motion_health_after_goal_reached_during_sensor_teardown(tmp_path):
     nav_status = tmp_path / "nav.json"
     missing_slam = tmp_path / "missing-slam.json"
@@ -1520,9 +1939,10 @@ def test_native_evidence_freezes_motion_health_after_goal_reached_during_sensor_
     ) -> None:
         nav_status.write_text(
             json.dumps(
-                {
-                    "input_gate": {"ready": ready, "reason": "ready" if ready else "odom_stale"},
-                    "frame_gate": {"odom_rejected": odom_rejected},
+                    {
+                        "input_gate": {"ready": ready, "reason": "ready" if ready else "odom_stale"},
+                        "command_boundary": {"last_accepted": True},
+                        "frame_gate": {"odom_rejected": odom_rejected},
                     "cloud_sync": {"pose_rejected": cloud_pose_rejected},
                     "timing_ms": {"overrun": overrun_ms},
                     "last_local": {"goal_reached": goal_reached},
@@ -1580,9 +2000,10 @@ def test_native_evidence_reports_loop_overrun_distribution_and_peak_context(tmp_
     for sample_index, overrun_ms in enumerate(overruns_ms, start=1):
         nav_status.write_text(
             json.dumps(
-                {
-                    "input_gate": {"ready": True, "reason": "ready"},
-                    "frame_gate": {"odom_rejected": 0},
+                    {
+                        "input_gate": {"ready": True, "reason": "ready"},
+                        "command_boundary": {"last_accepted": True},
+                        "frame_gate": {"odom_rejected": 0},
                     "cloud_sync": {"pose_rejected": 0},
                     "timing_ms": {"loop": round(50.0 + overrun_ms, 2), "overrun": overrun_ms},
                     "last_local": {"reason": "path_found", "goal_reached": False},

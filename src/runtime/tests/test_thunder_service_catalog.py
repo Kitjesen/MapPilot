@@ -74,6 +74,7 @@ def test_service_manager_uses_thunder_catalog_aliases():
     assert SERVICE_ALIASES["explore"][0] == "lingtu-explore-dds.service"
     assert SERVICE_ALIASES["gateway"][0] == "lingtu.service"
     assert SERVICE_ALIASES["lingtu"][0] == "lingtu.service"
+    assert SERVICE_ALIASES["runtime"][0] == "lingtu.service"
 
 
 def test_thunder_catalog_declares_product_readiness_contracts():

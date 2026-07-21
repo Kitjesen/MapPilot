@@ -68,7 +68,7 @@ SOURCE_FRAME_CONTRACT_ROOTS = (
     "src/nav",
     "src/nav/local",
     "src/runtime/msgs",
-    "src/runtime/blueprints",
+    "src/lingtu/assembly",
     "src/gateway/schemas.py",
     "src/gateway/services/control_commands.py",
     "src/gateway/services/goal_builder.py",
@@ -181,6 +181,25 @@ def _as_str_mapping(mapping: Mapping[str, Any] | None) -> dict[str, str]:
     if not isinstance(mapping, Mapping):
         return {}
     return {str(key): str(value) for key, value in mapping.items()}
+
+
+def _normalized_message_formats(
+    formats: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Normalize the YAML/runtime payload fields that must stay identical."""
+
+    if not isinstance(formats, Mapping):
+        return {}
+    normalized: dict[str, dict[str, Any]] = {}
+    for name, spec in formats.items():
+        entry = spec if isinstance(spec, Mapping) else {}
+        normalized[str(name)] = {
+            "ros_type": str(entry.get("ros_type") or ""),
+            "required_fields": tuple(
+                str(field) for field in (entry.get("required_fields") or ())
+            ),
+        }
+    return normalized
 
 
 def _normalized_adapter_aliases(
@@ -301,6 +320,11 @@ def _check_yaml_manifest(
 
     if _as_tuple_mapping(contract.get("topic_formats")) != manifest["topic_formats"]:
         blockers.append("topic_formats does not mirror runtime manifest")
+
+    if _normalized_message_formats(contract.get("data_formats")) != (
+        _normalized_message_formats(manifest.get("message_formats"))
+    ):
+        blockers.append("data_formats does not mirror runtime message_formats")
 
     if _as_tuple_mapping(contract.get("topic_ros_types")) != manifest["topic_ros_types"]:
         blockers.append("topic_ros_types does not mirror runtime manifest")

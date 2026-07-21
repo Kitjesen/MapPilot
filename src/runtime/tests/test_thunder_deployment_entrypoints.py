@@ -728,6 +728,7 @@ def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> 
     assert '--local-planner-debug-candidates "${LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES}"' in runner
     assert '--local-map-debug-points "${LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS}"' in runner
 
+
 def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     text = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
     runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
@@ -849,6 +850,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "terrain_map_ext_diagnostics_only" in status
     assert "cloud_stale" in _read("src/nav/cpp/endpoint/test_input_gate.cpp")
 
+
 def test_external_global_path_requires_driver_control_state() -> None:
     source = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
     global_path_handler = source.split("dds.drainLegacyGlobalPath", 1)[1].split(
@@ -858,6 +860,7 @@ def test_external_global_path_requires_driver_control_state() -> None:
     assert "driver_control_blocker()" in global_path_handler
     assert "path_driver_blocker" in global_path_handler
     assert "frames.path_rejected" in global_path_handler
+
 
 def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> None:
     native = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
@@ -911,6 +914,7 @@ def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> N
     assert "embedded_before_cmd_vel_gate" in status
     assert "cmd_vel_role" in status
     assert "final_navigation_command_output_when_enabled" in status
+
 
 def test_thunder_slam_dds_installer_is_explicit_cpp_slam_boundary() -> None:
     text = _read("scripts/deploy/thunder/install_slam_dds_service.sh")
@@ -1021,6 +1025,7 @@ def test_release_script_does_not_gate_on_legacy_ros2_local_autonomy() -> None:
     assert "lingtu-nav-dds.service" in text
     assert "robot-fastlio2.service robot-localizer.service" in text
 
+
 def test_native_nav_endpoint_has_a_release_install_manifest() -> None:
     endpoint_cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     inspection_cmake = _read("src/nav/inspection/CMakeLists.txt")
@@ -1041,18 +1046,6 @@ def test_native_nav_endpoint_has_a_release_install_manifest() -> None:
     assert "LIBRARY DESTINATION inspection" in inspection_cmake
     assert "EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env" in service
 
-def test_nav_control_exposes_typed_exploration_lifecycle() -> None:
-    text = _read("src/nav/cpp/endpoint/nav_control.cpp")
-
-    assert "explore start SESSION_ID [REASON]" in text
-    assert "explore <pause|resume|stop>" in text
-    assert 'arg == "--request-id"' in text
-    assert 'cfg.command += "-" + action' in text
-    assert "client.exploration().start(" in text
-    assert "client.exploration().pause(" in text
-    assert "client.exploration().resume(" in text
-    assert "client.exploration().stop(" in text
-    assert "kNavExplorationCommand" not in text
 
 def test_native_dds_build_scripts_check_service_binaries() -> None:
     slam = _read("scripts/build/build_slam_core.sh")
@@ -1087,6 +1080,7 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     endpoint_cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     assert "test_path_follower_core" in endpoint_cmake
     assert "test_local_planner_core" in endpoint_cmake
+
 
 def test_motion_mock_dds_closes_cmd_vel_to_odom_loop_without_hardware() -> None:
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
@@ -1132,12 +1126,26 @@ def test_nav_control_external_path_is_explicit_legacy_smoke_only() -> None:
     assert 'publish_clear(lingtu::message::kNavCloudClearing, "cloud_clearing")' in text
 
 
+def test_nav_control_exposes_typed_exploration_lifecycle() -> None:
+    text = _read("src/nav/cpp/endpoint/nav_control.cpp")
+
+    assert "explore start SESSION_ID [REASON]" in text
+    assert "explore <pause|resume|stop>" in text
+    assert 'arg == "--request-id"' in text
+    assert 'cfg.command += "-" + action' in text
+    assert "client.exploration().start(" in text
+    assert "client.exploration().pause(" in text
+    assert "client.exploration().resume(" in text
+    assert "client.exploration().stop(" in text
+    assert "kNavExplorationCommand" not in text
+
 def test_typed_navigation_client_uses_application_ack_as_authority() -> None:
     source = _read("src/nav/cpp/client/client.cpp")
 
     assert "active_request_id, pending, timeout_ms" in source
     assert "NavigationCommandAck is already available" in source
     assert "dds_wait_for_acks(nav_command_request)" not in source
+
 
 def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
     source = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
@@ -1167,6 +1175,7 @@ def test_native_motion_publishers_use_canonical_body_frame() -> None:
     assert 'toDdsPath(path, "map")' in sources[0]
     assert 'toDdsPoseStamped(point, "map")' in sources[0]
     assert 'fillHeader(msg.header, nowSeconds(), "body")' in sources[1]
+
 
 def test_ota_and_build_docs_do_not_recommend_legacy_ros2_planning_or_local_autonomy() -> None:
     push_script = _read("scripts/ota/push_to_robot.sh")
@@ -1306,67 +1315,47 @@ def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
     text = _read("scripts/lingtu")
     stop_body = text.split("mode_stop_motion_and_session() {", 1)[1].split("\n}\n\nmode_unit_available()", 1)[0]
     boot_body = text.split("mode_persist_product_boot_ownership() {", 1)[1].split(
-        "\n}\n\nmode_start_unit_if_available()", 1
+        "\n}\n\nmode_wait_nav_control_mode()", 1
     )[0]
     restart_body = text.split("mode_restart_product_stack() {", 1)[1].split("\n}\n\nmode_switch_preflight()", 1)[0]
+    preflight_body = text.split("mode_switch_preflight() {", 1)[1].split(
+        "\n}\n\nmode_start_session_for_target()", 1
+    )[0]
 
     assert "cmd_mode()" in text
-    assert "mode switch <teleop|teleop_avoid|map|tracking|nav|inspection|tare_explore>" in text
+    assert "mode switch <product-profile>" in text
+    assert "config/runtime_graph/products/*.yaml" in text
     assert "mode_switch_preflight" in text
     assert 'switch-plan "$current" "$target"' in text
     assert 'mode_profile_dropin "$target" "$endpoint"' in text
-    assert 'mode_nav_endpoint_dropin "$target"' in text
+    assert 'mode_nav_endpoint_dropin "$MODE_TARGET_NATIVE_CONTROL_MODE"' in text
     assert "LINGTU_NAV_CONTROL_MODE=$control_mode" in text
-    assert 'teleop|map)\n            control_mode="teleop"' in text
-    assert 'control_mode="teleop_avoid"' in text
-    assert "LINGTU_NAV_CHECK_OBSTACLE=$check_obstacle" in text
-    assert "mode_start_unit_if_available lingtu-traversability-dds.service" in text
+    assert "MODE_TARGET_NATIVE_CONTROL_MODE=$(pjson" in text
+    assert 'case "$profile" in' not in text
+    assert "LINGTU_NAV_CHECK_OBSTACLE=$MODE_TARGET_CHECK_OBSTACLE" in text
+    assert "mode_start_planned_process" not in text
     assert "mode_wait_nav_control_mode" in text
-    assert 'teleop|map) expected="teleop"' in text
-    map_restart = restart_body.split("\n        map)", 1)[1].split("\n        *)", 1)[0]
-    assert "mode_start_unit_if_available lingtu-nav-dds.service 20" in map_restart
-    assert 'mode_wait_nav_control_mode "$target" 10' in map_restart
+    assert '"$py" -m lingtu.launcher apply "$product" --endpoint "$endpoint" --json' in restart_body
+    assert 'mode_wait_nav_control_mode "$MODE_TARGET_NATIVE_CONTROL_MODE" 10' in restart_body
     assert "mode_persist_product_boot_ownership" in text
-    assert 'mode_persist_product_boot_ownership "$target"' in text
-    assert "teleop)\n            lidar=0\n            slam=0\n            traversability=0" in boot_body
-    assert "camera=0" in boot_body
-    assert "inspection)\n            camera=1" in boot_body
-    assert 'mode_set_unit_boot_enabled lingtu-camera-dds.service "$camera"' in boot_body
-    assert 'mode_set_unit_boot_enabled lingtu-traversability-dds.service "$traversability"' in boot_body
-    assert 'mode_set_unit_boot_enabled "$legacy_unit" 0' in boot_body
-    for legacy_unit in (
-        "robot-super-lio-relocation.service",
-        "robot-super-lio.service",
-        "robot-hba.service",
-        "robot-genz-icp.service",
-        "robot-localizer.service",
-        "robot-fastlio2.service",
-        "robot-lidar.service",
-        "lidar.service",
-        "localization.service",
-        "slam.service",
-        "traversability-dds.service",
-        "traversability.service",
-        "nav-dds.service",
-        "nav.service",
-        "explore-dds.service",
-        "explore.service",
-        "lingtu-thunder-dds-endpoint.service",
-        "thunder-dds-endpoint.service",
-    ):
-        assert legacy_unit in boot_body
-        assert f"svc_force_stop_unit {legacy_unit}" in restart_body
+    assert "mode_persist_product_boot_ownership || return 1" in text
+    assert "mode_plan_target_selected" in boot_body
+    assert "MODE_TARGET_KNOWN_TARGETS" in boot_body
+    assert "MODE_TARGET_STOP_TARGETS" in boot_body
+    assert 'mode_set_unit_boot_enabled "$target" "$enabled" "$enabled"' in boot_body
+    assert 'mode_set_unit_boot_enabled "$target" 0 0' in boot_body
+    assert 'required_topics' not in preflight_body
+    assert 'MODE_TARGET_NEEDS_NAV_ENDPOINT=$(mode_plan_bool nav)' in preflight_body
+    assert 'MODE_TARGET_NEEDS_TRAVERSABILITY=$(mode_plan_bool traversability)' in preflight_body
+    assert 'MODE_TARGET_NEEDS_INSPECTION_EVIDENCE=$(mode_plan_bool camera)' in preflight_body
+    assert 'MODE_TARGET_NEEDS_EXPLORATION_ENDPOINT=$(mode_plan_bool explore)' in preflight_body
     assert 'actual=$(python3 - "$status_file"' in text
     assert "age_s <= 1.0" in text
     assert "__status_fresh_without_control_mode__" in text
     assert "LINGTU_NAV_CONTROL_MODE=$expected" in text
-    assert 'mode_wait_nav_control_mode "$target" 10' in text
+    assert 'mode_wait_nav_control_mode "$MODE_TARGET_NATIVE_CONTROL_MODE" 10' in text
     assert 'rm -f "${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}"' in restart_body
-    assert "svc_force_stop_unit lingtu-camera-dds.service" in restart_body
-    restart_stop_body = restart_body.split("\n    case \"$target\" in", 1)[0]
-    assert "svc_force_stop_unit lingtu-camera-dds.service" in restart_stop_body
-    assert "Inspection mode requires lingtu-camera-dds.service" in restart_body
-    assert "mode_start_unit_if_available lingtu-camera-dds.service 20" in restart_body
+    assert 'svc_force_stop_unit "$target"' not in restart_body
     assert "mode_wait_inspection_evidence_ready()" in text
     assert '"$GW/api/v1/inspection/status"' in text
     assert 'mode_wait_inspection_evidence_ready 45' in text
@@ -1380,14 +1369,8 @@ def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
     assert "$GW/api/v1/session/end" in text
     assert 'slam_dds_set_mode mapping ""' in text
     assert 'slam_dds_set_mode localization "$map_pcd"' in text
-    assert '{"mode":"exploring","profile":"tare_explore","product_session":"exploration"}' in text
-    assert 'mode_restart_product_stack "$target"' in text
-    assert "svc_wait_gateway_available 45" in restart_body
-    assert "svc_wait_gateway_ready 45" not in restart_body
-    assert "Gateway /health did not become available" in restart_body
-    assert "svc_force_stop_unit lingtu-teleop-dds.service" in text
-    assert "svc_force_stop_unit lingtu-traversability-dds.service" in text
-    assert "mode_start_unit_if_available lingtu-teleop-dds.service" not in text
+    assert '"product_session": sys.argv[3]' in text
+    assert 'mode_restart_product_stack "$target" "$endpoint"' in text
     assert "mode)           shift; cmd_mode" in text
     assert "Mode $target requires --map NAME" in text
     assert "$GW/api/v1/mode" not in text
@@ -1400,19 +1383,11 @@ def test_failed_product_stack_restart_is_cleaned_up_fail_closed() -> None:
         "\n}\n\nmode_restart_product_stack()", 1
     )[0]
 
-    assert 'if ! mode_restart_product_stack "$target"; then' in switch_body
+    assert 'if ! mode_restart_product_stack "$target" "$endpoint"; then' in switch_body
     assert "mode_abort_product_switch" in switch_body
     assert "mode_stop_motion_and_session" in abort_body
-    for unit in (
-        "lingtu.service",
-        "lingtu-camera-dds.service",
-        "lingtu-explore-dds.service",
-        "lingtu-nav-dds.service",
-        "lingtu-traversability-dds.service",
-        "lingtu-slam-dds.service",
-        "lingtu-livox-dds.service",
-    ):
-        assert f"svc_force_stop_unit {unit}" in abort_body
+    assert 'svc_force_stop_unit "$target"' in abort_body
+    assert 'done <<< "$MODE_TARGET_STOP_TARGETS"' in abort_body
 
 
 def test_robot_ops_full_stack_restart_restarts_timestamp_consumers_in_order() -> None:
@@ -1441,7 +1416,7 @@ def test_product_nav_switch_activates_target_before_native_endpoint_restart() ->
     activate = 'mode_activate_saved_map_for_nav "$map_name"'
     preflight = 'mode_switch_preflight "$current" "$target" "$endpoint"'
     stop = "mode_stop_motion_and_session"
-    restart = 'mode_restart_product_stack "$target"'
+    restart = 'mode_restart_product_stack "$target" "$endpoint"'
     start_session = 'mode_start_session_for_target "$target"'
     wait_ready = 'mode_wait_navigation_ready "$map_name" 45'
     success = "PASS${N}: product mode is active: $target"
@@ -1456,14 +1431,12 @@ def test_product_nav_switch_activates_target_before_native_endpoint_restart() ->
 
 
 def test_product_switch_uses_gateway_availability_before_session_readiness() -> None:
-    text = _read("scripts/lingtu")
-    restart_body = text.split("mode_restart_product_stack() {", 1)[1].split("\n}\n\nmode_switch_preflight()", 1)[0]
-    availability_body = text.split("svc_wait_gateway_available() {", 1)[1].split("\n}\n\nsvc_wait_unit_active()", 1)[0]
+    launcher = _read("src/lingtu/launcher.py")
+    manager = _read("src/runtime/service_manager.py")
 
-    assert "svc_wait_gateway_available 45" in restart_body
-    assert "svc_wait_gateway_ready" not in restart_body
-    assert "$GW/health" in availability_body
-    assert "$GW/ready" not in availability_body
+    assert "thunder_service_spec(service)" in launcher
+    assert "http_check=True" in launcher
+    assert '"http://127.0.0.1:5050/health"' in manager
 
 
 def test_product_nav_switch_aborts_session_when_relocalization_or_readiness_fails() -> None:
@@ -1474,21 +1447,28 @@ def test_product_nav_switch_aborts_session_when_relocalization_or_readiness_fail
         'if ! mode_start_session_for_target "$target" "$map_name" "$relocalize" '
         '"$initial_explicit" "$initial_x" "$initial_y" "$initial_yaw"; then'
     )
-    wait_guard = 'mode_wait_navigation_ready "$map_name" 45 || {'
+    wait_guard = (
+        'mode_wait_navigation_ready "$map_name" 45 '
+        '"$MODE_TARGET_NATIVE_CONTROL_MODE" || {'
+    )
 
     assert start_guard in switch_body
     assert wait_guard in switch_body
     assert switch_body.count("mode_stop_motion_and_session") >= 3
 
 
-def test_legacy_nav_start_aborts_session_when_relocalization_fails() -> None:
+def test_nav_start_delegates_to_product_runtime_plan() -> None:
     text = _read("scripts/lingtu")
     nav_body = text.split("cmd_nav() {", 1)[1].split("\ncmd_loc() {", 1)[0]
     start_body = nav_body.split("start)", 1)[1].split("smoke|motion-smoke", 1)[0]
 
-    assert start_body.count("mode_stop_motion_and_session") == 3
-    assert 'nav_relocalize_saved_map "$map"' in start_body
-    assert 'nav_global_relocalize_saved_map "$map"' in start_body
+    assert 'cmd_mode switch nav --map "$map"' in start_body
+    assert "--initial-pose" in start_body
+    assert "--relocalize" in start_body
+    assert "--no-relocalize" in start_body
+    assert "slam_dds_set_mode" not in start_body
+    assert "/api/v1/session/start" not in start_body
+    assert "nav_relocalize_saved_map" not in start_body
 
 
 def test_robot_ops_system_acceptance_gate_matches_that_nav_parity_plan() -> None:

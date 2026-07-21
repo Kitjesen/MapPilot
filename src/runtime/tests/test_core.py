@@ -15,6 +15,7 @@
 
 import json
 import logging
+import sys
 from typing import Any
 
 import pytest
@@ -26,6 +27,10 @@ from runtime.msgs.semantic import Detection3D, GoalResult, SceneGraph
 from runtime.runtime_interface import TOPICS
 from runtime.stream import In, Out
 from runtime.transport.local import LocalTransport
+
+# Windows spawns worker processes slowly (multiprocessing 'spawn' re-imports the
+# module tree); allow more time for cross-process replies there.
+_WORKER_TIMEOUT = 20.0 if sys.platform == "win32" else 5.0
 
 # ============================================================================
 # Test Fixtures — 测试用模块定义
@@ -1591,13 +1596,13 @@ class TestWorker:
         w.start()
 
         cmd_q.put(("LIST",))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert resp[0] == "RESULT"
         assert resp[1] == []
 
         cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=5.0)
-        w.join(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
+        w.join(timeout=_WORKER_TIMEOUT)
 
     def test_worker_deploy_module(self):
         """DEPLOY instantiates a module inside the worker."""
@@ -1611,18 +1616,18 @@ class TestWorker:
         w.start()
 
         cmd_q.put(("DEPLOY", _WorkerTestModule, "mod1", (), {"initial": 42}))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert resp[0] == "OK"
         assert resp[1] == "mod1"
 
         # Confirm the module appears in the list
         cmd_q.put(("LIST",))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert "mod1" in resp[1]
 
         cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=5.0)
-        w.join(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
+        w.join(timeout=_WORKER_TIMEOUT)
 
     def test_worker_rpc_call_across_process(self):
         """RPC call crosses the process boundary and returns the correct value."""
@@ -1637,25 +1642,25 @@ class TestWorker:
 
         # Deploy with initial=7
         cmd_q.put(("DEPLOY", _WorkerTestModule, "mod1", (), {"initial": 7}))
-        resp_q.get(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
 
         # get_value should return 7
         cmd_q.put(("RPC_CALL", "mod1", "get_value", (), {}))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert resp[0] == "RESULT"
         assert resp[1] == 7
 
         # set_value then get_value
         cmd_q.put(("RPC_CALL", "mod1", "set_value", (), {"v": 99}))
-        resp_q.get(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
 
         cmd_q.put(("RPC_CALL", "mod1", "get_value", (), {}))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert resp[1] == 99
 
         cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=5.0)
-        w.join(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
+        w.join(timeout=_WORKER_TIMEOUT)
 
     def test_worker_shutdown_graceful(self):
         """SHUTDOWN stops all modules and the worker process exits cleanly."""
@@ -1670,13 +1675,13 @@ class TestWorker:
         assert w.is_alive()
 
         cmd_q.put(("DEPLOY", _WorkerTestModule, "m", (), {}))
-        resp_q.get(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
 
         cmd_q.put(("SHUTDOWN",))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert resp[0] == "OK"
 
-        w.join(timeout=5.0)
+        w.join(timeout=_WORKER_TIMEOUT)
         assert not w.is_alive()
 
     def test_worker_manager_multiple_workers(self):
@@ -1729,10 +1734,10 @@ class TestWorker:
         w.start()
 
         cmd_q.put(("DEPLOY", _SkillModDoThing, "skmod", (), {}))
-        resp_q.get(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
 
         cmd_q.put(("GET_SKILLS", "skmod"))
-        resp = resp_q.get(timeout=5.0)
+        resp = resp_q.get(timeout=_WORKER_TIMEOUT)
         assert resp[0] == "RESULT"
         skills = resp[1]
         assert isinstance(skills, list)
@@ -1742,8 +1747,8 @@ class TestWorker:
         assert "args_schema" in skills[0]
 
         cmd_q.put(("SHUTDOWN",))
-        resp_q.get(timeout=5.0)
-        w.join(timeout=5.0)
+        resp_q.get(timeout=_WORKER_TIMEOUT)
+        w.join(timeout=_WORKER_TIMEOUT)
 
     def test_worker_manager_get_skills(self):
         """WorkerManager.get_skills() aggregates skill info from a worker module."""

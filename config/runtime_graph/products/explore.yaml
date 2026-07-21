@@ -1,9 +1,25 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: explore
 summary: Grow a map and navigate to exploration goals through the native runtime contract.
+operator_switchable: false
+product_mode: exploration
+product_session: exploration
+session_mode: exploring
+native_control_mode: autonomy
+slam_mode: mapping
+requires_map: false
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: autonomy
 autonomy_owner: exploration_policy
+processes:
+  - lidar
+  - slam
+  - traversability
+  - nav
+  - driver
+  - runtime
 required_topics:
   - /lidar/raw_frame
   - /imu/raw

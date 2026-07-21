@@ -1,9 +1,25 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: tracking
-summary: Follow supplied waypoints or paths with native local planning and safety, without semantic goal selection.
+summary: Follow explicit map-frame goals with native planning and safety, without semantic goal selection.
+operator_switchable: true
+product_mode: tracking
+product_session: tracking
+session_mode: navigating
+native_control_mode: autonomy
+slam_mode: localization
+requires_map: true
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: autonomy
 autonomy_owner: native_nav_endpoint
+processes:
+  - lidar
+  - slam
+  - traversability
+  - nav
+  - driver
+  - runtime
 required_topics:
   - /tf
   - /slam/odometry
@@ -18,7 +34,7 @@ required_topics:
   - /nav/cmd_vel
 required_capabilities:
   - saved_map_relocalization
-  - supplied_goal_or_path_tracking
+  - explicit_goal_tracking
   - local_planner_collision_and_traversability_scoring
   - path_follower_pre_command_output
   - final_cmd_vel_single_writer
@@ -38,7 +54,7 @@ transport_rules:
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
 target_chain:
-  - Gateway/MCP sends explicit tracking goals through /nav/command/request; an externally computed tracking path may still enter /nav/global_path.
+  - Gateway/MCP sends explicit tracking goals through /nav/command/request and waits for /nav/command/ack.
   - Native nav endpoint performs local planning and path follower pre-command output.
   - PathFollower consumes the local path in memory; the endpoint publishes /nav/local_path telemetry, /nav/way_point, and final /nav/cmd_vel.
   - A deliberate non-zero operator command may latch manual takeover, cancel the old path, and remain stopped after release until explicit resume.

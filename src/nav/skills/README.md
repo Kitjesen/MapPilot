@@ -20,5 +20,6 @@ MCP / Agent
 - `SafetyRing`: hardware emergency stop.
 - `SemanticPlannerModule`: free-text semantic instructions.
 
-`NavigationSkillsModule` and `NavigationSkillsMixin` are compatibility aliases
-only. New code uses `NavSkills` and the runtime alias `nav.skills`.
+`NavigationSkillsModule` is a compatibility alias only. New code uses
+`NavSkills` and the runtime alias `nav.skills`. The old `nav.api` shim
+(`NavigationSkillsMixin`) has been removed.

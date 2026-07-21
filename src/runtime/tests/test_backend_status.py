@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from unittest import mock
 from argparse import Namespace
@@ -98,7 +98,7 @@ def test_perception_health_reports_detector_and_encoder_backend_status():
 
 
 def test_autonomy_backend_registry_names_are_visible():
-    from nav.services.plan.local_planner.service import LocalPlanner  # noqa: F401
+    from nav.local.local_planner import LocalPlanner  # noqa: F401
     from nav.local.path_follower import PathFollower  # noqa: F401
     from nav.local.terrain import Terrain  # noqa: F401
     from runtime.registry import list_plugins
@@ -109,7 +109,7 @@ def test_autonomy_backend_registry_names_are_visible():
 
 
 def test_autonomy_backend_allowlists_match_registry_catalog():
-    from nav.services.plan.local_planner import service as local_planner
+    from nav.local import local_planner as local_planner
     from nav.local import path_follower
     from nav.local import terrain
     from runtime.registry import list_plugins

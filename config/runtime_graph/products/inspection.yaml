@@ -1,9 +1,27 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: inspection
-summary: Semantic or scheduled inspection tasks over saved-map native navigation.
+summary: Operator or semantic inspection tasks over saved-map native navigation.
+operator_switchable: true
+product_mode: inspection
+product_session: inspection
+session_mode: navigating
+native_control_mode: autonomy
+slam_mode: localization
+requires_map: true
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: autonomy
-autonomy_owner: semantic_planner
+autonomy_owner: native_nav_endpoint
+goal_owner: operator_or_semantic_planner
+processes:
+  - lidar
+  - slam
+  - traversability
+  - nav
+  - driver
+  - camera
+  - runtime
 required_topics:
   - /tf
   - /slam/odometry
@@ -24,7 +42,7 @@ required_topics:
   - /nav/cmd_vel
 required_capabilities:
   - saved_map_relocalization
-  - semantic_or_scheduled_goal_source
+  - operator_or_semantic_goal_source
   - octoplanner3d_global_planning
   - local_planner_collision_and_traversability_scoring
   - final_cmd_vel_single_writer
@@ -52,7 +70,7 @@ inspection_evidence_boundary:
   result: /nav/inspection/evidence/result
   client_completion: matching_persisted_result_required
 target_chain:
-  - SemanticPlanner/TaskScheduler selects inspection goals.
+  - Operator requests or SemanticPlanner select inspection routes and goals.
   - Gateway and GoalService send route lifecycle requests through the persistent C++ client on /nav/inspection/command and wait for /nav/inspection/ack.
   - Native nav endpoint publishes current run and route-point progress on /nav/inspection/status.
   - Native nav endpoint requests point evidence on /nav/inspection/evidence/request and waits for the perception worker result on /nav/inspection/evidence/result.

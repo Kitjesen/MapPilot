@@ -26,7 +26,7 @@ except ImportError:
     _ROS2_AVAILABLE = False
 
 from drivers.sim.mujoco.driver import MujocoDriverModule
-from runtime.blueprints.products.thunder import thunder_blueprint
+from lingtu.assembly.products.thunder import thunder_blueprint
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
 from runtime.msgs.nav import Odometry
 from sim.engine.core.robot import RobotConfig
@@ -581,7 +581,7 @@ def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
 
 
 def test_fastlio_inspection_stack_passes_sim_tracking_params(monkeypatch):
-    import runtime.blueprints.profile_builder as profile_builder_module
+    import lingtu.assembly.profile_builder as profile_builder_module
     from drivers.sim.mujoco import stack as mujoco_stack
 
     captured = {}
@@ -823,7 +823,7 @@ def test_mujoco_fastlio2_live_gate_builds_fastlio_large_loop_diagnostic_report()
 
 
 def _native_slam_status_payload(**overrides):
-    from runtime.adapters.native.localization_adapter import STATUS_SNAPSHOT_SCHEMA
+    from localization.adapters.status import STATUS_SNAPSHOT_SCHEMA
 
     payload = {
         "schema_version": STATUS_SNAPSHOT_SCHEMA,
@@ -857,7 +857,7 @@ def _native_slam_status_payload(**overrides):
 
 
 def test_native_slam_status_adapter_records_odom_snapshot_stamp():
-    from runtime.adapters.native.localization_adapter import CppSlamStatusAdapterModule
+    from localization.adapters.status import CppSlamStatusAdapterModule
 
     adapter = CppSlamStatusAdapterModule()
     odometry_seen = []
@@ -923,7 +923,7 @@ def test_mujoco_fastlio2_motion_window_reports_fallback_when_stamps_are_missing(
 
 
 def test_native_slam_status_adapter_uses_runtime_default_frames():
-    from runtime.adapters.native.localization_adapter import CppSlamStatusAdapterModule
+    from localization.adapters.status import CppSlamStatusAdapterModule
     from runtime.runtime_interface import TOPICS, topic_default_frame_id
 
     adapter = CppSlamStatusAdapterModule()
@@ -937,7 +937,7 @@ def test_native_slam_status_adapter_uses_runtime_default_frames():
 
 
 def test_native_slam_status_adapter_feeds_module_ports_directly(tmp_path):
-    from runtime.adapters.native.localization_adapter import CppSlamStatusAdapterModule
+    from localization.adapters.status import CppSlamStatusAdapterModule
     from runtime.msgs.sensor import PointCloud2
     from runtime.runtime_interface import TOPICS, topic_default_frame_id
 
@@ -966,7 +966,7 @@ def test_native_slam_status_adapter_feeds_module_ports_directly(tmp_path):
 
 
 def test_native_slam_status_adapter_ignores_status_without_odom_pose():
-    from runtime.adapters.native.localization_adapter import CppSlamStatusAdapterModule
+    from localization.adapters.status import CppSlamStatusAdapterModule
 
     adapter = CppSlamStatusAdapterModule()
     odometry_seen = []
@@ -1453,7 +1453,7 @@ def test_launch_mujoco_fastlio2_live_exposes_cmd_vel_timeout_override():
 
 
 def test_safety_stack_allows_sim_specific_cmd_vel_mux_source_timeout():
-    from runtime.blueprints.stacks.safety import safety
+    from lingtu.assembly.stacks.safety import safety
 
     system = safety(cmd_vel_mux_source_timeout=5.0).build()
     mux = system.get_module("nav.velocity_mux")
@@ -2871,7 +2871,7 @@ import json
 import math
 import time
 
-from runtime.blueprints.products.thunder import thunder_blueprint
+from lingtu.assembly.products.thunder import thunder_blueprint
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
 system = thunder_blueprint(
@@ -3091,7 +3091,7 @@ def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
 def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
     from nav.safety.velocity_mux import VelocityMux
     from runtime.blueprint import Blueprint
-    from runtime.blueprints.full_stack_wiring import apply_full_stack_wires
+    from lingtu.assembly.full_stack_wiring import apply_full_stack_wires
     from runtime.module import Module
     from runtime.stream import In, Out
 
@@ -3152,7 +3152,7 @@ def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
 
 def test_full_stack_required_safety_stop_wire_reports_missing_contract():
     from runtime.blueprint import Blueprint
-    from runtime.blueprints.full_stack_wiring import apply_full_stack_wires
+    from lingtu.assembly.full_stack_wiring import apply_full_stack_wires
     from runtime.module import Module
     from runtime.stream import In, Out
 

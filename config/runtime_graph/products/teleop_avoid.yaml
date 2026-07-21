@@ -1,9 +1,25 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: teleop_avoid
 summary: Operator-assisted teleoperation with native local detour planning, live obstacle/traversability checks, and final command arbitration.
+operator_switchable: true
+product_mode: teleop_avoid
+product_session: teleop_avoid
+session_mode: navigating
+native_control_mode: teleop_avoid
+slam_mode: mapping
+requires_map: false
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+processes:
+  - lidar
+  - slam
+  - traversability
+  - nav
+  - driver
+  - runtime
 required_topics:
   # Operator intent input. This is intentionally separate from /nav/cmd_vel
   # because /nav/cmd_vel is the final post-safety command output.

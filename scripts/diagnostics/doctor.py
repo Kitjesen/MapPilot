@@ -291,7 +291,7 @@ def run_python_checks() -> None:
         check("lingtu importable", False, str(exc))
 
     try:
-        from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+        from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
         from runtime.profiles.resolver import resolve_profile_config
 
         cfg = resolve_profile_config("nav", overrides={"run_startup_checks": False})

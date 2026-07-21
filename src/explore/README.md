@@ -10,7 +10,8 @@ or candidate goal sequences. Navigation still owns:
 - local planning and obstacle avoidance;
 - path following;
 - safety checks;
-- `cmd_vel` output.
+- final logical `/nav/cmd_vel` output. On `thunder_field` this is encoded as DDS
+  wire topic `rt/nav/cmd_vel` and consumed only by `lingtu-driver`.
 
 ## Package layout
 
@@ -66,19 +67,34 @@ C++/ROS runtime with its own launch files, topics, and simulator assumptions.
 LingTu supports it only as an endpoint-owned external runtime through
 `backend="tare_external"` / `cmu_unity`.
 
-The target `tare_explore` product path is:
+The `tare_explore` field product uses the standalone native endpoint:
 
 ```text
-OccupancyGridModule.exploration_grid
-  -> C++ TarePolicy / lingtu_explore_dds
-  -> exploration goal
-  -> C++ NavigationCommandClient
-  -> /nav/command/request + /nav/command/ack
+Gateway / operator
+  -> /nav/exploration/command (START, PAUSE, RESUME, STOP)
+  <- /nav/exploration/ack (matching request_id, business acceptance)
+
+/slam/odometry + /tf + /nav/exploration_snapshot
+  -> lingtu_explore_dds (ExploreControl + TarePolicy)
+  -> /nav/command/request (goal)
+  <- /nav/command/ack
   -> OctoPlanner3D / LocalPlanner / PathFollower / Safety
 ```
 
-The existing Python Module path remains only until `lingtu_explore_dds` is wired
-into the field profile.
+`lingtu_explore_dds` starts idle. It cannot select or submit a goal until a
+fresh, map-frame `START` request is accepted and odometry/snapshot inputs pass
+the freshness gate. Duplicate request IDs replay the cached ACK without
+repeating the transition. Pause and stop clear queued work; stop remains
+callable even when the telemetry file is stale.
 
+`/dev/shm/lingtu/explore_status.json` is read-only telemetry with a bounded age.
+It never grants command authority. Gateway commands use
+`liblingtu_nav_client.so` and complete only after the matching DDS ACK.
+
+The Python `TAREExplorerModule` and nanobind path remain for development and
+compatibility profiles; they are not the `thunder_field` product control plane.
+Assembly resolves that field profile with `owner="native"`, so Blueprint omits
+both `TAREExplorerModule` and `ExplorationSupervisorModule`; `nav.commands` is
+the only Gateway control adapter for the native endpoint.
 Compatibility wrappers remain under `nav.exploration.*` for old imports. New
 code should import from `explore.*`.

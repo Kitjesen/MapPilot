@@ -14,9 +14,9 @@ import threading
 import time
 from typing import Any
 
-from runtime.adapters.native.navigation import (
-    NavigationClientError,
-    get_native_navigation_client,
+from gateway.services.command_boundary import (
+    CommandBoundaryError,
+    invoke_navigation_command,
 )
 from runtime.msgs.geometry import Twist, Vector3
 from runtime.runtime_interface import TOPICS
@@ -79,13 +79,13 @@ class LatestNativeTeleopPublisher:
         deadline = time.monotonic() + max(0.1, float(timeout_s))
         with self._condition:
             if self._closed:
-                raise NavigationClientError("native teleop publisher is closed")
+                raise CommandBoundaryError("native teleop publisher is closed")
             self._accepting = False
             self._pending = None
             while self._inflight:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0.0:
-                    raise NavigationClientError("native teleop publisher did not quiesce before release")
+                    raise CommandBoundaryError("native teleop publisher did not quiesce before release")
                 self._condition.wait(remaining)
         try:
             self._client.send_teleop(0.0, 0.0, 0.0, request_id=request_id)
@@ -111,7 +111,7 @@ class LatestNativeTeleopPublisher:
             while self._inflight:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0.0:
-                    raise NavigationClientError("native teleop publisher did not quiesce before stop")
+                    raise CommandBoundaryError("native teleop publisher did not quiesce before stop")
                 self._condition.wait(remaining)
 
     def resume(self) -> None:
@@ -229,19 +229,26 @@ def init_teleop_state(
         socket.socket(socket.AF_INET, socket.SOCK_DGRAM) if gw._teleop_bridge_addr is not None else None
     )
     gw._teleop_dds_enabled = dds_enabled
-    gw._teleop_native_client = None
     gw._teleop_native_publisher = None
-    if dds_enabled:
-        try:
-            gw._teleop_native_client = get_native_navigation_client(required=True)
-            gw._teleop_native_publisher = LatestNativeTeleopPublisher(gw._teleop_native_client)
-        except NavigationClientError as exc:
-            logger.error(
-                "GatewayModule: native client for %s unavailable: %s; "
-                "field teleop is disabled until the typed command boundary recovers",
-                TOPICS.teleop_cmd_vel,
-                exc,
-            )
+
+
+def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
+    """Bind the Blueprint-assembled command capability after module discovery."""
+
+    gw._nav_commands = commands
+    publisher = getattr(gw, "_teleop_native_publisher", None)
+    if publisher is not None:
+        publisher.close()
+    gw._teleop_native_publisher = None
+    if not bool(getattr(gw, "_teleop_dds_enabled", False)):
+        return
+    if commands is None:
+        logger.error(
+            "GatewayModule: %s disabled because nav.commands is absent",
+            TOPICS.teleop_cmd_vel,
+        )
+        return
+    gw._teleop_native_publisher = LatestNativeTeleopPublisher(commands)
 
 
 def configure_teleop(
@@ -288,13 +295,13 @@ def publish_remote_velocity_request(
     """
 
     if bool(getattr(gw, "_teleop_dds_enabled", False)):
-        client = getattr(gw, "_teleop_native_client", None)
-        if client is None:
-            raise NavigationClientError("native teleop command boundary is unavailable")
-        client.send_teleop(
-            twist.linear.x,
-            twist.linear.y,
-            twist.angular.z,
+        invoke_navigation_command(
+            gw,
+            "send_teleop",
+            required=True,
+            vx=twist.linear.x,
+            vy=twist.linear.y,
+            wz=twist.angular.z,
             request_id=request_id,
         )
         return True
@@ -346,7 +353,7 @@ def release(gw: Any) -> bool:
             return False
         try:
             publisher.quiesce_and_send_zero(timeout_s=max(2.0, float(gw._teleop_release_timeout) + 1.0))
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             logger.error("GatewayModule: field teleop release failed: %s", exc)
             return False
         return True
@@ -365,7 +372,7 @@ def quiesce_native_teleop(gw: Any, *, timeout_s: float = 2.0) -> bool:
         return False
     publisher = getattr(gw, "_teleop_native_publisher", None)
     if publisher is None:
-        raise NavigationClientError("native teleop publisher is unavailable")
+        raise CommandBoundaryError("native teleop publisher is unavailable")
     publisher.quiesce(timeout_s=timeout_s)
     return True
 

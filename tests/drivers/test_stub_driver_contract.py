@@ -16,7 +16,7 @@ from runtime.registry import get
 
 # Ensure StubDogModule is imported so @register fires.
 try:
-    __import__("runtime.blueprints.stub")
+    __import__("drivers.sim.stub")
 except ImportError:
     pass
 

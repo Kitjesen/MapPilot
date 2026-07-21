@@ -380,7 +380,9 @@ ProcessRunResult RunPosixShellCommand(
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
     if (!options.cwd.empty()) {
-      chdir(options.cwd.string().c_str());
+      if (chdir(options.cwd.string().c_str()) != 0) {
+        _exit(126);
+      }
     }
     execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
     _exit(127);
@@ -469,6 +471,17 @@ ProcessRunResult RunPosixShellCommand(
 ProcessRunResult RunShellCommand(
     const std::string& command,
     const ProcessRunOptions& options) {
+  if (!options.cwd.empty()) {
+    std::error_code error;
+    if (!std::filesystem::is_directory(options.cwd, error)) {
+      ProcessRunResult result;
+      result.launch_failed = true;
+      result.error = error
+          ? "working directory is unavailable: " + error.message()
+          : "working directory is not a directory: " + options.cwd.string();
+      return result;
+    }
+  }
 #if defined(_WIN32)
   return RunWindowsShellCommand(command, options);
 #else

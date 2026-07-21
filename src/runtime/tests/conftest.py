@@ -7,6 +7,8 @@ import warnings
 from inspect import signature
 from pathlib import Path
 
+import pytest
+
 _repo = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 _src = os.path.join(_repo, "src")
 
@@ -41,6 +43,16 @@ class _CompatEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
 
 
 asyncio.set_event_loop_policy(_CompatEventLoopPolicy())
+
+
+@pytest.fixture(autouse=True)
+def _isolate_process_environment():
+    """Keep in-process CLI tests from leaking a product runtime into later tests."""
+
+    snapshot = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(snapshot)
 
 # Integration harnesses run module-level setup at import time.
 # Both files now expose proper def test_*() functions and guard sys.exit()

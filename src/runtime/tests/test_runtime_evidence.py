@@ -2533,7 +2533,6 @@ def test_runtime_contract_audit_accepts_current_contract():
         "global_planning",
         "local_planning_and_following",
         "octoplanner3d_global_planning",
-        "pct_global_planning",
         "tare_exploration",
         "traversable_frontier_preview",
         "wavefront_frontier_exploration",
@@ -2796,6 +2795,22 @@ def test_runtime_contract_audit_rejects_yaml_topic_format_mismatch(tmp_path: Pat
     assert payload["ok"] is False
     assert any(
         "yaml_manifest: topic_formats does not mirror runtime manifest" == blocker for blocker in payload["blockers"]
+    )
+
+
+def test_runtime_contract_audit_rejects_yaml_data_format_catalog_mismatch(tmp_path: Path):
+    audit = _load_runtime_contract_audit_module()
+    contract = yaml.safe_load((REPO_ROOT / "config" / "topic_contract.yaml").read_text(encoding="utf-8"))
+    del contract["data_formats"]["lingtu.dds.Image"]
+    bad_contract = tmp_path / "topic_contract_bad_data_formats.yaml"
+    bad_contract.write_text(yaml.safe_dump(contract), encoding="utf-8")
+
+    payload = audit.build_runtime_contract_audit(bad_contract)
+
+    assert payload["ok"] is False
+    assert any(
+        "yaml_manifest: data_formats does not mirror runtime message_formats" == blocker
+        for blocker in payload["blockers"]
     )
 
 

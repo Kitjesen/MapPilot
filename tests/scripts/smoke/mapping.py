@@ -13,7 +13,7 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
 
 print("=== Starting mapping mode ===")
 bp = blueprint_for_resolved_profile(

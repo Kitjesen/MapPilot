@@ -1,16 +1,20 @@
 # Local Planner I/O Contract
 
+Status: current for Python Module-owned local-planner I/O; physical `thunder_field` embeds local planning inside `lingtu-nav-dds`
+Audience: navigation Module and compatibility-profile maintainers
+Replaced by: not replaced
+
 Canonical implementation document:
 
-- `src/nav/services/plan/local_planner/README.md`
+- `src/nav/local/README.md`
 
 Code references:
 
-- Module ports: `src/nav/services/plan/local_planner/service.py`
+- Module ports: `src/nav/local/local_planner.py`
 - Port contract: `src/nav/services/plan/contracts.py`
-- Navigation wires: `src/runtime/blueprints/wires/navigation.py`
-- SLAM/odometry wires: `src/runtime/blueprints/wires/slam.py`
-- Map/traversability wires: `src/runtime/blueprints/wires/mapping.py`
+- Navigation wires: `src/lingtu/assembly/wires/navigation.py`
+- SLAM/odometry wires: `src/lingtu/assembly/wires/slam.py`
+- Map/traversability wires: `src/lingtu/assembly/wires/mapping.py`
 
 Current status:
 

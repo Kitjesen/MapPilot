@@ -1,5 +1,9 @@
 # Building Mission Runtime
 
+Status: extension contract; not a replacement for native navigation endpoint safety gates
+Audience: building/facility integration maintainers
+Replaced by: not replaced
+
 LingTu owns building-scale execution without adding ROS to the robot runtime.
 Open-RMF remains an optional facility-level sidecar; it may submit a
 floor-aware objective, but it never publishes `cmd_vel`, changes the native

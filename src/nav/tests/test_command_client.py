@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from runtime.adapters.native.navigation import (
+from nav.adapters.native.commands import (
     NativeNavigationClient,
     NavigationClientError,
 )

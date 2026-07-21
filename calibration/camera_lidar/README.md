@@ -1,24 +1,25 @@
 # Camera-LiDAR Extrinsic Calibration
 
-Uses [direct_visual_lidar_calibration](https://github.com/koide3/direct_visual_lidar_calibration)
-for target-less camera-LiDAR extrinsic calibration.
+The default workflow uses [direct_visual_lidar_calibration](https://github.com/koide3/direct_visual_lidar_calibration) for target-less camera-LiDAR extrinsic calibration.
+
+This directory is for offline calibration and comparison. ROS1/ROS2 tools here do not change the LingTu product boundary: the robot runtime remains ROS-free and consumes only the resulting extrinsic parameters.
 
 ## Why This Tool
 
-- **No calibration target needed** — uses environment texture and structure
-- **Automatic** — NID-based optimization, no manual correspondence required
-- **ROS2 native** — works directly with `colcon build`
-- **Supports Livox** — non-repetitive scan LiDARs (static integration mode)
+- **No calibration target needed** — uses environment texture and structure.
+- **Automatic** — NID-based optimization, no manual correspondence required after initialization.
+- **ROS2 native for offline use** — builds with `colcon` in a calibration workspace.
+- **Supports Livox** — non-repetitive scan LiDARs via static integration mode.
 
 ## What It Calibrates
 
-- `T_lidar_camera`: 6DoF rigid transform from LiDAR frame to camera frame
-- Output format: `[x, y, z, qx, qy, qz, qw]` (position + quaternion)
+- `T_lidar_camera`: 6DoF rigid transform from LiDAR frame to camera frame.
+- Output format: `[x, y, z, qx, qy, qz, qw]`.
 
 ## Prerequisites
 
 ```bash
-# Build from the repository root (default path requires PCL, OpenCV, Ceres, Rust/Cargo)
+# Build from repository root; requires PCL, OpenCV, Ceres, Rust/Cargo
 python scripts/build/build_rust_kernels.py --target camera_lidar_optimizer --release
 cd calibration/camera_lidar/direct_visual_lidar_calibration
 source /opt/ros/humble/setup.bash
@@ -26,46 +27,39 @@ colcon build --packages-select direct_visual_lidar_calibration
 source install/setup.bash
 ```
 
-The LingTu default build uses the Rust CT-ICP/CT-GICP optimizer and skips the
-legacy graph-optimizer dependency. For old comparison runs only, configure
-`-DLINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER=OFF`.
+LingTu's default build uses the Rust CT-ICP/CT-GICP optimizer and skips the legacy graph-optimizer dependency. For old comparison runs only, configure `-DLINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER=OFF`.
 
 ## Procedure
 
 ### 1. Collect Data
 
-Record **5-10 bags**, each 15 seconds, robot **stationary**, in a
-**textured environment** (avoid blank walls).
+Record 5–10 bags. Keep the robot stationary for each 15 second recording, and choose textured scenes rather than blank walls.
 
 ```bash
-# Each recording: keep robot still for 15 seconds
 ros2 bag record /camera/color/image_raw /camera/camera_info /livox/lidar \
-    -o calib_bag_01 --duration 15
+  -o calib_bag_01 --duration 15
 ```
-
-Repeat from different viewpoints.
 
 ### 2. Preprocess
 
 ```bash
-# For each bag
 ros2 run direct_visual_lidar_calibration preprocess \
-    calib_bag_01 preprocessed_01 \
-    --image_topic /camera/color/image_raw \
-    --camera_info_topic /camera/camera_info \
-    --points_topic /livox/lidar \
-    -v
+  calib_bag_01 preprocessed_01 \
+  --image_topic /camera/color/image_raw \
+  --camera_info_topic /camera/camera_info \
+  --points_topic /livox/lidar \
+  -v
 
-# Note: NO -d flag for Livox (non-repetitive scan, use static integrator)
+# Do not pass -d for Livox; use static integration mode.
 ```
 
 ### 3. Initial Guess
 
 ```bash
-# Manual (GUI — pick 3+ corresponding points)
+# Manual GUI: pick 3+ corresponding points
 ros2 run direct_visual_lidar_calibration initial_guess_manual preprocessed_01
 
-# Or automatic (requires SuperGlue, non-commercial license)
+# Optional automatic path; SuperGlue has a non-commercial license
 ros2 run direct_visual_lidar_calibration find_matches_superglue.py preprocessed_01
 ros2 run direct_visual_lidar_calibration initial_guess_auto preprocessed_01
 ```
@@ -80,7 +74,6 @@ ros2 run direct_visual_lidar_calibration calibrate preprocessed_01
 ### 5. Verify
 
 ```bash
-# Visual inspection — LiDAR points projected onto image
 ros2 run direct_visual_lidar_calibration viewer preprocessed_01
 ```
 
@@ -88,57 +81,56 @@ ros2 run direct_visual_lidar_calibration viewer preprocessed_01
 
 ```bash
 python calibration/apply_calibration.py \
-    --camera-lidar preprocessed_01/calib.json
+  --camera-lidar preprocessed_01/calib.json
 ```
 
-## Our Configuration
+## LingTu Defaults
 
 | Parameter | Value | Notes |
-|-----------|-------|-------|
+| --- | --- | --- |
 | Image topic | `/camera/color/image_raw` | Orbbec RGB |
 | Camera info | `/camera/camera_info` | Includes K + D |
 | LiDAR topic | `/livox/lidar` | Livox Mid-360 CustomMsg |
 | Camera model | `plumb_bob` | Standard pinhole + Brown-Conrady |
-| Integration mode | Static (default) | No `-d` flag for Livox |
+| Integration mode | Static | No `-d` flag for Livox |
 
 ## Alternative Tools
 
+These tools are kept for field comparison and special calibration setups. Do not import their ROS launch/runtime assumptions into LingTu native navigation.
+
+### livox_calib_standalone
+
+`livox_calib_standalone/` is the preferred ROS-free comparison path when a calibration workstation should avoid ROS launch/runtime dependencies.
+
 ### livox_camera_calib (HKU-MARS)
 
-[livox_camera_calib](https://github.com/hku-mars/livox_camera_calib) is a
-**targetless** extrinsic calibration tool specifically optimized for **Livox**
-high-resolution LiDARs. It uses edge information in the scene and supports
-both single-scene and multi-scene calibration.
+[livox_camera_calib](https://github.com/hku-mars/livox_camera_calib) is a targetless extrinsic calibration tool optimized for Livox high-resolution LiDARs. It uses edge information in the scene and supports single-scene and multi-scene calibration.
 
-- **Prerequisites**: ROS1 (Kinetic/Melodic), Ceres, PCL, Eigen
-- **Strengths**: Pixel-level accuracy, no calibration target, Livox-optimized
-- **Note**: Requires ROS1; use rosbag replay or a ROS1 bridge
+- **Prerequisites**: ROS1 (Kinetic/Melodic), Ceres, PCL, Eigen.
+- **Strengths**: pixel-level accuracy, no calibration target, Livox-optimized.
+- **Boundary**: offline comparison tool only.
 
 ### livox_camera_lidar_calibration (Livox-SDK Official)
 
-[livox_camera_lidar_calibration](https://github.com/Livox-SDK/livox_camera_lidar_calibration)
-is **Livox's official** calibration solution. It uses a **target-based** approach
-(calibration board corners) and has been verified on Mid-40, Horizon, and Tele-15.
+[livox_camera_lidar_calibration](https://github.com/Livox-SDK/livox_camera_lidar_calibration) is Livox's official target-based calibration solution. It uses calibration board corners and includes camera intrinsic calibration, point cloud projection, and coloring tools.
 
-- **Prerequisites**: ROS1, Livox SDK, PCL, Ceres
-- **Strengths**: Official Livox support, includes camera intrinsic calibration,
-  point cloud projection and coloring tools
-- **Note**: Requires physical calibration board (1x1.5m recommended)
+- **Prerequisites**: ROS1, Livox SDK, PCL, Ceres.
+- **Strengths**: official Livox support.
+- **Boundary**: offline tool; requires a physical calibration board, typically around 1 x 1.5 m.
 
 ### mlcc (HKU-MARS — Multi-LiDAR/Camera)
 
-[mlcc](https://github.com/hku-mars/mlcc) provides targetless extrinsic
-calibration for **multiple LiDARs and cameras** using adaptive voxelization.
+[mlcc](https://github.com/hku-mars/mlcc) provides targetless extrinsic calibration for multiple LiDARs and cameras using adaptive voxelization.
 
-- **Use case**: If S100P is upgraded with additional LiDARs or cameras
-- **Supports**: Multi-LiDAR extrinsic, multi-LiDAR-camera extrinsic, single LiDAR-camera
-- **Prerequisites**: ROS1, Ceres, OpenCV, PCL, Eigen
+- **Use case**: S100P upgrades with additional LiDARs or cameras.
+- **Supports**: multi-LiDAR extrinsic, multi-LiDAR-camera extrinsic, single LiDAR-camera.
+- **Prerequisites**: ROS1, Ceres, OpenCV, PCL, Eigen.
+- **Boundary**: GPL-2.0 reference/offline tool; do not merge into product runtime.
 
 ## Important Notes
 
-- **Static integrator**: Livox Mid-360 is non-repetitive scan. Robot must be **stationary**
-  during recording for good point cloud accumulation.
-- **Textured environment**: The algorithm matches image textures to LiDAR intensity.
-  Featureless walls will cause poor results.
-- **Multiple bags**: Use 5-10 bags from different viewpoints for best accuracy.
-- **Verify visually**: Always check the projected point cloud overlay before accepting results.
+- Livox Mid-360 is a non-repetitive scan LiDAR. Keep the robot stationary during recording for good point cloud accumulation.
+- The algorithm matches image textures to LiDAR intensity; featureless walls produce poor results.
+- Use 5–10 bags from different viewpoints for best accuracy.
+- Always check the projected point cloud overlay before accepting results.
+- Accepted results must be written through `calibration/apply_calibration.py` and checked with `calibration/verify.py`.

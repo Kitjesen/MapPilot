@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import pytest
 
-from runtime.adapters.native import navigation_abi
-from runtime.adapters.native.inspection_commands import (
+from nav.adapters.native import abi as navigation_abi
+from nav.adapters.native.inspection_commands import (
     InspectionCommandClientError,
     NativeInspectionCommandClient,
     get_native_inspection_command_client,
 )
-from runtime.adapters.native.navigation import get_native_navigation_client
+from nav.adapters.native.commands import get_native_navigation_client
 
 
 class _Function:

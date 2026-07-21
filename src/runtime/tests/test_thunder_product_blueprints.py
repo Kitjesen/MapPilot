@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from lingtu.plugin_seed import install_builtin_plugin_catalog
-from runtime.blueprints.products.thunder import (
+from lingtu.assembly.products.thunder import (
     thunder_basic_blueprint,
     thunder_basic_config,
     thunder_blueprint,
@@ -173,7 +173,7 @@ def test_thunder_product_blueprint_uses_stack_composition_directly() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
 
-    assert "runtime.blueprints.stacks.composition" in imports
+    assert "lingtu.assembly.stacks.composition" in imports
 
 
 def test_thunder_basic_blueprint_builds_from_product_entrypoint() -> None:

@@ -1,9 +1,13 @@
 # Factory 3-Floor Staircase MuJoCo Demo — 交接文档
 
+Status: historical handoff note. Do not treat host addresses or `/tmp` paths in
+this file as current deployment instructions. Use `$LINGTU_ROBOT_HOST` for any
+new connection command.
+
 ## 连接信息
 
 ### 机器人 (S100P 四足狗)
-- **IP**: 192.168.66.190
+- **Host**: historical local-lab S100P target; set `LINGTU_ROBOT_HOST` for new runs
 - **用户名**: sunrise
 - **密码**: 通过 `S100P_PASSWORD` 环境变量提供，禁止写入仓库
 - **平台**: 地瓜 S100P，RDK aarch64 (不是 Jetson)，Ubuntu 22.04，ROS2 Humble
@@ -11,7 +15,7 @@
   - `DISPLAY=:0`
   - `XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth.QRJWL3`
   - `XDG_RUNTIME_DIR=/run/user/1000`
-- **SSH 连接**: `ssh sunrise@192.168.66.190` (局域网直连，无跳板)
+- **SSH 连接**: `ssh sunrise@"$LINGTU_ROBOT_HOST"` (根据当前网络配置设置主机)
 - **已安装**: Python3, MuJoCo, Pillow, numpy, ROS2 Humble
 - **注意**: SSH 长命令含分号时偶尔 exit 255，建议写脚本 scp 过去再执行
 
@@ -37,7 +41,7 @@
 | `C:\tmp\fs_nw.png` | 渲染: NW 全景 |
 | `C:\tmp\fs_stair1.png` | 渲染: 楼梯1近景 |
 
-### 机器人上 (192.168.66.190)
+### 机器人上 (historical lab target)
 
 | 路径 | 说明 |
 |---|---|
@@ -66,7 +70,7 @@ cd C:\tmp
 python deploy_stairs.py
 
 # 这个脚本会自动:
-#   a) SSH 连接 192.168.66.190
+#   a) SSH 连接 "$LINGTU_ROBOT_HOST"
 #   b) 生成场景 XML (调用 factory_stairs_scene.py)
 #   c) 上传 live_viz + render 脚本到 /tmp/
 #   d) 运行 offscreen render → 下载 4 张 PNG 到 C:\tmp\

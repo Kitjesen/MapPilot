@@ -417,7 +417,7 @@ def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> Non
     stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
     endpoint_catalog = Path("src/runtime/profiles/catalog/endpoints.py").read_text(encoding="utf-8")
-    exploration_stack = Path("src/runtime/blueprints/stacks/exploration.py").read_text(encoding="utf-8")
+    exploration_stack = Path("src/lingtu/assembly/stacks/exploration.py").read_text(encoding="utf-8")
 
     assert "goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID" in text
     assert "hold_active_goal_until_terminal=True" in text
@@ -430,7 +430,7 @@ def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> Non
 def test_mujoco_inspection_stack_keeps_static_tomogram_saved_map_frame_contract() -> None:
     stack = Path("src/drivers/sim/mujoco/stack.py")
     text = stack.read_text(encoding="utf-8")
-    nav_stack = Path("src/runtime/blueprints/stacks/navigation_core.py").read_text(encoding="utf-8")
+    nav_stack = Path("src/lingtu/assembly/stacks/navigation_core.py").read_text(encoding="utf-8")
 
     assert "MUJOCO_LIVE_PLANNING_FRAME_ID = topic_default_frame_id(TOPICS.odometry)" in text
     assert ("MUJOCO_LIVE_SAVED_MAP_FRAME_ID = topic_default_frame_id(TOPICS.saved_map_cloud)") in text

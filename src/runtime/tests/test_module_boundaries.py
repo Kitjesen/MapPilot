@@ -77,20 +77,23 @@ def test_architecture_layer_manifest_is_valid_and_drives_boundary_rules() -> Non
     }
     assert COMPOSITION_EXCEPTIONS == set(import_boundaries["composition_exceptions"])
     assert "src/runtime/profiles/" in manifest["layers"][1]["owns"]
-    assert "src/runtime/blueprints/" in manifest["layers"][2]["owns"]
+    assert "src/lingtu/assembly/" in manifest["layers"][2]["owns"]
     assert "src/runtime/adapters/" in manifest["layers"][3]["owns"]
     assert "src/nav/adapters/" in manifest["layers"][3]["owns"]
+    assert "src/localization/adapters/" in manifest["layers"][3]["owns"]
     assert "src/maps/adapters/" in manifest["layers"][3]["owns"]
     assert "src/nav/local/" in manifest["layers"][4]["owns"]
     assert "src/nav/kernel/" in manifest["layers"][5]["owns"]
+    assert "src/nav/cpp/" in manifest["layers"][5]["owns"]
     assert "cli/" in manifest["layers"][6]["owns"]
     assert "localization" in BOUNDARY_RULES["decision"]
 
 
 def test_architecture_layer_lookup_uses_most_specific_path_owner() -> None:
     assert architecture_layer_for_path("src/nav/mission/navigation.py")["id"] == "L4_capability_modules"
-    assert architecture_layer_for_path("src/nav/kernel/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
-    assert architecture_layer_for_path("src/nav/services/plan/local_planner/service.py")["id"] == "L5_algorithm_kernels"
+    assert architecture_layer_for_path("src/nav/cpp/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
+    assert architecture_layer_for_path("src/nav/local/local_planner.py")["id"] == "L4_capability_modules"
+    assert architecture_layer_for_path("src/nav/cpp/planning/local/local_planner.hpp")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/nav/local/paths")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/maps/adapters/native/map_save.py")["id"] == "L3_adapter_layer"
@@ -120,10 +123,10 @@ def test_package_does_not_import_forbidden_layers_directly(
     assert violations == [], "\n".join(violations)
 
 
-def test_core_blueprints_do_not_import_cli_profile_surfaces() -> None:
+def test_product_assembly_does_not_import_cli_profile_surfaces() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "runtime" / "blueprints").rglob("*.py"):
+    for path in (SRC / "lingtu" / "assembly").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -142,10 +145,10 @@ def test_core_blueprints_do_not_import_cli_profile_surfaces() -> None:
     assert violations == [], "\n".join(violations)
 
 
-def test_core_blueprints_do_not_import_product_runtime_catalog() -> None:
+def test_product_assembly_uses_registered_plugin_catalog_boundary() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "runtime" / "blueprints").rglob("*.py"):
+    for path in (SRC / "lingtu" / "assembly").rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -161,10 +164,25 @@ def test_core_blueprints_do_not_import_product_runtime_catalog() -> None:
     assert violations == [], "\n".join(violations)
 
 
+def test_runtime_does_not_import_product_assembly() -> None:
+    violations: list[str] = []
+
+    for path in _python_files("runtime"):
+        if _is_test_file(path) or _is_example_file(path):
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for module in _all_absolute_imports(tree):
+            if module == "lingtu.assembly" or module.startswith("lingtu.assembly."):
+                violations.append(f"{rel}: imports {module}")
+
+    assert violations == [], "\n".join(violations)
+
+
 def test_stack_factories_do_not_import_service_manager_directly() -> None:
     violations: list[str] = []
 
-    for path in (SRC / "runtime" / "blueprints" / "stacks").glob("*.py"):
+    for path in (SRC / "lingtu" / "assembly" / "stacks").glob("*.py"):
         if path.name == "__init__.py" or "__pycache__" in path.parts:
             continue
         rel = path.relative_to(ROOT).as_posix()
@@ -188,7 +206,7 @@ def test_navigation_split_stack_modules_keep_adapter_imports_lazy_and_isolated()
                 modules.add(node.module)
         return modules
 
-    stack_dir = SRC / "runtime" / "blueprints" / "stacks"
+    stack_dir = SRC / "lingtu" / "assembly" / "stacks"
     forbidden_core_import_roots = {
         "adapters",
         "compat",
@@ -211,7 +229,7 @@ def test_navigation_split_stack_modules_keep_adapter_imports_lazy_and_isolated()
     assert "nav.exploration.traversable_frontier_module" not in exploration_imports
 
     navigation = ast.parse((stack_dir / "navigation.py").read_text(encoding="utf-8-sig"))
-    assert "runtime.blueprints.adapters.navigation_io" not in set(direct_module_imports(navigation))
+    assert "lingtu.assembly.adapters.navigation_io" not in set(direct_module_imports(navigation))
 
 
 def test_thunder_driver_blueprints_are_compatibility_shims() -> None:
@@ -219,7 +237,7 @@ def test_thunder_driver_blueprints_are_compatibility_shims() -> None:
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
 
     imported = {module for module in _iter_imports(tree) if not module.startswith("typing")}
-    assert "runtime.blueprints.products.thunder" in imported
+    assert "lingtu.assembly.products.thunder" in imported
     assert all(_top_level(module) not in {"nav", "perception", "decision", "gateway"} for module in imported)
 
     forbidden_calls = {"stack_module", "optional_stack_module"}
@@ -324,6 +342,31 @@ def test_gateway_map_routes_do_not_construct_ros2_map_save_commands() -> None:
     assert "runtime.adapters.ros2" not in text
 
 
+def test_gateway_does_not_reach_into_private_planner_state() -> None:
+    violations: list[str] = []
+    for path in _python_files("gateway"):
+        if _is_test_file(path):
+            continue
+        text = path.read_text(encoding="utf-8-sig")
+        if "_planner_svc" in text:
+            violations.append(str(path.relative_to(ROOT)))
+
+    assert violations == []
+
+
+def test_gateway_and_maps_do_not_control_services_through_runtime_manager() -> None:
+    violations: list[str] = []
+    for package in ("gateway", "maps"):
+        for path in _python_files(package):
+            if _is_test_file(path):
+                continue
+            text = path.read_text(encoding="utf-8-sig")
+            if "runtime.service_manager" in text:
+                violations.append(str(path.relative_to(ROOT)))
+
+    assert violations == []
+
+
 def test_gateway_module_does_not_construct_ros2_map_save_commands() -> None:
     path = SRC / "gateway" / "gateway_module.py"
     text = path.read_text(encoding="utf-8-sig")
@@ -394,7 +437,7 @@ def test_product_runtime_paths_do_not_import_ros_modules() -> None:
     from tools.validate.validate_architecture_boundaries import _is_ros_import, _iter_imports
 
     product_paths = (
-        SRC / "runtime" / "blueprints" / "products",
+        SRC / "lingtu" / "assembly" / "products",
         SRC / "runtime" / "profiles",
     )
     violations: list[str] = []
@@ -506,6 +549,63 @@ def test_legacy_slam_ros2_bridge_file_is_removed() -> None:
 
 def test_legacy_slam_relocalization_service_file_is_removed() -> None:
     assert not (ROOT / "src/localization/relocalization.py").exists()
+    assert not (ROOT / "src/runtime/relocalization.py").exists()
+    assert not (ROOT / "src/runtime/adapters/native/relocalization.py").exists()
+    assert (ROOT / "src/localization/service.py").is_file()
+    assert (ROOT / "src/localization/adapters/relocalization.py").is_file()
+
+
+def test_domain_adapters_do_not_live_under_runtime() -> None:
+    assert not (ROOT / "src/runtime/adapters/native").exists()
+    assert not (ROOT / "src/runtime/adapters/localization.py").exists()
+
+    canonical = (
+        "src/nav/adapters/native/abi.py",
+        "src/nav/adapters/native/commands.py",
+        "src/nav/adapters/native/inspection_commands.py",
+        "src/nav/adapters/native/inspection_store.py",
+        "src/localization/adapters/status.py",
+        "src/localization/adapters/resolver.py",
+    )
+    assert [rel for rel in canonical if not (ROOT / rel).is_file()] == []
+
+    retired_modules = {
+        "runtime.adapters.localization",
+        "runtime.adapters.native",
+        "runtime.adapters.native.inspection",
+        "runtime.adapters.native.inspection_commands",
+        "runtime.adapters.native.localization_adapter",
+        "runtime.adapters.native.navigation",
+        "runtime.adapters.native.navigation_abi",
+        "runtime.adapters.native.relocalization",
+    }
+    violations: list[str] = []
+    for path in SRC.rglob("*.py"):
+        if _is_scan_excluded_path(path) or path.resolve() == Path(__file__).resolve():
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for module in _all_absolute_imports(tree):
+            if module in retired_modules or module.startswith("runtime.adapters.native."):
+                violations.append(f"{path.relative_to(ROOT)}: imports {module}")
+
+    assert violations == [], "\n".join(violations)
+
+
+def test_local_planner_has_one_canonical_runtime_location() -> None:
+    assert not (ROOT / "src/nav/services/plan/local_planner").exists()
+    assert (ROOT / "src/nav/local/local_planner.py").is_file()
+    assert (ROOT / "src/nav/cpp/planning/local/local_planner.hpp").is_file()
+
+    violations: list[str] = []
+    for path in SRC.rglob("*.py"):
+        if "__pycache__" in path.parts or path.resolve() == Path(__file__).resolve():
+            continue
+        if "nav.services.plan.local_planner" in path.read_text(encoding="utf-8-sig"):
+            violations.append(str(path.relative_to(ROOT)))
+    assert violations == []
 
 
 def test_thunder_hardware_package_does_not_import_ros_compat_modules() -> None:

@@ -1,7 +1,7 @@
 # Gateway REST API
 
 > Auto-generated from route registrations in `src/gateway/routes/`.
-> Generated: 2026-07-07 15:08:47
+> Generated: 2026-07-18 14:31:17
 
 The GatewayModule serves these endpoints via FastAPI on port 5050.
 
@@ -9,15 +9,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 
 ## Summary
 
-- **src\gateway\gateway_module.py**:
-  - `POST /api/v1/driver/swap` — Swap the active driver backend at runtime
-  - `POST /api/v1/maps` — Map lifecycle management
-  - `POST /api/v1/runtime/backend` —
 - **src\gateway\routes\app.py**:
   - `GET /api/v1/app/bootstrap` — App/Web bootstrap snapshot
   - `GET /api/v1/app/capabilities` — App/Web API capability manifest
   - `GET /api/v1/app/traffic` — App/Web realtime traffic and client polling policy
-  - `GET /api/v1/bootstrap` —
+  - `GET /api/v1/bootstrap`
 - **src\gateway\routes\auth.py**:
   - `GET /api/v1/auth/check` — Check if auth is required
   - `POST /api/v1/auth/login` — Login with API key
@@ -25,15 +21,16 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `GET /api/v1/camera/snapshot` — Camera JPEG snapshot
 - **src\gateway\routes\commands.py**:
   - `POST /api/v1/cmd_vel` — Direct velocity command
+  - `POST /api/v1/estop/reset` — Explicitly release the native software emergency-stop latch
   - `POST /api/v1/goal` — Send navigation goal
   - `POST /api/v1/instruction` — Natural language navigation instruction
   - `POST /api/v1/lease` — Acquire/release/renew control lease
   - `POST /api/v1/mode` — Switch operating mode
   - `POST /api/v1/navigate/click` — Navigate to map-viewer click point
   - `POST /api/v1/navigation/cancel` — Gracefully cancel current navigation mission
-  - `POST /api/v1/navigation/resume` — Release a latched manual takeover; a fresh goal/path is still required
   - `POST /api/v1/navigation/goal_candidate` — Construct and optionally preview a navigation goal without publishing it
   - `POST /api/v1/navigation/plan` — Preview navigation plan without publishing a goal
+  - `POST /api/v1/navigation/resume` — Release manual takeover and require a fresh navigation goal/path
   - `POST /api/v1/stop` — Emergency stop
   - `POST /api/v1/visual_servo` — Hot-switch visual servo target
 - **src\gateway\routes\diagnostics.py**:
@@ -45,23 +42,42 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `GET /api/v1/diagnostics/routecheck/latest` — Read latest non-motion routecheck summary
   - `GET /api/v1/diagnostics/runtime-contract` — Read canonical runtime interface contract
   - `POST /api/v1/inspection/acceptance` — Run read-only inspection acceptance without publishing motion commands
+- **src\gateway\routes\inspection.py**:
+  - `GET /api/v1/inspection/evidence` — List recent verified inspection evidence
+  - `GET /api/v1/inspection/evidence/{evidence_id}` — Read one verified inspection evidence manifest
+  - `GET /api/v1/inspection/evidence/{evidence_id}/artifacts/{kind}` — Read one verified inspection evidence artifact
+  - `GET /api/v1/inspection/routes` — List native inspection routes for a map
+  - `POST /api/v1/inspection/routes` — Create or update a native inspection route
+  - `GET /api/v1/inspection/routes/{route_id}` — Read one native inspection route
+  - `DELETE /api/v1/inspection/routes/{route_id}` — Delete one native inspection route
+  - `POST /api/v1/inspection/routes/{route_id}/start` — Start native C++ inspection execution
+  - `POST /api/v1/inspection/run/cancel` — Cancel native C++ inspection execution
+  - `POST /api/v1/inspection/run/pause` — Pause native C++ inspection execution
+  - `POST /api/v1/inspection/run/resume` — Resume native C++ inspection execution
+  - `GET /api/v1/inspection/status` — Read native inspection store/status snapshot
 - **src\gateway\routes\maps.py**:
   - `POST /api/v1/map/activate` — Set active map (symlink)
   - `GET /api/v1/map/points` — Map point cloud as JSON (from ikd-tree snapshot)
   - `POST /api/v1/map/rename` — Rename a saved map
-  - `POST /api/v1/map/restore_predufo` — Restore map.pcd from DUFOMap pre-filter backup
+  - `POST /api/v1/map/restore_predufo` — Restore map.pcd from pre-clean backup
   - `POST /api/v1/map/save` — Save current SLAM map
   - `POST /api/v1/map_cloud/reset` — Clear accumulated map cloud (viz only, SLAM ikd-tree untouched)
   - `POST /api/v1/maps/import_pcd` — Import a PCD file into a LingTu map package
+  - `GET /api/v1/maps/save-jobs` — List durable SaveMap jobs
+  - `GET /api/v1/maps/save-jobs/{job_id}` — Get durable SaveMap job status
+  - `POST /api/v1/maps/save-jobs/{job_id}/cancel` — Cancel a durable SaveMap job
+  - `POST /api/v1/maps/save-jobs/{job_id}/retry` — Retry a failed durable SaveMap job
   - `POST /api/v1/maps/{name}/build_octomap` — Build OctoPlanner3D octomap.ot from saved map.pcd
   - `POST /api/v1/maps/{name}/crop` — Crop a saved map point cloud and invalidate derived artifacts
   - `POST /api/v1/maps/{name}/mark_zone` — Mark occupied/free/preblocked/traversable zones in the saved OctoMap
   - `GET /api/v1/maps/{name}/pcd` — Serve raw PCD file for inline preview
   - `GET /api/v1/maps/{name}/points` — Saved map point cloud as JSON
   - `POST /api/v1/maps/{name}/validate_plan` — No-motion OctoPlanner3D route preview for the active saved map
+  - `GET /api/v1/maps/{name}/versions` — List verified immutable map versions
+  - `POST /api/v1/maps/{name}/versions/{version}/rollback` — Atomically roll a map back to a verified version
   - `POST /api/v1/maps/{name}/voxels/edit` — Edit saved OctoMap voxels for OctoPlanner3D
   - `GET /api/v1/maps/{name}/voxels/edits` — Saved OctoMap voxel edit overlay
-  - `GET /api/v1/slam/maps` — List maps from filesystem
+  - `GET /api/v1/slam/maps` — List maps through the native maps service
   - `GET /map/viewer` — Interactive 3D map viewer
   - `GET /robot/meshes/{filename}` — Serve robot STL mesh files
 - **src\gateway\routes\operations.py**:
@@ -73,6 +89,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/explore/stop` — Stop autonomous frontier exploration
   - `GET /api/v1/memory/temporal` — Query temporal entity observations
   - `POST /api/v1/memory/temporal/semantic` — Semantic similarity search over temporal observations
+  - `GET /api/v1/services/status` — Product service status
   - `POST /api/v1/slam/auto_relocalize` — Global relocalize via 3D-BBS (no guess required)
   - `POST /api/v1/slam/relocalize` — Relocalize against a saved map
   - `POST /api/v1/slam/restart` — Force-restart native SLAM localization service
@@ -94,7 +111,8 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/locations` — Create or update a tagged navigation location
   - `PUT /api/v1/locations/{name}` — Update a tagged navigation location
   - `DELETE /api/v1/locations/{name}` — Delete a tagged navigation location
-  - `GET /api/v1/navigation` —
+  - `GET /api/v1/metrics` — Operator-facing runtime metrics snapshot
+  - `GET /api/v1/navigation`
   - `GET /api/v1/navigation/dds_snapshot` — Latest navigation data for the native DDS endpoint
   - `GET /api/v1/navigation/status` — Navigation mission and control status
   - `GET /api/v1/path` — Latest planned path
@@ -110,21 +128,6 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `GET /ready` — Readiness probe
 
 ---
-
-## src\gateway\gateway_module.py
-
-### `POST /api/v1/driver/swap`
-**Summary:** Swap the active driver backend at runtime
-**Response model:** `DriverSwapResponse`
-**Handler:** `post_driver_swap`
-
-### `POST /api/v1/maps`
-**Summary:** Map lifecycle management
-**Response model:** `MapLifecycleResponse`
-**Handler:** `post_maps`
-
-### `POST /api/v1/runtime/backend`
-**Handler:** `post_runtime_backend`
 
 ## src\gateway\routes\app.py
 
@@ -172,6 +175,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `ControlCommandResponse`
 **Handler:** `post_cmd_vel`
 
+### `POST /api/v1/estop/reset`
+**Summary:** Explicitly release the native software emergency-stop latch
+**Response model:** `ControlCommandResponse`
+**Handler:** `post_estop_reset`
+
 ### `POST /api/v1/goal`
 **Summary:** Send navigation goal
 **Response model:** `ControlCommandResponse`
@@ -211,6 +219,11 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Preview navigation plan without publishing a goal
 **Response model:** `PlanPreviewResponse`
 **Handler:** `post_navigation_plan`
+
+### `POST /api/v1/navigation/resume`
+**Summary:** Release manual takeover and require a fresh navigation goal/path
+**Response model:** `ControlCommandResponse`
+**Handler:** `post_navigation_resume`
 
 ### `POST /api/v1/stop`
 **Summary:** Emergency stop
@@ -262,6 +275,65 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `InspectionAcceptanceResponse`
 **Handler:** `inspection_acceptance`
 
+## src\gateway\routes\inspection.py
+
+### `GET /api/v1/inspection/evidence`
+**Summary:** List recent verified inspection evidence
+**Handler:** `list_inspection_evidence`
+
+### `GET /api/v1/inspection/evidence/{evidence_id}`
+**Summary:** Read one verified inspection evidence manifest
+**Handler:** `get_inspection_evidence`
+
+### `GET /api/v1/inspection/evidence/{evidence_id}/artifacts/{kind}`
+**Summary:** Read one verified inspection evidence artifact
+**Handler:** `get_inspection_evidence_artifact`
+
+### `GET /api/v1/inspection/routes`
+**Summary:** List native inspection routes for a map
+**Response model:** `InspectionRouteListResponse`
+**Handler:** `list_inspection_routes`
+
+### `POST /api/v1/inspection/routes`
+**Summary:** Create or update a native inspection route
+**Response model:** `InspectionRouteResponse`
+**Handler:** `put_inspection_route`
+
+### `GET /api/v1/inspection/routes/{route_id}`
+**Summary:** Read one native inspection route
+**Response model:** `InspectionRouteResponse`
+**Handler:** `get_inspection_route`
+
+### `DELETE /api/v1/inspection/routes/{route_id}`
+**Summary:** Delete one native inspection route
+**Response model:** `InspectionCommandResponse`
+**Handler:** `delete_inspection_route`
+
+### `POST /api/v1/inspection/routes/{route_id}/start`
+**Summary:** Start native C++ inspection execution
+**Response model:** `InspectionCommandResponse`
+**Handler:** `start_inspection_route`
+
+### `POST /api/v1/inspection/run/cancel`
+**Summary:** Cancel native C++ inspection execution
+**Response model:** `InspectionCommandResponse`
+**Handler:** `cancel_inspection_run`
+
+### `POST /api/v1/inspection/run/pause`
+**Summary:** Pause native C++ inspection execution
+**Response model:** `InspectionCommandResponse`
+**Handler:** `pause_inspection_run`
+
+### `POST /api/v1/inspection/run/resume`
+**Summary:** Resume native C++ inspection execution
+**Response model:** `InspectionCommandResponse`
+**Handler:** `resume_inspection_run`
+
+### `GET /api/v1/inspection/status`
+**Summary:** Read native inspection store/status snapshot
+**Response model:** `InspectionStatusResponse`
+**Handler:** `inspection_status`
+
 ## src\gateway\routes\maps.py
 
 ### `POST /api/v1/map/activate`
@@ -280,7 +352,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `rename_map`
 
 ### `POST /api/v1/map/restore_predufo`
-**Summary:** Restore map.pcd from DUFOMap pre-filter backup
+**Summary:** Restore map.pcd from pre-clean backup
 **Response model:** `MapLifecycleResponse`
 **Handler:** `restore_predufo`
 
@@ -288,38 +360,6 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Save current SLAM map
 **Response model:** `MapLifecycleResponse`
 **Handler:** `save_map_now`
-
-The optional `request_id` is the durable SaveMap idempotency key. A successful
-save returns `job_id`, `version`, `manifest`, immutable artifact paths, and
-`compatibility_ready`. Canonical readers use the immutable version selected by
-`current_version.txt`; a false compatibility flag means only the legacy root
-mirror needs resynchronization. If processing outlives the synchronous wait
-budget, the endpoint returns HTTP `202` with `accepted=true`, `status=running`,
-and `job_id`; clients continue through the save-job status endpoint.
-
-### `GET /api/v1/maps/save-jobs`
-**Summary:** List recent durable SaveMap jobs
-**Response model:** `MapLifecycleResponse`
-
-### `GET /api/v1/maps/save-jobs/{job_id}`
-**Summary:** Read durable SaveMap state, phase, progress, reports, and version
-**Response model:** `MapLifecycleResponse`
-
-### `POST /api/v1/maps/save-jobs/{job_id}/cancel`
-**Summary:** Request cooperative cancellation, including native subprocesses
-**Response model:** `MapLifecycleResponse`
-
-### `POST /api/v1/maps/save-jobs/{job_id}/retry`
-**Summary:** Retry a failed or cancelled SaveMap job
-**Response model:** `MapLifecycleResponse`
-
-### `GET /api/v1/maps/{name}/versions`
-**Summary:** List verified immutable versions of a saved map, newest first
-**Response model:** `MapLifecycleResponse`
-
-### `POST /api/v1/maps/{name}/versions/{version}/rollback`
-**Summary:** Atomically select a verified historical map version and resync the compatibility view
-**Response model:** `MapLifecycleResponse`
 
 ### `POST /api/v1/map_cloud/reset`
 **Summary:** Clear accumulated map cloud (viz only, SLAM ikd-tree untouched)
@@ -330,6 +370,26 @@ and `job_id`; clients continue through the save-job status endpoint.
 **Summary:** Import a PCD file into a LingTu map package
 **Response model:** `MapLifecycleResponse`
 **Handler:** `import_pcd_map`
+
+### `GET /api/v1/maps/save-jobs`
+**Summary:** List durable SaveMap jobs
+**Response model:** `MapLifecycleResponse`
+**Handler:** `list_save_map_jobs`
+
+### `GET /api/v1/maps/save-jobs/{job_id}`
+**Summary:** Get durable SaveMap job status
+**Response model:** `MapLifecycleResponse`
+**Handler:** `get_save_map_job`
+
+### `POST /api/v1/maps/save-jobs/{job_id}/cancel`
+**Summary:** Cancel a durable SaveMap job
+**Response model:** `MapLifecycleResponse`
+**Handler:** `cancel_save_map_job`
+
+### `POST /api/v1/maps/save-jobs/{job_id}/retry`
+**Summary:** Retry a failed durable SaveMap job
+**Response model:** `MapLifecycleResponse`
+**Handler:** `retry_save_map_job`
 
 ### `POST /api/v1/maps/{name}/build_octomap`
 **Summary:** Build OctoPlanner3D octomap.ot from saved map.pcd
@@ -359,6 +419,16 @@ and `job_id`; clients continue through the save-job status endpoint.
 **Summary:** No-motion OctoPlanner3D route preview for the active saved map
 **Handler:** `validate_saved_map_plan`
 
+### `GET /api/v1/maps/{name}/versions`
+**Summary:** List verified immutable map versions
+**Response model:** `MapLifecycleResponse`
+**Handler:** `list_map_versions`
+
+### `POST /api/v1/maps/{name}/versions/{version}/rollback`
+**Summary:** Atomically roll a map back to a verified version
+**Response model:** `MapLifecycleResponse`
+**Handler:** `rollback_map_version`
+
 ### `POST /api/v1/maps/{name}/voxels/edit`
 **Summary:** Edit saved OctoMap voxels for OctoPlanner3D
 **Response model:** `MapLifecycleResponse`
@@ -369,7 +439,7 @@ and `job_id`; clients continue through the save-job status endpoint.
 **Handler:** `get_saved_map_voxel_edits`
 
 ### `GET /api/v1/slam/maps`
-**Summary:** List maps from filesystem
+**Summary:** List maps through the native maps service
 **Response model:** `MapListResponse`
 **Handler:** `slam_maps`
 
@@ -422,6 +492,11 @@ and `job_id`; clients continue through the save-job status endpoint.
 **Summary:** Semantic similarity search over temporal observations
 **Response model:** `TemporalMemoryResponse`
 **Handler:** `post_temporal_semantic`
+
+### `GET /api/v1/services/status`
+**Summary:** Product service status
+**Response model:** `ServiceStatusResponse`
+**Handler:** `service_status`
 
 ### `POST /api/v1/slam/auto_relocalize`
 **Summary:** Global relocalize via 3D-BBS (no guess required)
@@ -519,6 +594,10 @@ and `job_id`; clients continue through the save-job status endpoint.
 **Summary:** Delete a tagged navigation location
 **Response model:** `LocationOperationResponse`
 **Handler:** `delete_location`
+
+### `GET /api/v1/metrics`
+**Summary:** Operator-facing runtime metrics snapshot
+**Handler:** `get_metrics`
 
 ### `GET /api/v1/navigation`
 **Response model:** `NavigationStatusResponse`

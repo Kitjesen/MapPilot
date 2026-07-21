@@ -9,20 +9,22 @@ from runtime.runtime_interface import TOPICS
 
 from .loader import RuntimeGraph, load_runtime_graph
 
-REAL_PRODUCT_PROFILES = frozenset(
-    {
-        "teleop",
-        "teleop_avoid",
-        "map",
-        "tracking",
-        "nav",
-        "inspection",
-        "explore",
-        "tare_explore",
-    }
-)
-LEGACY_MODULE_SIM_PROFILES = frozenset({"sim_mujoco_live", "sim_mujoco_octo_live"})
 REQUIRED_NATIVE_ENDPOINTS = frozenset({"thunder_field", "mujoco_native_dds"})
+PRODUCT_MODE_REQUIRED_FIELDS = (
+    "product_mode",
+    "product_session",
+    "session_mode",
+    "native_control_mode",
+    "slam_mode",
+    "requires_map",
+    "switch_policy",
+    "online_hot_switch_supported",
+    "processes",
+)
+PRODUCT_SWITCH_POLICIES = frozenset({"cold_restart", "hot_switch"})
+PRODUCT_SESSION_MODES = frozenset({"none", "mapping", "navigating", "exploring"})
+PRODUCT_SLAM_MODES = frozenset({"none", "mapping", "localization"})
+PRODUCT_CONTROL_MODES = frozenset({"teleop", "teleop_avoid", "autonomy"})
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ class RuntimeGraphIssue:
     severity: str = "error"
 
     def as_dict(self) -> dict[str, str]:
+        """Return the stable JSON representation used by CLI and Gateway."""
+
         return {
             "code": self.code,
             "message": self.message,
@@ -66,10 +70,13 @@ def validate_runtime_graph(graph: RuntimeGraph | None = None) -> list[RuntimeGra
 
     for name, product in graph.products.items():
         issues.extend(_validate_product(name, product, topics))
+    issues.extend(_validate_product_session_defaults(graph))
 
     for name, endpoint in graph.endpoints.items():
         issues.extend(_validate_endpoint(name, endpoint, topics, graph.native_contract_topics))
 
+    issues.extend(_validate_field_product_topic_closure(graph))
+    issues.extend(_validate_field_product_process_closure(graph))
     issues.extend(_validate_native_endpoint_parity(graph))
     return issues
 
@@ -85,23 +92,6 @@ def assert_runtime_graph_valid(graph: RuntimeGraph | None = None) -> RuntimeGrap
     return graph
 
 
-def validate_profile_against_runtime_graph(
-    profile: str,
-    graph: RuntimeGraph | None = None,
-) -> list[RuntimeGraphIssue]:
-    """Validate a resolved profile against Runtime Graph product boundaries."""
-
-    graph = graph or load_runtime_graph()
-    issues: list[RuntimeGraphIssue] = []
-    profile_name = str(profile)
-
-    if profile_name in REAL_PRODUCT_PROFILES:
-        issues.extend(_validate_real_product_profile(profile_name, graph))
-    if profile_name in LEGACY_MODULE_SIM_PROFILES:
-        issues.extend(_validate_legacy_module_sim_profile(profile_name))
-    return issues
-
-
 def _validate_product(
     name: str,
     product: dict[str, Any],
@@ -109,6 +99,14 @@ def _validate_product(
 ) -> list[RuntimeGraphIssue]:
     issues: list[RuntimeGraphIssue] = []
     required = _string_tuple(product.get("required_topics"))
+    if not _string_tuple(product.get("processes")):
+        issues.append(
+            _issue(
+                "product_processes_missing",
+                f"product {name} must explicitly declare its processes",
+                scope=f"product:{name}",
+            )
+        )
     for topic in required:
         if topic not in topics:
             issues.append(
@@ -118,6 +116,35 @@ def _validate_product(
                     scope=f"product:{name}",
                 )
             )
+    if product.get("operator_switchable") is True:
+        for field in PRODUCT_MODE_REQUIRED_FIELDS:
+            if field not in product or product.get(field) in (None, ""):
+                issues.append(
+                    _issue(
+                        "product_mode_field_missing",
+                        f"operator-switchable product {name} is missing {field}",
+                        scope=f"product:{name}",
+                    )
+                )
+        switch_policy = str(product.get("switch_policy") or "")
+        if switch_policy and switch_policy not in PRODUCT_SWITCH_POLICIES:
+            issues.append(
+                _issue(
+                    "product_switch_policy_invalid",
+                    f"product {name} has unsupported switch policy {switch_policy!r}",
+                    scope=f"product:{name}",
+                )
+            )
+        online_hot_switch = bool(product.get("online_hot_switch_supported", False))
+        if online_hot_switch and switch_policy != "hot_switch":
+            issues.append(
+                _issue(
+                    "product_hot_switch_policy_conflict",
+                    f"product {name} enables online hot switch but requires {switch_policy!r}",
+                    scope=f"product:{name}",
+                )
+            )
+        issues.extend(_validate_product_mode_semantics(name, product, required))
     if name == "nav":
         for topic in (TOPICS.odometry, TOPICS.map_cloud, TOPICS.localization_health):
             if topic not in required:
@@ -131,6 +158,183 @@ def _validate_product(
     return issues
 
 
+def _validate_field_product_topic_closure(graph: RuntimeGraph) -> list[RuntimeGraphIssue]:
+    endpoint = graph.endpoints.get("thunder_field")
+    if endpoint is None:
+        return []
+    available = _endpoint_topics(endpoint)
+    issues: list[RuntimeGraphIssue] = []
+    for name, product in sorted(graph.products.items()):
+        missing = sorted(set(_string_tuple(product.get("required_topics"))) - available)
+        if missing:
+            issues.append(
+                _issue(
+                    "field_product_topic_missing",
+                    f"field product {name} has no endpoint provider for: {', '.join(missing)}",
+                    scope=f"product:{name}@thunder_field",
+                )
+            )
+    return issues
+
+
+def _validate_field_product_process_closure(graph: RuntimeGraph) -> list[RuntimeGraphIssue]:
+    from .plan import build_runtime_plan
+
+    endpoint = graph.endpoints.get("thunder_field")
+    if endpoint is None:
+        return []
+    definitions = endpoint.get("processes")
+    mapped = set(definitions) if isinstance(definitions, dict) else set()
+    issues: list[RuntimeGraphIssue] = []
+    for name, product in sorted(graph.products.items()):
+        required = set(_string_tuple(product.get("processes")))
+        missing = sorted(required - mapped)
+        if missing:
+            issues.append(
+                _issue(
+                    "field_product_process_unmapped",
+                    f"field product {name} has unmapped processes: {', '.join(missing)}",
+                    scope=f"product:{name}@thunder_field",
+                )
+            )
+            continue
+        try:
+            build_runtime_plan(name, "thunder_field", graph=graph)
+        except ValueError as exc:
+            issues.append(
+                _issue(
+                    "runtime_plan_invalid",
+                    str(exc),
+                    scope=f"product:{name}@thunder_field",
+                )
+            )
+    return issues
+
+
+def _validate_product_session_defaults(graph: RuntimeGraph) -> list[RuntimeGraphIssue]:
+    switchable = {
+        name: product
+        for name, product in graph.products.items()
+        if product.get("operator_switchable") is True
+    }
+    active_modes = {
+        str(product.get("session_mode") or "")
+        for product in switchable.values()
+        if str(product.get("session_mode") or "") != "none"
+    }
+    issues: list[RuntimeGraphIssue] = []
+    for mode in sorted(active_modes):
+        defaults = [
+            name
+            for name, product in switchable.items()
+            if product.get("default_for_session_mode") is True
+            and str(product.get("session_mode") or "") == mode
+        ]
+        if len(defaults) != 1:
+            issues.append(
+                _issue(
+                    "product_session_default_invalid",
+                    f"session mode {mode!r} must have exactly one default product; found {defaults}",
+                    scope=f"session_mode:{mode}",
+                )
+            )
+    return issues
+
+
+def _validate_product_mode_semantics(
+    name: str,
+    product: dict[str, Any],
+    required_topics: tuple[str, ...],
+) -> list[RuntimeGraphIssue]:
+    issues: list[RuntimeGraphIssue] = []
+    topics = set(required_topics)
+    capabilities = set(_string_tuple(product.get("required_capabilities")))
+    session_mode = str(product.get("session_mode") or "")
+    slam_mode = str(product.get("slam_mode") or "")
+    control_mode = str(product.get("native_control_mode") or "")
+    requires_map = bool(product.get("requires_map", False))
+    processes = set(_string_tuple(product.get("processes")))
+
+    for field, value, allowed in (
+        ("session_mode", session_mode, PRODUCT_SESSION_MODES),
+        ("slam_mode", slam_mode, PRODUCT_SLAM_MODES),
+        ("native_control_mode", control_mode, PRODUCT_CONTROL_MODES),
+    ):
+        if value and value not in allowed:
+            issues.append(
+                _issue(
+                    "product_mode_value_invalid",
+                    f"product {name} has unsupported {field} {value!r}",
+                    scope=f"product:{name}",
+                )
+            )
+
+    if requires_map != (slam_mode == "localization"):
+        issues.append(
+            _issue(
+                "product_map_slam_conflict",
+                f"product {name} requires_map={requires_map} but slam_mode={slam_mode!r}",
+                scope=f"product:{name}",
+            )
+        )
+
+    expected_processes = {"nav", "driver", "runtime"}
+    if slam_mode != "none":
+        expected_processes.update(("lidar", "slam"))
+    if "local_planner_collision_and_traversability_scoring" in capabilities:
+        expected_processes.add("traversability")
+    if "inspection_evidence_capture_and_result_ack" in capabilities:
+        expected_processes.add("camera")
+    if "tare_frontier_or_viewpoint_goal_source" in capabilities:
+        expected_processes.add("explore")
+    for process in sorted(expected_processes - processes):
+        issues.append(
+            _issue(
+                "product_process_missing",
+                f"product {name} must explicitly require process {process}",
+                scope=f"product:{name}",
+            )
+        )
+
+    command_topics = {TOPICS.nav_command_request, TOPICS.nav_command_ack, TOPICS.cmd_vel}
+    if not command_topics <= topics:
+        missing = ", ".join(sorted(command_topics - topics))
+        issues.append(
+            _issue(
+                "product_command_boundary_incomplete",
+                f"operator-switchable product {name} misses command boundary topics: {missing}",
+                scope=f"product:{name}",
+            )
+        )
+
+    local_planner = "local_planner_collision_and_traversability_scoring" in capabilities
+    if local_planner:
+        planner_topics = {
+            TOPICS.registered_cloud,
+            TOPICS.traversability,
+            TOPICS.local_path,
+        }
+        missing = sorted(planner_topics - topics)
+        if missing:
+            issues.append(
+                _issue(
+                    "product_local_planner_boundary_incomplete",
+                    f"product {name} claims native local planning but misses: {', '.join(missing)}",
+                    scope=f"product:{name}",
+                )
+            )
+
+    if "final_cmd_vel_single_writer" not in capabilities:
+        issues.append(
+            _issue(
+                "product_final_writer_capability_missing",
+                f"operator-switchable product {name} must declare final_cmd_vel_single_writer",
+                scope=f"product:{name}",
+            )
+        )
+    return issues
+
+
 def _validate_endpoint(
     name: str,
     endpoint: dict[str, Any],
@@ -138,6 +342,102 @@ def _validate_endpoint(
     native_topics: tuple[str, ...],
 ) -> list[RuntimeGraphIssue]:
     issues: list[RuntimeGraphIssue] = []
+    if "native_services" in endpoint or "mode_specific_services" in endpoint:
+        issues.append(
+            _issue(
+                "endpoint_legacy_service_list",
+                f"endpoint {name} must use the process mapping only",
+                scope=f"endpoint:{name}",
+            )
+        )
+    process_control = str(endpoint.get("process_control") or "").strip()
+    process_definitions = endpoint.get("processes")
+    if process_control == "runtime_plan" and process_definitions is None:
+        issues.append(
+            _issue(
+                "endpoint_process_mapping_missing",
+                f"RuntimePlan-managed endpoint {name} must declare processes",
+                scope=f"endpoint:{name}",
+            )
+        )
+    if process_definitions is not None and process_control != "runtime_plan":
+        issues.append(
+            _issue(
+                "endpoint_process_control_invalid",
+                f"endpoint {name} declares processes but is not RuntimePlan-managed",
+                scope=f"endpoint:{name}",
+            )
+        )
+    if process_control == "acceptance_runner" and not str(
+        endpoint.get("acceptance_runner") or ""
+    ).strip():
+        issues.append(
+            _issue(
+                "endpoint_acceptance_runner_missing",
+                f"acceptance-runner endpoint {name} must declare acceptance_runner",
+                scope=f"endpoint:{name}",
+            )
+        )
+    if process_definitions is not None:
+        manager = str(endpoint.get("process_manager") or "").strip()
+        if manager not in {"systemd", "direct", "external"}:
+            issues.append(
+                _issue(
+                    "endpoint_process_manager_invalid",
+                    f"endpoint {name} has invalid process manager {manager!r}",
+                    scope=f"endpoint:{name}",
+                )
+            )
+        if not isinstance(process_definitions, dict):
+            issues.append(
+                _issue(
+                    "endpoint_process_mapping_invalid",
+                    f"endpoint {name} process mapping must be an object",
+                    scope=f"endpoint:{name}",
+                )
+            )
+        else:
+            orders: dict[int, str] = {}
+            for process_name, process in process_definitions.items():
+                if not isinstance(process, dict):
+                    issues.append(
+                        _issue(
+                            "endpoint_process_invalid",
+                            f"endpoint {name} process {process_name} must be an object",
+                            scope=f"endpoint:{name}",
+                        )
+                    )
+                    continue
+                target = str(process.get("target") or "").strip()
+                lifecycle = str(process.get("lifecycle") or "").strip()
+                order = process.get("order")
+                timeout_s = process.get("timeout_s")
+                if not target or lifecycle not in {"mode", "persistent"}:
+                    issues.append(
+                        _issue(
+                            "endpoint_process_invalid",
+                            f"endpoint {name} process {process_name} has invalid target or lifecycle",
+                            scope=f"endpoint:{name}",
+                        )
+                    )
+                if not isinstance(order, int) or order < 0 or not isinstance(timeout_s, int) or timeout_s <= 0:
+                    issues.append(
+                        _issue(
+                            "endpoint_process_invalid",
+                            f"endpoint {name} process {process_name} has invalid order or timeout_s",
+                            scope=f"endpoint:{name}",
+                        )
+                    )
+                elif order in orders:
+                    issues.append(
+                        _issue(
+                            "endpoint_process_order_duplicate",
+                            f"endpoint {name} processes {orders[order]} and {process_name} share order {order}",
+                            scope=f"endpoint:{name}",
+                        )
+                    )
+                else:
+                    orders[order] = str(process_name)
     declared = set(_string_tuple(endpoint.get("source_topics"))) | set(_string_tuple(endpoint.get("exposed_topics")))
     for topic in sorted(declared):
         if topic not in topics:
@@ -208,99 +508,6 @@ def _validate_native_endpoint_parity(graph: RuntimeGraph) -> list[RuntimeGraphIs
                     scope=f"endpoint:{endpoint_name}",
                 )
             )
-    return issues
-
-
-def _validate_real_product_profile(
-    profile: str,
-    graph: RuntimeGraph,
-) -> list[RuntimeGraphIssue]:
-    from runtime.introspection.profile_graph import graph_for_profile
-    from runtime.profiles.resolver import resolve_profile_config
-
-    config = resolve_profile_config(profile)
-    profile_graph = graph_for_profile(profile)
-    modules = set(profile_graph.modules)
-    product = graph.products.get(profile, {})
-    endpoint = graph.endpoints.get("thunder_field", {})
-    forbidden_modules = set(_string_tuple(product.get("forbidden_modules"))) | set(
-        _string_tuple(endpoint.get("forbidden_modules"))
-    )
-    issues: list[RuntimeGraphIssue] = []
-
-    if config.get("_runtime_endpoint") != "thunder_field":
-        issues.append(
-            _issue(
-                "real_profile_endpoint_drift",
-                f"{profile} must resolve to thunder_field endpoint",
-                scope=f"profile:{profile}",
-            )
-        )
-    if config.get("localization_adapter") != "cpp_slam_status":
-        issues.append(
-            _issue(
-                "real_profile_localization_adapter_drift",
-                f"{profile} must use cpp_slam_status localization_adapter",
-                scope=f"profile:{profile}",
-            )
-        )
-    if config.get("command_output_mode") != "endpoint_only":
-        issues.append(
-            _issue(
-                "real_profile_command_output_drift",
-                f"{profile} must use endpoint_only command output",
-                scope=f"profile:{profile}",
-            )
-        )
-    if config.get("hardware_control_boundary") != "driver":
-        issues.append(
-            _issue(
-                "real_profile_driver_boundary_drift",
-                f"{profile} must use the canonical driver hardware boundary",
-                scope=f"profile:{profile}",
-            )
-        )
-    if config.get("enable_robot_driver") is not False:
-        issues.append(
-            _issue(
-                "real_profile_duplicate_driver",
-                f"{profile} must not add the Python robot driver beside the native driver",
-                scope=f"profile:{profile}",
-            )
-        )
-    forbidden_present = sorted(forbidden_modules & modules)
-    if forbidden_present:
-        issues.append(
-            _issue(
-                "real_profile_forbidden_module",
-                f"{profile} includes forbidden modules: {', '.join(forbidden_present)}",
-                scope=f"profile:{profile}",
-            )
-        )
-    return issues
-
-
-def _validate_legacy_module_sim_profile(profile: str) -> list[RuntimeGraphIssue]:
-    from runtime.profiles.catalog.products import PROFILES
-
-    config = PROFILES.get(profile, {})
-    issues: list[RuntimeGraphIssue] = []
-    if config.get("_runtime_graph_role") != "module_sim_harness":
-        issues.append(
-            _issue(
-                "legacy_module_sim_role_missing",
-                f"{profile} must be marked _runtime_graph_role=module_sim_harness",
-                scope=f"profile:{profile}",
-            )
-        )
-    if config.get("_real_equivalent") is not False:
-        issues.append(
-            _issue(
-                "legacy_module_sim_real_equivalent_flag",
-                f"{profile} must be marked _real_equivalent=False",
-                scope=f"profile:{profile}",
-            )
-        )
     return issues
 
 

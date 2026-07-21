@@ -100,6 +100,18 @@ _SCENE_GEOMS: dict[str, dict[str, str]] = {
         "group": "0",
         "rgba": "0.95 0.10 0.10 1",
     },
+    "obstacle_stop_demo": {
+        # Presentation-only approach lane. Keep at least 1.10 m beyond the
+        # conservative 0.50 m ThunderV4 forward envelope at the start pose.
+        "name": "acceptance_obstacle_stop_demo",
+        "type": "box",
+        "pos": "1.70 0 0.40",
+        "size": "0.04 0.25 0.40",
+        "contype": "0",
+        "conaffinity": "0",
+        "group": "0",
+        "rgba": "0.95 0.10 0.10 1",
+    },
     "terrain_soft": {
         "name": "acceptance_terrain_soft",
         "type": "box",

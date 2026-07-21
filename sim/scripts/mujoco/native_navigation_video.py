@@ -41,7 +41,6 @@ _MAX_KEYFRAME_WHITE_CLIP_FRACTION = 0.10
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     debug_by_id: dict[int, dict[str, Any]] = {}
-    timed_debug: list[tuple[float, int, dict[str, Any]]] = []
     debug_path = path.with_name(f"{path.stem}_planner_debug.jsonl")
     if debug_path.is_file():
         for line in debug_path.read_text(encoding="utf-8").splitlines():
@@ -52,14 +51,6 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
                 continue
             if isinstance(snapshot, dict):
                 debug_by_id[snapshot_id] = snapshot
-                try:
-                    status_stamp = float(snapshot.get("nav_status_stamp_s"))
-                except (TypeError, ValueError):
-                    continue
-                if math.isfinite(status_stamp) and status_stamp > 0.0:
-                    timed_debug.append((status_stamp, snapshot_id, snapshot))
-    timed_debug.sort(key=lambda item: (item[0], item[1]))
-    debug_stamps = [item[0] for item in timed_debug]
 
     motion_rows: list[dict[str, Any]] = []
     nav_overlay_by_id: dict[int, dict[str, Any]] = {}
@@ -86,6 +77,8 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
         }
 
     rows: list[dict[str, Any]] = []
+    active_exact_snapshot_id = -1
+    exact_snapshot_motion_stamp_s = math.nan
     for value in motion_rows:
         try:
             snapshot_id = int(value.get("planner_debug_id"))
@@ -96,12 +89,13 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
             frame_stamp = float(value.get("t"))
         except (TypeError, ValueError):
             frame_stamp = math.nan
-        if debug_stamps and math.isfinite(frame_stamp):
-            snapshot_index = bisect_right(debug_stamps, frame_stamp) - 1
-            if snapshot_index >= 0:
-                snapshot = timed_debug[snapshot_index][2]
-        elif not debug_stamps:
-            snapshot = debug_by_id.get(snapshot_id)
+        snapshot = debug_by_id.get(snapshot_id)
+        if snapshot is not None and snapshot_id > 0:
+            if snapshot_id != active_exact_snapshot_id:
+                active_exact_snapshot_id = snapshot_id
+                exact_snapshot_motion_stamp_s = frame_stamp
+            value["planner_debug_join"] = "exact_id"
+            value["planner_debug_motion_stamp_s"] = exact_snapshot_motion_stamp_s
         if snapshot is not None:
             planner_debug = snapshot.get("local_planner_debug") or {}
             selected_id = int(snapshot.get("id"))
@@ -129,7 +123,11 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
                 ) or {}
                 value["local_diagnostics"] = local_diagnostics
                 value["local_reason"] = str(local_diagnostics.get("reason") or "")
-            if math.isfinite(frame_stamp) and frame_stamp >= status_stamp:
+            if value.get("planner_debug_join") == "exact_id":
+                join_stamp = float(value.get("planner_debug_motion_stamp_s"))
+                if math.isfinite(frame_stamp) and frame_stamp >= join_stamp:
+                    value["nav_status_hold_age_s"] = frame_stamp - join_stamp
+            elif math.isfinite(frame_stamp) and frame_stamp >= status_stamp:
                 value["nav_status_hold_age_s"] = frame_stamp - status_stamp
         rows.append(value)
     return rows
@@ -380,6 +378,9 @@ def _snapshot_age_s(row: dict[str, Any]) -> float | None:
     debug = row.get("local_planner_debug") or {}
     if not bool(debug.get("valid")):
         return None
+    status_age = _nav_status_age_s(row)
+    if status_age is not None:
+        return status_age
     try:
         frame_stamp = float(row.get("t"))
         snapshot_stamp = float(debug.get("timestamp_s"))
@@ -397,6 +398,21 @@ def _snapshot_age_s(row: dict[str, Any]) -> float | None:
 
 
 def _nav_status_age_s(row: dict[str, Any]) -> float | None:
+    if row.get("planner_debug_join") == "exact_id":
+        try:
+            frame_stamp = float(row.get("t"))
+            join_stamp = float(row.get("planner_debug_motion_stamp_s"))
+        except (TypeError, ValueError):
+            return None
+        if (
+            not math.isfinite(frame_stamp)
+            or not math.isfinite(join_stamp)
+            or frame_stamp <= 0.0
+            or join_stamp <= 0.0
+            or join_stamp > frame_stamp
+        ):
+            return None
+        return frame_stamp - join_stamp
     try:
         frame_stamp = float(row.get("t"))
         status_stamp = float(row.get("nav_status_stamp_s"))
@@ -457,6 +473,39 @@ def _effective_traversability(row: dict[str, Any]) -> dict[str, Any]:
     if rows <= 0 or cols <= 0 or resolution <= 0.0 or len(origin) < 2:
         return {}
     return traversability
+
+
+def _local_map_has_visible_content(
+    row: dict[str, Any], *, range_m: float = 2.0
+) -> bool:
+    """Prove that planner obstacles or fused-cost cells land in the inset."""
+
+    if not bool(_effective_local_map(row).get("enabled")):
+        return False
+    robot_x = float(row.get("x") or 0.0)
+    robot_y = float(row.get("y") or 0.0)
+    radius_sq = max(0.0, float(range_m)) ** 2
+    for point in _presentation_planner_obstacle_points(row):
+        if (float(point[0]) - robot_x) ** 2 + (float(point[1]) - robot_y) ** 2 <= radius_sq:
+            return True
+
+    traversability = _effective_traversability(row)
+    origin = traversability.get("origin_xy") or []
+    if len(origin) < 2:
+        return False
+    resolution = float(traversability.get("resolution_m") or 0.0)
+    if resolution <= 0.0:
+        return False
+    origin_x = float(origin[0])
+    origin_y = float(origin[1])
+    for cell in traversability.get("risk_cells") or []:
+        if not isinstance(cell, (list, tuple)) or len(cell) < 2:
+            continue
+        cell_x = origin_x + (int(cell[1]) + 0.5) * resolution
+        cell_y = origin_y + (int(cell[0]) + 0.5) * resolution
+        if (cell_x - robot_x) ** 2 + (cell_y - robot_y) ** 2 <= radius_sq:
+            return True
+    return False
 
 
 def _effective_dynamic_objects(row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1088,6 +1137,60 @@ def _transcode_h264(raw_path: Path, output: Path) -> tuple[bool, str]:
     return True, "h264_yuv420p"
 
 
+def _validate_video_decode(path: Path) -> dict[str, Any]:
+    """Decode the complete artifact so container metadata alone cannot pass."""
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        proc = subprocess.run(
+            [
+                ffmpeg,
+                "-v",
+                "error",
+                "-xerror",
+                "-i",
+                str(path),
+                "-map",
+                "0:v:0",
+                "-f",
+                "null",
+                "-",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        return {
+            "ok": proc.returncode == 0,
+            "method": "ffmpeg_full_decode",
+            "error": "" if proc.returncode == 0 else proc.stderr[-1000:],
+        }
+
+    import cv2
+
+    capture = cv2.VideoCapture(str(path))
+    reported_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) if capture.isOpened() else 0
+    decoded_frames = 0
+    while capture.isOpened():
+        ok, _frame = capture.read()
+        if not ok:
+            break
+        decoded_frames += 1
+    capture.release()
+    return {
+        "ok": decoded_frames > 0 and (
+            reported_frames <= 0 or decoded_frames == reported_frames
+        ),
+        "method": "opencv_full_decode",
+        "decoded_frames": decoded_frames,
+        "reported_frames": reported_frames,
+        "error": "",
+    }
+
+
 def render_native_navigation_video(
     *,
     world: str | Path,
@@ -1296,13 +1399,27 @@ def render_native_navigation_video(
     decoded_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH)) if capture.isOpened() else 0
     decoded_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) if capture.isOpened() else 0
     capture.release()
+    decode_validation = _validate_video_decode(output_path)
     candidate_frames = sum(bool(_effective_local_candidates(row)) for row in rows)
+    exact_planner_join_frames = sum(
+        row.get("planner_debug_join") == "exact_id" for row in rows
+    )
+    selected_candidate_frames = sum(
+        any(
+            bool(candidate.get("selected"))
+            for candidate in _effective_local_candidates(row)
+        )
+        for row in rows
+    )
     stale_candidate_frames_hidden = sum(
         bool(row.get("local_candidates")) and not bool(_effective_local_candidates(row))
         for row in rows
     )
     local_map_frames = sum(
         bool(_effective_local_map(row).get("enabled")) for row in rows
+    )
+    visible_local_map_frames = sum(
+        _local_map_has_visible_content(row) for row in rows
     )
     traversability_frames = sum(
         bool(_effective_traversability(row))
@@ -1335,18 +1452,28 @@ def render_native_navigation_video(
         metrics["white_clip_fraction"] <= _MAX_KEYFRAME_WHITE_CLIP_FRACTION
         for metrics in keyframe_luma.values()
     )
+    presentation_evidence_ok = (
+        candidate_frames > 0
+        and selected_candidate_frames > 0
+        and local_map_frames > 0
+        and visible_local_map_frames > 0
+        and exact_planner_join_frames > 0
+    )
     return {
         "ok": (
             output_path.is_file()
             and decoded_frames > 0
             and bool(timeline.get("timeline_preserved"))
             and brightness_ok
+            and presentation_evidence_ok
+            and bool(decode_validation.get("ok"))
         ),
         "video": str(output_path),
         "codec": codec,
         "h264_transcoded": transcoded,
         "frames_written": frame_count,
         "frames_decoded": decoded_frames,
+        "decode_validation": decode_validation,
         "width": decoded_width,
         "height": decoded_height,
         "fps": float(fps),
@@ -1356,8 +1483,11 @@ def render_native_navigation_video(
         "motion_log": str(log_path),
         "overlays": overlays,
         "candidate_frames": candidate_frames,
+        "exact_planner_join_frames": exact_planner_join_frames,
+        "selected_candidate_frames": selected_candidate_frames,
         "stale_candidate_frames_hidden": stale_candidate_frames_hidden,
         "local_map_frames": local_map_frames,
+        "visible_local_map_frames": visible_local_map_frames,
         "stale_local_map_frames_hidden": stale_local_map_frames_hidden,
         "traversability_frames": traversability_frames,
         "dynamic_object_frames": dynamic_object_frames,
@@ -1365,8 +1495,8 @@ def render_native_navigation_video(
         "timeline": timeline,
         "snapshot_age_s": {
             "available": bool(snapshot_ages),
-            "meaning": "motion_frame_timestamp_minus_planner_snapshot_timestamp",
-            "join_policy": "latest_nav_status_not_newer_than_motion_frame",
+            "meaning": "motion_frame_clock_age_of_exact_planner_debug_id",
+            "join_policy": "exact_planner_debug_id_fail_closed",
             "max": max(snapshot_ages) if snapshot_ages else None,
             "mean": (
                 float(sum(snapshot_ages) / len(snapshot_ages))

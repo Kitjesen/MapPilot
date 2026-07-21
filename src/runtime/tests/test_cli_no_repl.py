@@ -44,6 +44,10 @@ class _FakeSystem:
 
 
 class _FakeBuilder:
+    # compile_product() passes blueprint.module_names into validate_profile;
+    # an empty tuple means "no forbidden modules present" for the check.
+    module_names: tuple = ()
+
     def __init__(self, system: _FakeSystem):
         self._system = system
 
@@ -57,7 +61,7 @@ class _FakeBuilder:
 
 def _install_cli_harness(monkeypatch, tmp_path, system: _FakeSystem) -> dict:
     import cli.main as main_mod
-    import runtime.blueprints.products as products_mod
+    import lingtu.assembly.products as products_mod
 
     calls = {"product": []}
 
@@ -510,7 +514,7 @@ def test_cli_module_transport_override_reaches_runtime_build(
     tmp_path,
 ):
     import cli.main as main_mod
-    import runtime.blueprints.profile_builder as builder_mod
+    import lingtu.assembly.profile_builder as builder_mod
 
     gateway = _FakeGateway(run_result=True)
     system = _FakeSystem(gateway)
@@ -902,6 +906,51 @@ def test_switch_plan_json_includes_product_mode_switch_contract(monkeypatch, cap
     assert switch["target"]["profile"] == "nav"
     assert switch["same_graph_candidate"] is False
     assert switch["online_hot_switch_supported"] is False
+    assert switch["required_lifecycle"] == "cold_restart"
+    assert switch["target"]["native_control_mode"] == "autonomy"
+    assert "/nav/cmd_vel" in switch["target"]["required_topics"]
+
+
+def test_switch_plan_can_enter_product_mode_from_non_product_profile(monkeypatch, capsys):
+    import cli.main as main_mod
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["lingtu.py", "switch-plan", "sim_mujoco_live", "nav", "--json"],
+    )
+
+    main_mod.main()
+
+    payload = json.loads(capsys.readouterr().out)
+    switch = payload["product_mode_switch"]
+    assert switch["current"] == {
+        "profile": "sim_mujoco_live",
+        "operator_switchable": False,
+    }
+    assert switch["target"]["profile"] == "nav"
+    runtime_plan = switch["runtime_plan"]
+    assert runtime_plan["schema_version"] == "lingtu.runtime_plan.v1"
+    assert runtime_plan["product"] == "nav"
+    assert runtime_plan["endpoint"] == "thunder_field"
+    assert [process["name"] for process in runtime_plan["processes"]] == [
+        "lidar",
+        "slam",
+        "traversability",
+        "nav",
+        "driver",
+        "runtime",
+    ]
+    assert runtime_plan["processes"][3] == {
+        "name": "nav",
+        "manager": "systemd",
+        "target": "lingtu-nav-dds.service",
+        "order": 40,
+        "timeout_s": 20,
+        "lifecycle": "mode",
+    }
+    assert runtime_plan["stop_targets"][0] == "lingtu.service"
+    assert "lingtu-teleop-dds.service" in runtime_plan["stop_targets"]
     assert switch["required_lifecycle"] == "cold_restart"
 
 

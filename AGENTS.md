@@ -4,17 +4,17 @@ This file provides guidance to Codex when working in this repository.
 
 ## Project Overview
 
-LingTu (灵�? is an autonomous navigation system for quadruped robots in
+LingTu (灵途) is an autonomous navigation system for quadruped robots in
 outdoor/off-road environments.
 
 - **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64), native CycloneDDS, Ubuntu Linux
 - **Languages**: Python for the module framework and semantic stack; C++ for SLAM, terrain, and planning hot paths
-- **Architecture**: Module-First. Module is the only runtime unit; Blueprint is the only orchestration unit
+- **Architecture**: LingTu Assembly compiles Product declarations; Blueprint materializes one application graph; RuntimePlan describes native processes; the external Launcher applies it
 - **Canonical architecture guide**: `docs/architecture/README.md`
 
 ## Working Rules
 
-- Follow Module-First boundaries. Product source is ROS-free: use native typed DDS at process boundaries and direct calls inside a C++ endpoint.
+- Keep orchestration scopes separate. `lingtu.assembly` owns product compilation, Module selection, and wires. Blueprint owns one application graph and optional Python workers. RuntimePlan is immutable endpoint process data; `lingtu.launcher` is its only executor. Product source is ROS-free: use native typed DDS at process boundaries and direct calls inside a C++ endpoint.
 - Prefer existing factories, registries, modules, and utilities before adding new abstractions.
 - Keep diffs small, reversible, and behavior-preserving unless the task explicitly requests a behavior change.
 - No new dependencies without an explicit request.
@@ -48,7 +48,7 @@ python lingtu.py stop
 
 # Common overrides
 python lingtu.py nav --llm mock
-python lingtu.py nav --robot thunder --dog-host 192.168.66.190
+python lingtu.py nav --endpoint thunder_field
 python lingtu.py nav --daemon
 ```
 
@@ -56,10 +56,10 @@ python lingtu.py nav --daemon
 
 ```python
 from runtime.blueprint import autoconnect
-from runtime.blueprints.stacks import *
+from lingtu.assembly.stacks import *
 
 system = autoconnect(
-    driver("thunder", dog_host="192.168.66.190"),  # L1 robot connection
+    driver("thunder"),                              # L1 robot connection; field host comes from deployment config
     lidar(enabled=True),                            # Livox MID-360 hardware adapter
     slam("localizer"),                              # managed SLAM/localization
     maps(),                                         # occupancy, voxel, ESDF, elevation, traversability, map manager
@@ -109,7 +109,7 @@ direct backend imports in business logic.
 
 ## Stack Factories
 
-Factories live under `src/runtime/blueprints/stacks/`.
+Factories live under `src/lingtu/assembly/stacks/`.
 
 | Factory | Purpose |
 | --- | --- |
@@ -141,7 +141,9 @@ Factories live under `src/runtime/blueprints/stacks/`.
 
 ## Profiles
 
-Current profile definitions are in `cli/profiles_data.py`.
+Current profile and endpoint definitions live under
+`src/runtime/profiles/catalog/`. `src/runtime/runtime_profiles.py` and
+`cli/profiles_data.py` are compatibility exports.
 
 | Profile | Default Robot | SLAM | LLM | Planner | Semantic | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -174,7 +176,8 @@ profile.
 | `src/nav/local/` | terrain, local planner, path follower Python modules and local autonomy backends |
 | `src/nav/services/plan/` | Planner service boundary, OctoPlanner3D backend, and explicit PCT legacy backend |
 | `src/localization/` | Fast-LIO2, Point-LIO, PGO, localizer, GNSS bridge, NTRIP client |
-| `src/nav/exploration/` | TARE planner integration and supervisor |
+| `src/explore/` | Canonical wavefront/TARE exploration algorithms and supervisor |
+| `src/nav/exploration/` | Compatibility imports for older exploration callers |
 | `calibration/` | camera, IMU, LiDAR-IMU, camera-LiDAR calibration tools |
 | `config/` | robot/device/DDS/DUFOMap/semantic configuration |
 | `launch/` | algorithm bridge launch files only |
@@ -187,33 +190,37 @@ profile.
 | File | Purpose |
 | --- | --- |
 | `lingtu.py` | primary CLI entry; `main_nav.py` is a compatibility alias |
-| `cli/profiles_data.py` | profile and robot-preset source of truth |
-| `src/runtime/blueprints/full_stack.py` | full-stack assembly and critical explicit wires |
-| `src/runtime/blueprints/stacks/` | composable stack factories |
+| `src/runtime/profiles/catalog/` | profile, robot-preset, endpoint, and runtime-path source of truth |
+| `cli/profiles_data.py` | compatibility export for older CLI imports |
+| `src/lingtu/assembly/profile_builder.py` | profile-to-Blueprint assembly |
+| `src/lingtu/launcher.py` | strict external RuntimePlan execution, readiness, and rollback |
+| `src/lingtu/assembly/full_stack_wiring.py` | critical explicit full-stack wires |
+| `src/lingtu/assembly/stacks/` | composable stack factories |
 | `src/runtime/module.py` | Module base class |
 | `src/runtime/stream.py` | `In[T]` / `Out[T]` ports and backpressure policies |
 | `src/runtime/blueprint.py` | Blueprint, autoconnect, explicit wire support |
 | `src/runtime/registry.py` | plugin registry |
 | `src/runtime/devices/` | `hw` module and hardware registry |
 | `src/runtime/utils/calibration_check.py` | startup calibration self-check |
-| `src/nav/mission/navigation.py` | mission FSM, global planning, recovery |
+| `src/nav/navigation.py` | mission FSM, global planning, and recovery |
 | `src/nav/services/plan/global_planner/service.py` | OctoPlanner3D global planner dispatch, map artifact gate, and safe-goal search |
-| `src/nav/safety/safety_ring.py` | safety evaluator and reflexes |
-| `src/nav/safety/velocity_mux.py` | priority-based velocity arbitration |
+| `src/nav/services/safety/safety_ring.py` | safety evaluator and reflexes |
+| `src/nav/services/safety/velocity_mux.py` | Python Module/simulation velocity arbitration |
 | `src/maps/modules/service.py` | map lifecycle Module facade over native map services |
 | `src/maps/services/` | persistent map query/control/storage/build application services |
 | `src/maps/artifacts.py` | saved-map metadata, hash, frame, and same-source validation |
-| `src/maps/prune/runtime.py` | DUFOMap/prune process-boundary adapter used by map save |
-| `src/decision/semantic_planner/goal_resolver.py` | fast/slow goal resolution |
-| `src/decision/semantic_planner/visual_servo_module.py` | bbox/depth visual servo |
-| `src/decision/semantic_planner/agent_loop.py` | multi-turn tool-calling agent loop |
+| `src/maps/services/pipeline.py` | saved-map build pipeline and native prune-command boundary |
+| `src/maps/prune/cpp/` | native save-time dynamic-map pruning implementation |
+| `src/decision/goals/resolver.py` | fast/slow goal resolution |
+| `src/decision/modules/visual_servo.py` | bbox/depth visual servo |
+| `src/decision/tasks/agent.py` | multi-turn tool-calling agent loop |
 | `src/memory/modules/semantic_mapper_module.py` | scene graph to semantic/topological maps |
 | `src/memory/modules/vector_memory_module.py` | CLIP/ChromaDB vector search with numpy fallback |
-| `src/localization/slam_module.py` | managed Fast-LIO2/Point-LIO/localizer mode |
+| `src/localization/slam/module.py` | managed Fast-LIO2/Point-LIO/localizer mode |
 | `src/gateway/gateway_module.py` | FastAPI REST/WS/SSE, map save hooks, drift watchdog |
 | `scripts/lingtu` | robot-side unified operations CLI |
 | `scripts/build/build_dufomap.sh` | aarch64 DUFOMap build helper |
-| `scripts/build/build_tare.sh` | TARE build helper |
+| `scripts/build/build_explore_kernel.sh` | native exploration/TARE policy kernel build helper |
 | `config/robot_config.yaml` | physical robot and calibration source of truth |
 | `config/devices.yaml` | hardware device registry |
 | `config/dufomap.toml` | LingTu-tuned DUFOMap config |
@@ -230,20 +237,13 @@ python -m pytest src/runtime/tests/test_calibration_check.py -q
 python -m pytest src/runtime/tests/test_localization_health.py -q
 python -m pytest src/runtime/tests/test_scene_mode_detector.py -q
 
-# C++ nav_kernel standalone tests
-cd src/nav/kernel
-mkdir -p build
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build . -j
-./test_benchmark
-./test_path_follower_core
-
-# C++ local planner standalone tests
-cd ../../services/plan/local_planner/cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
-cmake --build build -j
-./build/test_local_planner_core
+# Canonical portable C++ navigation tests
+cmake -S src/nav/cpp -B build/nav-cpp -DCMAKE_BUILD_TYPE=Release \
+  -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
+  -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF \
+  -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
+cmake --build build/nav-cpp -j
+ctest --test-dir build/nav-cpp --output-on-failure
 
 # Native C++ runtime build on S100P
 bash scripts/build/build_nav_endpoint.sh
@@ -254,8 +254,8 @@ failures under `-ffast-math`.
 
 ## C++ Performance Notes
 
-`src/nav/kernel/` is a header-first C++ algorithm library exposed to Python via
-nanobind. aarch64 performance is critical.
+`src/nav/cpp/` is the canonical C++ algorithm/runtime tree. `src/nav/kernel/`
+contains only the Python extension loader. aarch64 performance is critical.
 
 Key optimizations:
 
@@ -274,11 +274,12 @@ Be especially careful with these shared surfaces:
 - `src/runtime/stream.py`
 - `src/runtime/registry.py`
 - `src/runtime/utils/`
-- `src/runtime/blueprints/full_stack.py`
+- `src/lingtu/assembly/profile_builder.py`
+- `src/lingtu/assembly/full_stack_wiring.py`
 - `src/perception/.../instance_tracker.py`
-- `src/decision/semantic_planner/goal_resolver.py`
-- `src/nav/mission/navigation.py`
-- `src/nav/safety/safety_ring.py`
+- `src/decision/goals/resolver.py`
+- `src/nav/navigation.py`
+- `src/nav/services/safety/safety_ring.py`
 - `config/robot_config.yaml`
 - `config/devices.yaml`
 
@@ -300,7 +301,7 @@ bp.wire("SLAMModule", "map_cloud", "TerrainModule", "map_cloud", transport="shm"
 ```
 
 Use explicit wires for critical fan-in/fan-out or ambiguous port names. See
-`src/runtime/blueprints/full_stack.py`.
+`src/lingtu/assembly/full_stack_wiring.py`.
 
 ## Explicit Full-Stack Wires
 
@@ -412,7 +413,8 @@ Tool categories include navigation, perception, memory, semantic map, visual
 servo, planning, and system health.
 
 ```bash
-codex mcp add --transport http lingtu http://192.168.66.190:8090/mcp
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+codex mcp add --transport http lingtu http://${LINGTU_HOST}:8090/mcp
 ```
 
 ## Gateway And Teleop
@@ -429,9 +431,12 @@ Teleop joystick payload:
 {"type": "joy", "lx": 0.5, "ly": 0.0, "az": -0.3}
 ```
 
-## CmdVelMux Priority
+## Python CmdVelMux Priority
 
-All velocity sources go through CmdVelMux.
+Python Module, simulation, and explicit compatibility velocity sources use
+`CmdVelMux`. The physical `thunder_field` path performs final motion ownership
+inside the native Nav Endpoint and publishes logical `/nav/cmd_vel` on DDS wire
+topic `rt/nav/cmd_vel`; only `lingtu-driver` may forward it to Brainstem.
 
 | Source | Priority | Timeout |
 | --- | ---: | ---: |
@@ -444,9 +449,10 @@ Highest-priority active source wins.
 
 ## S100P Deployment
 
-- SSH: `ssh sunrise@192.168.66.190`
+- SSH: `ssh sunrise@<robot-ip>` (current lab address is tracked in `docs/CURRENT.md`)
 - Navigation code: `~/data/SLAM/navigation/` symlinked to `~/data/inovxio/lingtu/`
-- Deployment target: `/opt/lingtu/nav/`
+- Deployment target: versioned releases under `/opt/lingtu/releases/`, with
+  `/opt/lingtu/current` as the active application symlink
 - CycloneDDS runtime: C++ `dds/dds.h` + `idlc` from apt `cyclonedds-dev`/`cyclonedds-tools`
   (S100P currently uses 0.8.2 successfully)
 - Python: 3.10.12; `cyclonedds-python` is optional for development diagnostics and
@@ -459,8 +465,9 @@ Highest-priority active source wins.
 `scripts/lingtu` is the single entry point for field operations.
 
 ```bash
-alias lingtu='ssh sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu"'
-alias lingwatch='ssh -t sunrise@192.168.66.190 "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+alias lingtu='ssh sunrise@${LINGTU_HOST} "bash ~/data/SLAM/navigation/scripts/lingtu"'
+alias lingwatch='ssh -t sunrise@${LINGTU_HOST} "bash ~/data/SLAM/navigation/scripts/lingtu watch"'
 ```
 
 | Command | Purpose |

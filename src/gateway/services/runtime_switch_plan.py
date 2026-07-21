@@ -7,15 +7,13 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.profiles.resolver import resolve_profile_config
 from runtime.profiles.endpoints import resolve_runtime_run_spec
 from runtime.profiles.product_mode_contracts import (
     PRODUCT_MODE_CONTRACTS,
     product_mode_switch_plan,
 )
-from runtime.profiles.resolver import canonical_profile_name
+from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
 from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
-
 
 RUNTIME_SWITCH_PLAN_SCHEMA_VERSION = "lingtu.runtime_switch_plan.v1"
 
@@ -124,6 +122,8 @@ def build_runtime_switch_plan(request: Any = None) -> dict[str, Any]:
     }
 
     try:
+        from lingtu.assembly.profile_builder import compile_product
+
         current_config = resolve_profile_config(
             str(inputs["current_profile"]),
             runtime_endpoint=inputs.get("current_endpoint"),
@@ -154,13 +154,20 @@ def build_runtime_switch_plan(request: Any = None) -> dict[str, Any]:
         ]
         base.update(payload)
         product_switch = None
-        if (
-            str(inputs["current_profile"]) in PRODUCT_MODE_CONTRACTS
-            and str(inputs["target_profile"]) in PRODUCT_MODE_CONTRACTS
-        ):
+        if str(inputs["target_profile"]) in PRODUCT_MODE_CONTRACTS:
+            target_product = compile_product(
+                str(inputs["target_profile"]),
+                target_config,
+                endpoint=target_spec.endpoint,
+            )
             product_switch = product_mode_switch_plan(
                 str(inputs["current_profile"]),
                 str(inputs["target_profile"]),
+                runtime_plan=(
+                    target_product.plan.as_dict()
+                    if target_product.plan is not None
+                    else None
+                ),
             )
         base.update(
             {

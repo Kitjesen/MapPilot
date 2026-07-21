@@ -131,23 +131,18 @@ class TestGoalService:
         assert goal_service._test_statuses[-1]["success"] is True
         assert goal_service._test_cancels == ["api_cancel"]
 
-    def test_native_goal_uses_persistent_command_client(self, monkeypatch):
-        from runtime.adapters.native import navigation
-
-        class FakeClient:
+    def test_native_goal_uses_assembled_command_capability(self):
+        class FakeCommands:
             def __init__(self) -> None:
                 self.goals = []
 
-            def send_goal(self, x, y, z, yaw) -> None:
-                self.goals.append((x, y, z, yaw))
+            def send_goal(self, x, y, z, yaw, request_id=None) -> bool:
+                self.goals.append((x, y, z, yaw, request_id))
+                return True
 
-        client = FakeClient()
-        monkeypatch.setattr(
-            navigation,
-            "get_native_navigation_client",
-            lambda *, required=False: client,
-        )
-        service = GoalService(native_endpoint=True)
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
         service.setup()
         emitted = []
         statuses = []
@@ -165,27 +160,23 @@ class TestGoalService:
         )
 
         assert emitted == []
-        assert client.goals == [(1.0, 2.0, 0.3, pytest.approx(0.4))]
+        assert commands.goals[0][:4] == (1.0, 2.0, 0.3, pytest.approx(0.4))
+        assert str(commands.goals[0][4]).startswith("nav-")
         assert statuses[-1]["success"] is True
         assert statuses[-1]["sink"] == "native_dds"
 
-    def test_native_cancel_uses_persistent_command_client(self, monkeypatch):
-        from runtime.adapters.native import navigation
-
-        class FakeClient:
+    def test_native_cancel_uses_assembled_command_capability(self):
+        class FakeCommands:
             def __init__(self) -> None:
                 self.reasons = []
 
-            def cancel(self, reason) -> None:
-                self.reasons.append(reason)
+            def cancel(self, reason, request_id=None) -> bool:
+                self.reasons.append((reason, request_id))
+                return True
 
-        client = FakeClient()
-        monkeypatch.setattr(
-            navigation,
-            "get_native_navigation_client",
-            lambda *, required=False: client,
-        )
-        service = GoalService(native_endpoint=True)
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
         service.setup()
         emitted = []
         statuses = []
@@ -195,26 +186,22 @@ class TestGoalService:
         service.cancel_request._deliver("operator_cancel")
 
         assert emitted == []
-        assert client.reasons == ["operator_cancel"]
+        assert commands.reasons[0][0] == "operator_cancel"
+        assert str(commands.reasons[0][1]).startswith("nav-")
         assert statuses[-1]["sink"] == "native_dds"
 
-    def test_native_inspection_uses_dedicated_command_client(self, monkeypatch):
-        from runtime.adapters.native import inspection_commands
-
-        class FakeClient:
+    def test_native_inspection_uses_assembled_command_capability(self):
+        class FakeCommands:
             def __init__(self) -> None:
                 self.starts = []
 
-            def start(self, route_id, *, revision=0, request_id=None) -> None:
+            def start_inspection(self, route_id, *, revision=0, request_id=None) -> bool:
                 self.starts.append((route_id, revision, request_id))
+                return True
 
-        client = FakeClient()
-        monkeypatch.setattr(
-            inspection_commands,
-            "get_native_inspection_command_client",
-            lambda *, required=False: client,
-        )
-        service = GoalService(native_endpoint=True)
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
         service.setup()
         patrols = []
         statuses = []
@@ -233,7 +220,7 @@ class TestGoalService:
         )
 
         assert patrols == []
-        assert client.starts == [("daily-route", (1 << 64) - 1, "inspection-42")]
+        assert commands.starts == [("daily-route", (1 << 64) - 1, "inspection-42")]
         assert statuses[-1] == {
             "request_id": "inspection-42",
             "action": "inspection",
@@ -247,16 +234,18 @@ class TestGoalService:
         }
 
     @pytest.mark.parametrize("revision", [-1, 1 << 64])
-    def test_native_inspection_rejects_revision_outside_uint64(self, monkeypatch, revision):
-        from runtime.adapters.native import inspection_commands
+    def test_native_inspection_rejects_revision_outside_uint64(self, revision):
+        class FakeCommands:
+            calls = 0
 
-        acquired = []
-        monkeypatch.setattr(
-            inspection_commands,
-            "get_native_inspection_command_client",
-            lambda *, required=False: acquired.append(required),
-        )
-        service = GoalService(native_endpoint=True)
+            def start_inspection(self, **kwargs):
+                del kwargs
+                self.calls += 1
+                return True
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
         service.setup()
         statuses = []
         service.goal_status.subscribe(statuses.append)
@@ -271,7 +260,7 @@ class TestGoalService:
             )
         )
 
-        assert acquired == []
+        assert commands.calls == 0
         assert statuses[-1]["success"] is False
         assert statuses[-1]["message"] == "inspection route revision must be between 0 and UINT64_MAX"
 

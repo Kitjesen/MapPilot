@@ -1,5 +1,9 @@
 # LingTu Simulation
 
+Status: current simulation contract as of 2026-07-18. Simulation reports are
+not field evidence unless a dated field-run document says the same behavior was
+verified on a robot.
+
 `sim/` contains the hardware-free validation surface for LingTu. The primary
 runtime is MuJoCo with simulated Thunder/Go2-style robot assets, ray-cast
 LiDAR, simulated IMU, cameras, map gates, and navigation smoke tests.
@@ -77,6 +81,25 @@ the same native DDS sensor boundary used by the field robot, then native C++
 SLAM publishes `/slam/*` for map/nav/explore validation. Runtime Graph names
 this endpoint `mujoco_native_dds`.
 
+Current native-DDS acceptance commands are:
+
+```bash
+PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
+  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --mode motion \
+  --record-video \
+  --out-dir artifacts/mujoco_native_nav_60m
+
+PYTHONPATH=src:. python sim/scripts/mujoco/long_range_navigation_acceptance.py \
+  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --attempts 10 \
+  --min-distance-m 50 \
+  --max-distance-m 70 \
+  --record-video \
+  --strict \
+  --artifact-dir artifacts/mujoco_long_range_navigation
+```
+
 For an interactive assisted-teleop obstacle demo on Windows + WSL2:
 
 ```powershell
@@ -84,26 +107,30 @@ $env:PYTHONPATH = "src;."
 python sim/scripts/mujoco/teleop_avoid_wasd.py --scenario obstacle_stop
 ```
 
-The demo defaults to the existing `mujoco_navigation_fixture` state provider.
-It publishes MuJoCo ground-truth pose, TF, localization health and the live
-registered LiDAR cloud over typed DDS so the run isolates the local avoidance
-chain; it is not evidence that Fast-LIO2 localization passed. Use
-`--state-provider fastlio2` to validate the full simulated SLAM chain too.
+The interactive demo defaults to the existing `mujoco_navigation_fixture` state
+provider. It publishes MuJoCo ground-truth pose, TF, localization health and the
+live registered LiDAR cloud over typed DDS so the run isolates the local
+avoidance chain; it is not evidence that Fast-LIO2 localization passed. Use
+`--state-provider fastlio2` when the full simulated SLAM chain also needs to be
+validated.
 
 The demo opens a passive MuJoCo viewer. Hold `Shift` as the deadman and use
 `W/S` for forward/reverse, `A/D` for lateral intent, `Q/E` for yaw, `Space`
-to command zero, and `Esc` to exit. Keyboard input uses one persistent native
-command client, so direction changes do not relaunch WSL processes. A 350 ms
-keyboard-heartbeat timeout sends typed zero plus stop and ends the stream if
-the operator process stalls; restart the demo before motion can resume.
-
-The native endpoint still owns LocalPlanner, PathFollower, final safety, and
-`/nav/cmd_vel`. Use
-`--scenario free|obstacle_slow|obstacle_stop|terrain_soft|terrain_hard` to
-compare behavior. `mujoco_him_keyboard.py --keyboard` is a gait-policy debug
-tool that bypasses LingTu planning and must not be used as local-avoidance
+to command zero, and `Esc` to exit. Keyboard input publishes typed operator
+requests through one persistent native command client, so direction changes do
+not relaunch WSL processes. A 350 ms keyboard-heartbeat timeout sends typed
+zero plus stop and ends the stream if the operator process stalls; restart the
+demo before motion can resume. The native endpoint still owns LocalPlanner,
+PathFollower, final safety, and `/nav/cmd_vel`. Use
+`--scenario free|obstacle_slow|obstacle_stop|terrain_soft|terrain_hard`
+to compare behavior. `mujoco_him_keyboard.py --keyboard` is a gait-policy
+debug tool that bypasses LingTu planning and must not be used as local-avoidance
 evidence.
 
+Use [`docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md`](../docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md)
+for the exact claim boundary. The accepted native-DDS navigation gate proves
+the simulated map/plan/local-follow/final-DDS-command/control loop; it does not
+prove field fault handling or physical locomotion.
 
 ### Product Tasks On Simulation Endpoints
 
@@ -138,6 +165,7 @@ Relevant scripts:
 ```bash
 python sim/scripts/mujoco/native_dds_sensors.py --lidar-backend mujoco_lidar
 python sim/scripts/mujoco/live_gate.py --mujoco-lidar-backend mujoco_lidar
+python sim/scripts/mujoco/native_navigation_acceptance.py --mode motion
 python sim/scripts/mujoco/record_thunderv4_mid360_policy.py
 ```
 
@@ -200,10 +228,12 @@ Sunrise remote runner:
 
 ```bash
 python sim/scripts/run_sunrise_continuous_mapping_gate.py \
-  --host 192.168.66.13 \
+  --host "$LINGTU_SIM_HOST" \
   --duration 180 \
   --domain-id 231
 ```
+
+Set `LINGTU_SIM_HOST=FIELD_COMPUTE_HOST` before using the remote runner.
 
 Keep isolated `--domain-id` in **`200–232`**. Production robot SLAM uses domain
 `0`. See

@@ -1,5 +1,7 @@
 # MuJoCo Native Control-Mode Acceptance
 
+Status: current control-mode promotion contract as of 2026-07-18.
+
 This entry has two explicit actions:
 
 - `run` executes the harness configured for exactly one native endpoint mode,

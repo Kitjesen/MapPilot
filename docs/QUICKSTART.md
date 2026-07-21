@@ -22,6 +22,11 @@ and command output are connected. The native field path uses typed DDS and
 native C++ services at its process boundaries. ROS 2 is available only as an
 explicit compatibility or evaluation surface.
 
+For the current physical Thunder field endpoint, `thunder_field` resolves to an
+endpoint-owned command boundary: `lingtu-nav-dds` publishes `/nav/cmd_vel`, the
+single `lingtu-driver` service consumes it, and that driver sends checked gRPC
+commands to a remote Brainstem controller from `brainstem.env`.
+
 The following statement is always true:
 
 - A local test does not prove a simulation.
@@ -99,6 +104,8 @@ catalog.
 | `map` | Build a saved map | Selected field endpoint | Mapping session may involve supervised manual motion |
 | `tracking`, `nav`, `inspection` | Saved-map tracking, navigation, or inspection | Selected field endpoint | Potentially |
 | `explore`, `tare_explore` | Frontier exploration variants | Selected field endpoint | Potentially |
+| `sim_gazebo`, `sim_industrial`, `sim_mujoco_live`, `sim_mujoco_octo_live`, `sim_cmu_tare` | Advanced simulation/validation profiles | Simulator or replay endpoint | Simulated motion only |
+| `super_lio`, `super_lio_relocation` | Explicit Super-LIO evaluation profiles | Selected evaluation endpoint | Potentially, only after field gates |
 
 The `map`, `nav`, `explore`, and `tare_explore` names describe product
 tasks, not safe local demos. Do not launch them just to test a workstation.
@@ -292,6 +299,11 @@ Use overrides to make an experiment explicit. Re-run `show-config` or
 The product default global planner is OctoPlanner3D. PCT remains an explicit
 compatibility/experiment selection; do not silently treat a fallback as product
 planner validation.
+
+`direct` is a lightweight/direct compatibility planner used by profiles such
+as `lite`, `teleop`, and `map` where map-backed global planning is not the
+primary task. It is not evidence that the OctoPlanner3D saved-map navigation
+path is healthy.
 
 ## Optional interfaces
 

@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from memory.spatial.tagged_locations import TaggedLocationStore
-from runtime.blueprints.stacks.memory import memory
+from lingtu.assembly.stacks.memory import memory
 
 
 def test_memory_stack_persists_tagged_locations_under_semantic_directory(tmp_path: Path) -> None:

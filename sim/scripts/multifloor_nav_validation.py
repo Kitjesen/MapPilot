@@ -1294,7 +1294,7 @@ def _run_mujoco_bridge_segment(
 ) -> dict[str, Any]:
     from drivers.sim.mujoco.driver import MujocoDriverModule
     from nav.local.path_follower import PathFollower
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
     from nav.services.safety.velocity_mux import VelocityMux
     from nav.tracking.waypoint_tracker import EV_PATH_COMPLETE, WaypointTracker
 
@@ -1596,7 +1596,7 @@ def run_command_flow(
     local_planner_backend: str = "simple",
 ) -> dict[str, Any]:
     from nav.local.path_follower import PathFollower
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
     from nav.services.safety.velocity_mux import VelocityMux
 
     path_follower_backend = "pid"

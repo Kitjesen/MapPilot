@@ -23,7 +23,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from lingtu.plugin_seed import install_builtin_plugin_catalog
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
 from runtime.endpoints.dds.contracts import endpoint_contract
 from runtime.profiles.endpoints import resolve_runtime_run_spec
 from runtime.profiles.resolver import resolve_runtime_config
@@ -131,7 +131,7 @@ def validate(profile: str = EXPECTED_PROFILE) -> dict[str, Any]:
     checked_graph_profiles: set[str] = set()
     checked_files = {
         "src/runtime/profiles/catalog/endpoints.py",
-        "src/runtime/blueprints/products/thunder.py",
+        "src/lingtu/assembly/products/thunder.py",
         "src/runtime/endpoints/dds/contracts.py",
         "src/runtime/endpoints/dds/endpoint_runner.py",
         "src/runtime/endpoints/dds/endpoint_service.py",

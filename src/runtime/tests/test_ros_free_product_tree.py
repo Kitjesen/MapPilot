@@ -15,7 +15,7 @@ def test_product_source_tree_has_no_owned_ros2_adapter_packages() -> None:
         "src/perception/adapters/ros2",
         "src/runtime/adapters/ros2",
         "src/runtime/adapters/navigation_io.py",
-        "src/runtime/blueprints/stacks/navigation_io.py",
+        "src/lingtu/assembly/stacks/navigation_io.py",
         "src/nav/adapters/dds/nav",
         "src/lingtu/ros2_plugin_seed.py",
         "src/lingtu/ros2_shutdown.py",

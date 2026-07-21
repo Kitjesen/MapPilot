@@ -6,7 +6,7 @@ import importlib
 import sys
 from importlib import import_module
 
-from runtime.blueprints.stacks._registry import optional_stack_module, stack_module
+from runtime.plugin_resolution import optional_stack_module, stack_module
 from runtime.contracts import CAMERA_BACKEND_ORBBEC, CAMERA_BACKEND_SIM, CAMERA_ROLE
 from runtime.plugin_seed import seed_registered_plugins
 from runtime.registry import get

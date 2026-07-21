@@ -1,4 +1,4 @@
-"""add_autonomy_stack() -convenience wrapper for the 3 autonomy sub-modules.
+"""Convenience assembly for terrain, local planning, and path following.
 
 The autonomy stack is 3 independent Modules, each independently pluggable via
 Registry:
@@ -35,31 +35,7 @@ from runtime.registry import get
 
 logger = logging.getLogger(__name__)
 
-# The three class names are lazy-forward references resolved by __getattr__
-# below -each name is exported via lazy import from its real module.
-# noqa comments below: ruff F822 sees these as undefined but they are
-# resolved by __getattr__ at runtime.
-__all__ = [  # noqa: F822
-    "nav.local_planner",
-    "nav.path_follower",
-    "nav.terrain",
-    "add_autonomy_stack",
-]
-
-
-_EXPORTS = {
-    "nav.terrain": "nav.local.terrain",
-    "nav.local_planner": "nav.services.plan.local_planner.service",
-    "nav.path_follower": "nav.local.path_follower",
-}
-
-
-def __getattr__(name: str) -> Any:
-    module_name = _EXPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(name)
-    module = import_module(module_name)
-    return getattr(module, name)
+__all__ = ["add_autonomy_stack"]
 
 
 def _module_for_backend(category: str, backend: str) -> type:
@@ -77,7 +53,7 @@ def _module_for_backend(category: str, backend: str) -> type:
 def _import_builtin_category(category: str) -> None:
     module_names = {
         "terrain": ("nav.local.terrain",),
-        "local_planner": ("nav.services.plan.local_planner.service",),
+        "local_planner": ("nav.local.local_planner",),
         "path_follower": ("nav.local.path_follower",),
     }.get(category, ())
     for module_name in module_names:

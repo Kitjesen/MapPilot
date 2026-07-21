@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from runtime.adapters.native import inspection as native_inspection
+from nav.adapters.native import inspection_store as native_inspection
 
 
 class _FakeFunction:

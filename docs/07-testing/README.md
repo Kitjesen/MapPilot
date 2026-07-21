@@ -1,7 +1,11 @@
 # LingTu Regression Suite
 
-Current layers, from local commit to server/simulation closure. Hardware P0
-scripts are retained as optional legacy procedures, not the current target.
+Status: current testing index as of 2026-07-18. This file is an active gate
+map, not dated evidence.
+
+Current layers, from local commit to native-DDS simulation acceptance and field
+campaign evidence. Hardware P0 scripts are retained as optional legacy
+procedures, not the default proof for current native endpoint work.
 
 Commit and push acceptance criteria live in
 [`COMMIT_PUSH_POLICY.md`](COMMIT_PUSH_POLICY.md). The short version is:
@@ -13,6 +17,8 @@ Current P0 readiness evidence and remaining product-claim blockers are tracked
 in [`P0_READINESS_AUDIT.md`](P0_READINESS_AUDIT.md).
 The strict navigation algorithm claim boundary is defined in
 [`ALGORITHM_VALIDATION_FLOW.md`](ALGORITHM_VALIDATION_FLOW.md).
+The latest aarch64 native build and no-motion DDS evidence is recorded in
+[`field-runs/2026-07-18-worm-aarch64-native-validation.md`](field-runs/2026-07-18-worm-aarch64-native-validation.md).
 Simulation boundaries are defined in
 [`../architecture/SIMULATION_INTEGRATION_CONTRACT.md`](../architecture/SIMULATION_INTEGRATION_CONTRACT.md):
 LingTu absorbs simulator topic contracts, not simulator product profiles.
@@ -21,7 +27,9 @@ LingTu absorbs simulator topic contracts, not simulator product profiles.
 |---|---|---|---|---|
 | L1 pre-commit hook | `git commit` | `pytest src/runtime/tests/ -q` must pass | ~90 s | Yes |
 | L2 pre-push hook | `git push` | L1 plus `stub` profile build/start smoke | ~30 s extra | Yes |
-| L2.5 server simulation closure | Before navigation demos or simulation-backed claims | `server_sim_closure.py` strict summary over the relevant simulation gates | Host-dependent | Yes for simulation-backed navigation claims |
+| L2.5 server simulation closure | Before legacy server/simulation-backed claims | `server_sim_closure.py` strict summary over the relevant simulation gates | Host-dependent | Yes for legacy simulation-backed claims |
+| Native-DDS MuJoCo navigation acceptance | Before native endpoint navigation/control claims | `sim/scripts/mujoco/native_navigation_acceptance.py` or `long_range_navigation_acceptance.py` against the checked manifest | Host-dependent | Yes for native-DDS MuJoCo claims |
+| Native control-mode promotion | Before claiming `autonomy`, `teleop`, or `teleop_avoid` product promotion | `sim/scripts/mujoco/native_control_mode_acceptance.py run` then `evaluate` | Host-dependent | Yes for control-mode promotion |
 | L3 hardware P0 | Explicit hardware campaign only | Run the P0 scripts and capture video | ~30 min | No for current server/sim work |
 
 ---
@@ -54,6 +62,10 @@ Use this layer before claiming that navigation, localization, planning,
 tracking, exploration, or Gateway command safety works beyond unit tests. It is
 hardware-free evidence only: it must report `simulation_only=true`,
 `real_robot_motion=false`, and `cmd_vel_sent_to_hardware=false`.
+
+For current native-DDS MuJoCo navigation/control claims, prefer the dedicated
+MuJoCo native acceptance documents below. The L2.5 aggregate remains useful for
+legacy server simulation, replay, Gazebo/CMU, and benchmark-style gates.
 
 The current strict live Fast-LIO simulation input default is
 `scan_time_profile=physical_rolling`, which accumulates actual MuJoCo subscans
@@ -117,6 +129,48 @@ visible without parsing the nested summary.
 
 ---
 
+## Native-DDS MuJoCo Acceptance
+
+These are the current native endpoint gates. They use typed DDS and native C++
+processes; they still prove simulation behavior only.
+
+| Document | Status label | Scope |
+| --- | --- | --- |
+| [`MUJOCO_NAVIGATION_ACCEPTANCE.md`](MUJOCO_NAVIGATION_ACCEPTANCE.md) | contract + accepted evidence | Native navigation function gate, native-SLAM variant boundary, 60 m accepted single run, and long-range campaign command |
+| [`MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`](MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md) | contract/gate | Native endpoint `autonomy`, `teleop`, and `teleop_avoid` promotion rules |
+| [`MUJOCO_MID360_FIDELITY.md`](MUJOCO_MID360_FIDELITY.md) | contract/evidence | LiDAR optical and scan-time fidelity; separate from navigation function gates |
+
+Canonical commands:
+
+```bash
+PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
+  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --mode motion \
+  --record-video \
+  --out-dir artifacts/mujoco_native_nav_60m
+
+PYTHONPATH=src:. python sim/scripts/mujoco/long_range_navigation_acceptance.py \
+  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --attempts 10 \
+  --min-distance-m 50 \
+  --max-distance-m 70 \
+  --record-video \
+  --strict \
+  --artifact-dir artifacts/mujoco_long_range_navigation
+
+PYTHONPATH=src:. python sim/scripts/mujoco/native_control_mode_acceptance.py \
+  --control-mode autonomy \
+  --action run \
+  --artifact-dir artifacts/mujoco_native_control_modes/autonomy \
+  --json-out artifacts/mujoco_native_control_modes/autonomy/acceptance.json
+```
+
+Do not report these as field readiness. A passed native-DDS MuJoCo gate does
+not prove real MID-360 timing, real IMU noise, Brainstem network behavior,
+lease preemption, motor fault handling, or physical gait stability.
+
+---
+
 ## Optional Hardware P0 Scripts
 
 These scripts are not part of the current server/simulation target. Use them
@@ -139,7 +193,8 @@ Each P0 script is self-contained, uses `set -e`, and writes its log to `~/data/n
 ### Legacy Hardware Procedure
 
 ```bash
-ssh sunrise@192.168.66.190
+export LINGTU_ROBOT_HOST=ROBOT_IP_OR_HOSTNAME
+ssh sunrise@"$LINGTU_ROBOT_HOST"
 cd ~/data/SLAM/navigation
 git pull --ff-only origin main
 LINGTU_P0_GOAL_X=2.0 LINGTU_P0_GOAL_Y=0.0 bash docs/07-testing/p0_all.sh
@@ -180,7 +235,8 @@ Run it after changing MuJoCo assets, ONNX policy loading, `PolicyRunner`,
 `MujocoDriverModule`, or sim navigation wiring:
 
 ```bash
-ssh sunrise@192.168.66.190
+export LINGTU_ROBOT_HOST=ROBOT_IP_OR_HOSTNAME
+ssh sunrise@"$LINGTU_ROBOT_HOST"
 cd ~/data/SLAM/navigation
 mkdir -p artifacts
 PYTHONPATH=src:. PYTHONIOENCODING=utf-8 LINGTU_SIM_DRIVE_MODE=policy \

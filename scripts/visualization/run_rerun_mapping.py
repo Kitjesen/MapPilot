@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.WARNING)
 
 import rerun as rr
 
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
 
 rr.init("lingtu_mapping")
 server_uri = rr.serve_grpc(grpc_port=9877)

@@ -15,6 +15,7 @@ response.
 | `session.py` | Session lifecycle endpoints |
 | `operations.py` | Operator actions such as restart/toggle endpoints |
 | `diagnostics.py` | Diagnostic and evidence endpoints |
+| `inspection.py` | Inspection route commands, status, and evidence-facing endpoints |
 | `assets.py` | Static asset serving |
 | `auth.py` | Auth endpoint helpers |
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.adapters.native.localization_adapter import CppSlamStatusAdapterModule
+from localization.adapters.status import CppSlamStatusAdapterModule
 
 
 def _payload() -> dict:

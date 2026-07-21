@@ -1331,7 +1331,7 @@ def test_teleop_websocket_reports_unconfirmed_manual_hold(monkeypatch):
     from fastapi.testclient import TestClient
 
     from gateway.gateway_module import GatewayModule
-    from runtime.adapters.native.navigation import NavigationClientError
+    from nav.adapters.native.commands import NavigationClientError
 
     class FailingPublisher:
         def quiesce_and_send_zero(self, *, timeout_s):

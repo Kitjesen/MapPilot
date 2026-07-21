@@ -20,6 +20,23 @@ extern "C" {
 typedef struct LingtuMapsServiceHandle LingtuMapsServiceHandle;
 
 #define LINGTU_MAPS_SAVE_MAP_ABI_VERSION 1U
+#define LINGTU_MAPS_UNITY_SEMANTIC_IMPORT_ABI_VERSION 1U
+
+typedef struct LingtuMapsUnitySemanticImportOptions {
+  uint32_t struct_size;
+  uint32_t abi_version;
+  const char* taxonomy_path;
+  const char* frame_id;
+  double voxel_size_m;
+  double occupied_probability;
+  double shell_thickness_voxels;
+  uint64_t generation;
+  uint64_t max_objects;
+  uint64_t max_voxels;
+  uint64_t max_voxel_checks;
+  uint8_t include_unknown_geometry;
+  uint8_t exclude_dynamic_classes;
+} LingtuMapsUnitySemanticImportOptions;
 
 typedef struct LingtuMapsSaveRequirements {
   uint32_t struct_size;
@@ -644,6 +661,15 @@ LINGTU_MAPS_API int32_t lingtu_maps_service_build_traversability_artifact_json(
 LINGTU_MAPS_API int32_t lingtu_maps_service_build_semantic_artifact_json(
     LingtuMapsServiceHandle* handle,
     const char* map_id,
+    char* out,
+    uint64_t capacity,
+    uint64_t* out_size);
+
+LINGTU_MAPS_API int32_t lingtu_maps_service_import_unity_semantic_artifact_json(
+    LingtuMapsServiceHandle* handle,
+    const char* map_id,
+    const char* scene_dir,
+    const LingtuMapsUnitySemanticImportOptions* options,
     char* out,
     uint64_t capacity,
     uint64_t* out_size);

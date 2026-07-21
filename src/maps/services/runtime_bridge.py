@@ -148,28 +148,13 @@ class MapRuntimeBridge:
         profile = str(slam_profile or self.slam_profile or "").strip().lower()
         if profile:
             return self.normalize_slam_profile(profile)
-        try:
-            from runtime.service_manager import get_service_manager
-
-            services = get_service_manager().status(
-                "super_lio_relocation",
-                "super_lio",
-                "slam_pgo",
-                "localizer",
-                "slam",
-            )
-            if services.get("super_lio_relocation") in ("running", "active"):
-                return "super_lio_relocation"
-            if services.get("super_lio") in ("running", "active"):
-                return "super_lio"
-            if services.get("slam_pgo") in ("running", "active"):
-                return "fastlio2"
-            if services.get("localizer") in ("running", "active"):
-                return "localizer"
-            if services.get("slam") in ("running", "active"):
-                return "slam"
-        except Exception as exc:
-            logger.debug("_resolve_slam_profile: service_manager lookup failed: %s", exc)
+        status_backend = str(
+            self.latest_localization_status.get("backend")
+            or self.latest_localization_status.get("localization_backend")
+            or ""
+        ).strip().lower()
+        if status_backend:
+            return self.normalize_slam_profile(status_backend)
         return "unknown"
 
     def save_map_with_adapter(self, pcd_path: Path) -> dict[str, Any]:

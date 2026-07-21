@@ -1,4 +1,4 @@
-﻿"""Contract tests for all LocalPlanner backends.
+"""Contract tests for all LocalPlanner backends.
 
 Verifies that every declared backend (nanobind, cmu_py, simple) can be
 instantiated, that port types match the spec, that the simple backend survives
@@ -31,7 +31,7 @@ class TestLocalPlannerBackends:
     @pytest.mark.parametrize("backend", ["nanobind", "simple", "cmu_py"])
     def test_all_backends_instantiate(self, backend: str) -> None:
         """Every registered backend name must succeed in __init__."""
-        from nav.services.plan.local_planner.service import (
+        from nav.local.local_planner import (
             _AVAILABLE_LOCAL_PLANNER_BACKENDS,
             LocalPlanner,
         )
@@ -45,7 +45,7 @@ class TestLocalPlannerBackends:
 
     def test_default_backend_is_nanobind(self) -> None:
         """Default backend string must be 'nanobind'."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner()
         assert mod._backend == "nanobind"
@@ -56,7 +56,7 @@ class TestLocalPlannerBackends:
 
     def test_port_types_match_spec(self) -> None:
         """All In/Out ports have the correct msg_type."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
 
@@ -104,7 +104,7 @@ class TestLocalPlannerBackends:
 
     def test_nanobind_uses_map_odom_tf_for_odom_framed_pose(self) -> None:
         """Local planner must not reject normal odom-frame SLAM pose."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class FakeCore:
             def set_vehicle(self, *_args):
@@ -170,7 +170,7 @@ class TestLocalPlannerBackends:
 
     def test_map_odom_tf_payload_does_not_clear_local_plan(self) -> None:
         """Only explicit frame-jump events may clear the active local path."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         paths: list[Path] = []
@@ -246,7 +246,7 @@ class TestLocalPlannerBackends:
 
     def test_simple_backend_lifecycle(self) -> None:
         """setup() -> start() -> stop() works with backend='simple'."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         assert not mod._running
@@ -264,7 +264,7 @@ class TestLocalPlannerBackends:
 
     def test_simple_backend_alive_toggles(self) -> None:
         """alive Out[bool] publishes True on start(), False on stop()."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         mod.setup()
@@ -286,7 +286,7 @@ class TestLocalPlannerBackends:
 
     def test_simple_backend_publishes_path_on_waypoint(self) -> None:
         """Inject odometry + waypoint -> local_path published."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         mod.setup()
@@ -335,7 +335,7 @@ class TestLocalPlannerBackends:
 
     def test_simple_backend_rejects_frame_mismatch(self) -> None:
         """LocalPlanner must not mix odom-frame pose with map-frame goals."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         mod.setup()
@@ -369,7 +369,7 @@ class TestLocalPlannerBackends:
 
     def test_simple_backend_accepts_configured_odom_planning_frame(self) -> None:
         """Profiles that plan in odom can opt in explicitly."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple", planning_frame_id="odom")
         mod.setup()
@@ -399,7 +399,7 @@ class TestLocalPlannerBackends:
 
     def test_traversability_grid_becomes_virtual_obstacles(self) -> None:
         """High-risk traversability cells enter the shared obstacle cloud."""
-        from nav.services.plan.local_planner.obstacles import (
+        from nav.local.obstacles import (
             OBSTACLE_INTENSITY,
             merge_obstacle_clouds,
         )
@@ -435,10 +435,10 @@ class TestLocalPlannerBackends:
 
     def test_cmu_py_traversability_grid_penalizes_group_scores(self) -> None:
         """Soft risk lowers candidate scores and hard risk blocks them."""
-        from nav.services.plan.local_planner.cmu_py import (
+        from nav.local.cmu_py import (
             apply_traversability_cost_to_group_scores,
         )
-        from nav.services.plan.local_planner.models import GROUP_NUM
+        from nav.local.models import GROUP_NUM
 
         scores = np.ones(36 * GROUP_NUM, dtype=np.float64) * 10.0
         start_paths = [np.asarray([[0.75, 0.0, 0.0]], dtype=np.float32) for _ in range(GROUP_NUM)]
@@ -484,7 +484,7 @@ class TestLocalPlannerBackends:
 
     def test_nanobind_core_receives_traversability_grid(self) -> None:
         """Service syncs traversability payload into a capable C++ core."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class FakeCore:
             captured = None
@@ -524,7 +524,7 @@ class TestLocalPlannerBackends:
 
     def test_nanobind_uses_native_traversability_not_virtual_obstacles(self) -> None:
         """Grid-capable C++ core receives traversability separately from obstacles."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class FakeCore:
             traversability_grid = None
@@ -593,7 +593,7 @@ class TestLocalPlannerBackends:
 
     def test_nanobind_prefers_single_native_plan_frame_call(self) -> None:
         """Newer C++ core receives one frame-level call instead of setter chatter."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class FakeCore:
             plan_frame_calls = []
@@ -680,7 +680,7 @@ class TestLocalPlannerBackends:
     @pytest.mark.native
     def test_nanobind_backend_setup_succeeds(self, require_nav_kernel) -> None:
         """nanobind setup succeeds with local lingtu_nav_kernel build."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         require_nav_kernel(
             ("LocalPlannerParams", "LocalPlanner"),
@@ -702,7 +702,7 @@ class TestLocalPlannerBackends:
 
     def test_cmu_py_backend_setup_succeeds(self) -> None:
         """cmu_py backend loads paths successfully when PLY files exist."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="cmu_py")
         mod.setup()
@@ -718,9 +718,9 @@ class TestLocalPlannerBackends:
 
     def test_cmu_py_backend_setup_uses_adapter_runtime_bundle(self, monkeypatch) -> None:
         """cmu_py setup should consume the backend adapter bundle only."""
-        from nav.services.plan.local_planner import service as module_under_test
-        from nav.services.plan.local_planner import runtime as runtime_under_test
-        from nav.services.plan.local_planner.backend import (
+        from nav.local import local_planner as module_under_test
+        from nav.local import local_planner_runtime as runtime_under_test
+        from nav.local.local_planner_backend import (
             CmuPyLocalPlannerBackend,
         )
 
@@ -754,9 +754,9 @@ class TestLocalPlannerBackends:
         monkeypatch,
     ) -> None:
         """Default local planner must fail fast when LingTu native navigation kernel is unavailable."""
-        from nav.services.plan.local_planner import service as module_under_test
-        from nav.services.plan.local_planner import runtime as runtime_under_test
-        from nav.services.plan.local_planner.backend import (
+        from nav.local import local_planner as module_under_test
+        from nav.local import local_planner_runtime as runtime_under_test
+        from nav.local.local_planner_backend import (
             NanobindLocalPlannerBackend,
         )
 
@@ -794,7 +794,7 @@ class TestLocalPlannerBackends:
 
     def test_nanobind_plan_receives_contiguous_float32_numpy_buffer(self) -> None:
         """Local planner hot path should avoid Python list materialisation."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class FakeCore:
             obstacle_arg = None
@@ -854,7 +854,7 @@ class TestLocalPlannerBackends:
 
     def test_unknown_backend_raises(self) -> None:
         """A bogus backend name must raise ValueError."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         with pytest.raises(
             ValueError, match="Unknown local_planner backend 'bogus'"
@@ -863,7 +863,7 @@ class TestLocalPlannerBackends:
 
     def test_runtime_helper_unknown_backend_raises(self) -> None:
         """Runtime setup must not treat unknown names as simple."""
-        from nav.services.plan.local_planner.runtime import (
+        from nav.local.local_planner_runtime import (
             setup_local_planner_backend,
         )
         from runtime.backend_status import BackendStatus
@@ -876,7 +876,7 @@ class TestLocalPlannerBackends:
 
     def test_legacy_cmu_backend_is_rejected(self) -> None:
         """The ROS2 NativeModule local planner is no longer a Module backend."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         with pytest.raises(ValueError, match="Unknown local_planner backend 'cmu'"):
             LocalPlanner(backend="cmu")
@@ -895,7 +895,7 @@ class TestLocalPlannerBackends:
 
     def test_stop_clears_core(self) -> None:
         """stop() must clear in-process C++ core references."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         mod = LocalPlanner(backend="simple")
         mod.setup()
@@ -910,14 +910,12 @@ class TestLocalPlannerBackends:
 
     def test_module_has_no_external_node_lifecycle(self) -> None:
         """LocalPlanner must stay inside process, not manage node start/stop."""
-        from nav.services.plan.local_planner.runtime import LocalPlannerRuntime
+        from nav.local.local_planner_runtime import LocalPlannerRuntime
 
         module_path = (
             FsPath(__file__).resolve().parents[2]
-            / "services"
-            / "plan"
-            / "local_planner"
-            / "service.py"
+            / "local"
+            / "local_planner.py"
         )
         source = module_path.read_text(encoding="utf-8")
 
@@ -930,10 +928,8 @@ class TestLocalPlannerBackends:
         """LocalPlanner should not read global config directly."""
         module_path = (
             FsPath(__file__).resolve().parents[2]
-            / "services"
-            / "plan"
-            / "local_planner"
-            / "service.py"
+            / "local"
+            / "local_planner.py"
         )
         tree = ast.parse(module_path.read_text(encoding="utf-8"))
         direct_get_config_imports = [
@@ -950,10 +946,8 @@ class TestLocalPlannerBackends:
         """LocalPlanner should not instantiate backend adapters directly."""
         module_path = (
             FsPath(__file__).resolve().parents[2]
-            / "services"
-            / "plan"
-            / "local_planner"
-            / "service.py"
+            / "local"
+            / "local_planner.py"
         )
         source = module_path.read_text(encoding="utf-8")
 

@@ -58,7 +58,7 @@ def test_navigation_blueprint_validation_uses_static_profile_graph(monkeypatch):
     real_import = builtins.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "runtime.blueprints.products.thunder":
+        if name == "lingtu.assembly.products.thunder":
             raise AssertionError(f"runtime blueprint import attempted: {name}")
         return real_import(name, globals, locals, fromlist, level)
 
@@ -76,7 +76,7 @@ def test_navigation_blueprint_validation_uses_static_profile_graph(monkeypatch):
 def test_navigation_blueprint_validation_passes_runtime_parity_when_available(
     monkeypatch,
 ):
-    from runtime.introspection.profile_graph import WireEdge
+    from lingtu.assembly.graph import WireEdge
 
     required_edges = (
         WireEdge("MujocoDriverModule", "odometry", "nav.mission", "odometry"),
@@ -120,7 +120,7 @@ def test_navigation_blueprint_validation_passes_runtime_parity_when_available(
 
     monkeypatch.setattr(full_system_module, "_NUMPY_IMPORT_SAFE", True)
     monkeypatch.setattr(
-        "runtime.introspection.profile_graph.graph_for_profile",
+        "lingtu.assembly.graph.graph_for_profile",
         fake_graph_for_profile,
     )
 
@@ -132,7 +132,7 @@ def test_navigation_blueprint_validation_passes_runtime_parity_when_available(
 
 
 def test_navigation_blueprint_runtime_internal_import_error_fails(monkeypatch):
-    from runtime.introspection.profile_graph import WireEdge
+    from lingtu.assembly.graph import WireEdge
 
     required_edges = (
         WireEdge("MujocoDriverModule", "odometry", "nav.mission", "odometry"),
@@ -181,7 +181,7 @@ def test_navigation_blueprint_runtime_internal_import_error_fails(monkeypatch):
 
     monkeypatch.setattr(full_system_module, "_NUMPY_IMPORT_SAFE", True)
     monkeypatch.setattr(
-        "runtime.introspection.profile_graph.graph_for_profile",
+        "lingtu.assembly.graph.graph_for_profile",
         fake_graph_for_profile,
     )
 
@@ -497,7 +497,7 @@ def test_nav_motion_gate_accepts_startup_stop_when_final_safe(monkeypatch):
         def stop(self):
             pass
 
-    import runtime.blueprints.profile_builder as profile_builder
+    import lingtu.assembly.profile_builder as profile_builder
 
     monkeypatch.setattr(
         profile_builder,

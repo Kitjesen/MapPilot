@@ -114,9 +114,7 @@ class NativeGoalCompletionGate:
         if not all(math.isfinite(value) for value in goal):
             return "blocked"
         goal_error = math.sqrt(
-            (goal[0] - self._target.x) ** 2
-            + (goal[1] - self._target.y) ** 2
-            + (goal[2] - self._target.z) ** 2
+            (goal[0] - self._target.x) ** 2 + (goal[1] - self._target.y) ** 2 + (goal[2] - self._target.z) ** 2
         )
         if goal_error > self._goal_tolerance_m:
             return "blocked"

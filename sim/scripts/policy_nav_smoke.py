@@ -560,7 +560,7 @@ def run_full_stack_nav(
     free_costmap_resolution: float = 0.10,
     free_costmap_margin: float = 3.0,
 ) -> dict[str, Any]:
-    from runtime.blueprints.profile_builder import build_system_for_profile
+    from lingtu.assembly.profile_builder import build_system_for_profile
     from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
     system = build_system_for_profile(

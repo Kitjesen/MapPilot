@@ -42,6 +42,7 @@ env/
 .tmp_pytest_clean/
 .tmp/
 .tmp_gateway_tests/
+.lingtu_deploy_tmp/
 pytest_tmp/
 
 # Local agent/test caches and Windows native build outputs
@@ -61,9 +62,9 @@ src/libc++.dll
 *.out
 src/nav/core/build/
 src/nav/core/build_nb*/
-src/localization/fastlio2/portable/build/
 src/nav/cpp/build_py/
 src/nav/cpp/build_nb*/
+src/localization/fastlio2/portable/build/
 src/maps/build*/
 !src/maps/cpp/build/
 !src/maps/cpp/build/**
@@ -124,7 +125,6 @@ docs/media/videos/*.mp4
 docs/media/videos/*.gif
 !src/global_planning/pct_planner/rsc/PCD/example.pcd
 !src/global_planning/pct_planner/rsc/tomogram/example.pickle
-!sim/fixtures/octoplanner3d/*.pcd
 
 # 鈹€鈹€ IDE / editor / tooling 鈹€鈹€
 .vscode/
@@ -172,6 +172,13 @@ client/flutter_monitor/web/.dart_tool/
 # 鈹€鈹€ Third-party (use scripts/build/clone_semantic_deps.sh to restore) 鈹€鈹€
 third_party/
 !third_party/.gitkeep
+!third_party/MANIFEST.md
+
+# third_party build artifacts (explicit for clarity)
+third_party/build/
+third_party/install/
+third_party/deb-cache/
+third_party/sysroot/
 
 # OR-Tools binaries fetched by scripts/build/fetch_ortools.sh 鈥?~130 MB
 # per arch, not committed. The or-tools/ directory below ships the
@@ -200,6 +207,7 @@ sim/datasets/legkilo_all/
 
 # 鈹€鈹€ Research reference repos (clone manually, see research/README.md) 鈹€鈹€
 research/semantic_map_refs/
+research/core_planner/
 !research/README.md
 
 # Local outputs from the vehicle parking research package. Keep the package
@@ -219,3 +227,9 @@ mobileclip_blt.ts
 src/mobileclip_blt.ts
 src/yoloe-11l-seg.pt
 web/node_modules
+
+# ──────────────────────────────────────────────
+# AI tool caches and ephemeral development artifacts
+# ──────────────────────────────────────────────
+.codex-tmp/
+CUsers*/

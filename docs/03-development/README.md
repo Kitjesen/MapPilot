@@ -19,14 +19,14 @@ in the wrong layer is still a maintenance problem.
 | Requested change | Primary owner | Typical supporting surface |
 | --- | --- | --- |
 | New runtime lifecycle or typed port behavior | `src/runtime/` | Runtime unit tests and a Blueprint/wire change if the graph changes. |
-| Product profile composition or runtime defaults | `src/runtime/profiles/` and `src/runtime/blueprints/` | Profile graph snapshots and resolver tests. |
+| Product profile composition or runtime defaults | `src/runtime/profiles/` and `src/lingtu/assembly/` | Profile graph snapshots and resolver tests. |
 | Navigation mission, goals, global/local planning, safety, or velocity policy | `src/nav/` | Maps/localization contracts and navigation tests. |
 | Saved maps, map artifacts, or persistent map lifecycle | `src/maps/` | Map service/artifact contract and no-motion validation. |
 | Perception, semantic reasoning, LLM, memory, or visual servo behavior | `src/perception/`, `src/decision/`, or `src/memory/` | Runtime messages and explicit full-stack wires. |
 | Device SDK, robot connection, camera/LiDAR/IMU source | `src/drivers/` or a native endpoint | Explicit hardware/DDS adapter contract. |
 | Localization/SLAM behavior or native localization status | `src/localization/` | Native endpoint/service contract and frame validation. |
 | REST, SSE, WebSocket, MCP, or dashboard API behavior | `src/gateway/` | Typed request/status contract; never planner internals. |
-| C++ hot-path algorithm | `src/nav/kernel/`, `src/nav/services/plan/`, or the owning native package | CMake/native tests plus Python boundary tests. |
+| C++ hot-path algorithm | `src/nav/cpp/`, `src/nav/services/plan/`, or the owning native package | CMake/native tests plus Python boundary tests. |
 
 The repository map in [REPO_LAYOUT.md](../REPO_LAYOUT.md) is the authoritative
 directory index. Package-level READMEs are the first source for local ownership:
@@ -108,13 +108,13 @@ For a profile-driven change, trace this path:
 runtime/profiles/catalog/       product intent, robot preset, endpoint catalog
   -> runtime/profiles/resolver.py
                                merge profile -> robot -> endpoint -> overrides
-  -> runtime/blueprints/profile_builder.py
+  -> lingtu/assembly/profile_builder.py
                                select product Blueprint and validate route contract
-  -> runtime/blueprints/products/
+  -> lingtu/assembly/products/
                                product-level Module composition
-  -> runtime/blueprints/stacks/
+  -> lingtu/assembly/stacks/
                                reusable Module groups
-  -> runtime/blueprints/wires/
+  -> lingtu/assembly/wires/
                                explicit critical connections
 ```
 
@@ -238,7 +238,7 @@ write map artifacts, run an external command, or hide a policy callback.
 
 For a graph change:
 
-1. Start at `runtime/blueprints/products/` for a product behavior change.
+1. Start at `lingtu/assembly/products/` for a product behavior change.
 2. Reuse or extend a small factory in `stacks/` for a reusable Module group.
 3. Add critical cross-stack data flow in `wires/` rather than a constructor
    lookup or a new direct import.
@@ -267,6 +267,16 @@ For example, a field endpoint may select typed DDS and a native navigation
 endpoint while ordinary Module-to-Module wires remain local. Do not infer an
 endpoint from a hostname, insert a hardware address into product source, or
 make a normal Module branch on simulator/ROS/DDS details.
+
+Current Thunder field command ownership is:
+
+```text
+lingtu-nav-dds -> /nav/cmd_vel -> lingtu-driver -> remote Brainstem gRPC
+```
+
+`lingtu-driver.service` conflicts with legacy Python Thunder DDS endpoint
+units by design. A different physical command writer or a localhost Brainstem
+target is an architecture change, not an ordinary development shortcut.
 
 Use canonical profile names in new code and docs. Discover the current catalog
 instead of maintaining copied lists:

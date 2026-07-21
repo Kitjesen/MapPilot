@@ -94,18 +94,17 @@
         "max_map_xy_error_m": 0.75
       },
       "runner": {
-        "kind": "teleop_avoid_geometry_mirror",
-        "coverage": "supplemental_algorithm_mirror_only",
-        "script": "sim/scripts/mujoco/teleop_avoid_gate.py",
-        "report": "report.json",
-        "report_schema": "lingtu.mujoco.teleop_avoid_gate.v1",
-        "timeout_s": 120,
-        "arguments": [
-          "--artifact-dir",
-          "{harness_dir}",
-          "--strict"
-        ]
-      }
+      "kind": "teleop_avoid_native_acceptance",
+      "script": "sim/scripts/mujoco/teleop_avoid_native_acceptance.py",
+      "report": "report.json",
+      "report_schema": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
+      "timeout_s": 120,
+      "arguments": [
+        "--artifact-dir",
+        "{harness_dir}",
+        "--strict"
+      ]
     }
   }
+}
 }

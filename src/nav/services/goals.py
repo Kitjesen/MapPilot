@@ -1,8 +1,7 @@
-"""Goal service for navigation goals, patrol routes, and cancel commands."""
+"""Goal service for navigation, building, patrol, and cancel commands."""
 
 from __future__ import annotations
 
-import inspect
 import itertools
 import json
 import math
@@ -100,6 +99,16 @@ def normalize_patrol_waypoints(
     ]
 
 
+INSPECTION_LIFECYCLE_ACTIONS: dict[str, tuple[str, str]] = {
+    "inspection_pause": ("pause_inspection", "operator_pause"),
+    "pause_inspection": ("pause_inspection", "operator_pause"),
+    "inspection_resume": ("resume_inspection", "operator_resume"),
+    "resume_inspection": ("resume_inspection", "operator_resume"),
+    "inspection_cancel": ("cancel_inspection", "operator_cancel"),
+    "cancel_inspection": ("cancel_inspection", "operator_cancel"),
+}
+
+
 @register(
     "nav_service",
     "goal",
@@ -110,6 +119,7 @@ class GoalService(Module, layer=6):
 
     Accepted commands:
       {"action": "goto", "x": 1.0, "y": 2.0, "z": 0.0, "yaw": 0.0}
+      {"action": "building_navigate", "target": {"place_id": "company-6f"}}
       {"action": "inspection", "route_id": "daily_route", "revision": 3}
       {"action": "cancel", "reason": "user"}
     """
@@ -127,13 +137,23 @@ class GoalService(Module, layer=6):
     def __init__(
         self,
         planning_frame_id: str | None = None,
-        native_endpoint: bool = False,
+        command_module: str | None = None,
+        building_module: str | None = None,
         **config: Any,
     ) -> None:
         super().__init__(**config)
         self._planning_frame_id = normalize_frame_id(planning_frame_id) or map_frame_id()
-        self._native_endpoint = bool(native_endpoint)
+        self._command_module = str(command_module or "").strip()
+        self._building_module = str(building_module or "").strip()
+        self._commands: Any | None = None
+        self._building: Any | None = None
         self._request_sequence = itertools.count(1)
+
+    def on_system_modules(self, modules: dict[str, Module]) -> None:
+        if self._command_module:
+            self._commands = modules.get(self._command_module)
+        if self._building_module:
+            self._building = modules.get(self._building_module)
 
     def setup(self) -> None:
         self.goal_command.subscribe(self._on_command)
@@ -141,15 +161,25 @@ class GoalService(Module, layer=6):
         self.cancel_request.subscribe(self._on_cancel_request)
 
     def _on_goal_request(self, goal: PoseStamped) -> None:
-        request_id = self._new_request_id()
+        self.submit_goal(goal)
+
+    def submit_goal(
+        self,
+        goal: PoseStamped,
+        *,
+        request_id: str | None = None,
+        action: str = "goal_pose",
+    ) -> dict[str, Any]:
+        """Validate and synchronously admit one typed goal."""
+
+        resolved_request_id = str(request_id or "").strip() or self._new_request_id()
         if not isinstance(goal, PoseStamped):
-            self._publish_status(
-                "goal_pose",
+            return self._publish_status(
+                action,
                 False,
                 "goal_request must be PoseStamped",
-                request_id=request_id,
+                request_id=resolved_request_id,
             )
-            return
         frame_id = normalize_frame_id(getattr(goal, "frame_id", None))
         frame_id = frame_id or self._planning_frame_id
         try:
@@ -162,33 +192,39 @@ class GoalService(Module, layer=6):
                 planning_frame_id=self._planning_frame_id,
             )
         except (AttributeError, TypeError, ValueError) as exc:
-            self._publish_status(
-                "goal_pose",
+            return self._publish_status(
+                action,
                 False,
                 str(exc),
-                request_id=request_id,
+                request_id=resolved_request_id,
                 frame_id=frame_id,
             )
-            return
 
         normalized_goal = PoseStamped(
             pose=normalized_goal.pose,
             ts=getattr(goal, "ts", 0.0),
             frame_id=frame_id,
         )
-        if not self._dispatch_goal(
+        dispatch_error = self._dispatch_goal(
             normalized_goal,
-            request_id=request_id,
-            action="goal_pose",
-        ):
-            return
-        self._publish_status(
-            "goal_pose",
+            request_id=resolved_request_id,
+        )
+        if dispatch_error:
+            return self._publish_status(
+                action,
+                False,
+                dispatch_error,
+                request_id=resolved_request_id,
+                frame_id=normalized_goal.frame_id,
+                sink=self._sink_name,
+            )
+        return self._publish_status(
+            action,
             True,
             "goal dispatched",
-            request_id=request_id,
+            request_id=resolved_request_id,
             frame_id=frame_id,
-            sink="native_dds" if self._native_endpoint else "module",
+            sink=self._sink_name,
             target={
                 "x": normalized_goal.x,
                 "y": normalized_goal.y,
@@ -198,42 +234,44 @@ class GoalService(Module, layer=6):
         )
 
     def _on_cancel_request(self, reason: str) -> None:
-        self._dispatch_cancel(
+        self.submit_cancel(
             str(reason or "cancel"),
-            request_id=self._new_request_id(),
-            action="cancel",
         )
 
-    def _dispatch_cancel(self, reason: str, *, request_id: str, action: str) -> None:
-        if self._native_endpoint:
-            try:
-                from runtime.adapters.native.navigation import (
-                    get_native_navigation_client,
-                )
+    def submit_cancel(
+        self,
+        reason: str = "cancel",
+        *,
+        request_id: str | None = None,
+        action: str = "cancel",
+    ) -> dict[str, Any]:
+        """Synchronously admit one cancellation request."""
 
-                client = get_native_navigation_client(required=True)
-                if client is None:
-                    raise RuntimeError("native navigation client is unavailable")
-                kwargs = {"request_id": request_id} if self._accepts_request_id(client.cancel) else {}
-                client.cancel(reason, **kwargs)
-            except (ImportError, RuntimeError) as exc:
-                self._publish_status(
+        resolved_request_id = str(request_id or "").strip() or self._new_request_id()
+        if self._command_module:
+            try:
+                self._call_commands(
+                    "cancel",
+                    reason=reason,
+                    request_id=resolved_request_id,
+                )
+            except RuntimeError as exc:
+                return self._publish_status(
                     action,
                     False,
                     str(exc),
-                    request_id=request_id,
+                    request_id=resolved_request_id,
                     reason=reason,
                 )
-                return
         else:
             self.cancel.publish(reason)
-        self._publish_status(
+        return self._publish_status(
             action,
             True,
             "cancel dispatched",
-            request_id=request_id,
+            request_id=resolved_request_id,
             reason=reason,
-            sink="native_dds" if self._native_endpoint else "module",
+            sink=self._sink_name,
         )
 
     def _on_command(self, raw: str) -> None:
@@ -250,11 +288,15 @@ class GoalService(Module, layer=6):
         action = str(cmd.get("action") or cmd.get("type") or "").strip().lower()
         if action in {"goto", "go", "goal", "navigate", "target"}:
             self._publish_goal(cmd, action=action, request_id=request_id)
+        elif action in {"building_navigate", "building"}:
+            self._dispatch_building(cmd, action=action, request_id=request_id)
         elif action in {"inspection", "patrol", "route"}:
             self._publish_patrol(cmd, action=action, request_id=request_id)
+        elif action in INSPECTION_LIFECYCLE_ACTIONS:
+            self._dispatch_inspection_lifecycle(cmd, action=action, request_id=request_id)
         elif action in {"cancel", "stop"}:
             reason = str(cmd.get("reason") or action)
-            self._dispatch_cancel(reason, request_id=request_id, action=action)
+            self.submit_cancel(reason, request_id=request_id, action=action)
         else:
             self._publish_status(
                 action or "unknown",
@@ -262,6 +304,87 @@ class GoalService(Module, layer=6):
                 f"unknown action: {action}",
                 request_id=request_id,
             )
+
+    def _dispatch_building(
+        self,
+        cmd: dict[str, Any],
+        *,
+        action: str,
+        request_id: str,
+    ) -> None:
+        command = dict(cmd)
+        command["action"] = "building_navigate"
+        command["request_id"] = request_id
+        if not self._building_module:
+            self._publish_status(
+                action,
+                False,
+                "building navigation capability is not configured",
+                request_id=request_id,
+                reason="building_module_not_configured",
+                sink="building",
+            )
+            return
+        if self._building is None:
+            self._publish_status(
+                action,
+                False,
+                f"building navigation capability {self._building_module!r} is unavailable",
+                request_id=request_id,
+                reason="building_module_unavailable",
+                sink=self._building_module,
+            )
+            return
+        submit = getattr(self._building, "submit", None)
+        if not callable(submit):
+            self._publish_status(
+                action,
+                False,
+                "building navigation capability does not implement submit",
+                request_id=request_id,
+                reason="building_submit_unavailable",
+                sink=self._building_module,
+            )
+            return
+        try:
+            result = submit(command)
+        except Exception as exc:
+            self._publish_status(
+                action,
+                False,
+                str(exc) or "building navigation dispatch failed",
+                request_id=request_id,
+                reason="building_dispatch_error",
+                sink=self._building_module,
+            )
+            return
+        if not isinstance(result, dict):
+            self._publish_status(
+                action,
+                False,
+                "building navigation submit must return an object",
+                request_id=request_id,
+                reason="invalid_building_response",
+                sink=self._building_module,
+            )
+            return
+
+        accepted = bool(result.get("accepted", result.get("success", False)))
+        success = bool(result.get("success", accepted))
+        reason = str(result.get("reason") or "").strip()
+        message = str(result.get("message") or reason).strip()
+        if not message:
+            message = "building navigation accepted" if accepted else "building navigation rejected"
+        self._publish_status(
+            action,
+            success,
+            message,
+            request_id=request_id,
+            accepted=accepted,
+            state="accepted" if accepted else "rejected",
+            reason=reason,
+            sink=self._building_module,
+        )
 
     def _publish_goal(
         self,
@@ -295,7 +418,16 @@ class GoalService(Module, layer=6):
             )
             return
 
-        if not self._dispatch_goal(goal, request_id=request_id, action=action):
+        dispatch_error = self._dispatch_goal(goal, request_id=request_id)
+        if dispatch_error:
+            self._publish_status(
+                action,
+                False,
+                dispatch_error,
+                request_id=request_id,
+                frame_id=goal.frame_id,
+                sink=self._sink_name,
+            )
             return
         self._publish_status(
             action,
@@ -303,7 +435,7 @@ class GoalService(Module, layer=6):
             "goal dispatched",
             request_id=request_id,
             frame_id=frame_id,
-            sink="native_dds" if self._native_endpoint else "module",
+            sink=self._sink_name,
             target={"x": goal.x, "y": goal.y, "z": goal.z, "yaw": goal.yaw},
         )
 
@@ -312,30 +444,22 @@ class GoalService(Module, layer=6):
         goal: PoseStamped,
         *,
         request_id: str,
-        action: str,
-    ) -> bool:
-        if not self._native_endpoint:
+    ) -> str | None:
+        if not self._command_module:
             self.goal_pose.publish(goal)
-            return True
+            return None
         try:
-            from runtime.adapters.native.navigation import get_native_navigation_client
-
-            client = get_native_navigation_client(required=True)
-            if client is None:
-                raise RuntimeError("native navigation client is unavailable")
-            kwargs = {"request_id": request_id} if self._accepts_request_id(client.send_goal) else {}
-            client.send_goal(goal.x, goal.y, goal.z, goal.yaw, **kwargs)
-            return True
-        except (ImportError, RuntimeError) as exc:
-            self._publish_status(
-                action,
-                False,
-                str(exc),
+            self._call_commands(
+                "send_goal",
+                x=goal.x,
+                y=goal.y,
+                z=goal.z,
+                yaw=goal.yaw,
                 request_id=request_id,
-                frame_id=goal.frame_id,
-                sink="native_dds",
             )
-            return False
+            return None
+        except RuntimeError as exc:
+            return str(exc)
 
     def _publish_patrol(
         self,
@@ -344,7 +468,7 @@ class GoalService(Module, layer=6):
         action: str,
         request_id: str,
     ) -> None:
-        if self._native_endpoint:
+        if self._command_module:
             self._dispatch_inspection(cmd, action=action, request_id=request_id)
             return
 
@@ -389,24 +513,9 @@ class GoalService(Module, layer=6):
             )
             return
         try:
-            from runtime.adapters.native.inspection_commands import (
-                get_native_inspection_command_client,
-                normalize_route_revision,
-            )
-
-            revision = normalize_route_revision(
+            revision = self._route_revision(
                 cmd.get("route_revision", cmd.get("revision", 0)) or 0,
-                label="inspection route revision",
             )
-        except ImportError as exc:
-            self._publish_status(
-                action,
-                False,
-                str(exc),
-                request_id=request_id,
-                sink="native_dds",
-            )
-            return
         except (TypeError, ValueError) as exc:
             self._publish_status(
                 action,
@@ -418,12 +527,13 @@ class GoalService(Module, layer=6):
             return
 
         try:
-            client = get_native_inspection_command_client(required=True)
-            if client is None:
-                raise RuntimeError("native inspection command client is unavailable")
-            kwargs = {"request_id": request_id} if self._accepts_request_id(client.start) else {}
-            client.start(route_id, revision=revision, **kwargs)
-        except (ImportError, RuntimeError) as exc:
+            self._call_commands(
+                "start_inspection",
+                route_id=route_id,
+                revision=revision,
+                request_id=request_id,
+            )
+        except RuntimeError as exc:
             self._publish_status(
                 action,
                 False,
@@ -444,6 +554,50 @@ class GoalService(Module, layer=6):
             sink="native_dds",
         )
 
+    def _dispatch_inspection_lifecycle(
+        self,
+        cmd: dict[str, Any],
+        *,
+        action: str,
+        request_id: str,
+    ) -> None:
+        method, default_reason = INSPECTION_LIFECYCLE_ACTIONS[action]
+        reason = str(cmd.get("reason") or default_reason)
+        if not self._command_module:
+            self._publish_status(
+                action,
+                False,
+                "inspection lifecycle command requires native command capability",
+                request_id=request_id,
+                reason=reason,
+                sink="native_dds",
+            )
+            return
+        try:
+            self._call_commands(
+                method,
+                reason=reason,
+                request_id=request_id,
+            )
+        except RuntimeError as exc:
+            self._publish_status(
+                action,
+                False,
+                str(exc),
+                request_id=request_id,
+                reason=reason,
+                sink="native_dds",
+            )
+            return
+        self._publish_status(
+            action,
+            True,
+            f"{action} command dispatched",
+            request_id=request_id,
+            reason=reason,
+            sink="native_dds",
+        )
+
     def _publish_status(
         self,
         action: str,
@@ -451,7 +605,7 @@ class GoalService(Module, layer=6):
         message: str,
         request_id: str | None = None,
         **extra: Any,
-    ) -> None:
+    ) -> dict[str, Any]:
         payload = {
             "request_id": request_id or self._new_request_id(),
             "action": action,
@@ -462,6 +616,7 @@ class GoalService(Module, layer=6):
         }
         payload.update(extra)
         self.goal_status.publish(payload)
+        return payload
 
     def _new_request_id(self) -> str:
         return f"nav-{time.time_ns()}-{next(self._request_sequence)}"
@@ -470,14 +625,32 @@ class GoalService(Module, layer=6):
         request_id = str(command.get("request_id") or "").strip()
         return request_id or self._new_request_id()
 
-    @staticmethod
-    def _accepts_request_id(method: Any) -> bool:
-        """Keep one compatibility round for command clients without request IDs."""
+    @property
+    def _sink_name(self) -> str:
+        return "native_dds" if self._command_module else "module"
 
+    def _call_commands(self, method: str, **kwargs: Any) -> Any:
+        if self._commands is None:
+            raise RuntimeError(f"navigation command capability {self._command_module!r} is unavailable")
+        operation = getattr(self._commands, method, None)
+        if not callable(operation):
+            raise RuntimeError(f"navigation command capability does not implement {method}")
         try:
-            return "request_id" in inspect.signature(method).parameters
-        except (TypeError, ValueError):
-            return False
+            return operation(**kwargs)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(str(exc)) from exc
+
+    @staticmethod
+    def _route_revision(value: Any) -> int:
+        try:
+            revision = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("inspection route revision must be an integer") from exc
+        if not 0 <= revision <= (1 << 64) - 1:
+            raise ValueError("inspection route revision must be between 0 and UINT64_MAX")
+        return revision
 
     @staticmethod
     def _target_mapping(cmd: dict[str, Any]) -> dict[str, Any]:

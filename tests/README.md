@@ -1,5 +1,7 @@
 # LingTu Test And Acceptance Map
 
+Status: current test/acceptance map as of 2026-07-18.
+
 This directory contains legacy integration and planning tests. The current
 product acceptance path lives mostly under `src/runtime/tests`, `sim/scripts`, and
 Gateway/CLI gates. Use this file as an operator-facing map, not as the only CI
@@ -31,14 +33,16 @@ Use this when the Gateway is running and the question is whether a customer or
 field engineer can understand the runtime without ROS tooling:
 
 ```bash
+export LINGTU_GATEWAY_URL=http://ROBOT_IP_OR_HOSTNAME:5050
+
 python lingtu.py field-check \
-  --gateway-url http://192.168.66.190:5050 \
+  --gateway-url "$LINGTU_GATEWAY_URL" \
   maps/active \
   --require-tomogram \
   --require-occupancy
 
 python lingtu.py inspection-check \
-  --gateway-url http://192.168.66.190:5050 \
+  --gateway-url "$LINGTU_GATEWAY_URL" \
   maps/active \
   --point pump_room \
   --point dock \
@@ -48,14 +52,14 @@ python lingtu.py inspection-check \
 python lingtu.py gateway-runtime-acceptance
 python lingtu.py gateway-runtime-acceptance --acceptance-mode simulation
 python lingtu.py gateway-runtime-acceptance --acceptance-mode field
-python lingtu.py gateway-runtime-acceptance --gateway-url http://192.168.66.190:5050 --json
+python lingtu.py gateway-runtime-acceptance --gateway-url "$LINGTU_GATEWAY_URL" --json
 ```
 
 For one stream, use the Gateway dataflow detail route instead of `ros2 topic`:
 
 ```bash
-curl "http://192.168.66.190:5050/api/v1/runtime/dataflow/topic?topic=odometry"
-curl "http://192.168.66.190:5050/api/v1/runtime/dataflow/topic?topic=cmd_vel"
+curl "$LINGTU_GATEWAY_URL/api/v1/runtime/dataflow/topic?topic=odometry"
+curl "$LINGTU_GATEWAY_URL/api/v1/runtime/dataflow/topic?topic=cmd_vel"
 ```
 
 The detail route reports whether the stream has a fresh ModulePort sample,
@@ -102,7 +106,7 @@ python lingtu.py real-runtime-evidence \
 
 python lingtu.py gateway-runtime-acceptance \
   --acceptance-mode field \
-  --gateway-url http://192.168.66.190:5050
+  --gateway-url "$LINGTU_GATEWAY_URL"
 ```
 
 The first two commands are non-motion. `real-runtime-evidence` is also a

@@ -88,6 +88,7 @@ from gateway.services.exploration import (
     exploration_status_payload,
     explorer_available,
     explorer_backend,
+    explorer_stop_available,
     explorer_unavailable_detail,
     tare_status_payload,
 )
@@ -551,7 +552,6 @@ class GatewayModule(Module, layer=6):
     def stop(self) -> None:
         stop_background_threads(self)
         shutdown_teleop(self)
-        self._teleop_native_client = None
         super().stop()
 
     def on_system_modules(self, modules: dict[str, Any]) -> None:
@@ -604,6 +604,9 @@ class GatewayModule(Module, layer=6):
 
     def _explorer_available(self) -> bool:
         return explorer_available(self)
+
+    def _explorer_stop_available(self) -> bool:
+        return explorer_stop_available(self)
 
     def _explorer_unavailable_detail(self) -> dict[str, Any]:
         return explorer_unavailable_detail()

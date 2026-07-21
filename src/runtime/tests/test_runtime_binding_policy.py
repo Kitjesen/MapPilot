@@ -463,8 +463,8 @@ def test_ros2_runtime_binding_violations_rejects_removed_endpoint_nav_adapters()
 
 def test_runtime_binding_policy_is_the_blueprint_delivery_seam() -> None:
     checked_files = [
-        ROOT / "src/runtime/introspection/profile_graph.py",
-        ROOT / "src/runtime/blueprints/stacks/composition.py",
+        ROOT / "src/lingtu/assembly/graph.py",
+        ROOT / "src/lingtu/assembly/stacks/composition.py",
     ]
 
     for path in checked_files:
@@ -476,7 +476,7 @@ def test_runtime_binding_policy_is_the_blueprint_delivery_seam() -> None:
 
 
 def test_navigation_stack_has_no_python_endpoint_adapter_hooks() -> None:
-    source = (ROOT / "src/runtime/blueprints/stacks/navigation.py").read_text(encoding="utf-8-sig")
+    source = (ROOT / "src/lingtu/assembly/stacks/navigation.py").read_text(encoding="utf-8-sig")
 
     assert "enable_ros2_" not in source
     assert "enable_endpoint_" not in source
@@ -484,7 +484,7 @@ def test_navigation_stack_has_no_python_endpoint_adapter_hooks() -> None:
 
 
 def test_autonomy_chain_delegates_backend_selection_to_runtime_policy() -> None:
-    source = (ROOT / "src/runtime/blueprints/stacks/autonomy_chain.py").read_text(encoding="utf-8-sig")
+    source = (ROOT / "src/lingtu/assembly/stacks/autonomy_chain.py").read_text(encoding="utf-8-sig")
 
     assert "from runtime.profiles.binding_policy import resolved_autonomy_backend_selection" in source
     assert "resolved_autonomy_backend_selection(" in source

@@ -1,129 +1,64 @@
 # LingTu Roadmap
 
-> 产品路线图 + 模块成熟度 + 管理节奏。按交付场景划版本，不按技术模块。
+Status: current summary as of 2026-07-18
 
-## 版本规划
+This root roadmap is a short product-facing summary. The detailed active work
+board lives in [`docs/plans/current-roadmap.md`](./docs/plans/current-roadmap.md).
 
-### v1.7 — 架构 S 级 (2026-05 已完成)
+## Current Target
 
-**一句话**: 框架达到架构 S 级，模块间零违规交叉引用，所有子包独立可测。
+LingTu's near-term target is a ROS-free, typed-DDS Thunder field runtime with:
 
-| # | 完成项 | 详情 |
-|---|--------|------|
-| 1 | 架构 S 级评分 | 247 文件、1048 测试通过、零 ruff 违规 |
-| 2 | Module-First 严格化 | 所有 Module 只依赖 `core/`，nav/semantic/drivers/gateway 之间零交叉 |
-| 3 | 惰性导入 | `full_stack.py` + 9 个 stack factory，启动时不 import 未选 backend |
-| 4 | 跨包边界测试 | 每个子包独立 `pytest` 验证，import boundary test |
-| 5 | 文档补齐 | 14 个 README.md + MODULES.md，覆盖率 100% |
-| 6 | 多机器人抽象 | `multi_robot.py` + `SwapManager` + `CmdVelMux` freeze/unfreeze，运行时切换 robot profile |
-| 7 | API 文档 | `docs/api/mcp_tools.md` + `docs/api/gateway_rest.md`，自动提取 |
+- one native navigation command writer;
+- one hardware command consumer, `lingtu-driver`;
+- remote Brainstem gRPC control through `/opt/lingtu/config/brainstem.env`;
+- OctoPlanner3D as the product saved-map global planner;
+- Gateway on port `5050` and MCP JSON-RPC on port `8090`;
+- ROS 2 retained only as explicit compatibility, replay, or evaluation surface.
 
-### v1.8 — 可交付版 (DDL: 2026-06-30)
+Current field command chain:
 
-**一句话**: 客户拿到 S100P，30 分钟内跑通建图→导航全流程。
+```text
+Gateway / CLI / MCP / semantic goal
+  -> lingtu-nav-dds
+  -> /nav/cmd_vel
+  -> lingtu-driver
+  -> remote Brainstem gRPC WalkChecked
+```
 
-| # | 交付场景 | Issue | 状态 |
-|---|---------|-------|------|
-| 1 | 建图→导航 E2E 全流程 | [#8](../../issues/8) | 🔴 未验证 |
-| 2 | Web Dashboard 远程监控+遥控 | [#9](../../issues/9) | 🟡 原型 |
-| 3 | OTA 远程更新导航包 | [#10](../../issues/10) | 🟡 脚本有，未走通 |
-| 4 | 产品说明书+快速上手 | [#11](../../issues/11) | 🔴 未开始 |
-| 5 | SLAM ≥10Hz | [#12](../../issues/12) | 🔴 当前 3Hz |
+## Delivery Priorities
 
-### v1.9 — 智能版 (DDL: 2026-07-31)
+| Priority | Outcome | Status |
+| --- | --- | --- |
+| P0 | Prove saved-map localization alignment on the current field target. | Active |
+| P0 | Prove no-motion route preview through OctoPlanner3D and the native endpoint. | Active |
+| P0 | Run field fault injection for DDS/nav/driver loss, stale localization, stale traversability, Brainstem disconnect, and lease preemption. | Active |
+| P0 | Run supervised motion smoke only after no-motion and safety gates pass. | Blocked until gates pass |
+| P1 | Finish typed command acceptance/rejection feedback. | Active |
+| P1 | Validate map save -> `octomap.ot` -> OctoPlanner3D preview as one package flow. | Active |
+| P1 | Validate `tare_explore` as exploration target generation feeding normal navigation. | Next |
+| P1 | Move high-rate camera image payloads to C++ SHM while retaining DDS metadata/health. | Next |
+| P1 | Make MuJoCo consume the same final native `/nav/cmd_vel` command sink used by field services. | Next |
 
-**一句话**: 不给地图也能用——语义导航、跟人、自主探索。
+## Current Maturity View
 
-| # | 交付场景 | Issue | 状态 |
-|---|---------|-------|------|
-| 1 | 语义导航 "找充电桩" | [#15](../../issues/15) | 🟡 代码有，未真机 |
-| 2 | 跟人模式 | [#16](../../issues/16) | 🟡 仿真验证 |
-| 3 | 自主探索建图 | — | 🟡 FrontierScorer 已实现 |
+| Area | Current state | Remaining gate |
+| --- | --- | --- |
+| Runtime framework | Mature Module/Blueprint graph and tests. | Continue boundary regression tests. |
+| Native DDS field path | Locally locked for endpoint-only command ownership and typed DDS contracts. | Target-side sampling and fault injection. |
+| Driver/Brainstem boundary | `lingtu-driver` remote Brainstem path, checked Walk RPC, lease/readiness checks, watchdog, and stale command handling are implemented locally. | Field fault injection and supervised motion smoke. |
+| Global planning | OctoPlanner3D is the product default. | Saved-map artifact and live route preview evidence. |
+| PCT/A* | Legacy/manual comparison surfaces. | Do not use as product readiness evidence unless explicitly selected. |
+| Gateway/MCP | Current operator/integration surfaces. | Keep contracts generated/current and avoid exposing unsafe internals. |
+| Web dashboard | Active product UI surface. | Continue UI-state contracts and evidence-backed actions. |
+| Semantic/inspection/exploration | Implemented feature paths. | Field validation after navigation safety gates. |
 
-### v2.0 — 平台版 (DDL: 2026-10-31)
+## Evidence Rules
 
-**一句话**: 第三方开发者能基于 MCP API 二次开发。
-
-- MCP API 开放 + 文档
-- 多机器人支持
-- 插件式感知后端市场
-
----
-
-## 模块成熟度矩阵
-
-| 模块 | 代码 | 测试 | 真机 | 文档 | 等级 | 卡点 |
-|------|:----:|:----:|:----:|:----:|:----:|------|
-| core/ 框架 | S | A (1255) | A | S | **可交付** | — |
-| nav/ 导航 | A | B | B | B | **接近交付** | E2E 真机验证 |
-| drivers/ 驱动 | A | B | A | B | **接近交付** | 多 robot 真机验证 |
-| base_autonomy/ C++ | A | A (96) | B | B | **接近交付** | aarch64 性能验证 |
-| gateway/ Web API | A | B | B | A | **可用** | SSE 稳定性 |
-| slam/ | B | C | B | C | **可用但脆弱** | 3Hz 频率 |
-| semantic/ 语义 | A | B | C | C | **演示级** | 真机传感器接入 |
-| memory/ 记忆 | B | B | C | B | **演示级** | 持久化验证 |
-| web/ 前端 | C | — | — | C | **原型** | 功能不全 |
-| global_planning/ | B | B | B | B | **可用** | PCT .so 兼容 |
-| multi-robot/ | A | A | C | A | **原型** | 真机多机器人测试 |
-
-**等级定义**:
-- **可交付**: 客户可直接使用，有测试+文档+真机验证
-- **接近交付**: 代码成熟，需补真机验证或文档
-- **演示级**: 功能完整可演示，未经生产验证
-- **可用但脆弱**: 能跑但有已知问题
-- **原型**: 基础功能，需大幅完善
-
-**原则: 先把 B 拉到 A，再往矩阵加新模块。**
-
----
-
-## Issue 管理规范
-
-### 标签体系
-
-**层级** (每个 issue 必选一个):
-- `层:商业交付` — 客户能感知的功能
-- `层:技术基础` — 支撑交付的底层能力
-- `层:技术债务` — 不紧急但会拖后腿
-
-**模块** (标注涉及的模块):
-- `模块:core` `模块:nav` `模块:semantic` `模块:slam`
-- `模块:gateway` `模块:web` `模块:drivers` `模块:memory` `模块:deploy`
-
-**优先级**:
-- `优先级:P0-阻塞` — 阻塞交付，立即解决
-- `优先级:P1-重要` — 本版本必须完成
-- `优先级:P2-改进` — 改进体验，可下版本
-
-### Issue 模板
-
-每个 issue 包含:
-1. **场景**: 用户/客户视角的描述
-2. **验收标准**: checkbox 列表，全勾 = 完成
-3. **当前状态/卡点**: 诚实标注
-4. **依赖**: 阻塞关系
-
----
-
-## 周节奏
-
-| 日 | 做什么 |
-|---|--------|
-| 周一 | 看 issue 看板，定本周 ≤3 件事 |
-| 周三 | 中期检查，卡住的调整方向 |
-| 周五 | 真机跑一遍主流程，录 30s 视频存档 |
-
-**视频存档**: 给客户看、给投资人看、给自己看进度。
-
----
-
-## 决策记录
-
-| 日期 | 决策 | 原因 |
-|------|------|------|
-| 2026-04-09 | 版本按交付场景划分，不按技术模块 | 技术模块划分导致"每个都做了一点，没有一个能交付" |
-| 2026-04-09 | v1.8 聚焦"零代码跑通"，砍掉语义功能 | 语义是加分项不是门槛，建图→导航是底线 |
-| 2026-04-09 | SLAM 3Hz 定为 P0 | 导航基础不稳，上层全白搭 |
-| 2026-05-20 | 架构 S 级目标——消除所有跨包交叉引用 | 模块独立性是 AI 可读性和可维护性的前提 |
-| 2026-05-22 | 多机器人抽象——SwapManager + RobotProfile | 一套代码支持 Thunder/Stub/MuJoCo/ROS2 四种 robot 后端 |
-| 2026-05-30 | `docs/api/` 自动提取文档 | API 文档与代码同源，减少手工维护 |
+- Local tests prove local contracts only.
+- Simulation proves the named simulation gate only.
+- No-motion DDS or route preview proves readiness inputs, not real motion.
+- Real field readiness needs dated target evidence under
+  `docs/07-testing/field-runs/`.
+- Plans are not shipped behavior; use `docs/CURRENT.md` to find the
+  authoritative current document for a topic.

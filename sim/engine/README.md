@@ -1,5 +1,7 @@
 # sim/engine - Simulation Platform Core
 
+Status: current engine contract as of 2026-07-18.
+
 `sim/engine` is the canonical simulation runtime. Code here must stay
 hardware-free: it can create synthetic worlds, MuJoCo engines, bridges, and
 scenario assets, but it must not start robot services, publish to real robot
@@ -11,7 +13,7 @@ topics, or depend on field hardware being present.
 | --- | --- |
 | `core/` | Engine abstractions: `SimEngine` (ABC), `SimWorld`, `WorldConfig`, `RobotConfig`, sensor configs (`CameraConfig`, `LidarConfig`, `IMUConfig`), and data types (`RobotState`, `CameraData`, `VelocityCommand`). |
 | `mujoco/` | MuJoCo engine implementation: `MuJoCoEngine` (physics stepping, ONNX policy to joint control), `MuJoCoCamera`, `MuJoCoLidar`, `PolicyRunner`. |
-| `bridge/` | Simulation to ROS2 bridges: `SimROS2Bridge` (unified topic publisher), `GazeboBridgeConfig` (Gazebo topic mapping), `GazeboRuntimeAdapter` (Gazebo to LingTu topic normalization), `CmuUnityLingtuAdapter` (CMU TARE to LingTu relay). |
+| `bridge/` | Simulation adapters and compatibility bridges: native-DDS/MuJoCo adapters live with their gate scripts; `SimROS2Bridge`, `GazeboBridgeConfig`, `GazeboRuntimeAdapter`, and `CmuUnityLingtuAdapter` remain explicit ROS/GZ/CMU compatibility surfaces. |
 | `scenarios/` | Test scenario builders: `NavigationScenario` (A-to-B), `SemanticNavScenario` (natural language instruction), plus asset generators for large-terrain, multi-floor, and corridor maps. |
 | `worlds/` | `WorldRegistry` scene XML lookup, alias registration, empty-world fallback. Resolves paths under `sim/worlds/`. |
 | `cli.py` | CLI entry point (`python -m sim.engine.cli`) for engine/world/scenario selection. |
@@ -125,12 +127,23 @@ cli.py::main()
 
 ## Bridge Architecture
 
-Bridges convert simulation engine output into ROS2 messages so the navigation
-stack runs identically in sim and on real hardware:
+Simulation output can enter LingTu through two families of adapters:
+
+- native-DDS adapters used by the current real-equivalent MuJoCo gates;
+- ROS/GZ/CMU compatibility bridges used by legacy, benchmark, or delivery-demo
+  gates.
+
+Native-DDS acceptance uses `sim/scripts/mujoco/native_dds_sensors.py`,
+`native_navigation_acceptance.py`, and related manifest-driven C++ processes.
+Those paths publish LingTu-owned DDS types and must stay disconnected from
+physical hardware command subscribers.
+
+Compatibility bridges convert simulation engine output into ROS/GZ/CMU topics
+for gates that explicitly require them:
 
 | Bridge | Backend | Topics |
 | --- | --- | --- |
-| `SimROS2Bridge` | MuJoCo direct | `/slam/odometry`, `/slam/registered_cloud`, `/camera/*`, TF |
+| `SimROS2Bridge` | MuJoCo direct compatibility | `/slam/odometry`, `/slam/registered_cloud`, `/camera/*`, TF |
 | `GazeboBridgeConfig` | Gazebo/GZ | Topic name mapping for `ros_gz_bridge` |
 | `GazeboRuntimeAdapter` | Gazebo ROS | `/lingtu/gazebo/raw/*` to `/nav/*` normalization |
 | `CmuUnityLingtuAdapter` | CMU Unity | External TARE topics to LingTu `/nav/*` + `/exploration/*` |
@@ -150,3 +163,6 @@ closure evidence must remain simulation-only and should preserve:
 - `simulation_only=true`
 - `real_robot_motion=false`
 - `cmd_vel_sent_to_hardware=false`
+
+Do not cite ROS/GZ compatibility bridge evidence as native-DDS equivalence.
+Use the dedicated MuJoCo native acceptance reports for that claim.

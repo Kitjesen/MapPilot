@@ -6,6 +6,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -68,18 +69,69 @@ class _Store:
 class _Client:
     def __init__(self):
         self.calls = []
+        self.error: str | None = None
+
+    def _check(self):
+        if self.error:
+            raise RuntimeError(self.error)
 
     def start(self, route_id: str, *, revision: int = 0, request_id=None):
+        self._check()
         self.calls.append(("start", route_id, revision, request_id))
+        return True
 
     def pause(self, reason: str, *, request_id=None):
+        self._check()
         self.calls.append(("pause", reason, request_id))
+        return True
 
     def resume(self, reason: str, *, request_id=None):
+        self._check()
         self.calls.append(("resume", reason, request_id))
+        return True
 
     def cancel(self, reason: str, *, request_id=None):
+        self._check()
         self.calls.append(("cancel", reason, request_id))
+        return True
+
+
+class _InspectionService:
+    def __init__(self, client: _Client, store_type=_Store):
+        self.client = client
+        self.store_type = store_type
+
+    def _store(self, method: str, *args):
+        with self.store_type(Path(".")) as store:
+            return getattr(store, method)(*args)
+
+    def list_routes(self, map_id: str):
+        return self._store("list", map_id)
+
+    def put_route(self, route: dict):
+        return self._store("put", route)
+
+    def get_route(self, map_id: str, route_id: str):
+        return self._store("get", map_id, route_id)
+
+    def delete_route(self, map_id: str, route_id: str):
+        self._store("delete", map_id, route_id)
+        return True
+
+    def status(self):
+        return self._store("status")
+
+    def start_route(self, route_id: str, revision: int = 0, request_id=None):
+        return self.client.start(route_id, revision=revision, request_id=request_id)
+
+    def pause(self, reason: str, request_id=None):
+        return self.client.pause(reason, request_id=request_id)
+
+    def resume(self, reason: str, request_id=None):
+        return self.client.resume(reason, request_id=request_id)
+
+    def cancel(self, reason: str, request_id=None):
+        return self.client.cancel(reason, request_id=request_id)
 
 
 def _client(monkeypatch):
@@ -91,12 +143,7 @@ def _client(monkeypatch):
     _Store.routes = {}
     _Store.deleted = []
     native_client = _Client()
-    monkeypatch.setattr(inspection, "NativeInspectionStore", _Store)
-    monkeypatch.setattr(
-        inspection,
-        "get_native_inspection_command_client",
-        lambda *, required=False: native_client,
-    )
+    service = _InspectionService(native_client)
     monkeypatch.setattr(inspection, "active_map_name", lambda _root: "field-map")
     monkeypatch.setattr(
         inspection,
@@ -108,7 +155,8 @@ def _client(monkeypatch):
     )
 
     app = FastAPI()
-    inspection.register_inspection_routes(app, object())
+    gateway = SimpleNamespace(_inspection=service, _all_modules={"nav.inspection": service})
+    inspection.register_inspection_routes(app, gateway)
     return TestClient(app), native_client
 
 
@@ -223,16 +271,14 @@ def test_inspection_native_store_unavailable_returns_503(monkeypatch):
     from fastapi.testclient import TestClient
 
     import gateway.routes.inspection as inspection
-    from nav.inspection.native import InspectionNativeError
-
-    class MissingStore:
-        def __init__(self, map_root):
-            raise InspectionNativeError("native inspection library not found; set LINGTU_INSPECTION_LIBRARY")
-
-    monkeypatch.setattr(inspection, "NativeInspectionStore", MissingStore)
+    class MissingService:
+        def list_routes(self, map_id):
+            del map_id
+            raise RuntimeError("native inspection library not found; set LINGTU_INSPECTION_LIBRARY")
 
     app = FastAPI()
-    inspection.register_inspection_routes(app, object())
+    service = MissingService()
+    inspection.register_inspection_routes(app, SimpleNamespace(_inspection=service))
     response = TestClient(app).get("/api/v1/inspection/routes?map_id=field-map")
 
     assert response.status_code == 503
@@ -266,13 +312,7 @@ def test_inspection_native_client_unavailable_returns_503(monkeypatch):
     }
     assert client.post("/api/v1/inspection/routes", json=route).status_code == 200
 
-    import gateway.routes.inspection as inspection
-    from runtime.adapters.native.inspection_commands import InspectionCommandClientError
-
-    def unavailable(*, required=False):
-        raise InspectionCommandClientError("LINGTU_NAV_CLIENT_LIB is not configured")
-
-    monkeypatch.setattr(inspection, "get_native_inspection_command_client", unavailable)
+    _native_client.error = "LINGTU_NAV_CLIENT_LIB is not configured"
 
     response = client.post(
         "/api/v1/inspection/routes/route-a/start",
@@ -381,15 +421,16 @@ def test_inspection_client_acquisition_and_ack_do_not_block_event_loop(monkeypat
     getter_threads: list[int] = []
     calls: list[tuple[str, int]] = []
 
-    class Client:
-        def start(self, route_id: str, *, revision: int = 0, request_id=None):
-            calls.append((route_id, revision))
+    class BlockingInspection:
+        def get_route(self, map_id: str, route_id: str):
+            return _Store.routes[(map_id, route_id)]
 
-    def blocking_getter(*, required=False):
-        getter_threads.append(threading.get_ident())
-        entered.set()
-        release.wait(timeout=1.0)
-        return Client()
+        def start_route(self, route_id: str, *, revision: int = 0, request_id=None):
+            getter_threads.append(threading.get_ident())
+            entered.set()
+            release.wait(timeout=1.0)
+            calls.append((route_id, revision))
+            return True
 
     _Store.routes = {
         ("field-map", "route-a"): {
@@ -399,12 +440,11 @@ def test_inspection_client_acquisition_and_ack_do_not_block_event_loop(monkeypat
             "points": [],
         }
     }
-    monkeypatch.setattr(inspection, "NativeInspectionStore", _Store)
-    monkeypatch.setattr(inspection, "get_native_inspection_command_client", blocking_getter)
     monkeypatch.setattr(inspection, "active_map_name", lambda _root: "field-map")
 
     app = FastAPI()
-    inspection.register_inspection_routes(app, object())
+    service = BlockingInspection()
+    inspection.register_inspection_routes(app, SimpleNamespace(_inspection=service))
     endpoint = next(
         route.endpoint
         for route in app.routes
@@ -449,26 +489,16 @@ def test_inspection_store_calls_do_not_block_event_loop(monkeypatch):
     release = threading.Event()
     store_threads: list[int] = []
 
-    class BlockingStore:
-        def __init__(self, map_root):
-            self.map_root = map_root
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            return None
-
-        def list(self, map_id: str):
+    class BlockingInspection:
+        def list_routes(self, map_id: str):
+            del map_id
             store_threads.append(threading.get_ident())
             entered.set()
             release.wait(timeout=0.5)
             return {"routes": []}
 
-    monkeypatch.setattr(inspection, "NativeInspectionStore", BlockingStore)
-
     app = FastAPI()
-    inspection.register_inspection_routes(app, object())
+    inspection.register_inspection_routes(app, SimpleNamespace(_inspection=BlockingInspection()))
     endpoint = next(
         route.endpoint
         for route in app.routes

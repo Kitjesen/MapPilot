@@ -22,6 +22,8 @@ _ROBOT_DDS_QOS = {
     TOPICS.localization_quality: {"qos": "state"},
     TOPICS.nav_command_request: {"qos": "command"},
     TOPICS.nav_command_ack: {"qos": "event"},
+    TOPICS.exploration_command: {"qos": "command"},
+    TOPICS.exploration_ack: {"qos": "event"},
     TOPICS.inspection_command: {"qos": "command"},
     TOPICS.inspection_ack: {"qos": "event"},
     TOPICS.inspection_status: {"qos": "state"},

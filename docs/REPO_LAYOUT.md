@@ -16,10 +16,13 @@ where code belongs before adding a new file.
 | Path | Put here |
 | --- | --- |
 | `src/runtime/` | Module, Blueprint, ports, registry, shared messages, transport, TF. |
+| `src/message/idl/` | Native DDS IDL and generated cross-language message contracts. |
 | `src/diagnostics/` | Runtime evidence, acceptance gates, audit helpers, and migration catalogs. |
 | `src/drivers/` | Real/sim robot and sensor backends. |
 | `src/localization/` | SLAM/localization modules and portable SLAM code. |
-| `src/nav/` | Navigation FSM, maps, safety, exploration, planner services. |
+| `src/nav/` | Navigation FSM, safety, command handling, and planner services. |
+| `src/maps/` | Persistent map services, layers, artifacts, and native map adapters. |
+| `src/explore/` | Canonical wavefront/TARE exploration algorithms and supervision. |
 | `src/nav/services/plan/` | Navigation planning services, global/local planner contracts, and backend dispatch. |
 | `src/nav/services/plan/global_planner/algorithm/pct/vendor/` | External PCT source/resources kept out of LingTu runtime packages. |
 | `src/nav/local/` | Local planner, terrain, path follower C++/nanobind paths. |
@@ -38,7 +41,9 @@ where code belongs before adding a new file.
 | `config/` | Robot, device, topic, endpoint, package configuration. |
 | `calibration/` | Camera, IMU, LiDAR, camera-LiDAR calibration tools. |
 | `sim/` | Simulation engines, worlds, robots, assets, public script gates, validation, and tests. MuJoCo implementations live under `sim/scripts/mujoco/`; old `sim/scripts/<name>` entrypoints are compatibility wrappers. |
-| `scripts/` | Build, deploy, OTA, diagnostics, native/test wrappers plus ROS workspace compatibility, ROS2 compatibility perception demos, robot-side operations. |
+| `scripts/` | Build, deploy, OTA, diagnostics, native/test wrappers plus ROS workspace compatibility tools and robot-side operations. |
+| `scripts/perception/` | ROS2 compatibility perception demos; product camera and detection paths remain under `src/` and Gateway. |
+| `scripts/deploy/thunder/` | Thunder field systemd units and run/install wrappers, including the canonical `lingtu-driver` remote Brainstem boundary. |
 | `tools/` | Developer validation, benchmarks, offline analysis, one-shot packaging. |
 | `tests/` | Remaining integration/script tests outside package-owned tests. |
 | `web/` | React/Vite dashboard. |

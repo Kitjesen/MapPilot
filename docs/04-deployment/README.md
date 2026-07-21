@@ -1,5 +1,7 @@
 # LingTu Thunder Deployment
 
+Status: current Thunder deployment guide as of 2026-07-18.
+
 How LingTu is laid out on the field robot, how to install, update, roll back,
 and diagnose the running stack. The product runtime is native DDS plus
 Module-first Python/C++ services; ROS 2 compatibility services are optional
@@ -8,8 +10,9 @@ fallbacks and must be enabled explicitly.
 ## One-Liner Status
 
 ```bash
-ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'systemctl status lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds lingtu'
-ssh -p 12346 sunrise@fe91fae6a6756695.natapp.cc 'bash ~/data/SLAM/navigation/scripts/lingtu status'
+export LINGTU_ROBOT_HOST=ROBOT_IP_OR_HOSTNAME
+ssh sunrise@"$LINGTU_ROBOT_HOST" 'systemctl status lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds lingtu-driver lingtu'
+ssh sunrise@"$LINGTU_ROBOT_HOST" 'bash /opt/lingtu/current/scripts/lingtu status'
 ```
 
 The `lingtu` CLI gives an 8-section snapshot; see `lingtu_cli.md`.
@@ -19,9 +22,10 @@ The `lingtu` CLI gives an 8-section snapshot; see `lingtu_cli.md`.
 ```text
 Sensor DDS     lingtu-livox-dds     Livox SDK2 -> typed DDS       [systemd]
 SLAM DDS       lingtu-slam-dds      C++ SLAM runtime + snapshots  [systemd]
-Nav DDS        lingtu-nav-dds       Gateway/DDS nav endpoint      [systemd]
+Nav Endpoint   lingtu-nav-dds       Native DDS planner/control    [systemd]
+Driver         lingtu-driver        DDS cmd_vel -> Brainstem gRPC [systemd]
 
-Control        robot-brainstem      Dart gRPC :13145              [systemd]
+Control        remote Brainstem     Dart gRPC :13145              [external]
 Camera         robot-camera         Orbbec camera service         [systemd]
 
 Application    lingtu               python lingtu.py nav          [systemd]
@@ -42,6 +46,14 @@ There is no standalone `lingtu-gateway.service`: Gateway runs inside
 `lingtu.service` and exposes HTTP `:5050` plus MCP `:8090` from the same
 process.
 
+In the current field path, `lingtu.service` runs with
+`LINGTU_COMMAND_OUTPUT_MODE=endpoint_only` and
+`LINGTU_HARDWARE_CONTROL_BOUNDARY=driver`. The native navigation endpoint
+publishes the only product velocity stream (`rt/nav/cmd_vel`), and
+`lingtu-driver.service` is the unique speed exit to the remote Brainstem gRPC
+server. The Python application must not enable a second robot driver in this
+profile.
+
 Only `robot-camera.service` should own the Orbbec ROS driver. Legacy camera
 units such as `camera.service` or `orbbec-camera.service` must stay stopped or
 masked; if they run together with `robot-camera.service`, duplicate Orbbec node
@@ -55,8 +67,9 @@ one `/camera/camera_container` node is normal for the component launch.
 | `lingtu-livox-dds` | Livox MID-360 SDK2 publisher into typed DDS | yes |
 | `lingtu-slam-dds` | C++ SLAM/localization runtime and status snapshots | yes |
 | `lingtu-nav-dds` | Native DDS navigation endpoint | yes |
+| `lingtu-driver` | Native Thunder driver: typed DDS `rt/nav/cmd_vel` to remote Brainstem gRPC | yes |
 | `lingtu` | Gateway, session control, navigation module graph | yes |
-| `robot-brainstem` | Quadruped leg-control gRPC | yes |
+| remote Brainstem | Quadruped leg-control gRPC on a separate computer | yes |
 | `robot-camera` | Camera service | yes |
 | `robot-fastlio2` / `robot-localizer` / `robot-lidar` | ROS2 compatibility fallback | no |
 | `robot-genz-icp` / `robot-hba` / `robot-super-lio*` | experimental evaluation backends | no |
@@ -69,6 +82,7 @@ one `/camera/camera_container` node is normal for the component launch.
   releases/
   config/
     thunder-runtime-env.sh
+    brainstem.env
   nav/
   logs/
 
@@ -76,6 +90,7 @@ one `/camera/camera_container` node is normal for the component launch.
   lingtu-livox-dds.service
   lingtu-slam-dds.service
   lingtu-nav-dds.service
+  lingtu-driver.service
   lingtu.service
 
 /home/sunrise/data/
@@ -93,6 +108,7 @@ cd ~/data/SLAM/navigation
 bash scripts/build/build_livox_sdk2_stream.sh
 LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh
 bash scripts/build/build_nav_endpoint.sh
+bash scripts/build/build_driver.sh
 bash scripts/build/build_nav_kernel.sh --clean
 bash scripts/build/build_octoplanner3d.sh --require-pcl
 
@@ -101,16 +117,21 @@ bash scripts/build/build_ros_workspace.sh
 
 # 3. Install native field services. Brainstem is on a separate computer;
 #    loopback or a missing endpoint is rejected.
-LINGTU_BRAINSTEM_HOST=<remote-brainstem-ip> \
+LINGTU_BRAINSTEM_HOST=REMOTE_BRAINSTEM_IP \
 LINGTU_BRAINSTEM_PORT=13145 \
 LINGTU_BRAINSTEM_TLS_CA_FILE=/opt/lingtu/config/tls/brainstem-ca.crt \
 LINGTU_BRAINSTEM_TLS_CERT_FILE=/opt/lingtu/config/tls/lingtu-driver.crt \
 LINGTU_BRAINSTEM_TLS_KEY_FILE=/opt/lingtu/config/tls/lingtu-driver.key \
   bash scripts/deploy/thunder/install_services.sh field-cpp
 
-# 4. Start native DDS + LingTu
-sudo systemctl start lingtu-livox-dds.service lingtu-slam-dds.service lingtu-nav-dds.service lingtu.service
+# 4. Start the selected product through its resolved RuntimePlan
+bash scripts/lingtu mode switch nav --map MAP_NAME --endpoint thunder_field
 ```
+
+The product command validates the map and endpoint contract, removes stale
+mode-owned services, starts the declared processes in dependency order, and
+waits for role-specific readiness. Direct multi-service `systemctl start`
+commands are diagnostic procedures, not a supported product startup path.
 
 The legacy installer under `docs/04-deployment/services/install.sh` is guarded by
 `LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` and should not be used for new installs.
@@ -121,11 +142,10 @@ lease-and-ack v1 RPCs documented in
 `src/drivers/real/thunder/native/README.md`; a legacy `Walk`-only server remains
 fail-closed and cannot make `lingtu-driver` ready.
 
-On the Brainstem computer, explicitly allow the LingTu host's source IP (for
-the current field network, `192.168.114.23`) with
-`HAN_DOG_LINGTU_ALLOWED_IPS`. The default is empty and rejects every remote
-motion caller. This allowlist only permits lease-aware motion; motor enable,
-posture, zeroing, and fault-clear RPCs remain loopback-only.
+On the Brainstem computer, explicitly allow the LingTu host's source IP with
+`HAN_DOG_LINGTU_ALLOWED_IPS=LINGTU_HOST_IP`. The default is empty and rejects
+every remote motion caller. This allowlist only permits lease-aware motion;
+motor enable, posture, zeroing, and fault-clear RPCs remain loopback-only.
 
 The Brainstem hardware service must also configure
 `HAN_DOG_GRPC_TLS_CERT_FILE`, `HAN_DOG_GRPC_TLS_KEY_FILE`, and
@@ -139,9 +159,21 @@ cd ~/data/SLAM/navigation
 bash scripts/deploy/cut_release.sh vX.Y.Z
 ```
 
-`cut_release.sh` is native-first: it gates on `nav_kernel`, OctoPlanner3D, and
-the OctoMap PCD converter. ROS2 compatibility package checks run only when
-`LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
+`cut_release.sh` is native-first: it builds/tests and installs the complete
+`navd` endpoint package, writes an immutable selected-planner contract, then
+requires a fresh endpoint status after restart. OctoPlanner3D and its converter
+are required for the default `octoplanner3d` release. FAR is an explicit extra
+backend:
+
+```bash
+LINGTU_RELEASE_GLOBAL_PLANNER=far \
+  bash scripts/deploy/cut_release.sh vX.Y.Z
+```
+
+That release requires the active, validated `occupancy.npz`; it does not
+silently fall back to OctoPlanner3D. The nanobind Python kernel is optional via
+`LINGTU_RELEASE_REQUIRE_PYTHON_NAV_KERNEL=1`. ROS2 compatibility package checks
+run only when `LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
 
 ## Common Operations
 
@@ -155,6 +187,7 @@ the OctoMap PCD converter. ROS2 compatibility package checks run only when
 | Tail app logs | `journalctl -u lingtu -f` |
 | Tail native SLAM logs | `journalctl -u lingtu-slam-dds -f` |
 | Tail native Livox logs | `journalctl -u lingtu-livox-dds -f` |
+| Tail native driver logs | `journalctl -u lingtu-driver -f` |
 | Verify ports | `ss -tnlp \| grep -E '13145\|5050\|8090'` |
 
 ## Diagnostics
@@ -166,6 +199,8 @@ bash scripts/lingtu svc status
 bash scripts/lingtu health
 bash scripts/lingtu dataflow /nav/odometry
 bash scripts/lingtu dataflow /nav/map_cloud
+jq . /dev/shm/lingtu/nav_endpoint_status.json
+jq . /dev/shm/lingtu/driver_status.json
 journalctl -u lingtu-slam-dds.service -n 80 --no-pager
 ```
 

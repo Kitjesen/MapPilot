@@ -1,3 +1,4 @@
+#include "lingtu/maps/layers/exploration.hpp"
 #include "lingtu/maps/layers/grid.hpp"
 
 #include <cassert>
@@ -119,6 +120,16 @@ static void testProjectedCollisionSlowsOnSoftCell() {
   assert(result.maxCost == 70.0f);
 }
 
+static void testExplorationEncodingPreservesUnknownSpace() {
+  Grid2D cost = makeGrid2D(2, 3, 0.2, -1.0, -1.0, 0.0f);
+  cost.data = {0.0F, 20.0F, 65.0F, 100.0F, 0.0F, 90.0F};
+  const std::vector<std::uint8_t> observed = {1, 1, 1, 1, 0, 0};
+
+  const auto encoded = encodeExplorationOccupancy(cost, observed);
+
+  assert((encoded == std::vector<std::int8_t>{0, 0, 100, 100, -1, -1}));
+}
+
 int main() {
   testElevationUsesRowYColX();
   testEsdfGradientAxesMatchXY();
@@ -126,5 +137,6 @@ int main() {
   testFusedCostPreservesHardCellsAndUsesRiskLayers();
   testProjectedCollisionStopsOnHardCell();
   testProjectedCollisionSlowsOnSoftCell();
+  testExplorationEncodingPreservesUnknownSpace();
   return 0;
 }

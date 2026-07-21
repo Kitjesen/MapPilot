@@ -40,23 +40,23 @@ The startup chain is:
 ```text
 lingtu.py <profile>
   -> cli/profile resolution
-  -> runtime.blueprints.full_stack / stack factories
-  -> runtime.blueprints.stacks.planner()
+  -> lingtu.assembly.full_stack / stack factories
+  -> lingtu.assembly.stacks.planner()
   -> add SemanticPlannerModule, LLMModule, VisualServoModule
-  -> runtime.blueprints.wires.semantic connects ports
+  -> lingtu.assembly.wires.semantic connects ports
 ```
 
 The stack factory that creates decision modules is:
 
 ```text
-src/runtime/blueprints/stacks/planner.py
+src/lingtu/assembly/stacks/planner.py
 ```
 
 The wires that connect decision modules to Gateway, MCP, Perception, Memory, and
 Navigation are:
 
 ```text
-src/runtime/blueprints/wires/semantic.py
+src/lingtu/assembly/wires/semantic.py
 ```
 
 Profiles with semantic planning enabled include `dev`, `sim`, `nav`,

@@ -106,19 +106,14 @@ def _preview_path_xyz(preview: dict[str, Any]) -> list[list[float]]:
 
 
 def _evaluate_preview_live_safety(
-    gw: Any,
+    command_service: ControlCommandService,
     preview: dict[str, Any],
 ) -> dict[str, Any] | None:
     path = _preview_path_xyz(preview)
     if not path:
         return None
-    nav = (getattr(gw, "_all_modules", {}) or {}).get("nav.mission")
-    planner = getattr(nav, "_planner_svc", None)
-    evaluator = getattr(planner, "evaluate_current_path_safety", None)
-    if not callable(evaluator):
-        return None
     try:
-        return evaluator(path)
+        return command_service.evaluate_navigation_path(path)
     except Exception as exc:
         logger.debug("live path safety preview failed: %s", exc, exc_info=True)
         return {
@@ -580,7 +575,7 @@ def register_map_routes(app, gw) -> None:
                 executable_preview["fallback_reason"] = (
                     executable_preview.get("fallback_reason") or "planner start snapped too far from live pose"
                 )
-            executable_path_safety = _evaluate_preview_live_safety(gw, preview)
+            executable_path_safety = _evaluate_preview_live_safety(command_service, preview)
             executable_preview["path_safety"] = executable_path_safety
             if isinstance(executable_path_safety, dict) and executable_path_safety.get("ok") is False:
                 executable_preview["feasible"] = False
@@ -954,23 +949,15 @@ def register_map_routes(app, gw) -> None:
         else:
             status_code = 200
             map_path = str(resp.get("octomap") or resp.get("occupancy") or resp.get("pcd") or "")
-            nav = (getattr(gw, "_all_modules", {}) or {}).get("nav.mission")
-            reload_planner_map = getattr(nav, "reload_planner_map", None)
-            if callable(reload_planner_map):
-                try:
-                    resp["planner_reload"] = reload_planner_map(map_path)
-                except Exception as exc:
-                    logger.warning("planner map reload after activation failed: %s", exc)
-                    resp["planner_reload"] = {
-                        "ok": False,
-                        "reason": "planner_reload_failed",
-                        "message": str(exc),
-                        "map_path": map_path,
-                    }
-            else:
+            reload_planner_map = command_service.reload_navigation_map
+            try:
+                resp["planner_reload"] = reload_planner_map(map_path)
+            except Exception as exc:
+                logger.warning("planner map reload after activation failed: %s", exc)
                 resp["planner_reload"] = {
                     "ok": False,
-                    "reason": "nav_mission_unavailable",
+                    "reason": "planner_reload_failed",
+                    "message": str(exc),
                     "map_path": map_path,
                 }
             planner_reload = resp.get("planner_reload")
@@ -993,7 +980,7 @@ def register_map_routes(app, gw) -> None:
                             "previous_active": previous_active,
                         }
                 map_rollback_ok = rollback.get("success") is True
-                if map_rollback_ok and previous_active and callable(reload_planner_map):
+                if map_rollback_ok and previous_active:
                     rollback_path = str(
                         rollback.get("octomap") or rollback.get("occupancy") or rollback.get("pcd") or ""
                     )

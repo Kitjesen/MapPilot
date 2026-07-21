@@ -958,6 +958,43 @@ def test_external_mapping_session_accepts_matching_product_and_control_mode(
     assert ended.session.product_session == "idle"
 
 
+def test_external_teleop_avoid_session_is_map_free(monkeypatch, tmp_path):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionTransitionResponse
+
+    status_file = tmp_path / "nav_endpoint_status.json"
+    status_file.write_text(
+        json.dumps({"stamp_s": time.time(), "control_mode": "teleop_avoid"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_PROFILE", "teleop_avoid")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
+    gateway = GatewayModule(manage_session_services=False)
+    gateway.setup()
+    gateway._get_slam_profile = lambda: "fastlio2"
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            {
+                "mode": "navigating",
+                "profile": "teleop_avoid",
+                "product_session": "teleop_avoid",
+            }
+        )
+    )
+
+    accepted = SessionTransitionResponse.model_validate(_payload(response))
+    assert accepted.ok is True
+    assert accepted.session is not None
+    assert accepted.session.mode == "navigating"
+    assert accepted.session.product_profile == "teleop_avoid"
+    assert accepted.session.product_session == "teleop_avoid"
+    assert accepted.session.active_map is None
+    assert accepted.session.slam_profile == "fastlio2"
+
+
 def test_session_start_accepts_legacy_map_field(monkeypatch):
     import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
@@ -4078,7 +4115,7 @@ def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_
     import subprocess
 
     from gateway.gateway_module import GatewayModule
-    from runtime.relocalization import RelocalizationResult
+    from localization.service import RelocalizationResult
 
     map_dir = tmp_path / "maps"
     (map_dir / "demo").mkdir(parents=True)
@@ -4094,7 +4131,7 @@ def test_localizer_relocalize_passes_saved_map_path_to_service(monkeypatch, tmp_
     }
     gateway._persist_last_nav_pose = lambda *_args, **_kwargs: None
     service = _FakeRelocalizationService(saved_result=RelocalizationResult(True, "success=True\n"))
-    gateway._relocalization_service = service
+    gateway.localization.bind(service)
 
     monkeypatch.setattr(
         subprocess,
@@ -4121,7 +4158,7 @@ def test_auto_relocalize_delegates_to_service_and_preserves_success_payload(
     import subprocess
 
     from gateway.gateway_module import GatewayModule
-    from runtime.relocalization import RelocalizationResult
+    from localization.service import RelocalizationResult
 
     subprocess_calls = []
 
@@ -4139,7 +4176,7 @@ def test_auto_relocalize_delegates_to_service_and_preserves_success_payload(
     service = _FakeRelocalizationService(
         global_result=RelocalizationResult(True, "native_global_relocalized", quality=0.04)
     )
-    gateway._relocalization_service = service
+    gateway.localization.bind(service)
 
     monkeypatch.setattr(subprocess, "run", fail_run)
     payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/auto_relocalize")())
@@ -4161,7 +4198,7 @@ def test_relocalize_delegates_validated_request_and_persists_on_success(
     import subprocess
 
     from gateway.gateway_module import GatewayModule
-    from runtime.relocalization import RelocalizationResult
+    from localization.service import RelocalizationResult
 
     persisted = []
     subprocess_calls = []
@@ -4184,7 +4221,7 @@ def test_relocalize_delegates_validated_request_and_persists_on_success(
     gateway._get_slam_profile = lambda: "localizer"
     gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
     service = _FakeRelocalizationService(saved_result=RelocalizationResult(True, "service ok", quality=0.123))
-    gateway._relocalization_service = service
+    gateway.localization.bind(service)
 
     monkeypatch.setattr(subprocess, "run", fail_run)
     payload = asyncio.run(
@@ -4209,7 +4246,7 @@ def test_track_against_map_delegates_validated_request_to_service(
     import subprocess
 
     from gateway.gateway_module import GatewayModule
-    from runtime.relocalization import RelocalizationResult
+    from localization.service import RelocalizationResult
 
     subprocess_calls = []
     map_dir = tmp_path / "maps"
@@ -4237,7 +4274,7 @@ def test_track_against_map_delegates_validated_request_to_service(
             details={"track_against_map_enabled": True},
         )
     )
-    gateway._relocalization_service = service
+    gateway.localization.bind(service)
 
     monkeypatch.setattr(subprocess, "run", fail_run)
     payload = asyncio.run(
@@ -4260,7 +4297,7 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
     tmp_path,
 ):
     from gateway.gateway_module import GatewayModule
-    from runtime.relocalization import RelocalizationResult
+    from localization.service import RelocalizationResult
 
     persisted = []
     map_dir = tmp_path / "maps"
@@ -4276,9 +4313,9 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
         "saved_map_relocalization_supported": True,
     }
     gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
-    gateway._relocalization_service = _FakeRelocalizationService(
+    gateway.localization.bind(_FakeRelocalizationService(
         saved_result=RelocalizationResult(False, "service failed")
-    )
+    ))
 
     payload = asyncio.run(
         _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
@@ -4293,7 +4330,7 @@ def test_relocalize_does_not_persist_last_pose_when_service_reports_failure(
 
 def test_relocalize_service_timeout_maps_to_504_payload(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
-    from runtime.relocalization import RelocalizationResult
+    from localization.service import RelocalizationResult
 
     persisted = []
     map_dir = tmp_path / "maps"
@@ -4315,7 +4352,7 @@ def test_relocalize_service_timeout_maps_to_504_payload(monkeypatch, tmp_path):
         "saved_map_relocalization_supported": True,
     }
     gateway._persist_last_nav_pose = lambda *args: persisted.append(args)
-    gateway._relocalization_service = _FakeRelocalizationService(saved_result=timeout_result)
+    gateway.localization.bind(_FakeRelocalizationService(saved_result=timeout_result))
 
     response = asyncio.run(
         _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})

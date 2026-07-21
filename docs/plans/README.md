@@ -8,6 +8,10 @@ and old snapshots live in git history.
 | --- | --- |
 | [`current-roadmap.md`](./current-roadmap.md) | Current product/runtime roadmap and remaining gates. |
 
+Current roadmap headline: native Thunder DDS/driver code paths are locally
+locked; do not mark field motion complete until target-side no-motion preview,
+fault injection, and supervised motion evidence exist.
+
 ## Rules
 
 - Do not keep stale PRDs here after a contract lands.

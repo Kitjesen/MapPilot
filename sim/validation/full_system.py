@@ -287,7 +287,7 @@ def validate_slam_localization_contract(repo_root: Path) -> ValidationCheck:
 
 
 def validate_navigation_blueprint(repo_root: Path) -> ValidationCheck:
-    from runtime.introspection.profile_graph import graph_for_profile
+    from lingtu.assembly.graph import graph_for_profile
 
     profile = "portable_mujoco"
     graph = graph_for_profile(profile)
@@ -411,7 +411,7 @@ def validate_navigation_blueprint(repo_root: Path) -> ValidationCheck:
 def validate_frontier_exploration_runtime() -> ValidationCheck:
     np = _numpy()
 
-    from runtime.blueprints.profile_builder import build_system_for_profile
+    from lingtu.assembly.profile_builder import build_system_for_profile
     from runtime.msgs.geometry import Pose
     from runtime.msgs.nav import Odometry
 
@@ -751,7 +751,7 @@ def check_nav_motion(
 
     np = _numpy()
 
-    from runtime.blueprints.profile_builder import build_system_for_profile
+    from lingtu.assembly.profile_builder import build_system_for_profile
     from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 
     system = build_system_for_profile(

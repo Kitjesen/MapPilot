@@ -299,7 +299,7 @@ Linux controller, with no active mission, and according to the
 [Thunder deployment guide](../04-deployment/README.md).
 
 ```bash
-LINGTU_BRAINSTEM_HOST=<remote-brainstem-ip> \
+LINGTU_BRAINSTEM_HOST=REMOTE_BRAINSTEM_IP \
 LINGTU_BRAINSTEM_PORT=13145 \
   bash scripts/deploy/thunder/install_services.sh field-cpp
 ```

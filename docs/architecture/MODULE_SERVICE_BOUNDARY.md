@@ -1,6 +1,8 @@
 # Module And Service Boundary
 
 Status: current cleanup guide
+Audience: runtime/domain maintainers and reviewers
+Replaced by: not replaced
 
 This document fixes the naming confusion between LingTu Modules, OS services,
 internal service classes, and compatibility adapters.
@@ -13,7 +15,7 @@ internal service classes, and compatibility adapters.
 | System service | OS process supervised by systemd or an equivalent launcher. | `scripts/deploy/**`, robot host | DDS, HTTP, files, status JSON, hardware protocol. | `lingtu-slam-dds.service`, `lingtu-nav-dds.service` |
 | Internal service class | Plain helper object used by a Module or route layer. | `src/**/services/**` | Python or C++ function calls only. | `ControlCommandService`, `MapAPIService` |
 | Adapter / bridge | Explicit protocol boundary to DDS, simulator, or hardware. | `src/**/adapters/**`, `sim/engine/bridge/**` | External protocol or compatibility API. | `CppSlamStatusAdapterModule`, camera DDS adapter |
-| Native endpoint | C++ process that owns a native runtime boundary. | `src/**/endpoint/**`, `scripts/deploy/**` | Typed DDS plus files/status. | `lingtu_nav_native_endpoint` |
+| Native endpoint | C++ process that owns a native runtime boundary. | `src/**/endpoint/**`, `scripts/deploy/**` | Typed DDS plus files/status. | `navd` |
 | Field diagnostics | Offline or Gateway-facing product evidence/audit helpers. | `src/diagnostics/field/**` | Read-only files, reports, HTTP diagnostics, and existing topics. | `evidence`, `gateway_acceptance` |
 | Simulation diagnostics | Sim-only closure and dataflow reports. | `sim/diagnostics/**` | Existing reports and simulation artifacts. | `gap_report`, `dataflow_report` |
 
@@ -104,6 +106,8 @@ nav-lidar-network.service
   -> lingtu-traversability-dds.service
   -> lingtu-nav-dds.service
   -> /nav/cmd_vel
+  -> lingtu-driver.service
+  -> remote Brainstem gRPC
 ```
 
 What each service owns:
@@ -114,17 +118,17 @@ What each service owns:
 | `lingtu-livox-dds.service` | Livox/IMU native DDS source. | hardware | `/lidar/raw_frame`, `/imu/raw` |
 | `lingtu-slam-dds.service` | Native SLAM/localization. | `/lidar/raw_frame`, `/imu/raw` | `/slam/odometry`, `/slam/registered_cloud`, `/slam/map_cloud`, `/tf` |
 | `lingtu-traversability-dds.service` | Near-field traversability. | odom, registered cloud | `/nav/traversability` |
-| `lingtu-nav-dds.service` | Current native nav endpoint. | odom, TF, goal, cloud, traversability, map artifact | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, optional `/nav/cmd_vel` |
+| `lingtu-nav-dds.service` | Current native nav endpoint. | odom, TF, goal, cloud, traversability, map artifact, driver control status | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, `/nav/cmd_vel` when enabled |
 | `lingtu.service` | Gateway/API/MCP/status/task entry. | user/task requests, status files | HTTP `5050`, MCP, goal/status commands |
 
 Below `/nav/cmd_vel`:
 
 | System service | Owns | Needed for current base? |
 | --- | --- | --- |
-| `lingtu-driver.service` | Native real robot command sink. | no |
-| `lingtu-thunder-dds-endpoint.service` | Compatibility Python command sink. | no |
-| `robot-brainstem.service` | Robot low-level control bridge. | no |
-| `can-setup.service` | CAN setup. | no |
+| `lingtu-driver.service` | Native real robot command sink, remote Brainstem gRPC client, lease owner, `WalkChecked` ACK path. | yes for real motion |
+| `lingtu-thunder-dds-endpoint.service` | Compatibility Python command sink; conflicts with `lingtu-driver.service`. | no |
+| `robot-brainstem.service` | Legacy/local low-level control bridge if used by a non-field setup. | no for current `thunder_field` deployment |
+| `can-setup.service` | CAN setup for legacy/local bridge deployments. | no for current remote Brainstem gRPC deployment |
 
 Current `lingtu-nav-dds.service` still contains multiple internal parts:
 
@@ -146,7 +150,8 @@ That is acceptable for the first native endpoint. The split route is recorded in
 
 | Module group | Job | Should own process lifecycle? |
 | --- | --- | --- |
-| `runtime/blueprints` | Compose Modules and wires. | no |
+| `lingtu/assembly` | Declare LingTu products, Module groups, and wires. | no |
+| `runtime/blueprint.py` | Materialize one application Module graph. | no |
 | `gateway` | API, MCP, status, teleop entry. | one process through `lingtu.service` |
 | `localization` Modules/adapters | Normalize SLAM/localization state into LingTu. | no, unless wrapping a native endpoint |
 | `maps.service` / `src/maps/services` | Saved-map lifecycle, artifact build, validation, and MapBundle queries. | no; native worker may own async builds later |
@@ -166,6 +171,7 @@ ROS-free on the current product path:
 - `lingtu-slam-dds.service`;
 - `lingtu-traversability-dds.service`;
 - `lingtu-nav-dds.service`;
+- `lingtu-driver.service`;
 - map artifact generation for OctoPlanner3D;
 - `/nav/global_path`, `/nav/local_path`, `/nav/cmd_vel` typed DDS flow.
 

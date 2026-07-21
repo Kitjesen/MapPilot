@@ -13,8 +13,9 @@ It is deliberately not a planner, profile, or module orchestrator:
 - transport adapters are native DDS or process-local implementations.
 
 The product global-planner backend group is intentionally narrow: production
-startup registers OctoPlanner3D only. Legacy PCT/A*/direct code may still exist
-as archived tools or benchmarks, but it is not a product planner backend.
+startup registers OctoPlanner3D plus the explicit native FAR option. FAR does
+not silently replace the default. Legacy PCT/A*/direct code may still exist as
+archived tools or benchmarks, but it is not a product planner backend.
 """
 
 from __future__ import annotations
@@ -30,13 +31,13 @@ CATALOG_NAME = "lingtu_builtin"
 BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
     "device": ("runtime.devices.manager",),
     "driver": (
-        "runtime.blueprints.stub",
+        "drivers.sim.stub",
         "drivers.real.thunder.han_dog_module",
     ),
     # Co-located with "driver": each module above also carries a
     # @register("driver_protocol", ...) decorator for protocol-based lookup.
     "driver_protocol": (
-        "runtime.blueprints.stub",
+        "drivers.sim.stub",
         "drivers.real.thunder.han_dog_module",
     ),
     "driver_sim": (
@@ -76,16 +77,21 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "nav.services.safety.velocity_mux",
         "nav.services.geofence",
     ),
-    "planner_backend": ("nav.services.plan.global_planner.algorithm.octoplanner3d",),
+    "planner_backend": (
+        "nav.services.plan.global_planner.algorithm.far",
+        "nav.services.plan.global_planner.algorithm.octoplanner3d",
+    ),
     "navigation": (
         "nav.navigation",
+        "nav.commands.module",
+        "nav.inspection.service",
         "explore.frontier",
         "explore.traversable_frontier",
     ),
     "map_dds": ("maps.adapters.dds.output",),
     "autonomy": (
         "nav.local.terrain",
-        "nav.services.plan.local_planner.service",
+        "nav.local.local_planner",
         "nav.local.path_follower",
     ),
     "slam": (
@@ -95,7 +101,7 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "localization.gnss_module",
         "localization.gnss_bridge",
         "localization.ntrip_client_module",
-        "runtime.adapters.native.localization_adapter",
+        "localization.adapters.status",
     ),
     "sim_lidar": ("drivers.sim.pointcloud",),
     "exploration": (

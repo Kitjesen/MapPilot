@@ -15,6 +15,6 @@ The native path publishes DDS directly:
 - `/gnss/status` -> `rt/gnss/status`
 - `/gnss/odom` -> `rt/gnss/odom` when a map origin is configured
 
-ROS2 compatibility code lives outside this real driver tree under
-`src/drivers/adapters/ros2/gnss/wtrtk980_reader`. It is not the product GNSS
-role implementation.
+ROS2 GNSS reader code is legacy compatibility only and is not present in this
+real driver tree. Do not add ROS2 imports to the product GNSS role
+implementation.

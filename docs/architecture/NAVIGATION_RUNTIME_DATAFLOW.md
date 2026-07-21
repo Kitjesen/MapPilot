@@ -1,5 +1,9 @@
 # Navigation Runtime Dataflow
 
+Status: current product/native-DDS dataflow contract
+Audience: navigation, deployment, Gateway, and field-readiness maintainers
+Replaced by: not replaced
+
 This document records the shipped navigation-base dataflow. It is scoped to
 mapping, saved-map planning, local planning, path following, safety, command
 ownership, teleoperation, and the goal-producing modes that reuse navigation.
@@ -18,10 +22,14 @@ on the robot (`lingtu_slam_cyclone_runtime` / `lingtu-slam-dds.service`) or an
 explicit external native SLAM service. Python code may adapt streams, status,
 reports, and test evidence only; it must not become a SLAM backend.
 
-For Windows-hosted MuJoCo acceptance, replay records cross into the WSL-native
-Livox DDS publisher with `--restamp-stdin-records`. The C++ publisher rebases
-the first record to its own system clock and preserves all relative LiDAR/IMU
-timing and per-point offsets. Real MID-360 input never uses this replay option.
+For Windows-hosted MuJoCo acceptance, ordinary replay records cross into the
+WSL-native Livox DDS publisher with `--restamp-stdin-records`. The C++ publisher
+rebases those replay records to its own system clock while preserving relative
+LiDAR/IMU timing and per-point offsets. The navigation fixture is deliberately
+different: `--navigation-fixture` preserves its single simulated-hardware clock
+across IMU, odometry, TF, and clouds, while native consumers measure liveness
+from local steady-clock DDS receipt time. This avoids coupling control safety to
+Windows/WSL `CLOCK_REALTIME` steps. Real MID-360 input uses neither replay mode.
 
 | Boundary | Transport | Payload shape | ROS 2 required |
 | --- | --- | --- | --- |
@@ -31,7 +39,7 @@ timing and per-point offsets. Real MID-360 input never uses this replay option.
 | Field OctoPlanner3D global planner | direct C++ call inside `navd` | `PlanRequest` / `PlanResult` in memory | no |
 | Dev/compat OctoPlanner3D wrapper | subprocess stdin/stdout | JSON request/result | no |
 | Map artifact conversion | subprocess + files | `map.pcd` to `octomap.ot` | no |
-| Command output to Thunder brainstem | typed DDS then native `driver` gRPC client | `TwistStamped` to Brainstem `Walk(Vector3)` | no |
+| Command output to Thunder brainstem | typed DDS then native `lingtu-driver` gRPC client | `TwistStamped` to Brainstem `WalkChecked(seq, Vector3)` | no |
 
 Default internal wiring is callback delivery:
 
@@ -61,7 +69,9 @@ LingTu `/nav/cmd_vel` becomes DDS `rt/nav/cmd_vel`.
 | SLAM -> safety/UI | `/slam/localization_health` | `lingtu.dds.Text` | structured localization health |
 | SLAM -> safety/UI | `/slam/localization_quality` | `lingtu.dds.Float32` | quality in `[0,1]` |
 | C++ command client -> nav | `/nav/command/request` | `lingtu.dds.NavigationCommandRequest` | typed goal, cancel, or operator velocity request with `request_id` |
-| nav -> C++ command client | `/nav/command/ack` | `lingtu.dds.NavigationCommandAck` | authoritative admission acceptance/rejection for the matching request; not task completion |
+| nav -> C++ command client | /nav/command/ack | lingtu.dds.NavigationCommandAck | authoritative admission acceptance/rejection for the matching request; not task completion |
+| Gateway -> native explore | /nav/exploration/command | lingtu.dds.ExplorationCommandRequest | typed START/PAUSE/RESUME/STOP with request and session identity |
+| native explore -> Gateway | /nav/exploration/ack | lingtu.dds.ExplorationCommandAck | authoritative exploration FSM transition acceptance/rejection |
 | map/terrain control -> nav | `/nav/map_clearing` | `lingtu.dds.Bool` | clear map-derived planner caches |
 | map/terrain control -> nav | `/nav/cloud_clearing` | `lingtu.dds.Bool` | clear near-field obstacle caches |
 | traversability -> nav | `/nav/traversability` | `lingtu.dds.OccupancyGrid` | local terrain risk grid |
@@ -103,7 +113,7 @@ Web coordinate goal / CLI / MCP resolved goal
        -> LocalPlannerCore::plan(obstacles, traversability)
        -> PathFollower::computeControl(local_path_body)
   -> DDS /nav/cmd_vel
-  -> Thunder native driver -> Brainstem Walk
+  -> Thunder native driver -> Brainstem WalkChecked
 ```
 
 The command ACK closes command submission, not navigation execution. For a
@@ -121,6 +131,12 @@ is checked while selecting the local path, PathFollower applies speed and
 acceleration limits, and the resulting non-zero autonomous command passes the
 same independent `CommandSafety` stop/slow/limit gate used for operator
 requests before `/nav/cmd_vel` can be published.
+
+The final motion gate also requires fresh driver-control evidence from
+`lingtu-driver`: connected, ready, motors enabled, no critical motor fault,
+valid Brainstem lease, owner `grpc`, and owner id `lingtu-driver`. If that
+readiness becomes stale or false, `lingtu-nav-dds` clears endpoint motion and
+publishes/holds zero rather than continuing to emit stale non-zero commands.
 
 `/nav/local_path` is not the control hand-off. `LocalPlannerCore::plan()`
 returns `local_path_body` in memory and `PathFollower::computeControl()`
@@ -195,9 +211,28 @@ explicit path, then reuse the autonomous chain above:
 
 ```text
 inspection/patrol scheduler  -> /nav/inspection/command -> native inspection executor -> autonomous chain
-TARE/frontier exploration    -> NavigationCommandClient -> typed goal request -> autonomous chain
+TARE exploration lifecycle  -> /nav/exploration/command -> native ExploreControl -> /nav/exploration/ack
+TARE selected goal           -> NavigationCommandClient -> typed goal request -> autonomous chain
 semantic instruction         -> SemanticPlanner -> resolved goal -> typed request -> autonomous chain
 explicit tracking path       -> /nav/global_path -> NavLoop -> LocalPlanner -> PathFollower
+```
+
+For `tare_explore`, the native exploration endpoint starts idle. A fresh
+map-frame START command and fresh odometry, TF, and identity-versioned rolling
+occupancy snapshot are required before it can choose a goal. Duplicate request
+IDs replay the cached ACK without repeating state changes. PAUSE and STOP cancel
+or clear pending goal work. `/dev/shm/lingtu/explore_status.json` is bounded-age
+telemetry only; a stale status blocks START readiness but never blocks an
+operator STOP request.
+
+The native operator/diagnostic CLI uses the same request/ACK client; it does
+not publish a second raw control topic:
+
+```bash
+lingtu_nav_control explore start field-session --request-id field-start
+lingtu_nav_control explore pause operator_pause --request-id field-pause
+lingtu_nav_control explore resume operator_resume --request-id field-resume
+lingtu_nav_control explore stop operator_stop --request-id field-stop
 ```
 
 Mapping is different: LiDAR/IMU -> SLAM -> `map.pcd` -> map artifacts. The map
@@ -262,7 +297,7 @@ the Thunder field command path when `lingtu-nav-dds.service` owns navigation.
 | 25 | PathFollower | CmdVelMux | autonomous velocity | `Twist` | callback |
 | 26 | Teleop / VisualServo / Navigation recovery | CmdVelMux | override or recovery velocity | `Twist` | callback |
 | 27 | command arbiter | native `driver` | final velocity | DDS `TwistStamped` | DDS |
-| 28 | native `driver` | Brainstem | normalized walk command | gRPC `Walk(Vector3)` | gRPC |
+| 28 | native `driver` | Brainstem | sequence-checked normalized walk command | gRPC `WalkChecked(seq, Vector3)` | gRPC |
 | 29 | SafetyRing / Geofence | Navigation and driver | stop command | `int` (`0`, `1`, `2`) | callback |
 
 ## Live Map Cloud Cleanup
@@ -410,8 +445,8 @@ systemd process boundaries, not necessarily one algorithm per service.
 | `lingtu-traversability-dds.service` | active, disabled | Native traversability grid producer | `/slam/odometry`, `/slam/registered_cloud` | `/nav/traversability` | yes for obstacle/risk-aware local planning |
 | `lingtu-nav-dds.service` | active | Native navigation endpoint: global planning, local planning, path following, DDS output | odometry, TF, goal, traversability, cloud, OctoMap | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, `/nav/cmd_vel` | yes |
 | `lingtu.service` | active | Python Gateway/API/MCP/task/status process | user/task commands, module state | Gateway `5050`, MCP, navigation command entry | yes for external command entry |
-| `lingtu-driver.service` | product default | Native hardware command sink | `/nav/cmd_vel` | Brainstem/hardware command | no for cmd_vel-only validation |
-| `lingtu-thunder-dds-endpoint.service` | compatibility only | Python command sink | `/nav/cmd_vel` | Brainstem/hardware command | no |
+| `lingtu-driver.service` | product default | Native hardware command sink and Brainstem lease owner | `/nav/cmd_vel` | Brainstem `WalkChecked`, driver control status | no for cmd_vel-only validation; yes for real motion validation |
+| `lingtu-thunder-dds-endpoint.service` | compatibility only | Python endpoint/sink retained for explicit diagnostics | `/nav/cmd_vel` | legacy Brainstem command path | no |
 | `robot-brainstem.service` | not found / inactive | Real robot low-level control bridge | hardware command | robot control | no for cmd_vel-only validation |
 | `can-setup.service` | failed | CAN interface setup | none | `can0..can3` available | no for cmd_vel-only validation |
 | `robot-camera.service` | not found / inactive | Camera source | Orbbec/camera hardware | camera streams | no for LiDAR-only navigation; needed for inspection |
@@ -529,10 +564,13 @@ a nearer endpoint, requires repeated free evidence before demoting static
 structure, and preserves current dynamic objects in the planner obstacle
 snapshot for collision avoidance. Registered clouds use message-time pose
 sampling from `PoseBuffer`; a cloud without a pose inside the configured gap is
-rejected and cannot refresh the navigation input gate. Odom, TF, or cloud stamps
-more than 50 ms in the future are also rejected instead of being treated as
-fresh. Moving-object tracks expire after their TTL even when no newer scan
-arrives.
+rejected and cannot refresh the navigation input gate. Producer header stamps
+must be finite, positive, and ordered inside their source epoch; a large rollback
+opens a new source epoch. They are not compared with the receiver wall clock.
+Odom, TF, cloud, traversability, localization-health, and driver-control
+freshness instead use local steady-clock receipt timestamps, including the
+future/stale tolerance checks. Moving-object tracks expire after their TTL even
+when no newer scan arrives.
 `LiveObstacleLayer` is no longer a separate algorithm; it is the old name kept
 for native endpoint compatibility.
 
@@ -979,7 +1017,7 @@ PathFollower.cmd_vel
   -> CmdVelMux.path_follower_cmd_vel
   -> CmdVelMux.driver_cmd_vel
   -> local simulation/development driver
-  -> brainstem Walk(Vector3)
+  -> compatibility driver sink
 ```
 
 The physical `thunder_field` profile does not use this Python command chain;
@@ -990,7 +1028,7 @@ lingtu-nav-dds PathFollower
   -> native command arbiter and safety
   -> rt/nav/cmd_vel
   -> lingtu-driver
-  -> Brainstem Walk(Vector3)
+  -> Brainstem WalkChecked(seq, Vector3)
 ```
 
 ## What Must Be Validated On The Robot
@@ -1005,4 +1043,5 @@ Minimum field proof for the navigation base:
 6. `PathFollower` publishes non-zero `cmd_vel`.
 7. The native command arbiter is the only `/nav/cmd_vel` writer.
 8. Native safety is not holding a hard stop.
-9. `lingtu-driver` receives `/nav/cmd_vel` and Brainstem accepts `Walk(Vector3)`.
+9. `lingtu-driver` receives `/nav/cmd_vel`, owns the `grpc` Brainstem lease as
+   `lingtu-driver`, and Brainstem accepts `WalkChecked`.

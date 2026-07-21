@@ -1,5 +1,9 @@
 # LingTu ROS Frame Contract
 
+Status: current frame/topic compatibility contract; product runtime remains ROS-free/native-DDS
+Audience: localization, simulator, adapter, and UI telemetry maintainers
+Replaced by: not replaced
+
 This document records the frame and topic contract used by the navigation
 stack. It describes the boundary that modules, ROS 2 launch files, simulators,
 and App/Web telemetry must preserve.
@@ -65,6 +69,7 @@ table and the mirror tests.
 | --- | --- | --- | --- | --- |
 | `/lidar/raw_frame` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
 | `/imu/raw` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
+| `/slam/odom_prior` | `odom` | `odom` | no | `odom` |
 | `/driver/odometry` | `odom` | `odom` | no | `odom` |
 | `/slam/odometry` | `odom` | `odom`, `map` | yes | `odom`, `map` |
 | `/slam/state_at_scan` | `odom` | `odom` | no | `odom` |

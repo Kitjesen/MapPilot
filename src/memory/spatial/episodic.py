@@ -50,6 +50,10 @@ class EpisodicMemory:
         self._clip = clip_encoder
         self._lock = threading.Lock()
         self._store: SqliteEpisodicStore | None = None
+        # Last persisted record timestamp; used to keep timestamps strictly
+        # increasing so rows never collide on the ts primary key even when the
+        # platform clock is coarse (Windows ~15ms granularity).
+        self._last_record_ts: float = 0.0
 
         if persist_path is not None:
             from memory.spatial.episodic_store import SqliteEpisodicStore
@@ -103,8 +107,14 @@ class EpisodicMemory:
             except (ValueError, TypeError, AttributeError) as e:
                 logger.debug("CLIP encode_text failed: %s", e)
 
+        with self._lock:
+            ts = time.time()
+            if ts <= self._last_record_ts:
+                ts = self._last_record_ts + 1e-6
+            self._last_record_ts = ts
+
         record = MemoryRecord(
-            timestamp=time.time(),
+            timestamp=ts,
             position=pos,
             description=description,
             labels=unique_labels,

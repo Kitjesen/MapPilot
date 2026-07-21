@@ -5,16 +5,11 @@ summary: MuJoCo MID-360/IMU and ThunderV4 policy around the same C++ SLAM, terra
 simulation_only: true
 real_equivalent: true
 data_plane: native_dds
+process_control: acceptance_runner
 launcher: sim/scripts/mujoco/native_dds_sensors.py
 sensor_publisher: livox_sdk2_stream --stdin-records --dds
 acceptance_runner: sim/scripts/mujoco/native_navigation_acceptance.py
 acceptance_manifest: config/runtime_graph/endpoints/mujoco_native_navigation_acceptance.json
-native_services:
-  - lingtu_slam_cyclone_runtime
-  - lingtu_traversability_dds
-  - lingtu_nav_native_endpoint
-  - lingtu_explore_dds
-  - lingtu_mujoco_cmd_vel_tap
 simulation_command_consumer: ThunderV4 RL policy via C++ typed-DDS cmd_vel tap
 navigation_command_boundary:
   request: /nav/command/request

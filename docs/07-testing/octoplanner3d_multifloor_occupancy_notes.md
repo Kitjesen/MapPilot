@@ -272,7 +272,8 @@ artifact path.
 
 ## Board Result 2026-07-04
 
-Host: `sunrise@192.168.66.13`
+Historical host: `sunrise@<historical-lab-host>` (the live endpoint is not
+committed to public documentation).
 
 - `bash scripts/build/build_octoplanner3d.sh --require-pcl`: passed.
 - Built `octoplanner3d_headless`, `octoplanner3d_edit_octomap`, and

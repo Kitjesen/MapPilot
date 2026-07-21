@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from nav.building import ActiveFloor, NativeFloorLocalizationAdapter, PoseTarget
-from runtime.relocalization import RelocalizationResult
+from localization.service import RelocalizationResult
 
 
 class FakeMapsService:

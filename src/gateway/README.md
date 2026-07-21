@@ -15,6 +15,7 @@ algorithms.
 | MCP tool server | `mcp_server.py` |
 | request and response schemas | `schemas.py` |
 | route helper logic | `services/` |
+| inspection HTTP surface | `routes/inspection.py` plus native inspection/evidence service adapters |
 | dashboard templates and static assets | `templates/` |
 | optional visualization bridge | `rerun_bridge_module.py` |
 | auth helpers | `auth.py` |
@@ -37,7 +38,17 @@ map click
   -> Gateway goal endpoint
   -> PoseStamped goal
   -> nav.mission.goal_pose
-  -> global/local planning chain
+  -> native endpoint or Module global/local planning chain
+```
+
+Example inspection flow:
+
+```text
+inspection route command
+  -> Gateway inspection route
+  -> typed inspection command
+  -> native navigation endpoint
+  -> inspection status/evidence response
 ```
 
 ## Folder Map
@@ -54,7 +65,7 @@ package.
 
 ## Boundary Rule
 
-Gateway may ask other modules for work or state. Gateway should not import
-planner, SLAM, driver, or perception internals to do the work itself. Put that
-logic in the owning package and expose it through Module ports, skills, or
-runtime status.
+Gateway may ask other modules or native endpoint adapters for work or state.
+Gateway should not import planner, SLAM, driver, inspection executor, or
+perception internals to do the work itself. Put that logic in the owning package
+and expose it through Module ports, typed commands, skills, or runtime status.

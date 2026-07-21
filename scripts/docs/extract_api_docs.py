@@ -321,9 +321,8 @@ def generate_gateway_rest_md(routes: list[dict]) -> str:
     for filepath in sorted(by_file):
         lines.append(f"- **{filepath}**:")
         for entry in by_file[filepath]:
-            lines.append(
-                f"  - `{entry['method']} {entry['path']}` — {entry['summary']}"
-            )
+            summary = f" — {entry['summary']}" if entry["summary"] else ""
+            lines.append(f"  - `{entry['method']} {entry['path']}`{summary}")
     lines.append("")
     lines.append("---")
     lines.append("")

@@ -1,9 +1,11 @@
 # Navigation - maps, safety, planning execution
 
-`src/nav/` owns the runtime navigation chain: map products, safety checks,
-global-plan dispatch, mission state, frontier exploration goals, tracking, and
-velocity arbitration. It should not import `decision/`, `perception/`, `drivers/`, or
-`gateway/`; cross-layer behavior belongs in Blueprint wiring and typed ports.
+`src/nav/` owns navigation behavior: safety checks, goal command handling,
+global-plan dispatch, mission state, frontier exploration goals, inspection
+route execution, local path tracking, and velocity arbitration. Persistent map
+products live in `src/maps/`. `nav/` should not import `decision/`,
+`perception/`, `drivers/`, or `gateway/`; cross-layer behavior belongs in
+Blueprint wiring and typed ports.
 
 For a file-by-file purpose index, start with `FILES.md`.
 
@@ -18,12 +20,13 @@ MCP/Agent/CLI
   -> native field endpoint boundary
   -> lingtu-nav-dds
   -> DDS /nav/cmd_vel
+  -> lingtu-driver
 ```
 
-In that branch, Python owns goals, mission/status, map products, semantic
-coordination, and safety contracts. C++ `lingtu-nav-dds` owns the final field
-`/nav/cmd_vel` writer so the robot does not receive duplicate velocity
-commands.
+In that branch, Python owns goal admission, Gateway/MCP coordination, map
+service requests, semantic coordination, and status presentation. C++
+`lingtu-nav-dds` owns the final field `/nav/cmd_vel` writer, and the native
+Thunder `lingtu_driver` process is the unique hardware sink.
 
 Simulation, local-driver, and compatibility profiles can still run the
 Module-owned local execution chain:
@@ -58,10 +61,11 @@ Main implementation locations:
 | Navigation | `src/nav/navigation.py` | Mission FSM, global planning call, waypoint dispatch. |
 | PlannerService | `src/nav/services/plan/contracts.py` | Internal planner interface consumed by `Navigation`. |
 | GlobalPlanner | `src/nav/services/plan/global_planner/service.py` | Map-backed global planning coordinator. |
-| LocalPlanner | `src/nav/services/plan/local_planner/service.py` | Local obstacle-avoidance Module around `nav_kernel`. |
+| LocalPlanner | `src/nav/local/local_planner.py` | Local obstacle-avoidance Module around `nav_kernel`. |
 | PathFollower | `src/nav/local/path_follower.py` | Converts `local_path` into velocity commands. |
 | VelocityMux | `src/nav/services/safety/velocity_mux.py` | Final velocity arbiter before the driver. |
-| nav_kernel C++ | `src/nav/cpp/include/nav_kernel/` | Hot-path local planner, terrain, and path follower kernels. |
+| Native field endpoint | `src/nav/cpp/endpoint/` | Typed DDS boundary, global planner, local loop, safety, and final command authority. |
+| Navigation C++ | `src/nav/cpp/` | FAR/OctoPlanner3D, local planner, path follower, client ABI, and endpoint build. |
 
 ## Product contracts
 
@@ -77,9 +81,10 @@ Main implementation locations:
   tooling.
 - Normal navigation modules stay Module-First and ROS-free. ROS 2 code belongs
   under `*/adapters/ros2/`; `nav/` keeps no ROS runtime implementation.
-- OctoPlanner3D is the map-backed global planning path for real saved-map /
-  3D-map navigation. A*, PCT, and direct modes remain compatibility, simulation,
-  or lightweight profile paths unless a profile explicitly selects them.
+- OctoPlanner3D is the default map-backed global planner for 3D saved maps.
+  Native FAR is an explicit 2D occupancy option; it never activates as a
+  silent fallback. A*, PCT, and direct modes remain compatibility, simulation,
+  or lightweight paths outside the native field backend catalog.
 
 ## Global planner contract
 
@@ -88,7 +93,7 @@ Main implementation locations:
 - Map-backed runtime: `services/plan/global_planner/service.py:GlobalPlanner`.
   Thunder Lite/mapless runtime uses `services/plan/compat/direct.py`.
 - Backend registry key: `planner_backend`. Backend classes are constructed as
-  `BackendCls(tomogram_path, obstacle_thr)`.
+  `BackendCls(map_path, obstacle_thr)`.
 - Backend function names are mandatory: `plan(start, goal)` and
   `update_map(grid, resolution=0.2, origin=None)`. The service boundary rejects
   registered backends missing either callable.
@@ -98,20 +103,45 @@ Main implementation locations:
 - A global planner returns sparse route waypoints only. It never publishes
   `cmd_vel`; local planning, path following, safety, and `VelocityMux` own motion.
 
+## Mission lifecycle
+
+`Navigation` (runtime id `nav.mission`) owns the navigation task lifecycle. It
+is not a planner backend and it is not a service API layer.
+
+```text
+nav.services.goals / nav.services.patrol / gateway
+  -> nav.mission Navigation
+  -> nav.services.plan GlobalPlanner
+  -> nav.local LocalPlanner
+  -> nav.local PathFollower
+  -> nav.services.safety VelocityMux
+```
+
+- Services parse commands and own assets; mission owns execution state.
+- Mission calls `GlobalPlanner`; services should not push waypoint execution.
+- LocalPlanner and PathFollower are downstream runtime modules, not mission
+  subroutines.
+- New mission behavior goes into `runtime/` only when it changes task
+  execution. Data definitions stay in `model/`, tracking in `tracking/`.
+
 ## Module map
 
 | Area | Files | Responsibility |
 | --- | --- | --- |
 | Mission execution | `navigation.py`, `model/`, `runtime/`, `tracking/` | Goal handling, planning requests, waypoint tracking, recovery, and mission FSM. |
-| Global planning dispatch | `services/plan/global_planner/service.py` | Select OctoPlanner3D/A*/PCT planner, validate paths, find safe nearby goals. |
+| Building / multi-floor | `building/` | Floor-aware mission orchestration, lift transitions, and native map/relocalization gates. "Building" means physical buildings (floors, elevators), not software architecture. |
+| Native command adapter | `commands/module.py` | Typed goal/cancel/stop/teleop command forwarding to the native navigation endpoint. |
+| Inspection | `inspection/` | Inspection route execution facade (`service.py`) plus the native C++ core built into the nav endpoint. |
+| Localization monitor | `localization_monitor/` | Localization quality watch and pause/stop signaling. |
+| Global planning dispatch | `services/plan/global_planner/service.py`, `cpp/planning/global/` | Select OctoPlanner3D by default, admit explicit native FAR, validate maps/paths, and keep PCT manual-only. |
 | Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/compat/direct_path.py` owns the Thunder Lite direct planner. |
-| Maps | `services/map/layers/`, `services/maps.py` | L2 realtime map layers plus the saved-map lifecycle service used by navigation, safety, gateway preview, and local autonomy. |
-| Safety | `safety/`, `services/geofence.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
+| Maps | `../maps/modules/`, `../maps/services/` | L2 realtime map layers plus the saved-map lifecycle service used by navigation, safety, gateway preview, and local autonomy. |
+| Safety | `services/safety/`, `services/geofence.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
 | Frontier exploration | `exploration/` | Wavefront frontier goals and traversability-enriched frontier previews. |
-| Process boundary | C++ `lingtu-nav-dds` | Owns typed DDS goal/cancel input and global/local path plus final command output. The Python graph has no `nav.in` or `nav.out` adapter modules. Map visualization remains a separate map-domain concern. |
+| Process boundary | `cpp/endpoint/navd` (`lingtu-nav-dds.service`) | Owns typed DDS goal/cancel/inspection input, active map gates, global/local planning, and final command output. The Python graph has no competing field motion writer. |
 | Navigation services | `services/` | Map lifecycle, goal commands, patrol routes, optional schedules, and geofence state. |
-| Map lifecycle | `services/maps.py` | Save/use/build/delete maps through the native map-save adapter, map optimization metadata, and artifact builders. |
-| C++ hot path | `kernel/` | Header-first local planner/path follower/terrain kernels plus nanobind binding and C++ tests. Pytest does not cover this directory. |
+| Map lifecycle | `../maps/modules/service.py`, `../maps/services/` | Save/use/build/delete maps through the native maps service contract, map optimization metadata, and artifact builders. |
+| C++ hot path | `cpp/` | Local planner/path follower kernels, native global planners, nanobind binding, endpoint, and C++ tests. |
 
 ## Service set
 
@@ -142,7 +172,7 @@ them just to make the tree look tidier.
 | Traversable frontier preview | `nav/exploration/traversable_frontier_module.py` | Optional navigation stack preview/inspection | Enriches wavefront candidates with traversability and optional semantic evidence, publishes ranked candidate dictionaries. | Not the TARE planner. |
 | Semantic frontier scoring | `decision/frontier_scorer.py` | `SemanticPlanner` and goal-resolution logic | Scores frontier candidates using language, grounding, uncertainty, and semantic context. | Not a Module that drives navigation goals by itself. |
 | TARE exploration | `nav/exploration/tare/` | `tare_explore` profile through the navigation exploration stack | Runs CMU TARE hierarchical exploration via native/adapter integration. | Not the wavefront explorer and not enabled in the `explore` profile. |
-| OctoPlanner3D/PCT global planning | `nav/services/plan/global_planner/service.py`, OctoPlanner3D and explicit PCT compatibility under `nav/services/plan/global_planner/algorithm/` | `Navigation` | Python dispatch plus headless OctoPlanner3D and explicit PCT compatibility planners. | Not an exploration policy. |
+| Global planning | `nav/cpp/planning/global/`, plus Python Module/sim dispatch under `nav/services/plan/global_planner/` | `navd` or `Navigation` | Native OctoPlanner3D default, explicit FAR option, and Python simulation adapters; PCT is legacy/manual only. | Not an exploration policy. |
 
 Profile split:
 

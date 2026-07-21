@@ -289,7 +289,7 @@ def test_camera_dds_cpp_publisher_has_typed_writers_and_build_target() -> None:
     assert "include/${multiarch}" in build_script
     assert "--parallel" in build_script
     assert "native camera DDS publisher is missing" in build_script
-    assert "Skipping lingtu_nav_native_endpoint" in endpoint_cmake
+    assert "Skipping navd" in endpoint_cmake
     assert "Skipping lingtu_traversability_dds" in endpoint_cmake
     assert "Skipping lingtu_explore_dds" in endpoint_cmake
     assert "Skipping lingtu_nav_control" in endpoint_cmake

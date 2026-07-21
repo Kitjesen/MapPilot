@@ -51,7 +51,7 @@ def _endpoint_observations(control_mode: str, nonzero_samples: int) -> dict:
             },
         ],
         "final_cmd_topic": "rt/nav/cmd_vel",
-        "final_cmd_writer": "lingtu_nav_native_endpoint",
+        "final_cmd_writer": "navd",
         "nonzero_cmd_samples": nonzero_samples,
     }
 
@@ -92,7 +92,7 @@ def test_each_control_mode_has_an_exclusive_product_execution_plan() -> None:
     }
     assert "rt/slam/localization_health" in teleop_avoid["required_inputs"]
     assert "rt/nav/traversability" in teleop_avoid["required_inputs"]
-    assert teleop_avoid["runner"]["kind"] == "teleop_avoid_geometry_mirror"
+    assert teleop_avoid["runner"]["kind"] == "teleop_avoid_native_acceptance"
 
     with pytest.raises(ValueError, match="unsupported control mode"):
         acceptance.build_execution_plan(manifest, "both")
@@ -330,7 +330,7 @@ def test_run_mode_fails_honestly_when_full_mode_harness_is_unavailable(
     assert artifact["source_report"] is None
 
 
-def test_run_mode_executes_geometry_harness_but_does_not_promote_it(
+def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_it(
     tmp_path: Path,
 ) -> None:
     stale_report = tmp_path / "harness" / "report.json"
@@ -338,7 +338,7 @@ def test_run_mode_executes_geometry_harness_but_does_not_promote_it(
     stale_report.write_text(
         json.dumps(
             {
-                "schema_version": "lingtu.mujoco.teleop_avoid_gate.v1",
+                "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
                 "ok": True,
                 "blockers": [],
                 "cases": [],
@@ -361,15 +361,15 @@ def test_run_mode_executes_geometry_harness_but_does_not_promote_it(
     artifact = json.loads((tmp_path / "runner_artifact.json").read_text(encoding="utf-8"))
 
     assert artifact["runner_blockers"] == []
-    assert artifact["source_report"]["schema_version"] == ("lingtu.mujoco.teleop_avoid_gate.v1")
+    assert artifact["source_report"]["schema_version"] == ("lingtu.mujoco.teleop_avoid_native_acceptance.v1")
     assert artifact["source_report"]["sha256"]
     assert Path(artifact["source_report"]["path"]) != stale_report
     assert stale_report.is_file()
-    assert artifact["observations"]["geometry_mirror"]["ok"] is True
+    assert artifact["observations"]["ok"] is False
+    assert artifact["observations"]["case_count"] == 0
     assert artifact["observations_sha256"]
     assert report["promotion_eligible"] is False
-    assert report["supplemental_observations"]["geometry_mirror"]["ok"] is True
-    assert "control_chain:typed_command_observations_missing" in report["blockers"]
+    assert "runner_execution_nonzero" in report["blockers"]
 
     invalid_time = copy.deepcopy(artifact)
     invalid_time["finished_at"] = "2026-07-12T00:00:00"
@@ -505,3 +505,52 @@ def test_autonomy_adapter_recomputes_proofs_from_harness_report(
     assert report["promotion_eligible"] is False
     assert "control_chain:mode_mutual_exclusion_observation_missing" in report["blockers"]
     assert "control_chain:native_stop_observation_missing" in report["blockers"]
+
+
+def test_teleop_avoid_native_observations_aggregate_case_evidence() -> None:
+    source_report = {
+        "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
+        "ok": True,
+        "product_gate_eligible": True,
+        "preflight": {"ok": True},
+        "cases": [
+            {
+                "scenario": "free",
+                "ok": False,
+                "startup": {"ok": True},
+                "processes": [{"name": "slam"}, {"name": "navigation"}, {"name": "traversability"}, {"name": "sensor"}],
+                "process_cleanup": {"zero_leftovers": True},
+                "sensor_report": {
+                    "policy_loaded": True,
+                    "slam_status": {
+                        "state": "TRACKING",
+                        "registered_points": 123,
+                        "reason": "tracking",
+                    },
+                },
+                "terrain_producer_observation": {"cells": 12},
+                "evaluation": {
+                    "case": "free",
+                    "ok": False,
+                    "injected": False,
+                    "blockers": ["free_command_not_accepted"],
+                    "metrics": {
+                        "steady_nonzero_cmd_samples": 4,
+                        "teleop_reasons": ["terrain_stop", "obstacle"],
+                        "policy_motion_xy_m": 0.42,
+                    },
+                },
+                "typed_teleop": {"probe": {"returncode": 0, "stdout": "accepted teleop"}},
+            }
+        ],
+    }
+
+    observations = acceptance.extract_runner_observations("teleop_avoid_native_acceptance", source_report)
+    assert observations["runtime"]["processes"] == ["slam", "navigation", "traversability", "sensor"]
+    assert observations["endpoint"]["command_events"][0]["kind"] == "teleop"
+    assert observations["endpoint"]["final_cmd_topic"] == "rt/nav/cmd_vel"
+    assert observations["endpoint"]["nonzero_cmd_samples"] == 4
+    assert observations["summary"]["case_count"] == 1
+    assert observations["runtime"]["motion_m"] == 0.42
+    assert observations["summary"]["case_motion_m"] == [0.42]
+    assert observations["summary"]["case_cmd_samples"] == [("free", 4)]

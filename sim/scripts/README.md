@@ -1,5 +1,8 @@
 # sim/scripts Index
 
+Status: current script index as of 2026-07-18. This is a live contract/index;
+dated reports and old closure notes remain evidence only.
+
 This directory is a stable script contract, not a package boundary. New MuJoCo
 implementations live under `sim/scripts/mujoco/`; old top-level names stay as
 compatibility wrappers when profiles, tests, or field notes already call them.
@@ -13,10 +16,13 @@ Use these paths for new commands, docs, and tests:
 | `mujoco/launch_fastlio2_live.sh` | MuJoCo + Fast-LIO2 live simulation launcher |
 | `mujoco/live_gate.py` | MuJoCo live LiDAR/IMU simulation gate |
 | `mujoco/native_dds_sensors.py` | MuJoCo native DDS sensor publisher gate |
+| `mujoco/native_navigation_acceptance.py` | Native DDS navigation acceptance harness: MuJoCo sensors/processes, C++ SLAM/traversability/nav endpoint, final DDS command tap, optional video |
+| `mujoco/long_range_navigation_acceptance.py` | Repeated 50-70 m native-DDS navigation campaign runner over `native_navigation_acceptance.py` |
+| `mujoco/native_control_mode_acceptance.py` | Run/evaluate wrapper for native endpoint `autonomy`, `teleop`, and `teleop_avoid` control-mode promotion |
 | `mujoco/saved_map_plan_gate.py` | Same-source saved-map planning gate |
 | `mujoco/saved_map_tracking_gate.py` | Saved-map global path plus MuJoCo tracking gate |
 | `mujoco/saved_map_quality_gate.py` | Saved-map PCD/plan quality gate |
-| `mujoco/continuous_mapping_quality_gate.py` | 3�? min continuous native DDS mapping gate (bridge + continuity + scale + map quality) |
+| `mujoco/continuous_mapping_quality_gate.py` | 3-5 min continuous native DDS mapping gate (bridge + continuity + scale + map quality) |
 | `run_sunrise_continuous_mapping_gate.py` | SSH runner for the continuous mapping gate on sunrise |
 | `mujoco/native_pct_gate.py` | Native PCT + MuJoCo gate |
 | `mujoco/navigation_audit.py` | MuJoCo navigation wiring audit |
@@ -49,7 +55,7 @@ Use the safety class before running a script:
 | --- | --- | --- |
 | summary-only unless --run-missing | Reads existing reports and writes an aggregate summary. It must not launch missing gates unless `--run-missing` is passed. Explicit non-motion source materialization, such as `server_sim_closure.py --navigation-replay-deviation-topic-jsonl`, may write the requested local replay report before summarizing. Use `--host-preflight` to check host suitability without gate execution, `--skip-host-blocked` with `--run-missing` only for diagnostic local aggregation of host-blocked gates, and `--json-out -` for stdout-only reporting. Acceptance runs should use `run_dimos_linux_closure.sh`, which preflights first and does not pass `--skip-host-blocked` to runtime execution. | `server_sim_closure.py`, `dimos_gap_report.py` |
 | local non-motion | Runs local Python checks, asset generation, or in-memory module dataflow. It must report `real_robot_motion=false` and `cmd_vel_sent_to_hardware=false`. | `multifloor_nav_validation.py --skip-mujoco`, `large_terrain_nav_validation.py`, `routecheck_preflight_gate.py`, `blocked_route_replan_gate.py`, `navigation_replay_deviation_gate.py` |
-| simulated motion only | May move a MuJoCo/Gazebo/Unity simulated robot. It must stay disconnected from physical robot drivers and hardware command subscribers. | `policy_nav_smoke.py`, `mujoco/native_pct_gate.py`, `mujoco/live_gate.py` |
+| simulated motion only | May move a MuJoCo/Gazebo/Unity simulated robot. It must stay disconnected from physical robot drivers and hardware command subscribers. | `policy_nav_smoke.py`, `mujoco/native_navigation_acceptance.py`, `mujoco/long_range_navigation_acceptance.py`, `mujoco/native_control_mode_acceptance.py`, `mujoco/native_pct_gate.py`, `mujoco/live_gate.py` |
 | ROS2 isolated simulation | May source ROS 2, launch sim nodes, or publish sim topics. Use an isolated `ROS_DOMAIN_ID`; never run on a robot ROS domain. | `gazebo_runtime_gate.py`, `mujoco/launch_fastlio2_live.sh`, `launch_lingtu_gazebo_industrial_demo.sh` |
 | legacy manual | Historical helpers or dataset scripts. They can source install spaces, start subprocesses, or assume local assets; they are not part of the G4 closure unless another gate explicitly consumes their report. | `_run_legkilo_test.sh`, `run_legkilo_test.sh`, `test_*.sh`, legacy Go1 demos |
 
@@ -69,6 +75,9 @@ Use the safety class before running a script:
 - `moving_obstacle_sweep_gate.py` - Moving-obstacle sweep report validator.
 - `fastlio_speed_boundary_gate.py` - Fast-LIO speed-boundary gate.
 - `mujoco/live_gate.py` - MuJoCo live LiDAR/IMU plus Fast-LIO2 simulation gate.
+- `mujoco/native_navigation_acceptance.py` - Current native-DDS navigation acceptance harness. It verifies the native process chain and final DDS command tap in MuJoCo; it is not field readiness.
+- `mujoco/long_range_navigation_acceptance.py` - Repeated 50-70 m native-DDS navigation campaign runner. A single accepted run is not the same as a completed `10/10` campaign.
+- `mujoco/native_control_mode_acceptance.py` - Current control-mode promotion wrapper. It has separate `run` and `evaluate` actions and rejects handwritten summaries.
 - `policy_nav_smoke.py` - Current product-style simulated motion smoke: OctoPlanner is the configured global planner, LocalPlanner runs the nanobind backend, PathFollower runs nav_kernel, and commands stay inside the MuJoCo policy driver through nav.velocity_mux.
 - `mujoco/native_pct_gate.py` - Legacy compatibility coverage for native PCT plus ROS2 local planner/path follower into MuJoCo simulation. `--contract-only` validates the PCT source-report/no-fallback/same-source artifact contract without launching ROS2 or MuJoCo; it also emits `command_generation` with source-report fingerprint and the localPlanner/pathFollower command contract. This is a compatibility wiring check, not the current product local-autonomy runtime.
 - `mujoco/saved_map_tracking_gate.py` - Current native saved-map tracking check: builds/loads `map.pcd` and `octomap.ot`, runs OctoPlanner3D, feeds the global path through `lingtu_nav_kernel.LocalPlanner` and `lingtu_nav_kernel.compute_control`, then applies the resulting cmd_vel to a MuJoCo kinematic robot. It is simulated motion only and never connects to robot hardware.

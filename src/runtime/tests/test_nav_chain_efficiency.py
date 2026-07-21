@@ -421,7 +421,7 @@ class TestNavChainLocalPlannerEfficiency:
 
     def test_local_planner_backend_nanobind(self):
         """Local planner with 'nanobind' backend reports correctly."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         lp = LocalPlanner(backend="nanobind")
         assert lp._backend == "nanobind"
@@ -431,7 +431,7 @@ class TestNavChainLocalPlannerEfficiency:
 
     def test_local_planner_backend_simple(self):
         """'simple' backend is available for testing (straight-line only)."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         lp = LocalPlanner(backend="simple")
         assert lp._backend == "simple"
@@ -441,21 +441,21 @@ class TestNavChainLocalPlannerEfficiency:
 
     def test_local_planner_backend_cmu_py(self):
         """'cmu_py' backend is available (pure-Python CMU scorer)."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         lp = LocalPlanner(backend="cmu_py")
         assert lp._backend == "cmu_py"
 
     def test_local_planner_rejects_unknown_backend(self):
         """Unknown backend raises ValueError at construction."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         with pytest.raises(ValueError, match="nav_kernel"):
             LocalPlanner(backend="nav_kernel")
 
     def test_local_planner_does_not_silently_direct_track_without_fallback(self):
         """Direct-track fallback is opt-in; default is False."""
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         lp = LocalPlanner(backend="simple")
         assert lp._allow_direct_track_fallback is False

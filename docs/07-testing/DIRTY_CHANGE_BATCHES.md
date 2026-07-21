@@ -1,5 +1,10 @@
 # Dirty Change Verification Batches
 
+> **Status: historical execution plan.** Batch names, branch names, paths, and
+> field commands record one dirty-worktree cleanup sequence; they are not the
+> current release checklist. Use `docs/07-testing/README.md` and
+> `docs/04-deployment/field_readiness_runbook.md` for current gates.
+
 This runbook turns the current dirty worktree into reviewable product batches.
 One batch means one user-visible outcome, one focused test set, and one commit.
 
@@ -14,6 +19,8 @@ One batch means one user-visible outcome, one focused test set, and one commit.
 Preflight for every batch:
 
 ```bash
+export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
+export MAP_NAME=MAP_PACKAGE_NAME
 git status --short
 git diff --cached --name-only
 ```
@@ -54,18 +61,18 @@ git add \
   src/runtime/adapters/lcm/endpoint_runner.py \
   src/runtime/adapters/lcm/sources/__init__.py \
   src/runtime/adapters/lcm/sources/brainstem.py \
-  src/runtime/blueprints/full_stack_wiring.py \
-  src/runtime/blueprints/products/thunder.py \
-  src/runtime/blueprints/profile_graph.py \
-  src/runtime/blueprints/stacks/autonomy_chain.py \
-  src/runtime/blueprints/stacks/composition.py \
-  src/runtime/blueprints/stacks/navigation_core.py \
-  src/runtime/blueprints/stacks/safety.py \
-  src/runtime/blueprints/wires/context.py \
-  src/runtime/blueprints/wires/mapping.py \
-  src/runtime/blueprints/wires/safety.py \
-  src/runtime/blueprints/wires/slam.py \
-  src/runtime/introspection/profile_graph.py \
+  src/lingtu/assembly/full_stack_wiring.py \
+  src/lingtu/assembly/products/thunder.py \
+  src/lingtu/assembly/profile_graph.py \
+  src/lingtu/assembly/stacks/autonomy_chain.py \
+  src/lingtu/assembly/stacks/composition.py \
+  src/lingtu/assembly/stacks/navigation_core.py \
+  src/lingtu/assembly/stacks/safety.py \
+  src/lingtu/assembly/wires/context.py \
+  src/lingtu/assembly/wires/mapping.py \
+  src/lingtu/assembly/wires/safety.py \
+  src/lingtu/assembly/wires/slam.py \
+  src/lingtu/assembly/graph.py \
   src/runtime/profiles/catalog/endpoints.py \
   src/runtime/profiles/endpoint_config.py \
   src/runtime/runtime_evidence.py \
@@ -116,7 +123,7 @@ python -m pytest \
 Robot gate:
 
 ```bash
-ssh sunrise@192.168.66.13 "cd ~/data/inovxio/lingtu && bash scripts/lingtu svc status"
+ssh sunrise@${LINGTU_HOST} "cd ~/data/inovxio/lingtu && bash scripts/lingtu svc status"
 ```
 
 Commit only if the local tests pass and the robot still reports active
@@ -157,7 +164,7 @@ python -m pytest \
 Robot gate:
 
 ```bash
-ssh sunrise@192.168.66.13 "curl -fsS http://127.0.0.1:5050/api/v1/runtime/status >/tmp/runtime_status.json && python3 -m json.tool /tmp/runtime_status.json >/dev/null"
+ssh sunrise@${LINGTU_HOST} "curl -fsS http://127.0.0.1:5050/api/v1/runtime/status >/tmp/runtime_status.json && python3 -m json.tool /tmp/runtime_status.json >/dev/null"
 ```
 
 Commit only if Gateway returns valid JSON and no robot motion command is active.
@@ -192,8 +199,8 @@ git add \
   src/localization/tests/test_native_slam_contract.py \
   src/localization/tests/test_relocalization_service.py \
   src/localization/tests/test_slam_stack_services.py \
-  src/runtime/adapters/native/localization_adapter.py \
-  src/runtime/adapters/native/relocalization.py
+  src/localization/adapters/status.py \
+  src/localization/adapters/relocalization.py
 ```
 
 Verify:
@@ -210,13 +217,13 @@ python -m pytest \
 Robot build:
 
 ```bash
-ssh sunrise@192.168.66.13 "cd ~/data/inovxio/lingtu && LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_FASTLIO2=ON bash scripts/build/build_slam_core.sh"
+ssh sunrise@${LINGTU_HOST} "cd ~/data/inovxio/lingtu && LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_FASTLIO2=ON bash scripts/build/build_slam_core.sh"
 ```
 
 Robot gate:
 
 ```bash
-ssh sunrise@192.168.66.13 "cd ~/data/inovxio/lingtu && bash scripts/lingtu system-acceptance --map <map_name> --goal 1.0 0.0 0.0 --with-relocalization --initial-pose 0 0 0"
+ssh sunrise@${LINGTU_HOST} "cd ~/data/inovxio/lingtu && bash scripts/lingtu system-acceptance --map '${MAP_NAME}' --goal 1.0 0.0 0.0 --with-relocalization --initial-pose 0 0 0"
 ```
 
 Commit only if the build passes and relocalization returns a supported state.
@@ -268,8 +275,8 @@ git add \
   src/nav/services/plan/global_planner/backend_runtime.py \
   src/nav/services/plan/compat/direct.py \
   src/nav/services/plan/global_planner/service.py \
-  src/nav/services/plan/local_planner/output.py \
-  src/nav/services/plan/local_planner/service.py \
+  src/nav/local/output.py \
+  src/nav/local/local_planner.py \
   src/nav/services/plan/preview.py \
   src/nav/services/safety/plan_safety.py \
   src/nav/services/safety/safety_ring.py \
@@ -312,7 +319,7 @@ python -m pytest \
 Robot gate:
 
 ```bash
-ssh sunrise@192.168.66.13 "cd ~/data/inovxio/lingtu && bash scripts/lingtu system-acceptance --map <map_name> --goal 0.4 0.0 0.0 --allow-motion --initial-pose 0 0 0"
+ssh sunrise@${LINGTU_HOST} "cd ~/data/inovxio/lingtu && bash scripts/lingtu system-acceptance --map '${MAP_NAME}' --goal 0.4 0.0 0.0 --allow-motion --initial-pose 0 0 0"
 ```
 
 Commit only if `global_path`, `local_path`, `cmd_vel`, and odometry displacement

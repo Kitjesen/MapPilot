@@ -768,7 +768,7 @@ class TestTerrain(unittest.TestCase):
 
 class TestLocalPlanner(unittest.TestCase):
     def test_ports(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         m = LocalPlanner(backend="simple")
         self.assertIn("odometry", m.ports_in)
@@ -780,13 +780,13 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertIn("local_path", m.ports_out)
 
     def test_layer(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         m = LocalPlanner(backend="simple")
         self.assertEqual(m.layer, 2)
 
     def test_storage_inputs_keep_latest_only(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         m = LocalPlanner(backend="simple")
         m.setup()
@@ -797,7 +797,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertEqual(m.esdf._policy, "latest")
 
     def test_clear_path_drops_waypoint_and_publishes_empty_path(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         m = LocalPlanner(backend="simple")
         paths = []
@@ -815,7 +815,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertEqual(paths[-1].frame_id, "map")
 
     def test_global_path_biases_simple_backend_toward_corridor(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         m = LocalPlanner(backend="simple")
         paths = []
@@ -842,7 +842,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertAlmostEqual(last.y, 3.0)
 
     def test_map_frame_jump_drops_local_planner_state(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         m = LocalPlanner(backend="simple")
         paths = []
@@ -861,7 +861,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertEqual(paths[-1].frame_id, "map")
 
     def test_nanobind_empty_path_triggers_safety_stop(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class EmptyResult:
             path = []
@@ -907,7 +907,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertEqual(diag["effective_goal"], [5.0, 0.0, 0.0])
 
     def test_nanobind_direct_track_fallback_keeps_trackable_path(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class EmptyResult:
             path = []
@@ -950,7 +950,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertEqual(m.health()["local_planner"]["last_local_path_points"], 2)
 
     def test_nanobind_direct_track_fallback_respects_near_field_stop(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class EmptyResult:
             path = []
@@ -988,7 +988,7 @@ class TestLocalPlanner(unittest.TestCase):
         self.assertEqual(hints[-1]["reason"], "no_local_path")
 
     def test_nanobind_ignore_near_field_stop_keeps_trackable_path_active(self):
-        from nav.services.plan.local_planner.service import LocalPlanner
+        from nav.local.local_planner import LocalPlanner
 
         class Pt:
             def __init__(self, x, y, z=0.0):

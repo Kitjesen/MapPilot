@@ -159,6 +159,11 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
             map_opt_command=(config.get("map_opt_command") or config.get("map_optimization_command") or None),
             map_opt_timeout_sec=float(config.get("map_opt_timeout_sec", 120.0)),
             map_opt_required=bool(config.get("map_opt_required", False)),
+            semantic_taxonomy_path=(
+                config.get("semantic_taxonomy_path")
+                or os.environ.get("LINGTU_SEMANTIC_TAXONOMY")
+                or None
+            ),
         )
         self.control = MapControlService(
             storage=self.storage,
@@ -375,6 +380,7 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
             "build_esdf_artifact": "map.artifact_built",
             "build_traversability_artifact": "map.artifact_built",
             "build_artifact": "map.artifact_built",
+            "import_unity_semantic_artifact": "map.artifact_built",
             "edit_voxels": "map.edited",
         }.get(action)
         if not success:
@@ -502,6 +508,18 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
             source_path,
             voxel_size=voxel_size,
             bounds=bounds,
+        )
+
+    def _import_unity_semantic_artifact(
+        self,
+        name: str,
+        scene_dir: str,
+        **options: Any,
+    ) -> dict[str, Any]:
+        return self.pipeline.import_unity_semantic_artifact(
+            name,
+            scene_dir,
+            **options,
         )
 
     def _crop_map(

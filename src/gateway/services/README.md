@@ -25,6 +25,7 @@ SLAM behavior.
 | `map_service.py` | Maps module service-contract adapter |
 | `media_status.py` | Camera/media status helpers |
 | `module_refs.py` | Runtime module discovery and reference attachment |
+| `native_control.py` | Native endpoint control helpers for command/status surfaces |
 | `odometry.py` | Odometry validation, cache update, and SSE forwarding |
 | `pose_recovery.py` | Last-pose persistence, auto relocalization, map->odom TF, and reset helpers |
 | `readiness.py` | Readiness summaries |

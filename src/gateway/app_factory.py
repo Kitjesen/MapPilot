@@ -6,7 +6,6 @@ construction, middleware, and route registration.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any
@@ -60,9 +59,11 @@ def build_gateway_app(gw: Any):
         register_inspection_routes,
         register_map_routes,
         register_operation_routes,
+        register_place_routes,
         register_realtime_routes,
         register_session_routes,
         register_status_routes,
+        register_voice_routes,
     )
 
     app.add_middleware(
@@ -121,10 +122,12 @@ def build_gateway_app(gw: Any):
     register_operation_routes(app, gw)
     register_diagnostic_routes(app, gw)
     register_map_routes(app, gw)
+    register_place_routes(app, gw)
     register_status_routes(app, gw)
     register_session_routes(app, gw)
     register_command_routes(app, gw)
     register_inspection_routes(app, gw)
+    register_voice_routes(app, gw)
 
     @app.post(
         "/api/v1/maps",

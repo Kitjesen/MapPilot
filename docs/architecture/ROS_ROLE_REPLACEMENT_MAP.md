@@ -1,5 +1,9 @@
 # ROS Role Replacement Map
 
+Status: current migration map; ROS remains compatibility only
+Audience: runtime, adapter, deployment, and release maintainers
+Replaced by: not replaced
+
 LingTu should run without ROS by replacing ROS' current responsibilities with
 LingTu-owned contracts and lightweight adapters.  ROS2 remains useful as an
 optional compatibility adapter, not as the default runtime substrate.
@@ -9,24 +13,27 @@ optional compatibility adapter, not as the default runtime substrate.
 | Current ROS role | Heavy dependency examples | Lightweight replacement | Where it lives |
 | --- | --- | --- | --- |
 | Message types | `sensor_msgs`, `nav_msgs`, `geometry_msgs`, `std_msgs` | LingTu-owned `runtime.msgs` and `runtime.portable` frames | `src/runtime/msgs/`, `src/runtime/portable/contracts.py` |
-| Communication | ROS topics, services, pub/sub | ModulePort + Blueprint direct wiring for in-process; endpoint adapters for process/network boundaries | `src/runtime/blueprints/`, `src/runtime/runtime_interface.py`, `src/*/adapters/*` |
+| Communication | ROS topics, services, pub/sub | ModulePort + Blueprint direct wiring for in-process; endpoint adapters for process/network boundaries | `src/lingtu/assembly/`, `src/runtime/runtime_interface.py`, `src/*/adapters/*` |
 | Process lifecycle | `rclcpp`/`rclpy` nodes, `launch`, `colcon` | LingTu CLI/runtime/profile resolver + normal Python/CMake/Cargo processes | `lingtu.py`, `cli/`, `src/runtime/profiles/` |
-| Global planning | ROS launch wrappers, PCT compatibility packages | Headless `GlobalPlanner` with `octoplanner3d` primary; A*/PCT stay explicit compatibility backends | `src/nav/services/plan/global_planner/service.py`, `src/nav/services/plan/global_planner/backends/octoplanner3d/` |
-| SLAM/localization ingress | Legacy ROS bridge or implicit topic fallback | Product endpoints pass explicit typed DDS/native adapters; field runtime uses `CppSlamStatusAdapterModule` plus the C++ `lingtu-slam-dds` service, and empty adapter selection fails closed | `src/runtime/blueprints/stacks/slam.py`, `src/runtime/adapters/native/localization_adapter.py`, `src/runtime/adapters/dds/` |
+| Global planning | ROS launch wrappers, PCT compatibility packages | Headless `GlobalPlanner` with `octoplanner3d` primary; A*/PCT stay explicit compatibility backends | `src/nav/services/plan/global_planner/service.py`, `src/nav/services/plan/global_planner/algorithm/octoplanner3d_planner.py` |
+| SLAM/localization ingress | Legacy ROS bridge or implicit topic fallback | Product endpoints pass explicit typed DDS/native adapters; field runtime uses `CppSlamStatusAdapterModule` plus the C++ `lingtu-slam-dds` service, and empty adapter selection fails closed | `src/lingtu/assembly/stacks/slam.py`, `src/localization/adapters/status.py`, `src/runtime/adapters/dds/` |
 | Local autonomy | ROS2 `terrainAnalysis`, `localPlanner`, `pathFollower` NativeModule subprocesses | Product profiles resolve to `nanobind` terrain/local planner plus `nav_kernel` path follower; `lite` uses `simple/pid` | `src/nav/local/`, `src/runtime/profiles/binding_policy.py` |
-| Exploration | Local TARE NativeModule subprocess | Product `tare_explore` resolves to LingTu-native wavefront/traversable frontier modules; external TARE is endpoint compatibility only | `src/runtime/profiles/catalog/product_intents.py`, `src/runtime/blueprints/stacks/exploration_goal_sources.py` |
-| Local hardware registry | Product startup implicitly opening every enabled device in `config/devices.yaml` | Field and lite endpoints set `enable_hw=false`; `hw` remains an explicit local hardware-management mode | `src/runtime/profiles/catalog/endpoints.py`, `src/runtime/blueprints/stacks/system.py` |
-| LiDAR acquisition | Local `livox_ros_driver2_node` NativeModule process | Field product endpoint sets `enable_lidar=false` and consumes raw LiDAR/IMU through typed DDS endpoint topics; local Livox driver is only reachable through the explicit `lidar_start_driver` compatibility key and is flagged by runtime audit | `src/runtime/profiles/catalog/endpoints.py`, `src/runtime/blueprints/stacks/composition.py`, `src/drivers/real/lidar/` |
-| Camera acquisition | ROS2 camera bridge fallback | Perception uses a registered `camera` module or driver-native camera source by default; ROS2 camera bridge requires the explicit `enable_ros2_camera_bridge` compatibility key and is flagged by runtime audit | `src/runtime/blueprints/adapters/perception_gateway.py`, `src/runtime/blueprints/stacks/perception.py`, `src/runtime/profiles/binding_policy.py` |
-| Rerun visualization | ROS2 visualization bridge fallback | `--rerun` resolves to `runtime.rerun_module.RerunModule` by default; ROS2 visualization overlays require the explicit `enable_ros2_rerun_bridge` compatibility key and are flagged by runtime audit | `src/runtime/rerun_module.py`, `src/runtime/blueprints/adapters/perception_gateway.py`, `src/runtime/blueprints/stacks/gateway.py` |
+| Exploration | Local TARE NativeModule subprocess | `explore` is wavefront/frontier compatibility; field exploration defaults to `tare_explore`, which keeps TARE as an explicit exploration backend/binary and reuses the native navigation endpoint for motion | `src/runtime/profiles/catalog/product_intents.py`, `src/lingtu/assembly/stacks/exploration_goal_sources.py`, `src/lingtu/assembly/stacks/exploration.py` |
+| Local hardware registry | Product startup implicitly opening every enabled device in `config/devices.yaml` | Field and lite endpoints set `enable_hw=false`; `hw` remains an explicit local hardware-management mode | `src/runtime/profiles/catalog/endpoints.py`, `src/lingtu/assembly/stacks/system.py` |
+| LiDAR acquisition | Local `livox_ros_driver2_node` NativeModule process | Field product endpoint sets `enable_lidar=false` and consumes raw LiDAR/IMU through typed DDS endpoint topics; local Livox driver is only reachable through the explicit `lidar_start_driver` compatibility key and is flagged by runtime audit | `src/runtime/profiles/catalog/endpoints.py`, `src/lingtu/assembly/stacks/composition.py`, `src/drivers/real/lidar/` |
+| Camera acquisition | ROS2 camera bridge fallback | Perception uses a registered `camera` module or driver-native camera source by default; ROS2 camera bridge requires the explicit `enable_ros2_camera_bridge` compatibility key and is flagged by runtime audit | `src/runtime/adapters/perception_gateway.py`, `src/lingtu/assembly/stacks/perception.py`, `src/runtime/profiles/binding_policy.py` |
+| Rerun visualization | ROS2 visualization bridge fallback | `--rerun` resolves to `runtime.rerun_module.RerunModule` by default; ROS2 visualization overlays require the explicit `enable_ros2_rerun_bridge` compatibility key and are flagged by runtime audit | `src/runtime/rerun_module.py`, `src/runtime/adapters/perception_gateway.py`, `src/lingtu/assembly/stacks/gateway.py` |
 | GNSS/RTK acquisition | `ironoa/um982_ros2_driver` publishing ROS2/DDS `/gps/fix` or duplicate device-manager reads | Product GNSS stack runs C++ `lingtu_gnss_dds`, reads `/dev/wtrtk980`, and publishes `rt/gnss/fix`, `rt/gnss/status`, and optional `rt/gnss/odom`; Python and ROS2 readers are compatibility fallbacks only | `src/drivers/real/gnss/`, `scripts/deploy/thunder/lingtu-gnss-dds.service` |
-| Ecosystem bridges | `pcl_ros`, `pcl_conversions`, `tf2_ros`, `rosbag`, `livox_ros_driver` | Optional adapters/sidecars that translate into LingTu contracts | `src/*/adapters/ros2/`, future `src/nav/pcl_ops/`, replay/endpoint sources |
+| Ecosystem bridges | `pcl_ros`, `pcl_conversions`, `tf2_ros`, `rosbag`, `livox_ros_driver` | Optional adapters/sidecars that translate into LingTu contracts | `src/*/adapters/ros2/`, `src/nav/local/pcl_ops.py`, replay/endpoint sources |
 
 ## Current verified runtime state
 
 - Product `nav`, `explore`, `tare_explore`, `super_lio`, and
   `super_lio_relocation` resolve to `octoplanner3d` for global planning.
-- Product `map` resolves to `astar`; `thunder-lite` resolves to `direct`.
+- Product `map` does not run a field global-navigation planner. Product
+  navigation/tracking/inspection/exploration use OctoPlanner3D for saved-map
+  global planning. A*/direct/PCT/ROS planner adapters are compatibility or
+  diagnostics only.
 - Product terrain/local/path following resolves to `nanobind`, `nanobind`, and
   `nav_kernel`; `thunder-lite` uses `simple`, `simple`, and `pid`.
 - The old `portable-lio` / `windows-fastlio2` FastLIO2-like endpoint was removed
@@ -55,15 +62,17 @@ optional compatibility adapter, not as the default runtime substrate.
   Gateway endpoints by default instead of direct ROS2 topic readers.
 - Feishu and Telegram monitor bots collect status through Gateway endpoints and
   no longer import `rclpy`/`std_msgs` or embed default credentials.
-- `scripts/deploy/cut_release.sh` is native-first: it requires `_nav_kernel` and
-  OctoPlanner3D native/headless artifacts by default, while ROS2 compatibility
-  install package checks require `LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
+- `scripts/deploy/cut_release.sh` is native-first: the tested `navd` endpoint
+  package is mandatory, while the Python nanobind kernel is optional. The
+  release records one selected global planner; OctoPlanner3D is the default and
+  FAR is an explicit occupancy-backed option. ROS2 compatibility install
+  package checks require `LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
 - Build, deployment, and script index docs describe native planner kernels,
   Gateway/dataflow diagnostics, and legacy OTA/perception scripts as explicit
   compatibility paths rather than product defaults.
-- Field profiles now use the `dds_endpoint` localization adapter with typed DDS
-  message bindings. Portable no-ROS LIO extraction and hardware validation are
-  still separate SLAM algorithm work.
+- Field profiles now use the `cpp_slam_status` localization adapter over the
+  native C++ SLAM/status endpoint. Older `dds_endpoint` adapter wording refers
+  to compatibility diagnostics, not the default `thunder_field` profile.
 
 Next cuts:
 
@@ -103,7 +112,7 @@ PCL itself can be useful, but it is not a default runtime dependency.
 
 - Default local planning must work without PCL.
 - Optional native package name: `lingtu_pcl_ops`.
-- Python boundary module: `src/nav/local/pcl_ops_backend.py`.
+- Python boundary module: `src/nav/local/pcl_ops.py`.
 - Public API uses `Nx3`/`Nx4` arrays or LingTu messages, never PCL types.
 - Native plugin may internally use PCL and expose small functions such as:
   - `voxel_downsample_xyzi(points, voxel_size)`
@@ -130,7 +139,7 @@ The first code slice is intentionally small:
   mature transport backends: Local/SHM/LCM/DDS. Use LCM/DDS/SHM for real
   cross-process adapter communication; `LocalTopicHub` is only a no-dependency
   unit-test/local probe helper.
-- `src/nav/local/pcl_ops_backend.py` detects optional `lingtu_pcl_ops`
+- `src/nav/local/pcl_ops.py` detects optional `lingtu_pcl_ops`
   and falls back to NumPy voxel downsampling.
 - `src/drivers/sim/mujoco/adapter.py` converts MuJoCo engine state and
   commands to/from `PortableSensorFrame` / `PortableCommandFrame` and can publish

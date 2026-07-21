@@ -1,4 +1,4 @@
-"""TeleopModule 鈥?joystick remote control with live camera stream.
+"""TeleopModule — joystick remote control with live camera stream.
 
 All teleop state and logic lives here.  GatewayModule only forwards raw
 WebSocket messages to this module via the ``joy_input`` port.

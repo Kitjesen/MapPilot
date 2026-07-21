@@ -1,5 +1,7 @@
 # LingTu Web Dashboard
 
+Status: current Web dashboard contract as of 2026-07-18.
+
 LingTu Web Dashboard is the operator UI for the robot-side Gateway. It shows session state, localization, SLAM, live scene data, saved maps, point clouds, and safe command controls.
 
 The dashboard's primary contract is Gateway bootstrap plus runtime dataflow over ModulePorts. Operators do not need to inspect ROS 2 topics directly; ROS 2, GZ, and simulation topics are endpoint adapter or bridge details.
@@ -17,14 +19,14 @@ The Vite dev server listens on `http://localhost:3000`. It proxies `/api`, `/ws`
 PowerShell example:
 
 ```powershell
-$env:ROBOT_HOST = '192.168.66.190:5050'
+$env:ROBOT_HOST = 'ROBOT_IP_OR_HOSTNAME:5050'
 npm run dev
 ```
 
 Bash example:
 
 ```bash
-ROBOT_HOST=192.168.66.190:5050 npm run dev
+ROBOT_HOST=ROBOT_IP_OR_HOSTNAME:5050 npm run dev
 ```
 
 On the robot, Gateway serves the production build from `web/dist` at `http://<robot>:5050/`.
@@ -108,24 +110,26 @@ State-changing communication is limited to Gateway's whitelisted commands, such 
 Use `NO_PROXY` on sunrise because local Gateway requests can otherwise be routed through the configured HTTP proxy.
 
 ```bash
-NO_PROXY=127.0.0.1,localhost,192.168.66.190 \
-no_proxy=127.0.0.1,localhost,192.168.66.190 \
-curl -sS http://127.0.0.1:5050/api/v1/app/bootstrap >/tmp/lingtu_bootstrap.json
+export LINGTU_ROBOT_HOST=ROBOT_IP_OR_HOSTNAME
+export GATEWAY_URL="http://${LINGTU_ROBOT_HOST}:5050"
+NO_PROXY=127.0.0.1,localhost,"$LINGTU_ROBOT_HOST" \
+no_proxy=127.0.0.1,localhost,"$LINGTU_ROBOT_HOST" \
+curl -sS "${GATEWAY_URL}/api/v1/app/bootstrap" >/tmp/lingtu_bootstrap.json
 ```
 
 From this repo, the read-only contract smoke is:
 
 ```bash
 cd web
-GATEWAY_URL=http://192.168.66.190:5050 npm run smoke:gateway
+GATEWAY_URL=http://ROBOT_IP_OR_HOSTNAME:5050 npm run smoke:gateway
 ```
 
 If you are running it directly on sunrise, prefer:
 
 ```bash
 cd ~/data/inovxio/lingtu/web
-NO_PROXY=127.0.0.1,localhost,192.168.66.190 \
-no_proxy=127.0.0.1,localhost,192.168.66.190 \
+NO_PROXY=127.0.0.1,localhost \
+no_proxy=127.0.0.1,localhost \
 GATEWAY_URL=http://127.0.0.1:5050 npm run smoke:gateway
 ```
 

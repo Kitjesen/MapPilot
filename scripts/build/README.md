@@ -19,7 +19,7 @@ Run commands from the repository root unless a script says otherwise.
 | `build_pointcloud_codec.sh` / `build_pointcloud_codec.ps1` | Build the C++ PCLD encoder used by Gateway live point-cloud WebSocket frames. |
 | `build_slam_core.sh` | Build the C++ SLAM core, optional Python `_native` runner, and optional C++ DDS runtime. Uses `LINGTU_SLAM_FASTLIO2=ON` by default; set `OFF` only for contract tests. |
 | `build_nav_endpoint.sh` | Build the no-ROS C++ CycloneDDS navigation endpoint that bridges DDS goal/cancel/instruction and Gateway path/cmd output. |
-| `build_driver.sh` | Build and test the no-ROS C++ Thunder `driver` that consumes `rt/nav/cmd_vel` and calls Brainstem `Walk`. |
+| `build_driver.sh` | Build and test the no-ROS C++ Thunder `driver` that consumes `rt/nav/cmd_vel` and calls remote Brainstem `WalkChecked`. |
 | `build_native_runtime.sh` | Build `lt_native`, `lt_pgo`, `lt_hba`, and read-only `lt_loop_verify`; use `--install-user-bin` on robots to expose the commands. |
 | `build_prune.sh` | Build LingTu's clean-room C++ saved-map cleaner plus the ERASOR2 staging adapter. |
 | `build_map_cleaning.sh` | Compatibility wrapper for `build_prune.sh`. |
@@ -112,7 +112,8 @@ LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON \
 bash scripts/build/build_livox_sdk2_stream.sh
 ```
 
-Run it with `--dds --domain-id <N> --publish-freq 10` so it publishes
+Run it with `--dds --domain-id 0 --publish-freq 10` unless the whole field
+deployment intentionally uses another DDS domain. It publishes
 scan-level `rt/lidar/raw_frame` as `lingtu.dds.LivoxFrame`, diagnostic
 packet-level `rt/lidar/raw_packet`, and `rt/imu/raw` as `lingtu.dds.Imu`.
 
@@ -122,13 +123,14 @@ Build the native navigation DDS boundary:
 bash scripts/build/build_nav_endpoint.sh
 ```
 
-That produces `build/nav_endpoint/lingtu_nav_native_endpoint`. It subscribes
+That produces `build/nav_endpoint/navd`. It subscribes
 to `rt/slam/odometry`, `rt/slam/registered_cloud`, `rt/nav/goal_pose`,
 `rt/nav/global_path`, and `rt/nav/cancel`. With `LINGTU_ACTIVE_OCTOMAP` set,
 goals call OctoPlanner3D in-process, then the C++ navigation loop publishes
 `rt/nav/global_path`, `rt/nav/local_path`, and `rt/nav/cmd_vel`. The older
-Gateway-polling `lingtu_nav_cyclone_endpoint` target was removed; use
-`lingtu_nav_native_endpoint` for robot-side navigation.
+Gateway-polling `lingtu_nav_cyclone_endpoint` target was removed; use `navd`
+for robot-side navigation. Product startup resolves the logical `nav` process
+through RuntimePlan; operators should not launch this binary directly.
 
 Build the native Thunder motion driver:
 
@@ -137,9 +139,12 @@ bash scripts/build/build_driver.sh
 ```
 
 This produces `build/driver/lingtu_driver` and runs both the fail-closed safety
-core test and a typed DDS to Brainstem gRPC integration test. It uses the
-existing product dependencies `cyclonedds-dev`, `cyclonedds-tools`,
-`libgrpc++-dev`, `libprotobuf-dev`, and `protobuf-compiler-grpc`.
+core test and a typed DDS to Brainstem gRPC integration test. In the product
+service it is launched by `lingtu-driver.service`, reads
+`/opt/lingtu/config/brainstem.env`, requires a remote Brainstem endpoint, and
+publishes `/dev/shm/lingtu/driver_status.json`. It uses the existing product
+dependencies `cyclonedds-dev`, `cyclonedds-tools`, `libgrpc++-dev`,
+`libprotobuf-dev`, and `protobuf-compiler-grpc`.
 
 The older `LINGTU_SLAM_BUILD_CPP_DDS_RUNTIME=ON` target produces
 `lingtu_slam_dds_runtime`, which is C++ but still uses `rclcpp` and ROS 2

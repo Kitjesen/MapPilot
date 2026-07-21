@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime.relocalization import RelocalizationService
+from localization.service import RelocalizationService
+from gateway.services.teleop import bind_navigation_commands
 
 _BACKEND_RECONFIGURE_TARGETS = {
     "detector": ("PerceptionModule",),
@@ -24,6 +25,10 @@ def attach_module_refs(gw: Any, modules: dict[str, Any]) -> None:
     gw._map_mgr = modules.get("maps.service")
     gw._all_modules = dict(modules)
     gw._navigation = modules.get("nav.mission")
+    gw._goals = modules.get("nav.goals")
+    gw._nav_commands = modules.get("nav.commands")
+    gw._inspection = modules.get("nav.inspection")
+    bind_navigation_commands(gw, gw._nav_commands)
     gw._cmd_vel_mux = modules.get("nav.velocity_mux")
     gw._backend_reconfigure_modules = {
         module_name: modules.get(module_name)
@@ -31,7 +36,7 @@ def attach_module_refs(gw: Any, modules: dict[str, Any]) -> None:
         for module_name in module_names
         if modules.get(module_name) is not None
     }
-    gw._relocalization_service = next(
+    relocalization_backend = next(
         (
             module
             for name in (
@@ -43,8 +48,9 @@ def attach_module_refs(gw: Any, modules: dict[str, Any]) -> None:
         ),
         None,
     )
-    if gw._relocalization_service is None:
-        gw._relocalization_service = _native_relocalization_service()
+    if relocalization_backend is None:
+        relocalization_backend = _native_relocalization_service()
+    gw.localization.bind(relocalization_backend)
     gw._frontier_explorer = next(
         (module for module in modules.values() if module.__class__.__name__ == "WavefrontFrontierExplorer"),
         None,
@@ -81,7 +87,7 @@ def _has_relocalization_capability(module: Any) -> bool:
 
 def _native_relocalization_service() -> RelocalizationService | None:
     try:
-        from runtime.adapters.native.relocalization import (
+        from localization.adapters.relocalization import (
             NativeSlamRelocalizationService,
         )
 

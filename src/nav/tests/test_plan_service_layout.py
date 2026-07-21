@@ -5,7 +5,7 @@ def test_navigation_plan_service_entrypoints_live_under_services_plan() -> None:
     from nav.services.plan.contracts import PlannerService
     from nav.services.plan.factory import create_planner_service
     from nav.services.plan.global_planner.service import GlobalPlanner
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
 
     svc = create_planner_service(planner_name="direct")
 
@@ -20,19 +20,19 @@ def test_planning_implementation_entrypoints_are_in_services_plan() -> None:
     from nav.services.plan.global_planner.service import GlobalPlanner
     from nav.services.plan.global_planner.path_feasibility import evaluate_ground_path
     from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner
-    from nav.services.plan.local_planner.cmu_py import score_cmu_py_paths
-    from nav.services.plan.local_planner.models import CmuPyLocalPlannerRequest
-    from nav.services.plan.local_planner.native import create_nanobind_backend
-    from nav.services.plan.local_planner.runtime import setup_local_planner_backend
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.cmu_py import score_cmu_py_paths
+    from nav.local.models import CmuPyLocalPlannerRequest
+    from nav.local.native import create_nanobind_backend
+    from nav.local.local_planner_runtime import setup_local_planner_backend
+    from nav.local.local_planner import LocalPlanner
     from nav.services.plan.factory import create_planner_service
 
     assert GlobalPlanner.__module__ == "nav.services.plan.global_planner.service"
-    assert LocalPlanner.__module__ == "nav.services.plan.local_planner.service"
-    assert CmuPyLocalPlannerRequest.__module__ == "nav.services.plan.local_planner.models"
-    assert score_cmu_py_paths.__module__ == "nav.services.plan.local_planner.cmu_py"
-    assert create_nanobind_backend.__module__ == "nav.services.plan.local_planner.native"
-    assert setup_local_planner_backend.__module__ == "nav.services.plan.local_planner.runtime"
+    assert LocalPlanner.__module__ == "nav.local.local_planner"
+    assert CmuPyLocalPlannerRequest.__module__ == "nav.local.models"
+    assert score_cmu_py_paths.__module__ == "nav.local.cmu_py"
+    assert create_nanobind_backend.__module__ == "nav.local.native"
+    assert setup_local_planner_backend.__module__ == "nav.local.local_planner_runtime"
     assert DirectPathBackend.__module__ == "nav.services.plan.compat.direct_path"
     assert evaluate_ground_path.__module__ == "nav.services.plan.global_planner.path_feasibility"
     assert PCTPlanner.__module__ == "nav.services.plan.global_planner.algorithm.pct.planner"
@@ -41,7 +41,7 @@ def test_planning_implementation_entrypoints_are_in_services_plan() -> None:
 
 def test_local_plan_contract_matches_local_planner_ports() -> None:
     from nav.services.plan.contracts import LOCAL_PLAN_PORT_CONTRACT
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
 
     mod = LocalPlanner(backend="simple")
 

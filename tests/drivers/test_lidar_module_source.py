@@ -375,7 +375,7 @@ def test_create_lidar_source_rejects_embedded_driver_process_ownership() -> None
 
 
 def test_lidar_stack_default_does_not_enable_legacy_livox_driver() -> None:
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     bp = lidar(enabled=True, backend="mid360")
 

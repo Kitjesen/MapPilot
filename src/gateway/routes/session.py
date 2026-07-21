@@ -15,6 +15,7 @@ from gateway.schemas import (
     SessionStartRequest,
     SessionTransitionResponse,
 )
+from gateway.services.control_commands import ControlCommandService
 from gateway.services.map_service import ensure_maps_service, map_service_command, map_service_query
 from gateway.services.native_control import (
     endpoint_only_enabled,
@@ -115,24 +116,26 @@ def _normalize_slam_profile(profile: str) -> str:
 
 _DEFAULT_PRODUCT_IDENTITY_BY_MODE = {
     "idle": (None, "idle"),
-    "mapping": ("map", "mapping"),
-    "navigating": ("nav", "navigation"),
-    "exploring": ("tare_explore", "exploration"),
+    **{
+        contract.session_mode: (profile, contract.product_session)
+        for profile, contract in PRODUCT_MODE_CONTRACTS.items()
+        if contract.default_for_session_mode
+    },
 }
 
 _REQUIRED_PRODUCT_PROFILES_BY_SESSION_MODE = {
-    "mapping": ("map",),
-    "navigating": ("teleop_avoid", "tracking", "nav", "inspection"),
-    "exploring": ("tare_explore",),
-}
-
-_EXPECTED_NATIVE_CONTROL_MODE_BY_PROFILE = {
-    "map": "teleop",
-    "teleop_avoid": "teleop_avoid",
-    "tracking": "autonomy",
-    "nav": "autonomy",
-    "inspection": "autonomy",
-    "tare_explore": "autonomy",
+    mode: tuple(
+        profile
+        for profile, contract in PRODUCT_MODE_CONTRACTS.items()
+        if contract.session_mode == mode
+    )
+    for mode in sorted(
+        {
+            contract.session_mode
+            for contract in PRODUCT_MODE_CONTRACTS.values()
+            if contract.session_mode != "none"
+        }
+    )
 }
 
 
@@ -230,7 +233,8 @@ def _external_product_mode_guard(
             "runtime_switch": "/api/v1/runtime/switch",
         }
 
-    expected_control_mode = _EXPECTED_NATIVE_CONTROL_MODE_BY_PROFILE.get(current_profile)
+    contract = PRODUCT_MODE_CONTRACTS.get(current_profile)
+    expected_control_mode = contract.native_control_mode if contract is not None else ""
     status = read_native_control_status()
     actual_control_mode = str(status.get("control_mode") or "").strip().lower() if isinstance(status, dict) else ""
     if expected_control_mode and (
@@ -377,6 +381,8 @@ def _rollback_session_map_activation(
 
 
 def register_session_routes(app, gw) -> None:
+    command_service = ControlCommandService(gw)
+
     @app.get(
         "/api/v1/session",
         summary="Current session state + capabilities",
@@ -501,20 +507,18 @@ def register_session_routes(app, gw) -> None:
                 )
 
         if mode == "navigating":
-            if not map_name:
+            contract = PRODUCT_MODE_CONTRACTS.get(product_profile or "")
+            requires_map = contract.requires_map if contract is not None else True
+            if requires_map and not map_name:
                 return _transition_response(
                     False,
                     status_code=400,
                     message="map_name is required for navigating",
                 )
 
-            map_err = safe_map_name(map_name)
+            map_err = safe_map_name(map_name) if map_name else None
             if map_err is not None:
-                return _transition_response(
-                    False,
-                    status_code=400,
-                    message=map_err,
-                )
+                return _transition_response(False, status_code=400, message=map_err)
             if map_name == "active":
                 manager = _gateway_maps_service(gw)
                 map_name = _maps_active_name(manager) if manager is not None else ""
@@ -524,27 +528,30 @@ def register_session_routes(app, gw) -> None:
                         status_code=409,
                         message="no active map is selected",
                     )
-            (
-                map_ready,
-                activation_message,
-                activation_detail,
-                map_path,
-            ) = _activate_session_map_via_maps_service(gw, map_name)
-            if map_ready is not True:
-                status_code = 400
-                if isinstance(activation_detail, dict) and activation_detail.get("reason_code") == "missing_capability":
-                    status_code = 409
-                elif "artifact gate failed" in activation_message:
-                    status_code = 409
-                return _transition_response(
-                    False,
-                    status_code=status_code,
-                    message=activation_message or "map activation failed",
-                    detail={"map_activation": activation_detail},
-                )
-            nav = (getattr(gw, "_all_modules", {}) or {}).get("nav.mission")
-            reload_planner_map = getattr(nav, "reload_planner_map", None)
-            if callable(reload_planner_map):
+            if map_name:
+                (
+                    map_ready,
+                    activation_message,
+                    activation_detail,
+                    map_path,
+                ) = _activate_session_map_via_maps_service(gw, map_name)
+                if map_ready is not True:
+                    status_code = 400
+                    missing_capability = (
+                        isinstance(activation_detail, dict)
+                        and activation_detail.get("reason_code") == "missing_capability"
+                    )
+                    if missing_capability:
+                        status_code = 409
+                    elif "artifact gate failed" in activation_message:
+                        status_code = 409
+                    return _transition_response(
+                        False,
+                        status_code=status_code,
+                        message=activation_message or "map activation failed",
+                        detail={"map_activation": activation_detail},
+                    )
+                reload_planner_map = command_service.reload_navigation_map
                 try:
                     planner_reload = reload_planner_map(map_path)
                 except Exception as exc:
@@ -578,7 +585,7 @@ def register_session_routes(app, gw) -> None:
                             "planner_reload": planner_reload,
                         },
                     )
-            _clear_gateway_map_cloud(gw, "session_map_activation")
+                _clear_gateway_map_cloud(gw, "session_map_activation")
 
         gw._session_pending = True
         gw._session_error = ""
@@ -593,14 +600,10 @@ def register_session_routes(app, gw) -> None:
                 backend = default_slam_profile_for_mode(mode)
 
             if manages_services:
-                from runtime.service_manager import get_service_manager
+                from lingtu.control import ProductControl
 
-                svc = get_service_manager()
                 plan = session_transition_plan(mode, backend)
-                svc.stop(*plan.stop)
-                if plan.ensure:
-                    svc.ensure(*plan.ensure)
-                ok = svc.wait_ready(*plan.wait_ready, timeout=10.0) if plan.wait_ready else True
+                ok = ProductControl().legacy_transition(plan, timeout_s=10.0)
                 if plan.clear_live_map:
                     _clear_gateway_map_cloud(gw, "session_transition")
                 if not ok:
@@ -681,10 +684,12 @@ def register_session_routes(app, gw) -> None:
                 gw._exploring = False
                 gw.push_event({"type": "exploring", "active": False})
             if bool(getattr(gw, "_manage_session_services", True)):
-                from runtime.service_manager import get_service_manager
+                from lingtu.control import ProductControl
 
-                svc = get_service_manager()
-                svc.stop(*slam_switch_plan("stop").stop)
+                ProductControl().legacy_transition(
+                    slam_switch_plan("stop"),
+                    timeout_s=10.0,
+                )
             gw._session_mode = "idle"
             gw._session_product_profile = _current_runtime_product_profile(gw)
             gw._session_product_session = "idle"

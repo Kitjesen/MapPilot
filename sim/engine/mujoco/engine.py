@@ -1235,6 +1235,45 @@ class MuJoCoEngine(SimEngine):
     # 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     @property
+    def physics_integrator(self) -> str:
+        """Return the active MuJoCo integrator name."""
+        if self._model is None:
+            return "unloaded"
+        import mujoco
+
+        active = int(self._model.opt.integrator)
+        options = {
+            "euler": int(mujoco.mjtIntegrator.mjINT_EULER),
+            "rk4": int(mujoco.mjtIntegrator.mjINT_RK4),
+            "implicit": int(mujoco.mjtIntegrator.mjINT_IMPLICIT),
+            "implicitfast": int(mujoco.mjtIntegrator.mjINT_IMPLICITFAST),
+        }
+        for name, value in options.items():
+            if active == value:
+                return name
+        return f"unknown:{active}"
+
+    def set_physics_integrator(self, name: str) -> str:
+        """Override the loaded model integrator without changing its timestep."""
+        if self._model is None:
+            raise RuntimeError("MuJoCo model is not loaded")
+        normalized = str(name or "").strip().lower()
+        if normalized == "model":
+            return self.physics_integrator
+        import mujoco
+
+        options = {
+            "euler": mujoco.mjtIntegrator.mjINT_EULER,
+            "rk4": mujoco.mjtIntegrator.mjINT_RK4,
+            "implicit": mujoco.mjtIntegrator.mjINT_IMPLICIT,
+            "implicitfast": mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
+        }
+        if normalized not in options:
+            raise ValueError(f"unsupported MuJoCo integrator: {name}")
+        self._model.opt.integrator = options[normalized]
+        return self.physics_integrator
+
+    @property
     def dt(self) -> float:
         return self._physics_dt
 

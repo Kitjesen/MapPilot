@@ -202,7 +202,7 @@ failed precondition, not a reason to transform values in a client.
 | Product profiles and endpoint catalog | `src/runtime/profiles/catalog/` | Profile defaults, endpoint selection, and runtime identity. |
 | Robot/device configuration | `config/` | Physical geometry, calibration, device registration, and runtime settings. |
 | Module/back-end registration | `src/runtime/registry.py` and stack factories | Pluggable implementations without direct cross-layer imports. |
-| Full product wiring | `src/runtime/blueprints/` | Explicit critical wires and graph assembly. |
+| Full product wiring | `src/lingtu/assembly/` | Explicit critical wires and graph assembly. |
 | Public API inventories | `docs/api/` | Generated REST/MCP schema lookup. |
 
 When changing one of these surfaces, use the owning package and architecture

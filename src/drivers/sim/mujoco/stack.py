@@ -52,7 +52,7 @@ def _optional_module(system: Any, name: str) -> Any | None:
 def _build_system_from_profile(profile: str, overrides: dict[str, Any]) -> Any:
     """Build a simulation system through the shared product/compat selector."""
 
-    from runtime.blueprints.profile_builder import build_system_for_profile
+    from lingtu.assembly.profile_builder import build_system_for_profile
 
     return build_system_for_profile(profile, overrides)
 

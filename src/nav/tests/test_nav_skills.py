@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 
-from nav.api.skills import NavigationSkillsMixin
 from nav.services.goals import GoalService
 from nav.skills import NavigationSkillsModule, NavSkills
-from runtime.blueprints.stacks.navigation import navigation
-from runtime.blueprints.wires.navigation import navigation_support_specs
+from lingtu.assembly.stacks.navigation import navigation
+from lingtu.assembly.wires.navigation import navigation_support_specs
 
 
 def _wire(skills: NavSkills, goals: GoalService) -> None:
@@ -19,7 +18,6 @@ def test_nav_skills_is_l6_and_keeps_compatibility_alias() -> None:
     skills.setup()
 
     assert NavigationSkillsModule is NavSkills
-    assert NavigationSkillsMixin is NavSkills
     assert skills._layer == 6
     assert skills.mission_status._callback is not None
     assert skills.goal_status._callback is not None
@@ -47,25 +45,20 @@ def test_nav_skills_routes_goal_through_goal_service_ack() -> None:
     assert received[0].z == 0.2
 
 
-def test_nav_skills_preserves_request_id_through_native_dds_client(monkeypatch) -> None:
-    from runtime.adapters.native import navigation
-
-    class Client:
+def test_nav_skills_preserves_request_id_through_native_command_capability() -> None:
+    class Commands:
         def __init__(self) -> None:
             self.request_id = ""
 
-        def send_goal(self, x, y, z, yaw, *, request_id=None) -> None:
+        def send_goal(self, x, y, z, yaw, *, request_id=None) -> bool:
             del x, y, z, yaw
             self.request_id = str(request_id or "")
+            return True
 
-    client = Client()
-    monkeypatch.setattr(
-        navigation,
-        "get_native_navigation_client",
-        lambda *, required=False: client,
-    )
+    commands = Commands()
     skills = NavSkills()
-    goals = GoalService(native_endpoint=True)
+    goals = GoalService(command_module="nav.commands")
+    goals.on_system_modules({"nav.commands": commands})
     skills.setup()
     goals.setup()
     _wire(skills, goals)
@@ -73,7 +66,7 @@ def test_nav_skills_preserves_request_id_through_native_dds_client(monkeypatch) 
     result = json.loads(skills.navigate_to(1.0, 2.0))
 
     assert result["accepted"] is True
-    assert client.request_id == result["request_id"]
+    assert commands.request_id == result["request_id"]
     assert result["sink"] == "native_dds"
 
 
@@ -197,7 +190,7 @@ def test_mcp_discovers_nav_skills_as_navigation_tool_owner() -> None:
 
 
 def test_sim_and_field_profiles_share_nav_skills_with_different_sinks() -> None:
-    from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+    from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
     from runtime.profiles.resolver import resolve_profile_config
 
     profiles = {}
@@ -212,5 +205,9 @@ def test_sim_and_field_profiles_share_nav_skills_with_different_sinks() -> None:
         assert "nav.skills" in entries
         assert ("nav.skills", "goal_command", "nav.goals", "goal_command") in wires
         assert ("nav.goals", "goal_status", "nav.skills", "goal_status") in wires
-    assert profiles["sim_nav"][0]["nav.goals"]["native_endpoint"] is False
-    assert profiles["nav"][0]["nav.goals"]["native_endpoint"] is True
+    assert "command_module" not in profiles["sim_nav"][0]["nav.goals"]
+    assert profiles["nav"][0]["nav.goals"]["command_module"] == "nav.commands"
+    assert "nav.commands" not in profiles["sim_nav"][0]
+    assert "nav.inspection" not in profiles["sim_nav"][0]
+    assert "nav.commands" in profiles["nav"][0]
+    assert "nav.inspection" in profiles["nav"][0]

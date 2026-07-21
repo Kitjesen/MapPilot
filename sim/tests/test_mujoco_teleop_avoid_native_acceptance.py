@@ -774,6 +774,27 @@ def test_terrain_producer_scene_variants_use_the_declared_low_steps(tmp_path: Pa
     assert hard_geom.attrib["size"] == "0.65 0.72 0.12"
 
 
+def test_interactive_obstacle_stop_scene_has_demo_clearance_without_leaving_path(tmp_path: Path) -> None:
+    base = tmp_path / "base.xml"
+    base.write_text(
+        '<mujoco model="base"><worldbody><geom name="floor" type="plane"/></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+
+    scene = build_scene_variant(base, tmp_path / "demo_stop.xml", "obstacle_stop_demo")
+    obstacle = ET.parse(scene).getroot().find("./worldbody/geom[@name='acceptance_obstacle_stop_demo']")
+
+    assert obstacle is not None
+    pos = [float(value) for value in obstacle.attrib["pos"].split()]
+    size = [float(value) for value in obstacle.attrib["size"].split()]
+    conservative_robot_front_x_m = 0.50
+    minimum_demo_clearance_m = 1.10
+    obstacle_near_face_x_m = pos[0] - size[0]
+
+    assert obstacle_near_face_x_m - conservative_robot_front_x_m >= minimum_demo_clearance_m
+    assert abs(pos[1]) <= size[1]
+
+
 def test_odom_prior_diagnostic_derives_config_without_mutating_product_default(
     tmp_path: Path,
 ) -> None:
@@ -1454,7 +1475,7 @@ def test_prior_reclaim_never_signals_a_reused_unrelated_pid(
         },
         {
             "prior_navigation": [
-                "lingtu_nav_native_endpoint",
+                "navd",
                 "--domain-id",
                 "226",
             ]

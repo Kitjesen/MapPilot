@@ -1,9 +1,26 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: nav
 summary: Saved-map autonomous navigation through native localization, native DDS SLAM, OctoPlanner3D, C++ LocalPlanner, and gated command output.
+operator_switchable: true
+product_mode: navigation
+product_session: navigation
+session_mode: navigating
+default_for_session_mode: true
+native_control_mode: autonomy
+slam_mode: localization
+requires_map: true
+switch_policy: cold_restart
+online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: autonomy
 autonomy_owner: native_nav_endpoint
+processes:
+  - lidar
+  - slam
+  - traversability
+  - nav
+  - driver
+  - runtime
 required_topics:
   - /tf
   - /slam/odometry

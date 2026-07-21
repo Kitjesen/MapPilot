@@ -16,7 +16,8 @@
 
 - Navigation decisions stay in `src/nav`.
 - Sensor device ownership stays in `src/drivers`.
-- ROS2 bridge code is compatibility-only under `adapters/ros2`.
+- ROS2-facing interface files are compatibility-only and stay out of the
+  product native runtime.
 - SLAM does not publish navigation paths or velocity commands. Historical pose
   tracks may be saved as `poses.txt`, but `global_path`, `local_path`,
   `waypoint`, and `cmd_vel` belong to `src/nav`.
@@ -27,6 +28,10 @@
 
 | Path | Category | Role |
 | --- | --- | --- |
+| `service.py` | public API | Backend-neutral relocalization result, protocol, and stable `Localization` capability. |
+| `adapters/relocalization.py` | native adapter | Calls the C++ CycloneDDS SLAM control tool; no ROS dependency. |
+| `adapters/status.py` | native adapter | Converts the native SLAM endpoint status stream into localization-domain messages. |
+| `adapters/resolver.py` | composition adapter | Resolves the explicit localization adapter selected by the product profile; it never guesses a transport. |
 | `slam/cpp/` | realtime | ROS-free C++ `ISlamBackend`, DDS runtime, SLAM control, native relocalization hooks. |
 | `slam/module.py` | module boundary | Python Module wrapper for downstream runtime consumers. |
 | `fastlio2/`, `pointlio/` | algorithm assets | LIO algorithm packages used by native SLAM backends or compatibility builds. |
@@ -34,8 +39,7 @@
 | `pgo/`, `hba/` | optimization algorithms / legacy wrappers | Existing PGO/HBA algorithm code and ROS2 node wrappers. Product use should go through `opt/`. |
 | `localizer/`, `native_localizer/` | relocalization | Saved-map relocalization and localizer command surfaces. |
 | `gnss_module.py`, `gnss_serial_driver.py`, `ntrip_client_module.py` | GNSS/RTK | GNSS input, corrections, and diagnostics. |
-| `bridge.py`, `adapters/ros2/` | compatibility | Explicit ROS2 bridge path only. Not the product default. |
-| `launch/`, `interface/` | legacy ROS support | ROS launch files and messages/services for compatibility builds. |
+| `interface/` | compatibility | Legacy ROS 2 message/service contracts for compatibility builds. Not the product default. |
 
 The product/runtime names may still use `slam_profile` and `slam.service` for compatibility with deployed robots. New Python imports should use `localization.*`.
 

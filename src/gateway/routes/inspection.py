@@ -25,17 +25,16 @@ from gateway.schemas import (
     InspectionStatusResponse,
 )
 from gateway.services.map_service import map_service_query
+from gateway.services.inspection_boundary import (
+    InspectionBoundaryError,
+    invoke_inspection,
+)
 from maps.paths import active_map_name, nav_map_root
 from runtime.contracts.inspection_evidence import (
     EvidenceIntegrityError,
     EvidenceValidationError,
     InspectionEvidenceResult,
     InspectionEvidenceStore,
-)
-from runtime.adapters.native.inspection import InspectionNativeError, NativeInspectionStore
-from runtime.adapters.native.inspection_commands import (
-    InspectionCommandClientError,
-    get_native_inspection_command_client,
 )
 
 _DEFAULT_EVIDENCE_STATUS_FILE = "/dev/shm/lingtu/inspection_evidence_status.json"
@@ -95,10 +94,6 @@ def _resolve_map_id(value: str | None) -> str | JSONResponse:
     )
 
 
-def _store() -> NativeInspectionStore:
-    return NativeInspectionStore(nav_map_root())
-
-
 def _evidence_root() -> Path:
     return Path(os.environ.get("LINGTU_INSPECTION_EVIDENCE_DIR", _DEFAULT_EVIDENCE_ROOT))
 
@@ -107,10 +102,25 @@ def _evidence_store() -> InspectionEvidenceStore:
     return InspectionEvidenceStore(_evidence_root())
 
 
-def _run_store_operation(method: str, *args) -> Any:
-    """Run one native route-store operation with a bounded handle lifetime."""
-    with _store() as store:
-        return getattr(store, method)(*args)
+def _run_store_operation(gw: Any, method: str, *args) -> Any:
+    """Run one route-store operation through the assembled domain service."""
+
+    try:
+        if method == "list":
+            operation, kwargs = "list_routes", {"map_id": args[0]}
+        elif method == "put":
+            operation, kwargs = "put_route", {"route": args[0]}
+        elif method == "get":
+            operation, kwargs = "get_route", {"map_id": args[0], "route_id": args[1]}
+        elif method == "delete":
+            operation, kwargs = "delete_route", {"map_id": args[0], "route_id": args[1]}
+        elif method == "status":
+            operation, kwargs = "status", {}
+        else:
+            raise KeyError(method)
+    except (KeyError, IndexError) as exc:
+        raise InspectionBoundaryError(f"unsupported inspection store operation: {method}") from exc
+    return invoke_inspection(gw, operation, **kwargs)
 
 
 def _evidence_not_found() -> JSONResponse:
@@ -388,16 +398,15 @@ def _routes_from_native(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _native_client():
-    client = get_native_inspection_command_client(required=True)
-    if client is None:
-        raise InspectionCommandClientError("native inspection command client unavailable")
-    return client
-
-
-def _run_native_command(method: str, *args, **kwargs) -> None:
-    client = _native_client()
-    getattr(client, method)(*args, **kwargs)
+def _run_native_command(gw: Any, method: str, *args, **kwargs) -> None:
+    parameters = dict(kwargs)
+    if method == "start":
+        parameters.update(route_id=args[0])
+        operation = "start_route"
+    else:
+        parameters.update(reason=args[0])
+        operation = method
+    invoke_inspection(gw, operation, **parameters)
 
 
 def _evidence_status_file() -> Path:
@@ -633,8 +642,8 @@ def register_inspection_routes(app, gw) -> None:
         if isinstance(resolved, JSONResponse):
             return resolved
         try:
-            payload = await asyncio.to_thread(_run_store_operation, "list", resolved)
-        except InspectionNativeError as exc:
+            payload = await asyncio.to_thread(_run_store_operation, gw, "list", resolved)
+        except InspectionBoundaryError as exc:
             return _native_error(exc)
         routes = _routes_from_native(payload)
         return {
@@ -666,9 +675,9 @@ def register_inspection_routes(app, gw) -> None:
         payload = _route_payload(body)
         payload["map_version"] = version
         try:
-            stored = await asyncio.to_thread(_run_store_operation, "put", payload)
+            stored = await asyncio.to_thread(_run_store_operation, gw, "put", payload)
             route = _normalize_route(stored)
-        except InspectionNativeError as exc:
+        except InspectionBoundaryError as exc:
             return _native_error(exc)
         return {
             "schema_version": "lingtu.inspection.v1",
@@ -694,11 +703,12 @@ def register_inspection_routes(app, gw) -> None:
         try:
             route = await asyncio.to_thread(
                 _run_store_operation,
+                gw,
                 "get",
                 resolved,
                 route_id,
             )
-        except InspectionNativeError as exc:
+        except InspectionBoundaryError as exc:
             return _native_error(exc)
         return {
             "schema_version": "lingtu.inspection.v1",
@@ -724,11 +734,12 @@ def register_inspection_routes(app, gw) -> None:
         try:
             await asyncio.to_thread(
                 _run_store_operation,
+                gw,
                 "delete",
                 resolved,
                 route_id,
             )
-        except InspectionNativeError as exc:
+        except InspectionBoundaryError as exc:
             return _native_error(exc)
         return InspectionCommandResponse(
             action="delete",
@@ -757,11 +768,12 @@ def register_inspection_routes(app, gw) -> None:
         try:
             route = await asyncio.to_thread(
                 _run_store_operation,
+                gw,
                 "get",
                 resolved,
                 route_id,
             )
-        except InspectionNativeError as exc:
+        except InspectionBoundaryError as exc:
             return _native_error(exc)
         try:
             current_revision = int(route["revision"])
@@ -788,12 +800,13 @@ def register_inspection_routes(app, gw) -> None:
         try:
             await asyncio.to_thread(
                 _run_native_command,
+                gw,
                 "start",
                 route_id,
                 revision=current_revision,
                 request_id=request.request_id,
             )
-        except InspectionCommandClientError as exc:
+        except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
         return InspectionCommandResponse(
             action="start",
@@ -817,11 +830,12 @@ def register_inspection_routes(app, gw) -> None:
         try:
             await asyncio.to_thread(
                 _run_native_command,
+                gw,
                 "pause",
                 request.reason,
                 request_id=request.request_id,
             )
-        except InspectionCommandClientError as exc:
+        except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
         return InspectionCommandResponse(
             action="pause",
@@ -843,11 +857,12 @@ def register_inspection_routes(app, gw) -> None:
         try:
             await asyncio.to_thread(
                 _run_native_command,
+                gw,
                 "resume",
                 request.reason,
                 request_id=request.request_id,
             )
-        except InspectionCommandClientError as exc:
+        except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
         return InspectionCommandResponse(
             action="resume",
@@ -869,11 +884,12 @@ def register_inspection_routes(app, gw) -> None:
         try:
             await asyncio.to_thread(
                 _run_native_command,
+                gw,
                 "cancel",
                 request.reason,
                 request_id=request.request_id,
             )
-        except InspectionCommandClientError as exc:
+        except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
         return InspectionCommandResponse(
             action="cancel",
@@ -889,8 +905,8 @@ def register_inspection_routes(app, gw) -> None:
     )
     async def inspection_status():
         try:
-            status = await asyncio.to_thread(_run_store_operation, "status")
-        except InspectionNativeError as exc:
+            status = await asyncio.to_thread(_run_store_operation, gw, "status")
+        except InspectionBoundaryError as exc:
             return _native_error(exc)
         if not isinstance(status, dict):
             status = {"native_status": status}

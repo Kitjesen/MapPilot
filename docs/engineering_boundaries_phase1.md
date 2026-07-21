@@ -1,5 +1,12 @@
 # LingTu Engineering Boundaries, Phase 1
 
+> **Status: historical migration reference.** This document records the first
+> boundary-cleanup phase and intentionally retains the paths and terminology
+> used at that time. For the current package map and runtime contract, use
+> [Repository Layout](REPO_LAYOUT.md),
+> [System Design](architecture/SYSTEM_DESIGN.md), and
+> [Module / Service Boundary](architecture/MODULE_SERVICE_BOUNDARY.md).
+
 Phase 1 does not move directories. It names the target ownership boundaries and
 adds verification around contracts and composition before any larger package
 migration.
@@ -10,7 +17,7 @@ migration.
 | --- | --- | --- |
 | `runtime` | `src/runtime/module.py`, `src/runtime/stream.py`, lifecycle helpers | Module lifecycle, ports, scheduling, backpressure |
 | `contracts` | `src/runtime/contracts/` | Runtime-checkable schemas for high-risk dict messages |
-| `composition` | `src/runtime/runtime_profiles.py`, `src/runtime/blueprints/` | Profile compilation, stack factories, explicit wires |
+| `composition` | `src/runtime/runtime_profiles.py`, `src/lingtu/assembly/` | Profile compilation, stack factories, explicit wires |
 | `platform` | `src/drivers/`, `src/localization/`, `config/devices.yaml`, `config/robot_config.yaml` | Robot hardware, ROS 2 bridges, SLAM/localization adapters |
 | `mapping` | `src/nav/services/*map*`, `src/nav/services/dynamic_filter.py` | Occupancy, ESDF, elevation, traversability, map lifecycle |
 | `navigation` | `src/nav/`, `src/nav/services/plan/`, `src/nav/local/` | Mission FSM, global planning, local planning, cmd_vel arbitration |

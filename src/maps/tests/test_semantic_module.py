@@ -185,7 +185,7 @@ def test_semantic_module_saves_native_generation_atomically(monkeypatch, tmp_pat
 
 
 def test_semantic_save_handshake_is_explicitly_wired() -> None:
-    from runtime.blueprints.wires.mapping import traversability_specs
+    from lingtu.assembly.wires.mapping import traversability_specs
 
     wires = {f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}" for spec in traversability_specs()}
 

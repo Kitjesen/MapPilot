@@ -21,6 +21,25 @@ class MapsServiceNativeUnavailable(RuntimeError):
 
 
 _SAVE_MAP_ABI_VERSION = 1
+_UNITY_SEMANTIC_IMPORT_ABI_VERSION = 1
+
+
+class _UnitySemanticImportOptions(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("abi_version", ctypes.c_uint32),
+        ("taxonomy_path", ctypes.c_char_p),
+        ("frame_id", ctypes.c_char_p),
+        ("voxel_size_m", ctypes.c_double),
+        ("occupied_probability", ctypes.c_double),
+        ("shell_thickness_voxels", ctypes.c_double),
+        ("generation", ctypes.c_uint64),
+        ("max_objects", ctypes.c_uint64),
+        ("max_voxels", ctypes.c_uint64),
+        ("max_voxel_checks", ctypes.c_uint64),
+        ("include_unknown_geometry", ctypes.c_uint8),
+        ("exclude_dynamic_classes", ctypes.c_uint8),
+    ]
 
 
 class _SaveRequirements(ctypes.Structure):
@@ -576,6 +595,16 @@ class _NativeMapsServiceLib:
         self._lib.lingtu_maps_service_build_traversability_artifact_json.restype = ctypes.c_int32
         self._lib.lingtu_maps_service_build_semantic_artifact_json.argtypes = id_args
         self._lib.lingtu_maps_service_build_semantic_artifact_json.restype = ctypes.c_int32
+        self._lib.lingtu_maps_service_import_unity_semantic_artifact_json.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.POINTER(_UnitySemanticImportOptions),
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+        ]
+        self._lib.lingtu_maps_service_import_unity_semantic_artifact_json.restype = ctypes.c_int32
 
         health_output = [
             ctypes.c_void_p,
@@ -1630,6 +1659,52 @@ class NativeMapsService:
         return self._read_command_with_id(
             self._native._lib.lingtu_maps_service_build_semantic_artifact_json,
             map_id,
+        )
+
+    def import_unity_semantic_artifact(
+        self,
+        map_id: str,
+        scene_dir: str | Path,
+        *,
+        taxonomy_path: str | Path,
+        frame_id: str = "map",
+        voxel_size_m: float = 0.20,
+        occupied_probability: float = 0.95,
+        shell_thickness_voxels: float = 0.75,
+        generation: int = 1,
+        max_objects: int = 100_000,
+        max_voxels: int = 2_000_000,
+        max_voxel_checks: int = 50_000_000,
+        include_unknown_geometry: bool = False,
+        exclude_dynamic_classes: bool = True,
+    ) -> dict[str, Any]:
+        options = _UnitySemanticImportOptions()
+        options.struct_size = ctypes.sizeof(_UnitySemanticImportOptions)
+        options.abi_version = _UNITY_SEMANTIC_IMPORT_ABI_VERSION
+        options.taxonomy_path = _bytes(taxonomy_path)
+        options.frame_id = _bytes(frame_id)
+        options.voxel_size_m = float(voxel_size_m)
+        options.occupied_probability = float(occupied_probability)
+        options.shell_thickness_voxels = float(shell_thickness_voxels)
+        options.generation = int(generation)
+        options.max_objects = int(max_objects)
+        options.max_voxels = int(max_voxels)
+        options.max_voxel_checks = int(max_voxel_checks)
+        options.include_unknown_geometry = 1 if include_unknown_geometry else 0
+        options.exclude_dynamic_classes = 1 if exclude_dynamic_classes else 0
+        needed = ctypes.c_uint64(0)
+        fn = self._native._lib.lingtu_maps_service_import_unity_semantic_artifact_json
+        args = (
+            self._handle,
+            _bytes(map_id),
+            _bytes(scene_dir),
+            ctypes.byref(options),
+        )
+        rc = int(fn(*args, None, 0, ctypes.byref(needed)))
+        self._check_probe(rc)
+        return self._decode_json_from_command(
+            needed,
+            lambda buf, size: fn(*args, buf, size, ctypes.byref(needed)),
         )
 
     def _read_json(self, fn) -> dict[str, Any]:

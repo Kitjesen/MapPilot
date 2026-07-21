@@ -273,7 +273,7 @@ class TestNavigationPlanTransportContract(unittest.TestCase):
     """Local-planner execution wires stay inside the Module graph."""
 
     def test_navigation_plan_wires_default_to_direct_callbacks(self):
-        from runtime.blueprints.wires.navigation import navigation_execution_specs
+        from lingtu.assembly.wires.navigation import navigation_execution_specs
 
         specs = navigation_execution_specs()
 
@@ -282,7 +282,7 @@ class TestNavigationPlanTransportContract(unittest.TestCase):
         self.assertTrue(all(spec.topic is None for spec in specs))
 
     def test_navigation_plan_wires_do_not_use_transport_delivery(self):
-        from runtime.blueprints.wires.navigation import navigation_execution_specs
+        from lingtu.assembly.wires.navigation import navigation_execution_specs
 
         specs = navigation_execution_specs()
         edges = {

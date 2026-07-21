@@ -46,7 +46,7 @@ _gw_mod.GatewayModule.start = lambda self: None
 _tp_mod.TeleopModule.start = lambda self: None
 _mcp_mod.MCPServerModule.start = lambda self: None
 
-from runtime.blueprints.products.thunder import thunder_blueprint
+from lingtu.assembly.products.thunder import thunder_blueprint
 
 bp = thunder_blueprint(
     robot="stub",

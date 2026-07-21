@@ -3,7 +3,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from runtime.blueprints.stacks.driver import RobotProfile
+from lingtu.assembly.stacks.driver import RobotProfile
 from runtime.contracts import HW_COMPAT_CONFIG_BRIDGE, HW_COMPAT_CONFIG_ENABLE
 from runtime.profiles.binding_policy import (
     LEGACY_SENSOR_BINDING_KEYS,
@@ -616,7 +616,7 @@ def test_product_blueprints_do_not_import_compat_runtime_profiles() -> None:
 
     assert "runtime.runtime_profiles" not in modules
     assert "runtime.profiles.catalog.runtime_paths" in modules
-    assert "runtime.blueprints.catalog.runtime_paths" not in modules
+    assert "lingtu.assembly.catalog.runtime_paths" not in modules
 
 
 def test_profile_graph_does_not_hardcode_legacy_robot_driver_aliases() -> None:

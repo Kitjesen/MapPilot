@@ -1,8 +1,54 @@
-"""Compatibility import for local planner backend helpers."""
+"""Compatibility exports for local planner backend helpers.
 
-from importlib import import_module
-import sys
+The implementation lives in focused files next to this module:
+`models.py`, `path_tables.py`, `parameters.py`, `cmu_py.py`, and `native.py`.
+"""
 
-_module = import_module("nav.services.plan.local_planner.backend")
-globals().update(_module.__dict__)
-sys.modules[__name__] = _module
+from __future__ import annotations
+
+from nav.kernel import nav_kernel_build_hint, try_import_nav_kernel
+from nav.local.cmu_py import (
+    plan_cmu_py_local_path,
+    score_cmu_py_paths,
+)
+from nav.local.models import (
+    CmuPyLocalPlannerBackend,
+    CmuPyLocalPlannerDecision,
+    CmuPyLocalPlannerRequest,
+    LocalPlannerGridConfig,
+    NanobindLocalPlannerBackend,
+)
+from nav.local.native import (
+    create_cmu_py_backend,
+    create_nanobind_backend,
+)
+from nav.local.parameters import (
+    build_local_planner_params,
+    read_local_planner_frame_params,
+    read_local_planner_grid_config,
+    read_local_planner_python_params,
+)
+from nav.local.path_tables import (
+    load_cmu_py_paths,
+    local_planner_paths_dir,
+)
+
+__all__ = [
+    "CmuPyLocalPlannerBackend",
+    "CmuPyLocalPlannerDecision",
+    "CmuPyLocalPlannerRequest",
+    "LocalPlannerGridConfig",
+    "NanobindLocalPlannerBackend",
+    "build_local_planner_params",
+    "create_cmu_py_backend",
+    "create_nanobind_backend",
+    "load_cmu_py_paths",
+    "local_planner_paths_dir",
+    "nav_kernel_build_hint",
+    "plan_cmu_py_local_path",
+    "read_local_planner_frame_params",
+    "read_local_planner_grid_config",
+    "read_local_planner_python_params",
+    "score_cmu_py_paths",
+    "try_import_nav_kernel",
+]

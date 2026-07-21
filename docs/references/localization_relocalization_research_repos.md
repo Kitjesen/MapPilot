@@ -26,7 +26,7 @@ Code path:
 | `src/localization/localizer/src/localizers/icp_localizer.cpp` | GICP refine implementation: small_gicp when available, otherwise PCL GICP. |
 | `src/localization/slam/cpp/fastlio.cpp` | Calls relocalizer and resets Fast-LIO2 tracking state. |
 | `src/localization/slam/cpp/slam_control.cpp` | C++ DDS control CLI for `load_map`, `relocalize`, `global_relocalize`, and `query_status`. Relocalization commands use typed DDS request/reply. |
-| `src/runtime/adapters/native/relocalization.py` | Thin Python service adapter that shells out to the C++ control CLI; it no longer owns the DDS request schema. |
+| `src/localization/adapters/relocalization.py` | Thin Python service adapter that shells out to the C++ control CLI; it no longer owns the DDS request schema. |
 
 Important gap: this is still mostly one-shot relocalization. It is not yet a
 complete continuous scan-to-saved-map localization stack with prediction,

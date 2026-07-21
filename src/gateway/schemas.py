@@ -280,6 +280,56 @@ class InstructionRequest(BaseModel):
     client_id: str = Field(default="unknown", max_length=128)
 
 
+class VoiceTurnRequest(BaseModel):
+    """AskMe voice-runtime bridge request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=1024)
+    operator_id: str = Field(default="", max_length=128)
+    session_id: str = Field(default="", max_length=128)
+    channel: str = Field(default="voice", max_length=32)
+    robot_id: str | None = Field(default=None, max_length=128)
+    site_id: str | None = Field(default=None, max_length=128)
+    submit: bool = True
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str | None = Field(default=None, max_length=128)
+
+    @field_validator("text")
+    @classmethod
+    def normalized_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("text must not be blank")
+        return text
+
+    @field_validator(
+        "operator_id",
+        "session_id",
+        "channel",
+        "robot_id",
+        "site_id",
+        "request_id",
+        "client_id",
+    )
+    @classmethod
+    def normalized_identifier(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip()
+
+
+class SafetyEstopRequest(BaseModel):
+    """AskMe-compatible emergency-stop activation request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
+    request_id: str | None = Field(default=None, max_length=128)
+    client_id: str | None = Field(default=None, max_length=128)
+
+
 class VisualServoRequest(BaseModel):
     mode: str = Field(default="find", max_length=16)
     target: str | None = Field(default=None, max_length=256)
@@ -967,6 +1017,44 @@ class ControlCommandResponse(GatewayResponseModel):
     mode: str | None = None
     reason: str | None = None
     target: ConstructedGoalTarget | None = None
+
+
+class VoiceTurnResult(GatewayResponseModel):
+    action_type: Literal["runtime"] = "runtime"
+    spoken_reply: str = Field(min_length=1)
+    text: str
+    status: str
+    submitted: bool
+    accepted: bool
+    replay: bool = False
+    request_id: str | None = None
+    client_id: str
+    operator_id: str = ""
+    session_id: str = ""
+    channel: str = "voice"
+    robot_id: str | None = None
+    site_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    command: CommandReceipt | None = None
+    reason: str | None = None
+
+
+class VoiceTurnResponse(GatewayResponseModel):
+    handled: Literal[True] = True
+    turn: VoiceTurnResult
+
+
+class SafetyEstopResponse(GatewayResponseModel):
+    active: bool
+    enabled: bool
+    timestamp: float
+    accepted: bool = True
+    replay: bool = False
+    request_id: str | None = None
+    client_id: str = "unknown"
+    control_boundary: str | None = None
+    message: str = ""
+    command: CommandReceipt | None = None
 
 
 class AuthLoginRequest(BaseModel):

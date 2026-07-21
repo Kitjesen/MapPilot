@@ -38,6 +38,10 @@ import time
 from typing import Any
 
 from decision.backends import BackendManager
+from decision.modules.llm import LLMRequest, LLMResponse
+from decision.semantic_navigation.intent import HybridSemanticIntentParser, SemanticAction, SemanticIntent, TravelMode
+from decision.semantic_navigation.intent import normalize_floor_id as normalize_semantic_floor_id
+from maps.places import PlaceCatalog, PlaceCatalogError, PlaceRef
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import Odometry
@@ -83,6 +87,7 @@ class SemanticPlannerModule(Module, layer=4):
     mission_status: In[dict]  # from Navigation -drives LERa recovery
     topo_summary: In[str]  # from SemanticMapperModule
     room_graph: In[dict]  # serialized TopologySemGraph snapshot
+    llm_response: In[LLMResponse]  # symbolic semantic-intent slow path
 
     # -- Outputs --
     goal_pose: Out[PoseStamped]
@@ -91,6 +96,8 @@ class SemanticPlannerModule(Module, layer=4):
     cancel: Out[str]  # "lera_abort" ->Navigation.cancel
     servo_target: Out[str]  # "find:<label>" ->VisualServoModule
     agent_message: Out[dict]
+    nav_command: Out[str]  # symbolic inspection/building commands -> nav.goals
+    llm_request: Out[LLMRequest]  # bounded symbolic semantic-intent request
 
     def __init__(
         self,
@@ -147,6 +154,16 @@ class SemanticPlannerModule(Module, layer=4):
 
         # Sibling module references (set in on_system_modules)
         self._backends: BackendManager | None = None
+        self._semantic_intent_parser = HybridSemanticIntentParser()
+        self._place_catalog: PlaceCatalog | None = None
+        self._maps_service: Any | None = None
+        self._nav_goal_service_available = False
+        self._nav_building_service_available = False
+        self._symbolic_llm_lock = threading.Lock()
+        self._symbolic_llm_instruction_epoch = 0
+        self._symbolic_llm_current_request_id = ""
+        self._symbolic_llm_pending: dict[str, tuple[str, int]] = {}
+        self._symbolic_llm_seq = 0
         self._last_vector_memory_query_only: bool = False
         self._latest_topo_summary: str = ""
         self._latest_room_graph: dict[str, Any] | None = None
@@ -159,6 +176,20 @@ class SemanticPlannerModule(Module, layer=4):
 
     def on_system_modules(self, modules: dict) -> None:
         self._backends = BackendManager(modules)
+        self._nav_goal_service_available = self._backends.get("nav.goals") is not None
+        self._nav_building_service_available = self._backends.get("nav.building") is not None
+        self._maps_service = self._backends.get("maps.service") or self._backends.get("MapsModule")
+        self._place_catalog = None
+        if self._maps_service is None:
+            return
+        try:
+            # Prefer the dict-returning API service; the MapsModule skill
+            # compatibility methods intentionally return JSON strings.
+            catalog_source = getattr(self._maps_service, "api", None) or self._maps_service
+            self._place_catalog = PlaceCatalog(catalog_source)
+        except Exception as exc:
+            logger.warning("Semantic place catalog unavailable: %s", exc)
+            self._place_catalog = None
 
     def setup(self) -> None:
         self._init_backends()
@@ -169,6 +200,7 @@ class SemanticPlannerModule(Module, layer=4):
         self.mission_status.subscribe(self._on_mission_status)
         self.topo_summary.subscribe(self._on_topo_summary)
         self.room_graph.subscribe(self._on_room_graph)
+        self.llm_response.subscribe(self._on_llm_response)
 
     def _init_backends(self) -> None:
         """Lazy-load algorithm backends. Each backend is independent -one failure doesn't block others."""
@@ -253,6 +285,7 @@ class SemanticPlannerModule(Module, layer=4):
 
     def _on_instruction(self, text: str) -> None:
         """New instruction ->decompose ->resolve (or hand off person-following)."""
+        self._begin_symbolic_llm_instruction_epoch()
         # Person-following intent ->VisualServo follow mode (bypass goal resolve).
         follow_target = self._detect_follow_intent(text)
         if follow_target is not None:
@@ -271,6 +304,14 @@ class SemanticPlannerModule(Module, layer=4):
         self.planner_status.publish("PROCESSING")
         self._chat("thinking", "Parsing instruction", phase="parse")
 
+        if self._try_semantic_navigation_intent(text):
+            return
+
+        self._continue_legacy_instruction(text)
+
+    def _continue_legacy_instruction(self, text: str) -> None:
+        """Run the pre-existing scene-graph/vector/frontier path for ``text``."""
+
         plan = self._decompose(text)
         if plan:
             self.task_plan.publish(plan)
@@ -287,6 +328,405 @@ class SemanticPlannerModule(Module, layer=4):
             self._try_resolve(text, self._latest_sg)
         else:
             self._chat("assistant", "No scene graph available", phase="no_sg")
+
+    def _try_semantic_navigation_intent(self, text: str) -> bool:
+        """Handle first-version symbolic navigation commands before scene-graph matching.
+
+        Returns True when the command has been safely handled or intentionally
+        refused.  Returns False when legacy scene-graph/vector/frontier behavior
+        should continue.
+        """
+
+        try:
+            intent = self._semantic_intent_parser.parse(text)
+        except Exception as exc:
+            logger.warning("Semantic intent parsing rejected instruction: %s", exc)
+            self.planner_status.publish("SEMANTIC_INTENT_REJECTED")
+            self._chat("assistant", "I could not safely interpret that navigation command.", phase="semantic_intent")
+            return True
+        if intent is None:
+            if self._maybe_request_symbolic_llm_intent(text):
+                return True
+            return False
+
+        if intent.action is not SemanticAction.NAVIGATE:
+            self._handle_tour_intent(intent)
+            return True
+        return self._handle_place_navigation_intent(intent)
+
+    _SYMBOLIC_LLM_STRONG_FEATURE_RE = re.compile(
+        r"(导览|参观|展厅|(?:第)?(?:负)?(?:\d{1,3}|[零〇一二两三四五六七八九十百]+)(?:楼|层)|电梯|升降梯|楼梯|步梯)"
+    )
+    _SYMBOLIC_LLM_MOVEMENT_RE = re.compile(r"(导航|带路|领路|带我|前往|过去|去往|去|到)")
+    _SYMBOLIC_LLM_PLACE_KIND_RE = re.compile(r"(公司|会议室|办公室|展位|展区|房间|前台|大厅|展厅|工位|电梯厅|楼梯间)")
+    _SYMBOLIC_LLM_REQUEST_MAX_CHARS = 160
+    _SYMBOLIC_LLM_MAX_PENDING = 2
+
+    def _maybe_request_symbolic_llm_intent(self, text: str) -> bool:
+        raw_text = str(text or "").strip()
+        if not raw_text or len(raw_text) > self._SYMBOLIC_LLM_REQUEST_MAX_CHARS:
+            return False
+        has_strong_feature = self._SYMBOLIC_LLM_STRONG_FEATURE_RE.search(raw_text) is not None
+        has_place_movement = (
+            self._SYMBOLIC_LLM_MOVEMENT_RE.search(raw_text) is not None
+            and self._SYMBOLIC_LLM_PLACE_KIND_RE.search(raw_text) is not None
+        )
+        if not (has_strong_feature or has_place_movement):
+            return False
+
+        request_id = self._register_symbolic_llm_request(raw_text)
+        self.llm_request.publish(
+            LLMRequest(
+                messages=self._symbolic_llm_messages(raw_text),
+                request_id=request_id,
+                temperature=0.0,
+                caller="SemanticPlannerModule.symbolic_intent",
+            )
+        )
+        self.planner_status.publish("SYMBOLIC_LLM_PENDING")
+        self._chat("thinking", "Asking language model for a symbolic navigation intent.", phase="semantic_llm")
+        return True
+
+    def _register_symbolic_llm_request(self, raw_text: str) -> str:
+        with self._symbolic_llm_lock:
+            self._symbolic_llm_seq += 1
+            request_id = f"semantic-intent-{time.time_ns()}-{self._symbolic_llm_seq}"
+            self._symbolic_llm_current_request_id = request_id
+            self._symbolic_llm_pending[request_id] = (
+                raw_text[: self._SYMBOLIC_LLM_REQUEST_MAX_CHARS],
+                self._symbolic_llm_instruction_epoch,
+            )
+            while len(self._symbolic_llm_pending) > self._SYMBOLIC_LLM_MAX_PENDING:
+                oldest = next(iter(self._symbolic_llm_pending))
+                if oldest == request_id:
+                    break
+                self._symbolic_llm_pending.pop(oldest, None)
+            return request_id
+
+    def _begin_symbolic_llm_instruction_epoch(self) -> None:
+        with self._symbolic_llm_lock:
+            self._symbolic_llm_instruction_epoch += 1
+            self._symbolic_llm_current_request_id = ""
+            self._symbolic_llm_pending.clear()
+
+    def _symbolic_llm_epoch_is_current(self, epoch: int) -> bool:
+        with self._symbolic_llm_lock:
+            return epoch == self._symbolic_llm_instruction_epoch
+
+    def _has_symbolic_llm_pending(self) -> bool:
+        with self._symbolic_llm_lock:
+            return bool(self._symbolic_llm_current_request_id)
+
+    @staticmethod
+    def _symbolic_llm_messages(raw_text: str) -> list[dict[str, str]]:
+        schema = (
+            "Return ONLY one JSON object with exactly these fields when relevant: "
+            "action,target_query,floor_id,tour_id,travel_mode,confidence,"
+            "needs_clarification,reason. "
+            "Allowed action values: navigate,start_tour,pause_tour,resume_tour,cancel_tour. "
+            "Allowed travel_mode values: any,stairs,elevator. "
+            "Never include coordinates, pose, position, x, y, z, yaw, latitude, or longitude. "
+            "If destination is missing, set needs_clarification true and do not invent a target. "
+            "If it is not a navigation or tour-control command, return null."
+        )
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You extract a safe symbolic navigation intent for a quadruped robot. "
+                    "You are forbidden to output coordinates or executable motion data."
+                ),
+            },
+            {"role": "user", "content": f"{schema}\nUtterance: {raw_text}"},
+        ]
+
+    def _on_llm_response(self, resp: LLMResponse) -> None:
+        request_id = str(getattr(resp, "request_id", "") or "")
+        with self._symbolic_llm_lock:
+            pending = self._symbolic_llm_pending.get(request_id)
+            raw_text, epoch = pending if pending is not None else ("", -1)
+            is_current = bool(
+                request_id
+                and request_id == self._symbolic_llm_current_request_id
+                and epoch == self._symbolic_llm_instruction_epoch
+            )
+            if not is_current:
+                return
+            self._symbolic_llm_pending.pop(request_id, None)
+            self._symbolic_llm_current_request_id = ""
+
+        # The LLM loop can publish this callback from a background thread.
+        # Parse/map/publish outside the pending lock so a new instruction can
+        # replace state without deadlocking on slow map calls or stream callbacks.
+        if getattr(resp, "error", ""):
+            self.planner_status.publish("SYMBOLIC_LLM_FAILED")
+            self._chat("assistant", "I could not safely interpret that navigation command.", phase="semantic_llm")
+            return
+        try:
+            payload = self._parse_symbolic_llm_json(getattr(resp, "text", ""))
+            if payload is None:
+                self.planner_status.publish("SYMBOLIC_LLM_NO_INTENT")
+                self._chat(
+                    "assistant",
+                    "I could not map that sentence to a supported navigation command.",
+                    phase="semantic_llm",
+                )
+                return
+            intent = HybridSemanticIntentParser.from_symbolic_mapping(payload, raw_text=raw_text)
+        except Exception as exc:
+            logger.warning("Symbolic semantic LLM response rejected: %s", exc)
+            self.planner_status.publish("SYMBOLIC_LLM_REJECTED")
+            self._chat("assistant", "I could not safely interpret that navigation command.", phase="semantic_llm")
+            return
+
+        if not self._symbolic_llm_epoch_is_current(epoch):
+            return
+        if intent.needs_clarification:
+            self.planner_status.publish("PLACE_CLARIFICATION_REQUIRED")
+            self._chat("assistant", "Please name the place you want to go to.", phase="semantic_llm")
+            return
+        if intent.action is not SemanticAction.NAVIGATE:
+            self._handle_tour_intent(intent, expected_symbolic_epoch=epoch)
+            return
+        if not self._handle_place_navigation_intent(intent, expected_symbolic_epoch=epoch):
+            if not self._symbolic_llm_epoch_is_current(epoch):
+                return
+            self._chat("thinking", "Symbolic intent was not grounded; trying legacy navigation.", phase="semantic_llm")
+            self._continue_legacy_instruction(raw_text)
+
+    @staticmethod
+    def _parse_symbolic_llm_json(text: str) -> dict[str, Any] | None:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            raise ValueError("empty symbolic LLM response")
+        fence = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", cleaned, flags=re.IGNORECASE | re.DOTALL)
+        if fence:
+            cleaned = fence.group(1).strip()
+        payload = _json.loads(cleaned)
+        if payload is None:
+            return None
+        if not isinstance(payload, dict):
+            raise ValueError("symbolic LLM response must be a JSON object or null")
+        return payload
+
+    def _handle_tour_intent(self, intent: SemanticIntent, *, expected_symbolic_epoch: int | None = None) -> None:
+        if not self._nav_goal_service_available:
+            self.planner_status.publish("TOUR_COMMAND_UNAVAILABLE")
+            self._chat(
+                "assistant",
+                "Tour control is recognized, but the navigation command service is unavailable.",
+                phase="tour",
+            )
+            return
+
+        action_payload: dict[SemanticAction, dict[str, str]] = {
+            SemanticAction.START_TOUR: {
+                "action": "inspection",
+                "route_id": intent.tour_id,
+            },
+            SemanticAction.PAUSE_TOUR: {
+                "action": "inspection_pause",
+                "reason": "semantic_pause",
+            },
+            SemanticAction.RESUME_TOUR: {
+                "action": "inspection_resume",
+                "reason": "semantic_resume",
+            },
+            SemanticAction.CANCEL_TOUR: {
+                "action": "inspection_cancel",
+                "reason": "semantic_cancel",
+            },
+        }
+        payload = action_payload.get(intent.action)
+        if payload is None:
+            self.planner_status.publish("TOUR_COMMAND_REJECTED")
+            return
+        if expected_symbolic_epoch is not None and not self._symbolic_llm_epoch_is_current(expected_symbolic_epoch):
+            return
+        self.nav_command.publish(_json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        self.planner_status.publish("TOUR_COMMAND_DISPATCHED")
+        self._chat(
+            "assistant",
+            "Tour command sent to the native inspection service.",
+            phase="tour",
+        )
+
+    def _handle_place_navigation_intent(
+        self,
+        intent: SemanticIntent,
+        *,
+        expected_symbolic_epoch: int | None = None,
+    ) -> bool:
+        explicit_place_route = bool(intent.floor_id or intent.travel_mode is not TravelMode.ANY)
+        if intent.needs_clarification or not intent.target_query:
+            self.planner_status.publish("PLACE_CLARIFICATION_REQUIRED")
+            self._chat("assistant", "Please name the place you want to go to.", phase="place")
+            return True
+        if self._place_catalog is None:
+            if explicit_place_route:
+                self._refuse_place_navigation("PLACE_CATALOG_UNAVAILABLE", "Place map is unavailable.")
+                return True
+            return False
+
+        active_map = self._active_map_id()
+        if not active_map:
+            if explicit_place_route:
+                self._refuse_place_navigation("ACTIVE_MAP_REQUIRED", "No active map is selected.")
+                return True
+            return False
+
+        try:
+            resolution = self._place_catalog.resolve(
+                intent.target_query,
+                map_id=active_map,
+                floor_id=normalize_semantic_floor_id(intent.floor_id) if intent.floor_id else None,
+            )
+            if resolution.status == "not_found":
+                global_resolution = self._place_catalog.resolve(
+                    intent.target_query,
+                    floor_id=(normalize_semantic_floor_id(intent.floor_id) if intent.floor_id else None),
+                )
+                if global_resolution.status != "not_found":
+                    resolution = global_resolution
+        except PlaceCatalogError as exc:
+            logger.warning("Semantic place lookup failed: %s", exc)
+            if explicit_place_route:
+                self._refuse_place_navigation("PLACE_LOOKUP_FAILED", "Place lookup failed.")
+                return True
+            return False
+        except Exception as exc:
+            logger.warning("Semantic place lookup unavailable: %s", exc)
+            if explicit_place_route:
+                self._refuse_place_navigation("PLACE_LOOKUP_UNAVAILABLE", "Place lookup is unavailable.")
+                return True
+            return False
+
+        if resolution.status != "resolved" or resolution.place is None:
+            if explicit_place_route or resolution.status in {"ambiguous", "stale_map"}:
+                self._refuse_place_navigation(
+                    f"PLACE_{resolution.status.upper()}",
+                    self._place_refusal_text(resolution.status),
+                )
+                return True
+            return False
+
+        place = resolution.place
+        if not (self._nav_building_service_available and self._nav_goal_service_available):
+            self._refuse_place_navigation(
+                "CONNECTOR_RUNTIME_REQUIRED",
+                "Named-place navigation requires the building mission runtime.",
+            )
+            return True
+        if not self._building_place_is_executable(place):
+            self._refuse_place_navigation(
+                "PLACE_NOT_EXECUTABLE",
+                f"Place is not executable: {place.non_executable_reason or 'incomplete building binding'}.",
+            )
+            return True
+        self._publish_building_navigation(intent, place, expected_symbolic_epoch=expected_symbolic_epoch)
+        return True
+
+    @staticmethod
+    def _place_is_executable(place: PlaceRef) -> bool:
+        return (
+            place.executable
+            and place.x is not None
+            and place.y is not None
+            and place.z is not None
+            and bool(place.frame_id)
+        )
+
+    @classmethod
+    def _building_place_is_executable(cls, place: PlaceRef) -> bool:
+        return (
+            cls._place_is_executable(place)
+            and place.yaw is not None
+            and place.map_version is not None
+            and bool(place.place_id)
+            and bool(place.name)
+            and bool(place.building_id)
+            and bool(place.floor_id)
+            and bool(place.map_id)
+            and bool(place.version_id)
+            and bool(place.map_pcd_sha256)
+        )
+
+    def _publish_building_navigation(
+        self,
+        intent: SemanticIntent,
+        place: PlaceRef,
+        *,
+        expected_symbolic_epoch: int | None = None,
+    ) -> None:
+        if expected_symbolic_epoch is not None and not self._symbolic_llm_epoch_is_current(expected_symbolic_epoch):
+            return
+        payload = {
+            "action": "building_navigate",
+            "schema_version": "lingtu.building_goal.v1",
+            "request_id": f"semantic-{time.time_ns()}",
+            "source": "semantic",
+            "travel_mode": intent.travel_mode.value,
+            "connector_id": place.connector_id,
+            "target": {
+                "place_id": place.place_id,
+                "name": place.name,
+                "building_id": place.building_id,
+                "floor_id": place.floor_id,
+                "map_id": place.map_id,
+                "frame_id": place.frame_id,
+                "x": float(place.x),
+                "y": float(place.y),
+                "z": float(place.z),
+                "yaw": float(place.yaw),
+                "map_version": place.map_version,
+                "version_id": place.version_id,
+                "map_pcd_sha256": place.map_pcd_sha256,
+            },
+        }
+        self.nav_command.publish(_json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        self.planner_status.publish("BUILDING_MISSION_DISPATCHED")
+        self._chat(
+            "assistant",
+            f"Building navigation mission sent for {place.name} on {place.floor_id}.",
+            phase="place",
+        )
+
+    def _refuse_place_navigation(self, status: str, text: str) -> None:
+        self.planner_status.publish(status)
+        self._chat("assistant", text, phase="place")
+
+    @staticmethod
+    def _place_refusal_text(status: str) -> str:
+        if status == "ambiguous":
+            return "More than one matching place was found; I will not guess."
+        if status == "stale_map":
+            return "The matching place is not bound to the current map version."
+        return "I could not find that place in the active place map."
+
+    def _active_map_id(self) -> str:
+        service = self._maps_service
+        if service is None:
+            return ""
+        api = getattr(service, "api", None)
+        owner = api if api is not None else service
+        method = getattr(owner, "get_active_map", None)
+        if callable(method):
+            try:
+                response = method()
+            except Exception:
+                logger.debug("active map query failed", exc_info=True)
+            else:
+                if isinstance(response, dict) and response.get("success") is True:
+                    return str(response.get("active") or response.get("map_id") or "")
+        for attr in ("_active_map", "active_map"):
+            value = getattr(service, attr, "")
+            if value:
+                return str(value)
+        storage = getattr(service, "storage", None)
+        value = getattr(storage, "active_map", "") if storage is not None else ""
+        if value:
+            return str(value)
+        return ""
 
     # Follow-verb patterns: explicit multi-character Chinese verbs plus "follow".
     _FOLLOW_PATTERN = re.compile(
@@ -318,7 +758,7 @@ class SemanticPlannerModule(Module, layer=4):
         self._latest_sg = sg_json
         self._current_scene_graph = sg  # keep object for LERa label extraction
 
-        if self._current_instruction and self._goal_resolver:
+        if self._current_instruction and self._goal_resolver and not self._has_symbolic_llm_pending():
             self._try_resolve(self._current_instruction, sg_json)
 
     def _on_odom(self, odom: Odometry) -> None:

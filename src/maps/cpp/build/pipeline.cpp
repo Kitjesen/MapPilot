@@ -4048,6 +4048,139 @@ std::string MapPipelineCore::BuildTraversabilityArtifactJson(const std::string &
   }
 }
 
+std::string MapPipelineCore::ImportUnitySemanticArtifactJson(
+    const std::string &map_id,
+    const std::filesystem::path &scene_dir,
+    const sources::UnitySemanticImportConfig &options) {
+  std::filesystem::path transaction_dir;
+  std::vector<TransactionArtifactBackup> backups;
+  std::string id;
+  std::string build_id;
+  try {
+    id = MapStore::NormalizeMapId(map_id);
+    const auto map_dir = store_.MapPath(id);
+    if (!std::filesystem::is_directory(map_dir)) {
+      return FailureJson(
+          "import_unity_semantic_artifact", "map not found: " + id, "map_not_found");
+    }
+    if (!std::filesystem::is_directory(scene_dir)) {
+      return FailureJson(
+          "import_unity_semantic_artifact",
+          "Unity scene directory not found: " + scene_dir.string(),
+          "unity_scene_not_found");
+    }
+    if (std::filesystem::exists(LockPath(id))) {
+      const std::string running = FirstLine(ReadLockText(id));
+      return "{"
+             "\"action\":\"import_unity_semantic_artifact\","
+             "\"success\":false,"
+             "\"reason_code\":\"build_in_progress\","
+             "\"message\":" +
+             JsonString("map build already running: " + running) +
+             ",\"map_id\":" + JsonString(id) +
+             ",\"build_id\":" + JsonString(running) + "}";
+    }
+
+    build_id = MakeBuildId("SEMANTIC_UNITY_IMPORT");
+    std::filesystem::create_directories(BuildDir(id));
+    if (!std::filesystem::create_directory(LockPath(id))) {
+      return FailureJson(
+          "import_unity_semantic_artifact", "map build already running",
+          "build_in_progress");
+    }
+    WriteText(LockInfoPath(id), build_id + "\nSEMANTIC_UNITY_IMPORT\n");
+    WriteStatus(
+        id, build_id, "SEMANTIC_UNITY_IMPORT", "RUNNING", 0.0,
+        "Unity semantic import started");
+
+    transaction_dir = BuildDir(id) / (build_id + "_transaction");
+    const auto staging_map_dir = transaction_dir / "staging_map";
+    std::filesystem::create_directories(staging_map_dir);
+    const auto staged_artifact = staging_map_dir / kSemanticMapArtifactFilename;
+    const auto stats = sources::ImportUnitySemanticMap(scene_dir, staged_artifact, options);
+    const auto semantic_map = ReadSemanticMapBinary(staged_artifact);
+
+    backups = BackupNamedArtifacts(map_dir, transaction_dir, SemanticArtifactNames());
+    std::string publish_error;
+    if (!PublishTransactionArtifacts(staging_map_dir, backups, &publish_error)) {
+      RollbackTransactionArtifacts(backups);
+      WriteStatus(
+          id, build_id, "SEMANTIC_UNITY_IMPORT", "FAILED", 0.0, publish_error);
+      std::filesystem::remove_all(LockPath(id));
+      std::filesystem::remove_all(transaction_dir);
+      return "{"
+             "\"action\":\"import_unity_semantic_artifact\","
+             "\"success\":false,"
+             "\"reason_code\":\"transaction_commit_failed\","
+             "\"message\":" +
+             JsonString(publish_error) +
+             ",\"map_id\":" + JsonString(id) +
+             ",\"build_id\":" + JsonString(build_id) +
+             ",\"transactional_visibility\":\"staged_until_commit\","
+             "\"rolled_back\":true}";
+    }
+    WriteStatus(
+        id, build_id, "SEMANTIC_UNITY_IMPORT", "SUCCEEDED", 1.0,
+        "Unity semantic artifact committed");
+    std::filesystem::remove_all(LockPath(id));
+    std::filesystem::remove_all(transaction_dir);
+
+    std::ostringstream unmapped;
+    unmapped << '[';
+    for (std::size_t index = 0U; index < stats.unmapped_labels.size(); ++index) {
+      if (index != 0U) unmapped << ',';
+      unmapped << JsonString(stats.unmapped_labels[index]);
+    }
+    unmapped << ']';
+    return "{"
+           "\"action\":\"import_unity_semantic_artifact\","
+           "\"success\":true,"
+           "\"mode\":\"native_transaction\","
+           "\"map_id\":" +
+           JsonString(id) +
+           ",\"build_id\":" + JsonString(build_id) +
+           ",\"artifact_type\":\"SEMANTIC\","
+           "\"semantic\":" + ArtifactPathJson(map_dir, kSemanticMapArtifactFilename) +
+           ",\"sha256\":" +
+           JsonString(Sha256File(map_dir / kSemanticMapArtifactFilename)) +
+           ",\"generation\":" + std::to_string(semantic_map.generation) +
+           ",\"voxel_count\":" + std::to_string(semantic_map.Size()) +
+           ",\"frame_id\":" + JsonString(semantic_map.frame_id) +
+           ",\"taxonomy\":" + JsonString(semantic_map.taxonomy) +
+           ",\"taxonomy_version\":" + std::to_string(semantic_map.taxonomy_version) +
+           ",\"source\":{\"scene_dir\":" + JsonString(scene_dir.string()) +
+           ",\"category_rows\":" + std::to_string(stats.category_rows) +
+           ",\"object_rows\":" + std::to_string(stats.object_rows) +
+           ",\"accepted_objects\":" + std::to_string(stats.accepted_objects) +
+           ",\"skipped_unmapped_objects\":" +
+           std::to_string(stats.skipped_unmapped_objects) +
+           ",\"skipped_dynamic_objects\":" +
+           std::to_string(stats.skipped_dynamic_objects) +
+           ",\"candidate_voxel_checks\":" +
+           std::to_string(stats.candidate_voxel_checks) +
+           ",\"semantic_conflicts\":" + std::to_string(stats.semantic_conflicts) +
+           ",\"unmapped_labels\":" + unmapped.str() + "},"
+           "\"transactional_visibility\":\"staged_until_commit\","
+           "\"rolled_back\":false,"
+           "\"navigation_ready\":false,"
+           "\"navigation_ready_reason\":\"semantic_map.bin is query-only and is not a "
+           "planning artifact\"}";
+  } catch (const std::exception &exc) {
+    if (!backups.empty()) {
+      RollbackTransactionArtifacts(backups);
+    }
+    if (!id.empty() && !build_id.empty()) {
+      WriteStatus(id, build_id, "SEMANTIC_UNITY_IMPORT", "FAILED", 0.0, exc.what());
+      std::filesystem::remove_all(LockPath(id));
+    }
+    if (!transaction_dir.empty()) {
+      std::filesystem::remove_all(transaction_dir);
+    }
+    return FailureJson(
+        "import_unity_semantic_artifact", exc.what(), "invalid_unity_semantic_source");
+  }
+}
+
 std::string MapPipelineCore::BuildSemanticArtifactJson(const std::string &map_id) {
   std::filesystem::path transaction_dir;
   std::vector<TransactionArtifactBackup> backups;

@@ -14,7 +14,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[4]
 MODULES_DIR = ROOT / "src" / "nav" / "local"
-LOCAL_PLANNER_SERVICE = ROOT / "src" / "nav" / "services" / "plan" / "local_planner" / "service.py"
+LOCAL_PLANNER_MODULE = ROOT / "src" / "nav" / "local" / "local_planner.py"
 LEGACY_ROS2_PACKAGE_DIRS = (
     ROOT / "src" / "nav" / "local" / "legacy_ros" / "local_planner",
     ROOT / "src" / "nav" / "local" / "legacy_ros" / "sensor_scan_generation",
@@ -128,7 +128,7 @@ def test_legacy_ros2_local_autonomy_packages_have_been_removed() -> None:
     Per ``docs/architecture/ROS_ROLE_REPLACEMENT_MAP.md``: these four packages
     were confirmed unused by every production profile (they were
     already ``COLCON_IGNORE``'d and superseded by the nanobind ``nav_kernel`` /
-    ``nav/services/plan/local_planner/cpp`` native path), so the formalized
+    ``nav/local/cpp`` native path), so the formalized
     retirement removes the source outright rather than leaving it quarantined
     in place. Git history retains the original source if ever needed.
     """
@@ -143,7 +143,7 @@ def test_legacy_ros2_local_autonomy_packages_have_been_removed() -> None:
 def test_local_planner_product_runtime_uses_core_messages_not_ros_messages() -> None:
     """Fast deployment path uses LingTu messages and keeps ROS at adapters."""
 
-    source = LOCAL_PLANNER_SERVICE.read_text(encoding="utf-8")
+    source = LOCAL_PLANNER_MODULE.read_text(encoding="utf-8")
 
     assert "from runtime.msgs.nav import Odometry, Path" in source
     assert "from runtime.msgs.sensor import PointCloud2" in source
@@ -170,9 +170,9 @@ def test_default_autonomy_fallback_chain_never_uses_native_module(
         NavKernelPathFollowerAdapter,
         PidFallbackParams,
     )
-    from nav.services.plan.local_planner import runtime as local_planner_setup
-    from nav.services.plan.local_planner import service as local_planner
-    from nav.services.plan.local_planner.backend import (
+    from nav.local import local_planner_runtime as local_planner_setup
+    from nav.local import local_planner as local_planner
+    from nav.local.local_planner_backend import (
         LocalPlannerGridConfig,
         NanobindLocalPlannerBackend,
     )
@@ -254,7 +254,7 @@ def test_legacy_ros2_autonomy_backend_names_are_rejected() -> None:
 
     from nav.local.path_follower import PathFollower
     from nav.local.terrain import Terrain
-    from nav.services.plan.local_planner.service import LocalPlanner
+    from nav.local.local_planner import LocalPlanner
 
     with pytest.raises(ValueError, match="Unknown terrain backend 'native'"):
         Terrain(backend="native")

@@ -10,14 +10,11 @@ import json
 import math
 import os
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import Any
 
+from gateway.services.command_boundary import invoke_navigation_command
 from gateway.services.teleop import resolve_native_command_boundary
-from runtime.adapters.native.navigation import (
-    NativeNavigationClient,
-    get_native_navigation_client,
-)
 
 
 def endpoint_only_enabled() -> bool:
@@ -80,29 +77,29 @@ def teleop_active(payload: Mapping[str, Any] | None = None) -> bool:
     return bool(isinstance(teleop, Mapping) and teleop.get("fresh") is True and teleop.get("published") is True)
 
 
-def _deliver(
-    operation: Callable[[NativeNavigationClient], None],
-) -> bool:
-    client = get_native_navigation_client(required=endpoint_only_enabled())
-    if client is None:
-        return False
-    operation(client)
-    return True
+def _deliver(owner: Any, method: str, **kwargs: Any) -> bool:
+    return invoke_navigation_command(
+        owner,
+        method,
+        required=endpoint_only_enabled(),
+        **kwargs,
+    )
 
 
-def stop(reason: str = "stop", *, request_id: str | None = None) -> bool:
+def stop(owner: Any, reason: str = "stop", *, request_id: str | None = None) -> bool:
     """Clear native motion in every control mode without latching estop."""
 
-    return _deliver(lambda client: client.stop(reason or "stop", request_id=request_id))
+    return _deliver(owner, "stop_motion", reason=reason or "stop", request_id=request_id)
 
 
-def estop(reason: str = "estop", *, request_id: str | None = None) -> bool:
+def estop(owner: Any, reason: str = "estop", *, request_id: str | None = None) -> bool:
     """Latch the native software emergency stop."""
 
-    return _deliver(lambda client: client.estop(reason or "estop", request_id=request_id))
+    return _deliver(owner, "estop", reason=reason or "estop", request_id=request_id)
 
 
 def clear_estop(
+    owner: Any,
     reason: str = "clear_estop",
     *,
     request_id: str | None = None,
@@ -110,14 +107,15 @@ def clear_estop(
     """Explicitly release the native estop latch without restoring motion."""
 
     return _deliver(
-        lambda client: client.clear_estop(
-            reason or "clear_estop",
-            request_id=request_id,
-        )
+        owner,
+        "clear_estop",
+        reason=reason or "clear_estop",
+        request_id=request_id,
     )
 
 
 def resume_autonomy(
+    owner: Any,
     reason: str = "resume_autonomy",
     *,
     request_id: str | None = None,
@@ -125,8 +123,8 @@ def resume_autonomy(
     """Release the native manual-takeover latch without restoring an old path."""
 
     return _deliver(
-        lambda client: client.resume_autonomy(
-            reason or "resume_autonomy",
-            request_id=request_id,
-        )
+        owner,
+        "resume_autonomy",
+        reason=reason or "resume_autonomy",
+        request_id=request_id,
     )

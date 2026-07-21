@@ -213,8 +213,8 @@ class TestHw:
         assert get("device_manager", "default") is Hw
 
     def test_blueprint_stack_exports_hw_not_device_manager(self):
-        import runtime.blueprints.stacks as stacks
-        from runtime.blueprints.stacks.system import device_manager, hw
+        import lingtu.assembly.stacks as stacks
+        from lingtu.assembly.stacks.system import device_manager, hw
 
         assert "hw" in stacks.__all__
         assert "device_manager" not in stacks.__all__

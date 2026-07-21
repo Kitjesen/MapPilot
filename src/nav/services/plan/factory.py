@@ -18,6 +18,7 @@ def create_planner_service(
     fallback_planner_name: str = "",
     expected_saved_map_frame_id: str | None = None,
     map_artifact_gate_required: bool | None = None,
+    far_constraints: dict[str, Any] | None = None,
     octoplanner3d_constraints: dict[str, Any] | None = None,
     octoplanner3d_timeout_s: float | None = None,
 ) -> PlannerService:
@@ -50,6 +51,7 @@ def create_planner_service(
         fallback_planner_name=canonical_fallback_planner_name,
         expected_saved_map_frame_id=expected_saved_map_frame_id,
         map_artifact_gate_required=map_artifact_gate_required,
+        far_constraints=far_constraints,
         octoplanner3d_constraints=octoplanner3d_constraints,
         octoplanner3d_timeout_s=octoplanner3d_timeout_s,
     )

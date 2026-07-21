@@ -1,5 +1,9 @@
 # TravExplorer Adoption Boundary
 
+Status: research/adoption note, not a current product dependency
+Audience: exploration research and product adoption planning
+Replaced by: `PRODUCT_MODE_RUNTIME_CONTRACT.md` for field exploration runtime
+
 TravExplorer is not a directly integrable ROS2 package today. It is useful to
 LingTu as an algorithm reference. As of the current public repository state, the
 TravExplorer GitHub repository contains README, license, and image assets, while

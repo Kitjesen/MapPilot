@@ -1,11 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from types import SimpleNamespace
 from typing import Any
 
-import nav.services.plan.local_planner.cmu_py as cmu_py
-from nav.services.plan.local_planner.backend import (
+import nav.local.cmu_py as cmu_py
+from nav.local.local_planner_backend import (
     CmuPyLocalPlannerRequest,
     create_cmu_py_backend,
     create_nanobind_backend,

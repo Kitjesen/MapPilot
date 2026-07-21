@@ -20,7 +20,7 @@ def _entry_names(bp) -> list[str]:
 
 
 def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
-    driver_stack_source = Path("src/runtime/blueprints/stacks/driver.py").read_text(encoding="utf-8")
+    driver_stack_source = Path("src/lingtu/assembly/stacks/driver.py").read_text(encoding="utf-8")
     driver_runtime_source = Path("src/runtime/adapters/driver_runtime.py").read_text(encoding="utf-8")
 
     removed_driver_adapter = "drivers" + ".adapters"
@@ -41,7 +41,7 @@ def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
     ],
 )
 def test_driver_stack_resolves_runtime_driver_keys(robot, class_name):
-    from runtime.blueprints.stacks.driver import driver_name
+    from lingtu.assembly.stacks.driver import driver_name
 
     saved = snapshot()
     try:
@@ -53,7 +53,7 @@ def test_driver_stack_resolves_runtime_driver_keys(robot, class_name):
 
 
 def test_driver_stack_recovers_runtime_driver_after_registry_clear_with_loaded_module():
-    from runtime.blueprints.stacks.driver import driver_name
+    from lingtu.assembly.stacks.driver import driver_name
 
     saved = snapshot()
     try:
@@ -66,7 +66,7 @@ def test_driver_stack_recovers_runtime_driver_after_registry_clear_with_loaded_m
 
 
 def test_driver_stack_does_not_resolve_removed_ros2_bridge_profile():
-    from runtime.blueprints.stacks.driver import driver
+    from lingtu.assembly.stacks.driver import driver
 
     saved = snapshot()
     try:
@@ -79,7 +79,7 @@ def test_driver_stack_does_not_resolve_removed_ros2_bridge_profile():
 
 
 def test_safety_stack_prefers_registered_modules():
-    from runtime.blueprints.stacks.safety import safety
+    from lingtu.assembly.stacks.safety import safety
 
     saved = snapshot()
     try:
@@ -111,7 +111,7 @@ def test_safety_stack_prefers_registered_modules():
 
 
 def test_lidar_stack_prefers_registered_mid360_module():
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -131,7 +131,7 @@ def test_lidar_stack_prefers_registered_mid360_module():
 
 
 def test_lidar_stack_only_starts_legacy_driver_when_explicit():
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -154,7 +154,7 @@ def test_lidar_stack_only_starts_legacy_driver_when_explicit():
 
 
 def test_lidar_stack_uses_default_source_without_transport_config():
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -172,7 +172,7 @@ def test_lidar_stack_uses_default_source_without_transport_config():
 
 
 def test_lidar_stack_can_select_mujoco_backend():
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -192,7 +192,7 @@ def test_lidar_stack_can_select_mujoco_backend():
 
 
 def test_lidar_stack_rejects_unknown_backend_without_mid360_fallback():
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -210,14 +210,14 @@ def test_lidar_stack_rejects_unknown_backend_without_mid360_fallback():
 
 @pytest.mark.parametrize("backend", ["dds", "replay"])
 def test_lidar_stack_rejects_declared_unimplemented_backends(backend):
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     with pytest.raises(ValueError, match="declared but not implemented"):
         lidar(enabled=True, backend=backend)
 
 
 def test_imu_stack_can_select_mujoco_backend():
-    from runtime.blueprints.stacks.imu import imu
+    from lingtu.assembly.stacks.imu import imu
 
     saved = snapshot()
     try:
@@ -237,7 +237,7 @@ def test_imu_stack_can_select_mujoco_backend():
 
 
 def test_imu_stack_rejects_unknown_backend_without_livox_fallback():
-    from runtime.blueprints.stacks.imu import imu
+    from lingtu.assembly.stacks.imu import imu
 
     saved = snapshot()
     try:
@@ -254,14 +254,14 @@ def test_imu_stack_rejects_unknown_backend_without_livox_fallback():
 
 
 def test_imu_stack_rejects_declared_unimplemented_replay_backend():
-    from runtime.blueprints.stacks.imu import imu
+    from lingtu.assembly.stacks.imu import imu
 
     with pytest.raises(ValueError, match="declared but not implemented"):
         imu(enabled=True, backend="replay")
 
 
 def test_gateway_stack_prefers_registered_interface_modules():
-    from runtime.blueprints.stacks.gateway import gateway
+    from lingtu.assembly.stacks.gateway import gateway
 
     saved = snapshot()
     try:
@@ -309,7 +309,7 @@ def test_gateway_stack_prefers_registered_interface_modules():
 
 
 def test_gateway_stack_defaults_rerun_to_core_module_without_ros2_fallback():
-    from runtime.blueprints.stacks.gateway import gateway
+    from lingtu.assembly.stacks.gateway import gateway
 
     saved = snapshot()
     previous_rerun_bridge = sys.modules.pop("gateway.visualization.rerun_bridge", None)
@@ -336,7 +336,7 @@ def test_gateway_stack_defaults_rerun_to_core_module_without_ros2_fallback():
 
 
 def test_gateway_stack_ignores_registered_ros2_rerun_without_flag():
-    from runtime.blueprints.stacks.gateway import gateway
+    from lingtu.assembly.stacks.gateway import gateway
 
     saved = snapshot()
     previous_rerun_bridge = sys.modules.pop("gateway.visualization.rerun_bridge", None)
@@ -365,7 +365,7 @@ def test_gateway_stack_ignores_registered_ros2_rerun_without_flag():
 
 
 def test_gateway_stack_allows_explicit_ros2_rerun_bridge():
-    from runtime.blueprints.stacks.gateway import gateway
+    from lingtu.assembly.stacks.gateway import gateway
 
     saved = snapshot()
     previous_rerun_bridge = sys.modules.pop("gateway.visualization.rerun_bridge", None)
@@ -397,7 +397,7 @@ def test_gateway_stack_allows_explicit_ros2_rerun_bridge():
 
 
 def test_navigation_stack_prefers_registered_modules_with_canonical_aliases():
-    from runtime.blueprints.stacks.navigation import navigation
+    from lingtu.assembly.stacks.navigation import navigation
 
     saved = snapshot()
     try:
@@ -439,7 +439,7 @@ def test_navigation_stack_prefers_registered_modules_with_canonical_aliases():
 
 
 def test_external_tare_stack_prefers_registered_modules_with_canonical_aliases():
-    from runtime.blueprints.stacks.exploration import exploration
+    from lingtu.assembly.stacks.exploration import exploration
 
     saved = snapshot()
     try:
@@ -470,7 +470,7 @@ def test_external_tare_stack_prefers_registered_modules_with_canonical_aliases()
 
 
 def test_tare_stack_prefers_registered_bridge_modules_with_canonical_aliases():
-    from runtime.blueprints.stacks.exploration import exploration
+    from lingtu.assembly.stacks.exploration import exploration
 
     saved = snapshot()
     try:
@@ -505,7 +505,7 @@ def test_tare_stack_prefers_registered_bridge_modules_with_canonical_aliases():
 
 
 def test_perception_stack_prefers_registered_scene_and_camera_modules():
-    from runtime.blueprints.stacks.perception import perception
+    from lingtu.assembly.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -537,7 +537,7 @@ def test_perception_stack_prefers_registered_scene_and_camera_modules():
 
 
 def test_perception_stack_does_not_default_external_camera_to_ros2_bridge():
-    from runtime.blueprints.stacks.perception import perception
+    from lingtu.assembly.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -564,7 +564,7 @@ def test_perception_stack_does_not_default_external_camera_to_ros2_bridge():
 
 
 def test_perception_stack_ignores_removed_explicit_ros2_camera_bridge():
-    from runtime.blueprints.stacks.perception import perception
+    from lingtu.assembly.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -589,7 +589,7 @@ def test_perception_stack_ignores_removed_explicit_ros2_camera_bridge():
 
 
 def test_perception_stack_ignores_registered_ros2_camera_bridge_without_flag():
-    from runtime.blueprints.stacks.perception import perception
+    from lingtu.assembly.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -624,7 +624,7 @@ def test_perception_stack_skips_camera_resolution_for_driver_camera(
     monkeypatch,
     config,
 ):
-    perception_stack = importlib.import_module("runtime.blueprints.stacks.perception")
+    perception_stack = importlib.import_module("lingtu.assembly.stacks.perception")
 
     saved = snapshot()
     try:
@@ -667,7 +667,7 @@ def test_perception_stack_skips_camera_resolution_for_driver_camera(
 
 
 def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
-    perception_stack = importlib.import_module("runtime.blueprints.stacks.perception")
+    perception_stack = importlib.import_module("lingtu.assembly.stacks.perception")
 
     saved = snapshot()
     try:
@@ -715,7 +715,7 @@ def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
 
 
 def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
-    perception_stack = importlib.import_module("runtime.blueprints.stacks.perception")
+    perception_stack = importlib.import_module("lingtu.assembly.stacks.perception")
 
     saved = snapshot()
     try:
@@ -764,7 +764,7 @@ def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
 
 
 def test_wiring_context_accepts_canonical_camera_name():
-    from runtime.blueprints.wires.context import camera_source
+    from lingtu.assembly.wires.context import camera_source
     from runtime.contracts import CAMERA_COMPAT_ALIAS
 
     assert camera_source({"camera"}, driver_module="Driver") == (
@@ -779,7 +779,7 @@ def test_wiring_context_accepts_canonical_camera_name():
 
 
 def test_perception_stack_prefers_registered_optional_tool_modules():
-    from runtime.blueprints.stacks.perception import perception
+    from lingtu.assembly.stacks.perception import perception
 
     saved = snapshot()
     try:
@@ -844,7 +844,7 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
 
 def test_maps_stack_does_not_default_map_output_to_ros2():
     from maps.adapters.resolver import map_output_adapter_module
-    from runtime.blueprints.stacks.maps import maps
+    from lingtu.assembly.stacks.maps import maps
 
     saved = snapshot()
     try:
@@ -927,7 +927,7 @@ def test_maps_stack_does_not_default_map_output_to_ros2():
 
 
 def test_maps_stack_prefers_registered_explicit_dds_map_output_module():
-    from runtime.blueprints.stacks.maps import maps
+    from lingtu.assembly.stacks.maps import maps
 
     saved = snapshot()
     try:
@@ -993,7 +993,7 @@ def test_maps_stack_prefers_registered_explicit_dds_map_output_module():
 
 
 def test_planner_stack_prefers_registered_modules_with_canonical_aliases():
-    from runtime.blueprints.stacks.planner import planner
+    from lingtu.assembly.stacks.planner import planner
 
     saved = snapshot()
     try:
@@ -1040,7 +1040,7 @@ def test_planner_stack_prefers_registered_modules_with_canonical_aliases():
 
 
 def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
-    from runtime.blueprints.stacks.memory import memory
+    from lingtu.assembly.stacks.memory import memory
 
     saved = snapshot()
     try:
@@ -1096,7 +1096,7 @@ def test_memory_stack_prefers_registered_modules_with_canonical_aliases():
 
 
 def test_navigation_stack_prefers_registered_autonomy_modules_with_canonical_aliases():
-    from runtime.blueprints.stacks.navigation import navigation
+    from lingtu.assembly.stacks.navigation import navigation
 
     saved = snapshot()
     try:
@@ -1146,7 +1146,7 @@ def test_navigation_stack_prefers_registered_autonomy_modules_with_canonical_ali
 
 
 def test_lidar_stack_keeps_legacy_driver_start_opt_in():
-    from runtime.blueprints.stacks.lidar import lidar
+    from lingtu.assembly.stacks.lidar import lidar
 
     saved = snapshot()
     try:
@@ -1176,7 +1176,7 @@ def test_lidar_stack_keeps_legacy_driver_start_opt_in():
 
 
 def test_slam_stack_rejects_removed_ros2_adapter_even_if_registered(monkeypatch):
-    from runtime.blueprints.stacks.slam import slam
+    from lingtu.assembly.stacks.slam import slam
 
     monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     saved = snapshot()
@@ -1201,7 +1201,7 @@ def test_slam_stack_rejects_removed_ros2_adapter_even_if_registered(monkeypatch)
 
 
 def test_slam_stack_rejects_removed_legacy_bridge_registry(monkeypatch):
-    from runtime.adapters.localization import localization_adapter_module
+    from localization.adapters.resolver import localization_adapter_module
 
     monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     saved = snapshot()
@@ -1219,7 +1219,7 @@ def test_slam_stack_rejects_removed_legacy_bridge_registry(monkeypatch):
 
 
 def test_slam_stack_visual_backup_does_not_import_cv2_at_build_time():
-    from runtime.blueprints.stacks.slam import slam
+    from lingtu.assembly.stacks.slam import slam
 
     saved = snapshot()
     cv2_before = sys.modules.get("cv2")
@@ -1250,7 +1250,7 @@ def test_slam_stack_visual_backup_does_not_import_cv2_at_build_time():
 
 
 def test_slam_stack_without_explicit_adapter_does_not_import_ros2_bridge():
-    from runtime.blueprints.stacks.slam import slam
+    from lingtu.assembly.stacks.slam import slam
 
     saved = snapshot()
     ros2_bridge_before = sys.modules.get("localization.adapters.ros2.slam_bridge")
@@ -1272,7 +1272,7 @@ def test_slam_stack_without_explicit_adapter_does_not_import_ros2_bridge():
 
 
 def test_sim_lidar_stack_prefers_registered_pointcloud_provider():
-    from runtime.blueprints.stacks.sim_lidar import sim_lidar
+    from lingtu.assembly.stacks.sim_lidar import sim_lidar
 
     saved = snapshot()
     try:

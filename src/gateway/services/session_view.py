@@ -57,16 +57,17 @@ def detect_current_mode(gw: Any) -> tuple[str, str | None]:
         recover_external_mapping_session(gw)
         return gw._session_mode, gw._session_active_map_name()
     try:
-        from runtime.service_manager import get_service_manager
+        from lingtu.control import ProductControl
 
-        svc = get_service_manager()
-        status = svc.status(
-            "slam",
-            "slam_pgo",
-            "localizer",
-            "genz_icp",
-            "super_lio",
-            "super_lio_relocation",
+        status, _ = ProductControl().status(
+            (
+                "slam",
+                "slam_pgo",
+                "localizer",
+                "genz_icp",
+                "super_lio",
+                "super_lio_relocation",
+            )
         )
         slam_active = status.get("slam") in ("running", "active")
         pgo_active = status.get("slam_pgo") in ("running", "active")

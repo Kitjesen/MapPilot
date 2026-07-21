@@ -58,9 +58,9 @@
     "navigation": {
       "env": "LINGTU_MUJOCO_NAV_BIN",
       "candidates": [
-        "build/mujoco_native_nav/lingtu_nav_native_endpoint",
-        "build/nav_endpoint/lingtu_nav_native_endpoint",
-        "/home/thunder/lingtu_nav_mode_verify/lingtu_nav_native_endpoint"
+        "build/mujoco_native_nav/navd",
+        "build/nav_endpoint/navd",
+        "/home/thunder/lingtu_nav_mode_verify/navd"
       ]
     },
     "navigation_control": {

@@ -317,6 +317,8 @@ def resolve_runtime_run_spec(
     if hardware_control_boundary:
         env["LINGTU_HARDWARE_CONTROL_BOUNDARY"] = hardware_control_boundary
     env["LINGTU_COMMAND_SINK"] = source.command_sink
+    if planner_profile["primary"]:
+        env["LINGTU_NAV_GLOBAL_PLANNER"] = str(planner_profile["primary"])
     if endpoint_name in RUNTIME_ENDPOINTS:
         _merge_endpoint_env_overrides(env, RUNTIME_ENDPOINTS[endpoint_name])
 

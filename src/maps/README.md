@@ -148,6 +148,13 @@ Implemented in C++ now:
   generation, deterministic SoA payload, size checks, and checksum validation.
   The live semantic module saves it through a typed request/result handshake;
   map save then validates and catalogs it through `MapsServiceCore`.
+- Unity simulation truth imports are native and transactional. C++ parses the
+  real `environment/Categories.csv` and `object_list.txt` formats, resolves
+  labels through `config/semantic_taxonomy.json`, excludes dynamic classes by
+  default, voxelizes oriented object bounds, and publishes a validated
+  `semantic_map.bin` only after the complete import succeeds. The stable C ABI
+  and typed `import_unity_semantics` control action expose the same operation;
+  Python does not parse or voxelize the scene.
 - A semantic artifact is query/localization data only. It is deliberately
   excluded from the navigation-ready artifact gate.
 - `MapSceneFrame` + `/maps/scene` product contract: the voxel layer now
@@ -234,6 +241,42 @@ Remaining runtime integration work:
 Until those are migrated, Python may dispatch commands, but it must call into
 the native C++ service for map identity, active state, artifact inventory,
 health, bundle query, and build lifecycle state.
+
+### Unity Semantic Source
+
+The supported source directory is the Unity navigation environment output,
+not an ad-hoc JSON export:
+
+```text
+<scene>/
+  environment/Categories.csv
+  object_list.txt
+```
+
+`Categories.csv` uses the upstream columns
+`name,cleaned,nyuId,nyu40id,nyuClass,nyu40class`. Each object-list row is
+`id x y z size_x size_y size_z yaw "label"`. Labels are normalized against the
+LingTu taxonomy; unmapped labels are reported and omitted unless
+`include_unknown_geometry` is explicitly enabled. `person`, `animal`, and
+`vehicle` are omitted by default because persistent semantic assets must not
+turn transient actors into static map truth.
+
+Standalone native import:
+
+```bash
+cmake -S src/maps -B build/maps -DLINGTU_MAPS_BUILD_TOOLS=ON
+cmake --build build/maps --target lingtu_maps_import_unity -j
+build/maps/lingtu-maps-import-unity \
+  --scene <scene> \
+  --taxonomy config/semantic_taxonomy.json \
+  --output <map-package>/semantic_map.bin
+```
+
+Product control uses `MapControlRequest(action="import_unity_semantics")`
+with `name`, `scene_dir`, and optional bounded import settings. The native
+pipeline stages under `.builds/<build_id>_transaction`, preserves the previous
+artifact on any parse, limit, ABI, or publish failure, and marks the result
+query-only (`navigation_ready=false`).
 
 ## Domain Boundary
 

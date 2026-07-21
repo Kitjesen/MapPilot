@@ -10,8 +10,8 @@ from typing import Any
 from fastapi.responses import JSONResponse
 
 from gateway.schemas import PlanPreviewRequest
+from gateway.services.command_boundary import CommandBoundaryError
 from gateway.services.safety_status import safety_stop_active, safety_summary
-from runtime.adapters.native.navigation import NavigationClientError
 from runtime.runtime_interface import map_frame_id
 
 CONTROL_MAP_FRAME_ID = map_frame_id()
@@ -172,6 +172,46 @@ class ControlCommandService:
                 error=str(exc),
             )
 
+    def evaluate_navigation_path(
+        self,
+        path: list[list[float]],
+    ) -> dict[str, Any] | None:
+        """Call Navigation's public no-motion path-safety capability."""
+
+        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
+        evaluate = getattr(nav, "evaluate_path_safety", None)
+        if not callable(evaluate):
+            return None
+        result = evaluate(path)
+        return dict(result) if isinstance(result, dict) else None
+
+    def reload_navigation_map(self, map_path: str) -> dict[str, Any]:
+        """Reload Navigation's planner through its public capability boundary."""
+
+        nav = (getattr(self._gw, "_all_modules", {}) or {}).get("nav.mission")
+        if nav is None:
+            return {
+                "ok": True,
+                "reason": "planner_not_in_process",
+                "delegated": True,
+                "map_path": map_path,
+            }
+        reload_map = getattr(nav, "reload_planner_map", None)
+        if not callable(reload_map):
+            return {
+                "ok": False,
+                "reason": "nav_mission_unavailable",
+                "map_path": map_path,
+            }
+        result = reload_map(map_path)
+        if isinstance(result, dict):
+            return dict(result)
+        return {
+            "ok": False,
+            "reason": "planner_reload_invalid_response",
+            "map_path": map_path,
+        }
+
     def run_planned_goal_command(
         self,
         command: str,
@@ -201,7 +241,7 @@ class ControlCommandService:
 
         try:
             native_response = action()
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return self.rejected_response(
                 command,
@@ -236,7 +276,7 @@ class ControlCommandService:
             return rejection
         try:
             return self._gw._run_control_command(command, body, action)
-        except NavigationClientError as exc:
+        except CommandBoundaryError as exc:
             reason = str(exc)
             return self.rejected_response(
                 command,

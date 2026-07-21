@@ -35,7 +35,7 @@ flowchart LR
 | 原生 stop、estop、reset 与 resume 语义 | [native control boundary](../../src/gateway/services/native_control.py) |
 | 安全状态与陈旧数据反射动作 | [SafetyRing](../../src/nav/services/safety/safety_ring.py) |
 | 速度优先级与可选碰撞监控 | [VelocityMux](../../src/nav/services/safety/velocity_mux.py) |
-| 显式 Blueprint 安全连线 | [safety wiring](../../src/runtime/blueprints/wires/safety.py) |
+| 显式 Blueprint 安全连线 | [safety wiring](../../src/lingtu/assembly/wires/safety.py) |
 | Teleop 租约、deadman 与断连行为 | [realtime routes](../../src/gateway/routes/realtime.py) |
 | 现场命令与无运动证据门槛 | [运维](../06-operations/README.md) 和 [`scripts/lingtu`](../../scripts/lingtu) |
 | 精确 API 模型与名称 | [Gateway REST API](../api/gateway_rest.md) 和运行中的 `/openapi.json` |

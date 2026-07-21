@@ -97,11 +97,10 @@ def spawn_auto_relocalize(gw: Any, map_name: str) -> None:
                     map_name,
                 )
                 return
-            service = gw._relocalization_service
-            if service is None:
+            if not gw.localization.available:
                 logger.warning("auto-relocalize: relocalization service unavailable")
                 return
-            result = service.relocalize_saved_map_with_env(
+            result = gw.localization.relocalize_saved_map_with_env(
                 pcd_path,
                 x,
                 y,

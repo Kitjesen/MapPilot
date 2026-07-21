@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from runtime.introspection.profile_graph import graph_for_profile
+from lingtu.assembly.graph import graph_for_profile
 from runtime.profiles.resolver import resolve_profile_config
 
 
@@ -45,30 +45,25 @@ def test_explore_profile_owns_wavefront_frontier_through_navigation_stack():
     assert not graph.dangling_wires()
 
 
-def test_tare_explore_profile_uses_lingtu_tare_without_native_module():
+def test_tare_explore_profile_delegates_saved_map_coverage_to_native_endpoint():
     config = resolve_profile_config("tare_explore")
     graph = graph_for_profile("tare_explore")
-    wires = _wire_set(graph)
 
     assert config["enable_frontier"] is False
     assert config["enable_traversable_frontier"] is False
     assert config["exploration_backend"] == "tare"
     assert config["robot"] == "thunder"
     assert config["slam_profile"] == "localizer"
+    assert config["planner"] == "octoplanner3d"
     assert config["map_path"].endswith((".ot", ".bt"))
     assert config["map_artifact_gate_required"] is True
     assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
     assert config["command_output_mode"] == "endpoint_only"
-    assert config["planner"] == "octoplanner3d"
-    assert config["enable_native"] is False
     assert "WavefrontFrontierExplorer" not in graph.modules
     assert "TraversableFrontierModule" not in graph.modules
-    assert "TAREExplorerModule" in graph.modules
+    assert "TAREExplorerModule" not in graph.modules
     assert "TAREPlannerNativeModule" not in graph.modules
-    assert "ExplorationSupervisorModule" in graph.modules
-    assert "TAREExplorerModule.exploration_goal->nav.mission.goal_pose" in wires
-    assert "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid" in wires
-    assert "nav.mission.mission_status->TAREExplorerModule.navigation_status" in wires
+    assert "ExplorationSupervisorModule" not in graph.modules
     assert not graph.dangling_wires()
 
 def test_tare_explore_cmu_unity_endpoint_uses_external_tare_bridge():

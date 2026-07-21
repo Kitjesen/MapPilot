@@ -1,6 +1,8 @@
 # Naming And Service Boundary Plan
 
 Status: cleanup plan
+Audience: repo architecture cleanup maintainers
+Replaced by: `MODULE_SERVICE_BOUNDARY.md` for current naming rules
 
 This plan keeps LingTu's existing architecture words, but fixes their
 responsibilities. The problem is not that `Blueprint`, `Module`, `Service`,
@@ -14,9 +16,9 @@ LingTu currently has four related sources of confusion.
 | Problem | Current symptom | Required correction |
 | --- | --- | --- |
 | Vocabulary confusion | `Module`, `Service`, `Blueprint`, `Agent`, and `Kernel` are not consistently separated. | Keep the words, but make each one have one job. |
-| Directory confusion | `nav/services/map`, `maps`, `runtime/blueprints`, and `gateway/services` overlap. | Services must live in the domain that owns the capability. |
+| Directory confusion | `nav/services/map`, `maps`, `lingtu/assembly`, and `gateway/services` overlap. | Services must live in the domain that owns the capability. |
 | Runtime confusion | Python sometimes looks like the core because it owns Blueprint, Module shells, and service facades. | Python may be the runtime shell; domain compute and durable semantics should move to native/domain services. |
-| Product-chain confusion | Map, localization, planning, Gateway, DDS topics, and Module wires are described from different viewpoints. | Blueprint must be the product composition view; service contracts must be the capability view. |
+| Product-chain confusion | Map, localization, planning, Gateway, DDS topics, and Module wires are described from different viewpoints. | Assembly is the product composition view; Blueprint is the graph mechanism; service contracts are the capability view. |
 
 ## 2. Keep These Words
 
@@ -37,7 +39,8 @@ boundary cleanup, not a vocabulary replacement project.
 
 | Word | Owns | Must not own | Example |
 | --- | --- | --- | --- |
-| `Blueprint` | Product composition: choose modules, aliases, wires, route contracts, profile-level config. | Domain business logic, map files, planner algorithms, HTTP routes. | `runtime/blueprints/stacks/maps.py` |
+| `Blueprint` | Materialize one application Module graph, resolve wires/transports, and return its runtime handle. | Product selection, native service lifecycle, domain business logic. | `runtime/blueprint.py` |
+| `Assembly` | Choose LingTu modules, aliases, wires, route contracts, and profile-level config. | Domain business logic, native service supervision, map files, planner algorithms, HTTP routes. | `lingtu/assembly/stacks/maps.py` |
 | `Module` | Runtime behavior with typed ports, lifecycle hooks, callbacks, status. | Durable domain model semantics when they can live in a service, hot algorithms when they can live in a kernel. | `GatewayModule`, `Navigation`, `VoxelGridModule` |
 | `Service` | Domain capability API: maps, goals, patrol, planning, localization, relocalization, memory query. | Product composition, frontend routes, raw transport clients hidden inside business logic. | `MapsServiceCore`, `GoalService`, `PlannerService` |
 | `Agent` | High-level decision loop: task decomposition, semantic reasoning, tool use, service orchestration. | Low-level data transport, map file access, local planner kernels, direct hardware control. | semantic task agent |
@@ -46,7 +49,8 @@ boundary cleanup, not a vocabulary replacement project.
 ## 4. One-Sentence Rules
 
 ```text
-Blueprint composes the system.
+Assembly declares the LingTu product graph.
+Blueprint materializes the Module graph.
 Module runs the ports.
 Service provides a domain capability.
 Agent decides what to do by calling services.
@@ -85,11 +89,17 @@ This is the target shape after cleanup. It intentionally keeps existing names.
 ```text
 src/runtime/
   blueprint.py
-  blueprints/
   module.py
   stream.py
   transports/
   runtime_interface.py
+
+src/lingtu/
+  assembly/
+    profile_builder.py
+    products/
+    stacks/
+    wires/
 
 src/maps/
   service/          # domain service API if/when split from adapters
@@ -128,7 +138,7 @@ src/gateway/
 | --- | --- | --- |
 | `src/nav/services/map` | Maps was incorrectly owned by navigation. | Completed: `src/maps/services` + `src/maps/adapters/python` |
 | `src/nav/services/plan` | Name is too generic and mixes planner service, compat paths, and algorithms. | `src/nav/services/planning` plus `src/nav/planning` or `src/nav/local` as needed |
-| local planner code under `services/plan/local_planner` | Local planner is runtime execution, not a service. | `src/nav/local/planner` and `src/nav/local/follower` |
+| local planner code under the old planner-service tree | Local planner is runtime execution, not a service. | Completed: `src/nav/local/local_planner.py`, `path_follower.py`, and `cpp/` |
 | Gateway map helpers that inspect map files directly | Gateway should call maps service/bundle first. | `src/gateway/adapters/maps` or maps service API |
 | Semantic task loops mixed with service helpers | Agent behavior and service capability are different. | `src/decision/agents` and `src/decision/services` |
 
@@ -244,14 +254,15 @@ If a name needs three nouns to explain itself, the boundary is probably wrong.
 
 Before adding or moving code, answer these questions:
 
-1. Is this system composition? Put it in Blueprint/runtime graph code.
-2. Is this a runtime port owner? Make it a Module.
-3. Is this a domain capability? Put it in that domain's Service.
-4. Is this high-level task decision logic? Put it in Agent code.
-5. Is this hot compute or algorithm logic? Put it in Kernel code.
-6. Does it talk to a protocol, hardware, OS process, or file-backed external
+1. Is this LingTu product composition? Put it in `lingtu/assembly`.
+2. Is this generic Module graph materialization? Put it in `runtime/blueprint.py`.
+3. Is this a runtime port owner? Make it a Module.
+4. Is this a domain capability? Put it in that domain's Service.
+5. Is this high-level task decision logic? Put it in Agent code.
+6. Is this hot compute or algorithm logic? Put it in Kernel code.
+7. Does it talk to a protocol, hardware, OS process, or file-backed external
    state? Put it behind an adapter or explicit service storage boundary.
-7. Would moving this file make a domain easier to understand from its directory
+8. Would moving this file make a domain easier to understand from its directory
    name alone? If yes, move it now.
 
 ## 11. Non-Goals

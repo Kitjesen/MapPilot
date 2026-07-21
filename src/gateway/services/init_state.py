@@ -20,6 +20,7 @@ from gateway.services.traffic import (
     DEFAULT_CLOUD_QUEUE_MAXSIZE,
     DEFAULT_SSE_QUEUE_MAXSIZE,
 )
+from localization.service import Localization
 from runtime.tf import FrameTree
 
 
@@ -67,9 +68,12 @@ def init_module_refs(
     gw._map_mgr = None
     gw._all_modules = {}
     gw._navigation = None
+    gw._goals = None
+    gw._nav_commands = None
+    gw._inspection = None
     gw._cmd_vel_mux = None
     gw._backend_reconfigure_modules = {}
-    gw._relocalization_service = None
+    gw.localization = Localization()
     gw._map_save_adapter = map_save_adapter
     gw._manage_session_services = manage_session_services
 

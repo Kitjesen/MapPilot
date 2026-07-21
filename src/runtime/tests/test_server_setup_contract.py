@@ -137,8 +137,8 @@ def test_l2_hook_runs_stub_build_and_offline_start_smoke():
     )
 
     assert "running stub blueprint smoke" in hook
-    assert "runtime.blueprints.profile_builder" in hook
-    assert "runtime.blueprints.full_stack" not in hook
+    assert "lingtu.assembly.profile_builder" in hook
+    assert "lingtu.assembly.full_stack" not in hook
     assert "full_stack_blueprint" not in hook
     assert "stub profile build OK" in hook
     assert "stub profile start OK" in hook

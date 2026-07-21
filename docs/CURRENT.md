@@ -1,6 +1,6 @@
 # Current Documentation Map
 
-Status: current routing map
+Status: current routing map as of 2026-07-18
 
 Use this file when deciding which document is authoritative.
 
@@ -43,6 +43,7 @@ reports, and field-run evidence out of its primary reading paths.
 | --- | --- |
 | System architecture | `docs/architecture/SYSTEM_DESIGN.md` |
 | Module, Blueprint, Port/Wire model | `docs/architecture/LINGTU_RUNTIME_BUS_DECISION.md` |
+| Runtime Graph endpoint/topic contract | `config/runtime_graph/README.md` |
 | Global planning input/output | `docs/architecture/GLOBAL_PLANNING_CONTRACT.md` |
 | Saved map types and artifact bundles | `docs/architecture/MAP_SERVICE_CONTRACT.md` |
 | Navigation compute chain | `docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md` |
@@ -53,6 +54,11 @@ reports, and field-run evidence out of its primary reading paths.
 | SDK, REST, MCP, SSE, and teleoperation integration usage | `docs/09-integrations/README.md` |
 | Software control ownership, motion gate, and stop/recovery usage | `docs/10-safety/README.md` |
 | Known product gaps | `docs/known_gaps.md` |
+| Native field endpoint | `config/runtime_graph/endpoints/thunder_field.yaml` |
+| Native DDS IDL and typed message contracts | `src/message/idl/README.md` |
+| Thunder driver deployment boundary | `scripts/deploy/thunder/lingtu-driver.service` |
+| MuJoCo native-DDS navigation acceptance | `docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md` |
+| Native endpoint control-mode promotion gate | `docs/07-testing/MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md` |
 
 ## Not Authoritative By Default
 
@@ -63,6 +69,7 @@ reports, and field-run evidence out of its primary reading paths.
 | `docs/07-testing/*AUDIT*.md` | Evidence snapshots. Date-bound, not architecture. |
 | `docs/plans/` | Forward-looking PRDs and migration plans. Not shipped behavior. |
 | `docs/09-paper/` | Publication drafts and build output. Not runtime docs. |
+| `.qoder/`, `.hermes/`, `.codex/`, `.omx/` | Tool-generated workspace memory. Regenerate with the owning tool; do not treat as product documentation. |
 
 ## Current Product Defaults
 
@@ -72,6 +79,27 @@ reports, and field-run evidence out of its primary reading paths.
 | Orchestration unit | `Blueprint` |
 | Dataflow model | `Port -> Wire -> Transport` |
 | Product global planner | `octoplanner3d` through `GlobalPlanner` |
-| Legacy planner | `pct`, explicit/manual compatibility |
+| Compatibility planners | `direct` for lightweight/direct paths; `pct` and `astar` for explicit legacy/manual comparison |
 | UI global path payload | `lingtu.global_plan.v1` |
-| ROS 2 role | Compatibility adapter only |
+| ROS 2 role | Compatibility, replay, benchmark, and legacy gate adapter only |
+| Physical field endpoint | `thunder_field` |
+| Field command output | `endpoint_only`: logical `/nav/cmd_vel`, DDS wire `rt/nav/cmd_vel`, then `lingtu-driver` |
+| Brainstem boundary | Remote gRPC target loaded from `/opt/lingtu/config/brainstem.env` |
+| Gateway / MCP defaults | Gateway `5050`, MCP JSON-RPC `8090` |
+
+## Current Evidence Boundaries
+
+| Claim | Minimum current source |
+| --- | --- |
+| Local framework health | Focused Python tests and `stub`/`dev` profile inspection |
+| MuJoCo native navigation/control behavior | `MUJOCO_NAVIGATION_ACCEPTANCE.md` and matching artifacts/manifests |
+| Native endpoint control-mode promotion | `MUJOCO_NATIVE_CONTROL_MODE_ACCEPTANCE.md`; handwritten JSON summaries are not promotion evidence |
+| Physical robot readiness | Fresh field-run evidence under `docs/07-testing/field-runs/` plus robot-side `scripts/lingtu` diagnostics |
+| Historical context | Dated audit, plan, and field-run files only; revalidate before citing as current behavior |
+
+## Current Lab Address Note
+
+Reusable docs should use `$LINGTU_ROBOT_HOST`, `$ROBOT_HOST`, or `<robot-ip>`.
+Keep the active lab target in the operator environment or a dated, access-
+controlled field record. Do not embed live field endpoints in public or
+Web-bundled documentation.

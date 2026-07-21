@@ -19,12 +19,9 @@ from runtime.profiles.resolver import canonical_profile_name
 
 RUNTIME_SWITCH_SCHEMA_VERSION = "lingtu.runtime_switch.v1"
 _MAP_REQUIRED_PROFILES = frozenset(
-    {
-        "teleop_avoid",
-        "tracking",
-        "nav",
-        "inspection",
-    }
+    profile
+    for profile, contract in PRODUCT_MODE_CONTRACTS.items()
+    if contract.requires_map
 )
 _RUNTIME_SWITCH_INFLIGHT_TTL_S = 300.0
 
@@ -164,7 +161,7 @@ def _quiesce_for_cold_switch(gw: Any, command_id: str) -> list[str]:
     from gateway.services.native_control import stop as native_stop
 
     reason = "runtime_switch_pending"
-    wrote_native = native_stop(reason, request_id=command_id)
+    wrote_native = native_stop(gw, reason, request_id=command_id)
     if wrote_native:
         return ["native_navigation.stop_ack", "runtime_switch.pending"]
     if endpoint_only_enabled():
@@ -299,78 +296,6 @@ def _base_response(
     }
 
 
-def _hot_switch_blockers(gw: Any) -> list[str]:
-    blockers: list[str] = []
-    if gw is None:
-        blockers.append("gateway instance is required for hot switch")
-        return blockers
-    if str(getattr(gw, "_session_mode", "") or "").lower() != "navigating":
-        blockers.append("hot switch requires an active navigating session")
-    if bool(getattr(gw, "_session_pending", False)):
-        blockers.append("session transition already pending")
-    return blockers
-
-
-def _execute_hot_switch(
-    gw: Any,
-    raw: Mapping[str, Any],
-    *,
-    plan: Mapping[str, Any],
-    target_profile: str,
-) -> dict[str, Any]:
-    blockers = _hot_switch_blockers(gw)
-    if blockers:
-        return _base_response(
-            raw,
-            plan=plan,
-            status="rejected",
-            ok=False,
-            blockers=blockers,
-        )
-
-    reason = f"product_mode_switch:{target_profile}"
-    contract = PRODUCT_MODE_CONTRACTS[target_profile]
-    mux = getattr(gw, "_cmd_vel_mux", None)
-    freeze = getattr(mux, "freeze", None)
-    unfreeze = getattr(mux, "unfreeze", None)
-    effects: list[str] = []
-    if callable(freeze):
-        freeze()
-        effects.append("velocity_mux.freeze")
-    try:
-        gw.cancel.publish(reason)
-        effects.append("navigation.cancel")
-        gw.stop_cmd.publish(1)
-        effects.append("safety.soft_stop")
-        gw.cmd_vel.publish(Twist())
-        effects.append("cmd_vel.zero")
-        gw.mode_cmd.publish("autonomous")
-        effects.append("mode.autonomous")
-        with gw._state_lock:
-            gw._mode = "autonomous"
-            gw._runtime_product_profile = target_profile
-            gw._runtime_product_mode = contract.product_mode
-            gw._session_product_profile = target_profile
-            gw._session_product_session = contract.product_session
-            gw._runtime_switch_ts = time.time()
-    finally:
-        if callable(unfreeze):
-            unfreeze()
-            effects.append("velocity_mux.unfreeze")
-
-    response = _base_response(
-        raw,
-        plan=plan,
-        status="hot_switched",
-        ok=True,
-        accepted=True,
-        effects=effects,
-    )
-    if hasattr(gw, "push_event"):
-        gw.push_event({"type": "runtime_switch", "data": response})
-    return response
-
-
 def build_runtime_switch_response(
     gw_or_request: Any,
     request: Any | None = None,
@@ -427,12 +352,14 @@ def build_runtime_switch_response(
             command=command,
             blockers=["warm switch is not implemented; use hot or cold"],
         )
-    if execute and strategy in {"auto", "hot"} and lifecycle == "hot_switch":
-        return _execute_hot_switch(
-            gw,
+    if lifecycle == "hot_switch":
+        return _base_response(
             raw,
             plan=plan,
-            target_profile=target_profile,
+            status="rejected",
+            ok=False,
+            command=command,
+            blockers=["online hot switch is not implemented; use a cold restart contract"],
         )
     if strategy == "hot" and lifecycle != "hot_switch":
         return _base_response(

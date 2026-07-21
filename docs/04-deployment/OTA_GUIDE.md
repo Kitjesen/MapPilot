@@ -38,11 +38,11 @@ Lifecycle:
                dependency versions, safety mode, stale transaction logs
 3. Safety gate hot  -> install while running
                warm -> ModeManager -> IDLE, install, resume
-               cold -> robot must sit + disable motors first
+               cold -> robot must sit + disable motors/locomotion first
 4. Download    direct from server -> /opt/lingtu/staging/<version>/
 5. Verify      Ed25519 manifest signature; SHA256 every artifact
 6. Install     write transaction log, swap /opt/lingtu/current, restart lingtu.service
-7. Health      curl http://localhost:5050/api/v1/health (must report ok within 60 s)
+7. Health      curl http://127.0.0.1:5050/api/v1/health on the robot (must report ok within 60 s)
 8. Recover     on next boot, any leftover txn_*.json triggers auto-rollback
 ```
 
@@ -57,8 +57,11 @@ before applying:
 | warm  | mission paused, controllers in IDLE     | ONNX models, BPU `.hbm`          |
 | cold  | sit + motors disabled + maintenance hold | Python source / `.deb` / firmware |
 
-`lingtu` itself ships as a cold artifact today: the agent stops `lingtu.service`,
-swaps the symlink, then starts it again. The five `robot-*` services keep running.
+`lingtu` itself ships as a cold artifact today: the agent stops
+`lingtu.service`, swaps `/opt/lingtu/current`, then starts it again. Native
+field services such as `lingtu-livox-dds`, `lingtu-slam-dds`,
+`lingtu-nav-dds`, and `lingtu-driver` are managed explicitly by the deployment
+or operations procedure for the selected release.
 
 ## 4. Manifest
 
@@ -215,7 +218,9 @@ gh release create v2.0.0 dist/* --title v2.0.0 --notes "Release notes"
 
 Tag push triggers build, signs the manifest, uploads to a GitHub Release. The robot's
 `ota-agent` polls the configured server URL at the interval in
-`/opt/lingtu/nav/ota/config.yaml` (typically 30 s).
+`/opt/lingtu/nav/ota/config.yaml` (typically 30 s). New deployments should keep
+the active application symlink at `/opt/lingtu/current`; `/opt/lingtu/nav/ota`
+is retained as the legacy OTA agent state path.
 
 ## 8. Configuration on the robot
 
@@ -259,7 +264,7 @@ post-mortem auditing.
 | Force-strict signature mode by default        | P1       | Currently warn-only when no public key present |
 | Delta updates (bsdiff/zstd-frame-diff)        | P2       | Current full tarballs are ~50 MB each          |
 | A/B partition for system-level packages       | P2       | Out of scope for `lingtu` itself; relevant if we ship `.deb`s |
-| Smoke-test step after install                 | P1       | Run a small ROS2 topic-rate test before declaring success |
+| Smoke-test step after install                 | P1       | Run native Gateway/service/dataflow readiness before declaring success |
 | Fleet dashboard                               | P3       | Needed once robot count > 5                    |
 
 ## 11. Related

@@ -376,7 +376,7 @@ def _check_profile(profile: str) -> Check:
     if str(ROOT_DIR) not in sys.path:
         sys.path.insert(0, str(ROOT_DIR))
 
-    from runtime.introspection.profile_graph import graph_for_profile
+    from lingtu.assembly.graph import graph_for_profile
     from runtime.profiles.resolver import resolve_profile_config
     from runtime.runtime_interface import DATA_SOURCE_CONTRACTS, profile_data_source
 

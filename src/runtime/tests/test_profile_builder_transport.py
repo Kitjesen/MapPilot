@@ -8,6 +8,10 @@ class _FakeBlueprint:
         self.build_transport = "not-called"
         self.route_contract_name = None
 
+    @property
+    def module_names(self) -> tuple[str, ...]:
+        return ()
+
     def build(self, transport=None) -> str:
         self.build_transport = transport
         return "system"
@@ -31,7 +35,7 @@ class _FakeBackend:
 
 
 def test_local_module_transport_uses_blueprint_default_transport() -> None:
-    from runtime.blueprints.profile_builder import module_transport_for_resolved_config
+    from lingtu.assembly.profile_builder import module_transport_for_resolved_config
 
     assert module_transport_for_resolved_config({"_module_transport": "local"}) is None
     assert module_transport_for_resolved_config({}) is None
@@ -39,7 +43,7 @@ def test_local_module_transport_uses_blueprint_default_transport() -> None:
 
 def test_nonlocal_module_transport_is_wrapped_for_module_ports(monkeypatch) -> None:
     import runtime.transport.factory as factory_mod
-    from runtime.blueprints.profile_builder import module_transport_for_resolved_config
+    from lingtu.assembly.profile_builder import module_transport_for_resolved_config
     from runtime.transport.abc import TransportStrategy
 
     calls: list[str] = []
@@ -58,7 +62,7 @@ def test_nonlocal_module_transport_is_wrapped_for_module_ports(monkeypatch) -> N
 
 
 def test_lcm_module_transport_is_not_supported() -> None:
-    from runtime.blueprints.profile_builder import module_transport_for_resolved_config
+    from lingtu.assembly.profile_builder import module_transport_for_resolved_config
 
     try:
         module_transport_for_resolved_config({"module_transport": "zmq"})
@@ -69,7 +73,7 @@ def test_lcm_module_transport_is_not_supported() -> None:
 
 
 def test_resolved_endpoint_route_contract_is_boundary_metadata() -> None:
-    from runtime.blueprints.profile_builder import (
+    from lingtu.assembly.profile_builder import (
         route_contract_name_for_resolved_config,
         validate_route_contract_for_resolved_config,
     )
@@ -85,7 +89,7 @@ def test_resolved_endpoint_route_contract_is_boundary_metadata() -> None:
 
 
 def test_build_system_from_resolved_profile_attaches_route_contract(monkeypatch) -> None:
-    import runtime.blueprints.profile_builder as builder_mod
+    import lingtu.assembly.profile_builder as builder_mod
 
     fake_bp = _FakeBlueprint()
     monkeypatch.setattr(
@@ -99,20 +103,18 @@ def test_build_system_from_resolved_profile_attaches_route_contract(monkeypatch)
         lambda config: None,
     )
 
-    builder_mod.build_system_from_resolved_profile(
-        "nav",
-        {
-            "_runtime_endpoint": "thunder_field",
-            "_endpoint_transport": "dds",
-            "_endpoint_contract": "thunder_field_dds_v1",
-        },
-    )
+    from runtime.profiles.resolver import resolve_profile_config
+
+    config = resolve_profile_config("nav")
+    config["_endpoint_transport"] = "dds"
+    config["_endpoint_contract"] = "thunder_field_dds_v1"
+    builder_mod.build_system_from_resolved_profile("nav", config)
 
     assert fake_bp.route_contract_name == "robot"
 
 
 def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch) -> None:
-    import runtime.blueprints.profile_builder as builder_mod
+    import lingtu.assembly.profile_builder as builder_mod
 
     fake_bp = _FakeBlueprint()
     sentinel_transport: Any = object()
@@ -129,7 +131,7 @@ def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch)
     )
 
     system = builder_mod.build_system_from_resolved_profile(
-        "nav",
+        "lite",
         {"robot": "thunder", "module_transport": "shm"},
     )
 
@@ -138,7 +140,7 @@ def test_build_system_from_resolved_profile_honors_module_transport(monkeypatch)
 
 
 def test_build_system_from_resolved_profile_keeps_local_default_fresh(monkeypatch) -> None:
-    import runtime.blueprints.profile_builder as builder_mod
+    import lingtu.assembly.profile_builder as builder_mod
 
     fake_bp = _FakeBlueprint()
     monkeypatch.setattr(

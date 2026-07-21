@@ -1,38 +1,39 @@
-# LingTu API 文档
+# LingTu API Docs
 
-> 自动提取的 API 文档，与代码同源。
+Generated API inventories. Regenerate them from source before relying on route
+or tool counts.
 
-## 文档索引
+## Index
 
-| 文档 | 描述 | 来源 |
+| Doc | Description | Source |
 |------|------|------|
-| [MCP 工具](mcp_tools.md) | 所有 `@skill` 装饰器暴露的 MCP 工具（JSON-RPC） | 扫描 `src/` 下所有 Module 文件 |
-| [Gateway REST API](gateway_rest.md) | GatewayModule REST 端点（FastAPI, port 5050） | 扫描 `src/gateway/routes/` 路由注册 |
+| [MCP tools](mcp_tools.md) | `@skill` methods exposed through JSON-RPC MCP | Scans Module source files under `src/` |
+| [Gateway REST API](gateway_rest.md) | Gateway REST/HTTP endpoints on port 5050 | Scans FastAPI route registrations under `src/gateway/routes/` |
 
-## 生成命令
+## Regenerate
 
 ```bash
-# 重新生成两份文档
 python scripts/docs/extract_api_docs.py
 ```
 
-## 架构分层
+## Runtime boundary
 
 ```
 L0  Safety    REST: /api/v1/stop, /api/v1/mode
-L1  Hardware  MCP tools via driver backends (thunder/stub/sim)
+L1  Hardware  native field services and the unique `lingtu-driver` speed exit
 L2  Maps      REST: /api/v1/maps/*, /api/v1/slam/*
 L3  Perception REST: /api/v1/scene_graph, /api/v1/camera/*
     Memory    REST: /api/v1/locations, /api/v1/memory/*
 L4  Decision  REST: /api/v1/instruction, /api/v1/goal
 L5  Planning  REST: /api/v1/navigation/*
 L6  Interface REST: /api/v1/app/*, /api/v1/health
-               MCP: http://<robot>:8090/mcp
+               MCP: http://<robot-ip-or-hostname>:8090/mcp
 ```
 
-## 协议
+## Protocols
 
 - **REST**: JSON over HTTP, Pydantic v2 request/response models, 422 on validation error
 - **SSE**: `GET /api/v1/events` — `text/event-stream`
-- **WebSocket**: `ws://<robot>:5050/ws/teleop` — teleop joystick + camera
-- **MCP**: `http://<robot>:8090/mcp` — JSON-RPC 2.0
+- **WebSocket**: `ws://<robot-ip-or-hostname>:5050/ws/teleop` for teleop and `ws://<robot-ip-or-hostname>:5050/ws/camera` as the JPEG camera fallback
+- **WHEP**: `POST /api/v1/webrtc/whep` proxies low-latency camera signalling to the configured go2rtc sidecar
+- **MCP**: `http://<robot-ip-or-hostname>:8090/mcp` — JSON-RPC 2.0

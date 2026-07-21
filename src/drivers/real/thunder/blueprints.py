@@ -1,8 +1,8 @@
 """Compatibility shims for old Thunder blueprint import paths.
 
 New code should import product blueprints from
-``runtime.blueprints.products.thunder``. Driver packages own hardware modules only;
-product composition lives under ``runtime.blueprints.products``.
+``lingtu.assembly.products.thunder``. Driver packages own hardware modules only;
+product composition lives under ``lingtu.assembly.products``.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import warnings
 from typing import Any
 
 from runtime.blueprint import Blueprint
-from runtime.blueprints.products.thunder import (
+from lingtu.assembly.products.thunder import (
     thunder_basic_blueprint,
     thunder_nav_blueprint,
 )
@@ -33,7 +33,7 @@ def _warn_legacy(name: str) -> None:
     warnings.warn(
         (
             f"drivers.real.thunder.blueprints.{name} is deprecated; "
-            "use runtime.blueprints.products.thunder instead."
+            "use lingtu.assembly.products.thunder instead."
         ),
         DeprecationWarning,
         stacklevel=3,

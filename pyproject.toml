@@ -147,7 +147,7 @@ known-first-party = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"src/runtime/tests/*" = ["F811", "E402", "D"]
+"src/runtime/tests/*" = ["F811", "E402", "D", "S101"]
 "src/perception/*/test*" = ["F811", "E402", "D"]
 "src/decision/*/test*" = ["F811", "E402", "D"]
 "src/decision/tests/*" = ["S101"]

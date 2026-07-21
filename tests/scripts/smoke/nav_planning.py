@@ -18,7 +18,7 @@ if not os.path.exists(tomogram):
 print("Tomogram: %s" % tomogram)
 
 # Build system with real tomogram (no SLAM, no gateway; planning only)
-from runtime.blueprints.profile_builder import blueprint_for_resolved_profile
+from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
 bp = blueprint_for_resolved_profile("stub", dict(
     robot="stub", slam_profile="none",
     enable_native=False, enable_semantic=False, enable_gateway=False,

@@ -300,7 +300,7 @@ def test_slam_module_save_map_writes_contract_artifacts(tmp_path, monkeypatch) -
 
 
 def test_slam_stack_defaults_to_native_slam_module() -> None:
-    from runtime.blueprints.stacks.slam import slam, slam_module_name
+    from lingtu.assembly.stacks.slam import slam, slam_module_name
 
     bp = slam("fastlio2", enable_visual_backup=False)
 
@@ -309,7 +309,7 @@ def test_slam_stack_defaults_to_native_slam_module() -> None:
 
 
 def test_ros2_bridge_compatibility_is_removed(monkeypatch) -> None:
-    from runtime.adapters.localization import localization_adapter_module
+    from localization.adapters.resolver import localization_adapter_module
 
     monkeypatch.delenv("LINGTU_ENABLE_ROS2_COMPAT", raising=False)
     monkeypatch.delenv("LINGTU_ENABLE_LEGACY_ROS2_SERVICES", raising=False)
@@ -320,7 +320,7 @@ def test_ros2_bridge_compatibility_is_removed(monkeypatch) -> None:
 
 def test_slam_stack_does_not_restore_removed_ros2_bridge(monkeypatch) -> None:
     import lingtu.plugin_seed as plugin_seed
-    from runtime.blueprints.stacks.slam import slam
+    from lingtu.assembly.stacks.slam import slam
 
     monkeypatch.setenv("LINGTU_ENABLE_ROS2_COMPAT", "1")
     plugin_seed = importlib.reload(plugin_seed)
@@ -338,7 +338,7 @@ def test_slam_stack_does_not_restore_removed_ros2_bridge(monkeypatch) -> None:
 
 
 def test_native_slam_wiring_covers_old_bridge_consumers() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
     from runtime.runtime_interface import TOPICS
 
     modules = {
@@ -391,7 +391,7 @@ def test_native_slam_wiring_covers_old_bridge_consumers() -> None:
 
 
 def test_native_slam_wiring_keeps_lidar_module_as_compat_fallback() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
     from runtime.runtime_interface import TOPICS
 
     specs = full_stack_wire_specs(
@@ -417,7 +417,7 @@ def test_native_slam_wiring_keeps_lidar_module_as_compat_fallback() -> None:
 
 
 def test_mujoco_slam_wiring_prefers_lidar_role_over_driver_sensor_ports() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
     from runtime.runtime_interface import TOPICS
 
     specs = full_stack_wire_specs(
@@ -443,7 +443,7 @@ def test_mujoco_slam_wiring_prefers_lidar_role_over_driver_sensor_ports() -> Non
 
 
 def test_slam_wiring_prefers_lidar_imu_over_independent_imu_role() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
     from runtime.runtime_interface import TOPICS
 
     specs = full_stack_wire_specs(
@@ -466,7 +466,7 @@ def test_slam_wiring_prefers_lidar_imu_over_independent_imu_role() -> None:
 
 
 def test_mujoco_slam_wiring_does_not_use_driver_sensor_ports_by_default() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
 
     specs = full_stack_wire_specs(
         {
@@ -485,7 +485,7 @@ def test_mujoco_slam_wiring_does_not_use_driver_sensor_ports_by_default() -> Non
 
 
 def test_mujoco_slam_wiring_keeps_driver_sensor_ports_as_legacy_fallback() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
     from runtime.runtime_interface import TOPICS
 
     specs = full_stack_wire_specs(
@@ -511,7 +511,7 @@ def test_mujoco_slam_wiring_keeps_driver_sensor_ports_as_legacy_fallback() -> No
 
 
 def test_slam_wiring_prefers_gnss_role_for_gnss_odom() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
 
     specs = full_stack_wire_specs(
         {
@@ -529,7 +529,7 @@ def test_slam_wiring_prefers_gnss_role_for_gnss_odom() -> None:
 
 
 def test_slam_wiring_keeps_gnss_module_as_compat_fallback() -> None:
-    from runtime.blueprints.full_stack_wiring import full_stack_wire_specs
+    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
 
     specs = full_stack_wire_specs(
         {

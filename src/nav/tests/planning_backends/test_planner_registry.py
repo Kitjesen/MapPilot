@@ -45,6 +45,7 @@ class TestPlannerRegistry:
     def test_planner_name_normalization_preserves_canonical_names(self):
         """Canonical planner names remain unchanged."""
         assert normalize_planner_name("octoplanner3d") == "octoplanner3d"
+        assert normalize_planner_name("far") == "far"
 
     def test_planner_name_normalization_maps_octplanner_alias(self):
         """Historical octplanner spelling maps to the OctoPlanner3D backend."""
@@ -55,9 +56,9 @@ class TestPlannerRegistry:
         assert "planner_backend" in seeded_registry
 
     def test_planner_backend_list(self, seeded_registry):
-        """Product registry exposes only the product global planner."""
+        """Registry exposes the default planner and the explicit optional FAR backend."""
         backends = list_plugins("planner_backend")
-        assert backends == ["octoplanner3d"]
+        assert backends == ["far", "octoplanner3d"]
 
     def test_planner_backend_get_pct_rejected(self, seeded_registry):
         """PCT is legacy-only and is not seeded as a product planner backend."""
@@ -85,6 +86,19 @@ class TestPlannerRegistry:
         assert "description" in meta
         assert "OctoPlanner3D" in meta["description"]
 
+    def test_planner_backend_metadata_far(self, seeded_registry):
+        """FAR advertises its optional native and occupancy-map contract."""
+        meta = get_metadata("planner_backend", "far")
+        assert meta["optional"] is True
+        assert meta["supported_map_extensions"] == [".npz"]
+        assert "map_generation" in meta["input_schema"]["required"]
+
+    def test_far_registry_lookup_does_not_load_native_library(self, seeded_registry):
+        """Plugin discovery remains available on hosts without the optional binary."""
+        backend_cls = get("planner_backend", "far")
+        assert backend_cls.__name__ == "FarBackend"
+        assert callable(backend_cls.plan_request)
+
     def test_planner_backend_seeding_idempotent(self, seeded_registry):
         """Seeding plugins twice does not duplicate entries."""
         before = list_plugins("planner_backend")
@@ -97,7 +111,7 @@ class TestPlannerRegistry:
         backend_names = ["octoplanner3d"]
         for name in backend_names:
             BackendCls = get("planner_backend", name)
-            instance = BackendCls(tomogram_path="")
+            instance = BackendCls(map_path="")
             assert instance is not None
             assert isinstance(instance, GlobalPlannerBackend)
             assert callable(instance.plan_request)
