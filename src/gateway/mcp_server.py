@@ -133,6 +133,11 @@ class MCPServerModule(Module, layer=6):
         self._host = host
         self._require_api_key = require_api_key
         self._server_thread: threading.Thread | None = None
+        self._server: Any | None = None
+        self._stop_event = threading.Event()
+        self._server_error: str | None = None
+        self._lifecycle_lock = threading.RLock()
+        self._stopping = False
 
         # Cached telemetry (written by subscriptions)
         self._odom: dict | None = None
@@ -276,14 +281,66 @@ class MCPServerModule(Module, layer=6):
         self.mission_status.subscribe(self._on_mission)
 
     def start(self) -> None:
-        super().start()
-        self._server_thread = threading.Thread(target=self._run_server, daemon=True, name="mcp-server")
-        self._server_thread.start()
-        logger.info("MCP Server at http://%s:%d/mcp", self._host, self._port)
+        with self._lifecycle_lock:
+            if self._closed:
+                raise RuntimeError("MCPServerModule cannot be restarted after stop")
+            if self._stopping:
+                raise RuntimeError("MCPServerModule cannot be started while stopping")
+
+            thread = self._server_thread
+            if thread is not None and thread.is_alive():
+                logger.debug("MCP server thread already running")
+                return
+
+            self._stop_event.clear()
+            self._server_error = None
+            stop_event = self._stop_event
+            thread = threading.Thread(
+                target=self._run_server,
+                args=(stop_event,),
+                daemon=True,
+                name="mcp-server",
+            )
+            self._server_thread = thread
+            try:
+                thread.start()
+            except Exception:
+                self._server_thread = None
+                raise
+            super().start()
+
+        logger.info("MCP server thread starting on %s:%d", self._host, self._port)
 
     def stop(self) -> None:
-        self._server_thread = None
-        super().stop()
+        with self._lifecycle_lock:
+            self._stopping = True
+            self._stop_event.set()
+            server = self._server
+            thread = self._server_thread
+
+        try:
+            if server is not None:
+                try:
+                    server.should_exit = True
+                except Exception:
+                    logger.debug("failed to signal MCP uvicorn shutdown", exc_info=True)
+
+            current = threading.current_thread()
+            if thread is not None and thread is not current and thread.is_alive():
+                thread.join(timeout=2.0)
+
+            with self._lifecycle_lock:
+                if self._server_thread is thread:
+                    if thread is None or not thread.is_alive():
+                        self._server_thread = None
+                    elif thread is not current:
+                        logger.warning("MCP server thread did not stop within timeout")
+        finally:
+            try:
+                super().stop()
+            finally:
+                with self._lifecycle_lock:
+                    self._stopping = False
 
     # -- subscription callbacks --------------------------------------------
 
@@ -590,7 +647,14 @@ class MCPServerModule(Module, layer=6):
 
     # -- FastAPI + MCP JSON-RPC endpoint -----------------------------------
 
-    def _run_server(self) -> None:
+    def _run_server(
+        self,
+        stop_event: threading.Event | None = None,
+    ) -> bool:
+        stop_event = stop_event if stop_event is not None else self._stop_event
+        server = None
+        current = threading.current_thread()
+        self._server_error = None
         try:
             import os
 
@@ -599,8 +663,12 @@ class MCPServerModule(Module, layer=6):
             from fastapi.middleware.cors import CORSMiddleware
             from fastapi.responses import JSONResponse
         except ImportError:
+            self._server_error = "FastAPI or uvicorn is not installed"
+            with self._lifecycle_lock:
+                if self._server_thread is current:
+                    self._server_thread = None
             logger.error("FastAPI not installed -run: pip install fastapi uvicorn")
-            return
+            return False
 
         cors_origins = os.environ.get(
             "LINGTU_CORS_ORIGINS",
@@ -685,15 +753,60 @@ class MCPServerModule(Module, layer=6):
                 "has_handle": mcp._system_handle is not None,
             }
 
-        uvicorn.run(app, host=self._host, port=self._port, log_level="warning")
+        try:
+            config = uvicorn.Config(
+                app,
+                host=self._host,
+                port=self._port,
+                log_level="warning",
+            )
+            server = uvicorn.Server(config)
+            with self._lifecycle_lock:
+                self._server = server
+            if stop_event.is_set():
+                server.should_exit = True
+            server.run()
+
+            if bool(getattr(server, "should_exit", False)) or bool(getattr(server, "force_exit", False)):
+                return True
+
+            message = "uvicorn returned without shutdown signal"
+            self._server_error = message
+            logger.error("MCP %s", message)
+            return False
+        except SystemExit as exc:
+            self._server_error = f"SystemExit: {exc}"
+            logger.error("MCP uvicorn exited during startup: %s", exc)
+            return False
+        except Exception as exc:
+            self._server_error = f"{type(exc).__name__}: {exc}"
+            logger.exception("MCP uvicorn crashed")
+            return False
+        finally:
+            with self._lifecycle_lock:
+                if server is not None and self._server is server:
+                    self._server = None
+                if self._server_thread is current:
+                    self._server_thread = None
 
     # -- Module health summary ---------------------------------------------
 
     def health(self) -> dict[str, Any]:
+        with self._lifecycle_lock:
+            thread = self._server_thread
+            server = self._server
+            thread_alive = bool(thread is not None and thread.is_alive())
+            server_started = bool(getattr(server, "started", False))
+
         info = super().port_summary()
         info["mcp"] = {
             "port": self._port,
             "tools": len(self._tool_list),
             "has_handle": self._system_handle is not None,
+            "thread_alive": thread_alive,
+            "server_started": server_started,
+            "stop_requested": self._stop_event.is_set(),
+            "stopping": self._stopping,
+            "last_error": self._server_error,
         }
         return info

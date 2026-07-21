@@ -148,45 +148,42 @@ def _mcp_auth_kwargs(app):
     raise AssertionError("APIKeyMiddleware was not installed")
 
 
+def _capture_mcp_app(monkeypatch, module):
+    captured = {}
+
+    class CaptureServer:
+        def __init__(self, config):
+            captured["app"] = config.app
+            self.should_exit = False
+            self.force_exit = False
+
+        def run(self):
+            self.should_exit = True
+
+    monkeypatch.setattr("uvicorn.Server", CaptureServer)
+    assert module._run_server() is True
+    return captured["app"]
+
+
 def test_mcp_server_requires_key_by_default_on_non_localhost(monkeypatch):
     from gateway.mcp_server import MCPServerModule
 
-    captured = {}
+    app = _capture_mcp_app(monkeypatch, MCPServerModule(host="0.0.0.0"))
 
-    def capture_run(app, **kwargs):
-        captured["app"] = app
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr("uvicorn.run", capture_run)
-    MCPServerModule(host="0.0.0.0")._run_server()
-
-    assert _mcp_auth_kwargs(captured["app"])["require_key"] is True
+    assert _mcp_auth_kwargs(app)["require_key"] is True
 
 
 def test_mcp_server_keeps_localhost_dev_pass_through_by_default(monkeypatch):
     from gateway.mcp_server import MCPServerModule
 
-    captured = {}
+    app = _capture_mcp_app(monkeypatch, MCPServerModule(host="127.0.0.1"))
 
-    def capture_run(app, **kwargs):
-        captured["app"] = app
-        captured["kwargs"] = kwargs
-
-    monkeypatch.setattr("uvicorn.run", capture_run)
-    MCPServerModule(host="127.0.0.1")._run_server()
-
-    assert _mcp_auth_kwargs(captured["app"])["require_key"] is False
+    assert _mcp_auth_kwargs(app)["require_key"] is False
 
 
 def _capture_mcp_endpoint(monkeypatch, module):
-    captured = {}
-
-    def capture_run(app, **kwargs):
-        captured["app"] = app
-
-    monkeypatch.setattr("uvicorn.run", capture_run)
-    module._run_server()
-    return next(route.endpoint for route in captured["app"].routes if getattr(route, "path", None) == "/mcp")
+    app = _capture_mcp_app(monkeypatch, module)
+    return next(route.endpoint for route in app.routes if getattr(route, "path", None) == "/mcp")
 
 
 def test_unknown_mcp_tool_is_invalid_params_error(monkeypatch):
