@@ -13,7 +13,8 @@ algorithms.
 | --- | --- |
 | HTTP, WebSocket, SSE server | `gateway_module.py`, `routes/` |
 | MCP tool server | `mcp_server.py` |
-| request and response schemas | `schemas.py` |
+| request and response schema interface | `schemas.py` |
+| domain-grouped schema implementation | `_schemas/` |
 | route helper logic | `services/` |
 | inspection HTTP surface | `routes/inspection.py` plus native inspection/evidence service adapters |
 | dashboard templates and static assets | `templates/` |
@@ -57,6 +58,7 @@ inspection route command
 | --- | --- |
 | `routes/` | FastAPI route registration and thin request handlers |
 | `services/` | Shared route helpers such as status, goal building, map safety, traffic |
+| `_schemas/` | Internal domain-grouped schema implementation; callers use `gateway.schemas` |
 | `tests/` | Gateway-owned tests |
 | `templates/` | Dashboard HTML templates |
 

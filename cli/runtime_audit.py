@@ -70,6 +70,7 @@ SOURCE_FRAME_CONTRACT_ROOTS = (
     "src/runtime/msgs",
     "src/lingtu/assembly",
     "src/gateway/schemas.py",
+    "src/gateway/_schemas",
     "src/gateway/services/control_commands.py",
     "src/gateway/services/goal_builder.py",
     "src/gateway/services/runtime_status.py",

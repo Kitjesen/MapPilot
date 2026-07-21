@@ -1324,6 +1324,19 @@ def test_runtime_audit_default_prints_operator_summary(monkeypatch, capsys):
     assert '"schema_version":' not in out
 
 
+def test_runtime_audit_scans_gateway_schema_implementation_files():
+    from cli.runtime_audit import _source_frame_contract_paths
+
+    checked_files = {
+        relative_path
+        for relative_path, _ in _source_frame_contract_paths()
+    }
+
+    assert "src/gateway/schemas.py" in checked_files
+    assert "src/gateway/_schemas/common.py" in checked_files
+    assert "src/gateway/_schemas/runtime_contracts.py" in checked_files
+
+
 def test_runtime_audit_writes_json_out(monkeypatch, tmp_path, capsys):
     import cli.main as main_mod
 
@@ -1345,6 +1358,7 @@ def test_runtime_audit_writes_json_out(monkeypatch, tmp_path, capsys):
     assert payload["checks"]["source_frame_contracts"]["matches"] == []
     assert "sim/scripts/mujoco/live_gate.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
     assert "src/gateway/schemas.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
+    assert "src/gateway/_schemas/common.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
     assert "src/runtime/msgs/geometry.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
     assert "src/runtime/msgs/nav.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
     assert "src/drivers/real/lidar/module.py" in payload["checks"]["source_frame_contracts"]["checked_files"]
