@@ -387,8 +387,8 @@ def test_lidar_network_service_waits_for_managed_eth1_before_secondary_address()
 def test_thunder_traversability_dds_service_runs_cpp_runtime() -> None:
     text = _read("scripts/deploy/thunder/lingtu-traversability-dds.service")
     installer = _read("scripts/deploy/thunder/install_traversability_dds_service.sh")
-    source = _read("src/nav/services/endpoint/cpp/traversability_dds.cpp")
-    cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
+    source = _read("src/nav/cpp/endpoint/traversability_dds.cpp")
+    cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     topics = _read("src/message/cpp/dds_topics.hpp")
     idl = _read("src/message/idl/lingtu_slam.idl")
 
@@ -634,7 +634,7 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
     installer = _read("scripts/deploy/thunder/install_camera_dds_service.sh")
     build = _read("scripts/build/build_camera_dds.sh")
     cmake = _read("src/drivers/real/camera/native/CMakeLists.txt")
-    nav_cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
+    nav_cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     source = _read("src/drivers/real/camera/native/camera_dds.cpp")
     topics = _read("src/message/cpp/dds_topics.hpp")
     idl = _read("src/message/idl/lingtu_slam.idl")
@@ -720,24 +720,29 @@ def test_thunder_camera_dds_service_is_optional_and_fails_without_native_publish
 
 def test_thunder_nav_dds_service_enables_bounded_local_planner_diagnostics() -> None:
     text = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
+    runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
 
     assert "LINGTU_NAV_STATUS_S=0.2" in text
     assert "LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES=18" in text
     assert "LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=640" in text
-    assert '--local-planner-debug-candidates "${LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES}"' in text
-    assert '--local-map-debug-points "${LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS}"' in text
-
+    assert '--local-planner-debug-candidates "${LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES}"' in runner
+    assert '--local-map-debug-points "${LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS}"' in runner
 
 def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     text = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
-    source = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
-    config_source = _read("src/nav/services/endpoint/cpp/nav_endpoint_config.cpp")
+    runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
+    source = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
+    config_source = _read("src/nav/cpp/endpoint/nav_endpoint_config.cpp")
 
     assert "Description=LingTu native navigation DDS endpoint" in text
     assert "Wants=network-online.target lingtu-traversability-dds.service" not in text
-    assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint" in text
-    assert "LINGTU_LOCAL_PLANNER_PATHS=/opt/lingtu/current/src/nav/services/plan/local_planner/paths" in text
+    assert "LINGTU_NAV_DDS_BIN=/opt/lingtu/current/build/nav_endpoint/navd" in text
+    assert "LINGTU_LOCAL_PLANNER_PATHS=/opt/lingtu/current/src/nav/local/paths" in text
+    assert "LINGTU_NAV_GLOBAL_PLANNER=octoplanner3d" in text
     assert "LINGTU_ACTIVE_OCTOMAP=" in text
+    assert "LINGTU_ACTIVE_OCCUPANCY=" in text
+    assert "EnvironmentFile=-/etc/lingtu/nav.env" in text
+    assert "run_nav_dds.sh" in text
     assert "LINGTU_NAV_CONTROL_MODE=autonomy" in text
     assert "LINGTU_NAV_MAX_SPEED_MPS=0.4" in text
     assert "LINGTU_NAV_MAX_ACCEL_MPS2=1.0" in text
@@ -758,31 +763,34 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "StateDirectory=lingtu" in text
     assert "LINGTU_NAV_ESTOP_LATCH_FILE=/var/lib/lingtu/nav_estop_latched" in text
     assert "LINGTU_NAV_STATUS_S=0.2" in text
-    assert "--path-library" in text
-    assert "--control-mode" in text
+    assert "--path-library" in runner
+    assert "--control-mode" in runner
+    assert "--global-planner" in runner
+    assert "LINGTU_ACTIVE_PLANNER_MAP" in runner
     assert "--max-speed-mps" in config_source
     assert "--max-accel-mps2" in config_source
-    assert "--max-obstacle-points" in text
-    assert "--publish-cmd-vel" in text
-    assert "--check-obstacle" in text
-    assert "--use-traversability-cost" in text
-    assert "--traversability-max-age-s" in text
-    assert "--localization-health-max-age-s" in text
-    assert "--allow-legacy-motion-inputs" in text
-    assert "--terrain-map-max-age-s" in text
-    assert "--odom-max-age-s" in text
-    assert "--tf-max-age-s" in text
-    assert "--cloud-max-age-s" in text
-    assert "--cloud-pose-max-gap-s" in text
-    assert "--input-recovery-frames" in text
-    assert "--status-file" in text
-    assert "--estop-latch-file" in text
-    assert '--status-s "${LINGTU_NAV_STATUS_S}"' in text
-    assert "--gateway-host" not in text
-    assert "--gateway-port" not in text
-    assert "native navigation DDS endpoint is missing or not executable" in text
-    assert "build_nav_endpoint.sh" in text
+    assert "--max-obstacle-points" in runner
+    assert "--publish-cmd-vel" in runner
+    assert "--check-obstacle" in runner
+    assert "--use-traversability-cost" in runner
+    assert "--traversability-max-age-s" in runner
+    assert "--localization-health-max-age-s" in runner
+    assert "--allow-legacy-motion-inputs" in runner
+    assert "--terrain-map-max-age-s" in runner
+    assert "--odom-max-age-s" in runner
+    assert "--tf-max-age-s" in runner
+    assert "--cloud-max-age-s" in runner
+    assert "--cloud-pose-max-gap-s" in runner
+    assert "--input-recovery-frames" in runner
+    assert "--status-file" in runner
+    assert "--estop-latch-file" in runner
+    assert '--status-s "${LINGTU_NAV_STATUS_S}"' in runner
+    assert "--gateway-host" not in runner
+    assert "--gateway-port" not in runner
+    assert "native navigation DDS endpoint is missing or not executable" in runner
+    assert "build_nav_endpoint.sh" in runner
     assert "ros2-env.sh" not in text
+    assert "ros2-env.sh" not in runner
     assert "LINGTU_NAV_CHECK_OBSTACLE" in config_source
     assert "LINGTU_NAV_MAX_SPEED_MPS" in config_source
     assert "LINGTU_NAV_MAX_ACCEL_MPS2" in config_source
@@ -819,7 +827,7 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "pose_buffer.sample(cloud_stamp_s, cfg.cloud_pose_max_gap_s)" in source
     assert "headerStampSeconds(msg.header)" in source
     assert "cloud_sync.pose_rejected" in source
-    status = _read("src/nav/services/endpoint/cpp/nav_status_writer.cpp")
+    status = _read("src/nav/cpp/endpoint/nav_status_writer.cpp")
     assert "motion_layer" in status
     assert "last_sensor_origin" in status
     assert "dynamic_objects" in status
@@ -839,24 +847,23 @@ def test_thunder_nav_dds_service_diagnoses_missing_endpoint_binary() -> None:
     assert "cloud_stamp_rejected" in status
     assert "last_pose_gap_s" in status
     assert "terrain_map_ext_diagnostics_only" in status
-    assert "cloud_stale" in _read("src/nav/services/endpoint/cpp/test_input_gate.cpp")
-
+    assert "cloud_stale" in _read("src/nav/cpp/endpoint/test_input_gate.cpp")
 
 def test_external_global_path_requires_driver_control_state() -> None:
-    source = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
+    source = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
     global_path_handler = source.split("dds.drainLegacyGlobalPath", 1)[1].split(
         "dds.drainTraversability", 1
     )[0]
 
-    assert "driver_control_blocker(nowSeconds())" in global_path_handler
+    assert "driver_control_blocker()" in global_path_handler
+    assert "path_driver_blocker" in global_path_handler
     assert "frames.path_rejected" in global_path_handler
 
-
 def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> None:
-    native = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
-    messages = _read("src/nav/services/endpoint/cpp/nav_endpoint_messages.cpp")
-    runtime = _read("src/nav/services/endpoint/cpp/nav_dds_runtime.cpp")
-    runtime_h = _read("src/nav/services/endpoint/cpp/nav_dds_runtime.hpp")
+    native = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
+    messages = _read("src/nav/cpp/endpoint/nav_endpoint_messages.cpp")
+    runtime = _read("src/nav/cpp/endpoint/nav_dds_runtime.cpp")
+    runtime_h = _read("src/nav/cpp/endpoint/nav_dds_runtime.hpp")
     text = "\n".join([native, messages, runtime, runtime_h])
 
     assert 'name == "intensity"' in text
@@ -877,20 +884,19 @@ def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> N
     assert "obstacle_xyzh.clear()" in text
     assert "buildPlannerObstacleCloud(" in text
     assert "appendXyzhCloudDedupe(" in messages
-    assert "const bool registered_active = !registered_xyzh.empty()" in messages
-    assert "const bool terrain_active = terrain_map_fresh && !terrain_xyzh.empty()" in messages
-    assert "(void)terrain_ext_xyzh" in messages
-    assert "(void)terrain_ext_fresh" in messages
-    assert "const bool terrain_ext_active" not in messages
+    assert "config.registered_share > 0.0 && !registered_xyzh.empty()" in messages
+    assert "config.terrain_share > 0.0 && terrain_map_fresh" in messages
+    assert "config.terrain_ext_share > 0.0 && terrain_ext_fresh" in messages
+    assert "const bool terrain_ext_active" in messages
     assert "registered_budget" in messages
     assert "terrain_budget" in messages
-    assert "terrain_ext_budget" not in messages
-    assert "double terrain_ext_share{0.0};" in _read("src/nav/services/endpoint/cpp/nav_endpoint_messages.hpp")
-    assert "double obstacle_terrain_ext_share{0.0};" in _read("src/nav/services/endpoint/cpp/nav_endpoint_config.hpp")
+    assert "terrain_ext_budget" in messages
+    assert "double terrain_ext_share{0.0};" in _read("src/nav/cpp/endpoint/nav_endpoint_messages.hpp")
+    assert "double obstacle_terrain_ext_share{0.0};" in _read("src/nav/cpp/endpoint/nav_endpoint_config.hpp")
     assert "registered_xyzh," in messages
     assert "terrain_xyzh," in messages
     assert "terrain_map_fresh ? terrain_xyzh : obstacle_xyzh" not in text
-    status = _read("src/nav/services/endpoint/cpp/nav_status_writer.cpp")
+    status = _read("src/nav/cpp/endpoint/nav_status_writer.cpp")
     assert "has_terrain_map" in status
     assert "has_terrain_map_ext" in status
     assert "terrain_maps" in status
@@ -898,14 +904,13 @@ def test_nav_endpoint_uses_relative_height_when_cloud_has_no_height_field() -> N
     assert "map_clearing" in status
     assert "cloud_clearing" in status
     assert "navigation_compute_owner" in status
-    assert "lingtu_nav_native_endpoint" in status
+    assert "navd" in status
     assert "local_path_role" in status
     assert "dds_telemetry_and_preview" in status
     assert "path_follower_role" in status
     assert "embedded_before_cmd_vel_gate" in status
     assert "cmd_vel_role" in status
     assert "final_navigation_command_output_when_enabled" in status
-
 
 def test_thunder_slam_dds_installer_is_explicit_cpp_slam_boundary() -> None:
     text = _read("scripts/deploy/thunder/install_slam_dds_service.sh")
@@ -970,12 +975,25 @@ def test_release_script_uses_thunder_product_wording() -> None:
 def test_release_script_does_not_gate_on_legacy_ros2_local_autonomy() -> None:
     text = _read("scripts/deploy/cut_release.sh")
 
+    assert "ensure_nav_endpoint_artifacts" in text
+    assert 'bash "$DEV_DIR/scripts/build/build_nav_endpoint.sh"' in text
+    assert 'cmake --install "$NAV_ENDPOINT_BUILD_DIR"' in text
+    assert "NAV_ENDPOINT_RUNTIME_FILES" in text
+    assert "navd" in text
+    assert "liblingtu_nav_client.so" in text
+    assert "liblingtu_inspection.so" in text
     assert "ensure_nav_kernel_artifact" in text
     assert 'bash "$DEV_DIR/scripts/build/build_nav_kernel.sh" --clean' in text
+    assert "LINGTU_RELEASE_REQUIRE_PYTHON_NAV_KERNEL:-0" in text
     assert "bash scripts/build/build_octoplanner3d.sh" in text
     assert "bash scripts/build/build_octoplanner3d.sh --require-pcl" in text
-    assert "LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D:-1" in text
+    assert "LINGTU_RELEASE_GLOBAL_PLANNER" in text
+    assert "far)" in text
+    assert "DEFAULT_REQUIRE_OCTOPLANNER3D=0" in text
+    assert "LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D:-$DEFAULT_REQUIRE_OCTOPLANNER3D" in text
     assert "LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER:-$REQUIRE_OCTOPLANNER3D" in text
+    assert "nav_status_matches_release" in text
+    assert "occupancy.npz" in text
     assert "LINGTU_RELEASE_REQUIRE_ROS2_COMPAT:-0" in text
     assert "ROS 2 compatibility package gate skipped" in text
     assert "Build first: cd $DEV_DIR && colcon build" not in text
@@ -1003,6 +1021,38 @@ def test_release_script_does_not_gate_on_legacy_ros2_local_autonomy() -> None:
     assert "lingtu-nav-dds.service" in text
     assert "robot-fastlio2.service robot-localizer.service" in text
 
+def test_native_nav_endpoint_has_a_release_install_manifest() -> None:
+    endpoint_cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    inspection_cmake = _read("src/nav/inspection/CMakeLists.txt")
+    service = _read("scripts/deploy/thunder/lingtu-nav-dds.service")
+
+    for target in (
+        "navd",
+        "lingtu_traversability_dds",
+        "lingtu_explore_dds",
+        "lingtu_nav_control",
+        "lingtu_motion_mock_dds",
+    ):
+        assert target in endpoint_cmake
+    assert "_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS" in endpoint_cmake
+    assert "lingtu_nav_client" in endpoint_cmake
+    assert "lingtu_inspection_evidence_bridge" in endpoint_cmake
+    assert "LIBRARY DESTINATION ." in endpoint_cmake
+    assert "LIBRARY DESTINATION inspection" in inspection_cmake
+    assert "EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env" in service
+
+def test_nav_control_exposes_typed_exploration_lifecycle() -> None:
+    text = _read("src/nav/cpp/endpoint/nav_control.cpp")
+
+    assert "explore start SESSION_ID [REASON]" in text
+    assert "explore <pause|resume|stop>" in text
+    assert 'arg == "--request-id"' in text
+    assert 'cfg.command += "-" + action' in text
+    assert "client.exploration().start(" in text
+    assert "client.exploration().pause(" in text
+    assert "client.exploration().resume(" in text
+    assert "client.exploration().stop(" in text
+    assert "kNavExplorationCommand" not in text
 
 def test_native_dds_build_scripts_check_service_binaries() -> None:
     slam = _read("scripts/build/build_slam_core.sh")
@@ -1017,7 +1067,7 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON" in livox
     assert "livox_sdk2_stream" in livox
 
-    assert "lingtu_nav_native_endpoint" in nav
+    assert "navd" in nav
     assert "lingtu_traversability_dds" in nav
     assert "lingtu_nav_control" in nav
     assert "lingtu_motion_mock_dds" in nav
@@ -1025,22 +1075,22 @@ def test_native_dds_build_scripts_check_service_binaries() -> None:
     assert "LINGTU_CYCLONEDDS_PREFIX}/bin" in nav
     assert "include/${multiarch}" in nav
     assert "native navigation DDS endpoint is missing" in nav
-    assert "LINGTU_NAV_ENDPOINT_RUN_TESTS:-1" in nav
+    assert "LINGTU_NAV_CPP_BUILD_TESTS:-ON" in nav
+    assert "LINGTU_NAV_ENDPOINT_RUN_TESTS:-$BUILD_TESTS" in nav
     assert 'ctest --test-dir "$BUILD_DIR" --output-on-failure' in nav
     assert "required navigation test is missing from CTest" in nav
     assert "test_path_follower_core" in nav
     assert "test_local_planner_core" in nav
     assert "test_nav_client" in nav
     assert "test_teleop_safety" in nav
-    assert "test_nav_endpoint_config" in _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
-    endpoint_cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
+    assert "test_nav_endpoint_config" in _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    endpoint_cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
     assert "test_path_follower_core" in endpoint_cmake
     assert "test_local_planner_core" in endpoint_cmake
 
-
 def test_motion_mock_dds_closes_cmd_vel_to_odom_loop_without_hardware() -> None:
-    cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
-    source = _read("src/nav/services/endpoint/cpp/motion_mock_dds.cpp")
+    cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
+    source = _read("src/nav/cpp/endpoint/motion_mock_dds.cpp")
 
     assert "add_executable(lingtu_motion_mock_dds" in cmake
     assert "motion_mock_dds.cpp" in cmake
@@ -1058,7 +1108,7 @@ def test_motion_mock_dds_closes_cmd_vel_to_odom_loop_without_hardware() -> None:
 
 
 def test_nav_control_external_path_is_explicit_legacy_smoke_only() -> None:
-    text = _read("src/nav/services/endpoint/cpp/nav_control.cpp")
+    text = _read("src/nav/cpp/endpoint/nav_control.cpp")
 
     assert "path X1 Y1 Z1 X2 Y2 Z2" in text
     assert "kNavGlobalPath" in text
@@ -1083,22 +1133,21 @@ def test_nav_control_external_path_is_explicit_legacy_smoke_only() -> None:
 
 
 def test_typed_navigation_client_uses_application_ack_as_authority() -> None:
-    source = _read("src/nav/commands/cpp/client.cpp")
+    source = _read("src/nav/cpp/client/client.cpp")
 
-    assert "waitForAck(active_request_id, kind, timeout_ms, sent_steady)" in source
+    assert "active_request_id, pending, timeout_ms" in source
     assert "NavigationCommandAck is already available" in source
     assert "dds_wait_for_acks(nav_command_request)" not in source
 
-
 def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
-    source = _read("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp")
-    runtime_source = _read("src/nav/services/endpoint/cpp/nav_dds_runtime.cpp")
-    cmake = _read("src/nav/services/endpoint/cpp/CMakeLists.txt")
+    source = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
+    runtime_source = _read("src/nav/cpp/endpoint/nav_dds_runtime.cpp")
+    cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
 
     assert '#include "message/cpp/dds_qos_profiles.hpp"' in runtime_source
     assert "qos_for_topic(topic_name)" in runtime_source
     assert "dds_qset_reliability" not in runtime_source
-    assert "lingtu_nav_native_endpoint" in cmake
+    assert "navd" in cmake
     assert "lingtu_dds_qos_profiles" in cmake
     assert "motion_layer.cpp" in cmake
     assert "test_motion_layer" in cmake
@@ -1109,15 +1158,15 @@ def test_native_nav_endpoint_uses_shared_dds_qos_catalog() -> None:
 
 def test_native_motion_publishers_use_canonical_body_frame() -> None:
     sources = (
-        _read("src/nav/services/endpoint/cpp/nav_dds_runtime.cpp"),
-        _read("src/nav/services/endpoint/cpp/nav_control.cpp"),
+        _read("src/nav/cpp/endpoint/nav_dds_runtime.cpp"),
+        _read("src/nav/cpp/endpoint/nav_control.cpp"),
     )
 
     for source in sources:
         assert 'fillHeader(msg.header, nowSeconds(), "base_link")' not in source
-    assert 'fillHeader(out.header, nowSeconds(), "body")' in sources[0]
+    assert 'toDdsPath(path, "map")' in sources[0]
+    assert 'toDdsPoseStamped(point, "map")' in sources[0]
     assert 'fillHeader(msg.header, nowSeconds(), "body")' in sources[1]
-
 
 def test_ota_and_build_docs_do_not_recommend_legacy_ros2_planning_or_local_autonomy() -> None:
     push_script = _read("scripts/ota/push_to_robot.sh")

@@ -253,13 +253,13 @@ git add \
   src/maps/modules/service.py \
   src/nav/services/plan/contracts.py \
   src/nav/services/plan/factory.py \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/include/global_planner.h \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/src/global_planner.cpp \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime/CMakeLists.txt \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime/make_test_octomap.cpp \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime/octoplanner3d_core.cpp \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime/octoplanner3d_core.hpp \
-  src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime/octoplanner3d_headless.cpp \
+  src/nav/cpp/planning/global/octoplanner/vendor/planner/include/global_planner.h \
+  src/nav/cpp/planning/global/octoplanner/vendor/planner/src/global_planner.cpp \
+  src/nav/cpp/planning/global/octoplanner/CMakeLists.txt \
+  src/nav/cpp/planning/global/octoplanner/make_test_octomap.cpp \
+  src/nav/cpp/planning/global/octoplanner/octoplanner3d_core.cpp \
+  src/nav/cpp/planning/global/octoplanner/octoplanner3d_core.hpp \
+  src/nav/cpp/planning/global/octoplanner/octoplanner3d_headless.cpp \
   src/nav/services/plan/global_planner/algorithm/README.md \
   src/nav/services/plan/global_planner/algorithm/octoplanner3d_planner.py \
   src/nav/services/plan/global_planner/algorithm/octoplanner3d_protocol.py \

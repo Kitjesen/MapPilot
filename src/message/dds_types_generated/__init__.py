@@ -1,7 +1,7 @@
 r"""Auto-generated DDS type package.
 
 Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-17T02:52:46Z
+Generated:  2026-07-20T05:28:09Z
 
 DO NOT EDIT BY HAND -- run ``make codegen-idl`` to regenerate.
 """
@@ -40,6 +40,8 @@ from .types import (  # noqa: F401
     Text,
     NavigationCommandRequest,
     NavigationCommandAck,
+    ExplorationCommandRequest,
+    ExplorationCommandAck,
     InspectionCommandRequest,
     InspectionCommandAck,
     InspectionEvidenceRequest,
@@ -50,6 +52,7 @@ from .types import (  # noqa: F401
     Path,
     MapMetaData,
     OccupancyGrid,
+    ExplorationGrid,
 )
 
 __all__ = [
@@ -84,6 +87,8 @@ __all__ = [
     "Text",
     "NavigationCommandRequest",
     "NavigationCommandAck",
+    "ExplorationCommandRequest",
+    "ExplorationCommandAck",
     "InspectionCommandRequest",
     "InspectionCommandAck",
     "InspectionEvidenceRequest",
@@ -94,4 +99,5 @@ __all__ = [
     "Path",
     "MapMetaData",
     "OccupancyGrid",
+    "ExplorationGrid",
 ]

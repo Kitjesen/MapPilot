@@ -83,7 +83,7 @@ REQUIRED_PACKAGE_OMIT_PATHS = (
     "src/nav/services/plan/global_planner/service.py",
     "src/nav/services/plan/global_planner/algorithm/pct/",
     "src/nav/services/plan/global_planner/algorithm/pct/runtime/",
-    "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/",
+    "src/nav/cpp/planning/global/octoplanner/",
     "src/nav/services/plan/global_planner/artifacts.py",
     "src/nav/services/plan/global_planner/path_feasibility.py",
     "cli/runtime_audit.py",

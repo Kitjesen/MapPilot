@@ -13,12 +13,19 @@ native_services:
   - lingtu_slam_cyclone_runtime
   - lingtu_traversability_dds
   - lingtu_nav_native_endpoint
+  - lingtu_explore_dds
   - lingtu_mujoco_cmd_vel_tap
 simulation_command_consumer: ThunderV4 RL policy via C++ typed-DDS cmd_vel tap
 navigation_command_boundary:
   request: /nav/command/request
   ack: /nav/command/ack
   client_completion: business_ack_required
+exploration_command_boundary:
+  request: /nav/exploration/command
+  ack: /nav/exploration/ack
+  client_completion: business_ack_required
+  status_source: /dev/shm/lingtu/explore_status.json
+  status_authoritative_for_commands: false
 inspection_command_boundary:
   request: /nav/inspection/command
   ack: /nav/inspection/ack
@@ -41,6 +48,7 @@ source_topics:
   - /lidar/raw_frame
   - /imu/raw
   - /nav/command/request
+  - /nav/exploration/command
   - /nav/inspection/command
   - /nav/inspection/evidence/result
   - /nav/traversability
@@ -51,11 +59,14 @@ exposed_topics:
   - /slam/saved_map_cloud
   - /slam/localization_health
   - /slam/localization_quality
+  - /nav/exploration_grid
+  - /nav/exploration_snapshot
   - /nav/global_path
   - /nav/local_path
   - /nav/way_point
   - /nav/cmd_vel
   - /nav/command/ack
+  - /nav/exploration/ack
   - /nav/inspection/ack
   - /nav/inspection/status
   - /nav/inspection/evidence/request

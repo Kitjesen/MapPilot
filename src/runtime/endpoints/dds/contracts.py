@@ -170,6 +170,18 @@ THUNDER_FIELD_DDS_CONTRACT = DDSEndpointContract(
             note="Business-level endpoint acceptance or rejection for a request_id.",
         ),
         _binding(
+            TOPICS.exploration_command,
+            direction="lingtu_to_endpoint",
+            schema="lingtu.dds.ExplorationCommandRequest",
+            note="Typed start, pause, resume, or stop request for the native exploration FSM.",
+        ),
+        _binding(
+            TOPICS.exploration_ack,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.ExplorationCommandAck",
+            note="Business-level exploration acceptance or rejection for a request_id.",
+        ),
+        _binding(
             TOPICS.inspection_command,
             direction="lingtu_to_endpoint",
             schema="lingtu.dds.InspectionCommandRequest",

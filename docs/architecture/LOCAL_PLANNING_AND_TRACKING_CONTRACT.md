@@ -31,17 +31,17 @@ Python `CmdVelMux` control lane.
 
 The executable implementation paths are:
 
-- local planner: `src/nav/services/plan/local_planner/cpp/local_planner.hpp`
-- scoring helpers: `src/nav/services/plan/local_planner/cpp/local_planner_scoring.hpp`
-- path follower: `src/nav/kernel/src/path_follower_core.cpp`
-- native endpoint assembly: `src/nav/services/endpoint/cpp/nav_native_endpoint.cpp`
+- local planner: `src/nav/cpp/planning/local/local_planner.hpp`
+- scoring helpers: `src/nav/cpp/planning/local/local_planner_scoring.hpp`
+- path follower: `src/nav/cpp/control/path_follower_core.cpp`
+- native endpoint assembly: `src/nav/cpp/endpoint/nav_native_endpoint.cpp`
 - Python adapters: `src/nav/services/plan/local_planner/parameters.py` and
   `src/nav/local/path_follower_backend.py`
 
 ## 2. LocalPlanner path-library model
 
 The planner loads three offline-generated assets from
-`src/nav/services/plan/local_planner/paths/`:
+`src/nav/local/paths/`:
 
 | Asset | Runtime meaning |
 | --- | --- |

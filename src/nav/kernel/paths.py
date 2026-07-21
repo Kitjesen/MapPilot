@@ -1,8 +1,8 @@
-"""Path helpers for the navigation L5 algorithm kernel.
+"""Path helpers for the navigation L5 native extension.
 
-The C++ source lives under ``src/nav/kernel``. This module owns the Python
-side build/install path calculation so runtime loaders do not encode build
-layout details directly.
+The public Python loader remains under ``src/nav/kernel``. Native C++ source
+and CMake ownership live under ``src/nav/cpp``; this module keeps build-layout
+details out of runtime callers.
 """
 
 from __future__ import annotations
@@ -33,14 +33,14 @@ def repo_root_for_nav_kernel(anchor: str | Path | None = None) -> Path:
 def nav_kernel_candidate_dirs(anchor: str | Path | None = None) -> list[str]:
     """Return candidate directories for the ``lingtu_nav_kernel`` native module.
 
-    Priority order is preserved from the legacy loader:
-    Windows local build, Linux local build, build-script copy under ``src/``,
-    then future colcon install output.
+    Canonical source-tree builds come first, followed by the build-script
+    output, the release artifact copied under ``src/``, and install output.
     """
     repo = repo_root_for_nav_kernel(anchor)
     return [
-        str(repo / "src" / "nav" / "kernel" / "build_nb_win"),
-        str(repo / "src" / "nav" / "kernel" / "build_nb"),
+        str(repo / "src" / "nav" / "cpp" / "build_nb_win"),
+        str(repo / "src" / "nav" / "cpp" / "build_nb"),
+        str(repo / "build" / "nav_kernel"),
         str(repo / "src"),
         str(repo / "install" / "nav_kernel" / "lib"),
     ]
@@ -51,5 +51,5 @@ def nav_kernel_build_hint() -> str:
     return (
         "Run:  bash scripts/build/build_nav_kernel.sh\n"
         "      (needs cmake, python3-dev, pip install nanobind)\n"
-        "Windows local builds may use src/nav/kernel/build_nb_win."
+        "Windows local builds may use src/nav/cpp/build_nb_win."
     )

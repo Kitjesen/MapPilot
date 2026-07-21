@@ -22,7 +22,7 @@ planner implementation is intentionally changed.
 Input:
 
 ```text
-src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/building2_9.pcd
+sim/fixtures/octoplanner3d/building2_9.pcd
 start = [7.9, -2.7, 0.3]
 goal  = [2.5, -0.3, 13.7]
 ```

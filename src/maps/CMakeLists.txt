@@ -38,6 +38,8 @@ add_library(lingtu_maps STATIC
   cpp/service.cpp
   cpp/store.cpp
   cpp/version.cpp
+  cpp/layers/rolling_occupancy.cpp
+  cpp/layers/exploration_projection.cpp
   cpp/layers/semantic_occupancy.cpp
   cpp/layers/voxel.cpp
 )
@@ -89,6 +91,25 @@ if(LINGTU_MAPS_BUILD_TESTS)
   target_link_libraries(lingtu_maps_voxel_layer_test PRIVATE lingtu_maps)
   add_test(NAME lingtu_maps_voxel_layer_test COMMAND lingtu_maps_voxel_layer_test)
 
+  add_executable(
+    lingtu_maps_rolling_occupancy_test
+    tests/cpp/rolling_occupancy_test.cpp
+  )
+  target_link_libraries(lingtu_maps_rolling_occupancy_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_rolling_occupancy_test
+    COMMAND lingtu_maps_rolling_occupancy_test
+  )
+
+  add_executable(
+    lingtu_maps_exploration_projection_test
+    tests/cpp/exploration_projection_test.cpp
+  )
+  target_link_libraries(lingtu_maps_exploration_projection_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_exploration_projection_test
+    COMMAND lingtu_maps_exploration_projection_test
+  )
   add_executable(
     lingtu_maps_semantic_occupancy_test
     tests/cpp/semantic_occupancy_test.cpp
@@ -257,6 +278,8 @@ if(LINGTU_MAPS_BUILD_TESTS)
     lingtu_maps_header_smoke
     lingtu_maps_grid_layers_test
     lingtu_maps_voxel_layer_test
+    lingtu_maps_rolling_occupancy_test
+    lingtu_maps_exploration_projection_test
     lingtu_maps_semantic_occupancy_test
     lingtu_maps_semantic_map_persistence_test
     lingtu_maps_semantic_performance_test

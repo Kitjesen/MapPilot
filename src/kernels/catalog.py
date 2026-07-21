@@ -4,7 +4,7 @@ Metadata only. Runtime code should not branch on this file; it is for audits,
 build scripts, and migration status reports.
 
 Only list materialized kernel directories here. Production C++ navigation
-kernels that already live under ``src/nav/kernel`` stay with that owning
+kernels that already live under ``src/nav/cpp`` stay with that owning
 domain instead of getting speculative placeholder paths under ``src/kernels``.
 """
 

@@ -28,7 +28,7 @@ timing and per-point offsets. Real MID-360 input never uses this replay option.
 | Hardware / external runtime to LingTu | typed DDS | IDL structs under `message.dds_types` | no |
 | LingTu module to module, same process | `Out.publish()` to wired `In._deliver()` callback | Python objects | no |
 | LingTu worker subprocess boundary | SHM transport when enabled | serialized runtime messages | no |
-| Field OctoPlanner3D global planner | direct C++ call inside `lingtu_nav_native_endpoint` | `PlanRequest` / `PlanResult` in memory | no |
+| Field OctoPlanner3D global planner | direct C++ call inside `navd` | `PlanRequest` / `PlanResult` in memory | no |
 | Dev/compat OctoPlanner3D wrapper | subprocess stdin/stdout | JSON request/result | no |
 | Map artifact conversion | subprocess + files | `map.pcd` to `octomap.ot` | no |
 | Command output to Thunder brainstem | typed DDS then native `driver` gRPC client | `TwistStamped` to Brainstem `Walk(Vector3)` | no |
@@ -93,7 +93,7 @@ Web coordinate goal / CLI / MCP resolved goal
   -> process-wide NavigationCommandClient
   -> liblingtu_nav_client.so
   -> DDS /nav/command/request (kind=goal, request_id=...)
-  -> lingtu_nav_native_endpoint (control_mode=autonomy)
+  -> navd (control_mode=autonomy)
   -> validate frame, authority, localization, map, and goal admission
   -> DDS /nav/command/ack (accepted=true, reason=planning_started)
   -> OctoPlanner3D::runPlan(request)
@@ -519,9 +519,9 @@ Realtime dynamic handling has two native C++ layers:
 
 | Layer | File | Stage | Role |
 | --- | --- | --- | --- |
-| `DynamicClearCore` | `src/nav/kernel/include/nav_kernel/dynamic_clear_core.hpp` | traversability producer | filters stale rolling terrain points before publishing `rt/nav/terrain_map` |
-| `motion` / `LiveVoxelLayer` | `src/nav/services/endpoint/cpp/motion_layer.*` | nav consumer | keeps explicit unknown/free/occupied/static/cleared voxel evidence plus separate moving-object tracks |
-| `LiveObstacleLayer` | `src/nav/services/endpoint/cpp/live_obstacle_layer.*` | compatibility API | preserves existing endpoint calls while delegating to `motion` |
+| `DynamicClearCore` | `src/nav/cpp/include/nav_kernel/dynamic_clear_core.hpp` | traversability producer | filters stale rolling terrain points before publishing `rt/nav/terrain_map` |
+| `motion` / `LiveVoxelLayer` | `src/nav/cpp/endpoint/motion_layer.*` | nav consumer | keeps explicit unknown/free/occupied/static/cleared voxel evidence plus separate moving-object tracks |
+| `LiveObstacleLayer` | `src/nav/cpp/endpoint/live_obstacle_layer.*` | compatibility API | preserves existing endpoint calls while delegating to `motion` |
 
 `motion` is the realtime local-planner layer. It raycasts free space from the
 current robot pose to current scan endpoints, does not clear cells hidden behind
@@ -541,24 +541,24 @@ for native endpoint compatibility.
 `lingtu-nav-dds.service` runs one binary:
 
 ```text
-/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint
+/opt/lingtu/current/build/nav_endpoint/navd
 ```
 
 That binary contains the native planning and command pipeline:
 
 | Internal node | Process | Responsibility | Inputs | Outputs |
 | --- | --- | --- | --- | --- |
-| Command receiver | `lingtu_nav_native_endpoint` | Validate typed goal/cancel/teleop requests and emit business ACK | `/nav/command/request` | internal command + `/nav/command/ack` |
-| OctoPlanner3D global planner | `lingtu_nav_native_endpoint` | Plan a 3D saved-map route | current `map` pose, goal, `octomap.ot` | internal global path |
-| Global path publisher | `lingtu_nav_native_endpoint` | Publish accepted global path | internal global path | `/nav/global_path` |
-| NavLoop target selector | `lingtu_nav_native_endpoint` | Pick the next lookahead target from global path | current pose, global path | internal target waypoint |
-| LocalPlannerCore | `lingtu_nav_native_endpoint` | Generate near-field local path | target, current pose, obstacle cloud, `/nav/traversability` | internal local path |
-| Local path publisher | `lingtu_nav_native_endpoint` | Publish the local path | internal local path | `/nav/local_path` |
-| PathFollowerCore | `lingtu_nav_native_endpoint` | Convert local path to velocity | local path, follower state | internal `cmd_vel` |
-| Waypoint publisher | `lingtu_nav_native_endpoint` | Publish current target waypoint | internal target waypoint | `/nav/way_point` |
-| CmdVel publisher | `lingtu_nav_native_endpoint` | Publish speed command when enabled | internal `cmd_vel`, `LINGTU_NAV_PUBLISH_CMD_VEL=1` | `/nav/cmd_vel` |
+| Command receiver | `navd` | Validate typed goal/cancel/teleop requests and emit business ACK | `/nav/command/request` | internal command + `/nav/command/ack` |
+| OctoPlanner3D global planner | `navd` | Plan a 3D saved-map route | current `map` pose, goal, `octomap.ot` | internal global path |
+| Global path publisher | `navd` | Publish accepted global path | internal global path | `/nav/global_path` |
+| NavLoop target selector | `navd` | Pick the next lookahead target from global path | current pose, global path | internal target waypoint |
+| LocalPlannerCore | `navd` | Generate near-field local path | target, current pose, obstacle cloud, `/nav/traversability` | internal local path |
+| Local path publisher | `navd` | Publish the local path | internal local path | `/nav/local_path` |
+| PathFollowerCore | `navd` | Convert local path to velocity | local path, follower state | internal `cmd_vel` |
+| Waypoint publisher | `navd` | Publish current target waypoint | internal target waypoint | `/nav/way_point` |
+| CmdVel publisher | `navd` | Publish speed command when enabled | internal `cmd_vel`, `LINGTU_NAV_PUBLISH_CMD_VEL=1` | `/nav/cmd_vel` |
 
-Runtime order inside `lingtu_nav_native_endpoint`:
+Runtime order inside `navd`:
 
 ```text
 /nav/command/request (kind=goal)
@@ -663,7 +663,7 @@ The expected smoke topology is:
 domain 77:
   lingtu_motion_mock_dds
     -> /slam/odometry + /tf
-  lingtu_nav_native_endpoint
+  navd
     -> /nav/cmd_vel
   lingtu_motion_mock_dds
     -> integrated simulated pose

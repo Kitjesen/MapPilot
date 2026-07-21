@@ -33,8 +33,8 @@ def test_typed_inspection_topics_are_canonical() -> None:
 
 def test_inspection_idl_and_native_endpoint_are_wired() -> None:
     idl = Path("src/message/idl/lingtu_slam.idl").read_text(encoding="utf-8")
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
-    cmake = Path("src/nav/services/endpoint/cpp/CMakeLists.txt").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    cmake = Path("src/nav/cpp/endpoint/CMakeLists.txt").read_text(encoding="utf-8")
 
     assert "struct InspectionCommandRequest" in idl
     assert "struct InspectionCommandAck" in idl
@@ -46,7 +46,7 @@ def test_inspection_idl_and_native_endpoint_are_wired() -> None:
 
 
 def test_inspection_action_deadline_is_started_before_evidence_publish() -> None:
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
     action_block = endpoint.split(
         "if (const auto action = inspection_executor.PendingAction()) {",
         1,
@@ -139,7 +139,7 @@ def test_native_inspection_library_candidates_cover_repo_and_deployed_builds(
 
 
 def test_inspection_resume_requires_autonomy_control_before_executor_resume() -> None:
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
     resume_block = endpoint.split("} else if (kind == InspectionCommand::kResume) {", 1)[1].split(
         "remember_inspection_ack", 1
     )[0]
@@ -150,7 +150,7 @@ def test_inspection_resume_requires_autonomy_control_before_executor_resume() ->
 
 
 def test_active_map_change_clears_inspection_motion_immediately() -> None:
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
 
     assert "inspection_state_before_map_check" in endpoint
     assert 'inspection_executor.status().reason == "active_map_changed"' in endpoint
@@ -158,7 +158,7 @@ def test_active_map_change_clears_inspection_motion_immediately() -> None:
 
 
 def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> None:
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
 
     assert "out.recovery_exhausted" in endpoint
     assert "inspection_local_recovery_exhausted" in endpoint
@@ -168,7 +168,7 @@ def test_local_recovery_exhaustion_routes_into_inspection_failure_policy() -> No
 
 
 def test_endpoint_feeds_final_inspection_point_progress_to_watchdog() -> None:
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
 
     assert "inspection_executor.OnNavigationProgress" in endpoint
     assert endpoint.count("inspection_executor.OnNavigationProgress") == 1
@@ -177,7 +177,7 @@ def test_endpoint_feeds_final_inspection_point_progress_to_watchdog() -> None:
 
 
 def test_post_arrival_inspection_actions_fail_closed_on_localization_gate() -> None:
-    endpoint = Path("src/nav/services/endpoint/cpp/nav_native_endpoint.cpp").read_text(encoding="utf-8")
+    endpoint = Path("src/nav/cpp/endpoint/nav_native_endpoint.cpp").read_text(encoding="utf-8")
 
     gate_index = endpoint.index("input_gate_state = input_gate.evaluate(input_snapshot);")
     action_index = endpoint.index("if (const auto action = inspection_executor.PendingAction()) {")

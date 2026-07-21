@@ -62,8 +62,8 @@ src/libc++.dll
 src/nav/core/build/
 src/nav/core/build_nb*/
 src/localization/fastlio2/portable/build/
-src/nav/kernel/build_py/
-src/nav/kernel/build_nb*/
+src/nav/cpp/build_py/
+src/nav/cpp/build_nb*/
 src/maps/build*/
 !src/maps/cpp/build/
 !src/maps/cpp/build/**
@@ -124,8 +124,7 @@ docs/media/videos/*.mp4
 docs/media/videos/*.gif
 !src/global_planning/pct_planner/rsc/PCD/example.pcd
 !src/global_planning/pct_planner/rsc/tomogram/example.pickle
-!src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/lib/*.so*
-!src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/*.pcd
+!sim/fixtures/octoplanner3d/*.pcd
 
 # 鈹€鈹€ IDE / editor / tooling 鈹€鈹€
 .vscode/

@@ -1042,7 +1042,7 @@ def test_sensor_runtime_options_are_attached_only_to_sensor_process():
 
 def test_native_endpoint_keeps_lidar_extrinsic_out_of_body_pose_local_planning():
     source = (
-        ROOT / "src/nav/services/endpoint/cpp/nav_native_endpoint.cpp"
+        ROOT / "src/nav/cpp/endpoint/nav_native_endpoint.cpp"
     ).read_text(encoding="utf-8")
 
     assert "sensorOriginFromBody" in source

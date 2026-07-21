@@ -19,7 +19,7 @@ own LiDAR ingestion, SLAM, PGO, HBA, or navigation compute.
 | --- | --- |
 | `src/drivers/real/lidar/sdk2_stream/` | Livox SDK2 C++ ingestion and optional CycloneDDS publication. |
 | `src/localization/slam/cpp/` | Native SLAM contract, Fast-LIO/Point-LIO wrapper, DDS runtime, SLAM control, native relocalization support. |
-| `src/nav/services/endpoint/cpp/` | Native navigation endpoint, traversability DDS, nav control, and robot command publication gate. |
+| `src/nav/cpp/endpoint/` | Native navigation endpoint, traversability DDS, nav control, and robot command publication gate. |
 | `src/localization/pgo/` | Legacy ROS2 PGO node wrapper and historical algorithm code. |
 | `src/localization/hba/` | Legacy ROS2 HBA node wrapper and historical algorithm code. |
 | `src/kernels/slam/pose_graph_opt/` | Portable pose-graph optimization kernel with C ABI used by PGO/HBA code. |
@@ -33,7 +33,7 @@ own LiDAR ingestion, SLAM, PGO, HBA, or navigation compute.
 | LiDAR DDS | Product-native C++ implemented. | `livox_sdk2_stream` in `src/drivers/real/lidar/sdk2_stream/`; deployed as `lingtu-livox-dds.service`. |
 | SLAM DDS | Product-native C++ implemented. | `lingtu_slam_cyclone_runtime` and `lingtu_slam_control` in `src/localization/slam/cpp/`; deployed as `lingtu-slam-dds.service`. |
 | Relocalization | Product-native support exists in the SLAM C++ contract, with optional BBS3D/small_gicp build support. | `native_relocalizer.cpp` in `src/localization/slam/cpp/`. |
-| Navigation DDS | Product-native C++ implemented. | `lingtu_nav_native_endpoint`, `lingtu_nav_control`, `lingtu_traversability_dds` in `src/nav/services/endpoint/cpp/`; deployed as `lingtu-nav-dds.service` and `lingtu-traversability-dds.service`. |
+| Navigation DDS | Product-native C++ implemented. | `navd`, `lingtu_nav_control`, `lingtu_traversability_dds` in `src/nav/cpp/endpoint/`; deployed as `lingtu-nav-dds.service` and `lingtu-traversability-dds.service`. |
 | Saved-map loop verification | `wip`: deterministic native shadow verifier exists; no map/pose mutation and no PGO feed yet. | `lt_loop_verify` emits versioned constraints/diagnostics, validates exact pose-patch provenance, and rejects changing inputs. |
 | PGO | `exp`: binary and solver exist; product save defaults to `off`. | `lt_pgo` refuses to rebuild a map when the graph has no independent geometric constraints and reports `skipped_no_independent_constraints`. |
 | HBA | `exp`: binary and solver exist; product save defaults to `off`. | `lt_hba` currently shares the same constraint gap; it is not a supported high-quality product action yet. |

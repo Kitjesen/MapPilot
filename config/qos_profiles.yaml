@@ -41,8 +41,6 @@ profiles:
       - rt/nav/terrain_map
       - /nav/terrain_map_ext
       - rt/nav/terrain_map_ext
-      - /nav/scan_cloud            # sensor_scan_generation output
-      - rt/nav/scan_cloud
 
   # --- High-frequency State (Odometry, IMU) ---
   # ~200 B, 100-200 Hz, only latest value matters
@@ -120,6 +118,8 @@ profiles:
     topics:
       - /nav/command/request
       - rt/nav/command/request
+      - /nav/exploration/command
+      - rt/nav/exploration/command
       - /nav/inspection/command
       - rt/nav/inspection/command
 
@@ -131,6 +131,8 @@ profiles:
     topics:
       - /nav/command/ack
       - rt/nav/command/ack
+      - /nav/exploration/ack
+      - rt/nav/exploration/ack
       - /nav/inspection/ack
       - rt/nav/inspection/ack
 
@@ -155,8 +157,6 @@ profiles:
       - rt/nav/global_path
       - /nav/local_path
       - rt/nav/local_path
-      - /nav/pct_path
-      - rt/nav/pct_path
 
   # --- Map/Grid State ---
   # Low-rate occupancy-style state consumed by planners and gateway surfaces.
@@ -170,6 +170,8 @@ profiles:
       - rt/nav/traversability
       - /nav/exploration_grid
       - rt/nav/exploration_grid
+      - /nav/exploration_snapshot
+      - rt/nav/exploration_snapshot
 
   # --- Exploration Events (TARE explorer outputs, event-driven) ---
   # Waypoint / local path / runtime / finish / start signals emitted by the
@@ -199,16 +201,10 @@ profiles:
     history: keep_last
     depth: 1
     topics:
-      - /nav/health_status
-      - rt/nav/health_status
-      - /nav/geofence_status
-      - rt/nav/geofence_status
       - /robot_state
       - rt/robot_state
       - /gnss/status
       - rt/gnss/status
-      - /nav/mode
-      - rt/nav/mode
       - /driver/control_state
       - rt/driver/control_state
 
@@ -219,23 +215,8 @@ profiles:
     history: keep_last
     depth: 1
     topics:
-      - /nav/geofence_boundary
-      - rt/nav/geofence_boundary
       - /nav/goal_pose
       - rt/nav/goal_pose
-
-  # --- Image / Video Stream (WebRTC raw source) ---
-  image_stream:
-    reliability: best_effort
-    durability: volatile
-    history: keep_last
-    depth: 1                       # only the latest frame
-    lifespan: 100ms
-    topics:
-      - /camera/image_raw/compressed
-      - rt/camera/image_raw/compressed
-      - /camera/image_raw
-      - rt/camera/image_raw
 
   # --- Semantic Scene Graph (1-2 Hz, 2-10 KB/frame) ---
   # References:
@@ -252,8 +233,6 @@ profiles:
     topics:
       - /nav/semantic/scene_graph
       - rt/nav/semantic/scene_graph
-      - /nav/semantic/scene_diff
-      - rt/nav/semantic/scene_diff
 
   # --- Semantic Detections (throttled to 2 Hz) ---
   # References:
@@ -279,8 +258,6 @@ profiles:
     topics:
       - /nav/semantic/instruction
       - rt/nav/semantic/instruction
-      - /nav/semantic/resolved_goal
-      - rt/nav/semantic/resolved_goal
       - /nav/semantic/status
       - rt/nav/semantic/status
 
@@ -323,9 +300,9 @@ profiles:
     history: keep_last
     depth: 1
     topics:
-      - /camera/color
+      - /camera/color/image_raw
       - rt/camera/color
-      - /camera/depth
+      - /camera/depth/image_raw
       - rt/camera/depth
 
   # --- Camera Info (calibration metadata) ---
@@ -336,7 +313,7 @@ profiles:
     history: keep_last
     depth: 1
     topics:
-      - /camera/info
+      - /camera/color/camera_info
       - rt/camera/info
 
   # --- TF Dynamic (ROS 2 default for /tf) ---
@@ -377,4 +354,4 @@ bandwidth_budget:
   note: >
     CycloneDDS uses UDP multicast by default. Same-host loopback does not use
     the physical NIC, so bandwidth is not a bottleneck. For cross-host traffic
-    (e.g. remote monitoring), consider limiting image_stream.
+    (e.g. remote monitoring), consider limiting camera_stream.

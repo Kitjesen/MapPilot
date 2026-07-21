@@ -267,23 +267,15 @@ python -m pytest src/runtime/tests/ -q
 python -m pytest src/decision/tests/ -q
 ```
 
-C++ navigation kernel:
+Canonical C++ navigation core (path follower, local planner, FAR, and tests):
 
 ```bash
-cd src/nav/kernel
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/test_benchmark
-./build/test_path_follower_core
-```
-
-C++ local planner:
-
-```bash
-cd src/nav/services/plan/local_planner/cpp
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DLOCAL_PLANNER_CPP_BUILD_TESTS=ON
-cmake --build build -j
-./build/test_local_planner_core
+cmake -S src/nav/cpp -B build/nav-cpp -DCMAKE_BUILD_TYPE=Release \
+  -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
+  -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF \
+  -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
+cmake --build build/nav-cpp -j
+ctest --test-dir build/nav-cpp --output-on-failure
 ```
 
 Robot builds should run on the target Linux environment with the required

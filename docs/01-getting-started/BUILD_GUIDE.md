@@ -23,6 +23,10 @@ optional and only belongs to explicit compatibility, replay, or evaluation
 work. Do not source a ROS 2/colcon environment or install ROS packages merely
 to run the normal local or native Thunder product path.
 
+**Product default: native planner kernels, no ROS2.**
+ROS 2 Humble Desktop is optional and belongs only to explicit compatibility,
+replay, calibration, or benchmark work.
+
 ## Prerequisites
 
 ### Repository and interpreter

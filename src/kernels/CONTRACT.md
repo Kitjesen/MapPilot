@@ -86,5 +86,5 @@ Materialized targets:
 - `gpmp_trajectory_optimizer`
 - `camera_lidar_calibration_optimizer`
 
-Navigation C++ kernels that already live in `src/nav/kernel/` stay there.
+Navigation C++ kernels that already live in `src/nav/cpp/` stay there.
 Do not add placeholder target directories here for speculative rewrites.

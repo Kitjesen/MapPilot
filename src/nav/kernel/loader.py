@@ -1,6 +1,6 @@
 """Native loader for LingTu navigation algorithm kernels.
 
-The C++ source lives under ``src/nav/kernel`` and builds the Python extension
+The C++ source lives under ``src/nav/cpp`` and builds the Python extension
 ``lingtu_nav_kernel``. Keep extension discovery and symbol checks here so
 Modules and planner adapters do not encode build-layout details.
 """

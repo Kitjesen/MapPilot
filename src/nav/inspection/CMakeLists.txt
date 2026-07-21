@@ -19,6 +19,11 @@ target_link_libraries(lingtu_inspection PRIVATE lingtu_inspection_core)
 target_include_directories(lingtu_inspection PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(lingtu_inspection PUBLIC cxx_std_17)
 
+install(TARGETS lingtu_inspection
+  LIBRARY DESTINATION inspection
+  RUNTIME DESTINATION inspection)
+install(FILES c_api.h DESTINATION include/nav/inspection)
+
 if(MSVC)
   target_compile_options(lingtu_inspection_core PRIVATE /W4)
   target_compile_options(lingtu_inspection PRIVATE /W4)

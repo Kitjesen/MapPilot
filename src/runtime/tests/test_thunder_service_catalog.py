@@ -162,8 +162,26 @@ def test_thunder_catalog_declares_product_readiness_contracts():
         {
             "name": "nav_dds",
             "env": "LINGTU_NAV_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint",
+            "path": "/opt/lingtu/current/build/nav_endpoint/navd",
         }
+    ]
+    assert metadata["explore"]["checks"] == [
+        "systemd",
+        "native_binary",
+        "dds",
+        "status_file",
+    ]
+    assert metadata["explore"]["topics"] == [
+        TOPICS.odometry,
+        TOPICS.exploration_snapshot,
+        TOPICS.exploration_command,
+        TOPICS.exploration_ack,
+        TOPICS.nav_command_request,
+        TOPICS.nav_command_ack,
+    ]
+    assert metadata["explore"]["dds_topics"] == [
+        "rt/slam/odometry",
+        "rt/nav/exploration_snapshot",
     ]
     assert metadata["gateway"]["checks"] == ["systemd", "http"]
 
@@ -583,7 +601,7 @@ def test_service_manager_core_native_binary_missing_blocks_readiness(monkeypatch
     assert nav["ready"] is False
     assert nav["observed"]["native_binary"]["ok"] is False
     assert nav["blockers"] == [
-        "native_binary_missing_or_not_executable:nav_dds:/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint"
+        "native_binary_missing_or_not_executable:nav_dds:/opt/lingtu/current/build/nav_endpoint/navd"
     ]
 
 
@@ -709,7 +727,7 @@ def test_thunder_installer_covers_cataloged_product_and_optional_services():
         "nav_dds": {
             "service": "nav",
             "env": "LINGTU_NAV_DDS_BIN",
-            "path": "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint",
+            "path": "/opt/lingtu/current/build/nav_endpoint/navd",
         },
         "driver": {
             "service": "driver",
@@ -868,6 +886,6 @@ def test_thunder_catalog_cli_exports_field_readiness_targets(capsys):
         "orbbec_capture=camera|LINGTU_ORBBEC_CAPTURE_BIN|/opt/lingtu/current/build/orbbec_native/orbbec_capture",
         "slam_dds=slam|LINGTU_SLAM_BIN|/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime",
         "traversability_dds=traversability|LINGTU_TRAVERSABILITY_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/lingtu_traversability_dds",
-        "nav_dds=nav|LINGTU_NAV_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint",
+        "nav_dds=nav|LINGTU_NAV_DDS_BIN|/opt/lingtu/current/build/nav_endpoint/navd",
         "driver=driver|LINGTU_DRIVER_BIN|/opt/lingtu/current/build/driver/lingtu_driver",
     ]

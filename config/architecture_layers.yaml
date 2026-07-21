@@ -92,7 +92,8 @@ layers:
       - src/kernels/
       - src/native/
       - src/nav/kernel/
-      - src/nav/services/plan/local_planner/paths/
+      - src/nav/cpp/
+      - src/nav/local/paths/
       - src/nav/services/plan/
 
   - id: L6_cli_deploy

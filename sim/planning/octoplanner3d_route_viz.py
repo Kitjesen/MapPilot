@@ -23,7 +23,7 @@ import numpy as np
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PCD = (
     REPO_ROOT
-    / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/building2_9.pcd"
+    / "sim/fixtures/octoplanner3d/building2_9.pcd"
 )
 DEFAULT_ROUTES_JSON = REPO_ROOT / "artifacts/octoplanner3d_building2_route_tests.json"
 DEFAULT_OUTPUT = (

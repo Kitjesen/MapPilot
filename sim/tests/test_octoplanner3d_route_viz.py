@@ -39,7 +39,7 @@ def test_default_route_viz_uses_octoplanner3d_pcd_not_tomogram():
     default_pcd = viz.DEFAULT_PCD.as_posix()
 
     assert default_pcd.endswith(
-        "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/octomap/pcd_files/building2_9.pcd"
+        "sim/fixtures/octoplanner3d/building2_9.pcd"
     )
     assert "tomogram" not in default_pcd
     assert "pct/vendor" not in default_pcd

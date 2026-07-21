@@ -1,12 +1,14 @@
-name: nav-kernel standalone tests
+name: Navigation C++ portable tests
 
 on:
   push:
     paths:
-      - 'src/nav/kernel/**'
+      - 'src/nav/cpp/**'
+      - '.github/workflows/nav-core-tests.yml'
   pull_request:
     paths:
-      - 'src/nav/kernel/**'
+      - 'src/nav/cpp/**'
+      - '.github/workflows/nav-core-tests.yml'
 
 jobs:
   test:
@@ -16,37 +18,55 @@ jobs:
         with:
           submodules: false
 
-      - name: Install coverage tools
-        run: sudo apt-get update && sudo apt-get install -y gcovr
+      - name: Install native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cmake \
+            gcovr \
+            libgtest-dev \
+            liboctomap-dev
 
-      - name: Configure (standalone mode, no ROS2, with coverage)
-        run: cmake -B src/nav/kernel/build -S src/nav/kernel -DSTANDALONE=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_C_FLAGS="--coverage"
+      - name: Configure portable native tests with coverage
+        run: |
+          cmake -S src/nav/cpp -B build/nav-cpp \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_FLAGS="--coverage" \
+            -DCMAKE_C_FLAGS="--coverage" \
+            -DLINGTU_NAV_CPP_BUILD_TESTS=ON \
+            -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF \
+            -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
 
       - name: Build
-        run: cmake --build src/nav/kernel/build --parallel 4
+        run: cmake --build build/nav-cpp --parallel 4
 
       - name: Run tests
-        run: ctest --test-dir src/nav/kernel/build --output-on-failure
+        run: ctest --test-dir build/nav-cpp --output-on-failure
 
       - name: Generate coverage report
         run: |
-          gcovr --root src/nav/kernel \
-            --filter 'src/nav/kernel/include/' \
-            --filter 'src/nav/kernel/src/' \
+          gcovr --root src/nav/cpp \
+            --filter 'src/nav/cpp/include/' \
+            --filter 'src/nav/cpp/control/' \
+            --filter 'src/nav/cpp/engine/' \
+            --filter 'src/nav/cpp/planning/' \
             --exclude '.*test.*' \
             --print-summary \
-            --xml src/nav/kernel/build/coverage.xml
+            --xml build/nav-cpp/coverage.xml
           # Extract line coverage percentage for summary
-          LINE_COV=$(gcovr --root src/nav/kernel \
-            --filter 'src/nav/kernel/include/' \
-            --filter 'src/nav/kernel/src/' \
+          LINE_COV=$(gcovr --root src/nav/cpp \
+            --filter 'src/nav/cpp/include/' \
+            --filter 'src/nav/cpp/control/' \
+            --filter 'src/nav/cpp/engine/' \
+            --filter 'src/nav/cpp/planning/' \
             --exclude '.*test.*' \
             --print-summary 2>&1 | grep 'lines:' | awk '{print $2}')
-          echo "### nav-kernel Test Coverage: ${LINE_COV}" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Navigation C++ Test Coverage: ${LINE_COV}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v4
         with:
           name: nav-core-coverage
-          path: src/nav/kernel/build/coverage.xml
+          path: build/nav-cpp/coverage.xml
           retention-days: 14

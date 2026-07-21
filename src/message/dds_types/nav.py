@@ -38,6 +38,20 @@ class OccupancyGrid(IdlStruct, typename="lingtu::dds::OccupancyGrid"):
 
 
 @dataclass
+class ExplorationGrid(IdlStruct, typename="lingtu::dds::ExplorationGrid"):
+    header: Header
+    info: MapMetaData
+    data: types.sequence[types.int8]
+    session_id: str
+    map_id: str
+    map_version: int
+    artifact_hash: str
+    reset_epoch: types.uint64
+    generation: types.uint64
+    live: types.boolean
+
+
+@dataclass
 class NavigationCommandRequest(
     IdlStruct,
     typename="lingtu::dds::NavigationCommandRequest",
@@ -60,6 +74,31 @@ class NavigationCommandAck(
     kind: types.int32
     accepted: types.boolean
     reason: str
+
+
+@dataclass
+class ExplorationCommandRequest(
+    IdlStruct,
+    typename="lingtu::dds::ExplorationCommandRequest",
+):
+    header: Header
+    request_id: str
+    kind: types.int32
+    session_id: str
+    reason: str
+
+
+@dataclass
+class ExplorationCommandAck(
+    IdlStruct,
+    typename="lingtu::dds::ExplorationCommandAck",
+):
+    header: Header
+    request_id: str
+    kind: types.int32
+    accepted: types.boolean
+    reason: str
+    session_id: str
 
 
 @dataclass
@@ -144,8 +183,11 @@ DDS_Odometry = Odometry
 DDS_Path = Path
 DDS_MapMetaData = MapMetaData
 DDS_OccupancyGrid = OccupancyGrid
+DDS_ExplorationGrid = ExplorationGrid
 DDS_NavigationCommandRequest = NavigationCommandRequest
 DDS_NavigationCommandAck = NavigationCommandAck
+DDS_ExplorationCommandRequest = ExplorationCommandRequest
+DDS_ExplorationCommandAck = ExplorationCommandAck
 DDS_InspectionCommandRequest = InspectionCommandRequest
 DDS_InspectionCommandAck = InspectionCommandAck
 DDS_InspectionEvidenceRequest = InspectionEvidenceRequest

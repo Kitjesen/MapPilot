@@ -1,7 +1,7 @@
 r"""Auto-generated DDS dataclass definitions.
 
 Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-17T02:52:46Z
+Generated:  2026-07-20T05:28:09Z
 
 DO NOT EDIT BY HAND -- regenerate with::
 
@@ -338,6 +338,29 @@ class NavigationCommandAck:
 
 
 @dataclass(kw_only=True)
+class ExplorationCommandRequest:
+    r"""IDL struct: lingtu::dds::ExplorationCommandRequest
+    """
+    header: Header
+    request_id: str
+    kind: int
+    session_id: str
+    reason: str
+
+
+@dataclass(kw_only=True)
+class ExplorationCommandAck:
+    r"""IDL struct: lingtu::dds::ExplorationCommandAck
+    """
+    header: Header
+    request_id: str
+    kind: int
+    accepted: bool
+    reason: str
+    session_id: str
+
+
+@dataclass(kw_only=True)
 class InspectionCommandRequest:
     r"""IDL struct: lingtu::dds::InspectionCommandRequest
     """
@@ -478,3 +501,19 @@ class OccupancyGrid:
     header: Header
     info: MapMetaData
     data: list[int] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
+class ExplorationGrid:
+    r"""IDL struct: lingtu::dds::ExplorationGrid
+    """
+    header: Header
+    info: MapMetaData
+    data: list[int] = field(default_factory=list)
+    session_id: str
+    map_id: str
+    map_version: int
+    artifact_hash: str
+    reset_epoch: int
+    generation: int
+    live: bool

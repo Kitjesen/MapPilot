@@ -61,7 +61,7 @@ Main implementation locations:
 | LocalPlanner | `src/nav/services/plan/local_planner/service.py` | Local obstacle-avoidance Module around `nav_kernel`. |
 | PathFollower | `src/nav/local/path_follower.py` | Converts `local_path` into velocity commands. |
 | VelocityMux | `src/nav/services/safety/velocity_mux.py` | Final velocity arbiter before the driver. |
-| nav_kernel C++ | `src/nav/kernel/include/nav_kernel/` | Hot-path local planner, terrain, and path follower kernels. |
+| nav_kernel C++ | `src/nav/cpp/include/nav_kernel/` | Hot-path local planner, terrain, and path follower kernels. |
 
 ## Product contracts
 
@@ -180,5 +180,5 @@ python -m pytest src/nav/tests/ -m "not ros2"
 python -m pytest src/nav/tests -q
 ```
 
-The C++ tests under `src/nav/kernel/tests/` require the CMake flow from the root
+The C++ tests under `src/nav/cpp/tests/` require the CMake flow from the root
 project guidance; they are not collected by pytest.

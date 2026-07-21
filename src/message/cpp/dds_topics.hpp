@@ -115,6 +115,14 @@ inline constexpr TopicContract kNavCommandAck{
     "/nav/command/ack", "rt/nav/command/ack",
     "lingtu.dds.NavigationCommandAck",
     "lingtu::dds::NavigationCommandAck"};
+inline constexpr TopicContract kNavExplorationCommand{
+    "/nav/exploration/command", "rt/nav/exploration/command",
+    "lingtu.dds.ExplorationCommandRequest",
+    "lingtu::dds::ExplorationCommandRequest"};
+inline constexpr TopicContract kNavExplorationAck{
+    "/nav/exploration/ack", "rt/nav/exploration/ack",
+    "lingtu.dds.ExplorationCommandAck",
+    "lingtu::dds::ExplorationCommandAck"};
 inline constexpr TopicContract kNavInspectionCommand{
     "/nav/inspection/command", "rt/nav/inspection/command",
     "lingtu.dds.InspectionCommandRequest",
@@ -163,6 +171,9 @@ inline constexpr TopicContract kNavTeleopCmdVel{
 inline constexpr TopicContract kNavExplorationGrid{
     "/nav/exploration_grid", "rt/nav/exploration_grid",
     "lingtu.dds.OccupancyGrid", "lingtu::dds::OccupancyGrid"};
+inline constexpr TopicContract kNavExplorationSnapshot{
+    "/nav/exploration_snapshot", "rt/nav/exploration_snapshot",
+    "lingtu.dds.ExplorationGrid", "lingtu::dds::ExplorationGrid"};
 
 // ── Exploration planner topics ────────────────────────────────────────
 inline constexpr TopicContract kExplorationWayPoint{
@@ -215,6 +226,8 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavCancel,
     kNavCommandRequest,
     kNavCommandAck,
+    kNavExplorationCommand,
+    kNavExplorationAck,
     kNavInspectionCommand,
     kNavInspectionAck,
     kNavInspectionEvidenceRequest,
@@ -229,6 +242,7 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavCmdVel,
     kNavTeleopCmdVel,
     kNavExplorationGrid,
+    kNavExplorationSnapshot,
     kExplorationWayPoint,
     kExplorationLocalPath,
     kExplorationRuntime,

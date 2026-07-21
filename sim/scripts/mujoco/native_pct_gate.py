@@ -841,7 +841,7 @@ def _default_local_planner_path_folder() -> Path:
     candidates = (
         ROOT / "install/local_planner/share/local_planner/paths",
         ROOT / "install/share/local_planner/paths",
-        ROOT / "src/nav/services/plan/local_planner/paths",
+        ROOT / "src/nav/local/paths",
     )
     for candidate in candidates:
         if (candidate / "startPaths.ply").is_file() and (candidate / "paths.ply").is_file():

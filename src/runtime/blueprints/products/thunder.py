@@ -21,7 +21,7 @@ from runtime.profiles.binding_policy import (
 )
 from runtime.profiles.catalog.product_intents import (
     THUNDER_MAP_ARTIFACT_CONFIG,
-    THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+    THUNDER_OCTO_CONFIG,
 )
 from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_GATEWAY_PORT,
@@ -403,7 +403,7 @@ def thunder_map_config(**overrides: Any) -> dict[str, Any]:
             "plan_safety_policy": "reject",
             "fallback_planner_name": "",
             **THUNDER_MAP_ARTIFACT_CONFIG,
-            **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+            **THUNDER_OCTO_CONFIG,
             "enable_native": True,
             "terrain_backend": "nanobind",
             "terrain_strict_native": True,
@@ -439,7 +439,7 @@ def thunder_nav_config(**overrides: Any) -> dict[str, Any]:
             "path_follower_min_speed": 0.08,
             "path_follower_native_max_accel": 10.0,
             **THUNDER_MAP_ARTIFACT_CONFIG,
-            **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+            **THUNDER_OCTO_CONFIG,
             "enable_native": True,
             "terrain_backend": "nanobind",
             "terrain_strict_native": True,
@@ -465,7 +465,7 @@ def thunder_explore_config(**overrides: Any) -> dict[str, Any]:
             "plan_safety_policy": "reject",
             "fallback_planner_name": "",
             **THUNDER_MAP_ARTIFACT_CONFIG,
-            **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+            **THUNDER_OCTO_CONFIG,
             "enable_semantic": True,
             "enable_gateway": True,
             "enable_frontier": True,

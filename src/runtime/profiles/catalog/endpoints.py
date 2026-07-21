@@ -206,6 +206,7 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             "tare_explore": {
                 "planner": "octoplanner3d",
                 "map_path": _resolve_octoplanner3d_map(),
+                "map_artifact_gate_required": True,
                 "plan_safety_policy": "reject",
                 "fallback_planner_name": "",
                 "enable_frontier": False,

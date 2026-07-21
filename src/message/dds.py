@@ -281,6 +281,22 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "lingtu::dds::NavigationCommandAck",
         ros_compatible=False,
     ),
+    TOPICS.exploration_command: TopicSpec(
+        TOPICS.exploration_command,
+        "ExplorationCommandRequest",
+        "message.dds_types.nav.ExplorationCommandRequest",
+        "lingtu.dds.ExplorationCommandRequest",
+        "lingtu::dds::ExplorationCommandRequest",
+        ros_compatible=False,
+    ),
+    TOPICS.exploration_ack: TopicSpec(
+        TOPICS.exploration_ack,
+        "ExplorationCommandAck",
+        "message.dds_types.nav.ExplorationCommandAck",
+        "lingtu.dds.ExplorationCommandAck",
+        "lingtu::dds::ExplorationCommandAck",
+        ros_compatible=False,
+    ),
     TOPICS.inspection_command: TopicSpec(
         TOPICS.inspection_command,
         "InspectionCommandRequest",
@@ -409,6 +425,14 @@ TOPIC_SPECS: dict[str, TopicSpec] = {
         "message.dds_types.nav.OccupancyGrid",
         "lingtu.dds.OccupancyGrid",
         "lingtu::dds::OccupancyGrid",
+        ros_compatible=False,
+    ),
+    TOPICS.exploration_snapshot: TopicSpec(
+        TOPICS.exploration_snapshot,
+        "ExplorationGrid",
+        "message.dds_types.nav.ExplorationGrid",
+        "lingtu.dds.ExplorationGrid",
+        "lingtu::dds::ExplorationGrid",
         ros_compatible=False,
     ),
 }

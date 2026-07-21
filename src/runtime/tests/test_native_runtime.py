@@ -16,7 +16,7 @@ def test_native_runtime_manifest_declares_product_cpp_components() -> None:
     assert '"slam"' in text
     assert '"src/localization/slam/cpp"' in text
     assert '"nav"' in text
-    assert '"src/nav/services/endpoint/cpp"' in text
+    assert '"src/nav/cpp/endpoint"' in text
 
 
 def test_pgo_hba_are_product_native_save_time_commands() -> None:

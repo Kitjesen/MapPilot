@@ -5,20 +5,80 @@ summary: Physical Thunder field endpoint. Native services own sensors, SLAM, nav
 simulation_only: false
 real_equivalent: true
 data_plane: native_dds
+process_control: runtime_plan
+process_manager: systemd
 profile_defaults:
   runtime_endpoint: thunder_field
   localization_adapter: cpp_slam_status
   command_output_mode: endpoint_only
   hardware_control_boundary: driver
-native_services:
-  - lingtu-livox-dds.service
-  - lingtu-slam-dds.service
-  - lingtu-traversability-dds.service
-  - lingtu-nav-dds.service
-  - lingtu-driver.service
-mode_specific_services:
-  tare_explore:
-    - lingtu-explore-dds.service
+processes:
+  lidar:
+    target: lingtu-livox-dds.service
+    lifecycle: mode
+    order: 10
+    timeout_s: 20
+  slam:
+    target: lingtu-slam-dds.service
+    lifecycle: mode
+    order: 20
+    timeout_s: 35
+  traversability:
+    target: lingtu-traversability-dds.service
+    lifecycle: mode
+    order: 30
+    timeout_s: 20
+  nav:
+    target: lingtu-nav-dds.service
+    lifecycle: mode
+    order: 40
+    timeout_s: 20
+  driver:
+    target: lingtu-driver.service
+    lifecycle: persistent
+    order: 50
+    timeout_s: 20
+  camera:
+    target: lingtu-camera-dds.service
+    lifecycle: mode
+    order: 60
+    timeout_s: 20
+  explore:
+    target: lingtu-explore-dds.service
+    lifecycle: mode
+    order: 70
+    timeout_s: 20
+  runtime:
+    target: lingtu.service
+    lifecycle: mode
+    order: 90
+    timeout_s: 45
+conflicts:
+  - lingtu-teleop-dds.service
+  - robot-super-lio-relocation.service
+  - robot-super-lio.service
+  - robot-hba.service
+  - robot-genz-icp.service
+  - robot-localizer.service
+  - robot-fastlio2.service
+  - robot-lidar.service
+  - lidar.service
+  - localization.service
+  - slam.service
+  - traversability-dds.service
+  - traversability.service
+  - nav-dds.service
+  - nav.service
+  - explore-dds.service
+  - explore.service
+  - lingtu-thunder-dds-endpoint.service
+  - thunder-dds-endpoint.service
+exploration_command_boundary:
+  request: /nav/exploration/command
+  ack: /nav/exploration/ack
+  client_completion: business_ack_required
+  status_source: /dev/shm/lingtu/explore_status.json
+  status_authoritative_for_commands: false
 inspection_command_boundary:
   request: /nav/inspection/command
   ack: /nav/inspection/ack
@@ -34,6 +94,7 @@ source_topics:
   - /lidar/raw_frame
   - /imu/raw
   - /nav/command/request
+  - /nav/exploration/command
   - /nav/inspection/command
   - /nav/inspection/evidence/result
   - /nav/traversability
@@ -44,11 +105,14 @@ exposed_topics:
   - /slam/saved_map_cloud
   - /slam/localization_health
   - /slam/localization_quality
+  - /nav/exploration_grid
+  - /nav/exploration_snapshot
   - /nav/global_path
   - /nav/local_path
   - /nav/way_point
   - /nav/cmd_vel
   - /nav/command/ack
+  - /nav/exploration/ack
   - /nav/inspection/ack
   - /nav/inspection/status
   - /nav/inspection/evidence/request

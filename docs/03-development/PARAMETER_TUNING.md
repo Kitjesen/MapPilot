@@ -44,7 +44,7 @@ safety state are stable.
 
 Implementation:
 
-- C++ core: `src/nav/services/plan/local_planner/cpp/`
+- C++ core: `src/nav/cpp/planning/local/`
 - Module wrapper: `src/nav/local/local_planner.py`
 - Hot path backend: `nav_kernel` / nanobind
 

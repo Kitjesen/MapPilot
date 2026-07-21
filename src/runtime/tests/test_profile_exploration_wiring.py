@@ -54,7 +54,11 @@ def test_tare_explore_profile_uses_lingtu_tare_without_native_module():
     assert config["enable_traversable_frontier"] is False
     assert config["exploration_backend"] == "tare"
     assert config["robot"] == "thunder"
-    assert config["slam_profile"] == "fastlio2"
+    assert config["slam_profile"] == "localizer"
+    assert config["map_path"].endswith((".ot", ".bt"))
+    assert config["map_artifact_gate_required"] is True
+    assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
+    assert config["command_output_mode"] == "endpoint_only"
     assert config["planner"] == "octoplanner3d"
     assert config["enable_native"] is False
     assert "WavefrontFrontierExplorer" not in graph.modules
@@ -66,7 +70,6 @@ def test_tare_explore_profile_uses_lingtu_tare_without_native_module():
     assert "OccupancyGridModule.exploration_grid->TAREExplorerModule.exploration_grid" in wires
     assert "nav.mission.mission_status->TAREExplorerModule.navigation_status" in wires
     assert not graph.dangling_wires()
-
 
 def test_tare_explore_cmu_unity_endpoint_uses_external_tare_bridge():
     config = resolve_profile_config("tare_explore", runtime_endpoint="cmu_unity")

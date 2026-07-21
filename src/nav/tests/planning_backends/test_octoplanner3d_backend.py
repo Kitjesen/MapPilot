@@ -25,9 +25,7 @@ MODULE = "nav.services.plan.global_planner.algorithm.octoplanner3d"
 RUNTIME_MODULE = "nav.services.plan.global_planner.algorithm.octoplanner3d_runtime"
 REGISTRY_KEY = "octoplanner3d"
 REPO_ROOT = Path(__file__).resolve().parents[4]
-OCTO_NATIVE_DIR = (
-    REPO_ROOT / "src" / "nav" / "services" / "plan" / "global_planner" / "algorithm" / "OctoPlanner3D" / "runtime"
-)
+OCTO_NATIVE_DIR = REPO_ROOT / "src" / "nav" / "cpp" / "planning" / "global" / "octoplanner"
 
 
 @pytest.fixture(autouse=True)
@@ -657,16 +655,18 @@ def test_native_runtime_uses_generic_contract_and_public_octoplanner3d_adapter()
     core = (OCTO_NATIVE_DIR / "octoplanner3d_core.cpp").read_text(encoding="utf-8")
     cmake = (OCTO_NATIVE_DIR / "CMakeLists.txt").read_text(encoding="utf-8")
     planner_header = (
-        REPO_ROOT / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/include/global_planner.h"
+        REPO_ROOT
+        / "src/nav/cpp/planning/global/octoplanner/vendor/planner/include/global_planner.h"
     ).read_text(encoding="utf-8")
     planner_core = (
-        REPO_ROOT / "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/planner/src/global_planner.cpp"
+        REPO_ROOT
+        / "src/nav/cpp/planning/global/octoplanner/vendor/planner/src/global_planner.cpp"
     ).read_text(encoding="utf-8")
-    contract = (REPO_ROOT / "src/nav/services/plan/cpp/global_planner_contract.hpp").read_text(encoding="utf-8")
+    contract = (REPO_ROOT / "src/nav/cpp/planning/global/global_planner_contract.hpp").read_text(encoding="utf-8")
     runtime_combined = source + "\n" + core + "\n" + cmake
 
     assert '#include "octoplanner3d_core.hpp"' in source
-    assert "octoplanner3d::runtime::runPlan(request)" in source
+    assert "octoplanner3d::runtime::runPlan(request.map_path, request.plan)" in source
     assert '#include "global_planner.h"' in core
     assert '#include "pcd2octomap_converter.h"' in core
     assert "converter.setInputPcdFile" in core
@@ -689,7 +689,7 @@ def test_native_runtime_uses_generic_contract_and_public_octoplanner3d_adapter()
     assert 'extractString(json, "map_path")' in source
     assert 'extractNumberArray(json, "start")' in source
     assert 'extractNumberArray(json, "goal")' in source
-    assert "applyOptionsFromJson(request.options, json)" in source
+    assert "applyOptionsFromJson(request.plan.options, json)" in source
     assert "RedirectStdoutToStderr redirect_logs" in source
     assert "duplicateTo(fileNo(stderr), fileNo(stdout))" in source
     assert '"max_same_floor_z_excursion"' in source
@@ -791,7 +791,8 @@ def test_headless_cmake_does_not_require_pcd_converter_for_octomap_inputs():
 def test_build_script_points_at_headless_cxx_wrapper_not_ros2_launch():
     script = (REPO_ROOT / "scripts" / "build" / "build_octoplanner3d.sh").read_text(encoding="utf-8")
 
-    assert "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime" in script
+    assert "src/nav/cpp/planning/global/octoplanner" in script
+    assert "src/nav/cpp/planning/global/octoplanner/vendor" in script
     assert "octoplanner3d_headless" in script
     assert "--python|--bindings" not in script
     assert "OCTOPLANNER3D_BUILD_PYTHON_BINDINGS" not in script

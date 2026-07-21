@@ -4,6 +4,8 @@ project(lingtu_explore_cpp LANGUAGES C CXX)
 option(LINGTU_EXPLORE_CPP_BUILD_TESTS "Build LingTu explore C++ tests" OFF)
 
 add_library(lingtu_explore_core
+  frontier.cpp
+  keypose_graph.cpp
   tare_policy.cpp)
 
 target_compile_features(lingtu_explore_core PUBLIC cxx_std_17)
@@ -66,7 +68,7 @@ if(LINGTU_EXPLORE_CPP_BUILD_TESTS)
 endif()
 
 # nanobind Python extension: exposes the C++ TarePolicy as lingtu_explore_kernel.
-# Mirrors src/nav/kernel/CMakeLists.txt. Off by default; built by
+# Mirrors the optional Python-binding mode in src/nav/cpp/CMakeLists.txt. Off by default; built by
 # scripts/build/build_explore_kernel.sh or by passing the option below.
 option(LINGTU_EXPLORE_CPP_BUILD_PYTHON_BINDINGS
   "Build lingtu_explore_kernel Python bindings" OFF)

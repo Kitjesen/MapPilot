@@ -217,7 +217,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "nav_dds",
                 "LINGTU_NAV_DDS_BIN",
-                "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint",
+                "/opt/lingtu/current/build/nav_endpoint/navd",
             ),
         ),
         description="Native DDS navigation runtime.",
@@ -236,7 +236,7 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
             (
                 "nav_dds",
                 "LINGTU_NAV_DDS_BIN",
-                "/opt/lingtu/current/build/nav_endpoint/lingtu_nav_native_endpoint",
+                "/opt/lingtu/current/build/nav_endpoint/navd",
             ),
         ),
         description="Compatibility alias for the short nav service.",
@@ -281,19 +281,31 @@ THUNDER_SERVICE_SPECS: tuple[ThunderServiceSpec, ...] = (
         installer="install_explore_dds_service.sh",
         group="native_dds",
         optional=True,
-        experimental=True,
-        checks=("systemd", "dds"),
+        checks=("systemd", "native_binary", "dds", "status_file"),
         topics=(
-            TOPICS.exploration_way_point,
-            TOPICS.exploration_global_path,
-            TOPICS.exploration_local_path,
+            TOPICS.odometry,
+            TOPICS.exploration_snapshot,
+            TOPICS.exploration_command,
+            TOPICS.exploration_ack,
+            TOPICS.nav_command_request,
+            TOPICS.nav_command_ack,
         ),
-        dds_topics=_dds(
-            TOPICS.exploration_way_point,
-            TOPICS.exploration_global_path,
-            TOPICS.exploration_local_path,
+        # Startup readiness observes only periodic inputs. Command/ack traffic begins
+        # after START and must not create a circular launcher dependency.
+        dds_topics=_dds(TOPICS.odometry, TOPICS.exploration_snapshot),
+        files=("/dev/shm/lingtu/explore_status.json",),
+        status_max_age_s=6.0,
+        binaries=(
+            (
+                "explore_dds",
+                "LINGTU_EXPLORE_DDS_BIN",
+                "/opt/lingtu/current/build/nav_endpoint/lingtu_explore_dds",
+            ),
         ),
-        description="Optional native DDS exploration endpoint.",
+        description=(
+            "Native hierarchical exploration endpoint over identity-versioned "
+            "rolling occupancy snapshots and typed navigation commands."
+        ),
     ),
     ThunderServiceSpec(
         name="gateway",

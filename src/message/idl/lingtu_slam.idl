@@ -232,6 +232,23 @@ struct NavigationCommandAck {
   string reason;
 };
 
+struct ExplorationCommandRequest {
+  Header header;
+  string request_id;
+  long kind;
+  string session_id;
+  string reason;
+};
+
+struct ExplorationCommandAck {
+  Header header;
+  string request_id;
+  long kind;
+  boolean accepted;
+  string reason;
+  string session_id;
+};
+
 struct InspectionCommandRequest {
   Header header;
   string request_id;
@@ -343,6 +360,19 @@ struct OccupancyGrid {
   Header header;
   MapMetaData info;
   sequence<octet> data;
+};
+
+struct ExplorationGrid {
+  Header header;
+  MapMetaData info;
+  sequence<octet> data;
+  string session_id;
+  string map_id;
+  long long map_version;
+  string artifact_hash;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
 };
 
 };

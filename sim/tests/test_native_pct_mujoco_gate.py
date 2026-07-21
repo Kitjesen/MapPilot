@@ -755,7 +755,7 @@ def test_default_local_planner_path_folder_supports_merge_install(tmp_path: Path
     merge_paths.mkdir(parents=True)
     (merge_paths / "startPaths.ply").write_text("ply\n", encoding="utf-8")
     (merge_paths / "paths.ply").write_text("ply\n", encoding="utf-8")
-    source_paths = tmp_path / "src/nav/services/plan/local_planner/paths"
+    source_paths = tmp_path / "src/nav/local/paths"
     source_paths.mkdir(parents=True)
     (source_paths / "startPaths.ply").write_text("ply\n", encoding="utf-8")
     (source_paths / "paths.ply").write_text("ply\n", encoding="utf-8")

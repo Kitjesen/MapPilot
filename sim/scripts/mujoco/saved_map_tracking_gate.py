@@ -32,7 +32,7 @@ from nav.services.plan.global_planner.algorithm.octoplanner3d_planner import (
 )
 from runtime.msgs.numpy_compat import np
 
-PATH_LIBRARY = ROOT / "src" / "nav" / "services" / "plan" / "local_planner" / "paths"
+PATH_LIBRARY = ROOT / "src" / "nav" / "local" / "paths"
 
 
 def _wrap_angle_rad(value: float) -> float:
@@ -460,14 +460,11 @@ def _dump_octomap_occupied_points(
             "-lc",
             (
                 f"cd {root_wsl} && "
-                "LD_LIBRARY_PATH=src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/lib "
                 f"{exe_wsl} --input {input_wsl} --output {output_wsl}"
             ),
         ]
     else:
         env = os.environ.copy()
-        lib_dir = ROOT / "src" / "nav" / "services" / "plan" / "global_planner" / "algorithm" / "OctoPlanner3D" / "lib"
-        env["LD_LIBRARY_PATH"] = f"{lib_dir}:{env.get('LD_LIBRARY_PATH', '')}"
         command = [str(exe), "--input", str(octomap_path), "--output", str(output)]
 
     info["enabled"] = True

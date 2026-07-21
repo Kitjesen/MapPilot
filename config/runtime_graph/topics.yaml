@@ -13,18 +13,60 @@ native_contract_topics:
   - /slam/localization_quality
   - /nav/command/request
   - /nav/command/ack
+  - /nav/exploration/command
+  - /nav/exploration/ack
   - /nav/inspection/command
   - /nav/inspection/ack
   - /nav/inspection/status
   - /nav/inspection/evidence/request
   - /nav/inspection/evidence/result
   - /nav/traversability
+  - /nav/exploration_grid
   - /nav/global_path
   - /nav/local_path
   - /nav/way_point
   - /nav/cmd_vel
 
 topics:
+  /nav/exploration/command:
+    role: native_exploration_command
+    frame: map
+    schema: exploration_command_request
+    producer: persistent_cpp_navigation_client
+    consumers:
+      - native_explore_runtime
+    qos: reliable_volatile_keep_last_32
+    semantics: exploration_start_pause_resume_or_stop
+    port_bindings:
+      - owner: persistent_cpp_navigation_client
+        port: exploration_command
+        direction: out
+        boundary: native
+      - owner: native_explore_runtime
+        port: exploration_command
+        direction: in
+        boundary: endpoint
+
+  /nav/exploration/ack:
+    role: native_exploration_command_ack
+    frame: map
+    schema: exploration_command_ack
+    producer: native_explore_runtime
+    consumers:
+      - persistent_cpp_navigation_client
+      - gateway_command_audit
+    qos: reliable_transient_local_keep_last_64
+    semantics: exploration_business_ack
+    port_bindings:
+      - owner: native_explore_runtime
+        port: exploration_ack
+        direction: out
+        boundary: endpoint
+      - owner: persistent_cpp_navigation_client
+        port: exploration_ack
+        direction: in
+        boundary: native
+
   /nav/inspection/command:
     role: native_inspection_command
     frame: map
@@ -557,6 +599,41 @@ topics:
         boundary: module
       - owner: endpoint_supervisor
         port: traversability
+        direction: in
+        boundary: endpoint
+
+  /nav/exploration_grid:
+    role: frontier_occupancy_grid
+    frame: map
+    schema: occupancy_grid
+    producer: native_traversability_endpoint
+    consumers:
+      - gateway
+    qos: reliable_keep_last_2
+    semantics: observed_free_occupied_and_unknown_frontier_input
+    port_bindings:
+      - owner: native_traversability_endpoint
+        port: exploration_grid
+        direction: out
+        boundary: endpoint
+
+  /nav/exploration_snapshot:
+    role: versioned_live_exploration_map
+    frame: map
+    schema: lingtu.dds.ExplorationGrid
+    producer: native_traversability_endpoint
+    consumers:
+      - native_explore_endpoint
+      - gateway
+    qos: reliable_keep_last_2
+    semantics: rolling_occupancy_with_session_reset_epoch_and_generation
+    port_bindings:
+      - owner: native_traversability_endpoint
+        port: exploration_snapshot
+        direction: out
+        boundary: endpoint
+      - owner: native_explore_endpoint
+        port: exploration_snapshot
         direction: in
         boundary: endpoint
 

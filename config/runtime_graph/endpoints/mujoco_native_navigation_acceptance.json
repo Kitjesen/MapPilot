@@ -30,7 +30,7 @@
   },
   "paths": {
     "slam_config": "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
-    "path_library": "src/nav/services/plan/local_planner/paths",
+    "path_library": "src/nav/local/paths",
     "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
   },
   "binaries": {

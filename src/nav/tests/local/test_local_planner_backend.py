@@ -136,7 +136,7 @@ def test_local_planner_paths_dir_resolves_shared_cmu_paths_directory() -> None:
     paths_dir = local_planner_paths_dir()
 
     assert paths_dir.endswith(
-        os.path.normpath("src/nav/services/plan/local_planner/paths")
+        os.path.normpath("src/nav/local/paths")
     )
     assert os.path.isdir(paths_dir)
     assert os.path.exists(os.path.join(paths_dir, "paths.ply"))

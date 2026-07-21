@@ -9,7 +9,7 @@ log_file="${TMPDIR:-/tmp}/lingtu_nav_command_ack.log"
 
 endpoint="${build_dir}/lingtu_nav_native_endpoint"
 control="${build_dir}/lingtu_nav_control"
-path_library="${source_dir}/src/nav/services/plan/local_planner/paths"
+path_library="${source_dir}/src/nav/local/paths"
 
 for file in "${endpoint}" "${control}"; do
   if [[ ! -x "${file}" ]]; then

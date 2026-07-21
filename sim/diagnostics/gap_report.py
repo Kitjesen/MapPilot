@@ -103,7 +103,7 @@ PIPELINE_TRACE = {
             "code": [
                 "src/nav/services/plan/global_planner/service.py",
                 "src/nav/services/plan/global_planner/algorithm/octoplanner3d.py",
-                "src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/",
+                "src/nav/cpp/planning/global/octoplanner/",
             ],
             "runtime_evidence_gate": "policy_nav",
         },

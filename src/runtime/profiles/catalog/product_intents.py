@@ -27,7 +27,7 @@ THUNDER_MAP_ARTIFACT_CONFIG = dict(
     octomap_free_layers_above=6,
     octomap_free_dilation_cells=1,
 )
-THUNDER_OCTOPLANNER3D_CONSTRAINTS = dict(
+THUNDER_OCTO_CONFIG = dict(
     **THUNDER_MAP_ARTIFACT_CONFIG,
     preview_timeout=30.0,
     octoplanner3d_timeout_s=30.0,
@@ -121,7 +121,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
         plan_safety_policy="reject",
         fallback_planner_name="",
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         enable_navigation=False,
         enable_native=False,
         enable_semantic=False,
@@ -170,7 +170,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         path_follower_lookahead=0.35,
         path_follower_max_speed=0.20,
         path_follower_min_speed=0.08,
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         # Keep autonomy inside the Module graph. The default local planner and
         # path follower are ROS-free nanobind/nav_kernel backends; legacy ROS2
         # NativeModule backends stay explicit compatibility choices only.
@@ -193,7 +193,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
         plan_safety_policy="reject",
         fallback_planner_name="",
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         enable_native=False,
         enable_semantic=True,
         enable_gateway=True,
@@ -210,7 +210,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
         plan_safety_policy="reject",
         fallback_planner_name="",
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         enable_native=False,
         enable_semantic=True,
         enable_gateway=True,
@@ -227,7 +227,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
         plan_safety_policy="reject",
         fallback_planner_name="",
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         enable_native=False,
         enable_semantic=True,
         enable_gateway=True,
@@ -244,13 +244,16 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
     "tare_explore": dict(
         _desc="Explore via LingTu-owned TARE-style frontier/viewpoint selection",
         product_mode="exploration",
-        slam_profile="fastlio2",
+        # Native TARE selects coverage goals from live snapshots, while the
+        # current global planner still requires a validated saved OctoMap.
+        slam_profile="localizer",
         llm="qwen",
         planner="octoplanner3d",
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
+        map_artifact_gate_required=True,
         plan_safety_policy="reject",
         fallback_planner_name="",
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         enable_native=False,
         enable_semantic=True,
         enable_gateway=True,
@@ -270,7 +273,7 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         map_path=_ACTIVE_OCTOPLANNER3D_MAP,
         plan_safety_policy="reject",
         fallback_planner_name="",
-        **THUNDER_OCTOPLANNER3D_CONSTRAINTS,
+        **THUNDER_OCTO_CONFIG,
         enable_native=False,
         enable_semantic=True,
         enable_gateway=True,

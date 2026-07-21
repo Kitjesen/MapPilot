@@ -79,10 +79,10 @@ def test_architecture_layer_manifest_rejects_equal_paths_with_trailing_slash_dri
 
 def test_architecture_layer_manifest_uses_most_specific_path_owner() -> None:
     assert architecture_layer_for_path("src/nav/local/path_follower.py")["id"] == "L4_capability_modules"
-    assert architecture_layer_for_path("src/nav/services/plan/local_planner/paths")["id"] == "L5_algorithm_kernels"
+    assert architecture_layer_for_path("src/nav/local/paths")["id"] == "L5_algorithm_kernels"
     assert architecture_layer_for_path("src/runtime/adapters/dds/reader.py")["id"] == "L3_adapter_layer"
     assert architecture_layer_for_path("src/maps/adapters/native/map_save.py")["id"] == "L3_adapter_layer"
-    assert architecture_layer_for_path("src/nav/kernel/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
+    assert architecture_layer_for_path("src/nav/cpp/CMakeLists.txt")["id"] == ("L5_algorithm_kernels")
     assert architecture_layer_for_path("src/nav/adapters/dds/nav/path_bridge.py")["id"] == ("L3_adapter_layer")
 
 

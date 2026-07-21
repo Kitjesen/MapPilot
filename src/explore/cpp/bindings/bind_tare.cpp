@@ -23,15 +23,39 @@ void bind_tare(nb::module_& m) {
     .def_rw("candidate_radius_m", &TarePolicyConfig::candidate_radius_m)
     .def_rw("min_goal_distance_m", &TarePolicyConfig::min_goal_distance_m)
     .def_rw("novelty_radius_m", &TarePolicyConfig::novelty_radius_m)
-    .def_rw("max_candidates", &TarePolicyConfig::max_candidates);
+    .def_rw("max_candidates", &TarePolicyConfig::max_candidates)
+    .def_rw("local_route_radius_m", &TarePolicyConfig::local_route_radius_m)
+    .def_rw("coverage_resolution_m", &TarePolicyConfig::coverage_resolution_m)
+    .def_rw("return_home_distance_m", &TarePolicyConfig::return_home_distance_m)
+    .def_rw("keypose_min_distance_m", &TarePolicyConfig::keypose_min_distance_m)
+    .def_rw("keypose_connect_distance_m", &TarePolicyConfig::keypose_connect_distance_m)
+    .def_rw("gain_weight", &TarePolicyConfig::gain_weight)
+    .def_rw("travel_weight", &TarePolicyConfig::travel_weight)
+    .def_rw("momentum_weight", &TarePolicyConfig::momentum_weight)
+    .def_rw("revisit_weight", &TarePolicyConfig::revisit_weight)
+    .def_rw("max_plan_time_ms", &TarePolicyConfig::max_plan_time_ms)
+    .def_rw("route_2opt_iterations", &TarePolicyConfig::route_2opt_iterations)
+    .def_rw("max_grid_cells", &TarePolicyConfig::max_grid_cells)
+    .def_rw("max_frontier_cells", &TarePolicyConfig::max_frontier_cells)
+    .def_rw("max_frontier_clusters", &TarePolicyConfig::max_frontier_clusters)
+    .def_rw("max_coverage_cells", &TarePolicyConfig::max_coverage_cells)
+    .def_rw("max_keyposes", &TarePolicyConfig::max_keyposes)
+    .def_rw("max_keypose_edges", &TarePolicyConfig::max_keypose_edges)
+    .def_rw("max_keypose_neighbor_links", &TarePolicyConfig::max_keypose_neighbor_links)
+    .def_rw("max_route_targets", &TarePolicyConfig::max_route_targets)
+    .def_rw("return_home_when_done", &TarePolicyConfig::return_home_when_done);
 
   nb::class_<TarePolicy>(m, "TarePolicy")
     .def(nb::init<TarePolicyConfig>(), nb::arg("config") = TarePolicyConfig())
     .def("name", &TarePolicy::name)
-    .def("plan", &TarePolicy::plan, nb::arg("input"))
+    .def("plan",
+         static_cast<ExploreDecision (TarePolicy::*)(const ExploreInput&)>(&TarePolicy::plan),
+         nb::arg("input"))
     .def("select", &TarePolicy::select,
          nb::arg("grid"), nb::arg("robot"),
-         nb::arg("visited_goals") = std::vector<Pose2D>());
+         nb::arg("visited_goals") = std::vector<Pose2D>())
+    .def("reset", &TarePolicy::reset)
+    .def("diagnostics", &TarePolicy::diagnostics);
 
   // ── DDS transport ─────────────────────────────────────────────────────
 #ifdef LINGTU_EXPLORE_HAS_DDS

@@ -33,15 +33,6 @@ struct NpyArray {
   std::vector<std::uint8_t> payload;
 };
 
-struct OccupancyArray {
-  std::vector<std::int8_t> grid;
-  int rows{0};
-  int cols{0};
-  double resolution{0.0};
-  double origin_x{0.0};
-  double origin_y{0.0};
-};
-
 struct EsdfArray {
   std::vector<float> distance;
   std::vector<float> grad_x;
@@ -385,13 +376,13 @@ std::array<double, 2> OriginF64(const NpyArray& array) {
   return origin;
 }
 
-OccupancyArray LoadOccupancy(const std::filesystem::path& path) {
+OccupancyArtifactData LoadOccupancyImpl(const std::filesystem::path& path) {
   const auto entries = ReadStoredNpz(path);
   const auto grid = ParseNpy(Entry(entries, "grid.npy"));
   if (grid.descr != "|i1" || grid.shape.size() != 2U) {
     throw std::runtime_error("occupancy grid must be int8 HxW");
   }
-  OccupancyArray out;
+  OccupancyArtifactData out;
   out.rows = grid.shape[0];
   out.cols = grid.shape[1];
   if (out.rows <= 0 || out.cols <= 0) {
@@ -402,6 +393,15 @@ OccupancyArray LoadOccupancy(const std::filesystem::path& path) {
   const auto origin = OriginF64(ParseNpy(Entry(entries, "origin.npy")));
   out.origin_x = origin[0];
   out.origin_y = origin[1];
+  if (!std::isfinite(out.resolution) || out.resolution <= 0.0 ||
+      !std::isfinite(out.origin_x) || !std::isfinite(out.origin_y)) {
+    throw std::runtime_error("occupancy grid geometry is invalid");
+  }
+  for (const auto value : out.grid) {
+    if (value < -1 || value > 100) {
+      throw std::runtime_error("occupancy grid contains a value outside [-1, 100]");
+    }
+  }
   return out;
 }
 
@@ -439,7 +439,7 @@ EsdfArray LoadEsdf(const std::filesystem::path& path) {
   return out;
 }
 
-layers::Grid2D OccupancyToCostGrid(const OccupancyArray& occupancy) {
+layers::Grid2D OccupancyToCostGrid(const OccupancyArtifactData& occupancy) {
   auto grid = layers::makeGrid2D(
       occupancy.rows,
       occupancy.cols,
@@ -495,6 +495,11 @@ bool CommitFile(
 
 }  // namespace
 
+OccupancyArtifactData LoadOccupancyArtifact(
+    const std::filesystem::path& path) {
+  return LoadOccupancyImpl(path);
+}
+
 GridArtifactResult BuildEsdfArtifact(
     const std::filesystem::path& map_dir,
     bool output_is_staged) {
@@ -503,7 +508,7 @@ GridArtifactResult BuildEsdfArtifact(
     if (!std::filesystem::is_regular_file(occupancy_path)) {
       return Error("occupancy.npz is required before building esdf.npz");
     }
-    const auto occupancy = LoadOccupancy(occupancy_path);
+    const auto occupancy = LoadOccupancyImpl(occupancy_path);
     const auto occupancy_grid = OccupancyToCostGrid(occupancy);
     const auto esdf = layers::computeEsdf(occupancy_grid, 50.0F);
 
@@ -571,7 +576,7 @@ GridArtifactResult BuildTraversabilityArtifact(
         return Error("failed to build prerequisite esdf.npz: " + esdf_result.message);
       }
     }
-    const auto occupancy = LoadOccupancy(occupancy_path);
+    const auto occupancy = LoadOccupancyImpl(occupancy_path);
     const auto esdf = LoadEsdf(esdf_path);
     if (occupancy.rows != esdf.rows || occupancy.cols != esdf.cols ||
         std::fabs(occupancy.resolution - esdf.resolution) > 1e-9 ||

@@ -75,6 +75,7 @@ def test_gateway_runtime_uses_http_liveness_systemd_watchdog() -> None:
     (
         ("lingtu-slam-dds.service", "LINGTU_SLAM_STATUS_JSON"),
         ("lingtu-nav-dds.service", "LINGTU_NAV_STATUS_FILE"),
+        ("lingtu-explore-dds.service", "LINGTU_EXPLORE_STATUS_FILE"),
         ("lingtu-driver.service", "LINGTU_DRIVER_STATUS_FILE"),
     ),
 )

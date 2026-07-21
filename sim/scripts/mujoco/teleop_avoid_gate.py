@@ -2,7 +2,7 @@
 """MuJoCo geometry gate for the native teleop_avoid safety arbiter.
 
 The production arbiter lives in:
-  src/nav/services/endpoint/cpp/teleop_safety.cpp
+  src/nav/cpp/endpoint/teleop_safety.cpp
 
 This script uses MuJoCo for the scene geometry and samples obstacle points from
 MuJoCo geoms. The decision logic mirrors the C++ arbiter and reads its default
@@ -26,8 +26,8 @@ from typing import Iterable
 import mujoco
 
 ROOT = Path(__file__).resolve().parents[3]
-TELEOP_SAFETY_CPP = ROOT / "src/nav/services/endpoint/cpp/teleop_safety.cpp"
-ENDPOINT_CONFIG_HPP = ROOT / "src/nav/services/endpoint/cpp/nav_endpoint_config.hpp"
+TELEOP_SAFETY_CPP = ROOT / "src/nav/cpp/endpoint/teleop_safety.cpp"
+ENDPOINT_CONFIG_HPP = ROOT / "src/nav/cpp/endpoint/nav_endpoint_config.hpp"
 
 
 @dataclass(frozen=True)

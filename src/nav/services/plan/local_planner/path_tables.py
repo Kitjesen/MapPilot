@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 def local_planner_paths_dir() -> str:
     """Return the shared CMU local_planner paths directory."""
-    return os.path.normpath(os.path.join(os.path.dirname(__file__), "paths"))
+    nav_root = Path(__file__).resolve().parents[3]
+    return os.path.normpath(nav_root / "local" / "paths")
 
 
 def _ply_payload_text(path: Path) -> str | None:

@@ -53,42 +53,62 @@ class RuntimeFrames:
 
     @property
     def body_alias_note(self) -> str:
+        """Describe the canonical body-frame alias relationship."""
+
         return f"{self.model_base} == {self.body}"
 
     @property
     def map_frame(self) -> str:
+        """Return the canonical map frame."""
+
         return self.map
 
     @property
     def odom_frame(self) -> str:
+        """Return the canonical odometry frame."""
+
         return self.odom
 
     @property
     def body_frame(self) -> str:
+        """Return the canonical robot body frame."""
+
         return self.body
 
     @property
     def model_base_frame(self) -> str:
+        """Return the simulator model-base frame alias."""
+
         return self.model_base
 
     @property
     def lidar_frame(self) -> str:
+        """Return the normalized LiDAR frame."""
+
         return self.lidar
 
     @property
     def camera_frame(self) -> str:
+        """Return the canonical camera frame."""
+
         return self.camera
 
     @property
     def gnss_frame(self) -> str:
+        """Return the canonical GNSS antenna frame."""
+
         return self.gnss
 
     @property
     def world(self) -> str:
+        """Return the simulator world frame."""
+
         return self.simulator_world
 
     @property
     def simulator_world_frame(self) -> str:
+        """Return the simulator world frame."""
+
         return self.simulator_world
 
 
@@ -142,6 +162,7 @@ class RuntimeTopics:
     exploration_runtime: str = "/exploration/runtime"
     exploration_finish: str = "/exploration/finish"
     exploration_grid: str = "/nav/exploration_grid"
+    exploration_snapshot: str = "/nav/exploration_snapshot"
     traversable_frontiers: str = "/nav/traversable_frontiers"
     frontier_candidate: str = "/nav/frontier_candidate"
     exploration_status: str = "/exploration/status"
@@ -158,6 +179,8 @@ class RuntimeTopics:
     teleop_cmd_vel: str = "/nav/teleop_cmd_vel"
     nav_command_request: str = "/nav/command/request"
     nav_command_ack: str = "/nav/command/ack"
+    exploration_command: str = "/nav/exploration/command"
+    exploration_ack: str = "/nav/exploration/ack"
     inspection_command: str = "/nav/inspection/command"
     inspection_ack: str = "/nav/inspection/ack"
     inspection_status: str = "/nav/inspection/status"
@@ -257,10 +280,14 @@ class Transform3D:
 
     @property
     def translation(self) -> tuple[float, float, float]:
+        """Return translation components as an XYZ tuple."""
+
         return (self.x, self.y, self.z)
 
     @property
     def rotation_xyzw(self) -> tuple[float, float, float, float]:
+        """Return the roll-pitch-yaw rotation as an XYZW quaternion."""
+
         return rpy_to_quaternion_xyzw(self.roll, self.pitch, self.yaw)
 
 
@@ -375,6 +402,7 @@ CORE_ALGORITHM_ENTRY_TOPICS = (
 CANONICAL_NAV_TOPICS = (
     *CORE_ALGORITHM_ENTRY_TOPICS,
     TOPICS.exploration_grid,
+    TOPICS.exploration_snapshot,
     TOPICS.global_path,
     TOPICS.local_path,
     TOPICS.terrain_map,
@@ -577,6 +605,13 @@ LIDAR_EXTRINSICS = {
 }
 
 MESSAGE_FORMATS = {
+    "tf_message": MessageFormat(
+        name="tf_message",
+        ros_type="lingtu.dds.TFMessage",
+        frame_role="per_transform",
+        required_fields=("transforms",),
+        note="Native frame-tree update; each transform carries its own parent and child frames.",
+    ),
     "raw_livox_custom": MessageFormat(
         name="raw_livox_custom",
         ros_type="livox_ros_driver2/msg/CustomMsg",
@@ -697,6 +732,20 @@ MESSAGE_FORMATS = {
         frame_role=FRAMES.map,
         required_fields=("request_id", "kind", "accepted", "reason"),
         note="Endpoint business acceptance or rejection with a native map-frame Header.",
+    ),
+    "exploration_command": MessageFormat(
+        name="exploration_command",
+        ros_type="lingtu.dds.ExplorationCommandRequest",
+        frame_role=FRAMES.map,
+        required_fields=("request_id", "kind", "session_id", "reason"),
+        note="Typed start, pause, resume, or stop request for the native exploration FSM.",
+    ),
+    "exploration_ack": MessageFormat(
+        name="exploration_ack",
+        ros_type="lingtu.dds.ExplorationCommandAck",
+        frame_role=FRAMES.map,
+        required_fields=("request_id", "kind", "accepted", "reason", "session_id"),
+        note="Native exploration business ACK; transport delivery alone is not acceptance.",
     ),
     "inspection_command": MessageFormat(
         name="inspection_command",
@@ -825,6 +874,24 @@ MESSAGE_FORMATS = {
         frame_role="planner_status",
         note="Local planner advisory output for path follower speed/stop behavior.",
     ),
+    "exploration_snapshot": MessageFormat(
+        name="exploration_snapshot",
+        ros_type="lingtu.dds.ExplorationGrid",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "info",
+            "data",
+            "session_id",
+            "map_id",
+            "map_version",
+            "artifact_hash",
+            "reset_epoch",
+            "generation",
+            "live",
+        ),
+        note="Strict trinary rolling occupancy snapshot with restart-safe map identity.",
+    ),
     "traversable_frontier_candidates": MessageFormat(
         name="traversable_frontier_candidates",
         ros_type="application/json",
@@ -844,8 +911,11 @@ MESSAGE_FORMATS = {
 }
 
 TOPIC_FORMATS = {
+    "/tf": ("tf_message",),
+    "/tf_static": ("tf_message",),
     TOPICS.raw_lidar_points: ("raw_livox_custom", "raw_timed_pointcloud2"),
     TOPICS.raw_imu: ("lingtu.dds.Imu",),
+    TOPICS.odom_prior: ("odometry",),
     TOPICS.driver_odometry: ("odometry",),
     TOPICS.odometry: ("odometry",),
     TOPICS.state_estimation_at_scan: ("state_estimation_at_scan",),
@@ -870,6 +940,7 @@ TOPIC_FORMATS = {
     TOPICS.slam_relocalization_request: ("lingtu.dds.RelocalizationRequest",),
     TOPICS.slam_relocalization_response: ("lingtu.dds.RelocalizationResponse",),
     TOPICS.exploration_grid: ("nav_msgs/msg/OccupancyGrid",),
+    TOPICS.exploration_snapshot: ("exploration_snapshot",),
     TOPICS.traversable_frontiers: ("traversable_frontier_candidates",),
     TOPICS.frontier_candidate: ("traversable_frontier_candidates",),
     TOPICS.save_map_service: ("service",),
@@ -888,6 +959,8 @@ TOPIC_FORMATS = {
     TOPICS.teleop_cmd_vel: ("teleop_cmd_vel",),
     TOPICS.nav_command_request: ("nav_command_request",),
     TOPICS.nav_command_ack: ("nav_command_ack",),
+    TOPICS.exploration_command: ("exploration_command",),
+    TOPICS.exploration_ack: ("exploration_ack",),
     TOPICS.inspection_command: ("inspection_command",),
     TOPICS.inspection_ack: ("inspection_ack",),
     TOPICS.inspection_status: ("inspection_status",),
@@ -975,6 +1048,7 @@ TOPIC_ROS_TYPES = {topic: _ros_types_for_formats(formats) for topic, formats in 
 TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.lidar_scan: (FRAMES.lidar,),
     TOPICS.imu: (FRAMES.lidar,),
+    TOPICS.odom_prior: (FRAMES.odom,),
     TOPICS.driver_odometry: (FRAMES.odom,),
     TOPICS.odometry: (FRAMES.odom, FRAMES.map),
     TOPICS.state_estimation_at_scan: (FRAMES.odom,),
@@ -992,6 +1066,7 @@ TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.gnss_status: (FRAMES.gnss,),
     TOPICS.gnss_odom: (FRAMES.map, FRAMES.odom),
     TOPICS.exploration_grid: (FRAMES.map, FRAMES.odom),
+    TOPICS.exploration_snapshot: (FRAMES.map,),
     TOPICS.traversable_frontiers: (FRAMES.map, FRAMES.odom),
     TOPICS.frontier_candidate: (FRAMES.map, FRAMES.odom),
     TOPICS.terrain_map: (FRAMES.map, FRAMES.odom),
@@ -1001,6 +1076,8 @@ TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.teleop_cmd_vel: (FRAMES.body,),
     TOPICS.nav_command_request: (FRAMES.map, FRAMES.body),
     TOPICS.nav_command_ack: (FRAMES.map,),
+    TOPICS.exploration_command: (FRAMES.map,),
+    TOPICS.exploration_ack: (FRAMES.map,),
     TOPICS.inspection_command: (FRAMES.map,),
     TOPICS.inspection_ack: (FRAMES.map,),
     TOPICS.inspection_status: (FRAMES.map,),
@@ -1157,10 +1234,15 @@ ALGORITHM_INTERFACES = {
     ),
     "tare_exploration": AlgorithmInterface(
         name="tare_exploration",
-        inputs=(TOPICS.odometry, TOPICS.map_cloud, TOPICS.terrain_map_ext),
-        outputs=(TOPICS.exploration_way_point,),
-        owner="tare_external_or_lingtu_tare_adapter",
-        map_dependency="live_registered_scan_or_terrain_map_ext",
+        inputs=(
+            TOPICS.odometry,
+            "/tf",
+            TOPICS.exploration_snapshot,
+            TOPICS.exploration_command,
+        ),
+        outputs=(TOPICS.nav_command_request, TOPICS.exploration_ack),
+        owner="native_explore_endpoint",
+        map_dependency="identity_versioned_rolling_occupancy_snapshot",
     ),
     "global_planning": AlgorithmInterface(
         name="global_planning",
@@ -1168,13 +1250,6 @@ ALGORITHM_INTERFACES = {
         outputs=(TOPICS.global_path, TOPICS.nav_way_point),
         owner="lingtu_navigation",
         map_dependency="planner_specific_octoplanner3d_octomap",
-    ),
-    "pct_global_planning": AlgorithmInterface(
-        name="pct_global_planning",
-        inputs=(TOPICS.odometry, "artifact:point_cloud", TOPICS.goal_pose),
-        outputs=(TOPICS.global_path, TOPICS.nav_way_point),
-        owner="lingtu_pct_legacy",
-        map_dependency="saved_point_cloud_pcd_legacy_pct",
     ),
     "octoplanner3d_global_planning": AlgorithmInterface(
         name="octoplanner3d_global_planning",
@@ -1216,7 +1291,6 @@ RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES = {
     ),
     "global_planning": (
         "global_planning",
-        "pct_global_planning",
         "octoplanner3d_global_planning",
     ),
     "local_planning_and_following": ("local_planning_and_following",),
@@ -1810,7 +1884,7 @@ PROFILE_DATA_SOURCE_BINDINGS = {
         profile="teleop_avoid",
         data_source=REAL_RUNTIME_CONTRACT,
         mode="real_robot_remote_control_with_obstacle_avoidance",
-        note="Operator command with localization/map/safety veto, still no autonomous goal planning.",
+        note="Operator command with live SLAM, obstacle, and traversability gates; no saved map or global planning.",
     ),
     "map": ProfileDataSourceBinding(
         profile="map",
@@ -1821,7 +1895,7 @@ PROFILE_DATA_SOURCE_BINDINGS = {
         profile="tracking",
         data_source=REAL_RUNTIME_CONTRACT,
         mode="real_robot_tracking",
-        note="Follow supplied path/waypoint through local planning and path following.",
+        note="Follow explicit map-frame goals through native planning and path following.",
     ),
     "nav": ProfileDataSourceBinding(
         profile="nav",
@@ -1832,7 +1906,7 @@ PROFILE_DATA_SOURCE_BINDINGS = {
         profile="inspection",
         data_source=REAL_RUNTIME_CONTRACT,
         mode="real_robot_inspection",
-        note="Semantic/patrol task execution over saved-map navigation.",
+        note="Typed multi-point inspection route execution over saved-map navigation.",
     ),
     "explore": ProfileDataSourceBinding(
         profile="explore",

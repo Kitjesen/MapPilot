@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -8,14 +8,16 @@ def _read_repo_file(path: str) -> str:
     return (REPO_ROOT / path).read_text(encoding="utf-8", errors="ignore")
 
 
-def test_nav_kernel_builder_does_not_force_user_site_install():
+def test_nav_kernel_builder_uses_canonical_cpp_cmake_without_forced_install():
     script = _read_repo_file("scripts/build/build_nav_kernel.sh")
+    cmake = _read_repo_file("src/nav/cpp/CMakeLists.txt")
 
     assert "pip install --user nanobind" not in script
     assert "pip_install" not in script
     assert "python3-pip" not in script
-    assert "FetchContent_Declare(nanobind" in script
-    assert "GIT_TAG        v2.12.0" in script
+    assert 'NAV_CPP_DIR="$REPO_ROOT/src/nav/cpp"' in script
+    assert "FetchContent_Declare(nanobind" in cmake
+    assert "GIT_TAG v2.12.0" in cmake
 
 
 def test_nav_kernel_loader_rejects_stale_or_wrong_platform_extensions():
@@ -83,19 +85,24 @@ def test_ros_workspace_builder_is_not_hidden_by_build_gitignore_rule():
     assert "!scripts/build/build_ros_workspace.sh" in ignore
 
 
-def test_nav_kernel_exports_openmp_for_downstream_ament_consumers():
-    cmake = _read_repo_file("src/nav/kernel/CMakeLists.txt")
+def test_nav_cpp_propagates_openmp_to_header_only_local_planning():
+    cmake = _read_repo_file("src/nav/cpp/cmake/NavCoreTargets.cmake")
 
-    assert "target_link_libraries(${PROJECT_NAME} INTERFACE OpenMP::OpenMP_CXX)" in cmake
-    assert "ament_export_dependencies(OpenMP)" in cmake
+    assert "find_package(OpenMP QUIET)" in cmake
+    assert "target_link_libraries(lingtu_nav_local_planner INTERFACE" in cmake
+    assert "OpenMP::OpenMP_CXX" in cmake
+    assert "ament_" not in cmake
 
 
-def test_nav_kernel_standalone_tests_do_not_require_python_headers():
-    cmake = _read_repo_file("src/nav/kernel/CMakeLists.txt")
+def test_nav_cpp_standalone_tests_do_not_require_python_headers():
+    cmake = _read_repo_file("src/nav/cpp/CMakeLists.txt")
 
-    assert 'option(NAV_KERNEL_BUILD_PYTHON_BINDINGS "Build nav_kernel Python bindings" OFF)' in cmake
-    assert 'EXISTS "${Python3_INCLUDE_DIRS}/Python.h"' in cmake
-    assert "Skipping nav_kernel Python bindings because Python development headers were not found" in cmake
+    assert "option(LINGTU_NAV_CPP_BUILD_TESTS" in cmake
+    assert "option(LINGTU_NAV_CPP_BUILD_PYTHON" in cmake
+    assert "if(LINGTU_NAV_CPP_BUILD_PYTHON)" in cmake
+    python_probe = "find_package(Python COMPONENTS Interpreter Development REQUIRED)"
+    assert python_probe in cmake
+    assert cmake.index("if(LINGTU_NAV_CPP_BUILD_PYTHON)") < cmake.index(python_probe)
 
 
 def test_nav_kernel_build_script_is_ascii_for_server_terminals():
@@ -110,7 +117,8 @@ def test_nav_kernel_build_script_installs_real_release_artifact():
     assert 'cp -f "$SO_FILE" "$LINK_TARGET"' in script
     assert 'ln -s "$SO_FILE" "$LINK_TARGET"' not in script
     assert "LingTu auto-detects the installed runtime in src/" in script
-    assert 'LOCAL_PLANNER_CPP_SRC "${NAV_KERNEL_SRC}/../services/plan/local_planner/cpp"' in script
+    assert 'cmake -B "$BUILD_DIR" -S "$NAV_CPP_DIR"' in script
+    assert "-DLINGTU_NAV_CPP_BUILD_PYTHON=ON" in script
 
 
 def test_nav_kernel_loader_exposes_production_requirement_gate():
@@ -123,16 +131,17 @@ def test_nav_kernel_loader_exposes_production_requirement_gate():
     assert "require_nav_kernel" in init
 
 
-def test_nav_kernel_cmake_comments_are_ascii_to_avoid_mojibake():
-    cmake = _read_repo_file("src/nav/kernel/CMakeLists.txt")
+def test_nav_cpp_cmake_comments_are_ascii_to_avoid_mojibake():
+    cmake = _read_repo_file("src/nav/cpp/CMakeLists.txt")
 
     for line in cmake.splitlines():
         if line.lstrip().startswith("#"):
             assert line.isascii(), line
 
 
-def test_nav_kernel_does_not_enable_fast_math_globally():
-    cmake = _read_repo_file("src/nav/kernel/CMakeLists.txt")
+def test_nav_cpp_does_not_enable_fast_math_globally():
+    cmake = _read_repo_file("src/nav/cpp/CMakeLists.txt")
+    targets = _read_repo_file("src/nav/cpp/cmake/NavCoreTargets.cmake")
 
     assert "-ffast-math" not in cmake
-    assert "validation must preserve NaN/Inf checks" in cmake
+    assert "-ffast-math" not in targets

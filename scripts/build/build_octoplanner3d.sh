@@ -15,7 +15,8 @@ EOF
     ;;
 esac
 
-source_dir="${LINGTU_OCTOPLANNER3D_SOURCE_DIR:-$repo_root/src/nav/services/plan/global_planner/algorithm/OctoPlanner3D}"
+runtime_dir="$repo_root/src/nav/cpp/planning/global/octoplanner"
+source_dir="${LINGTU_OCTOPLANNER3D_SOURCE_DIR:-$runtime_dir/vendor}"
 build_dir="${LINGTU_OCTOPLANNER3D_BUILD_DIR:-$repo_root/build/octoplanner3d_headless}"
 build_type="${CMAKE_BUILD_TYPE:-Release}"
 require_pcl="${LINGTU_OCTOPLANNER3D_REQUIRE_PCL:-0}"
@@ -32,7 +33,7 @@ Options:
   --diagnose              Print PCL/CMake/ldd diagnostics for the configured build dir and exit.
 
 Environment:
-  LINGTU_OCTOPLANNER3D_SOURCE_DIR   Default: src/nav/services/plan/global_planner/algorithm/OctoPlanner3D
+  LINGTU_OCTOPLANNER3D_SOURCE_DIR   Default: src/nav/cpp/planning/global/octoplanner/vendor
   LINGTU_OCTOPLANNER3D_BUILD_DIR    Default: <repo>/build/octoplanner3d_headless
   LINGTU_OCTOPLANNER3D_REQUIRE_PCL  Set to 1 to require PCL converter linkage.
   PCL_DIR / CMAKE_PREFIX_PATH       Point CMake at the repo-local PCL install.
@@ -186,7 +187,7 @@ EOF
 fi
 
 cmake_args=(
-  -S "$repo_root/src/nav/services/plan/global_planner/algorithm/OctoPlanner3D/runtime"
+  -S "$runtime_dir"
   -B "$build_dir"
   -DOCTOPLANNER3D_SOURCE_DIR="$source_dir"
   -DCMAKE_BUILD_TYPE="$build_type"

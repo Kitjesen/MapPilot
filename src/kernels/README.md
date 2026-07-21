@@ -46,7 +46,7 @@ The current materialized kernel targets are listed in `catalog.py`:
 - `camera_lidar_calibration_optimizer`
 
 The production C++/nanobind navigation kernel is already owned by the nav
-domain at `src/nav/kernel/`; this folder tracks portable kernel extraction
+domain at `src/nav/cpp/`; `src/nav/kernel/` remains the Python loader, while this folder tracks portable kernel extraction
 targets and Rust/process ABI experiments that have real source directories.
 
 ## Boundary Rule

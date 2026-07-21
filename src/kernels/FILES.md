@@ -20,7 +20,7 @@ Use this folder only for portable compute kernels and ABI contracts.
 | `calibration/camera_lidar_optimizer/` | Camera-LiDAR calibration optimizer kernel |
 
 The production navigation nanobind kernel lives with its owning domain at
-`src/nav/kernel/`.
+`src/nav/cpp/`; `src/nav/kernel/` only exposes the Python loader.
 
 ## Do Not Commit
 

@@ -4,7 +4,7 @@
 // when the macro is not defined the class is unavailable and the nanobind
 // bindings raise RuntimeError.
 //
-// Style mirrors src/nav/services/endpoint/cpp/explore_dds.cpp.
+// Style mirrors src/nav/cpp/endpoint/explore_dds.cpp.
 
 #ifdef LINGTU_EXPLORE_HAS_DDS
 

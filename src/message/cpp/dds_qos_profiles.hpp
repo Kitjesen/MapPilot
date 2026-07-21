@@ -156,9 +156,11 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
   if (dds_topic == "rt/nav/stop")
     return QosProfile::ControlCommand;
   if (dds_topic == "rt/nav/command/request" ||
+      dds_topic == "rt/nav/exploration/command" ||
       dds_topic == "rt/nav/inspection/command")
     return QosProfile::CommandRequest;
   if (dds_topic == "rt/nav/command/ack" ||
+      dds_topic == "rt/nav/exploration/ack" ||
       dds_topic == "rt/nav/inspection/ack")
     return QosProfile::CommandAck;
   if (dds_topic == "rt/nav/inspection/evidence/request" ||
@@ -177,19 +179,17 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
   if (dds_topic == "rt/nav/global_path" || dds_topic == "rt/nav/local_path")
     return QosProfile::GlobalPath;
   // System status
-  if (dds_topic == "rt/nav/health_status" ||
-      dds_topic == "rt/robot_state" ||
+  if (dds_topic == "rt/robot_state" ||
       dds_topic == "rt/gnss/status")
     return QosProfile::SystemStatus;
   // Event and grid state
   if (dds_topic == "rt/nav/goal_pose" ||
-      dds_topic == "rt/nav/geofence_boundary" ||
       dds_topic == "rt/nav/semantic/instruction" ||
-      dds_topic == "rt/nav/semantic/resolved_goal" ||
       dds_topic == "rt/nav/semantic/status")
     return QosProfile::Event;
   if (dds_topic == "rt/nav/traversability" ||
-      dds_topic == "rt/nav/exploration_grid")
+      dds_topic == "rt/nav/exploration_grid" ||
+      dds_topic == "rt/nav/exploration_snapshot")
     return QosProfile::MapGrid;
   // TF
   if (dds_topic == "rt/tf")
@@ -202,8 +202,7 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
       dds_topic == "rt/slam/cumulative_map_cloud" ||
       dds_topic == "rt/slam/saved_map_cloud" ||
       dds_topic == "rt/nav/terrain_map" ||
-      dds_topic == "rt/nav/terrain_map_ext" ||
-      dds_topic == "rt/nav/scan_cloud")
+      dds_topic == "rt/nav/terrain_map_ext")
     return QosProfile::LidarPointcloud;
   // Semantic
   if (dds_topic == "rt/nav/semantic/scene_graph")
