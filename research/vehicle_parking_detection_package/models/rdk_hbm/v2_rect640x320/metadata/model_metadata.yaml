@@ -1,0 +1,14 @@
+model_name: patrol_v2_yolo11s_garbage_aug_balanced_e120_rect640x320
+target: rdk_s100p
+march: nash-m
+source_pt: /home/bsrl/hongsenpang/Yolov11_project/runs/detect/patrol_v2_yolo11s_garbage_aug_balanced_e120/weights/best.pt
+source_onnx: /home/bsrl/hongsenpang/Yolov11_project/rdk_compile_input/v2_yolo11s_static_640x320_rect/model/best_rect640x320.onnx
+input_shape: 1x3x640x320
+output_shape: 1x10x4200
+classes:
+  0: person
+  1: vehicle
+  2: trash_bin
+  3: garbage
+  4: fire
+  5: smoke

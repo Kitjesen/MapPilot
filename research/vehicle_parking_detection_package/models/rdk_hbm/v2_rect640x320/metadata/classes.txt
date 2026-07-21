@@ -1,0 +1,6 @@
+person
+vehicle
+trash_bin
+garbage
+fire
+smoke
