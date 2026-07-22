@@ -1311,6 +1311,48 @@ def test_robot_ops_doctor_defaults_to_gateway_first_ros2_explicit() -> None:
     assert '[ "$ros2" = "1" ] && command -v ros2' in text
 
 
+def test_native_endpoint_uses_and_reports_compiled_product_motion_parameters() -> None:
+    config = _read("src/nav/cpp/endpoint/nav_endpoint_config.cpp")
+    endpoint = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
+    status = _read("src/nav/cpp/endpoint/nav_status_writer.cpp")
+    runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
+
+    for key in (
+        "LINGTU_NAV_CONFIG_FINGERPRINT",
+        "LINGTU_NAV_WAYPOINT_REACHED_M",
+        "LINGTU_NAV_GOAL_REACHED_M",
+        "LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M",
+        "LINGTU_NAV_PATH_FOLLOWER_LOOKAHEAD_M",
+        "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS",
+        "LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS",
+        "LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2",
+        "LINGTU_TELEOP_PLANNER_HORIZON_M",
+        "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG",
+    ):
+        assert key in config
+    assert "nav_config.waypoint_reached_m = cfg.waypoint_reached_m" in endpoint
+    assert "nav_config.goal_reached_m = cfg.goal_reached_m" in endpoint
+    assert "nav_config.path_follower.minSpeed = cfg.path_follower_min_speed_mps" in endpoint
+    assert "nav_config.path_follower.baseLookAheadDis = cfg.path_follower_lookahead_m" in endpoint
+    assert "nav_config.path_follower.stopDisThre = cfg.path_follower_goal_tolerance_m" in endpoint
+    assert "nav_config.teleop_intent_horizon_m = cfg.teleop_planner_horizon_m" in endpoint
+    assert (
+        "nav_config.teleop_intent_max_deviation_deg =" in endpoint
+    )
+    assert "teleop_planner_horizon_m" in status
+    assert "teleop_planner_max_deviation_deg" in status
+    assert (
+        '--teleop-planner-horizon-m "${LINGTU_TELEOP_PLANNER_HORIZON_M}"'
+        in runner
+    )
+    assert ('--teleop-planner-max-deviation-deg '
+            '"${LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG}"') in runner
+    assert "native_profile" in status
+    assert "config_fingerprint" in status
+    assert "nav_loop" in status
+    assert "--max-speed-mps" not in runner
+
+
 def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
     text = _read("scripts/lingtu")
     stop_body = text.split("mode_stop_motion_and_session() {", 1)[1].split("\n}\n\nmode_unit_available()", 1)[0]
@@ -1331,14 +1373,24 @@ def test_robot_ops_has_product_mode_switch_entrypoint() -> None:
     assert 'mode_nav_endpoint_dropin "$MODE_TARGET_NATIVE_CONTROL_MODE"' in text
     assert "LINGTU_NAV_CONTROL_MODE=$control_mode" in text
     assert "MODE_TARGET_NATIVE_CONTROL_MODE=$(pjson" in text
+    assert "MODE_TARGET_NATIVE_NAV_ENV=$(pjson" in text
+    assert 'n=(d.get("product_mode_switch") or {}).get("native_nav_config") or {}' in text
+    assert 'for key, value in sorted((n.get("environment") or {}).items())' in text
+    assert 'done <<< "$MODE_TARGET_NATIVE_NAV_ENV"' in text
+    assert "LINGTU_NAV_CONFIG_FINGERPRINT" in text
+    assert "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS" in text
+    assert "LINGTU_NAV_GOAL_REACHED_M" in text
     assert 'case "$profile" in' not in text
+    assert "LINGTU_TELEOP_PLANNER_HORIZON_M" in text
+    assert "LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG" in text
     assert "LINGTU_NAV_CHECK_OBSTACLE=$MODE_TARGET_CHECK_OBSTACLE" in text
     assert "mode_start_planned_process" not in text
     assert "mode_wait_nav_control_mode" in text
     assert '"$py" -m lingtu.launcher apply "$product" --endpoint "$endpoint" --json' in restart_body
     assert 'mode_wait_nav_control_mode "$MODE_TARGET_NATIVE_CONTROL_MODE" 10' in restart_body
     assert "mode_persist_product_boot_ownership" in text
-    assert "mode_persist_product_boot_ownership || return 1" in text
+    assert "mode_persist_product_boot_ownership || {" in text
+    assert 'mode_fail_closed_product_switch "Product boot ownership update failed"' in text
     assert "mode_plan_target_selected" in boot_body
     assert "MODE_TARGET_KNOWN_TARGETS" in boot_body
     assert "MODE_TARGET_STOP_TARGETS" in boot_body
@@ -1382,12 +1434,35 @@ def test_failed_product_stack_restart_is_cleaned_up_fail_closed() -> None:
     abort_body = text.split("mode_abort_product_switch() {", 1)[1].split(
         "\n}\n\nmode_restart_product_stack()", 1
     )[0]
+    fail_closed_body = text.split("mode_fail_closed_product_switch() {", 1)[1].split(
+        "\n}\n\nmode_restart_product_stack()", 1
+    )[0]
 
     assert 'if ! mode_restart_product_stack "$target" "$endpoint"; then' in switch_body
-    assert "mode_abort_product_switch" in switch_body
+    assert "mode_fail_closed_product_switch" in switch_body
+    assert "mode_abort_product_switch" in fail_closed_body
     assert "mode_stop_motion_and_session" in abort_body
     assert 'svc_force_stop_unit "$target"' in abort_body
     assert 'done <<< "$MODE_TARGET_STOP_TARGETS"' in abort_body
+
+
+def test_product_switch_requires_confirmed_stop_before_mutating_runtime() -> None:
+    text = _read("scripts/lingtu")
+    stop_body = text.split("mode_stop_motion_and_session() {", 1)[1].split(
+        "\n}\n\nmode_activate_saved_map_for_nav()", 1
+    )[0]
+    switch_body = text.split("cmd_mode() {", 1)[1].split("\ncmd_map() {", 1)[0]
+
+    assert "|| true" not in stop_body
+    assert 'cancel_ok=$(pjson "$cancel_raw"' in stop_body
+    assert 'd.get("ok") is True' in stop_body
+    assert 'command.get("accepted") is True' in stop_body
+    assert 'session_ok=$(pjson "$session_raw"' in stop_body
+    assert 'd.get("success") is True' in stop_body
+    assert "mode_stop_motion_and_session || return 1" in switch_body
+    assert switch_body.index("mode_stop_motion_and_session || return 1") < switch_body.index(
+        'mode_activate_saved_map_for_nav "$map_name"'
+    )
 
 
 def test_robot_ops_full_stack_restart_restarts_timestamp_consumers_in_order() -> None:
@@ -1407,6 +1482,26 @@ def test_robot_ops_full_stack_restart_restarts_timestamp_consumers_in_order() ->
     input_gate_ready = body.index("svc_wait_native_input_gate_ready 20")
     assert start_livox < start_slam < start_traversability < start_nav
     assert start_nav < input_gate_ready
+def test_product_switch_failures_after_mutation_force_stopped_state() -> None:
+    source = _read("scripts/lingtu")
+
+    assert "mode_fail_closed_product_switch()" in source
+    abort_start = source.index("mode_abort_product_switch()")
+    abort_end = source.index("mode_restart_product_stack()", abort_start)
+    abort_body = source[abort_start:abort_end]
+    assert 'mode_set_unit_boot_enabled "$target" 0 0' in abort_body
+    assert 'svc_force_stop_unit "$target"' in abort_body
+
+    switch_start = source.index(
+        'echo -e "${B}=== Product mode switch: $current -> $target ===${N}"'
+    )
+    switch_end = source.index(
+        'echo -e "${G}PASS${N}: product mode is active: $target"', switch_start
+    )
+    switch_body = source[switch_start:switch_end]
+    assert switch_body.count("mode_fail_closed_product_switch") >= 9
+
+
 
 
 def test_product_nav_switch_activates_target_before_native_endpoint_restart() -> None:
@@ -1436,7 +1531,10 @@ def test_product_switch_uses_gateway_availability_before_session_readiness() -> 
 
     assert "thunder_service_spec(service)" in launcher
     assert "http_check=True" in launcher
-    assert '"http://127.0.0.1:5050/health"' in manager
+    assert '"http://127.0.0.1:5050/api/v1/readiness"' in manager
+    assert 'for field in ("data_ready", "non_motion_safe")' in manager
+    assert 'if payload.get("data_ready") is False' in manager
+    assert 'for field in ("failed_modules", "critical_failed_modules")' in manager
 
 
 def test_product_nav_switch_aborts_session_when_relocalization_or_readiness_fails() -> None:
@@ -1454,7 +1552,10 @@ def test_product_nav_switch_aborts_session_when_relocalization_or_readiness_fail
 
     assert start_guard in switch_body
     assert wait_guard in switch_body
-    assert switch_body.count("mode_stop_motion_and_session") >= 3
+    assert (
+        'mode_fail_closed_product_switch "Target product session failed to start"' in switch_body
+    )
+    assert 'mode_fail_closed_product_switch "Navigation readiness failed"' in switch_body
 
 
 def test_nav_start_delegates_to_product_runtime_plan() -> None:

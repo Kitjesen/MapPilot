@@ -2404,6 +2404,76 @@ def test_navigation_status_blocks_when_native_input_gate_is_not_ready(
     assert payload["readiness"]["native_endpoint"]["input_gate"]["reason"] == ("localization_unhealthy")
 
 
+def test_endpoint_only_control_uses_native_authority_and_blocks_resume_required(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.runtime_status import build_navigation_status
+
+    class MisleadingPythonMux:
+        def health(self):
+            return {
+                "active_source": "path_follower",
+                "sources": {"path_follower": {"active": True, "priority": 40}},
+            }
+
+    status_path = tmp_path / "nav_endpoint_status.json"
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_path))
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "30")
+    status_path.write_text(
+        json.dumps(
+            {
+                "stamp_s": time.time(),
+                "input_gate": {"ready": True, "reason": "ready"},
+                "control_mode": "autonomy",
+                "global_planner": "octoplanner3d",
+                "planner_map": "/maps/active/octomap.ot",
+                "publish_cmd_vel": True,
+                "active_cmd_source": "manual_hold",
+                "control_authority": {
+                    "owner": "native_endpoint",
+                    "estop_latched": False,
+                    "operator_takeover_latched": True,
+                    "resume_required": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gateway = GatewayModule()
+    gateway._session_mode = "navigating"
+    gateway._icp_quality = 0.03
+    with gateway._state_lock:
+        gateway._odom = {"x": 0.0, "y": 0.0}
+        gateway._mode = "autonomous"
+        gateway._mission = {"state": "IDLE"}
+        gateway._localization_status = {
+            "state": "TRACKING",
+            "confidence": 0.9,
+            "degeneracy": "NONE",
+            "icp_fitness": 0.028,
+            "localizer_health": "RECOVERED",
+            "odom_age_ms": 0.0,
+        }
+    gateway._all_modules = {"nav.velocity_mux": MisleadingPythonMux()}
+
+    payload = build_navigation_status(gateway)
+
+    assert payload["control"]["authority_source"] == "native_endpoint"
+    assert payload["control"]["active_cmd_source"] == "manual_hold"
+    assert payload["control"]["command_owner"] == "operator"
+    assert payload["control"]["manual_override"] is True
+    assert payload["control"]["resume_required"] is True
+    assert payload["control"]["operator_takeover_latched"] is True
+    assert payload["control"]["mux_available"] is False
+    assert "cmd_vel_mux_unavailable" not in payload["reason_codes"]
+    assert "native_resume_required" in payload["readiness"]["blockers"]
+    assert payload["can_accept_goal"] is False
+
+
 def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_publish(
     monkeypatch,
     tmp_path,
@@ -2421,7 +2491,49 @@ def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_pub
         *,
         global_planner: str = "octoplanner3d",
         planner_map: str = "/maps/active/octomap.ot",
+        product_profile: str | None = None,
     ) -> None:
+        native_status = {}
+        if product_profile:
+            from runtime.profiles.native_nav_config import native_nav_profile_config
+            from runtime.profiles.resolver import resolve_profile_config
+
+            expected = native_nav_profile_config(
+                product_profile,
+                resolve_profile_config(
+                    product_profile,
+                    runtime_endpoint="thunder_field",
+                ),
+            ).as_dict()
+            parameters = expected["parameters"]
+            native_status = {
+                "native_profile": {
+                    "profile": product_profile,
+                    "config_fingerprint": expected["fingerprint"],
+                },
+                "path_follower": {
+                    "max_speed_mps": parameters["path_follower_max_speed_mps"],
+                    "min_speed_mps": parameters["path_follower_min_speed_mps"],
+                    "max_accel_mps2": parameters["path_follower_max_accel_mps2"],
+                    "lookahead_m": parameters["path_follower_lookahead_m"],
+                    "goal_tolerance_m": parameters[
+                        "path_follower_goal_tolerance_m"
+                    ],
+                },
+                "nav_loop": {
+                    "waypoint_reached_m": parameters["waypoint_reached_m"],
+                    "goal_reached_m": parameters["goal_reached_m"],
+                    "corridor_lookahead_m": parameters["corridor_lookahead_m"],
+                },
+            }
+            if product_profile == "teleop_avoid":
+                native_status.update(
+                    teleop_local_planner=True,
+                    check_obstacle=True,
+                    use_traversability_cost=True,
+                    teleop_planner_horizon_m=2.0,
+                    teleop_planner_max_deviation_deg=55.0,
+                )
         status_path.write_text(
             json.dumps(
                 {
@@ -2431,6 +2543,14 @@ def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_pub
                     "global_planner": global_planner,
                     "planner_map": planner_map,
                     "publish_cmd_vel": publish_cmd_vel,
+                    "active_cmd_source": "none",
+                    "control_authority": {
+                        "owner": "native_endpoint",
+                        "estop_latched": False,
+                        "operator_takeover_latched": False,
+                        "resume_required": False,
+                    },
+                    **native_status,
                 }
             ),
             encoding="utf-8",
@@ -2453,7 +2573,13 @@ def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_pub
     assert ready["global_planner"] == "octoplanner3d"
     assert ready["planner_map"] == "/maps/active/octomap.ot"
 
-    write_status("teleop_avoid", True)
+    write_status(
+        "teleop_avoid",
+        True,
+        global_planner="",
+        planner_map="",
+        product_profile="teleop_avoid",
+    )
     assisted = _native_endpoint_readiness(
         {"mode": "navigating", "product_profile": "teleop_avoid"}
     )
@@ -2461,6 +2587,48 @@ def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_pub
     assert assisted["ok"] is True
     assert assisted["expected_control_mode"] == "teleop_avoid"
     assert assisted["blockers"] == []
+    assisted_status = json.loads(status_path.read_text(encoding="utf-8"))
+
+    mismatched_planner_status = dict(assisted_status)
+    mismatched_planner_status.update(
+        teleop_planner_horizon_m=1.0,
+        teleop_planner_max_deviation_deg=20.0,
+    )
+    status_path.write_text(json.dumps(mismatched_planner_status), encoding="utf-8")
+    mismatched_planner = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "teleop_avoid"}
+    )
+    assert mismatched_planner["ok"] is False
+    assert "native_profile_parameters_mismatch" in mismatched_planner["blockers"]
+    assert mismatched_planner["parameter_mismatches"] == {
+        "teleop_planner_horizon_m": {"actual": 1.0, "expected": 2.0},
+        "teleop_planner_max_deviation_deg": {"actual": 20.0, "expected": 55.0},
+    }
+
+    stop_only_status = dict(assisted_status)
+    stop_only_status.update(
+        teleop_local_planner=False,
+        check_obstacle=False,
+        use_traversability_cost=False,
+    )
+    status_path.write_text(json.dumps(stop_only_status), encoding="utf-8")
+    stop_only = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "teleop_avoid"}
+    )
+    assert stop_only["ok"] is False
+    assert "native_teleop_local_planner_disabled" in stop_only["blockers"]
+    assert "native_obstacle_check_disabled" in stop_only["blockers"]
+    assert "native_traversability_cost_disabled" in stop_only["blockers"]
+
+    status_path.write_text(json.dumps(assisted_status), encoding="utf-8")
+
+    assisted_status = json.loads(status_path.read_text(encoding="utf-8"))
+    assisted_status["native_profile"]["config_fingerprint"] = "stale"
+    status_path.write_text(json.dumps(assisted_status), encoding="utf-8")
+    assisted_stale = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "teleop_avoid"}
+    )
+    assert "native_profile_fingerprint_mismatch" in assisted_stale["blockers"]
 
     write_status(
         "autonomy",
@@ -2480,6 +2648,84 @@ def test_native_endpoint_readiness_requires_profile_control_mode_and_cmd_vel_pub
     )
     assert mismatch["ok"] is False
     assert "native_global_planner_mismatch" in mismatch["blockers"]
+
+
+def test_native_endpoint_readiness_requires_compiled_profile_fingerprint_and_values(
+    monkeypatch,
+    tmp_path,
+):
+    from gateway.services.runtime_status import _native_endpoint_readiness
+    from runtime.profiles.native_nav_config import native_nav_profile_config
+    from runtime.profiles.resolver import resolve_profile_config
+
+    status_path = tmp_path / "nav_endpoint_status.json"
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
+    monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_path))
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "30")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    expected = native_nav_profile_config(
+        "nav",
+        resolve_profile_config("nav", runtime_endpoint="thunder_field"),
+    ).as_dict()
+    parameters = expected["parameters"]
+    status = {
+        "stamp_s": time.time(),
+        "input_gate": {"ready": True, "reason": "ready"},
+        "control_mode": "autonomy",
+        "global_planner": "octoplanner3d",
+        "planner_map": "/maps/active/octomap.ot",
+        "publish_cmd_vel": True,
+        "active_cmd_source": "none",
+        "control_authority": {
+            "owner": "native_endpoint",
+            "estop_latched": False,
+            "operator_takeover_latched": False,
+            "resume_required": False,
+        },
+        "native_profile": {
+            "profile": "nav",
+            "config_fingerprint": "stale",
+        },
+        "path_follower": {
+            "max_speed_mps": parameters["path_follower_max_speed_mps"],
+            "min_speed_mps": parameters["path_follower_min_speed_mps"],
+            "max_accel_mps2": parameters["path_follower_max_accel_mps2"],
+            "lookahead_m": parameters["path_follower_lookahead_m"],
+            "goal_tolerance_m": parameters["path_follower_goal_tolerance_m"],
+        },
+        "nav_loop": {
+            "waypoint_reached_m": parameters["waypoint_reached_m"],
+            "goal_reached_m": parameters["goal_reached_m"],
+            "corridor_lookahead_m": parameters["corridor_lookahead_m"],
+        },
+    }
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    stale = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "nav"}
+    )
+    assert "native_profile_fingerprint_mismatch" in stale["blockers"]
+    from gateway.services.runtime_status import _navigation_blockers
+
+    assert _navigation_blockers(stale["blockers"]) == stale["blockers"]
+
+    status["native_profile"]["config_fingerprint"] = expected["fingerprint"]
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    ready = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "nav"}
+    )
+    assert ready["ok"] is True
+    assert ready["expected_config_fingerprint"] == expected["fingerprint"]
+
+    status["path_follower"]["max_speed_mps"] = 0.4
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    divergent = _native_endpoint_readiness(
+        {"mode": "navigating", "product_profile": "nav"}
+    )
+    assert "native_profile_parameters_mismatch" in divergent["blockers"]
+    assert divergent["parameter_mismatches"] == {
+        "path_follower.max_speed_mps": {"actual": 0.4, "expected": 0.2}
+    }
 
 
 def test_navigation_status_treats_diverged_slam_as_lost():

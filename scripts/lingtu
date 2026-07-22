@@ -804,6 +804,7 @@ MODE_TARGET_PROFILE=""
 MODE_TARGET_PRODUCT_SESSION=""
 MODE_TARGET_SESSION_MODE=""
 MODE_TARGET_NATIVE_CONTROL_MODE=""
+MODE_TARGET_NATIVE_NAV_ENV=""
 MODE_TARGET_SLAM_MODE=""
 MODE_TARGET_REQUIRES_MAP="false"
 MODE_TARGET_NEEDS_NAV_ENDPOINT="false"
@@ -874,8 +875,25 @@ mode_profile_dropin() {
 
 mode_nav_endpoint_dropin() {
     local control_mode="$1"
-    local nav_target override_dir
+    local nav_target override_dir native_entry native_key native_value
     [ -n "$control_mode" ] || { echo "Missing native_control_mode in product contract" >&2; return 1; }
+    [ -n "$MODE_TARGET_NATIVE_NAV_ENV" ] || { echo "Missing compiled native navigation profile" >&2; return 1; }
+    while IFS= read -r native_entry; do
+        [ -n "$native_entry" ] || continue
+        native_key="${native_entry%%=*}"
+        native_value="${native_entry#*=}"
+        case "$native_key" in
+            LINGTU_NAV_CONFIG_FINGERPRINT|LINGTU_NAV_CORRIDOR_LOOKAHEAD_M|\
+            LINGTU_NAV_GOAL_REACHED_M|LINGTU_NAV_PATH_FOLLOWER_GOAL_TOLERANCE_M|\
+            LINGTU_NAV_PATH_FOLLOWER_LOOKAHEAD_M|LINGTU_NAV_PATH_FOLLOWER_MAX_ACCEL_MPS2|\
+            LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS|LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS|\
+            LINGTU_NAV_PROFILE|LINGTU_NAV_WAYPOINT_REACHED_M|\
+            LINGTU_TELEOP_PLANNER_HORIZON_M|LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG) ;;
+            *) echo "Invalid native navigation environment key: $native_key" >&2; return 1 ;;
+        esac
+        [ -n "$native_value" ] || { echo "Empty native navigation value: $native_key" >&2; return 1; }
+        case "$native_value" in *$'\n'*|*$'\r'*) echo "Invalid native navigation value: $native_key" >&2; return 1 ;; esac
+    done <<< "$MODE_TARGET_NATIVE_NAV_ENV"
     nav_target="$(mode_plan_process_target nav)"
     [ -n "$nav_target" ] || { echo "Runtime plan has no navigation process" >&2; return 1; }
     override_dir="/etc/systemd/system/${nav_target}.d"
@@ -887,14 +905,43 @@ mode_nav_endpoint_dropin() {
         echo "Environment=LINGTU_NAV_USE_TRAVERSABILITY_COST=$MODE_TARGET_NEEDS_TRAVERSABILITY"
         echo "Environment=LINGTU_NAV_ALLOW_TELEOP_TAKEOVER=$MODE_TARGET_ALLOW_TELEOP_TAKEOVER"
         echo "Environment=LINGTU_TELEOP_LOCAL_PLANNER=$MODE_TARGET_TELEOP_LOCAL_PLANNER"
+        while IFS= read -r native_entry; do
+            [ -n "$native_entry" ] || continue
+            echo "Environment=$native_entry"
+        done <<< "$MODE_TARGET_NATIVE_NAV_ENV"
     } | sudo tee "$override_dir/product-mode.conf" >/dev/null || return 1
     sudo systemctl daemon-reload || return 1
 }
 
 mode_stop_motion_and_session() {
-    curl -s --max-time 5 -X POST -H "Content-Type: application/json" \
-        -d '{"reason":"product_mode_switch"}' "$GW/api/v1/navigation/cancel" >/dev/null 2>&1 || true
-    curl -s --max-time 10 -X POST "$GW/api/v1/session/end" >/dev/null 2>&1 || true
+    local cancel_raw cancel_ok session_raw session_ok
+    cancel_raw=$(curl -fsS --max-time 8 -X POST -H "Content-Type: application/json" \
+        -d '{"reason":"product_mode_switch"}' "$GW/api/v1/navigation/cancel") || {
+        echo -e "${R}FAIL${N}: navigation cancel request failed; product mode remains unchanged" >&2
+        return 1
+    }
+    cancel_ok=$(pjson "$cancel_raw" '
+command = d.get("command") or {}
+print(str(d.get("ok") is True and command.get("accepted") is True).lower())
+')
+    if [ "$cancel_ok" != "true" ]; then
+        echo -e "${R}FAIL${N}: navigation cancel was not accepted; product mode remains unchanged" >&2
+        printf '%s\n' "$cancel_raw" | python3 -m json.tool >&2 2>/dev/null || printf '%s\n' "$cancel_raw" >&2
+        return 1
+    fi
+
+    session_raw=$(curl -fsS --max-time 10 -X POST "$GW/api/v1/session/end") || {
+        echo -e "${R}FAIL${N}: session end request failed; product mode remains unchanged" >&2
+        return 1
+    }
+    session_ok=$(pjson "$session_raw" '
+print(str(d.get("ok") is True and d.get("success") is True).lower())
+')
+    if [ "$session_ok" != "true" ]; then
+        echo -e "${R}FAIL${N}: session end was not confirmed; product mode remains unchanged" >&2
+        printf '%s\n' "$session_raw" | python3 -m json.tool >&2 2>/dev/null || printf '%s\n' "$session_raw" >&2
+        return 1
+    fi
 }
 
 mode_activate_saved_map_for_nav() {
@@ -994,12 +1041,34 @@ PY
 
 mode_abort_product_switch() {
     local target
-    echo "Product mode switch failed; stopping motion and partially started services..." >&2
-    mode_stop_motion_and_session
+    echo "Product mode switch failed; forcing a stopped operator-recovery state..." >&2
+    if ! mode_stop_motion_and_session; then
+        echo "Motion/session confirmation failed during switch cleanup; forcing planned services down" >&2
+    fi
     while IFS= read -r target; do
         [ -n "$target" ] || continue
         svc_force_stop_unit "$target"
     done <<< "$MODE_TARGET_STOP_TARGETS"
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        mode_set_unit_boot_enabled "$target" 0 0 || \
+            echo "Failed to disable product unit after aborted switch: $target" >&2
+    done <<< "$MODE_TARGET_KNOWN_TARGETS"
+    while IFS= read -r target; do
+        [ -n "$target" ] || continue
+        printf '%s\n' "$MODE_TARGET_KNOWN_TARGETS" | grep -Fqx "$target" && continue
+        mode_set_unit_boot_enabled "$target" 0 0 || \
+            echo "Failed to disable conflicting unit after aborted switch: $target" >&2
+    done <<< "$MODE_TARGET_STOP_TARGETS"
+    sudo systemctl daemon-reload || \
+        echo "Failed to reload systemd after aborted product switch" >&2
+}
+
+mode_fail_closed_product_switch() {
+    local reason="$1"
+    [ -n "$reason" ] && echo "$reason" >&2
+    mode_abort_product_switch
+    return 1
 }
 
 mode_restart_product_stack() {
@@ -1043,6 +1112,7 @@ mode_switch_preflight() {
     MODE_TARGET_PRODUCT_SESSION=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("product_session") or "")')
     MODE_TARGET_SESSION_MODE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("session_mode") or "")')
     MODE_TARGET_NATIVE_CONTROL_MODE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("native_control_mode") or "")')
+    MODE_TARGET_NATIVE_NAV_ENV=$(pjson "$plan_json" 'n=(d.get("product_mode_switch") or {}).get("native_nav_config") or {}; print("\n".join(f"{key}={value}" for key, value in sorted((n.get("environment") or {}).items())))')
     MODE_TARGET_SLAM_MODE=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(t.get("slam_mode") or "")')
     MODE_TARGET_REQUIRES_MAP=$(pjson "$plan_json" 't=(d.get("product_mode_switch") or {}).get("target") or {}; print(str(bool(t.get("requires_map", False))).lower())')
     MODE_TARGET_PROCESS_ROWS=$(pjson "$plan_json" 'p=(d.get("product_mode_switch") or {}).get("runtime_plan") or {}; print("\n".join("|".join((str(x.get("name") or ""), str(x.get("manager") or ""), str(x.get("target") or ""), str(x.get("timeout_s") or ""), str(x.get("lifecycle") or ""))) for x in p.get("processes") or []))')
@@ -1058,7 +1128,8 @@ mode_switch_preflight() {
     if [ "$MODE_TARGET_PROFILE" != "$target" ] || [ -z "$MODE_TARGET_PRODUCT_SESSION" ] || \
        [ -z "$MODE_TARGET_SESSION_MODE" ] || [ -z "$MODE_TARGET_NATIVE_CONTROL_MODE" ] || \
        [ -z "$MODE_TARGET_SLAM_MODE" ] || [ -z "$MODE_TARGET_PROCESS_ROWS" ] || \
-       [ -z "$MODE_TARGET_KNOWN_TARGETS" ] || [ -z "$MODE_TARGET_STOP_TARGETS" ]; then
+       [ -z "$MODE_TARGET_KNOWN_TARGETS" ] || [ -z "$MODE_TARGET_STOP_TARGETS" ] || \
+       [ -z "$MODE_TARGET_NATIVE_NAV_ENV" ]; then
         echo "Target is not an operator-switchable product contract: $target" >&2
         return 1
     fi
@@ -1232,43 +1303,69 @@ cmd_mode() {
             echo -e "${B}=== Product mode switch: $current -> $target ===${N}"
             echo "Endpoint: $endpoint"
             [ -n "$map_name" ] && echo "Map: $map_name"
-            mode_stop_motion_and_session
+            mode_stop_motion_and_session || return 1
             if [ "$MODE_TARGET_REQUIRES_MAP" = "true" ]; then
-                mode_activate_saved_map_for_nav "$map_name" || return 1
+                mode_activate_saved_map_for_nav "$map_name" || {
+                    mode_fail_closed_product_switch "Map activation failed after motion stop"
+                    return 1
+                }
             fi
-            mode_profile_dropin "$target" "$endpoint" || return 1
-            mode_nav_endpoint_dropin "$MODE_TARGET_NATIVE_CONTROL_MODE" || return 1
+            mode_profile_dropin "$target" "$endpoint" || {
+                mode_fail_closed_product_switch "Gateway product profile staging failed"
+                return 1
+            }
+            mode_nav_endpoint_dropin "$MODE_TARGET_NATIVE_CONTROL_MODE" || {
+                mode_fail_closed_product_switch "Native navigation profile staging failed"
+                return 1
+            }
 
             case "$MODE_TARGET_SLAM_MODE" in
                 none) ;;
-                mapping) slam_dds_set_mode mapping "" || return 1 ;;
-                localization) slam_dds_set_mode localization "$map_pcd" || return 1 ;;
-                *) echo "Unsupported SLAM mode in product contract: $MODE_TARGET_SLAM_MODE" >&2; return 1 ;;
+                mapping) slam_dds_set_mode mapping "" || {
+                    mode_fail_closed_product_switch "SLAM mapping transition failed"
+                    return 1
+                } ;;
+                localization) slam_dds_set_mode localization "$map_pcd" || {
+                    mode_fail_closed_product_switch "SLAM localization transition failed"
+                    return 1
+                } ;;
+                *)
+                    mode_fail_closed_product_switch "Unsupported SLAM mode in product contract: $MODE_TARGET_SLAM_MODE"
+                    return 1 ;;
             esac
 
-            mode_persist_product_boot_ownership || return 1
+            mode_persist_product_boot_ownership || {
+                mode_fail_closed_product_switch "Product boot ownership update failed"
+                return 1
+            }
             if ! mode_restart_product_stack "$target" "$endpoint"; then
-                mode_abort_product_switch
+                mode_fail_closed_product_switch "Product process plan failed to start"
                 return 1
             fi
             case "$MODE_TARGET_SLAM_MODE" in
                 none) ;;
-                mapping) slam_dds_wait_status mapping 0 35 || return 1 ;;
-                localization) slam_dds_wait_status localization 1 35 || return 1 ;;
+                mapping) slam_dds_wait_status mapping 0 35 || {
+                    mode_fail_closed_product_switch "SLAM mapping readiness failed"
+                    return 1
+                } ;;
+                localization) slam_dds_wait_status localization 1 35 || {
+                    mode_fail_closed_product_switch "SLAM localization readiness failed"
+                    return 1
+                } ;;
             esac
             if ! mode_start_session_for_target "$target" "$map_name" "$relocalize" "$initial_explicit" "$initial_x" "$initial_y" "$initial_yaw"; then
-                [ "$MODE_TARGET_SESSION_MODE" = "none" ] || mode_stop_motion_and_session
+                mode_fail_closed_product_switch "Target product session failed to start"
                 return 1
             fi
             if [ "$MODE_TARGET_SESSION_MODE" = "navigating" ]; then
                 mode_wait_navigation_ready "$map_name" 45 "$MODE_TARGET_NATIVE_CONTROL_MODE" || {
-                    mode_stop_motion_and_session
+                    mode_fail_closed_product_switch "Navigation readiness failed"
                     return 1
                 }
             fi
             if [ "$MODE_TARGET_NEEDS_INSPECTION_EVIDENCE" = "true" ]; then
                 mode_wait_inspection_evidence_ready 45 || {
-                    mode_stop_motion_and_session
+                    mode_fail_closed_product_switch "Inspection evidence readiness failed"
                     return 1
                 }
             fi

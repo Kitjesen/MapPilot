@@ -88,6 +88,8 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         enable_patrol_routes=False,
         enable_scheduler=False,
         planning_frame_id=DEFAULT_PLANNING_FRAME_ID,
+        teleop_planner_horizon_m=2.0,
+        teleop_planner_max_deviation_deg=55.0,
         gateway_port=DEFAULT_GATEWAY_PORT,
     ),
     "lite": dict(
@@ -155,11 +157,13 @@ PRODUCT_PROFILE_CONFIGS: dict[str, dict[str, Any]] = {
         fallback_planner_name="",
         waypoint_threshold=0.20,
         final_waypoint_threshold=0.10,
+        native_corridor_lookahead_m=3.0,
         local_planner_direct_track_fallback_min_distance_m=0.05,
         local_planner_min_trackable_local_path_m=0.05,
         path_follower_goal_tolerance=0.05,
         path_follower_lookahead=0.35,
         path_follower_max_speed=0.20,
+        path_follower_max_accel=1.0,
         path_follower_min_speed=0.08,
         **THUNDER_OCTO_CONFIG,
         # This historical flag only disables legacy Python NativeModule
