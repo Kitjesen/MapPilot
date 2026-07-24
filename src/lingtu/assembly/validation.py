@@ -87,6 +87,17 @@ def _validate_real_product_profile(
             )
         )
 
+    required_modules = set(_string_tuple(product.get("critical_modules")))
+    missing_required = sorted(required_modules - modules)
+    if missing_required:
+        issues.append(
+            _issue(
+                "real_profile_critical_module_missing",
+                f"{profile} is missing critical modules: {', '.join(missing_required)}",
+                profile,
+            )
+        )
+
     forbidden_present = sorted(forbidden_modules & modules)
     if forbidden_present:
         issues.append(

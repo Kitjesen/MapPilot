@@ -27,6 +27,10 @@ def services(
 
     bp = Blueprint()
     native_commands = bool(config.get("native_navigation_endpoint"))
+    operator_assisted = (
+        native_commands
+        and str(config.get("product_mode") or "").strip().lower() == "teleop_avoid"
+    )
     building_added = False
 
     if native_commands:
@@ -38,6 +42,18 @@ def services(
             bp.add(Inspection, alias="nav.inspection")
         except ImportError as exc:
             logger.warning("Native navigation command services not available: %s", exc)
+
+    if operator_assisted:
+        try:
+            from nav.commands.operator_motion import OperatorMotion
+
+            bp.add(
+                OperatorMotion,
+                alias="operator.motion",
+                command_module="nav.commands",
+            )
+        except ImportError as exc:
+            logger.warning("Operator motion ingress not available: %s", exc)
 
     if enable_building:
         try:

@@ -70,6 +70,7 @@ def init_module_refs(
     gw._navigation = None
     gw._goals = None
     gw._nav_commands = None
+    gw._operator_motion = None
     gw._inspection = None
     gw._cmd_vel_mux = None
     gw._backend_reconfigure_modules = {}

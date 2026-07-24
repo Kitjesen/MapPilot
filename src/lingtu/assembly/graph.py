@@ -342,6 +342,8 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
         modules.append("nav.goals")
     if config.get("native_navigation_endpoint"):
         modules.extend(["nav.commands", "nav.inspection"])
+        if str(config.get("product_mode") or "").strip().lower() == "teleop_avoid":
+            modules.append("operator.motion")
     if bool(config.get("enable_patrol_routes", True)):
         modules.append("PatrolManagerModule")
     if bool(config.get("enable_scheduler", False)):

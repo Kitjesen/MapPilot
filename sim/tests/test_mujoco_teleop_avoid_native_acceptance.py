@@ -814,6 +814,8 @@ def test_odom_prior_diagnostic_derives_config_without_mutating_product_default(
 
 
 def test_execution_plan_is_the_real_native_teleop_avoid_policy_chain(tmp_path: Path) -> None:
+    from sim.scripts.mujoco import native_navigation_acceptance as native
+
     binaries = {
         name: tmp_path / name
         for name in (
@@ -829,6 +831,7 @@ def test_execution_plan_is_the_real_native_teleop_avoid_policy_chain(tmp_path: P
         "slam": tmp_path / "map.pcd",
         "slam_config": tmp_path / "slam.yaml",
         "policy": tmp_path / "policy.onnx",
+        "path_library": tmp_path / "paths",
         "sensor_runner": tmp_path / "native_dds_sensors.py",
         "world": tmp_path / "scene.xml",
     }
@@ -849,6 +852,10 @@ def test_execution_plan_is_the_real_native_teleop_avoid_policy_chain(tmp_path: P
     assert list(by_name) == ["slam", "traversability", "navigation", "sensor"]
     assert "--control-mode" in by_name["navigation"]["command"]
     assert "teleop_avoid" in by_name["navigation"]["command"]
+    assisted_planner_index = by_name["navigation"]["command"].index("--teleop-local-planner")
+    assert by_name["navigation"]["command"][assisted_planner_index + 1] == "true"
+    path_library_index = by_name["navigation"]["command"].index("--path-library")
+    assert by_name["navigation"]["command"][path_library_index + 1] == native._linux_arg(paths["path_library"])
     assert "--command-source" in by_name["sensor"]["command"]
     assert "dds" in by_name["sensor"]["command"]
     assert "--drive-mode" in by_name["sensor"]["command"]
@@ -962,7 +969,7 @@ def test_preflight_only_never_starts_a_scenario(tmp_path: Path) -> None:
     assert report["cases"] == []
 
 
-def test_teleop_preflight_does_not_require_autonomy_planner_artifacts(
+def test_teleop_preflight_requires_local_path_library_but_not_autonomy_map_artifacts(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -1027,9 +1034,9 @@ def test_teleop_preflight_does_not_require_autonomy_planner_artifacts(
     )
     prepared = prepare_runtime(args)
 
-    assert prepared["ok"] is True
-    assert prepared["blockers"] == []
-    assert len(prepared["details"]["out_of_scope_preflight_findings"]) == 4
+    assert prepared["ok"] is False
+    assert prepared["blockers"] == ["runtime_path_missing:path_library:/unused/paths"]
+    assert len(prepared["details"]["out_of_scope_preflight_findings"]) == 3
 
 
 def test_motion_samples_are_correlated_with_fault_phase_events() -> None:

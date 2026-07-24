@@ -20,6 +20,12 @@ processes:
   - nav
   - driver
   - runtime
+critical_modules:
+  - SlamAdapterModule
+  - maps.service
+  - nav.commands
+  - operator.motion
+  - GatewayModule
 required_topics:
   # Operator intent input. This is intentionally separate from /nav/cmd_vel
   # because /nav/cmd_vel is the final post-safety command output.
@@ -36,6 +42,7 @@ required_topics:
   - /nav/cmd_vel
 required_capabilities:
   - teleop
+  - operator_motion_ingress
   - localization_health_gate
   - registered_cloud_collision_check
   - traversability_costmap
@@ -59,7 +66,8 @@ transport_rules:
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
 target_chain:
-  - Gateway/TeleopModule sends a typed operator velocity request through /nav/command/request and waits for endpoint acceptance on /nav/command/ack.
+  - Gateway WebSocket is a thin Adapter into operator.motion; operator.motion owns the session/deadman/latest-only/release semantics and delegates typed requests to nav.commands.
+  - nav.commands sends the typed operator velocity request through /nav/command/request and waits for endpoint acceptance on /nav/command/ack.
   - Native command endpoint runs in control_mode=teleop_avoid, rejects autonomous goals/paths, and interprets joystick translation as a short-horizon body-frame intent.
   - It reads the accepted velocity request in memory plus /slam/odometry, /slam/registered_cloud, and /nav/traversability.
   - Native LocalPlanner selects a detour within the configured direction deviation and PathFollower produces a pre-safety command; no-path has no recovery motion and becomes zero.

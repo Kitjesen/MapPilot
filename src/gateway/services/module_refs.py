@@ -27,8 +27,13 @@ def attach_module_refs(gw: Any, modules: dict[str, Any]) -> None:
     gw._navigation = modules.get("nav.mission")
     gw._goals = modules.get("nav.goals")
     gw._nav_commands = modules.get("nav.commands")
+    gw._operator_motion = modules.get("operator.motion")
     gw._inspection = modules.get("nav.inspection")
-    bind_navigation_commands(gw, gw._nav_commands)
+    bind_navigation_commands(
+        gw,
+        gw._nav_commands,
+        operator_motion=gw._operator_motion,
+    )
     gw._cmd_vel_mux = modules.get("nav.velocity_mux")
     gw._backend_reconfigure_modules = {
         module_name: modules.get(module_name)

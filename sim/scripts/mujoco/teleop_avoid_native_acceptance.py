@@ -320,6 +320,10 @@ def build_execution_plan(
         str(FIELD_TELEOP_AVOID_PROFILE["input_recovery_frames"]),
         "--publish-cmd-vel",
         "true",
+        "--teleop-local-planner",
+        "true",
+        "--path-library",
+        native._linux_arg(Path(paths["path_library"])),
         "--check-obstacle",
         "true",
         "--use-traversability-cost",
@@ -673,8 +677,7 @@ def prepare_runtime(args: argparse.Namespace) -> dict[str, Any]:
     for blocker in blockers:
         missing_binary = blocker.split(":", 1)[1] if blocker.startswith("native_binary_missing:") else ""
         if (
-            blocker.startswith("runtime_path_missing:path_library:")
-            or blocker.startswith("map_artifact_missing:planner:")
+            blocker.startswith("map_artifact_missing:planner:")
             or blocker.startswith("map_artifact_missing:metadata:")
             or blocker
             in {

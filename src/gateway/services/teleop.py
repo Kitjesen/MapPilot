@@ -232,7 +232,12 @@ def init_teleop_state(
     gw._teleop_native_publisher = None
 
 
-def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
+def bind_navigation_commands(
+    gw: Any,
+    commands: Any | None,
+    *,
+    operator_motion: Any | None = None,
+) -> None:
     """Bind the Blueprint-assembled command capability after module discovery."""
 
     gw._nav_commands = commands
@@ -241,6 +246,8 @@ def bind_navigation_commands(gw: Any, commands: Any | None) -> None:
         publisher.close()
     gw._teleop_native_publisher = None
     if not bool(getattr(gw, "_teleop_dds_enabled", False)):
+        return
+    if operator_motion is not None:
         return
     if commands is None:
         logger.error(
@@ -355,6 +362,9 @@ def release(gw: Any) -> bool:
             publisher.quiesce_and_send_zero(timeout_s=max(2.0, float(gw._teleop_release_timeout) + 1.0))
         except CommandBoundaryError as exc:
             logger.error("GatewayModule: field teleop release failed: %s", exc)
+            return False
+        except Exception as exc:
+            logger.error("GatewayModule: field teleop release zero failed: %s", exc)
             return False
         return True
     tm = gw._teleop_module
