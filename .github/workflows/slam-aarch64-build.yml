@@ -1,130 +1,100 @@
-name: SLAM aarch64 Build Verification
-
-# Why aarch64-native?
-#
-# S100P deploys aarch64 ROS2 Humble exclusively (RDK X5, 128 TOPS BPU). All C++
-# changes in src/localization/{fastlio2,pgo,localizer} target this platform. Until
-# Jan 2025 GitHub-hosted aarch64 runners did not exist for public OSS, so the
-# only verification was first colcon build on the robot â€?which is too late.
-# This workflow runs the same colcon build path on a native arm64 GitHub
-# runner so any include/template/symbol error surfaces in the PR, not in the
-# field. We pin the path-trigger list so x86-only changes (Python framework,
-# docs, tools) do not pay the ~12-18 min build cost.
-#
-# Reference: GitHub arm64 hosted runners GA â€?Jan 2025.
+name: Native SLAM aarch64 Build Verification
 
 on:
   pull_request:
     branches: [main]
     paths:
-      - 'src/localization/**'
-      - 'src/nav/kernel/**'
-      - 'src/nav/planning/**'
+      - 'src/localization/slam/**'
+      - 'src/localization/fastlio2/src/**'
+      - 'src/localization/localizer/src/localizers/**'
+      - 'src/maps/include/**'
+      - 'src/message/**'
+      - 'third_party/3d_bbs/**'
+      - 'third_party/research_localization/small_gicp/include/**'
+      - 'scripts/build/build_slam_core.sh'
       - '.github/workflows/slam-aarch64-build.yml'
   push:
     branches: [main]
     paths:
-      - 'src/localization/**'
-      - 'src/nav/kernel/**'
-      - 'src/nav/planning/**'
-  # Manual trigger for branches that aren't main / aren't yet PR'd.
-  # Use this on the feature branch before opening a PR to catch errors early.
+      - 'src/localization/slam/**'
+      - 'src/localization/fastlio2/src/**'
+      - 'src/localization/localizer/src/localizers/**'
+      - 'src/maps/include/**'
+      - 'src/message/**'
+      - 'third_party/3d_bbs/**'
+      - 'third_party/research_localization/small_gicp/include/**'
+      - 'scripts/build/build_slam_core.sh'
+      - '.github/workflows/slam-aarch64-build.yml'
   workflow_dispatch:
 
 concurrency:
-  # Cancel a running build when a new commit lands on the same ref â€?saves
-  # CI minutes on rapid rebase / amend cycles.
-  group: slam-aarch64-${{ github.ref }}
+  group: native-slam-aarch64-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  colcon-aarch64:
-    name: Colcon Release Build (aarch64 native)
-    # Public-repo arm64 runners are free; private-repo cost is ~$0.009/min.
-    # If repo flips private and budget tightens, swap to ubuntu-22.04 +
-    # docker buildx --platform linux/arm64 (slower but x86-budget).
-    runs-on: ubuntu-22.04-arm64
-    timeout-minutes: 35
+  native-slam-aarch64:
+    name: Native Fast-LIO2 and CycloneDDS runtime
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 40
+    env:
+      CMAKE_BUILD_TYPE: Release
+      LINGTU_BUILD_JOBS: '4'
+      LINGTU_SLAM_BUILD_TESTS: 'ON'
+      LINGTU_SLAM_BUILD_PYTHON_BINDINGS: 'OFF'
+      LINGTU_SLAM_BUILD_DDS_RUNTIME: 'ON'
+      LINGTU_SLAM_FASTLIO2: 'ON'
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          submodules: recursive
+          submodules: false
 
-      - name: Setup ROS 2 Humble
-        uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: humble
-
-      - name: Cache colcon build artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            build
-            install
-          # Invalidate cache whenever any package.xml / CMakeLists.txt changes,
-          # since those are the only places that meaningfully affect what
-          # colcon plans to do.
-          key: colcon-${{ runner.os }}-arm64-${{ hashFiles('src/**/package.xml', 'src/**/CMakeLists.txt') }}
-          restore-keys: |
-            colcon-${{ runner.os }}-arm64-
-
-      - name: Install workspace system deps
-        # Pinned set â€?anything else gets pulled by rosdep below. PCL/Eigen/
-        # yaml-cpp are the heavy ones we know fastlio2/pgo/localizer
-        # need; pulling them explicitly so the failure mode is "missing
-        # apt package" not "missing transitive header" deep in colcon.
+      - name: Verify native aarch64 runner
         run: |
-          set -e
+          test "$(dpkg --print-architecture)" = "arm64"
+          test "$(uname -m)" = "aarch64"
+
+      - name: Install native SLAM dependencies
+        run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-colcon-common-extensions \
-            python3-rosdep \
-            libpcl-dev libeigen3-dev libyaml-cpp-dev \
-            libgrpc++-dev protobuf-compiler-grpc \
-            ccache
-          if ! rosdep db &>/dev/null; then sudo rosdep init || true; fi
-          rosdep update
+            build-essential \
+            ccache \
+            cmake \
+            cyclonedds-dev \
+            cyclonedds-tools \
+            libeigen3-dev \
+            libpcl-dev \
+            libyaml-cpp-dev \
+            ninja-build \
+            pkg-config
 
-      - name: Resolve package-level dependencies
+      - name: Build and test native SLAM runtime
         run: |
-          source /opt/ros/humble/setup.bash
-          rosdep install --from-paths src -y --ignore-src --rosdistro humble \
-            || echo "(some rosdeps unresolved â€?proceeding; colcon will surface real failures)"
+          set -o pipefail
+          bash scripts/build/build_slam_core.sh 2>&1 | tee /tmp/native-slam-build.log
 
-      - name: Build slam packages only (incremental, scoped)
-        # We deliberately do NOT colcon-build the whole tree â€?Python-only
-        # packages do not need to round-trip through CMake. Scope explicitly
-        # to the C++ targets that actually changed in Sprint 1.
-        run: |
-          source /opt/ros/humble/setup.bash
-          colcon build \
-            --packages-select fastlio2 pgo localizer interface \
-            --cmake-args -DCMAKE_BUILD_TYPE=Release \
-                         -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            --event-handlers console_direct+ summary+ \
-            2>&1 | tee /tmp/colcon.log
-
-      - name: Surface compile errors clearly
-        # colcon's exit code already fails the job, but the log is huge.
-        # Grep for the lines that matter so the PR reviewer sees them in the
-        # GitHub Actions summary without scrolling.
+      - name: Surface native compile errors
         if: failure()
         run: |
-          echo "## Build failure summary" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E "error:|undefined reference|fatal error|No such file" /tmp/colcon.log \
-            | head -50 >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Native SLAM build failure"
+            echo '```text'
+            grep -E "error:|undefined reference|fatal error|No such file" \
+              /tmp/native-slam-build.log | head -50 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload compile_commands.json
-        # Lets a reviewer download the artifact and run clangd locally
-        # against the exact arm64 build that just succeeded.
+      - name: Upload native SLAM runtime
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: compile-commands-arm64
-          path: build/*/compile_commands.json
+          name: lingtu-slam-aarch64-native-build
+          path: |
+            build/slam_core/lingtu_slam_cyclone_runtime
+            build/slam_core/lingtu_slam_control
+            build/slam_core/test_slam_contract
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: error

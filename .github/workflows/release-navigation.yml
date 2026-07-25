@@ -1,26 +1,19 @@
-name: Release Navigation Package
+name: Release LingTu Native Runtime
 
-# Automatic navigation package build and release.
-# Trigger:
-#   1. Push v* tag (e.g., v1.0.0)
-#   2. Manual trigger (workflow_dispatch)
-#
-# Artifacts:
-#   - navigation-<version>-aarch64.tar.gz (ARM64 cross-compiled)
-#   - manifest.json (with Ed25519 signature)
-#   - GitHub Release
+# Builds the tracked typed-DDS runtime components on a native aarch64 runner.
+# Packaging never activates services or changes machine configuration.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v1.1.0)'
+        description: 'Release version (for example v2.1.0)'
         required: true
         type: string
       release_notes:
         description: 'Release notes (Markdown)'
         required: false
-        default: 'Navigation system update'
+        default: 'LingTu native runtime update'
         type: string
       prerelease:
         description: 'Pre-release'
@@ -31,175 +24,178 @@ on:
     tags:
       - 'v[0-9]*'
 
+permissions:
+  contents: write
+
 jobs:
   build-and-release:
-    name: Build & Release
-    runs-on: ubuntu-22.04
+    name: Build and publish aarch64 native release
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 90
+    env:
+      CMAKE_BUILD_TYPE: Release
+      LINGTU_BUILD_JOBS: '4'
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 0
+          submodules: false
 
-      - name: Determine version
+      - name: Configure stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Determine release metadata
         id: version
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_NOTES: ${{ inputs.release_notes }}
+          DISPATCH_PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "notes=${{ inputs.release_notes }}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=${{ inputs.prerelease }}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            VERSION="${DISPATCH_VERSION}"
+            PRERELEASE="${DISPATCH_PRERELEASE}"
+            printf '%s\n' "${DISPATCH_NOTES}" > release-notes.md
           else
-            TAG="${GITHUB_REF#refs/tags/}"
-            echo "version=$TAG" >> "$GITHUB_OUTPUT"
-            echo "notes=Navigation system ${TAG} release" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            VERSION="${GITHUB_REF#refs/tags/}"
+            PRERELEASE="false"
+            printf 'LingTu native runtime %s release\n' "${VERSION}" > release-notes.md
           fi
+          if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${VERSION}" >&2
+            exit 2
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version_clean=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
-      - name: Update VERSION file
+      - name: Synchronize repository version
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          echo "${VERSION#v}" > VERSION
+          printf '%s\n' "${{ steps.version.outputs.version_clean }}" > VERSION
+          bash scripts/deploy/sync_versions.sh
 
-      - name: Setup ROS 2 Humble
-        uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: humble
-
-      - name: Install dependencies
+      - name: Verify native aarch64 runner
         run: |
-          source /opt/ros/humble/setup.bash
+          test "$(dpkg --print-architecture)" = "arm64"
+          test "$(uname -m)" = "aarch64"
+
+      - name: Install native build dependencies
+        run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            python3-colcon-common-extensions \
-            python3-rosdep \
-            libpcl-dev \
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ccache \
+            cmake \
+            cyclonedds-dev \
+            cyclonedds-tools \
             libeigen3-dev \
-            libopencv-dev \
             libgrpc++-dev \
-            protobuf-compiler-grpc
-          # Install signing dependency
-          pip install cryptography
+            libgtest-dev \
+            liboctomap-dev \
+            libpcl-dev \
+            libprotobuf-dev \
+            libyaml-cpp-dev \
+            ninja-build \
+            pkg-config \
+            protobuf-compiler \
+            protobuf-compiler-grpc \
+            python3 \
+            python3-cryptography \
+            rsync
 
-      - name: Sync versions
-        run: bash scripts/sync_versions.sh
+      - name: Test native release packager
+        run: bash scripts/deploy/package_native_release.sh --self-test
 
-      - name: Build workspace
+      - name: Build and test tracked native runtime
         run: |
-          source /opt/ros/humble/setup.bash
-          colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release
+          make build PYTHON=python3
+          ctest --test-dir build/native-runtime --output-on-failure
 
-      - name: Run unit tests
+      - name: Package signed native release
+        env:
+          OTA_PRIVATE_KEY: ${{ secrets.OTA_PRIVATE_KEY }}
         run: |
-          source /opt/ros/humble/setup.bash
-          source install/setup.bash
-          colcon test --return-code-on-test-failure
-          colcon test-result --verbose
+          KEY_FILE=""
+          cleanup_key() {
+            if [[ -n "${KEY_FILE}" ]]; then
+              rm -f -- "${KEY_FILE}"
+            fi
+          }
+          trap cleanup_key EXIT
+          if [[ -n "${OTA_PRIVATE_KEY}" ]]; then
+            KEY_FILE="${RUNNER_TEMP}/lingtu-native-release-key.pem"
+            printf '%s\n' "${OTA_PRIVATE_KEY}" > "${KEY_FILE}"
+            chmod 0600 "${KEY_FILE}"
+            export LINGTU_NATIVE_RELEASE_SIGNING_KEY="${KEY_FILE}"
+          fi
+          LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
+            bash scripts/deploy/package_native_release.sh \
+              "${{ steps.version.outputs.version }}" dist
 
-      - name: Package
+      - name: Verify release artifacts
         run: |
-          bash scripts/ota/build_nav_package.sh --skip-build
-
-      - name: Check artifact size
-        run: |
-          TARBALL=$(ls dist/navigation-*.tar.gz 2>/dev/null | head -1)
-          if [ -z "$TARBALL" ]; then
-            echo "ERROR: No tarball found in dist/"
+          TARBALL=$(find dist -maxdepth 1 -type f \
+            -name '*-aarch64-native-release.tar.gz' -print -quit)
+          MANIFEST=$(find dist -maxdepth 1 -type f \
+            -name '*-aarch64-native-release-manifest.json' -print -quit)
+          test -n "${TARBALL}"
+          test -n "${MANIFEST}"
+          (
+            cd dist
+            sha256sum -c "$(basename "${TARBALL%.tar.gz}.sha256")"
+          )
+          python3 -m json.tool "${MANIFEST}" >/dev/null
+          SIZE_MB=$(du -m "${TARBALL}" | awk '{print $1}')
+          echo "Artifact: ${TARBALL} -- ${SIZE_MB} MB"
+          if [[ "${SIZE_MB}" -gt 500 ]]; then
+            echo "Native release exceeds the 500 MB limit" >&2
             exit 1
           fi
-          SIZE_MB=$(du -m "$TARBALL" | awk '{print $1}')
-          echo "Artifact: $TARBALL -- ${SIZE_MB} MB"
-          if [ "$SIZE_MB" -gt 500 ]; then
-            echo "ERROR: Artifact exceeds 500 MB limit (${SIZE_MB} MB). Check for accidentally packaged large files."
-            exit 1
-          fi
-          echo "Artifact size OK (${SIZE_MB} MB <= 500 MB)"
 
-      - name: Generate & sign manifest
-        run: |
-          # Write signing key (from GitHub Secret)
-          if [ -n "${{ secrets.OTA_PRIVATE_KEY }}" ]; then
-            echo "${{ secrets.OTA_PRIVATE_KEY }}" > /tmp/ota_key.pem
-            python3 scripts/ota/generate_manifest.py \
-              --version ${{ steps.version.outputs.version }} \
-              --artifacts-dir ./dist/ \
-              --template scripts/ota/manifest_template.json \
-              --signing-key /tmp/ota_key.pem \
-              --key-id ota-signing-key-01 \
-              --output ./dist/manifest.json
-            rm -f /tmp/ota_key.pem
-          else
-            python3 scripts/ota/generate_manifest.py \
-              --version ${{ steps.version.outputs.version }} \
-              --artifacts-dir ./dist/ \
-              --template scripts/ota/manifest_template.json \
-              --output ./dist/manifest.json
-          fi
-
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
-          name: "Navigation ${{ steps.version.outputs.version }}"
-          body: |
-            ${{ steps.version.outputs.notes }}
-
-            ---
-
-            **OTA Deploy:**
-            1. MapPilot App -> Settings -> Cloud Update -> Check Updates
-            2. Select the navigation package -> Download and Install
-
-            **Manual Deploy:**
-            ```bash
-            ./scripts/ota/push_to_robot.sh sunrise@<robot_ip>
-            ```
-          files: dist/*
+          name: "LingTu Native Release ${{ steps.version.outputs.version }}"
+          body_path: release-notes.md
+          files: dist/*native-release*
           draft: false
           prerelease: ${{ steps.version.outputs.prerelease }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload to OTA Server
+      - name: Upload native release to OTA server
         env:
           OTA_SERVER_URL: ${{ secrets.OTA_SERVER_URL }}
           OTA_API_KEY: ${{ secrets.OTA_API_KEY }}
         run: |
-          if [ -z "${OTA_SERVER_URL}" ] || [ -z "${OTA_API_KEY}" ]; then
-            echo "OTA_SERVER_URL or OTA_API_KEY not configured, skipping OTA server upload"
+          if [[ -z "${OTA_SERVER_URL}" || -z "${OTA_API_KEY}" ]]; then
+            echo "OTA server credentials are not configured; skipping upload"
             exit 0
           fi
 
           VERSION="${{ steps.version.outputs.version }}"
           VERSION_CLEAN="${VERSION#v}"
-          NOTES="${{ steps.version.outputs.notes }}"
+          TARBALL=$(find dist -maxdepth 1 -type f \
+            -name '*-aarch64-native-release.tar.gz' -print -quit)
+          test -n "${TARBALL}"
 
-          # Find the packaged navigation tarball
-          TARBALL=$(ls dist/navigation-*.tar.gz 2>/dev/null | head -1)
-          if [ -z "$TARBALL" ]; then
-            echo "ERROR: No navigation tarball found in dist/"
-            exit 1
-          fi
-          echo "Uploading: $TARBALL"
-
-          # Step 1: Upload package (multipart/form-data)
-          UPLOAD_RESP=$(curl -sf \
+          UPLOAD_RESPONSE=$(curl -sf \
             -H "X-API-Key: ${OTA_API_KEY}" \
-            -F "name=navigation" \
+            -F "name=navigation-native-release" \
             -F "version=${VERSION_CLEAN}" \
-            -F "changelog=${NOTES}" \
+            -F "changelog=<release-notes.md" \
             -F "auto_sign=true" \
             -F "file=@${TARBALL}" \
             "${OTA_SERVER_URL}/packages/upload")
+          PACKAGE_ID_JSON=$(printf '%s' "${UPLOAD_RESPONSE}" | \
+            python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin)['id']))")
 
-          PKG_ID=$(echo "$UPLOAD_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-          echo "Package uploaded: id=${PKG_ID}"
-
-          # Step 2: Create release (initial 10% canary rollout, LINGTU-NAV product policy)
           curl -sf \
             -H "X-API-Key: ${OTA_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"version\": \"${VERSION_CLEAN}\", \"channel\": \"stable\", \"package_ids\": [${PKG_ID}], \"rollout_percent\": 10, \"target_product\": \"LINGTU-NAV\"}" \
+            -d "{\"version\": \"${VERSION_CLEAN}\", \"channel\": \"stable\", \"package_ids\": [${PACKAGE_ID_JSON}], \"rollout_percent\": 10, \"target_product\": \"LINGTU-NAV\"}" \
             "${OTA_SERVER_URL}/releases"
 
-          echo "Release created in OTA server: ${VERSION_CLEAN} (10% rollout)"
+          echo "Published native release ${VERSION_CLEAN} with a 10% rollout"

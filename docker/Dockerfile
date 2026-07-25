@@ -1,85 +1,109 @@
 # =============================================================================
-# LingTu Navigation System — Multi-stage Dockerfile
+# LingTu native multi-stage image
 #
-# Targets (selected via `--target`):
-#   build   — Build C++ nav_core shared library and prepare colcon workspace
-#   runtime — Production runtime image (ROS2 Humble + LingTu)
-#   test    — Test image (runtime + pytest)
-#
-# Usage:
-#   docker build --target runtime -t lingtu:latest .
-#   docker build --target test -t lingtu:test .
+# Targets:
+#   build   - compile and test the native DDS field binaries
+#   runtime - Python Host/Gateway plus the compiled native artifacts
+#   test    - runtime image with the project's development test extra
 # =============================================================================
 
-# ── Stage 0: Python dependencies ──────────────────────────────────────────
-FROM ros:humble AS python-deps
-WORKDIR /deps
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3-pip python3-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && pip install --no-cache-dir -r requirements.txt
+ARG UBUNTU_VERSION=22.04
 
-# ── Stage 1: Build C++ nav_core ──────────────────────────────────────────
-FROM ros:humble AS builder
+FROM ubuntu:${UBUNTU_VERSION} AS build
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake build-essential python3-dev \
+    build-essential \
+    ca-certificates \
+    cargo \
+    cmake \
+    cyclonedds-dev \
+    cyclonedds-tools \
     libeigen3-dev \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /build
-COPY src/nav/core/ /build/
-RUN mkdir build && \
-    cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release && \
-    make -j$(nproc)
-
-# ── Stage 2: Build stage (for colcon builds in CI) ───────────────────────
-FROM ros:humble AS build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake build-essential python3-pip python3-dev \
-    python3-colcon-common-extensions python3-rosdep \
-    libpcl-dev libeigen3-dev libopencv-dev \
-    && rm -rf /var/lib/apt/lists/*
-WORKDIR /ws
-COPY . .
-RUN pip install --no-cache-dir -r requirements.txt
-RUN /bin/bash -c "source /opt/ros/humble/setup.bash && \
-    colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
-
-# ── Stage 3: Runtime ─────────────────────────────────────────────────────
-FROM ros:humble-ros-base AS runtime
-
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip \
+    libgrpc++-dev \
+    libgtest-dev \
+    liboctomap-dev \
+    libopencv-dev \
+    libpcl-dev \
+    libprotobuf-dev \
+    libtbb-dev \
+    libyaml-cpp-dev \
+    ninja-build \
+    pkg-config \
+    protobuf-compiler \
+    protobuf-compiler-grpc \
+    python3 \
+    python3-dev \
+    python3-pip \
+    rustc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy nav_core shared library from builder
-COPY --from=builder /build/build/*.so /usr/local/lib/
-ENV LD_LIBRARY_PATH=/usr/local/lib:${LD_LIBRARY_PATH}
-
-# Copy Python dependencies layer
-COPY --from=python-deps /usr/local/lib/python3.*/dist-packages/ /usr/local/lib/python3.*
-
-# Copy application code
 WORKDIR /app
 COPY . .
 
-# Expose gateway (HTTP/WS/SSE) and MCP ports
+RUN python3 -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version" \
+    && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && python3 -m pip install --no-cache-dir '.[dev]'
+
+ENV CMAKE_BUILD_TYPE=Release \
+    LINGTU_BUILD_JOBS=4 \
+    LINGTU_NAV_CPP_BUILD_TESTS=ON \
+    LINGTU_NAV_ENDPOINT_RUN_TESTS=ON \
+    LINGTU_SLAM_BUILD_DDS_RUNTIME=ON \
+    LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF \
+    LINGTU_SLAM_BUILD_TESTS=ON
+
+RUN make build PYTHON=python3
+
+FROM ubuntu:${UBUNTU_VERSION} AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Development packages are intentionally installed here as a portable way to
+# provide every shared library needed by the native artifacts on Ubuntu 22.04.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    cyclonedds-dev \
+    libgrpc++-dev \
+    liboctomap-dev \
+    libpcl-dev \
+    libprotobuf-dev \
+    libyaml-cpp-dev \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . .
+COPY --from=build /app/build /app/build
+
+RUN python3 -c "import sys; assert sys.version_info[:2] == (3, 10), sys.version" \
+    && python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && python3 -m pip install --no-cache-dir '.[gateway]'
+
+ENV PYTHONPATH=/app/src:/app \
+    PATH=/app/build/native-runtime:/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/dds_probe:/app/build/driver:/app/build/livox_sdk2_stream:${PATH} \
+    LD_LIBRARY_PATH=/app/build/nav_endpoint:/app/build/slam_core:/app/build/maps:/app/build/driver:/app/build/livox_sdk2_stream:/usr/local/lib
+
 EXPOSE 5050 8090
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python3 -c "import requests; requests.get('http://localhost:5050/api/v1/health', timeout=5)" || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5050/health', timeout=5).read()"
 
-# Default command: stub profile (no hardware required)
 CMD ["python3", "lingtu.py", "stub"]
 
-# ── Stage 4: Test ────────────────────────────────────────────────────────
 FROM runtime AS test
 
-# Install test dependencies
-RUN pip install --no-cache-dir pytest pytest-asyncio pytest-mock pytest-benchmark
+RUN python3 -m pip install --no-cache-dir '.[dev]'
 
-# Run framework tests
-CMD ["python3", "-m", "pytest", "src/runtime/tests/", "-q", "-x", "--timeout=60"]
+CMD ["python3", "-m", "pytest", "src/runtime/tests/", "-q", "-x"]
