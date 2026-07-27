@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any
 
 from nav.adapters.native.abi import (
@@ -104,6 +105,43 @@ class NativeNavigationClient:
             task_id=task,
             request_id=request,
         )
+
+    def read_navigation_state(self) -> dict[str, object] | None:
+        """Read the latest authoritative native navigation snapshot."""
+
+        snapshot = self._session.read_navigation_state()
+        if snapshot is None:
+            return None
+        if not isinstance(snapshot, Mapping):
+            raise RuntimeError("native navigation returned an invalid state mapping")
+        active_task = str(snapshot.get("active_task_id") or "").strip()
+        active_request = str(snapshot.get("active_request_id") or "").strip()
+        if bool(active_task) != bool(active_request):
+            raise RuntimeError("native navigation active task_id and request_id must be present together")
+        if active_task and active_task == active_request:
+            raise RuntimeError("native navigation active task_id and request_id must be distinct")
+        return dict(snapshot)
+
+    def get_navigation_task_status(self, task_id: str) -> dict[str, object] | None:
+        """Read retained lifecycle state for one stable navigation task."""
+
+        task = str(task_id or "").strip()
+        if not task:
+            raise ValueError("navigation task_id is required")
+        status = self._session.get_navigation_task_status(task)
+        if status is None:
+            return None
+        if not isinstance(status, Mapping):
+            raise RuntimeError("native navigation returned an invalid status mapping")
+        returned_task = str(status.get("task_id") or "").strip()
+        if returned_task != task:
+            raise RuntimeError("native navigation returned status for the wrong task_id")
+        returned_request = str(status.get("request_id") or "").strip()
+        if not returned_request:
+            raise RuntimeError("native navigation status request_id is required")
+        if returned_request == returned_task:
+            raise RuntimeError("native navigation status task_id and request_id must be distinct")
+        return dict(status)
 
     @staticmethod
     def _task_identity(task_id: str, request_id: str) -> tuple[str, str]:

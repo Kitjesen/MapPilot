@@ -436,3 +436,253 @@ def test_commands_reject_invalid_inspection_identity_before_native_call(monkeypa
         commands.start_inspection("route-a", -1)
 
     assert inspection.calls == []
+
+
+def test_commands_read_current_navigation_state_without_inventing_one(monkeypatch) -> None:
+    snapshot = {
+        "active_task_id": "task-1",
+        "active_request_id": "request-1",
+        "sequence": 7,
+    }
+
+    class StateNavigation(_NavigationClient):
+        def read_navigation_state(self):
+            self.calls.append(("read_navigation_state",))
+            return snapshot
+
+    navigation = StateNavigation()
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: navigation,
+    )
+    commands = command_module.Commands()
+
+    assert commands.read_navigation_state() == snapshot
+    assert navigation.calls == [("read_navigation_state",)]
+
+    navigation.read_navigation_state = lambda: None
+    assert commands.read_navigation_state() is None
+
+
+def test_native_navigation_client_reads_authoritative_state_snapshot() -> None:
+    session = _NativeSession()
+    snapshot = {
+        "active_task_id": "task-1",
+        "active_request_id": "request-1",
+        "sequence": 7,
+    }
+    calls = []
+
+    def read_state():
+        calls.append("read")
+        return snapshot
+
+    session.read_navigation_state = read_state
+
+    assert _native_client(session).read_navigation_state() == snapshot
+    assert calls == ["read"]
+
+
+def test_native_navigation_client_gets_status_for_exact_task_identity() -> None:
+    session = _NativeSession()
+    status = {
+        "task_id": "task-1",
+        "request_id": "request-1",
+        "sequence": 9,
+        "state": 2,
+    }
+    calls = []
+
+    def get_task_status(task_id):
+        calls.append(task_id)
+        return status
+
+    session.get_navigation_task_status = get_task_status
+    client = _native_client(session)
+
+    assert client.get_navigation_task_status(" task-1 ") == status
+    assert calls == ["task-1"]
+
+    session.get_navigation_task_status = lambda _task_id: None
+    assert client.get_navigation_task_status("task-1") is None
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (True, "invalid status"),
+        (
+            {"task_id": "task-other", "request_id": "request-1"},
+            "wrong task_id",
+        ),
+        ({"task_id": "task-1", "request_id": ""}, "request_id"),
+    ],
+)
+def test_native_navigation_client_rejects_uncorrelated_task_status(
+    status,
+    message,
+) -> None:
+    session = _NativeSession()
+    session.get_navigation_task_status = lambda _task_id: status
+
+    with pytest.raises(RuntimeError, match=message):
+        _native_client(session).get_navigation_task_status("task-1")
+
+
+@pytest.mark.parametrize("task_id", ["", "   ", None])
+def test_native_navigation_client_rejects_blank_status_task_before_native_call(
+    task_id,
+) -> None:
+    session = _NativeSession()
+    calls = []
+
+    def get_task_status(value):
+        calls.append(value)
+
+    session.get_navigation_task_status = get_task_status
+
+    with pytest.raises(ValueError, match="task_id"):
+        _native_client(session).get_navigation_task_status(task_id)
+
+    assert calls == []
+
+
+def test_commands_get_status_for_exact_navigation_task(monkeypatch) -> None:
+    status = {
+        "task_id": "task-1",
+        "request_id": "request-1",
+        "sequence": 9,
+        "state": 2,
+    }
+
+    class StatusNavigation(_NavigationClient):
+        def get_navigation_task_status(self, task_id):
+            self.calls.append(("get_navigation_task_status", task_id))
+            return status
+
+    navigation = StatusNavigation()
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: navigation,
+    )
+    commands = command_module.Commands()
+
+    assert commands.get_navigation_task_status(" task-1 ") == status
+    assert navigation.calls == [
+        ("get_navigation_task_status", "task-1"),
+    ]
+
+    navigation.get_navigation_task_status = lambda _task_id: None
+    assert commands.get_navigation_task_status("task-1") is None
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (True, "invalid status"),
+        (
+            {"task_id": "task-other", "request_id": "request-1"},
+            "wrong task_id",
+        ),
+        ({"task_id": "task-1", "request_id": ""}, "request_id"),
+    ],
+)
+def test_commands_reject_uncorrelated_navigation_task_status(
+    monkeypatch,
+    status,
+    message,
+) -> None:
+    class StatusNavigation(_NavigationClient):
+        def get_navigation_task_status(self, _task_id):
+            return status
+
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: StatusNavigation(),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        command_module.Commands().get_navigation_task_status("task-1")
+
+
+@pytest.mark.parametrize("task_id", ["", "   ", None])
+def test_commands_reject_blank_status_task_before_native_call(
+    monkeypatch,
+    task_id,
+) -> None:
+    navigation = _NavigationClient()
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: navigation,
+    )
+
+    with pytest.raises(ValueError, match="task_id"):
+        command_module.Commands().get_navigation_task_status(task_id)
+
+    assert navigation.calls == []
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "message"),
+    [
+        (True, "invalid state"),
+        (
+            {"active_task_id": "task-1", "active_request_id": ""},
+            "present together",
+        ),
+        (
+            {"active_task_id": "", "active_request_id": "request-1"},
+            "present together",
+        ),
+        (
+            {"active_task_id": "same-id", "active_request_id": "same-id"},
+            "distinct",
+        ),
+    ],
+)
+def test_native_navigation_client_rejects_invalid_state_identity(
+    snapshot,
+    message,
+) -> None:
+    session = _NativeSession()
+    session.read_navigation_state = lambda: snapshot
+
+    with pytest.raises(RuntimeError, match=message):
+        _native_client(session).read_navigation_state()
+
+
+@pytest.mark.parametrize(
+    ("snapshot", "message"),
+    [
+        (True, "invalid state"),
+        (
+            {"active_task_id": "task-1", "active_request_id": ""},
+            "present together",
+        ),
+        (
+            {"active_task_id": "same-id", "active_request_id": "same-id"},
+            "distinct",
+        ),
+    ],
+)
+def test_commands_reject_invalid_navigation_state_identity(
+    monkeypatch,
+    snapshot,
+    message,
+) -> None:
+    class StateNavigation(_NavigationClient):
+        def read_navigation_state(self):
+            return snapshot
+
+    monkeypatch.setattr(
+        command_module,
+        "get_native_navigation_client",
+        lambda *, required: StateNavigation(),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        command_module.Commands().read_navigation_state()

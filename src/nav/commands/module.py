@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from nav.adapters.native.commands import get_native_navigation_client
@@ -74,6 +75,54 @@ class Commands(Module, layer=3):
             task_id=task_id,
             request_id=request_id,
         )
+
+    @rpc
+    def read_navigation_state(self) -> dict[str, object] | None:
+        """Read the latest authoritative native navigation snapshot."""
+
+        client = get_native_navigation_client(required=True)
+        if client is None:
+            raise RuntimeError("native navigation command boundary is unavailable")
+        snapshot = client.read_navigation_state()
+        if snapshot is None:
+            return None
+        if not isinstance(snapshot, Mapping):
+            raise RuntimeError("native navigation returned an invalid state mapping")
+        active_task = str(snapshot.get("active_task_id") or "").strip()
+        active_request = str(snapshot.get("active_request_id") or "").strip()
+        if bool(active_task) != bool(active_request):
+            raise RuntimeError("native navigation active task_id and request_id must be present together")
+        if active_task and active_task == active_request:
+            raise RuntimeError("native navigation active task_id and request_id must be distinct")
+        return dict(snapshot)
+
+    @rpc
+    def get_navigation_task_status(
+        self,
+        task_id: str,
+    ) -> dict[str, object] | None:
+        """Read retained lifecycle state for one stable navigation task."""
+
+        task = str(task_id or "").strip()
+        if not task:
+            raise ValueError("native navigation task_id is required")
+        client = get_native_navigation_client(required=True)
+        if client is None:
+            raise RuntimeError("native navigation command boundary is unavailable")
+        status = client.get_navigation_task_status(task)
+        if status is None:
+            return None
+        if not isinstance(status, Mapping):
+            raise RuntimeError("native navigation returned an invalid status mapping")
+        returned_task = str(status.get("task_id") or "").strip()
+        if returned_task != task:
+            raise RuntimeError("native navigation returned status for the wrong task_id")
+        returned_request = str(status.get("request_id") or "").strip()
+        if not returned_request:
+            raise RuntimeError("native navigation status request_id is required")
+        if returned_request == returned_task:
+            raise RuntimeError("native navigation status task_id and request_id must be distinct")
+        return dict(status)
 
     @rpc
     def cancel(self, reason: str = "cancel", request_id: str | None = None) -> bool:
