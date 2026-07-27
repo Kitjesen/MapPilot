@@ -56,12 +56,21 @@ def services(
     if enable_goals:
         try:
             from nav.services.goals import GoalService
+            from nav.services.task_ledger import default_task_ledger_path
 
             kwargs = {}
             if config.get("planning_frame_id") is not None:
                 kwargs["planning_frame_id"] = config.get("planning_frame_id")
             if native_commands:
                 kwargs["command_module"] = "nav.commands"
+                configured_ledger = config.get("task_ledger_path")
+                kwargs["task_ledger_path"] = str(
+                    configured_ledger if configured_ledger is not None else default_task_ledger_path()
+                )
+            if config.get("product_fingerprint") is not None:
+                kwargs["product_fingerprint"] = str(config.get("product_fingerprint") or "")
+            if config.get("map_identity") is not None:
+                kwargs["map_identity"] = config.get("map_identity")
             if building_added:
                 kwargs["building_module"] = "nav.building"
             bp.add(

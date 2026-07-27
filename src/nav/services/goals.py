@@ -7,8 +7,10 @@ import json
 import math
 import time
 import uuid
+from collections.abc import Mapping
 from typing import Any
 
+from nav.services.task_ledger import NavigationTaskLedger, TaskLedgerConflict
 from runtime import In, Module, Out
 from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
@@ -140,6 +142,9 @@ class GoalService(Module, layer=6):
         self,
         planning_frame_id: str | None = None,
         command_module: str | None = None,
+        task_ledger_path: str | None = None,
+        product_fingerprint: str = "",
+        map_identity: Mapping[str, Any] | None = None,
         building_module: str | None = None,
         **config: Any,
     ) -> None:
@@ -150,6 +155,9 @@ class GoalService(Module, layer=6):
         self._commands: Any | None = None
         self._building: Any | None = None
         self._request_sequence = itertools.count(1)
+        self._product_fingerprint = str(product_fingerprint or "").strip()
+        self._map_identity = dict(map_identity) if map_identity is not None else None
+        self._task_ledger = NavigationTaskLedger(":memory:" if task_ledger_path is None else task_ledger_path)
 
     def on_system_modules(self, modules: dict[str, Module]) -> None:
         if self._command_module:
@@ -161,6 +169,16 @@ class GoalService(Module, layer=6):
         self.goal_command.subscribe(self._on_command)
         self.goal_request.subscribe(self._on_goal_request)
         self.cancel_request.subscribe(self._on_cancel_request)
+
+        self._reconcile_task_history()
+
+    def stop(self) -> None:
+        """Close the task ledger and then release Module resources."""
+
+        try:
+            self._task_ledger.close()
+        finally:
+            super().stop()
 
     def _on_goal_request(self, goal: PoseStamped) -> None:
         self.submit_goal(goal)
@@ -219,22 +237,77 @@ class GoalService(Module, layer=6):
             ts=getattr(goal, "ts", 0.0),
             frame_id=frame_id,
         )
+        target = {
+            "x": normalized_goal.x,
+            "y": normalized_goal.y,
+            "z": normalized_goal.z,
+            "yaw": normalized_goal.yaw,
+            "frame_id": normalized_goal.frame_id,
+        }
+        try:
+            admission = self._task_ledger.admit(
+                resolved_task_id,
+                resolved_request_id,
+                "goal",
+                target,
+                source=action,
+                target=target,
+                product_fingerprint=self._product_fingerprint,
+                map_identity=self._map_identity,
+            )
+        except TaskLedgerConflict as exc:
+            return self._publish_status(
+                action,
+                False,
+                f"task admission conflict: {exc}",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                frame_id=frame_id,
+                sink=self._sink_name,
+            )
+        except Exception:
+            return self._publish_status(
+                action,
+                False,
+                "task history unavailable; command was not dispatched",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                frame_id=frame_id,
+                sink=self._sink_name,
+            )
+        if admission["replay"]:
+            return self._publish_replay_status(
+                admission["record"],
+                action=action,
+                request_id=resolved_request_id,
+            )
         dispatch_result = self._dispatch_goal(
             normalized_goal,
             task_id=resolved_task_id,
             request_id=resolved_request_id,
         )
-        dispatch_error = dispatch_result if isinstance(dispatch_result, str) else None
-        if dispatch_error:
+        if isinstance(dispatch_result, str):
+            dispatch_error = dispatch_result or "navigation command failed without error detail"
             return self._publish_status(
                 action,
                 False,
-                dispatch_error,
+                f"goal admission outcome unconfirmed: {dispatch_error}; do not resend with a new request_id",
                 task_id=resolved_task_id,
                 request_id=resolved_request_id,
                 frame_id=normalized_goal.frame_id,
+                state="unknown",
+                admission_confirmed=False,
+                admission_unconfirmed=True,
+                history_recorded=True,
                 sink=self._sink_name,
             )
+
+        history_fields = self._record_dispatch_history(
+            dispatch_result,
+            task_id=resolved_task_id,
+            request_id=resolved_request_id,
+            local_reason="goal_published",
+        )
         receipt_fields = self._receipt_status_fields(dispatch_result)
         if isinstance(dispatch_result, NavigationCommandReceipt) and not dispatch_result.accepted:
             return self._publish_status(
@@ -246,6 +319,7 @@ class GoalService(Module, layer=6):
                 frame_id=frame_id,
                 sink=self._sink_name,
                 **receipt_fields,
+                **history_fields,
             )
         return self._publish_status(
             action,
@@ -256,6 +330,7 @@ class GoalService(Module, layer=6):
             frame_id=frame_id,
             sink=self._sink_name,
             **receipt_fields,
+            **history_fields,
             target={
                 "x": normalized_goal.x,
                 "y": normalized_goal.y,
@@ -279,19 +354,22 @@ class GoalService(Module, layer=6):
     ) -> dict[str, Any]:
         """Synchronously admit one cancellation request."""
 
+        resolved_reason = str(reason or "cancel")
         resolved_task_id = str(task_id or "").strip()
         resolved_request_id = str(request_id or "").strip() or self._new_request_id()
-        if self._command_module:
-            if not resolved_task_id:
-                return self._publish_status(
-                    action,
-                    False,
-                    "task_id is required to cancel a native navigation task",
-                    task_id=resolved_task_id,
-                    request_id=resolved_request_id,
-                    reason=reason,
-                    sink=self._sink_name,
-                )
+        if self._command_module and not resolved_task_id:
+            return self._publish_status(
+                action,
+                False,
+                "task_id is required to cancel a native navigation task",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                reason=resolved_reason,
+                sink=self._sink_name,
+            )
+
+        tracks_history = bool(resolved_task_id)
+        if tracks_history:
             if resolved_task_id == resolved_request_id:
                 return self._publish_status(
                     action,
@@ -299,29 +377,85 @@ class GoalService(Module, layer=6):
                     "task_id and request_id must be distinct",
                     task_id=resolved_task_id,
                     request_id=resolved_request_id,
-                    reason=reason,
+                    reason=resolved_reason,
                     sink=self._sink_name,
                 )
             try:
-                result = self._call_commands(
-                    "cancel_task",
-                    reason=reason,
-                    task_id=resolved_task_id,
-                    request_id=resolved_request_id,
+                admission = self._task_ledger.admit(
+                    resolved_task_id,
+                    resolved_request_id,
+                    "cancel",
+                    {"reason": resolved_reason},
+                    source=action,
+                    product_fingerprint=self._product_fingerprint,
+                    map_identity=self._map_identity,
                 )
-            except RuntimeError as exc:
+            except TaskLedgerConflict as exc:
                 return self._publish_status(
                     action,
                     False,
-                    str(exc),
+                    f"task admission conflict: {exc}",
                     task_id=resolved_task_id,
                     request_id=resolved_request_id,
-                    reason=reason,
+                    reason=resolved_reason,
                     sink=self._sink_name,
                 )
+            except Exception:
+                return self._publish_status(
+                    action,
+                    False,
+                    "task history unavailable; command was not dispatched",
+                    task_id=resolved_task_id,
+                    request_id=resolved_request_id,
+                    reason=resolved_reason,
+                    sink=self._sink_name,
+                )
+            if admission["replay"]:
+                return self._publish_replay_status(
+                    admission["record"],
+                    action=action,
+                    request_id=resolved_request_id,
+                )
+
+        try:
+            if self._command_module:
+                result = self._call_commands(
+                    "cancel_task",
+                    reason=resolved_reason,
+                    task_id=resolved_task_id,
+                    request_id=resolved_request_id,
+                )
+            else:
+                result = None
+                self.cancel.publish(resolved_reason)
+        except Exception as exc:
+            return self._publish_status(
+                action,
+                False,
+                f"cancel admission outcome unconfirmed: {exc}; do not resend with a new request_id",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                reason=resolved_reason,
+                state="unknown",
+                admission_confirmed=False,
+                admission_unconfirmed=True,
+                history_recorded=tracks_history,
+                sink=self._sink_name,
+            )
+
+        if tracks_history:
+            history_fields = self._record_dispatch_history(
+                result,
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                local_reason="cancel_requested",
+            )
         else:
-            result = None
-            self.cancel.publish(reason)
+            history_fields = {
+                "history_recorded": False,
+                "history_warning": "cancel has no task_id and is not in task history",
+            }
+
         receipt_fields = self._receipt_status_fields(result)
         if isinstance(result, NavigationCommandReceipt) and not result.accepted:
             return self._publish_status(
@@ -330,9 +464,10 @@ class GoalService(Module, layer=6):
                 f"cancel rejected by native endpoint: {result.reason or 'rejected'}",
                 task_id=resolved_task_id,
                 request_id=resolved_request_id,
-                reason=reason,
+                reason=resolved_reason,
                 sink=self._sink_name,
                 **receipt_fields,
+                **history_fields,
             )
         return self._publish_status(
             action,
@@ -340,10 +475,11 @@ class GoalService(Module, layer=6):
             "cancel accepted by native endpoint" if receipt_fields else "cancel published",
             task_id=resolved_task_id,
             request_id=resolved_request_id,
-            reason=reason,
+            reason=resolved_reason,
             state="cancel_requested",
             sink=self._sink_name,
             **receipt_fields,
+            **history_fields,
         )
 
     def _on_command(self, raw: str) -> None:
@@ -514,10 +650,10 @@ class GoalService(Module, layer=6):
         task_id: str,
         request_id: str,
     ) -> NavigationCommandReceipt | str | None:
-        if not self._command_module:
-            self.goal_pose.publish(goal)
-            return None
         try:
+            if not self._command_module:
+                self.goal_pose.publish(goal)
+                return None
             return self._call_commands(
                 "send_goal",
                 x=goal.x,
@@ -527,8 +663,153 @@ class GoalService(Module, layer=6):
                 task_id=task_id,
                 request_id=request_id,
             )
-        except RuntimeError as exc:
+        except Exception as exc:
             return str(exc)
+
+    def get_task(
+        self,
+        task_id: str,
+        *,
+        refresh: bool = True,
+    ) -> dict[str, Any] | None:
+        """Return one durable task record, optionally reconciled with navd."""
+
+        resolved_task_id = str(task_id or "").strip()
+        if not resolved_task_id:
+            raise ValueError("task_id is required")
+        if refresh:
+            self._reconcile_task_history()
+        return self._task_ledger.get_task(resolved_task_id)
+
+    def list_tasks(
+        self,
+        *,
+        limit: int = 50,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return recent task history, optionally restricted to nonterminal tasks."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise ValueError("limit must be a positive integer")
+        if limit > 1000:
+            raise ValueError("limit cannot exceed 1000")
+        self._reconcile_task_history()
+        if active_only:
+            return self._task_ledger.list_open()[:limit]
+        return self._task_ledger.list_recent(limit)
+
+    def _reconcile_task_history(self) -> None:
+        """Apply retained native evidence without ever replaying a command."""
+
+        if not self._command_module:
+            return
+        open_tasks = self._task_ledger.list_open()
+        if not open_tasks:
+            return
+
+        try:
+            navigation_state = self._call_commands("read_navigation_state")
+        except RuntimeError:
+            navigation_state = None
+
+        retained_statuses: list[dict[str, Any]] = []
+        retained_available = True
+        for task in open_tasks:
+            try:
+                retained = self._call_commands(
+                    "get_navigation_task_status",
+                    task_id=task["task_id"],
+                )
+            except RuntimeError:
+                retained_available = False
+                retained_statuses = []
+                break
+            if retained is not None:
+                retained_statuses.append(dict(retained))
+
+        try:
+            self._task_ledger.reconcile_endpoint(
+                navigation_state,
+                goal_statuses=retained_statuses if retained_available else None,
+            )
+        except (KeyError, TaskLedgerConflict, TypeError, ValueError):
+            # Bad or conflicting evidence must not create a terminal state.
+            return
+
+    def _publish_replay_status(
+        self,
+        record: Mapping[str, Any],
+        *,
+        action: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        attempt = next(
+            (
+                item
+                for item in record.get("attempts", [])
+                if isinstance(item, Mapping) and item.get("request_id") == request_id
+            ),
+            None,
+        )
+        attempt = attempt if isinstance(attempt, Mapping) else None
+        accepted = attempt.get("accepted") if attempt is not None else None
+        kind = str(attempt.get("kind") or "") if attempt is not None else ""
+        if accepted is True:
+            state = "cancel_requested" if kind == "cancel" else str(record.get("state") or "accepted")
+            message = f"{kind or 'navigation'} request was already accepted"
+        elif accepted is False:
+            state = "rejected"
+            message = f"{kind or 'navigation'} request was already rejected"
+        else:
+            state = "unknown"
+            message = "request was already admitted; admission outcome remains unconfirmed"
+
+        extra: dict[str, Any] = {
+            "task_id": str(record.get("task_id") or ""),
+            "state": state,
+            "task_state": str(record.get("state") or "unknown"),
+            "reason": (
+                str(attempt.get("reason") or "") if attempt is not None else str(record.get("reason") or "")
+            ),
+            "replay": True,
+            "admission_confirmed": accepted is not None,
+            "history_recorded": True,
+            "sink": self._sink_name,
+        }
+        if attempt is not None and attempt.get("native_ack") is not None:
+            extra["native_request_id"] = str(attempt.get("native_request_id") or request_id)
+            extra["native_ack"] = attempt["native_ack"]
+        return self._publish_status(
+            action,
+            accepted is True,
+            message,
+            request_id=request_id,
+            **extra,
+        )
+
+    def _record_dispatch_history(
+        self,
+        result: NavigationCommandReceipt | None,
+        *,
+        task_id: str,
+        request_id: str,
+        local_reason: str,
+    ) -> dict[str, Any]:
+        try:
+            if isinstance(result, NavigationCommandReceipt):
+                self._task_ledger.record_native_ack(result)
+            else:
+                self._task_ledger.record_accepted(
+                    task_id,
+                    request_id,
+                    local_reason,
+                )
+        except Exception:
+            return {
+                "history_recorded": False,
+                "history_warning": ("command was dispatched, but durable task history could not be updated"),
+            }
+        return {"history_recorded": True}
 
     def _publish_patrol(
         self,
@@ -719,31 +1000,19 @@ class GoalService(Module, layer=6):
             raise RuntimeError(str(exc)) from exc
         if method in {"send_goal", "cancel_task"}:
             if not isinstance(result, NavigationCommandReceipt):
-                raise RuntimeError(
-                    f"navigation command {method} returned an invalid task receipt"
-                )
-            expected_kind = (
-                NavigationCommandKind.GOAL
-                if method == "send_goal"
-                else NavigationCommandKind.CANCEL
-            )
+                raise RuntimeError(f"navigation command {method} returned an invalid task receipt")
+            expected_kind = NavigationCommandKind.GOAL if method == "send_goal" else NavigationCommandKind.CANCEL
             if result.kind != int(expected_kind):
-                raise RuntimeError(
-                    f"navigation command {method} returned the wrong command kind"
-                )
+                raise RuntimeError(f"navigation command {method} returned the wrong command kind")
             expected_task_id = str(kwargs.get("task_id") or "").strip()
             if result.task_id != expected_task_id:
-                raise RuntimeError(
-                    f"navigation command {method} returned the wrong task_id"
-                )
+                raise RuntimeError(f"navigation command {method} returned the wrong task_id")
             expected_request_id = str(kwargs.get("request_id") or "").strip()
             if expected_request_id and not (
                 result.request_id == expected_request_id
                 or result.request_id.startswith(f"{expected_request_id}-clock-retry-")
             ):
-                raise RuntimeError(
-                    f"navigation command {method} returned the wrong request_id"
-                )
+                raise RuntimeError(f"navigation command {method} returned the wrong request_id")
         return result
 
     @staticmethod

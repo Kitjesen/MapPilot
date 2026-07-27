@@ -10,10 +10,12 @@ import json
 import pytest
 
 from nav.services.goals import GoalService
+from nav.services.task_ledger import NavigationTaskLedger
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.msgs.nav import (
     NavigationCommandKind,
     NavigationCommandReceipt,
+    NavigationGoalState,
 )
 
 
@@ -462,3 +464,542 @@ class TestGoalService:
 
         assert goal_service._test_statuses[-1]["success"] is False
         assert goal_service._test_goals == []
+
+    def test_task_attempt_replay_does_not_dispatch_native_goal_twice(self, tmp_path):
+        class FakeCommands:
+            def __init__(self) -> None:
+                self.goals = []
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                self.goals.append((task_id, request_id, x, y, z, yaw))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+            def read_navigation_state(self):
+                return {
+                    "boot_id": "navd-boot-a",
+                    "active_task_id": "task-replay",
+                    "active_request_id": "goal-attempt-replay",
+                }
+
+            def get_navigation_task_status(self, task_id):
+                del task_id
+                return None
+
+        commands = FakeCommands()
+        service = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=str(tmp_path / "tasks.sqlite3"),
+        )
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        goal = PoseStamped(
+            pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+            frame_id="map",
+        )
+
+        first = service.submit_goal(
+            goal,
+            task_id="task-replay",
+            request_id="goal-attempt-replay",
+        )
+        second = service.submit_goal(
+            goal,
+            task_id="task-replay",
+            request_id="goal-attempt-replay",
+        )
+
+        assert first["accepted"] is True
+        assert second["accepted"] is True
+        assert second["replay"] is True
+        assert len(commands.goals) == 1
+        task = service.get_task("task-replay", refresh=False)
+        assert task is not None
+        assert task["state"] == "accepted"
+        assert len(task["attempts"]) == 1
+        service.stop()
+
+    def test_task_terminal_status_survives_goal_service_restart(self, tmp_path):
+        class FakeCommands:
+            def __init__(self, *, terminal=False) -> None:
+                self.terminal = terminal
+                self.goals = []
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                self.goals.append((task_id, request_id))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+            def read_navigation_state(self):
+                return {
+                    "boot_id": "navd-boot-a",
+                    "active_task_id": "" if self.terminal else "task-persisted",
+                    "active_request_id": "" if self.terminal else "goal-attempt-persisted",
+                }
+
+            def get_navigation_task_status(self, task_id):
+                if not self.terminal:
+                    return None
+                return {
+                    "ts": 120.0,
+                    "frame_id": "map",
+                    "boot_id": "navd-boot-a",
+                    "sequence": 9,
+                    "task_id": task_id,
+                    "request_id": "goal-attempt-persisted",
+                    "state": int(NavigationGoalState.REACHED),
+                    "goal_epoch": 1,
+                    "reason": "goal_reached",
+                }
+
+        db_path = tmp_path / "tasks.sqlite3"
+        first_commands = FakeCommands()
+        first_service = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=str(db_path),
+        )
+        first_service.on_system_modules({"nav.commands": first_commands})
+        first_service.setup()
+        first_service.submit_goal(
+            PoseStamped(pose=Pose(position=Vector3(3.0, 4.0, 0.0)), frame_id="map"),
+            task_id="task-persisted",
+            request_id="goal-attempt-persisted",
+        )
+        first_service.stop()
+
+        second_commands = FakeCommands(terminal=True)
+        second_service = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=str(db_path),
+        )
+        second_service.on_system_modules({"nav.commands": second_commands})
+        second_service.setup()
+
+        task = second_service.get_task("task-persisted")
+
+        assert task is not None
+        assert task["state"] == "reached"
+        assert task["terminal"] is True
+        assert task["reason"] == "goal_reached"
+        assert second_commands.goals == []
+        second_service.stop()
+
+    def test_endpoint_boot_change_interrupts_task_without_replaying_motion(self, tmp_path):
+        db_path = tmp_path / "tasks.sqlite3"
+        ledger = NavigationTaskLedger(db_path, clock=lambda: 100.0)
+        ledger.admit(
+            "task-old-boot",
+            "goal-old-boot",
+            "goal",
+            {"x": 1.0, "y": 2.0},
+            target={"x": 1.0, "y": 2.0},
+        )
+        ledger.record_accepted(
+            "task-old-boot",
+            "goal-old-boot",
+            "planning_started",
+            endpoint_boot_id="navd-boot-old",
+        )
+        ledger.close()
+
+        class RestartedCommands:
+            calls = 0
+
+            def read_navigation_state(self):
+                return {
+                    "boot_id": "navd-boot-new",
+                    "active_task_id": "",
+                    "active_request_id": "",
+                }
+
+            def get_navigation_task_status(self, task_id):
+                del task_id
+                return None
+
+            def send_goal(self, *args, **kwargs):
+                self.calls += 1
+                raise AssertionError("restart reconciliation must not replay motion")
+
+        commands = RestartedCommands()
+        service = GoalService(
+            command_module="nav.commands",
+            task_ledger_path=str(db_path),
+        )
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+
+        task = service.get_task("task-old-boot", refresh=False)
+
+        assert task is not None
+        assert task["state"] == "interrupted"
+        assert task["terminal"] is True
+        assert task["reason"] == "endpoint_restarted"
+        assert task["can_resume"] is False
+        assert commands.calls == 0
+        service.stop()
+
+    def test_native_timeout_is_unconfirmed_and_replay_never_redispatches(self):
+        class SideEffectThenTimeout:
+            calls = 0
+
+            def send_goal(self, *args, **kwargs):
+                del args, kwargs
+                self.calls += 1
+                raise TimeoutError
+
+        commands = SideEffectThenTimeout()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        goal = PoseStamped(
+            pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+            frame_id="map",
+        )
+
+        first = service.submit_goal(
+            goal,
+            task_id="task-timeout",
+            request_id="request-timeout",
+        )
+        replay = service.submit_goal(
+            goal,
+            task_id="task-timeout",
+            request_id="request-timeout",
+        )
+        task = service.get_task("task-timeout", refresh=False)
+
+        assert commands.calls == 1
+        assert first["accepted"] is False
+        assert first["state"] == "unknown"
+        assert first["admission_unconfirmed"] is True
+        assert replay["replay"] is True
+        assert replay["admission_confirmed"] is False
+        assert task is not None
+        assert task["state"] == "admitted"
+        assert task["terminal"] is False
+        assert task["attempts"][0]["accepted"] is None
+        service.stop()
+
+    def test_cancel_timeout_is_unconfirmed_and_replay_never_redispatches(self):
+        class SideEffectThenTimeout:
+            cancel_calls = 0
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+            def cancel_task(self, task_id, reason, *, request_id):
+                del task_id, reason, request_id
+                self.cancel_calls += 1
+                raise TimeoutError("ACK timeout after cancel write")
+
+        commands = SideEffectThenTimeout()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-cancel-timeout",
+            request_id="goal-cancel-timeout",
+        )
+
+        first = service.submit_cancel(
+            "operator",
+            task_id="task-cancel-timeout",
+            request_id="cancel-timeout",
+        )
+        replay = service.submit_cancel(
+            "operator",
+            task_id="task-cancel-timeout",
+            request_id="cancel-timeout",
+        )
+        task = service.get_task("task-cancel-timeout", refresh=False)
+
+        assert commands.cancel_calls == 1
+        assert first["state"] == "unknown"
+        assert first["admission_unconfirmed"] is True
+        assert replay["replay"] is True
+        assert replay["admission_confirmed"] is False
+        assert task is not None
+        assert task["terminal"] is False
+        assert task["cancel_requested"] is False
+        assert task["attempts"][-1]["accepted"] is None
+        service.stop()
+
+    def test_dispatch_success_survives_history_write_failure(self, monkeypatch):
+        class FakeCommands:
+            calls = 0
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                self.calls += 1
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+
+        def fail_history(_receipt):
+            raise OSError("disk unavailable")
+
+        monkeypatch.setattr(service._task_ledger, "record_native_ack", fail_history)
+        result = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-history-failure",
+            request_id="request-history-failure",
+        )
+
+        assert commands.calls == 1
+        assert result["accepted"] is True
+        assert result["history_recorded"] is False
+        assert "history" in result["history_warning"]
+        service.stop()
+
+    def test_history_admission_failure_prevents_motion_dispatch(self, monkeypatch):
+        class FakeCommands:
+            calls = 0
+
+            def send_goal(self, *args, **kwargs):
+                del args, kwargs
+                self.calls += 1
+                raise AssertionError("dispatch must not run")
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+
+        def fail_admission(*args, **kwargs):
+            del args, kwargs
+            raise OSError("ledger unavailable")
+
+        monkeypatch.setattr(service._task_ledger, "admit", fail_admission)
+        result = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-no-history",
+            request_id="request-no-history",
+        )
+
+        assert commands.calls == 0
+        assert result["accepted"] is False
+        assert "task history unavailable" in result["message"]
+        service.stop()
+
+    def test_explicit_native_rejection_is_the_only_rejected_terminal(self):
+        class RejectingCommands:
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                return NavigationCommandReceipt(
+                    accepted=False,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="goal_outside_map",
+                )
+
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": RejectingCommands()})
+        service.setup()
+        result = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-rejected",
+            request_id="request-rejected",
+        )
+        task = service.get_task("task-rejected", refresh=False)
+
+        assert result["accepted"] is False
+        assert task is not None
+        assert task["state"] == "rejected"
+        assert task["terminal"] is True
+        assert task["reason"] == "goal_outside_map"
+        service.stop()
+
+    def test_native_status_unavailable_becomes_unknown_not_terminal(self):
+        class UnavailableCommands:
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+            def read_navigation_state(self):
+                raise RuntimeError("status unavailable")
+
+            def get_navigation_task_status(self, task_id):
+                del task_id
+                raise RuntimeError("status unavailable")
+
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": UnavailableCommands()})
+        service.setup()
+        service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-status-unavailable",
+            request_id="request-status-unavailable",
+        )
+
+        task = service.get_task("task-status-unavailable", refresh=True)
+
+        assert task is not None
+        assert task["state"] == "unknown"
+        assert task["terminal"] is False
+        assert task["reason"] == "endpoint_status_unavailable"
+        assert task["can_resume"] is False
+        service.stop()
+
+    def test_list_tasks_active_only_excludes_terminal_history(self):
+        service = GoalService()
+        service.setup()
+        active = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-active",
+            request_id="request-active",
+        )
+        assert active["accepted"] is True
+        service._task_ledger.admit(
+            "task-terminal",
+            "request-terminal",
+            "goal",
+            {"x": 3.0, "y": 4.0},
+            target={"x": 3.0, "y": 4.0},
+        )
+        service._task_ledger.record_rejected(
+            "task-terminal",
+            "request-terminal",
+            "goal_outside_map",
+        )
+
+        tasks = service.list_tasks(active_only=True)
+
+        assert [task["task_id"] for task in tasks] == ["task-active"]
+        service.stop()
+
+    def test_conflicting_reuse_of_request_identity_never_redispatches(self):
+        class FakeCommands:
+            calls = 0
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                self.calls += 1
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        first = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-conflict",
+            request_id="request-conflict",
+        )
+        conflict = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(9.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-conflict",
+            request_id="request-conflict",
+        )
+
+        assert first["accepted"] is True
+        assert conflict["accepted"] is False
+        assert "conflict" in conflict["message"]
+        assert commands.calls == 1
+        service.stop()
+
+    def test_local_cancel_is_persisted_nonterminal_and_replay_safe(self):
+        service = GoalService()
+        service.setup()
+        cancellations: list[str] = []
+        service.cancel.subscribe(cancellations.append)
+        service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-local-cancel",
+            request_id="goal-local-cancel",
+        )
+
+        first = service.submit_cancel(
+            "operator",
+            task_id="task-local-cancel",
+            request_id="cancel-local-cancel",
+        )
+        replay = service.submit_cancel(
+            "operator",
+            task_id="task-local-cancel",
+            request_id="cancel-local-cancel",
+        )
+        task = service.get_task("task-local-cancel", refresh=False)
+
+        assert cancellations == ["operator"]
+        assert first["state"] == "cancel_requested"
+        assert first["history_recorded"] is True
+        assert replay["replay"] is True
+        assert replay["state"] == "cancel_requested"
+        assert task is not None
+        assert task["cancel_requested"] is True
+        assert task["terminal"] is False
+        service.stop()
