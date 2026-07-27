@@ -48,6 +48,9 @@ inline constexpr TopicContract kSlamStateAtScan{
 inline constexpr TopicContract kSlamRegisteredCloud{
     "/slam/registered_cloud", "rt/slam/registered_cloud",
     "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+inline constexpr TopicContract kSlamMapObservation{
+    "/slam/map_observation", "rt/slam/map_observation",
+    "lingtu.dds.MapObservation", "lingtu::dds::MapObservation"};
 inline constexpr TopicContract kSlamMapCloud{
     "/slam/map_cloud", "rt/slam/map_cloud",
     "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
@@ -57,6 +60,33 @@ inline constexpr TopicContract kSlamCumulativeMapCloud{
 inline constexpr TopicContract kSlamSavedMapCloud{
     "/slam/saved_map_cloud", "rt/slam/saved_map_cloud",
     "lingtu.dds.PointCloud2", "lingtu::dds::PointCloud2"};
+inline constexpr TopicContract kMapsState{
+    "/maps/state", "rt/maps/state",
+    "lingtu.dds.MapRuntimeState", "lingtu::dds::MapRuntimeState"};
+inline constexpr TopicContract kMapsLiveCloud{
+    "/maps/live_cloud", "rt/maps/live_cloud",
+    "lingtu.dds.MapCloudLayer", "lingtu::dds::MapCloudLayer"};
+inline constexpr TopicContract kMapsVoxelCloud{
+    "/maps/voxel_cloud", "rt/maps/voxel_cloud",
+    "lingtu.dds.MapCloudLayer", "lingtu::dds::MapCloudLayer"};
+inline constexpr TopicContract kMapsAccumulatedCloud{
+    "/maps/accumulated_cloud", "rt/maps/accumulated_cloud",
+    "lingtu.dds.MapCloudLayer", "lingtu::dds::MapCloudLayer"};
+inline constexpr TopicContract kMapsOccupancy{
+    "/maps/occupancy", "rt/maps/occupancy",
+    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+inline constexpr TopicContract kMapsElevation{
+    "/maps/elevation", "rt/maps/elevation",
+    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+inline constexpr TopicContract kMapsEsdf{
+    "/maps/esdf", "rt/maps/esdf",
+    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+inline constexpr TopicContract kMapsTraversability{
+    "/maps/traversability", "rt/maps/traversability",
+    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
+inline constexpr TopicContract kMapsScene{
+    "/maps/scene", "rt/maps/scene",
+    "lingtu.dds.MapScene", "lingtu::dds::MapScene"};
 inline constexpr TopicContract kCameraColor{
     "/camera/color/image_raw", "rt/camera/color",
     "lingtu.dds.Image", "lingtu::dds::Image"};
@@ -115,6 +145,30 @@ inline constexpr TopicContract kNavCommandAck{
     "/nav/command/ack", "rt/nav/command/ack",
     "lingtu.dds.NavigationCommandAck",
     "lingtu::dds::NavigationCommandAck"};
+inline constexpr TopicContract kOperatorMotionControl{
+    "/nav/operator_motion/control", "rt/nav/operator_motion/control",
+    "lingtu.dds.OperatorMotionControl",
+    "lingtu::dds::OperatorMotionControl"};
+inline constexpr TopicContract kOperatorMotionSample{
+    "/nav/operator_motion/sample", "rt/nav/operator_motion/sample",
+    "lingtu.dds.OperatorMotionSample",
+    "lingtu::dds::OperatorMotionSample"};
+inline constexpr TopicContract kOperatorMotionAck{
+    "/nav/operator_motion/ack", "rt/nav/operator_motion/ack",
+    "lingtu.dds.OperatorMotionAck",
+    "lingtu::dds::OperatorMotionAck"};
+inline constexpr TopicContract kOperatorMotionStatus{
+    "/nav/operator_motion/status", "rt/nav/operator_motion/status",
+    "lingtu.dds.OperatorMotionStatus",
+    "lingtu::dds::OperatorMotionStatus"};
+inline constexpr TopicContract kNavGoalStatus{
+    "/nav/goal/status", "rt/nav/goal/status",
+    "lingtu.dds.NavigationGoalStatus",
+    "lingtu::dds::NavigationGoalStatus"};
+inline constexpr TopicContract kNavState{
+    "/nav/state", "rt/nav/state",
+    "lingtu.dds.NavigationState",
+    "lingtu::dds::NavigationState"};
 inline constexpr TopicContract kNavExplorationCommand{
     "/nav/exploration/command", "rt/nav/exploration/command",
     "lingtu.dds.ExplorationCommandRequest",
@@ -123,6 +177,18 @@ inline constexpr TopicContract kNavExplorationAck{
     "/nav/exploration/ack", "rt/nav/exploration/ack",
     "lingtu.dds.ExplorationCommandAck",
     "lingtu::dds::ExplorationCommandAck"};
+inline constexpr TopicContract kNavExplorationSegmentRequest{
+    "/nav/exploration_segment/request", "rt/nav/exploration_segment/request",
+    "lingtu.dds.ExplorationSegmentRequest",
+    "lingtu::dds::ExplorationSegmentRequest"};
+inline constexpr TopicContract kNavExplorationSegmentAck{
+    "/nav/exploration_segment/ack", "rt/nav/exploration_segment/ack",
+    "lingtu.dds.ExplorationSegmentAck",
+    "lingtu::dds::ExplorationSegmentAck"};
+inline constexpr TopicContract kNavExplorationSegmentStatus{
+    "/nav/exploration_segment/status", "rt/nav/exploration_segment/status",
+    "lingtu.dds.ExplorationSegmentStatus",
+    "lingtu::dds::ExplorationSegmentStatus"};
 inline constexpr TopicContract kNavInspectionCommand{
     "/nav/inspection/command", "rt/nav/inspection/command",
     "lingtu.dds.InspectionCommandRequest",
@@ -174,6 +240,10 @@ inline constexpr TopicContract kNavExplorationGrid{
 inline constexpr TopicContract kNavExplorationSnapshot{
     "/nav/exploration_snapshot", "rt/nav/exploration_snapshot",
     "lingtu.dds.ExplorationGrid", "lingtu::dds::ExplorationGrid"};
+inline constexpr TopicContract kNavExplorationExecutionSnapshot{
+    "/nav/exploration_execution_snapshot", "rt/nav/exploration_execution_snapshot",
+    "lingtu.dds.ExplorationExecutionGrid",
+    "lingtu::dds::ExplorationExecutionGrid"};
 
 // ── Exploration planner topics ────────────────────────────────────────
 inline constexpr TopicContract kExplorationWayPoint{
@@ -204,9 +274,19 @@ inline constexpr TopicContract kTopicContracts[] = {
     kSlamOdometry,
     kSlamStateAtScan,
     kSlamRegisteredCloud,
+    kSlamMapObservation,
     kSlamMapCloud,
     kSlamCumulativeMapCloud,
     kSlamSavedMapCloud,
+    kMapsState,
+    kMapsLiveCloud,
+    kMapsVoxelCloud,
+    kMapsAccumulatedCloud,
+    kMapsOccupancy,
+    kMapsElevation,
+    kMapsEsdf,
+    kMapsTraversability,
+    kMapsScene,
     kCameraColor,
     kCameraDepth,
     kCameraInfo,
@@ -226,10 +306,19 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavCancel,
     kNavCommandRequest,
     kNavCommandAck,
+    kOperatorMotionControl,
+    kOperatorMotionSample,
+    kOperatorMotionAck,
+    kOperatorMotionStatus,
+    kNavGoalStatus,
+    kNavState,
     kNavExplorationCommand,
     kNavExplorationAck,
     kNavInspectionCommand,
     kNavInspectionAck,
+    kNavExplorationSegmentRequest,
+    kNavExplorationSegmentAck,
+    kNavExplorationSegmentStatus,
     kNavInspectionEvidenceRequest,
     kNavInspectionEvidenceResult,
     kNavInspectionStatus,
@@ -243,6 +332,7 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavTeleopCmdVel,
     kNavExplorationGrid,
     kNavExplorationSnapshot,
+    kNavExplorationExecutionSnapshot,
     kExplorationWayPoint,
     kExplorationLocalPath,
     kExplorationRuntime,

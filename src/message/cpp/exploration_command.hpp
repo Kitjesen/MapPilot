@@ -12,13 +12,17 @@ enum class ExplorationCommandKind : std::int32_t {
   kPause = 2,
   kResume = 3,
   kStop = 4,
+  kSetDirectedTarget = 5,
+  kClearDirectedTarget = 6,
 };
 
 inline bool isKnownExplorationCommandKind(std::int32_t value) noexcept {
   return value == static_cast<std::int32_t>(ExplorationCommandKind::kStart) ||
       value == static_cast<std::int32_t>(ExplorationCommandKind::kPause) ||
       value == static_cast<std::int32_t>(ExplorationCommandKind::kResume) ||
-      value == static_cast<std::int32_t>(ExplorationCommandKind::kStop);
+      value == static_cast<std::int32_t>(ExplorationCommandKind::kStop) ||
+      value == static_cast<std::int32_t>(ExplorationCommandKind::kSetDirectedTarget) ||
+      value == static_cast<std::int32_t>(ExplorationCommandKind::kClearDirectedTarget);
 }
 
 inline const char* explorationCommandKindName(
@@ -32,6 +36,10 @@ inline const char* explorationCommandKindName(
       return "resume";
     case ExplorationCommandKind::kStop:
       return "stop";
+    case ExplorationCommandKind::kSetDirectedTarget:
+      return "set_directed_target";
+    case ExplorationCommandKind::kClearDirectedTarget:
+      return "clear_directed_target";
   }
   return "unknown";
 }

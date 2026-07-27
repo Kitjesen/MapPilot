@@ -48,4 +48,45 @@ inline const char* navigationCommandKindName(
   return "unknown";
 }
 
+// Stable values carried by NavigationGoalStatus.state. Command acceptance is
+// deliberately separate from execution: a goal may be accepted while its
+// asynchronous global plan is still pending or may later fail.
+enum class NavigationGoalState : std::int32_t {
+  Planning = 1,
+  PathActive = 2,
+  Failed = 3,
+  Reached = 4,
+  Cancelled = 5,
+};
+
+inline bool isKnownNavigationGoalState(std::int32_t value) noexcept {
+  return value == static_cast<std::int32_t>(NavigationGoalState::Planning) ||
+      value == static_cast<std::int32_t>(NavigationGoalState::PathActive) ||
+      value == static_cast<std::int32_t>(NavigationGoalState::Failed) ||
+      value == static_cast<std::int32_t>(NavigationGoalState::Reached) ||
+      value == static_cast<std::int32_t>(NavigationGoalState::Cancelled);
+}
+
+inline bool isTerminalNavigationGoalState(NavigationGoalState state) noexcept {
+  return state == NavigationGoalState::Failed ||
+      state == NavigationGoalState::Reached ||
+      state == NavigationGoalState::Cancelled;
+}
+
+inline const char* navigationGoalStateName(NavigationGoalState state) noexcept {
+  switch (state) {
+    case NavigationGoalState::Planning:
+      return "planning";
+    case NavigationGoalState::PathActive:
+      return "path_active";
+    case NavigationGoalState::Failed:
+      return "failed";
+    case NavigationGoalState::Reached:
+      return "reached";
+    case NavigationGoalState::Cancelled:
+      return "cancelled";
+  }
+  return "unknown";
+}
+
 }  // namespace lingtu::message

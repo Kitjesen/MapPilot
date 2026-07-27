@@ -1,22 +1,26 @@
 module lingtu {
 module dds {
 
+@final
 struct Time {
   long sec;
   unsigned long nanosec;
 };
 
+@final
 struct Header {
   Time stamp;
   string frame_id;
 };
 
+@final
 struct Vector3 {
   double x;
   double y;
   double z;
 };
 
+@final
 struct Quaternion {
   double x;
   double y;
@@ -24,6 +28,7 @@ struct Quaternion {
   double w;
 };
 
+@final
 struct Imu {
   Header header;
   Quaternion orientation;
@@ -34,6 +39,7 @@ struct Imu {
   double linear_acceleration_covariance[9];
 };
 
+@final
 struct LivoxPoint {
   unsigned long offset_time;
   float x;
@@ -44,6 +50,7 @@ struct LivoxPoint {
   octet line;
 };
 
+@final
 struct LivoxFrame {
   Header header;
   unsigned long long timebase;
@@ -53,37 +60,44 @@ struct LivoxFrame {
   sequence<LivoxPoint> points;
 };
 
+@final
 struct Point {
   double x;
   double y;
   double z;
 };
 
+@final
 struct Pose {
   Point position;
   Quaternion orientation;
 };
 
+@final
 struct PoseStamped {
   Header header;
   Pose pose;
 };
 
+@final
 struct PoseWithCovariance {
   Pose pose;
   double covariance[36];
 };
 
+@final
 struct Twist {
   Vector3 linear;
   Vector3 angular;
 };
 
+@final
 struct TwistStamped {
   Header header;
   Twist twist;
 };
 
+@final
 struct FinalVelocityCommand {
   string host_boot_id;
   string producer_boot_id;
@@ -93,26 +107,31 @@ struct FinalVelocityCommand {
   Twist twist;
 };
 
+@final
 struct Transform {
   Vector3 translation;
   Quaternion rotation;
 };
 
+@final
 struct TransformStamped {
   Header header;
   string child_frame_id;
   Transform transform;
 };
 
+@final
 struct TFMessage {
   sequence<TransformStamped> transforms;
 };
 
+@final
 struct TwistWithCovariance {
   Twist twist;
   double covariance[36];
 };
 
+@final
 struct Odometry {
   Header header;
   string child_frame_id;
@@ -120,6 +139,7 @@ struct Odometry {
   TwistWithCovariance twist;
 };
 
+@final
 struct PointField {
   string name;
   unsigned long offset;
@@ -127,6 +147,7 @@ struct PointField {
   unsigned long count;
 };
 
+@final
 struct PointCloud2 {
   Header header;
   unsigned long height;
@@ -139,6 +160,25 @@ struct PointCloud2 {
   boolean is_dense;
 };
 
+// One accepted incremental scan and the exact map<-sensor transform evaluated
+// at that scan timestamp. Consumers must reject an old reset_epoch or a
+// non-increasing sequence within the same epoch.
+@final
+struct MapObservation {
+  Header header;
+  unsigned long long observation_sequence;
+  unsigned long long reset_epoch;
+  string sensor_frame;
+  Transform map_sensor;
+  Vector3 sensor_origin;
+  PointCloud2 scan;
+  float pose_confidence;
+  float localization_quality;
+  string pose_state;
+  string pose_reason;
+};
+
+@final
 struct Image {
   Header header;
   unsigned long height;
@@ -149,6 +189,7 @@ struct Image {
   sequence<octet> data;
 };
 
+@final
 struct CameraInfo {
   Header header;
   unsigned long height;
@@ -161,6 +202,7 @@ struct CameraInfo {
   double p[12];
 };
 
+@final
 struct GnssFix {
   Header header;
   double latitude;
@@ -174,6 +216,7 @@ struct GnssFix {
   double rtcm_age_s;
 };
 
+@final
 struct GnssStatus {
   Header header;
   string device;
@@ -187,6 +230,7 @@ struct GnssStatus {
   string error;
 };
 
+@final
 struct DriverControlState {
   Header header;
   boolean connected;
@@ -196,6 +240,8 @@ struct DriverControlState {
   boolean lease_valid;
   unsigned long lease_remaining_ms;
   unsigned long long accepted_sequence;
+  string accepted_producer_boot_id;
+  unsigned long long accepted_output_sequence;
   boolean last_command_accepted;
   string fsm;
   string owner;
@@ -203,20 +249,25 @@ struct DriverControlState {
   string reason;
 };
 
+@final
 struct Float32 {
   float data;
 };
 
+@final
 struct Bool {
   boolean data;
 };
 
+@final
 struct Text {
   string data;
 };
 
+@final
 struct NavigationCommandRequest {
   Header header;
+  string client_id;
   string request_id;
   long kind;
   Pose goal;
@@ -224,6 +275,7 @@ struct NavigationCommandRequest {
   string reason;
 };
 
+@final
 struct NavigationCommandAck {
   Header header;
   string request_id;
@@ -232,14 +284,111 @@ struct NavigationCommandAck {
   string reason;
 };
 
+@final
+struct OperatorMotionControl {
+  Header header;
+  string source_id;
+  unsigned long long source_epoch;
+  unsigned long long source_sequence;
+  string request_id;
+  long action;
+  unsigned long lease_ttl_ms;
+  string reason;
+};
+
+@final
+struct OperatorMotionSample {
+  Header header;
+  string source_id;
+  unsigned long long source_epoch;
+  unsigned long long source_sequence;
+  string request_id;
+  boolean deadman;
+  Twist velocity;
+  unsigned long freshness_budget_ms;
+  unsigned long long source_stamp_ns;
+};
+
+@final
+struct OperatorMotionAck {
+  Header header;
+  string source_id;
+  unsigned long long source_epoch;
+  unsigned long long source_sequence;
+  string request_id;
+  long action;
+  boolean accepted;
+  string reason;
+  unsigned long long accepted_sequence;
+  unsigned long long final_output_sequence;
+};
+
+@final
+struct OperatorMotionStatus {
+  Header header;
+  string active_source_id;
+  unsigned long long active_source_epoch;
+  boolean has_active_authority;
+  boolean holding;
+  boolean has_active_sample;
+  unsigned long long last_sample_sequence;
+  unsigned long long admitted_sequence;
+  unsigned long long final_output_sequence;
+  string authority_reason;
+  string input_gate_reason;
+  Twist teleop_output;
+  Twist final_cmd_vel;
+};
+
+@final
+struct NavigationGoalStatus {
+  Header header;
+  string boot_id;
+  unsigned long long event_sequence;
+  string request_id;
+  long state;
+  unsigned long long goal_epoch;
+  string reason;
+};
+
+// Compact authoritative state from navd. Detailed timing, input age, and
+// performance counters belong to NavigationDiagnostics, not this lifecycle
+// contract.
+@final
+struct NavigationState {
+  Header header;
+  string boot_id;
+  unsigned long long state_sequence;
+  long control_mode;
+  long lifecycle_state;
+  string active_request_id;
+  unsigned long long goal_epoch;
+  string map_id;
+  long long map_version;
+  string map_hash;
+  long planning_state;
+  long execution_state;
+  long recovery_state;
+  float progress;
+  string authority;
+  string hold_reason;
+  string failure_code;
+};
+
+@final
 struct ExplorationCommandRequest {
   Header header;
   string request_id;
   long kind;
   string session_id;
+  boolean has_directed_target;
+  double directed_target_x;
+  double directed_target_y;
+  double directed_target_ttl_s;
   string reason;
 };
 
+@final
 struct ExplorationCommandAck {
   Header header;
   string request_id;
@@ -247,8 +396,51 @@ struct ExplorationCommandAck {
   boolean accepted;
   string reason;
   string session_id;
+  unsigned long long intent_revision;
 };
 
+// P3 rolling-map motion is deliberately separate from a generic Navigation
+// Goal. The request binds the TARE-selected target to a live rolling-map
+// epoch; navd selects and verifies the executable free-space prefix itself.
+
+@final
+struct ExplorationSegmentRequest {
+  Header header;
+  string request_id;
+  long kind;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long minimum_generation;
+  Pose target;
+  string reason;
+};
+
+@final
+struct ExplorationSegmentAck {
+  Header header;
+  string request_id;
+  long kind;
+  boolean accepted;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+  string reason;
+};
+
+@final
+struct ExplorationSegmentStatus {
+  Header header;
+  string request_id;
+  long state;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+  string reason;
+};
+
+@final
 struct InspectionCommandRequest {
   Header header;
   string request_id;
@@ -258,6 +450,7 @@ struct InspectionCommandRequest {
   string reason;
 };
 
+@final
 struct InspectionCommandAck {
   Header header;
   string request_id;
@@ -267,6 +460,7 @@ struct InspectionCommandAck {
   string run_id;
 };
 
+@final
 struct InspectionEvidenceRequest {
   Header header;
   string request_id;
@@ -281,6 +475,7 @@ struct InspectionEvidenceRequest {
   double deadline_s;
 };
 
+@final
 struct InspectionEvidenceResult {
   Header header;
   string request_id;
@@ -290,6 +485,7 @@ struct InspectionEvidenceResult {
   string analysis_verdict;
 };
 
+@final
 struct InspectionStatus {
   Header header;
   string run_id;
@@ -310,6 +506,7 @@ struct InspectionStatus {
   string reason;
 };
 
+@final
 struct RelocalizationRequest {
   string request_id;
   string action;
@@ -320,6 +517,7 @@ struct RelocalizationRequest {
   double timeout_s;
 };
 
+@final
 struct RelocalizationResponse {
   string request_id;
   string action;
@@ -336,6 +534,10 @@ struct RelocalizationResponse {
   string refine_backend;
   long refine_iterations;
   long refine_inliers;
+  long refine_input_points;
+  long refine_evaluated_points;
+  double refine_support_ratio;
+  double refine_overlap_inlier_ratio;
   boolean refine_converged;
   double refine_pos_cov_trace;
   boolean track_against_map_supported;
@@ -343,11 +545,13 @@ struct RelocalizationResponse {
   long track_against_map_failures;
 };
 
+@final
 struct Path {
   Header header;
   sequence<PoseStamped> poses;
 };
 
+@final
 struct MapMetaData {
   Time map_load_time;
   float resolution;
@@ -355,13 +559,123 @@ struct MapMetaData {
   unsigned long height;
   Pose origin;
 };
+@final
+struct ExplorationExecutionGrid {
+  Header header;
+  MapMetaData info;
+  sequence<octet> occupancy;
+  sequence<octet> terrain_cost;
+  string session_id;
+  unsigned long long reset_epoch;
+  unsigned long long generation;
+  boolean live;
+  Time terrain_risk_stamp;
+  boolean terrain_risk_ready;
+};
 
+
+@final
 struct OccupancyGrid {
   Header header;
   MapMetaData info;
   sequence<octet> data;
 };
 
+// Identity-bearing live map layer contracts. A layer update is valid only for
+// its reset_epoch and observation_sequence; consumers must discard old epochs
+// rather than blending geometry across a SLAM reset or relocalization.
+@final
+struct MapCloudLayer {
+  Header header;
+  string layer;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+  PointCloud2 cloud;
+};
+
+@final
+struct MapGrid {
+  Header header;
+  string layer;
+  MapMetaData info;
+  sequence<float> data;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+};
+
+@final
+struct MapRuntimeState {
+  Header header;
+  string producer_boot_id;
+  boolean running;
+  boolean live;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  unsigned long long accepted_observations;
+  unsigned long long processed_observations;
+  unsigned long long replaced_observations;
+  unsigned long long stale_observations;
+  unsigned long long invalid_observations;
+  unsigned long long epoch_resets;
+  unsigned long queue_depth;
+  unsigned long long live_points;
+  unsigned long long voxel_points;
+  unsigned long long voxel_cells;
+  unsigned long long voxel_snapshot_omitted_cells;
+  unsigned long long voxel_capacity_rejections;
+  unsigned long long accumulated_cells;
+  unsigned long long accumulated_snapshot_cells;
+  unsigned long long accumulated_capacity_rejections;
+  boolean capacity_limited;
+  float pose_quality;
+  string pose_state;
+  string pose_reason;
+  unsigned long long dds_received_samples;
+  unsigned long long dds_decoded_samples;
+  unsigned long long dds_rejected_samples;
+  unsigned long long dds_write_attempts;
+  unsigned long long dds_write_failures;
+  unsigned long long dds_serialization_rejections;
+  unsigned long long dds_scene_oversize_rejections;
+  unsigned long dds_unhealthy_writers;
+  boolean required_publications_ready;
+  boolean current_generation_published;
+  unsigned long long state_published_generation;
+  unsigned long long realtime_clouds_published_generation;
+  unsigned long long map_layers_published_generation;
+  unsigned long long scene_published_generation;
+  string engine_error;
+  string input_error;
+  string output_error;
+};
+
+// Coherent low-rate reader handoff. Individual layers remain available on
+// /maps/* for native consumers; Gateway can consume this snapshot without
+// reconstructing temporal consistency itself.
+@final
+struct MapScene {
+  Header header;
+  string producer_boot_id;
+  unsigned long long reset_epoch;
+  unsigned long long observation_sequence;
+  unsigned long long generation;
+  boolean live;
+  Pose map_sensor;
+  MapCloudLayer live_cloud;
+  MapCloudLayer voxel_cloud;
+  MapCloudLayer accumulated_cloud;
+  MapGrid occupancy;
+  MapGrid elevation;
+  MapGrid esdf;
+  MapGrid traversability;
+};
+
+@final
 struct ExplorationGrid {
   Header header;
   MapMetaData info;

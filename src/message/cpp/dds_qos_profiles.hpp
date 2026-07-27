@@ -11,11 +11,16 @@ namespace lingtu::dds {
 enum class QosProfile {
   Default,           // CycloneDDS defaults (no explicit QoS)
   SensorStream,     // lidar/imu: BEST_EFFORT, KEEP_LAST=256
+  RawLidarStream,   // raw lidar: BEST_EFFORT, KEEP_LAST=2, lifespan=350ms
   HighFreqState,    // odometry/state: BEST_EFFORT, KEEP_LAST=5, deadline=20ms
   ControlCommand,   // stop/control: RELIABLE, KEEP_LAST=1, deadline=50ms
   FinalVelocityCommand,  // final cmd_vel plus a 200ms DDS lifespan
   CommandRequest,   // typed requests: RELIABLE, VOLATILE, KEEP_LAST=32
   CommandAck,       // typed replies: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=64
+  OperatorMotionControl,  // authority claim/release/hold: RELIABLE, KEEP_LAST=32
+  OperatorMotionSample,   // latest-only velocity intent: BEST_EFFORT, KEEP_LAST=1
+  OperatorMotionAck,      // admission replies: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=64
+  OperatorMotionStatus,   // authority/output state: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   InspectionEvidence,  // evidence handshake: RELIABLE, bounded and expiring
   CameraStream,     // color/depth: BEST_EFFORT, KEEP_LAST=1
   CameraInfo,       // camera_info: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
@@ -26,6 +31,8 @@ enum class QosProfile {
   TfDynamic,        // tf: BEST_EFFORT, KEEP_LAST=100
   TfStatic,         // tf_static: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   LidarPointcloud,  // registered_cloud/terrain_map: BEST_EFFORT, KEEP_LAST=2, lifespan=200ms
+  MapCloud,         // live map clouds: BEST_EFFORT, VOLATILE, KEEP_LAST=1
+  MapScene,         // coherent scene: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   SemanticScene,    // scene_graph: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=2, lifespan=5s
 };
 
@@ -39,6 +46,13 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
       dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 256);
+      break;
+    case QosProfile::RawLidarStream:
+      dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 2);
+      dds_qset_lifespan(qos, DDS_MSECS(350));
+      dds_qset_resource_limits(qos, 2, 1, 2);
       break;
     case QosProfile::HighFreqState:
       dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
@@ -68,6 +82,28 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
       dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 64);
+      break;
+    case QosProfile::OperatorMotionControl:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 32);
+      break;
+    case QosProfile::OperatorMotionSample:
+      dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
+      dds_qset_deadline(qos, DDS_MSECS(50));
+      dds_qset_lifespan(qos, DDS_MSECS(350));
+      break;
+    case QosProfile::OperatorMotionAck:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 64);
+      break;
+    case QosProfile::OperatorMotionStatus:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
       break;
     case QosProfile::InspectionEvidence:
       dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
@@ -122,6 +158,20 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 2);
       dds_qset_lifespan(qos, DDS_MSECS(200));
       break;
+    case QosProfile::MapCloud:
+      dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_VOLATILE);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
+      dds_qset_lifespan(qos, DDS_MSECS(500));
+      dds_qset_resource_limits(qos, 1, 1, 1);
+      break;
+    case QosProfile::MapScene:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_MSECS(100));
+      dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 1);
+      dds_qset_lifespan(qos, DDS_SECS(2));
+      dds_qset_resource_limits(qos, 1, 1, 1);
+      break;
     case QosProfile::SemanticScene:
       dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
       dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
@@ -135,8 +185,9 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
 inline QosProfile qos_for_topic(std::string_view dds_topic) {
   // Sensor streams
   if (dds_topic == "rt/lidar/raw_frame" ||
-      dds_topic == "rt/lidar/raw_packet" ||
-      dds_topic == "rt/imu/raw" ||
+      dds_topic == "rt/lidar/raw_packet")
+    return QosProfile::RawLidarStream;
+  if (dds_topic == "rt/imu/raw" ||
       dds_topic == "rt/slam/odom_prior")
     return QosProfile::SensorStream;
   // Camera
@@ -157,16 +208,30 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
     return QosProfile::ControlCommand;
   if (dds_topic == "rt/nav/command/request" ||
       dds_topic == "rt/nav/exploration/command" ||
+      dds_topic == "rt/nav/exploration_segment/request" ||
       dds_topic == "rt/nav/inspection/command")
     return QosProfile::CommandRequest;
+  if (dds_topic == "rt/nav/operator_motion/control")
+    return QosProfile::OperatorMotionControl;
+  if (dds_topic == "rt/nav/operator_motion/sample")
+    return QosProfile::OperatorMotionSample;
+  if (dds_topic == "rt/nav/operator_motion/ack")
+    return QosProfile::OperatorMotionAck;
+  if (dds_topic == "rt/nav/operator_motion/status")
+    return QosProfile::OperatorMotionStatus;
   if (dds_topic == "rt/nav/command/ack" ||
+      dds_topic == "rt/nav/goal/status" ||
       dds_topic == "rt/nav/exploration/ack" ||
+      dds_topic == "rt/nav/exploration_segment/ack" ||
+      dds_topic == "rt/nav/exploration_segment/status" ||
       dds_topic == "rt/nav/inspection/ack")
     return QosProfile::CommandAck;
   if (dds_topic == "rt/nav/inspection/evidence/request" ||
       dds_topic == "rt/nav/inspection/evidence/result")
     return QosProfile::InspectionEvidence;
   if (dds_topic == "rt/nav/inspection/status" ||
+      dds_topic == "rt/nav/state" ||
+      dds_topic == "rt/maps/state" ||
       dds_topic == "rt/driver/control_state")
     return QosProfile::SystemStatus;
   if (dds_topic == "rt/nav/way_point" ||
@@ -189,7 +254,12 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
     return QosProfile::Event;
   if (dds_topic == "rt/nav/traversability" ||
       dds_topic == "rt/nav/exploration_grid" ||
-      dds_topic == "rt/nav/exploration_snapshot")
+      dds_topic == "rt/nav/exploration_snapshot" ||
+      dds_topic == "rt/nav/exploration_execution_snapshot" ||
+      dds_topic == "rt/maps/occupancy" ||
+      dds_topic == "rt/maps/elevation" ||
+      dds_topic == "rt/maps/esdf" ||
+      dds_topic == "rt/maps/traversability")
     return QosProfile::MapGrid;
   // TF
   if (dds_topic == "rt/tf")
@@ -198,12 +268,19 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
     return QosProfile::TfStatic;
   // Point clouds
   if (dds_topic == "rt/slam/registered_cloud" ||
+      dds_topic == "rt/slam/map_observation" ||
       dds_topic == "rt/slam/map_cloud" ||
       dds_topic == "rt/slam/cumulative_map_cloud" ||
       dds_topic == "rt/slam/saved_map_cloud" ||
       dds_topic == "rt/nav/terrain_map" ||
       dds_topic == "rt/nav/terrain_map_ext")
     return QosProfile::LidarPointcloud;
+  if (dds_topic == "rt/maps/live_cloud" ||
+      dds_topic == "rt/maps/voxel_cloud" ||
+      dds_topic == "rt/maps/accumulated_cloud")
+    return QosProfile::MapCloud;
+  if (dds_topic == "rt/maps/scene")
+    return QosProfile::MapScene;
   // Semantic
   if (dds_topic == "rt/nav/semantic/scene_graph")
     return QosProfile::SemanticScene;

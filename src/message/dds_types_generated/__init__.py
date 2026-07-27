@@ -1,7 +1,7 @@
 r"""Auto-generated DDS type package.
 
 Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-20T05:28:09Z
+Generated:  2026-07-25T23:35:53Z
 
 DO NOT EDIT BY HAND -- run ``make codegen-idl`` to regenerate.
 """
@@ -30,6 +30,7 @@ from .types import (  # noqa: F401
     Odometry,
     PointField,
     PointCloud2,
+    MapObservation,
     Image,
     CameraInfo,
     GnssFix,
@@ -40,8 +41,17 @@ from .types import (  # noqa: F401
     Text,
     NavigationCommandRequest,
     NavigationCommandAck,
+    OperatorMotionControl,
+    OperatorMotionSample,
+    OperatorMotionAck,
+    OperatorMotionStatus,
+    NavigationGoalStatus,
+    NavigationState,
     ExplorationCommandRequest,
     ExplorationCommandAck,
+    ExplorationSegmentRequest,
+    ExplorationSegmentAck,
+    ExplorationSegmentStatus,
     InspectionCommandRequest,
     InspectionCommandAck,
     InspectionEvidenceRequest,
@@ -51,7 +61,12 @@ from .types import (  # noqa: F401
     RelocalizationResponse,
     Path,
     MapMetaData,
+    ExplorationExecutionGrid,
     OccupancyGrid,
+    MapCloudLayer,
+    MapGrid,
+    MapRuntimeState,
+    MapScene,
     ExplorationGrid,
 )
 
@@ -77,6 +92,7 @@ __all__ = [
     "Odometry",
     "PointField",
     "PointCloud2",
+    "MapObservation",
     "Image",
     "CameraInfo",
     "GnssFix",
@@ -87,8 +103,17 @@ __all__ = [
     "Text",
     "NavigationCommandRequest",
     "NavigationCommandAck",
+    "OperatorMotionControl",
+    "OperatorMotionSample",
+    "OperatorMotionAck",
+    "OperatorMotionStatus",
+    "NavigationGoalStatus",
+    "NavigationState",
     "ExplorationCommandRequest",
     "ExplorationCommandAck",
+    "ExplorationSegmentRequest",
+    "ExplorationSegmentAck",
+    "ExplorationSegmentStatus",
     "InspectionCommandRequest",
     "InspectionCommandAck",
     "InspectionEvidenceRequest",
@@ -98,6 +123,11 @@ __all__ = [
     "RelocalizationResponse",
     "Path",
     "MapMetaData",
+    "ExplorationExecutionGrid",
     "OccupancyGrid",
+    "MapCloudLayer",
+    "MapGrid",
+    "MapRuntimeState",
+    "MapScene",
     "ExplorationGrid",
 ]

@@ -1,7 +1,7 @@
 r"""Auto-generated DDS dataclass definitions.
 
 Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-20T05:28:09Z
+Generated:  2026-07-25T23:35:53Z
 
 DO NOT EDIT BY HAND -- regenerate with::
 
@@ -215,6 +215,23 @@ class PointCloud2:
 
 
 @dataclass(kw_only=True)
+class MapObservation:
+    r"""IDL struct: lingtu::dds::MapObservation
+    """
+    header: Header
+    observation_sequence: int
+    reset_epoch: int
+    sensor_frame: str
+    map_sensor: Transform
+    sensor_origin: Vector3
+    scan: PointCloud2
+    pose_confidence: float
+    localization_quality: float
+    pose_state: str
+    pose_reason: str
+
+
+@dataclass(kw_only=True)
 class Image:
     r"""IDL struct: lingtu::dds::Image
     """
@@ -286,6 +303,8 @@ class DriverControlState:
     lease_valid: bool
     lease_remaining_ms: int
     accepted_sequence: int
+    accepted_producer_boot_id: str
+    accepted_output_sequence: int
     last_command_accepted: bool
     fsm: str
     owner: str
@@ -319,6 +338,7 @@ class NavigationCommandRequest:
     r"""IDL struct: lingtu::dds::NavigationCommandRequest
     """
     header: Header
+    client_id: str
     request_id: str
     kind: int
     goal: Pose
@@ -338,6 +358,106 @@ class NavigationCommandAck:
 
 
 @dataclass(kw_only=True)
+class OperatorMotionControl:
+    r"""IDL struct: lingtu::dds::OperatorMotionControl
+    """
+    header: Header
+    source_id: str
+    source_epoch: int
+    source_sequence: int
+    request_id: str
+    action: int
+    lease_ttl_ms: int
+    reason: str
+
+
+@dataclass(kw_only=True)
+class OperatorMotionSample:
+    r"""IDL struct: lingtu::dds::OperatorMotionSample
+    """
+    header: Header
+    source_id: str
+    source_epoch: int
+    source_sequence: int
+    request_id: str
+    deadman: bool
+    velocity: Twist
+    freshness_budget_ms: int
+    source_stamp_ns: int
+
+
+@dataclass(kw_only=True)
+class OperatorMotionAck:
+    r"""IDL struct: lingtu::dds::OperatorMotionAck
+    """
+    header: Header
+    source_id: str
+    source_epoch: int
+    source_sequence: int
+    request_id: str
+    action: int
+    accepted: bool
+    reason: str
+    accepted_sequence: int
+    final_output_sequence: int
+
+
+@dataclass(kw_only=True)
+class OperatorMotionStatus:
+    r"""IDL struct: lingtu::dds::OperatorMotionStatus
+    """
+    header: Header
+    active_source_id: str
+    active_source_epoch: int
+    has_active_authority: bool
+    holding: bool
+    has_active_sample: bool
+    last_sample_sequence: int
+    admitted_sequence: int
+    final_output_sequence: int
+    authority_reason: str
+    input_gate_reason: str
+    teleop_output: Twist
+    final_cmd_vel: Twist
+
+
+@dataclass(kw_only=True)
+class NavigationGoalStatus:
+    r"""IDL struct: lingtu::dds::NavigationGoalStatus
+    """
+    header: Header
+    boot_id: str
+    event_sequence: int
+    request_id: str
+    state: int
+    goal_epoch: int
+    reason: str
+
+
+@dataclass(kw_only=True)
+class NavigationState:
+    r"""IDL struct: lingtu::dds::NavigationState
+    """
+    header: Header
+    boot_id: str
+    state_sequence: int
+    control_mode: int
+    lifecycle_state: int
+    active_request_id: str
+    goal_epoch: int
+    map_id: str
+    map_version: int
+    map_hash: str
+    planning_state: int
+    execution_state: int
+    recovery_state: int
+    progress: float
+    authority: str
+    hold_reason: str
+    failure_code: str
+
+
+@dataclass(kw_only=True)
 class ExplorationCommandRequest:
     r"""IDL struct: lingtu::dds::ExplorationCommandRequest
     """
@@ -345,6 +465,10 @@ class ExplorationCommandRequest:
     request_id: str
     kind: int
     session_id: str
+    has_directed_target: bool
+    directed_target_x: float
+    directed_target_y: float
+    directed_target_ttl_s: float
     reason: str
 
 
@@ -358,6 +482,50 @@ class ExplorationCommandAck:
     accepted: bool
     reason: str
     session_id: str
+    intent_revision: int
+
+
+@dataclass(kw_only=True)
+class ExplorationSegmentRequest:
+    r"""IDL struct: lingtu::dds::ExplorationSegmentRequest
+    """
+    header: Header
+    request_id: str
+    kind: int
+    session_id: str
+    reset_epoch: int
+    minimum_generation: int
+    target: Pose
+    reason: str
+
+
+@dataclass(kw_only=True)
+class ExplorationSegmentAck:
+    r"""IDL struct: lingtu::dds::ExplorationSegmentAck
+    """
+    header: Header
+    request_id: str
+    kind: int
+    accepted: bool
+    session_id: str
+    reset_epoch: int
+    generation: int
+    live: bool
+    reason: str
+
+
+@dataclass(kw_only=True)
+class ExplorationSegmentStatus:
+    r"""IDL struct: lingtu::dds::ExplorationSegmentStatus
+    """
+    header: Header
+    request_id: str
+    state: int
+    session_id: str
+    reset_epoch: int
+    generation: int
+    live: bool
+    reason: str
 
 
 @dataclass(kw_only=True)
@@ -468,6 +636,10 @@ class RelocalizationResponse:
     refine_backend: str
     refine_iterations: int
     refine_inliers: int
+    refine_input_points: int
+    refine_evaluated_points: int
+    refine_support_ratio: float
+    refine_overlap_inlier_ratio: float
     refine_converged: bool
     refine_pos_cov_trace: float
     track_against_map_supported: bool
@@ -495,12 +667,124 @@ class MapMetaData:
 
 
 @dataclass(kw_only=True)
+class ExplorationExecutionGrid:
+    r"""IDL struct: lingtu::dds::ExplorationExecutionGrid
+    """
+    header: Header
+    info: MapMetaData
+    occupancy: list[int] = field(default_factory=list)
+    terrain_cost: list[int] = field(default_factory=list)
+    session_id: str
+    reset_epoch: int
+    generation: int
+    live: bool
+    terrain_risk_stamp: Time
+    terrain_risk_ready: bool
+
+
+@dataclass(kw_only=True)
 class OccupancyGrid:
     r"""IDL struct: lingtu::dds::OccupancyGrid
     """
     header: Header
     info: MapMetaData
     data: list[int] = field(default_factory=list)
+
+
+@dataclass(kw_only=True)
+class MapCloudLayer:
+    r"""IDL struct: lingtu::dds::MapCloudLayer
+    """
+    header: Header
+    layer: str
+    reset_epoch: int
+    observation_sequence: int
+    generation: int
+    live: bool
+    cloud: PointCloud2
+
+
+@dataclass(kw_only=True)
+class MapGrid:
+    r"""IDL struct: lingtu::dds::MapGrid
+    """
+    header: Header
+    layer: str
+    info: MapMetaData
+    data: list[float] = field(default_factory=list)
+    reset_epoch: int
+    observation_sequence: int
+    generation: int
+    live: bool
+
+
+@dataclass(kw_only=True)
+class MapRuntimeState:
+    r"""IDL struct: lingtu::dds::MapRuntimeState
+    """
+    header: Header
+    producer_boot_id: str
+    running: bool
+    live: bool
+    reset_epoch: int
+    observation_sequence: int
+    generation: int
+    accepted_observations: int
+    processed_observations: int
+    replaced_observations: int
+    stale_observations: int
+    invalid_observations: int
+    epoch_resets: int
+    queue_depth: int
+    live_points: int
+    voxel_points: int
+    voxel_cells: int
+    voxel_snapshot_omitted_cells: int
+    voxel_capacity_rejections: int
+    accumulated_cells: int
+    accumulated_snapshot_cells: int
+    accumulated_capacity_rejections: int
+    capacity_limited: bool
+    pose_quality: float
+    pose_state: str
+    pose_reason: str
+    dds_received_samples: int
+    dds_decoded_samples: int
+    dds_rejected_samples: int
+    dds_write_attempts: int
+    dds_write_failures: int
+    dds_serialization_rejections: int
+    dds_scene_oversize_rejections: int
+    dds_unhealthy_writers: int
+    required_publications_ready: bool
+    current_generation_published: bool
+    state_published_generation: int
+    realtime_clouds_published_generation: int
+    map_layers_published_generation: int
+    scene_published_generation: int
+    engine_error: str
+    input_error: str
+    output_error: str
+
+
+@dataclass(kw_only=True)
+class MapScene:
+    r"""IDL struct: lingtu::dds::MapScene
+    """
+    header: Header
+    producer_boot_id: str
+    reset_epoch: int
+    observation_sequence: int
+    generation: int
+    live: bool
+    map_sensor: Pose
+    live_cloud: MapCloudLayer
+    voxel_cloud: MapCloudLayer
+    accumulated_cloud: MapCloudLayer
+    occupancy: MapGrid
+    elevation: MapGrid
+    esdf: MapGrid
+    traversability: MapGrid
 
 
 @dataclass(kw_only=True)

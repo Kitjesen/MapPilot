@@ -38,6 +38,10 @@ class RelocalizationResponse(
     refine_backend: str
     refine_iterations: types.int32
     refine_inliers: types.int32
+    refine_input_points: types.int32
+    refine_evaluated_points: types.int32
+    refine_support_ratio: types.float64
+    refine_overlap_inlier_ratio: types.float64
     refine_converged: bool
     refine_pos_cov_trace: types.float64
     track_against_map_supported: bool
