@@ -236,6 +236,22 @@ def publish_command_ack(
         "status_code": status_code,
         "ts": time.time(),
     }
+    for field in (
+        "task_id",
+        "native_request_id",
+        "stage",
+        "execution_confirmed",
+        "task_replay",
+        "task_state",
+        "admission_confirmed",
+        "admission_unconfirmed",
+        "history_recorded",
+        "history_warning",
+        "task_message",
+        "reason",
+    ):
+        if field in payload:
+            data[field] = payload[field]
     gw.push_event({"type": "command_ack", "data": data})
 
 

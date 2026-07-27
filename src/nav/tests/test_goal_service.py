@@ -686,6 +686,7 @@ class TestGoalService:
         assert first["admission_unconfirmed"] is True
         assert replay["replay"] is True
         assert replay["admission_confirmed"] is False
+        assert replay["admission_unconfirmed"] is True
         assert task is not None
         assert task["state"] == "admitted"
         assert task["terminal"] is False
@@ -742,6 +743,7 @@ class TestGoalService:
         assert first["admission_unconfirmed"] is True
         assert replay["replay"] is True
         assert replay["admission_confirmed"] is False
+        assert replay["admission_unconfirmed"] is True
         assert task is not None
         assert task["terminal"] is False
         assert task["cancel_requested"] is False

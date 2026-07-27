@@ -1042,6 +1042,15 @@ class ControlCommandResponse(GatewayResponseModel):
     native_ack: dict[str, Any] | None = None
     stage: str | None = None
     execution_confirmed: bool = False
+    task_replay: bool = False
+    task_state: str | None = None
+    admission_confirmed: bool | None = None
+    admission_unconfirmed: bool = False
+    history_recorded: bool | None = None
+    history_warning: str | None = None
+    task_message: str | None = None
+    error: str | None = None
+    message: str | None = None
     goal: list[float] | None = None
     yaw: float | None = None
     frame_id: str | None = None
@@ -1714,6 +1723,80 @@ class NavigationFrameSummary(GatewayResponseModel):
     goal_frame_id: str | None = None
     ok: bool = True
     mismatches: list[NavigationFrameMismatch] = Field(default_factory=list)
+
+
+class NavigationTaskResponseModel(BaseModel):
+    """Strict public navigation-task schema; internal ledger fields stay private."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class NavigationTaskAttemptResponse(NavigationTaskResponseModel):
+    request_id: str
+    native_request_id: str = ""
+    kind: str
+    payload: Any = None
+    state: str
+    accepted: bool | None = None
+    reason: str = ""
+    endpoint_boot_id: str = ""
+    native_ack: dict[str, Any] | None = None
+    created_at: float
+    updated_at: float
+
+
+class NavigationTaskEventResponse(NavigationTaskResponseModel):
+    id: int
+    request_id: str = ""
+    type: str
+    state: str
+    reason: str = ""
+    evidence: Any = None
+    created_at: float
+
+
+class NavigationTaskRecordResponse(NavigationTaskResponseModel):
+    task_id: str
+    observed_only: bool = False
+    state: str
+    terminal: bool
+    reason: str = ""
+    source: str = ""
+    target: Any = None
+    product_fingerprint: str = ""
+    map_identity: dict[str, Any] = Field(default_factory=dict)
+    created_at: float
+    updated_at: float
+    terminal_at: float | None = None
+    endpoint_boot_id: str = ""
+    active_request_id: str = ""
+    cancel_requested: bool = False
+    cancel_requested_at: float | None = None
+    cancel_request_id: str = ""
+    cancel_reason: str = ""
+    can_resume: bool = False
+    last_goal_status: dict[str, Any] | None = None
+    last_navigation_state: dict[str, Any] | None = None
+    attempts: list[NavigationTaskAttemptResponse] = Field(default_factory=list)
+    events: list[NavigationTaskEventResponse] = Field(default_factory=list)
+
+
+class NavigationTaskDetailResponse(NavigationTaskResponseModel):
+    schema_version: int = 1
+    found: bool
+    task: NavigationTaskRecordResponse | None = None
+    reason: str | None = None
+    ts: float
+
+
+class NavigationTaskListResponse(NavigationTaskResponseModel):
+    schema_version: int = 1
+    tasks: list[NavigationTaskRecordResponse] = Field(default_factory=list)
+    count: int = 0
+    limit: int
+    active_only: bool = False
+    reason: str | None = None
+    ts: float
 
 
 class NavigationStatusResponse(GatewayResponseModel):

@@ -28,6 +28,7 @@ from gateway.schemas import (
     VisualServoRequest,
 )
 from gateway.services.command_boundary import (
+    CommandAdmissionUnconfirmed,
     CommandBoundaryError,
     submit_cancel,
     submit_goal,
@@ -50,6 +51,11 @@ from runtime.msgs.geometry import Twist, Vector3
 
 CONTROL_COMMAND_ERROR_RESPONSES = {
     409: {"model": GatewayErrorResponse},
+}
+
+NAVIGATION_COMMAND_RESPONSES = {
+    202: {"model": ControlCommandResponse},
+    **CONTROL_COMMAND_ERROR_RESPONSES,
 }
 
 LEASE_ERROR_RESPONSES = {
@@ -97,6 +103,29 @@ def _publish_goal(
         "task_id": str(task_id or "").strip(),
         "request_id": str(request_id or "").strip(),
         "sink": "module",
+    }
+
+
+def _navigation_task_truth(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Project GoalService task truth without conflating it with HTTP replay."""
+
+    confirmed = receipt.get("admission_confirmed")
+    if not isinstance(confirmed, bool):
+        confirmed = True if receipt.get("accepted") is True else None
+    history_recorded = receipt.get("history_recorded")
+    if not isinstance(history_recorded, bool):
+        history_recorded = None
+    task_state = str(receipt.get("task_state") or receipt.get("state") or "").strip()
+    task_message = str(receipt.get("message") or "").strip()
+    history_warning = str(receipt.get("history_warning") or "").strip()
+    return {
+        "task_replay": receipt.get("replay") is True,
+        "task_state": task_state or None,
+        "admission_confirmed": confirmed,
+        "admission_unconfirmed": receipt.get("admission_unconfirmed") is True,
+        "history_recorded": history_recorded,
+        "history_warning": history_warning or None,
+        "task_message": task_message or None,
     }
 
 
@@ -165,7 +194,7 @@ def register_command_routes(app, gw) -> None:
         "/api/v1/goal",
         summary="Send navigation goal",
         response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+        responses=NAVIGATION_COMMAND_RESPONSES,
     )
     async def post_goal(body: GoalRequest):
         goal = construct_goal_from_request(
@@ -185,6 +214,7 @@ def register_command_routes(app, gw) -> None:
                 request_id=body.request_id,
             )
             native_ack = receipt.get("native_ack")
+            task_truth = _navigation_task_truth(receipt)
             return {
                 **goal.command_payload(
                     status="accepted",
@@ -194,8 +224,13 @@ def register_command_routes(app, gw) -> None:
                 "task_id": receipt.get("task_id") or None,
                 "native_request_id": receipt.get("native_request_id") or None,
                 "native_ack": native_ack,
-                "stage": "native_acknowledged" if native_ack else "local_published",
+                "stage": (
+                    "task_replayed"
+                    if task_truth["task_replay"]
+                    else "native_acknowledged" if native_ack else "local_published"
+                ),
                 "execution_confirmed": False,
+                **task_truth,
             }
 
         return await asyncio.to_thread(
@@ -209,7 +244,7 @@ def register_command_routes(app, gw) -> None:
         "/api/v1/navigate/click",
         summary="Navigate to map-viewer click point",
         response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+        responses=NAVIGATION_COMMAND_RESPONSES,
     )
     async def post_navigate_click(body: ClickNavRequest):
         goal = construct_goal_from_request(
@@ -229,13 +264,19 @@ def register_command_routes(app, gw) -> None:
                 request_id=body.request_id,
             )
             native_ack = receipt.get("native_ack")
+            task_truth = _navigation_task_truth(receipt)
             return {
                 **goal.command_payload(status="accepted", ts=ts),
                 "task_id": receipt.get("task_id") or None,
                 "native_request_id": receipt.get("native_request_id") or None,
                 "native_ack": native_ack,
-                "stage": "native_acknowledged" if native_ack else "local_published",
+                "stage": (
+                    "task_replayed"
+                    if task_truth["task_replay"]
+                    else "native_acknowledged" if native_ack else "local_published"
+                ),
                 "execution_confirmed": False,
+                **task_truth,
             }
 
         return await asyncio.to_thread(
@@ -388,14 +429,20 @@ def register_command_routes(app, gw) -> None:
                 gw.cancel.publish(command_body.reason)
                 receipt = {}
             native_ack = receipt.get("native_ack")
+            task_truth = _navigation_task_truth(receipt)
             return {
                 "status": "cancel_requested",
                 "reason": command_body.reason,
                 "task_id": receipt.get("task_id") or task_id or None,
                 "native_request_id": receipt.get("native_request_id") or None,
                 "native_ack": native_ack,
-                "stage": "native_acknowledged" if native_ack else "local_published",
+                "stage": (
+                    "task_replayed"
+                    if task_truth["task_replay"]
+                    else "native_acknowledged" if native_ack else "local_published"
+                ),
                 "execution_confirmed": False,
+                **task_truth,
             }
 
         try:
@@ -404,6 +451,12 @@ def register_command_routes(app, gw) -> None:
                 "navigation_cancel",
                 command_body,
                 _publish,
+            )
+        except CommandAdmissionUnconfirmed as exc:
+            return command_service.unconfirmed_response(
+                "navigation_cancel",
+                command_body,
+                exc.receipt,
             )
         except CommandBoundaryError as exc:
             reason = str(exc)
@@ -424,7 +477,7 @@ def register_command_routes(app, gw) -> None:
         "/api/v1/navigation/cancel",
         summary="Compatibility cancel for a named navigation task",
         response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+        responses=NAVIGATION_COMMAND_RESPONSES,
     )
     async def post_navigation_cancel(body: CancelRequest):
         return await _submit_navigation_cancel(body)
@@ -433,7 +486,7 @@ def register_command_routes(app, gw) -> None:
         "/api/v1/navigation/tasks/{task_id}/cancel",
         summary="Request cancellation of one exact navigation task",
         response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+        responses=NAVIGATION_COMMAND_RESPONSES,
     )
     async def post_navigation_task_cancel(task_id: str, body: CancelRequest):
         return await _submit_navigation_cancel(body, route_task_id=task_id)

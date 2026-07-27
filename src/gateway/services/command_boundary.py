@@ -10,6 +10,14 @@ class CommandBoundaryError(RuntimeError):
     """Raised when a required product command cannot reach its endpoint."""
 
 
+class CommandAdmissionUnconfirmed(CommandBoundaryError):
+    """Raised when a stable task exists but native admission is not known."""
+
+    def __init__(self, receipt: Mapping[str, Any]) -> None:
+        self.receipt = dict(receipt)
+        super().__init__(_response_reason(receipt))
+
+
 def _clean_identity(value: Any) -> str:
     return str(value or "").strip()
 
@@ -52,6 +60,39 @@ def _validated_task_receipt(
     expected_request_id: str,
     task_id_required: bool,
 ) -> dict[str, Any]:
+    if isinstance(result, Mapping) and result.get("admission_unconfirmed") is True:
+        receipt = dict(result)
+        if receipt.get("admission_confirmed") is not False:
+            raise CommandBoundaryError("unconfirmed admission has contradictory confirmation state")
+        if receipt.get("accepted") is True or receipt.get("success") is True:
+            raise CommandBoundaryError("unconfirmed admission has a positive acceptance verdict")
+
+        returned_task_id = _clean_identity(receipt.get("task_id"))
+        returned_request_id = _clean_identity(receipt.get("request_id"))
+        if not returned_task_id:
+            raise CommandBoundaryError("unconfirmed admission is missing task_id")
+        if not returned_request_id:
+            raise CommandBoundaryError("unconfirmed admission is missing request_id")
+        if expected_task_id and returned_task_id != expected_task_id:
+            raise CommandBoundaryError("goal service returned the wrong task_id")
+        if expected_request_id and returned_request_id != expected_request_id:
+            raise CommandBoundaryError("goal service returned the wrong request_id")
+        if returned_task_id and returned_task_id == returned_request_id:
+            raise CommandBoundaryError("task_id and request_id must be distinct")
+        if receipt.get("native_ack") is not None:
+            raise CommandBoundaryError("unconfirmed admission cannot include a native acknowledgement")
+
+        native_request_id = _clean_identity(receipt.get("native_request_id"))
+        if native_request_id and not _matches_native_attempt(returned_request_id, native_request_id):
+            raise CommandBoundaryError("goal service returned the wrong native_request_id")
+        receipt["task_id"] = returned_task_id
+        receipt["request_id"] = returned_request_id
+        if native_request_id:
+            receipt["native_request_id"] = native_request_id
+        receipt["admission_confirmed"] = False
+        receipt["admission_unconfirmed"] = True
+        raise CommandAdmissionUnconfirmed(receipt)
+
     if not _has_positive_mapping_ack(result):
         raise CommandBoundaryError(_response_reason(result))
 
@@ -198,6 +239,7 @@ def invoke_navigation_command(
 
 
 __all__ = [
+    "CommandAdmissionUnconfirmed",
     "CommandBoundaryError",
     "invoke_navigation_command",
     "navigation_commands",

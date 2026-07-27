@@ -773,6 +773,7 @@ class GoalService(Module, layer=6):
             ),
             "replay": True,
             "admission_confirmed": accepted is not None,
+            "admission_unconfirmed": accepted is None,
             "history_recorded": True,
             "sink": self._sink_name,
         }

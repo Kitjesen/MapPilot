@@ -3120,3 +3120,280 @@ def test_navigation_task_and_request_identity_must_be_distinct():
             task_id="same-id",
             request_id="same-id",
         )
+
+
+def test_navigation_routes_expose_stable_task_replay_without_claiming_redispatch():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import (
+        CancelRequest,
+        ClickNavRequest,
+        ControlCommandResponse,
+        GoalRequest,
+    )
+
+    class ReplayedTaskGoals:
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
+            del goal, action
+            return self._receipt(task_id, request_id, state="running")
+
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            del reason
+            return self._receipt(task_id, request_id, state="cancel_requested")
+
+        @staticmethod
+        def _receipt(task_id, request_id, *, state):
+            native_ack = {
+                "accepted": True,
+                "success": True,
+                "task_id": task_id,
+                "request_id": request_id,
+            }
+            return {
+                "accepted": True,
+                "success": True,
+                "task_id": task_id,
+                "request_id": request_id,
+                "native_task_id": task_id,
+                "native_request_id": request_id,
+                "native_ack": native_ack,
+                "sink": "native_dds",
+                "state": state,
+                "task_state": state,
+                "replay": True,
+                "admission_confirmed": True,
+                "admission_unconfirmed": False,
+                "history_recorded": True,
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules(
+        {"nav.mission": _FakePlanPreviewNav(), "nav.goals": ReplayedTaskGoals()}
+    )
+    _mark_navigation_ready(gateway)
+
+    openapi = gateway._app.openapi()
+    for path in (
+        "/api/v1/goal",
+        "/api/v1/navigate/click",
+        "/api/v1/navigation/cancel",
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+    ):
+        schema = openapi["paths"][path]["post"]["responses"]["202"]["content"][
+            "application/json"
+        ]["schema"]
+        assert schema["$ref"].endswith("/ControlCommandResponse")
+
+    goal = asyncio.run(
+        _endpoint(gateway, "/api/v1/goal")(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                task_id="task-goal",
+                request_id="attempt-goal",
+            )
+        )
+    )
+    click = asyncio.run(
+        _endpoint(gateway, "/api/v1/navigate/click")(
+            ClickNavRequest(
+                x=2.0,
+                y=3.0,
+                task_id="task-click",
+                request_id="attempt-click",
+            )
+        )
+    )
+    cancel = asyncio.run(
+        _endpoint(gateway, "/api/v1/navigation/tasks/{task_id}/cancel")(
+            "task-cancel",
+            CancelRequest(request_id="attempt-cancel"),
+        )
+    )
+
+    for payload, expected_state in (
+        (goal, "running"),
+        (click, "running"),
+        (cancel, "cancel_requested"),
+    ):
+        model = ControlCommandResponse.model_validate(payload)
+        assert model.task_replay is True
+        assert model.task_state == expected_state
+        assert model.admission_confirmed is True
+        assert model.admission_unconfirmed is False
+        assert model.history_recorded is True
+        assert model.stage == "task_replayed"
+        assert model.command.replay is False
+
+    assert gateway.goal_pose.msg_count == 0
+    assert gateway.cancel.msg_count == 0
+
+
+def test_goal_route_reports_unconfirmed_native_admission_without_journal_accept():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ControlCommandResponse, GoalRequest
+
+    class UnconfirmedGoals:
+        def __init__(self):
+            self.calls = 0
+
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
+            del goal, action
+            self.calls += 1
+            return {
+                "accepted": False,
+                "success": False,
+                "task_id": task_id,
+                "request_id": request_id,
+                "state": "unknown",
+                "task_state": "unknown",
+                "replay": self.calls > 1,
+                "admission_confirmed": False,
+                "admission_unconfirmed": True,
+                "history_recorded": True,
+                "message": "native acknowledgement timed out",
+                "sink": "native_dds",
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    goals = UnconfirmedGoals()
+    gateway.on_system_modules(
+        {"nav.mission": _FakePlanPreviewNav(), "nav.goals": goals}
+    )
+    _mark_navigation_ready(gateway)
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/goal")(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                task_id="task-unknown",
+                request_id="attempt-unknown",
+            )
+        )
+    )
+    replay_response = asyncio.run(
+        _endpoint(gateway, "/api/v1/goal")(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                task_id="task-unknown",
+                request_id="attempt-unknown",
+            )
+        )
+    )
+    model = ControlCommandResponse.model_validate(_payload(response))
+    replay_model = ControlCommandResponse.model_validate(_payload(replay_response))
+
+    assert response.status_code == 202
+    assert model.ok is False
+    assert model.status == "native_command_unconfirmed"
+    assert model.task_id == "task-unknown"
+    assert model.task_state == "unknown"
+    assert model.admission_confirmed is False
+    assert model.admission_unconfirmed is True
+    assert model.history_recorded is True
+    assert model.stage == "native_unconfirmed"
+    assert model.command.accepted is False
+    assert replay_response.status_code == 202
+    assert replay_model.task_replay is True
+    assert replay_model.admission_unconfirmed is True
+    assert replay_model.command.accepted is False
+    assert goals.calls == 2
+    assert gateway._command_stats_snapshot()["accepted_commands"] == 0
+
+
+def test_exact_cancel_reports_unconfirmed_native_admission_without_journal_accept():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CancelRequest, ControlCommandResponse
+
+    class UnconfirmedCancelGoals:
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            del reason
+            return {
+                "accepted": False,
+                "success": False,
+                "task_id": task_id,
+                "request_id": request_id,
+                "state": "unknown",
+                "task_state": "unknown",
+                "replay": True,
+                "admission_confirmed": False,
+                "admission_unconfirmed": True,
+                "history_recorded": True,
+                "message": "cancel acknowledgement timed out",
+                "sink": "native_dds",
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": UnconfirmedCancelGoals()})
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/navigation/tasks/{task_id}/cancel")(
+            "task-cancel-unknown",
+            CancelRequest(request_id="cancel-attempt-unknown"),
+        )
+    )
+    model = ControlCommandResponse.model_validate(_payload(response))
+
+    assert response.status_code == 202
+    assert model.status == "native_command_unconfirmed"
+    assert model.task_id == "task-cancel-unknown"
+    assert model.task_replay is True
+    assert model.admission_unconfirmed is True
+    assert model.command.accepted is False
+    assert gateway._command_stats_snapshot()["accepted_commands"] == 0
+
+
+def test_command_ack_sse_whitelists_navigation_task_truth_without_internal_fields():
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    queue = gateway._sse_subscribe()
+    try:
+        gateway._publish_command_ack(
+            {
+                "schema_version": 1,
+                "ok": False,
+                "status": "native_command_unconfirmed",
+                "command": {
+                    "name": "goal",
+                    "request_id": "attempt-unknown",
+                    "client_id": "web",
+                    "accepted": False,
+                    "replay": False,
+                    "ts": time.time(),
+                },
+                "task_id": "task-unknown",
+                "task_replay": True,
+                "task_state": "unknown",
+                "admission_confirmed": False,
+                "admission_unconfirmed": True,
+                "history_recorded": True,
+                "history_warning": None,
+                "task_message": "Query or cancel this task by task_id.",
+                "stage": "native_unconfirmed",
+                "execution_confirmed": False,
+                "internal_ledger_row": {"database_id": 42},
+            },
+            status_code=202,
+        )
+        event = queue.get_nowait()
+    finally:
+        gateway._sse_unsubscribe(queue)
+
+    assert event["type"] == "command_ack"
+    data = event["data"]
+    assert data["status_code"] == 202
+    assert data["task_id"] == "task-unknown"
+    assert data["task_replay"] is True
+    assert data["task_state"] == "unknown"
+    assert data["admission_confirmed"] is False
+    assert data["admission_unconfirmed"] is True
+    assert data["history_recorded"] is True
+    assert data["stage"] == "native_unconfirmed"
+    assert data["execution_confirmed"] is False
+    assert "internal_ledger_row" not in data

@@ -23,6 +23,11 @@ from gateway.schemas import (
     LocationUpsertRequest,
     NavigationDdsSnapshotResponse,
     NavigationStatusResponse,
+    NavigationTaskAttemptResponse,
+    NavigationTaskDetailResponse,
+    NavigationTaskEventResponse,
+    NavigationTaskListResponse,
+    NavigationTaskRecordResponse,
     PathResponse,
     ReadinessResponse,
     RuntimeDataflowResponse,
@@ -99,6 +104,64 @@ def _native_traversability_status() -> dict[str, Any] | None:
     return _read_json_snapshot(
         os.environ.get("LINGTU_TRAVERSABILITY_STATUS_FILE") or DEFAULT_TRAVERSABILITY_STATUS_FILE
     )
+
+
+def _navigation_task_record(value: object) -> dict[str, Any] | None:
+    """Return one schema-validated JSON-safe task record."""
+
+    if not isinstance(value, Mapping):
+        return None
+    try:
+        payload = json.loads(
+            json.dumps(
+                dict(value),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        )
+        payload = _project_navigation_task_record(payload)
+        model = NavigationTaskRecordResponse.model_validate(payload)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return model.model_dump(mode="json")
+
+
+def _project_navigation_task_record(payload: dict[str, Any]) -> dict[str, Any]:
+    """Project a ledger record onto the intentionally public task contract."""
+
+    attempts = payload.get("attempts")
+    if isinstance(attempts, list):
+        payload["attempts"] = [
+            _project_navigation_task_item(
+                item,
+                NavigationTaskAttemptResponse.model_fields,
+            )
+            for item in attempts
+        ]
+
+    events = payload.get("events")
+    if isinstance(events, list):
+        payload["events"] = [
+            _project_navigation_task_item(
+                item,
+                NavigationTaskEventResponse.model_fields,
+            )
+            for item in events
+        ]
+
+    return _project_navigation_task_item(
+        payload,
+        NavigationTaskRecordResponse.model_fields,
+    )
+
+
+def _project_navigation_task_item(
+    value: Any,
+    public_fields: Mapping[str, object],
+) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    return {name: value[name] for name in public_fields if name in value}
 
 
 def _native_path_points(payload: Mapping[str, Any] | None, key: str) -> list[dict[str, Any]]:
@@ -861,6 +924,134 @@ def register_status_routes(app, gw) -> None:
     )
     async def get_navigation_status():
         return build_navigation_status(gw)
+
+    @app.get(
+        "/api/v1/navigation/tasks",
+        summary="List durable navigation task history",
+        response_model=NavigationTaskListResponse,
+    )
+    async def get_navigation_tasks(
+        limit: Annotated[
+            int,
+            Query(
+                ge=1,
+                le=100,
+                description="Maximum number of most recently updated tasks.",
+            ),
+        ] = 50,
+        active_only: Annotated[
+            bool,
+            Query(description="Return only tasks without a terminal state."),
+        ] = False,
+    ):
+        goals = getattr(gw, "_goals", None)
+        list_tasks = getattr(goals, "list_tasks", None)
+        if not callable(list_tasks):
+            return {
+                "tasks": [],
+                "count": 0,
+                "limit": limit,
+                "active_only": active_only,
+                "reason": "navigation_task_service_unavailable",
+                "ts": time.time(),
+            }
+
+        try:
+            raw_records = await asyncio.to_thread(
+                list_tasks,
+                limit=limit,
+                active_only=active_only,
+            )
+        except Exception:
+            return {
+                "tasks": [],
+                "count": 0,
+                "limit": limit,
+                "active_only": active_only,
+                "reason": "navigation_task_service_unavailable",
+                "ts": time.time(),
+            }
+
+        if not isinstance(raw_records, Sequence) or isinstance(
+            raw_records,
+            (str, bytes, bytearray),
+        ):
+            records: list[dict[str, Any]] = []
+            invalid = True
+        else:
+            records = []
+            invalid = False
+            for raw_record in list(raw_records)[:limit]:
+                record = _navigation_task_record(raw_record)
+                if record is None:
+                    invalid = True
+                    records = []
+                    break
+                records.append(record)
+
+        return {
+            "tasks": records,
+            "count": len(records),
+            "limit": limit,
+            "active_only": active_only,
+            "reason": "navigation_task_record_invalid" if invalid else None,
+            "ts": time.time(),
+        }
+
+    @app.get(
+        "/api/v1/navigation/tasks/{task_id}",
+        summary="Get one durable navigation task timeline",
+        response_model=NavigationTaskDetailResponse,
+    )
+    async def get_navigation_task(task_id: str):
+        goals = getattr(gw, "_goals", None)
+        get_task = getattr(goals, "get_task", None)
+        if not callable(get_task):
+            return {
+                "found": False,
+                "task": None,
+                "reason": "navigation_task_service_unavailable",
+                "ts": time.time(),
+            }
+
+        try:
+            raw_record = await asyncio.to_thread(
+                get_task,
+                task_id,
+                refresh=True,
+            )
+        except KeyError:
+            raw_record = None
+        except Exception:
+            return {
+                "found": False,
+                "task": None,
+                "reason": "navigation_task_service_unavailable",
+                "ts": time.time(),
+            }
+
+        if raw_record is None:
+            return {
+                "found": False,
+                "task": None,
+                "reason": "task_not_found",
+                "ts": time.time(),
+            }
+
+        record = _navigation_task_record(raw_record)
+        if record is None:
+            return {
+                "found": False,
+                "task": None,
+                "reason": "navigation_task_record_invalid",
+                "ts": time.time(),
+            }
+        return {
+            "found": True,
+            "task": record,
+            "reason": None,
+            "ts": time.time(),
+        }
 
     @app.get(
         "/api/v1/runtime/dataflow",

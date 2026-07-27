@@ -10,7 +10,10 @@ from typing import Any
 from fastapi.responses import JSONResponse
 
 from gateway.schemas import PlanPreviewRequest
-from gateway.services.command_boundary import CommandBoundaryError
+from gateway.services.command_boundary import (
+    CommandAdmissionUnconfirmed,
+    CommandBoundaryError,
+)
 from gateway.services.safety_status import safety_stop_active, safety_summary
 from runtime.runtime_interface import map_frame_id
 
@@ -51,6 +54,55 @@ class ControlCommandService:
         if hasattr(self._gw, "_publish_command_ack"):
             self._gw._publish_command_ack(content, status_code=status_code)
         return JSONResponse(status_code=status_code, content=content)
+
+    def unconfirmed_response(
+        self,
+        command: str,
+        body: Any,
+        receipt: dict[str, Any],
+    ) -> JSONResponse:
+        """Return durable task identity without claiming native acceptance."""
+
+        task_id = str(receipt.get("task_id") or "").strip()
+        request_id = str(receipt.get("request_id") or getattr(body, "request_id", None) or "").strip()
+        reason = str(receipt.get("message") or receipt.get("reason") or "native acknowledgement is unavailable")
+        guidance = "Do not retry with a new request_id; query or cancel this task by task_id."
+        message = f"{reason.rstrip('.')}. {guidance}"
+        history_recorded = receipt.get("history_recorded")
+        if not isinstance(history_recorded, bool):
+            history_recorded = None
+        history_warning = str(receipt.get("history_warning") or "").strip() or None
+        content = {
+            "schema_version": 1,
+            "ok": False,
+            "status": "native_command_unconfirmed",
+            "error": "native_command_unconfirmed",
+            "message": message,
+            "command": {
+                "name": command,
+                "request_id": request_id or None,
+                "client_id": getattr(body, "client_id", "unknown"),
+                "accepted": False,
+                "replay": False,
+                "ts": time.time(),
+            },
+            "task_id": task_id or None,
+            "native_request_id": str(receipt.get("native_request_id") or "").strip() or None,
+            "native_ack": None,
+            "stage": "native_unconfirmed",
+            "execution_confirmed": False,
+            "task_replay": receipt.get("replay") is True,
+            "task_state": str(receipt.get("task_state") or receipt.get("state") or "unknown"),
+            "admission_confirmed": False,
+            "admission_unconfirmed": True,
+            "history_recorded": history_recorded,
+            "history_warning": history_warning,
+            "task_message": message,
+            "reason": str(receipt.get("reason") or reason),
+        }
+        if hasattr(self._gw, "_publish_command_ack"):
+            self._gw._publish_command_ack(content, status_code=202)
+        return JSONResponse(status_code=202, content=content)
 
     def command_error_detail(
         self,
@@ -241,6 +293,8 @@ class ControlCommandService:
 
         try:
             native_response = action()
+        except CommandAdmissionUnconfirmed as exc:
+            return self.unconfirmed_response(command, body, exc.receipt)
         except CommandBoundaryError as exc:
             reason = str(exc)
             return self.rejected_response(

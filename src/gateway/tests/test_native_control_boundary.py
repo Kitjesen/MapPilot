@@ -6,6 +6,7 @@ import pytest
 
 from gateway.services import native_control
 from gateway.services.command_boundary import (
+    CommandAdmissionUnconfirmed,
     CommandBoundaryError,
     submit_cancel,
     submit_goal,
@@ -218,3 +219,60 @@ def test_goal_boundary_accepts_clock_recovery_native_attempt_identity():
 
     assert receipt["request_id"] == "attempt-9"
     assert receipt["native_request_id"] == "attempt-9-clock-retry-1"
+
+
+def test_goal_boundary_surfaces_unconfirmed_admission_with_task_identity():
+    response = {
+        "accepted": False,
+        "success": False,
+        "task_id": "task-unknown",
+        "request_id": "attempt-unknown",
+        "state": "unknown",
+        "task_state": "unknown",
+        "replay": False,
+        "admission_confirmed": False,
+        "admission_unconfirmed": True,
+        "history_recorded": True,
+        "message": "goal admission outcome unconfirmed; do not resend with a new request_id",
+        "sink": "native_dds",
+    }
+
+    with pytest.raises(CommandAdmissionUnconfirmed) as raised:
+        submit_goal(
+            SimpleNamespace(_goals=_TaskGoalService(response)),
+            object(),
+            task_id="task-unknown",
+            request_id="attempt-unknown",
+        )
+
+    receipt = raised.value.receipt
+    assert receipt["task_id"] == "task-unknown"
+    assert receipt["request_id"] == "attempt-unknown"
+    assert receipt["admission_confirmed"] is False
+    assert receipt["admission_unconfirmed"] is True
+    assert receipt["history_recorded"] is True
+
+
+def test_goal_boundary_preserves_stable_task_replay_truth():
+    response = _native_task_ack(task_id="task-replay", request_id="attempt-replay")
+    response.update(
+        {
+            "replay": True,
+            "state": "running",
+            "task_state": "running",
+            "admission_confirmed": True,
+            "admission_unconfirmed": False,
+            "history_recorded": True,
+        }
+    )
+
+    receipt = submit_goal(
+        SimpleNamespace(_goals=_TaskGoalService(response)),
+        object(),
+        task_id="task-replay",
+        request_id="attempt-replay",
+    )
+
+    assert receipt["replay"] is True
+    assert receipt["task_state"] == "running"
+    assert receipt["history_recorded"] is True
