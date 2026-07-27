@@ -75,6 +75,7 @@ namespace global_planner
 
     void OctoPlanner3D::makePlan(const PointPose start,const PointPose goal)
     {
+        endpoint_resolution_ = {};
         start_point_ = start;
         has_start_ = true;
 
@@ -109,7 +110,12 @@ namespace global_planner
        plannerResults = planner_results_;
     }
 
-    bool OctoPlanner3D::resolvePlanEndpoints(GridIndex & start, GridIndex & goal) const
+    OctoPlanner3D::EndpointResolutionInfo OctoPlanner3D::endpointResolution() const noexcept
+    {
+        return endpoint_resolution_;
+    }
+
+    bool OctoPlanner3D::resolvePlanEndpoints(GridIndex & start, GridIndex & goal)
     {
         const GridIndex start_raw = worldToGrid(
             start_point_.x, start_point_.y, start_point_.z);
@@ -117,6 +123,8 @@ namespace global_planner
             goal_point_.x, goal_point_.y, goal_point_.z);
         start = start_raw;
         goal = goal_raw;
+        endpoint_resolution_.start_raw_outside_bounds = !isInsideMetricBounds(start_raw);
+        endpoint_resolution_.goal_raw_outside_bounds = !isInsideMetricBounds(goal_raw);
 
         if (!findNearestFreeCell(
                 start_raw,
@@ -127,9 +135,12 @@ namespace global_planner
                 ground_support_xy_radius_cells_,
                 ground_support_depth_cells_,
                 start)) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::StartSnapExhausted;
             printf("OctoPlanner3D::startPlan start is occupied/out of map and no nearby free cell\n");
             return false;
         }
+        endpoint_resolution_.start_snapped = !(start == start_raw);
         if (!findNearestFreeCell(
                 goal_raw,
                 robot_radius_,
@@ -139,9 +150,12 @@ namespace global_planner
                 ground_support_xy_radius_cells_,
                 ground_support_depth_cells_,
                 goal)) {
+            endpoint_resolution_.failure =
+                EndpointResolutionInfo::Failure::GoalSnapExhausted;
             printf("OctoPlanner3D::startPlan goal is occupied/out of map and no nearby free cell\n");
             return false;
         }
+        endpoint_resolution_.goal_snapped = !(goal == goal_raw);
 
         if (!(start == start_raw)) {
             const auto point = gridToWorld(start);

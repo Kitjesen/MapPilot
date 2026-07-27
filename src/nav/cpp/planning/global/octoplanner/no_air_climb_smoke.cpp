@@ -174,11 +174,62 @@ int main()
 
     const auto air_result =
       plan(map_path.string(), start, {center(18), center(0), center(10)});
-    if (air_result.ok) {
+    if (air_result.ok || air_result.failure_reason != "goal_snap_exhausted") {
       std::cerr << "unsupported air goal unexpectedly planned; points="
                 << air_result.path.size()
                 << " goal_error=" << air_result.goal_error_m << "\n";
       return 2;
+    }
+
+    const auto outside_map_result =
+      plan(map_path.string(), start, {center(80), center(0), center(1)});
+    if (outside_map_result.ok ||
+        outside_map_result.failure_reason != "goal_outside_static_map") {
+      std::cerr << "far outside-map goal did not report static-map boundary failure; reason="
+                << outside_map_result.failure_reason << "\n";
+      return 13;
+    }
+
+    auto outside_map_snap_options = testOptions();
+    outside_map_snap_options.snap_search_radius_cells = 5;
+    const auto outside_map_snap_result =
+      plan(
+        map_path.string(),
+        start,
+        {center(-26), center(0), center(1)},
+        outside_map_snap_options);
+    if (!outside_map_snap_result.ok ||
+        outside_map_snap_result.reached_goal ||
+        !outside_map_snap_result.failure_reason.empty()) {
+      std::cerr << "near outside-map goal did not preserve snapped terminal semantics; ok="
+                << outside_map_snap_result.ok
+                << " reached=" << outside_map_snap_result.reached_goal
+                << " reason=" << outside_map_snap_result.failure_reason << "\n";
+      return 14;
+    }
+
+    const auto start_outside_map_result =
+      plan(
+        map_path.string(),
+        {center(-80), center(0), center(1)},
+        {center(18), center(0), center(1)});
+    if (start_outside_map_result.ok ||
+        start_outside_map_result.failure_reason != "start_outside_static_map") {
+      std::cerr << "far outside-map start did not report static-map boundary failure; reason="
+                << start_outside_map_result.failure_reason << "\n";
+      return 15;
+    }
+
+    const auto start_snap_result =
+      plan(
+        map_path.string(),
+        {center(18), center(0), center(10)},
+        {center(18), center(0), center(1)});
+    if (start_snap_result.ok ||
+        start_snap_result.failure_reason != "start_snap_exhausted") {
+      std::cerr << "in-map unsupported start did not report snap exhaustion; reason="
+                << start_snap_result.failure_reason << "\n";
+      return 16;
     }
 
     auto supported_layer_options = testOptions();
@@ -267,6 +318,8 @@ int main()
       << "\"narrow_rail_rejected\":true,"
       << "\"air_goal_rejected\":true,"
       << "\"cancelled_request_rejected\":true,"
+      << "\"outside_static_map_rejected\":true,"
+      << "\"start_static_map_boundary_rejected\":true,"
       << "\"same_floor_z_excursion_rejected\":true,"
       << "\"map_path\":\"" << map_path.string() << "\"}\n";
     return 0;

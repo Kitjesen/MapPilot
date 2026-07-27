@@ -249,6 +249,25 @@ PlanResult cancelledResult(
   return result;
 }
 
+std::string endpointResolutionFailureReason(
+  const global_planner::OctoPlanner3D::EndpointResolutionInfo & resolution)
+{
+  using Failure = global_planner::OctoPlanner3D::EndpointResolutionInfo::Failure;
+  switch (resolution.failure) {
+    case Failure::StartSnapExhausted:
+      return resolution.start_raw_outside_bounds
+        ? "start_outside_static_map"
+        : "start_snap_exhausted";
+    case Failure::GoalSnapExhausted:
+      return resolution.goal_raw_outside_bounds
+        ? "goal_outside_static_map"
+        : "goal_snap_exhausted";
+    case Failure::None:
+      return {};
+  }
+  return {};
+}
+
 PlanResult runWithLoadedMap(
   const std::shared_ptr<octomap::OcTree> & map,
   const PlanRequest & request,
@@ -268,6 +287,7 @@ PlanResult runWithLoadedMap(
   planner.setOctomap(map);
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
+  const auto endpoint_resolution = planner.endpointResolution();
 
   PlanResult result;
   result.options = request.options;
@@ -278,6 +298,9 @@ PlanResult runWithLoadedMap(
   result.path.reserve(native_path.size());
   for (const auto & point : native_path) {
     result.path.push_back(fromPlannerPoint(point));
+  }
+  if (native_path.empty()) {
+    result.failure_reason = endpointResolutionFailureReason(endpoint_resolution);
   }
   if (!hasAcceptableSameFloorExcursion(request, result.path)) {
     result.failure_reason = "same_floor_z_excursion";

@@ -103,6 +103,22 @@ struct PlannerConfig
 class OctoPlanner3D
 {
 public:
+  struct EndpointResolutionInfo
+  {
+    enum class Failure
+    {
+      None,
+      StartSnapExhausted,
+      GoalSnapExhausted,
+    };
+
+    Failure failure{Failure::None};
+    bool start_raw_outside_bounds{false};
+    bool goal_raw_outside_bounds{false};
+    bool start_snapped{false};
+    bool goal_snapped{false};
+  };
+
   OctoPlanner3D();
 
   ~OctoPlanner3D();
@@ -116,6 +132,8 @@ public:
   void makePlan(const PointPose start,const PointPose goal);
 
   void getPlannerResults(std::vector<PointPose>& plannerResults);
+
+  EndpointResolutionInfo endpointResolution() const noexcept;
 
 private:
   enum class TraversabilityFailure
@@ -206,7 +224,7 @@ private:
     int support_depth_cells,
     GridIndex & out) const;
 
-  bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal) const;
+  bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal);
 
   std::vector<GridIndex> make26Directions() const;
 
@@ -257,6 +275,7 @@ private:
   PointPose start_point_;
   PointPose goal_point_;
 
+  EndpointResolutionInfo endpoint_resolution_{};
   std::vector<PointPose> planner_results_;
 
   std::function<bool()> cancel_check_;
