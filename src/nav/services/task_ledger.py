@@ -1,7 +1,8 @@
-"""Durable, task-centric navigation history.
+"""Durable navigation task identity, admission, and native evidence history.
 
-The ledger owns task identity and lifecycle history. It never dispatches motion
-commands; callers must use the navigation command seam for that.
+The Host owns idempotency and stored evidence only. ``NavigationGoalStatus`` is
+the sole execution-state source; endpoint snapshots and availability can change
+evidence health but never create task lifecycle or terminal results.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ _GOAL_STATUS_STATES = {
     3: "failed",
     4: "reached",
     5: "cancelled",
+    6: "paused",
 }
 _NAVIGATION_LIFECYCLE_STATES = {
     0: "idle",
@@ -34,15 +36,7 @@ _NAVIGATION_LIFECYCLE_STATES = {
     6: "failed",
     7: "cancelled",
 }
-_TERMINAL_STATES = {"rejected", "reached", "failed", "cancelled", "interrupted"}
-_NONTERMINAL_PROGRESS = {
-    "unknown": 0,
-    "admitted": 1,
-    "accepted": 2,
-    "planning": 3,
-    "executing": 4,
-    "recovering": 5,
-}
+_TERMINAL_STATES = {"reached", "failed", "cancelled"}
 
 
 class TaskLedgerConflict(ValueError):
@@ -135,7 +129,7 @@ def _goal_status_state(value: object) -> str:
         "cancelled": "cancelled",
         "planning": "planning",
         "executing": "executing",
-        "recovering": "recovering",
+        "paused": "paused",
     }
     try:
         return aliases[normalized]
@@ -185,7 +179,7 @@ def _command_kind(value: object) -> str:
 
 
 class NavigationTaskLedger:
-    """Thread-safe SQLite history for navigation tasks and command attempts."""
+    """Thread-safe SQLite history without Host-owned execution decisions."""
 
     def __init__(
         self,
@@ -220,6 +214,11 @@ class NavigationTaskLedger:
                 CREATE TABLE IF NOT EXISTS navigation_tasks (
                     task_id TEXT PRIMARY KEY,
                     state TEXT NOT NULL,
+                    admission TEXT NOT NULL DEFAULT 'unconfirmed',
+                    admission_reason TEXT NOT NULL DEFAULT '',
+                    evidence_status TEXT NOT NULL DEFAULT 'unavailable',
+                    state_source TEXT NOT NULL DEFAULT 'none',
+                    state_observed_at REAL,
                     terminal INTEGER NOT NULL DEFAULT 0,
                     reason TEXT NOT NULL DEFAULT '',
                     source TEXT NOT NULL DEFAULT '',
@@ -283,6 +282,177 @@ class NavigationTaskLedger:
                     ON navigation_task_attempts(task_id, native_request_id) WHERE native_request_id <> '';
                 """
             )
+            self._migrate_legacy_schema()
+
+    def _migrate_legacy_schema(self) -> None:
+        columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(navigation_tasks)")
+        }
+        additions = {
+            "admission": "TEXT NOT NULL DEFAULT 'unconfirmed'",
+            "admission_reason": "TEXT NOT NULL DEFAULT ''",
+            "evidence_status": "TEXT NOT NULL DEFAULT 'unavailable'",
+            "state_source": "TEXT NOT NULL DEFAULT 'none'",
+            "state_observed_at": "REAL",
+        }
+        missing = [name for name in additions if name not in columns]
+        if not missing:
+            return
+
+        for name in missing:
+            self._conn.execute(
+                f"ALTER TABLE navigation_tasks ADD COLUMN {name} {additions[name]}"
+            )
+        self._migrate_legacy_task_records()
+
+    def _migrate_legacy_task_records(self) -> None:
+        rows = self._conn.execute("SELECT * FROM navigation_tasks").fetchall()
+        for row in rows:
+            task_id = str(row["task_id"])
+            attempts = self._conn.execute(
+                """
+                SELECT request_id, kind, state, accepted, reason, native_ack_json
+                FROM navigation_task_attempts
+                WHERE task_id = ? ORDER BY updated_at DESC, request_id DESC
+                """,
+                (task_id,),
+            ).fetchall()
+            admission = "unconfirmed"
+            admission_reason = ""
+            for attempt in attempts:
+                if str(attempt["kind"]) != "goal":
+                    continue
+                accepted = attempt["accepted"]
+                if accepted is not None:
+                    admission = "accepted" if bool(accepted) else "rejected"
+                ack = self._safe_json_object(attempt["native_ack_json"])
+                admission_reason = str(
+                    (ack or {}).get("reason") or attempt["reason"] or ""
+                ).strip()
+                break
+
+            status = self._legacy_goal_status(row["last_goal_status_json"], task_id)
+            if status is None:
+                execution_state = "unknown"
+                execution_reason = ""
+                terminal = False
+                terminal_at = None
+                state_source = "none"
+                state_observed_at = None
+                active_request_id = ""
+                old_reason = str(row["reason"] or "")
+                if old_reason == "endpoint_restarted":
+                    evidence_status = "boot_changed"
+                elif old_reason == "endpoint_status_unavailable":
+                    evidence_status = "unavailable"
+                elif row["last_navigation_state_json"]:
+                    evidence_status = "stale"
+                else:
+                    evidence_status = "unavailable"
+            else:
+                execution_state = str(status["state"])
+                execution_reason = str(status["reason"])
+                terminal = execution_state in _TERMINAL_STATES
+                terminal_at = float(status["timestamp_s"]) if terminal else None
+                state_source = "native_goal_status"
+                state_observed_at = float(status["timestamp_s"])
+                evidence_status = "stale"
+                try:
+                    active_request_id = self._resolve_request_attempt(
+                        task_id,
+                        str(status["request_id"]),
+                    )
+                except (KeyError, TaskLedgerConflict):
+                    active_request_id = ""
+
+            self._conn.execute(
+                """
+                UPDATE navigation_tasks
+                SET state = ?, terminal = ?, reason = ?, terminal_at = ?,
+                    admission = ?, admission_reason = ?, evidence_status = ?,
+                    state_source = ?, state_observed_at = ?,
+                    active_request_id = ?, can_resume = 0
+                WHERE task_id = ?
+                """,
+                (
+                    execution_state,
+                    int(terminal),
+                    execution_reason,
+                    terminal_at,
+                    admission,
+                    admission_reason,
+                    evidence_status,
+                    state_source,
+                    state_observed_at,
+                    active_request_id,
+                    task_id,
+                ),
+            )
+
+            for attempt in attempts:
+                accepted = attempt["accepted"]
+                attempt_state = (
+                    "admitted"
+                    if accepted is None
+                    else ("accepted" if bool(accepted) else "rejected")
+                )
+                ack = self._safe_json_object(attempt["native_ack_json"])
+                attempt_reason = str(
+                    (ack or {}).get("reason")
+                    or (
+                        attempt["reason"]
+                        if str(attempt["state"]) in {"admitted", "accepted", "rejected"}
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                self._conn.execute(
+                    """
+                    UPDATE navigation_task_attempts
+                    SET state = ?, reason = ?
+                    WHERE task_id = ? AND request_id = ?
+                    """,
+                    (attempt_state, attempt_reason, task_id, attempt["request_id"]),
+                )
+
+    @staticmethod
+    def _safe_json_object(value: object) -> dict[str, Any] | None:
+        if not value:
+            return None
+        try:
+            decoded = _decode_json(str(value))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return decoded if isinstance(decoded, dict) else None
+
+    @classmethod
+    def _legacy_goal_status(
+        cls,
+        value: object,
+        task_id: str,
+    ) -> dict[str, Any] | None:
+        status = cls._safe_json_object(value)
+        if status is None or str(status.get("task_id") or "").strip() != task_id:
+            return None
+        try:
+            status["state"] = _goal_status_state(status.get("state"))
+            status["timestamp_s"] = _positive_timestamp(
+                status.get("timestamp_s", status.get("ts")),
+                "goal_status timestamp",
+            )
+            _required_identity(status.get("request_id"), "goal_status.request_id")
+            _required_identity(status.get("boot_id"), "goal_status.boot_id")
+            sequence_value = status.get("sequence")
+            if sequence_value is None or isinstance(sequence_value, bool):
+                return None
+            sequence = int(sequence_value)
+            if sequence <= 0:
+                return None
+        except (TypeError, ValueError):
+            return None
+        status["reason"] = str(status.get("reason") or "").strip()
+        return status
 
     def lookup_admission(
         self,
@@ -433,7 +603,6 @@ class NavigationTaskLedger:
                 (task,),
             ).fetchone()
             if existing_task is None:
-                initial_state = "admitted" if attempt_kind == "goal" else "unknown"
                 observed_only = int(attempt_kind != "goal")
                 self._conn.execute(
                     """
@@ -444,7 +613,7 @@ class NavigationTaskLedger:
                     """,
                     (
                         task,
-                        initial_state,
+                        "unknown",
                         str(source or "").strip(),
                         observed_only,
                         target_json,
@@ -530,14 +699,6 @@ class NavigationTaskLedger:
                 assert record is not None
                 return record
 
-            task_row = self._conn.execute(
-                "SELECT state, terminal FROM navigation_tasks WHERE task_id = ?",
-                (task,),
-            ).fetchone()
-            assert task_row is not None
-            if bool(task_row["terminal"]):
-                raise TaskLedgerConflict("terminal task cannot accept admission evidence")
-
             attempt_state = "accepted" if accepted else "rejected"
             self._conn.execute(
                 """
@@ -560,27 +721,15 @@ class NavigationTaskLedger:
             kind = str(attempt["kind"])
             event_state = attempt_state
             if kind == "goal":
-                if accepted:
-                    self._conn.execute(
-                        """
-                        UPDATE navigation_tasks
-                        SET state = 'accepted', reason = ?, endpoint_boot_id = ?,
-                            active_request_id = ?, updated_at = ?, can_resume = 0
-                        WHERE task_id = ?
-                        """,
-                        (result_reason, boot_id, request, now, task),
-                    )
-                else:
-                    self._conn.execute(
-                        """
-                        UPDATE navigation_tasks
-                        SET state = 'rejected', terminal = 1, reason = ?,
-                            endpoint_boot_id = ?, active_request_id = ?,
-                            updated_at = ?, terminal_at = ?, can_resume = 0
-                        WHERE task_id = ?
-                        """,
-                        (result_reason, boot_id, request, now, now, task),
-                    )
+                self._conn.execute(
+                    """
+                    UPDATE navigation_tasks
+                    SET admission = ?, admission_reason = ?, endpoint_boot_id = ?,
+                        updated_at = ?, can_resume = 0
+                    WHERE task_id = ?
+                    """,
+                    (attempt_state, result_reason, boot_id, now, task),
+                )
             elif kind == "cancel" and accepted:
                 event_state = "cancel_requested"
                 payload = _decode_json(attempt["payload_json"])
@@ -617,38 +766,6 @@ class NavigationTaskLedger:
             record = self._task_record(task)
             assert record is not None
             return record
-
-    def record_accepted(
-        self,
-        task_id: str,
-        request_id: str,
-        reason: str = "",
-        endpoint_boot_id: str = "",
-    ) -> dict[str, Any]:
-        """Record a positive local or native admission decision."""
-
-        return self.record_admission_result(
-            task_id,
-            request_id,
-            accepted=True,
-            reason=reason,
-            endpoint_boot_id=endpoint_boot_id,
-        )
-
-    def record_rejected(
-        self,
-        task_id: str,
-        request_id: str,
-        reason: str,
-    ) -> dict[str, Any]:
-        """Record a fail-closed admission rejection."""
-
-        return self.record_admission_result(
-            task_id,
-            request_id,
-            accepted=False,
-            reason=reason,
-        )
 
     def _resolve_request_attempt(
         self,
@@ -768,7 +885,7 @@ class NavigationTaskLedger:
             normalized["endpoint_boot_id"] = boot_id
         ack_json = _canonical_json(normalized, label="native_ack")
 
-        with self._lock:
+        with self._lock, self._conn:
             self._require_open()
             request = self._resolve_request_attempt(task, native_request)
             attempt = self._conn.execute(
@@ -789,6 +906,20 @@ class NavigationTaskLedger:
             if existing_ack is not None and existing_ack != ack_json:
                 raise TaskLedgerConflict("native ACK conflicts with the recorded receipt")
 
+            self._conn.execute(
+                """
+                UPDATE navigation_task_attempts
+                SET native_request_id = ?, native_ack_json = ?, updated_at = ?
+                WHERE task_id = ? AND request_id = ?
+                """,
+                (
+                    native_request,
+                    ack_json,
+                    float(self._clock()),
+                    task,
+                    request,
+                ),
+            )
             self.record_admission_result(
                 task,
                 request,
@@ -796,21 +927,6 @@ class NavigationTaskLedger:
                 reason=reason,
                 endpoint_boot_id=boot_id,
             )
-            with self._conn:
-                self._conn.execute(
-                    """
-                    UPDATE navigation_task_attempts
-                    SET native_request_id = ?, native_ack_json = ?, updated_at = ?
-                    WHERE task_id = ? AND request_id = ?
-                    """,
-                    (
-                        native_request,
-                        ack_json,
-                        float(self._clock()),
-                        task,
-                        request,
-                    ),
-                )
             record = self._task_record(task)
             assert record is not None
             return record
@@ -888,18 +1004,6 @@ class NavigationTaskLedger:
                     record = self._task_record(task)
                     assert record is not None
                     return record
-            previous_boot = str(task_row["endpoint_boot_id"] or "")
-            if previous_boot and previous_boot != boot_id and state not in _TERMINAL_STATES:
-                raise TaskLedgerConflict("endpoint boot changed; reconcile the open task before applying active status")
-
-            current_state = str(task_row["state"])
-            if (
-                state not in _TERMINAL_STATES
-                and current_state in _NONTERMINAL_PROGRESS
-                and _NONTERMINAL_PROGRESS[state] < _NONTERMINAL_PROGRESS[current_state]
-                and not (current_state == "recovering" and state == "executing")
-            ):
-                raise TaskLedgerConflict(f"goal status would regress {current_state} to {state}")
 
             terminal = state in _TERMINAL_STATES
             self._conn.execute(
@@ -907,7 +1011,9 @@ class NavigationTaskLedger:
                 UPDATE navigation_tasks
                 SET state = ?, terminal = ?, reason = ?, endpoint_boot_id = ?,
                     active_request_id = ?, updated_at = ?, terminal_at = ?,
-                    can_resume = 0, last_goal_status_json = ?
+                    can_resume = 0, last_goal_status_json = ?,
+                    state_source = 'native_goal_status', state_observed_at = ?,
+                    evidence_status = 'fresh'
                 WHERE task_id = ?
                 """,
                 (
@@ -919,16 +1025,9 @@ class NavigationTaskLedger:
                     now,
                     timestamp if terminal else None,
                     status_json,
+                    timestamp,
                     task,
                 ),
-            )
-            self._conn.execute(
-                """
-                UPDATE navigation_task_attempts
-                SET state = ?, reason = ?, endpoint_boot_id = ?, updated_at = ?
-                WHERE task_id = ? AND request_id = ?
-                """,
-                (state, reason, boot_id, now, task, request),
             )
             self._insert_event(
                 task,
@@ -945,7 +1044,7 @@ class NavigationTaskLedger:
             return record
 
     def record_navigation_state(self, evidence: Any) -> dict[str, Any] | None:
-        """Apply one complete authoritative endpoint state snapshot."""
+        """Store one endpoint snapshot without deriving task lifecycle."""
 
         snapshot = _evidence_dict(evidence, "navigation_state")
         boot_id = _required_identity(snapshot.get("boot_id"), "navigation_state.boot_id")
@@ -980,14 +1079,14 @@ class NavigationTaskLedger:
             self._require_open()
             task_row = self._conn.execute(
                 """
-                SELECT state, terminal, endpoint_boot_id,
-                       last_navigation_state_json
+                SELECT endpoint_boot_id, last_navigation_state_json
                 FROM navigation_tasks WHERE task_id = ?
                 """,
                 (active_task,),
             ).fetchone()
             if task_row is None:
                 return None
+
             request = self._resolve_or_create_observed_attempt(
                 active_task,
                 native_request,
@@ -1006,69 +1105,35 @@ class NavigationTaskLedger:
                     return self._task_record(active_task)
 
             previous_boot = str(task_row["endpoint_boot_id"] or "")
-            if previous_boot and previous_boot != boot_id:
-                raise TaskLedgerConflict("endpoint boot changed; reconcile the open task before applying active state")
-
-            current_state = str(task_row["state"])
-            target_state = lifecycle
-            reason = str(snapshot.get("failure_code") or snapshot.get("hold_reason") or lifecycle).strip()
-            if lifecycle == "paused":
-                target_state = current_state
-            elif lifecycle == "idle":
-                target_state = "unknown"
-                reason = "endpoint_state_inconsistent"
-
-            if bool(task_row["terminal"]):
-                if current_state == target_state:
-                    record = self._task_record(active_task)
-                    assert record is not None
-                    return record
-                raise TaskLedgerConflict(f"terminal task is already {current_state}; cannot become {target_state}")
-            if (
-                target_state not in _TERMINAL_STATES
-                and target_state in _NONTERMINAL_PROGRESS
-                and current_state in _NONTERMINAL_PROGRESS
-                and _NONTERMINAL_PROGRESS[target_state] < _NONTERMINAL_PROGRESS[current_state]
-                and not (current_state == "recovering" and target_state == "executing")
-            ):
-                raise TaskLedgerConflict(f"navigation state would regress {current_state} to {target_state}")
-
-            terminal = target_state in _TERMINAL_STATES
+            evidence_status = (
+                "boot_changed"
+                if previous_boot and previous_boot != boot_id
+                else "fresh"
+            )
             now = float(self._clock())
             self._conn.execute(
                 """
                 UPDATE navigation_tasks
-                SET state = ?, terminal = ?, reason = ?, endpoint_boot_id = ?,
-                    active_request_id = ?, updated_at = ?, terminal_at = ?,
-                    can_resume = 0, last_navigation_state_json = ?
+                SET endpoint_boot_id = ?, active_request_id = ?, updated_at = ?,
+                    can_resume = 0, last_navigation_state_json = ?,
+                    evidence_status = ?
                 WHERE task_id = ?
                 """,
                 (
-                    target_state,
-                    int(terminal),
-                    reason,
                     boot_id,
                     request,
                     now,
-                    timestamp if terminal else None,
                     state_json,
+                    evidence_status,
                     active_task,
                 ),
-            )
-            self._conn.execute(
-                """
-                UPDATE navigation_task_attempts
-                SET state = ?, reason = ?, endpoint_boot_id = ?, updated_at = ?
-                WHERE task_id = ? AND request_id = ?
-                """,
-                (target_state, reason, boot_id, now, active_task, request),
             )
             self._insert_event(
                 active_task,
                 request,
                 event_type="navigation_state",
-                state=target_state,
-                reason=reason,
+                state=evidence_status,
+                reason="navigation_state_observed",
                 evidence=normalized,
                 created_at=timestamp,
                 dedupe_key=f"navigation_state:{boot_id}:{sequence}",
@@ -1083,7 +1148,7 @@ class NavigationTaskLedger:
         *,
         goal_statuses: Any | None = None,
     ) -> list[dict[str, Any]]:
-        """Reconcile open tasks from endpoint evidence without dispatching motion."""
+        """Refresh native evidence and health without synthesizing task state."""
 
         open_ids = [item["task_id"] for item in self.list_open()]
         retained_items = None if goal_statuses is None else list(goal_statuses)
@@ -1098,13 +1163,10 @@ class NavigationTaskLedger:
                     self.record_goal_status(status_dict)
                 except KeyError:
                     continue
-                except TaskLedgerConflict as exc:
-                    if "endpoint boot changed" not in str(exc):
-                        raise
 
         if evidence is None:
             for task_id in open_ids:
-                self._mark_unknown(
+                self._mark_evidence_status(
                     task_id,
                     "endpoint_status_unavailable",
                     evidence={},
@@ -1134,12 +1196,11 @@ class NavigationTaskLedger:
             if task is None or task["terminal"]:
                 continue
             previous_boot = str(task["endpoint_boot_id"] or "")
-            if previous_boot and previous_boot != boot_id:
-                self._interrupt_task(
+            if previous_boot and previous_boot != boot_id and active_task != task_id:
+                self._mark_evidence_status(
                     task_id,
                     "endpoint_restarted",
                     evidence=snapshot,
-                    terminal_at=timestamp,
                 )
                 continue
 
@@ -1154,12 +1215,18 @@ class NavigationTaskLedger:
                             boot_id=boot_id,
                             timestamp=timestamp,
                         )
+                        evidence_status = (
+                            "boot_changed"
+                            if previous_boot and previous_boot != boot_id
+                            else "fresh"
+                        )
                         self._conn.execute(
                             """
                             UPDATE navigation_tasks
                             SET endpoint_boot_id = ?, active_request_id = ?,
                                 can_resume = 0, updated_at = ?,
-                                last_navigation_state_json = ?
+                                last_navigation_state_json = ?,
+                                evidence_status = ?
                             WHERE task_id = ? AND terminal = 0
                             """,
                             (
@@ -1167,34 +1234,34 @@ class NavigationTaskLedger:
                                 request,
                                 float(self._clock()),
                                 _canonical_json(snapshot, label="navigation_state"),
+                                evidence_status,
                                 task_id,
                             ),
                         )
                 continue
 
             if retained_items is None:
-                self._mark_unknown(
+                self._mark_evidence_status(
                     task_id,
                     "endpoint_task_not_confirmed",
                     evidence=snapshot,
                 )
             elif task_id in retained_task_ids:
-                self._mark_unknown(
+                self._mark_evidence_status(
                     task_id,
                     "endpoint_evidence_conflict",
                     evidence=snapshot,
                 )
             else:
-                self._interrupt_task(
+                self._mark_evidence_status(
                     task_id,
                     "endpoint_task_not_active",
                     evidence=snapshot,
-                    terminal_at=timestamp,
                 )
 
         return [record for task_id in open_ids if (record := self.get_task(task_id)) is not None]
 
-    def _mark_unknown(
+    def _mark_evidence_status(
         self,
         task_id: str,
         reason: str,
@@ -1207,18 +1274,17 @@ class NavigationTaskLedger:
         boot_id = str(evidence_dict.get("boot_id") or "")
         sequence = str(evidence_dict.get("sequence") or "")
         dedupe_key = f"reconcile:{reason}:{boot_id}:{sequence}"
+        evidence_status = {
+            "endpoint_status_unavailable": "unavailable",
+            "endpoint_restarted": "boot_changed",
+        }.get(reason, "stale")
         with self._lock, self._conn:
             row = self._conn.execute(
-                """
-                SELECT state, terminal, reason
-                FROM navigation_tasks WHERE task_id = ?
-                """,
+                "SELECT task_id FROM navigation_tasks WHERE task_id = ?",
                 (task_id,),
             ).fetchone()
             if row is None:
                 return None
-            if bool(row["terminal"]):
-                return self._task_record(task_id)
             duplicate = self._conn.execute(
                 """
                 SELECT 1 FROM navigation_task_events
@@ -1226,86 +1292,27 @@ class NavigationTaskLedger:
                 """,
                 (task_id, dedupe_key),
             ).fetchone()
-            if row["state"] == "unknown" and row["reason"] == reason and duplicate:
+            if duplicate:
                 return self._task_record(task_id)
 
             self._conn.execute(
                 """
                 UPDATE navigation_tasks
-                SET state = 'unknown', reason = ?, can_resume = 0,
-                    updated_at = ?,
+                SET evidence_status = ?, updated_at = ?,
                     last_navigation_state_json = COALESCE(?, last_navigation_state_json)
                 WHERE task_id = ?
                 """,
-                (reason, now, evidence_json if evidence_dict else None, task_id),
+                (evidence_status, now, evidence_json if evidence_dict else None, task_id),
             )
             self._insert_event(
                 task_id,
                 "",
                 event_type="reconcile",
-                state="unknown",
+                state=evidence_status,
                 reason=reason,
                 evidence=evidence_dict,
                 created_at=now,
                 dedupe_key=dedupe_key,
-            )
-            return self._task_record(task_id)
-
-    def _interrupt_task(
-        self,
-        task_id: str,
-        reason: str,
-        *,
-        evidence: Any,
-        terminal_at: float,
-    ) -> dict[str, Any] | None:
-        now = float(self._clock())
-        evidence_json = _canonical_json(evidence, label="reconcile evidence")
-        evidence_dict = _decode_json(evidence_json)
-        with self._lock, self._conn:
-            row = self._conn.execute(
-                """
-                SELECT state, terminal, active_request_id
-                FROM navigation_tasks WHERE task_id = ?
-                """,
-                (task_id,),
-            ).fetchone()
-            if row is None:
-                return None
-            if bool(row["terminal"]):
-                if row["state"] != "interrupted":
-                    raise TaskLedgerConflict(f"terminal task is already {row['state']}; cannot become interrupted")
-                return self._task_record(task_id)
-            active_request = str(row["active_request_id"] or "")
-            self._conn.execute(
-                """
-                UPDATE navigation_tasks
-                SET state = 'interrupted', terminal = 1, reason = ?,
-                    can_resume = 0, updated_at = ?, terminal_at = ?,
-                    last_navigation_state_json = ?
-                WHERE task_id = ?
-                """,
-                (reason, now, terminal_at, evidence_json, task_id),
-            )
-            if active_request:
-                self._conn.execute(
-                    """
-                    UPDATE navigation_task_attempts
-                    SET state = 'interrupted', reason = ?, updated_at = ?
-                    WHERE task_id = ? AND request_id = ?
-                    """,
-                    (reason, now, task_id, active_request),
-                )
-
-            self._insert_event(
-                task_id,
-                active_request,
-                event_type="reconcile",
-                state="interrupted",
-                reason=reason,
-                evidence=evidence_dict,
-                created_at=terminal_at,
-                dedupe_key=f"terminal:interrupted:{reason}",
             )
             return self._task_record(task_id)
 
@@ -1335,7 +1342,8 @@ class NavigationTaskLedger:
             rows = self._conn.execute(
                 """
                 SELECT task_id FROM navigation_tasks
-                WHERE terminal = 0 ORDER BY updated_at DESC, task_id DESC
+                WHERE terminal = 0 AND admission <> 'rejected'
+                ORDER BY updated_at DESC, task_id DESC
                 """
             ).fetchall()
             return [record for row in rows if (record := self._task_record(str(row["task_id"]))) is not None]
@@ -1372,6 +1380,18 @@ class NavigationTaskLedger:
         ).fetchall()
         return {
             "task_id": row["task_id"],
+            "admission": row["admission"],
+            "admission_reason": row["admission_reason"],
+            "execution_state": (
+                None if row["state"] == "unknown" else row["state"]
+            ),
+            "execution_reason": row["reason"],
+            "evidence_status": row["evidence_status"],
+            "state_source": row["state_source"],
+            "state_observed_at": (
+                float(row["state_observed_at"])
+                if row["state_observed_at"] is not None else None
+            ),
             "state": row["state"],
             "terminal": bool(row["terminal"]),
             "reason": row["reason"],

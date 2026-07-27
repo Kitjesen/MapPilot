@@ -19,28 +19,19 @@ from runtime.msgs.geometry import Pose, PoseStamped, Vector3
 def _task(task_id: str = "nav-task-001", *, terminal: bool = False) -> dict:
     return {
         "task_id": task_id,
-        "state": "reached" if terminal else "executing",
-        "terminal": terminal,
-        "reason": "goal_reached" if terminal else "",
-        "observed_only": False,
-        "source": "gateway",
         "target": {"x": 1.0, "y": 2.0, "yaw": 0.0},
         "product_fingerprint": "product-sha256",
         "map_identity": {"map_id": "yard", "map_version": "v3"},
+        "admission": "accepted",
+        "admission_reason": "accepted",
+        "execution_state": "reached" if terminal else "executing",
+        "execution_reason": "goal_reached" if terminal else "",
+        "cancel_requested": False,
+        "evidence_status": "fresh",
+        "state_source": "native_goal_status",
+        "state_observed_at": 101.0,
         "created_at": 100.0,
         "updated_at": 101.0,
-        "terminal_at": 101.0 if terminal else None,
-        "endpoint_boot_id": "boot-7",
-        "active_request_id": "request-001",
-        "cancel_requested": False,
-        "cancel_requested_at": None,
-        "cancel_request_id": "",
-        "cancel_reason": "",
-        "can_resume": False,
-        "last_goal_status": {"state": "executing"},
-        "last_navigation_state": {"motion_state": "moving"},
-        "attempts": [],
-        "events": [],
     }
 
 
@@ -50,12 +41,12 @@ def _client(goals=None) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-def test_navigation_task_detail_returns_persisted_task_and_refreshes_native_state() -> None:
+def test_navigation_task_detail_is_a_read_only_history_lookup() -> None:
     class Goals:
-        calls: list[tuple[str, bool]] = []
+        calls: list[str] = []
 
-        def get_task(self, task_id: str, *, refresh: bool = True):
-            self.calls.append((task_id, refresh))
+        def get_task(self, task_id: str):
+            self.calls.append(task_id)
             return _task(task_id)
 
     goals = Goals()
@@ -63,18 +54,33 @@ def test_navigation_task_detail_returns_persisted_task_and_refreshes_native_stat
 
     assert response.status_code == 200
     assert response.json() == {
-        "schema_version": 1,
+        "schema_version": 2,
         "found": True,
         "task": _task(),
         "reason": None,
         "ts": response.json()["ts"],
     }
-    assert goals.calls == [("nav-task-001", True)]
+    assert goals.calls == ["nav-task-001"]
+
+
+def test_navigation_task_detail_accepts_native_paused_state() -> None:
+    class Goals:
+        def get_task(self, task_id: str):
+            task = _task(task_id)
+            task["execution_state"] = "paused"
+            task["execution_reason"] = "operator_pause"
+            return task
+
+    response = _client(Goals()).get("/api/v1/navigation/tasks/nav-task-paused")
+
+    assert response.status_code == 200
+    assert response.json()["task"]["execution_state"] == "paused"
+    assert response.json()["task"]["execution_reason"] == "operator_pause"
 
 
 def test_navigation_task_detail_reports_unknown_task_without_500() -> None:
     class Goals:
-        def get_task(self, task_id: str, *, refresh: bool = True):
+        def get_task(self, task_id: str):
             return None
 
     response = _client(Goals()).get("/api/v1/navigation/tasks/missing")
@@ -98,7 +104,7 @@ def test_navigation_task_list_passes_user_filters_to_goal_service() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["tasks"] == [_task("nav-task-active")]
     assert payload["count"] == 1
     assert payload["limit"] == 25
@@ -132,7 +138,7 @@ def test_navigation_task_routes_report_service_unavailable_without_500(goals) ->
 
 def test_navigation_task_routes_fail_closed_for_non_json_safe_service_records() -> None:
     class Goals:
-        def get_task(self, task_id: str, *, refresh: bool = True):
+        def get_task(self, task_id: str):
             return {**_task(task_id), "unsafe": object()}
 
         def list_tasks(self, *, limit: int = 50, active_only: bool = False):
@@ -152,6 +158,14 @@ def test_navigation_task_routes_fail_closed_for_non_json_safe_service_records() 
 
 def test_navigation_task_routes_do_not_leak_json_safe_internal_fields() -> None:
     task = _task()
+    task.update(
+        {
+            "state": "failed",
+            "terminal": True,
+            "reason": "host_inferred_failure",
+            "can_resume": False,
+        }
+    )
     task["internal_db_path"] = "/var/lib/lingtu/navigation-tasks.sqlite3"
     task["attempts"] = [
         {
@@ -174,7 +188,7 @@ def test_navigation_task_routes_do_not_leak_json_safe_internal_fields() -> None:
     ]
 
     class Goals:
-        def get_task(self, task_id: str, *, refresh: bool = True):
+        def get_task(self, task_id: str):
             return {**task, "task_id": task_id}
 
         def list_tasks(self, *, limit: int = 50, active_only: bool = False):
@@ -187,13 +201,16 @@ def test_navigation_task_routes_do_not_leak_json_safe_internal_fields() -> None:
     assert detail.json()["found"] is True
     assert listing.status_code == 200
     assert listing.json()["count"] == 1
+    assert {"state", "terminal", "reason", "can_resume", "attempts", "events"}.isdisjoint(
+        detail.json()["task"]
+    )
     assert "internal_db_path" not in detail.text
     assert "internal_db_path" not in listing.text
 
 
 def test_navigation_task_service_exceptions_are_reported_without_internal_details() -> None:
     class Goals:
-        def get_task(self, task_id: str, *, refresh: bool = True):
+        def get_task(self, task_id: str):
             raise RuntimeError("database path and secret details")
 
         def list_tasks(self, *, limit: int = 50, active_only: bool = False):
@@ -220,7 +237,7 @@ def test_navigation_task_reads_are_offloaded_with_asyncio_to_thread(monkeypatch)
         return function(*args, **kwargs)
 
     class Goals:
-        def get_task(self, task_id: str, *, refresh: bool = True):
+        def get_task(self, task_id: str):
             return _task(task_id)
 
         def list_tasks(self, *, limit: int = 50, active_only: bool = False):
@@ -267,8 +284,9 @@ def test_navigation_task_routes_read_real_goal_service_sqlite_history() -> None:
         task = detail.json()["task"]
         assert detail.json()["found"] is True
         assert task["task_id"] == "nav-task-real-service"
-        assert task["state"] == "accepted"
-        assert task["attempts"][0]["request_id"] == "request-real-service"
+        assert task["admission"] == "accepted"
+        assert task["execution_state"] is None
+        assert "attempts" not in task
         assert listing.status_code == 200
         assert listing.json()["reason"] is None
         assert [item["task_id"] for item in listing.json()["tasks"]] == ["nav-task-real-service"]

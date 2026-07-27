@@ -23,9 +23,7 @@ from gateway.schemas import (
     LocationUpsertRequest,
     NavigationDdsSnapshotResponse,
     NavigationStatusResponse,
-    NavigationTaskAttemptResponse,
     NavigationTaskDetailResponse,
-    NavigationTaskEventResponse,
     NavigationTaskListResponse,
     NavigationTaskRecordResponse,
     PathResponse,
@@ -128,26 +126,6 @@ def _navigation_task_record(value: object) -> dict[str, Any] | None:
 
 def _project_navigation_task_record(payload: dict[str, Any]) -> dict[str, Any]:
     """Project a ledger record onto the intentionally public task contract."""
-
-    attempts = payload.get("attempts")
-    if isinstance(attempts, list):
-        payload["attempts"] = [
-            _project_navigation_task_item(
-                item,
-                NavigationTaskAttemptResponse.model_fields,
-            )
-            for item in attempts
-        ]
-
-    events = payload.get("events")
-    if isinstance(events, list):
-        payload["events"] = [
-            _project_navigation_task_item(
-                item,
-                NavigationTaskEventResponse.model_fields,
-            )
-            for item in events
-        ]
 
     return _project_navigation_task_item(
         payload,
@@ -1000,7 +978,7 @@ def register_status_routes(app, gw) -> None:
 
     @app.get(
         "/api/v1/navigation/tasks/{task_id}",
-        summary="Get one durable navigation task timeline",
+        summary="Get one durable navigation task summary",
         response_model=NavigationTaskDetailResponse,
     )
     async def get_navigation_task(task_id: str):
@@ -1015,11 +993,7 @@ def register_status_routes(app, gw) -> None:
             }
 
         try:
-            raw_record = await asyncio.to_thread(
-                get_task,
-                task_id,
-                refresh=True,
-            )
+            raw_record = await asyncio.to_thread(get_task, task_id)
         except KeyError:
             raw_record = None
         except Exception:

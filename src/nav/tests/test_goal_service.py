@@ -521,9 +521,10 @@ class TestGoalService:
         assert second["replay"] is True
         assert len(commands.goals) == 1
         assert service.goal_status.msg_count == status_count + 1
-        task = service.get_task("task-replay", refresh=False)
+        task = service.get_task("task-replay")
         assert task is not None
-        assert task["state"] == "accepted"
+        assert task["admission"] == "accepted"
+        assert task["execution_state"] is None
         assert len(task["attempts"]) == 1
         service.stop()
 
@@ -564,7 +565,7 @@ class TestGoalService:
             request_id="goal-attempt-probe",
             action="goto",
         )
-        before = service.get_task("task-probe", refresh=False)
+        before = service.get_task("task-probe")
         status_count = service.goal_status.msg_count
 
         replay = service.lookup_goal_replay(
@@ -588,7 +589,7 @@ class TestGoalService:
         assert replay["native_request_id"] == "goal-attempt-probe"
         assert replay["native_ack"]["accepted"] is True
         assert len(commands.goals) == 1
-        assert service.get_task("task-probe", refresh=False) == before
+        assert service.get_task("task-probe") == before
         assert service.goal_status.msg_count == status_count
         service.stop()
 
@@ -831,13 +832,13 @@ class TestGoalService:
         task = second_service.get_task("task-persisted")
 
         assert task is not None
-        assert task["state"] == "reached"
+        assert task["execution_state"] == "reached"
         assert task["terminal"] is True
-        assert task["reason"] == "goal_reached"
+        assert task["execution_reason"] == "goal_reached"
         assert second_commands.goals == []
         second_service.stop()
 
-    def test_endpoint_boot_change_interrupts_task_without_replaying_motion(self, tmp_path):
+    def test_endpoint_boot_change_marks_evidence_without_replaying_motion(self, tmp_path):
         db_path = tmp_path / "tasks.sqlite3"
         ledger = NavigationTaskLedger(db_path, clock=lambda: 100.0)
         ledger.admit(
@@ -847,10 +848,11 @@ class TestGoalService:
             {"x": 1.0, "y": 2.0},
             target={"x": 1.0, "y": 2.0},
         )
-        ledger.record_accepted(
+        ledger.record_admission_result(
             "task-old-boot",
             "goal-old-boot",
-            "planning_started",
+            accepted=True,
+            reason="planning_started",
             endpoint_boot_id="navd-boot-old",
         )
         ledger.close()
@@ -881,13 +883,14 @@ class TestGoalService:
         service.on_system_modules({"nav.commands": commands})
         service.setup()
 
-        task = service.get_task("task-old-boot", refresh=False)
+        task = service.get_task("task-old-boot")
 
         assert task is not None
-        assert task["state"] == "interrupted"
-        assert task["terminal"] is True
-        assert task["reason"] == "endpoint_restarted"
-        assert task["can_resume"] is False
+        assert task["admission"] == "accepted"
+        assert task["execution_state"] is None
+        assert task["execution_reason"] == ""
+        assert task["evidence_status"] == "boot_changed"
+        assert task["terminal"] is False
         assert commands.calls == 0
         service.stop()
 
@@ -919,7 +922,7 @@ class TestGoalService:
             task_id="task-timeout",
             request_id="request-timeout",
         )
-        task = service.get_task("task-timeout", refresh=False)
+        task = service.get_task("task-timeout")
 
         assert commands.calls == 1
         assert first["accepted"] is False
@@ -929,7 +932,8 @@ class TestGoalService:
         assert replay["admission_confirmed"] is False
         assert replay["admission_unconfirmed"] is True
         assert task is not None
-        assert task["state"] == "admitted"
+        assert task["admission"] == "unconfirmed"
+        assert task["execution_state"] is None
         assert task["terminal"] is False
         assert task["attempts"][0]["accepted"] is None
         service.stop()
@@ -977,7 +981,7 @@ class TestGoalService:
             task_id="task-cancel-timeout",
             request_id="cancel-timeout",
         )
-        task = service.get_task("task-cancel-timeout", refresh=False)
+        task = service.get_task("task-cancel-timeout")
 
         assert commands.cancel_calls == 1
         assert first["state"] == "unknown"
@@ -1064,7 +1068,7 @@ class TestGoalService:
         assert "task history unavailable" in result["message"]
         service.stop()
 
-    def test_explicit_native_rejection_is_the_only_rejected_terminal(self):
+    def test_explicit_native_rejection_is_admission_not_execution_terminal(self):
         class RejectingCommands:
             def send_goal(self, x, y, z, yaw, *, task_id, request_id):
                 del x, y, z, yaw
@@ -1088,16 +1092,59 @@ class TestGoalService:
             task_id="task-rejected",
             request_id="request-rejected",
         )
-        task = service.get_task("task-rejected", refresh=False)
+        task = service.get_task("task-rejected")
 
         assert result["accepted"] is False
         assert task is not None
-        assert task["state"] == "rejected"
-        assert task["terminal"] is True
-        assert task["reason"] == "goal_outside_map"
+        assert task["admission"] == "rejected"
+        assert task["admission_reason"] == "goal_outside_map"
+        assert task["execution_state"] is None
+        assert task["terminal"] is False
         service.stop()
 
-    def test_native_status_unavailable_becomes_unknown_not_terminal(self):
+    def test_get_and_list_tasks_are_read_only(self):
+        class Commands:
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="accepted",
+                )
+
+            def read_navigation_state(self):
+                raise AssertionError("task reads must not poll native state")
+
+            def get_navigation_task_status(self, task_id):
+                del task_id
+                raise AssertionError("task reads must not poll native status")
+
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": Commands()})
+        service.setup()
+        service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-read-only",
+            request_id="request-read-only",
+        )
+        before = service._task_ledger.get_task("task-read-only")
+
+        detail = service.get_task("task-read-only")
+        listed = service.list_tasks()
+        after = service._task_ledger.get_task("task-read-only")
+
+        assert detail == before
+        assert listed == [before]
+        assert after == before
+        service.stop()
+
+    def test_native_status_unavailable_does_not_change_execution_on_read(self):
         class UnavailableCommands:
             def send_goal(self, x, y, z, yaw, *, task_id, request_id):
                 del x, y, z, yaw
@@ -1129,13 +1176,14 @@ class TestGoalService:
             request_id="request-status-unavailable",
         )
 
-        task = service.get_task("task-status-unavailable", refresh=True)
+        task = service.get_task("task-status-unavailable")
 
         assert task is not None
-        assert task["state"] == "unknown"
+        assert task["admission"] == "accepted"
+        assert task["execution_state"] is None
+        assert task["execution_reason"] == ""
+        assert task["evidence_status"] == "unavailable"
         assert task["terminal"] is False
-        assert task["reason"] == "endpoint_status_unavailable"
-        assert task["can_resume"] is False
         service.stop()
 
     def test_list_tasks_active_only_excludes_terminal_history(self):
@@ -1157,10 +1205,11 @@ class TestGoalService:
             {"x": 3.0, "y": 4.0},
             target={"x": 3.0, "y": 4.0},
         )
-        service._task_ledger.record_rejected(
+        service._task_ledger.record_admission_result(
             "task-terminal",
             "request-terminal",
-            "goal_outside_map",
+            accepted=False,
+            reason="goal_outside_map",
         )
 
         tasks = service.list_tasks(active_only=True)
@@ -1236,7 +1285,7 @@ class TestGoalService:
             task_id="task-local-cancel",
             request_id="cancel-local-cancel",
         )
-        task = service.get_task("task-local-cancel", refresh=False)
+        task = service.get_task("task-local-cancel")
 
         assert cancellations == ["operator"]
         assert first["state"] == "cancel_requested"

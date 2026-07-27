@@ -757,19 +757,12 @@ class GoalService(Module, layer=6):
         except Exception as exc:
             return str(exc)
 
-    def get_task(
-        self,
-        task_id: str,
-        *,
-        refresh: bool = True,
-    ) -> dict[str, Any] | None:
-        """Return one durable task record, optionally reconciled with navd."""
+    def get_task(self, task_id: str) -> dict[str, Any] | None:
+        """Return one durable task record without polling or mutating history."""
 
         resolved_task_id = str(task_id or "").strip()
         if not resolved_task_id:
             raise ValueError("task_id is required")
-        if refresh:
-            self._reconcile_task_history()
         return self._task_ledger.get_task(resolved_task_id)
 
     def list_tasks(
@@ -778,13 +771,12 @@ class GoalService(Module, layer=6):
         limit: int = 50,
         active_only: bool = False,
     ) -> list[dict[str, Any]]:
-        """Return recent task history, optionally restricted to nonterminal tasks."""
+        """Return stored task history without polling or mutating native state."""
 
         if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
             raise ValueError("limit must be a positive integer")
         if limit > 1000:
             raise ValueError("limit cannot exceed 1000")
-        self._reconcile_task_history()
         if active_only:
             return self._task_ledger.list_open()[:limit]
         return self._task_ledger.list_recent(limit)
@@ -861,7 +853,7 @@ class GoalService(Module, layer=6):
         accepted = attempt.get("accepted") if attempt is not None else None
         kind = str(attempt.get("kind") or "") if attempt is not None else ""
         if accepted is True:
-            state = "cancel_requested" if kind == "cancel" else str(record.get("state") or "accepted")
+            state = "cancel_requested" if kind == "cancel" else "accepted"
             message = f"{kind or 'navigation'} request was already accepted"
         elif accepted is False:
             state = "rejected"
@@ -873,7 +865,8 @@ class GoalService(Module, layer=6):
         extra: dict[str, Any] = {
             "task_id": str(record.get("task_id") or ""),
             "state": state,
-            "task_state": str(record.get("state") or "unknown"),
+            "task_state": str(record.get("execution_state") or "unknown"),
+            "admission": str(record.get("admission") or "unconfirmed"),
             "reason": (
                 str(attempt.get("reason") or "") if attempt is not None else str(record.get("reason") or "")
             ),
@@ -906,10 +899,11 @@ class GoalService(Module, layer=6):
             if isinstance(result, NavigationCommandReceipt):
                 self._task_ledger.record_native_ack(result)
             else:
-                self._task_ledger.record_accepted(
+                self._task_ledger.record_admission_result(
                     task_id,
                     request_id,
-                    local_reason,
+                    accepted=True,
+                    reason=local_reason,
                 )
         except Exception:
             return {

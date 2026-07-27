@@ -1731,58 +1731,37 @@ class NavigationTaskResponseModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class NavigationTaskAttemptResponse(NavigationTaskResponseModel):
-    request_id: str
-    native_request_id: str = ""
-    kind: str
-    payload: Any = None
-    state: str
-    accepted: bool | None = None
-    reason: str = ""
-    endpoint_boot_id: str = ""
-    native_ack: dict[str, Any] | None = None
-    created_at: float
-    updated_at: float
-
-
-class NavigationTaskEventResponse(NavigationTaskResponseModel):
-    id: int
-    request_id: str = ""
-    type: str
-    state: str
-    reason: str = ""
-    evidence: Any = None
-    created_at: float
-
-
 class NavigationTaskRecordResponse(NavigationTaskResponseModel):
     task_id: str
-    observed_only: bool = False
-    state: str
-    terminal: bool
-    reason: str = ""
-    source: str = ""
     target: Any = None
     product_fingerprint: str = ""
     map_identity: dict[str, Any] = Field(default_factory=dict)
+    admission: Literal["unconfirmed", "accepted", "rejected"]
+    admission_reason: str = ""
+    execution_state: Literal[
+        "planning",
+        "executing",
+        "reached",
+        "failed",
+        "cancelled",
+        "paused",
+    ] | None = None
+    execution_reason: str = ""
+    cancel_requested: bool = False
+    evidence_status: Literal[
+        "fresh",
+        "stale",
+        "unavailable",
+        "boot_changed",
+    ]
+    state_source: Literal["native_goal_status", "none"]
+    state_observed_at: float | None = None
     created_at: float
     updated_at: float
-    terminal_at: float | None = None
-    endpoint_boot_id: str = ""
-    active_request_id: str = ""
-    cancel_requested: bool = False
-    cancel_requested_at: float | None = None
-    cancel_request_id: str = ""
-    cancel_reason: str = ""
-    can_resume: bool = False
-    last_goal_status: dict[str, Any] | None = None
-    last_navigation_state: dict[str, Any] | None = None
-    attempts: list[NavigationTaskAttemptResponse] = Field(default_factory=list)
-    events: list[NavigationTaskEventResponse] = Field(default_factory=list)
 
 
 class NavigationTaskDetailResponse(NavigationTaskResponseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     found: bool
     task: NavigationTaskRecordResponse | None = None
     reason: str | None = None
@@ -1790,7 +1769,7 @@ class NavigationTaskDetailResponse(NavigationTaskResponseModel):
 
 
 class NavigationTaskListResponse(NavigationTaskResponseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     tasks: list[NavigationTaskRecordResponse] = Field(default_factory=list)
     count: int = 0
     limit: int
