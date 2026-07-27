@@ -24,6 +24,7 @@ struct TarePolicyConfig {
   double gain_weight{1.0};
   double travel_weight{0.20};
   double momentum_weight{2.0};
+  double directed_progress_weight{0.0};
   double revisit_weight{3.0};
   double max_plan_time_ms{100.0};
   int route_2opt_iterations{4};

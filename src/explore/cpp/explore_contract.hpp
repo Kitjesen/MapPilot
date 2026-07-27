@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,11 @@ struct Pose2D {
   double yaw = 0.0;
 };
 
+struct DirectedTarget {
+  double x = 0.0;
+  double y = 0.0;
+};
+
 struct ExploreMapIdentity {
   std::string frame_id{"map"};
   std::string session_id;
@@ -76,6 +82,8 @@ struct ExploreInput {
   std::vector<Pose2D> visited_goals;
   double stamp_s = 0.0;
   std::string map_frame = "map";
+  std::optional<DirectedTarget> directed_target;
+  std::uint64_t directed_intent_revision{0U};
   ExploreMapIdentity map;
 };
 
@@ -101,6 +109,7 @@ struct ExploreDiagnostics {
   std::uint64_t reset_epoch{0U};
   std::uint64_t generation{0U};
   std::uint64_t accepted_generation{0U};
+  std::uint64_t accepted_intent_revision{0U};
   std::size_t reachable_free_cells{0U};
   std::size_t frontier_cells{0U};
   std::size_t frontier_clusters{0U};

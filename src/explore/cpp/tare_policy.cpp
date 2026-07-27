@@ -38,6 +38,27 @@ bool FinitePose(const Pose2D& pose) {
       std::isfinite(pose.yaw);
 }
 
+bool FiniteDirectedTarget(const DirectedTarget& target) {
+  return std::isfinite(target.x) && std::isfinite(target.y);
+}
+
+double DirectedProgressToTarget(
+    const Pose2D& robot,
+    const DirectedTarget& target,
+    double candidate_x,
+    double candidate_y,
+    double minimum_scale_m) {
+  const double robot_distance =
+      std::hypot(target.x - robot.x, target.y - robot.y);
+  const double candidate_distance =
+      std::hypot(target.x - candidate_x, target.y - candidate_y);
+  const double scale = std::max(robot_distance, minimum_scale_m);
+  return std::clamp(
+      (robot_distance - candidate_distance) / scale,
+      -1.0,
+      1.0);
+}
+
 std::uint64_t CoverageKey(double x, double y, double resolution_m) {
   const auto qx = static_cast<std::int64_t>(
       std::floor(x / resolution_m));
@@ -187,6 +208,7 @@ struct TarePolicy::Impl {
   void ResetState() {
     identity.reset();
     accepted_generation = 0U;
+    accepted_intent_revision = 0U;
     coverage.clear();
     selected_goals.clear();
     keyposes.Reset();
@@ -197,6 +219,7 @@ struct TarePolicy::Impl {
   std::unordered_map<std::uint64_t, std::uint64_t> coverage;
   std::vector<Pose2D> selected_goals;
   std::uint64_t accepted_generation{0U};
+  std::uint64_t accepted_intent_revision{0U};
   std::size_t reset_count{0U};
   ExploreDiagnostics last;
 };
@@ -209,6 +232,8 @@ TarePolicy::TarePolicy(TarePolicyConfig config)
       !(config_.candidate_radius_m > 0.0) ||
       !(config_.min_goal_distance_m >= 0.0) ||
       !(config_.novelty_radius_m >= 0.0) ||
+      !std::isfinite(config_.directed_progress_weight) ||
+      config_.directed_progress_weight < 0.0 ||
       !(config_.local_route_radius_m > 0.0) ||
       !(config_.return_home_distance_m >= 0.0) ||
       !(config_.coverage_resolution_m > 0.0) ||
@@ -255,6 +280,7 @@ ExploreDecision TarePolicy::plan(
   decision.diagnostics.reset_epoch = input.map.reset_epoch;
   decision.diagnostics.generation = input.map.generation;
   decision.diagnostics.accepted_generation = impl_->accepted_generation;
+  decision.diagnostics.accepted_intent_revision = impl_->accepted_intent_revision;
   decision.diagnostics.reset_count = impl_->reset_count;
 
   auto finish_without_commit = [&](std::string reason) {
@@ -283,6 +309,11 @@ ExploreDecision TarePolicy::plan(
       input.stamp_s < 0.0) {
     return finish_without_commit("invalid_robot_pose_or_stamp");
   }
+
+  if (input.directed_target.has_value() &&
+      !FiniteDirectedTarget(*input.directed_target)) {
+    return finish_without_commit("invalid_directed_target");
+  }
   if (cancelled()) {
     return finish_without_commit("cancelled");
   }
@@ -298,7 +329,10 @@ ExploreDecision TarePolicy::plan(
   } else if (input.map.reset_epoch > working.identity->reset_epoch) {
     working.ResetState();
     reset = true;
-  } else if (input.map.generation <= working.accepted_generation) {
+  } else if (input.map.generation < working.accepted_generation ||
+      (input.map.generation == working.accepted_generation &&
+       input.directed_intent_revision ==
+           working.accepted_intent_revision)) {
     return finish_without_commit("stale_map_generation");
   }
   if (reset) {
@@ -415,11 +449,21 @@ ExploreDecision TarePolicy::plan(
             static_cast<double>(visible_frontier);
         const double gain =
             static_cast<double>(visible_frontier - already_covered);
-        const double score =
+        double score =
             config_.gain_weight * gain -
             config_.travel_weight * route_cost +
             config_.momentum_weight * momentum -
             config_.revisit_weight * revisit_penalty;
+        if (input.directed_target.has_value() &&
+            config_.directed_progress_weight > 0.0) {
+          score += config_.directed_progress_weight *
+              DirectedProgressToTarget(
+                  input.robot_pose,
+                  *input.directed_target,
+                  x,
+                  y,
+                  grid.resolution);
+        }
 
         ExploreCandidate candidate;
         candidate.x = x;
@@ -554,6 +598,7 @@ ExploreDecision TarePolicy::plan(
   }
 
   working.accepted_generation = input.map.generation;
+  working.accepted_intent_revision = input.directed_intent_revision;
   const detail::KeyposeGraphStats graph_stats =
       working.keyposes.Stats();
   decision.diagnostics.keypose_nodes = graph_stats.nodes;
@@ -565,6 +610,8 @@ ExploreDecision TarePolicy::plan(
   decision.diagnostics.reset_count = working.reset_count;
   decision.diagnostics.accepted_generation =
       input.map.generation;
+  decision.diagnostics.accepted_intent_revision =
+      input.directed_intent_revision;
   decision.diagnostics.state_committed = true;
   decision.diagnostics.planning_time_ms =
       std::chrono::duration<double, std::milli>(

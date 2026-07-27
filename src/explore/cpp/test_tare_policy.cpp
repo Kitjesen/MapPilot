@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 
+using lingtu::explore::DirectedTarget;
 using lingtu::explore::ExploreInput;
 using lingtu::explore::Grid2D;
 using lingtu::explore::IExplorePlanner;
@@ -34,6 +35,16 @@ Grid2D MakeGrid(
 Grid2D MakeFrontierGrid() {
   Grid2D grid = MakeGrid(16, 10, 1.0, kFree);
   for (int row = 0; row < grid.height; ++row) {
+    grid.cells[static_cast<std::size_t>(
+        grid.index(row, grid.width - 1))] = kUnknown;
+  }
+  return grid;
+}
+
+Grid2D MakeSymmetricFrontierGrid() {
+  Grid2D grid = MakeGrid(21, 11, 1.0, kFree);
+  for (int row = 0; row < grid.height; ++row) {
+    grid.cells[static_cast<std::size_t>(grid.index(row, 0))] = kUnknown;
     grid.cells[static_cast<std::size_t>(
         grid.index(row, grid.width - 1))] = kUnknown;
   }
@@ -273,6 +284,110 @@ void TestVisitedGoalSuppressesCandidate() {
   assert(decision.diagnostics.state_committed);
 }
 
+void TestDirectedTargetDefaultWeightIsNeutral() {
+  ExploreInput baseline_input = MakeInput(
+      MakeFrontierGrid(),
+      Pose2D{2.5, 3.5, 0.0},
+      1U);
+  ExploreInput directed_input = baseline_input;
+  directed_input.directed_target = DirectedTarget{100.0, 3.5};
+  directed_input.directed_intent_revision = 1U;
+
+  TarePolicy baseline_policy;
+  TarePolicy directed_policy;
+  const auto baseline = baseline_policy.plan(baseline_input);
+  const auto directed = directed_policy.plan(directed_input);
+
+  assert(directed.has_goal == baseline.has_goal);
+  assert(directed.done == baseline.done);
+  assert(directed.reason == baseline.reason);
+  assert(directed.goal_x == baseline.goal_x);
+  assert(directed.goal_y == baseline.goal_y);
+  assert(directed.candidates.size() == baseline.candidates.size());
+  for (std::size_t index = 0; index < baseline.candidates.size(); ++index) {
+    assert(directed.candidates[index].x == baseline.candidates[index].x);
+    assert(directed.candidates[index].y == baseline.candidates[index].y);
+    assert(directed.candidates[index].score == baseline.candidates[index].score);
+  }
+  assert(directed.diagnostics.accepted_intent_revision == 1U);
+}
+
+void TestDirectedTargetFavorsProgress() {
+  TarePolicyConfig config;
+  config.travel_weight = 0.0;
+  config.momentum_weight = 0.0;
+  config.revisit_weight = 0.0;
+  config.directed_progress_weight = 10.0;
+  TarePolicy policy(config);
+
+  ExploreInput input = MakeInput(
+      MakeSymmetricFrontierGrid(),
+      Pose2D{10.5, 5.5, 0.0},
+      1U);
+  input.directed_target = DirectedTarget{100.0, 5.5};
+  input.directed_intent_revision = 1U;
+
+  const auto decision = policy.plan(input);
+
+  assert(decision.has_goal);
+  assert(decision.goal_x > input.robot_pose.x);
+  assert(decision.diagnostics.accepted_intent_revision == 1U);
+}
+
+void TestNewIntentRevisionReplansSameGeneration() {
+  TarePolicy policy;
+  ExploreInput first_input = MakeInput(
+      MakeFrontierGrid(),
+      Pose2D{2.5, 3.5, 0.0},
+      1U);
+  first_input.directed_target = DirectedTarget{100.0, 3.5};
+  first_input.directed_intent_revision = 1U;
+  const auto first = policy.plan(first_input);
+  assert(first.diagnostics.state_committed);
+  assert(first.diagnostics.accepted_intent_revision == 1U);
+
+  ExploreInput clear_input = MakeInput(
+      MakeFrontierGrid(),
+      Pose2D{2.5, 3.5, 0.0},
+      1U);
+  clear_input.directed_intent_revision = 2U;
+  const auto cleared = policy.plan(clear_input);
+  assert(cleared.diagnostics.state_committed);
+  assert(cleared.diagnostics.accepted_generation == 1U);
+  assert(cleared.diagnostics.accepted_intent_revision == 2U);
+  assert(cleared.diagnostics.covered_cells >= first.diagnostics.covered_cells);
+
+  const auto stale = policy.plan(clear_input);
+  assert(stale.reason == "stale_map_generation");
+  assert(!stale.diagnostics.state_committed);
+  assert(stale.diagnostics.accepted_intent_revision == 2U);
+}
+
+void TestDirectedTargetDoesNotBypassCandidateSafety() {
+  Grid2D grid = MakeSymmetricFrontierGrid();
+  for (int row = 0; row < grid.height; ++row) {
+    grid.cells[static_cast<std::size_t>(grid.index(row, 10))] = kOccupied;
+  }
+
+  TarePolicyConfig config;
+  config.directed_progress_weight = 100.0;
+  TarePolicy policy(config);
+  ExploreInput input = MakeInput(
+      std::move(grid),
+      Pose2D{4.5, 5.5, 0.0},
+      1U);
+  input.directed_target = DirectedTarget{100.0, 5.5};
+  input.directed_intent_revision = 1U;
+
+  const auto decision = policy.plan(input);
+
+  assert(decision.has_goal);
+  assert(decision.goal_x < 10.0);
+  for (const auto& candidate : decision.candidates) {
+    assert(candidate.x < 10.0);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -288,6 +403,10 @@ int main() {
   TestRejectsRobotOutsideFreeSpace();
   TestFloatGridMetadataKeepsBoundaryStable();
   TestVisitedGoalSuppressesCandidate();
+  TestDirectedTargetDefaultWeightIsNeutral();
+  TestDirectedTargetFavorsProgress();
+  TestNewIntentRevisionReplansSameGeneration();
+  TestDirectedTargetDoesNotBypassCandidateSafety();
   std::cout << "test_tare_policy passed\n";
   return 0;
 }
