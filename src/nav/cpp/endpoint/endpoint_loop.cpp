@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
-#include <optional>
 #include <string>
 #include <thread>
 #include <utility>
@@ -26,7 +25,6 @@
 #include "motion/motion_stop_coordinator.hpp"
 #include "motion/operator_motion_authority.hpp"
 #include "motion/operator_motion_output_evidence.hpp"
-#include "motion/stop_confirmation.hpp"
 #include "motion/teleop_admission_controller.hpp"
 #include "motion/teleop_safety.hpp"
 #include "motion/teleop_tick_controller.hpp"
@@ -37,8 +35,6 @@
 #include "nav_loop.hpp"
 #include "plan/goal_plan_controller.hpp"
 #include "plan/input_gate.hpp"
-#include "plan/live_obstacle_layer.hpp"
-#include "plan/planner_inputs.hpp"
 #include "plan/rolling_segment_effect_coordinator.hpp"
 #include "plan/rolling_segment_lifecycle.hpp"
 #include "status/control_loop_health.hpp"
@@ -58,7 +54,6 @@ using lingtu::nav::endpoint::decodeGoal;
 using lingtu::nav::endpoint::decodePath;
 using lingtu::nav::endpoint::decodeTwist;
 using lingtu::nav::endpoint::elapsedMs;
-using lingtu::nav::endpoint::headerFrameId;
 using lingtu::nav::endpoint::headerStampSeconds;
 using lingtu::nav::endpoint::nowSeconds;
 using lingtu::nav::endpoint::sourceStampError;
@@ -154,13 +149,11 @@ namespace lingtu::nav::endpoint {
 int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &cfg = ctx.cfg;
   auto &gate_cfg = ctx.gate_cfg;
-  auto &obstacle_merge_config = ctx.obstacle_merge_config;
   auto &safety_config = ctx.safety_config;
   auto &operator_motion_interface_enabled = ctx.operator_motion_interface_enabled;
   auto &dds = ctx.dds;
   auto &state = ctx.state;
   auto &nav = ctx.nav;
-  auto &live_obstacles = ctx.live_obstacles;
   auto &inspection_status_writer = ctx.inspection_status_writer;
   auto &input_projector = ctx.input_projector;
   auto &goal_plan = ctx.goal_plan;
@@ -180,7 +173,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &navigation_state = ctx.navigation_state;
   auto &active_map_identity = ctx.active_map_identity;
   auto &current_map_identity = ctx.current_map_identity;
-  auto &clear_motion_outputs = ctx.clear_motion_outputs;
   auto &sync_goal_plan_diagnostics = ctx.sync_goal_plan_diagnostics;
   auto &control_loop_guard_latched = ctx.control_loop_guard_latched;
   auto &current_timing = ctx.current_timing;
@@ -193,20 +185,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   auto &map_body = state.map_body;
   auto &map_odom_tf = state.map_odom_tf;
   auto &obstacle_xyzh = state.obstacle_xyzh;
-  auto &terrain_xyzh = state.terrain_xyzh;
-  auto &terrain_ext_xyzh = state.terrain_ext_xyzh;
-  auto &planner_terrain_xyzh = state.planner_terrain_xyzh;
-  auto &latest_dynamic_clusters = state.latest_dynamic_clusters;
   auto &traversability_grid = state.traversability_grid;
-  auto &last_terrain_map_receive_s = state.last_terrain_map_receive_s;
-  auto &last_terrain_ext_receive_s = state.last_terrain_ext_receive_s;
   auto &last_traversability_receive_s = state.last_traversability_receive_s;
   auto &last_odom_s = state.last_odom_s;
   auto &last_odom_linear_speed_mps = state.last_odom_linear_speed_mps;
   auto &last_odom_angular_speed_radps = state.last_odom_angular_speed_radps;
-  auto &driver_accepted_producer_boot_id = state.driver_accepted_producer_boot_id;
-  auto &driver_accepted_output_sequence = state.driver_accepted_output_sequence;
-  auto &driver_last_command_accepted = state.driver_last_command_accepted;
   auto &driver_authority_previous = state.driver_authority_previous;
   auto &teleop_receive_time = state.teleop_receive_time;
   auto &teleop_received = state.teleop_received;

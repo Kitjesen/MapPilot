@@ -65,66 +65,40 @@ using lingtu::nav::endpoint::ActiveInspectionMapCache;
 using lingtu::nav::endpoint::ActiveInspectionMapIdentity;
 using lingtu::nav::endpoint::ActiveOccupancyGate;
 using lingtu::nav::endpoint::ActiveOctomapGate;
-using lingtu::nav::endpoint::arbitrateTeleopCommand;
 using lingtu::nav::endpoint::AutonomyTickActions;
 using lingtu::nav::endpoint::AutonomyTickController;
-using lingtu::nav::endpoint::AutonomyTickInput;
-using lingtu::nav::endpoint::AutonomyTickOutcomeKind;
 using lingtu::nav::endpoint::AutonomyTickPlannerInputs;
-using lingtu::nav::endpoint::buildPlannerObstacleCloud;
 using lingtu::nav::endpoint::CliConfig;
-using lingtu::nav::endpoint::CommandAck;
 using lingtu::nav::endpoint::CommandIngressController;
-using lingtu::nav::endpoint::CommandPayload;
 using lingtu::nav::endpoint::commandSafetyConfig;
-using lingtu::nav::endpoint::ControlAuthority;
 using lingtu::nav::endpoint::ControlLoopHealth;
 using lingtu::nav::endpoint::ControlLoopHealthConfig;
 using lingtu::nav::endpoint::ControlLoopRuntimeGuard;
 using lingtu::nav::endpoint::ControlLoopRuntimeGuardConfig;
 using lingtu::nav::endpoint::ControlLoopRuntimeGuardState;
-using lingtu::nav::endpoint::ControlLoopSample;
 using lingtu::nav::endpoint::ControlMode;
-using lingtu::nav::endpoint::controlModeName;
 using lingtu::nav::endpoint::DdsRuntime;
-using lingtu::nav::endpoint::decodeGoal;
-using lingtu::nav::endpoint::decodePath;
-using lingtu::nav::endpoint::decodeTwist;
-using lingtu::nav::endpoint::DynamicCluster;
 using lingtu::nav::endpoint::EstopLatchStore;
 using lingtu::nav::endpoint::evaluateCommandSafety;
-using lingtu::nav::endpoint::FrameDiagnostics;
 using lingtu::nav::endpoint::GlobalPlannerBackend;
 using lingtu::nav::endpoint::globalPlannerBackendName;
 using lingtu::nav::endpoint::GoalPlanActions;
-using lingtu::nav::endpoint::GoalPlanAdmissionContext;
-using lingtu::nav::endpoint::GoalPlanAdvanceContext;
 using lingtu::nav::endpoint::GoalPlanController;
 using lingtu::nav::endpoint::GoalPlanInspectionDecision;
 using lingtu::nav::endpoint::GoalPlanMapIdentityResult;
-using lingtu::nav::endpoint::GoalPlanOrigin;
 using lingtu::nav::endpoint::GoalPlanPathActivation;
 using lingtu::nav::endpoint::GoalPlanPathTolerance;
-using lingtu::nav::endpoint::GoalPlanRequest;
 using lingtu::nav::endpoint::GoalPlanStatus;
-using lingtu::nav::endpoint::GoalPlanTarget;
 using lingtu::nav::endpoint::headerFrameId;
 using lingtu::nav::endpoint::headerStampSeconds;
 using lingtu::nav::endpoint::InputGate;
 using lingtu::nav::endpoint::InputGateConfig;
 using lingtu::nav::endpoint::inputGateConfig;
-using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::InspectionActiveMap;
 using lingtu::nav::endpoint::InspectionCommandAck;
 using lingtu::nav::endpoint::InspectionCommandActions;
 using lingtu::nav::endpoint::InspectionCommandCoordinator;
-using lingtu::nav::endpoint::InspectionCommandRequest;
 using lingtu::nav::endpoint::InspectionRuntimeController;
-using lingtu::nav::endpoint::InspectionRuntimeEvidenceResult;
-using lingtu::nav::endpoint::InspectionRuntimeIntentKind;
-using lingtu::nav::endpoint::InspectionRuntimeMapIdentity;
-using lingtu::nav::endpoint::InspectionRuntimeRobotPosition;
-using lingtu::nav::endpoint::InspectionRuntimeTickInput;
 using lingtu::nav::endpoint::InspectionStatusFileWriter;
 using lingtu::nav::endpoint::LiveObstacleLayer;
 using lingtu::nav::endpoint::LiveObstacleLayerConfig;
@@ -132,8 +106,6 @@ using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopCoordinator;
 using lingtu::nav::endpoint::NavigationControlState;
-using lingtu::nav::endpoint::NavigationMapIdentity;
-using lingtu::nav::endpoint::NavigationStateContext;
 using lingtu::nav::endpoint::NavigationStateTracker;
 using lingtu::nav::endpoint::NavInputStateProjector;
 using lingtu::nav::endpoint::NavInputStateProjectorActions;
@@ -143,43 +115,24 @@ using lingtu::nav::endpoint::NavStatusPublisherActions;
 using lingtu::nav::endpoint::ObstacleMergeConfig;
 using lingtu::nav::endpoint::OdometrySpeedEvidence;
 using lingtu::nav::endpoint::OdometrySpeedMonitor;
-using lingtu::nav::endpoint::OperatorMotionAckSample;
 using lingtu::nav::endpoint::OperatorMotionAuthority;
-using lingtu::nav::endpoint::OperatorMotionClaim;
-using lingtu::nav::endpoint::OperatorMotionReceipt;
-using lingtu::nav::endpoint::OperatorMotionRelease;
-using lingtu::nav::endpoint::OperatorMotionSample;
-using lingtu::nav::endpoint::OperatorMotionStatusSample;
 using lingtu::nav::endpoint::parseArgs;
-using lingtu::nav::endpoint::PathEcho;
 using lingtu::nav::endpoint::PlanDiagnostics;
-using lingtu::nav::endpoint::PlannerInputClearSource;
-using lingtu::nav::endpoint::ResumeAutonomyRequest;
 using lingtu::nav::endpoint::runWithActiveOccupancy;
 using lingtu::nav::endpoint::runWithActiveOctomap;
-using lingtu::nav::endpoint::sourceStampError;
-using lingtu::nav::endpoint::sourceStampPredates;
 using lingtu::nav::endpoint::StatusMotionLayerSample;
 using lingtu::nav::endpoint::StatusPlannerSample;
-using lingtu::nav::endpoint::statusRuntimeStateFromEndpoint;
 using lingtu::nav::endpoint::StatusWriterConfig;
 using lingtu::nav::endpoint::StopConfirmation;
 using lingtu::nav::endpoint::StopConfirmationConfig;
 using lingtu::nav::endpoint::StopConfirmationState;
 using lingtu::nav::endpoint::TeleopAdmissionActions;
-using lingtu::nav::endpoint::TeleopAdmissionContext;
 using lingtu::nav::endpoint::TeleopAdmissionController;
-using lingtu::nav::endpoint::TeleopAdmissionRequest;
-using lingtu::nav::endpoint::TeleopDiagnostics;
-using lingtu::nav::endpoint::teleopSafetyConfig;
 using lingtu::nav::endpoint::TeleopTickActions;
 using lingtu::nav::endpoint::TeleopTickController;
-using lingtu::nav::endpoint::TeleopTickInput;
 using lingtu::nav::endpoint::TeleopTickPlannerInputs;
-using lingtu::nav::endpoint::textData;
 using lingtu::nav::endpoint::TimingDiagnostics;
 using lingtu::nav::endpoint::TransformBuffer;
-using lingtu::nav::endpoint::TraversabilityGrid;
 using CommandKind = lingtu::message::NavigationCommandKind;
 using ExplorationExecutionGridView = lingtu::nav::endpoint::ExplorationExecutionGridView;
 using ExplorationSegmentAck = lingtu::nav::endpoint::ExplorationSegmentAck;
@@ -232,7 +185,6 @@ std::uint64_t headerStampNanoseconds(const lingtu_dds_Header &header) {
          static_cast<std::uint64_t>(header.stamp.nanosec);
 }
 
-using lingtu::nav::endpoint::commandIngressRequestFromDds;
 using lingtu::nav::endpoint::elapsedMs;
 using lingtu::nav::endpoint::EndpointLoopContext;
 using lingtu::nav::endpoint::EndpointState;
@@ -355,10 +307,8 @@ int main(int argc, char **argv) {
 
     EndpointState state;
 
-    // -- Reference aliases (removed as modules are extracted in Batch 3) ------
-    auto &odom_body = state.odom_body;
+    // -- Setup aliases shared by the controller wiring below ------------------
     auto &map_body = state.map_body;
-    auto &map_odom_tf = state.map_odom_tf;
     auto &obstacle_xyzh = state.obstacle_xyzh;
     auto &terrain_xyzh = state.terrain_xyzh;
     auto &terrain_ext_xyzh = state.terrain_ext_xyzh;
@@ -369,12 +319,8 @@ int main(int argc, char **argv) {
     auto &last_terrain_ext_receive_s = state.last_terrain_ext_receive_s;
     auto &last_traversability_receive_s = state.last_traversability_receive_s;
     auto &last_odom_s = state.last_odom_s;
-    auto &last_odom_linear_speed_mps = state.last_odom_linear_speed_mps;
-    auto &last_odom_angular_speed_radps = state.last_odom_angular_speed_radps;
-    auto &driver_authority_previous = state.driver_authority_previous;
     auto &teleop_receive_time = state.teleop_receive_time;
     auto &teleop_received = state.teleop_received;
-    auto &input_gate_state = state.input_gate_state;
     auto &last_plan = state.last_plan;
     auto &last_local = state.last_local;
     auto &last_teleop = state.last_teleop;
@@ -388,16 +334,7 @@ int main(int argc, char **argv) {
     auto &path_echo = state.path_echo;
     auto &odom_generation = state.odom_generation;
     auto &frame_epoch = state.frame_epoch;
-    auto &goal_count = state.goal_count;
-    auto &cancel_count = state.cancel_count;
-    auto &teleop_cmd_count = state.teleop_cmd_count;
-    auto &teleop_output_count = state.teleop_output_count;
-    auto &teleop_stop_count = state.teleop_stop_count;
-    auto &teleop_slow_count = state.teleop_slow_count;
-    auto &teleop_limited_count = state.teleop_limited_count;
     auto &path_count = state.path_count;
-    auto &plan_fail_count = state.plan_fail_count;
-    auto &output_count = state.output_count;
     auto &cmd_vel_count = state.cmd_vel_count;
     auto &autonomy_request_not_before_s = state.autonomy_request_not_before_s;
 
@@ -702,8 +639,6 @@ int main(int argc, char **argv) {
       last_local = LocalDiagnostics{};
     };
     GoalPlanController goal_plan(std::move(global_planner), std::move(goal_plan_actions));
-    std::optional<NavigationMapIdentity> navigation_map_identity;
-    double last_navigation_map_identity_refresh_s = 0.0;
     auto sync_goal_plan_diagnostics = [&]() {
       const auto snapshot = goal_plan.snapshot();
       const auto &diagnostics = snapshot.diagnostics;
@@ -898,7 +833,7 @@ int main(int argc, char **argv) {
                                     ack.reason.c_str(), ack.run_id.c_str());
     };
     inspection_command_actions.request_status = [&]() { inspection_runtime.requestStatus(); };
-    inspection_command_actions.now_s = []() { return nowSeconds(); };
+    inspection_command_actions.now_s = nowSeconds;
     InspectionCommandCoordinator inspection_command_coordinator(
         inspection_executor, std::move(inspection_command_actions));
 
@@ -924,7 +859,7 @@ int main(int argc, char **argv) {
 
     TeleopTickActions teleop_tick_actions;
     teleop_tick_actions.teleop_receive_age_s = teleop_receive_age_s;
-    teleop_tick_actions.steady_now_s = []() { return steadySeconds(); };
+    teleop_tick_actions.steady_now_s = steadySeconds;
     teleop_tick_actions.compute_planner_inputs = [&](TimingDiagnostics &tick_timing) {
       const auto inputs = computePlannerInputs(
           cfg, obstacle_merge_config, traversability_grid, last_traversability_receive_s,
@@ -947,7 +882,7 @@ int main(int argc, char **argv) {
     TeleopTickController teleop_tick(std::move(teleop_tick_actions));
 
     AutonomyTickActions autonomy_tick_actions;
-    autonomy_tick_actions.steady_now_s = []() { return steadySeconds(); };
+    autonomy_tick_actions.steady_now_s = steadySeconds;
     autonomy_tick_actions.compute_planner_inputs = [&](TimingDiagnostics &tick_timing) {
       const auto inputs = computePlannerInputs(
           cfg, obstacle_merge_config, traversability_grid, last_traversability_receive_s,
@@ -976,13 +911,11 @@ int main(int argc, char **argv) {
     EndpointLoopContext loop_ctx{
         cfg,
         gate_cfg,
-        obstacle_merge_config,
         safety_config,
         operator_motion_interface_enabled,
         dds,
         state,
         nav,
-        live_obstacles,
         inspection_status_writer,
         input_projector,
         goal_plan,
@@ -1002,7 +935,6 @@ int main(int argc, char **argv) {
         navigation_state,
         active_map_identity,
         current_map_identity,
-        clear_motion_outputs,
         sync_goal_plan_diagnostics,
         control_loop_guard_latched,
         current_timing,

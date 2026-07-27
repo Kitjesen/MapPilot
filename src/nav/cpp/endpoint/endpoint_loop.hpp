@@ -1,7 +1,6 @@
 #pragma once
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -24,7 +23,6 @@ namespace lingtu::nav::endpoint {
 
 struct CliConfig;
 struct InputGateConfig;
-struct ObstacleMergeConfig;
 struct CommandSafetyConfig;
 class DdsRuntime;
 struct EndpointState;
@@ -44,7 +42,6 @@ class ControlLoopRuntimeGuard;
 class OperatorMotionAuthority;
 class CommandIngressController;
 class NavigationStateTracker;
-class LiveObstacleLayer;
 class InspectionStatusFileWriter;
 
 /// All external state the endpoint main-loop needs.  Constructed once in
@@ -54,7 +51,6 @@ struct EndpointLoopContext {
   // -- Config (immutable) ---------------------------------------------------
   const CliConfig &cfg;
   const InputGateConfig &gate_cfg;
-  const ObstacleMergeConfig &obstacle_merge_config;
   const CommandSafetyConfig &safety_config;
   bool operator_motion_interface_enabled;
 
@@ -62,7 +58,6 @@ struct EndpointLoopContext {
   DdsRuntime &dds;
   EndpointState &state;
   lingtu::nav::plan::NavLoop &nav;
-  LiveObstacleLayer &live_obstacles;
   InspectionStatusFileWriter &inspection_status_writer;
 
   // -- Controllers ----------------------------------------------------------
@@ -86,7 +81,6 @@ struct EndpointLoopContext {
   // -- Callbacks wired in the setup phase -----------------------------------
   std::function<std::optional<std::pair<std::string, std::int64_t>>()> active_map_identity;
   std::function<GoalPlanMapIdentityResult()> current_map_identity;
-  std::function<bool(const std::string &)> clear_motion_outputs;
   std::function<void()> sync_goal_plan_diagnostics;
   std::function<bool()> control_loop_guard_latched;
 
