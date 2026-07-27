@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 
-from nav.services.goals import GoalService
-from nav.skills import NavigationSkillsModule, NavSkills
 from lingtu.assembly.stacks.navigation import navigation
 from lingtu.assembly.wires.navigation import navigation_support_specs
+from nav.services.goals import GoalService
+from nav.skills import NavigationSkillsModule, NavSkills
+from runtime.msgs.nav import NavigationCommandKind, NavigationCommandReceipt
 
 
 def _wire(skills: NavSkills, goals: GoalService) -> None:
@@ -48,12 +49,30 @@ def test_nav_skills_routes_goal_through_goal_service_ack() -> None:
 def test_nav_skills_preserves_request_id_through_native_command_capability() -> None:
     class Commands:
         def __init__(self) -> None:
+            self.task_id = ""
             self.request_id = ""
 
-        def send_goal(self, x, y, z, yaw, *, request_id=None) -> bool:
+        def send_goal(
+            self,
+            x,
+            y,
+            z,
+            yaw,
+            *,
+            task_id,
+            request_id=None,
+        ) -> NavigationCommandReceipt:
             del x, y, z, yaw
+            self.task_id = str(task_id or "")
             self.request_id = str(request_id or "")
-            return True
+            return NavigationCommandReceipt(
+                accepted=True,
+                kind=int(NavigationCommandKind.GOAL),
+                task_id=self.task_id,
+                request_id=self.request_id,
+                endpoint_timestamp_s=123.0,
+                reason="accepted",
+            )
 
     commands = Commands()
     skills = NavSkills()
@@ -66,6 +85,8 @@ def test_nav_skills_preserves_request_id_through_native_command_capability() -> 
     result = json.loads(skills.navigate_to(1.0, 2.0))
 
     assert result["accepted"] is True
+    assert commands.task_id == result["task_id"]
+    assert result["task_id"] != result["request_id"]
     assert commands.request_id == result["request_id"]
     assert result["sink"] == "native_dds"
 

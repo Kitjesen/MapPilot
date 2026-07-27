@@ -1344,7 +1344,7 @@ def test_command_journal_replays_duplicate_request_id_without_republish():
     assert nav.calls == [(1.0, 2.0, 0.0)]
     assert model.schema_version == 1
     assert model.ok is True
-    assert model.status == "ok"
+    assert model.status == "accepted"
     assert model.goal == [1.0, 2.0, 0.0]
     assert model.command.name == "goal"
     assert model.command.request_id == "goal-001"
@@ -1562,7 +1562,7 @@ def test_control_commands_publish_command_ack_events():
     assert second["command"]["replay"] is True
     assert first_event["type"] == "command_ack"
     assert first_event["data"]["ok"] is True
-    assert first_event["data"]["status"] == "ok"
+    assert first_event["data"]["status"] == "accepted"
     assert first_event["data"]["status_code"] == 200
     assert first_event["data"]["command"]["name"] == "goal"
     assert first_event["data"]["command"]["request_id"] == "goal-ack-001"
@@ -1629,9 +1629,31 @@ def test_goal_route_uses_persistent_native_client_when_configured(monkeypatch):
         def __init__(self, commands) -> None:
             self.commands = commands
 
-        def submit_goal(self, goal, *, request_id=None, action="goal"):
+        def submit_goal(
+            self,
+            goal,
+            *,
+            task_id=None,
+            request_id=None,
+            action="goal",
+        ):
             self.commands.send_goal(goal.x, goal.y, goal.z, goal.yaw, request_id=request_id)
-            return {"accepted": True, "success": True, "action": action}
+            resolved_task_id = task_id or "task-generated-by-fake-goals"
+            return {
+                "accepted": True,
+                "success": True,
+                "action": action,
+                "task_id": resolved_task_id,
+                "request_id": request_id,
+                "native_task_id": resolved_task_id,
+                "native_request_id": request_id,
+                "native_ack": {
+                    "accepted": True,
+                    "task_id": resolved_task_id,
+                    "request_id": request_id,
+                },
+                "sink": "native_dds",
+            }
 
     client = FakeClient()
 
@@ -1693,8 +1715,8 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
 
     class MissingGoals:
-        def submit_goal(self, goal, *, request_id=None, action="goal"):
-            del goal, request_id, action
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
+            del goal, task_id, request_id, action
             return {
                 "accepted": False,
                 "success": False,
@@ -1733,8 +1755,8 @@ def test_goal_route_surfaces_native_business_rejection(monkeypatch):
     from gateway.schemas import GoalRequest
 
     class RejectingGoals:
-        def submit_goal(self, goal, *, request_id=None, action="goal"):
-            del goal, request_id, action
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
+            del goal, task_id, request_id, action
             return {
                 "accepted": False,
                 "success": False,
@@ -2669,7 +2691,10 @@ def test_navigation_cancel_publishes_cancel_without_motion_outputs():
     model = ControlCommandResponse.model_validate(result)
 
     assert model.ok is True
-    assert model.status == "cancelled"
+    assert model.status == "cancel_requested"
+    assert model.stage == "local_published"
+    assert model.execution_confirmed is False
+    assert model.task_id is None
     assert model.reason == "operator_cancel"
     assert model.command.name == "navigation_cancel"
     assert model.command.request_id == "cancel-001"
@@ -2928,3 +2953,170 @@ def test_bootstrap_and_health_expose_command_policy():
     assert policy["client_id_field"] == "client_id"
     assert policy["rate_policy_hz"]["cmd_vel"] == 20.0
     assert health["gateway"]["commands"]["rate_policy_enforcement"] == "advisory"
+
+
+def test_goal_route_returns_goal_service_task_receipt_without_claiming_execution():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ControlCommandResponse, GoalRequest
+
+    class GeneratedTaskGoals:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def submit_goal(
+            self,
+            goal,
+            *,
+            task_id=None,
+            request_id=None,
+            action="goal",
+        ):
+            self.calls.append((goal, task_id, request_id, action))
+            return {
+                "accepted": True,
+                "success": True,
+                "task_id": "task-generated-by-goal-service",
+                "request_id": request_id,
+                "native_task_id": "task-generated-by-goal-service",
+                "native_request_id": request_id,
+                "native_ack": {
+                    "accepted": True,
+                    "task_id": "task-generated-by-goal-service",
+                    "request_id": request_id,
+                },
+                "sink": "native_dds",
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    goals = GeneratedTaskGoals()
+    gateway.on_system_modules(
+        {"nav.mission": _FakePlanPreviewNav(), "nav.goals": goals}
+    )
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    result = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                request_id="attempt-1",
+                client_id="web",
+            )
+        )
+    )
+    model = ControlCommandResponse.model_validate(result)
+
+    assert model.task_id == "task-generated-by-goal-service"
+    assert model.native_request_id == "attempt-1"
+    assert model.stage == "native_acknowledged"
+    assert model.execution_confirmed is False
+    assert goals.calls[0][1:] == (None, "attempt-1", "goal")
+    assert gateway.goal_pose.msg_count == 0
+
+
+def test_exact_task_cancel_forwards_path_identity_and_reports_request_stage():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CancelRequest, ControlCommandResponse
+
+    class ExactCancelGoals:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            self.calls.append((reason, task_id, request_id))
+            return {
+                "accepted": True,
+                "success": True,
+                "task_id": task_id,
+                "request_id": request_id,
+                "native_task_id": task_id,
+                "native_request_id": request_id,
+                "native_ack": {
+                    "accepted": True,
+                    "task_id": task_id,
+                    "request_id": request_id,
+                },
+                "sink": "native_dds",
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    goals = ExactCancelGoals()
+    gateway.on_system_modules({"nav.goals": goals})
+    post_cancel = _endpoint(
+        gateway,
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+    )
+
+    result = asyncio.run(
+        post_cancel(
+            "task-7",
+            CancelRequest(
+                reason="operator_cancel",
+                request_id="cancel-attempt-1",
+                client_id="web",
+            ),
+        )
+    )
+    model = ControlCommandResponse.model_validate(result)
+
+    assert model.status == "cancel_requested"
+    assert model.task_id == "task-7"
+    assert model.stage == "native_acknowledged"
+    assert model.execution_confirmed is False
+    assert goals.calls == [("operator_cancel", "task-7", "cancel-attempt-1")]
+
+
+def test_legacy_native_cancel_without_task_id_fails_closed():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CancelRequest, GatewayErrorResponse
+
+    class NativeCancelGoals:
+        def __init__(self) -> None:
+            self.task_ids = []
+
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            del reason, request_id
+            self.task_ids.append(task_id)
+            return {
+                "accepted": False,
+                "success": False,
+                "message": "task_id is required to cancel a native navigation task",
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    goals = NativeCancelGoals()
+    gateway.on_system_modules({"nav.goals": goals})
+    post_cancel = _endpoint(gateway, "/api/v1/navigation/cancel")
+
+    response = asyncio.run(
+        post_cancel(
+            CancelRequest(
+                reason="operator_cancel",
+                request_id="cancel-attempt-2",
+                client_id="web",
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "native_command_rejected"
+    assert "task_id is required" in model.detail["reason"]
+    assert goals.task_ids == [None]
+    assert gateway.cancel.msg_count == 0
+
+
+def test_navigation_task_and_request_identity_must_be_distinct():
+    from gateway.schemas import GoalRequest
+
+    with pytest.raises(ValueError, match="distinct"):
+        GoalRequest(
+            x=1.0,
+            y=2.0,
+            task_id="same-id",
+            request_id="same-id",
+        )

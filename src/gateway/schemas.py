@@ -170,6 +170,7 @@ class GoalRequest(BaseModel):
     acceptance_radius_m: float | None = Field(default=None, gt=0, le=20)
     max_speed_mps: float | None = Field(default=None, gt=0, le=5)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    task_id: str | None = Field(default=None, max_length=128)
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
 
@@ -181,6 +182,14 @@ class GoalRequest(BaseModel):
         if not math.isfinite(v):
             raise ValueError("must be finite")
         return v
+
+    @model_validator(mode="after")
+    def distinct_task_and_request_identity(self) -> GoalRequest:
+        task_id = str(self.task_id or "").strip()
+        request_id = str(self.request_id or "").strip()
+        if task_id and task_id == request_id:
+            raise ValueError("task_id and request_id must be distinct")
+        return self
 
 
 class ClickNavRequest(BaseModel):
@@ -194,6 +203,7 @@ class ClickNavRequest(BaseModel):
     acceptance_radius_m: float | None = Field(default=None, gt=0, le=20)
     max_speed_mps: float | None = Field(default=None, gt=0, le=5)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    task_id: str | None = Field(default=None, max_length=128)
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
 
@@ -205,6 +215,14 @@ class ClickNavRequest(BaseModel):
         if not math.isfinite(v):
             raise ValueError("must be finite")
         return v
+
+    @model_validator(mode="after")
+    def distinct_task_and_request_identity(self) -> ClickNavRequest:
+        task_id = str(self.task_id or "").strip()
+        request_id = str(self.request_id or "").strip()
+        if task_id and task_id == request_id:
+            raise ValueError("task_id and request_id must be distinct")
+        return self
 
 
 class PlanPreviewRequest(BaseModel):
@@ -355,8 +373,17 @@ class StopRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: str = Field(default="client_cancel", max_length=256)
+    task_id: str | None = Field(default=None, max_length=128)
     request_id: str | None = Field(default=None, max_length=128)
     client_id: str = Field(default="unknown", max_length=128)
+
+    @model_validator(mode="after")
+    def distinct_task_and_request_identity(self) -> CancelRequest:
+        task_id = str(self.task_id or "").strip()
+        request_id = str(self.request_id or "").strip()
+        if task_id and task_id == request_id:
+            raise ValueError("task_id and request_id must be distinct")
+        return self
 
 
 class ModeRequest(BaseModel):
@@ -1010,6 +1037,11 @@ class ControlCommandResponse(GatewayResponseModel):
     ok: bool = True
     status: str
     command: CommandReceipt
+    task_id: str | None = None
+    native_request_id: str | None = None
+    native_ack: dict[str, Any] | None = None
+    stage: str | None = None
+    execution_confirmed: bool = False
     goal: list[float] | None = None
     yaw: float | None = None
     frame_id: str | None = None

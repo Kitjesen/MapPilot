@@ -6,9 +6,11 @@ import itertools
 import json
 import math
 import time
+import uuid
 from typing import Any
 
 from runtime import In, Module, Out
+from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.registry import register
 from runtime.runtime_interface import map_frame_id, normalize_frame_id
@@ -167,17 +169,28 @@ class GoalService(Module, layer=6):
         self,
         goal: PoseStamped,
         *,
+        task_id: str | None = None,
         request_id: str | None = None,
         action: str = "goal_pose",
     ) -> dict[str, Any]:
         """Validate and synchronously admit one typed goal."""
 
+        resolved_task_id = str(task_id or "").strip() or self._new_task_id()
         resolved_request_id = str(request_id or "").strip() or self._new_request_id()
+        if resolved_task_id == resolved_request_id:
+            return self._publish_status(
+                action,
+                False,
+                "task_id and request_id must be distinct",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+            )
         if not isinstance(goal, PoseStamped):
             return self._publish_status(
                 action,
                 False,
                 "goal_request must be PoseStamped",
+                task_id=resolved_task_id,
                 request_id=resolved_request_id,
             )
         frame_id = normalize_frame_id(getattr(goal, "frame_id", None))
@@ -196,6 +209,7 @@ class GoalService(Module, layer=6):
                 action,
                 False,
                 str(exc),
+                task_id=resolved_task_id,
                 request_id=resolved_request_id,
                 frame_id=frame_id,
             )
@@ -205,26 +219,43 @@ class GoalService(Module, layer=6):
             ts=getattr(goal, "ts", 0.0),
             frame_id=frame_id,
         )
-        dispatch_error = self._dispatch_goal(
+        dispatch_result = self._dispatch_goal(
             normalized_goal,
+            task_id=resolved_task_id,
             request_id=resolved_request_id,
         )
+        dispatch_error = dispatch_result if isinstance(dispatch_result, str) else None
         if dispatch_error:
             return self._publish_status(
                 action,
                 False,
                 dispatch_error,
+                task_id=resolved_task_id,
                 request_id=resolved_request_id,
                 frame_id=normalized_goal.frame_id,
                 sink=self._sink_name,
             )
+        receipt_fields = self._receipt_status_fields(dispatch_result)
+        if isinstance(dispatch_result, NavigationCommandReceipt) and not dispatch_result.accepted:
+            return self._publish_status(
+                action,
+                False,
+                f"goal rejected by native endpoint: {dispatch_result.reason or 'rejected'}",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                frame_id=frame_id,
+                sink=self._sink_name,
+                **receipt_fields,
+            )
         return self._publish_status(
             action,
             True,
-            "goal dispatched",
+            "goal accepted by native endpoint" if receipt_fields else "goal published",
+            task_id=resolved_task_id,
             request_id=resolved_request_id,
             frame_id=frame_id,
             sink=self._sink_name,
+            **receipt_fields,
             target={
                 "x": normalized_goal.x,
                 "y": normalized_goal.y,
@@ -242,17 +273,40 @@ class GoalService(Module, layer=6):
         self,
         reason: str = "cancel",
         *,
+        task_id: str | None = None,
         request_id: str | None = None,
         action: str = "cancel",
     ) -> dict[str, Any]:
         """Synchronously admit one cancellation request."""
 
+        resolved_task_id = str(task_id or "").strip()
         resolved_request_id = str(request_id or "").strip() or self._new_request_id()
         if self._command_module:
-            try:
-                self._call_commands(
-                    "cancel",
+            if not resolved_task_id:
+                return self._publish_status(
+                    action,
+                    False,
+                    "task_id is required to cancel a native navigation task",
+                    task_id=resolved_task_id,
+                    request_id=resolved_request_id,
                     reason=reason,
+                    sink=self._sink_name,
+                )
+            if resolved_task_id == resolved_request_id:
+                return self._publish_status(
+                    action,
+                    False,
+                    "task_id and request_id must be distinct",
+                    task_id=resolved_task_id,
+                    request_id=resolved_request_id,
+                    reason=reason,
+                    sink=self._sink_name,
+                )
+            try:
+                result = self._call_commands(
+                    "cancel_task",
+                    reason=reason,
+                    task_id=resolved_task_id,
                     request_id=resolved_request_id,
                 )
             except RuntimeError as exc:
@@ -260,18 +314,36 @@ class GoalService(Module, layer=6):
                     action,
                     False,
                     str(exc),
+                    task_id=resolved_task_id,
                     request_id=resolved_request_id,
                     reason=reason,
+                    sink=self._sink_name,
                 )
         else:
+            result = None
             self.cancel.publish(reason)
+        receipt_fields = self._receipt_status_fields(result)
+        if isinstance(result, NavigationCommandReceipt) and not result.accepted:
+            return self._publish_status(
+                action,
+                False,
+                f"cancel rejected by native endpoint: {result.reason or 'rejected'}",
+                task_id=resolved_task_id,
+                request_id=resolved_request_id,
+                reason=reason,
+                sink=self._sink_name,
+                **receipt_fields,
+            )
         return self._publish_status(
             action,
             True,
-            "cancel dispatched",
+            "cancel accepted by native endpoint" if receipt_fields else "cancel published",
+            task_id=resolved_task_id,
             request_id=resolved_request_id,
             reason=reason,
+            state="cancel_requested",
             sink=self._sink_name,
+            **receipt_fields,
         )
 
     def _on_command(self, raw: str) -> None:
@@ -287,7 +359,8 @@ class GoalService(Module, layer=6):
         request_id = self._request_id_from(cmd)
         action = str(cmd.get("action") or cmd.get("type") or "").strip().lower()
         if action in {"goto", "go", "goal", "navigate", "target"}:
-            self._publish_goal(cmd, action=action, request_id=request_id)
+            task_id = self._task_id_from(cmd) or self._new_task_id()
+            self._publish_goal(cmd, action=action, task_id=task_id, request_id=request_id)
         elif action in {"building_navigate", "building"}:
             self._dispatch_building(cmd, action=action, request_id=request_id)
         elif action in {"inspection", "patrol", "route"}:
@@ -296,7 +369,8 @@ class GoalService(Module, layer=6):
             self._dispatch_inspection_lifecycle(cmd, action=action, request_id=request_id)
         elif action in {"cancel", "stop"}:
             reason = str(cmd.get("reason") or action)
-            self.submit_cancel(reason, request_id=request_id, action=action)
+            task_id = self._task_id_from(cmd)
+            self.submit_cancel(reason, task_id=task_id, request_id=request_id, action=action)
         else:
             self._publish_status(
                 action or "unknown",
@@ -391,12 +465,19 @@ class GoalService(Module, layer=6):
         cmd: dict[str, Any],
         *,
         action: str,
+        task_id: str,
         request_id: str,
     ) -> None:
         try:
             target = self._target_mapping(cmd)
         except TypeError as exc:
-            self._publish_status(action, False, str(exc), request_id=request_id)
+            self._publish_status(
+                action,
+                False,
+                str(exc),
+                task_id=task_id,
+                request_id=request_id,
+            )
             return
         frame_id = self._frame_id(target, cmd)
         try:
@@ -413,51 +494,39 @@ class GoalService(Module, layer=6):
                 action,
                 False,
                 str(exc),
+                task_id=task_id,
                 request_id=request_id,
                 frame_id=frame_id,
             )
             return
 
-        dispatch_error = self._dispatch_goal(goal, request_id=request_id)
-        if dispatch_error:
-            self._publish_status(
-                action,
-                False,
-                dispatch_error,
-                request_id=request_id,
-                frame_id=goal.frame_id,
-                sink=self._sink_name,
-            )
-            return
-        self._publish_status(
-            action,
-            True,
-            "goal dispatched",
+        self.submit_goal(
+            goal,
+            task_id=task_id,
             request_id=request_id,
-            frame_id=frame_id,
-            sink=self._sink_name,
-            target={"x": goal.x, "y": goal.y, "z": goal.z, "yaw": goal.yaw},
+            action=action,
         )
 
     def _dispatch_goal(
         self,
         goal: PoseStamped,
         *,
+        task_id: str,
         request_id: str,
-    ) -> str | None:
+    ) -> NavigationCommandReceipt | str | None:
         if not self._command_module:
             self.goal_pose.publish(goal)
             return None
         try:
-            self._call_commands(
+            return self._call_commands(
                 "send_goal",
                 x=goal.x,
                 y=goal.y,
                 z=goal.z,
                 yaw=goal.yaw,
+                task_id=task_id,
                 request_id=request_id,
             )
-            return None
         except RuntimeError as exc:
             return str(exc)
 
@@ -621,9 +690,16 @@ class GoalService(Module, layer=6):
     def _new_request_id(self) -> str:
         return f"nav-{time.time_ns()}-{next(self._request_sequence)}"
 
+    def _new_task_id(self) -> str:
+        return f"nav-task-{uuid.uuid4().hex}"
+
     def _request_id_from(self, command: dict[str, Any]) -> str:
         request_id = str(command.get("request_id") or "").strip()
         return request_id or self._new_request_id()
+
+    def _task_id_from(self, command: dict[str, Any]) -> str:
+        task_id = str(command.get("task_id") or "").strip()
+        return task_id
 
     @property
     def _sink_name(self) -> str:
@@ -636,11 +712,48 @@ class GoalService(Module, layer=6):
         if not callable(operation):
             raise RuntimeError(f"navigation command capability does not implement {method}")
         try:
-            return operation(**kwargs)
+            result = operation(**kwargs)
         except RuntimeError:
             raise
         except Exception as exc:
             raise RuntimeError(str(exc)) from exc
+        if method in {"send_goal", "cancel_task"}:
+            if not isinstance(result, NavigationCommandReceipt):
+                raise RuntimeError(
+                    f"navigation command {method} returned an invalid task receipt"
+                )
+            expected_kind = (
+                NavigationCommandKind.GOAL
+                if method == "send_goal"
+                else NavigationCommandKind.CANCEL
+            )
+            if result.kind != int(expected_kind):
+                raise RuntimeError(
+                    f"navigation command {method} returned the wrong command kind"
+                )
+            expected_task_id = str(kwargs.get("task_id") or "").strip()
+            if result.task_id != expected_task_id:
+                raise RuntimeError(
+                    f"navigation command {method} returned the wrong task_id"
+                )
+            expected_request_id = str(kwargs.get("request_id") or "").strip()
+            if expected_request_id and not (
+                result.request_id == expected_request_id
+                or result.request_id.startswith(f"{expected_request_id}-clock-retry-")
+            ):
+                raise RuntimeError(
+                    f"navigation command {method} returned the wrong request_id"
+                )
+        return result
+
+    @staticmethod
+    def _receipt_status_fields(result: Any) -> dict[str, Any]:
+        if not isinstance(result, NavigationCommandReceipt):
+            return {}
+        return {
+            "native_request_id": result.request_id,
+            "native_ack": result.to_dict(),
+        }
 
     @staticmethod
     def _route_revision(value: Any) -> int:

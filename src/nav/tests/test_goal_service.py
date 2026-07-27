@@ -11,6 +11,10 @@ import pytest
 
 from nav.services.goals import GoalService
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
+from runtime.msgs.nav import (
+    NavigationCommandKind,
+    NavigationCommandReceipt,
+)
 
 
 @pytest.fixture
@@ -136,9 +140,16 @@ class TestGoalService:
             def __init__(self) -> None:
                 self.goals = []
 
-            def send_goal(self, x, y, z, yaw, request_id=None) -> bool:
-                self.goals.append((x, y, z, yaw, request_id))
-                return True
+            def send_goal(self, x, y, z, yaw, *, task_id=None, request_id=None):
+                self.goals.append((x, y, z, yaw, task_id, request_id))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="accepted",
+                )
 
         commands = FakeCommands()
         service = GoalService(command_module="nav.commands")
@@ -161,18 +172,109 @@ class TestGoalService:
 
         assert emitted == []
         assert commands.goals[0][:4] == (1.0, 2.0, 0.3, pytest.approx(0.4))
-        assert str(commands.goals[0][4]).startswith("nav-")
+        assert str(commands.goals[0][4]).startswith("nav-task-")
+        generated_task_id = str(commands.goals[0][4])
+        assert len(generated_task_id) == len("nav-task-") + 32
+        int(generated_task_id.removeprefix("nav-task-"), 16)
+        assert generated_task_id != str(commands.goals[0][5])
+        assert str(commands.goals[0][5]).startswith("nav-")
         assert statuses[-1]["success"] is True
         assert statuses[-1]["sink"] == "native_dds"
 
-    def test_native_cancel_uses_assembled_command_capability(self):
+    def test_native_task_receipts_preserve_task_identity_across_goal_and_cancel(self):
+        class FakeCommands:
+            def __init__(self) -> None:
+                self.calls = []
+
+            def send_goal(
+                self,
+                x,
+                y,
+                z,
+                yaw,
+                *,
+                task_id=None,
+                request_id=None,
+            ):
+                self.calls.append(("goal", task_id, request_id, x, y, z, yaw))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="accepted",
+                )
+
+            def cancel_task(self, task_id, reason, *, request_id=None):
+                self.calls.append(("cancel", task_id, request_id, reason))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.CANCEL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=101.0,
+                    reason="cancel_requested",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        goal = PoseStamped(
+            pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+            frame_id="map",
+        )
+
+        accepted = service.submit_goal(
+            goal,
+            task_id="navigation-task-1",
+            request_id="goal-attempt-1",
+        )
+        cancel_requested = service.submit_cancel(
+            "operator_cancel",
+            task_id="navigation-task-1",
+            request_id="cancel-attempt-1",
+        )
+
+        assert accepted["accepted"] is True
+        assert accepted["task_id"] == "navigation-task-1"
+        assert accepted["request_id"] == "goal-attempt-1"
+        assert accepted["state"] == "accepted"
+        assert accepted["native_request_id"] == "goal-attempt-1"
+        assert accepted["native_ack"]["accepted"] is True
+        assert cancel_requested["accepted"] is True
+        assert cancel_requested["task_id"] == "navigation-task-1"
+        assert cancel_requested["request_id"] == "cancel-attempt-1"
+        assert cancel_requested["state"] == "cancel_requested"
+        assert "cancelled" not in str(cancel_requested).lower()
+        assert cancel_requested["native_request_id"] == "cancel-attempt-1"
+        assert cancel_requested["native_ack"]["accepted"] is True
+        assert commands.calls == [
+            ("goal", "navigation-task-1", "goal-attempt-1", 1.0, 2.0, 0.0, 0.0),
+            (
+                "cancel",
+                "navigation-task-1",
+                "cancel-attempt-1",
+                "operator_cancel",
+            ),
+        ]
+
+    def test_native_cancel_without_task_identity_fails_closed(self):
         class FakeCommands:
             def __init__(self) -> None:
                 self.reasons = []
 
-            def cancel(self, reason, request_id=None) -> bool:
-                self.reasons.append((reason, request_id))
-                return True
+            def cancel_task(self, task_id, reason, *, request_id=None):
+                self.reasons.append((reason, task_id, request_id))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.CANCEL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=101.0,
+                    reason="cancel_requested",
+                )
 
         commands = FakeCommands()
         service = GoalService(command_module="nav.commands")
@@ -186,9 +288,100 @@ class TestGoalService:
         service.cancel_request._deliver("operator_cancel")
 
         assert emitted == []
-        assert commands.reasons[0][0] == "operator_cancel"
-        assert str(commands.reasons[0][1]).startswith("nav-")
+        assert commands.reasons == []
+        assert statuses[-1]["success"] is False
+        assert "task_id is required" in statuses[-1]["message"]
         assert statuses[-1]["sink"] == "native_dds"
+        assert statuses[-1]["state"] == "rejected"
+
+    def test_goal_rejects_equal_task_and_request_identity(self):
+        service = GoalService()
+        service.setup()
+        emitted = []
+        service.goal_pose.subscribe(emitted.append)
+
+        status = service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="same-identity",
+            request_id="same-identity",
+        )
+
+        assert emitted == []
+        assert status["accepted"] is False
+        assert "must be distinct" in status["message"]
+
+    @pytest.mark.parametrize("invalid_ack", [None, "queued", 1, {}, {"accepted": True}])
+    def test_native_goal_malformed_ack_is_not_reported_as_accepted(
+        self,
+        invalid_ack,
+    ):
+        class MalformedCommands:
+            def send_goal(self, x, y, z, yaw, *, task_id=None, request_id=None):
+                return invalid_ack
+
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": MalformedCommands()})
+        service.setup()
+        statuses = []
+        service.goal_status.subscribe(statuses.append)
+
+        service.goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            )
+        )
+
+        assert statuses[-1]["success"] is False
+        assert statuses[-1]["accepted"] is False
+        assert "invalid task receipt" in statuses[-1]["message"]
+
+    def test_native_goal_boolean_is_not_a_business_ack(self):
+        class RejectingCommands:
+            def send_goal(self, x, y, z, yaw, *, task_id=None, request_id=None) -> bool:
+                return False
+
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": RejectingCommands()})
+        service.setup()
+        statuses = []
+        service.goal_status.subscribe(statuses.append)
+
+        service.goal_request._deliver(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            )
+        )
+
+        assert statuses[-1]["success"] is False
+        assert statuses[-1]["accepted"] is False
+        assert "send_goal" in statuses[-1]["message"]
+        assert "invalid task receipt" in statuses[-1]["message"]
+
+    def test_native_cancel_boolean_is_not_a_business_ack(self):
+        class RejectingCommands:
+            def cancel_task(self, task_id, reason, *, request_id=None) -> bool:
+                return False
+
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": RejectingCommands()})
+        service.setup()
+
+        result = service.submit_cancel(
+            "operator_cancel",
+            task_id="navigation-task-rejected",
+            request_id="cancel-rejected",
+        )
+
+        assert result["success"] is False
+        assert result["accepted"] is False
+        assert result["request_id"] == "cancel-rejected"
+        assert "cancel" in result["message"]
+        assert "invalid task receipt" in result["message"]
 
     def test_native_inspection_uses_assembled_command_capability(self):
         class FakeCommands:

@@ -29,9 +29,15 @@ Gateway / GoalService / Explore
 - The endpoint is the authority. A successful DDS write is not admission; only
   a matching accepted ACK completes command submission. For goals this means
   `planning_started`, not that planning succeeded or the robot arrived.
-- A `request_id` identifies one immutable logical command. Retries may reuse it
-  only with the same kind and payload because the endpoint caches ACKs for
-  idempotency.
+- A `task_id` identifies one navigation task from admission through its single
+  terminal state. Goal, cancel, status, and audit records keep that identity.
+- A `request_id` identifies one immutable command attempt against that task.
+  Replaying the same attempt requires the same kind and payload; a distinct
+  cancel or replacement attempt uses a new request ID. The native client may
+  expose a suffixed `-clock-retry-N` attempt after a rejected clock-sync probe,
+  while the logical request ID remains unchanged.
+- An accepted command receipt proves endpoint admission only. It does not prove
+  that a safe velocity was published, the motors moved, or the task reached its
 
 ## Compatibility
 

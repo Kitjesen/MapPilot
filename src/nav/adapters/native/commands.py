@@ -10,6 +10,7 @@ from nav.adapters.native.abi import (
     NativeCommandSession,
     get_native_command_session,
 )
+from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
 
 NavigationClientError = NativeCommandClientError
 
@@ -51,6 +52,100 @@ class NativeNavigationClient:
         instance._owns_session = False
         session.ensure_navigation_abi()
         return instance
+
+    def start_task(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        yaw: float,
+        *,
+        task_id: str,
+        request_id: str,
+    ) -> NavigationCommandReceipt:
+        """Submit one product task and return its correlated business ACK."""
+
+        task, request = self._task_identity(task_id, request_id)
+        receipt = self._session.start_navigation_task(
+            task,
+            request,
+            float(x),
+            float(y),
+            float(z),
+            float(yaw),
+        )
+        return self._task_receipt(
+            receipt,
+            action="start_task",
+            expected_kind=NavigationCommandKind.GOAL,
+            task_id=task,
+            request_id=request,
+        )
+
+    def cancel_task(
+        self,
+        task_id: str,
+        reason: str = "cancel",
+        *,
+        request_id: str,
+    ) -> NavigationCommandReceipt:
+        """Cancel exactly one product task and return its business ACK."""
+
+        task, request = self._task_identity(task_id, request_id)
+        receipt = self._session.cancel_navigation_task(
+            task,
+            request,
+            str(reason or "cancel"),
+        )
+        return self._task_receipt(
+            receipt,
+            action="cancel_task",
+            expected_kind=NavigationCommandKind.CANCEL,
+            task_id=task,
+            request_id=request,
+        )
+
+    @staticmethod
+    def _task_identity(task_id: str, request_id: str) -> tuple[str, str]:
+        task = str(task_id or "").strip()
+        request = str(request_id or "").strip()
+        if not task:
+            raise ValueError("navigation task_id is required")
+        if not request:
+            raise ValueError("navigation request_id is required")
+        if task == request:
+            raise ValueError("navigation task_id and request_id must be distinct")
+        return task, request
+
+    @staticmethod
+    def _task_receipt(
+        receipt: object,
+        *,
+        action: str,
+        expected_kind: NavigationCommandKind,
+        task_id: str,
+        request_id: str,
+    ) -> NavigationCommandReceipt:
+        if not isinstance(receipt, NavigationCommandReceipt):
+            raise RuntimeError(f"native navigation {action} returned an invalid receipt")
+        if not isinstance(receipt.accepted, bool):
+            raise RuntimeError(f"native navigation {action} returned an invalid accepted value")
+        if int(receipt.kind) != int(expected_kind):
+            raise RuntimeError(f"native navigation {action} returned the wrong command kind")
+        if receipt.task_id != task_id:
+            raise RuntimeError(f"native navigation {action} returned the wrong task_id")
+        if not NativeNavigationClient._request_identity_matches(
+            receipt.request_id,
+            request_id,
+        ):
+            raise RuntimeError(f"native navigation {action} returned the wrong request_id")
+        if not receipt.reason.strip():
+            raise RuntimeError(f"native navigation {action} returned an empty reason")
+        return receipt
+
+    @staticmethod
+    def _request_identity_matches(actual: str, requested: str) -> bool:
+        return actual == requested or actual.startswith(f"{requested}-clock-retry-")
 
     def send_goal(
         self,

@@ -4,7 +4,10 @@ from pathlib import Path
 
 import pytest
 
-from nav.adapters.native.abi import NativeCommandClientError
+from nav.adapters.native.abi import (
+    NATIVE_COMMAND_ABI_VERSION,
+    NativeCommandClientError,
+)
 from nav.adapters.native.exploration_commands import NativeExplorationCommandClient
 
 
@@ -21,7 +24,7 @@ class _Function:
 class _Library:
     def __init__(self, *, capabilities: int = 0x07) -> None:
         self.calls: list[tuple[str, tuple[object, ...]]] = []
-        self.lingtu_nav_client_abi_version = _Function(lambda: 1)
+        self.lingtu_nav_client_abi_version = _Function(lambda: NATIVE_COMMAND_ABI_VERSION)
         self.lingtu_nav_client_capabilities = _Function(lambda: capabilities)
         self.lingtu_nav_client_create = _Function(lambda _domain: 1)
         self.lingtu_nav_client_destroy = _Function(lambda _handle: None)

@@ -27,15 +27,15 @@ from gateway.schemas import (
     StopRequest,
     VisualServoRequest,
 )
-from gateway.services.control_commands import ControlCommandService
-from gateway.services.goal_builder import construct_goal_from_request
-from gateway.services.native_control import (
-    clear_estop as native_clear_estop,
-)
 from gateway.services.command_boundary import (
     CommandBoundaryError,
     submit_cancel,
     submit_goal,
+)
+from gateway.services.control_commands import ControlCommandService
+from gateway.services.goal_builder import construct_goal_from_request
+from gateway.services.native_control import (
+    clear_estop as native_clear_estop,
 )
 from gateway.services.native_control import (
     endpoint_only_enabled,
@@ -77,14 +77,27 @@ def _publish_goal(
     goal: Any,
     *,
     ts: float,
+    task_id: str | None = None,
     request_id: str | None = None,
-) -> None:
+) -> dict[str, Any]:
     typed_goal = goal.pose_stamped(ts=ts)
-    if submit_goal(gw, typed_goal, request_id=request_id):
-        return
+    receipt = submit_goal(
+        gw,
+        typed_goal,
+        task_id=task_id,
+        request_id=request_id,
+    )
+    if isinstance(receipt, dict):
+        return receipt
     if _native_commands_required():
         raise CommandBoundaryError("goal service is unavailable")
     gw.goal_pose.publish(typed_goal)
+    return {
+        "accepted": True,
+        "task_id": str(task_id or "").strip(),
+        "request_id": str(request_id or "").strip(),
+        "sink": "module",
+    }
 
 
 def register_command_routes(app, gw) -> None:
@@ -164,12 +177,26 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             ts = time.time()
-            _publish_goal(gw, goal, ts=ts, request_id=body.request_id)
-            return goal.command_payload(
-                status="ok",
-                instruction=body.instruction,
+            receipt = _publish_goal(
+                gw,
+                goal,
                 ts=ts,
+                task_id=body.task_id,
+                request_id=body.request_id,
             )
+            native_ack = receipt.get("native_ack")
+            return {
+                **goal.command_payload(
+                    status="accepted",
+                    instruction=body.instruction,
+                    ts=ts,
+                ),
+                "task_id": receipt.get("task_id") or None,
+                "native_request_id": receipt.get("native_request_id") or None,
+                "native_ack": native_ack,
+                "stage": "native_acknowledged" if native_ack else "local_published",
+                "execution_confirmed": False,
+            }
 
         return await asyncio.to_thread(
             command_service.run_planned_goal_command,
@@ -194,8 +221,22 @@ def register_command_routes(app, gw) -> None:
 
         def _publish() -> dict[str, Any]:
             ts = time.time()
-            _publish_goal(gw, goal, ts=ts, request_id=body.request_id)
-            return goal.command_payload(status="ok", ts=ts)
+            receipt = _publish_goal(
+                gw,
+                goal,
+                ts=ts,
+                task_id=body.task_id,
+                request_id=body.request_id,
+            )
+            native_ack = receipt.get("native_ack")
+            return {
+                **goal.command_payload(status="accepted", ts=ts),
+                "task_id": receipt.get("task_id") or None,
+                "native_request_id": receipt.get("native_request_id") or None,
+                "native_ack": native_ack,
+                "stage": "native_acknowledged" if native_ack else "local_published",
+                "execution_confirmed": False,
+            }
 
         return await asyncio.to_thread(
             command_service.run_planned_goal_command,
@@ -282,33 +323,93 @@ def register_command_routes(app, gw) -> None:
                 ),
             )
 
-    @app.post(
-        "/api/v1/navigation/cancel",
-        summary="Gracefully cancel current navigation mission",
-        response_model=ControlCommandResponse,
-        responses=CONTROL_COMMAND_ERROR_RESPONSES,
-    )
-    async def post_navigation_cancel(body: CancelRequest):
+    async def _submit_navigation_cancel(
+        body: CancelRequest,
+        *,
+        route_task_id: str | None = None,
+    ):
+        route_task = str(route_task_id or "").strip()
+        body_task = str(body.task_id or "").strip()
+        if route_task_id is not None and (not route_task or len(route_task) > 128):
+            return command_service.rejected_response(
+                "navigation_cancel",
+                body,
+                error="task_identity_invalid",
+                message="The task route requires a non-empty task_id of at most 128 characters.",
+                detail=command_service.command_error_detail(
+                    reason_code="task_identity_invalid",
+                    reason="invalid route task_id",
+                    source="gateway_navigation_task_api",
+                    blockers=["task_identity_invalid"],
+                ),
+            )
+        if route_task and body_task and body_task != route_task:
+            return command_service.rejected_response(
+                "navigation_cancel",
+                body,
+                error="task_identity_conflict",
+                message="The body task_id does not match the task route.",
+                detail=command_service.command_error_detail(
+                    reason_code="task_identity_conflict",
+                    reason="body task_id must match route task_id",
+                    source="gateway_navigation_task_api",
+                    blockers=["task_identity_conflict"],
+                ),
+            )
+
+        task_id = route_task or body_task
+        request_id = str(body.request_id or "").strip()
+        if task_id and task_id == request_id:
+            return command_service.rejected_response(
+                "navigation_cancel",
+                body,
+                error="task_identity_invalid",
+                message="task_id and request_id must be distinct.",
+                detail=command_service.command_error_detail(
+                    reason_code="task_identity_invalid",
+                    reason="task_id and request_id must be distinct",
+                    source="gateway_navigation_task_api",
+                    blockers=["task_identity_invalid"],
+                ),
+            )
+
+        command_body = body.model_copy(update={"task_id": task_id or None})
+
         def _publish() -> dict[str, Any]:
-            wrote_native = submit_cancel(gw, body.reason, request_id=body.request_id)
-            if not wrote_native:
+            receipt = submit_cancel(
+                gw,
+                command_body.reason,
+                task_id=command_body.task_id,
+                request_id=command_body.request_id,
+            )
+            if not receipt:
                 if _native_commands_required():
                     raise CommandBoundaryError("goal service is unavailable")
-                gw.cancel.publish(body.reason)
-            return {"status": "cancelled", "reason": body.reason}
+                gw.cancel.publish(command_body.reason)
+                receipt = {}
+            native_ack = receipt.get("native_ack")
+            return {
+                "status": "cancel_requested",
+                "reason": command_body.reason,
+                "task_id": receipt.get("task_id") or task_id or None,
+                "native_request_id": receipt.get("native_request_id") or None,
+                "native_ack": native_ack,
+                "stage": "native_acknowledged" if native_ack else "local_published",
+                "execution_confirmed": False,
+            }
 
         try:
             return await asyncio.to_thread(
                 gw._run_control_command,
                 "navigation_cancel",
-                body,
+                command_body,
                 _publish,
             )
         except CommandBoundaryError as exc:
             reason = str(exc)
             return command_service.rejected_response(
                 "navigation_cancel",
-                body,
+                command_body,
                 error="native_command_rejected",
                 message="Native navigation endpoint rejected the cancel request.",
                 detail=command_service.command_error_detail(
@@ -318,6 +419,24 @@ def register_command_routes(app, gw) -> None:
                     blockers=[reason],
                 ),
             )
+
+    @app.post(
+        "/api/v1/navigation/cancel",
+        summary="Compatibility cancel for a named navigation task",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def post_navigation_cancel(body: CancelRequest):
+        return await _submit_navigation_cancel(body)
+
+    @app.post(
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+        summary="Request cancellation of one exact navigation task",
+        response_model=ControlCommandResponse,
+        responses=CONTROL_COMMAND_ERROR_RESPONSES,
+    )
+    async def post_navigation_task_cancel(task_id: str, body: CancelRequest):
+        return await _submit_navigation_cancel(body, route_task_id=task_id)
 
     @app.post(
         "/api/v1/navigation/resume",

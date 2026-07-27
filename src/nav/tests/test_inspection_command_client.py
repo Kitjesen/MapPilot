@@ -3,12 +3,12 @@ from __future__ import annotations
 import pytest
 
 from nav.adapters.native import abi as navigation_abi
+from nav.adapters.native.commands import get_native_navigation_client
 from nav.adapters.native.inspection_commands import (
     InspectionCommandClientError,
     NativeInspectionCommandClient,
     get_native_inspection_command_client,
 )
-from nav.adapters.native.commands import get_native_navigation_client
 
 
 class _Function:
@@ -27,7 +27,7 @@ class _InspectionLibrary:
     def __init__(self) -> None:
         self.calls = []
         self.error = b""
-        self.lingtu_nav_client_abi_version = _Function(lambda: 1)
+        self.lingtu_nav_client_abi_version = _Function(lambda: navigation_abi.NATIVE_COMMAND_ABI_VERSION)
         self.lingtu_nav_client_capabilities = _Function(lambda: 0x03)
         self.lingtu_nav_client_create = _Function(self._create)
         self.lingtu_nav_client_destroy = _Function(self._destroy)
@@ -64,11 +64,16 @@ class _InspectionLibrary:
 class _CombinedLibrary(_InspectionLibrary):
     def __init__(self) -> None:
         super().__init__()
+        self.lingtu_nav_client_capabilities = _Function(
+            lambda: 0x03 | navigation_abi.NATIVE_COMMAND_CAP_NAVIGATION_COMMAND_RECEIPT
+        )
         for name in (
             "lingtu_nav_client_send_goal",
             "lingtu_nav_client_send_goal_with_id",
             "lingtu_nav_client_cancel",
             "lingtu_nav_client_cancel_with_id",
+            "lingtu_nav_client_start_task_with_receipt_v1",
+            "lingtu_nav_client_cancel_task_with_receipt_v1",
             "lingtu_nav_client_send_teleop",
             "lingtu_nav_client_send_teleop_with_id",
             "lingtu_nav_client_stop",

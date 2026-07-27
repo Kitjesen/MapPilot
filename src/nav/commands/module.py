@@ -13,6 +13,7 @@ from nav.adapters.native.inspection_commands import (
     normalize_route_revision,
 )
 from runtime import Module, rpc
+from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
 from runtime.registry import register
 
 
@@ -34,16 +35,44 @@ class Commands(Module, layer=3):
         y: float,
         z: float,
         yaw: float,
-        request_id: str | None = None,
-    ) -> bool:
-        return self._navigation(
-            lambda client: client.send_goal(
+        *,
+        task_id: str,
+        request_id: str,
+    ) -> NavigationCommandReceipt:
+        """Submit a task-identified navigation goal and return its native ACK."""
+        return self._navigation_receipt(
+            lambda client: client.start_task(
                 float(x),
                 float(y),
                 float(z),
                 float(yaw),
+                task_id=task_id,
                 request_id=request_id,
-            )
+            ),
+            action="send_goal",
+            expected_kind=NavigationCommandKind.GOAL,
+            task_id=task_id,
+            request_id=request_id,
+        )
+
+    @rpc
+    def cancel_task(
+        self,
+        task_id: str,
+        reason: str = "cancel",
+        request_id: str | None = None,
+    ) -> NavigationCommandReceipt:
+        """Request cancellation of exactly one task and return its native ACK."""
+        return self._navigation_receipt(
+            lambda client: client.cancel_task(
+                task_id,
+                str(reason or "cancel"),
+                request_id=request_id,
+            ),
+            action="cancel_task",
+            expected_kind=NavigationCommandKind.CANCEL,
+            task_id=task_id,
+            request_id=request_id,
         )
 
     @rpc
@@ -212,6 +241,46 @@ class Commands(Module, layer=3):
                 request_id=request_id,
             )
         )
+
+    @staticmethod
+    def _navigation_receipt(
+        operation: Callable[[Any], Any],
+        *,
+        action: str,
+        expected_kind: NavigationCommandKind,
+        task_id: str,
+        request_id: str | None,
+    ) -> NavigationCommandReceipt:
+        task = str(task_id or "").strip()
+        request = str(request_id or "").strip()
+        if not task:
+            raise ValueError(f"native navigation {action} task_id is required")
+        if not request:
+            raise ValueError(f"native navigation {action} request_id is required")
+        if task == request:
+            raise ValueError(f"native navigation {action} task_id and request_id must be distinct")
+
+        client = get_native_navigation_client(required=True)
+        if client is None:
+            raise RuntimeError("native navigation command boundary is unavailable")
+        receipt = operation(client)
+        if not isinstance(receipt, NavigationCommandReceipt):
+            raise RuntimeError(f"native navigation {action} returned an invalid receipt")
+        if not isinstance(receipt.accepted, bool):
+            raise RuntimeError(f"native navigation {action} returned an invalid accepted value")
+        if int(receipt.kind) != int(expected_kind):
+            raise RuntimeError(f"native navigation {action} returned the wrong command kind")
+        if receipt.task_id != task:
+            raise RuntimeError(f"native navigation {action} returned the wrong task_id")
+        if not Commands._request_identity_matches(receipt.request_id, request):
+            raise RuntimeError(f"native navigation {action} returned the wrong request_id")
+        if not receipt.reason.strip():
+            raise RuntimeError(f"native navigation {action} returned an empty reason")
+        return receipt
+
+    @staticmethod
+    def _request_identity_matches(actual: str, requested: str) -> bool:
+        return actual == requested or actual.startswith(f"{requested}-clock-retry-")
 
     @staticmethod
     def _navigation(operation: Callable[[Any], None]) -> bool:
