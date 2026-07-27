@@ -15,6 +15,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -27,6 +28,81 @@
 #include <vector>
 
 #include <unistd.h>
+
+struct NavigationStateV4Layout {
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long sequence;
+  int32_t control_mode;
+  int32_t lifecycle_state;
+  char active_request_id[128];
+  unsigned long long goal_epoch;
+  char map_id[128];
+  int64_t map_version;
+  char map_hash[128];
+  int32_t planning_state;
+  int32_t execution_state;
+  int32_t recovery_state;
+  float progress;
+  char authority[32];
+  char hold_reason[128];
+  char failure_code[128];
+};
+
+struct NavigationGoalStatusV4Layout {
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long sequence;
+  char request_id[128];
+  int32_t state;
+  unsigned long long goal_epoch;
+  char reason[256];
+};
+
+#define CHECK_V4_FIELD_LAYOUT(actual, expected, field) \
+  static_assert(offsetof(actual, field) == offsetof(expected, field))
+
+static_assert(
+    sizeof(lingtu_nav_navigation_state) == sizeof(NavigationStateV4Layout));
+static_assert(
+    alignof(lingtu_nav_navigation_state) == alignof(NavigationStateV4Layout));
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, timestamp_s);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, frame_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, boot_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, sequence);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, control_mode);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, lifecycle_state);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, active_request_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, goal_epoch);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, map_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, map_version);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, map_hash);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, planning_state);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, execution_state);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, recovery_state);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, progress);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, authority);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, hold_reason);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_state, NavigationStateV4Layout, failure_code);
+
+static_assert(
+    sizeof(lingtu_nav_navigation_goal_status) ==
+    sizeof(NavigationGoalStatusV4Layout));
+static_assert(
+    alignof(lingtu_nav_navigation_goal_status) ==
+    alignof(NavigationGoalStatusV4Layout));
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, timestamp_s);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, frame_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, boot_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, sequence);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, request_id);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, state);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, goal_epoch);
+CHECK_V4_FIELD_LAYOUT(lingtu_nav_navigation_goal_status, NavigationGoalStatusV4Layout, reason);
+
+#undef CHECK_V4_FIELD_LAYOUT
 
 namespace {
 
@@ -125,12 +201,14 @@ void writeAck(
     lingtu::message::NavigationCommandKind kind,
     bool accepted,
     const std::string& reason,
-    double endpoint_stamp_s = nowSeconds()) {
+    double endpoint_stamp_s = nowSeconds(),
+    const std::string& task_id = {}) {
   lingtu_dds_NavigationCommandAck ack{};
   ack.header.stamp.sec = static_cast<std::int32_t>(endpoint_stamp_s);
   ack.header.stamp.nanosec = static_cast<std::uint32_t>(
       (endpoint_stamp_s - static_cast<double>(ack.header.stamp.sec)) * 1e9);
   ack.header.frame_id = const_cast<char*>("map");
+  ack.task_id = const_cast<char*>(task_id.c_str());
   ack.request_id = const_cast<char*>(request_id.c_str());
   ack.kind = static_cast<std::int32_t>(kind);
   ack.accepted = accepted;
@@ -208,10 +286,42 @@ void writeOperatorMotionAck(
   checked(dds_write(writer, &ack), "dds_write(test_operator_motion_ack)");
 }
 
+
+void writeNavigationState(
+    dds_entity_t writer,
+    std::uint64_t sequence,
+    const std::string& task_id,
+    const std::string& request_id) {
+  lingtu_dds_NavigationState state{};
+  const double stamp_s = nowSeconds();
+  state.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  state.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(state.header.stamp.sec)) * 1e9);
+  state.header.frame_id = const_cast<char*>("map");
+  state.boot_id = const_cast<char*>("navd-state-test-boot");
+  state.state_sequence = sequence;
+  state.control_mode = 1;
+  state.lifecycle_state = 2;
+  state.active_task_id = const_cast<char*>(task_id.c_str());
+  state.active_request_id = const_cast<char*>(request_id.c_str());
+  state.goal_epoch = 7U;
+  state.map_id = const_cast<char*>("test-map");
+  state.map_version = 3;
+  state.map_hash = const_cast<char*>("test-map-hash");
+  state.planning_state = 2;
+  state.execution_state = 1;
+  state.recovery_state = 0;
+  state.progress = 0.5F;
+  state.authority = const_cast<char*>("autonomy");
+  state.hold_reason = const_cast<char*>("");
+  state.failure_code = const_cast<char*>("");
+  checked(dds_write(writer, &state), "dds_write(test_navigation_state)");
+}
 void writeGoalStatus(
     dds_entity_t writer,
     const std::string& boot_id,
     std::uint64_t sequence,
+    const std::string& task_id,
     const std::string& request_id,
     lingtu::message::NavigationGoalState state,
     std::uint64_t goal_epoch,
@@ -224,6 +334,7 @@ void writeGoalStatus(
   status.header.frame_id = const_cast<char*>("map");
   status.boot_id = const_cast<char*>(boot_id.c_str());
   status.event_sequence = sequence;
+  status.task_id = const_cast<char*>(task_id.c_str());
   status.request_id = const_cast<char*>(request_id.c_str());
   status.state = static_cast<std::int32_t>(state);
   status.goal_epoch = goal_epoch;
@@ -434,7 +545,8 @@ void sendAndReply(
     Send&& send,
     Verify&& verify,
     bool accepted = true,
-    const std::string& reason = "accepted") {
+    const std::string& reason = "accepted",
+    const std::optional<std::string>& acknowledged_task_id = std::nullopt) {
   std::exception_ptr sender_error;
   std::thread sender([&]() {
     try {
@@ -449,8 +561,10 @@ void sendAndReply(
       "navigation command client id must identify the native client");
   verify(*request);
   const std::string request_id = request->request_id;
+  const std::string task_id = acknowledged_task_id.value_or(
+      request->task_id == nullptr ? "" : request->task_id);
   const auto kind = static_cast<lingtu::message::NavigationCommandKind>(request->kind);
-  writeAck(ack_writer, request_id, kind, accepted, reason);
+  writeAck(ack_writer, request_id, kind, accepted, reason, nowSeconds(), task_id);
   returnLoan(request_reader, request);
   sender.join();
   if (sender_error) {
@@ -1239,6 +1353,43 @@ void testEstopBypassesGoalAckWait() {
       "estop was blocked behind the goal ACK wait");
 }
 
+
+void testTaskCommandsRejectAliasedIds() {
+  const int domain_id = 65 + static_cast<int>(getpid() % 10);
+  lingtu::nav::commands::Client client(domain_id);
+  const auto rejects_invalid_argument = [](auto&& operation) {
+    try {
+      operation();
+    } catch (const std::invalid_argument&) {
+      return true;
+    } catch (...) {
+      return false;
+    }
+    return false;
+  };
+  check(
+      rejects_invalid_argument([&]() {
+        (void)client.navigation().startTask(
+            1.0,
+            2.0,
+            0.0,
+            0.0,
+            1,
+            "same-task-and-request-id",
+            "same-task-and-request-id");
+      }),
+      "startTask must reject identical explicit task/request ids");
+  check(
+      rejects_invalid_argument([&]() {
+        (void)client.navigation().cancelTask(
+            "same-task-and-request-id",
+            "operator_cancel",
+            1,
+            "same-task-and-request-id");
+      }),
+      "cancelTask must reject identical explicit task/request ids");
+}
+
 void runTest() {
   using CommandKind = lingtu::message::NavigationCommandKind;
   const int domain_id = 170 + static_cast<int>(getpid() % 20);
@@ -1264,16 +1415,17 @@ void runTest() {
       &lingtu_dds_NavigationCommandAck_desc);
 
   lingtu::nav::commands::Client client(domain_id);
-  std::string accepted_goal_request_id;
+  lingtu::nav::commands::NavigationCommandReceipt accepted_goal_receipt;
   sendAndReply(
       request_reader,
       ack_writer,
       [&]() {
-        accepted_goal_request_id =
-            client.navigation().sendGoal(1.25, -2.5, 0.4, 0.6, 1000, "goal-001");
+        accepted_goal_receipt = client.navigation().startTask(
+            1.25, -2.5, 0.4, 0.6, 1000, "", "goal-001");
       },
       [&](const lingtu_dds_NavigationCommandRequest& request) {
         check(std::string(request.request_id) == "goal-001", "goal request id mismatch");
+        check(request.task_id != nullptr && std::string(request.task_id) != "goal-001", "goal task id must differ from request id");
         check(request.kind == static_cast<std::int32_t>(CommandKind::Goal), "goal kind mismatch");
         check(std::abs(request.goal.position.x - 1.25) < 1e-9, "goal x mismatch");
         check(std::abs(request.goal.position.y + 2.5) < 1e-9, "goal y mismatch");
@@ -1281,17 +1433,147 @@ void runTest() {
         check(std::abs(request.goal.orientation.z - std::sin(0.3)) < 1e-9, "goal yaw mismatch");
       });
   check(
-      accepted_goal_request_id == "goal-001",
-      "sendGoal must return the exact accepted request id for lifecycle correlation");
+      accepted_goal_receipt.accepted &&
+          accepted_goal_receipt.request_id == "goal-001" &&
+          !accepted_goal_receipt.task_id.empty() &&
+          accepted_goal_receipt.task_id != accepted_goal_receipt.request_id,
+      "startTask must return distinct task/request ids for lifecycle correlation");
+  lingtu::nav::commands::NavigationCommandReceipt cancel_receipt;
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        cancel_receipt = client.navigation().cancelTask(
+            accepted_goal_receipt.task_id,
+            "operator_cancel",
+            1000,
+            "cancel-001");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::Cancel), "cancel kind mismatch");
+        check(std::string(request.task_id) == accepted_goal_receipt.task_id, "cancel task id mismatch");
+        check(std::string(request.reason) == "operator_cancel", "cancel reason mismatch");
+      });
+  check(
+      cancel_receipt.accepted &&
+          cancel_receipt.task_id == accepted_goal_receipt.task_id &&
+          cancel_receipt.request_id == "cancel-001",
+      "cancelTask must target the accepted goal task");
+
+  lingtu::nav::commands::NavigationCommandReceipt mismatched_cancel_receipt;
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        mismatched_cancel_receipt = client.navigation().cancelTask(
+            accepted_goal_receipt.task_id,
+            "operator_cancel",
+            1000,
+            "cancel-mismatch-001");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(
+            std::string(request.task_id) == accepted_goal_receipt.task_id,
+            "strict cancel task id mismatch");
+      },
+      true,
+      "cancelled",
+      "different-task-id");
+  check(
+      !mismatched_cancel_receipt.accepted &&
+          mismatched_cancel_receipt.reason ==
+              "command_ack_task_id_mismatch",
+      "cancelTask must reject an ACK for a different task");
+
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C navigation client creation failed");
+  lingtu_nav_navigation_command_receipt_v1 c_goal_receipt{};
+  c_goal_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_goal_receipt.struct_size = sizeof(c_goal_receipt);
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_start_task_with_receipt_v1(
+                c_client,
+                "",
+                "c-goal-001",
+                2.0,
+                3.0,
+                0.0,
+                0.0,
+                1000,
+                &c_goal_receipt) == 0,
+            "C start task receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(std::string(request.request_id) == "c-goal-001", "C goal request id mismatch");
+        check(request.task_id != nullptr && std::string(request.task_id) != "c-goal-001", "C goal task id must differ from request id");
+        check(request.kind == static_cast<std::int32_t>(CommandKind::Goal), "C goal kind mismatch");
+      });
+  check(
+      c_goal_receipt.accepted != 0 &&
+          std::string(c_goal_receipt.request_id) == "c-goal-001" &&
+          std::string(c_goal_receipt.task_id) != "c-goal-001",
+      "C start task receipt did not preserve task/request identity");
+
+  lingtu_nav_navigation_command_receipt_v1 c_cancel_receipt{};
+  c_cancel_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_cancel_receipt.struct_size = sizeof(c_cancel_receipt);
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_cancel_task_with_receipt_v1(
+                c_client,
+                c_goal_receipt.task_id,
+                "c-cancel-001",
+                "operator_cancel",
+                1000,
+                &c_cancel_receipt) == 0,
+            "C cancel task receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(std::string(request.task_id) == c_goal_receipt.task_id, "C cancel task id mismatch");
+        check(std::string(request.request_id) == "c-cancel-001", "C cancel request id mismatch");
+        check(request.kind == static_cast<std::int32_t>(CommandKind::Cancel), "C cancel kind mismatch");
+      });
+  check(
+      c_cancel_receipt.accepted != 0 &&
+          std::string(c_cancel_receipt.task_id) == c_goal_receipt.task_id,
+      "C cancel task receipt did not target the original task");
 
   sendAndReply(
       request_reader,
       ack_writer,
-      [&]() { client.navigation().cancel("operator_cancel", 1000, "cancel-001"); },
+      [&]() {
+        check(
+            lingtu_nav_client_cancel_with_id(
+                c_client,
+                "c-cancel-current-001",
+                "legacy_cancel_current",
+                1000) == 0,
+            "legacy C cancel-current call failed");
+      },
       [&](const lingtu_dds_NavigationCommandRequest& request) {
-        check(request.kind == static_cast<std::int32_t>(CommandKind::Cancel), "cancel kind mismatch");
-        check(std::string(request.reason) == "operator_cancel", "cancel reason mismatch");
-      });
+        check(
+            request.task_id == nullptr || std::string(request.task_id).empty(),
+            "legacy cancel-current must not claim a strict task identity");
+        check(
+            std::string(request.request_id) == "c-cancel-current-001",
+            "legacy cancel-current request id mismatch");
+        check(
+            request.kind == static_cast<std::int32_t>(CommandKind::Cancel),
+            "legacy cancel-current kind mismatch");
+      },
+      true,
+      "cancelled",
+      std::string(c_goal_receipt.task_id));
+  lingtu_nav_client_destroy(c_client);
 
   sendAndReply(
       request_reader,
@@ -1441,6 +1723,86 @@ void runTest() {
   dds_delete(participant);
 }
 
+
+void testNavigationStateCAbi() {
+  const int domain_id = 75 + static_cast<int>(getpid() % 10);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_navigation_state_c_abi)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_navigation_state_c_abi)");
+  const dds_entity_t state_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavState,
+      &lingtu_dds_NavigationState_desc);
+  lingtu_nav_client_handle client = lingtu_nav_client_create(domain_id);
+  check(client != nullptr, "C navigation state client creation failed");
+
+  lingtu_nav_navigation_state_v1 state_v1{};
+  state_v1.abi_version = LINGTU_NAV_NAVIGATION_STATE_ABI_VERSION + 1U;
+  state_v1.struct_size = sizeof(state_v1);
+  check(
+      lingtu_nav_client_read_navigation_state_v1(client, &state_v1) == -1,
+      "navigation state v1 must reject an unknown ABI version");
+  state_v1.abi_version = LINGTU_NAV_NAVIGATION_STATE_ABI_VERSION;
+  state_v1.struct_size = sizeof(state_v1) - 1U;
+  check(
+      lingtu_nav_client_read_navigation_state_v1(client, &state_v1) == -1,
+      "navigation state v1 must reject an undersized buffer");
+
+  struct GuardedLegacyState {
+    lingtu_nav_navigation_state value{};
+    std::array<unsigned char, 32> canary{};
+  } legacy_state;
+  std::array<unsigned char, 32> expected_canary{};
+  expected_canary.fill(0xA5U);
+  legacy_state.canary = expected_canary;
+  state_v1.abi_version = LINGTU_NAV_NAVIGATION_STATE_ABI_VERSION;
+  state_v1.struct_size = sizeof(state_v1);
+
+  bool legacy_found = false;
+  bool v1_found = false;
+  for (std::uint64_t attempt = 1U;
+       attempt <= 100U && (!legacy_found || !v1_found);
+       ++attempt) {
+    writeNavigationState(
+        state_writer, attempt, "task-state-001", "request-state-001");
+    if (!legacy_found) {
+      const int result =
+          lingtu_nav_client_read_navigation_state(client, &legacy_state.value);
+      check(result >= 0, "legacy navigation state read failed");
+      legacy_found = result == 1;
+    }
+    if (!v1_found) {
+      const int result =
+          lingtu_nav_client_read_navigation_state_v1(client, &state_v1);
+      check(result >= 0, "navigation state v1 read failed");
+      v1_found = result == 1;
+    }
+    if (!legacy_found || !v1_found) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+
+  check(legacy_found, "legacy navigation state was not received");
+  check(v1_found, "navigation state v1 was not received");
+  check(
+      legacy_state.canary == expected_canary,
+      "legacy navigation state read wrote past the v4 layout");
+  check(
+      std::string(legacy_state.value.active_request_id) == "request-state-001",
+      "legacy navigation state lost active_request_id");
+  check(
+      std::string(state_v1.active_task_id) == "task-state-001" &&
+          std::string(state_v1.active_request_id) == "request-state-001",
+      "navigation state v1 did not expose task/request identity");
+
+  lingtu_nav_client_destroy(client);
+  dds_delete(participant);
+}
 void testNavigationGoalStatusReaderAndRetention() {
   const int domain_id = 110 + static_cast<int>(getpid() % 10);
   const dds_entity_t participant = checked(
@@ -1456,6 +1818,25 @@ void testNavigationGoalStatusReaderAndRetention() {
       lingtu::message::kNavGoalStatus,
       &lingtu_dds_NavigationGoalStatus_desc);
   lingtu::nav::commands::Client client(domain_id);
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C goal status client creation failed");
+  lingtu_nav_client_handle legacy_c_client = lingtu_nav_client_create(domain_id);
+  check(legacy_c_client != nullptr, "legacy C goal status client creation failed");
+
+  lingtu_nav_navigation_goal_status_v1 invalid_status{};
+  invalid_status.abi_version =
+      LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION + 1U;
+  invalid_status.struct_size = sizeof(invalid_status);
+  check(
+      lingtu_nav_client_take_navigation_goal_status_v1(
+          c_client, &invalid_status) == -1,
+      "goal status v1 must reject an unknown ABI version");
+  invalid_status.abi_version = LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
+  invalid_status.struct_size = sizeof(invalid_status) - 1U;
+  check(
+      lingtu_nav_client_take_navigation_goal_status_v1(
+          c_client, &invalid_status) == -1,
+      "goal status v1 must reject an undersized buffer");
 
   auto take = [&](int timeout_ms) {
     lingtu::nav::commands::NavigationGoalStatusSnapshot status;
@@ -1473,18 +1854,21 @@ void testNavigationGoalStatusReaderAndRetention() {
         lingtu::nav::commands::NavigationGoalStatusSnapshot>{};
   };
 
+  const std::string task_id = "task-lifecycle-1";
   const std::string request_id = "goal-lifecycle-1";
   for (int attempt = 0; attempt < 100; ++attempt) {
     writeGoalStatus(
         status_writer,
         "navd-boot-a",
         1U,
+        task_id,
         request_id,
         lingtu::message::NavigationGoalState::Planning,
         7U,
         "planning");
     auto first = take(10);
     if (first.has_value()) {
+      check(first->task_id == task_id, "goal status task id mismatch");
       check(first->request_id == request_id, "goal status request id mismatch");
       check(first->sequence == 1U, "goal status sequence mismatch");
       break;
@@ -1492,11 +1876,14 @@ void testNavigationGoalStatusReaderAndRetention() {
   }
   const auto retained_planning = client.navigationGoalStatus(request_id);
   check(retained_planning.has_value(), "goal status must be retained by request id");
+  const auto retained_task_planning = client.navigationTaskStatus(task_id);
+  check(retained_task_planning.has_value(), "goal status must be retained by task id");
 
   writeGoalStatus(
       status_writer,
       "navd-boot-a",
       1U,
+      task_id,
       request_id,
       lingtu::message::NavigationGoalState::Failed,
       7U,
@@ -1505,6 +1892,7 @@ void testNavigationGoalStatusReaderAndRetention() {
       status_writer,
       "navd-boot-a",
       2U,
+      task_id,
       request_id,
       lingtu::message::NavigationGoalState::Reached,
       7U,
@@ -1523,10 +1911,131 @@ void testNavigationGoalStatusReaderAndRetention() {
       retained_terminal->state == terminal->state &&
           retained_terminal->sequence == terminal->sequence,
       "retained goal status does not match the latest event");
+  const auto retained_task_terminal = client.navigationTaskStatus(task_id);
+  check(
+      retained_task_terminal.has_value() &&
+          retained_task_terminal->state == terminal->state &&
+          retained_task_terminal->request_id == request_id,
+      "retained task status does not match the latest event");
+
+  struct GuardedLegacyGoalStatus {
+    lingtu_nav_navigation_goal_status value{};
+    std::array<unsigned char, 32> canary{};
+  } legacy_event, legacy_retained;
+  std::array<unsigned char, 32> expected_canary{};
+  expected_canary.fill(0xC3U);
+  legacy_event.canary = expected_canary;
+  legacy_retained.canary = expected_canary;
+
+  lingtu_nav_navigation_goal_status_v1 c_event_status{};
+  c_event_status.abi_version = LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
+  c_event_status.struct_size = sizeof(c_event_status);
+  bool c_event_found = false;
+  bool legacy_event_found = false;
+  for (int attempt = 0;
+       attempt < 100 && (!c_event_found || !legacy_event_found);
+       ++attempt) {
+    writeGoalStatus(
+        status_writer,
+        "navd-boot-a",
+        2U,
+        task_id,
+        request_id,
+        lingtu::message::NavigationGoalState::Reached,
+        7U,
+        "goal_reached");
+    if (!c_event_found) {
+      const int result = lingtu_nav_client_take_navigation_goal_status_v1(
+          c_client, &c_event_status);
+      check(result >= 0, "C goal status v1 take failed");
+      c_event_found = result == 1;
+    }
+    if (!legacy_event_found) {
+      const int result = lingtu_nav_client_take_navigation_goal_status(
+          legacy_c_client, &legacy_event.value);
+      check(result >= 0, "legacy C goal status take failed");
+      legacy_event_found = result == 1;
+    }
+    if (!c_event_found || !legacy_event_found) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  check(
+      c_event_found && std::string(c_event_status.task_id) == task_id &&
+          std::string(c_event_status.request_id) == request_id,
+      "C goal status v1 take lost task/request identity");
+  check(legacy_event_found, "legacy C goal status event was not received");
+  check(
+      legacy_event.canary == expected_canary,
+      "legacy goal status take wrote past the v4 layout");
+  check(
+      std::string(legacy_event.value.request_id) == request_id,
+      "legacy goal status take lost request_id");
+
+  lingtu_nav_navigation_goal_status_v1 c_retained_status{};
+  c_retained_status.abi_version =
+      LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
+  c_retained_status.struct_size = sizeof(c_retained_status);
+  bool c_retained_found = false;
+  bool legacy_retained_found = false;
+  for (int attempt = 0;
+       attempt < 100 && (!c_retained_found || !legacy_retained_found);
+       ++attempt) {
+    if (!c_retained_found) {
+      const int result = lingtu_nav_client_get_navigation_goal_status_v1(
+          c_client, request_id.c_str(), &c_retained_status);
+      check(result >= 0, "C goal status v1 lookup failed");
+      c_retained_found = result == 1;
+    }
+    if (!legacy_retained_found) {
+      const int result = lingtu_nav_client_get_navigation_goal_status(
+          legacy_c_client, request_id.c_str(), &legacy_retained.value);
+      check(result >= 0, "legacy C goal status lookup failed");
+      legacy_retained_found = result == 1;
+    }
+    if (!c_retained_found || !legacy_retained_found) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  check(
+      c_retained_found &&
+          std::string(c_retained_status.task_id) == task_id &&
+          std::string(c_retained_status.request_id) == request_id &&
+          c_retained_status.state == terminal->state,
+      "C goal status v1 lookup lost retained task/request identity");
+  check(legacy_retained_found, "legacy C goal status was not retained");
+  check(
+      legacy_retained.canary == expected_canary,
+      "legacy goal status lookup wrote past the v4 layout");
+  check(
+      std::string(legacy_retained.value.request_id) == request_id &&
+          legacy_retained.value.state == terminal->state,
+      "legacy goal status lookup returned the wrong retained state");
+  lingtu_nav_navigation_goal_status_v1 c_task_status{};
+  c_task_status.abi_version = LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
+  c_task_status.struct_size = sizeof(c_task_status);
+  bool c_task_status_found = false;
+  for (int attempt = 0; attempt < 100 && !c_task_status_found; ++attempt) {
+    const int result = lingtu_nav_client_get_navigation_task_status_v1(
+        c_client, task_id.c_str(), &c_task_status);
+    check(result >= 0, "C task status query failed");
+    c_task_status_found = result == 1;
+    if (!c_task_status_found) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  check(
+      c_task_status_found &&
+          std::string(c_task_status.task_id) == task_id &&
+          std::string(c_task_status.request_id) == request_id &&
+          c_task_status.state == terminal->state,
+      "C task status query did not return the retained terminal state");
   check(
       !take(50).has_value(),
       "duplicate goal status sequence leaked into the event queue");
 
+  lingtu_nav_client_destroy(c_client);
+  lingtu_nav_client_destroy(legacy_c_client);
   dds_delete(participant);
 }
 
@@ -2138,6 +2647,24 @@ int main() {
         (lingtu_nav_client_capabilities() &
          LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT) != 0U,
         "operator motion receipt client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_NAVIGATION_COMMAND_RECEIPT) != 0U,
+        "navigation command receipt client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_NAVIGATION_TASK_STATUS) != 0U,
+        "navigation task status client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_NAVIGATION_STATE_V1) != 0U,
+        "navigation state v1 client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_NAVIGATION_GOAL_STATUS_V1) != 0U,
+        "navigation goal status v1 client capability missing");
+    testTaskCommandsRejectAliasedIds();
+    testNavigationStateCAbi();
     runTest();
     testNavigationGoalStatusReaderAndRetention();
     testNavigationPathTelemetry();

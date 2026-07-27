@@ -15,7 +15,7 @@ enum {
   // Field Products atomically package this library with its Host bindings.
   // Mixed global ABI versions fail closed; append-only feature discovery
   // within one version uses the capability bits below.
-  LINGTU_NAV_CLIENT_ABI_VERSION = 4,
+  LINGTU_NAV_CLIENT_ABI_VERSION = 5,
 };
 
 enum {
@@ -29,6 +29,10 @@ enum {
   LINGTU_NAV_CLIENT_CAP_PATH_TELEMETRY = 1ULL << 7,
   LINGTU_NAV_CLIENT_CAP_MAP_SCENE = 1ULL << 8,
   LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT = 1ULL << 9,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_COMMAND_RECEIPT = 1ULL << 10,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_TASK_STATUS = 1ULL << 11,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_STATE_V1 = 1ULL << 12,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_GOAL_STATUS_V1 = 1ULL << 13,
 };
 
 enum {
@@ -42,6 +46,9 @@ enum {
 
 enum {
   LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1,
+  LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1,
+  LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1,
+  LINGTU_NAV_NAVIGATION_STATE_ABI_VERSION = 1,
 };
 
 typedef struct lingtu_nav_navigation_state {
@@ -65,6 +72,30 @@ typedef struct lingtu_nav_navigation_state {
   char failure_code[128];
 } lingtu_nav_navigation_state;
 
+
+typedef struct lingtu_nav_navigation_state_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long sequence;
+  int32_t control_mode;
+  int32_t lifecycle_state;
+  char active_task_id[128];
+  char active_request_id[128];
+  unsigned long long goal_epoch;
+  char map_id[128];
+  int64_t map_version;
+  char map_hash[128];
+  int32_t planning_state;
+  int32_t execution_state;
+  int32_t recovery_state;
+  float progress;
+  char authority[32];
+  char hold_reason[128];
+  char failure_code[128];
+} lingtu_nav_navigation_state_v1;
 typedef struct lingtu_nav_navigation_goal_status {
   double timestamp_s;
   char frame_id[32];
@@ -75,6 +106,31 @@ typedef struct lingtu_nav_navigation_goal_status {
   unsigned long long goal_epoch;
   char reason[256];
 } lingtu_nav_navigation_goal_status;
+
+typedef struct lingtu_nav_navigation_command_receipt_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  char task_id[128];
+  char request_id[128];
+  int32_t accepted;
+  int32_t kind;
+  char reason[256];
+  double endpoint_timestamp_s;
+} lingtu_nav_navigation_command_receipt_v1;
+
+typedef struct lingtu_nav_navigation_goal_status_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long sequence;
+  char task_id[128];
+  char request_id[128];
+  int32_t state;
+  unsigned long long goal_epoch;
+  char reason[256];
+} lingtu_nav_navigation_goal_status_v1;
 
 typedef struct lingtu_nav_path_point {
   double x;
@@ -229,6 +285,19 @@ int lingtu_nav_client_send_goal_with_id(
     double yaw,
     int timeout_ms);
 
+// Returns 0 after receiving a correlated ACK, including accepted=false.
+// Transport, timeout, and argument errors return -1.
+int lingtu_nav_client_start_task_with_receipt_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    double yaw,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
+
 int lingtu_nav_client_cancel(
     lingtu_nav_client_handle handle,
     const char* reason,
@@ -239,6 +308,16 @@ int lingtu_nav_client_cancel_with_id(
     const char* request_id,
     const char* reason,
     int timeout_ms);
+
+// Cancels the task identified by task_id. Returns 0 after a correlated ACK,
+// including accepted=false. Transport, timeout, and argument errors return -1.
+int lingtu_nav_client_cancel_task_with_receipt_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    const char* reason,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
 
 int lingtu_nav_client_send_teleop(
     lingtu_nav_client_handle handle,
@@ -432,6 +511,12 @@ int lingtu_nav_client_read_navigation_state(
     lingtu_nav_client_handle handle,
     lingtu_nav_navigation_state* state);
 
+// Versioned state snapshot including active_task_id. The caller must set
+// abi_version and struct_size before calling.
+int lingtu_nav_client_read_navigation_state_v1(
+    lingtu_nav_client_handle handle,
+    lingtu_nav_navigation_state_v1* state);
+
 // Pops one deduplicated lifecycle event from the bounded client queue.
 // Returns 1 when an event is available, 0 when the queue is empty, and -1 on
 // error.
@@ -439,12 +524,32 @@ int lingtu_nav_client_take_navigation_goal_status(
     lingtu_nav_client_handle handle,
     lingtu_nav_navigation_goal_status* status);
 
+// Versioned lifecycle event including task_id. The caller must set abi_version
+// and struct_size before calling.
+int lingtu_nav_client_take_navigation_goal_status_v1(
+    lingtu_nav_client_handle handle,
+    lingtu_nav_navigation_goal_status_v1* status);
+
 // Reads the retained latest lifecycle state for request_id without consuming
 // the event queue. Returns 1 when found, 0 when unknown, and -1 on error.
 int lingtu_nav_client_get_navigation_goal_status(
     lingtu_nav_client_handle handle,
     const char* request_id,
     lingtu_nav_navigation_goal_status* status);
+
+// Versioned retained lifecycle state including task_id. The caller must set
+// abi_version and struct_size before calling.
+int lingtu_nav_client_get_navigation_goal_status_v1(
+    lingtu_nav_client_handle handle,
+    const char* request_id,
+    lingtu_nav_navigation_goal_status_v1* status);
+
+// Reads the retained latest lifecycle state for task_id without consuming the
+// event queue. Returns 1 when found, 0 when unknown, and -1 on error.
+int lingtu_nav_client_get_navigation_task_status_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    lingtu_nav_navigation_goal_status_v1* status);
 
 // Copies one latest-only path sample. If point_capacity is too small, returns
 // 2, stores the required point_count in header, and retains the sample for a

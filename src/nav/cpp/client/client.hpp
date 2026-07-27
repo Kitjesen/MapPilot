@@ -15,6 +15,7 @@ struct NavigationStateSnapshot {
   std::uint64_t sequence{0U};
   std::int32_t control_mode{0};
   std::int32_t lifecycle_state{0};
+  std::string active_task_id;
   std::string active_request_id;
   std::uint64_t goal_epoch{0U};
   std::string map_id;
@@ -34,10 +35,21 @@ struct NavigationGoalStatusSnapshot {
   std::string frame_id;
   std::string boot_id;
   std::uint64_t sequence{0U};
+  std::string task_id;
   std::string request_id;
   std::int32_t state{0};
   std::uint64_t goal_epoch{0U};
   std::string reason;
+};
+
+struct NavigationCommandReceipt {
+  std::string task_id;
+  std::string request_id;
+  bool accepted{false};
+  std::int32_t kind{0};
+  std::string reason;
+  double endpoint_timestamp_s{0.0};
+  std::string diagnostic;
 };
 
 struct OperatorMotionCommandReceipt {
@@ -148,11 +160,24 @@ class Client {
  public:
   class NavigationCommands {
    public:
+    [[nodiscard]] NavigationCommandReceipt startTask(
+        double x,
+        double y,
+        double z,
+        double yaw,
+        int timeout_ms = 1000,
+        const std::string& task_id = {},
+        const std::string& request_id = {});
     std::string sendGoal(
         double x,
         double y,
         double z,
         double yaw,
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    [[nodiscard]] NavigationCommandReceipt cancelTask(
+        const std::string& task_id,
+        const std::string& reason,
         int timeout_ms = 1000,
         const std::string& request_id = {});
     void cancel(
@@ -334,6 +359,8 @@ class Client {
       NavigationGoalStatusSnapshot* status);
   [[nodiscard]] std::optional<NavigationGoalStatusSnapshot>
   navigationGoalStatus(const std::string& request_id) const;
+  [[nodiscard]] std::optional<NavigationGoalStatusSnapshot>
+  navigationTaskStatus(const std::string& task_id) const;
   [[nodiscard]] bool takeGlobalPath(PathSnapshot* path);
   [[nodiscard]] bool takeLocalPath(PathSnapshot* path);
   [[nodiscard]] bool takeMapScene(MapSceneSnapshot* scene);

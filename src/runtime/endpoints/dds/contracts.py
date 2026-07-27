@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from message.dds import TopicSpec, dds_topic_name, topic_spec
 from runtime.runtime_interface import (
+    NAVIGATION_TASK_IDENTITY_WIRE_CONTRACT,
     THUNDER_FIELD_RUNTIME_CONTRACT,
     TOPICS,
     runtime_topic_allowed_frame_ids,
@@ -161,13 +162,25 @@ THUNDER_FIELD_DDS_CONTRACT = DDSEndpointContract(
             TOPICS.nav_command_request,
             direction="lingtu_to_endpoint",
             schema="lingtu.dds.NavigationCommandRequest",
-            note="Typed goal, cancel, or operator velocity request from the persistent C++ client.",
+            note="Typed navigation command carrying stable task and request-attempt identity.",
         ),
         _binding(
             TOPICS.nav_command_ack,
             direction="endpoint_to_lingtu",
             schema="lingtu.dds.NavigationCommandAck",
-            note="Business-level endpoint acceptance or rejection for a request_id.",
+            note="Business-level request-attempt ACK carrying the stable task_id.",
+        ),
+        _binding(
+            TOPICS.nav_goal_status,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.NavigationGoalStatus",
+            note="Asynchronous lifecycle status for a stable task_id and originating request_id.",
+        ),
+        _binding(
+            TOPICS.nav_state,
+            direction="endpoint_to_lingtu",
+            schema="lingtu.dds.NavigationState",
+            note="Compact authoritative navigation lifecycle state.",
         ),
         _binding(
             TOPICS.exploration_command,

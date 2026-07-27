@@ -60,6 +60,61 @@ void copyString(char (&target)[N], const std::string& source) {
   std::memcpy(target, source.data(), count);
   target[count] = '\0';
 }
+bool validateNavigationReceiptBuffer(
+    const lingtu_nav_navigation_command_receipt_v1* receipt,
+    const char* operation) {
+  if (receipt == nullptr) {
+    thread_error = std::string(operation) + " receipt is null";
+    return false;
+  }
+  if (receipt->abi_version !=
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION) {
+    thread_error = std::string(operation) + " receipt ABI version mismatch";
+    return false;
+  }
+  if (receipt->struct_size < sizeof(*receipt)) {
+    thread_error = std::string(operation) + " receipt struct is too small";
+    return false;
+  }
+  return true;
+}
+
+bool validateGoalStatusBuffer(
+    const lingtu_nav_navigation_goal_status_v1* status,
+    const char* operation) {
+  if (status == nullptr) {
+    thread_error = std::string(operation) + " status is null";
+    return false;
+  }
+  if (status->abi_version != LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION) {
+    thread_error = std::string(operation) + " status ABI version mismatch";
+    return false;
+  }
+  if (status->struct_size < sizeof(*status)) {
+    thread_error = std::string(operation) + " status struct is too small";
+    return false;
+  }
+  return true;
+}
+
+bool validateNavigationStateBuffer(
+    const lingtu_nav_navigation_state_v1* state,
+    const char* operation) {
+  if (state == nullptr) {
+    thread_error = std::string(operation) + " state is null";
+    return false;
+  }
+  if (state->abi_version != LINGTU_NAV_NAVIGATION_STATE_ABI_VERSION) {
+    thread_error = std::string(operation) + " state ABI version mismatch";
+    return false;
+  }
+  if (state->struct_size < sizeof(*state)) {
+    thread_error = std::string(operation) + " state struct is too small";
+    return false;
+  }
+  return true;
+}
+
 bool validateOperatorMotionReceiptBuffer(
     const lingtu_nav_operator_motion_receipt_v1* receipt,
     const char* operation) {
@@ -79,6 +134,20 @@ bool validateOperatorMotionReceiptBuffer(
   return true;
 }
 
+void copyNavigationReceipt(
+    lingtu_nav_navigation_command_receipt_v1* target,
+    const lingtu::nav::commands::NavigationCommandReceipt& source) {
+  std::memset(target, 0, sizeof(*target));
+  target->abi_version = LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  target->struct_size = sizeof(*target);
+  copyString(target->task_id, source.task_id);
+  copyString(target->request_id, source.request_id);
+  target->accepted = source.accepted ? 1 : 0;
+  target->kind = source.kind;
+  copyString(target->reason, source.reason);
+  target->endpoint_timestamp_s = source.endpoint_timestamp_s;
+}
+
 void copyOperatorMotionReceipt(
     lingtu_nav_operator_motion_receipt_v1* target,
     const lingtu::nav::commands::OperatorMotionCommandReceipt& source) {
@@ -94,6 +163,50 @@ void copyOperatorMotionReceipt(
   target->accepted_sequence = source.accepted_sequence;
   target->final_output_sequence = source.final_output_sequence;
   target->endpoint_timestamp_s = source.endpoint_timestamp_s;
+  copyString(target->reason, source.reason);
+}
+
+
+void copyNavigationStateV1(
+    lingtu_nav_navigation_state_v1* target,
+    const lingtu::nav::commands::NavigationStateSnapshot& source) {
+  std::memset(target, 0, sizeof(*target));
+  target->abi_version = LINGTU_NAV_NAVIGATION_STATE_ABI_VERSION;
+  target->struct_size = sizeof(*target);
+  target->timestamp_s = source.timestamp_s;
+  copyString(target->frame_id, source.frame_id);
+  copyString(target->boot_id, source.boot_id);
+  target->sequence = source.sequence;
+  target->control_mode = source.control_mode;
+  target->lifecycle_state = source.lifecycle_state;
+  copyString(target->active_task_id, source.active_task_id);
+  copyString(target->active_request_id, source.active_request_id);
+  target->goal_epoch = source.goal_epoch;
+  copyString(target->map_id, source.map_id);
+  target->map_version = source.map_version;
+  copyString(target->map_hash, source.map_hash);
+  target->planning_state = source.planning_state;
+  target->execution_state = source.execution_state;
+  target->recovery_state = source.recovery_state;
+  target->progress = source.progress;
+  copyString(target->authority, source.authority);
+  copyString(target->hold_reason, source.hold_reason);
+  copyString(target->failure_code, source.failure_code);
+}
+void copyGoalStatusV1(
+    lingtu_nav_navigation_goal_status_v1* target,
+    const lingtu::nav::commands::NavigationGoalStatusSnapshot& source) {
+  std::memset(target, 0, sizeof(*target));
+  target->abi_version = LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
+  target->struct_size = sizeof(*target);
+  target->timestamp_s = source.timestamp_s;
+  copyString(target->frame_id, source.frame_id);
+  copyString(target->boot_id, source.boot_id);
+  target->sequence = source.sequence;
+  copyString(target->task_id, source.task_id);
+  copyString(target->request_id, source.request_id);
+  target->state = source.state;
+  target->goal_epoch = source.goal_epoch;
   copyString(target->reason, source.reason);
 }
 
@@ -298,7 +411,11 @@ uint64_t lingtu_nav_client_capabilities(void) {
       LINGTU_NAV_CLIENT_CAP_GOAL_STATUS |
       LINGTU_NAV_CLIENT_CAP_PATH_TELEMETRY |
       LINGTU_NAV_CLIENT_CAP_MAP_SCENE |
-      LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT;
+      LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT |
+      LINGTU_NAV_CLIENT_CAP_NAVIGATION_COMMAND_RECEIPT |
+      LINGTU_NAV_CLIENT_CAP_NAVIGATION_TASK_STATUS |
+      LINGTU_NAV_CLIENT_CAP_NAVIGATION_STATE_V1 |
+      LINGTU_NAV_CLIENT_CAP_NAVIGATION_GOAL_STATUS_V1;
 }
 
 lingtu_nav_client_handle lingtu_nav_client_create(int domain_id) {
@@ -344,6 +461,33 @@ int lingtu_nav_client_send_goal_with_id(
   });
 }
 
+int lingtu_nav_client_start_task_with_receipt_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    double x,
+    double y,
+    double z,
+    double yaw,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "navigation start task")) {
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    copyNavigationReceipt(
+        receipt,
+        client.navigation().startTask(
+            x,
+            y,
+            z,
+            yaw,
+            timeout_ms,
+            task_id == nullptr ? "" : task_id,
+            request_id == nullptr ? "" : request_id));
+  });
+}
+
 int lingtu_nav_client_cancel(
     lingtu_nav_client_handle handle,
     const char* reason,
@@ -363,6 +507,27 @@ int lingtu_nav_client_cancel_with_id(
         reason == nullptr ? "cancel" : reason,
         timeout_ms,
         request_id == nullptr ? "" : request_id);
+  });
+}
+
+int lingtu_nav_client_cancel_task_with_receipt_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    const char* reason,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt) {
+  if (!validateNavigationReceiptBuffer(receipt, "navigation cancel task")) {
+    return -1;
+  }
+  return invoke(handle, [&](lingtu::nav::commands::Client& client) {
+    copyNavigationReceipt(
+        receipt,
+        client.navigation().cancelTask(
+            task_id == nullptr ? "" : task_id,
+            reason == nullptr ? "cancel" : reason,
+            timeout_ms,
+            request_id == nullptr ? "" : request_id));
   });
 }
 
@@ -832,6 +997,35 @@ int lingtu_nav_client_read_navigation_state(
   }
 }
 
+int lingtu_nav_client_read_navigation_state_v1(
+    lingtu_nav_client_handle raw_handle,
+    lingtu_nav_navigation_state_v1* state) {
+  if (!validateNavigationStateBuffer(state, "navigation state v1 read")) {
+    return -1;
+  }
+  Handle* handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr) {
+    thread_error = "navigation state v1 read received a null handle";
+    return -1;
+  }
+  try {
+    const auto snapshot = handle->client->latestNavigationState();
+    if (!snapshot.has_value()) {
+      thread_error.clear();
+      return 0;
+    }
+    copyNavigationStateV1(state, *snapshot);
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception& exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native navigation state v1 read failure";
+    return -1;
+  }
+}
+
 int lingtu_nav_client_take_navigation_goal_status(
     lingtu_nav_client_handle raw_handle,
     lingtu_nav_navigation_goal_status* status) {
@@ -854,6 +1048,35 @@ int lingtu_nav_client_take_navigation_goal_status(
     return -1;
   } catch (...) {
     thread_error = "unknown native navigation goal status take failure";
+    return -1;
+  }
+}
+
+int lingtu_nav_client_take_navigation_goal_status_v1(
+    lingtu_nav_client_handle raw_handle,
+    lingtu_nav_navigation_goal_status_v1* status) {
+  if (!validateGoalStatusBuffer(status, "navigation goal status v1 take")) {
+    return -1;
+  }
+  Handle* handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr) {
+    thread_error = "navigation goal status v1 take received a null handle";
+    return -1;
+  }
+  try {
+    lingtu::nav::commands::NavigationGoalStatusSnapshot snapshot;
+    if (!handle->client->takeNavigationGoalStatus(&snapshot)) {
+      thread_error.clear();
+      return 0;
+    }
+    copyGoalStatusV1(status, snapshot);
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception& exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native navigation goal status v1 take failure";
     return -1;
   }
 }
@@ -883,6 +1106,68 @@ int lingtu_nav_client_get_navigation_goal_status(
     return -1;
   } catch (...) {
     thread_error = "unknown native navigation goal status lookup failure";
+    return -1;
+  }
+}
+
+int lingtu_nav_client_get_navigation_goal_status_v1(
+    lingtu_nav_client_handle raw_handle,
+    const char* request_id,
+    lingtu_nav_navigation_goal_status_v1* status) {
+  if (!validateGoalStatusBuffer(status, "navigation goal status v1 lookup")) {
+    return -1;
+  }
+  Handle* handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr || request_id == nullptr ||
+      *request_id == '\0') {
+    thread_error = "navigation goal status v1 lookup received an invalid argument";
+    return -1;
+  }
+  try {
+    const auto snapshot = handle->client->navigationGoalStatus(request_id);
+    if (!snapshot.has_value()) {
+      thread_error.clear();
+      return 0;
+    }
+    copyGoalStatusV1(status, *snapshot);
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception& exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native navigation goal status v1 lookup failure";
+    return -1;
+  }
+}
+
+int lingtu_nav_client_get_navigation_task_status_v1(
+    lingtu_nav_client_handle raw_handle,
+    const char* task_id,
+    lingtu_nav_navigation_goal_status_v1* status) {
+  if (!validateGoalStatusBuffer(status, "navigation task status")) {
+    return -1;
+  }
+  Handle* handle = asHandle(raw_handle);
+  if (handle == nullptr || handle->client == nullptr || task_id == nullptr ||
+      *task_id == 0) {
+    thread_error = "navigation task status lookup received an invalid argument";
+    return -1;
+  }
+  try {
+    const auto snapshot = handle->client->navigationTaskStatus(task_id);
+    if (!snapshot.has_value()) {
+      thread_error.clear();
+      return 0;
+    }
+    copyGoalStatusV1(status, *snapshot);
+    thread_error.clear();
+    return 1;
+  } catch (const std::exception& exc) {
+    thread_error = exc.what();
+    return -1;
+  } catch (...) {
+    thread_error = "unknown native navigation task status lookup failure";
     return -1;
   }
 }

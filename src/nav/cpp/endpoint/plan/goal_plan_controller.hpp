@@ -22,6 +22,7 @@ struct GoalPlanTarget {
 };
 
 struct GoalPlanRequest {
+  std::string task_id;
   std::string request_id;
   GoalPlanOrigin origin{GoalPlanOrigin::kExternal};
   double source_stamp_s{0.0};
@@ -52,6 +53,7 @@ struct GoalPlanAdvanceContext {
 };
 
 struct GoalPlanStatus {
+  std::string task_id;
   std::string request_id;
   std::uint64_t goal_epoch{0U};
   lingtu::message::NavigationGoalState state{lingtu::message::NavigationGoalState::Failed};
@@ -131,10 +133,17 @@ struct GoalPlanAdvanceResult {
   std::string map_identity_error;
 };
 
+struct GoalPlanCancelAdmission {
+  bool accepted{false};
+  std::string reason;
+};
+
 struct GoalPlanSnapshot {
   std::uint64_t goal_epoch{0U};
+  std::string planning_task_id;
   std::string planning_request_id;
   std::uint64_t planning_goal_epoch{0U};
+  std::string active_task_id;
   std::string active_request_id;
   std::uint64_t active_goal_epoch{0U};
   bool busy{false};
@@ -153,13 +162,15 @@ class GoalPlanController {
   [[nodiscard]] GoalPlanTerminalCommit
   deferActiveTerminal(lingtu::message::NavigationGoalState state, const std::string &reason);
   void invalidateForHold(const std::string &reason);
+  [[nodiscard]] GoalPlanCancelAdmission admitCancel(const std::string &task_id) const;
   [[nodiscard]] GoalPlanSnapshot snapshot() const;
 
  private:
   [[nodiscard]] GoalPlanSubmitResult reject(std::string reason, bool count_frame_rejection = false,
                                             bool record_frame_error = false);
-  void publishStatus(const std::string &request_id, std::uint64_t goal_epoch,
-                     lingtu::message::NavigationGoalState state, const std::string &reason);
+  void publishStatus(const std::string &task_id, const std::string &request_id,
+                     std::uint64_t goal_epoch, lingtu::message::NavigationGoalState state,
+                     const std::string &reason);
   [[nodiscard]] GoalPlanTerminalCommit
   terminalCommit(std::vector<GoalPlanStatus> pending_statuses) const;
   [[nodiscard]] GoalPlanTerminalCommit deferPlanningAbort(const std::string &reason);
@@ -169,8 +180,10 @@ class GoalPlanController {
   GlobalPlanTask task_;
   GoalPlanActions actions_;
   std::uint64_t goal_epoch_{0U};
+  std::string planning_task_id_;
   std::string planning_request_id_;
   std::uint64_t planning_goal_epoch_{0U};
+  std::string active_task_id_;
   std::string active_request_id_;
   std::uint64_t active_goal_epoch_{0U};
   GoalPlanDiagnostics diagnostics_;

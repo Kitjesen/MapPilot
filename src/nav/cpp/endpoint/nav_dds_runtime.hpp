@@ -307,9 +307,11 @@ class DdsRuntime {
   const nav_kernel::Twist &lastOutputCommand() const noexcept { return last_output_command_; }
   bool writeOperatorMotionAck(const OperatorMotionAckSample &ack);
   bool writeOperatorMotionStatus(const OperatorMotionStatusSample &status);
-  bool writeCommandAck(const char *request_id, lingtu::message::NavigationCommandKind kind,
-                       bool accepted, const char *reason);
-  void writeNavigationGoalStatus(const char *request_id, lingtu::message::NavigationGoalState state,
+  bool writeCommandAck(const char *task_id, const char *request_id,
+                       lingtu::message::NavigationCommandKind kind, bool accepted,
+                       const char *reason);
+  void writeNavigationGoalStatus(const char *task_id, const char *request_id,
+                                 lingtu::message::NavigationGoalState state,
                                  std::uint64_t goal_epoch, const char *reason);
   bool writeNavigationState(const NavigationStateSample &state);
   bool writeExplorationSegmentAck(const ExplorationSegmentAck &ack);

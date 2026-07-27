@@ -24,10 +24,12 @@ CommandIngressRequest request(std::string client, std::string id, NavigationComm
                               std::string payload = {}) {
   CommandPayload value;
   value.reason = std::move(payload);
+  std::string task_id;
+  if (kind == NavigationCommandKind::Goal || kind == NavigationCommandKind::Cancel) {
+    task_id = "task-" + id;
+  }
   return {
-      std::move(client),
-      std::move(id),
-      static_cast<std::int32_t>(kind),
+      std::move(client), std::move(id), std::move(task_id), static_cast<std::int32_t>(kind),
       std::move(value),
   };
 }
@@ -127,6 +129,93 @@ void testTeleopTtlAndBusinessIsolation() {
   require(business_dispatches == 1, "business command dispatched twice");
   require(teleop_dispatches == 82, "teleop dispatch count mismatch");
 }
+
+void testTaskIdValidationAllowsCancelCurrent() {
+  CommandIngressController controller;
+  int dispatches = 0;
+  const auto dispatch = [&](NavigationCommandKind kind, const CommandPayload &) {
+    ++dispatches;
+    return CommandAck{kind == NavigationCommandKind::Cancel, "cancel_requested"};
+  };
+
+  auto goal = request("client", "goal-without-task", NavigationCommandKind::Goal);
+  goal.task_id.clear();
+  const auto rejected_goal = controller.handle(goal, dispatch);
+  require(!rejected_goal.dispatched && rejected_goal.ack.reason == "command_task_id_empty",
+          "goal without task id must be rejected");
+
+  auto cancel_current = request("client", "cancel-current", NavigationCommandKind::Cancel);
+  cancel_current.task_id.clear();
+  const auto accepted_cancel = controller.handle(cancel_current, dispatch);
+  require(accepted_cancel.dispatched && accepted_cancel.ack.accepted,
+          "cancel-current without task id must dispatch");
+  require(accepted_cancel.task_id.empty(), "cancel-current ACK invented a task id");
+  require(accepted_cancel.request_id == "cancel-current",
+          "cancel-current ACK lost request identity");
+  require(dispatches == 1, "task id validation dispatched an unexpected command");
+}
+
+void testTaskAndRequestIdsMustDiffer() {
+  CommandIngressController controller;
+  int dispatches = 0;
+  const auto dispatch = [&](NavigationCommandKind, const CommandPayload &) {
+    ++dispatches;
+    return CommandAck{true, "accepted"};
+  };
+
+  auto goal = request("client", "shared-id", NavigationCommandKind::Goal);
+  goal.task_id = goal.request_id;
+  const auto rejected_goal = controller.handle(goal, dispatch);
+  require(!rejected_goal.dispatched && rejected_goal.ack.reason == "command_task_request_id_equal",
+          "goal with equal task and request ids must be rejected");
+
+  auto cancel = request("client", "cancel-shared-id", NavigationCommandKind::Cancel);
+  cancel.task_id = cancel.request_id;
+  const auto rejected_cancel = controller.handle(cancel, dispatch);
+  require(!rejected_cancel.dispatched &&
+              rejected_cancel.ack.reason == "command_task_request_id_equal",
+          "strict cancel with equal task and request ids must be rejected");
+  require(dispatches == 0, "equal task and request ids reached the dispatcher");
+}
+
+void testTaskIdStableAcrossRequestRetries() {
+  CommandIngressController controller;
+  const auto now = CommandIngressController::Clock::time_point{90s};
+  int dispatches = 0;
+  const auto dispatch = [&](NavigationCommandKind, const CommandPayload &) {
+    ++dispatches;
+    return CommandAck{true, "planning_started"};
+  };
+
+  auto first_request = request("client-a", "goal-attempt-1", NavigationCommandKind::Goal);
+  first_request.task_id = "navigation-task-1";
+  const auto first = controller.handle(first_request, dispatch, now);
+  require(first.dispatched && !first.replayed, "first task attempt must dispatch");
+  require(first.task_id == "navigation-task-1", "first ACK task id mismatch");
+  require(first.request_id == "goal-attempt-1", "first ACK request id mismatch");
+
+  auto retry_request = first_request;
+  retry_request.request_id = "goal-attempt-2";
+  const auto retry = controller.handle(retry_request, dispatch, now + 1s);
+  require(retry.replayed && !retry.dispatched, "same task retry must replay admission");
+  require(retry.task_id == "navigation-task-1", "retry ACK changed task id");
+  require(retry.request_id == "goal-attempt-2", "retry ACK must echo current request id");
+  require(dispatches == 1, "same task retry dispatched the planner twice");
+
+  auto changed_goal = retry_request;
+  changed_goal.request_id = "goal-attempt-3";
+  changed_goal.payload.goal[0] = 3.0;
+  const auto conflict = controller.handle(changed_goal, dispatch, now + 2s);
+  require(!conflict.dispatched && conflict.ack.reason == "idempotency_conflict",
+          "changed goal under one task id must conflict");
+
+  auto forked_task = first_request;
+  forked_task.task_id = "navigation-task-2";
+  const auto fork_conflict = controller.handle(forked_task, dispatch, now + 3s);
+  require(!fork_conflict.dispatched && fork_conflict.ack.reason == "idempotency_conflict",
+          "one request id must not alias two task ids");
+  require(dispatches == 1, "conflicting task identity dispatched work");
+}
 }  // namespace
 
 int main() {
@@ -134,6 +223,9 @@ int main() {
     testValidationOrderAndDiagnostics();
     testReplayConflictAndPartitions();
     testTeleopTtlAndBusinessIsolation();
+    testTaskIdValidationAllowsCancelCurrent();
+    testTaskAndRequestIdsMustDiffer();
+    testTaskIdStableAcrossRequestRetries();
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_command_ingress_controller: FAIL: %s\n", exc.what());
     return 1;

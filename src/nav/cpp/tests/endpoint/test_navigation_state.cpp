@@ -25,6 +25,7 @@ void require(bool condition, const char *message) {
 void testLifecycleAndTransientHold() {
   NavigationStateTracker tracker(NavigationControlState::kAutonomy);
   tracker.observe(GoalPlanStatus{
+      "navigation-task-7",
       "goal-7",
       7U,
       NavigationGoalState::Planning,
@@ -35,6 +36,8 @@ void testLifecycleAndTransientHold() {
   context.map = NavigationMapIdentity{"factory", 12, "sha256-map"};
   context.authority = "autonomy";
   auto state = tracker.sample(context);
+  require(state.active_task_id == "navigation-task-7", "planning task identity missing");
+  require(state.active_request_id == "goal-7", "planning request identity missing");
   require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kPlanning),
           "planning lifecycle missing");
   require(state.planning_state == static_cast<int>(NavigationPlanningState::kPlanning),
@@ -58,6 +61,7 @@ void testLifecycleAndTransientHold() {
 void testExecutionRecoveryAndTerminalState() {
   NavigationStateTracker tracker(NavigationControlState::kAutonomy);
   tracker.observe(GoalPlanStatus{
+      "navigation-task-9",
       "goal-9",
       9U,
       NavigationGoalState::PathActive,
@@ -81,6 +85,7 @@ void testExecutionRecoveryAndTerminalState() {
           "recovery state missing");
 
   tracker.observe(GoalPlanStatus{
+      "navigation-task-9",
       "goal-9",
       9U,
       NavigationGoalState::Reached,
@@ -100,6 +105,7 @@ void testExecutionRecoveryAndTerminalState() {
 void testFailureCarriesStableCode() {
   NavigationStateTracker tracker(NavigationControlState::kTeleopAvoid);
   tracker.observe(GoalPlanStatus{
+      "navigation-task-11",
       "goal-11",
       11U,
       NavigationGoalState::Failed,
@@ -115,6 +121,7 @@ void testFailureCarriesStableCode() {
           "local recovery exhaustion must remain a recovery failure");
 
   tracker.observe(GoalPlanStatus{
+      "navigation-task-12",
       "goal-12",
       12U,
       NavigationGoalState::Failed,

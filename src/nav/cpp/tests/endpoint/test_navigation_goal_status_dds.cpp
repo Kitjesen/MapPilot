@@ -107,16 +107,19 @@ void testRuntimePublishesCorrelatedGoalLifecycle() {
 
   lingtu_dds_NavigationGoalStatus observed{};
   for (int attempt = 0; attempt < 100; ++attempt) {
-    runtime.writeNavigationGoalStatus(
-        "tare-explore-1", lingtu::message::NavigationGoalState::Failed, 42U, "goal_outside_map");
+    runtime.writeNavigationGoalStatus("navigation-task-1", "goal-attempt-1",
+                                      lingtu::message::NavigationGoalState::Failed, 42U,
+                                      "goal_outside_map");
     std::this_thread::sleep_for(10ms);
     if (peer.take(&observed)) {
       break;
     }
   }
 
-  require(observed.request_id != nullptr, "goal lifecycle sample must arrive");
-  require(std::string(observed.request_id) == "tare-explore-1",
+  require(observed.task_id != nullptr, "goal lifecycle sample must arrive");
+  require(std::string(observed.task_id) == "navigation-task-1",
+          "goal lifecycle task id must be preserved");
+  require(observed.request_id != nullptr && std::string(observed.request_id) == "goal-attempt-1",
           "goal lifecycle request id must be preserved");
   require(observed.boot_id != nullptr && std::strlen(observed.boot_id) > 0U,
           "goal lifecycle producer boot id must be present");
@@ -130,6 +133,7 @@ void testRuntimePublishesCorrelatedGoalLifecycle() {
           "goal lifecycle header must be map framed");
   dds_free(observed.header.frame_id);
   dds_free(observed.boot_id);
+  dds_free(observed.task_id);
   dds_free(observed.request_id);
   dds_free(observed.reason);
 }

@@ -15,6 +15,7 @@ inline CommandIngressRequest
 commandIngressRequestFromDds(const lingtu_dds_NavigationCommandRequest &message) {
   CommandIngressRequest request;
   request.client_id = stringValue(message.client_id);
+  request.task_id = stringValue(message.task_id);
   request.request_id = stringValue(message.request_id);
   request.raw_kind = message.kind;
 

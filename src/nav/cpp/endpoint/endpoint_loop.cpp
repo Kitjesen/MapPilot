@@ -290,10 +290,17 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         frames.last_error = rolling_state.input_error;
       }
     });
-    auto submit_goal = [&](const lingtu_dds_PoseStamped &msg, const std::string &request_id,
+    auto next_internal_goal_identity = [&](const std::string &source) {
+      const std::string prefix =
+          dds.producerBootId() + ":" + source + ":" + std::to_string(goal_count + 1U);
+      return std::pair<std::string, std::string>{prefix + ":task", prefix + ":request"};
+    };
+    auto submit_goal = [&](const lingtu_dds_PoseStamped &msg, const std::string &task_id,
+                           const std::string &request_id,
                            GoalPlanOrigin origin) -> std::pair<bool, std::string> {
       ++goal_count;
       GoalPlanRequest request;
+      request.task_id = task_id;
       request.request_id = request_id;
       request.origin = origin;
       request.source_stamp_s = headerStampSeconds(msg.header);
@@ -342,7 +349,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       return {result.accepted, result.reason};
     };
     dds.drainLegacyGoals([&](const lingtu_dds_PoseStamped &msg) {
-      (void)submit_goal(msg, {}, GoalPlanOrigin::kExternal);
+      const auto identity = next_internal_goal_identity("legacy-goal");
+      (void)submit_goal(msg, identity.first, identity.second, GoalPlanOrigin::kExternal);
     });
     dds.drainCloud([&](const lingtu_dds_PointCloud2 &msg) {
       input_projector.projectCloud(msg, steadySeconds(), nowSeconds(), timing);
@@ -436,10 +444,15 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     dds.drainLocalizationHealth([&](const lingtu_dds_Text &msg) {
       input_projector.projectLocalizationHealth(msg, steadySeconds());
     });
-    auto handle_cancel = [&](const std::string &) -> std::pair<bool, std::string> {
+    auto handle_cancel = [&](const std::string &task_id,
+                             const std::string &) -> std::pair<bool, std::string> {
       ++cancel_count;
+      const auto admission = goal_plan.admitCancel(task_id);
+      if (!admission.accepted) {
+        return {false, admission.reason};
+      }
       const auto result = motion_stop.cancel();
-      return {result.accepted, result.reason};
+      return {result.accepted, result.accepted ? "cancel_requested" : result.reason};
     };
     auto handle_stop = [&](const std::string &) -> std::pair<bool, std::string> {
       const auto result = motion_stop.stop();
@@ -485,7 +498,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       }
       return {result.accepted, result.reason};
     };
-    dds.drainLegacyCancel([&](const lingtu_dds_Text &msg) { (void)handle_cancel(textData(msg)); });
+    dds.drainLegacyCancel(
+        [&](const lingtu_dds_Text &msg) { (void)handle_cancel(std::string{}, textData(msg)); });
     auto handle_teleop = [&](const lingtu_dds_TwistStamped &msg) -> std::pair<bool, std::string> {
       ++teleop_cmd_count;
       TeleopAdmissionContext context;
@@ -729,9 +743,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               lingtu_dds_PoseStamped goal{};
               goal.header = msg.header;
               goal.pose = msg.goal;
-              result = submit_goal(goal, ingress_request.request_id, GoalPlanOrigin::kExternal);
+              result = submit_goal(goal, ingress_request.task_id, ingress_request.request_id,
+                                   GoalPlanOrigin::kExternal);
             } else if (kind == CommandKind::Cancel) {
-              result = handle_cancel(payload.reason);
+              result = handle_cancel(ingress_request.task_id, payload.reason);
             } else if (kind == CommandKind::Teleop) {
               if (!cfg.allow_legacy_motion_inputs) {
                 result = {false, "legacy_teleop_disabled_use_operator_motion"};
@@ -754,9 +769,9 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
             }
             return {result.first, result.second};
           });
-      const bool ack_published =
-          dds.writeCommandAck(ingress_result.request_id.c_str(), ingress_result.kind,
-                              ingress_result.ack.accepted, ingress_result.ack.reason.c_str());
+      const bool ack_published = dds.writeCommandAck(
+          ingress_result.task_id.c_str(), ingress_result.request_id.c_str(), ingress_result.kind,
+          ingress_result.ack.accepted, ingress_result.ack.reason.c_str());
       command_ingress.recordAckPublication(ack_published);
       if (!ack_published) {
         frames.last_error = "command_ack_publish_failed";
@@ -889,8 +904,10 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     }
     if (inspection_result.goal_dispatch) {
       const auto &point = inspection_result.goal_dispatch->point;
-      const auto dispatch_result = submit_goal(inspectionGoalMessage(point, inspection_now), {},
-                                               GoalPlanOrigin::kInspection);
+      const auto identity = next_internal_goal_identity("inspection-leg");
+      const auto dispatch_result =
+          submit_goal(inspectionGoalMessage(point, inspection_now), identity.first, identity.second,
+                      GoalPlanOrigin::kInspection);
       const auto completion = inspection_runtime.completeGoalDispatch(
           dispatch_result.first, dispatch_result.second, inspection_now);
       if (completion.clear_motion_reason) {

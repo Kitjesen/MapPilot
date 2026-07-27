@@ -69,6 +69,7 @@ planning:
   planner_status: /nav/planner_status
   adapter_status: /nav/adapter_status
   mission_status: /nav/mission_status
+  navigation_state: /nav/state           # authoritative native nav lifecycle
 
 autonomy:
   terrain_map: /nav/terrain_map          # sensor_msgs/PointCloud2
@@ -87,11 +88,11 @@ autonomy:
   navigation_boundary: /nav/navigation_boundary
   added_obstacles: /nav/added_obstacles
   check_obstacle: /nav/check_obstacle
-  nav_state: /nav/nav_state
 
 control:
   nav_command_request: /nav/command/request  # typed C++ goal/cancel/teleop command
   nav_command_ack: /nav/command/ack          # native business-level ACK
+  nav_goal_status: /nav/goal/status          # task lifecycle with request-attempt identity
   exploration_command: /nav/exploration/command # typed native exploration lifecycle command
   exploration_ack: /nav/exploration/ack      # matching exploration business ACK
   inspection_command: /nav/inspection/command # typed route start/pause/resume/cancel
@@ -433,14 +434,26 @@ data_formats:
     topic: /nav/command/request
     ros_type: lingtu.dds.NavigationCommandRequest
     frame_role: request_dependent
-    required_fields: [request_id, kind]
-    note: Typed C++ field command envelope. Goal, cancel, and operator velocity requests share this reliable volatile request channel.
+    required_fields: [client_id, task_id, request_id, kind]
+    note: GOAL and strict CANCEL carry a stable task_id; legacy cancel-current and non-task control commands may leave it empty.
   nav_command_ack:
     topic: /nav/command/ack
     ros_type: lingtu.dds.NavigationCommandAck
     frame_role: map
-    required_fields: [request_id, kind, accepted, reason]
-    note: Endpoint business acceptance or rejection with a native map-frame Header.
+    required_fields: [task_id, request_id, kind, accepted, reason]
+    note: Request-attempt acceptance, never a terminal result; task_id mirrors the request and may be empty for legacy non-task commands.
+  nav_goal_status:
+    topic: /nav/goal/status
+    ros_type: lingtu.dds.NavigationGoalStatus
+    frame_role: map
+    required_fields: [header, boot_id, event_sequence, task_id, request_id, state, goal_epoch, reason]
+    note: Native task lifecycle status with the originating request attempt.
+  navigation_state:
+    topic: /nav/state
+    ros_type: lingtu.dds.NavigationState
+    frame_role: map
+    required_fields: [header, boot_id, state_sequence, control_mode, lifecycle_state, active_task_id, active_request_id, goal_epoch, map_id, map_version, map_hash, planning_state, execution_state, recovery_state, progress, authority, hold_reason, failure_code]
+    note: Compact authoritative native navigation lifecycle state.
   exploration_command:
     topic: /nav/exploration/command
     ros_type: lingtu.dds.ExplorationCommandRequest
@@ -583,6 +596,10 @@ topic_formats:
   - nav_command_request
   /nav/command/ack:
   - nav_command_ack
+  /nav/goal/status:
+  - nav_goal_status
+  /nav/state:
+  - navigation_state
   /nav/exploration/command:
   - exploration_command
   /nav/exploration/ack:
@@ -815,6 +832,10 @@ topic_ros_types:
   - lingtu.dds.NavigationCommandRequest
   /nav/command/ack:
   - lingtu.dds.NavigationCommandAck
+  /nav/goal/status:
+  - lingtu.dds.NavigationGoalStatus
+  /nav/state:
+  - lingtu.dds.NavigationState
   /nav/exploration/command:
   - lingtu.dds.ExplorationCommandRequest
   /nav/exploration/ack:
@@ -1027,6 +1048,10 @@ topic_allowed_frame_ids:
   - body
   /nav/command/ack:
   - map
+  /nav/goal/status:
+  - map
+  /nav/state:
+  - map
   /nav/exploration/command:
   - map
   /nav/exploration/ack:
@@ -1090,6 +1115,8 @@ topic_default_frame_ids:
   /nav/teleop_cmd_vel: body
   /nav/command/request: map
   /nav/command/ack: map
+  /nav/goal/status: map
+  /nav/state: map
   /nav/exploration/command: map
   /nav/exploration/ack: map
   /nav/inspection/command: map
@@ -1173,6 +1200,10 @@ real_runtime_topic_allowed_frame_ids:
   - body
   /nav/command/ack:
   - map
+  /nav/goal/status:
+  - map
+  /nav/state:
+  - map
   /nav/exploration/command:
   - map
   /nav/exploration/ack:
@@ -1235,6 +1266,8 @@ real_runtime_topic_default_frame_ids:
   /nav/teleop_cmd_vel: body
   /nav/command/request: map
   /nav/command/ack: map
+  /nav/goal/status: map
+  /nav/state: map
   /nav/exploration/command: map
   /nav/exploration/ack: map
   /nav/inspection/command: map

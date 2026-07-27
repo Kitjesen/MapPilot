@@ -422,11 +422,12 @@ bool DdsRuntime::writeOperatorMotionStatus(const OperatorMotionStatusSample &sta
   return result >= 0;
 }
 
-bool DdsRuntime::writeCommandAck(const char *request_id,
+bool DdsRuntime::writeCommandAck(const char *task_id, const char *request_id,
                                  lingtu::message::NavigationCommandKind kind, bool accepted,
                                  const char *reason) {
   lingtu_dds_NavigationCommandAck msg{};
   fillHeader(msg.header, nowSeconds(), "map");
+  msg.task_id = const_cast<char *>(task_id == nullptr ? "" : task_id);
   msg.request_id = const_cast<char *>(request_id == nullptr ? "" : request_id);
   msg.kind = static_cast<std::int32_t>(kind);
   msg.accepted = accepted;
@@ -436,17 +437,18 @@ bool DdsRuntime::writeCommandAck(const char *request_id,
   return result >= 0;
 }
 
-void DdsRuntime::writeNavigationGoalStatus(const char *request_id,
+void DdsRuntime::writeNavigationGoalStatus(const char *task_id, const char *request_id,
                                            lingtu::message::NavigationGoalState state,
                                            std::uint64_t goal_epoch, const char *reason) {
-  if (goal_status_writer_ <= 0 || request_id == nullptr || *request_id == '\0' ||
-      goal_status_seq_ == std::numeric_limits<std::uint64_t>::max()) {
+  if (goal_status_writer_ <= 0 || task_id == nullptr || *task_id == '\0' || request_id == nullptr ||
+      *request_id == '\0' || goal_status_seq_ == std::numeric_limits<std::uint64_t>::max()) {
     return;
   }
   lingtu_dds_NavigationGoalStatus msg{};
   fillHeader(msg.header, nowSeconds(), "map");
   msg.boot_id = const_cast<char *>(producer_boot_id_.c_str());
   msg.event_sequence = goal_status_seq_ + 1U;
+  msg.task_id = const_cast<char *>(task_id);
   msg.request_id = const_cast<char *>(request_id);
   msg.state = static_cast<std::int32_t>(state);
   msg.goal_epoch = goal_epoch;
@@ -469,6 +471,7 @@ bool DdsRuntime::writeNavigationState(const NavigationStateSample &state) {
   message.state_sequence = navigation_state_seq_ + 1U;
   message.control_mode = state.control_mode;
   message.lifecycle_state = state.lifecycle_state;
+  message.active_task_id = const_cast<char *>(state.active_task_id.c_str());
   message.active_request_id = const_cast<char *>(state.active_request_id.c_str());
   message.goal_epoch = state.goal_epoch;
   message.map_id = const_cast<char *>(state.map_id.c_str());

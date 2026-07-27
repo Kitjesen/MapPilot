@@ -179,6 +179,8 @@ class RuntimeTopics:
     teleop_cmd_vel: str = "/nav/teleop_cmd_vel"
     nav_command_request: str = "/nav/command/request"
     nav_command_ack: str = "/nav/command/ack"
+    nav_goal_status: str = "/nav/goal/status"
+    nav_state: str = "/nav/state"
     exploration_command: str = "/nav/exploration/command"
     exploration_ack: str = "/nav/exploration/ack"
     inspection_command: str = "/nav/inspection/command"
@@ -196,7 +198,6 @@ class RuntimeTopics:
     added_obstacles: str = "/nav/added_obstacles"
     check_obstacle: str = "/nav/check_obstacle"
     planner_status: str = "/nav/planner_status"
-    nav_state: str = "/nav/nav_state"
     local_planner_clear_path: str = "/nav/local_planner/clear_path"
     local_planner_control_hint: str = "/nav/local_planner/control_hint"
 
@@ -328,6 +329,17 @@ class MessageFormat:
 
 
 @dataclass(frozen=True)
+class DDSWireRevisionContract:
+    """Deployment rule for an incompatible revision on retained DDS topics."""
+
+    schema_revision: str
+    topics: tuple[str, ...]
+    deployment_policy: str
+    mixed_versions_supported: bool
+    note: str
+
+
+@dataclass(frozen=True)
 class ArtifactFormat:
     """Saved-map artifact contract shared by mapping, relocalization, and PCT."""
 
@@ -392,6 +404,23 @@ class ProfileDataSourceBinding:
 
 FRAMES = RuntimeFrames()
 TOPICS = RuntimeTopics()
+
+NAVIGATION_TASK_IDENTITY_WIRE_CONTRACT = DDSWireRevisionContract(
+    schema_revision="lingtu.dds.navigation_task_identity.v2",
+    topics=(
+        TOPICS.nav_command_request,
+        TOPICS.nav_command_ack,
+        TOPICS.nav_goal_status,
+        TOPICS.nav_state,
+    ),
+    deployment_policy="cold_switch",
+    mixed_versions_supported=False,
+    note=(
+        "These retained topics use @final IDL structs whose field layout changed. "
+        "Stop every publisher and subscriber, deploy one generated schema revision, "
+        "then restart them together; rolling or mixed-version operation is unsupported."
+    ),
+)
 
 CORE_ALGORITHM_ENTRY_TOPICS = (
     TOPICS.odometry,
@@ -720,18 +749,67 @@ MESSAGE_FORMATS = {
         name="nav_command_request",
         ros_type="lingtu.dds.NavigationCommandRequest",
         frame_role="request_dependent",
-        required_fields=("request_id", "kind"),
+        required_fields=("client_id", "task_id", "request_id", "kind"),
         note=(
-            "Typed C++ field command envelope. Goal, cancel, and operator velocity "
-            "requests share this reliable volatile request channel."
+            "Typed C++ field command envelope. GOAL and strict CANCEL carry a stable "
+            "task_id across attempts identified by request_id; legacy cancel-current "
+            "and non-task control commands may leave task_id empty."
         ),
     ),
     "nav_command_ack": MessageFormat(
         name="nav_command_ack",
         ros_type="lingtu.dds.NavigationCommandAck",
         frame_role=FRAMES.map,
-        required_fields=("request_id", "kind", "accepted", "reason"),
-        note="Endpoint business acceptance or rejection with a native map-frame Header.",
+        required_fields=("task_id", "request_id", "kind", "accepted", "reason"),
+        note=(
+            "Endpoint request-attempt acceptance; never a terminal task result. "
+            "task_id mirrors the request and may be empty for legacy non-task commands."
+        ),
+    ),
+    "nav_goal_status": MessageFormat(
+        name="nav_goal_status",
+        ros_type="lingtu.dds.NavigationGoalStatus",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "boot_id",
+            "event_sequence",
+            "task_id",
+            "request_id",
+            "state",
+            "goal_epoch",
+            "reason",
+        ),
+        note=(
+            "Native navigation task lifecycle status with the originating request "
+            "attempt identity."
+        ),
+    ),
+    "navigation_state": MessageFormat(
+        name="navigation_state",
+        ros_type="lingtu.dds.NavigationState",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "boot_id",
+            "state_sequence",
+            "control_mode",
+            "lifecycle_state",
+            "active_task_id",
+            "active_request_id",
+            "goal_epoch",
+            "map_id",
+            "map_version",
+            "map_hash",
+            "planning_state",
+            "execution_state",
+            "recovery_state",
+            "progress",
+            "authority",
+            "hold_reason",
+            "failure_code",
+        ),
+        note="Compact authoritative native navigation lifecycle state.",
     ),
     "exploration_command": MessageFormat(
         name="exploration_command",
@@ -959,6 +1037,8 @@ TOPIC_FORMATS = {
     TOPICS.teleop_cmd_vel: ("teleop_cmd_vel",),
     TOPICS.nav_command_request: ("nav_command_request",),
     TOPICS.nav_command_ack: ("nav_command_ack",),
+    TOPICS.nav_goal_status: ("nav_goal_status",),
+    TOPICS.nav_state: ("navigation_state",),
     TOPICS.exploration_command: ("exploration_command",),
     TOPICS.exploration_ack: ("exploration_ack",),
     TOPICS.inspection_command: ("inspection_command",),
@@ -1076,6 +1156,8 @@ TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.teleop_cmd_vel: (FRAMES.body,),
     TOPICS.nav_command_request: (FRAMES.map, FRAMES.body),
     TOPICS.nav_command_ack: (FRAMES.map,),
+    TOPICS.nav_goal_status: (FRAMES.map,),
+    TOPICS.nav_state: (FRAMES.map,),
     TOPICS.exploration_command: (FRAMES.map,),
     TOPICS.exploration_ack: (FRAMES.map,),
     TOPICS.inspection_command: (FRAMES.map,),

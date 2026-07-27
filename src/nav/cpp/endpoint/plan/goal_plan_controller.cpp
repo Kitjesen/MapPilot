@@ -21,6 +21,12 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
   diagnostics_ = {};
   diagnostics_.seen = true;
 
+  if (request.task_id.empty()) {
+    return reject("goal_task_id_empty");
+  }
+  if (request.request_id.empty()) {
+    return reject("goal_request_id_empty");
+  }
   if (request.origin == GoalPlanOrigin::kExternal && actions_.inspection_active()) {
     return reject("inspection_run_active");
   }
@@ -88,9 +94,10 @@ GoalPlanSubmitResult GoalPlanController::submit(const GoalPlanRequest &request,
     return reject("global_planner_busy");
   }
 
+  planning_task_id_ = request.task_id;
   planning_request_id_ = request.request_id;
   planning_goal_epoch_ = goal_epoch_;
-  publishStatus(planning_request_id_, planning_goal_epoch_,
+  publishStatus(planning_task_id_, planning_request_id_, planning_goal_epoch_,
                 lingtu::message::NavigationGoalState::Planning, "planning");
   diagnostics_.reason = "planning";
   return {true, "planning_started", false, false, false};
@@ -239,6 +246,7 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
       context.now_s,
   });
   finishActive(lingtu::message::NavigationGoalState::Cancelled, "superseded_by_new_goal");
+  active_task_id_ = planning_task_id_;
   active_request_id_ = planning_request_id_;
   active_goal_epoch_ = planning_goal_epoch_;
   finishPlanning(lingtu::message::NavigationGoalState::PathActive, "path_active");
@@ -249,13 +257,16 @@ GoalPlanAdvanceResult GoalPlanController::advance(const GoalPlanAdvanceContext &
 }
 
 GoalPlanTerminalCommit GoalPlanController::deferAbort(const std::string &reason) {
+  const std::string planning_task_id = planning_task_id_;
   const std::string planning_request_id = planning_request_id_;
   const std::uint64_t planning_goal_epoch = planning_goal_epoch_;
+  const std::string active_task_id = active_task_id_;
   const std::string active_request_id = active_request_id_;
   const std::uint64_t active_goal_epoch = active_goal_epoch_;
   std::vector<GoalPlanStatus> pending_statuses;
   if (!planning_request_id.empty()) {
     pending_statuses.push_back({
+        planning_task_id,
         planning_request_id,
         planning_goal_epoch,
         lingtu::message::NavigationGoalState::Cancelled,
@@ -264,6 +275,7 @@ GoalPlanTerminalCommit GoalPlanController::deferAbort(const std::string &reason)
   }
   if (!active_request_id.empty()) {
     pending_statuses.push_back({
+        active_task_id,
         active_request_id,
         active_goal_epoch,
         lingtu::message::NavigationGoalState::Cancelled,
@@ -274,18 +286,22 @@ GoalPlanTerminalCommit GoalPlanController::deferAbort(const std::string &reason)
 
   bool has_pending_status = !pending_statuses.empty();
   GoalPlanTerminalCommit publish_terminal = terminalCommit(std::move(pending_statuses));
-  return [this, planning_request_id, planning_goal_epoch, active_request_id, active_goal_epoch,
-          has_pending_status, publish_terminal = std::move(publish_terminal)]() mutable {
+  return [this, planning_task_id, planning_request_id, planning_goal_epoch, active_task_id,
+          active_request_id, active_goal_epoch, has_pending_status,
+          publish_terminal = std::move(publish_terminal)]() mutable {
     if (!has_pending_status) {
       return;
     }
     has_pending_status = false;
-    if (planning_request_id_ == planning_request_id &&
+    if (planning_task_id_ == planning_task_id && planning_request_id_ == planning_request_id &&
         planning_goal_epoch_ == planning_goal_epoch) {
+      planning_task_id_.clear();
       planning_request_id_.clear();
       planning_goal_epoch_ = 0U;
     }
-    if (active_request_id_ == active_request_id && active_goal_epoch_ == active_goal_epoch) {
+    if (active_task_id_ == active_task_id && active_request_id_ == active_request_id &&
+        active_goal_epoch_ == active_goal_epoch) {
+      active_task_id_.clear();
       active_request_id_.clear();
       active_goal_epoch_ = 0U;
     }
@@ -313,17 +329,36 @@ void GoalPlanController::invalidateForHold(const std::string &reason) {
   diagnostics_.reason = reason;
 }
 
+GoalPlanCancelAdmission GoalPlanController::admitCancel(const std::string &task_id) const {
+  if (task_id.empty()) {
+    if (!planning_task_id_.empty() || !active_task_id_.empty()) {
+      return {true, "cancel_current"};
+    }
+    return {false, "task_not_active"};
+  }
+  if (!planning_task_id_.empty() && !active_task_id_.empty() &&
+      planning_task_id_ != active_task_id_) {
+    return {false, "task_cancel_ambiguous"};
+  }
+  if (task_id == planning_task_id_ || task_id == active_task_id_) {
+    return {true, "cancel_target_active"};
+  }
+  return {false, "task_not_active"};
+}
+
 GoalPlanTerminalCommit
 GoalPlanController::deferActiveTerminal(lingtu::message::NavigationGoalState state,
                                         const std::string &reason) {
   if (!lingtu::message::isTerminalNavigationGoalState(state)) {
     throw std::invalid_argument("deferred active status must be terminal");
   }
+  const std::string active_task_id = active_task_id_;
   const std::string active_request_id = active_request_id_;
   const std::uint64_t active_goal_epoch = active_goal_epoch_;
   std::vector<GoalPlanStatus> pending_statuses;
   if (!active_request_id.empty()) {
     pending_statuses.push_back({
+        active_task_id,
         active_request_id,
         active_goal_epoch,
         state,
@@ -332,13 +367,15 @@ GoalPlanController::deferActiveTerminal(lingtu::message::NavigationGoalState sta
   }
   bool has_pending_status = !pending_statuses.empty();
   GoalPlanTerminalCommit publish_terminal = terminalCommit(std::move(pending_statuses));
-  return [this, state, reason, active_request_id, active_goal_epoch, has_pending_status,
-          publish_terminal = std::move(publish_terminal)]() mutable {
+  return [this, state, reason, active_task_id, active_request_id, active_goal_epoch,
+          has_pending_status, publish_terminal = std::move(publish_terminal)]() mutable {
     if (!has_pending_status) {
       return;
     }
     has_pending_status = false;
-    if (active_request_id_ == active_request_id && active_goal_epoch_ == active_goal_epoch) {
+    if (active_task_id_ == active_task_id && active_request_id_ == active_request_id &&
+        active_goal_epoch_ == active_goal_epoch) {
+      active_task_id_.clear();
       active_request_id_.clear();
       active_goal_epoch_ = 0U;
     }
@@ -351,11 +388,13 @@ GoalPlanController::deferActiveTerminal(lingtu::message::NavigationGoalState sta
 }
 
 GoalPlanTerminalCommit GoalPlanController::deferPlanningAbort(const std::string &reason) {
+  const std::string planning_task_id = planning_task_id_;
   const std::string planning_request_id = planning_request_id_;
   const std::uint64_t planning_goal_epoch = planning_goal_epoch_;
   std::vector<GoalPlanStatus> pending_statuses;
   if (!planning_request_id.empty()) {
     pending_statuses.push_back({
+        planning_task_id,
         planning_request_id,
         planning_goal_epoch,
         lingtu::message::NavigationGoalState::Cancelled,
@@ -366,14 +405,15 @@ GoalPlanTerminalCommit GoalPlanController::deferPlanningAbort(const std::string 
 
   bool has_pending_status = !pending_statuses.empty();
   GoalPlanTerminalCommit publish_terminal = terminalCommit(std::move(pending_statuses));
-  return [this, planning_request_id, planning_goal_epoch, has_pending_status,
+  return [this, planning_task_id, planning_request_id, planning_goal_epoch, has_pending_status,
           publish_terminal = std::move(publish_terminal)]() mutable {
     if (!has_pending_status) {
       return;
     }
     has_pending_status = false;
-    if (planning_request_id_ == planning_request_id &&
+    if (planning_task_id_ == planning_task_id && planning_request_id_ == planning_request_id &&
         planning_goal_epoch_ == planning_goal_epoch) {
+      planning_task_id_.clear();
       planning_request_id_.clear();
       planning_goal_epoch_ = 0U;
     }
@@ -383,7 +423,8 @@ GoalPlanTerminalCommit GoalPlanController::deferPlanningAbort(const std::string 
 
 void GoalPlanController::finishPlanning(lingtu::message::NavigationGoalState state,
                                         const std::string &reason) {
-  publishStatus(planning_request_id_, planning_goal_epoch_, state, reason);
+  publishStatus(planning_task_id_, planning_request_id_, planning_goal_epoch_, state, reason);
+  planning_task_id_.clear();
   planning_request_id_.clear();
   planning_goal_epoch_ = 0U;
 }
@@ -396,8 +437,9 @@ void GoalPlanController::finishActive(lingtu::message::NavigationGoalState state
 
 GoalPlanSnapshot GoalPlanController::snapshot() const {
   return {
-      goal_epoch_,        planning_request_id_, planning_goal_epoch_, active_request_id_,
-      active_goal_epoch_, task_.busy(),         diagnostics_,
+      goal_epoch_,          planning_task_id_, planning_request_id_,
+      planning_goal_epoch_, active_task_id_,   active_request_id_,
+      active_goal_epoch_,   task_.busy(),      diagnostics_,
   };
 }
 
@@ -411,11 +453,12 @@ GoalPlanSubmitResult GoalPlanController::reject(std::string reason, bool count_f
   };
 }
 
-void GoalPlanController::publishStatus(const std::string &request_id, std::uint64_t goal_epoch,
+void GoalPlanController::publishStatus(const std::string &task_id, const std::string &request_id,
+                                       std::uint64_t goal_epoch,
                                        lingtu::message::NavigationGoalState state,
                                        const std::string &reason) {
-  if (!request_id.empty()) {
-    actions_.publish_status({request_id, goal_epoch, state, reason});
+  if (!task_id.empty() && !request_id.empty()) {
+    actions_.publish_status({task_id, request_id, goal_epoch, state, reason});
   }
 }
 

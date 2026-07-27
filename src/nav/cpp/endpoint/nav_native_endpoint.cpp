@@ -596,8 +596,8 @@ int main(int argc, char **argv) {
     goal_plan_actions.current_map_identity = current_map_identity;
     goal_plan_actions.publish_status = [&](const GoalPlanStatus &status) {
       navigation_state.observe(status);
-      dds.writeNavigationGoalStatus(status.request_id.c_str(), status.state, status.goal_epoch,
-                                    status.reason.c_str());
+      dds.writeNavigationGoalStatus(status.task_id.c_str(), status.request_id.c_str(), status.state,
+                                    status.goal_epoch, status.reason.c_str());
     };
     goal_plan_actions.inspection_active = [&]() { return inspection_executor.active(); };
     goal_plan_actions.inspection_leg_failed = [&](const std::string &reason, double now_s) {

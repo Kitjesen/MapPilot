@@ -177,6 +177,7 @@ class NavigationCommandRequest(
 ):
     header: Header
     client_id: str
+    task_id: str
     request_id: str
     kind: types.int32
     goal: Pose
@@ -190,6 +191,7 @@ class NavigationCommandAck(
     typename="lingtu::dds::NavigationCommandAck",
 ):
     header: Header
+    task_id: str
     request_id: str
     kind: types.int32
     accepted: types.boolean
@@ -260,6 +262,7 @@ class NavigationGoalStatus(
     header: Header
     boot_id: str
     event_sequence: types.uint64
+    task_id: str
     request_id: str
     state: types.int32
     goal_epoch: types.uint64
@@ -273,6 +276,7 @@ class NavigationState(IdlStruct, typename="lingtu::dds::NavigationState"):
     state_sequence: types.uint64
     control_mode: types.int32
     lifecycle_state: types.int32
+    active_task_id: str
     active_request_id: str
     goal_epoch: types.uint64
     map_id: str

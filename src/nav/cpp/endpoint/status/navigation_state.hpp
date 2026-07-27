@@ -69,6 +69,7 @@ struct NavigationStateContext {
 struct NavigationStateSample {
   std::int32_t control_mode{static_cast<std::int32_t>(NavigationControlState::kUnknown)};
   std::int32_t lifecycle_state{static_cast<std::int32_t>(NavigationLifecycleState::kIdle)};
+  std::string active_task_id;
   std::string active_request_id;
   std::uint64_t goal_epoch{0U};
   std::string map_id;

@@ -8,6 +8,7 @@ NavigationStateTracker::NavigationStateTracker(NavigationControlState control_mo
 }
 
 void NavigationStateTracker::observe(const GoalPlanStatus &status) {
+  state_.active_task_id = status.task_id;
   state_.active_request_id = status.request_id;
   state_.goal_epoch = status.goal_epoch;
   state_.hold_reason.clear();

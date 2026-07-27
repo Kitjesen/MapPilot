@@ -1,7 +1,7 @@
 r"""Auto-generated DDS dataclass definitions.
 
 Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-25T23:35:53Z
+Generated:  2026-07-27T04:19:25Z
 
 DO NOT EDIT BY HAND -- regenerate with::
 
@@ -339,6 +339,7 @@ class NavigationCommandRequest:
     """
     header: Header
     client_id: str
+    task_id: str
     request_id: str
     kind: int
     goal: Pose
@@ -351,6 +352,7 @@ class NavigationCommandAck:
     r"""IDL struct: lingtu::dds::NavigationCommandAck
     """
     header: Header
+    task_id: str
     request_id: str
     kind: int
     accepted: bool
@@ -428,6 +430,7 @@ class NavigationGoalStatus:
     header: Header
     boot_id: str
     event_sequence: int
+    task_id: str
     request_id: str
     state: int
     goal_epoch: int
@@ -443,6 +446,7 @@ class NavigationState:
     state_sequence: int
     control_mode: int
     lifecycle_state: int
+    active_task_id: str
     active_request_id: str
     goal_epoch: int
     map_id: str

@@ -13,6 +13,8 @@ native_contract_topics:
   - /slam/localization_quality
   - /nav/command/request
   - /nav/command/ack
+  - /nav/goal/status
+  - /nav/state
   - /nav/exploration/command
   - /nav/exploration/ack
   - /nav/inspection/command
@@ -169,7 +171,7 @@ topics:
     consumers:
       - native_nav_runtime
     qos: reliable_volatile_keep_last_32
-    semantics: goal_cancel_or_operator_velocity_request
+    semantics: stable_task_identity_with_request_attempt_identity
     port_bindings:
       - owner: persistent_cpp_navigation_client
         port: command_request
@@ -189,7 +191,7 @@ topics:
       - persistent_cpp_navigation_client
       - gateway_command_audit
     qos: reliable_transient_local_keep_last_64
-    semantics: business_accept_or_reject_for_matching_request_id
+    semantics: request_attempt_ack_with_stable_task_identity
     port_bindings:
       - owner: native_nav_runtime
         port: command_ack
@@ -197,6 +199,54 @@ topics:
         boundary: endpoint
       - owner: persistent_cpp_navigation_client
         port: command_ack
+        direction: in
+        boundary: native
+
+  /nav/goal/status:
+    role: native_navigation_goal_status
+    frame: map
+    schema: navigation_goal_status
+    producer: native_nav_runtime
+    consumers:
+      - persistent_cpp_navigation_client
+      - host_bus
+    qos: reliable_transient_local_keep_last_64
+    semantics: task_lifecycle_with_originating_request_attempt
+    port_bindings:
+      - owner: native_nav_runtime
+        port: goal_status
+        direction: out
+        boundary: endpoint
+      - owner: persistent_cpp_navigation_client
+        port: goal_status
+        direction: in
+        boundary: native
+      - owner: host_bus
+        port: navigation_goal_status
+        direction: in
+        boundary: native
+
+  /nav/state:
+    role: authoritative_navigation_state
+    frame: map
+    schema: navigation_state
+    producer: native_nav_runtime
+    consumers:
+      - persistent_cpp_navigation_client
+      - host_bus
+    qos: reliable_transient_local_keep_last_1
+    semantics: active_task_and_request_attempt_lifecycle_state
+    port_bindings:
+      - owner: native_nav_runtime
+        port: navigation_state
+        direction: out
+        boundary: endpoint
+      - owner: persistent_cpp_navigation_client
+        port: navigation_state
+        direction: in
+        boundary: native
+      - owner: host_bus
+        port: navigation_state
         direction: in
         boundary: native
 

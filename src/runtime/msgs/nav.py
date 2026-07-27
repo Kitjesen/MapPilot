@@ -10,6 +10,7 @@ import struct
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Any, ClassVar
 
 from runtime.runtime_interface import body_frame_id, map_frame_id, odom_frame_id
@@ -20,6 +21,252 @@ from .numpy_compat import is_numpy_array, np, numpy_import_is_safe
 NAV_MAP_FRAME_ID = map_frame_id()
 NAV_ODOM_FRAME_ID = odom_frame_id()
 NAV_BODY_FRAME_ID = body_frame_id()
+
+
+class NavigationControlMode(IntEnum):
+    UNKNOWN = 0
+    AUTONOMY = 1
+    TELEOP = 2
+    TELEOP_AVOID = 3
+
+
+class NavigationLifecycle(IntEnum):
+    IDLE = 0
+    PLANNING = 1
+    EXECUTING = 2
+    PAUSED = 3
+    RECOVERING = 4
+    SUCCESS = 5
+    FAILED = 6
+    CANCELLED = 7
+
+
+class NavigationPlanningState(IntEnum):
+    IDLE = 0
+    PLANNING = 1
+    READY = 2
+    FAILED = 3
+
+
+class NavigationExecutionState(IntEnum):
+    IDLE = 0
+    FOLLOWING = 1
+    REACHED = 2
+    BLOCKED = 3
+
+
+class NavigationRecoveryState(IntEnum):
+    IDLE = 0
+    ACTIVE = 1
+    SUCCEEDED = 2
+    FAILED = 3
+
+
+class NavigationGoalState(IntEnum):
+    PLANNING = 1
+    PATH_ACTIVE = 2
+    FAILED = 3
+    REACHED = 4
+    CANCELLED = 5
+
+
+class NavigationCommandKind(IntEnum):
+    GOAL = 1
+    CANCEL = 2
+    TELEOP = 3
+    STOP = 4
+    ESTOP = 5
+    CLEAR_ESTOP = 6
+    RESUME_AUTONOMY = 7
+
+
+def _require_int(value: int, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{field_name} must be an integer")
+    return int(value)
+
+
+def _enum_name(enum_type: type[IntEnum], value: int) -> str:
+    try:
+        return enum_type(int(value)).name
+    except ValueError:
+        return "UNKNOWN"
+
+
+@dataclass(frozen=True)
+class NavigationCommandReceipt:
+    """Native business ACK preserving logical task and delivery-attempt identity."""
+
+    msg_name: ClassVar[str] = "lingtu.runtime.NavigationCommandReceipt"
+
+    accepted: bool
+    kind: int
+    task_id: str
+    request_id: str
+    endpoint_timestamp_s: float
+    reason: str
+
+    def __post_init__(self) -> None:
+        kind = NavigationCommandKind(
+            _require_int(self.kind, "NavigationCommandReceipt.kind")
+        )
+        if not isinstance(self.accepted, bool):
+            raise ValueError("NavigationCommandReceipt.accepted must be a boolean")
+        if not isinstance(self.task_id, str):
+            raise ValueError("NavigationCommandReceipt.task_id must be a string")
+        if kind == NavigationCommandKind.GOAL and not self.task_id.strip():
+            raise ValueError("NavigationCommandReceipt.task_id is required for goals")
+        if not isinstance(self.request_id, str) or not self.request_id.strip():
+            raise ValueError("NavigationCommandReceipt.request_id is required")
+        if self.task_id and self.task_id == self.request_id:
+            raise ValueError(
+                "NavigationCommandReceipt.task_id and request_id must be distinct"
+            )
+        timestamp = float(self.endpoint_timestamp_s)
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError(
+                "NavigationCommandReceipt.endpoint_timestamp_s must be finite and non-negative"
+            )
+        if not isinstance(self.reason, str):
+            raise ValueError("NavigationCommandReceipt.reason must be a string")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "accepted": self.accepted,
+            "kind": int(self.kind),
+            "kind_name": _enum_name(NavigationCommandKind, self.kind),
+            "task_id": self.task_id,
+            "request_id": self.request_id,
+            "endpoint_timestamp_s": float(self.endpoint_timestamp_s),
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class NavigationGoalStatus:
+    """Task lifecycle event with its originating command-attempt identity."""
+
+    msg_name: ClassVar[str] = "lingtu.dds.NavigationGoalStatus"
+
+    ts: float = field(default_factory=time.time)
+    frame_id: str = NAV_MAP_FRAME_ID
+    boot_id: str = ""
+    sequence: int = 0
+    task_id: str = ""
+    request_id: str = ""
+    state: int = int(NavigationGoalState.PLANNING)
+    goal_epoch: int = 0
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(float(self.ts)) or self.ts <= 0.0:
+            raise ValueError("NavigationGoalStatus.ts must be a positive finite timestamp")
+        if not self.frame_id or not self.boot_id or not self.task_id or not self.request_id:
+            raise ValueError(
+                "NavigationGoalStatus frame_id, boot_id, task_id, and request_id are required"
+            )
+        if int(self.sequence) <= 0:
+            raise ValueError("NavigationGoalStatus.sequence must be positive")
+        if int(self.goal_epoch) < 0:
+            raise ValueError("NavigationGoalStatus.goal_epoch cannot be negative")
+        NavigationGoalState(int(self.state))
+
+    @property
+    def terminal(self) -> bool:
+        return int(self.state) in {
+            int(NavigationGoalState.FAILED),
+            int(NavigationGoalState.REACHED),
+            int(NavigationGoalState.CANCELLED),
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ts": float(self.ts),
+            "frame_id": self.frame_id,
+            "boot_id": self.boot_id,
+            "sequence": int(self.sequence),
+            "task_id": self.task_id,
+            "request_id": self.request_id,
+            "state": int(self.state),
+            "state_name": _enum_name(NavigationGoalState, self.state),
+            "goal_epoch": int(self.goal_epoch),
+            "reason": self.reason,
+            "terminal": self.terminal,
+        }
+
+
+@dataclass(frozen=True)
+class NavigationState:
+    """Compact authoritative lifecycle state published by the native nav endpoint."""
+
+    msg_name: ClassVar[str] = "lingtu.dds.NavigationState"
+
+    ts: float = field(default_factory=time.time)
+    frame_id: str = NAV_MAP_FRAME_ID
+    boot_id: str = ""
+    sequence: int = 0
+    control_mode: int = int(NavigationControlMode.UNKNOWN)
+    lifecycle_state: int = int(NavigationLifecycle.IDLE)
+    active_task_id: str = ""
+    active_request_id: str = ""
+    goal_epoch: int = 0
+    map_id: str = ""
+    map_version: int = 0
+    map_hash: str = ""
+    planning_state: int = int(NavigationPlanningState.IDLE)
+    execution_state: int = int(NavigationExecutionState.IDLE)
+    recovery_state: int = int(NavigationRecoveryState.IDLE)
+    progress: float = -1.0
+    authority: str = "none"
+    hold_reason: str = ""
+    failure_code: str = ""
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(float(self.ts)) or self.ts <= 0.0:
+            raise ValueError("NavigationState.ts must be a positive finite timestamp")
+        if not self.frame_id:
+            raise ValueError("NavigationState.frame_id is required")
+        if not self.boot_id:
+            raise ValueError("NavigationState.boot_id is required")
+        if int(self.sequence) <= 0:
+            raise ValueError("NavigationState.sequence must be positive")
+        if int(self.goal_epoch) < 0 or int(self.map_version) < 0:
+            raise ValueError("NavigationState epochs and versions cannot be negative")
+        if bool(self.active_task_id.strip()) != bool(self.active_request_id.strip()):
+            raise ValueError(
+                "NavigationState active_task_id and active_request_id must be present together"
+            )
+        progress = float(self.progress)
+        if not math.isfinite(progress) or (progress != -1.0 and not 0.0 <= progress <= 1.0):
+            raise ValueError("NavigationState.progress must be -1 or within [0, 1]")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ts": float(self.ts),
+            "frame_id": self.frame_id,
+            "boot_id": self.boot_id,
+            "sequence": int(self.sequence),
+            "control_mode": int(self.control_mode),
+            "control_mode_name": _enum_name(NavigationControlMode, self.control_mode),
+            "lifecycle_state": int(self.lifecycle_state),
+            "lifecycle_state_name": _enum_name(NavigationLifecycle, self.lifecycle_state),
+            "active_task_id": self.active_task_id,
+            "active_request_id": self.active_request_id,
+            "goal_epoch": int(self.goal_epoch),
+            "map_id": self.map_id,
+            "map_version": int(self.map_version),
+            "map_hash": self.map_hash,
+            "planning_state": int(self.planning_state),
+            "planning_state_name": _enum_name(NavigationPlanningState, self.planning_state),
+            "execution_state": int(self.execution_state),
+            "execution_state_name": _enum_name(NavigationExecutionState, self.execution_state),
+            "recovery_state": int(self.recovery_state),
+            "recovery_state_name": _enum_name(NavigationRecoveryState, self.recovery_state),
+            "progress": float(self.progress),
+            "authority": self.authority,
+            "hold_reason": self.hold_reason,
+            "failure_code": self.failure_code,
+        }
 
 
 def _header_from_stamp(ts: float, frame_id: str) -> Any:

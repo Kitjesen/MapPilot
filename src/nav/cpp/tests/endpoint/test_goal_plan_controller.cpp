@@ -58,6 +58,13 @@ int main() {
   actions.activate_path = [](const GoalPlanPathActivation &) {};
 
   GoalPlanController controller(planImmediately, std::move(actions));
+  const auto no_current_legacy_cancel = controller.admitCancel("");
+  require(!no_current_legacy_cancel.accepted &&
+              no_current_legacy_cancel.reason == "task_not_active",
+          "legacy cancel-current matched without a planning or active goal");
+  const auto no_current_task_cancel = controller.admitCancel("navigation-task-1");
+  require(!no_current_task_cancel.accepted && no_current_task_cancel.reason == "task_not_active",
+          "task cancel matched before the task became current");
   GoalPlanAdmissionContext context;
   context.motion_allowed = true;
   context.autonomy_mode = true;
@@ -67,6 +74,7 @@ int main() {
   context.frame_epoch = 4;
 
   GoalPlanRequest request;
+  request.task_id = "navigation-task-1";
   request.request_id = "goal-1";
   request.origin = GoalPlanOrigin::kExternal;
   request.source_stamp_s = 10.0;
@@ -82,7 +90,16 @@ int main() {
 
   const auto snapshot = controller.snapshot();
   require(snapshot.goal_epoch == 1U, "first goal did not allocate epoch one");
+  require(snapshot.planning_task_id == "navigation-task-1",
+          "planning task identity was not retained");
   require(snapshot.planning_request_id == "goal-1", "planning identity was not retained");
+  require(controller.admitCancel("").accepted,
+          "legacy cancel-current did not target the planning goal");
+  require(controller.admitCancel("navigation-task-1").accepted,
+          "planning task id did not match its cancel target");
+  const auto wrong_planning_cancel = controller.admitCancel("navigation-task-wrong");
+  require(!wrong_planning_cancel.accepted && wrong_planning_cancel.reason == "task_not_active",
+          "wrong task id matched the planning goal");
   require(snapshot.active_request_id.empty(), "new goal became active before a path existed");
   require(snapshot.busy, "accepted goal did not start the planner task");
   require(snapshot.diagnostics.seen, "goal diagnostics were not initialized");
@@ -91,6 +108,7 @@ int main() {
   require(snapshot.diagnostics.goal.x == 4.0, "planning goal was not captured");
 
   require(statuses.size() == 1U, "planning emitted an unexpected status count");
+  require(statuses.front().task_id == "navigation-task-1", "planning status lost task identity");
   require(statuses.front().request_id == "goal-1", "planning status lost request identity");
   require(statuses.front().goal_epoch == 1U, "planning status lost goal epoch");
   require(statuses.front().state == NavigationGoalState::Planning,
@@ -324,9 +342,37 @@ int main() {
           "planning identity remained after path activation");
   require(active_snapshot.active_request_id == request.request_id,
           "active goal identity was not transferred");
+  require(success_controller.admitCancel("").accepted,
+          "legacy cancel-current did not target the active goal");
+  require(success_controller.admitCancel(request.task_id).accepted,
+          "active task id did not match its cancel target");
+  const auto wrong_active_cancel = success_controller.admitCancel("navigation-task-wrong");
+  require(!wrong_active_cancel.accepted && wrong_active_cancel.reason == "task_not_active",
+          "wrong task id matched the active goal");
   require(active_snapshot.diagnostics.accepted, "accepted plan diagnostics were false");
   require(active_snapshot.diagnostics.reason == "accepted",
           "accepted plan diagnostics reason changed");
+
+  auto replacement_request = request;
+  replacement_request.task_id = "navigation-task-2";
+  replacement_request.request_id = "goal-2";
+  require(success_controller.submit(replacement_request, context).accepted,
+          "replacement goal could not start while the first task was active");
+  const auto replacement_snapshot = success_controller.snapshot();
+  require(replacement_snapshot.active_task_id == request.task_id &&
+              replacement_snapshot.planning_task_id == replacement_request.task_id,
+          "ambiguous cancel test did not retain distinct active and planning tasks");
+  const auto cancel_active_during_replacement = success_controller.admitCancel(request.task_id);
+  require(!cancel_active_during_replacement.accepted &&
+              cancel_active_during_replacement.reason == "task_cancel_ambiguous",
+          "task cancel could kill a distinct replacement planning task");
+  const auto cancel_planning_during_replacement =
+      success_controller.admitCancel(replacement_request.task_id);
+  require(!cancel_planning_during_replacement.accepted &&
+              cancel_planning_during_replacement.reason == "task_cancel_ambiguous",
+          "task cancel could kill a distinct active task");
+  require(success_controller.admitCancel("").accepted,
+          "legacy cancel-current must remain available for all current navigation");
 
   return 0;
 }

@@ -16,6 +16,7 @@ struct CommandDiagnostics {
   std::uint64_t ack_publish_failed{0};
   std::uint64_t rejected{0};
   std::uint64_t replayed{0};
+  std::string last_task_id;
   std::string last_request_id;
   std::string last_kind{"none"};
   bool last_accepted{false};
@@ -25,11 +26,13 @@ struct CommandDiagnostics {
 struct CommandIngressRequest {
   std::string client_id;
   std::string request_id;
+  std::string task_id;
   std::int32_t raw_kind{0};
   CommandPayload payload;
 };
 
 struct CommandIngressResult {
+  std::string task_id;
   std::string request_id;
   lingtu::message::NavigationCommandKind kind{lingtu::message::NavigationCommandKind::Goal};
   CommandAck ack;
@@ -52,8 +55,8 @@ class CommandIngressController {
   const CommandDiagnostics &diagnostics() const noexcept { return diagnostics_; }
 
  private:
-  CommandIngressResult finish(std::string request_id, CommandKind kind, CommandAck ack,
-                              bool replayed, bool dispatched);
+  CommandIngressResult finish(std::string task_id, std::string request_id, CommandKind kind,
+                              CommandAck ack, bool replayed, bool dispatched);
 
   CommandAckJournal &journalFor(CommandKind kind) noexcept;
 

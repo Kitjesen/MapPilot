@@ -686,6 +686,15 @@ std::string makeRequestId(CommandKind kind) {
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
+std::string makeTaskId(CommandKind kind) {
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return "nav-task-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
+      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
 std::string makeClientId() {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -754,6 +763,22 @@ bool isRecoverableClockRejection(CommandKind kind, const std::string& reason) {
   return false;
 }
 
+void requireAcceptedNavigationReceipt(
+    const NavigationCommandReceipt& receipt) {
+  if (receipt.accepted) {
+    return;
+  }
+  throw std::runtime_error(
+      "navigation command rejected: " +
+      (!receipt.diagnostic.empty()
+           ? receipt.diagnostic
+           : (receipt.reason.empty() ? std::string("unspecified") :
+              receipt.reason) +
+               " [task_id=" + receipt.task_id + " request_id=" +
+               receipt.request_id + " kind=" + navigationCommandKindName(
+                   static_cast<CommandKind>(receipt.kind)) + "]"));
+}
+
 void requireAcceptedOperatorMotionReceipt(
     const OperatorMotionCommandReceipt& receipt) {
   if (receipt.accepted) {
@@ -771,6 +796,9 @@ void requireAcceptedOperatorMotionReceipt(
 struct Client::Impl {
   struct AckObservation {
     bool accepted{false};
+    std::string task_id;
+    std::string request_id;
+    std::int32_t kind{0};
     std::string reason;
     double endpoint_stamp_s{0.0};
     double local_receive_wall_s{0.0};
@@ -780,6 +808,7 @@ struct Client::Impl {
 
   struct PendingNavigationAck {
     CommandKind kind;
+    std::string task_id;
     SteadyClock::time_point sent_steady;
     std::optional<AckObservation> observation;
   };
@@ -1069,10 +1098,11 @@ struct Client::Impl {
 
   NavigationPending registerNavigationAck(
       const std::string& request_id,
+      const std::string& task_id,
       CommandKind kind,
       SteadyClock::time_point sent_steady) const {
     auto pending = std::make_shared<PendingNavigationAck>(
-        PendingNavigationAck{kind, sent_steady, std::nullopt});
+        PendingNavigationAck{kind, task_id, sent_steady, std::nullopt});
     std::lock_guard<std::mutex> lock(ack_mutex);
     if (!ack_receiver_error.empty()) {
       throw std::runtime_error(ack_receiver_error);
@@ -1308,6 +1338,9 @@ struct Client::Impl {
         auto& pending = *it->second;
         AckObservation observation{
             ack.accepted,
+            text(ack.task_id),
+            text(ack.request_id),
+            ack.kind,
             text(ack.reason),
             stampSeconds(ack.header.stamp),
             local_receive_wall_s,
@@ -1318,6 +1351,11 @@ struct Client::Impl {
         if (ack.kind != static_cast<std::int32_t>(pending.kind)) {
           observation.accepted = false;
           observation.reason = "command_ack_kind_mismatch";
+        }
+        if (!pending.task_id.empty() &&
+            text(ack.task_id) != pending.task_id) {
+          observation.accepted = false;
+          observation.reason = "command_ack_task_id_mismatch";
         }
         pending.observation = std::move(observation);
         matched = true;
@@ -1362,6 +1400,9 @@ struct Client::Impl {
         auto& pending = *it->second;
         AckObservation observation{
             ack.accepted,
+            "",
+            text(ack.request_id),
+            ack.kind,
             text(ack.reason),
             stampSeconds(ack.header.stamp),
             local_receive_wall_s,
@@ -1416,6 +1457,9 @@ struct Client::Impl {
         auto& pending = *it->second;
         AckObservation observation{
             ack.accepted,
+            "",
+            text(ack.request_id),
+            ack.kind,
             text(ack.reason),
             stampSeconds(ack.header.stamp),
             local_receive_wall_s,
@@ -1539,6 +1583,7 @@ struct Client::Impl {
             state.state_sequence,
             state.control_mode,
             state.lifecycle_state,
+            text(state.active_task_id),
             text(state.active_request_id),
             state.goal_epoch,
             text(state.map_id),
@@ -1586,8 +1631,9 @@ struct Client::Impl {
         const auto& status =
             *static_cast<lingtu_dds_NavigationGoalStatus*>(samples[i]);
         const std::string boot_id = text(status.boot_id);
+        const std::string task_id = text(status.task_id);
         const std::string request_id = text(status.request_id);
-        if (boot_id.empty() || request_id.empty() ||
+        if (boot_id.empty() || task_id.empty() || request_id.empty() ||
             status.event_sequence == 0U ||
             !lingtu::message::isKnownNavigationGoalState(status.state)) {
           continue;
@@ -1603,6 +1649,7 @@ struct Client::Impl {
             text(status.header.frame_id),
             boot_id,
             status.event_sequence,
+            task_id,
             request_id,
             status.state,
             status.goal_epoch,
@@ -1613,11 +1660,22 @@ struct Client::Impl {
           retained_goal_status_order.push_back(request_id);
         }
         retained_goal_statuses[request_id] = snapshot;
+        if (retained_task_goal_statuses.find(task_id) ==
+            retained_task_goal_statuses.end()) {
+          retained_task_goal_status_order.push_back(task_id);
+        }
+        retained_task_goal_statuses[task_id] = snapshot;
         while (retained_goal_status_order.size() >
                kGoalStatusRetentionCapacity) {
           const std::string expired = retained_goal_status_order.front();
           retained_goal_status_order.pop_front();
           retained_goal_statuses.erase(expired);
+        }
+        while (retained_task_goal_status_order.size() >
+               kGoalStatusRetentionCapacity) {
+          const std::string expired = retained_task_goal_status_order.front();
+          retained_task_goal_status_order.pop_front();
+          retained_task_goal_statuses.erase(expired);
         }
         if (pending_goal_status_events.size() >= kGoalStatusEventCapacity) {
           pending_goal_status_events.pop_front();
@@ -2119,7 +2177,7 @@ struct Client::Impl {
       sync.reason = const_cast<char*>("client_clock_sync");
       const auto sent_steady = SteadyClock::now();
       const auto pending = registerNavigationAck(
-          request_id, CommandKind::Stop, sent_steady);
+          request_id, "", CommandKind::Stop, sent_steady);
       try {
         checked(
             dds_write(command_writer, static_cast<const void*>(&sync)),
@@ -2166,8 +2224,9 @@ struct Client::Impl {
         std::to_string(last_round_trip_s * 1000.0));
   }
 
-  std::string writeCommand(
+  NavigationCommandReceipt writeCommandReceipt(
       lingtu_dds_NavigationCommandRequest message,
+      const std::string& task_id,
       const std::string& request_id,
       CommandKind kind,
       int timeout_ms) const {
@@ -2189,6 +2248,7 @@ struct Client::Impl {
     }
     std::string active_request_id = request_id;
     message.client_id = const_cast<char*>(client_id.c_str());
+    message.task_id = const_cast<char*>(task_id.c_str());
     for (int attempt = 0; attempt < 2; ++attempt) {
       if (attempt > 0) {
         active_request_id = request_id + "-clock-retry-1";
@@ -2211,7 +2271,7 @@ struct Client::Impl {
           send_source_stamp_s);
       const auto sent_steady = SteadyClock::now();
       const auto pending = registerNavigationAck(
-          active_request_id, kind, sent_steady);
+          active_request_id, task_id, kind, sent_steady);
       try {
         checked(
             dds_write(command_writer, static_cast<const void*>(&message)),
@@ -2228,8 +2288,19 @@ struct Client::Impl {
       const auto observation = waitForAck(
           active_request_id, pending, timeout_ms);
       (void)updateEndpointClock(observation);
+      NavigationCommandReceipt receipt{
+          task_id,
+          active_request_id,
+          observation.accepted,
+          static_cast<std::int32_t>(kind),
+          observation.reason,
+          observation.endpoint_stamp_s,
+          observation.accepted
+              ? std::string{}
+              : rejectionMessage(active_request_id, kind, observation),
+      };
       if (observation.accepted) {
-        return active_request_id;
+        return receipt;
       }
       logClockEvent(
           "command_rejected",
@@ -2252,12 +2323,22 @@ struct Client::Impl {
         synchronizeEndpointClock(timeout_ms);
         continue;
       }
-      throw std::runtime_error(
-          rejectionMessage(active_request_id, kind, observation));
+      return receipt;
     }
     throw std::logic_error("navigation command retry loop exhausted");
   }
 
+  std::string writeCommand(
+      lingtu_dds_NavigationCommandRequest message,
+      const std::string& task_id,
+      const std::string& request_id,
+      CommandKind kind,
+      int timeout_ms) const {
+    const auto receipt = writeCommandReceipt(
+        message, task_id, request_id, kind, timeout_ms);
+    requireAcceptedNavigationReceipt(receipt);
+    return receipt.request_id;
+  }
   void writeReasonCommand(
       CommandKind kind,
       const std::string& requested_reason,
@@ -2273,7 +2354,7 @@ struct Client::Impl {
     message.request_id = const_cast<char*>(request_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.reason = const_cast<char*>(reason.c_str());
-    writeCommand(message, request_id, kind, timeout_ms);
+    writeCommand(message, "", request_id, kind, timeout_ms);
   }
 
   mutable std::mutex ack_mutex;
@@ -2294,6 +2375,9 @@ struct Client::Impl {
   std::unordered_map<std::string, NavigationGoalStatusSnapshot>
       retained_goal_statuses;
   std::deque<std::string> retained_goal_status_order;
+  std::unordered_map<std::string, NavigationGoalStatusSnapshot>
+      retained_task_goal_statuses;
+  std::deque<std::string> retained_task_goal_status_order;
   std::unordered_map<std::string, std::uint64_t>
       goal_status_sequences_by_boot;
   mutable std::mutex global_path_mutex;
@@ -2383,6 +2467,19 @@ std::optional<NavigationGoalStatusSnapshot> Client::navigationGoalStatus(
   return found->second;
 }
 
+std::optional<NavigationGoalStatusSnapshot> Client::navigationTaskStatus(
+    const std::string& task_id) const {
+  if (task_id.empty()) {
+    return std::nullopt;
+  }
+  std::lock_guard<std::mutex> lock(impl_->navigation_goal_status_mutex);
+  const auto found = impl_->retained_task_goal_statuses.find(task_id);
+  if (found == impl_->retained_task_goal_statuses.end()) {
+    return std::nullopt;
+  }
+  return found->second;
+}
+
 bool Client::takeGlobalPath(PathSnapshot* path) {
   if (path == nullptr) {
     throw std::invalid_argument("global path output is null");
@@ -2429,21 +2526,30 @@ MapSceneHealthSnapshot Client::mapSceneHealth() const {
   return health;
 }
 
-std::string Client::NavigationCommands::sendGoal(
+NavigationCommandReceipt Client::NavigationCommands::startTask(
     double x,
     double y,
     double z,
     double yaw,
     int timeout_ms,
+    const std::string& requested_task_id,
     const std::string& requested_id) {
   requireFinite(x, "goal x");
   requireFinite(y, "goal y");
   requireFinite(z, "goal z");
   requireFinite(yaw, "goal yaw");
+  if (!requested_task_id.empty() && requested_task_id == requested_id) {
+    throw std::invalid_argument(
+        "navigation task_id and request_id must be distinct");
+  }
+  const std::string task_id = requested_task_id.empty()
+      ? makeTaskId(CommandKind::Goal)
+      : requested_task_id;
   const std::string request_id =
       requested_id.empty() ? makeRequestId(CommandKind::Goal) : requested_id;
   lingtu_dds_NavigationCommandRequest message{};
   fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
   message.request_id = const_cast<char*>(request_id.c_str());
   message.kind = static_cast<std::int32_t>(CommandKind::Goal);
   message.goal.position.x = x;
@@ -2451,9 +2557,47 @@ std::string Client::NavigationCommands::sendGoal(
   message.goal.position.z = z;
   message.goal.orientation = quaternionFromYaw(yaw);
   message.reason = const_cast<char*>("");
-  return owner_.impl_->writeCommand(message, request_id, CommandKind::Goal, timeout_ms);
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::Goal, timeout_ms);
 }
 
+std::string Client::NavigationCommands::sendGoal(
+    double x,
+    double y,
+    double z,
+    double yaw,
+    int timeout_ms,
+    const std::string& requested_id) {
+  const auto receipt = startTask(
+      x, y, z, yaw, timeout_ms, "", requested_id);
+  requireAcceptedNavigationReceipt(receipt);
+  return receipt.request_id;
+}
+
+NavigationCommandReceipt Client::NavigationCommands::cancelTask(
+    const std::string& task_id,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& requested_id) {
+  if (task_id.empty()) {
+    throw std::invalid_argument("navigation cancel task_id is required");
+  }
+  if (!requested_id.empty() && task_id == requested_id) {
+    throw std::invalid_argument(
+        "navigation task_id and request_id must be distinct");
+  }
+  const std::string text = reason.empty() ? "cancel" : reason;
+  const std::string request_id =
+      requested_id.empty() ? makeRequestId(CommandKind::Cancel) : requested_id;
+  lingtu_dds_NavigationCommandRequest message{};
+  fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
+  message.request_id = const_cast<char*>(request_id.c_str());
+  message.kind = static_cast<std::int32_t>(CommandKind::Cancel);
+  message.reason = const_cast<char*>(text.c_str());
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::Cancel, timeout_ms);
+}
 void Client::NavigationCommands::cancel(
     const std::string& reason,
     int timeout_ms,
@@ -2466,7 +2610,8 @@ void Client::NavigationCommands::cancel(
   message.request_id = const_cast<char*>(request_id.c_str());
   message.kind = static_cast<std::int32_t>(CommandKind::Cancel);
   message.reason = const_cast<char*>(text.c_str());
-  owner_.impl_->writeCommand(message, request_id, CommandKind::Cancel, timeout_ms);
+  owner_.impl_->writeCommand(
+      message, "", request_id, CommandKind::Cancel, timeout_ms);
 }
 
 void Client::NavigationCommands::sendTeleop(
@@ -2488,7 +2633,8 @@ void Client::NavigationCommands::sendTeleop(
   message.velocity.linear.y = vy;
   message.velocity.angular.z = wz;
   message.reason = const_cast<char*>("");
-  owner_.impl_->writeCommand(message, request_id, CommandKind::Teleop, timeout_ms);
+  owner_.impl_->writeCommand(
+      message, "", request_id, CommandKind::Teleop, timeout_ms);
 }
 
 void Client::NavigationCommands::stop(

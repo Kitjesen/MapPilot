@@ -87,6 +87,7 @@ GoalPlanAdmissionContext admissionContext() {
 
 GoalPlanRequest request() {
   GoalPlanRequest value;
+  value.task_id = "navigation-task-stale-frame";
   value.request_id = "goal-stale-frame";
   value.origin = GoalPlanOrigin::kExternal;
   value.source_stamp_s = 10.0;
