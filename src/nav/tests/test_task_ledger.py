@@ -186,6 +186,127 @@ def test_attempt_identity_is_idempotent_and_task_target_is_immutable():
     ledger.close()
 
 
+def test_lookup_admission_is_an_exact_read_only_replay_probe():
+    clock_calls: list[float] = []
+
+    def clock() -> float:
+        value = 100.0 + len(clock_calls)
+        clock_calls.append(value)
+        return value
+
+    ledger = NavigationTaskLedger(":memory:", clock=clock)
+    ledger.admit(
+        "task-lookup",
+        "goal-attempt-lookup",
+        "goal",
+        {"yaw": 0.25, "x": 1.0, "y": 2.0},
+        target={"frame_id": "map", "x": 1.0, "y": 2.0, "yaw": 0.25},
+        product_fingerprint="product-sha256",
+        map_identity={"map_id": "yard", "version": 7},
+    )
+    before = ledger.get_task("task-lookup")
+    clock_call_count = len(clock_calls)
+
+    replay = ledger.lookup_admission(
+        "task-lookup",
+        "goal-attempt-lookup",
+        "goal",
+        {"x": 1.0, "y": 2.0, "yaw": 0.25},
+        target={"yaw": 0.25, "y": 2.0, "x": 1.0, "frame_id": "map"},
+        product_fingerprint="product-sha256",
+        map_identity={"version": 7, "map_id": "yard"},
+    )
+    after = ledger.get_task("task-lookup")
+
+    assert replay == {"record": before, "replay": True}
+    assert after == before
+    assert len(clock_calls) == clock_call_count
+    assert replay["record"]["updated_at"] == before["updated_at"]
+    assert replay["record"]["events"] == before["events"]
+    ledger.close()
+
+
+def test_lookup_admission_returns_none_for_unknown_identity_without_writes():
+    ledger = NavigationTaskLedger(":memory:", clock=lambda: 100.0)
+    ledger.admit(
+        "task-known",
+        "goal-attempt-known",
+        "goal",
+        {"x": 1.0, "y": 2.0},
+        target={"x": 1.0, "y": 2.0},
+    )
+    before = ledger.list_recent()
+
+    assert (
+        ledger.lookup_admission(
+            "task-missing",
+            "goal-attempt-missing",
+            "goal",
+            {"x": 1.0, "y": 2.0},
+            target={"x": 1.0, "y": 2.0},
+        )
+        is None
+    )
+    assert (
+        ledger.lookup_admission(
+            "task-known",
+            "goal-attempt-missing",
+            "goal",
+            {"x": 1.0, "y": 2.0},
+            target={"x": 1.0, "y": 2.0},
+        )
+        is None
+    )
+    assert ledger.list_recent() == before
+    ledger.close()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"kind": "cancel"}, "different content"),
+        ({"payload": {"x": 9.0, "y": 2.0}}, "different content"),
+        ({"target": {"x": 9.0, "y": 2.0}}, "different target"),
+        ({"product_fingerprint": "product-b"}, "different Product"),
+        ({"product_fingerprint": ""}, "different Product"),
+        ({"map_identity": {"map_id": "map-b"}}, "different map"),
+        ({"map_identity": None}, "different map"),
+    ],
+)
+def test_lookup_admission_rejects_conflicting_immutable_content(overrides, message):
+    ledger = NavigationTaskLedger(":memory:", clock=lambda: 100.0)
+    ledger.admit(
+        "task-conflict",
+        "goal-attempt-conflict",
+        "goal",
+        {"x": 1.0, "y": 2.0},
+        target={"x": 1.0, "y": 2.0},
+        product_fingerprint="product-a",
+        map_identity={"map_id": "map-a"},
+    )
+    before = ledger.get_task("task-conflict")
+    query = {
+        "kind": "goal",
+        "payload": {"x": 1.0, "y": 2.0},
+        "target": {"x": 1.0, "y": 2.0},
+        "product_fingerprint": "product-a",
+        "map_identity": {"map_id": "map-a"},
+    }
+    query.update(overrides)
+
+    with pytest.raises(TaskLedgerConflict, match=message):
+        ledger.lookup_admission(
+            "task-conflict",
+            "goal-attempt-conflict",
+            query.pop("kind"),
+            query.pop("payload"),
+            **query,
+        )
+
+    assert ledger.get_task("task-conflict") == before
+    ledger.close()
+
+
 def test_authoritative_goal_status_reaches_one_immutable_terminal():
     ledger = NavigationTaskLedger(":memory:")
     ledger.admit(

@@ -3397,3 +3397,263 @@ def test_command_ack_sse_whitelists_navigation_task_truth_without_internal_field
     assert data["stage"] == "native_unconfirmed"
     assert data["execution_confirmed"] is False
     assert "internal_ledger_row" not in data
+
+
+class _PreGateReplayGoals:
+    def __init__(self, response_factory) -> None:
+        self._response_factory = response_factory
+        self.lookup_calls = []
+        self.submit_calls = []
+
+    def lookup_goal_replay(
+        self,
+        goal,
+        *,
+        task_id=None,
+        request_id=None,
+        action="goal",
+    ):
+        self.lookup_calls.append((action, goal, task_id, request_id))
+        response = self._response_factory(task_id, request_id)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    def submit_goal(
+        self,
+        goal,
+        *,
+        task_id=None,
+        request_id=None,
+        action="goal",
+    ):
+        self.submit_calls.append((action, goal, task_id, request_id))
+        raise AssertionError("durable replay must not redispatch the goal")
+
+
+def _accepted_replay_receipt(task_id, request_id):
+    native_ack = {
+        "accepted": True,
+        "success": True,
+        "task_id": task_id,
+        "request_id": request_id,
+    }
+    return {
+        "accepted": True,
+        "success": True,
+        "task_id": task_id,
+        "request_id": request_id,
+        "native_task_id": task_id,
+        "native_request_id": request_id,
+        "native_ack": native_ack,
+        "sink": "native_dds",
+        "state": "running",
+        "task_state": "running",
+        "replay": True,
+        "admission_confirmed": True,
+        "admission_unconfirmed": False,
+        "history_recorded": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "command_name", "request_type"),
+    [
+        ("/api/v1/goal", "goal", "goal"),
+        ("/api/v1/navigate/click", "navigate_click", "click"),
+    ],
+)
+def test_durable_goal_replay_runs_before_all_motion_gates_and_preserves_http_replay(
+    monkeypatch,
+    path,
+    command_name,
+    request_type,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ClickNavRequest, ControlCommandResponse, GoalRequest
+    from gateway.services.control_commands import ControlCommandService
+
+    goals = _PreGateReplayGoals(_accepted_replay_receipt)
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": goals})
+
+    def unexpected_gate(*_args, **_kwargs):
+        raise AssertionError("durable replay must be resolved before motion gates")
+
+    for name in (
+        "motion_safety_rejection",
+        "_goal_readiness_rejection",
+        "_goal_map_identity_rejection",
+        "_goal_plan_preview_rejection",
+    ):
+        monkeypatch.setattr(ControlCommandService, name, unexpected_gate)
+
+    request_class = GoalRequest if request_type == "goal" else ClickNavRequest
+    body = request_class(
+        x=1.0,
+        y=2.0,
+        task_id=f"task-{request_type}",
+        request_id=f"attempt-{request_type}",
+        client_id="web",
+        metadata={"map_name": "no-longer-active"},
+    )
+    endpoint = _endpoint(gateway, path)
+
+    first = asyncio.run(endpoint(body))
+    second = asyncio.run(endpoint(body))
+    first_model = ControlCommandResponse.model_validate(_payload(first))
+    second_model = ControlCommandResponse.model_validate(_payload(second))
+
+    assert first_model.stage == "task_replayed"
+    assert first_model.task_replay is True
+    assert first_model.task_state == "running"
+    assert first_model.command.name == command_name
+    assert first_model.command.replay is False
+    assert second_model.command.replay is True
+    assert second_model.task_replay is True
+    assert len(goals.lookup_calls) == 1
+    assert goals.submit_calls == []
+    assert gateway.goal_pose.msg_count == 0
+
+
+def test_unconfirmed_durable_replay_remains_202_before_motion_gates(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import ControlCommandResponse, GoalRequest
+    from gateway.services.control_commands import ControlCommandService
+
+    def unconfirmed(task_id, request_id):
+        return {
+            "accepted": False,
+            "success": False,
+            "task_id": task_id,
+            "request_id": request_id,
+            "state": "unknown",
+            "task_state": "unknown",
+            "replay": True,
+            "admission_confirmed": False,
+            "admission_unconfirmed": True,
+            "history_recorded": True,
+            "message": "native acknowledgement timed out",
+            "sink": "native_dds",
+        }
+
+    goals = _PreGateReplayGoals(unconfirmed)
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": goals})
+    monkeypatch.setattr(
+        ControlCommandService,
+        "motion_safety_rejection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unconfirmed replay must be resolved before safety")
+        ),
+    )
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/goal")(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                task_id="task-unknown-pre-gate",
+                request_id="attempt-unknown-pre-gate",
+            )
+        )
+    )
+    model = ControlCommandResponse.model_validate(_payload(response))
+
+    assert response.status_code == 202
+    assert model.status == "native_command_unconfirmed"
+    assert model.task_replay is True
+    assert model.admission_unconfirmed is True
+    assert model.command.accepted is False
+    assert goals.submit_calls == []
+    assert gateway._command_stats_snapshot()["accepted_commands"] == 0
+
+
+@pytest.mark.parametrize(
+    "probe_result, expected_reason",
+    [
+        (
+            {
+                "accepted": False,
+                "success": False,
+                "task_id": "task-conflict",
+                "request_id": "attempt-conflict",
+                "message": "task admission conflict: target changed",
+            },
+            "target changed",
+        ),
+        (RuntimeError("task history unavailable"), "task history unavailable"),
+    ],
+)
+def test_durable_replay_probe_conflict_or_failure_blocks_before_motion_gates(
+    monkeypatch,
+    probe_result,
+    expected_reason,
+):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
+    from gateway.services.control_commands import ControlCommandService
+
+    goals = _PreGateReplayGoals(lambda _task_id, _request_id: probe_result)
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": goals})
+    monkeypatch.setattr(
+        ControlCommandService,
+        "motion_safety_rejection",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("probe failure must fail closed before safety")
+        ),
+    )
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/goal")(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                task_id="task-conflict",
+                request_id="attempt-conflict",
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "navigation_task_replay_rejected"
+    assert model.detail["reason_code"] == "navigation_task_replay_rejected"
+    assert model.detail["source"] == "navigation_task_history"
+    assert expected_reason in model.detail["reason"]
+    assert goals.submit_calls == []
+    assert gateway.goal_pose.msg_count == 0
+
+
+def test_unknown_durable_attempt_still_runs_the_existing_motion_gates():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
+
+    goals = _PreGateReplayGoals(lambda _task_id, _request_id: None)
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": goals})
+    with gateway._state_lock:
+        gateway._safety = {"level": 2}
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/goal")(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                task_id="task-new",
+                request_id="attempt-new",
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "safety_stop"
+    assert len(goals.lookup_calls) == 1
+    assert goals.submit_calls == []
+    assert gateway.goal_pose.msg_count == 0

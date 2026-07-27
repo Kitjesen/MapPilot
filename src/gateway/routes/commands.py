@@ -30,6 +30,7 @@ from gateway.schemas import (
 from gateway.services.command_boundary import (
     CommandAdmissionUnconfirmed,
     CommandBoundaryError,
+    probe_goal_replay,
     submit_cancel,
     submit_goal,
 )
@@ -129,6 +130,34 @@ def _navigation_task_truth(receipt: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _goal_command_payload(
+    goal: Any,
+    receipt: dict[str, Any],
+    *,
+    ts: float,
+    instruction: str | None = None,
+) -> dict[str, Any]:
+    native_ack = receipt.get("native_ack")
+    task_truth = _navigation_task_truth(receipt)
+    return {
+        **goal.command_payload(
+            status="accepted",
+            instruction=instruction,
+            ts=ts,
+        ),
+        "task_id": receipt.get("task_id") or None,
+        "native_request_id": receipt.get("native_request_id") or None,
+        "native_ack": native_ack,
+        "stage": (
+            "task_replayed"
+            if task_truth["task_replay"]
+            else "native_acknowledged" if native_ack else "local_published"
+        ),
+        "execution_confirmed": False,
+        **task_truth,
+    }
+
+
 def register_command_routes(app, gw) -> None:
     """Register Gateway navigation and direct-control command routes."""
 
@@ -213,31 +242,36 @@ def register_command_routes(app, gw) -> None:
                 task_id=body.task_id,
                 request_id=body.request_id,
             )
-            native_ack = receipt.get("native_ack")
-            task_truth = _navigation_task_truth(receipt)
-            return {
-                **goal.command_payload(
-                    status="accepted",
-                    instruction=body.instruction,
-                    ts=ts,
-                ),
-                "task_id": receipt.get("task_id") or None,
-                "native_request_id": receipt.get("native_request_id") or None,
-                "native_ack": native_ack,
-                "stage": (
-                    "task_replayed"
-                    if task_truth["task_replay"]
-                    else "native_acknowledged" if native_ack else "local_published"
-                ),
-                "execution_confirmed": False,
-                **task_truth,
-            }
+            return _goal_command_payload(
+                goal,
+                receipt,
+                ts=ts,
+                instruction=body.instruction,
+            )
+
+        def _probe_replay() -> dict[str, Any] | None:
+            ts = time.time()
+            receipt = probe_goal_replay(
+                gw,
+                goal.pose_stamped(ts=ts),
+                task_id=body.task_id,
+                request_id=body.request_id,
+            )
+            if receipt is None:
+                return None
+            return _goal_command_payload(
+                goal,
+                receipt,
+                ts=ts,
+                instruction=body.instruction,
+            )
 
         return await asyncio.to_thread(
             command_service.run_planned_goal_command,
             "goal",
             body,
             _publish,
+            replay_probe=_probe_replay,
         )
 
     @app.post(
@@ -263,27 +297,26 @@ def register_command_routes(app, gw) -> None:
                 task_id=body.task_id,
                 request_id=body.request_id,
             )
-            native_ack = receipt.get("native_ack")
-            task_truth = _navigation_task_truth(receipt)
-            return {
-                **goal.command_payload(status="accepted", ts=ts),
-                "task_id": receipt.get("task_id") or None,
-                "native_request_id": receipt.get("native_request_id") or None,
-                "native_ack": native_ack,
-                "stage": (
-                    "task_replayed"
-                    if task_truth["task_replay"]
-                    else "native_acknowledged" if native_ack else "local_published"
-                ),
-                "execution_confirmed": False,
-                **task_truth,
-            }
+            return _goal_command_payload(goal, receipt, ts=ts)
+
+        def _probe_replay() -> dict[str, Any] | None:
+            ts = time.time()
+            receipt = probe_goal_replay(
+                gw,
+                goal.pose_stamped(ts=ts),
+                task_id=body.task_id,
+                request_id=body.request_id,
+            )
+            if receipt is None:
+                return None
+            return _goal_command_payload(goal, receipt, ts=ts)
 
         return await asyncio.to_thread(
             command_service.run_planned_goal_command,
             "navigate_click",
             body,
             _publish,
+            replay_probe=_probe_replay,
         )
 
     @app.post(

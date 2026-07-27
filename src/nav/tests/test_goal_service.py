@@ -509,6 +509,7 @@ class TestGoalService:
             task_id="task-replay",
             request_id="goal-attempt-replay",
         )
+        status_count = service.goal_status.msg_count
         second = service.submit_goal(
             goal,
             task_id="task-replay",
@@ -519,10 +520,250 @@ class TestGoalService:
         assert second["accepted"] is True
         assert second["replay"] is True
         assert len(commands.goals) == 1
+        assert service.goal_status.msg_count == status_count + 1
         task = service.get_task("task-replay", refresh=False)
         assert task is not None
         assert task["state"] == "accepted"
         assert len(task["attempts"]) == 1
+        service.stop()
+
+    def test_goal_replay_lookup_is_read_only_and_never_dispatches(self):
+        class FakeCommands:
+            def __init__(self) -> None:
+                self.goals = []
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                self.goals.append((task_id, request_id, x, y, z, yaw))
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(
+            command_module="nav.commands",
+            product_fingerprint="product-a",
+            map_identity={"map_id": "yard", "version": 7},
+        )
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        original = PoseStamped(
+            pose=Pose(
+                position=Vector3(1.0, 2.0, 0.0),
+                orientation=Quaternion.from_yaw(0.25),
+            ),
+            frame_id="/map",
+        )
+        service.submit_goal(
+            original,
+            task_id="task-probe",
+            request_id="goal-attempt-probe",
+            action="goto",
+        )
+        before = service.get_task("task-probe", refresh=False)
+        status_count = service.goal_status.msg_count
+
+        replay = service.lookup_goal_replay(
+            PoseStamped(
+                pose=Pose(
+                    position=Vector3(1.0, 2.0, 0.0),
+                    orientation=Quaternion.from_yaw(0.25),
+                ),
+                frame_id="map",
+            ),
+            task_id="task-probe",
+            request_id="goal-attempt-probe",
+            action="goto",
+        )
+
+        assert replay is not None
+        assert replay["accepted"] is True
+        assert replay["replay"] is True
+        assert replay["task_id"] == "task-probe"
+        assert replay["request_id"] == "goal-attempt-probe"
+        assert replay["native_request_id"] == "goal-attempt-probe"
+        assert replay["native_ack"]["accepted"] is True
+        assert len(commands.goals) == 1
+        assert service.get_task("task-probe", refresh=False) == before
+        assert service.goal_status.msg_count == status_count
+        service.stop()
+
+    def test_goal_replay_lookup_returns_none_without_both_stable_ids(self):
+        service = GoalService()
+        service.setup()
+
+        assert (
+            service.lookup_goal_replay(
+                object(),
+                task_id="",
+                request_id="goal-attempt",
+                action="goto",
+            )
+            is None
+        )
+        assert (
+            service.lookup_goal_replay(
+                object(),
+                task_id="task-id",
+                request_id="",
+                action="goto",
+            )
+            is None
+        )
+        rejected = service.lookup_goal_replay(
+            object(),
+            task_id="task-id",
+            request_id="goal-attempt",
+            action="goto",
+        )
+        assert rejected is not None
+        assert rejected["accepted"] is False
+        assert service.goal_status.msg_count == 0
+        service.stop()
+
+    def test_goal_replay_lookup_conflict_is_rejected_without_redispatch(self):
+        class FakeCommands:
+            calls = 0
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                self.calls += 1
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-probe-conflict",
+            request_id="goal-attempt-probe-conflict",
+        )
+        status_count = service.goal_status.msg_count
+
+        rejected = service.lookup_goal_replay(
+            PoseStamped(
+                pose=Pose(position=Vector3(9.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-probe-conflict",
+            request_id="goal-attempt-probe-conflict",
+            action="goto",
+        )
+
+        assert rejected is not None
+        assert rejected["accepted"] is False
+        assert rejected["state"] == "rejected"
+        assert "conflict" in rejected["message"]
+        assert commands.calls == 1
+        assert service.goal_status.msg_count == status_count
+        service.stop()
+
+    def test_goal_replay_lookup_rejects_missing_product_and_map_context(self):
+        class FakeCommands:
+            calls = 0
+
+            def send_goal(self, x, y, z, yaw, *, task_id, request_id):
+                del x, y, z, yaw
+                self.calls += 1
+                return NavigationCommandReceipt(
+                    accepted=True,
+                    kind=int(NavigationCommandKind.GOAL),
+                    task_id=task_id,
+                    request_id=request_id,
+                    endpoint_timestamp_s=100.0,
+                    reason="planning_started",
+                )
+
+        commands = FakeCommands()
+        service = GoalService(
+            command_module="nav.commands",
+            product_fingerprint="product-a",
+            map_identity={"map_id": "yard", "version": 7},
+        )
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+        goal = PoseStamped(
+            pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+            frame_id="map",
+        )
+        service.submit_goal(
+            goal,
+            task_id="task-probe-context",
+            request_id="goal-attempt-probe-context",
+        )
+        service._product_fingerprint = ""
+        service._map_identity = None
+        status_count = service.goal_status.msg_count
+
+        rejected = service.lookup_goal_replay(
+            goal,
+            task_id="task-probe-context",
+            request_id="goal-attempt-probe-context",
+            action="goto",
+        )
+
+        assert rejected is not None
+        assert rejected["accepted"] is False
+        assert rejected["state"] == "rejected"
+        assert "different Product" in rejected["message"]
+        assert commands.calls == 1
+        assert service.goal_status.msg_count == status_count
+        service.stop()
+
+    def test_goal_replay_lookup_fails_closed_when_history_is_unavailable(self, monkeypatch):
+        class FakeCommands:
+            calls = 0
+
+            def send_goal(self, *args, **kwargs):
+                del args, kwargs
+                self.calls += 1
+                raise AssertionError("replay lookup must not dispatch")
+
+        commands = FakeCommands()
+        service = GoalService(command_module="nav.commands")
+        service.on_system_modules({"nav.commands": commands})
+        service.setup()
+
+        def fail_lookup(*args, **kwargs):
+            del args, kwargs
+            raise OSError("database unavailable")
+
+        monkeypatch.setattr(service._task_ledger, "lookup_admission", fail_lookup)
+        status_count = service.goal_status.msg_count
+        rejected = service.lookup_goal_replay(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-probe-unavailable",
+            request_id="goal-attempt-probe-unavailable",
+            action="goto",
+        )
+
+        assert rejected is not None
+        assert rejected["accepted"] is False
+        assert rejected["state"] == "rejected"
+        assert rejected["task_id"] == "task-probe-unavailable"
+        assert rejected["request_id"] == "goal-attempt-probe-unavailable"
+        assert "task history unavailable" in rejected["message"]
+        assert "not dispatched" in rejected["message"]
+        assert commands.calls == 0
+        assert service.goal_status.msg_count == status_count
         service.stop()
 
     def test_task_terminal_status_survives_goal_service_restart(self, tmp_path):
@@ -989,6 +1230,7 @@ class TestGoalService:
             task_id="task-local-cancel",
             request_id="cancel-local-cancel",
         )
+        status_count = service.goal_status.msg_count
         replay = service.submit_cancel(
             "operator",
             task_id="task-local-cancel",
@@ -1001,6 +1243,7 @@ class TestGoalService:
         assert first["history_recorded"] is True
         assert replay["replay"] is True
         assert replay["state"] == "cancel_requested"
+        assert service.goal_status.msg_count == status_count + 1
         assert task is not None
         assert task["cancel_requested"] is True
         assert task["terminal"] is False

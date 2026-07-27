@@ -183,6 +183,90 @@ class GoalService(Module, layer=6):
     def _on_goal_request(self, goal: PoseStamped) -> None:
         self.submit_goal(goal)
 
+    def lookup_goal_replay(
+        self,
+        goal: PoseStamped,
+        *,
+        task_id: str | None,
+        request_id: str | None,
+        action: str = "goal_pose",
+    ) -> dict[str, Any] | None:
+        """Return a prior goal admission without dispatching any motion."""
+
+        resolved_task_id = str(task_id or "").strip()
+        resolved_request_id = str(request_id or "").strip()
+        if not resolved_task_id or not resolved_request_id:
+            return None
+        if resolved_task_id == resolved_request_id:
+            return self._build_status_payload(
+                action,
+                False,
+                "task_id and request_id must be distinct",
+                request_id=resolved_request_id,
+                task_id=resolved_task_id,
+            )
+        if not isinstance(goal, PoseStamped):
+            return self._build_status_payload(
+                action,
+                False,
+                "goal_request must be PoseStamped",
+                request_id=resolved_request_id,
+                task_id=resolved_task_id,
+            )
+
+        frame_id = normalize_frame_id(getattr(goal, "frame_id", None))
+        frame_id = frame_id or self._planning_frame_id
+        try:
+            _, target = self._normalize_goal(goal, frame_id=frame_id)
+        except (AttributeError, TypeError, ValueError) as exc:
+            return self._build_status_payload(
+                action,
+                False,
+                str(exc),
+                request_id=resolved_request_id,
+                task_id=resolved_task_id,
+                frame_id=frame_id,
+            )
+
+        try:
+            admission = self._task_ledger.lookup_admission(
+                resolved_task_id,
+                resolved_request_id,
+                "goal",
+                target,
+                target=target,
+                product_fingerprint=self._product_fingerprint,
+                map_identity=self._map_identity,
+            )
+        except TaskLedgerConflict as exc:
+            return self._build_status_payload(
+                action,
+                False,
+                f"task admission conflict: {exc}",
+                request_id=resolved_request_id,
+                task_id=resolved_task_id,
+                frame_id=frame_id,
+                sink=self._sink_name,
+            )
+        except Exception:
+            return self._build_status_payload(
+                action,
+                False,
+                "task history unavailable; replay lookup rejected and command was not dispatched",
+                request_id=resolved_request_id,
+                task_id=resolved_task_id,
+                frame_id=frame_id,
+                reason="task_history_unavailable",
+                sink=self._sink_name,
+            )
+        if admission is None:
+            return None
+        return self._build_replay_status_payload(
+            admission["record"],
+            action=action,
+            request_id=resolved_request_id,
+        )
+
     def submit_goal(
         self,
         goal: PoseStamped,
@@ -214,14 +298,7 @@ class GoalService(Module, layer=6):
         frame_id = normalize_frame_id(getattr(goal, "frame_id", None))
         frame_id = frame_id or self._planning_frame_id
         try:
-            normalized_goal = build_goal_pose(
-                x=goal.pose.position.x,
-                y=goal.pose.position.y,
-                z=goal.pose.position.z,
-                yaw=goal.yaw,
-                frame_id=frame_id,
-                planning_frame_id=self._planning_frame_id,
-            )
+            normalized_goal, target = self._normalize_goal(goal, frame_id=frame_id)
         except (AttributeError, TypeError, ValueError) as exc:
             return self._publish_status(
                 action,
@@ -231,19 +308,6 @@ class GoalService(Module, layer=6):
                 request_id=resolved_request_id,
                 frame_id=frame_id,
             )
-
-        normalized_goal = PoseStamped(
-            pose=normalized_goal.pose,
-            ts=getattr(goal, "ts", 0.0),
-            frame_id=frame_id,
-        )
-        target = {
-            "x": normalized_goal.x,
-            "y": normalized_goal.y,
-            "z": normalized_goal.z,
-            "yaw": normalized_goal.yaw,
-            "frame_id": normalized_goal.frame_id,
-        }
         try:
             admission = self._task_ledger.admit(
                 resolved_task_id,
@@ -338,6 +402,33 @@ class GoalService(Module, layer=6):
                 "yaw": normalized_goal.yaw,
             },
         )
+
+    def _normalize_goal(
+        self,
+        goal: PoseStamped,
+        *,
+        frame_id: str,
+    ) -> tuple[PoseStamped, dict[str, Any]]:
+        normalized_goal = build_goal_pose(
+            x=goal.pose.position.x,
+            y=goal.pose.position.y,
+            z=goal.pose.position.z,
+            yaw=goal.yaw,
+            frame_id=frame_id,
+            planning_frame_id=self._planning_frame_id,
+        )
+        normalized_goal = PoseStamped(
+            pose=normalized_goal.pose,
+            ts=getattr(goal, "ts", 0.0),
+            frame_id=frame_id,
+        )
+        return normalized_goal, {
+            "x": normalized_goal.x,
+            "y": normalized_goal.y,
+            "z": normalized_goal.z,
+            "yaw": normalized_goal.yaw,
+            "frame_id": normalized_goal.frame_id,
+        }
 
     def _on_cancel_request(self, reason: str) -> None:
         self.submit_cancel(
@@ -743,6 +834,21 @@ class GoalService(Module, layer=6):
         action: str,
         request_id: str,
     ) -> dict[str, Any]:
+        payload = self._build_replay_status_payload(
+            record,
+            action=action,
+            request_id=request_id,
+        )
+        self.goal_status.publish(payload)
+        return payload
+
+    def _build_replay_status_payload(
+        self,
+        record: Mapping[str, Any],
+        *,
+        action: str,
+        request_id: str,
+    ) -> dict[str, Any]:
         attempt = next(
             (
                 item
@@ -780,7 +886,7 @@ class GoalService(Module, layer=6):
         if attempt is not None and attempt.get("native_ack") is not None:
             extra["native_request_id"] = str(attempt.get("native_request_id") or request_id)
             extra["native_ack"] = attempt["native_ack"]
-        return self._publish_status(
+        return self._build_status_payload(
             action,
             accepted is True,
             message,
@@ -949,6 +1055,25 @@ class GoalService(Module, layer=6):
             sink="native_dds",
         )
 
+    @staticmethod
+    def _build_status_payload(
+        action: str,
+        success: bool,
+        message: str,
+        request_id: str,
+        **extra: Any,
+    ) -> dict[str, Any]:
+        payload = {
+            "request_id": request_id,
+            "action": action,
+            "success": success,
+            "accepted": success,
+            "state": "accepted" if success else "rejected",
+            "message": message,
+        }
+        payload.update(extra)
+        return payload
+
     def _publish_status(
         self,
         action: str,
@@ -957,15 +1082,13 @@ class GoalService(Module, layer=6):
         request_id: str | None = None,
         **extra: Any,
     ) -> dict[str, Any]:
-        payload = {
-            "request_id": request_id or self._new_request_id(),
-            "action": action,
-            "success": success,
-            "accepted": success,
-            "state": "accepted" if success else "rejected",
-            "message": message,
-        }
-        payload.update(extra)
+        payload = self._build_status_payload(
+            action,
+            success,
+            message,
+            request_id or self._new_request_id(),
+            **extra,
+        )
         self.goal_status.publish(payload)
         return payload
 

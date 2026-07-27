@@ -145,6 +145,56 @@ def navigation_commands(owner: Any) -> Any | None:
     return None
 
 
+def _goal_service(owner: Any) -> Any | None:
+    goals = getattr(owner, "_goals", None)
+    if goals is not None:
+        return goals
+    modules = getattr(owner, "_all_modules", None)
+    return modules.get("nav.goals") if isinstance(modules, dict) else None
+
+
+def probe_goal_replay(
+    owner: Any,
+    goal: Any,
+    *,
+    task_id: str | None = None,
+    request_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Read an existing durable goal attempt without admitting or dispatching it."""
+
+    expected_task_id, expected_request_id = _validate_requested_identity(
+        task_id=task_id,
+        request_id=request_id,
+    )
+    if not expected_task_id or not expected_request_id:
+        return None
+
+    operation = getattr(_goal_service(owner), "lookup_goal_replay", None)
+    if not callable(operation):
+        return None
+    try:
+        result = operation(
+            goal,
+            task_id=expected_task_id,
+            request_id=expected_request_id,
+            action="goal",
+        )
+    except Exception as exc:
+        raise CommandBoundaryError(str(exc)) from exc
+    if result is None:
+        return None
+
+    receipt = _validated_task_receipt(
+        result,
+        expected_task_id=expected_task_id,
+        expected_request_id=expected_request_id,
+        task_id_required=True,
+    )
+    if receipt.get("replay") is not True:
+        raise CommandBoundaryError("goal replay probe returned a non-replay acknowledgement")
+    return receipt
+
+
 def submit_goal(
     owner: Any,
     goal: Any,
@@ -156,11 +206,7 @@ def submit_goal(
         task_id=task_id,
         request_id=request_id,
     )
-    goals = getattr(owner, "_goals", None)
-    if goals is None:
-        modules = getattr(owner, "_all_modules", None)
-        goals = modules.get("nav.goals") if isinstance(modules, dict) else None
-    operation = getattr(goals, "submit_goal", None)
+    operation = getattr(_goal_service(owner), "submit_goal", None)
     if not callable(operation):
         return False
     try:
@@ -191,11 +237,7 @@ def submit_cancel(
         task_id=task_id,
         request_id=request_id,
     )
-    goals = getattr(owner, "_goals", None)
-    if goals is None:
-        modules = getattr(owner, "_all_modules", None)
-        goals = modules.get("nav.goals") if isinstance(modules, dict) else None
-    operation = getattr(goals, "submit_cancel", None)
+    operation = getattr(_goal_service(owner), "submit_cancel", None)
     if not callable(operation):
         return False
     try:
@@ -243,6 +285,7 @@ __all__ = [
     "CommandBoundaryError",
     "invoke_navigation_command",
     "navigation_commands",
+    "probe_goal_replay",
     "submit_cancel",
     "submit_goal",
 ]

@@ -8,6 +8,7 @@ from gateway.services import native_control
 from gateway.services.command_boundary import (
     CommandAdmissionUnconfirmed,
     CommandBoundaryError,
+    probe_goal_replay,
     submit_cancel,
     submit_goal,
 )
@@ -276,3 +277,121 @@ def test_goal_boundary_preserves_stable_task_replay_truth():
     assert receipt["replay"] is True
     assert receipt["task_state"] == "running"
     assert receipt["history_recorded"] is True
+
+
+class _ReplayProbeGoalService:
+    def __init__(self, response: object) -> None:
+        self.response = response
+        self.calls: list[tuple[str, object, str, str]] = []
+
+    def lookup_goal_replay(
+        self,
+        goal: object,
+        *,
+        task_id: str,
+        request_id: str,
+        action: str = "goal",
+    ) -> object:
+        self.calls.append((action, goal, task_id, request_id))
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
+
+def test_goal_replay_probe_requires_stable_identity_and_validates_exact_replay():
+    response = _native_task_ack(task_id="task-replay", request_id="attempt-replay")
+    response.update(
+        {
+            "replay": True,
+            "state": "running",
+            "task_state": "running",
+            "admission_confirmed": True,
+            "admission_unconfirmed": False,
+            "history_recorded": True,
+        }
+    )
+    service = _ReplayProbeGoalService(response)
+    owner = SimpleNamespace(_goals=service)
+    goal = object()
+
+    assert probe_goal_replay(owner, goal, task_id=None, request_id="attempt-replay") is None
+    assert probe_goal_replay(owner, goal, task_id="task-replay", request_id=None) is None
+    assert service.calls == []
+
+    receipt = probe_goal_replay(
+        owner,
+        goal,
+        task_id="task-replay",
+        request_id="attempt-replay",
+    )
+
+    assert receipt is not None
+    assert receipt["replay"] is True
+    assert receipt["task_state"] == "running"
+    assert service.calls == [("goal", goal, "task-replay", "attempt-replay")]
+
+
+@pytest.mark.parametrize(
+    "response, error",
+    [
+        (
+            {
+                "accepted": False,
+                "success": False,
+                "task_id": "task-replay",
+                "request_id": "attempt-replay",
+                "message": "task admission conflict: target changed",
+            },
+            "target changed",
+        ),
+        (
+            {
+                **_native_task_ack(task_id="task-replay", request_id="attempt-replay"),
+                "replay": False,
+            },
+            "non-replay",
+        ),
+        (RuntimeError("task history unavailable"), "task history unavailable"),
+    ],
+)
+def test_goal_replay_probe_fails_closed_on_conflict_invalid_ack_or_query_error(
+    response,
+    error,
+):
+    service = _ReplayProbeGoalService(response)
+
+    with pytest.raises(CommandBoundaryError, match=error):
+        probe_goal_replay(
+            SimpleNamespace(_goals=service),
+            object(),
+            task_id="task-replay",
+            request_id="attempt-replay",
+        )
+
+
+def test_goal_replay_probe_preserves_unconfirmed_admission():
+    response = {
+        "accepted": False,
+        "success": False,
+        "task_id": "task-unknown",
+        "request_id": "attempt-unknown",
+        "state": "unknown",
+        "task_state": "unknown",
+        "replay": True,
+        "admission_confirmed": False,
+        "admission_unconfirmed": True,
+        "history_recorded": True,
+        "message": "native acknowledgement timed out",
+        "sink": "native_dds",
+    }
+
+    with pytest.raises(CommandAdmissionUnconfirmed) as raised:
+        probe_goal_replay(
+            SimpleNamespace(_goals=_ReplayProbeGoalService(response)),
+            object(),
+            task_id="task-unknown",
+            request_id="attempt-unknown",
+        )
+
+    assert raised.value.receipt["replay"] is True
+    assert raised.value.receipt["admission_unconfirmed"] is True

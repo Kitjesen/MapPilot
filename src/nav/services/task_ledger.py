@@ -284,6 +284,89 @@ class NavigationTaskLedger:
                 """
             )
 
+    def lookup_admission(
+        self,
+        task_id: str,
+        request_id: str,
+        kind: str,
+        payload: Any,
+        *,
+        target: Any = None,
+        product_fingerprint: str = "",
+        map_identity: Any = None,
+    ) -> dict[str, Any] | None:
+        """Return an exact prior admission without changing task history."""
+
+        task = _required_identity(task_id, "task_id")
+        request = _required_identity(request_id, "request_id")
+        if task == request:
+            raise ValueError("task_id and request_id must be distinct")
+        if "-clock-retry-" in request:
+            raise ValueError("request_id uses the reserved native clock-retry namespace")
+
+        attempt_kind = _required_identity(kind, "kind").lower()
+        if attempt_kind not in {"goal", "cancel"}:
+            raise ValueError("kind must be 'goal' or 'cancel'")
+        payload_json = _canonical_json(payload, label="payload")
+        target_json = _canonical_json(target, label="target")
+        map_json = _canonical_json(map_identity, label="map_identity")
+
+        with self._lock:
+            self._require_open()
+            row = self._conn.execute(
+                """
+                SELECT attempts.kind, attempts.payload_json,
+                       tasks.target_json, tasks.product_fingerprint,
+                       tasks.map_identity_json
+                FROM navigation_task_attempts AS attempts
+                JOIN navigation_tasks AS tasks ON tasks.task_id = attempts.task_id
+                WHERE attempts.task_id = ? AND attempts.request_id = ?
+                """,
+                (task, request),
+            ).fetchone()
+            if row is None:
+                return None
+            self._validate_existing_admission(
+                row,
+                attempt_kind=attempt_kind,
+                payload_json=payload_json,
+                target_json=target_json,
+                product_fingerprint=product_fingerprint,
+                map_identity=map_identity,
+                map_json=map_json,
+                require_context_match=True,
+            )
+
+            record = self._task_record(task)
+            assert record is not None
+            return {"record": record, "replay": True}
+
+    @staticmethod
+    def _validate_existing_admission(
+        row: sqlite3.Row,
+        *,
+        attempt_kind: str,
+        payload_json: str,
+        target_json: str,
+        product_fingerprint: str,
+        map_identity: Any,
+        map_json: str,
+        require_context_match: bool,
+    ) -> None:
+        """Validate immutable replay content while the caller holds the ledger lock."""
+
+        if row["kind"] != attempt_kind or row["payload_json"] != payload_json:
+            raise TaskLedgerConflict("request identity was already used with different content")
+        if attempt_kind == "goal" and row["target_json"] != target_json:
+            raise TaskLedgerConflict("task_id was already admitted with a different target")
+        supplied_fingerprint = str(product_fingerprint or "").strip()
+        if (
+            require_context_match or supplied_fingerprint
+        ) and supplied_fingerprint != row["product_fingerprint"]:
+            raise TaskLedgerConflict("task_id was already admitted under a different Product")
+        if (require_context_match or map_identity is not None) and row["map_identity_json"] != map_json:
+            raise TaskLedgerConflict("task_id was already admitted against a different map")
+
     def admit(
         self,
         task_id: str,
@@ -317,30 +400,26 @@ class NavigationTaskLedger:
             self._require_open()
             existing_attempt = self._conn.execute(
                 """
-                SELECT kind, payload_json
-                FROM navigation_task_attempts
-                WHERE task_id = ? AND request_id = ?
+                SELECT attempts.kind, attempts.payload_json,
+                       tasks.target_json, tasks.product_fingerprint,
+                       tasks.map_identity_json
+                FROM navigation_task_attempts AS attempts
+                JOIN navigation_tasks AS tasks ON tasks.task_id = attempts.task_id
+                WHERE attempts.task_id = ? AND attempts.request_id = ?
                 """,
                 (task, request),
             ).fetchone()
             if existing_attempt is not None:
-                if existing_attempt["kind"] != attempt_kind or existing_attempt["payload_json"] != payload_json:
-                    raise TaskLedgerConflict("request identity was already used with different content")
-                task_row = self._conn.execute(
-                    """
-                    SELECT target_json, product_fingerprint, map_identity_json
-                    FROM navigation_tasks WHERE task_id = ?
-                    """,
-                    (task,),
-                ).fetchone()
-                assert task_row is not None
-                if attempt_kind == "goal" and task_row["target_json"] != target_json:
-                    raise TaskLedgerConflict("task_id was already admitted with a different target")
-                supplied_fingerprint = str(product_fingerprint or "").strip()
-                if supplied_fingerprint and supplied_fingerprint != task_row["product_fingerprint"]:
-                    raise TaskLedgerConflict("task_id was already admitted under a different Product")
-                if map_identity is not None and task_row["map_identity_json"] != map_json:
-                    raise TaskLedgerConflict("task_id was already admitted against a different map")
+                self._validate_existing_admission(
+                    existing_attempt,
+                    attempt_kind=attempt_kind,
+                    payload_json=payload_json,
+                    target_json=target_json,
+                    product_fingerprint=product_fingerprint,
+                    map_identity=map_identity,
+                    map_json=map_json,
+                    require_context_match=False,
+                )
 
                 record = self._task_record(task)
                 assert record is not None

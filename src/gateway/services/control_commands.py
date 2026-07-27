@@ -269,18 +269,53 @@ class ControlCommandService:
         command: str,
         body: Any,
         action: Callable[[], dict[str, Any]],
+        *,
+        replay_probe: Callable[[], dict[str, Any] | None] | None = None,
     ) -> dict[str, Any] | JSONResponse:
         request_id = getattr(body, "request_id", None) if body is not None else None
         client_id = getattr(body, "client_id", None) if body is not None else None
-        rejection = self.motion_safety_rejection(command, body)
-        if rejection is not None:
-            return rejection
         replay = self._gw._command_journal.replay(command, request_id)
         if replay is not None:
             if hasattr(self._gw, "_publish_command_ack"):
                 self._gw._publish_command_ack(replay, status_code=200)
             return replay
 
+        if replay_probe is not None:
+            try:
+                durable_replay = replay_probe()
+            except CommandAdmissionUnconfirmed as exc:
+                return self.unconfirmed_response(command, body, exc.receipt)
+            except CommandBoundaryError as exc:
+                reason = str(exc)
+                return self.rejected_response(
+                    command,
+                    body,
+                    error="navigation_task_replay_rejected",
+                    message=(
+                        "Navigation task replay could not be verified; "
+                        "the command was not dispatched."
+                    ),
+                    detail=self.command_error_detail(
+                        reason_code="navigation_task_replay_rejected",
+                        reason=reason,
+                        source="navigation_task_history",
+                        blockers=[reason],
+                    ),
+                )
+            if durable_replay is not None:
+                response = self._gw._command_journal.accept(
+                    command,
+                    request_id,
+                    client_id,
+                    durable_replay,
+                )
+                if hasattr(self._gw, "_publish_command_ack"):
+                    self._gw._publish_command_ack(response, status_code=200)
+                return response
+
+        rejection = self.motion_safety_rejection(command, body)
+        if rejection is not None:
+            return rejection
         rejection = self._goal_readiness_rejection(command, body)
         if rejection is not None:
             return rejection
