@@ -1,4 +1,5 @@
 #include "client.hpp"
+#include "client_c.h"
 #include "clock_sync.hpp"
 
 #include "message/cpp/dds_qos_profiles.hpp"
@@ -6,6 +7,7 @@
 #include "message/cpp/exploration_command.hpp"
 #include "message/cpp/inspection_command.hpp"
 #include "message/cpp/navigation_command.hpp"
+#include "message/cpp/operator_motion.hpp"
 
 #include "dds/dds.h"
 #include "lingtu_slam.h"
@@ -18,6 +20,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
+#include <cstring>
+#include <deque>
 #include <iomanip>
 #include <limits>
 #include <mutex>
@@ -28,6 +32,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <unistd.h>
 
@@ -36,8 +41,10 @@ namespace {
 
 using CommandKind = lingtu::message::NavigationCommandKind;
 using ExplorationKind = lingtu::message::ExplorationCommandKind;
+using OperatorMotionAction = lingtu::message::OperatorMotionAction;
 using lingtu::message::explorationCommandKindName;
 using lingtu::message::navigationCommandKindName;
+using lingtu::message::operatorMotionActionName;
 
 using SteadyClock = std::chrono::steady_clock;
 
@@ -47,6 +54,24 @@ using SteadyClock = std::chrono::steady_clock;
 // command freshness budget.  100 ms leaves at least 150 ms of the field
 // profile's 250 ms teleop budget for command delivery and endpoint scheduling.
 constexpr double kMaximumClockSampleRoundTripS = 0.10;
+constexpr std::size_t kGoalStatusEventCapacity = 256U;
+constexpr std::size_t kGoalStatusRetentionCapacity = 256U;
+constexpr std::size_t kMaximumPathPointCount = 1'000'000U;
+constexpr std::size_t kMaximumMapScenePointsPerLayer =
+    LINGTU_NAV_MAP_SCENE_MAX_POINTS_PER_LAYER;
+constexpr std::size_t kMaximumMapSceneTotalPoints =
+    LINGTU_NAV_MAP_SCENE_MAX_TOTAL_POINTS;
+constexpr std::size_t kMaximumMapSceneGridCellsPerLayer =
+    LINGTU_NAV_MAP_SCENE_MAX_GRID_CELLS_PER_LAYER;
+constexpr std::size_t kMaximumMapSceneTotalGridCells =
+    LINGTU_NAV_MAP_SCENE_MAX_TOTAL_GRID_CELLS;
+constexpr std::size_t kMaximumMapScenePayloadBytes =
+    LINGTU_NAV_MAP_SCENE_MAX_PAYLOAD_BYTES;
+constexpr std::size_t kMaximumMapSceneCloudBytes = 16U * 1024U * 1024U;
+constexpr std::size_t kMaximumMapScenePointStep = 64U;
+constexpr std::size_t kMaximumMapSceneFields = 8U;
+constexpr std::size_t kMaximumMapSceneTextBytes = 128U;
+constexpr std::uint8_t kPointFieldFloat32 = 7U;
 
 double nowSeconds() {
   const auto now = std::chrono::system_clock::now().time_since_epoch();
@@ -91,8 +116,556 @@ void requireFinite(double value, const char* label) {
   }
 }
 
+constexpr double kDirectedTargetMaxCoordinateM = 1'000'000.0;
+constexpr double kDirectedTargetMaxTtlS = 3'600.0;
+
+void requireDirectedTarget(double x, double y, double ttl_s) {
+  requireFinite(x, "directed target x");
+  requireFinite(y, "directed target y");
+  requireFinite(ttl_s, "directed target ttl_s");
+  if (std::abs(x) > kDirectedTargetMaxCoordinateM ||
+      std::abs(y) > kDirectedTargetMaxCoordinateM) {
+    throw std::invalid_argument("directed target coordinates are out of bounds");
+  }
+  if (ttl_s <= 0.0 || ttl_s > kDirectedTargetMaxTtlS) {
+    throw std::invalid_argument("directed target ttl_s is out of bounds");
+  }
+}
+
+void requireDirectedTargetSessionId(const std::string& session_id) {
+  if (session_id.empty()) {
+    throw std::invalid_argument("directed exploration session_id is required");
+  }
+}
+
 std::string text(const char* value) {
   return value == nullptr ? std::string{} : std::string(value);
+}
+
+enum class SceneDecodeResult {
+  Valid,
+  Invalid,
+  Capacity,
+};
+
+bool copyBoundedText(
+    const char* value,
+    std::size_t maximum_bytes,
+    const char* label,
+    std::string* out,
+    std::string* error,
+    bool required = false) {
+  if (value == nullptr) {
+    if (required) {
+      *error = std::string(label) + " is missing";
+      return false;
+    }
+    out->clear();
+    return true;
+  }
+  std::size_t length = 0U;
+  while (length < maximum_bytes && value[length] != '\0') {
+    ++length;
+  }
+  if (length == maximum_bytes) {
+    *error = std::string(label) + " exceeds map scene text limit";
+    return false;
+  }
+  if (required && length == 0U) {
+    *error = std::string(label) + " is empty";
+    return false;
+  }
+  out->assign(value, length);
+  return true;
+}
+
+bool addPayloadBytes(std::size_t bytes, std::size_t* total) {
+  if (bytes > kMaximumMapScenePayloadBytes ||
+      *total > kMaximumMapScenePayloadBytes - bytes) {
+    return false;
+  }
+  *total += bytes;
+  return true;
+}
+
+bool sameSceneIdentity(
+    const lingtu_dds_MapCloudLayer& layer,
+    const lingtu_dds_MapScene& scene) {
+  return layer.reset_epoch == scene.reset_epoch &&
+      layer.observation_sequence == scene.observation_sequence &&
+      layer.generation == scene.generation &&
+      static_cast<bool>(layer.live) == static_cast<bool>(scene.live);
+}
+
+bool sameSceneIdentity(
+    const lingtu_dds_MapGrid& layer,
+    const lingtu_dds_MapScene& scene) {
+  return layer.reset_epoch == scene.reset_epoch &&
+      layer.observation_sequence == scene.observation_sequence &&
+      layer.generation == scene.generation &&
+      static_cast<bool>(layer.live) == static_cast<bool>(scene.live);
+}
+
+SceneDecodeResult decodeSceneCloud(
+    const lingtu_dds_MapCloudLayer& layer,
+    const lingtu_dds_MapScene& scene,
+    const char* expected_layer,
+    std::vector<MapScenePoint>* points,
+    std::size_t* total_points,
+    std::size_t* payload_bytes,
+    std::string* error) {
+  std::string layer_name;
+  if (!copyBoundedText(
+          layer.layer,
+          kMaximumMapSceneTextBytes,
+          "map scene cloud layer",
+          &layer_name,
+          error,
+          true) ||
+      layer_name != expected_layer || !sameSceneIdentity(layer, scene)) {
+    if (error->empty()) {
+      *error = std::string("map scene cloud identity mismatch: ") +
+          expected_layer;
+    }
+    return SceneDecodeResult::Invalid;
+  }
+
+  const auto& cloud = layer.cloud;
+  std::string cloud_frame;
+  if (!copyBoundedText(
+          cloud.header.frame_id,
+          kMaximumMapSceneTextBytes,
+          "map scene cloud frame",
+          &cloud_frame,
+          error,
+          true) ||
+      cloud.is_bigendian || cloud.height == 0U ||
+      cloud.point_step == 0U ||
+      cloud.point_step > kMaximumMapScenePointStep) {
+    if (error->empty()) {
+      *error = "map scene cloud geometry or endianness is unsupported";
+    }
+    return SceneDecodeResult::Invalid;
+  }
+  if (cloud.fields._maximum < cloud.fields._length ||
+      cloud.fields._length > kMaximumMapSceneFields ||
+      (cloud.fields._length > 0U && cloud.fields._buffer == nullptr)) {
+    *error = "map scene cloud fields are malformed";
+    return SceneDecodeResult::Invalid;
+  }
+  if (cloud.data._maximum < cloud.data._length ||
+      cloud.data._length > kMaximumMapSceneCloudBytes ||
+      (cloud.data._length > 0U && cloud.data._buffer == nullptr)) {
+    *error = "map scene cloud byte payload is malformed or oversized";
+    return cloud.data._length > kMaximumMapSceneCloudBytes
+        ? SceneDecodeResult::Capacity
+        : SceneDecodeResult::Invalid;
+  }
+
+  const std::size_t rows = cloud.height;
+  const std::size_t columns = cloud.width;
+  if (columns > kMaximumMapScenePointsPerLayer ||
+      (columns > 0U && rows > kMaximumMapScenePointsPerLayer / columns)) {
+    *error = "map scene cloud point count exceeds per-layer limit";
+    return SceneDecodeResult::Capacity;
+  }
+  const std::size_t point_count = rows * columns;
+  if (point_count > kMaximumMapScenePointsPerLayer ||
+      *total_points > kMaximumMapSceneTotalPoints - point_count) {
+    *error = "map scene cloud point count exceeds product limit";
+    return SceneDecodeResult::Capacity;
+  }
+  if (columns > std::numeric_limits<std::size_t>::max() / cloud.point_step) {
+    *error = "map scene cloud row size overflows";
+    return SceneDecodeResult::Invalid;
+  }
+  const std::size_t minimum_row_step = columns * cloud.point_step;
+  const std::size_t row_step =
+      cloud.row_step == 0U ? minimum_row_step : cloud.row_step;
+  if (row_step < minimum_row_step ||
+      (rows > 1U &&
+       row_step >
+           (std::numeric_limits<std::size_t>::max() - minimum_row_step) /
+               (rows - 1U))) {
+    *error = "map scene cloud row stride is invalid";
+    return SceneDecodeResult::Invalid;
+  }
+  const std::size_t required =
+      rows == 0U ? 0U : (rows - 1U) * row_step + minimum_row_step;
+  if (required > cloud.data._length) {
+    *error = "map scene cloud byte payload is truncated";
+    return SceneDecodeResult::Invalid;
+  }
+
+  std::size_t x_offset = 0U;
+  std::size_t y_offset = 0U;
+  std::size_t z_offset = 0U;
+  std::size_t intensity_offset = 0U;
+  bool has_x = false;
+  bool has_y = false;
+  bool has_z = false;
+  bool has_intensity = false;
+  for (std::size_t index = 0U; index < cloud.fields._length; ++index) {
+    const auto& field = cloud.fields._buffer[index];
+    std::string name;
+    if (!copyBoundedText(
+            field.name,
+            32U,
+            "map scene point field",
+            &name,
+            error,
+            true)) {
+      return SceneDecodeResult::Invalid;
+    }
+    if (name != "x" && name != "y" && name != "z" &&
+        name != "intensity") {
+      continue;
+    }
+    if (field.datatype != kPointFieldFloat32 || field.count != 1U ||
+        field.offset > cloud.point_step ||
+        sizeof(float) > cloud.point_step - field.offset) {
+      *error = "map scene point fields must be scalar float32 values";
+      return SceneDecodeResult::Invalid;
+    }
+    if (name == "x") {
+      x_offset = field.offset;
+      has_x = true;
+    } else if (name == "y") {
+      y_offset = field.offset;
+      has_y = true;
+    } else if (name == "z") {
+      z_offset = field.offset;
+      has_z = true;
+    } else {
+      intensity_offset = field.offset;
+      has_intensity = true;
+    }
+  }
+  if (!has_x || !has_y || !has_z) {
+    *error = "map scene cloud is missing x/y/z fields";
+    return SceneDecodeResult::Invalid;
+  }
+  const std::size_t copied_bytes = point_count * sizeof(MapScenePoint);
+  if (!addPayloadBytes(copied_bytes, payload_bytes)) {
+    *error = "map scene cloud copy exceeds total payload limit";
+    return SceneDecodeResult::Capacity;
+  }
+
+  points->clear();
+  points->reserve(point_count);
+  if (point_count == 0U) {
+    return SceneDecodeResult::Valid;
+  }
+  for (std::size_t row = 0U; row < rows; ++row) {
+    const std::uint8_t* row_data = cloud.data._buffer + row * row_step;
+    for (std::size_t column = 0U; column < columns; ++column) {
+      const std::uint8_t* raw = row_data + column * cloud.point_step;
+      MapScenePoint point;
+      std::memcpy(&point.x, raw + x_offset, sizeof(float));
+      std::memcpy(&point.y, raw + y_offset, sizeof(float));
+      std::memcpy(&point.z, raw + z_offset, sizeof(float));
+      if (has_intensity) {
+        std::memcpy(
+            &point.intensity, raw + intensity_offset, sizeof(float));
+      }
+      if (!std::isfinite(point.x) || !std::isfinite(point.y) ||
+          !std::isfinite(point.z) || !std::isfinite(point.intensity)) {
+        *error = "map scene cloud contains non-finite point data";
+        points->clear();
+        return SceneDecodeResult::Invalid;
+      }
+      points->push_back(point);
+    }
+  }
+  *total_points += point_count;
+  return SceneDecodeResult::Valid;
+}
+
+SceneDecodeResult decodeSceneGrid(
+    const lingtu_dds_MapGrid& layer,
+    const lingtu_dds_MapScene& scene,
+    const char* expected_layer,
+    MapSceneGridSnapshot* grid,
+    std::size_t* total_grid_cells,
+    std::size_t* payload_bytes,
+    std::string* error) {
+  std::string layer_name;
+  if (!copyBoundedText(
+          layer.layer,
+          kMaximumMapSceneTextBytes,
+          "map scene grid layer",
+          &layer_name,
+          error,
+          true) ||
+      layer_name != expected_layer || !sameSceneIdentity(layer, scene)) {
+    if (error->empty()) {
+      *error = std::string("map scene grid identity mismatch: ") +
+          expected_layer;
+    }
+    return SceneDecodeResult::Invalid;
+  }
+  if (layer.data._maximum < layer.data._length ||
+      (layer.data._length > 0U && layer.data._buffer == nullptr)) {
+    *error = "map scene grid data sequence is malformed";
+    return SceneDecodeResult::Invalid;
+  }
+  const std::size_t width = layer.info.width;
+  const std::size_t height = layer.info.height;
+  if (width > 0U &&
+      height > kMaximumMapSceneGridCellsPerLayer / width) {
+    *error = "map scene grid dimensions exceed per-layer limit";
+    return SceneDecodeResult::Capacity;
+  }
+  const std::size_t cell_count = width * height;
+  if (cell_count != layer.data._length) {
+    *error = "map scene grid dimensions do not match its data length";
+    return SceneDecodeResult::Invalid;
+  }
+  if (cell_count > kMaximumMapSceneGridCellsPerLayer ||
+      *total_grid_cells >
+          kMaximumMapSceneTotalGridCells - cell_count) {
+    *error = "map scene grid cells exceed product limit";
+    return SceneDecodeResult::Capacity;
+  }
+  const std::size_t copied_bytes = cell_count * sizeof(float);
+  if (!addPayloadBytes(copied_bytes, payload_bytes)) {
+    *error = "map scene grid copy exceeds total payload limit";
+    return SceneDecodeResult::Capacity;
+  }
+  const auto& origin = layer.info.origin;
+  if (!std::isfinite(layer.info.resolution) ||
+      (cell_count > 0U && !(layer.info.resolution > 0.0F)) ||
+      !std::isfinite(origin.position.x) ||
+      !std::isfinite(origin.position.y) ||
+      !std::isfinite(origin.position.z) ||
+      !std::isfinite(origin.orientation.x) ||
+      !std::isfinite(origin.orientation.y) ||
+      !std::isfinite(origin.orientation.z) ||
+      !std::isfinite(origin.orientation.w)) {
+    *error = "map scene grid metadata contains non-finite values";
+    return SceneDecodeResult::Invalid;
+  }
+
+  grid->width = layer.info.width;
+  grid->height = layer.info.height;
+  grid->resolution = layer.info.resolution;
+  grid->origin_x = origin.position.x;
+  grid->origin_y = origin.position.y;
+  grid->origin_z = origin.position.z;
+  grid->origin_qx = origin.orientation.x;
+  grid->origin_qy = origin.orientation.y;
+  grid->origin_qz = origin.orientation.z;
+  grid->origin_qw = origin.orientation.w;
+  if (cell_count == 0U) {
+    grid->cells.clear();
+  } else {
+    grid->cells.assign(
+        layer.data._buffer, layer.data._buffer + layer.data._length);
+  }
+  *total_grid_cells += cell_count;
+  return SceneDecodeResult::Valid;
+}
+
+SceneDecodeResult decodeMapScene(
+    const lingtu_dds_MapScene& message,
+    MapSceneSnapshot* scene,
+    std::string* error) {
+  scene->timestamp_s = stampSeconds(message.header.stamp);
+  if (!std::isfinite(scene->timestamp_s) || scene->timestamp_s <= 0.0 ||
+      !copyBoundedText(
+          message.header.frame_id,
+          kMaximumMapSceneTextBytes,
+          "map scene frame",
+          &scene->frame_id,
+          error,
+          true) ||
+      !copyBoundedText(
+          message.producer_boot_id,
+          kMaximumMapSceneTextBytes,
+          "map scene producer boot id",
+          &scene->producer_boot_id,
+          error,
+          true) ||
+      message.observation_sequence == 0U || message.generation == 0U) {
+    if (error->empty()) {
+      *error = "map scene header is invalid";
+    }
+    return SceneDecodeResult::Invalid;
+  }
+  const auto& pose = message.map_sensor;
+  if (!std::isfinite(pose.position.x) ||
+      !std::isfinite(pose.position.y) ||
+      !std::isfinite(pose.position.z) ||
+      !std::isfinite(pose.orientation.x) ||
+      !std::isfinite(pose.orientation.y) ||
+      !std::isfinite(pose.orientation.z) ||
+      !std::isfinite(pose.orientation.w)) {
+    *error = "map scene sensor pose contains non-finite values";
+    return SceneDecodeResult::Invalid;
+  }
+  scene->reset_epoch = message.reset_epoch;
+  scene->observation_sequence = message.observation_sequence;
+  scene->generation = message.generation;
+  scene->live = message.live;
+  scene->sensor_x = pose.position.x;
+  scene->sensor_y = pose.position.y;
+  scene->sensor_z = pose.position.z;
+  scene->sensor_qx = pose.orientation.x;
+  scene->sensor_qy = pose.orientation.y;
+  scene->sensor_qz = pose.orientation.z;
+  scene->sensor_qw = pose.orientation.w;
+
+  std::size_t total_points = 0U;
+  std::size_t total_grid_cells = 0U;
+  std::size_t payload_bytes = 0U;
+  for (const auto& item : {
+           std::tuple<
+               const lingtu_dds_MapCloudLayer*,
+               const char*,
+               std::vector<MapScenePoint>*>{
+               &message.live_cloud, "live", &scene->live_points},
+           {
+               &message.voxel_cloud,
+               "voxel",
+               &scene->voxel_points},
+           {
+               &message.accumulated_cloud,
+               "accumulated",
+               &scene->accumulated_points},
+       }) {
+    const auto result = decodeSceneCloud(
+        *std::get<0>(item),
+        message,
+        std::get<1>(item),
+        std::get<2>(item),
+        &total_points,
+        &payload_bytes,
+        error);
+    if (result != SceneDecodeResult::Valid) {
+      return result;
+    }
+  }
+  for (const auto& item : {
+           std::tuple<
+               const lingtu_dds_MapGrid*,
+               const char*,
+               MapSceneGridSnapshot*>{
+               &message.occupancy, "occupancy", &scene->occupancy},
+           {&message.elevation, "elevation", &scene->elevation},
+           {&message.esdf, "esdf", &scene->esdf},
+           {
+               &message.traversability,
+               "traversability",
+               &scene->traversability},
+       }) {
+    const auto result = decodeSceneGrid(
+        *std::get<0>(item),
+        message,
+        std::get<1>(item),
+        std::get<2>(item),
+        &total_grid_cells,
+        &payload_bytes,
+        error);
+    if (result != SceneDecodeResult::Valid) {
+      return result;
+    }
+  }
+  scene->payload_bytes = payload_bytes;
+  return SceneDecodeResult::Valid;
+}
+
+bool decodeMapRuntimeState(
+    const lingtu_dds_MapRuntimeState& message,
+    MapSceneHealthSnapshot* health,
+    std::int64_t* stamp_ns,
+    std::string* error) {
+  if (message.header.stamp.sec <= 0 ||
+      message.header.stamp.nanosec >= 1'000'000'000U) {
+    *error = "map runtime state timestamp is invalid";
+    return false;
+  }
+  *stamp_ns =
+      static_cast<std::int64_t>(message.header.stamp.sec) * 1'000'000'000LL +
+      static_cast<std::int64_t>(message.header.stamp.nanosec);
+  std::string frame_id;
+  std::string engine_error;
+  std::string input_error;
+  std::string output_error;
+  if (!copyBoundedText(
+          message.header.frame_id,
+          kMaximumMapSceneTextBytes,
+          "map runtime state frame",
+          &frame_id,
+          error,
+          true) ||
+      !copyBoundedText(
+          message.producer_boot_id,
+          kMaximumMapSceneTextBytes,
+          "map runtime state producer boot id",
+          &health->state_producer_boot_id,
+          error,
+          true) ||
+      !copyBoundedText(
+          message.engine_error,
+          512U,
+          "map runtime engine error",
+          &engine_error,
+          error) ||
+      !copyBoundedText(
+          message.input_error,
+          512U,
+          "map runtime input error",
+          &input_error,
+          error) ||
+      !copyBoundedText(
+          message.output_error,
+          512U,
+          "map runtime output error",
+          &output_error,
+          error)) {
+    return false;
+  }
+  if (message.current_generation_published &&
+      (message.state_published_generation < message.generation ||
+       message.realtime_clouds_published_generation < message.generation ||
+       message.map_layers_published_generation < message.generation ||
+       message.scene_published_generation < message.generation)) {
+    *error = "map runtime state publication cursors are inconsistent";
+    return false;
+  }
+
+  health->state_timestamp_s = stampSeconds(message.header.stamp);
+  health->state_received = true;
+  health->state_running = message.running;
+  health->state_live = message.live;
+  health->state_required_publications_ready =
+      message.required_publications_ready;
+  health->state_current_generation_published =
+      message.current_generation_published;
+  health->state_capacity_limited = message.capacity_limited;
+  health->state_reset_epoch = message.reset_epoch;
+  health->state_observation_sequence = message.observation_sequence;
+  health->state_generation = message.generation;
+  health->state_scene_published_generation =
+      message.scene_published_generation;
+  health->state_error.clear();
+  for (const auto& item : {
+           std::pair<const char*, const std::string*>{
+               "engine", &engine_error},
+           {"input", &input_error},
+           {"output", &output_error},
+       }) {
+    if (item.second->empty()) {
+      continue;
+    }
+    if (!health->state_error.empty()) {
+      health->state_error += "; ";
+    }
+    health->state_error += item.first;
+    health->state_error += ":";
+    health->state_error += *item.second;
+  }
+  return true;
 }
 
 bool diagnosticsEnabled() {
@@ -111,6 +684,13 @@ std::string makeRequestId(CommandKind kind) {
   return "nav-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
       std::to_string(static_cast<long long>(getpid())) + "-" +
       std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
+std::string makeClientId() {
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::steady_clock::now().time_since_epoch()).count();
+  return "nav-client-" + std::to_string(static_cast<long long>(getpid())) +
+      "-" + std::to_string(ticks);
 }
 
 std::string makeExplorationRequestId(ExplorationKind kind) {
@@ -132,6 +712,32 @@ std::string makeInspectionRequestId(
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
+std::string makeOperatorMotionRequestId(OperatorMotionAction action) {
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return "operator-motion-" +
+      std::to_string(static_cast<std::int32_t>(action)) + "-" +
+      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
+std::string makeOperatorMotionSampleRequestId() {
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return "operator-motion-sample-" +
+      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
+std::uint64_t sourceStampNs(double stamp_s) {
+  if (!std::isfinite(stamp_s) || stamp_s <= 0.0) {
+    return 0U;
+  }
+  return static_cast<std::uint64_t>(stamp_s * 1e9);
+}
+
 bool isRecoverableClockRejection(CommandKind kind, const std::string& reason) {
   if (kind == CommandKind::Teleop) {
     return reason == "teleop_source_stamp_stale" ||
@@ -146,6 +752,18 @@ bool isRecoverableClockRejection(CommandKind kind, const std::string& reason) {
         reason == "resume_autonomy_source_stamp_future";
   }
   return false;
+}
+
+void requireAcceptedOperatorMotionReceipt(
+    const OperatorMotionCommandReceipt& receipt) {
+  if (receipt.accepted) {
+    return;
+  }
+  throw std::runtime_error(
+      "operator motion command rejected: " +
+      (receipt.reason.empty() ? std::string("unspecified") : receipt.reason) +
+      " [request_id=" + receipt.request_id + " action=" +
+      operatorMotionActionName(static_cast<OperatorMotionAction>(receipt.action)) + "]");
 }
 
 }  // namespace
@@ -176,6 +794,15 @@ struct Client::Impl {
     lingtu::message::InspectionCommandKind kind;
     SteadyClock::time_point sent_steady;
     std::optional<AckObservation> observation;
+  };
+
+  struct PendingOperatorMotionAck {
+    OperatorMotionAction action;
+    std::string source_id;
+    std::uint64_t source_epoch{0U};
+    std::uint64_t sequence{0U};
+    SteadyClock::time_point sent_steady;
+    std::optional<OperatorMotionCommandReceipt> receipt;
   };
 
   explicit Impl(int domain_id) {
@@ -214,6 +841,42 @@ struct Client::Impl {
           lingtu::message::kNavInspectionAck,
           &lingtu_dds_InspectionCommandAck_desc,
           "inspection_ack");
+      operator_motion_control_writer = createWriter(
+          lingtu::message::kOperatorMotionControl,
+          &lingtu_dds_OperatorMotionControl_desc,
+          "operator_motion_control");
+      operator_motion_sample_writer = createWriter(
+          lingtu::message::kOperatorMotionSample,
+          &lingtu_dds_OperatorMotionSample_desc,
+          "operator_motion_sample");
+      operator_motion_ack_reader = createReader(
+          lingtu::message::kOperatorMotionAck,
+          &lingtu_dds_OperatorMotionAck_desc,
+          "operator_motion_ack");
+      navigation_goal_status_reader = createReader(
+          lingtu::message::kNavGoalStatus,
+          &lingtu_dds_NavigationGoalStatus_desc,
+          "navigation_goal_status");
+      navigation_state_reader = createReader(
+          lingtu::message::kNavState,
+          &lingtu_dds_NavigationState_desc,
+          "navigation_state");
+      global_path_reader = createReader(
+          lingtu::message::kNavGlobalPath,
+          &lingtu_dds_Path_desc,
+          "global_path");
+      local_path_reader = createReader(
+          lingtu::message::kNavLocalPath,
+          &lingtu_dds_Path_desc,
+          "local_path");
+      map_scene_reader = createReader(
+          lingtu::message::kMapsScene,
+          &lingtu_dds_MapScene_desc,
+          "map_scene");
+      map_state_reader = createReader(
+          lingtu::message::kMapsState,
+          &lingtu_dds_MapRuntimeState_desc,
+          "map_state");
       ack_receiver = std::thread([this]() { ackReceiverLoop(); });
     } catch (...) {
       dds_delete(participant);
@@ -402,6 +1065,7 @@ struct Client::Impl {
   using NavigationPending = std::shared_ptr<PendingNavigationAck>;
   using ExplorationPending = std::shared_ptr<PendingExplorationAck>;
   using InspectionPending = std::shared_ptr<PendingInspectionAck>;
+  using OperatorMotionPending = std::shared_ptr<PendingOperatorMotionAck>;
 
   NavigationPending registerNavigationAck(
       const std::string& request_id,
@@ -454,6 +1118,32 @@ struct Client::Impl {
     return pending;
   }
 
+  OperatorMotionPending registerOperatorMotionAck(
+      const std::string& request_id,
+      OperatorMotionAction action,
+      const std::string& source_id,
+      std::uint64_t source_epoch,
+      std::uint64_t sequence,
+      SteadyClock::time_point sent_steady) const {
+    auto pending = std::make_shared<PendingOperatorMotionAck>(
+        PendingOperatorMotionAck{
+            action,
+            source_id,
+            source_epoch,
+            sequence,
+            sent_steady,
+            std::nullopt});
+    std::lock_guard<std::mutex> lock(ack_mutex);
+    if (!ack_receiver_error.empty()) {
+      throw std::runtime_error(ack_receiver_error);
+    }
+    if (!pending_operator_motion_acks.emplace(request_id, pending).second) {
+      throw std::runtime_error(
+          "duplicate in-flight operator motion request id: " + request_id);
+    }
+    return pending;
+  }
+
   void unregisterNavigationAck(
       const std::string& request_id,
       const NavigationPending& pending) const {
@@ -481,6 +1171,16 @@ struct Client::Impl {
     const auto it = pending_inspection_acks.find(request_id);
     if (it != pending_inspection_acks.end() && it->second == pending) {
       pending_inspection_acks.erase(it);
+    }
+  }
+
+  void unregisterOperatorMotionAck(
+      const std::string& request_id,
+      const OperatorMotionPending& pending) const {
+    std::lock_guard<std::mutex> lock(ack_mutex);
+    const auto it = pending_operator_motion_acks.find(request_id);
+    if (it != pending_operator_motion_acks.end() && it->second == pending) {
+      pending_operator_motion_acks.erase(it);
     }
   }
 
@@ -554,6 +1254,30 @@ struct Client::Impl {
       throw std::runtime_error(ack_receiver_error);
     }
     return *pending->observation;
+  }
+
+  OperatorMotionCommandReceipt waitForOperatorMotionAck(
+      const std::string& request_id,
+      const OperatorMotionPending& pending,
+      int timeout_ms) const {
+    const auto deadline = SteadyClock::now() +
+        std::chrono::milliseconds(std::max(1, timeout_ms));
+    std::unique_lock<std::mutex> lock(ack_mutex);
+    const bool ready = ack_cv.wait_until(lock, deadline, [&]() {
+      return pending->receipt.has_value() || !ack_receiver_error.empty();
+    });
+    const auto it = pending_operator_motion_acks.find(request_id);
+    if (it != pending_operator_motion_acks.end() && it->second == pending) {
+      pending_operator_motion_acks.erase(it);
+    }
+    if (!ready) {
+      throw std::runtime_error(
+          "timed out waiting for operator motion ACK: " + request_id);
+    }
+    if (!pending->receipt) {
+      throw std::runtime_error(ack_receiver_error);
+    }
+    return *pending->receipt;
   }
 
   bool takeNavigationAcks() {
@@ -718,6 +1442,423 @@ struct Client::Impl {
     return count > 0;
   }
 
+  bool takeOperatorMotionAcks() {
+    constexpr std::size_t kMaxSamples = 16;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        operator_motion_ack_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(operator_motion_ack): ") +
+          dds_strretcode(-count));
+    }
+    bool matched = false;
+    {
+      std::lock_guard<std::mutex> lock(ack_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& ack =
+            *static_cast<lingtu_dds_OperatorMotionAck*>(samples[i]);
+        const auto it = pending_operator_motion_acks.find(text(ack.request_id));
+        if (it == pending_operator_motion_acks.end() ||
+            it->second->receipt) {
+          continue;
+        }
+        auto& pending = *it->second;
+        if (ack.action != static_cast<std::int32_t>(pending.action) ||
+            text(ack.source_id) != pending.source_id ||
+            ack.source_epoch != pending.source_epoch ||
+            ack.source_sequence != pending.sequence) {
+          // request_id values are supplied by adapters and are not globally
+          // unique across DDS participants. A same-id ACK for another source
+          // must not complete (or reject) this caller's pending operation.
+          continue;
+        }
+        OperatorMotionCommandReceipt receipt{
+            ack.accepted,
+            ack.action,
+            text(ack.request_id),
+            text(ack.source_id),
+            ack.source_epoch,
+            ack.source_sequence,
+            ack.accepted_sequence,
+            ack.final_output_sequence,
+            stampSeconds(ack.header.stamp),
+            text(ack.reason),
+        };
+        pending.receipt = std::move(receipt);
+        matched = true;
+      }
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(operator_motion_ack_reader, samples, count),
+          "dds_return_loan(operator_motion_ack)");
+    }
+    if (matched) {
+      ack_cv.notify_all();
+    }
+    return count > 0;
+  }
+
+  bool takeNavigationStates() {
+    constexpr std::size_t kMaxSamples = 16;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        navigation_state_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(navigation_state): ") +
+          dds_strretcode(-count));
+    }
+    {
+      std::lock_guard<std::mutex> lock(navigation_state_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& state =
+            *static_cast<lingtu_dds_NavigationState*>(samples[i]);
+        const std::string boot_id = text(state.boot_id);
+        if (boot_id.empty() || state.state_sequence == 0U) {
+          continue;
+        }
+        if (latest_navigation_state.has_value() &&
+            latest_navigation_state->boot_id == boot_id &&
+            state.state_sequence <= latest_navigation_state->sequence) {
+          continue;
+        }
+        latest_navigation_state = NavigationStateSnapshot{
+            stampSeconds(state.header.stamp),
+            text(state.header.frame_id),
+            boot_id,
+            state.state_sequence,
+            state.control_mode,
+            state.lifecycle_state,
+            text(state.active_request_id),
+            state.goal_epoch,
+            text(state.map_id),
+            state.map_version,
+            text(state.map_hash),
+            state.planning_state,
+            state.execution_state,
+            state.recovery_state,
+            state.progress,
+            text(state.authority),
+            text(state.hold_reason),
+            text(state.failure_code),
+        };
+      }
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(navigation_state_reader, samples, count),
+          "dds_return_loan(navigation_state)");
+    }
+    return count > 0;
+  }
+
+  bool takeNavigationGoalStatuses() {
+    constexpr std::size_t kMaxSamples = 64;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        navigation_goal_status_reader,
+        samples,
+        infos,
+        kMaxSamples,
+        kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(navigation_goal_status): ") +
+          dds_strretcode(-count));
+    }
+    {
+      std::lock_guard<std::mutex> lock(navigation_goal_status_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& status =
+            *static_cast<lingtu_dds_NavigationGoalStatus*>(samples[i]);
+        const std::string boot_id = text(status.boot_id);
+        const std::string request_id = text(status.request_id);
+        if (boot_id.empty() || request_id.empty() ||
+            status.event_sequence == 0U ||
+            !lingtu::message::isKnownNavigationGoalState(status.state)) {
+          continue;
+        }
+        auto& last_sequence = goal_status_sequences_by_boot[boot_id];
+        if (status.event_sequence <= last_sequence) {
+          continue;
+        }
+        last_sequence = status.event_sequence;
+
+        NavigationGoalStatusSnapshot snapshot{
+            stampSeconds(status.header.stamp),
+            text(status.header.frame_id),
+            boot_id,
+            status.event_sequence,
+            request_id,
+            status.state,
+            status.goal_epoch,
+            text(status.reason),
+        };
+        if (retained_goal_statuses.find(request_id) ==
+            retained_goal_statuses.end()) {
+          retained_goal_status_order.push_back(request_id);
+        }
+        retained_goal_statuses[request_id] = snapshot;
+        while (retained_goal_status_order.size() >
+               kGoalStatusRetentionCapacity) {
+          const std::string expired = retained_goal_status_order.front();
+          retained_goal_status_order.pop_front();
+          retained_goal_statuses.erase(expired);
+        }
+        if (pending_goal_status_events.size() >= kGoalStatusEventCapacity) {
+          pending_goal_status_events.pop_front();
+        }
+        pending_goal_status_events.push_back(std::move(snapshot));
+      }
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(navigation_goal_status_reader, samples, count),
+          "dds_return_loan(navigation_goal_status)");
+    }
+    return count > 0;
+  }
+
+  bool takePathSamples(
+      dds_entity_t reader,
+      std::mutex& mutex,
+      std::optional<PathSnapshot>& pending,
+      std::uint64_t& receive_sequence,
+      const char* label) {
+    constexpr std::size_t kMaxSamples = 8U;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count =
+        dds_take(reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(") + label + "): " +
+          dds_strretcode(-count));
+    }
+    try {
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& message = *static_cast<lingtu_dds_Path*>(samples[i]);
+        const std::size_t point_count =
+            static_cast<std::size_t>(message.poses._length);
+        if (point_count > kMaximumPathPointCount ||
+            (point_count > 0U && message.poses._buffer == nullptr)) {
+          continue;
+        }
+        PathSnapshot candidate;
+        candidate.timestamp_s = stampSeconds(message.header.stamp);
+        candidate.frame_id = text(message.header.frame_id);
+        if (candidate.frame_id.empty()) {
+          candidate.frame_id = "map";
+        }
+        candidate.points.reserve(point_count);
+        bool valid = std::isfinite(candidate.timestamp_s) &&
+            candidate.timestamp_s > 0.0;
+        for (std::size_t point_index = 0U;
+             valid && point_index < point_count;
+             ++point_index) {
+          const auto& position =
+              message.poses._buffer[point_index].pose.position;
+          valid = std::isfinite(position.x) &&
+              std::isfinite(position.y) &&
+              std::isfinite(position.z);
+          if (valid) {
+            candidate.points.push_back(
+                PathPoint{position.x, position.y, position.z});
+          }
+        }
+        if (!valid ||
+            receive_sequence == std::numeric_limits<std::uint64_t>::max()) {
+          continue;
+        }
+        candidate.receive_sequence = ++receive_sequence;
+        std::lock_guard<std::mutex> lock(mutex);
+        pending = std::move(candidate);
+      }
+    } catch (...) {
+      if (count > 0) {
+        dds_return_loan(reader, samples, count);
+      }
+      throw;
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(reader, samples, count),
+          (std::string("dds_return_loan(") + label + ")").c_str());
+    }
+    return count > 0;
+  }
+
+  bool takeMapScenes() {
+    constexpr std::size_t kMaxSamples = 4U;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        map_scene_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(map_scene): ") + dds_strretcode(-count));
+    }
+    try {
+      for (dds_return_t index = 0; index < count; ++index) {
+        if (!infos[index].valid_data) {
+          continue;
+        }
+        MapSceneSnapshot candidate;
+        std::string error;
+        const auto result = decodeMapScene(
+            *static_cast<lingtu_dds_MapScene*>(samples[index]),
+            &candidate,
+            &error);
+        std::lock_guard<std::mutex> lock(map_scene_mutex);
+        ++map_scene_health.received_samples;
+        if (result != SceneDecodeResult::Valid) {
+          if (result == SceneDecodeResult::Capacity) {
+            ++map_scene_health.capacity_rejections;
+          } else {
+            ++map_scene_health.invalid_samples;
+          }
+          map_scene_health.last_error =
+              error.empty() ? "map scene sample was rejected" : error;
+          continue;
+        }
+        const bool stale =
+            candidate.producer_boot_id == last_map_scene_boot_id &&
+            (candidate.reset_epoch < last_map_scene_reset_epoch ||
+             (candidate.reset_epoch == last_map_scene_reset_epoch &&
+              candidate.generation <= last_map_scene_generation));
+        if (stale) {
+          ++map_scene_health.stale_samples;
+          continue;
+        }
+        if (map_scene_receive_sequence ==
+            std::numeric_limits<std::uint64_t>::max()) {
+          ++map_scene_health.invalid_samples;
+          map_scene_health.last_error =
+              "map scene receive sequence exhausted";
+          continue;
+        }
+        candidate.receive_sequence = ++map_scene_receive_sequence;
+        if (pending_map_scene.has_value()) {
+          ++map_scene_health.replaced_samples;
+        }
+        last_map_scene_boot_id = candidate.producer_boot_id;
+        last_map_scene_reset_epoch = candidate.reset_epoch;
+        last_map_scene_generation = candidate.generation;
+        ++map_scene_health.valid_samples;
+        map_scene_health.last_receive_sequence =
+            candidate.receive_sequence;
+        map_scene_health.last_generation = candidate.generation;
+        map_scene_health.last_sample_timestamp_s =
+            candidate.timestamp_s;
+        map_scene_health.last_error.clear();
+        pending_map_scene = std::move(candidate);
+      }
+    } catch (...) {
+      if (count > 0) {
+        dds_return_loan(map_scene_reader, samples, count);
+      }
+      throw;
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(map_scene_reader, samples, count),
+          "dds_return_loan(map_scene)");
+    }
+    return count > 0;
+  }
+
+  bool takeMapRuntimeStates() {
+    constexpr std::size_t kMaxSamples = 8U;
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        map_state_reader, samples, infos, kMaxSamples, kMaxSamples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(map_state): ") + dds_strretcode(-count));
+    }
+    try {
+      for (dds_return_t index = 0; index < count; ++index) {
+        if (!infos[index].valid_data) {
+          continue;
+        }
+        MapSceneHealthSnapshot decoded;
+        std::int64_t stamp_ns = 0;
+        std::string error;
+        const bool valid = decodeMapRuntimeState(
+            *static_cast<lingtu_dds_MapRuntimeState*>(samples[index]),
+            &decoded,
+            &stamp_ns,
+            &error);
+        std::lock_guard<std::mutex> lock(map_scene_mutex);
+        ++map_scene_health.state_received_samples;
+        if (!valid) {
+          ++map_scene_health.state_invalid_samples;
+          map_scene_health.state_error =
+              error.empty() ? "map runtime state was rejected" : error;
+          continue;
+        }
+        const bool stale =
+            decoded.state_producer_boot_id == map_state_boot_id &&
+            stamp_ns <= map_state_stamp_ns;
+        if (stale) {
+          ++map_scene_health.state_stale_samples;
+          continue;
+        }
+        map_state_boot_id = decoded.state_producer_boot_id;
+        map_state_stamp_ns = stamp_ns;
+        ++map_scene_health.state_valid_samples;
+        map_scene_health.state_timestamp_s = decoded.state_timestamp_s;
+        map_scene_health.state_producer_boot_id =
+            std::move(decoded.state_producer_boot_id);
+        map_scene_health.state_received = decoded.state_received;
+        map_scene_health.state_running = decoded.state_running;
+        map_scene_health.state_live = decoded.state_live;
+        map_scene_health.state_required_publications_ready =
+            decoded.state_required_publications_ready;
+        map_scene_health.state_current_generation_published =
+            decoded.state_current_generation_published;
+        map_scene_health.state_capacity_limited =
+            decoded.state_capacity_limited;
+        map_scene_health.state_reset_epoch = decoded.state_reset_epoch;
+        map_scene_health.state_observation_sequence =
+            decoded.state_observation_sequence;
+        map_scene_health.state_generation = decoded.state_generation;
+        map_scene_health.state_scene_published_generation =
+            decoded.state_scene_published_generation;
+        map_scene_health.state_error = std::move(decoded.state_error);
+      }
+    } catch (...) {
+      if (count > 0) {
+        dds_return_loan(map_state_reader, samples, count);
+      }
+      throw;
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(map_state_reader, samples, count),
+          "dds_return_loan(map_state)");
+    }
+    return count > 0;
+  }
+
   void failAckReceiver(const std::string& reason) noexcept {
     {
       std::lock_guard<std::mutex> lock(ack_mutex);
@@ -732,7 +1873,22 @@ struct Client::Impl {
     while (ack_receiver_running.load(std::memory_order_acquire)) {
       try {
         const bool received =
-            takeNavigationAcks() | takeExplorationAcks() | takeInspectionAcks();
+            takeNavigationAcks() | takeExplorationAcks() |
+            takeInspectionAcks() | takeOperatorMotionAcks() |
+            takeNavigationGoalStatuses() | takeNavigationStates() |
+            takePathSamples(
+                global_path_reader,
+                global_path_mutex,
+                pending_global_path,
+                global_path_receive_sequence,
+                "global_path") |
+            takePathSamples(
+                local_path_reader,
+                local_path_mutex,
+                pending_local_path,
+                local_path_receive_sequence,
+                "local_path") |
+            takeMapRuntimeStates() | takeMapScenes();
         if (!received) {
           std::this_thread::sleep_for(std::chrono::milliseconds(2));
         }
@@ -751,7 +1907,11 @@ struct Client::Impl {
       const std::string& session_id,
       const std::string& requested_reason,
       int timeout_ms,
-      const std::string& requested_id) const {
+      const std::string& requested_id,
+      bool has_directed_target = false,
+      double directed_target_x = 0.0,
+      double directed_target_y = 0.0,
+      double directed_target_ttl_s = 0.0) const {
     const std::string request_id = requested_id.empty()
         ? makeExplorationRequestId(kind)
         : requested_id;
@@ -765,6 +1925,10 @@ struct Client::Impl {
     message.request_id = const_cast<char*>(request_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.session_id = const_cast<char*>(session_id.c_str());
+    message.has_directed_target = has_directed_target;
+    message.directed_target_x = directed_target_x;
+    message.directed_target_y = directed_target_y;
+    message.directed_target_ttl_s = directed_target_ttl_s;
     message.reason = const_cast<char*>(reason.c_str());
     const auto sent = SteadyClock::now();
     const auto pending = registerExplorationAck(request_id, kind, sent);
@@ -826,6 +1990,116 @@ struct Client::Impl {
     }
   }
 
+  void requireOperatorSource(
+      const std::string& source_id,
+      std::uint64_t source_epoch) const {
+    if (source_id.empty()) {
+      throw std::invalid_argument("operator motion source_id is required");
+    }
+    if (source_epoch == 0U) {
+      throw std::invalid_argument("operator motion source_epoch is required");
+    }
+  }
+
+  OperatorMotionCommandReceipt writeOperatorMotionControl(
+      OperatorMotionAction action,
+      const std::string& source_id,
+      std::uint64_t source_epoch,
+      std::uint64_t sequence,
+      std::uint32_t lease_ttl_ms,
+      const std::string& requested_reason,
+      int timeout_ms,
+      const std::string& requested_id) const {
+    requireOperatorSource(source_id, source_epoch);
+    if (sequence == 0U) {
+      throw std::invalid_argument("operator motion sequence is required");
+    }
+    const std::string request_id = requested_id.empty()
+        ? makeOperatorMotionRequestId(action)
+        : requested_id;
+    const std::string reason = requested_reason.empty()
+        ? operatorMotionActionName(action)
+        : requested_reason;
+    waitForReader(
+        operator_motion_control_writer, "operator_motion_control", timeout_ms);
+    waitForWriter(operator_motion_ack_reader, "operator_motion_ack", timeout_ms);
+    lingtu_dds_OperatorMotionControl message{};
+    fillHeader(message.header, nowSeconds(), "");
+    message.source_id = const_cast<char*>(source_id.c_str());
+    message.source_epoch = source_epoch;
+    message.source_sequence = sequence;
+    message.request_id = const_cast<char*>(request_id.c_str());
+    message.action = static_cast<std::int32_t>(action);
+    message.lease_ttl_ms = lease_ttl_ms;
+    message.reason = const_cast<char*>(reason.c_str());
+    const auto sent = SteadyClock::now();
+    const auto pending = registerOperatorMotionAck(
+        request_id, action, source_id, source_epoch, sequence, sent);
+    try {
+      checked(
+          dds_write(
+              operator_motion_control_writer,
+              static_cast<const void*>(&message)),
+          "dds_write(operator_motion_control)");
+    } catch (...) {
+      unregisterOperatorMotionAck(request_id, pending);
+      throw;
+    }
+    return waitForOperatorMotionAck(request_id, pending, timeout_ms);
+  }
+
+  void writeOperatorMotionSample(
+      const std::string& source_id,
+      std::uint64_t source_epoch,
+      std::uint64_t sequence,
+      double vx,
+      double vy,
+      double wz,
+      bool deadman,
+      std::uint32_t freshness_budget_ms,
+      int timeout_ms,
+      const std::string& requested_id) const {
+    requireOperatorSource(source_id, source_epoch);
+    if (sequence == 0U) {
+      throw std::invalid_argument("operator motion sequence is required");
+    }
+    if (freshness_budget_ms == 0U) {
+      throw std::invalid_argument(
+          "operator motion freshness_budget_ms is required");
+    }
+    requireFinite(vx, "operator motion vx");
+    requireFinite(vy, "operator motion vy");
+    requireFinite(wz, "operator motion wz");
+    const std::string request_id = requested_id.empty()
+        ? makeOperatorMotionSampleRequestId()
+        : requested_id;
+    std::unique_lock<std::mutex> clock_lane_lock(clock_command_mutex);
+    waitForReader(
+        operator_motion_sample_writer, "operator_motion_sample", timeout_ms);
+    if (!std::isfinite(
+            endpoint_clock_offset_s.load(std::memory_order_relaxed))) {
+      synchronizeEndpointClock(timeout_ms);
+    }
+    lingtu_dds_OperatorMotionSample message{};
+    message.source_id = const_cast<char*>(source_id.c_str());
+    message.source_epoch = source_epoch;
+    message.source_sequence = sequence;
+    message.request_id = const_cast<char*>(request_id.c_str());
+    message.deadman = deadman;
+    message.velocity.linear.x = vx;
+    message.velocity.linear.y = vy;
+    message.velocity.angular.z = wz;
+    message.freshness_budget_ms = freshness_budget_ms;
+    const double send_source_stamp_s = sourceNowSeconds();
+    message.source_stamp_ns = sourceStampNs(send_source_stamp_s);
+    fillHeader(message.header, send_source_stamp_s, "body");
+    checked(
+        dds_write(
+            operator_motion_sample_writer,
+            static_cast<const void*>(&message)),
+        "dds_write(operator_motion_sample)");
+  }
+
   static bool requiresEndpointClock(CommandKind kind) {
     return kind == CommandKind::Teleop || kind == CommandKind::ClearEstop ||
         kind == CommandKind::ResumeAutonomy;
@@ -839,6 +2113,7 @@ struct Client::Impl {
       const std::string request_id = makeRequestId(CommandKind::Stop);
       lingtu_dds_NavigationCommandRequest sync{};
       fillHeader(sync.header, nowSeconds(), "body");
+      sync.client_id = const_cast<char*>(client_id.c_str());
       sync.request_id = const_cast<char*>(request_id.c_str());
       sync.kind = static_cast<std::int32_t>(CommandKind::Stop);
       sync.reason = const_cast<char*>("client_clock_sync");
@@ -891,7 +2166,7 @@ struct Client::Impl {
         std::to_string(last_round_trip_s * 1000.0));
   }
 
-  void writeCommand(
+  std::string writeCommand(
       lingtu_dds_NavigationCommandRequest message,
       const std::string& request_id,
       CommandKind kind,
@@ -913,6 +2188,7 @@ struct Client::Impl {
       synchronizeEndpointClock(timeout_ms);
     }
     std::string active_request_id = request_id;
+    message.client_id = const_cast<char*>(client_id.c_str());
     for (int attempt = 0; attempt < 2; ++attempt) {
       if (attempt > 0) {
         active_request_id = request_id + "-clock-retry-1";
@@ -953,7 +2229,7 @@ struct Client::Impl {
           active_request_id, pending, timeout_ms);
       (void)updateEndpointClock(observation);
       if (observation.accepted) {
-        return;
+        return active_request_id;
       }
       logClockEvent(
           "command_rejected",
@@ -979,6 +2255,7 @@ struct Client::Impl {
       throw std::runtime_error(
           rejectionMessage(active_request_id, kind, observation));
     }
+    throw std::logic_error("navigation command retry loop exhausted");
   }
 
   void writeReasonCommand(
@@ -1007,7 +2284,33 @@ struct Client::Impl {
       pending_exploration_acks;
   mutable std::unordered_map<std::string, InspectionPending>
       pending_inspection_acks;
+  mutable std::unordered_map<std::string, OperatorMotionPending>
+      pending_operator_motion_acks;
   mutable std::string ack_receiver_error;
+  mutable std::mutex navigation_state_mutex;
+  std::optional<NavigationStateSnapshot> latest_navigation_state;
+  mutable std::mutex navigation_goal_status_mutex;
+  std::deque<NavigationGoalStatusSnapshot> pending_goal_status_events;
+  std::unordered_map<std::string, NavigationGoalStatusSnapshot>
+      retained_goal_statuses;
+  std::deque<std::string> retained_goal_status_order;
+  std::unordered_map<std::string, std::uint64_t>
+      goal_status_sequences_by_boot;
+  mutable std::mutex global_path_mutex;
+  std::optional<PathSnapshot> pending_global_path;
+  std::uint64_t global_path_receive_sequence{0U};
+  mutable std::mutex local_path_mutex;
+  std::optional<PathSnapshot> pending_local_path;
+  std::uint64_t local_path_receive_sequence{0U};
+  mutable std::mutex map_scene_mutex;
+  std::optional<MapSceneSnapshot> pending_map_scene;
+  MapSceneHealthSnapshot map_scene_health;
+  std::string last_map_scene_boot_id;
+  std::uint64_t last_map_scene_reset_epoch{0U};
+  std::uint64_t last_map_scene_generation{0U};
+  std::uint64_t map_scene_receive_sequence{0U};
+  std::string map_state_boot_id;
+  std::int64_t map_state_stamp_ns{0};
   std::atomic<bool> ack_receiver_running{true};
   std::thread ack_receiver;
   mutable std::mutex clock_command_mutex;
@@ -1020,6 +2323,16 @@ struct Client::Impl {
   dds_entity_t exploration_ack_reader{0};
   dds_entity_t inspection_writer{0};
   dds_entity_t inspection_ack_reader{0};
+  dds_entity_t operator_motion_control_writer{0};
+  dds_entity_t operator_motion_sample_writer{0};
+  dds_entity_t operator_motion_ack_reader{0};
+  dds_entity_t navigation_goal_status_reader{0};
+  dds_entity_t navigation_state_reader{0};
+  dds_entity_t global_path_reader{0};
+  dds_entity_t local_path_reader{0};
+  dds_entity_t map_scene_reader{0};
+  dds_entity_t map_state_reader{0};
+  const std::string client_id{makeClientId()};
   bool diagnostics_enabled{diagnosticsEnabled()};
   mutable std::atomic<double> endpoint_clock_offset_s{
       std::numeric_limits<double>::quiet_NaN()};
@@ -1034,11 +2347,89 @@ Client::Client(int domain_id)
     : impl_(std::make_unique<Impl>(domain_id)),
       navigation_(*this),
       exploration_(*this),
-      inspection_(*this) {}
+      inspection_(*this),
+      operator_motion_(*this) {}
 
 Client::~Client() = default;
 
-void Client::NavigationCommands::sendGoal(
+std::optional<NavigationStateSnapshot> Client::latestNavigationState() const {
+  std::lock_guard<std::mutex> lock(impl_->navigation_state_mutex);
+  return impl_->latest_navigation_state;
+}
+
+bool Client::takeNavigationGoalStatus(NavigationGoalStatusSnapshot* status) {
+  if (status == nullptr) {
+    throw std::invalid_argument("navigation goal status output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->navigation_goal_status_mutex);
+  if (impl_->pending_goal_status_events.empty()) {
+    return false;
+  }
+  *status = std::move(impl_->pending_goal_status_events.front());
+  impl_->pending_goal_status_events.pop_front();
+  return true;
+}
+
+std::optional<NavigationGoalStatusSnapshot> Client::navigationGoalStatus(
+    const std::string& request_id) const {
+  if (request_id.empty()) {
+    return std::nullopt;
+  }
+  std::lock_guard<std::mutex> lock(impl_->navigation_goal_status_mutex);
+  const auto found = impl_->retained_goal_statuses.find(request_id);
+  if (found == impl_->retained_goal_statuses.end()) {
+    return std::nullopt;
+  }
+  return found->second;
+}
+
+bool Client::takeGlobalPath(PathSnapshot* path) {
+  if (path == nullptr) {
+    throw std::invalid_argument("global path output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->global_path_mutex);
+  if (!impl_->pending_global_path.has_value()) {
+    return false;
+  }
+  *path = std::move(*impl_->pending_global_path);
+  impl_->pending_global_path.reset();
+  return true;
+}
+
+bool Client::takeLocalPath(PathSnapshot* path) {
+  if (path == nullptr) {
+    throw std::invalid_argument("local path output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->local_path_mutex);
+  if (!impl_->pending_local_path.has_value()) {
+    return false;
+  }
+  *path = std::move(*impl_->pending_local_path);
+  impl_->pending_local_path.reset();
+  return true;
+}
+
+bool Client::takeMapScene(MapSceneSnapshot* scene) {
+  if (scene == nullptr) {
+    throw std::invalid_argument("map scene output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->map_scene_mutex);
+  if (!impl_->pending_map_scene.has_value()) {
+    return false;
+  }
+  *scene = std::move(*impl_->pending_map_scene);
+  impl_->pending_map_scene.reset();
+  return true;
+}
+
+MapSceneHealthSnapshot Client::mapSceneHealth() const {
+  std::lock_guard<std::mutex> lock(impl_->map_scene_mutex);
+  auto health = impl_->map_scene_health;
+  health.pending = impl_->pending_map_scene.has_value();
+  return health;
+}
+
+std::string Client::NavigationCommands::sendGoal(
     double x,
     double y,
     double z,
@@ -1060,7 +2451,7 @@ void Client::NavigationCommands::sendGoal(
   message.goal.position.z = z;
   message.goal.orientation = quaternionFromYaw(yaw);
   message.reason = const_cast<char*>("");
-  owner_.impl_->writeCommand(message, request_id, CommandKind::Goal, timeout_ms);
+  return owner_.impl_->writeCommand(message, request_id, CommandKind::Goal, timeout_ms);
 }
 
 void Client::NavigationCommands::cancel(
@@ -1189,6 +2580,41 @@ void Client::ExplorationCommands::stop(
       request_id);
 }
 
+void Client::ExplorationCommands::setDirectedTarget(
+    double x,
+    double y,
+    double ttl_s,
+    const std::string& session_id,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& request_id) {
+  requireDirectedTarget(x, y, ttl_s);
+  owner_.impl_->writeExplorationCommand(
+      ExplorationKind::kSetDirectedTarget,
+      session_id,
+      reason.empty() ? "operator_directed_explore" : reason,
+      timeout_ms,
+      request_id,
+      true,
+      x,
+      y,
+      ttl_s);
+}
+
+void Client::ExplorationCommands::clearDirectedTarget(
+    const std::string& session_id,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& request_id) {
+  requireDirectedTargetSessionId(session_id);
+  owner_.impl_->writeExplorationCommand(
+      ExplorationKind::kClearDirectedTarget,
+      session_id,
+      reason.empty() ? "operator_clear_directed_explore" : reason,
+      timeout_ms,
+      request_id);
+}
+
 void Client::InspectionCommands::start(
     const std::string& route_id,
     std::uint64_t route_revision,
@@ -1241,6 +2667,132 @@ void Client::InspectionCommands::cancel(
       reason.empty() ? "operator_cancel" : reason,
       timeout_ms,
       request_id);
+}
+
+OperatorMotionCommandReceipt
+Client::OperatorMotionCommands::claimWithReceipt(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    std::uint32_t lease_ttl_ms,
+    int timeout_ms,
+    const std::string& request_id) {
+  return owner_.impl_->writeOperatorMotionControl(
+      OperatorMotionAction::Claim,
+      source_id,
+      source_epoch,
+      sequence,
+      lease_ttl_ms,
+      "operator_claim",
+      timeout_ms,
+      request_id);
+}
+void Client::OperatorMotionCommands::claim(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    std::uint32_t lease_ttl_ms,
+    int timeout_ms,
+    const std::string& request_id) {
+  requireAcceptedOperatorMotionReceipt(claimWithReceipt(
+      source_id,
+      source_epoch,
+      sequence,
+      lease_ttl_ms,
+      timeout_ms,
+      request_id));
+}
+
+void Client::OperatorMotionCommands::sample(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    double vx,
+    double vy,
+    double wz,
+    bool deadman,
+    std::uint32_t freshness_budget_ms,
+    int timeout_ms,
+    const std::string& request_id) {
+  owner_.impl_->writeOperatorMotionSample(
+      source_id,
+      source_epoch,
+      sequence,
+      vx,
+      vy,
+      wz,
+      deadman,
+      freshness_budget_ms,
+      timeout_ms,
+      request_id);
+}
+
+OperatorMotionCommandReceipt
+Client::OperatorMotionCommands::holdWithReceipt(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& request_id) {
+  return owner_.impl_->writeOperatorMotionControl(
+      OperatorMotionAction::Hold,
+      source_id,
+      source_epoch,
+      sequence,
+      0U,
+      reason.empty() ? "operator_hold" : reason,
+      timeout_ms,
+      request_id);
+}
+void Client::OperatorMotionCommands::hold(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& request_id) {
+  requireAcceptedOperatorMotionReceipt(holdWithReceipt(
+      source_id,
+      source_epoch,
+      sequence,
+      reason,
+      timeout_ms,
+      request_id));
+}
+
+OperatorMotionCommandReceipt
+Client::OperatorMotionCommands::releaseWithReceipt(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& request_id) {
+  return owner_.impl_->writeOperatorMotionControl(
+      OperatorMotionAction::Release,
+      source_id,
+      source_epoch,
+      sequence,
+      0U,
+      reason.empty() ? "operator_release" : reason,
+      timeout_ms,
+      request_id);
+}
+void Client::OperatorMotionCommands::release(
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& request_id) {
+  requireAcceptedOperatorMotionReceipt(releaseWithReceipt(
+      source_id,
+      source_epoch,
+      sequence,
+      reason,
+      timeout_ms,
+      request_id));
 }
 
 }  // namespace lingtu::nav::commands

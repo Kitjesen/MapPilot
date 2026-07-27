@@ -7,18 +7,24 @@
 #include "message/cpp/exploration_command.hpp"
 #include "message/cpp/inspection_command.hpp"
 #include "message/cpp/navigation_command.hpp"
+#include "message/cpp/operator_motion.hpp"
 
 #include "dds/dds.h"
 #include "lingtu_slam.h"
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <exception>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <unistd.h>
 
@@ -150,6 +156,7 @@ void writeExplorationAck(
   ack.accepted = accepted;
   ack.reason = const_cast<char*>(reason.c_str());
   ack.session_id = const_cast<char*>(session_id.c_str());
+  ack.intent_revision = 17U;
   checked(dds_write(writer, &ack), "dds_write(test_exploration_client_ack)");
 }
 
@@ -173,6 +180,253 @@ void writeInspectionAck(
   checked(dds_write(writer, &ack), "dds_write(test_inspection_client_ack)");
 }
 
+void writeOperatorMotionAck(
+    dds_entity_t writer,
+    const std::string& request_id,
+    const std::string& source_id,
+    std::uint64_t source_epoch,
+    std::uint64_t sequence,
+    std::int32_t action,
+    bool accepted = true,
+    const std::string& reason = "accepted",
+    std::uint64_t final_output_sequence = 0U) {
+  lingtu_dds_OperatorMotionAck ack{};
+  const double stamp_s = nowSeconds();
+  ack.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  ack.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(ack.header.stamp.sec)) * 1e9);
+  ack.header.frame_id = const_cast<char*>("");
+  ack.source_id = const_cast<char*>(source_id.c_str());
+  ack.source_epoch = source_epoch;
+  ack.source_sequence = sequence;
+  ack.request_id = const_cast<char*>(request_id.c_str());
+  ack.action = action;
+  ack.accepted = accepted;
+  ack.reason = const_cast<char*>(reason.c_str());
+  ack.accepted_sequence = accepted ? sequence : 0U;
+  ack.final_output_sequence = final_output_sequence;
+  checked(dds_write(writer, &ack), "dds_write(test_operator_motion_ack)");
+}
+
+void writeGoalStatus(
+    dds_entity_t writer,
+    const std::string& boot_id,
+    std::uint64_t sequence,
+    const std::string& request_id,
+    lingtu::message::NavigationGoalState state,
+    std::uint64_t goal_epoch,
+    const std::string& reason) {
+  lingtu_dds_NavigationGoalStatus status{};
+  const double stamp_s = nowSeconds();
+  status.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  status.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(status.header.stamp.sec)) * 1e9);
+  status.header.frame_id = const_cast<char*>("map");
+  status.boot_id = const_cast<char*>(boot_id.c_str());
+  status.event_sequence = sequence;
+  status.request_id = const_cast<char*>(request_id.c_str());
+  status.state = static_cast<std::int32_t>(state);
+  status.goal_epoch = goal_epoch;
+  status.reason = const_cast<char*>(reason.c_str());
+  checked(dds_write(writer, &status), "dds_write(test_navigation_goal_status)");
+}
+
+void writePath(
+    dds_entity_t writer,
+    const std::vector<lingtu::nav::commands::PathPoint>& points) {
+  lingtu_dds_Path path{};
+  const double stamp_s = nowSeconds();
+  path.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  path.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(path.header.stamp.sec)) * 1e9);
+  path.header.frame_id = const_cast<char*>("map");
+  std::vector<lingtu_dds_PoseStamped> poses(points.size());
+  for (std::size_t i = 0U; i < points.size(); ++i) {
+    poses[i].header = path.header;
+    poses[i].pose.position.x = points[i].x;
+    poses[i].pose.position.y = points[i].y;
+    poses[i].pose.position.z = points[i].z;
+    poses[i].pose.orientation.w = 1.0;
+  }
+  path.poses._maximum = static_cast<std::uint32_t>(poses.size());
+  path.poses._length = static_cast<std::uint32_t>(poses.size());
+  path.poses._buffer = poses.data();
+  path.poses._release = false;
+  checked(dds_write(writer, &path), "dds_write(test_navigation_path)");
+}
+
+struct MapSceneCloudFixture {
+  lingtu_dds_MapCloudLayer layer{};
+  std::array<lingtu_dds_PointField, 4U> fields{};
+  std::vector<std::uint8_t> bytes;
+
+  MapSceneCloudFixture(
+      const char* name,
+      const std::vector<std::array<float, 4U>>& points,
+      std::uint64_t reset_epoch,
+      std::uint64_t observation_sequence,
+      std::uint64_t generation,
+      double stamp_s) {
+    layer.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+    layer.header.stamp.nanosec = static_cast<std::uint32_t>(
+        (stamp_s - static_cast<double>(layer.header.stamp.sec)) * 1e9);
+    layer.header.frame_id = const_cast<char*>("map");
+    layer.layer = const_cast<char*>(name);
+    layer.reset_epoch = reset_epoch;
+    layer.observation_sequence = observation_sequence;
+    layer.generation = generation;
+    layer.live = true;
+    layer.cloud.header = layer.header;
+    layer.cloud.height = 1U;
+    layer.cloud.width = static_cast<std::uint32_t>(points.size());
+    layer.cloud.is_bigendian = false;
+    layer.cloud.point_step = 4U * sizeof(float);
+    layer.cloud.row_step = layer.cloud.width * layer.cloud.point_step;
+    layer.cloud.is_dense = true;
+    const char* names[4] = {"x", "y", "z", "intensity"};
+    for (std::size_t index = 0U; index < fields.size(); ++index) {
+      fields[index].name = const_cast<char*>(names[index]);
+      fields[index].offset =
+          static_cast<std::uint32_t>(index * sizeof(float));
+      fields[index].datatype = 7U;
+      fields[index].count = 1U;
+    }
+    layer.cloud.fields._maximum = fields.size();
+    layer.cloud.fields._length = fields.size();
+    layer.cloud.fields._buffer = fields.data();
+    layer.cloud.fields._release = false;
+    bytes.resize(points.size() * 4U * sizeof(float));
+    for (std::size_t index = 0U; index < points.size(); ++index) {
+      std::memcpy(
+          bytes.data() + index * 4U * sizeof(float),
+          points[index].data(),
+          4U * sizeof(float));
+    }
+    layer.cloud.data._maximum = bytes.size();
+    layer.cloud.data._length = bytes.size();
+    layer.cloud.data._buffer = bytes.data();
+    layer.cloud.data._release = false;
+  }
+};
+
+struct MapSceneGridFixture {
+  lingtu_dds_MapGrid grid{};
+  std::vector<float> cells;
+
+  MapSceneGridFixture(
+      const char* name,
+      std::vector<float> values,
+      std::uint64_t reset_epoch,
+      std::uint64_t observation_sequence,
+      std::uint64_t generation,
+      double stamp_s)
+      : cells(std::move(values)) {
+    grid.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+    grid.header.stamp.nanosec = static_cast<std::uint32_t>(
+        (stamp_s - static_cast<double>(grid.header.stamp.sec)) * 1e9);
+    grid.header.frame_id = const_cast<char*>("map");
+    grid.layer = const_cast<char*>(name);
+    grid.info.map_load_time = grid.header.stamp;
+    grid.info.resolution = 0.25F;
+    grid.info.width = static_cast<std::uint32_t>(cells.size());
+    grid.info.height = cells.empty() ? 0U : 1U;
+    grid.info.origin.orientation.w = 1.0;
+    grid.data._maximum = cells.size();
+    grid.data._length = cells.size();
+    grid.data._buffer = cells.data();
+    grid.data._release = false;
+    grid.reset_epoch = reset_epoch;
+    grid.observation_sequence = observation_sequence;
+    grid.generation = generation;
+    grid.live = true;
+  }
+};
+
+void writeMapScene(
+    dds_entity_t writer,
+    std::uint64_t generation,
+    bool oversized = false) {
+  const double stamp_s = nowSeconds();
+  constexpr std::uint64_t reset_epoch = 9U;
+  constexpr std::uint64_t observation_sequence = 17U;
+  MapSceneCloudFixture live(
+      "live", {{{1.0F, 2.0F, 0.1F, 4.0F}}},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneCloudFixture voxel(
+      "voxel", {{{1.1F, 2.1F, 0.2F, 5.0F}}},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneCloudFixture accumulated(
+      "accumulated",
+      {{{1.2F, 2.2F, 0.3F, 0.8F}, {3.0F, 4.0F, 0.4F, 0.9F}}},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  if (oversized) {
+    live.layer.cloud.width =
+        LINGTU_NAV_MAP_SCENE_MAX_POINTS_PER_LAYER + 1U;
+    live.layer.cloud.row_step =
+        live.layer.cloud.width * live.layer.cloud.point_step;
+  }
+  MapSceneGridFixture occupancy(
+      "occupancy", {0.0F, 1.0F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneGridFixture elevation(
+      "elevation", {0.1F, 0.2F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneGridFixture esdf(
+      "esdf", {1.0F, 2.0F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+  MapSceneGridFixture traversability(
+      "traversability", {10.0F, 20.0F},
+      reset_epoch, observation_sequence, generation, stamp_s);
+
+  lingtu_dds_MapScene scene{};
+  scene.header = live.layer.header;
+  scene.producer_boot_id = const_cast<char*>("mapd-test-boot");
+  scene.reset_epoch = reset_epoch;
+  scene.observation_sequence = observation_sequence;
+  scene.generation = generation;
+  scene.live = true;
+  scene.map_sensor.position.x = 1.0;
+  scene.map_sensor.orientation.w = 1.0;
+  scene.live_cloud = live.layer;
+  scene.voxel_cloud = voxel.layer;
+  scene.accumulated_cloud = accumulated.layer;
+  scene.occupancy = occupancy.grid;
+  scene.elevation = elevation.grid;
+  scene.esdf = esdf.grid;
+  scene.traversability = traversability.grid;
+  checked(dds_write(writer, &scene), "dds_write(test_map_scene)");
+}
+
+void writeMapRuntimeState(
+    dds_entity_t writer,
+    std::uint64_t generation) {
+  lingtu_dds_MapRuntimeState state{};
+  const double stamp_s = nowSeconds();
+  state.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
+  state.header.stamp.nanosec = static_cast<std::uint32_t>(
+      (stamp_s - static_cast<double>(state.header.stamp.sec)) * 1e9);
+  state.header.frame_id = const_cast<char*>("map");
+  state.producer_boot_id = const_cast<char*>("mapd-test-boot");
+  state.running = true;
+  state.live = true;
+  state.reset_epoch = 9U;
+  state.observation_sequence = 17U;
+  state.generation = generation;
+  state.pose_quality = 1.0F;
+  state.pose_state = const_cast<char*>("TRACKING");
+  state.pose_reason = const_cast<char*>("");
+  state.required_publications_ready = true;
+  state.current_generation_published = true;
+  state.state_published_generation = generation;
+  state.realtime_clouds_published_generation = generation;
+  state.map_layers_published_generation = generation;
+  state.scene_published_generation = generation;
+  state.engine_error = const_cast<char*>("");
+  state.input_error = const_cast<char*>("");
+  state.output_error = const_cast<char*>("");
+  checked(dds_write(writer, &state), "dds_write(test_map_runtime_state)");
+}
+
 template <typename Send, typename Verify>
 void sendAndReply(
     dds_entity_t request_reader,
@@ -190,6 +444,9 @@ void sendAndReply(
     }
   });
   auto* request = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader);
+  check(
+      request->client_id != nullptr && std::string(request->client_id).find("nav-client-") == 0,
+      "navigation command client id must identify the native client");
   verify(*request);
   const std::string request_id = request->request_id;
   const auto kind = static_cast<lingtu::message::NavigationCommandKind>(request->kind);
@@ -334,6 +591,67 @@ void testExplorationCommands() {
         check(std::string(request.reason) == "operator_stop",
               "exploration stop reason mismatch");
       });
+  sendExplorationAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        exploration.setDirectedTarget(
+            12.5,
+            -8.25,
+            45.0,
+            "session-a",
+            "operator_directed_explore",
+            1000,
+            "explore-directed-set");
+      },
+      [&](const lingtu_dds_ExplorationCommandRequest& request) {
+        check(
+            request.kind == static_cast<std::int32_t>(
+                ExplorationKind::kSetDirectedTarget),
+            "directed target set kind mismatch");
+        check(
+            std::string(request.request_id) == "explore-directed-set",
+            "directed target set request id mismatch");
+        check(request.has_directed_target, "directed target set flag mismatch");
+        check(std::abs(request.directed_target_x - 12.5) < 1e-9,
+              "directed target x mismatch");
+        check(std::abs(request.directed_target_y + 8.25) < 1e-9,
+              "directed target y mismatch");
+        check(std::abs(request.directed_target_ttl_s - 45.0) < 1e-9,
+              "directed target ttl mismatch");
+        check(std::string(request.session_id) == "session-a",
+              "directed target session mismatch");
+        check(std::string(request.reason) == "operator_directed_explore",
+              "directed target reason mismatch");
+      });
+  sendExplorationAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        exploration.clearDirectedTarget(
+            "session-a", "operator_clear_directed_explore", 1000, "explore-directed-clear");
+      },
+      [&](const lingtu_dds_ExplorationCommandRequest& request) {
+        check(
+            request.kind == static_cast<std::int32_t>(
+                ExplorationKind::kClearDirectedTarget),
+            "directed target clear kind mismatch");
+        check(
+            std::string(request.request_id) == "explore-directed-clear",
+            "directed target clear request id mismatch");
+        check(
+            std::string(request.session_id) == "session-a",
+            "directed target clear session mismatch");
+        check(!request.has_directed_target, "directed target clear flag mismatch");
+        check(std::abs(request.directed_target_x) < 1e-12,
+              "directed target clear x must be empty");
+        check(std::abs(request.directed_target_y) < 1e-12,
+              "directed target clear y must be empty");
+        check(std::abs(request.directed_target_ttl_s) < 1e-12,
+              "directed target clear ttl must be empty");
+        check(std::string(request.reason) == "operator_clear_directed_explore",
+              "directed target clear reason mismatch");
+      });
 
   bool rejected = false;
   try {
@@ -438,6 +756,389 @@ void testInspectionCommands() {
         std::string::npos;
   }
   check(rejected, "inspection rejection ACK was not surfaced to caller");
+  dds_delete(participant);
+}
+
+void testOperatorMotionAckCorrelationUsesFullSourceIdentity() {
+  using OperatorAction = lingtu::message::OperatorMotionAction;
+  const int domain_id = 205 + static_cast<int>(getpid() % 5);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_operator_motion_client)");
+  const dds_entity_t subscriber = checked(
+      dds_create_subscriber(participant, nullptr, nullptr),
+      "dds_create_subscriber(test_operator_motion_client)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_operator_motion_client)");
+  const dds_entity_t control_reader = createReader(
+      participant,
+      subscriber,
+      lingtu::message::kOperatorMotionControl,
+      &lingtu_dds_OperatorMotionControl_desc);
+  const dds_entity_t ack_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kOperatorMotionAck,
+      &lingtu_dds_OperatorMotionAck_desc);
+
+  lingtu::nav::commands::Client client(domain_id);
+  bool rejected_zero_sequence = false;
+  try {
+    client.operatorMotion().claim(
+        "ws:operator-a", 42U, 0U, 1000U, 2000, "zero-sequence");
+  } catch (const std::invalid_argument&) {
+    rejected_zero_sequence = true;
+  }
+  check(
+      rejected_zero_sequence,
+      "operator motion control must reject sequence zero before DDS delivery");
+  std::exception_ptr sender_error;
+  std::atomic<bool> sender_done{false};
+  std::thread sender([&]() {
+    try {
+      client.operatorMotion().claim(
+          "ws:operator-a", 42U, 1U, 1000U, 2000, "shared-request-id");
+    } catch (...) {
+      sender_error = std::current_exception();
+    }
+    sender_done.store(true, std::memory_order_release);
+  });
+
+  auto* request = takeOne<lingtu_dds_OperatorMotionControl>(control_reader, 2000);
+  check(
+      std::string(request->source_id) == "ws:operator-a" &&
+          request->source_epoch == 42U && request->source_sequence == 1U,
+      "operator motion claim identity mismatch");
+  const std::string request_id = request->request_id;
+  const std::int32_t action = request->action;
+  returnLoan(control_reader, request);
+
+  writeOperatorMotionAck(
+      ack_writer, request_id, "ws:operator-b", 42U, 1U, action);
+  writeOperatorMotionAck(
+      ack_writer, request_id, "ws:operator-a", 41U, 1U, action);
+  writeOperatorMotionAck(
+      ack_writer, request_id, "ws:operator-a", 42U, 7U, action);
+  writeOperatorMotionAck(
+      ack_writer,
+      request_id,
+      "ws:operator-a",
+      42U,
+      1U,
+      static_cast<std::int32_t>(OperatorAction::Hold));
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  const bool completed_before_matching_ack =
+      sender_done.load(std::memory_order_acquire);
+
+  writeOperatorMotionAck(
+      ack_writer, request_id, "ws:operator-a", 42U, 1U, action);
+  sender.join();
+  if (sender_error) {
+    std::rethrow_exception(sender_error);
+  }
+  check(
+      sender_done.load(std::memory_order_acquire),
+      "matching operator ACK did not complete the pending claim");
+  check(
+      !completed_before_matching_ack,
+      "foreign or stale operator ACK must not complete the pending claim");
+  dds_delete(participant);
+}
+void testOperatorMotionReceiptApis() {
+  using OperatorAction = lingtu::message::OperatorMotionAction;
+  using Receipt = lingtu::nav::commands::OperatorMotionCommandReceipt;
+  const int domain_id = 95 + static_cast<int>(getpid() % 5);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_operator_motion_receipts)");
+  const dds_entity_t subscriber = checked(
+      dds_create_subscriber(participant, nullptr, nullptr),
+      "dds_create_subscriber(test_operator_motion_receipts)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_operator_motion_receipts)");
+  const dds_entity_t control_reader = createReader(
+      participant,
+      subscriber,
+      lingtu::message::kOperatorMotionControl,
+      &lingtu_dds_OperatorMotionControl_desc);
+  const dds_entity_t ack_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kOperatorMotionAck,
+      &lingtu_dds_OperatorMotionAck_desc);
+
+  lingtu::nav::commands::Client client(domain_id);
+
+  std::optional<Receipt> accepted_receipt;
+  std::exception_ptr accepted_error;
+  std::thread accepted_sender([&]() {
+    try {
+      accepted_receipt = client.operatorMotion().holdWithReceipt(
+          "ws:receipt-a", 51U, 2U, "disconnect_hold", 2000);
+    } catch (...) {
+      accepted_error = std::current_exception();
+    }
+  });
+  auto* accepted_request =
+      takeOne<lingtu_dds_OperatorMotionControl>(control_reader, 2000);
+  const std::string generated_request_id = accepted_request->request_id;
+  const auto accepted_action = accepted_request->action;
+  check(
+      !generated_request_id.empty(),
+      "empty operator request id was not materialized before DDS publication");
+  returnLoan(control_reader, accepted_request);
+  writeOperatorMotionAck(
+      ack_writer,
+      generated_request_id,
+      "ws:receipt-a",
+      51U,
+      2U,
+      accepted_action,
+      true,
+      "hold_zero_published",
+      71U);
+  accepted_sender.join();
+  if (accepted_error) {
+    std::rethrow_exception(accepted_error);
+  }
+  check(accepted_receipt.has_value(), "accepted operator receipt was not returned");
+  check(
+      accepted_receipt->accepted &&
+          accepted_receipt->action ==
+              static_cast<std::int32_t>(OperatorAction::Hold) &&
+          accepted_receipt->request_id == generated_request_id &&
+          accepted_receipt->source_id == "ws:receipt-a" &&
+          accepted_receipt->source_epoch == 51U &&
+          accepted_receipt->source_sequence == 2U &&
+          accepted_receipt->accepted_sequence == 2U &&
+          accepted_receipt->final_output_sequence == 71U &&
+          accepted_receipt->endpoint_timestamp_s > 0.0 &&
+          accepted_receipt->reason == "hold_zero_published",
+      "accepted operator receipt did not preserve the complete ACK");
+
+  std::optional<Receipt> rejected_receipt;
+  std::exception_ptr rejected_error;
+  std::thread rejected_sender([&]() {
+    try {
+      rejected_receipt = client.operatorMotion().releaseWithReceipt(
+          "ws:receipt-a",
+          51U,
+          3U,
+          "operator_release",
+          2000,
+          "release-rejected");
+    } catch (...) {
+      rejected_error = std::current_exception();
+    }
+  });
+  auto* rejected_request =
+      takeOne<lingtu_dds_OperatorMotionControl>(control_reader, 2000);
+  returnLoan(control_reader, rejected_request);
+  writeOperatorMotionAck(
+      ack_writer,
+      "release-rejected",
+      "ws:receipt-a",
+      51U,
+      3U,
+      static_cast<std::int32_t>(OperatorAction::Release),
+      false,
+      "operator_source_not_owner");
+  rejected_sender.join();
+  if (rejected_error) {
+    std::rethrow_exception(rejected_error);
+  }
+  check(
+      rejected_receipt.has_value() && !rejected_receipt->accepted &&
+          rejected_receipt->request_id == "release-rejected" &&
+          rejected_receipt->accepted_sequence == 0U &&
+          rejected_receipt->final_output_sequence == 0U &&
+          rejected_receipt->reason == "operator_source_not_owner",
+      "rejected operator ACK was not returned as a structured receipt");
+
+  std::string legacy_rejection;
+  std::exception_ptr legacy_error;
+  std::thread legacy_sender([&]() {
+    try {
+      client.operatorMotion().hold(
+          "ws:receipt-a",
+          51U,
+          4U,
+          "legacy_hold",
+          2000,
+          "legacy-rejected");
+    } catch (const std::runtime_error& exc) {
+      legacy_rejection = exc.what();
+    } catch (...) {
+      legacy_error = std::current_exception();
+    }
+  });
+  auto* legacy_request =
+      takeOne<lingtu_dds_OperatorMotionControl>(control_reader, 2000);
+  returnLoan(control_reader, legacy_request);
+  writeOperatorMotionAck(
+      ack_writer,
+      "legacy-rejected",
+      "ws:receipt-a",
+      51U,
+      4U,
+      static_cast<std::int32_t>(OperatorAction::Hold),
+      false,
+      "legacy_denied");
+  legacy_sender.join();
+  if (legacy_error) {
+    std::rethrow_exception(legacy_error);
+  }
+  check(
+      legacy_rejection.find("legacy_denied") != std::string::npos,
+      "legacy operator API no longer throws on a rejected ACK");
+
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C operator receipt client creation failed");
+  check(
+      lingtu_nav_client_operator_motion_sample(
+          c_client,
+          "invalid-deadman",
+          "c:receipt",
+          77U,
+          1U,
+          2,
+          0.2,
+          0.0,
+          0.0,
+          350U,
+          1) == -1,
+      "C operator sample accepted a non-boolean deadman");
+  check(
+      std::string(lingtu_nav_client_last_error(c_client)).find(
+          "deadman must be 0 or 1") != std::string::npos,
+      "C operator sample did not explain invalid deadman");
+  lingtu_nav_operator_motion_receipt_v1 invalid_version{};
+  invalid_version.abi_version =
+      LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION + 1U;
+  invalid_version.struct_size = sizeof(invalid_version);
+  check(
+      lingtu_nav_client_operator_motion_claim_with_receipt_v1(
+          c_client,
+          "invalid-version",
+          "c:receipt",
+          77U,
+          1U,
+          1000U,
+          1,
+          &invalid_version) == -1,
+      "C receipt ABI accepted an unsupported caller version");
+  check(
+      std::string(lingtu_nav_client_last_error(c_client)).find(
+          "ABI version mismatch") != std::string::npos,
+      "C receipt ABI did not explain a version mismatch");
+
+  lingtu_nav_operator_motion_receipt_v1 invalid_size{};
+  invalid_size.abi_version =
+      LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION;
+  invalid_size.struct_size = sizeof(invalid_size) - 1U;
+  check(
+      lingtu_nav_client_operator_motion_claim_with_receipt_v1(
+          c_client,
+          "invalid-size",
+          "c:receipt",
+          77U,
+          1U,
+          1000U,
+          1,
+          &invalid_size) == -1,
+      "C receipt ABI accepted an undersized caller buffer");
+  check(
+      std::string(lingtu_nav_client_last_error(c_client)).find(
+          "struct is too small") != std::string::npos,
+      "C receipt ABI did not explain an undersized buffer");
+  lingtu_nav_operator_motion_receipt_v1 c_receipt{};
+  c_receipt.abi_version = LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION;
+  c_receipt.struct_size = sizeof(c_receipt) + 64U;
+  int c_result = -2;
+  std::thread c_sender([&]() {
+    c_result = lingtu_nav_client_operator_motion_claim_with_receipt_v1(
+        c_client,
+        nullptr,
+        "c:receipt",
+        77U,
+        1U,
+        1000U,
+        2000,
+        &c_receipt);
+  });
+  auto* c_request =
+      takeOne<lingtu_dds_OperatorMotionControl>(control_reader, 2000);
+  const std::string c_generated_request_id = c_request->request_id;
+  returnLoan(control_reader, c_request);
+  writeOperatorMotionAck(
+      ack_writer,
+      c_generated_request_id,
+      "c:receipt",
+      77U,
+      1U,
+      static_cast<std::int32_t>(OperatorAction::Claim),
+      true,
+      "authority_claimed");
+  c_sender.join();
+  check(c_result == 0, "C receipt call failed for an accepted ACK");
+  check(
+      c_receipt.abi_version ==
+              LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION &&
+          c_receipt.struct_size == sizeof(c_receipt) &&
+          c_receipt.accepted != 0 &&
+          c_receipt.action ==
+              static_cast<std::int32_t>(OperatorAction::Claim) &&
+          std::string(c_receipt.request_id) == c_generated_request_id &&
+          std::string(c_receipt.source_id) == "c:receipt" &&
+          c_receipt.source_epoch == 77U &&
+          c_receipt.source_sequence == 1U &&
+          c_receipt.accepted_sequence == 1U &&
+          c_receipt.final_output_sequence == 0U &&
+          c_receipt.endpoint_timestamp_s > 0.0 &&
+          std::string(c_receipt.reason) == "authority_claimed",
+      "C receipt out-parameter did not preserve the complete ACK");
+
+  lingtu_nav_operator_motion_receipt_v1 c_rejected{};
+  c_rejected.abi_version = LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION;
+  c_rejected.struct_size = sizeof(c_rejected);
+  int c_rejected_result = -2;
+  std::thread c_rejected_sender([&]() {
+    c_rejected_result =
+        lingtu_nav_client_operator_motion_release_with_receipt_v1(
+            c_client,
+            "c-release-rejected",
+            "c:receipt",
+            77U,
+            2U,
+            "operator_release",
+            2000,
+            &c_rejected);
+  });
+  auto* c_rejected_request =
+      takeOne<lingtu_dds_OperatorMotionControl>(control_reader, 2000);
+  returnLoan(control_reader, c_rejected_request);
+  writeOperatorMotionAck(
+      ack_writer,
+      "c-release-rejected",
+      "c:receipt",
+      77U,
+      2U,
+      static_cast<std::int32_t>(OperatorAction::Release),
+      false,
+      "release_denied");
+  c_rejected_sender.join();
+  check(
+      c_rejected_result == 0 && c_rejected.accepted == 0 &&
+          c_rejected.accepted_sequence == 0U &&
+          c_rejected.final_output_sequence == 0U &&
+          std::string(c_rejected.reason) == "release_denied",
+      "C receipt ABI treated a reliable rejected ACK as a transport error");
+
+  lingtu_nav_client_destroy(c_client);
   dds_delete(participant);
 }
 
@@ -563,10 +1264,14 @@ void runTest() {
       &lingtu_dds_NavigationCommandAck_desc);
 
   lingtu::nav::commands::Client client(domain_id);
+  std::string accepted_goal_request_id;
   sendAndReply(
       request_reader,
       ack_writer,
-      [&]() { client.navigation().sendGoal(1.25, -2.5, 0.4, 0.6, 1000, "goal-001"); },
+      [&]() {
+        accepted_goal_request_id =
+            client.navigation().sendGoal(1.25, -2.5, 0.4, 0.6, 1000, "goal-001");
+      },
       [&](const lingtu_dds_NavigationCommandRequest& request) {
         check(std::string(request.request_id) == "goal-001", "goal request id mismatch");
         check(request.kind == static_cast<std::int32_t>(CommandKind::Goal), "goal kind mismatch");
@@ -575,6 +1280,9 @@ void runTest() {
         check(std::string(request.header.frame_id) == "map", "goal frame mismatch");
         check(std::abs(request.goal.orientation.z - std::sin(0.3)) < 1e-9, "goal yaw mismatch");
       });
+  check(
+      accepted_goal_request_id == "goal-001",
+      "sendGoal must return the exact accepted request id for lifecycle correlation");
 
   sendAndReply(
       request_reader,
@@ -730,6 +1438,282 @@ void runTest() {
         "clock rejection exception is missing audit diagnostics");
   }
 
+  dds_delete(participant);
+}
+
+void testNavigationGoalStatusReaderAndRetention() {
+  const int domain_id = 110 + static_cast<int>(getpid() % 10);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_goal_status_client)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_goal_status_client)");
+  const dds_entity_t status_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavGoalStatus,
+      &lingtu_dds_NavigationGoalStatus_desc);
+  lingtu::nav::commands::Client client(domain_id);
+
+  auto take = [&](int timeout_ms) {
+    lingtu::nav::commands::NavigationGoalStatusSnapshot status;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (client.takeNavigationGoalStatus(&status)) {
+        return std::optional<
+            lingtu::nav::commands::NavigationGoalStatusSnapshot>(
+            std::move(status));
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return std::optional<
+        lingtu::nav::commands::NavigationGoalStatusSnapshot>{};
+  };
+
+  const std::string request_id = "goal-lifecycle-1";
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    writeGoalStatus(
+        status_writer,
+        "navd-boot-a",
+        1U,
+        request_id,
+        lingtu::message::NavigationGoalState::Planning,
+        7U,
+        "planning");
+    auto first = take(10);
+    if (first.has_value()) {
+      check(first->request_id == request_id, "goal status request id mismatch");
+      check(first->sequence == 1U, "goal status sequence mismatch");
+      break;
+    }
+  }
+  const auto retained_planning = client.navigationGoalStatus(request_id);
+  check(retained_planning.has_value(), "goal status must be retained by request id");
+
+  writeGoalStatus(
+      status_writer,
+      "navd-boot-a",
+      1U,
+      request_id,
+      lingtu::message::NavigationGoalState::Failed,
+      7U,
+      "duplicate_must_be_ignored");
+  writeGoalStatus(
+      status_writer,
+      "navd-boot-a",
+      2U,
+      request_id,
+      lingtu::message::NavigationGoalState::Reached,
+      7U,
+      "goal_reached");
+  const auto terminal = take(1000);
+  check(terminal.has_value(), "terminal goal status was not received");
+  check(
+      terminal->state == static_cast<std::int32_t>(
+          lingtu::message::NavigationGoalState::Reached),
+      "duplicate sequence replaced the terminal lifecycle event");
+  check(terminal->sequence == 2U, "terminal goal status sequence mismatch");
+
+  const auto retained_terminal = client.navigationGoalStatus(request_id);
+  check(retained_terminal.has_value(), "terminal goal status was not retained");
+  check(
+      retained_terminal->state == terminal->state &&
+          retained_terminal->sequence == terminal->sequence,
+      "retained goal status does not match the latest event");
+  check(
+      !take(50).has_value(),
+      "duplicate goal status sequence leaked into the event queue");
+
+  dds_delete(participant);
+}
+
+void testNavigationPathTelemetry() {
+  const int domain_id = 125 + static_cast<int>(getpid() % 10);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_path_client)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_path_client)");
+  const dds_entity_t global_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavGlobalPath,
+      &lingtu_dds_Path_desc);
+  const dds_entity_t local_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavLocalPath,
+      &lingtu_dds_Path_desc);
+  lingtu::nav::commands::Client client(domain_id);
+  const std::vector<lingtu::nav::commands::PathPoint> global_points{
+      {1.0, 2.0, 0.1},
+      {3.0, 4.0, 0.2},
+  };
+  const std::vector<lingtu::nav::commands::PathPoint> local_points{
+      {0.1, 0.2, 0.0},
+      {0.3, 0.4, 0.0},
+      {0.5, 0.6, 0.0},
+  };
+
+  lingtu::nav::commands::PathSnapshot global;
+  lingtu::nav::commands::PathSnapshot local;
+  bool received = false;
+  for (int attempt = 0; attempt < 100 && !received; ++attempt) {
+    writePath(global_writer, global_points);
+    writePath(local_writer, local_points);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    received =
+        client.takeGlobalPath(&global) && client.takeLocalPath(&local);
+  }
+  check(received, "native client did not receive global/local path telemetry");
+  check(global.frame_id == "map", "global path frame mismatch");
+  check(global.points.size() == global_points.size(), "global path point count mismatch");
+  check(local.points.size() == local_points.size(), "local path point count mismatch");
+  check(
+      std::abs(global.points[1].z - 0.2) < 1e-12,
+      "global path point payload mismatch");
+  check(
+      global.receive_sequence > 0U && local.receive_sequence > 0U,
+      "path receive sequence was not assigned");
+
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C path telemetry client creation failed");
+  lingtu_nav_path_header header{};
+  int result = 0;
+  for (int attempt = 0; attempt < 100 && result == 0; ++attempt) {
+    writePath(global_writer, global_points);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    result = lingtu_nav_client_take_global_path(c_client, &header, nullptr, 0U);
+  }
+  check(result == 2, "C path telemetry probe did not request a point buffer");
+  check(
+      header.point_count == global_points.size(),
+      "C path telemetry probe returned the wrong point count");
+  std::vector<lingtu_nav_path_point> copied(
+      static_cast<std::size_t>(header.point_count));
+  result = lingtu_nav_client_take_global_path(
+      c_client,
+      &header,
+      copied.data(),
+      static_cast<unsigned long long>(copied.size()));
+  check(result == 1, "C path telemetry buffered copy failed");
+  check(
+      std::abs(copied[1].x - 3.0) < 1e-12,
+      "C path telemetry copied the wrong point payload");
+  lingtu_nav_client_destroy(c_client);
+  dds_delete(participant);
+}
+
+void testMapSceneTelemetryAndCapacityGate() {
+  const int domain_id = 135 + static_cast<int>(getpid() % 10);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_map_scene_client)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_map_scene_client)");
+  const dds_entity_t scene_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kMapsScene,
+      &lingtu_dds_MapScene_desc);
+  const dds_entity_t state_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kMapsState,
+      &lingtu_dds_MapRuntimeState_desc);
+  lingtu_nav_client_handle client = lingtu_nav_client_create(domain_id);
+  check(client != nullptr, "C MapScene client creation failed");
+
+  lingtu_nav_map_scene_header_v1 header{};
+  int result = 0;
+  lingtu_nav_map_scene_health_v1 health{};
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    writeMapRuntimeState(state_writer, 3U);
+    writeMapScene(scene_writer, 3U);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    result = lingtu_nav_client_take_map_scene_v1(
+        client, &header, nullptr);
+    check(
+        lingtu_nav_client_read_map_scene_health_v1(client, &health) == 1,
+        "C MapScene health read failed");
+    if (result == 2 && health.state_received != 0) {
+      break;
+    }
+  }
+  check(result == 2, "C MapScene probe did not retain a buffered sample");
+  check(
+      header.abi_version == LINGTU_NAV_MAP_SCENE_ABI_VERSION &&
+          header.generation == 3U &&
+          header.live_point_count == 1U &&
+          header.voxel_point_count == 1U &&
+          header.accumulated_point_count == 2U,
+      "C MapScene probe returned the wrong identity or point counts");
+  check(
+      health.state_running != 0 && health.state_live != 0 &&
+          health.state_current_generation_published != 0 &&
+          health.state_scene_published_generation == 3U,
+      "C MapScene health did not expose current mapd state evidence");
+
+  std::vector<lingtu_nav_map_scene_point_v1> live(
+      static_cast<std::size_t>(header.live_point_count));
+  std::vector<lingtu_nav_map_scene_point_v1> voxel(
+      static_cast<std::size_t>(header.voxel_point_count));
+  std::vector<lingtu_nav_map_scene_point_v1> accumulated(
+      static_cast<std::size_t>(header.accumulated_point_count));
+  std::vector<float> occupancy(header.occupancy.cell_count);
+  std::vector<float> elevation(header.elevation.cell_count);
+  std::vector<float> esdf(header.esdf.cell_count);
+  std::vector<float> traversability(header.traversability.cell_count);
+  lingtu_nav_map_scene_buffers_v1 buffers{};
+  buffers.abi_version = LINGTU_NAV_MAP_SCENE_ABI_VERSION;
+  buffers.struct_size = sizeof(buffers);
+  buffers.live_points = live.data();
+  buffers.live_point_capacity = live.size();
+  buffers.voxel_points = voxel.data();
+  buffers.voxel_point_capacity = voxel.size();
+  buffers.accumulated_points = accumulated.data();
+  buffers.accumulated_point_capacity = accumulated.size();
+  buffers.occupancy_cells = occupancy.data();
+  buffers.occupancy_cell_capacity = occupancy.size();
+  buffers.elevation_cells = elevation.data();
+  buffers.elevation_cell_capacity = elevation.size();
+  buffers.esdf_cells = esdf.data();
+  buffers.esdf_cell_capacity = esdf.size();
+  buffers.traversability_cells = traversability.data();
+  buffers.traversability_cell_capacity = traversability.size();
+  result = lingtu_nav_client_take_map_scene_v1(
+      client, &header, &buffers);
+  check(result == 1, "C MapScene buffered copy failed");
+  check(
+      std::abs(accumulated[1].x - 3.0F) < 1e-6F &&
+          std::abs(traversability[1] - 20.0F) < 1e-6F,
+      "C MapScene copied the wrong point or grid payload");
+
+  bool rejected = false;
+  for (int attempt = 0; attempt < 100 && !rejected; ++attempt) {
+    writeMapScene(scene_writer, 4U, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    check(
+        lingtu_nav_client_read_map_scene_health_v1(client, &health) == 1,
+        "C MapScene capacity health read failed");
+    rejected = health.capacity_rejections > 0U;
+  }
+  check(rejected, "oversized MapScene did not trip the product capacity gate");
+  check(
+      health.last_generation == 3U,
+      "oversized MapScene advanced the accepted generation");
+  result = lingtu_nav_client_take_map_scene_v1(
+      client, &header, nullptr);
+  check(result == 0, "oversized MapScene leaked into the consumer queue");
+
+  lingtu_nav_client_destroy(client);
   dds_delete(participant);
 }
 
@@ -1134,9 +2118,34 @@ int main() {
         (lingtu_nav_client_capabilities() &
          LINGTU_NAV_CLIENT_CAP_EXPLORATION) != 0U,
         "exploration client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_DIRECTED_EXPLORATION) != 0U,
+        "directed exploration client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_GOAL_STATUS) != 0U,
+        "goal status client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_PATH_TELEMETRY) != 0U,
+        "path telemetry client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_MAP_SCENE) != 0U,
+        "map scene client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT) != 0U,
+        "operator motion receipt client capability missing");
     runTest();
+    testNavigationGoalStatusReaderAndRetention();
+    testNavigationPathTelemetry();
+    testMapSceneTelemetryAndCapacityGate();
     testExplorationCommands();
     testInspectionCommands();
+    testOperatorMotionAckCorrelationUsesFullSourceIdentity();
+    testOperatorMotionReceiptApis();
     testEstopBypassesGoalAckWait();
     testSourceStampIsRefreshedAfterDiscovery();
     testFirstTeleopUsesEndpointClockAnchor();

@@ -2,15 +2,153 @@
 
 #include <memory>
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace lingtu::nav::commands {
+
+struct NavigationStateSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string boot_id;
+  std::uint64_t sequence{0U};
+  std::int32_t control_mode{0};
+  std::int32_t lifecycle_state{0};
+  std::string active_request_id;
+  std::uint64_t goal_epoch{0U};
+  std::string map_id;
+  std::int64_t map_version{0};
+  std::string map_hash;
+  std::int32_t planning_state{0};
+  std::int32_t execution_state{0};
+  std::int32_t recovery_state{0};
+  float progress{-1.0F};
+  std::string authority;
+  std::string hold_reason;
+  std::string failure_code;
+};
+
+struct NavigationGoalStatusSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string boot_id;
+  std::uint64_t sequence{0U};
+  std::string request_id;
+  std::int32_t state{0};
+  std::uint64_t goal_epoch{0U};
+  std::string reason;
+};
+
+struct OperatorMotionCommandReceipt {
+  bool accepted{false};
+  std::int32_t action{0};
+  std::string request_id;
+  std::string source_id;
+  std::uint64_t source_epoch{0U};
+  std::uint64_t source_sequence{0U};
+  std::uint64_t accepted_sequence{0U};
+  std::uint64_t final_output_sequence{0U};
+  double endpoint_timestamp_s{0.0};
+  std::string reason;
+};
+
+struct PathPoint {
+  double x{0.0};
+  double y{0.0};
+  double z{0.0};
+};
+
+struct PathSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::uint64_t receive_sequence{0U};
+  std::vector<PathPoint> points;
+};
+
+struct MapScenePoint {
+  float x{0.0F};
+  float y{0.0F};
+  float z{0.0F};
+  float intensity{0.0F};
+};
+
+struct MapSceneGridSnapshot {
+  std::uint32_t width{0U};
+  std::uint32_t height{0U};
+  float resolution{0.0F};
+  double origin_x{0.0};
+  double origin_y{0.0};
+  double origin_z{0.0};
+  double origin_qx{0.0};
+  double origin_qy{0.0};
+  double origin_qz{0.0};
+  double origin_qw{1.0};
+  std::vector<float> cells;
+};
+
+struct MapSceneSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string producer_boot_id;
+  std::uint64_t receive_sequence{0U};
+  std::uint64_t reset_epoch{0U};
+  std::uint64_t observation_sequence{0U};
+  std::uint64_t generation{0U};
+  bool live{false};
+  double sensor_x{0.0};
+  double sensor_y{0.0};
+  double sensor_z{0.0};
+  double sensor_qx{0.0};
+  double sensor_qy{0.0};
+  double sensor_qz{0.0};
+  double sensor_qw{1.0};
+  std::size_t payload_bytes{0U};
+  std::vector<MapScenePoint> live_points;
+  std::vector<MapScenePoint> voxel_points;
+  std::vector<MapScenePoint> accumulated_points;
+  MapSceneGridSnapshot occupancy;
+  MapSceneGridSnapshot elevation;
+  MapSceneGridSnapshot esdf;
+  MapSceneGridSnapshot traversability;
+};
+
+struct MapSceneHealthSnapshot {
+  std::uint64_t received_samples{0U};
+  std::uint64_t valid_samples{0U};
+  std::uint64_t stale_samples{0U};
+  std::uint64_t invalid_samples{0U};
+  std::uint64_t capacity_rejections{0U};
+  std::uint64_t replaced_samples{0U};
+  std::uint64_t last_receive_sequence{0U};
+  std::uint64_t last_generation{0U};
+  double last_sample_timestamp_s{0.0};
+  bool pending{false};
+  std::string last_error;
+  std::uint64_t state_received_samples{0U};
+  std::uint64_t state_valid_samples{0U};
+  std::uint64_t state_stale_samples{0U};
+  std::uint64_t state_invalid_samples{0U};
+  double state_timestamp_s{0.0};
+  std::string state_producer_boot_id;
+  bool state_received{false};
+  bool state_running{false};
+  bool state_live{false};
+  bool state_required_publications_ready{false};
+  bool state_current_generation_published{false};
+  bool state_capacity_limited{false};
+  std::uint64_t state_reset_epoch{0U};
+  std::uint64_t state_observation_sequence{0U};
+  std::uint64_t state_generation{0U};
+  std::uint64_t state_scene_published_generation{0U};
+  std::string state_error;
+};
 
 class Client {
  public:
   class NavigationCommands {
    public:
-    void sendGoal(
+    std::string sendGoal(
         double x,
         double y,
         double z,
@@ -70,6 +208,20 @@ class Client {
         int timeout_ms = 1000,
         const std::string& request_id = {});
 
+    void setDirectedTarget(
+        double x,
+        double y,
+        double ttl_s,
+        const std::string& session_id = {},
+        const std::string& reason = "operator_directed_explore",
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    void clearDirectedTarget(
+        const std::string& session_id,
+        const std::string& reason = "operator_clear_directed_explore",
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+
    private:
     friend class Client;
     explicit ExplorationCommands(Client& owner) : owner_(owner) {}
@@ -102,6 +254,68 @@ class Client {
     Client& owner_;
   };
 
+  class OperatorMotionCommands {
+   public:
+    [[nodiscard]] OperatorMotionCommandReceipt claimWithReceipt(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        std::uint32_t lease_ttl_ms,
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    void claim(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        std::uint32_t lease_ttl_ms,
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    void sample(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        double vx,
+        double vy,
+        double wz,
+        bool deadman = true,
+        std::uint32_t freshness_budget_ms = 350,
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    [[nodiscard]] OperatorMotionCommandReceipt holdWithReceipt(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        const std::string& reason = "operator_hold",
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    void hold(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        const std::string& reason = "operator_hold",
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    [[nodiscard]] OperatorMotionCommandReceipt releaseWithReceipt(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        const std::string& reason = "operator_release",
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    void release(
+        const std::string& source_id,
+        std::uint64_t source_epoch,
+        std::uint64_t sequence,
+        const std::string& reason = "operator_release",
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+
+   private:
+    friend class Client;
+    explicit OperatorMotionCommands(Client& owner) : owner_(owner) {}
+    Client& owner_;
+  };
+
   explicit Client(int domain_id);
   ~Client();
 
@@ -113,6 +327,17 @@ class Client {
   NavigationCommands& navigation() noexcept { return navigation_; }
   ExplorationCommands& exploration() noexcept { return exploration_; }
   InspectionCommands& inspection() noexcept { return inspection_; }
+  OperatorMotionCommands& operatorMotion() noexcept { return operator_motion_; }
+  [[nodiscard]] std::optional<NavigationStateSnapshot>
+  latestNavigationState() const;
+  [[nodiscard]] bool takeNavigationGoalStatus(
+      NavigationGoalStatusSnapshot* status);
+  [[nodiscard]] std::optional<NavigationGoalStatusSnapshot>
+  navigationGoalStatus(const std::string& request_id) const;
+  [[nodiscard]] bool takeGlobalPath(PathSnapshot* path);
+  [[nodiscard]] bool takeLocalPath(PathSnapshot* path);
+  [[nodiscard]] bool takeMapScene(MapSceneSnapshot* scene);
+  [[nodiscard]] MapSceneHealthSnapshot mapSceneHealth() const;
 
  private:
   struct Impl;
@@ -120,6 +345,7 @@ class Client {
   NavigationCommands navigation_;
   ExplorationCommands exploration_;
   InspectionCommands inspection_;
+  OperatorMotionCommands operator_motion_;
 };
 
 }  // namespace lingtu::nav::commands
