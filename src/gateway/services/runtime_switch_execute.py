@@ -5,7 +5,9 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Mapping
@@ -63,13 +65,6 @@ def _clean_text(value: Any) -> str | None:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
-
-
-def _script_path() -> Path:
-    override = _clean_text(os.environ.get("LINGTU_RUNTIME_SWITCH_SCRIPT"))
-    if override:
-        return Path(override).expanduser()
-    return _repo_root() / "scripts" / "lingtu"
 
 
 def _resolve_active_map_name(gw: Any) -> str | None:
@@ -153,6 +148,26 @@ def _finish_cold_switch(gw: Any, command_id: str) -> None:
             gw._runtime_switch_pending = None
 
 
+def _reap_dev_switch_process(gw: Any, command_id: str, proc: Any) -> None:
+    wait = getattr(proc, "wait", None)
+    if not callable(wait):
+        return
+
+    def reap() -> None:
+        try:
+            wait()
+        except Exception:
+            pass
+        finally:
+            _finish_cold_switch(gw, command_id)
+
+    threading.Thread(
+        target=reap,
+        name=f"lingtu-runtime-switch-reap-{command_id[:24]}",
+        daemon=True,
+    ).start()
+
+
 def _quiesce_for_cold_switch(gw: Any, command_id: str) -> list[str]:
     if gw is None:
         raise RuntimeError("gateway instance is required for a cold runtime switch")
@@ -164,7 +179,7 @@ def _quiesce_for_cold_switch(gw: Any, command_id: str) -> list[str]:
     wrote_native = native_stop(gw, reason, request_id=command_id)
     if wrote_native:
         return ["native_navigation.stop_ack", "runtime_switch.pending"]
-    if endpoint_only_enabled():
+    if endpoint_only_enabled(gw):
         raise RuntimeError("native navigation endpoint did not acknowledge stop")
 
     gw.cancel.publish(reason)
@@ -189,8 +204,11 @@ def _systemd_run_command(
     user = _clean_text(env.get("USER")) or _clean_text(os.environ.get("USER")) or "sunrise"
     group = _clean_text(env.get("GROUP")) or _clean_text(os.environ.get("GROUP")) or user
     home = _clean_text(env.get("HOME")) or ("/root" if user == "root" else f"/home/{user}")
+    source_root = str(_repo_root() / "src")
+    inherited_pythonpath = _clean_text(env.get("PYTHONPATH"))
+    pythonpath = source_root if not inherited_pythonpath else f"{source_root}{os.pathsep}{inherited_pythonpath}"
     return [
-        "sudo",
+        "/usr/bin/sudo",
         "-n",
         "systemd-run",
         f"--unit={unit_name}",
@@ -208,17 +226,17 @@ def _systemd_run_command(
         f"USER={user}",
         f"LOGNAME={user}",
         f"GW={env.get('GW', 'http://localhost:5050')}",
+        f"PYTHONPATH={pythonpath}",
         *command,
     ]
 
 
 def _build_command(raw: Mapping[str, Any], target_profile: str) -> list[str]:
-    script = _script_path()
     endpoint = _clean_text(raw.get("target_endpoint")) or _clean_text(raw.get("endpoint")) or "thunder_field"
     command = [
-        "bash",
-        str(script),
-        "mode",
+        sys.executable,
+        "-m",
+        "lingtu.control",
         "switch",
         target_profile,
         "--endpoint",
@@ -237,6 +255,7 @@ def _build_command(raw: Mapping[str, Any], target_profile: str) -> list[str]:
     initial_pose = raw.get("initial_pose")
     if isinstance(initial_pose, list) and len(initial_pose) == 3:
         command.extend(["--initial-pose", *(str(item) for item in initial_pose)])
+    command.append("--json")
     return command
 
 
@@ -380,7 +399,7 @@ def build_runtime_switch_response(
             blockers=["execution requires hot switch support or allow_restart=true"],
         )
 
-    if not allow_restart:
+    if not execute:
         return _base_response(
             raw,
             plan=plan,
@@ -389,15 +408,15 @@ def build_runtime_switch_response(
             command=command,
         )
 
-    script = Path(command[1])
-    if not script.exists():
+    executable = Path(command[0])
+    if not executable.is_file():
         return _base_response(
             raw,
             plan=plan,
             status="rejected",
             ok=False,
             command=command,
-            blockers=[f"robot-side switch script not found: {script}"],
+            blockers=[f"ProductControl Python executable not found: {executable}"],
         )
 
     command_id = _clean_text(raw.get("request_id")) or uuid.uuid4().hex
@@ -417,6 +436,12 @@ def build_runtime_switch_response(
     log_path = _log_path(command_id)
     env = os.environ.copy()
     env.setdefault("GW", "http://localhost:5050")
+    source_root = str(_repo_root() / "src")
+    env["PYTHONPATH"] = (
+        source_root
+        if not env.get("PYTHONPATH")
+        else f"{source_root}{os.pathsep}{env['PYTHONPATH']}"
+    )
     proc_pid: int | None = None
     effects: list[str] = []
     try:
@@ -427,7 +452,7 @@ def build_runtime_switch_response(
             # absent path is created correctly by PID 1.
             log_path.unlink(missing_ok=True)
             sudo_check = subprocess.run(
-                ["sudo", "-n", "true"],
+                ["/usr/bin/sudo", "-n", "true"],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -453,7 +478,7 @@ def build_runtime_switch_response(
                 log_path=log_path,
                 env=env,
             )
-            launched = subprocess.run(
+            launched = subprocess.run(  # noqa: S603 - Command is assembled from validated Product inputs.
                 transient_command,
                 check=False,
                 capture_output=True,
@@ -486,8 +511,12 @@ def build_runtime_switch_response(
                 }
                 if os.name != "nt":
                     kwargs["start_new_session"] = True
-                proc = subprocess.Popen(command, **kwargs)
+                proc = subprocess.Popen(  # noqa: S603 - Command invokes this release's ProductControl module.
+                    command,
+                    **kwargs,
+                )
                 proc_pid = proc.pid
+                _reap_dev_switch_process(gw, command_id, proc)
     except Exception as exc:
         _finish_cold_switch(gw, command_id)
         return _base_response(

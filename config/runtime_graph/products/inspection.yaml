@@ -14,25 +14,49 @@ data_plane: typed_dds
 control_owner: autonomy
 autonomy_owner: native_nav_endpoint
 goal_owner: operator_or_semantic_planner
+native_nav:
+  control_mode: autonomy
+  publish_cmd_vel: true
+  check_obstacle: true
+  use_traversability_cost: true
+  allow_teleop_takeover: true
+  teleop_local_planner: true
 processes:
   - lidar
   - slam
+  - maps
   - traversability
   - nav
   - driver
   - camera
-  - runtime
+  - host
+critical_modules:
+  - host.bus
+  - nav.commands
+  - GatewayModule
 required_topics:
   - /tf
   - /slam/odometry
   - /slam/registered_cloud
+  - /slam/map_observation
   - /slam/map_cloud
   - /slam/localization_health
+  - /maps/state
+  - /maps/scene
   - /nav/command/request
   - /nav/command/ack
+  - /nav/goal/status
+  - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
   - /nav/inspection/command
   - /nav/inspection/ack
+  - /nav/inspection/task/request
+  - /nav/inspection/task/ack
   - /nav/inspection/status
+  - /nav/inspection/task/event
   - /nav/inspection/evidence/request
   - /nav/inspection/evidence/result
   - /nav/traversability
@@ -46,10 +70,15 @@ required_capabilities:
   - octoplanner3d_global_planning
   - local_planner_collision_and_traversability_scoring
   - final_cmd_vel_single_writer
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
   - operator_teleop_takeover_with_safety_veto
   - operator_assisted_local_planner_takeover
   - inspection_evidence_capture_and_result_ack
 forbidden_modules:
+  - TeleopModule
+  - nav.mission
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.local_planner
   - nav.path_follower
@@ -65,17 +94,41 @@ inspection_command_boundary:
   ack: /nav/inspection/ack
   status: /nav/inspection/status
   client_completion: business_ack_required
+inspection_task_boundary:
+  request: /nav/inspection/task/request
+  ack: /nav/inspection/task/ack
+  status: /nav/inspection/status
+  client_completion: business_ack_required
+  request_identity_fields: [task_id, request_id]
+  response_identity_fields: [task_id, request_id]
+inspection_task_event_stream:
+  topic: /nav/inspection/task/event
+  ordering_cursor: [boot_id, event_sequence]
+  consumer_status: host_bus_gateway_projection_enabled
+  retention: process_local_gateway_projection
+  recording_status: native_mcap_task_verification_enabled_durable_task_journal_pending
+recording_contract:
+  activation: explicit_product_operation
+  native_preset: inspection-evidence-v1
+  identity: task_id
+  completion: unique_native_terminal_after_boot_matched_zero_output_and_driver_confirmation
+  output: atomic_mcap_plus_session_manifest
+  replay_policy: sensors_only_recorded_control_and_task_facts_are_never_republished
+  lifecycle_binding: pending
 inspection_evidence_boundary:
   request: /nav/inspection/evidence/request
   result: /nav/inspection/evidence/result
   client_completion: matching_persisted_result_required
 target_chain:
   - Operator requests or SemanticPlanner select inspection routes and goals.
-  - Gateway and GoalService send route lifecycle requests through the persistent C++ client on /nav/inspection/command and wait for /nav/inspection/ack.
+  - Product Gateway task APIs send task-addressed lifecycle requests through the persistent C++ client on /nav/inspection/task/request and wait for /nav/inspection/task/ack; GoalService migration remains pending and legacy /nav/inspection/command remains compatibility-only.
   - Native nav endpoint publishes current run and route-point progress on /nav/inspection/status.
+  - Native nav endpoint publishes ordered task facts on /nav/inspection/task/event; HostBus projects them to the Gateway's bounded process-local task read model and generic SSE stream. boot_id plus event_sequence is the cursor; gaps and endpoint restarts disable controls instead of being inferred. The explicit inspection-evidence-v1 recording preset captures this event stream with navigation, path, logical-output, driver-state, and evidence-result context while keeping all control/output topics outside the replay allowlist. When bound to a task_id, final MCAP publication requires a complete event timeline, one native terminal fact, a preceding final zero command, and driver acceptance of that output sequence. Automatic Product lifecycle start/stop binding and a durable cross-restart task journal remain pending.
   - Native nav endpoint requests point evidence on /nav/inspection/evidence/request and waits for the perception worker result on /nav/inspection/evidence/result.
-  - Direct goals and operator motion intents continue to use /nav/command/request and /nav/command/ack.
+  - Direct goals use /nav/command/request and /nav/command/ack; operator takeover instead uses /nav/operator_motion/control for claim, hold, and release, whose /nav/operator_motion/ack confirms only that native control action.
+  - Fresh takeover intent uses /nav/operator_motion/sample and is submitted-only; /nav/operator_motion/status then exposes authority, input-gate, teleop-output, and final logical-command evidence.
   - Native nav endpoint runs OctoPlanner3D, LocalPlanner, and PathFollower as C++ calls.
   - Native nav endpoint publishes path state and final /nav/cmd_vel.
+  - Physical driver execution requires separate downstream evidence; neither operator control ACK, status, nor /nav/cmd_vel alone proves motor motion.
   - Operator takeover pauses motion without restarting the inspection runtime; release holds zero until explicit resume and a fresh inspection goal.
   - Assisted takeover routes joystick translation through native LocalPlanner and PathFollower without automatic recovery rotation or backing up.

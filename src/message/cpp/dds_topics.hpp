@@ -197,6 +197,14 @@ inline constexpr TopicContract kNavInspectionAck{
     "/nav/inspection/ack", "rt/nav/inspection/ack",
     "lingtu.dds.InspectionCommandAck",
     "lingtu::dds::InspectionCommandAck"};
+inline constexpr TopicContract kNavInspectionTaskRequest{
+    "/nav/inspection/task/request", "rt/nav/inspection/task/request",
+    "lingtu.dds.InspectionTaskRequest",
+    "lingtu::dds::InspectionTaskRequest"};
+inline constexpr TopicContract kNavInspectionTaskAck{
+    "/nav/inspection/task/ack", "rt/nav/inspection/task/ack",
+    "lingtu.dds.InspectionTaskAck",
+    "lingtu::dds::InspectionTaskAck"};
 inline constexpr TopicContract kNavInspectionEvidenceRequest{
     "/nav/inspection/evidence/request", "rt/nav/inspection/evidence/request",
     "lingtu.dds.InspectionEvidenceRequest",
@@ -209,6 +217,10 @@ inline constexpr TopicContract kNavInspectionStatus{
     "/nav/inspection/status", "rt/nav/inspection/status",
     "lingtu.dds.InspectionStatus",
     "lingtu::dds::InspectionStatus"};
+inline constexpr TopicContract kNavInspectionTaskEvent{
+    "/nav/inspection/task/event", "rt/nav/inspection/task/event",
+    "lingtu.dds.InspectionTaskEvent",
+    "lingtu::dds::InspectionTaskEvent"};
 inline constexpr TopicContract kNavSemanticInstruction{
     "/nav/semantic/instruction", "rt/nav/semantic/instruction",
     "lingtu.dds.Text", "lingtu::dds::Text"};
@@ -316,12 +328,15 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavExplorationAck,
     kNavInspectionCommand,
     kNavInspectionAck,
+    kNavInspectionTaskRequest,
+    kNavInspectionTaskAck,
     kNavExplorationSegmentRequest,
     kNavExplorationSegmentAck,
     kNavExplorationSegmentStatus,
     kNavInspectionEvidenceRequest,
     kNavInspectionEvidenceResult,
     kNavInspectionStatus,
+    kNavInspectionTaskEvent,
     kNavSemanticInstruction,
     kNavTraversability,
     kNavTerrainMap,

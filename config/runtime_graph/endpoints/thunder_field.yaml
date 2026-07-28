@@ -5,7 +5,7 @@ summary: Physical Thunder field endpoint. Native services own sensors, SLAM, nav
 simulation_only: false
 real_equivalent: true
 data_plane: native_dds
-process_control: runtime_plan
+process_control: launcher
 process_manager: systemd
 profile_defaults:
   runtime_endpoint: thunder_field
@@ -23,6 +23,11 @@ processes:
     lifecycle: mode
     order: 20
     timeout_s: 35
+  maps:
+    target: mapd.service
+    lifecycle: mode
+    order: 25
+    timeout_s: 20
   traversability:
     target: lingtu-traversability-dds.service
     lifecycle: mode
@@ -48,7 +53,7 @@ processes:
     lifecycle: mode
     order: 70
     timeout_s: 20
-  runtime:
+  host:
     target: lingtu.service
     lifecycle: mode
     order: 90
@@ -77,13 +82,39 @@ exploration_command_boundary:
   request: /nav/exploration/command
   ack: /nav/exploration/ack
   client_completion: business_ack_required
+  directed_target:
+    set_kind: 5
+    clear_kind: 6
+    request_fields: [has_directed_target, directed_target_x, directed_target_y, directed_target_ttl_s]
+    ack_field: intent_revision
+    policy: soft_tare_candidate_preference
+    grants_static_boundary_path_authorization: false
   status_source: /dev/shm/lingtu/explore_status.json
   status_authoritative_for_commands: false
+exploration_segment_boundary:
+  execution_snapshot: /nav/exploration_execution_snapshot
+  request: /nav/exploration_segment/request
+  ack: /nav/exploration_segment/ack
+  status: /nav/exploration_segment/status
+  client_completion: matching_business_ack_and_terminal_status_required
+  request_identity_fields: [session_id, reset_epoch, minimum_generation]
+  response_identity_fields: [session_id, reset_epoch, generation, live]
 inspection_command_boundary:
   request: /nav/inspection/command
   ack: /nav/inspection/ack
   status: /nav/inspection/status
   client_completion: business_ack_required
+inspection_task_boundary:
+  request: /nav/inspection/task/request
+  ack: /nav/inspection/task/ack
+  status: /nav/inspection/status
+  client_completion: business_ack_required
+  request_identity_fields: [task_id, request_id]
+  response_identity_fields: [task_id, request_id]
+inspection_task_event_stream:
+  topic: /nav/inspection/task/event
+  ordering_cursor: [boot_id, event_sequence]
+  terminal_truth: native_stop_evidence_before_terminal_state
 inspection_evidence_boundary:
   request: /nav/inspection/evidence/request
   result: /nav/inspection/evidence/result
@@ -94,27 +125,50 @@ source_topics:
   - /lidar/raw_frame
   - /imu/raw
   - /nav/command/request
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
   - /nav/exploration/command
   - /nav/inspection/command
+  - /nav/inspection/task/request
   - /nav/inspection/evidence/result
   - /nav/traversability
 exposed_topics:
   - /slam/odometry
   - /slam/registered_cloud
+  - /slam/map_observation
   - /slam/map_cloud
   - /slam/saved_map_cloud
   - /slam/localization_health
   - /slam/localization_quality
+  - /maps/state
+  - /maps/live_cloud
+  - /maps/voxel_cloud
+  - /maps/accumulated_cloud
+  - /maps/occupancy
+  - /maps/elevation
+  - /maps/esdf
+  - /maps/traversability
+  - /maps/scene
   - /nav/exploration_grid
   - /nav/exploration_snapshot
+  - /nav/exploration_execution_snapshot
+  - /nav/exploration_segment/request
+  - /nav/exploration_segment/ack
+  - /nav/exploration_segment/status
   - /nav/global_path
   - /nav/local_path
   - /nav/way_point
   - /nav/cmd_vel
   - /nav/command/ack
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
+  - /nav/goal/status
+  - /nav/state
   - /nav/exploration/ack
   - /nav/inspection/ack
+  - /nav/inspection/task/ack
   - /nav/inspection/status
+  - /nav/inspection/task/event
   - /nav/inspection/evidence/request
 compatibility_topics:
   - /nav/teleop_cmd_vel

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,35 @@ def map_service_command(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
     if not callable(execute):
         raise RuntimeError("maps.service has no typed control endpoint")
     return execute(MapControlRequest.from_mapping(cmd))
+
+
+def map_runtime_lock():
+    """Return the shared product-level map mutation lock."""
+    from lingtu.map_runtime_transaction import MapRuntimeTransaction
+
+    return MapRuntimeTransaction.shared_lock()
+
+
+def activate_runtime_map(
+    gw: Any,
+    name: str,
+    planner_reload: Callable[[str], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Activate a map through the product-level runtime transaction."""
+
+    from lingtu.map_runtime_transaction import MapRuntimeTransaction
+
+    transaction = MapRuntimeTransaction(
+        lambda command: map_service_command(gw, command),
+        planner_reload,
+    )
+    with transaction.shared_lock():
+        return transaction.activate(
+            name,
+            session_mode=str(getattr(gw, "_session_mode", "") or ""),
+            session_map=str(getattr(gw, "_session_map", "") or ""),
+            session_pending=bool(getattr(gw, "_session_pending", False)),
+        )
 
 
 def map_service_query(gw: Any, query: dict[str, Any]) -> dict[str, Any]:

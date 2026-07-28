@@ -68,6 +68,32 @@ class NavigationGoalState(IntEnum):
     FAILED = 3
     REACHED = 4
     CANCELLED = 5
+    PAUSED = 6
+
+
+class InspectionTaskEventKind(IntEnum):
+    TASK_ACCEPTED = 1
+    STATE_CHANGED = 2
+    MILESTONE = 3
+    STOP_CONFIRMATION_FAILED = 4
+    EVIDENCE_RECORDED = 5
+
+
+class InspectionTaskState(IntEnum):
+    IDLE = 0
+    VALIDATING = 1
+    PLANNING = 2
+    NAVIGATING = 3
+    DWELLING = 4
+    PAUSED = 5
+    RECOVERING = 6
+    SUCCEEDED = 7
+    FAILED = 8
+    CANCELLED = 9
+    SETTLING = 10
+    ACTION_PENDING = 11
+    PAUSING = 12
+    CANCELLING = 13
 
 
 class NavigationCommandKind(IntEnum):
@@ -78,6 +104,14 @@ class NavigationCommandKind(IntEnum):
     ESTOP = 5
     CLEAR_ESTOP = 6
     RESUME_AUTONOMY = 7
+    PAUSE_TASK = 8
+    RESUME_TASK = 9
+
+
+class OperatorMotionAction(IntEnum):
+    CLAIM = 1
+    RELEASE = 2
+    HOLD = 3
 
 
 def _require_int(value: int, field_name: str) -> int:
@@ -107,18 +141,16 @@ class NavigationCommandReceipt:
     reason: str
 
     def __post_init__(self) -> None:
-        kind = NavigationCommandKind(
+        NavigationCommandKind(
             _require_int(self.kind, "NavigationCommandReceipt.kind")
         )
         if not isinstance(self.accepted, bool):
             raise ValueError("NavigationCommandReceipt.accepted must be a boolean")
-        if not isinstance(self.task_id, str):
-            raise ValueError("NavigationCommandReceipt.task_id must be a string")
-        if kind == NavigationCommandKind.GOAL and not self.task_id.strip():
-            raise ValueError("NavigationCommandReceipt.task_id is required for goals")
+        if not isinstance(self.task_id, str) or not self.task_id.strip():
+            raise ValueError("NavigationCommandReceipt.task_id is required")
         if not isinstance(self.request_id, str) or not self.request_id.strip():
             raise ValueError("NavigationCommandReceipt.request_id is required")
-        if self.task_id and self.task_id == self.request_id:
+        if self.task_id == self.request_id:
             raise ValueError(
                 "NavigationCommandReceipt.task_id and request_id must be distinct"
             )
@@ -139,6 +171,105 @@ class NavigationCommandReceipt:
             "request_id": self.request_id,
             "endpoint_timestamp_s": float(self.endpoint_timestamp_s),
             "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class OperatorMotionReceipt:
+    """Authoritative receipt for operator motion authority requests."""
+
+    msg_name: ClassVar[str] = "lingtu.runtime.OperatorMotionReceipt"
+
+    accepted: bool
+    action: int
+    request_id: str
+    source_id: str
+    source_epoch: int
+    source_sequence: int
+    accepted_sequence: int
+    final_output_sequence: int
+    endpoint_timestamp_s: float
+    reason: str
+
+    def __post_init__(self) -> None:
+        OperatorMotionAction(_require_int(self.action, "OperatorMotionReceipt.action"))
+        if not isinstance(self.accepted, bool):
+            raise ValueError("OperatorMotionReceipt.accepted must be a boolean")
+        if not isinstance(self.request_id, str) or not self.request_id.strip():
+            raise ValueError("OperatorMotionReceipt.request_id is required")
+        if not isinstance(self.source_id, str) or not self.source_id.strip():
+            raise ValueError("OperatorMotionReceipt.source_id is required")
+
+        source_epoch = _require_int(
+            self.source_epoch,
+            "OperatorMotionReceipt.source_epoch",
+        )
+        source_sequence = _require_int(
+            self.source_sequence,
+            "OperatorMotionReceipt.source_sequence",
+        )
+        accepted_sequence = _require_int(
+            self.accepted_sequence,
+            "OperatorMotionReceipt.accepted_sequence",
+        )
+        final_output_sequence = _require_int(
+            self.final_output_sequence,
+            "OperatorMotionReceipt.final_output_sequence",
+        )
+        if source_epoch <= 0 or source_sequence <= 0:
+            raise ValueError(
+                "OperatorMotionReceipt source_epoch and source_sequence must be positive"
+            )
+        if accepted_sequence < 0 or final_output_sequence < 0:
+            raise ValueError("OperatorMotionReceipt sequences cannot be negative")
+        if self.accepted and accepted_sequence != source_sequence:
+            raise ValueError(
+                "OperatorMotionReceipt.accepted_sequence must equal source_sequence "
+                "when accepted"
+            )
+        if not self.accepted and accepted_sequence != 0:
+            raise ValueError(
+                "OperatorMotionReceipt.accepted_sequence must be 0 when rejected"
+            )
+        if not self.accepted and final_output_sequence != 0:
+            raise ValueError(
+                "OperatorMotionReceipt.final_output_sequence must be 0 when rejected"
+            )
+        timestamp = float(self.endpoint_timestamp_s)
+        if not math.isfinite(timestamp) or timestamp <= 0.0:
+            raise ValueError(
+                "OperatorMotionReceipt.endpoint_timestamp_s must be a positive finite "
+                "timestamp"
+            )
+
+    @property
+    def source_accepted(self) -> bool:
+        return bool(self.accepted) and int(self.accepted_sequence) == int(self.source_sequence)
+
+    @property
+    def final_output_published(self) -> bool:
+        return (
+            bool(self.accepted)
+            and int(self.action)
+            in {int(OperatorMotionAction.HOLD), int(OperatorMotionAction.RELEASE)}
+            and int(self.final_output_sequence) > 0
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "accepted": bool(self.accepted),
+            "action": int(self.action),
+            "action_name": _enum_name(OperatorMotionAction, self.action),
+            "request_id": self.request_id,
+            "source_id": self.source_id,
+            "source_epoch": int(self.source_epoch),
+            "source_sequence": int(self.source_sequence),
+            "accepted_sequence": int(self.accepted_sequence),
+            "final_output_sequence": int(self.final_output_sequence),
+            "endpoint_timestamp_s": float(self.endpoint_timestamp_s),
+            "reason": self.reason,
+            "source_accepted": self.source_accepted,
+            "final_output_published": self.final_output_published,
         }
 
 
@@ -192,6 +323,113 @@ class NavigationGoalStatus:
             "goal_epoch": int(self.goal_epoch),
             "reason": self.reason,
             "terminal": self.terminal,
+        }
+
+
+@dataclass(frozen=True)
+class InspectionTaskEvent:
+    """Immutable native fact for one inspection task lifecycle transition."""
+
+    msg_name: ClassVar[str] = "lingtu.dds.InspectionTaskEvent"
+
+    ts: float = field(default_factory=time.time)
+    frame_id: str = NAV_MAP_FRAME_ID
+    boot_id: str = ""
+    event_sequence: int = 0
+    kind: int = int(InspectionTaskEventKind.STATE_CHANGED)
+    task_id: str = ""
+    request_id: str = ""
+    command_request_id: str = ""
+    state: int = int(InspectionTaskState.IDLE)
+    map_id: str = ""
+    map_version: int = 0
+    route_id: str = ""
+    route_revision: int = 0
+    point_index: int = 0
+    point_count: int = 0
+    loop_index: int = 0
+    retry_count: int = 0
+    point_id: str = ""
+    action: str = ""
+    action_request_id: str = ""
+    evidence_id: str = ""
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        timestamp = float(self.ts)
+        if not math.isfinite(timestamp) or timestamp < 0.0:
+            raise ValueError("InspectionTaskEvent.ts must be finite and non-negative")
+        required = {
+            "frame_id": self.frame_id,
+            "boot_id": self.boot_id,
+            "task_id": self.task_id,
+            "request_id": self.request_id,
+            "command_request_id": self.command_request_id,
+            "map_id": self.map_id,
+            "route_id": self.route_id,
+        }
+        if any(not isinstance(value, str) or not value.strip() for value in required.values()):
+            raise ValueError("InspectionTaskEvent identity and map fields are required")
+        if _require_int(self.event_sequence, "InspectionTaskEvent.event_sequence") <= 0:
+            raise ValueError("InspectionTaskEvent.event_sequence must be positive")
+        InspectionTaskEventKind(_require_int(self.kind, "InspectionTaskEvent.kind"))
+        InspectionTaskState(_require_int(self.state, "InspectionTaskEvent.state"))
+        for field_name in (
+            "map_version",
+            "route_revision",
+            "point_index",
+            "point_count",
+            "loop_index",
+            "retry_count",
+        ):
+            if _require_int(getattr(self, field_name), f"InspectionTaskEvent.{field_name}") < 0:
+                raise ValueError(f"InspectionTaskEvent.{field_name} cannot be negative")
+        if int(self.route_revision) <= 0:
+            raise ValueError("InspectionTaskEvent.route_revision must be positive")
+
+    @property
+    def terminal(self) -> bool:
+        return int(self.state) in {
+            int(InspectionTaskState.SUCCEEDED),
+            int(InspectionTaskState.FAILED),
+            int(InspectionTaskState.CANCELLED),
+        }
+
+    @property
+    def state_name(self) -> str:
+        return _enum_name(InspectionTaskState, self.state)
+
+    @property
+    def kind_name(self) -> str:
+        return _enum_name(InspectionTaskEventKind, self.kind)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ts": float(self.ts),
+            "frame_id": self.frame_id,
+            "boot_id": self.boot_id,
+            "event_sequence": int(self.event_sequence),
+            "kind": int(self.kind),
+            "kind_name": self.kind_name,
+            "task_id": self.task_id,
+            "request_id": self.request_id,
+            "command_request_id": self.command_request_id,
+            "state": int(self.state),
+            "state_name": self.state_name,
+            "terminal": self.terminal,
+            "map_id": self.map_id,
+            "map_version": int(self.map_version),
+            "route_id": self.route_id,
+            "route_revision": int(self.route_revision),
+            "point_index": int(self.point_index),
+            "point_count": int(self.point_count),
+            "loop_index": int(self.loop_index),
+            "retry_count": int(self.retry_count),
+            "point_id": self.point_id,
+            "action": self.action,
+            "action_request_id": self.action_request_id,
+            "evidence_id": self.evidence_id,
+            "reason": self.reason,
         }
 
 

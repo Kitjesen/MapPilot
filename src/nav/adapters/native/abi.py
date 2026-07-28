@@ -9,16 +9,15 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import math
 import os
 import threading
 from pathlib import Path
 from typing import Any
 
-from runtime.msgs import NavigationCommandReceipt
-
-# Field Products package this library with the Host as one immutable release.
-# Capability bits keep feature discovery explicit inside the exact ABI version.
-
+# Field Products package the Host and native client in one fingerprinted,
+# atomically switched release. Exact equality intentionally fails closed.
+# Append-only extensions inside a release are advertised by capability bits.
 NATIVE_COMMAND_ABI_VERSION = 5
 NATIVE_COMMAND_CAP_NAVIGATION = 1 << 0
 NATIVE_COMMAND_CAP_INSPECTION = 1 << 1
@@ -32,43 +31,23 @@ NATIVE_COMMAND_CAP_MAP_SCENE = 1 << 8
 NATIVE_COMMAND_CAP_OPERATOR_MOTION_RECEIPT = 1 << 9
 NATIVE_COMMAND_CAP_NAVIGATION_COMMAND_RECEIPT = 1 << 10
 NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS = 1 << 11
-NATIVE_COMMAND_CAP_NAVIGATION_STATE_V1 = 1 << 12
-NATIVE_COMMAND_CAP_NAVIGATION_GOAL_STATUS_V1 = 1 << 13
+NATIVE_COMMAND_CAP_INSPECTION_TASK_EVENTS = 1 << 12
 
+NATIVE_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1
 NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1
-NATIVE_NAVIGATION_STATE_ABI_VERSION = 1
+NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION = 1
+
+NATIVE_MAP_SCENE_ABI_VERSION = 1
+NATIVE_MAP_SCENE_MAX_POINTS_PER_LAYER = 300_000
+NATIVE_MAP_SCENE_MAX_TOTAL_POINTS = 800_000
+NATIVE_MAP_SCENE_MAX_GRID_CELLS_PER_LAYER = 1_000_000
+NATIVE_MAP_SCENE_MAX_TOTAL_GRID_CELLS = 4_000_000
+NATIVE_MAP_SCENE_MAX_PAYLOAD_BYTES = 32 * 1024 * 1024
 
 
 class _NativeNavigationState(ctypes.Structure):
-    """Frozen ABI v4 layout retained for legacy binary compatibility checks."""
-
     _fields_ = [
-        ("timestamp_s", ctypes.c_double),
-        ("frame_id", ctypes.c_char * 32),
-        ("boot_id", ctypes.c_char * 128),
-        ("sequence", ctypes.c_ulonglong),
-        ("control_mode", ctypes.c_int32),
-        ("lifecycle_state", ctypes.c_int32),
-        ("active_request_id", ctypes.c_char * 128),
-        ("goal_epoch", ctypes.c_ulonglong),
-        ("map_id", ctypes.c_char * 128),
-        ("map_version", ctypes.c_int64),
-        ("map_hash", ctypes.c_char * 128),
-        ("planning_state", ctypes.c_int32),
-        ("execution_state", ctypes.c_int32),
-        ("recovery_state", ctypes.c_int32),
-        ("progress", ctypes.c_float),
-        ("authority", ctypes.c_char * 32),
-        ("hold_reason", ctypes.c_char * 128),
-        ("failure_code", ctypes.c_char * 128),
-    ]
-
-
-class _NativeNavigationStateV1(ctypes.Structure):
-    _fields_ = [
-        ("abi_version", ctypes.c_uint32),
-        ("struct_size", ctypes.c_uint32),
         ("timestamp_s", ctypes.c_double),
         ("frame_id", ctypes.c_char * 32),
         ("boot_id", ctypes.c_char * 128),
@@ -92,13 +71,12 @@ class _NativeNavigationStateV1(ctypes.Structure):
 
 
 class _NativeNavigationGoalStatus(ctypes.Structure):
-    """Frozen ABI v4 layout retained for legacy binary compatibility checks."""
-
     _fields_ = [
         ("timestamp_s", ctypes.c_double),
         ("frame_id", ctypes.c_char * 32),
         ("boot_id", ctypes.c_char * 128),
         ("sequence", ctypes.c_ulonglong),
+        ("task_id", ctypes.c_char * 128),
         ("request_id", ctypes.c_char * 128),
         ("state", ctypes.c_int32),
         ("goal_epoch", ctypes.c_ulonglong),
@@ -135,6 +113,180 @@ class _NativeNavigationGoalStatusV1(ctypes.Structure):
     ]
 
 
+class _NativeInspectionTaskEventV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("frame_id", ctypes.c_char * 32),
+        ("boot_id", ctypes.c_char * 128),
+        ("event_sequence", ctypes.c_ulonglong),
+        ("kind", ctypes.c_int32),
+        ("task_id", ctypes.c_char * 128),
+        ("request_id", ctypes.c_char * 128),
+        ("command_request_id", ctypes.c_char * 128),
+        ("state", ctypes.c_int32),
+        ("map_id", ctypes.c_char * 128),
+        ("map_version", ctypes.c_int64),
+        ("route_id", ctypes.c_char * 128),
+        ("route_revision", ctypes.c_ulonglong),
+        ("point_index", ctypes.c_uint32),
+        ("point_count", ctypes.c_uint32),
+        ("loop_index", ctypes.c_uint32),
+        ("retry_count", ctypes.c_uint32),
+        ("point_id", ctypes.c_char * 128),
+        ("action", ctypes.c_char * 128),
+        ("action_request_id", ctypes.c_char * 128),
+        ("evidence_id", ctypes.c_char * 128),
+        ("reason", ctypes.c_char * 256),
+    ]
+
+
+class _NativePathPoint(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_double),
+        ("y", ctypes.c_double),
+        ("z", ctypes.c_double),
+    ]
+
+
+class _NativePathHeader(ctypes.Structure):
+    _fields_ = [
+        ("timestamp_s", ctypes.c_double),
+        ("frame_id", ctypes.c_char * 32),
+        ("receive_sequence", ctypes.c_ulonglong),
+        ("point_count", ctypes.c_ulonglong),
+    ]
+
+class _NativeMapScenePointV1(ctypes.Structure):
+    _fields_ = [
+        ("x", ctypes.c_float),
+        ("y", ctypes.c_float),
+        ("z", ctypes.c_float),
+        ("intensity", ctypes.c_float),
+    ]
+
+class _NativeOperatorMotionReceiptV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("accepted", ctypes.c_int32),
+        ("action", ctypes.c_int32),
+        ("request_id", ctypes.c_char * 128),
+        ("source_id", ctypes.c_char * 128),
+        ("source_epoch", ctypes.c_ulonglong),
+        ("source_sequence", ctypes.c_ulonglong),
+        ("accepted_sequence", ctypes.c_ulonglong),
+        ("final_output_sequence", ctypes.c_ulonglong),
+        ("endpoint_timestamp_s", ctypes.c_double),
+        ("reason", ctypes.c_char * 256),
+    ]
+
+
+
+class _NativeMapSceneGridHeaderV1(ctypes.Structure):
+    _fields_ = [
+        ("width", ctypes.c_uint32),
+        ("height", ctypes.c_uint32),
+        ("resolution", ctypes.c_float),
+        ("origin_x", ctypes.c_double),
+        ("origin_y", ctypes.c_double),
+        ("origin_z", ctypes.c_double),
+        ("origin_qx", ctypes.c_double),
+        ("origin_qy", ctypes.c_double),
+        ("origin_qz", ctypes.c_double),
+        ("origin_qw", ctypes.c_double),
+        ("cell_count", ctypes.c_ulonglong),
+    ]
+
+
+class _NativeMapSceneHeaderV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("timestamp_s", ctypes.c_double),
+        ("frame_id", ctypes.c_char * 32),
+        ("producer_boot_id", ctypes.c_char * 128),
+        ("receive_sequence", ctypes.c_ulonglong),
+        ("reset_epoch", ctypes.c_ulonglong),
+        ("observation_sequence", ctypes.c_ulonglong),
+        ("generation", ctypes.c_ulonglong),
+        ("live", ctypes.c_int32),
+        ("sensor_x", ctypes.c_double),
+        ("sensor_y", ctypes.c_double),
+        ("sensor_z", ctypes.c_double),
+        ("sensor_qx", ctypes.c_double),
+        ("sensor_qy", ctypes.c_double),
+        ("sensor_qz", ctypes.c_double),
+        ("sensor_qw", ctypes.c_double),
+        ("payload_bytes", ctypes.c_ulonglong),
+        ("live_point_count", ctypes.c_ulonglong),
+        ("voxel_point_count", ctypes.c_ulonglong),
+        ("accumulated_point_count", ctypes.c_ulonglong),
+        ("occupancy", _NativeMapSceneGridHeaderV1),
+        ("elevation", _NativeMapSceneGridHeaderV1),
+        ("esdf", _NativeMapSceneGridHeaderV1),
+        ("traversability", _NativeMapSceneGridHeaderV1),
+    ]
+
+
+class _NativeMapSceneBuffersV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("live_points", ctypes.POINTER(_NativeMapScenePointV1)),
+        ("live_point_capacity", ctypes.c_ulonglong),
+        ("voxel_points", ctypes.POINTER(_NativeMapScenePointV1)),
+        ("voxel_point_capacity", ctypes.c_ulonglong),
+        ("accumulated_points", ctypes.POINTER(_NativeMapScenePointV1)),
+        ("accumulated_point_capacity", ctypes.c_ulonglong),
+        ("occupancy_cells", ctypes.POINTER(ctypes.c_float)),
+        ("occupancy_cell_capacity", ctypes.c_ulonglong),
+        ("elevation_cells", ctypes.POINTER(ctypes.c_float)),
+        ("elevation_cell_capacity", ctypes.c_ulonglong),
+        ("esdf_cells", ctypes.POINTER(ctypes.c_float)),
+        ("esdf_cell_capacity", ctypes.c_ulonglong),
+        ("traversability_cells", ctypes.POINTER(ctypes.c_float)),
+        ("traversability_cell_capacity", ctypes.c_ulonglong),
+    ]
+
+
+class _NativeMapSceneHealthV1(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("struct_size", ctypes.c_uint32),
+        ("received_samples", ctypes.c_ulonglong),
+        ("valid_samples", ctypes.c_ulonglong),
+        ("stale_samples", ctypes.c_ulonglong),
+        ("invalid_samples", ctypes.c_ulonglong),
+        ("capacity_rejections", ctypes.c_ulonglong),
+        ("replaced_samples", ctypes.c_ulonglong),
+        ("consumer_buffer_retries", ctypes.c_ulonglong),
+        ("last_receive_sequence", ctypes.c_ulonglong),
+        ("last_generation", ctypes.c_ulonglong),
+        ("last_sample_timestamp_s", ctypes.c_double),
+        ("pending", ctypes.c_int32),
+        ("last_error", ctypes.c_char * 256),
+        ("state_received_samples", ctypes.c_ulonglong),
+        ("state_valid_samples", ctypes.c_ulonglong),
+        ("state_stale_samples", ctypes.c_ulonglong),
+        ("state_invalid_samples", ctypes.c_ulonglong),
+        ("state_timestamp_s", ctypes.c_double),
+        ("state_producer_boot_id", ctypes.c_char * 128),
+        ("state_received", ctypes.c_int32),
+        ("state_running", ctypes.c_int32),
+        ("state_live", ctypes.c_int32),
+        ("state_required_publications_ready", ctypes.c_int32),
+        ("state_current_generation_published", ctypes.c_int32),
+        ("state_capacity_limited", ctypes.c_int32),
+        ("state_reset_epoch", ctypes.c_ulonglong),
+        ("state_observation_sequence", ctypes.c_ulonglong),
+        ("state_generation", ctypes.c_ulonglong),
+        ("state_scene_published_generation", ctypes.c_ulonglong),
+        ("state_error", ctypes.c_char * 256),
+    ]
+
+
 class NativeCommandClientError(RuntimeError):
     """Raised when the native command session cannot be loaded or invoked."""
 
@@ -151,6 +303,7 @@ class NativeCommandSession:
         goal_timeout_ms: int | None = None,
         cancel_timeout_ms: int | None = None,
         teleop_timeout_ms: int | None = None,
+        operator_motion_timeout_ms: int | None = None,
         library: Any | None = None,
     ) -> None:
         path = Path(library_path)
@@ -171,14 +324,28 @@ class NativeCommandSession:
             1,
             int(teleop_timeout_ms if teleop_timeout_ms is not None else self.timeout_ms),
         )
+        self.operator_motion_timeout_ms = max(
+            1,
+            int(
+                operator_motion_timeout_ms
+                if operator_motion_timeout_ms is not None
+                else self.teleop_timeout_ms
+            ),
+        )
         self.lock = threading.RLock()
         self._state_changed = threading.Condition(self.lock)
         self._active_calls = 0
         self._navigation_configured = False
         self._exploration_configured = False
+        self._directed_exploration_configured = False
         self._inspection_configured = False
+        self._inspection_task_configured = False
+        self._inspection_task_event_configured = False
+        self._operator_motion_configured = False
         self._host_state_configured = False
         self._goal_status_configured = False
+        self._path_telemetry_configured = False
+        self._map_scene_configured = False
         self._configure_core_abi()
         self._validate_abi()
         self.handle = self.library.lingtu_nav_client_create(int(domain_id))
@@ -245,18 +412,6 @@ class NativeCommandSession:
                     ctypes.c_int,
                 ]
                 lib.lingtu_nav_client_send_goal_with_id.restype = ctypes.c_int
-                lib.lingtu_nav_client_start_task_with_receipt_v1.argtypes = [
-                    ctypes.c_void_p,
-                    ctypes.c_char_p,
-                    ctypes.c_char_p,
-                    ctypes.c_double,
-                    ctypes.c_double,
-                    ctypes.c_double,
-                    ctypes.c_double,
-                    ctypes.c_int,
-                    ctypes.POINTER(_NativeNavigationCommandReceiptV1),
-                ]
-                lib.lingtu_nav_client_start_task_with_receipt_v1.restype = ctypes.c_int
                 lib.lingtu_nav_client_cancel.argtypes = [
                     ctypes.c_void_p,
                     ctypes.c_char_p,
@@ -270,6 +425,18 @@ class NativeCommandSession:
                     ctypes.c_int,
                 ]
                 lib.lingtu_nav_client_cancel_with_id.restype = ctypes.c_int
+                lib.lingtu_nav_client_start_task_with_receipt_v1.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_int,
+                    ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+                ]
+                lib.lingtu_nav_client_start_task_with_receipt_v1.restype = ctypes.c_int
                 lib.lingtu_nav_client_cancel_task_with_receipt_v1.argtypes = [
                     ctypes.c_void_p,
                     ctypes.c_char_p,
@@ -279,6 +446,20 @@ class NativeCommandSession:
                     ctypes.POINTER(_NativeNavigationCommandReceiptV1),
                 ]
                 lib.lingtu_nav_client_cancel_task_with_receipt_v1.restype = ctypes.c_int
+                for name in (
+                    "lingtu_nav_client_pause_task_with_receipt_v1",
+                    "lingtu_nav_client_resume_task_with_receipt_v1",
+                ):
+                    function = getattr(lib, name)
+                    function.argtypes = [
+                        ctypes.c_void_p,
+                        ctypes.c_char_p,
+                        ctypes.c_char_p,
+                        ctypes.c_char_p,
+                        ctypes.c_int,
+                        ctypes.POINTER(_NativeNavigationCommandReceiptV1),
+                    ]
+                    function.restype = ctypes.c_int
                 lib.lingtu_nav_client_send_teleop.argtypes = [
                     ctypes.c_void_p,
                     ctypes.c_double,
@@ -364,6 +545,44 @@ class NativeCommandSession:
                 ) from exc
             self._exploration_configured = True
 
+    def ensure_directed_exploration_abi(self) -> None:
+        """Validate and configure the typed directed-exploration symbols lazily."""
+
+        with self.lock:
+            if self._directed_exploration_configured:
+                return
+            self.ensure_exploration_abi()
+            self._require_capability(
+                NATIVE_COMMAND_CAP_DIRECTED_EXPLORATION,
+                "directed exploration commands",
+            )
+            lib = self.library
+            try:
+                lib.lingtu_nav_client_set_directed_exploration_target.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_set_directed_exploration_target.restype = ctypes.c_int
+                lib.lingtu_nav_client_clear_directed_exploration_target.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_clear_directed_exploration_target.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native directed exploration command ABI is incomplete; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._directed_exploration_configured = True
+
     def ensure_inspection_abi(self) -> None:
         """Validate and configure inspection-command symbols lazily."""
 
@@ -403,32 +622,188 @@ class NativeCommandSession:
                 ) from exc
             self._inspection_configured = True
 
+    def ensure_inspection_task_abi(self) -> None:
+        """Validate task-addressed inspection symbols without a v1 fallback."""
+
+        with self.lock:
+            if self._inspection_task_configured:
+                return
+            self.ensure_inspection_abi()
+            lib = self.library
+            try:
+                lib.lingtu_nav_client_start_inspection_task.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_start_inspection_task.restype = ctypes.c_int
+                for name in (
+                    "lingtu_nav_client_pause_inspection_task",
+                    "lingtu_nav_client_resume_inspection_task",
+                    "lingtu_nav_client_cancel_inspection_task",
+                ):
+                    function = getattr(lib, name)
+                    function.argtypes = [
+                        ctypes.c_void_p,
+                        ctypes.c_char_p,
+                        ctypes.c_char_p,
+                        ctypes.c_char_p,
+                        ctypes.c_int,
+                    ]
+                    function.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native task inspection command ABI is incomplete; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._inspection_task_configured = True
+
+    def ensure_inspection_task_event_abi(self) -> None:
+        """Validate the native task-event reader used by the Product Host."""
+
+        with self.lock:
+            if self._inspection_task_event_configured:
+                return
+            self._require_capability(
+                NATIVE_COMMAND_CAP_INSPECTION_TASK_EVENTS,
+                "inspection task events",
+            )
+            try:
+                take = self.library.lingtu_nav_client_take_inspection_task_event_v1
+                take.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.POINTER(_NativeInspectionTaskEventV1),
+                ]
+                take.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native inspection task event ABI is incomplete; "
+                    "rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._inspection_task_event_configured = True
+
+    def ensure_operator_motion_abi(self) -> None:
+        """Validate and configure typed operator-motion command symbols lazily."""
+
+        with self.lock:
+            if self._operator_motion_configured:
+                return
+            self._require_capability(
+                NATIVE_COMMAND_CAP_OPERATOR_MOTION,
+                "operator motion commands",
+            )
+            self._require_capability(
+                NATIVE_COMMAND_CAP_OPERATOR_MOTION_RECEIPT,
+                "operator motion receipt",
+            )
+            lib = self.library
+            try:
+                lib.lingtu_nav_client_operator_motion_claim.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_ulonglong,
+                    ctypes.c_uint,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_operator_motion_claim.restype = ctypes.c_int
+                lib.lingtu_nav_client_operator_motion_sample.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_ulonglong,
+                    ctypes.c_int,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_double,
+                    ctypes.c_uint,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_operator_motion_sample.restype = ctypes.c_int
+                lib.lingtu_nav_client_operator_motion_hold.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_ulonglong,
+                    ctypes.c_char_p,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_operator_motion_hold.restype = ctypes.c_int
+                lib.lingtu_nav_client_operator_motion_release.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_ulonglong,
+                    ctypes.c_char_p,
+                    ctypes.c_int,
+                ]
+                lib.lingtu_nav_client_operator_motion_release.restype = ctypes.c_int
+                lib.lingtu_nav_client_operator_motion_claim_with_receipt_v1.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.c_char_p,
+                    ctypes.c_char_p,
+                    ctypes.c_ulonglong,
+                    ctypes.c_ulonglong,
+                    ctypes.c_uint,
+                    ctypes.c_int,
+                    ctypes.POINTER(_NativeOperatorMotionReceiptV1),
+                ]
+                lib.lingtu_nav_client_operator_motion_claim_with_receipt_v1.restype = (
+                    ctypes.c_int
+                )
+                for name in (
+                    "lingtu_nav_client_operator_motion_hold_with_receipt_v1",
+                    "lingtu_nav_client_operator_motion_release_with_receipt_v1",
+                ):
+                    function = getattr(lib, name)
+                    function.argtypes = [
+                        ctypes.c_void_p,
+                        ctypes.c_char_p,
+                        ctypes.c_char_p,
+                        ctypes.c_ulonglong,
+                        ctypes.c_ulonglong,
+                        ctypes.c_char_p,
+                        ctypes.c_int,
+                        ctypes.POINTER(_NativeOperatorMotionReceiptV1),
+                    ]
+                    function.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native operator motion command ABI is incomplete; rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._operator_motion_configured = True
+
     def ensure_host_state_abi(self) -> None:
-        """Bind the versioned navigation state reader used by the Host."""
+        """Validate the single native state-reader boundary used by HostBus."""
 
         with self.lock:
             if self._host_state_configured:
                 return
-            self._require_capability(NATIVE_COMMAND_CAP_HOST_STATE, "Host state")
             self._require_capability(
-                NATIVE_COMMAND_CAP_NAVIGATION_STATE_V1,
-                "navigation state v1",
+                NATIVE_COMMAND_CAP_HOST_STATE,
+                "Host state",
             )
             try:
-                function = self.library.lingtu_nav_client_read_navigation_state_v1
+                function = self.library.lingtu_nav_client_read_navigation_state
                 function.argtypes = [
                     ctypes.c_void_p,
-                    ctypes.POINTER(_NativeNavigationStateV1),
+                    ctypes.POINTER(_NativeNavigationState),
                 ]
                 function.restype = ctypes.c_int
             except AttributeError as exc:
                 raise NativeCommandClientError(
-                    "native Host state v1 ABI is incomplete; rebuild liblingtu_nav_client.so"
+                    "native Host state ABI is incomplete; rebuild liblingtu_nav_client.so"
                 ) from exc
             self._host_state_configured = True
 
     def ensure_goal_status_abi(self) -> None:
-        """Bind versioned lifecycle readers that preserve logical task identity."""
+        """Validate the native request-lifecycle reader used by HostBus."""
 
         with self.lock:
             if self._goal_status_configured:
@@ -437,25 +812,24 @@ class NativeCommandSession:
                 NATIVE_COMMAND_CAP_GOAL_STATUS,
                 "navigation goal status",
             )
-            self._require_capability(
-                NATIVE_COMMAND_CAP_NAVIGATION_GOAL_STATUS_V1,
-                "navigation goal status v1",
+            has_task_lookup = bool(
+                self.capabilities & NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS
             )
             try:
-                take = self.library.lingtu_nav_client_take_navigation_goal_status_v1
+                take = self.library.lingtu_nav_client_take_navigation_goal_status
                 take.argtypes = [
                     ctypes.c_void_p,
-                    ctypes.POINTER(_NativeNavigationGoalStatusV1),
+                    ctypes.POINTER(_NativeNavigationGoalStatus),
                 ]
                 take.restype = ctypes.c_int
-                get = self.library.lingtu_nav_client_get_navigation_goal_status_v1
+                get = self.library.lingtu_nav_client_get_navigation_goal_status
                 get.argtypes = [
                     ctypes.c_void_p,
                     ctypes.c_char_p,
-                    ctypes.POINTER(_NativeNavigationGoalStatusV1),
+                    ctypes.POINTER(_NativeNavigationGoalStatus),
                 ]
                 get.restype = ctypes.c_int
-                if self.capabilities & NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS:
+                if has_task_lookup:
                     get_task = self.library.lingtu_nav_client_get_navigation_task_status_v1
                     get_task.argtypes = [
                         ctypes.c_void_p,
@@ -465,9 +839,72 @@ class NativeCommandSession:
                     get_task.restype = ctypes.c_int
             except AttributeError as exc:
                 raise NativeCommandClientError(
-                    "native navigation goal status v1 ABI is incomplete; rebuild liblingtu_nav_client.so"
+                    "native navigation goal status ABI is incomplete; "
+                    "rebuild liblingtu_nav_client.so"
                 ) from exc
             self._goal_status_configured = True
+
+    def ensure_path_telemetry_abi(self) -> None:
+        """Validate latest-only global/local path telemetry symbols lazily."""
+
+        with self.lock:
+            if self._path_telemetry_configured:
+                return
+            self._require_capability(
+                NATIVE_COMMAND_CAP_PATH_TELEMETRY,
+                "navigation path telemetry",
+            )
+            argument_types = [
+                ctypes.c_void_p,
+                ctypes.POINTER(_NativePathHeader),
+                ctypes.POINTER(_NativePathPoint),
+                ctypes.c_ulonglong,
+            ]
+            try:
+                for name in (
+                    "lingtu_nav_client_take_global_path",
+                    "lingtu_nav_client_take_local_path",
+                ):
+                    function = getattr(self.library, name)
+                    function.argtypes = argument_types
+                    function.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native navigation path telemetry ABI is incomplete; "
+                    "rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._path_telemetry_configured = True
+
+    def ensure_map_scene_abi(self) -> None:
+        """Validate bounded latest-only MapScene telemetry symbols lazily."""
+
+        with self.lock:
+            if self._map_scene_configured:
+                return
+            self._require_capability(
+                NATIVE_COMMAND_CAP_MAP_SCENE,
+                "map scene telemetry",
+            )
+            try:
+                take = self.library.lingtu_nav_client_take_map_scene_v1
+                take.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.POINTER(_NativeMapSceneHeaderV1),
+                    ctypes.POINTER(_NativeMapSceneBuffersV1),
+                ]
+                take.restype = ctypes.c_int
+                health = self.library.lingtu_nav_client_read_map_scene_health_v1
+                health.argtypes = [
+                    ctypes.c_void_p,
+                    ctypes.POINTER(_NativeMapSceneHealthV1),
+                ]
+                health.restype = ctypes.c_int
+            except AttributeError as exc:
+                raise NativeCommandClientError(
+                    "native map scene telemetry ABI is incomplete; "
+                    "rebuild liblingtu_nav_client.so"
+                ) from exc
+            self._map_scene_configured = True
 
     def _require_capability(self, capability: int, label: str) -> None:
         if self.capabilities & capability:
@@ -492,6 +929,166 @@ class NativeCommandSession:
                 if self._active_calls == 0:
                     self._state_changed.notify_all()
 
+    def read_navigation_state(self) -> dict[str, object] | None:
+        """Return the latest owning native navigation snapshot, if published."""
+
+        self.ensure_host_state_abi()
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            function = self.library.lingtu_nav_client_read_navigation_state
+            self._active_calls += 1
+        state = _NativeNavigationState()
+        try:
+            result = int(function(handle, ctypes.byref(state)))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if result == 0:
+                return None
+            return {
+                "timestamp_s": float(state.timestamp_s),
+                "frame_id": bytes(state.frame_id).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+                "boot_id": bytes(state.boot_id).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+                "sequence": int(state.sequence),
+                "control_mode": int(state.control_mode),
+                "lifecycle_state": int(state.lifecycle_state),
+                "active_task_id": bytes(state.active_task_id)
+                .split(b"\0", 1)[0]
+                .decode("utf-8", errors="replace"),
+                "active_request_id": bytes(state.active_request_id)
+                .split(b"\0", 1)[0]
+                .decode("utf-8", errors="replace"),
+                "goal_epoch": int(state.goal_epoch),
+                "map_id": bytes(state.map_id).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+                "map_version": int(state.map_version),
+                "map_hash": bytes(state.map_hash).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+                "planning_state": int(state.planning_state),
+                "execution_state": int(state.execution_state),
+                "recovery_state": int(state.recovery_state),
+                "progress": float(state.progress),
+                "authority": bytes(state.authority).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+                "hold_reason": bytes(state.hold_reason).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+                "failure_code": bytes(state.failure_code).split(b"\0", 1)[0].decode(
+                    "utf-8", errors="replace"
+                ),
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    def take_navigation_goal_status(self) -> dict[str, object] | None:
+        """Pop one deduplicated request-lifecycle event from the native client."""
+
+        self.ensure_goal_status_abi()
+        return self._read_navigation_goal_status(
+            self.library.lingtu_nav_client_take_navigation_goal_status,
+        )
+
+    def take_inspection_task_event(self) -> dict[str, object] | None:
+        """Pop one native inspection task fact without inventing lifecycle state."""
+
+        self.ensure_inspection_task_event_abi()
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            self._active_calls += 1
+        event = _NativeInspectionTaskEventV1()
+        event.abi_version = NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION
+        event.struct_size = ctypes.sizeof(_NativeInspectionTaskEventV1)
+        try:
+            result = int(
+                self.library.lingtu_nav_client_take_inspection_task_event_v1(
+                    handle,
+                    ctypes.byref(event),
+                )
+            )
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if result == 0:
+                return None
+            if (
+                int(event.abi_version) != NATIVE_INSPECTION_TASK_EVENT_ABI_VERSION
+                or int(event.struct_size) != ctypes.sizeof(_NativeInspectionTaskEventV1)
+            ):
+                raise NativeCommandClientError(
+                    "native inspection task event returned an incompatible event ABI"
+                )
+            return {
+                "timestamp_s": float(event.timestamp_s),
+                "frame_id": self._decode_fixed_text(event.frame_id),
+                "boot_id": self._decode_fixed_text(event.boot_id),
+                "event_sequence": int(event.event_sequence),
+                "kind": int(event.kind),
+                "task_id": self._decode_fixed_text(event.task_id),
+                "request_id": self._decode_fixed_text(event.request_id),
+                "command_request_id": self._decode_fixed_text(
+                    event.command_request_id
+                ),
+                "state": int(event.state),
+                "map_id": self._decode_fixed_text(event.map_id),
+                "map_version": int(event.map_version),
+                "route_id": self._decode_fixed_text(event.route_id),
+                "route_revision": int(event.route_revision),
+                "point_index": int(event.point_index),
+                "point_count": int(event.point_count),
+                "loop_index": int(event.loop_index),
+                "retry_count": int(event.retry_count),
+                "point_id": self._decode_fixed_text(event.point_id),
+                "action": self._decode_fixed_text(event.action),
+                "action_request_id": self._decode_fixed_text(
+                    event.action_request_id
+                ),
+                "evidence_id": self._decode_fixed_text(event.evidence_id),
+                "reason": self._decode_fixed_text(event.reason),
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    def get_navigation_goal_status(self, request_id: str) -> dict[str, object] | None:
+        """Return the retained latest lifecycle state for one request."""
+
+        normalized = str(request_id or "").strip()
+        if not normalized:
+            raise ValueError("request_id is required")
+        self.ensure_goal_status_abi()
+        return self._read_navigation_goal_status(
+            self.library.lingtu_nav_client_get_navigation_goal_status,
+            normalized.encode("utf-8"),
+        )
+
+    def get_navigation_task_status(self, task_id: str) -> dict[str, object] | None:
+        """Return the retained latest lifecycle state for one logical task."""
+
+        normalized = str(task_id or "").strip()
+        if not normalized:
+            raise ValueError("task_id is required")
+        self.ensure_goal_status_abi()
+        self._require_capability(
+            NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS,
+            "navigation task status",
+        )
+        return self._read_navigation_goal_status_v1(
+            self.library.lingtu_nav_client_get_navigation_task_status_v1,
+            normalized.encode("utf-8"),
+        )
+
     def start_navigation_task(
         self,
         task_id: str,
@@ -500,11 +1097,16 @@ class NativeCommandSession:
         y: float,
         z: float,
         yaw: float,
-    ) -> NavigationCommandReceipt:
-        """Submit one logical task and return its correlated business ACK."""
+    ) -> dict[str, object]:
+        """Submit one navigation task and return the correlated native ACK."""
 
-        task, request = self._validate_task_identity(task_id, request_id)
         self.ensure_navigation_abi()
+        task = str(task_id or "").strip()
+        request = str(request_id or "").strip()
+        if not task:
+            raise ValueError("task_id is required")
+        if not request:
+            raise ValueError("request_id is required")
         return self._write_navigation_command_receipt(
             self.library.lingtu_nav_client_start_task_with_receipt_v1,
             task.encode("utf-8"),
@@ -521,11 +1123,16 @@ class NativeCommandSession:
         task_id: str,
         request_id: str,
         reason: str,
-    ) -> NavigationCommandReceipt:
-        """Cancel one logical task and return its correlated business ACK."""
+    ) -> dict[str, object]:
+        """Cancel one logical navigation task and return the correlated ACK."""
 
-        task, request = self._validate_task_identity(task_id, request_id)
         self.ensure_navigation_abi()
+        task = str(task_id or "").strip()
+        request = str(request_id or "").strip()
+        if not task:
+            raise ValueError("task_id is required")
+        if not request:
+            raise ValueError("request_id is required")
         return self._write_navigation_command_receipt(
             self.library.lingtu_nav_client_cancel_task_with_receipt_v1,
             task.encode("utf-8"),
@@ -534,78 +1141,46 @@ class NativeCommandSession:
             self.cancel_timeout_ms,
         )
 
-    def read_navigation_state(self) -> dict[str, object] | None:
-        """Return the latest task-aware authoritative state snapshot."""
+    def pause_navigation_task(
+        self,
+        task_id: str,
+        request_id: str,
+        reason: str,
+    ) -> dict[str, object]:
+        """Request a stop-confirmed pause for one logical task."""
 
-        self.ensure_host_state_abi()
-        state = self._read_versioned_snapshot(
-            self.library.lingtu_nav_client_read_navigation_state_v1,
-            _NativeNavigationStateV1,
-            NATIVE_NAVIGATION_STATE_ABI_VERSION,
-            "navigation state v1",
-        )
-        if state is None:
-            return None
-        return {
-            "timestamp_s": float(state.timestamp_s),
-            "frame_id": self._decode_fixed_text(state.frame_id),
-            "boot_id": self._decode_fixed_text(state.boot_id),
-            "sequence": int(state.sequence),
-            "control_mode": int(state.control_mode),
-            "lifecycle_state": int(state.lifecycle_state),
-            "active_task_id": self._decode_fixed_text(state.active_task_id),
-            "active_request_id": self._decode_fixed_text(state.active_request_id),
-            "goal_epoch": int(state.goal_epoch),
-            "map_id": self._decode_fixed_text(state.map_id),
-            "map_version": int(state.map_version),
-            "map_hash": self._decode_fixed_text(state.map_hash),
-            "planning_state": int(state.planning_state),
-            "execution_state": int(state.execution_state),
-            "recovery_state": int(state.recovery_state),
-            "progress": float(state.progress),
-            "authority": self._decode_fixed_text(state.authority),
-            "hold_reason": self._decode_fixed_text(state.hold_reason),
-            "failure_code": self._decode_fixed_text(state.failure_code),
-        }
-
-    def take_navigation_goal_status(self) -> dict[str, object] | None:
-        """Pop one task-aware lifecycle event from the bounded native queue."""
-
-        self.ensure_goal_status_abi()
-        return self._read_navigation_goal_status(
-            self.library.lingtu_nav_client_take_navigation_goal_status_v1,
+        return self._request_navigation_task_lifecycle(
+            "lingtu_nav_client_pause_task_with_receipt_v1",
+            task_id=task_id,
+            request_id=request_id,
+            reason=reason or "operator_pause",
         )
 
-    def get_navigation_goal_status(self, request_id: str) -> dict[str, object] | None:
-        """Read retained task-aware lifecycle state for one request attempt."""
+    def resume_navigation_task(
+        self,
+        task_id: str,
+        request_id: str,
+        reason: str,
+    ) -> dict[str, object]:
+        """Request continuation of the same paused logical task."""
 
-        request = str(request_id or "").strip()
-        if not request:
-            raise ValueError("request_id is required")
-        self.ensure_goal_status_abi()
-        return self._read_navigation_goal_status(
-            self.library.lingtu_nav_client_get_navigation_goal_status_v1,
-            request.encode("utf-8"),
+        return self._request_navigation_task_lifecycle(
+            "lingtu_nav_client_resume_task_with_receipt_v1",
+            task_id=task_id,
+            request_id=request_id,
+            reason=reason or "operator_resume",
         )
 
-    def get_navigation_task_status(self, task_id: str) -> dict[str, object] | None:
-        """Read retained lifecycle state for one stable logical task."""
-
-        task = str(task_id or "").strip()
-        if not task:
-            raise ValueError("task_id is required")
-        self.ensure_goal_status_abi()
-        self._require_capability(
-            NATIVE_COMMAND_CAP_NAVIGATION_TASK_STATUS,
-            "navigation task status",
-        )
-        return self._read_navigation_goal_status(
-            self.library.lingtu_nav_client_get_navigation_task_status_v1,
-            task.encode("utf-8"),
-        )
-
-    @staticmethod
-    def _validate_task_identity(task_id: str, request_id: str) -> tuple[str, str]:
+    def _request_navigation_task_lifecycle(
+        self,
+        symbol: str,
+        *,
+        task_id: str,
+        request_id: str,
+        reason: str,
+    ) -> dict[str, object]:
+        self.ensure_navigation_abi()
+        function = getattr(self.library, symbol)
         task = str(task_id or "").strip()
         request = str(request_id or "").strip()
         if not task:
@@ -614,64 +1189,532 @@ class NativeCommandSession:
             raise ValueError("request_id is required")
         if task == request:
             raise ValueError("task_id and request_id must be distinct")
-        return task, request
+        # Lifecycle controls share cancellation's short synchronous ACK budget.
+        return self._write_navigation_command_receipt(
+            function,
+            task.encode("utf-8"),
+            request.encode("utf-8"),
+            str(reason).encode("utf-8"),
+            self.cancel_timeout_ms,
+        )
+
+    def take_global_path(self) -> dict[str, object] | None:
+        """Pop the latest complete native global path sample."""
+
+        self.ensure_path_telemetry_abi()
+        return self._take_path(self.library.lingtu_nav_client_take_global_path)
+
+    def take_local_path(self) -> dict[str, object] | None:
+        """Pop the latest complete native local path sample."""
+
+        self.ensure_path_telemetry_abi()
+        return self._take_path(self.library.lingtu_nav_client_take_local_path)
+
+    def _take_path(self, function: Any) -> dict[str, object] | None:
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            self._active_calls += 1
+        header = _NativePathHeader()
+        try:
+            result = int(function(handle, ctypes.byref(header), None, 0))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if result == 0:
+                return None
+            point_count = int(header.point_count)
+            if result == 1:
+                if point_count != 0:
+                    raise NativeCommandClientError(
+                        "native path telemetry returned a non-empty path without a buffer probe"
+                    )
+                points: list[dict[str, float]] = []
+            elif result == 2:
+                if point_count <= 0:
+                    raise NativeCommandClientError(
+                        "native path telemetry requested an invalid point buffer"
+                    )
+                point_buffer = (_NativePathPoint * point_count)()
+                result = int(
+                    function(
+                        handle,
+                        ctypes.byref(header),
+                        point_buffer,
+                        point_count,
+                    )
+                )
+                if result != 1:
+                    if result < 0:
+                        raise NativeCommandClientError(self.last_error(handle))
+                    raise NativeCommandClientError(
+                        "native path telemetry did not complete its buffered copy"
+                    )
+                if int(header.point_count) != point_count:
+                    raise NativeCommandClientError(
+                        "native path telemetry point count changed during buffered copy"
+                    )
+                points = [
+                    {
+                        "x": float(point.x),
+                        "y": float(point.y),
+                        "z": float(point.z),
+                    }
+                    for point in point_buffer
+                ]
+            else:
+                raise NativeCommandClientError(
+                    f"native path telemetry returned unexpected status {result}"
+                )
+            return {
+                "timestamp_s": float(header.timestamp_s),
+                "frame_id": self._decode_fixed_text(header.frame_id),
+                "receive_sequence": int(header.receive_sequence),
+                "points": points,
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    def take_map_scene(self) -> dict[str, object] | None:
+        """Pop one coherent MapScene after validating all product capacities."""
+
+        self.ensure_map_scene_abi()
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            function = self.library.lingtu_nav_client_take_map_scene_v1
+            self._active_calls += 1
+        header = _NativeMapSceneHeaderV1()
+        try:
+            result = int(function(handle, ctypes.byref(header), None))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if result == 0:
+                return None
+            self._validate_map_scene_header(header)
+            if result == 1:
+                if self._map_scene_payload_count(header) != 0:
+                    raise NativeCommandClientError(
+                        "native map scene returned payload without a capacity probe"
+                    )
+                return self._map_scene_result(header, {}, {})
+            if result != 2:
+                raise NativeCommandClientError(
+                    f"native map scene returned unexpected status {result}"
+                )
+
+            point_counts = {
+                "live": int(header.live_point_count),
+                "voxel": int(header.voxel_point_count),
+                "accumulated": int(header.accumulated_point_count),
+            }
+            grid_headers = {
+                "occupancy": header.occupancy,
+                "elevation": header.elevation,
+                "esdf": header.esdf,
+                "traversability": header.traversability,
+            }
+            point_buffers = {
+                name: (_NativeMapScenePointV1 * count)()
+                for name, count in point_counts.items()
+                if count
+            }
+            grid_buffers = {
+                name: (ctypes.c_float * int(grid.cell_count))()
+                for name, grid in grid_headers.items()
+                if int(grid.cell_count)
+            }
+            buffers = _NativeMapSceneBuffersV1()
+            buffers.abi_version = NATIVE_MAP_SCENE_ABI_VERSION
+            buffers.struct_size = ctypes.sizeof(_NativeMapSceneBuffersV1)
+            for name in point_counts:
+                setattr(buffers, f"{name}_points", point_buffers.get(name))
+                setattr(buffers, f"{name}_point_capacity", point_counts[name])
+            for name, grid in grid_headers.items():
+                setattr(buffers, f"{name}_cells", grid_buffers.get(name))
+                setattr(
+                    buffers,
+                    f"{name}_cell_capacity",
+                    int(grid.cell_count),
+                )
+            identity = self._map_scene_header_identity(header)
+            result = int(
+                function(handle, ctypes.byref(header), ctypes.byref(buffers))
+            )
+            if result != 1:
+                if result < 0:
+                    raise NativeCommandClientError(self.last_error(handle))
+                raise NativeCommandClientError(
+                    "native map scene did not complete its buffered copy"
+                )
+            self._validate_map_scene_header(header)
+            if self._map_scene_header_identity(header) != identity:
+                raise NativeCommandClientError(
+                    "native map scene identity changed during buffered copy"
+                )
+            point_bytes = {
+                name: ctypes.string_at(
+                    ctypes.addressof(buffer),
+                    ctypes.sizeof(buffer),
+                )
+                for name, buffer in point_buffers.items()
+            }
+            grid_bytes = {
+                name: ctypes.string_at(
+                    ctypes.addressof(buffer),
+                    ctypes.sizeof(buffer),
+                )
+                for name, buffer in grid_buffers.items()
+            }
+            return self._map_scene_result(header, point_bytes, grid_bytes)
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    def read_map_scene_health(self) -> dict[str, object]:
+        """Return native MapScene receive, rejection, and capacity counters."""
+
+        self.ensure_map_scene_abi()
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            function = self.library.lingtu_nav_client_read_map_scene_health_v1
+            self._active_calls += 1
+        health = _NativeMapSceneHealthV1()
+        try:
+            result = int(function(handle, ctypes.byref(health)))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if (
+                int(health.abi_version) != NATIVE_MAP_SCENE_ABI_VERSION
+                or int(health.struct_size) < ctypes.sizeof(_NativeMapSceneHealthV1)
+            ):
+                raise NativeCommandClientError(
+                    "native map scene health returned an incompatible v1 struct"
+                )
+            return {
+                "received_samples": int(health.received_samples),
+                "valid_samples": int(health.valid_samples),
+                "stale_samples": int(health.stale_samples),
+                "invalid_samples": int(health.invalid_samples),
+                "capacity_rejections": int(health.capacity_rejections),
+                "replaced_samples": int(health.replaced_samples),
+                "consumer_buffer_retries": int(
+                    health.consumer_buffer_retries
+                ),
+                "last_receive_sequence": int(health.last_receive_sequence),
+                "last_generation": int(health.last_generation),
+                "last_sample_timestamp_s": float(
+                    health.last_sample_timestamp_s
+                ),
+                "pending": bool(health.pending),
+                "last_error": self._decode_fixed_text(health.last_error),
+                "state_received_samples": int(
+                    health.state_received_samples
+                ),
+                "state_valid_samples": int(health.state_valid_samples),
+                "state_stale_samples": int(health.state_stale_samples),
+                "state_invalid_samples": int(
+                    health.state_invalid_samples
+                ),
+                "state_timestamp_s": float(health.state_timestamp_s),
+                "state_producer_boot_id": self._decode_fixed_text(
+                    health.state_producer_boot_id
+                ),
+                "state_received": bool(health.state_received),
+                "state_running": bool(health.state_running),
+                "state_live": bool(health.state_live),
+                "state_required_publications_ready": bool(
+                    health.state_required_publications_ready
+                ),
+                "state_current_generation_published": bool(
+                    health.state_current_generation_published
+                ),
+                "state_capacity_limited": bool(
+                    health.state_capacity_limited
+                ),
+                "state_reset_epoch": int(health.state_reset_epoch),
+                "state_observation_sequence": int(
+                    health.state_observation_sequence
+                ),
+                "state_generation": int(health.state_generation),
+                "state_scene_published_generation": int(
+                    health.state_scene_published_generation
+                ),
+                "state_error": self._decode_fixed_text(
+                    health.state_error
+                ),
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    @staticmethod
+    def _map_scene_payload_count(header: _NativeMapSceneHeaderV1) -> int:
+        return sum(
+            (
+                int(header.live_point_count),
+                int(header.voxel_point_count),
+                int(header.accumulated_point_count),
+                int(header.occupancy.cell_count),
+                int(header.elevation.cell_count),
+                int(header.esdf.cell_count),
+                int(header.traversability.cell_count),
+            )
+        )
+
+    @staticmethod
+    def _map_scene_header_identity(
+        header: _NativeMapSceneHeaderV1,
+    ) -> tuple[int, ...]:
+        return (
+            int(header.receive_sequence),
+            int(header.reset_epoch),
+            int(header.observation_sequence),
+            int(header.generation),
+            int(header.live_point_count),
+            int(header.voxel_point_count),
+            int(header.accumulated_point_count),
+            int(header.occupancy.cell_count),
+            int(header.elevation.cell_count),
+            int(header.esdf.cell_count),
+            int(header.traversability.cell_count),
+            int(header.payload_bytes),
+        )
+
+    @classmethod
+    def _validate_map_scene_header(
+        cls,
+        header: _NativeMapSceneHeaderV1,
+    ) -> None:
+        if (
+            int(header.abi_version) != NATIVE_MAP_SCENE_ABI_VERSION
+            or int(header.struct_size) < ctypes.sizeof(_NativeMapSceneHeaderV1)
+        ):
+            raise NativeCommandClientError(
+                "native map scene returned an incompatible v1 header"
+            )
+        point_counts = [
+            int(header.live_point_count),
+            int(header.voxel_point_count),
+            int(header.accumulated_point_count),
+        ]
+        grid_headers = [
+            header.occupancy,
+            header.elevation,
+            header.esdf,
+            header.traversability,
+        ]
+        grid_counts = [int(grid.cell_count) for grid in grid_headers]
+        if any(
+            count < 0 or count > NATIVE_MAP_SCENE_MAX_POINTS_PER_LAYER
+            for count in point_counts
+        ) or sum(point_counts) > NATIVE_MAP_SCENE_MAX_TOTAL_POINTS:
+            raise NativeCommandClientError(
+                "native map scene point count exceeds Python product limit"
+            )
+        if any(
+            count < 0 or count > NATIVE_MAP_SCENE_MAX_GRID_CELLS_PER_LAYER
+            for count in grid_counts
+        ) or sum(grid_counts) > NATIVE_MAP_SCENE_MAX_TOTAL_GRID_CELLS:
+            raise NativeCommandClientError(
+                "native map scene grid count exceeds Python product limit"
+            )
+        for grid, count in zip(grid_headers, grid_counts, strict=True):
+            if int(grid.width) * int(grid.height) != count:
+                raise NativeCommandClientError(
+                    "native map scene grid dimensions do not match cell count"
+                )
+            if count and (
+                not math.isfinite(float(grid.resolution))
+                or float(grid.resolution) <= 0.0
+            ):
+                raise NativeCommandClientError(
+                    "native map scene grid resolution is invalid"
+                )
+        expected_bytes = (
+            sum(point_counts) * ctypes.sizeof(_NativeMapScenePointV1)
+            + sum(grid_counts) * ctypes.sizeof(ctypes.c_float)
+        )
+        if (
+            expected_bytes != int(header.payload_bytes)
+            or expected_bytes > NATIVE_MAP_SCENE_MAX_PAYLOAD_BYTES
+        ):
+            raise NativeCommandClientError(
+                "native map scene payload byte count exceeds or violates product contract"
+            )
+        if (
+            int(header.receive_sequence) <= 0
+            or int(header.observation_sequence) <= 0
+            or int(header.generation) <= 0
+            or int(header.live) not in (0, 1)
+            or not math.isfinite(float(header.timestamp_s))
+            or float(header.timestamp_s) <= 0.0
+            or not cls._decode_fixed_text(header.frame_id)
+            or not cls._decode_fixed_text(header.producer_boot_id)
+        ):
+            raise NativeCommandClientError(
+                "native map scene identity or timestamp is invalid"
+            )
+        pose = (
+            header.sensor_x,
+            header.sensor_y,
+            header.sensor_z,
+            header.sensor_qx,
+            header.sensor_qy,
+            header.sensor_qz,
+            header.sensor_qw,
+        )
+        if not all(math.isfinite(float(value)) for value in pose):
+            raise NativeCommandClientError(
+                "native map scene sensor pose is invalid"
+            )
+
+    @classmethod
+    def _map_scene_result(
+        cls,
+        header: _NativeMapSceneHeaderV1,
+        point_bytes: dict[str, bytes],
+        grid_bytes: dict[str, bytes],
+    ) -> dict[str, object]:
+        def grid(name: str, value: _NativeMapSceneGridHeaderV1) -> dict[str, object]:
+            return {
+                "width": int(value.width),
+                "height": int(value.height),
+                "resolution": float(value.resolution),
+                "origin": {
+                    "x": float(value.origin_x),
+                    "y": float(value.origin_y),
+                    "z": float(value.origin_z),
+                    "qx": float(value.origin_qx),
+                    "qy": float(value.origin_qy),
+                    "qz": float(value.origin_qz),
+                    "qw": float(value.origin_qw),
+                },
+                "cell_count": int(value.cell_count),
+                "values_f32": grid_bytes.get(name, b""),
+            }
+
+        return {
+            "timestamp_s": float(header.timestamp_s),
+            "frame_id": cls._decode_fixed_text(header.frame_id),
+            "producer_boot_id": cls._decode_fixed_text(
+                header.producer_boot_id
+            ),
+            "receive_sequence": int(header.receive_sequence),
+            "reset_epoch": int(header.reset_epoch),
+            "observation_sequence": int(header.observation_sequence),
+            "generation": int(header.generation),
+            "live": bool(header.live),
+            "sensor_pose": {
+                "x": float(header.sensor_x),
+                "y": float(header.sensor_y),
+                "z": float(header.sensor_z),
+                "qx": float(header.sensor_qx),
+                "qy": float(header.sensor_qy),
+                "qz": float(header.sensor_qz),
+                "qw": float(header.sensor_qw),
+            },
+            "payload_bytes": int(header.payload_bytes),
+            "clouds": {
+                "live": {
+                    "point_count": int(header.live_point_count),
+                    "points_xyzi_f32": point_bytes.get("live", b""),
+                },
+                "voxel": {
+                    "point_count": int(header.voxel_point_count),
+                    "points_xyzi_f32": point_bytes.get("voxel", b""),
+                },
+                "accumulated": {
+                    "point_count": int(header.accumulated_point_count),
+                    "points_xyzi_f32": point_bytes.get("accumulated", b""),
+                },
+            },
+            "grids": {
+                "occupancy": grid("occupancy", header.occupancy),
+                "elevation": grid("elevation", header.elevation),
+                "esdf": grid("esdf", header.esdf),
+                "traversability": grid(
+                    "traversability", header.traversability
+                ),
+            },
+        }
 
     def _read_navigation_goal_status(
         self,
         function: Any,
         *arguments: object,
     ) -> dict[str, object] | None:
-        status = self._read_versioned_snapshot(
-            function,
-            _NativeNavigationGoalStatusV1,
-            NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION,
-            "navigation goal status v1",
-            *arguments,
-        )
-        if status is None:
-            return None
-        return {
-            "timestamp_s": float(status.timestamp_s),
-            "frame_id": self._decode_fixed_text(status.frame_id),
-            "boot_id": self._decode_fixed_text(status.boot_id),
-            "sequence": int(status.sequence),
-            "task_id": self._decode_fixed_text(status.task_id),
-            "request_id": self._decode_fixed_text(status.request_id),
-            "state": int(status.state),
-            "goal_epoch": int(status.goal_epoch),
-            "reason": self._decode_fixed_text(status.reason),
-        }
-
-    def _read_versioned_snapshot(
-        self,
-        function: Any,
-        structure_type: type[ctypes.Structure],
-        abi_version: int,
-        label: str,
-        *arguments: object,
-    ) -> ctypes.Structure | None:
         with self.lock:
             self.require_open()
             handle = self.handle
             self._active_calls += 1
-        snapshot = structure_type()
-        snapshot.abi_version = int(abi_version)
-        snapshot.struct_size = ctypes.sizeof(structure_type)
+        status = _NativeNavigationGoalStatus()
         try:
-            result = int(function(handle, *arguments, ctypes.byref(snapshot)))
+            result = int(function(handle, *arguments, ctypes.byref(status)))
             if result < 0:
                 raise NativeCommandClientError(self.last_error(handle))
             if result == 0:
                 return None
-            if result != 1:
-                raise NativeCommandClientError(f"native {label} returned unexpected result {result}")
-            self._validate_versioned_metadata(
-                snapshot,
-                expected_abi_version=abi_version,
-                structure_type=structure_type,
-                label=label,
-            )
-            return snapshot
+            return {
+                "timestamp_s": float(status.timestamp_s),
+                "frame_id": self._decode_fixed_text(status.frame_id),
+                "boot_id": self._decode_fixed_text(status.boot_id),
+                "sequence": int(status.sequence),
+                "task_id": self._decode_fixed_text(status.task_id),
+                "request_id": self._decode_fixed_text(status.request_id),
+                "state": int(status.state),
+                "goal_epoch": int(status.goal_epoch),
+                "reason": self._decode_fixed_text(status.reason),
+            }
+        finally:
+            with self.lock:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._state_changed.notify_all()
+
+    def _read_navigation_goal_status_v1(
+        self,
+        function: Any,
+        *arguments: object,
+    ) -> dict[str, object] | None:
+        with self.lock:
+            self.require_open()
+            handle = self.handle
+            self._active_calls += 1
+        status = _NativeNavigationGoalStatusV1()
+        status.abi_version = NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION
+        status.struct_size = ctypes.sizeof(_NativeNavigationGoalStatusV1)
+        try:
+            result = int(function(handle, *arguments, ctypes.byref(status)))
+            if result < 0:
+                raise NativeCommandClientError(self.last_error(handle))
+            if result == 0:
+                return None
+            if (
+                int(status.abi_version) != NATIVE_NAVIGATION_GOAL_STATUS_ABI_VERSION
+                or int(status.struct_size) != ctypes.sizeof(_NativeNavigationGoalStatusV1)
+            ):
+                raise NativeCommandClientError(
+                    "native navigation task status returned an incompatible receipt ABI"
+                )
+            return {
+                "timestamp_s": float(status.timestamp_s),
+                "frame_id": self._decode_fixed_text(status.frame_id),
+                "boot_id": self._decode_fixed_text(status.boot_id),
+                "sequence": int(status.sequence),
+                "task_id": self._decode_fixed_text(status.task_id),
+                "request_id": self._decode_fixed_text(status.request_id),
+                "state": int(status.state),
+                "goal_epoch": int(status.goal_epoch),
+                "reason": self._decode_fixed_text(status.reason),
+            }
         finally:
             with self.lock:
                 self._active_calls -= 1
@@ -682,7 +1725,7 @@ class NativeCommandSession:
         self,
         function: Any,
         *arguments: object,
-    ) -> NavigationCommandReceipt:
+    ) -> dict[str, object]:
         with self.lock:
             self.require_open()
             handle = self.handle
@@ -692,49 +1735,28 @@ class NativeCommandSession:
         receipt.struct_size = ctypes.sizeof(_NativeNavigationCommandReceiptV1)
         try:
             result = int(function(handle, *arguments, ctypes.byref(receipt)))
-            if result != 0:
+            if result < 0:
                 raise NativeCommandClientError(self.last_error(handle))
-            self._validate_versioned_metadata(
-                receipt,
-                expected_abi_version=NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION,
-                structure_type=_NativeNavigationCommandReceiptV1,
-                label="navigation command receipt v1",
-            )
-            if int(receipt.accepted) not in (0, 1):
-                raise NativeCommandClientError("native navigation command receipt has an invalid accepted value")
-            return NavigationCommandReceipt(
-                accepted=bool(receipt.accepted),
-                kind=int(receipt.kind),
-                task_id=self._decode_fixed_text(receipt.task_id),
-                request_id=self._decode_fixed_text(receipt.request_id),
-                endpoint_timestamp_s=float(receipt.endpoint_timestamp_s),
-                reason=self._decode_fixed_text(receipt.reason),
-            )
-        except ValueError as exc:
-            raise NativeCommandClientError(f"native navigation command returned an invalid receipt: {exc}") from exc
+            if (
+                int(receipt.abi_version) != NATIVE_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION
+                or int(receipt.struct_size) != ctypes.sizeof(_NativeNavigationCommandReceiptV1)
+            ):
+                raise NativeCommandClientError(
+                    "native navigation command returned an incompatible receipt ABI"
+                )
+            return {
+                "accepted": bool(receipt.accepted),
+                "kind": int(receipt.kind),
+                "task_id": self._decode_fixed_text(receipt.task_id),
+                "request_id": self._decode_fixed_text(receipt.request_id),
+                "endpoint_timestamp_s": float(receipt.endpoint_timestamp_s),
+                "reason": self._decode_fixed_text(receipt.reason),
+            }
         finally:
             with self.lock:
                 self._active_calls -= 1
                 if self._active_calls == 0:
                     self._state_changed.notify_all()
-
-    @staticmethod
-    def _validate_versioned_metadata(
-        value: ctypes.Structure,
-        *,
-        expected_abi_version: int,
-        structure_type: type[ctypes.Structure],
-        label: str,
-    ) -> None:
-        if int(value.abi_version) != int(expected_abi_version):
-            raise NativeCommandClientError(
-                f"native {label} ABI version mismatch: expected {expected_abi_version}, got {int(value.abi_version)}"
-            )
-        expected_size = ctypes.sizeof(structure_type)
-        if int(value.struct_size) != expected_size:
-            raise NativeCommandClientError(
-                f"native {label} struct size mismatch: expected {expected_size}, got {int(value.struct_size)}"
-            )
 
     @staticmethod
     def _decode_fixed_text(value: bytes | bytearray | memoryview) -> str:
@@ -768,7 +1790,7 @@ class NativeCommandSession:
         self.library.lingtu_nav_client_destroy(handle)
 
 
-_SESSIONS: dict[tuple[str, int, int, int, int, int], NativeCommandSession] = {}
+_SESSIONS: dict[tuple[str, int, int, int, int, int, int], NativeCommandSession] = {}
 _SESSIONS_LOCK = threading.Lock()
 
 
@@ -786,6 +1808,10 @@ def get_native_command_session(*, required: bool = False) -> NativeCommandSessio
         goal_timeout_ms = int(os.environ.get("LINGTU_NAV_GOAL_TIMEOUT_MS", "10000") or "10000")
         cancel_timeout_ms = int(os.environ.get("LINGTU_NAV_CANCEL_TIMEOUT_MS", "2000") or "2000")
         teleop_timeout_ms = int(os.environ.get("LINGTU_NAV_TELEOP_TIMEOUT_MS", "1000") or "1000")
+        operator_motion_timeout_ms = int(
+            os.environ.get("LINGTU_NAV_OPERATOR_MOTION_TIMEOUT_MS", str(teleop_timeout_ms))
+            or str(teleop_timeout_ms)
+        )
     except ValueError as exc:
         raise NativeCommandClientError("invalid native navigation client configuration") from exc
     key = (
@@ -795,6 +1821,7 @@ def get_native_command_session(*, required: bool = False) -> NativeCommandSessio
         max(1, goal_timeout_ms),
         max(1, cancel_timeout_ms),
         max(1, teleop_timeout_ms),
+        max(1, operator_motion_timeout_ms),
     )
     with _SESSIONS_LOCK:
         session = _SESSIONS.get(key)
@@ -806,6 +1833,7 @@ def get_native_command_session(*, required: bool = False) -> NativeCommandSessio
                 goal_timeout_ms=goal_timeout_ms,
                 cancel_timeout_ms=cancel_timeout_ms,
                 teleop_timeout_ms=teleop_timeout_ms,
+                operator_motion_timeout_ms=operator_motion_timeout_ms,
             )
             _SESSIONS[key] = session
         return session

@@ -45,7 +45,13 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     if ctx.slam_module:
         if ctx.slam_module == "SlamModule":
             specs.extend(
-                WireSpec(ctx.slam_module, "map_observation", consumer, "map_observation")
+                WireSpec(
+                    ctx.slam_module,
+                    "map_observation",
+                    consumer,
+                    "map_observation",
+                    topic=TOPICS.map_observation,
+                )
                 for consumer in MAP_OBSERVATION_CONSUMERS
                 if consumer in ctx.names
             )
@@ -58,12 +64,18 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
         else:
             legacy_consumers = MAP_CLOUD_CONSUMERS
             if ctx.slam_module == "SlamAdapterModule":
+                legacy_consumers = tuple(
+                    consumer
+                    for consumer in MAP_CLOUD_CONSUMERS
+                    if consumer not in MAP_OBSERVATION_CONSUMERS
+                )
                 specs.extend(
                     WireSpec(
                         ctx.slam_module,
                         "map_observation",
                         consumer,
                         "map_observation",
+                        topic=TOPICS.map_observation,
                     )
                     for consumer in MAP_OBSERVATION_CONSUMERS
                     if consumer in ctx.names

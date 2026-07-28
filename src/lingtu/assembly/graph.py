@@ -295,18 +295,21 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     modules.extend(_static_gnss_module_names(config))
 
     if bool(config.get("enable_map_modules", True)):
-        modules.append("OccupancyGridModule")
-        if map_output_adapter_enabled(config) and (map_output_uses_dds(config) or map_output_uses_ros2(config)):
-            modules.append(MAP_OUT)
-        modules.extend(
-            [
-                "VoxelGridModule",
-                "ESDFModule",
-                "ElevationMapModule",
-                "TraversabilityCostModule",
-                "maps.service",
-            ]
-        )
+        if bool(config.get("enable_map_layers", True)):
+            modules.append("OccupancyGridModule")
+            if map_output_adapter_enabled(config) and (
+                map_output_uses_dds(config) or map_output_uses_ros2(config)
+            ):
+                modules.append(MAP_OUT)
+            modules.extend(
+                [
+                    "VoxelGridModule",
+                    "ESDFModule",
+                    "ElevationMapModule",
+                    "TraversabilityCostModule",
+                ]
+            )
+        modules.append("maps.service")
 
     if _needs_camera(
         config,
@@ -341,19 +344,20 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     if bool(config.get("enable_goals", True)):
         modules.append("nav.goals")
     if config.get("native_navigation_endpoint"):
-        modules.extend(["nav.commands", "nav.inspection"])
+        modules.extend(["host.bus", "nav.commands", "nav.inspection"])
     if bool(config.get("enable_patrol_routes", True)):
         modules.append("PatrolManagerModule")
     if bool(config.get("enable_scheduler", False)):
         modules.append("TaskSchedulerModule")
 
     if enable_navigation:
-        modules.append("nav.mission")
-        if bool(config.get("enable_frontier", False)):
-            modules.append("WavefrontFrontierExplorer")
-        if bool(config.get("enable_traversable_frontier", False)):
-            modules.append("TraversableFrontierModule")
+        modules.extend(["nav.skills", "nav.localization_monitor"])
         if not config.get("native_navigation_endpoint"):
+            modules.append("nav.mission")
+            if bool(config.get("enable_frontier", False)):
+                modules.append("WavefrontFrontierExplorer")
+            if bool(config.get("enable_traversable_frontier", False)):
+                modules.append("TraversableFrontierModule")
             modules.extend(["nav.terrain", "nav.local_planner", "nav.path_follower"])
 
     exploration_backend = str(config.get("exploration_backend", "none") or "none")
@@ -374,7 +378,9 @@ def _static_module_names(config: dict[str, Any]) -> tuple[str, ...]:
     if enable_gateway:
         modules.extend(["GatewayModule", "MCPServerModule"])
         if enable_teleop:
-            modules.append("TeleopModule")
+            modules.append(
+                "CameraJpegRelayModule" if endpoint_only else "TeleopModule"
+            )
         if bool(config.get("enable_rerun", False)):
             modules.append("RerunBridgeModule")
 

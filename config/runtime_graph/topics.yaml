@@ -7,19 +7,26 @@ native_contract_topics:
   - /imu/raw
   - /slam/odometry
   - /slam/registered_cloud
+  - /slam/map_observation
   - /slam/map_cloud
   - /slam/saved_map_cloud
   - /slam/localization_health
   - /slam/localization_quality
   - /nav/command/request
   - /nav/command/ack
-  - /nav/goal/status
   - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
   - /nav/exploration/command
   - /nav/exploration/ack
   - /nav/inspection/command
   - /nav/inspection/ack
+  - /nav/inspection/task/request
+  - /nav/inspection/task/ack
   - /nav/inspection/status
+  - /nav/inspection/task/event
   - /nav/inspection/evidence/request
   - /nav/inspection/evidence/result
   - /nav/traversability
@@ -38,7 +45,7 @@ topics:
     consumers:
       - native_explore_runtime
     qos: reliable_volatile_keep_last_32
-    semantics: exploration_start_pause_resume_or_stop
+    semantics: exploration_lifecycle_or_directed_target_set_clear
     port_bindings:
       - owner: persistent_cpp_navigation_client
         port: exploration_command
@@ -56,9 +63,8 @@ topics:
     producer: native_explore_runtime
     consumers:
       - persistent_cpp_navigation_client
-      - gateway_command_audit
     qos: reliable_transient_local_keep_last_64
-    semantics: exploration_business_ack
+    semantics: exploration_business_ack_with_intent_revision
     port_bindings:
       - owner: native_explore_runtime
         port: exploration_ack
@@ -95,7 +101,6 @@ topics:
     producer: native_nav_runtime
     consumers:
       - persistent_cpp_navigation_client
-      - gateway_command_audit
     qos: reliable_transient_local_keep_last_64
     semantics: inspection_business_ack
     port_bindings:
@@ -108,14 +113,52 @@ topics:
         direction: in
         boundary: native
 
+  /nav/inspection/task/request:
+    role: native_inspection_task_request
+    frame: map
+    schema: inspection_task_request
+    producer: persistent_cpp_navigation_client
+    consumers:
+      - native_nav_runtime
+    qos: reliable_volatile_keep_last_32
+    semantics: caller_task_id_and_retryable_request_id
+    port_bindings:
+      - owner: persistent_cpp_navigation_client
+        port: inspection_task_request
+        direction: out
+        boundary: native
+      - owner: native_nav_runtime
+        port: inspection_task_request
+        direction: in
+        boundary: endpoint
+
+  /nav/inspection/task/ack:
+    role: native_inspection_task_ack
+    frame: map
+    schema: inspection_task_ack
+    producer: native_nav_runtime
+    consumers:
+      - persistent_cpp_navigation_client
+    qos: reliable_transient_local_keep_last_64
+    semantics: task_id_preserving_business_ack
+    port_bindings:
+      - owner: native_nav_runtime
+        port: inspection_task_ack
+        direction: out
+        boundary: endpoint
+      - owner: persistent_cpp_navigation_client
+        port: inspection_task_ack
+        direction: in
+        boundary: native
+
   /nav/inspection/status:
     role: native_inspection_status
     frame: map
     schema: inspection_status
     producer: native_nav_runtime
     consumers:
-      - gateway
-      - web
+      - host_bus
+    external_diagnostics_subscribable: true
     qos: reliable_transient_local_keep_last_1
     semantics: route_and_current_point_progress
     port_bindings:
@@ -123,6 +166,26 @@ topics:
         port: inspection_status
         direction: out
         boundary: endpoint
+
+  /nav/inspection/task/event:
+    role: native_inspection_task_event
+    frame: map
+    schema: inspection_task_event
+    producer: native_nav_runtime
+    consumers:
+      - host_bus
+    external_diagnostics_subscribable: true
+    qos: reliable_transient_local_keep_last_512
+    semantics: ordered_task_facts_with_boot_id_and_event_sequence
+    port_bindings:
+      - owner: native_nav_runtime
+        port: inspection_task_event
+        direction: out
+        boundary: endpoint
+      - owner: host_bus
+        port: inspection_task_event
+        direction: in
+        boundary: native
 
   /nav/inspection/evidence/request:
     role: native_inspection_evidence_request
@@ -150,7 +213,6 @@ topics:
     producer: inspection_evidence_worker
     consumers:
       - native_nav_runtime
-      - gateway
     qos: reliable_transient_local_keep_last_64
     semantics: durable_evidence_result_for_matching_request_id
     port_bindings:
@@ -171,7 +233,7 @@ topics:
     consumers:
       - native_nav_runtime
     qos: reliable_volatile_keep_last_32
-    semantics: stable_task_identity_with_request_attempt_identity
+    semantics: goal_cancel_or_operator_velocity_request
     port_bindings:
       - owner: persistent_cpp_navigation_client
         port: command_request
@@ -189,9 +251,8 @@ topics:
     producer: native_nav_runtime
     consumers:
       - persistent_cpp_navigation_client
-      - gateway_command_audit
     qos: reliable_transient_local_keep_last_64
-    semantics: request_attempt_ack_with_stable_task_identity
+    semantics: business_accept_or_reject_for_matching_request_id
     port_bindings:
       - owner: native_nav_runtime
         port: command_ack
@@ -201,6 +262,78 @@ topics:
         port: command_ack
         direction: in
         boundary: native
+
+  /nav/operator_motion/control:
+    role: native_operator_motion_control
+    frame: none
+    schema: operator_motion_control
+    producer: operator_motion_adapter
+    consumers:
+      - native_nav_runtime
+    qos: reliable_volatile_keep_last_32
+    semantics: claim_release_or_hold_for_source_epoch
+    port_bindings:
+      - owner: operator_motion_adapter
+        port: operator_motion_control
+        direction: out
+        boundary: native
+      - owner: native_nav_runtime
+        port: operator_motion_control
+        direction: in
+        boundary: endpoint
+
+  /nav/operator_motion/sample:
+    role: native_operator_motion_sample
+    frame: body
+    schema: operator_motion_sample
+    producer: operator_motion_adapter
+    consumers:
+      - native_nav_runtime
+    qos: best_effort_volatile_keep_last_1
+    semantics: high_rate_latest_only_body_frame_velocity_intent
+    port_bindings:
+      - owner: operator_motion_adapter
+        port: operator_motion_sample
+        direction: out
+        boundary: native
+      - owner: native_nav_runtime
+        port: operator_motion_sample
+        direction: in
+        boundary: endpoint
+
+  /nav/operator_motion/ack:
+    role: native_operator_motion_ack
+    frame: none
+    schema: operator_motion_ack
+    producer: native_nav_runtime
+    consumers:
+      - operator_motion_adapter
+    qos: reliable_transient_local_keep_last_64
+    semantics: native_business_ack_for_claim_hold_release_only
+    port_bindings:
+      - owner: native_nav_runtime
+        port: operator_motion_ack
+        direction: out
+        boundary: endpoint
+      - owner: operator_motion_adapter
+        port: operator_motion_ack
+        direction: in
+        boundary: native
+
+  /nav/operator_motion/status:
+    role: native_operator_motion_status
+    frame: map
+    schema: operator_motion_status
+    producer: native_nav_runtime
+    consumers: []
+    qos: reliable_transient_local_keep_last_1
+    semantics: active_source_epoch_last_sample_admission_and_final_output_evidence
+    external_diagnostics_subscribable: true
+    port_bindings:
+      - owner: native_nav_runtime
+        port: operator_motion_status
+        direction: out
+        boundary: endpoint
 
   /nav/goal/status:
     role: native_navigation_goal_status
@@ -208,47 +341,80 @@ topics:
     schema: navigation_goal_status
     producer: native_nav_runtime
     consumers:
-      - persistent_cpp_navigation_client
+      - native_explore_runtime
       - host_bus
     qos: reliable_transient_local_keep_last_64
-    semantics: task_lifecycle_with_originating_request_attempt
+    semantics: request_correlated_goal_lifecycle
     port_bindings:
       - owner: native_nav_runtime
         port: goal_status
         direction: out
         boundary: endpoint
-      - owner: persistent_cpp_navigation_client
+      - owner: native_explore_runtime
         port: goal_status
         direction: in
-        boundary: native
+        boundary: endpoint
       - owner: host_bus
         port: navigation_goal_status
         direction: in
         boundary: native
 
-  /nav/state:
-    role: authoritative_navigation_state
+  /nav/exploration_segment/request:
+    role: native_exploration_segment_request
     frame: map
-    schema: navigation_state
-    producer: native_nav_runtime
+    schema: exploration_segment_request
+    producer: native_explore_runtime
     consumers:
-      - persistent_cpp_navigation_client
-      - host_bus
-    qos: reliable_transient_local_keep_last_1
-    semantics: active_task_and_request_attempt_lifecycle_state
+      - native_nav_runtime
+    qos: reliable_volatile_keep_last_32
+    semantics: request_execution_of_identity_bound_rolling_map_segment
     port_bindings:
-      - owner: native_nav_runtime
-        port: navigation_state
+      - owner: native_explore_runtime
+        port: segment_request
         direction: out
         boundary: endpoint
-      - owner: persistent_cpp_navigation_client
-        port: navigation_state
+      - owner: native_nav_runtime
+        port: segment_request
         direction: in
-        boundary: native
-      - owner: host_bus
-        port: navigation_state
+        boundary: endpoint
+
+  /nav/exploration_segment/ack:
+    role: native_exploration_segment_ack
+    frame: map
+    schema: exploration_segment_ack
+    producer: native_nav_runtime
+    consumers:
+      - native_explore_runtime
+    qos: reliable_transient_local_keep_last_64
+    semantics: business_accept_or_reject_for_matching_segment_identity
+    port_bindings:
+      - owner: native_nav_runtime
+        port: segment_ack
+        direction: out
+        boundary: endpoint
+      - owner: native_explore_runtime
+        port: segment_ack
         direction: in
-        boundary: native
+        boundary: endpoint
+
+  /nav/exploration_segment/status:
+    role: native_exploration_segment_status
+    frame: map
+    schema: exploration_segment_status
+    producer: native_nav_runtime
+    consumers:
+      - native_explore_runtime
+    qos: reliable_transient_local_keep_last_64
+    semantics: request_correlated_identity_bound_segment_lifecycle
+    port_bindings:
+      - owner: native_nav_runtime
+        port: segment_status
+        direction: out
+        boundary: endpoint
+      - owner: native_explore_runtime
+        port: segment_status
+        direction: in
+        boundary: endpoint
 
   /tf:
     role: dynamic_frame_tree
@@ -383,6 +549,160 @@ topics:
         direction: in
         boundary: endpoint
 
+  /slam/map_observation:
+    role: synchronized_incremental_map_observation
+    frame: map
+    schema: map_observation
+    producer: native_slam_runtime
+    consumers:
+      - native_maps_runtime
+    qos: best_effort_volatile_keep_last_2
+    semantics: one_accepted_scan_with_exact_same_timestamp_map_sensor_pose_and_origin
+    real_equivalent_required: true
+    port_bindings:
+      - owner: native_slam_runtime
+        port: map_observation
+        direction: out
+        boundary: endpoint
+      - owner: native_maps_runtime
+        port: map_observation
+        direction: in
+        boundary: endpoint
+
+  /maps/state:
+    role: live_maps_runtime_state
+    frame: map
+    schema: map_runtime_state
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+      - diagnostics
+    qos: reliable_transient_local_keep_last_1
+    real_equivalent_required: true
+    port_bindings:
+      - owner: native_maps_runtime
+        port: state
+        direction: out
+        boundary: endpoint
+
+  /maps/live_cloud:
+    role: current_incremental_scan
+    frame: map
+    schema: map_cloud_layer
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+      - diagnostics
+    qos: best_effort_volatile_keep_last_1
+    port_bindings:
+      - owner: native_maps_runtime
+        port: live_cloud
+        direction: out
+        boundary: endpoint
+
+  /maps/voxel_cloud:
+    role: decaying_voxel_map
+    frame: map
+    schema: map_cloud_layer
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+      - diagnostics
+    qos: best_effort_volatile_keep_last_1
+    port_bindings:
+      - owner: native_maps_runtime
+        port: voxel_cloud
+        direction: out
+        boundary: endpoint
+
+  /maps/accumulated_cloud:
+    role: bounded_accumulated_map
+    frame: map
+    schema: map_cloud_layer
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+      - diagnostics
+    qos: best_effort_volatile_keep_last_1
+    port_bindings:
+      - owner: native_maps_runtime
+        port: accumulated_cloud
+        direction: out
+        boundary: endpoint
+
+  /maps/occupancy:
+    role: live_occupancy_grid
+    frame: map
+    schema: map_grid
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+      - exploration
+    qos: reliable_transient_local_keep_last_1
+    port_bindings:
+      - owner: native_maps_runtime
+        port: occupancy
+        direction: out
+        boundary: endpoint
+
+  /maps/elevation:
+    role: live_elevation_grid
+    frame: map
+    schema: map_grid
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+    qos: reliable_transient_local_keep_last_1
+    port_bindings:
+      - owner: native_maps_runtime
+        port: elevation
+        direction: out
+        boundary: endpoint
+
+  /maps/esdf:
+    role: live_distance_grid
+    frame: map
+    schema: map_grid
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+    qos: reliable_transient_local_keep_last_1
+    port_bindings:
+      - owner: native_maps_runtime
+        port: esdf
+        direction: out
+        boundary: endpoint
+
+  /maps/traversability:
+    role: maps_scene_traversability_grid
+    frame: map
+    schema: map_grid
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+    qos: reliable_transient_local_keep_last_1
+    semantics: visualization_and_query_only_not_nav_control_authority
+    port_bindings:
+      - owner: native_maps_runtime
+        port: traversability
+        direction: out
+        boundary: endpoint
+
+  /maps/scene:
+    role: coherent_live_map_scene
+    frame: map
+    schema: map_scene
+    producer: native_maps_runtime
+    consumers:
+      - gateway
+    qos: reliable_transient_local_keep_last_1
+    real_equivalent_required: true
+    port_bindings:
+      - owner: native_maps_runtime
+        port: scene
+        direction: out
+        boundary: endpoint
+
   /slam/map_cloud:
     role: live_map_cloud
     frame: map
@@ -414,6 +734,26 @@ topics:
         port: map_cloud
         direction: in
         boundary: module
+
+  /nav/state:
+    role: authoritative_navigation_state
+    frame: map
+    schema: navigation_state
+    producer: native_nav_runtime
+    consumers:
+      - host_bus
+    qos: reliable_transient_local_keep_last_1
+    semantics: compact_authoritative_navd_lifecycle_state
+    external_diagnostics_subscribable: true
+    port_bindings:
+      - owner: native_nav_runtime
+        port: navigation_state
+        direction: out
+        boundary: endpoint
+      - owner: host_bus
+        port: navigation_state
+        direction: in
+        boundary: native
 
   /slam/saved_map_cloud:
     role: saved_map_cloud
@@ -552,60 +892,35 @@ topics:
     role: global_path
     frame: map
     schema: path
-    producer: global_planner
+    producer: native_nav_runtime
     consumers:
-      - local_planner
-      - gateway
-      - native_nav_runtime
+      - host_bus
     port_bindings:
-      - owner: nav.mission
+      - owner: native_nav_runtime
         port: global_path
         direction: out
-        boundary: module
-      - owner: nav.local_planner
-        port: global_path
-        direction: in
-        boundary: module
-      - owner: GatewayModule
-        port: global_path
-        direction: in
-        boundary: module
-      - owner: endpoint_supervisor
-        port: global_path
-        direction: in
         boundary: endpoint
+      - owner: host_bus
+        port: global_path
+        direction: in
+        boundary: native
 
   /nav/local_path:
     role: local_path
     frame: map
     schema: path
-    producer: local_planner
+    producer: native_nav_runtime
     consumers:
-      - path_follower
-      - safety
-      - gateway
-      - native_nav_runtime
+      - host_bus
     port_bindings:
-      - owner: nav.local_planner
+      - owner: native_nav_runtime
         port: local_path
-        direction: out
-        boundary: module
-      - owner: nav.path_follower
-        port: local_path
-        direction: in
-        boundary: module
-      - owner: nav.safety
-        port: path
-        direction: in
-        boundary: module
-      - owner: GatewayModule
-        port: local_path
-        direction: in
-        boundary: module
-      - owner: endpoint_supervisor
-        port: local_path
-        direction: in
         boundary: endpoint
+        direction: out
+      - owner: host_bus
+        port: local_path
+        direction: in
+        boundary: native
 
   /nav/way_point:
     role: navigation_waypoint
@@ -633,7 +948,11 @@ topics:
     role: traversability_grid
     frame: map
     schema: occupancy_grid
-    producer: terrain
+    producer: traversability_runtime
+    field_producer: native_traversability_endpoint
+    module_dev_producer: nav.terrain
+    single_writer_per_product: true
+    semantics: control_risk_authority_distinct_from_maps_scene_traversability
     consumers:
       - local_planner
       - native_nav_runtime
@@ -658,7 +977,8 @@ topics:
     schema: occupancy_grid
     producer: native_traversability_endpoint
     consumers:
-      - gateway
+      - WavefrontFrontierExplorer
+      - TraversableFrontierModule
     qos: reliable_keep_last_2
     semantics: observed_free_occupied_and_unknown_frontier_input
     port_bindings:
@@ -674,7 +994,6 @@ topics:
     producer: native_traversability_endpoint
     consumers:
       - native_explore_endpoint
-      - gateway
     qos: reliable_keep_last_2
     semantics: rolling_occupancy_with_session_reset_epoch_and_generation
     port_bindings:
@@ -687,11 +1006,32 @@ topics:
         direction: in
         boundary: endpoint
 
+  /nav/exploration_execution_snapshot:
+    role: identity_bound_exploration_execution_snapshot
+    frame: map
+    schema: exploration_execution_snapshot
+    producer: native_traversability_endpoint
+    consumers:
+      - native_nav_runtime
+    qos: reliable_keep_last_2
+    semantics: atomic_rolling_occupancy_and_terrain_risk_with_session_reset_epoch_generation_and_live
+    port_bindings:
+      - owner: native_traversability_endpoint
+        port: execution_snapshot
+        direction: out
+        boundary: endpoint
+      - owner: native_nav_runtime
+        port: execution_snapshot
+        direction: in
+        boundary: endpoint
+
   /nav/cmd_vel:
-    role: velocity_command
+    role: final_velocity_command
     frame: body
-    schema: twist
+    schema: final_velocity_command
     producer: command_arbiter
+    single_writer_per_product: true
+    semantics: identity_bound_freshness_bounded_final_velocity_envelope
     consumers:
       - driver
       - safety_monitor

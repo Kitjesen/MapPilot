@@ -149,9 +149,17 @@ def build_gateway_app(gw: Any):
         if body.new_name:
             cmd["new_name"] = body.new_name
         try:
-            from gateway.services.map_service import map_service_command
+            from gateway.services.control_commands import ControlCommandService
+            from gateway.services.map_service import activate_runtime_map, map_service_command
 
-            resp = map_service_command(gw, cmd)
+            if action == "set_active":
+                resp = activate_runtime_map(
+                    gw,
+                    str(body.name or ""),
+                    ControlCommandService(gw).reload_navigation_map,
+                )
+            else:
+                resp = map_service_command(gw, cmd)
         except RuntimeError as exc:
             message = str(exc)
             return JSONResponse(
@@ -161,7 +169,7 @@ def build_gateway_app(gw: Any):
         if not resp.get("success"):
             message = str(resp.get("message") or "failed")
             return JSONResponse(
-                status_code=400,
+                status_code=409 if action == "set_active" else 400,
                 content=GatewayErrorResponse(
                     error=message,
                     message=message,

@@ -9,7 +9,6 @@ import os
 import pathlib
 import re
 import time
-from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -17,6 +16,8 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 
 from gateway.schemas import (
+    MapActivationMapIdentity,
+    MapActivationRestoreRequest,
     MapLifecycleResponse,
     MapListResponse,
     MapNameRequest,
@@ -26,7 +27,12 @@ from gateway.schemas import (
     PlanPreviewRequest,
 )
 from gateway.services.control_commands import ControlCommandService
-from gateway.services.map_service import artifact_path, map_service_command
+from gateway.services.map_service import (
+    activate_runtime_map,
+    artifact_path,
+    map_runtime_lock,
+    map_service_command,
+)
 from maps.paths import map_import_root, resolve_exchange_path
 from maps.services.storage import safe_map_name
 from runtime.runtime_interface import TOPICS, normalize_frame_id, topic_default_frame_id
@@ -302,6 +308,8 @@ def _planner_failure_summary(preview: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def map_lifecycle_payload(success: bool, **fields: Any) -> dict[str, Any]:
+    """Build the stable response envelope used by map lifecycle routes."""
+
     payload = {
         "schema_version": 1,
         "ok": bool(success),
@@ -347,6 +355,120 @@ def _map_service_command(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+def _runtime_map_identity(response: dict[str, Any]) -> dict[str, Any]:
+    """Project native map record fields into the Product switch token contract."""
+
+    record = response.get("record")
+    if not isinstance(record, dict):
+        raise RuntimeError("maps service response did not include a map record")
+    map_id = str(record.get("map_id") or response.get("active") or "").strip()
+    if not map_id:
+        raise RuntimeError("maps service response did not include a map id")
+    raw_scope = record.get("scope")
+    scope: dict[str, Any] = raw_scope if isinstance(raw_scope, dict) else {}
+    raw_metadata = record.get("metadata")
+    metadata: dict[str, Any] = raw_metadata if isinstance(raw_metadata, dict) else {}
+    identity: dict[str, Any] = {
+        "map_id": map_id,
+        "version": record.get("version"),
+        "version_id": record.get("version_id"),
+        "frame_id": scope.get("frame_id"),
+        "artifacts": [],
+    }
+    map_dir = str(scope.get("map_dir") or metadata.get("content_dir") or "").strip()
+    if map_dir:
+        identity["map_dir"] = map_dir
+    raw_artifacts = record.get("artifacts")
+    if not isinstance(raw_artifacts, list):
+        raise RuntimeError("maps service map record did not include an artifact inventory")
+    for artifact in raw_artifacts:
+        if not isinstance(artifact, dict):
+            raise RuntimeError("maps service map record included a malformed artifact identity")
+        identity["artifacts"].append(
+            {
+                "type": artifact.get("type"),
+                "uri": artifact.get("uri"),
+                "hash": artifact.get("hash") or artifact.get("sha256"),
+            }
+        )
+    try:
+        parsed = MapActivationMapIdentity.model_validate(identity)
+    except ValueError as exc:
+        raise RuntimeError(f"maps service map identity is incomplete: {exc}") from exc
+    return parsed.model_dump(exclude_none=True)
+
+
+def _restore_staged_map_pointer(
+    gw: Any,
+    *,
+    previous: str | None,
+    expected_previous_identity: dict[str, Any] | None,
+) -> tuple[bool, dict[str, Any]]:
+    """Restore and verify a pointer mutated before its staging token was built."""
+
+    command = {"action": "set_active", "name": previous} if previous else {"action": "clear_active"}
+    evidence: dict[str, Any] = {
+        "action": command["action"],
+        "previous_active": previous or None,
+        "command_success": False,
+        "verified": False,
+        "expected_previous_identity": expected_previous_identity,
+    }
+    try:
+        restore_response = _map_service_command(gw, command)
+    except HTTPException as exc:
+        evidence["message"] = str(exc.detail)
+        return False, evidence
+    except RuntimeError as exc:
+        evidence["message"] = str(exc)
+        return False, evidence
+    evidence["command_success"] = restore_response.get("success") is True
+    if restore_response.get("success") is not True:
+        evidence["reason_code"] = restore_response.get("reason_code")
+        evidence["message"] = str(restore_response.get("message") or "active-map restore command failed")
+        return False, evidence
+
+    try:
+        verification = _map_service_command(gw, {"action": "get_active"})
+    except HTTPException as exc:
+        evidence["message"] = str(exc.detail)
+        return False, evidence
+    except RuntimeError as exc:
+        evidence["message"] = str(exc)
+        return False, evidence
+
+    active = str(verification.get("active") or "").strip()
+    evidence["active"] = active or None
+    if previous:
+        if verification.get("success") is not True or active != previous:
+            evidence["message"] = (
+                f"active-map restore verification expected {previous}, active {active or 'none'}"
+            )
+            return False, evidence
+        try:
+            restored_identity = _runtime_map_identity(verification)
+        except RuntimeError as exc:
+            evidence["message"] = str(exc)
+            return False, evidence
+        identity_matches = restored_identity == expected_previous_identity
+        evidence["identity_matches"] = identity_matches
+        evidence["restored_identity"] = restored_identity
+        if not identity_matches:
+            evidence["message"] = "restored active-map identity did not match the pre-stage identity"
+            return False, evidence
+    else:
+        cleared = (
+            verification.get("success") is not True
+            and verification.get("reason_code") == "map_not_found"
+        ) or (verification.get("success") is True and not active)
+        if not cleared:
+            evidence["message"] = f"active-map clear verification found {active or 'an unknown map'}"
+            return False, evidence
+
+    evidence["verified"] = True
+    return True, evidence
+
+
 def _map_navigation_ready(item: dict[str, Any]) -> bool:
     if "navigation_ready" in item:
         return bool(item.get("navigation_ready"))
@@ -357,6 +479,8 @@ def _map_navigation_ready(item: dict[str, Any]) -> bool:
 
 
 def register_map_routes(app, gw) -> None:
+    """Register saved-map query and lifecycle routes on the Gateway app."""
+
     command_service = ControlCommandService(gw)
 
     @app.get(
@@ -900,121 +1024,421 @@ def register_map_routes(app, gw) -> None:
         err = safe_map_name(name)
         if err is not None:
             return _map_lifecycle_response(False, message=err, status_code=400)
-        session_mode = str(getattr(gw, "_session_mode", "") or "").strip().lower()
-        if session_mode in {"navigating", "exploring"}:
-            active_map = str(getattr(gw, "_session_map", "") or "").strip()
-            if not active_map or active_map != name:
-                return _map_lifecycle_response(
-                    False,
-                    status_code=409,
-                    name=name,
-                    active=active_map or None,
-                    message=(
-                        "Cross-map activation is blocked during an active navigation "
-                        "session; use the full runtime switch so localization and "
-                        "planning change maps together."
-                    ),
-                )
-            return _map_lifecycle_response(
-                True,
-                status_code=200,
-                name=name,
-                active=active_map,
-                message="Map is already active for the current navigation session.",
-            )
         try:
-            previous_resp = _map_service_command(gw, {"action": "get_active"})
-        except HTTPException as exc:
+            resp = activate_runtime_map(
+                gw,
+                name,
+                command_service.reload_navigation_map,
+            )
+        except RuntimeError as exc:
             return _map_lifecycle_response(
                 False,
-                message=str(exc.detail),
-                status_code=int(exc.status_code),
-            )
-        previous_active = str(previous_resp.get("active") or "").strip()
-        _clear_gateway_map_cloud(gw, "map_activation_begin")
-        try:
-            resp = _map_service_command(gw, {"action": "set_active", "name": name})
-        except HTTPException as exc:
-            return _map_lifecycle_response(
-                False,
-                message=str(exc.detail),
-                status_code=int(exc.status_code),
+                message=str(exc),
+                status_code=503,
             )
         ok = resp.get("success") is True
-        message = str(resp.get("message") or "")
-        if not ok and "not found" in message.lower():
+        reason = str(resp.get("reason_code") or "")
+        if not ok and reason == "map_not_found":
             status_code = 404
         elif not ok:
             status_code = 409
         else:
             status_code = 200
-            map_path = str(resp.get("octomap") or resp.get("occupancy") or resp.get("pcd") or "")
-            reload_planner_map = command_service.reload_navigation_map
-            try:
-                resp["planner_reload"] = reload_planner_map(map_path)
-            except Exception as exc:
-                logger.warning("planner map reload after activation failed: %s", exc)
-                resp["planner_reload"] = {
-                    "ok": False,
-                    "reason": "planner_reload_failed",
-                    "message": str(exc),
-                    "map_path": map_path,
-                }
-            planner_reload = resp.get("planner_reload")
-            if not isinstance(planner_reload, Mapping) or planner_reload.get("ok") is not True:
-                rollback: dict[str, Any] = {
-                    "success": previous_active == name,
-                    "skipped": previous_active == name,
-                    "previous_active": previous_active or None,
-                }
-                if previous_active and previous_active != name:
-                    try:
-                        rollback = _map_service_command(
-                            gw,
-                            {"action": "set_active", "name": previous_active},
-                        )
-                    except HTTPException as exc:
-                        rollback = {
-                            "success": False,
-                            "message": str(exc.detail),
-                            "previous_active": previous_active,
-                        }
-                map_rollback_ok = rollback.get("success") is True
-                if map_rollback_ok and previous_active:
-                    rollback_path = str(
-                        rollback.get("octomap") or rollback.get("occupancy") or rollback.get("pcd") or ""
-                    )
-                    if rollback_path:
-                        try:
-                            planner_rollback = reload_planner_map(rollback_path)
-                        except Exception as exc:
-                            planner_rollback = {
-                                "ok": False,
-                                "reason": "planner_rollback_failed",
-                                "message": str(exc),
-                                "map_path": rollback_path,
-                            }
-                    else:
-                        planner_rollback = {
-                            "ok": False,
-                            "reason": "planner_rollback_path_missing",
-                            "map_path": "",
-                        }
-                    rollback["planner_reload"] = planner_rollback
-                    rollback["success"] = bool(
-                        isinstance(planner_rollback, Mapping) and planner_rollback.get("ok") is True
-                    )
-                resp["rollback"] = rollback
-                resp["success"] = False
-                resp["message"] = (
-                    "planner map reload failed; active map was rolled back"
-                    if rollback.get("success") is True
-                    else "planner map reload failed and active-map rollback failed"
-                )
-                status_code = 409
+        transaction = resp.get("transaction")
+        transaction_state = str(transaction.get("state") or "") if isinstance(transaction, dict) else ""
+        if transaction_state not in {"", "rejected"} and resp.get("unchanged") is not True:
             _clear_gateway_map_cloud(gw, "map_activation")
             resp["live_cloud_reset"] = True
         return _map_service_lifecycle_response(resp, status_code=status_code)
+
+    @app.post(
+        "/api/v1/map/stage-for-runtime-switch",
+        summary="Stage a saved map for a fail-closed full runtime switch",
+        response_model=MapLifecycleResponse,
+        responses={
+            400: {"model": MapLifecycleResponse},
+            409: {"model": MapLifecycleResponse},
+            503: {"model": MapLifecycleResponse},
+        },
+    )
+    async def stage_map_for_runtime_switch(body: MapNameRequest):
+        """Stage the pointer only; the Launcher must restart map consumers."""
+        payload = _body_mapping(body)
+        name = str(payload.get("name") or "").strip()
+        err = safe_map_name(name)
+        if err is not None:
+            return _map_lifecycle_response(False, message=err, status_code=400)
+        session_mode = str(getattr(gw, "_session_mode", "") or "").strip().lower()
+        if session_mode in {"navigating", "exploring"}:
+            return _map_service_lifecycle_response(
+                {
+                    "success": False,
+                    "reason_code": "motion_session_active",
+                    "message": "Stop the motion session before staging a runtime map switch.",
+                },
+                status_code=409,
+                name=name,
+            )
+        target_identity: dict[str, Any] | None = None
+        previous_identity: dict[str, Any] | None = None
+        try:
+            with map_runtime_lock():
+                session_mode = str(getattr(gw, "_session_mode", "") or "").strip().lower()
+                session_pending = bool(getattr(gw, "_session_pending", False))
+                if session_mode in {"navigating", "exploring"} or session_pending:
+                    return _map_service_lifecycle_response(
+                        {
+                            "success": False,
+                            "reason_code": (
+                                "session_transition_in_progress" if session_pending else "motion_session_active"
+                            ),
+                            "message": "Stop the motion session and wait for transitions before staging a map.",
+                        },
+                        status_code=409,
+                        name=name,
+                    )
+                previous_response = _map_service_command(gw, {"action": "get_active"})
+                no_previous = (
+                    previous_response.get("success") is not True
+                    and previous_response.get("reason_code") == "map_not_found"
+                )
+                if previous_response.get("success") is not True and not no_previous:
+                    return _map_service_lifecycle_response(
+                        {
+                            "success": False,
+                            "reason_code": "active_map_query_failed",
+                            "message": str(previous_response.get("message") or "failed to read active map"),
+                        },
+                        status_code=503,
+                        name=name,
+                    )
+                previous = "" if no_previous else str(previous_response.get("active") or "").strip()
+                if previous:
+                    try:
+                        previous_identity = _runtime_map_identity(previous_response)
+                        if previous_identity["map_id"] != previous:
+                            raise RuntimeError("active-map name and record identity did not match")
+                    except RuntimeError as exc:
+                        return _map_service_lifecycle_response(
+                            {
+                                "success": False,
+                                "reason_code": "map_identity_unavailable",
+                                "message": str(exc),
+                                "transaction": {
+                                    "operation": "stage_map_for_runtime_switch",
+                                    "state": "rejected",
+                                    "previous_active": previous,
+                                    "target_map": name,
+                                    "runtime_consistent": True,
+                                    "restart_required": False,
+                                },
+                            },
+                            status_code=503,
+                            name=name,
+                        )
+                if previous == name:
+                    resp = dict(previous_response)
+                    resp["unchanged"] = True
+                    target_identity = previous_identity
+                else:
+                    resp = _map_service_command(gw, {"action": "set_active", "name": name})
+                    if resp.get("success") is True:
+                        try:
+                            target_identity = _runtime_map_identity(resp)
+                            if target_identity["map_id"] != name:
+                                raise RuntimeError("staged map name and record identity did not match")
+                        except RuntimeError as exc:
+                            rollback_ok, rollback = _restore_staged_map_pointer(
+                                gw,
+                                previous=previous or None,
+                                expected_previous_identity=previous_identity,
+                            )
+                            reason_code = "map_identity_unavailable" if rollback_ok else "map_stage_rollback_failed"
+                            message = str(exc)
+                            if not rollback_ok:
+                                message = f"{message}; rollback failed: {rollback.get('message') or 'unknown error'}"
+                            return _map_service_lifecycle_response(
+                                {
+                                    "success": False,
+                                    "reason_code": reason_code,
+                                    "message": message,
+                                    "transaction": {
+                                        "operation": "stage_map_for_runtime_switch",
+                                        "state": "rolled_back" if rollback_ok else "rollback_failed",
+                                        "previous_active": previous or None,
+                                        "target_map": name,
+                                        "runtime_consistent": rollback_ok,
+                                        "restart_required": not rollback_ok,
+                                        "rollback": rollback,
+                                    },
+                                },
+                                status_code=503 if rollback_ok else 409,
+                                name=name,
+                            )
+        except RuntimeError as exc:
+            return _map_lifecycle_response(False, message=str(exc), status_code=503)
+        ok = resp.get("success") is True
+        if ok:
+            if target_identity is None:
+                return _map_lifecycle_response(
+                    False,
+                    reason_code="map_identity_unavailable",
+                    message="staged map identity was not captured",
+                    status_code=503,
+                )
+            resp["activation_token"] = {
+                "schema_version": "lingtu.map_activation.v1",
+                "changed": previous != name,
+                "target": target_identity,
+                "previous": previous_identity,
+            }
+        resp["transaction"] = {
+            "operation": "stage_map_for_runtime_switch",
+            "state": "staged" if ok else "rejected",
+            "previous_active": previous or None,
+            "target_map": name,
+            "runtime_consistent": False,
+            "restart_required": True,
+        }
+        status_code = 200 if ok else (404 if "not found" in str(resp.get("message") or "").lower() else 409)
+        return _map_service_lifecycle_response(resp, status_code=status_code, name=name)
+
+    @app.post(
+        "/api/v1/map/restore-staged-runtime-switch",
+        summary="Restore the exact active-map pointer prepared by a failed Product switch",
+        response_model=MapLifecycleResponse,
+        responses={
+            400: {"model": MapLifecycleResponse},
+            409: {"model": MapLifecycleResponse},
+            503: {"model": MapLifecycleResponse},
+        },
+    )
+    async def restore_staged_map_for_runtime_switch(body: MapActivationRestoreRequest):
+        token = body.activation_token
+        token_payload = token.model_dump(exclude_none=True)
+        target_identity = dict(token_payload["target"])
+        previous_payload = token_payload.get("previous")
+        previous_identity = dict(previous_payload) if isinstance(previous_payload, dict) else None
+        target = str(target_identity["map_id"])
+        previous = str(previous_identity["map_id"]) if previous_identity is not None else ""
+        target_error = safe_map_name(target)
+        previous_error = safe_map_name(previous) if previous else None
+        if target_error is not None or previous_error is not None:
+            return _map_lifecycle_response(
+                False,
+                message=target_error or previous_error,
+                status_code=400,
+            )
+        session_mode = str(getattr(gw, "_session_mode", "") or "").strip().lower()
+        if session_mode in {"navigating", "exploring"} or bool(getattr(gw, "_session_pending", False)):
+            return _map_service_lifecycle_response(
+                {
+                    "success": False,
+                    "reason_code": "motion_session_active",
+                    "message": "Stop the motion session before restoring a staged map switch.",
+                },
+                status_code=409,
+            )
+        base_transaction = {
+            "operation": "restore_staged_map_for_runtime_switch",
+            "target_map": target,
+            "previous_active": previous or None,
+            "target_identity": target_identity,
+            "previous_identity": previous_identity,
+            "changed": token.changed,
+            "verified": False,
+        }
+
+        def fail(
+            reason_code: str,
+            message: str,
+            *,
+            state: str = "rejected",
+            status_code: int = 409,
+            **evidence: Any,
+        ) -> JSONResponse:
+            return _map_service_lifecycle_response(
+                {
+                    "success": False,
+                    "reason_code": reason_code,
+                    "message": message,
+                    **evidence,
+                    "transaction": {**base_transaction, "state": state},
+                },
+                status_code=status_code,
+            )
+
+        mutation_attempted = False
+        try:
+            with map_runtime_lock():
+                current_response = _map_service_command(gw, {"action": "get_active"})
+                current = str(current_response.get("active") or "").strip()
+                if current_response.get("success") is not True:
+                    return fail(
+                        "staged_map_identity_changed",
+                        f"The staged target is no longer active: expected {target}, active {current or 'none'}.",
+                        active=current or None,
+                        pointer_mutated=False,
+                    )
+                try:
+                    current_identity = _runtime_map_identity(current_response)
+                except RuntimeError as exc:
+                    return fail(
+                        "staged_map_identity_unavailable",
+                        str(exc),
+                        status_code=503,
+                        active=current or None,
+                        pointer_mutated=False,
+                    )
+                if current_identity != target_identity:
+                    return fail(
+                        "staged_map_identity_changed",
+                        "The active map no longer has the exact staged Product switch target identity.",
+                        active=current or None,
+                        active_identity=current_identity,
+                        expected_identity=target_identity,
+                        pointer_mutated=False,
+                    )
+
+                if previous_identity is not None:
+                    previous_response = _map_service_command(
+                        gw,
+                        {"action": "get_record", "name": previous},
+                    )
+                    if previous_response.get("success") is not True:
+                        return fail(
+                            "previous_map_identity_unavailable",
+                            str(previous_response.get("message") or "previous map identity is unavailable"),
+                            exact_version_restore_available=False,
+                            pointer_mutated=False,
+                        )
+                    try:
+                        current_previous_identity = _runtime_map_identity(previous_response)
+                    except RuntimeError as exc:
+                        return fail(
+                            "previous_map_identity_unavailable",
+                            str(exc),
+                            exact_version_restore_available=False,
+                            pointer_mutated=False,
+                        )
+                    if current_previous_identity != previous_identity:
+                        return fail(
+                            "previous_map_identity_changed",
+                            "The previous map's current version or artifacts no longer match the activation token.",
+                            expected_identity=previous_identity,
+                            current_identity=current_previous_identity,
+                            exact_version_restore_available=False,
+                            pointer_mutated=False,
+                        )
+
+                if token.changed:
+                    command = (
+                        {"action": "set_active", "name": previous}
+                        if previous
+                        else {"action": "clear_active"}
+                    )
+                    mutation_attempted = True
+                    restore_response = _map_service_command(gw, command)
+                    if restore_response.get("success") is not True:
+                        return fail(
+                            "map_restore_command_failed",
+                            str(restore_response.get("message") or "active-map restore command failed"),
+                            state="rollback_failed",
+                            service_reason_code=restore_response.get("reason_code"),
+                            pointer_mutated=True,
+                        )
+
+                verification = _map_service_command(gw, {"action": "get_active"})
+        except (HTTPException, RuntimeError) as exc:
+            detail = exc.detail if isinstance(exc, HTTPException) else str(exc)
+            return fail(
+                "map_restore_service_unavailable",
+                str(detail),
+                state="rollback_failed" if mutation_attempted else "rejected",
+                status_code=503,
+                pointer_mutated=mutation_attempted,
+            )
+
+        restored_identity: dict[str, Any] | None = None
+        if previous_identity is None:
+            verified = (
+                verification.get("success") is not True
+                and verification.get("reason_code") == "map_not_found"
+            ) or (
+                verification.get("success") is True
+                and not str(verification.get("active") or "").strip()
+            )
+        else:
+            verified = verification.get("success") is True
+            if verified:
+                try:
+                    restored_identity = _runtime_map_identity(verification)
+                except RuntimeError:
+                    verified = False
+            verified = verified and restored_identity == previous_identity
+        if not verified:
+            return fail(
+                "map_restore_verification_failed",
+                "The active-map pointer did not restore to the exact prepared previous identity.",
+                state="rollback_failed" if mutation_attempted else "rejected",
+                active=str(verification.get("active") or "").strip() or None,
+                restored_identity=restored_identity,
+                pointer_mutated=mutation_attempted,
+            )
+        return _map_service_lifecycle_response(
+            {
+                "success": True,
+                "active": previous or "",
+                "unchanged": not token.changed,
+                "restored_identity": restored_identity,
+                "transaction": {**base_transaction, "state": "rolled_back", "verified": True},
+            },
+            status_code=200,
+        )
+
+    @app.post(
+        "/api/v1/map/commit-staged-runtime-switch",
+        summary="Verify the staged map identity before committing the active Product",
+        response_model=MapLifecycleResponse,
+        responses={409: {"model": MapLifecycleResponse}, 503: {"model": MapLifecycleResponse}},
+    )
+    async def commit_staged_map_for_runtime_switch(body: MapNameRequest):
+        payload = _body_mapping(body)
+        target = str(payload.get("name") or "").strip()
+        err = safe_map_name(target)
+        if err is not None:
+            return _map_lifecycle_response(False, message=err, status_code=400)
+        try:
+            with map_runtime_lock():
+                active_response = _map_service_command(gw, {"action": "get_active"})
+                active = str(active_response.get("active") or "").strip()
+                if active_response.get("success") is not True or active != target:
+                    return _map_service_lifecycle_response(
+                        {
+                            "success": False,
+                            "reason_code": "staged_map_identity_changed",
+                            "message": f"Expected staged map {target}, active {active or 'none'}.",
+                            "active": active or None,
+                        },
+                        status_code=409,
+                    )
+                active_identity = _runtime_map_identity(active_response)
+        except RuntimeError as exc:
+            return _map_lifecycle_response(False, message=str(exc), status_code=503)
+        return _map_service_lifecycle_response(
+            {
+                "success": True,
+                "active": target,
+                "active_identity": active_identity,
+                "transaction": {
+                    "operation": "commit_staged_map_for_runtime_switch",
+                    "state": "commit_verified",
+                    "target_map": target,
+                    "verified": True,
+                },
+            },
+            status_code=200,
+        )
 
     @app.post(
         "/api/v1/map/rename",
@@ -1246,10 +1670,32 @@ def register_map_routes(app, gw) -> None:
                 message="version must be a positive integer",
                 status_code=400,
             )
-        resp = _map_service_command(
-            gw,
-            {"action": "rollback_map_version", "name": name, "version": version},
-        )
+        with map_runtime_lock():
+            active_response = _map_service_command(gw, {"action": "get_active"})
+            if active_response.get("success") is not True:
+                return _map_lifecycle_response(
+                    False,
+                    status_code=409,
+                    reason_code="active_map_query_failed",
+                    message=str(active_response.get("message") or "Failed to read active map."),
+                )
+            active_map = str(active_response.get("active") or "").strip()
+            if active_map == name:
+                return _map_lifecycle_response(
+                    False,
+                    status_code=409,
+                    name=name,
+                    active=active_map,
+                    reason_code="active_map_version_transaction_required",
+                    message=(
+                        "The active map version cannot change independently of localization "
+                        "and planning; activate another map first or use a full runtime transaction."
+                    ),
+                )
+            resp = _map_service_command(
+                gw,
+                {"action": "rollback_map_version", "name": name, "version": version},
+            )
         return _map_service_lifecycle_response(
             resp,
             status_code=200 if resp.get("success") is True else 409,

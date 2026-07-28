@@ -464,6 +464,31 @@ struct InspectionCommandAck {
   string run_id;
 };
 
+// Product task ingress. This stays separate from the v1 command pair so an
+// existing @final wire layout is never reinterpreted. task_id identifies one
+// durable user-visible lifecycle; request_id identifies one retryable call.
+@final
+struct InspectionTaskRequest {
+  Header header;
+  string task_id;
+  string request_id;
+  long kind;
+  string route_id;
+  unsigned long long route_revision;
+  string reason;
+};
+
+@final
+struct InspectionTaskAck {
+  Header header;
+  string task_id;
+  string request_id;
+  long kind;
+  boolean accepted;
+  string reason;
+  string run_id;
+};
+
 @final
 struct InspectionEvidenceRequest {
   Header header;
@@ -507,6 +532,33 @@ struct InspectionStatus {
   double phase_started_at;
   double stable_since;
   double deadline;
+  string reason;
+};
+
+// Additive task-fact stream. InspectionCommandRequest/InspectionStatus remain
+// v1 compatibility surfaces; do not extend their @final wire layouts.
+@final
+struct InspectionTaskEvent {
+  Header header;
+  string boot_id;
+  unsigned long long event_sequence;
+  long kind;
+  string task_id;
+  string request_id;
+  string command_request_id;
+  long state;
+  string map_id;
+  long long map_version;
+  string route_id;
+  unsigned long long route_revision;
+  unsigned long point_index;
+  unsigned long point_count;
+  unsigned long loop_index;
+  unsigned long retry_count;
+  string point_id;
+  string action;
+  string action_request_id;
+  string evidence_id;
   string reason;
 };
 

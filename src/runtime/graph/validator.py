@@ -25,6 +25,22 @@ PRODUCT_SWITCH_POLICIES = frozenset({"cold_restart", "hot_switch"})
 PRODUCT_SESSION_MODES = frozenset({"none", "mapping", "navigating", "exploring"})
 PRODUCT_SLAM_MODES = frozenset({"none", "mapping", "localization"})
 PRODUCT_CONTROL_MODES = frozenset({"teleop", "teleop_avoid", "autonomy"})
+OPERATOR_MOTION_TOPICS = frozenset(
+    {
+        TOPICS.operator_motion_control,
+        TOPICS.operator_motion_sample,
+        TOPICS.operator_motion_ack,
+        TOPICS.operator_motion_status,
+    }
+)
+OPERATOR_MOTION_CAPABILITIES = frozenset(
+    {
+        "operator_motion_typed_dds_interface",
+        "native_operator_motion_authority",
+    }
+)
+OPERATOR_MOTION_CRITICAL_MODULES = frozenset({"nav.commands", "GatewayModule"})
+PYTHON_MOTION_AUTHORITY_MODULES = frozenset({"TeleopModule", "nav.velocity_mux"})
 
 
 @dataclass(frozen=True)
@@ -116,6 +132,8 @@ def _validate_product(
                     scope=f"product:{name}",
                 )
             )
+    issues.extend(_validate_operator_motion_contract(name, product, required))
+    issues.extend(_validate_native_final_writer_contract(name, product))
     if product.get("operator_switchable") is True:
         for field in PRODUCT_MODE_REQUIRED_FIELDS:
             if field not in product or product.get(field) in (None, ""):
@@ -158,6 +176,95 @@ def _validate_product(
     return issues
 
 
+def _validate_operator_motion_contract(
+    name: str,
+    product: dict[str, Any],
+    required_topics: tuple[str, ...],
+) -> list[RuntimeGraphIssue]:
+    """Require the typed motion boundary when native mode permits operators.
+
+    The requirement is derived from ``native_nav`` policy rather than from a
+    capability flag, so deleting the capability cannot make the validation
+    requirement disappear.
+    """
+
+    native_nav = product.get("native_nav")
+    if not isinstance(native_nav, dict):
+        return []
+
+    control_mode = str(native_nav.get("control_mode") or "").strip()
+    allow_takeover = native_nav.get("allow_teleop_takeover") is True
+    requires_operator_motion = control_mode in {"teleop", "teleop_avoid"} or (
+        control_mode == "autonomy" and allow_takeover
+    )
+    if not requires_operator_motion:
+        return []
+
+    issues: list[RuntimeGraphIssue] = []
+    topics = set(required_topics)
+    missing_topics = sorted(OPERATOR_MOTION_TOPICS - topics)
+    if missing_topics:
+        issues.append(
+            _issue(
+                "product_operator_motion_boundary_incomplete",
+                f"product {name} permits operator motion but misses topics: {', '.join(missing_topics)}",
+                scope=f"product:{name}",
+            )
+        )
+
+    capabilities = set(_string_tuple(product.get("required_capabilities")))
+    missing_capabilities = sorted(OPERATOR_MOTION_CAPABILITIES - capabilities)
+    if missing_capabilities:
+        issues.append(
+            _issue(
+                "product_operator_motion_capability_missing",
+                f"product {name} permits operator motion but misses capabilities: {', '.join(missing_capabilities)}",
+                scope=f"product:{name}",
+            )
+        )
+
+    # Products with a managed Host expose operator motion through the Host's
+    # typed native client and WebSocket adapter.  Those adapters must be
+    # startup-critical; otherwise the Product can report ready while its
+    # declared operator-motion ingress is absent.
+    processes = set(_string_tuple(product.get("processes")))
+    if "host" in processes:
+        critical_modules = set(_string_tuple(product.get("critical_modules")))
+        missing_modules = sorted(OPERATOR_MOTION_CRITICAL_MODULES - critical_modules)
+        if missing_modules:
+            issues.append(
+                _issue(
+                    "product_operator_motion_critical_adapter_missing",
+                    f"product {name} permits Host operator motion but misses critical modules: "
+                    f"{', '.join(missing_modules)}",
+                    scope=f"product:{name}",
+                )
+            )
+    return issues
+
+
+def _validate_native_final_writer_contract(
+    name: str,
+    product: dict[str, Any],
+) -> list[RuntimeGraphIssue]:
+    capabilities = set(_string_tuple(product.get("required_capabilities")))
+    if "final_cmd_vel_single_writer" not in capabilities:
+        return []
+
+    forbidden_modules = set(_string_tuple(product.get("forbidden_modules")))
+    missing = sorted(PYTHON_MOTION_AUTHORITY_MODULES - forbidden_modules)
+    if not missing:
+        return []
+    return [
+        _issue(
+            "product_python_motion_authority_not_forbidden",
+            f"native final-writer product {name} must forbid Python motion authorities: "
+            f"{', '.join(missing)}",
+            scope=f"product:{name}",
+        )
+    ]
+
+
 def _validate_field_product_topic_closure(graph: RuntimeGraph) -> list[RuntimeGraphIssue]:
     endpoint = graph.endpoints.get("thunder_field")
     if endpoint is None:
@@ -178,7 +285,7 @@ def _validate_field_product_topic_closure(graph: RuntimeGraph) -> list[RuntimeGr
 
 
 def _validate_field_product_process_closure(graph: RuntimeGraph) -> list[RuntimeGraphIssue]:
-    from .plan import build_runtime_plan
+    from .processes import resolve_processes
 
     endpoint = graph.endpoints.get("thunder_field")
     if endpoint is None:
@@ -199,11 +306,11 @@ def _validate_field_product_process_closure(graph: RuntimeGraph) -> list[Runtime
             )
             continue
         try:
-            build_runtime_plan(name, "thunder_field", graph=graph)
+            resolve_processes(name, "thunder_field", graph=graph)
         except ValueError as exc:
             issues.append(
                 _issue(
-                    "runtime_plan_invalid",
+                    "product_processes_invalid",
                     str(exc),
                     scope=f"product:{name}@thunder_field",
                 )
@@ -254,6 +361,16 @@ def _validate_product_mode_semantics(
     control_mode = str(product.get("native_control_mode") or "")
     requires_map = bool(product.get("requires_map", False))
     processes = set(_string_tuple(product.get("processes")))
+    native_nav = product.get("native_nav") or {}
+    if not isinstance(native_nav, dict):
+        issues.append(
+            _issue(
+                "product_native_nav_invalid",
+                f"product {name} native_nav must be a mapping",
+                scope=f"product:{name}",
+            )
+        )
+        native_nav = {}
 
     for field, value, allowed in (
         ("session_mode", session_mode, PRODUCT_SESSION_MODES),
@@ -278,7 +395,10 @@ def _validate_product_mode_semantics(
             )
         )
 
-    expected_processes = {"nav", "driver", "runtime"}
+    # Product process names are the stable Launcher-facing roles declared by
+    # the Runtime Graph.  The Python application role is ``host``; ``runtime``
+    # is an architecture/package name and is not a deployable process target.
+    expected_processes = {"nav", "driver", "host"}
     if slam_mode != "none":
         expected_processes.update(("lidar", "slam"))
     if "local_planner_collision_and_traversability_scoring" in capabilities:
@@ -308,7 +428,33 @@ def _validate_product_mode_semantics(
         )
 
     local_planner = "local_planner_collision_and_traversability_scoring" in capabilities
+    if control_mode in PRODUCT_CONTROL_MODES:
+        native_control_mode = str(native_nav.get("control_mode") or "").strip()
+        if native_control_mode != control_mode:
+            issues.append(
+                _issue(
+                    "product_native_control_mode_mismatch",
+                    f"product {name} native_nav.control_mode must be {control_mode!r}",
+                    scope=f"product:{name}",
+                )
+            )
     if local_planner:
+        if native_nav.get("check_obstacle") is not True:
+            issues.append(
+                _issue(
+                    "product_native_obstacle_check_missing",
+                    f"product {name} must explicitly enable native obstacle checks",
+                    scope=f"product:{name}",
+                )
+            )
+        if native_nav.get("use_traversability_cost") is not True:
+            issues.append(
+                _issue(
+                    "product_native_traversability_check_missing",
+                    f"product {name} must explicitly enable native traversability checks",
+                    scope=f"product:{name}",
+                )
+            )
         planner_topics = {
             TOPICS.registered_cloud,
             TOPICS.traversability,
@@ -323,6 +469,15 @@ def _validate_product_mode_semantics(
                     scope=f"product:{name}",
                 )
             )
+
+    if "operator_assisted_local_planner_control" in capabilities and native_nav.get("teleop_local_planner") is not True:
+        issues.append(
+            _issue(
+                "product_native_teleop_local_planner_missing",
+                f"product {name} must explicitly enable the native teleop local planner",
+                scope=f"product:{name}",
+            )
+        )
 
     if "final_cmd_vel_single_writer" not in capabilities:
         issues.append(
@@ -352,19 +507,19 @@ def _validate_endpoint(
         )
     process_control = str(endpoint.get("process_control") or "").strip()
     process_definitions = endpoint.get("processes")
-    if process_control == "runtime_plan" and process_definitions is None:
+    if process_control == "launcher" and process_definitions is None:
         issues.append(
             _issue(
                 "endpoint_process_mapping_missing",
-                f"RuntimePlan-managed endpoint {name} must declare processes",
+                f"Launcher-managed endpoint {name} must declare processes",
                 scope=f"endpoint:{name}",
             )
         )
-    if process_definitions is not None and process_control != "runtime_plan":
+    if process_definitions is not None and process_control != "launcher":
         issues.append(
             _issue(
                 "endpoint_process_control_invalid",
-                f"endpoint {name} declares processes but is not RuntimePlan-managed",
+                f"endpoint {name} declares processes but is not Launcher-managed",
                 scope=f"endpoint:{name}",
             )
         )

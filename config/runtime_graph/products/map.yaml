@@ -14,32 +14,58 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+native_nav:
+  control_mode: teleop
+  publish_cmd_vel: true
+  check_obstacle: false
+  use_traversability_cost: false
+  allow_teleop_takeover: false
+  teleop_local_planner: false
 processes:
   - lidar
   - slam
+  - maps
   - nav
   - driver
-  - runtime
+  - camera
+  - host
+critical_modules:
+  - host.bus
+  - camera
+  - nav.commands
+  - GatewayModule
 required_topics:
   - /lidar/raw_frame
   - /imu/raw
   - /slam/odometry
   - /slam/registered_cloud
+  - /slam/map_observation
   - /slam/map_cloud
   - /slam/saved_map_cloud
   - /slam/localization_health
+  - /maps/state
+  - /maps/scene
   - /nav/command/request
   - /nav/command/ack
+  - /nav/state
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
   - /nav/cmd_vel
 required_capabilities:
   - native_slam_mapping
   - map_artifact_save
   - map_pcd_to_octomap_artifact
   - teleop
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
   - command_staleness_gate
   - velocity_limit
   - final_cmd_vel_single_writer
 forbidden_modules:
+  - TeleopModule
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.mission
   - nav.local_planner
@@ -51,5 +77,8 @@ forbidden_claims:
 target_chain:
   - Livox DDS publishes /lidar/raw_frame and /imu/raw.
   - Fast-LIO2 native SLAM publishes /slam/odometry, /slam/registered_cloud, and /slam/map_cloud.
-  - Native command endpoint accepts gated operator velocity requests while mapping and remains the sole writer of /nav/cmd_vel.
+  - The native camera service publishes RGB-D frames through POSIX SHM; the Host camera adapter feeds the Gateway JPEG fallback without owning the device.
+  - Operator clients use /nav/operator_motion/control for claim, hold, and release; matching /nav/operator_motion/ack proves only native authority admission, while fresh /nav/operator_motion/sample is submitted-only with no per-sample completion ACK.
+  - /nav/operator_motion/status separates authority/input-gate/output evidence from final logical /nav/cmd_vel; physical driver execution still requires separate evidence.
+  - Native command endpoint accepts gated operator motion while mapping and remains the sole writer of /nav/cmd_vel.
   - Gateway/MapService saves map.pcd and builds metadata plus octomap.ot for later navigation.

@@ -5,7 +5,7 @@ runtime data plane and must not start sensors, SLAM, navigation, or drivers.
 """
 
 from .loader import RuntimeGraph, load_runtime_graph
-from .plan import RuntimePlan, RuntimeProcess, build_runtime_plan
+from .processes import ProcessSpec, resolve_processes
 from .render import render_endpoint_mermaid, render_product_markdown
 from .validator import (
     RuntimeGraphIssue,
@@ -14,14 +14,13 @@ from .validator import (
 )
 
 __all__ = [
+    "ProcessSpec",
     "RuntimeGraph",
     "RuntimeGraphIssue",
-    "RuntimePlan",
-    "RuntimeProcess",
     "assert_runtime_graph_valid",
-    "build_runtime_plan",
     "load_runtime_graph",
     "render_endpoint_mermaid",
     "render_product_markdown",
+    "resolve_processes",
     "validate_runtime_graph",
 ]

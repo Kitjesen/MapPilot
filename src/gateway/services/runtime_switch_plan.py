@@ -12,6 +12,7 @@ from runtime.profiles.product_mode_contracts import (
     PRODUCT_MODE_CONTRACTS,
     product_mode_switch_plan,
 )
+from runtime.profiles.native_nav_config import native_nav_profile_config
 from runtime.profiles.resolver import canonical_profile_name, resolve_profile_config
 from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
 
@@ -160,14 +161,22 @@ def build_runtime_switch_plan(request: Any = None) -> dict[str, Any]:
                 target_config,
                 endpoint=target_spec.endpoint,
             )
+            native_nav_config = native_nav_profile_config(
+                str(inputs["target_profile"]),
+                {
+                    **target_config,
+                    "native_control_mode": target_product.native_nav.get(
+                        "control_mode",
+                        target_product.as_dict().get("native_control_mode"),
+                    ),
+                    "native_nav": target_product.native_nav,
+                },
+            ).as_dict()
             product_switch = product_mode_switch_plan(
                 str(inputs["current_profile"]),
                 str(inputs["target_profile"]),
-                runtime_plan=(
-                    target_product.plan.as_dict()
-                    if target_product.plan is not None
-                    else None
-                ),
+                product=target_product.as_dict(),
+                native_nav_config=native_nav_config,
             )
         base.update(
             {

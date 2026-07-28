@@ -13,22 +13,44 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+native_nav:
+  control_mode: teleop_avoid
+  publish_cmd_vel: true
+  check_obstacle: true
+  use_traversability_cost: true
+  allow_teleop_takeover: false
+  teleop_local_planner: true
 processes:
   - lidar
   - slam
+  - maps
   - traversability
   - nav
   - driver
-  - runtime
+  - host
+critical_modules:
+  - host.bus
+  - SlamAdapterModule
+  - maps.service
+  - nav.commands
+  - GatewayModule
 required_topics:
-  # Operator intent input. This is intentionally separate from /nav/cmd_vel
-  # because /nav/cmd_vel is the final post-safety command output.
+  # Generic endpoint control remains separate from typed operator motion.
   - /nav/command/request
   - /nav/command/ack
+  - /nav/state
+  # Operator authority and fresh body-frame intent.
+  - /nav/operator_motion/control
+  - /nav/operator_motion/sample
+  - /nav/operator_motion/ack
+  - /nav/operator_motion/status
   # Native localization and live obstacle context.
   - /slam/odometry
   - /slam/registered_cloud
+  - /slam/map_observation
   - /slam/localization_health
+  - /maps/state
+  - /maps/scene
   - /nav/traversability
   - /nav/local_path
   - /nav/way_point
@@ -36,6 +58,8 @@ required_topics:
   - /nav/cmd_vel
 required_capabilities:
   - teleop
+  - operator_motion_typed_dds_interface
+  - native_operator_motion_authority
   - localization_health_gate
   - registered_cloud_collision_check
   - traversability_costmap
@@ -45,6 +69,8 @@ required_capabilities:
   - final_cmd_vel_single_writer
   - cmd_vel_arbitration
 forbidden_modules:
+  - TeleopModule
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.mission
   - nav.local_planner
@@ -59,8 +85,11 @@ transport_rules:
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
 target_chain:
-  - Gateway/TeleopModule sends a typed operator velocity request through /nav/command/request and waits for endpoint acceptance on /nav/command/ack.
+  - Gateway WebSocket and native test/SDK adapters claim, hold, or release authority through /nav/operator_motion/control; matching /nav/operator_motion/ack proves only that native control action. A future movement-board ingress adapter must implement this same typed contract; no physical movement-board ingress is claimed today.
+  - accepted_sequence proves the endpoint accepted the exact source command; final_output_sequence is authoritative only for hold/release and proves publication of the endpoint's final logical zero, not Driver or Brainstem execution.
+  - Fresh body-frame intent uses /nav/operator_motion/sample; adapter or WebSocket success is submitted-only and does not confirm native output or motor execution.
   - Native command endpoint runs in control_mode=teleop_avoid, rejects autonomous goals/paths, and interprets joystick translation as a short-horizon body-frame intent.
-  - It reads the accepted velocity request in memory plus /slam/odometry, /slam/registered_cloud, and /nav/traversability.
+  - It reads the admitted sample in memory plus /slam/odometry, /slam/registered_cloud, and /nav/traversability.
   - Native LocalPlanner selects a detour within the configured direction deviation and PathFollower produces a pre-safety command; no-path has no recovery motion and becomes zero.
-  - The endpoint checks the curved local path again, publishes /nav/local_path and /nav/way_point telemetry, and remains the sole writer of final body-frame Twist to /nav/cmd_vel.
+  - /nav/operator_motion/status exposes authority, input-gate, teleop-output, and final logical-command evidence; the endpoint also publishes /nav/local_path, /nav/way_point, and final /nav/cmd_vel.
+  - Driver or Brainstem execution requires separate downstream evidence; control ACK, status, and /nav/cmd_vel do not by themselves confirm physical motion.

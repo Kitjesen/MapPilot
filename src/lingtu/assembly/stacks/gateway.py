@@ -10,6 +10,7 @@ All external interfaces share a single uvicorn process on port 5050:
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from runtime.adapters.perception_gateway import rerun_bridge_module
 from runtime.blueprint import Blueprint
@@ -27,6 +28,10 @@ def gateway(
     enable_ros2_rerun_bridge: bool = False,
     rerun_port: int = 9090,
     manage_session_services: bool = True,
+    command_output_mode: str | None = None,
+    hardware_control_boundary: str | None = None,
+    product_profile: str | None = None,
+    product_fingerprint: str | None = None,
     # teleop_port kept for backwards compat but ignored â€?teleop is on /ws/teleop
     teleop_port: int = 5050,
 ) -> Blueprint:
@@ -40,12 +45,20 @@ def gateway(
             seed_group="gateway",
             fallback="gateway.gateway_module.GatewayModule",
         )
-        bp.add(
-            GatewayModule,
-            alias="GatewayModule",
-            port=port,
-            manage_session_services=manage_session_services,
+        gateway_config: dict[str, Any] = {
+            "port": port,
+            "manage_session_services": manage_session_services,
+        }
+        compiled_contract = {
+            "command_output_mode": command_output_mode,
+            "hardware_control_boundary": hardware_control_boundary,
+            "product_profile": product_profile,
+            "product_fingerprint": product_fingerprint,
+        }
+        gateway_config.update(
+            {key: value for key, value in compiled_contract.items() if value is not None}
         )
+        bp.add(GatewayModule, alias="GatewayModule", **gateway_config)
     except ImportError:
         logger.warning("GatewayModule not available")
 
@@ -61,18 +74,29 @@ def gateway(
         logger.warning("MCPServerModule not available")
 
     if enable_teleop:
-        TeleopModule = optional_stack_module(
-            "teleop",
-            "default",
-            seed_group="teleop",
-            fallback="drivers.real.teleop_module.TeleopModule",
-        )
-        if TeleopModule is not None:
-            bp.add(
-                TeleopModule,
-                alias="TeleopModule",
-                port=port,
-            )  # informational â€?same port as Gateway
+        endpoint_only = str(command_output_mode or "").strip().lower() == "endpoint_only"
+        if endpoint_only:
+            CameraJpegRelayModule = optional_stack_module(
+                "media",
+                "jpeg_relay",
+                seed_group="teleop",
+                fallback="drivers.real.camera_jpeg_relay.CameraJpegRelayModule",
+            )
+            if CameraJpegRelayModule is not None:
+                bp.add(CameraJpegRelayModule, alias="CameraJpegRelayModule")
+        else:
+            TeleopModule = optional_stack_module(
+                "teleop",
+                "default",
+                seed_group="teleop",
+                fallback="drivers.real.teleop_module.TeleopModule",
+            )
+            if TeleopModule is not None:
+                bp.add(
+                    TeleopModule,
+                    alias="TeleopModule",
+                    port=port,
+                )  # informational â€?same port as Gateway
     if enable_rerun:
         RerunBridgeModule = rerun_bridge_module(enable_ros2=enable_ros2_rerun_bridge)
         if RerunBridgeModule is not None:
