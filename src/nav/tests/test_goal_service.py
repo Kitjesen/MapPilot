@@ -16,6 +16,7 @@ from runtime.msgs.nav import (
     NavigationCommandKind,
     NavigationCommandReceipt,
     NavigationGoalState,
+    NavigationGoalStatus,
 )
 
 
@@ -52,10 +53,62 @@ class TestGoalService:
         assert summary["ports_in"]["goal_command"]["type"] == "str"
         assert summary["ports_in"]["goal_request"]["type"] == "PoseStamped"
         assert summary["ports_in"]["cancel_request"]["type"] == "str"
+        assert summary["ports_in"]["navigation_goal_status"]["type"] == "NavigationGoalStatus"
         assert summary["ports_out"]["goal_pose"]["type"] == "PoseStamped"
         assert summary["ports_out"]["patrol_goals"]["type"] == "list"
         assert summary["ports_out"]["cancel"]["type"] == "str"
         assert summary["ports_out"]["goal_status"]["type"] == "dict"
+
+    def test_native_goal_status_updates_live_task_history(self, goal_service):
+        goal_service.submit_goal(
+            PoseStamped(
+                pose=Pose(position=Vector3(1.0, 2.0, 0.0)),
+                frame_id="map",
+            ),
+            task_id="task-live-status",
+            request_id="request-live-status",
+        )
+        published_statuses = len(goal_service._test_statuses)
+
+        goal_service.navigation_goal_status._deliver(
+            NavigationGoalStatus(
+                ts=100.0,
+                frame_id="map",
+                boot_id="navd-boot-live",
+                sequence=1,
+                task_id="task-live-status",
+                request_id="request-live-status",
+                state=int(NavigationGoalState.PATH_ACTIVE),
+                goal_epoch=1,
+                reason="path_active",
+            )
+        )
+
+        task = goal_service.get_task("task-live-status")
+        assert task is not None
+        assert task["execution_state"] == "executing"
+        assert task["state_source"] == "native_goal_status"
+        assert task["evidence_status"] == "fresh"
+        assert task["terminal"] is False
+        assert len(goal_service._test_statuses) == published_statuses
+
+    def test_foreign_native_goal_status_does_not_create_task(self, goal_service):
+        goal_service.navigation_goal_status._deliver(
+            NavigationGoalStatus(
+                ts=101.0,
+                frame_id="map",
+                boot_id="navd-boot-live",
+                sequence=2,
+                task_id="task-owned-by-another-service",
+                request_id="request-owned-by-another-service",
+                state=int(NavigationGoalState.PATH_ACTIVE),
+                goal_epoch=1,
+                reason="path_active",
+            )
+        )
+
+        assert goal_service.get_task("task-owned-by-another-service") is None
+        assert goal_service.navigation_goal_status.callback_errors == 0
 
     def test_goto_command_publishes_map_goal(self, goal_service):
         status = _cmd(

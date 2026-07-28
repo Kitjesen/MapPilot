@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import math
 import time
 import uuid
@@ -12,10 +13,16 @@ from typing import Any
 
 from nav.services.task_ledger import NavigationTaskLedger, TaskLedgerConflict
 from runtime import In, Module, Out
-from runtime.msgs import NavigationCommandKind, NavigationCommandReceipt
+from runtime.msgs import (
+    NavigationCommandKind,
+    NavigationCommandReceipt,
+    NavigationGoalStatus,
+)
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
 from runtime.registry import register
 from runtime.runtime_interface import map_frame_id, normalize_frame_id
+
+logger = logging.getLogger(__name__)
 
 
 def finite_float(value: Any, *, label: str = "coordinate") -> float:
@@ -133,6 +140,7 @@ class GoalService(Module, layer=6):
     goal_command: In[str]
     goal_request: In[PoseStamped]
     cancel_request: In[str]
+    navigation_goal_status: In[NavigationGoalStatus]
     goal_pose: Out[PoseStamped]
     patrol_goals: Out[list]
     cancel: Out[str]
@@ -169,6 +177,8 @@ class GoalService(Module, layer=6):
         self.goal_command.subscribe(self._on_command)
         self.goal_request.subscribe(self._on_goal_request)
         self.cancel_request.subscribe(self._on_cancel_request)
+        # Lifecycle transitions are low-rate and order-sensitive; do not coalesce them.
+        self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
 
         self._reconcile_task_history()
 
@@ -179,6 +189,23 @@ class GoalService(Module, layer=6):
             self._task_ledger.close()
         finally:
             super().stop()
+
+    def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
+        """Persist one native lifecycle event in source delivery order."""
+
+        try:
+            self._task_ledger.record_goal_status(status)
+        except KeyError:
+            logger.debug(
+                "Ignoring native goal status for untracked task %s",
+                getattr(status, "task_id", ""),
+            )
+        except (TaskLedgerConflict, TypeError, ValueError) as exc:
+            logger.warning(
+                "Rejecting invalid native goal status for task %s: %s",
+                getattr(status, "task_id", ""),
+                exc,
+            )
 
     def _on_goal_request(self, goal: PoseStamped) -> None:
         self.submit_goal(goal)
