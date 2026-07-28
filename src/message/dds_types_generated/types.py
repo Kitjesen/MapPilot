@@ -557,32 +557,6 @@ class InspectionCommandAck:
 
 
 @dataclass(kw_only=True)
-class InspectionTaskRequest:
-    r"""IDL struct: lingtu::dds::InspectionTaskRequest
-    """
-    header: Header
-    task_id: str
-    request_id: str
-    kind: int
-    route_id: str
-    route_revision: int
-    reason: str
-
-
-@dataclass(kw_only=True)
-class InspectionTaskAck:
-    r"""IDL struct: lingtu::dds::InspectionTaskAck
-    """
-    header: Header
-    task_id: str
-    request_id: str
-    kind: int
-    accepted: bool
-    reason: str
-    run_id: str
-
-
-@dataclass(kw_only=True)
 class InspectionEvidenceRequest:
     r"""IDL struct: lingtu::dds::InspectionEvidenceRequest
     """
@@ -631,33 +605,6 @@ class InspectionStatus:
     phase_started_at: float
     stable_since: float
     deadline: float
-    reason: str
-
-
-@dataclass(kw_only=True)
-class InspectionTaskEvent:
-    r"""IDL struct: lingtu::dds::InspectionTaskEvent
-    """
-    header: Header
-    boot_id: str
-    event_sequence: int
-    kind: int
-    task_id: str
-    request_id: str
-    command_request_id: str
-    state: int
-    map_id: str
-    map_version: int
-    route_id: str
-    route_revision: int
-    point_index: int
-    point_count: int
-    loop_index: int
-    retry_count: int
-    point_id: str
-    action: str
-    action_request_id: str
-    evidence_id: str
     reason: str
 
 

@@ -385,38 +385,6 @@ class InspectionCommandAck(
 
 
 @dataclass
-class InspectionTaskRequest(
-    IdlStruct,
-    typename="lingtu::dds::InspectionTaskRequest",
-):
-    """A task-addressed inspection lifecycle command from the product boundary."""
-
-    header: Header
-    task_id: str
-    request_id: str
-    kind: types.int32
-    route_id: str
-    route_revision: types.uint64
-    reason: str
-
-
-@dataclass
-class InspectionTaskAck(
-    IdlStruct,
-    typename="lingtu::dds::InspectionTaskAck",
-):
-    """Native admission result preserving both task and request identity."""
-
-    header: Header
-    task_id: str
-    request_id: str
-    kind: types.int32
-    accepted: types.boolean
-    reason: str
-    run_id: str
-
-
-@dataclass
 class InspectionEvidenceRequest(
     IdlStruct,
     typename="lingtu::dds::InspectionEvidenceRequest",
@@ -467,33 +435,6 @@ class InspectionStatus(IdlStruct, typename="lingtu::dds::InspectionStatus"):
     deadline: types.float64
     reason: str
 
-
-@dataclass
-class InspectionTaskEvent(IdlStruct, typename="lingtu::dds::InspectionTaskEvent"):
-    """Immutable native fact for one inspection task lifecycle transition."""
-
-    header: Header
-    boot_id: str
-    event_sequence: types.uint64
-    kind: types.int32
-    task_id: str
-    request_id: str
-    command_request_id: str
-    state: types.int32
-    map_id: str
-    map_version: int
-    route_id: str
-    route_revision: types.uint64
-    point_index: types.uint32
-    point_count: types.uint32
-    loop_index: types.uint32
-    retry_count: types.uint32
-    point_id: str
-    action: str
-    action_request_id: str
-    evidence_id: str
-    reason: str
-
 DDS_ExplorationExecutionGrid = ExplorationExecutionGrid
 DDS_ExplorationSegmentRequest = ExplorationSegmentRequest
 DDS_ExplorationSegmentAck = ExplorationSegmentAck
@@ -521,9 +462,6 @@ DDS_ExplorationCommandRequest = ExplorationCommandRequest
 DDS_ExplorationCommandAck = ExplorationCommandAck
 DDS_InspectionCommandRequest = InspectionCommandRequest
 DDS_InspectionCommandAck = InspectionCommandAck
-DDS_InspectionTaskRequest = InspectionTaskRequest
-DDS_InspectionTaskAck = InspectionTaskAck
 DDS_InspectionEvidenceRequest = InspectionEvidenceRequest
 DDS_InspectionEvidenceResult = InspectionEvidenceResult
 DDS_InspectionStatus = InspectionStatus
-DDS_InspectionTaskEvent = InspectionTaskEvent

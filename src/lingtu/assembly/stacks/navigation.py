@@ -27,15 +27,14 @@ def navigation(
     """Global planning plus local autonomy unless a native endpoint owns it."""
 
     bp = Blueprint()
-    native_endpoint = bool(config.get("native_navigation_endpoint"))
-    if not native_endpoint:
-        add_navigation_core(
-            bp,
-            planner_backend=planner_backend,
-            map_path=map_path,
-            **config,
-        )
-        add_exploration_goal_sources(bp, **config)
+    add_navigation_core(
+        bp,
+        planner_backend=planner_backend,
+        map_path=map_path,
+        **config,
+    )
+    add_exploration_goal_sources(bp, **config)
+    if not config.get("native_navigation_endpoint"):
         add_autonomy_chain(bp, enable_native=enable_native, **config)
 
     # -- Supporting modules ------------------------------------------------

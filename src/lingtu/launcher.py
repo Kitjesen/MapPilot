@@ -1,7 +1,8 @@
-"""Apply the deployment processes declared by a compiled Product.
+"""Execute a compiled LingTu product process plan.
 
-Blueprint owns one in-process Module graph. Launcher is the only product-layer
-component allowed to apply Product processes to an external process manager.
+Blueprint builds one in-process Module graph. RuntimePlan is immutable data.
+Launcher is the only product-layer component allowed to apply that plan to an
+external process manager.
 """
 
 from __future__ import annotations
@@ -13,11 +14,11 @@ import subprocess
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Protocol
 
-from lingtu.product import Product, ProductManifest
-from runtime.graph import ProcessSpec
+from lingtu.assembly.profile_builder import Product, compile_product
+from runtime.graph import RuntimeProcess
+from runtime.profiles.resolver import resolve_runtime_config
 from runtime.service_catalogs.thunder import thunder_service_spec
 from runtime.service_manager import ServiceManager
 
@@ -55,7 +56,7 @@ class ProcessControl(Protocol):
 class Readiness(Protocol):
     """Product-process readiness boundary."""
 
-    def wait(self, process: ProcessSpec, timeout_s: float) -> Mapping[str, Any]:
+    def wait(self, process: RuntimeProcess, timeout_s: float) -> Mapping[str, Any]:
         """Wait for one process contract or raise on timeout."""
 
 
@@ -221,13 +222,16 @@ class ServiceReadiness:
         self._sleep = sleep
         self._monotonic = monotonic
 
-    def wait(self, process: ProcessSpec, timeout_s: float) -> Mapping[str, Any]:
+    def wait(self, process: RuntimeProcess, timeout_s: float) -> Mapping[str, Any]:
         """Require every readiness check declared for *process*."""
 
         service = process.name
         spec = thunder_service_spec(service)
         if spec is not None and process.target not in (spec.start_units or spec.units):
-            raise LaunchError(f"Product target disagrees with readiness catalog for {service}: {process.target}")
+            raise LaunchError(
+                f"RuntimePlan target disagrees with readiness catalog for {service}: "
+                f"{process.target}"
+            )
         deadline = self._monotonic() + timeout_s
         last: Mapping[str, Any] = {}
         while self._monotonic() < deadline:
@@ -244,11 +248,8 @@ class ServiceReadiness:
         raise LaunchError(f"{process.name} is not ready: {detail}")
 
 
-LaunchProduct = Product | ProductManifest
-
-
 class Launcher:
-    """Apply Product processes as a fail-closed external transaction."""
+    """Apply RuntimePlan as a fail-closed external-process transaction."""
 
     def __init__(
         self,
@@ -261,14 +262,15 @@ class Launcher:
         self._readiness = readiness or ServiceReadiness()
         self._environment = environment if environment is not None else os.environ
 
-    def apply(self, product: LaunchProduct, *, dry_run: bool = False) -> LaunchReport:
+    def apply(self, product: Product, *, dry_run: bool = False) -> LaunchReport:
         """Stop conflicting mode processes and start one compiled product."""
 
-        processes = tuple(sorted(self._require_processes(product), key=lambda item: (item.order, item.name)))
+        plan = self._require_plan(product)
+        processes = tuple(sorted(plan.processes, key=lambda item: (item.order, item.name)))
         self._require_supported_managers(processes)
         report = LaunchReport(
             product=product.profile,
-            endpoint=self._endpoint(product),
+            endpoint=plan.endpoint,
             action="apply",
             dry_run=dry_run,
             planned=[process.target for process in processes],
@@ -279,10 +281,10 @@ class Launcher:
             return report
 
         self._reject_self_management(processes)
-        started: list[ProcessSpec] = []
+        started: list[RuntimeProcess] = []
         try:
-            timeouts = {process.target: process.timeout_s for process in product.available_processes}
-            for target in product.stop_targets:
+            timeouts = {process.target: process.timeout_s for process in plan.available_processes}
+            for target in plan.stop_targets:
                 if not self._control.active(target):
                     continue
                 self._control.stop(target, float(timeouts.get(target, 15)))
@@ -291,7 +293,9 @@ class Launcher:
             for process in processes:
                 if self._control.active(process.target):
                     if process.lifecycle != "persistent":
-                        raise LaunchError(f"mode process remained active after conflict stop: {process.target}")
+                        raise LaunchError(
+                            f"mode process remained active after conflict stop: {process.target}"
+                        )
                     report.preserved.append(process.target)
                 else:
                     self._control.start(process.target, float(process.timeout_s))
@@ -311,15 +315,15 @@ class Launcher:
         report.status = "active"
         return report
 
-    def stop(self, product: LaunchProduct, *, dry_run: bool = False) -> LaunchReport:
+    def stop(self, product: Product, *, dry_run: bool = False) -> LaunchReport:
         """Stop the selected product's mode processes and preserve persistent ones."""
 
-        self._require_processes(product)
-        processes = tuple(reversed(product.managed_processes))
+        plan = self._require_plan(product)
+        processes = tuple(reversed(plan.managed_processes))
         self._require_supported_managers(processes)
         report = LaunchReport(
             product=product.profile,
-            endpoint=self._endpoint(product),
+            endpoint=plan.endpoint,
             action="stop",
             dry_run=dry_run,
             planned=[process.target for process in processes],
@@ -344,81 +348,36 @@ class Launcher:
         report.status = "stopped"
         return report
 
-    def quiesce(self, product: LaunchProduct, *, dry_run: bool = False) -> LaunchReport:
-        """Stop every mode target that can conflict with this Product.
-
-        This is the process-level fail-closed primitive used after a product
-        switch mutates deployment state. ProductControl owns the decision to
-        invoke it; Launcher owns the systemd operations.
-        """
-
-        self._require_processes(product)
-        targets = tuple(product.stop_targets)
-        report = LaunchReport(
-            product=product.profile,
-            endpoint=self._endpoint(product),
-            action="quiesce",
-            dry_run=dry_run,
-            planned=list(targets),
-        )
-        if dry_run:
-            report.ok = True
-            report.status = "planned"
-            return report
-
-        timeouts = {process.target: process.timeout_s for process in product.available_processes}
-        failures: list[tuple[str, Exception]] = []
-        for target in targets:
-            try:
-                if not self._control.active(target):
-                    continue
-                self._control.stop(target, float(timeouts.get(target, 15)))
-                report.stopped.append(target)
-            except Exception as exc:
-                failures.append((target, exc))
-        if failures:
-            details = "; ".join(
-                f"{target}: {str(error) or error.__class__.__name__}"
-                for target, error in failures
-            )
-            report.error = f"failed to quiesce Product processes: {details}"
-            report.status = "failed"
-            raise LaunchFailed(report) from failures[0][1]
-        report.ok = True
-        report.status = "stopped"
-        return report
-
     def restart(
         self,
-        product: LaunchProduct,
+        product: Product,
         process_name: str,
         *,
         dry_run: bool = False,
     ) -> LaunchReport:
-        """Restart one process declared by the compiled Product.
+        """Restart one process declared by the compiled RuntimePlan.
 
         The logical process name, target unit, timeout, and readiness checks all
-        come from the Product. A failed restart is stopped fail-closed; if the
+        come from the plan.  A failed restart is stopped fail-closed; if the
         unit was active before the operation, Launcher makes one recovery start
         and records whether the previous running state was restored.
         """
 
-        processes = self._require_processes(product)
+        plan = self._require_plan(product)
         process = next(
-            (item for item in processes if item.name == process_name),
+            (item for item in plan.processes if item.name == process_name),
             None,
         )
         if process is None:
-            known = ", ".join(item.name for item in processes)
+            known = ", ".join(item.name for item in plan.processes)
             raise LaunchError(
-                f"process {process_name!r} is not in "
-                f"{product.profile}/{self._endpoint(product)}; "
+                f"process {process_name!r} is not in {product.profile}/{plan.endpoint}; "
                 f"known processes: {known}"
             )
         self._require_supported_managers((process,))
         report = LaunchReport(
             product=product.profile,
-            endpoint=self._endpoint(product),
+            endpoint=plan.endpoint,
             action="restart",
             dry_run=dry_run,
             planned=[process.target],
@@ -454,7 +413,7 @@ class Launcher:
 
     def _stop_failed_restart(
         self,
-        process: ProcessSpec,
+        process: RuntimeProcess,
         report: LaunchReport,
     ) -> None:
         try:
@@ -465,7 +424,7 @@ class Launcher:
 
     def _restore_restarted_process(
         self,
-        process: ProcessSpec,
+        process: RuntimeProcess,
         report: LaunchReport,
     ) -> None:
         try:
@@ -481,9 +440,11 @@ class Launcher:
                 if self._control.active(process.target):
                     self._control.stop(process.target, float(process.timeout_s))
             except Exception as cleanup_exc:
-                report.rollback_errors.append(f"restore cleanup failed {process.target}: {cleanup_exc}")
+                report.rollback_errors.append(
+                    f"restore cleanup failed {process.target}: {cleanup_exc}"
+                )
 
-    def _rollback(self, started: list[ProcessSpec], report: LaunchReport) -> None:
+    def _rollback(self, started: list[RuntimeProcess], report: LaunchReport) -> None:
         for process in reversed(started):
             try:
                 if self._control.active(process.target):
@@ -492,51 +453,53 @@ class Launcher:
             except Exception as exc:
                 report.rollback_errors.append(f"{process.target}: {exc}")
 
-    def _reject_self_management(self, processes: tuple[ProcessSpec, ...]) -> None:
+    def _reject_self_management(self, processes: tuple[RuntimeProcess, ...]) -> None:
         current_unit = str(self._environment.get("LINGTU_SYSTEMD_UNIT") or "").strip()
         if current_unit and any(process.target == current_unit for process in processes):
-            raise LaunchError(f"Launcher must run outside {current_unit}; use an independent transient unit")
+            raise LaunchError(
+                f"Launcher must run outside {current_unit}; use an independent transient unit"
+            )
 
     @staticmethod
-    def _require_processes(product: LaunchProduct) -> tuple[ProcessSpec, ...]:
-        if product.process_control != "launcher":
-            raise LaunchError(f"product {product.profile} is controlled by {product.process_control}, not Launcher")
-        if not product.processes:
-            raise LaunchError(f"product {product.profile} has no deployment processes on endpoint {product.endpoint}")
-        return product.processes
+    def _require_plan(product: Product):
+        if product.plan is None:
+            raise LaunchError(
+                f"product {product.profile} has no external RuntimePlan on endpoint {product.endpoint}"
+            )
+        return product.plan
 
     @staticmethod
-    def _endpoint(product: LaunchProduct) -> str:
-        if not product.endpoint:
-            raise LaunchError(f"product {product.profile} has no deployment endpoint")
-        return product.endpoint
-
-    @staticmethod
-    def _require_supported_managers(processes: tuple[ProcessSpec, ...]) -> None:
-        unsupported = sorted({process.manager for process in processes if process.manager != "systemd"})
+    def _require_supported_managers(processes: tuple[RuntimeProcess, ...]) -> None:
+        unsupported = sorted(
+            {process.manager for process in processes if process.manager != "systemd"}
+        )
         if unsupported:
             raise LaunchError(f"unsupported process managers: {', '.join(unsupported)}")
 
 
+def _compile(profile: str, endpoint: str | None) -> Product:
+    resolved = resolve_runtime_config(profile, runtime_endpoint_name=endpoint)
+    return compile_product(
+        resolved.profile,
+        resolved.config,
+        endpoint=resolved.runtime_endpoint,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
-    """Execute one already compiled Product manifest."""
+    """Run the external product Launcher CLI."""
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("plan", "apply", "stop", "restart"))
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("profile")
+    parser.add_argument("--endpoint")
     parser.add_argument("--process")
     parser.add_argument("--no-sudo", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
     try:
-        product = ProductManifest.load(args.manifest)
-        if args.action == "apply" and product.process_control == "launcher":
-            raise LaunchError(
-                "field Product cannot be applied through the Launcher CLI; "
-                "use `python -m lingtu.control switch` so map/runtime staging and "
-                "active Product commit remain one transaction"
-            )
+        product = _compile(args.profile, args.endpoint)
         launcher = Launcher(control=Systemd(use_sudo=not args.no_sudo))
         if args.action == "plan":
             report = launcher.apply(product, dry_run=True)

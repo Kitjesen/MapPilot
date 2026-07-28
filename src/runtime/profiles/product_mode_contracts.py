@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import MappingProxyType
 from typing import Any, Mapping
 
 from runtime.graph.loader import load_runtime_graph
@@ -27,7 +26,6 @@ class ProductModeContract:
     required_topics: frozenset[str] = frozenset()
     required_capabilities: frozenset[str] = frozenset()
     forbidden_modules: frozenset[str] = frozenset()
-    native_nav: Mapping[str, Any] = MappingProxyType({})
     hot_switch_candidates: frozenset[str] = frozenset()
     online_hot_switch_supported: bool = False
 
@@ -48,7 +46,6 @@ class ProductModeContract:
             "required_topics": sorted(self.required_topics),
             "required_capabilities": sorted(self.required_capabilities),
             "forbidden_modules": sorted(self.forbidden_modules),
-            "native_nav": dict(self.native_nav),
             "switch_policy": self.switch_policy,
             "hot_switch_candidates": sorted(self.hot_switch_candidates),
             "online_hot_switch_supported": self.online_hot_switch_supported,
@@ -74,22 +71,13 @@ def _required_text(product: Mapping[str, Any], field: str) -> str:
 
 
 def _contract_from_product(name: str, product: Mapping[str, Any]) -> ProductModeContract:
-    native_nav = product.get("native_nav") or {}
-    if not isinstance(native_nav, Mapping):
-        raise TypeError(f"product mode {name!r} native_nav must be a mapping")
-    native_control_mode = _required_text(product, "native_control_mode")
-    native_nav_control_mode = str(native_nav.get("control_mode") or native_control_mode).strip()
-    if native_nav_control_mode != native_control_mode:
-        raise ValueError(
-            f"product mode {name!r} native_nav.control_mode must match native_control_mode"
-        )
     return ProductModeContract(
         profile=name,
         label=str(product.get("label") or name.replace("_", " ").title()),
         product_mode=_required_text(product, "product_mode"),
         product_session=_required_text(product, "product_session"),
         session_mode=_required_text(product, "session_mode"),
-        native_control_mode=native_control_mode,
+        native_control_mode=_required_text(product, "native_control_mode"),
         slam_mode=_required_text(product, "slam_mode"),
         requires_map=bool(product.get("requires_map", False)),
         switch_policy=_required_text(product, "switch_policy"),
@@ -98,7 +86,6 @@ def _contract_from_product(name: str, product: Mapping[str, Any]) -> ProductMode
         required_topics=_strings(product.get("required_topics")),
         required_capabilities=_strings(product.get("required_capabilities")),
         forbidden_modules=_strings(product.get("forbidden_modules")),
-        native_nav=MappingProxyType(dict(native_nav)),
         hot_switch_candidates=_strings(product.get("hot_switch_candidates")),
         online_hot_switch_supported=bool(product.get("online_hot_switch_supported", False)),
     )
@@ -132,14 +119,13 @@ def product_mode_switch_plan(
     current_profile: str,
     target_profile: str,
     *,
-    product: Mapping[str, Any] | None = None,
-    native_nav_config: Mapping[str, Any] | None = None,
+    runtime_plan: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Describe a transition using an already compiled Product.
+    """Describe a product transition using an already compiled process plan.
 
-    Mode contracts own lifecycle semantics only. Product assembly owns
-    compilation, so this view must never compile a second Product behind the
-    caller's back.
+    Product mode contracts own lifecycle semantics only. Product assembly owns
+    compilation, so this view must never resolve an endpoint or build a second
+    RuntimePlan behind the caller's back.
     """
 
     target = product_mode_contract(target_profile)
@@ -161,8 +147,7 @@ def product_mode_switch_plan(
         "target": target.as_dict(),
         "same_graph_candidate": same_graph_candidate,
         "online_hot_switch_supported": online_supported,
-        "product": dict(product) if product is not None else None,
-        "native_nav_config": dict(native_nav_config) if native_nav_config is not None else None,
+        "runtime_plan": dict(runtime_plan) if runtime_plan is not None else None,
         "required_lifecycle": required_lifecycle,
         "reason": (
             "same graph hot switch is supported"

@@ -140,10 +140,10 @@ def full_stack_wire_specs(
     specs.extend(semantic_scene_specs())
     specs.extend(recorder_specs(ctx))
     specs.extend(safety_status_specs())
-    specs.extend(gateway_status_specs(ctx))
+    specs.extend(gateway_status_specs())
     specs.extend(navigation_execution_specs())
     specs.extend(navigation_support_specs())
-    specs.extend(visual_servo_specs(ctx))
+    specs.extend(visual_servo_specs())
     specs.extend(vla_specs(ctx))
     specs.extend(teleop_media_specs(ctx))
     if cmd_vel_mux_collision_monitor:

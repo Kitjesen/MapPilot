@@ -37,8 +37,6 @@ profiles:
     topics:
       - /slam/registered_cloud
       - rt/slam/registered_cloud
-      - /slam/map_observation
-      - rt/slam/map_observation
       - /nav/terrain_map
       - rt/nav/terrain_map
       - /nav/terrain_map_ext
@@ -124,8 +122,6 @@ profiles:
       - rt/nav/exploration/command
       - /nav/inspection/command
       - rt/nav/inspection/command
-      - /nav/inspection/task/request
-      - rt/nav/inspection/task/request
 
   navigation_command_ack:
     reliability: reliable
@@ -135,52 +131,10 @@ profiles:
     topics:
       - /nav/command/ack
       - rt/nav/command/ack
-      - /nav/goal/status
-      - rt/nav/goal/status
       - /nav/exploration/ack
       - rt/nav/exploration/ack
       - /nav/inspection/ack
       - rt/nav/inspection/ack
-      - /nav/inspection/task/ack
-      - rt/nav/inspection/task/ack
-
-  operator_motion_control:
-    reliability: reliable
-    durability: volatile
-    history: keep_last
-    depth: 32
-    topics:
-      - /nav/operator_motion/control
-      - rt/nav/operator_motion/control
-
-  operator_motion_sample:
-    reliability: best_effort
-    durability: volatile
-    history: keep_last
-    depth: 1
-    deadline: 50ms
-    lifespan: 350ms
-    topics:
-      - /nav/operator_motion/sample
-      - rt/nav/operator_motion/sample
-
-  operator_motion_ack:
-    reliability: reliable
-    durability: transient_local
-    history: keep_last
-    depth: 64
-    topics:
-      - /nav/operator_motion/ack
-      - rt/nav/operator_motion/ack
-
-  operator_motion_status:
-    reliability: reliable
-    durability: transient_local
-    history: keep_last
-    depth: 1
-    topics:
-      - /nav/operator_motion/status
-      - rt/nav/operator_motion/status
 
   inspection_status:
     reliability: reliable
@@ -190,15 +144,6 @@ profiles:
     topics:
       - /nav/inspection/status
       - rt/nav/inspection/status
-
-  inspection_task_event:
-    reliability: reliable
-    durability: transient_local
-    history: keep_last
-    depth: 512
-    topics:
-      - /nav/inspection/task/event
-      - rt/nav/inspection/task/event
 
   # --- Global Path ---
   # ~10 KB, <1 Hz, must not drop
@@ -227,44 +172,6 @@ profiles:
       - rt/nav/exploration_grid
       - /nav/exploration_snapshot
       - rt/nav/exploration_snapshot
-      - /maps/occupancy
-      - rt/maps/occupancy
-      - /maps/elevation
-      - rt/maps/elevation
-      - /maps/esdf
-      - rt/maps/esdf
-      - /maps/traversability
-      - rt/maps/traversability
-
-  # --- Live map point layers ---
-  # These are bounded visualization snapshots. Dropping an old frame is safer
-  # than retransmitting stale multi-megabyte payloads.
-  map_cloud:
-    reliability: best_effort
-    durability: volatile
-    history: keep_last
-    depth: 1
-    lifespan: 500ms
-    topics:
-      - /maps/live_cloud
-      - rt/maps/live_cloud
-      - /maps/voxel_cloud
-      - rt/maps/voxel_cloud
-      - /maps/accumulated_cloud
-      - rt/maps/accumulated_cloud
-
-  # --- Coherent map scene handoff ---
-  # Reliable transient-local is required for a late-joining Gateway to receive
-  # one complete coherent scene. mapd caps its point/cell payload.
-  map_scene:
-    reliability: reliable
-    durability: transient_local
-    history: keep_last
-    depth: 1
-    lifespan: 2000ms
-    topics:
-      - /maps/scene
-      - rt/maps/scene
 
   # --- Exploration Events (TARE explorer outputs, event-driven) ---
   # Waypoint / local path / runtime / finish / start signals emitted by the
@@ -300,10 +207,6 @@ profiles:
       - rt/gnss/status
       - /driver/control_state
       - rt/driver/control_state
-      - /nav/state
-      - rt/nav/state
-      - /maps/state
-      - rt/maps/state
 
   # --- Geofence / Goal Pose (event-driven, must not drop) ---
   geofence_events:
@@ -374,33 +277,16 @@ profiles:
   # Product-level QoS profiles (new)
   # =========================================================================
 
-  # --- Raw LiDAR Stream ---
-  # Large raw frames are latest-data inputs. Keep this queue shallow so a slow
-  # consumer cannot turn old scans into write-side backpressure.
-  raw_lidar_stream:
-    reliability: best_effort
-    durability: volatile
-    history: keep_last
-    depth: 2
-    lifespan: 350ms
-    resource_limits:
-      max_samples: 2
-      max_instances: 1
-      max_samples_per_instance: 2
-    topics:
-      - /lidar/raw_frame
-      - rt/lidar/raw_frame
-      - /lidar/raw_packet
-      - rt/lidar/raw_packet
-
-  # --- Sensor Stream (IMU and SLAM odom prior) ---
-  # High-rate, small sensor data retains enough history for consumer catch-up.
+  # --- Sensor Stream (raw LiDAR frames, IMU, SLAM odom prior) ---
+  # High-rate sensor data where only the latest sample matters.
   sensor_stream:
     reliability: best_effort
     durability: volatile
     history: keep_last
     depth: 256
     topics:
+      - /lidar/raw_frame
+      - rt/lidar/raw_frame
       - /imu/raw
       - rt/imu/raw
       - /slam/odom_prior

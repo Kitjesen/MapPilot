@@ -22,14 +22,12 @@ from .thunder import (
 
 
 def product_blueprint_for_profile(
-    profile: str,
+    _profile: str,
     config: Mapping[str, Any],
 ) -> Blueprint:
     """Return the standard product blueprint for any resolved profile."""
 
-    assembly_config = dict(config)
-    assembly_config["_product_profile"] = profile
-    return thunder_blueprint(assembly_config)
+    return thunder_blueprint(config)
 
 
 __all__ = [

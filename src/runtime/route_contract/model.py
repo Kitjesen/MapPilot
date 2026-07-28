@@ -59,7 +59,6 @@ class TopicContract:
     consumers: tuple[str, ...] = ()
     port_bindings: tuple[PortBinding, ...] = ()
     real_equivalent_required: bool = False
-    external_diagnostics_subscribable: bool = False
 
     @classmethod
     def from_mapping(cls, topic: str, data: Mapping[str, Any]) -> TopicContract:
@@ -80,7 +79,6 @@ class TopicContract:
                 PortBinding.from_mapping(item) for item in raw_port_bindings if isinstance(item, Mapping)
             ),
             real_equivalent_required=bool(data.get("real_equivalent_required", False)),
-            external_diagnostics_subscribable=bool(data.get("external_diagnostics_subscribable", False)),
         )
 
     def to_manifest(self) -> dict[str, Any]:
@@ -93,7 +91,6 @@ class TopicContract:
             "consumers": list(self.consumers),
             "port_bindings": [binding.to_manifest() for binding in self.port_bindings],
             "real_equivalent_required": self.real_equivalent_required,
-            "external_diagnostics_subscribable": self.external_diagnostics_subscribable,
         }
 
 

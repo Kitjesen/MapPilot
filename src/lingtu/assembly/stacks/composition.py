@@ -182,10 +182,6 @@ def compose_full_stack_modules(
             enable_rerun=enable_rerun,
             enable_ros2_rerun_bridge=bool(config.get("enable_ros2_rerun_bridge", False)),
             manage_session_services=manage_session_services,
-            command_output_mode=config.get("command_output_mode"),
-            hardware_control_boundary=config.get("hardware_control_boundary"),
-            product_profile=config.get("_product_profile"),
-            product_fingerprint=config.get("_product_fingerprint"),
         )
         if enable_gateway
         else Blueprint(),

@@ -3,7 +3,7 @@
 Wavefront frontier still lives in the navigation stack for the `explore`
 profile. TARE has exactly one runtime owner:
 
-- `owner="native"` mounts no Python goal producer; Product owns the native
+- `owner="native"` mounts no Python goal producer; RuntimePlan owns the native
   exploration endpoint.
 - `owner="module"`, `backend="tare"` runs the in-process policy for development
   and simulation.

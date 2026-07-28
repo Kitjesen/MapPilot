@@ -1,7 +1,7 @@
 r"""Auto-generated DDS type package.
 
 Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-27T04:19:25Z
+Generated:  2026-07-25T23:35:53Z
 
 DO NOT EDIT BY HAND -- run ``make codegen-idl`` to regenerate.
 """
@@ -54,12 +54,9 @@ from .types import (  # noqa: F401
     ExplorationSegmentStatus,
     InspectionCommandRequest,
     InspectionCommandAck,
-    InspectionTaskRequest,
-    InspectionTaskAck,
     InspectionEvidenceRequest,
     InspectionEvidenceResult,
     InspectionStatus,
-    InspectionTaskEvent,
     RelocalizationRequest,
     RelocalizationResponse,
     Path,
@@ -119,12 +116,9 @@ __all__ = [
     "ExplorationSegmentStatus",
     "InspectionCommandRequest",
     "InspectionCommandAck",
-    "InspectionTaskRequest",
-    "InspectionTaskAck",
     "InspectionEvidenceRequest",
     "InspectionEvidenceResult",
     "InspectionStatus",
-    "InspectionTaskEvent",
     "RelocalizationRequest",
     "RelocalizationResponse",
     "Path",

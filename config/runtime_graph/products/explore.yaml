@@ -16,27 +16,19 @@ autonomy_owner: exploration_policy
 processes:
   - lidar
   - slam
-  - maps
   - traversability
   - nav
   - driver
-  - host
-critical_modules:
-  - host.bus
+  - runtime
 required_topics:
   - /lidar/raw_frame
   - /imu/raw
   - /slam/odometry
   - /slam/registered_cloud
-  - /slam/map_observation
   - /slam/map_cloud
   - /slam/localization_health
-  - /maps/state
-  - /maps/scene
   - /nav/command/request
   - /nav/command/ack
-  - /nav/goal/status
-  - /nav/state
   - /nav/traversability
   - /nav/global_path
   - /nav/local_path
@@ -48,9 +40,6 @@ required_capabilities:
   - local_planner_collision_and_traversability_scoring
   - final_cmd_vel_single_writer
 forbidden_modules:
-  - TeleopModule
-  - nav.mission
-  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.local_planner
   - nav.path_follower

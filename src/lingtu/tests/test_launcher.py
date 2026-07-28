@@ -1,23 +1,17 @@
-# ruff: noqa: S101
-
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
 from lingtu.assembly.profile_builder import compile_product
 from lingtu.launcher import (
-    Launcher,
     LaunchError,
     LaunchFailed,
+    Launcher,
     ServiceReadiness,
 )
-from lingtu.launcher import (
-    main as launcher_main,
-)
-from runtime.graph import ProcessSpec
+from runtime.graph import RuntimeProcess
 from runtime.profiles.resolver import resolve_runtime_config
 
 
@@ -47,7 +41,7 @@ class FakeReadiness:
         self.fail = fail
         self.calls: list[str] = []
 
-    def wait(self, process: ProcessSpec, timeout_s: float) -> dict[str, Any]:
+    def wait(self, process: RuntimeProcess, timeout_s: float) -> dict[str, Any]:
         self.calls.append(process.name)
         if process.name == self.fail:
             raise LaunchError(f"{process.name} readiness failed")
@@ -74,7 +68,6 @@ def test_launcher_dry_run_has_no_process_side_effects() -> None:
     assert report.planned == [
         "lingtu-livox-dds.service",
         "lingtu-slam-dds.service",
-        "mapd.service",
         "lingtu-traversability-dds.service",
         "lingtu-nav-dds.service",
         "lingtu-driver.service",
@@ -102,7 +95,6 @@ def test_launcher_applies_plan_in_order_and_preserves_running_driver() -> None:
     assert control.started == [
         "lingtu-livox-dds.service",
         "lingtu-slam-dds.service",
-        "mapd.service",
         "lingtu-traversability-dds.service",
         "lingtu-nav-dds.service",
         "lingtu.service",
@@ -111,11 +103,10 @@ def test_launcher_applies_plan_in_order_and_preserves_running_driver() -> None:
     assert readiness.calls == [
         "lidar",
         "slam",
-        "maps",
         "traversability",
         "nav",
         "driver",
-        "host",
+        "runtime",
     ]
 
 
@@ -132,7 +123,6 @@ def test_launcher_rolls_back_only_processes_started_by_failed_transaction() -> N
     assert report.rolled_back == [
         "lingtu-nav-dds.service",
         "lingtu-traversability-dds.service",
-        "mapd.service",
         "lingtu-slam-dds.service",
         "lingtu-livox-dds.service",
     ]
@@ -156,7 +146,8 @@ def test_launcher_rejects_stopping_its_own_systemd_unit() -> None:
 
 def test_launcher_stop_preserves_persistent_processes() -> None:
     product = _field_product()
-    control = FakeControl({process.target for process in product.processes})
+    assert product.plan is not None
+    control = FakeControl({process.target for process in product.plan.processes})
 
     report = Launcher(control, FakeReadiness()).stop(product)
 
@@ -165,14 +156,13 @@ def test_launcher_stop_preserves_persistent_processes() -> None:
         "lingtu.service",
         "lingtu-nav-dds.service",
         "lingtu-traversability-dds.service",
-        "mapd.service",
         "lingtu-slam-dds.service",
         "lingtu-livox-dds.service",
     ]
     assert "lingtu-driver.service" in control.active_targets
 
 
-def test_launcher_restarts_one_product_process_and_checks_readiness() -> None:
+def test_launcher_restarts_one_runtime_plan_process_and_checks_readiness() -> None:
     control = FakeControl({"lingtu-slam-dds.service"})
     readiness = FakeReadiness()
 
@@ -204,11 +194,13 @@ def test_launcher_failed_restart_restores_previously_active_process() -> None:
         "lingtu-slam-dds.service",
     ]
     assert report.rolled_back == []
-    assert report.rollback_errors == ["restore failed lingtu-slam-dds.service: slam readiness failed"]
+    assert report.rollback_errors == [
+        "restore failed lingtu-slam-dds.service: slam readiness failed"
+    ]
     assert "lingtu-slam-dds.service" not in control.active_targets
 
 
-def test_launcher_rejects_restart_of_process_outside_product() -> None:
+def test_launcher_rejects_restart_of_process_outside_runtime_plan() -> None:
     with pytest.raises(LaunchError, match="is not in"):
         Launcher(FakeControl(), FakeReadiness()).restart(
             _field_product(),
@@ -216,44 +208,8 @@ def test_launcher_rejects_restart_of_process_outside_product() -> None:
         )
 
 
-def test_launcher_quiesce_stops_all_conflicting_mode_targets() -> None:
-    product = _field_product()
-    control = FakeControl(set(product.stop_targets))
-
-    report = Launcher(control, FakeReadiness()).quiesce(product)
-
-    assert report.ok is True
-    assert report.action == "quiesce"
-    assert control.stopped == list(product.stop_targets)
-    assert control.active_targets == set()
-
-def test_launcher_quiesce_attempts_every_target_and_aggregates_stop_failures() -> None:
-    product = _field_product()
-    failed_targets = {product.stop_targets[0], product.stop_targets[-1]}
-
-    class FailingStopControl(FakeControl):
-        def stop(self, target: str, timeout_s: float) -> None:
-            self.stopped.append(target)
-            if target in failed_targets:
-                raise RuntimeError(f"stop failed for {target}")
-            self.active_targets.discard(target)
-
-    control = FailingStopControl(set(product.stop_targets))
-
-    with pytest.raises(LaunchFailed) as failure:
-        Launcher(control, FakeReadiness()).quiesce(product)
-
-    report = failure.value.report
-    assert control.stopped == list(product.stop_targets)
-    assert report.ok is False
-    assert report.status == "failed"
-    for failed_target in failed_targets:
-        assert f"{failed_target}: stop failed for {failed_target}" in (report.error or "")
-    assert control.active_targets == failed_targets
-
-
-def test_service_readiness_rejects_product_catalog_drift() -> None:
-    process = ProcessSpec(
+def test_service_readiness_rejects_runtime_plan_catalog_drift() -> None:
+    process = RuntimeProcess(
         name="nav",
         manager="systemd",
         target="wrong-nav.service",
@@ -264,76 +220,3 @@ def test_service_readiness_rejects_product_catalog_drift() -> None:
 
     with pytest.raises(LaunchError, match="disagrees with readiness catalog"):
         ServiceReadiness().wait(process, 1.0)
-
-
-def test_service_readiness_allows_inactive_navigation_when_data_is_safe() -> None:
-    calls = []
-
-    class Manager:
-        def status_details(self, service, *, dds_check, http_check):
-            calls.append((service, dds_check, http_check))
-            return {
-                service: {
-                    "ready": True,
-                    "blockers": [],
-                    "observed": {
-                        "http": {
-                            "payload": {
-                                "ready": False,
-                                "motion_ready": False,
-                                "data_ready": True,
-                                "non_motion_safe": True,
-                                "failed_modules": [],
-                                "critical_failed_modules": [],
-                            }
-                        }
-                    },
-                }
-            }
-
-    process = ProcessSpec(
-        name="gateway",
-        manager="systemd",
-        target="lingtu.service",
-        order=1,
-        timeout_s=1,
-        lifecycle="mode",
-    )
-    readiness = ServiceReadiness(
-        manager=Manager(),
-        sleep=lambda _seconds: None,
-        monotonic=lambda: 0.0,
-    )
-
-    detail = readiness.wait(process, 1.0)
-
-    assert calls == [("gateway", True, True)]
-    assert detail["ready"] is True
-    assert detail["observed"]["http"]["payload"]["motion_ready"] is False
-
-
-def test_launcher_cli_executes_a_manifest_without_compiling_profile(
-    tmp_path,
-    capsys,
-) -> None:
-    manifest_path = _field_product().manifest().write(tmp_path / "product.json")
-
-    exit_code = launcher_main(["plan", "--manifest", str(manifest_path), "--no-sudo", "--json"])
-
-    payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 0
-    assert payload["product"] == "nav"
-    assert payload["status"] == "planned"
-
-
-def test_launcher_cli_rejects_direct_field_product_apply(tmp_path, capsys) -> None:
-    manifest_path = _field_product().manifest().write(tmp_path / "product.json")
-
-    exit_code = launcher_main(
-        ["apply", "--manifest", str(manifest_path), "--no-sudo", "--json"]
-    )
-
-    payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 2
-    assert payload["ok"] is False
-    assert "lingtu.control switch" in payload["error"]

@@ -27,10 +27,6 @@ def maps(**config) -> Blueprint:
     commands arriving via its map_command In port.
     """
     bp = Blueprint()
-    if not bool(config.get("enable_map_layers", True)):
-        _add_map_service(bp, config)
-        return bp
-
     try:
         from runtime.config import get_config
 
@@ -168,13 +164,9 @@ def maps(**config) -> Blueprint:
     except ImportError as e:
         logger.warning("Map modules not available: %s", e)
 
-    _add_map_service(bp, config)
-    return bp
-
-
-def _add_map_service(bp: Blueprint, config: dict) -> None:
-    """Add the low-rate map control facade without enabling live map layers."""
-
+    # MapsModule: map lifecycle (list/save/use/build/delete).
+    # Always included so the REPL and Gateway can issue map_command messages
+    # without needing a direct subprocess call.
     try:
         MapsModule = stack_module(
             "map",
@@ -208,3 +200,5 @@ def _add_map_service(bp: Blueprint, config: dict) -> None:
         bp.add(MapsModule, alias="maps.service", **maps_service_config)
     except ImportError as e:
         logger.warning("MapsModule not available: %s", e)
+
+    return bp

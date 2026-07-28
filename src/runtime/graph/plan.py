@@ -1,11 +1,9 @@
-"""Resolve product process roles against one deployment endpoint."""
+"""Resolve product intent into a deterministic endpoint process plan."""
 
 from __future__ import annotations
 
-import json
 import re
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from .loader import RuntimeGraph, load_runtime_graph
@@ -16,8 +14,8 @@ _SYSTEMD_TARGET = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@:-]*\.service\Z")
 
 
 @dataclass(frozen=True)
-class ProcessSpec:
-    """One logical product process resolved to a deployment target."""
+class RuntimeProcess:
+    """One logical process resolved to an endpoint deployment service."""
 
     name: str
     manager: str
@@ -25,23 +23,11 @@ class ProcessSpec:
     order: int
     timeout_s: int
     lifecycle: str
-    application: str | None = None
-    config: Mapping[str, Any] = field(default_factory=dict, hash=False)
-
-    def __post_init__(self) -> None:
-        """Normalize optional application metadata into immutable JSON data."""
-
-        if self.application is not None:
-            application = str(self.application).strip()
-            if _PROCESS_NAME.fullmatch(application) is None:
-                raise ValueError(f"invalid process application {self.application!r}")
-            object.__setattr__(self, "application", application)
-        object.__setattr__(self, "config", _immutable_json_mapping(self.config))
 
     def as_dict(self) -> dict[str, Any]:
-        """Return the stable representation consumed by Launcher."""
+        """Return the stable JSON representation consumed by launchers."""
 
-        payload = {
+        return {
             "name": self.name,
             "manager": self.manager,
             "target": self.target,
@@ -49,20 +35,74 @@ class ProcessSpec:
             "timeout_s": self.timeout_s,
             "lifecycle": self.lifecycle,
         }
-        if self.application is not None:
-            payload["application"] = self.application
-        if self.config:
-            payload["config"] = _mutable_json_value(self.config)
-        return payload
 
 
-def resolve_processes(
+@dataclass(frozen=True)
+class RuntimePlan:
+    """Executable process plan for one product on one endpoint."""
+
+    product: str
+    endpoint: str
+    processes: tuple[RuntimeProcess, ...]
+    available_processes: tuple[RuntimeProcess, ...] = ()
+    conflicts: tuple[str, ...] = ()
+
+    @property
+    def managed_processes(self) -> tuple[RuntimeProcess, ...]:
+        """Return processes restarted as part of a product mode switch."""
+
+        return tuple(process for process in self.processes if process.lifecycle == "mode")
+
+    @property
+    def persistent_processes(self) -> tuple[RuntimeProcess, ...]:
+        """Return processes kept alive across product mode switches."""
+
+        return tuple(process for process in self.processes if process.lifecycle == "persistent")
+
+    def has_process(self, name: str) -> bool:
+        """Return whether the selected product requires *name*."""
+
+        return any(process.name == name for process in self.processes)
+
+    def process(self, name: str) -> RuntimeProcess:
+        """Return one selected process or raise ``KeyError``."""
+
+        for process in self.processes:
+            if process.name == name:
+                return process
+        raise KeyError(name)
+
+    def as_dict(self) -> dict[str, Any]:
+        """Return the machine-readable runtime plan contract."""
+
+        return {
+            "schema_version": "lingtu.runtime_plan.v1",
+            "product": self.product,
+            "endpoint": self.endpoint,
+            "processes": [process.as_dict() for process in self.processes],
+            "known_targets": [process.target for process in self.available_processes],
+            "stop_targets": list(self.stop_targets),
+        }
+
+    @property
+    def stop_targets(self) -> tuple[str, ...]:
+        """Return targets stopped before applying this product plan."""
+
+        managed = tuple(
+            process.target
+            for process in reversed(self.available_processes)
+            if process.lifecycle == "mode"
+        )
+        return tuple(dict.fromkeys((*managed, *self.conflicts)))
+
+
+def build_runtime_plan(
     product: str,
     endpoint: str,
     *,
     graph: RuntimeGraph | None = None,
-) -> tuple[tuple[ProcessSpec, ...], tuple[ProcessSpec, ...], tuple[str, ...]]:
-    """Return selected processes, all endpoint processes, and conflict targets."""
+) -> RuntimePlan:
+    """Resolve explicit product process names against an endpoint mapping."""
 
     graph = graph or load_runtime_graph()
     product_spec = graph.products.get(product)
@@ -72,10 +112,10 @@ def resolve_processes(
     if endpoint_spec is None:
         raise ValueError(f"unknown Runtime Graph endpoint: {endpoint}")
     process_control = str(endpoint_spec.get("process_control") or "").strip()
-    if process_control != "launcher":
+    if process_control != "runtime_plan":
         owner = process_control or "unspecified"
         raise ValueError(
-            f"endpoint {endpoint} is not Launcher-managed; process control is {owner}"
+            f"endpoint {endpoint} is not RuntimePlan-managed; process control is {owner}"
         )
 
     names = _process_names(product_spec.get("processes"), product=product)
@@ -83,7 +123,6 @@ def resolve_processes(
     if not isinstance(definitions, Mapping):
         raise ValueError(f"endpoint {endpoint} has no process mapping")
 
-    manager = str(endpoint_spec.get("process_manager") or "").strip()
     available = tuple(
         sorted(
             (
@@ -91,7 +130,7 @@ def resolve_processes(
                     name,
                     value,
                     endpoint=endpoint,
-                    manager=manager,
+                    manager=str(endpoint_spec.get("process_manager") or "").strip(),
                 )
                 for name, value in definitions.items()
             ),
@@ -104,14 +143,13 @@ def resolve_processes(
     targets = [process.target for process in available]
     if len(set(targets)) != len(targets):
         raise ValueError(f"endpoint {endpoint} has duplicate process targets")
-
     by_name = {process.name: process for process in available}
     missing = sorted(set(names) - set(by_name))
     if missing:
         raise ValueError(
             f"endpoint {endpoint} does not map processes: {', '.join(missing)}"
         )
-
+    manager = str(endpoint_spec.get("process_manager") or "").strip()
     conflicts = _target_names(
         endpoint_spec.get("conflicts"),
         endpoint=endpoint,
@@ -122,8 +160,13 @@ def resolve_processes(
         raise ValueError(
             f"endpoint {endpoint} process targets also appear as conflicts: {', '.join(overlap)}"
         )
-    selected = tuple(process for process in available if process.name in names)
-    return selected, available, conflicts
+    return RuntimePlan(
+        product=product,
+        endpoint=endpoint,
+        processes=tuple(process for process in available if process.name in names),
+        available_processes=available,
+        conflicts=conflicts,
+    )
 
 
 def _process_names(value: Any, *, product: str) -> tuple[str, ...]:
@@ -158,7 +201,7 @@ def _resolve_process(
     *,
     endpoint: str,
     manager: str,
-) -> ProcessSpec:
+) -> RuntimeProcess:
     if not isinstance(value, Mapping):
         raise ValueError(f"endpoint {endpoint} does not map process {name}")
     if _PROCESS_NAME.fullmatch(name) is None:
@@ -185,16 +228,18 @@ def _resolve_process(
         raise ValueError(
             f"endpoint {endpoint} process {name} needs integer order and timeout_s"
         )
-    if raw_order < 0 or raw_timeout <= 0:
+    order = raw_order
+    timeout_s = raw_timeout
+    if order < 0 or timeout_s <= 0:
         raise ValueError(
             f"endpoint {endpoint} process {name} has invalid order or timeout_s"
         )
-    return ProcessSpec(
+    return RuntimeProcess(
         name=name,
         manager=manager,
         target=target,
-        order=raw_order,
-        timeout_s=raw_timeout,
+        order=order,
+        timeout_s=timeout_s,
         lifecycle=lifecycle,
     )
 
@@ -207,37 +252,3 @@ def _valid_target(value: str, *, manager: str) -> bool:
     if manager == "systemd":
         return _SYSTEMD_TARGET.fullmatch(value) is not None
     return True
-
-
-def _immutable_json_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError("process config must be a JSON object")
-    try:
-        encoded = json.dumps(
-            {str(key): item for key, item in value.items()},
-            allow_nan=False,
-            ensure_ascii=True,
-            sort_keys=True,
-        )
-        normalized = json.loads(encoded)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("process config must contain JSON data") from exc
-    return _immutable_json_value(normalized)
-
-
-def _immutable_json_value(value: Any) -> Any:
-    if isinstance(value, dict):
-        return MappingProxyType(
-            {str(key): _immutable_json_value(item) for key, item in value.items()}
-        )
-    if isinstance(value, list):
-        return tuple(_immutable_json_value(item) for item in value)
-    return value
-
-
-def _mutable_json_value(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(key): _mutable_json_value(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_mutable_json_value(item) for item in value]
-    return value

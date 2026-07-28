@@ -156,10 +156,6 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
         runtime_contract=THUNDER_FIELD_RUNTIME_CONTRACT,
         config_overrides={
             "enable_hw": False,
-            # The field SLAM adapter is a read-only consumer of native SLAM
-            # state and has no visual-odometry feedback path. Do not mount a
-            # Python backup module whose output cannot reach the native owner.
-            "enable_visual_backup": False,
             "enable_robot_driver": False,
             "enable_lidar": False,
             "enable_imu": False,
@@ -171,10 +167,6 @@ RUNTIME_ENDPOINTS: dict[str, RuntimeEndpointSpec] = {
             # Field navigation DDS is owned exclusively by C++ services.
             # Python navigation adapters have been removed.
             "enable_map_out": False,
-            # Native mapd owns live voxel/grid/scene computation. The Host
-            # retains only the low-rate map control facade until mapd exposes
-            # the typed control/query plane.
-            "enable_map_layers": False,
             # Field camera hardware is owned by lingtu-camera-dds.service.
             # The runtime camera role consumes DDS and must not open Orbbec
             # directly, otherwise two processes compete for the same device.

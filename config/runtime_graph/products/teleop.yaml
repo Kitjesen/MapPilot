@@ -13,40 +13,20 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
-native_nav:
-  control_mode: teleop
-  publish_cmd_vel: true
-  check_obstacle: false
-  use_traversability_cost: false
-  allow_teleop_takeover: false
-  teleop_local_planner: false
 processes:
   - nav
   - driver
-  - host
-critical_modules:
-  - host.bus
-  - nav.commands
-  - GatewayModule
+  - runtime
 required_topics:
   - /nav/command/request
   - /nav/command/ack
-  - /nav/state
-  - /nav/operator_motion/control
-  - /nav/operator_motion/sample
-  - /nav/operator_motion/ack
-  - /nav/operator_motion/status
   - /nav/cmd_vel
 required_capabilities:
   - teleop
-  - operator_motion_typed_dds_interface
-  - native_operator_motion_authority
   - command_staleness_gate
   - velocity_limit
   - final_cmd_vel_single_writer
 forbidden_modules:
-  - TeleopModule
-  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.mission
   - nav.local_planner
@@ -63,9 +43,7 @@ transport_rules:
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
 target_chain:
-  - Operator clients claim, hold, or release authority through /nav/operator_motion/control; a matching /nav/operator_motion/ack confirms only that native control action, not final velocity or motor execution.
-  - Fresh body-frame velocity intent uses /nav/operator_motion/sample; adapter success is submitted-only and there is no per-sample output or motor confirmation.
+  - Gateway/TeleopModule sends typed operator velocity requests through /nav/command/request and waits for /nav/command/ack.
   - Native command endpoint runs in control_mode=teleop and rejects autonomous goals/paths.
   - Command age, linear speed, and yaw rate are checked without requiring SLAM or a map.
-  - /nav/operator_motion/status exposes native authority, input-gate, teleop-output, and final logical-command evidence; /nav/cmd_vel is the final body-frame command after native gates.
-  - Driver or Brainstem execution requires separate downstream evidence; neither control ACK nor /nav/cmd_vel alone confirms physical motion.
+  - Native command endpoint publishes final body-frame Twist to /nav/cmd_vel.

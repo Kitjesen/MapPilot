@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 import signal
 import sys
 import textwrap
 import threading
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from . import term as T
 from .lifecycle import (
@@ -62,12 +58,6 @@ from .ui import (
 )
 
 logger = logging.getLogger("lingtu")
-
-
-@dataclass(frozen=True)
-class _HostRuntimeBuild:
-    kind: str
-    handle: Any
 
 
 _SPECIAL_COMMANDS = {
@@ -173,274 +163,6 @@ def _preflight(profile_name: str, cfg: dict) -> None:
     preflight(profile_name, cfg)
 
 
-def _require_managed_product_entry(product) -> None:
-    """Reject field Product startup that bypasses Launcher and systemd."""
-
-    if product.process_control != "launcher":
-        return
-    if str(os.environ.get("LINGTU_SYSTEMD_UNIT") or "").strip():
-        return
-    raise RuntimeError(
-        f"{product.profile} is a managed field Product; use scripts/lingtu instead of running lingtu.py directly"
-    )
-
-
-def _load_product_manifest_for_host(
-    profile_name: str,
-    host_config: dict,
-):
-    """Load the exact Product selected by control, if this is a managed Host."""
-
-    manifest_path = str(os.environ.get("LINGTU_PRODUCT_MANIFEST") or "").strip()
-    expected_fingerprint = str(os.environ.get("LINGTU_PRODUCT_FINGERPRINT") or "").strip()
-    if not manifest_path:
-        if expected_fingerprint:
-            raise RuntimeError("LINGTU_PRODUCT_FINGERPRINT is set without LINGTU_PRODUCT_MANIFEST")
-        return None
-
-    from lingtu.product import ProductManifest
-
-    manifest = ProductManifest.load(manifest_path)
-    is_v5_process_contract = manifest.schema_version == "lingtu.product.v5"
-    endpoint = str(host_config.get("_runtime_endpoint") or host_config.get("runtime_endpoint") or "").strip() or None
-    if is_v5_process_contract:
-        return _validate_v5_host_manifest(
-            manifest,
-            profile_name=profile_name,
-            endpoint=endpoint,
-            expected_fingerprint=expected_fingerprint,
-        )
-    if manifest.profile != profile_name:
-        raise RuntimeError(
-            f"Host profile does not match the control-plane manifest: manifest={manifest.profile} host={profile_name}"
-        )
-    if manifest.endpoint != endpoint:
-        raise RuntimeError(
-            f"Host endpoint does not match the control-plane manifest: manifest={manifest.endpoint!r} host={endpoint!r}"
-        )
-    try:
-        manifest_config = json.dumps(
-            manifest.host_config,
-            allow_nan=False,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        resolved_config = json.dumps(
-            host_config,
-            allow_nan=False,
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError("Host configuration is not valid Product data") from exc
-    if manifest_config != resolved_config:
-        raise RuntimeError("Host configuration does not match the control-plane manifest")
-    if expected_fingerprint and expected_fingerprint != manifest.fingerprint:
-        raise RuntimeError(
-            "systemd Product fingerprint does not match the manifest: "
-            f"environment={expected_fingerprint} manifest={manifest.fingerprint}"
-        )
-    return manifest
-
-
-def _load_published_v5_host_manifest(profile_name: str):
-    """Load a managed v5 Host contract without resolving a local profile."""
-
-    manifest_path = str(os.environ.get("LINGTU_PRODUCT_MANIFEST") or "").strip()
-    expected_fingerprint = str(os.environ.get("LINGTU_PRODUCT_FINGERPRINT") or "").strip()
-    if not manifest_path:
-        if expected_fingerprint:
-            raise RuntimeError("LINGTU_PRODUCT_FINGERPRINT is set without LINGTU_PRODUCT_MANIFEST")
-        return None
-
-    from lingtu.product import PROCESS_CONTRACT_SCHEMA, ProductManifest
-
-    manifest = ProductManifest.load(manifest_path)
-    if manifest.schema_version != PROCESS_CONTRACT_SCHEMA:
-        return None
-    endpoint = str(os.environ.get("LINGTU_ENDPOINT") or "").strip() or None
-    return _validate_v5_host_manifest(
-        manifest,
-        profile_name=profile_name,
-        endpoint=endpoint,
-        expected_fingerprint=expected_fingerprint,
-    )
-
-
-def _validate_v5_host_manifest(
-    manifest: Any,
-    *,
-    profile_name: str,
-    endpoint: str | None,
-    expected_fingerprint: str,
-):
-    """Bind one verified v5 manifest to the current managed Host process."""
-
-    if not expected_fingerprint:
-        raise RuntimeError("v5 Host startup requires LINGTU_PRODUCT_FINGERPRINT")
-    if manifest.profile != profile_name:
-        raise RuntimeError(
-            f"Host profile does not match the control-plane manifest: manifest={manifest.profile} host={profile_name}"
-        )
-    if manifest.endpoint != endpoint:
-        raise RuntimeError(
-            f"Host endpoint does not match the control-plane manifest: manifest={manifest.endpoint!r} host={endpoint!r}"
-        )
-    try:
-        host_process = manifest.process("host")
-    except KeyError as exc:
-        raise RuntimeError("v5 Product manifest is missing required host process") from exc
-    unit = str(os.environ.get("LINGTU_SYSTEMD_UNIT") or "").strip()
-    if host_process.manager != "systemd":
-        raise RuntimeError("v5 Product host process must be managed by systemd")
-    if unit != host_process.target:
-        raise RuntimeError(
-            "v5 Product host systemd unit does not match the manifest: "
-            f"environment={unit or '<unset>'} manifest={host_process.target}"
-        )
-    if expected_fingerprint != manifest.fingerprint:
-        raise RuntimeError(
-            "systemd Product fingerprint does not match the manifest: "
-            f"environment={expected_fingerprint} manifest={manifest.fingerprint}"
-        )
-    return manifest
-
-
-def _build_host_from_manifest(manifest: Any) -> _HostRuntimeBuild:
-    """Dispatch one already-verified manifest without recompiling a Product."""
-
-    _require_managed_product_entry(manifest)
-    if manifest.schema_version == "lingtu.product.v5":
-        host_process = manifest.process("host")
-        if host_process.application == "map_control_plane":
-            from lingtu.runtime import build_runtime_application
-
-            return _HostRuntimeBuild(
-                kind="application",
-                handle=build_runtime_application(manifest),
-            )
-        raise RuntimeError(
-            f"unknown Product host application: {host_process.application!r}"
-        )
-    return _HostRuntimeBuild(kind="system", handle=manifest.build())
-
-
-def _build_host_runtime(profile_name: str, host_config: dict) -> _HostRuntimeBuild:
-    """Build the managed Host from its manifest or a local development Product."""
-
-    manifest = _load_product_manifest_for_host(profile_name, host_config)
-    if manifest is not None:
-        return _build_host_from_manifest(manifest)
-
-    endpoint = str(host_config.get("_runtime_endpoint") or host_config.get("runtime_endpoint") or "").strip()
-    if _canonical_profile_name(profile_name) == "map" and endpoint == "thunder_field":
-        raise RuntimeError("process-only map Product requires a published Product manifest")
-
-    from lingtu.assembly.profile_builder import compile_product
-
-    product = compile_product(profile_name, host_config)
-    _require_managed_product_entry(product)
-    return _HostRuntimeBuild(kind="system", handle=product.build())
-
-
-def _build_host_system(profile_name: str, host_config: dict):
-    """Compatibility wrapper returning the legacy SystemHandle directly."""
-
-    result = _build_host_runtime(profile_name, host_config)
-    if result.kind != "system":
-        raise RuntimeError("Product host is a runtime application, not a SystemHandle")
-    return result.handle
-
-
-def _application_phase(application: Any) -> str:
-    state = getattr(application, "state", None)
-    return str(getattr(state, "phase", "") or "").strip().lower()
-
-
-def _runtime_application_summary(manifest: Any) -> dict[str, Any]:
-    """Return run-state metadata sourced only from the published Product."""
-
-    host_process = manifest.process("host")
-    return {
-        "profile": manifest.profile,
-        "endpoint": manifest.endpoint,
-        "host_kind": "runtime_application",
-        "host_application": host_process.application,
-        "host_target": host_process.target,
-        "product_fingerprint": manifest.fingerprint,
-    }
-
-
-def _run_host_application(
-    *,
-    application: Any,
-    profile_name: str,
-    cfg: dict,
-    log_dir: str,
-    args: argparse.Namespace,
-    runtime_summary: dict[str, Any],
-) -> None:
-    if not args.no_repl:
-        print(f"  {T.red('Error')}: runtime applications require --no-repl")
-        sys.exit(2)
-
-    shutdown = threading.Event()
-
-    def _on_signal(signum, frame):
-        shutdown.set()
-
-    signal.signal(signal.SIGINT, _on_signal)
-    if hasattr(signal, "SIGTERM"):
-        signal.signal(signal.SIGTERM, _on_signal)
-
-    exit_code = 0
-    try:
-        application.start()
-        save_run_state(
-            profile_name,
-            cfg,
-            log_dir,
-            log_format=args.log_format,
-            argv=sys.argv[1:],
-            cwd=str(Path.cwd()),
-            daemon=args.daemon,
-            status="running",
-            runtime=dict(runtime_summary),
-        )
-        failure_phases = {"failed", "failure", "error", "start_failed"}
-        clean_phases = {"stopped", "stopping", "complete", "completed", "done", "shutdown", "exited"}
-        while not shutdown.is_set():
-            phase = _application_phase(application)
-            if phase in failure_phases:
-                logger.error("Runtime application entered failure phase: %s", phase)
-                exit_code = 1
-                break
-            if phase in clean_phases:
-                break
-            shutdown.wait(0.05)
-    except Exception as e:
-        logger.error("Start failed: %s", e, exc_info=True)
-        print(f"\n  {T.red('Start failed')}: {e}")
-        exit_code = 1
-    finally:
-        print("  Stopping runtime application...")
-        try:
-            update_run_state(status="stopping")
-        except Exception as exc:
-            logger.warning("Could not update runtime application stop state: %s", exc)
-        try:
-            application.stop()
-        except Exception as exc:
-            logger.error("Runtime application stop failed: %s", exc, exc_info=True)
-            exit_code = 1
-        clear_run_state()
-        print(f"  {T.green('Done.')}\n")
-    if exit_code:
-        sys.exit(exit_code)
-
-
 def _run_external_profile_launcher(
     profile_name: str,
     cfg: dict,
@@ -502,16 +224,15 @@ def _run_external_profile_launcher(
 def _cmd_switch_plan(args: argparse.Namespace) -> None:
     import json
 
-    from lingtu.control import ProductControl
+    from lingtu.assembly.profile_builder import compile_product
     from runtime.profiles.endpoints import resolve_runtime_run_spec
-    from runtime.profiles.native_nav_config import native_nav_profile_config
     from runtime.profiles.product_mode_contracts import (
         PRODUCT_MODE_CONTRACTS,
         product_mode_switch_plan,
     )
     from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
 
-    if len(args.extra) != 2:
+    if len(args.extra) < 2:
         print(
             "  Usage: lingtu switch-plan <current-profile> <target-profile> "
             "[--current-endpoint ENDPOINT] [--endpoint ENDPOINT]"
@@ -527,10 +248,10 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
     target_cfg = _resolve_config(target_profile, target_args, allow_wizard=False)
     current_spec = resolve_runtime_run_spec(current_profile, current_cfg)
     target_spec = resolve_runtime_run_spec(target_profile, target_cfg)
-    # Product previews must match the same authoritative facade used by field switching.
     target_product = (
-        ProductControl().product(
+        compile_product(
             target_profile,
+            target_cfg,
             endpoint=target_spec.endpoint,
         )
         if target_profile in PRODUCT_MODE_CONTRACTS
@@ -543,8 +264,11 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
         product_mode_switch_plan(
             current_profile,
             target_profile,
-            product=target_product.as_dict() if target_product is not None else None,
-            native_nav_config=native_nav_profile_config(target_profile, target_cfg).as_dict(),
+            runtime_plan=(
+                target_product.plan.as_dict()
+                if target_product is not None and target_product.plan is not None
+                else None
+            ),
         )
         if target_profile in PRODUCT_MODE_CONTRACTS
         else None
@@ -1629,53 +1353,6 @@ def main() -> None:
         print(f"  {T.red('Error')}: Unexpected extra positional arguments: {' '.join(args.extra)}")
         sys.exit(1)
 
-    try:
-        published_v5_manifest = _load_published_v5_host_manifest(profile_name)
-    except Exception as e:
-        logger.error("Published Product validation failed: %s", e, exc_info=True)
-        print(f"\n  {T.red('Product validation failed')}: {e}")
-        sys.exit(1)
-
-    if published_v5_manifest is not None:
-        if args.endpoint and str(args.endpoint).strip() != published_v5_manifest.endpoint:
-            print(
-                f"  {T.red('Error')}: --endpoint cannot override the published Product "
-                f"({published_v5_manifest.endpoint})"
-            )
-            sys.exit(2)
-        if args.daemon:
-            args.no_repl = True
-        if not IS_TTY:
-            args.no_repl = True
-
-        log_dir = setup_logging(args.log_level, profile_name, args.log_format)
-        if args.daemon:
-            log_file = str(Path(log_dir) / "lingtu.log")
-            daemonize(log_file)
-
-        host_process = published_v5_manifest.process("host")
-        print(
-            f"  Product:  {published_v5_manifest.profile}@{published_v5_manifest.endpoint} "
-            f"{host_process.application} {published_v5_manifest.fingerprint[:12]}"
-        )
-        try:
-            host_runtime = _build_host_from_manifest(published_v5_manifest)
-        except Exception as e:
-            logger.error("Build failed: %s", e, exc_info=True)
-            print(f"\n  {T.red('Build failed')}: {e}")
-            sys.exit(1)
-        if host_runtime.kind != "application":
-            raise RuntimeError("v5 process contract did not resolve to a runtime application")
-        _run_host_application(
-            application=host_runtime.handle,
-            profile_name=profile_name,
-            cfg=dict(host_process.config),
-            log_dir=log_dir,
-            args=args,
-            runtime_summary=_runtime_application_summary(published_v5_manifest),
-        )
-        return
-
     cfg = _resolve_config(profile_name, args, allow_wizard=True)
 
     if cfg.get("_external_launcher"):
@@ -1710,27 +1387,15 @@ def main() -> None:
     print(f"  Path stages: {format_runtime_flow_stages(runtime_spec)}")
     print(f"\n  Building system ({T.green(profile_name)})...")
 
+    from lingtu.assembly.profile_builder import compile_product
+
     try:
-        host_runtime = _build_host_runtime(profile_name, blueprint_cfg)
+        product = compile_product(profile_name, blueprint_cfg)
+        system = product.build()
     except Exception as e:
         logger.error("Build failed: %s", e, exc_info=True)
         print(f"\n  {T.red('Build failed')}: {e}")
         sys.exit(1)
-
-    if host_runtime.kind == "application":
-        from runtime.runtime_switch import runtime_spec_summary
-
-        _run_host_application(
-            application=host_runtime.handle,
-            profile_name=profile_name,
-            cfg=cfg,
-            log_dir=log_dir,
-            args=args,
-            runtime_summary=runtime_spec_summary(runtime_spec),
-        )
-        return
-
-    system = host_runtime.handle
 
     if not health_check(system):
         print(f"  {T.red('Health check failed')} - some modules did not build correctly")

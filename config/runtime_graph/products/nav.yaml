@@ -14,45 +14,21 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: autonomy
 autonomy_owner: native_nav_endpoint
-native_nav:
-  control_mode: autonomy
-  publish_cmd_vel: true
-  check_obstacle: true
-  use_traversability_cost: true
-  allow_teleop_takeover: true
-  teleop_local_planner: true
 processes:
   - lidar
   - slam
-  - maps
   - traversability
   - nav
   - driver
-  - host
-critical_modules:
-  - host.bus
-  - SlamAdapterModule
-  - maps.service
-  - nav.commands
-  - nav.goals
-  - GatewayModule
+  - runtime
 required_topics:
   - /tf
   - /slam/odometry
   - /slam/registered_cloud
-  - /slam/map_observation
   - /slam/map_cloud
   - /slam/localization_health
-  - /maps/state
-  - /maps/scene
   - /nav/command/request
   - /nav/command/ack
-  - /nav/goal/status
-  - /nav/state
-  - /nav/operator_motion/control
-  - /nav/operator_motion/sample
-  - /nav/operator_motion/ack
-  - /nav/operator_motion/status
   - /nav/traversability
   - /nav/global_path
   - /nav/local_path
@@ -64,14 +40,9 @@ required_capabilities:
   - local_planner_collision_and_traversability_scoring
   - path_follower_pre_command_output
   - final_cmd_vel_single_writer
-  - operator_motion_typed_dds_interface
-  - native_operator_motion_authority
   - operator_teleop_takeover_with_safety_veto
   - operator_assisted_local_planner_takeover
 forbidden_modules:
-  - TeleopModule
-  - nav.mission
-  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.local_planner
   - nav.path_follower
@@ -85,12 +56,10 @@ transport_rules:
 target_chain:
   - Gateway coordinate requests and GoalService use the persistent C++ client for typed /nav/command/request and wait for /nav/command/ack.
   - Natural-language Gateway/MCP instructions first resolve through SemanticPlanner; only the resulting map-frame goal enters DDS.
-  - Operator takeover uses /nav/operator_motion/control for claim, hold, and release; matching /nav/operator_motion/ack confirms only that control action, while /nav/operator_motion/sample is submitted-only and does not confirm output or motion.
   - Native nav endpoint reads /slam/odometry, /slam/registered_cloud, and /nav/traversability.
   - Native nav endpoint loads active octomap.ot by file path for OctoPlanner3D global planning.
   - OctoPlanner3D, LocalPlanner, and PathFollower run as C++ function calls in the endpoint process.
   - Native nav endpoint publishes /nav/global_path, /nav/local_path telemetry, /nav/way_point, and final /nav/cmd_vel.
   - Native driver consumes /nav/cmd_vel and sends fail-closed Brainstem Walk commands.
-  - /nav/operator_motion/status provides authority, gate, teleop-output, and final logical-command evidence; physical execution requires separate driver/actuator evidence.
   - A deliberate non-zero operator command may latch manual takeover; explicit resume only re-enables fresh goal/path submission and never restores the old path.
   - During takeover, joystick translation is planned locally around obstacles; pure rotation remains under direct swept safety, and no local path produces zero velocity.
