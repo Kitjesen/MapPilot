@@ -44,6 +44,7 @@
 #include "plan/rolling_segment_lifecycle.hpp"
 #include "status/control_loop_health.hpp"
 #include "status/goal_terminal_status_delivery.hpp"
+#include "status/goal_terminal_transaction.hpp"
 #include "status/inspection_status_file_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
@@ -264,139 +265,28 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     frames.last_error = reason;
     nav_status.requestImmediate();
   };
-  struct TerminalServiceResult {
-    bool action_committed{false};
-    bool delivery_acknowledged{false};
-    std::string reason;
-  };
-  auto service_terminal_with_stop = [&](const GoalReplanRuntimeResult &runtime_result,
-                                        const std::string &estop_reason =
-                                            "estop_latched") -> TerminalServiceResult {
-    if (!runtime_result.terminal_after_stop || runtime_result.terminal_intent_id == 0U) {
-      return {false, false, "goal_terminal_missing"};
-    }
-
-    const auto &terminal = *runtime_result.terminal_after_stop;
-    const auto stage =
-        goal_terminal_delivery.stage(runtime_result.terminal_intent_id, terminal.delivery_ticket);
-    if (stage != GoalTerminalStatusDelivery::StageResult::kStaged &&
-        stage != GoalTerminalStatusDelivery::StageResult::kReplay) {
-      terminal_delivery_error(stage == GoalTerminalStatusDelivery::StageResult::kConflict
-                                  ? "goal_terminal_delivery_ticket_conflict"
-                                  : "goal_terminal_delivery_ticket_invalid");
-      return {false, false, "goal_terminal_delivery_ticket_invalid"};
-    }
-
-    if (!goal_terminal_delivery.isCommitted(runtime_result.terminal_intent_id)) {
-      MotionStopTerminalBarrierResult terminal_result;
-      switch (runtime_result.terminal_stop_policy) {
-        case TerminalStopPolicy::kStop:
-          terminal_result = motion_stop.stopPreservingGoalTerminal(terminal.commit);
-          break;
-        case TerminalStopPolicy::kCancel:
-          terminal_result = motion_stop.cancelPreservingGoalTerminal(terminal.commit);
-          break;
-        case TerminalStopPolicy::kEstop:
-          terminal_result = motion_stop.estopPreservingGoalTerminal(estop_reason, terminal.commit);
-          break;
-        case TerminalStopPolicy::kShutdown:
-          return {false, false, "shutdown_terminal_requires_transaction"};
-        case TerminalStopPolicy::kGenericStop: {
-          const auto stopped =
-              motion_stop.commitGoalTerminalAfterStop(terminal.reason, terminal.commit);
-          terminal_result =
-              MotionStopTerminalBarrierResult{stopped.accepted, stopped.reason, stopped.accepted};
-          break;
-        }
-      }
-      if (!terminal_result.accepted) {
-        if (inspection_executor.active()) {
-          (void)inspection_executor.Pause("goal_terminal_stop_unconfirmed:" +
-                                          terminal_result.reason);
-          inspection_runtime.requestStatus();
-        }
-        terminal_delivery_error("goal_terminal_stop_unconfirmed:" + terminal_result.reason);
-        return {false, false, terminal_result.reason};
-      }
-      if (!terminal_result.terminal_committed) {
-        terminal_delivery_error("goal_terminal_stop_unconfirmed:" + terminal_result.reason);
-        return {false, false, terminal_result.reason};
-      }
-      if (!goal_terminal_delivery.markCommitted(runtime_result.terminal_intent_id)) {
-        terminal_delivery_error("goal_terminal_delivery_commit_identity_rejected");
-        return {false, false, "goal_terminal_delivery_commit_identity_rejected"};
-      }
-      sync_goal_plan_diagnostics();
-    }
-
-    const auto delivery = goal_terminal_delivery.flushAndAcknowledge(goal_replan_runtime);
-    if (delivery == GoalTerminalStatusDelivery::FlushResult::kAcknowledged) {
-      return {true, true, "goal_terminal_acknowledged"};
-    }
-    if (delivery == GoalTerminalStatusDelivery::FlushResult::kAcknowledgementRejected) {
-      terminal_delivery_error("goal_terminal_delivery_acknowledgement_rejected");
-      return {true, false, "goal_terminal_delivery_acknowledgement_rejected"};
-    }
-    return {true, false, "goal_terminal_delivery_pending"};
-  };
-  auto service_terminal =
-      [&](const GoalReplanRuntimeResult &runtime_result) -> TerminalServiceResult {
-    return service_terminal_with_stop(runtime_result);
+  GoalTerminalTransaction goal_terminal_transaction(goal_replan_runtime, motion_stop,
+                                                    goal_terminal_delivery,
+                                                    GoalTerminalTransactionActions{
+                                                        terminal_delivery_error,
+                                                        [&](const std::string &reason) {
+                                                          if (inspection_executor.active()) {
+                                                            (void)inspection_executor.Pause(reason);
+                                                            inspection_runtime.requestStatus();
+                                                          }
+                                                        },
+                                                        sync_goal_plan_diagnostics,
+                                                    });
+  auto service_terminal = [&](const GoalReplanRuntimeResult &runtime_result) {
+    return goal_terminal_transaction.advance(runtime_result);
   };
   GoalTaskCancelRouter task_cancel_router(
       goal_plan, goal_replan_runtime,
       [&](const GoalReplanRuntimeResult &runtime_result) {
-        const TerminalServiceResult serviced = service_terminal(runtime_result);
+        const GoalTerminalTransactionResult serviced = service_terminal(runtime_result);
         return GoalTaskCancelTerminalServiceResult{serviced.action_committed, serviced.reason};
       },
       [&] { nav_status.requestImmediate(); });
-  auto preserve_pending_goal_terminal = [&](auto &&preserve_stop) {
-    const GoalReplanRuntimeResult pending = goal_replan_runtime.replayPendingTerminal();
-    if (!pending.terminal_after_stop || pending.terminal_intent_id == 0U) {
-      const auto physical_stop = motion_stop.stopWithoutTerminalCommit();
-      terminal_delivery_error("goal_terminal_surface_missing");
-      return MotionStopTerminalBarrierResult{
-          false,
-          physical_stop.accepted ? "goal_terminal_surface_missing" : physical_stop.reason,
-          false,
-      };
-    }
-
-    const auto &terminal = *pending.terminal_after_stop;
-    const auto stage =
-        goal_terminal_delivery.stage(pending.terminal_intent_id, terminal.delivery_ticket);
-    if (stage != GoalTerminalStatusDelivery::StageResult::kStaged &&
-        stage != GoalTerminalStatusDelivery::StageResult::kReplay) {
-      const std::string failure_reason = stage == GoalTerminalStatusDelivery::StageResult::kConflict
-                                             ? "goal_terminal_delivery_ticket_conflict"
-                                             : "goal_terminal_delivery_ticket_invalid";
-      terminal_delivery_error(failure_reason);
-      const auto preserved = preserve_stop(terminal.commit);
-      if (preserved.terminal_committed) {
-        sync_goal_plan_diagnostics();
-      }
-      return MotionStopTerminalBarrierResult{
-          false,
-          preserved.accepted ? failure_reason : preserved.reason,
-          preserved.terminal_committed,
-      };
-    }
-
-    const auto preserved = preserve_stop(terminal.commit);
-    if (!preserved.terminal_committed) {
-      return preserved;
-    }
-    if (!goal_terminal_delivery.markCommitted(pending.terminal_intent_id)) {
-      terminal_delivery_error("goal_terminal_delivery_commit_identity_rejected");
-      return MotionStopTerminalBarrierResult{
-          false,
-          "goal_terminal_delivery_commit_identity_rejected",
-          true,
-      };
-    }
-    sync_goal_plan_diagnostics();
-    return preserved;
-  };
 
   while (running) {
     const auto loop_start = SteadyClock::now();
@@ -607,7 +497,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       const auto runtime_result =
           goal_replan_runtime.interrupt(GoalReplanRuntimeInterruption::kEstop, steadySeconds());
       if (runtime_result.terminal_after_stop && runtime_result.terminal_intent_id != 0U) {
-        const auto terminal_result = service_terminal_with_stop(runtime_result, reason);
+        const auto terminal_result = goal_terminal_transaction.advance(runtime_result, reason);
         return {terminal_result.action_committed,
                 terminal_result.action_committed ? "estop_latched" : terminal_result.reason};
       }
@@ -942,18 +832,12 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               return {false, std::string(terminal_verdict.reason)};
             }
             if (terminal_verdict.decision == GoalTerminalIngressDecision::kSafetyStop) {
-              const auto preserved =
-                  preserve_pending_goal_terminal([&](MotionStopTerminalCommit commit_terminal) {
-                    return motion_stop.stopPreservingGoalTerminal(std::move(commit_terminal));
-                  });
+              const auto preserved = goal_terminal_transaction.stopWhileTerminalPending();
               return {preserved.accepted, preserved.reason};
             }
             if (terminal_verdict.decision == GoalTerminalIngressDecision::kSafetyEstop) {
               const auto preserved =
-                  preserve_pending_goal_terminal([&](MotionStopTerminalCommit commit_terminal) {
-                    return motion_stop.estopPreservingGoalTerminal(payload.reason,
-                                                                   std::move(commit_terminal));
-                  });
+                  goal_terminal_transaction.estopWhileTerminalPending(payload.reason);
               return {preserved.accepted, preserved.reason};
             }
             std::pair<bool, std::string> result;

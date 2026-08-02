@@ -42,6 +42,11 @@ A concrete HTTP, DDS, or native-service communication access point. It is not an
 env and does not select a Product.
 _Avoid_: using endpoint to mean real or simulated deployment or Product identity
 
+**Navigation runtime**:
+The authoritative in-process owner of one native `navd` navigation lifecycle,
+including goal, recovery, stop, rolling-segment, inspection, and terminal state.
+_Avoid_: a separate state-machine process, DDS-owned state, status projection as state ownership
+
 **Profile**:
 A local-development configuration input for building a Host graph. It is not a
 field Product, env, endpoint identity, or ownership category.

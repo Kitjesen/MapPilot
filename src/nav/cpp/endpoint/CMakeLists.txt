@@ -169,6 +169,7 @@ if(_HAS_OCTOPLANNER3D_RUNTIME)
     status/nav_status_endpoint_adapter.cpp
     status/navigation_goal_status_outbox.cpp
     status/goal_terminal_status_delivery.cpp
+    status/goal_terminal_transaction.cpp
     status/navigation_state.cpp
     status/status_snapshot_file_writer.cpp
     status/inspection_status_file_writer.cpp
@@ -336,6 +337,32 @@ if(NOT TARGET test_active_path_replan_cycle
     -Wall -Wextra -Wpedantic)
   add_test(NAME test_active_path_replan_cycle
            COMMAND test_active_path_replan_cycle)
+endif()
+
+if(NOT TARGET test_goal_terminal_transaction
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_transaction.cpp")
+  add_executable(test_goal_terminal_transaction
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_transaction.cpp"
+    status/goal_terminal_status_delivery.cpp
+    status/goal_terminal_transaction.cpp
+    status/navigation_goal_status_outbox.cpp
+    motion/motion_stop_coordinator.cpp
+    plan/global_plan_task.cpp
+    plan/bounded_goal_replan_controller.cpp
+    plan/goal_plan_controller.cpp
+    plan/goal_replan_runtime_coordinator.cpp)
+  target_include_directories(test_goal_terminal_transaction PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_goal_terminal_transaction PRIVATE pthread)
+  target_compile_options(test_goal_terminal_transaction PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME test_goal_terminal_transaction
+           COMMAND test_goal_terminal_transaction)
 endif()
 
 if(NOT TARGET test_goal_terminal_ingress_policy

@@ -587,6 +587,39 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
+      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_transaction.cpp"
+    AND EXISTS
+      "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/status/goal_terminal_transaction.cpp")
+  find_package(Threads REQUIRED)
+  add_executable(test_goal_terminal_transaction
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_transaction.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/status/goal_terminal_status_delivery.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/status/goal_terminal_transaction.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/status/navigation_goal_status_outbox.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/motion/motion_stop_coordinator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/global_plan_task.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/bounded_goal_replan_controller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/goal_plan_controller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/goal_replan_runtime_coordinator.cpp")
+  target_include_directories(test_goal_terminal_transaction PRIVATE
+    "${LINGTU_SRC_ROOT}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/status"
+    "${LINGTU_NAV_GLOBAL_CPP_DIR}"
+    "${LINGTU_NAV_PLAN_CPP_DIR}"
+    "${LINGTU_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_goal_terminal_transaction PRIVATE Threads::Threads)
+  target_compile_options(test_goal_terminal_transaction PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
+  add_test(
+    NAME test_goal_terminal_transaction
+    COMMAND test_goal_terminal_transaction)
+endif()
+if(LINGTU_NAV_CPP_BUILD_TESTS
+    AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
+    AND EXISTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_endpoint_acceptance.cpp"
     AND EXISTS
       "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/status/goal_terminal_status_delivery.cpp")
