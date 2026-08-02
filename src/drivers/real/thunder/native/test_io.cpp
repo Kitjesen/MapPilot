@@ -6,6 +6,7 @@
 #include "brainstem.grpc.pb.h"
 #include "message/cpp/dds_qos_profiles.hpp"
 #include "message/cpp/dds_topics.hpp"
+#include "message/cpp/navigation_command.hpp"
 
 #include "dds/dds.h"
 #include "lingtu_slam.h"
@@ -251,6 +252,68 @@ class FinalVelocityWriter {
   dds_entity_t writer_{0};
 };
 
+void testDriverSafetyStopUsesGlobalStopKind() {
+  constexpr int kDomain = 94;
+  const dds_entity_t participant = checked(
+      dds_create_participant(static_cast<dds_domainid_t>(kDomain), nullptr, nullptr),
+      "dds_create_participant(test_safety_stop)");
+  const dds_entity_t topic = checked(
+      dds_create_topic(
+          participant,
+          &lingtu_dds_NavigationCommandRequest_desc,
+          lingtu::message::kNavCommandRequest.dds_topic.data(),
+          nullptr,
+          nullptr),
+      "dds_create_topic(test_safety_stop)");
+  auto qos = lingtu::dds::make_qos(
+      lingtu::dds::qos_for_topic(lingtu::message::kNavCommandRequest.dds_topic));
+  const dds_entity_t reader = checked(
+      dds_create_reader(participant, topic, qos.get(), nullptr),
+      "dds_create_reader(test_safety_stop)");
+  lingtu::driver::DdsReader driver(kDomain);
+
+  bool observed = false;
+  for (std::uint64_t attempt = 1U; attempt <= 100U && !observed; ++attempt) {
+    check(
+        driver.writeNavigationStop(
+            "brainstem_control_lost:transport_error", attempt, 123.0),
+        "driver safety stop write failed");
+    std::this_thread::sleep_for(10ms);
+    void* raw_sample = nullptr;
+    dds_sample_info_t info{};
+    const dds_return_t count = dds_take(reader, &raw_sample, &info, 1, 1);
+    check(count >= 0, "driver safety stop take failed");
+    if (count == 0) {
+      continue;
+    }
+    auto* message = static_cast<lingtu_dds_NavigationCommandRequest*>(raw_sample);
+    if (info.valid_data) {
+      check(
+          message->kind == static_cast<std::int32_t>(
+                               lingtu::message::NavigationCommandKind::Stop),
+          "driver fail-safe must publish canonical global Stop");
+      check(
+          message->task_id == nullptr || std::string(message->task_id).empty(),
+          "global Stop must not impersonate a task cancellation");
+      check(
+          message->client_id != nullptr &&
+              std::string(message->client_id) == "lingtu-driver",
+          "driver safety stop must preserve source identity");
+      check(
+          message->reason != nullptr &&
+              std::string(message->reason) ==
+                  "brainstem_control_lost:transport_error",
+          "driver safety stop must preserve its fail-closed reason");
+      observed = true;
+    }
+    checked(
+        dds_return_loan(reader, &raw_sample, 1),
+        "dds_return_loan(test_safety_stop)");
+  }
+  check(observed, "driver safety stop was not observed on DDS");
+  dds_delete(participant);
+}
+
 std::string readTextFile(const std::filesystem::path& path);
 
 void testFinalVelocityQosExpiresQueuedMotion() {
@@ -274,12 +337,28 @@ void testFreshnessRejectionsAreVisibleInDriverStatus() {
   lingtu::driver::recordFreshnessDecision(
       stats,
       {true, lingtu::driver::CommandFreshnessReason::Accepted});
+  lingtu::driver::recordCurrentOutputResult(
+      stats, "producer-before-rejection", 42, true);
   lingtu::driver::recordFreshnessDecision(
       stats,
       {false, lingtu::driver::CommandFreshnessReason::DuplicateSequence});
   lingtu::driver::recordFreshnessDecision(
       stats,
       {false, lingtu::driver::CommandFreshnessReason::Expired});
+
+  check(
+      !stats.last_command_accepted,
+      "freshness rejection must invalidate current output ACK");
+  check(
+      stats.accepted_producer_boot_id.empty(),
+      "freshness rejection must clear current producer identity");
+  check(
+      stats.accepted_output_sequence == 0,
+      "freshness rejection must clear current output sequence");
+
+  // Reinsert stale values to prove status projects only current evidence.
+  stats.accepted_producer_boot_id = "stale-producer-history";
+  stats.accepted_output_sequence = 42;
 
   lingtu::driver::Config config;
   config.status_file =
@@ -291,6 +370,12 @@ void testFreshnessRejectionsAreVisibleInDriverStatus() {
       config, core, stats, "brainstem.test:13145", 123.0);
 
   const std::string status = readTextFile(config.status_file);
+  check(
+      status.find(
+          "\"output_ack\": {\"producer_boot_id\": \"\", "
+          "\"output_sequence\": 0, \"accepted\": false}") !=
+          std::string::npos,
+      "status must not expose stale output ACK identity after rejection");
   check(
       status.find("\"freshness_accepted\": 1") != std::string::npos,
       "status must count accepted freshness envelopes");
@@ -308,6 +393,50 @@ void testFreshnessRejectionsAreVisibleInDriverStatus() {
       status.find("\"last_freshness_reason\": \"expired\"") !=
           std::string::npos,
       "status must expose the latest freshness decision");
+  std::error_code remove_error;
+  std::filesystem::remove(config.status_file, remove_error);
+}
+
+void testCurrentCommandRejectionIsTemporarilyCorrelatedInStatus() {
+  lingtu::driver::RuntimeStats stats;
+  stats.control.reason = "preempted";
+  const auto now = lingtu::driver::Clock::now();
+  lingtu::driver::recordCurrentOutputResult(
+      stats, "producer-rejected", 73, false, now);
+
+  lingtu::driver::Config config;
+  config.status_file =
+      "/tmp/lingtu_driver_rejection_status_" +
+      std::to_string(static_cast<unsigned long long>(boottimeNanoseconds())) +
+      ".json";
+  lingtu::driver::Core core(config.limits, "host-boot");
+  lingtu::driver::writeStatus(
+      config, core, stats, "brainstem.test:13145", 123.0);
+
+  std::string status = readTextFile(config.status_file);
+  check(
+      status.find(
+          "\"output_ack\": {\"producer_boot_id\": \"producer-rejected\", "
+          "\"output_sequence\": 73, \"accepted\": false}") !=
+          std::string::npos,
+      "current command rejection must retain exact sequence identity");
+  check(
+      status.find("\"decision\": \"preempted\"") != std::string::npos,
+      "current command rejection must retain Brainstem reason");
+
+  lingtu::driver::expireCurrentOutputEvidence(
+      stats,
+      now + lingtu::driver::kRejectedOutputEvidenceLifetime);
+  lingtu::driver::writeStatus(
+      config, core, stats, "brainstem.test:13145", 124.0);
+  status = readTextFile(config.status_file);
+  check(
+      status.find(
+          "\"output_ack\": {\"producer_boot_id\": \"\", "
+          "\"output_sequence\": 0, \"accepted\": false}") !=
+          std::string::npos,
+      "expired command rejection must not expose stale sequence identity");
+
   std::error_code remove_error;
   std::filesystem::remove(config.status_file, remove_error);
 }
@@ -522,7 +651,9 @@ void testMutualTlsBrainstemPath() {
 int main() {
   try {
     testFinalVelocityQosExpiresQueuedMotion();
+    testDriverSafetyStopUsesGlobalStopKind();
     testFreshnessRejectionsAreVisibleInDriverStatus();
+    testCurrentCommandRejectionIsTemporarilyCorrelatedInStatus();
     testDdsToBrainstemPath();
     testLegacyWalkOnlyServerFailsClosedWithExplicitProtocolReason();
     testMutualTlsBrainstemPath();

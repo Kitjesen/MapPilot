@@ -1,5 +1,7 @@
 # LingTu Commit and Push Policy
 
+Status: current repository validation policy
+
 This policy is the project-facing checklist for every commit and push.
 `AGENTS.md` remains the authoritative agent contract and contains the required
 Lore Commit Protocol. This document explains how that protocol is applied in
@@ -80,7 +82,7 @@ Closure summaries include `report_age_s` per gate. The wrapper enforces
 `--max-report-age-s`, defaulting to 21600 seconds, so older passing artifacts do
 not silently support new simulation-backed claims.
 
-For setup-only validation, `scripts/deploy/setup_server_ros_pct.sh` writes the
+For setup-only validation, `sim/scripts/setup_linux_validation_host.sh` writes the
 setup-safe subset summary to `artifacts/server_sim_closure_summary_setup.json`.
 When Gateway is running, `/api/v1/diagnostics/routecheck/latest` also exposes
 the latest routecheck `report_age_s`, no-motion flags, and `published` counters

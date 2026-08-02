@@ -17,25 +17,30 @@ driver **native DDS 服务**的现场部署验证流程。
 
 ## 2. Camera Service Catalog 安装（工作流 #18）
 
-通过 Thunder service catalog 统一安装并启用 camera native DDS 服务，替代手工复制 systemd unit。
+通过 Thunder service catalog 统一安装 camera native DDS 服务，替代手工复制 systemd unit。
+安装器只安装服务；ProductControl 通过 Product switch 或重新应用已提交的
+RunPlan 激活进程。
 
 ```bash
 export LINGTU_HOST=ROBOT_IP_OR_HOSTNAME
 ssh sunrise@"$LINGTU_HOST"
 cd /opt/lingtu/current
 
-# 通过 catalog 安装并启用（替代手工复制 service）
+# 通过 catalog 安装（替代手工复制 service，不直接激活进程）
 sudo bash scripts/deploy/thunder/install_catalog_service.sh camera
 
-# 启用并立即启动服务
-sudo systemctl enable --now lingtu-camera-dds.service
+# 首次激活：切换到声明 camera 进程的 Product
+bash scripts/lingtu --env real mode switch <product> [--map <name>]
+
+# 已有 committed RunPlan 时，改为重新应用该计划
+# bash scripts/lingtu --env real svc reapply
 
 # 验证服务状态
 systemctl status lingtu-camera-dds.service
 
-# 确认不再是 disabled
-systemctl is-enabled lingtu-camera-dds.service
-# 期望输出：enabled
+# 确认该 Product 的 RunPlan 已激活 camera
+systemctl is-active lingtu-camera-dds.service
+# 期望输出：active
 ```
 
 ### 环境变量覆盖机制
@@ -177,7 +182,7 @@ Replay backend 是**声明式绑定**（declarative binding），非真实 LCM �
 
 1. 每个 replay channel 的 message type 都有对应的 DDS typed spec
 2. DDS codec 能正确完成 serialize → deserialize round-trip
-3. Robot preset 与 replay preset 使用相同的 topic 路由
+3. Driver backend 与 replay binding 使用相同的 topic 路由
 
 ### DDS Round-trip 覆盖的类型清单
 
@@ -186,7 +191,7 @@ Replay backend 是**声明式绑定**（declarative binding），非真实 LCM �
 | Odometry | `rt/slam/odometry` |
 | PointCloud2 | `rt/slam/map_cloud`, `rt/lidar/raw_frame` |
 | OccupancyGrid | `rt/nav/traversability` |
-| TwistStamped | `rt/nav/cmd_vel` |
+| FinalVelocityCommand | `rt/nav/cmd_vel` |
 | PoseStamped | 目标位姿 |
 | Text (String) | 状态文本 |
 | Float32 | 标量传感器值 |
@@ -206,7 +211,6 @@ Replay backend 是**声明式绑定**（declarative binding），非真实 LCM �
 | Driver motion readiness is status-file based | The product driver is validated through `/dev/shm/lingtu/driver_status.json`, gRPC lease/ACK state, and Gateway/service readiness. Do not require a live nonzero `rt/nav/cmd_vel` sample during a no-motion readiness check. | High |
 | LCM/replay backend 非真实运行时 | replay backend 仅为声明式绑定，不作为真实 LCM 运行时后端存在 | 低（设计如此） |
 | QoS field evidence | late subscriber / reconnect 场景需在 S100P 实机验证 | 高 |
-| 旧名兼容 alias | `CameraBridgeModule` / `LidarModule` / `DeviceManager` 保留兼容 alias，暂不删除 | 低 |
 
 ---
 
@@ -243,11 +247,13 @@ systemctl list-units | grep -E "livox|imu"
 
 ```bash
 # 1. 服务安装与启动
-systemctl is-enabled lingtu-camera-dds.service  # → enabled
-systemctl is-enabled lingtu-livox-dds.service   # → enabled
-systemctl is-enabled lingtu-slam-dds.service    # → enabled
-systemctl is-enabled lingtu-nav-dds.service     # → enabled
+# Product mode units are not boot owners; disabled or static is expected.
+for unit in lingtu-camera-dds lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds; do
+  systemctl is-enabled "${unit}.service" 2>/dev/null || true
+done
+# Only a RunPlan-declared persistent role may be boot-enabled.
 systemctl is-enabled lingtu-driver.service      # → enabled
+bash scripts/lingtu status --explain             # active roles match current RunPlan
 
 # 2. LiDAR/IMU 收口
 ps aux | grep -E "livox|lidar" | grep -v grep  # → 仅 livox_sdk2_stream

@@ -1,4 +1,4 @@
-"""Maps Module compatibility helpers, public skills, and health."""
+"""Maps Module public skills and health facade."""
 
 from __future__ import annotations
 
@@ -123,10 +123,16 @@ class MapsFacadeMixin:
         """Save current SLAM map as *name* and build all artifacts."""
         return json.dumps(self._map_save(name, slam_profile=slam_profile), default=str)
 
-    @skill
     def use_map(self, name: str) -> str:
-        """Activate *name* as the current map."""
-        return json.dumps(self._map_set_active(name), default=str)
+        """Reject legacy direct activation outside product control."""
+        del name
+        return json.dumps(
+            {
+                "success": False,
+                "reason_code": "product_map_transaction_required",
+                "message": "Map activation is owned by the product runtime transaction.",
+            }
+        )
 
     def _poi_set(self, cmd: dict[str, Any]) -> dict[str, Any]:
         return self.api.poi_set(cmd)
@@ -151,6 +157,9 @@ class MapsFacadeMixin:
 
     def _rollback_active_map(self) -> dict[str, Any]:
         return self.api.rollback_active_map()
+
+    def _clear_active_map(self) -> dict[str, Any]:
+        return self.storage.clear_active_map()
 
     def _active_slots(self) -> dict[str, Any]:
         return self.api.list_active_slots()

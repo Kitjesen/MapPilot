@@ -199,7 +199,6 @@ Observe
 bash scripts/lingtu status
 bash scripts/lingtu health
 bash scripts/lingtu doctor --non-motion --json --strict
-bash scripts/lingtu plan-preview --internal-only --strict
 ```
 
 对于特定地图/目标，已文档化的系统验收流程在显式提供 `--allow-motion` 前始终不产生运动。运动 smoke test 也要求明确的 `--allow-motion`。这些标志是刻意显式的复核点，不是在诊断失败门槛时为了方便而附加的选项。

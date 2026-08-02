@@ -8,9 +8,33 @@ import time
 import pytest
 
 pytest.importorskip("fastapi")
+from runtime.msgs.nav import OperatorMotionAction, OperatorMotionReceipt
 from runtime.tests.numpy_guard import numpy_safe_skip_mark
 
 
+def operator_motion_receipt(
+    action: OperatorMotionAction,
+    source_id: str,
+    source_epoch: int,
+    sequence: int,
+    request_id: str | None,
+    *,
+    final_output_sequence: int = 0,
+    accepted: bool = True,
+    reason: str = "accepted",
+) -> OperatorMotionReceipt:
+    return OperatorMotionReceipt(
+        accepted=accepted,
+        action=int(action),
+        request_id=str(request_id or f"{source_id}:{action.name.lower()}:{sequence}"),
+        source_id=source_id,
+        source_epoch=source_epoch,
+        source_sequence=sequence,
+        accepted_sequence=sequence if accepted else 0,
+        final_output_sequence=final_output_sequence if accepted else 0,
+        endpoint_timestamp_s=time.time() or 1.0,
+        reason=reason,
+    )
 def disable_cloud_publish_throttle(gateway) -> None:
     gateway.configure_cloud_viewer(
         cloud_viewer_min_interval_s=0.0,
@@ -267,11 +291,18 @@ def test_external_mapping_profile_recovers_session_before_first_cloud(monkeypatc
     import numpy as np
 
     from gateway.gateway_module import GatewayModule
+    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.profile_builder import compile_run_plan
     from runtime.msgs.sensor import PointCloud2
 
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_PROFILE", "map")
-    gateway = GatewayModule(manage_session_services=False)
+    resolved = resolve_product_host_runtime("map", "real")
+    plan = compile_run_plan(
+        resolved.product,
+        resolved.env,
+        resolved.config,
+    )
+    gateway = GatewayModule(run_plan=plan)
     gateway.setup()
     configure_map_viewer(gateway, map_voxel_size=0.1, voxel_min_hits=1)
     disable_cloud_publish_throttle(gateway)
@@ -290,7 +321,7 @@ def test_external_mapping_profile_recovers_session_before_first_cloud(monkeypatc
     )
 
     assert gateway._session_mode == "mapping"
-    assert gateway._session_product_profile == "map"
+    assert gateway._session_product == "map"
     assert gateway._session_product_session == "mapping"
     assert gateway.map_cloud_point_count() == 4
     assert gateway.latest_cloud_metadata()["session_mode"] == "mapping"
@@ -1128,7 +1159,7 @@ def test_camera_websocket_is_camera_only_and_cleans_up():
     gateway = GatewayModule()
     gateway.setup()
     tracker = TeleopTracker()
-    gateway._teleop_module = tracker
+    gateway._camera_module = tracker
     gateway.push_jpeg(b"\xff\xd8\xffcamera")
 
     client = TestClient(gateway._app)
@@ -1320,6 +1351,11 @@ def test_teleop_websocket_requires_explicit_deadman_for_motion():
             "type": "control_ack",
             "action": "manual_hold",
             "accepted": True,
+            "request_id": None,
+            "source_sequence": 1,
+            "stage": "compatibility_source_zero",
+            "final_cmd_vel_confirmed": False,
+            "motor_confirmed": False,
         }
         assert sent_cmds
         assert sent_cmds[-1].linear.x == 0.0
@@ -1334,7 +1370,16 @@ def test_teleop_websocket_reports_unconfirmed_manual_hold(monkeypatch):
     from nav.adapters.native.commands import NavigationClientError
 
     class FailingPublisher:
-        def quiesce_and_send_zero(self, *, timeout_s):
+        def claim(self, **kwargs):
+            return operator_motion_receipt(
+                OperatorMotionAction.CLAIM,
+                kwargs["source_id"],
+                kwargs["source_epoch"],
+                kwargs["sequence"],
+                kwargs.get("request_id"),
+            )
+
+        def quiesce_and_send_zero(self, **_kwargs):
             raise NavigationClientError("zero command rejected")
 
     gateway = GatewayModule()
@@ -1366,7 +1411,12 @@ def test_teleop_websocket_reports_disconnect_zero_when_release_raises():
     gateway = GatewayModule()
     gateway.setup()
     gateway._teleop_dds_enabled = True
-    gateway._teleop_release = lambda: (_ for _ in ()).throw(RuntimeError("release crashed"))
+    gateway._teleop_native_publisher = type(
+        "ClaimingPublisher",
+        (),
+        {"claim": lambda self, **kwargs: operator_motion_receipt(OperatorMotionAction.CLAIM, kwargs["source_id"], kwargs["source_epoch"], kwargs["sequence"], kwargs.get("request_id"))},
+    )()
+    gateway._teleop_release = lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("release crashed"))
     events = []
     gateway.push_event = events.append
     client = TestClient(gateway._app)
@@ -1376,6 +1426,34 @@ def test_teleop_websocket_reports_disconnect_zero_when_release_raises():
 
     assert any(
         event["type"] == "control_rejected" and event["data"]["error"] == "disconnect_zero_unconfirmed"
+        for event in events
+    )
+
+
+def test_teleop_websocket_rejects_truthy_non_boolean_disconnect_ack():
+    from fastapi.testclient import TestClient
+
+    from gateway.gateway_module import GatewayModule
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    gateway._teleop_native_publisher = type(
+        "ClaimingPublisher",
+        (),
+        {"claim": lambda self, **kwargs: operator_motion_receipt(OperatorMotionAction.CLAIM, kwargs["source_id"], kwargs["source_epoch"], kwargs["sequence"], kwargs.get("request_id"))},
+    )()
+    gateway._teleop_release = lambda **_kwargs: "true"
+    events = []
+    gateway.push_event = events.append
+    client = TestClient(gateway._app)
+
+    with client.websocket_connect("/ws/teleop?client_id=operator-malformed-release"):
+        pass
+
+    assert any(
+        event["type"] == "control_rejected"
+        and event["data"]["error"] == "disconnect_zero_unconfirmed"
         for event in events
     )
 
@@ -1396,89 +1474,119 @@ def test_teleop_websocket_reports_unavailable_native_command_queue():
         payload = json.loads(ws.receive_text())
 
         assert payload["type"] == "control_rejected"
-        assert payload["error"] == "native_command_unavailable"
+        assert payload["error"] == "operator_motion_claim_failed"
 
 
-def test_teleop_camera_frame_task_is_awaited_on_disconnect(monkeypatch):
+def test_teleop_websocket_rejects_truthy_non_boolean_claim_ack():
     from fastapi.testclient import TestClient
 
-    import gateway.routes.realtime as realtime
     from gateway.gateway_module import GatewayModule
-
-    class FakeTask:
-        def __init__(self):
-            self.cancelled = False
-            self.awaited = False
-
-        def cancel(self):
-            self.cancelled = True
-
-        def __await__(self):
-            async def _complete():
-                self.awaited = True
-                raise asyncio.CancelledError()
-
-            return _complete().__await__()
-
-    fake_task = FakeTask()
-
-    def fake_create_task(coro):
-        coro.close()
-        return fake_task
-
-    monkeypatch.setattr(realtime.asyncio, "create_task", fake_create_task)
 
     gateway = GatewayModule()
     gateway.setup()
-
+    gateway._teleop_dds_enabled = True
+    gateway._teleop_native_publisher = type(
+        "MalformedClaimPublisher",
+        (),
+        {"claim": lambda self, **_kwargs: "true"},
+    )()
     client = TestClient(gateway._app)
-    with client.websocket_connect("/ws/teleop?camera=1"):
-        assert gateway._teleop_clients == 1
 
-    assert fake_task.cancelled is True
-    assert fake_task.awaited is True
-    assert gateway._teleop_clients == 0
+    with client.websocket_connect("/ws/teleop?client_id=operator-malformed-claim") as ws:
+        payload = json.loads(ws.receive_text())
+
+    assert payload["type"] == "control_rejected"
+    assert payload["error"] == "operator_motion_claim_failed"
 
 
-def test_teleop_camera_frame_task_error_still_releases_client(monkeypatch):
+def test_teleop_websocket_success_is_ingress_ack_not_control_ack():
     from fastapi.testclient import TestClient
 
-    import gateway.routes.realtime as realtime
     from gateway.gateway_module import GatewayModule
 
-    class FakeTask:
-        def __init__(self):
-            self.cancelled = False
-            self.awaited = False
+    class NativePublisher:
+        last_error = None
 
-        def cancel(self):
-            self.cancelled = True
+        def __init__(self) -> None:
+            self.submitted = []
+            self.zeroed = False
+            self.claimed = False
 
-        def __await__(self):
-            async def _complete():
-                self.awaited = True
-                raise RuntimeError("camera stream failed during cleanup")
+        def claim(self, **kwargs):
+            self.claimed = True
+            return operator_motion_receipt(
+                OperatorMotionAction.CLAIM,
+                kwargs["source_id"],
+                kwargs["source_epoch"],
+                kwargs["sequence"],
+                kwargs.get("request_id"),
+            )
 
-            return _complete().__await__()
+        def submit(self, vx, vy, wz, **kwargs):
+            request_id = kwargs.get("request_id")
+            self.submitted.append((vx, vy, wz, request_id))
+            return True
 
-    fake_task = FakeTask()
+        def quiesce_and_send_zero(self, **kwargs):
+            self.zeroed = True
+            return operator_motion_receipt(
+                OperatorMotionAction.HOLD,
+                kwargs["source_id"],
+                kwargs["source_epoch"],
+                kwargs["sequence"],
+                kwargs.get("request_id"),
+                final_output_sequence=kwargs["sequence"],
+            )
 
-    def fake_create_task(coro):
-        coro.close()
-        return fake_task
-
-    monkeypatch.setattr(realtime.asyncio, "create_task", fake_create_task)
+        def release_source(self, **kwargs):
+            return operator_motion_receipt(
+                OperatorMotionAction.RELEASE,
+                kwargs["source_id"],
+                kwargs["source_epoch"],
+                kwargs["sequence"],
+                kwargs.get("request_id"),
+                final_output_sequence=kwargs["sequence"],
+            )
 
     gateway = GatewayModule()
     gateway.setup()
-
+    gateway._teleop_dds_enabled = True
+    publisher = NativePublisher()
+    gateway._teleop_native_publisher = publisher
+    events = []
+    gateway.push_event = events.append
     client = TestClient(gateway._app)
-    with client.websocket_connect("/ws/teleop?camera=1"):
-        assert gateway._teleop_clients == 1
 
-    assert fake_task.cancelled is True
-    assert fake_task.awaited is True
-    assert gateway._teleop_clients == 0
+    with client.websocket_connect("/ws/teleop?client_id=operator-native") as ws:
+        ws.send_text('{"type":"joy","lx":0.2,"ly":0,"az":0,"deadman":true,"request_id":"joy-1"}')
+        payload = json.loads(ws.receive_text())
+
+        assert payload == {
+            "type": "ingress_ack",
+            "action": "queued",
+            "ingress_accepted": True,
+            "stage": "gateway_queue_accepted",
+            "request_id": "joy-1",
+            "source_id": payload["source_id"],
+            "source_epoch": payload["source_epoch"],
+            "source_sequence": 2,
+            "replaceable": True,
+            "sample_accepted": True,
+            "sample_ack_expected": False,
+            "sample_ack_scope": "operator-motion-sample",
+            "final_cmd_vel_confirmed": False,
+            "motor_confirmed": False,
+        }
+        assert publisher.submitted
+        assert publisher.submitted[-1][3] == "joy-1"
+        assert publisher.claimed is True
+
+    assert publisher.zeroed is True
+    assert not any(
+        event.get("type") == "control_rejected"
+        and event.get("data", {}).get("error") == "disconnect_zero_unconfirmed"
+        for event in events
+    )
 
 
 def test_teleop_client_counter_helpers_are_thread_safe():

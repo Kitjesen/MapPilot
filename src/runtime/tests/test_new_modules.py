@@ -4,7 +4,6 @@ AutonomyModule, GatewayModule, MCPServerModule, RerunModule, SemanticPlannerModu
 All external deps mocked. No GPU/FastAPI/Rerun/C++ required.
 """
 
-import json
 import math
 import time
 import unittest
@@ -30,7 +29,7 @@ class TestNavigation(unittest.TestCase):
         m = self._make()
         self.assertIn("goal_pose", m.ports_in)
         self.assertIn("odometry", m.ports_in)
-        self.assertIn("instruction", m.ports_in)
+        self.assertNotIn("instruction", m.ports_in)
         self.assertIn("stop_signal", m.ports_in)
         self.assertIn("cancel", m.ports_in)
 
@@ -182,14 +181,6 @@ class TestNavigation(unittest.TestCase):
             m._execute_recovery_motion(post_action="none")
             m._request_recovery_stop()
 
-    def test_downsample(self):
-        m = self._make(downsample_dist=2.0)
-        path = [(0, 0, 0), (0.5, 0, 0), (1, 0, 0), (3, 0, 0), (5, 0, 0)]
-        goal = np.array(path[-1])
-        # Downsample now lives in GlobalPlanner
-        result = m._planner_svc._downsample(path, goal)
-        self.assertLess(len(result), len(path))
-
     def test_on_odom_updates_pos(self):
         m = self._make()
         odom = Odometry(
@@ -259,11 +250,13 @@ class TestNavigation(unittest.TestCase):
         self.assertAlmostEqual(m._robot_yaw, yaw)
         m._tracker.update.assert_called_once()
         self.assertAlmostEqual(m._tracker.update.call_args.args[1], yaw)
-        # get_navigation_status moved to NavigationSkillsModule;
+        # get_navigation_status is owned by NavSkills;
         # verify yaw stored directly on Navigation
         self.assertAlmostEqual(m._robot_yaw, yaw)
 
     def test_repeated_patrol_goals_do_not_reset_active_exploration_path(self):
+        from nav.model.state import MissionState
+
         m = self._make()
         m._plan = MagicMock()
         goals = [{"x": 1.0, "y": 2.0, "z": 0.0}, {"x": 3.0, "y": 4.0, "z": 0.0}]
@@ -273,11 +266,11 @@ class TestNavigation(unittest.TestCase):
         self.assertEqual(m._mission_mode, "PATROL")
         self.assertEqual(m._plan.call_count, 1)
 
-        m._state = "EXECUTING"
+        m._state = MissionState.EXECUTING
         m._plan.reset_mock()
         m._on_patrol_goals(goals)
 
-        self.assertEqual(m._state, "EXECUTING")
+        self.assertIs(m._state, MissionState.EXECUTING)
         m._plan.assert_not_called()
 
     def test_repeated_patrol_goals_restart_after_terminal_state(self):
@@ -581,39 +574,6 @@ class TestNavigation(unittest.TestCase):
         self.assertAlmostEqual(m._goal[2], 3.0)
         self.assertFalse(any(e.get("event") == "goal_update_ignored" for e in events))
 
-    def test_navigate_to_skill_accepts_explicit_z(self):
-        m = self._make(allow_direct_goal_fallback=True)
-        m._robot_pos = np.array([1.0, 2.0, 1.25])
-
-        result = json.loads(m.navigate_to(4.0, 5.0, yaw=0.25, z=2.5))
-
-        self.assertEqual(result["goal"], [4.0, 5.0, 2.5])
-        self.assertAlmostEqual(m._goal[2], 2.5)
-        self.assertAlmostEqual(m._active_path_terminal_goal[2], 2.5)
-
-    def test_navigate_to_skill_defaults_z_to_current_floor(self):
-        m = self._make(allow_direct_goal_fallback=True)
-        m._on_odom(
-            Odometry(
-                pose=Pose(position=Vector3(1.0, 2.0, 1.75)),
-                frame_id="map",
-                ts=time.time(),
-            )
-        )
-
-        result = json.loads(m.navigate_to(4.0, 5.0))
-
-        self.assertEqual(result["goal"], [4.0, 5.0, 1.75])
-        self.assertAlmostEqual(m._goal[2], 1.75)
-
-    def test_start_patrol_skill_rejects_non_list_payload(self):
-        m = self._make()
-
-        result = json.loads(m.start_patrol('{"x": 1.0, "y": 2.0}'))
-
-        self.assertEqual(result["status"], "rejected")
-        self.assertEqual(m._patrol_goals, [])
-
     def test_rejects_non_map_goal_frame(self):
         m = self._make(allow_direct_goal_fallback=True)
         events = []
@@ -820,7 +780,12 @@ class TestLocalPlanner(unittest.TestCase):
         m = LocalPlanner(backend="simple")
         paths = []
         m.local_path._add_callback(paths.append)
-        m._on_odom(Odometry(pose=Pose(position=Vector3(0.0, 0.0, 0.0))))
+        m._on_odom(
+            Odometry(
+                pose=Pose(position=Vector3(0.0, 0.0, 0.0)),
+                frame_id="map",
+            )
+        )
         m._on_global_path(
             [
                 np.array([0.0, 0.0, 0.0]),
@@ -832,11 +797,11 @@ class TestLocalPlanner(unittest.TestCase):
         m._on_waypoint(
             PoseStamped(
                 pose=Pose(position=Vector3(3.0, 3.0, 0.0)),
-                frame_id="odom",
+                frame_id="map",
             )
         )
 
-        self.assertEqual(paths[-1].frame_id, "odom")
+        self.assertEqual(paths[-1].frame_id, "map")
         last = paths[-1].poses[-1]
         self.assertAlmostEqual(last.x, 0.0)
         self.assertAlmostEqual(last.y, 3.0)
@@ -1223,21 +1188,28 @@ class TestMCPServerModule(unittest.TestCase):
         self.assertEqual(result["status"], "emergency_stopped")
         self.assertEqual(stops, [2])
 
-    def test_legacy_stop_alias_uses_non_latching_native_stop(self):
-        import json
+    def test_field_emergency_stop_does_not_fall_back_to_local_streams(self):
         from unittest.mock import patch
+
+        from gateway.services.command_boundary import CommandBoundaryError
 
         m = self._make()
         with (
-            patch("gateway.mcp_server.native_stop", return_value=True) as stop,
-            patch("gateway.mcp_server.native_estop") as estop,
+            patch.dict("os.environ", {"LINGTU_COMMAND_OUTPUT_MODE": "endpoint_only"}),
+            patch("gateway.mcp_server.native_estop", return_value=False),
         ):
-            result = json.loads(m._legacy_stop_tool())
+            with self.assertRaises(CommandBoundaryError):
+                m.emergency_stop()
 
-        self.assertEqual(result["status"], "stopped")
-        self.assertEqual(result["control_boundary"], "native_stop")
-        stop.assert_called_once_with(m, "mcp_stop")
-        estop.assert_not_called()
+        self.assertEqual(m.stop_cmd.msg_count, 0)
+        self.assertEqual(m.cmd_vel.msg_count, 0)
+
+    def test_mcp_does_not_publish_ambiguous_stop_alias(self):
+        m = self._make()
+        m.on_system_modules({"MCPServerModule": m})
+
+        self.assertNotIn("stop", m._tool_registry)
+        self.assertNotIn("stop", {tool["name"] for tool in m._tool_list})
 
     def test_get_position_no_odom(self):
         import json
@@ -1309,6 +1281,23 @@ class TestMCPServerModule(unittest.TestCase):
         self.assertEqual(m.mode_cmd.msg_count, 1)
         self.assertEqual(m.stop_cmd.msg_count, 1)
         self.assertEqual(m.cmd_vel.msg_count, 1)
+
+    def test_field_set_mode_estop_requires_native_ack_before_mode_publish(self):
+        from unittest.mock import patch
+
+        from gateway.services.command_boundary import CommandBoundaryError
+
+        m = self._make()
+        with (
+            patch.dict("os.environ", {"LINGTU_COMMAND_OUTPUT_MODE": "endpoint_only"}),
+            patch("gateway.mcp_server.native_estop", return_value=False),
+        ):
+            with self.assertRaises(CommandBoundaryError):
+                m.set_mode("estop")
+
+        self.assertEqual(m.mode_cmd.msg_count, 0)
+        self.assertEqual(m.stop_cmd.msg_count, 0)
+        self.assertEqual(m.cmd_vel.msg_count, 0)
 
     def test_set_mode_invalid(self):
         import json
@@ -1616,7 +1605,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
                 }
 
         m = self._make()
-        m._vector_memory = _VectorMemory()
+        m.on_system_modules({"VectorMemoryModule": _VectorMemory()})
         goals = []
         statuses = []
         m.goal_pose._add_callback(goals.append)
@@ -1660,7 +1649,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
         m = self._make()
         m._goal_resolver = None
         m._frontier_scorer = _FrontierScorer()
-        m._vector_memory = _VectorMemory()
+        m.on_system_modules({"VectorMemoryModule": _VectorMemory()})
         goals = []
         statuses = []
         m.goal_pose._add_callback(goals.append)
@@ -1693,7 +1682,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
                 }
 
         m = self._make()
-        m._vector_memory = _VectorMemory()
+        m.on_system_modules({"VectorMemoryModule": _VectorMemory()})
         goals = []
         m.goal_pose._add_callback(goals.append)
 
@@ -1721,7 +1710,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
                 raise RuntimeError("stats unavailable")
 
         m = self._make()
-        m._vector_memory = _VectorMemory()
+        m.on_system_modules({"VectorMemoryModule": _VectorMemory()})
         goals = []
         m.goal_pose._add_callback(goals.append)
 
@@ -1752,8 +1741,10 @@ class TestSemanticPlannerModule(unittest.TestCase):
                     "degraded": True,
                 }
 
-        m = self._make()
-        m._vector_memory = _VectorMemory()
+        from decision.modules.agent_planner import AgentPlannerModule
+
+        m = AgentPlannerModule(llm_backend="mock")
+        m.on_system_modules({"VectorMemoryModule": _VectorMemory()})
 
         response = m._tool_query_memory("find backpack")
 
@@ -1786,7 +1777,7 @@ class TestSemanticPlannerModule(unittest.TestCase):
                 }
 
         m = self._make()
-        m._vector_memory = _VectorMemory()
+        m.on_system_modules({"VectorMemoryModule": _VectorMemory()})
         goals = []
         statuses = []
         m.goal_pose._add_callback(goals.append)

@@ -1,62 +1,110 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
-
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def test_server_setup_runs_multifloor_closure_without_robot_motion():
-    script = (REPO_ROOT / "scripts/deploy/setup_server_ros_pct.sh").read_text(
-        encoding="utf-8"
+    native_script = (
+        REPO_ROOT / "sim/scripts/setup_linux_validation_host.sh"
+    ).read_text(encoding="utf-8")
+    ros_compat_script = (
+        REPO_ROOT / "scripts/compat/ros2/setup_fastlio2_validation_host.sh"
+    ).read_text(encoding="utf-8")
+    legacy_script = REPO_ROOT / "scripts/deploy/setup_server_ros_pct.sh"
+
+    assert not legacy_script.exists()
+    assert 'RUN_MULTIFLOOR="${LINGTU_RUN_MULTIFLOOR:-1}"' in native_script
+    assert 'RUN_NAV_KERNEL="${LINGTU_RUN_NAV_KERNEL:-1}"' in native_script
+    assert (
+        'PCT_BUILD_LEGACY_NATIVE="${LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE:-0}"'
+        in native_script
     )
+    assert (
+        'RUN_ROUTECHECK_PREFLIGHT="${LINGTU_RUN_ROUTECHECK_PREFLIGHT:-1}"'
+        in native_script
+    )
+    assert (
+        'SETUP_CLOSURE_MAX_REPORT_AGE_S='
+        '"${LINGTU_SETUP_CLOSURE_MAX_REPORT_AGE_S:-21600}"'
+        in native_script
+    )
+    assert "build_nav_kernel_runtime" in native_script
+    assert (
+        'bash "${ROOT}/scripts/build/build_nav_kernel.sh" --clean'
+        in native_script
+    )
+    assert "building nav_kernel nanobind runtime" in native_script
+    assert "building PCT Rust GPMP runtime" in native_script
+    assert (
+        "scripts/build/build_rust_kernels.py "
+        "--target gpmp_trajectory_optimizer --release"
+        in native_script
+    )
+    assert (
+        'local out_dir="${ROOT}/src/nav/services/plan/global_planner/'
+        'algorithm/pct/runtime/rust/${arch}"'
+        in native_script
+    )
+    assert 'if [[ "${PCT_BUILD_LEGACY_NATIVE}" == "1" ]]; then' in native_script
+    assert "building PCT legacy native/GTSAM runtime" in native_script
+    assert "LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE=1 \\" in native_script
+    assert "multi-floor exploration/local-planning closure gate" in native_script
+    assert "Gateway routecheck preflight closure gate, non-motion" in native_script
+    assert "sim/scripts/routecheck_preflight_gate.py" in native_script
+    assert "server simulation closure summary for setup-generated gates" in native_script
+    assert "sim/scripts/server_sim_closure.py" in native_script
+    assert "artifacts/server_sim_closure_summary_setup.json" in native_script
+    assert "--max-report-age-s" in native_script
+    assert "--required-only" in native_script
+    assert '"${SETUP_CLOSURE_MAX_REPORT_AGE_S}"' in native_script
+    assert "--route matrix" in native_script
+    assert "--frontier-loop" in native_script
+    assert "--local-planner-backend nanobind" in native_script
+    assert "--require-production-local-planner" in native_script
+    assert (
+        "artifacts/server_sim_closure/multifloor_exploration/report.json"
+        in native_script
+    )
+    assert "cmd_vel" in native_script
+    assert "physical hardware" in native_script
+    assert (
+        'if [[ "${RUN_PCT}" == "1" ]]; then\n'
+        '    log "PCT runtime inspection"'
+        in native_script
+    )
+    assert "local focused_tests=()" in native_script
+    assert "focused_tests+=(src/runtime/tests/test_pct_runtime.py)" in native_script
+    assert "src/runtime/tests/test_gateway_commands.py" not in native_script
+    assert "src/runtime/tests/test_gateway_route_split.py" not in native_script
 
-    assert 'RUN_MULTIFLOOR="${LINGTU_RUN_MULTIFLOOR:-1}"' in script
-    assert 'RUN_NAV_KERNEL="${LINGTU_RUN_NAV_KERNEL:-1}"' in script
-    assert 'RUN_ROS2_LOCAL_PLANNER="${LINGTU_RUN_ROS2_LOCAL_PLANNER:-0}"' in script
-    assert 'RUN_ROS2_FASTLIO2="${LINGTU_RUN_ROS2_FASTLIO2:-0}"' in script
-    assert 'PCT_BUILD_LEGACY_NATIVE="${LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE:-0}"' in script
-    assert 'RUN_ROUTECHECK_PREFLIGHT="${LINGTU_RUN_ROUTECHECK_PREFLIGHT:-1}"' in script
-    assert 'SETUP_CLOSURE_MAX_REPORT_AGE_S="${LINGTU_SETUP_CLOSURE_MAX_REPORT_AGE_S:-21600}"' in script
-    assert "build_nav_kernel_runtime" in script
-    assert 'bash "${ROOT}/scripts/build/build_nav_kernel.sh" --clean' in script
-    assert "building nav_kernel nanobind runtime for production local planning" in script
-    assert "ros_compat_requested" in script
-    assert "skipping legacy ROS2 local_planner build" in script
-    assert "LINGTU_RUN_ROS2_LOCAL_PLANNER=1 is deprecated and ignored" in script
-    assert "skipping optional ROS2 fastlio2 build" in script
-    assert "if ros_compat_requested; then" in script
-    assert "packages+=(python3-colcon-common-extensions python3-rosdep)" in script
-    assert '|| "${RUN_ROS2_LOCAL_PLANNER}" == "1"' not in script
-    assert "--packages-up-to local_planner" not in script
-    assert "ros2 pkg executables local_planner" not in script
-    assert "verify_ros2_local_planner_setup" not in script
-    assert "building PCT Rust GPMP runtime" in script
-    assert "scripts/build/build_rust_kernels.py --target gpmp_trajectory_optimizer --release" in script
-    assert 'local out_dir="${ROOT}/src/nav/services/plan/global_planner/algorithm/pct/runtime/rust/${arch}"' in script
-    assert 'if [[ "${PCT_BUILD_LEGACY_NATIVE}" == "1" ]]; then' in script
-    assert "building PCT legacy native/GTSAM runtime for parity baselines" in script
-    assert 'LINGTU_PCT_BUILD_LEGACY_GTSAM_NATIVE=1 \\' in script
-    assert "multi-floor exploration/local-planning closure gate" in script
-    assert "Gateway routecheck preflight closure gate, non-motion" in script
-    assert "sim/scripts/routecheck_preflight_gate.py" in script
-    assert "server simulation closure summary for setup-generated gates" in script
-    assert "sim/scripts/server_sim_closure.py" in script
-    assert "artifacts/server_sim_closure_summary_setup.json" in script
-    assert "--max-report-age-s" in script
-    assert "--required-only" in script
-    assert '"${SETUP_CLOSURE_MAX_REPORT_AGE_S}"' in script
-    assert "--route matrix" in script
-    assert "--frontier-loop" in script
-    assert "--local-planner-backend nanobind" in script
-    assert "--require-production-local-planner" in script
-    assert "artifacts/server_sim_closure/multifloor_exploration/report.json" in script
-    assert "cmd_vel" in script
-    assert "physical hardware" in script
-    assert 'if [[ "${RUN_PCT}" == "1" ]]; then\n    log "PCT runtime inspection"' in script
-    assert 'focused_tests=(\n    src/runtime/tests/test_gateway_commands.py' in script
-    assert 'focused_tests+=(src/runtime/tests/test_pct_runtime.py)' in script
+    native_forbidden = (
+        "LINGTU_INSTALL_ROS2",
+        "LINGTU_RUN_ROS2_FASTLIO2",
+        "LINGTU_RUN_ROS2_LOCAL_PLANNER",
+        "source_ros_if_present",
+        "/opt/ros",
+        "colcon",
+        "rosdep",
+        "ros2 pkg",
+        "FishROS",
+    )
+    for token in native_forbidden:
+        assert token not in native_script
 
+    assert "detect_ros_distro" in ros_compat_script
+    assert "install_ros2_official" in ros_compat_script
+    assert "install_ros2_fishros" in ros_compat_script
+    assert "source_ros_if_present" in ros_compat_script
+    assert "colcon build" in ros_compat_script
+    assert "--packages-up-to fastlio2" in ros_compat_script
+    assert "ros2 pkg executables fastlio2" in ros_compat_script
+    assert "ros2 pkg prefix livox_ros_driver2" in ros_compat_script
+
+    lowered_compat = ros_compat_script.lower()
+    for token in ("pct", "mujoco", "nav_kernel", "multifloor", "routecheck"):
+        assert token not in lowered_compat
 
 def test_p0_scripts_use_current_gateway_contracts():
     goto = (REPO_ROOT / "docs/07-testing/p0_goto.sh").read_text(
@@ -103,20 +151,26 @@ def test_p0_scripts_use_current_gateway_contracts():
     assert "/api/v1/safety/state" not in estop
     assert "curl -sf http://localhost:5050/api/v1/cmd_vel" not in estop
 
-    assert "/api/v1/maps" in mapping
-    assert "action=save" in mapping
-    assert "action=set_active" in mapping
-    assert "/api/v1/map/save" not in mapping
+    assert 'scripts/lingtu" map save "$MAP_NAME"' in mapping
+    assert 'scripts/lingtu" nav start "$MAP_NAME"' in mapping
+    assert "/api/v1/map/save" in mapping
+    assert "/api/v1/maps/operations/{operation_id}" in mapping
+    assert "ProductControl transaction boundary" in mapping
+    assert "metadata.json" in mapping
+    assert "occupancy.npz" in mapping
+    assert "octomap.ot" in mapping
     assert "/api/v1/map/activate" not in mapping
-    assert "SAVE_PATH=" in mapping
-    assert 'd.get("map_dir") or d.get("path")' in mapping
-    assert "json_payload action=save" in mapping
-    assert "json_payload action=set_active" in mapping
-    assert 'basename "$ACTIVE_TARGET"' in mapping
+    assert "/api/v1/session/start" not in mapping
+    assert "action=save" not in mapping
+    assert "action=set_active" not in mapping
+    assert "SAVE_PATH=" not in mapping
+    assert "SAVED_MAP_DIR=" in mapping
+    assert "resolve_map_root" in mapping
+    assert "tomogram.pickle" not in mapping
+    assert "LINGTU_SLAM_MAP" not in mapping
     assert "NAV_MAP_DIR" in mapping
     assert "~/data/nova/maps" in mapping
     assert "data/inovxio/data/maps" not in mapping
-
     assert "/api/v1/navigation/plan" in route_safety
     assert "p0_route_safety" in route_safety
     assert "path_safety" in route_safety
@@ -124,10 +178,13 @@ def test_p0_scripts_use_current_gateway_contracts():
     assert "/api/v1/goal" not in route_safety
     assert "/api/v1/cmd_vel" not in route_safety
 
-    assert "/api/v1/explore/status" in explore
-    assert "/api/v1/explore/start" in explore
-    assert "/api/v1/explore/stop" in explore
-    assert "explore or tare_explore" in explore
+    assert 'scripts/lingtu" explore status' in explore
+    assert 'scripts/lingtu" explore task start' in explore
+    assert 'scripts/lingtu" explore stop' in explore
+    assert "curl -sf -X POST http://localhost:5050/api/v1/explore/start" not in explore
+    assert "curl -sf -X POST http://localhost:5050/api/v1/explore/stop" not in explore
+    assert "explore Product" in explore
+    assert "tare_explore" not in explore
     assert "exploring=true" in explore
 
 
@@ -172,16 +229,19 @@ def test_l25_fresh_closure_wrapper_enforces_report_age():
     assert "--max-report-age-s" in script
     assert "--strict" in script
     assert "artifacts/server_sim_closure_summary_all.json" in script
-    assert "bash docs/07-testing/l25_fresh_closure.sh" in readme
-    assert "LINGTU_L25_MAX_REPORT_AGE_S" in readme
+    assert "`l25_fresh_closure.sh` remains a compatibility aggregator" in readme
+    assert "LINGTU_L25_MAX_REPORT_AGE_S" in script
     assert "bash docs/07-testing/l25_fresh_closure.sh" in policy
 
 
 def test_p0_field_runbook_matches_script_contracts():
-    readme = (REPO_ROOT / "docs/07-testing/README.md").read_text(
+    p0_all = (REPO_ROOT / "docs/07-testing/p0_all.sh").read_text(
         encoding="utf-8"
     )
-    p0_all = (REPO_ROOT / "docs/07-testing/p0_all.sh").read_text(
+    p0_cold_boot = (REPO_ROOT / "docs/07-testing/p0_cold_boot.sh").read_text(
+        encoding="utf-8"
+    )
+    p0_explore = (REPO_ROOT / "docs/07-testing/p0_explore.sh").read_text(
         encoding="utf-8"
     )
     p0_scripts = [
@@ -195,34 +255,39 @@ def test_p0_field_runbook_matches_script_contracts():
         REPO_ROOT / "docs/07-testing/p0_route_safety.sh",
     ]
 
-    assert "/api/v1/navigation/status" in readme
-    assert "/api/v1/navigation/plan" in readme
-    assert "path_safety.ok=true" in readme
-    assert "/api/v1/session/start" in readme
-    assert "LINGTU_P0_GOAL_X" in readme
-    assert "type `RUN`" in readme
-    assert "POST /api/v1/stop" in readme
-    assert "/api/v1/state" in readme
-    assert "/api/v1/explore/status" in readme
-    assert "LINGTU_P0_RUN_EXPLORE=1" in readme
-    assert "four scripts" not in readme
-    assert "P0-03 no-motion route safety preview" in readme
-    assert "P0-06 exploration start/stop" in readme
-    assert "VelocityMux` outputs `Twist.zero()`" not in readme
-    assert "watchdog log entry" not in readme
-    assert "session_start \"mapping\" \"fastlio2\"" in p0_all
-    assert "session_start \"navigating\" \"localizer\" \"$MAP_NAME\"" in p0_all
-    assert "confirm_after_preview" in p0_all
+    assert 'scripts/lingtu" map start' in p0_cold_boot
+    assert 'scripts/lingtu" explore start' in p0_explore
+    assert 'scripts/lingtu" explore start --map "$EXPLORE_MAP"' in p0_explore
+    assert "confirm_after_preview" not in p0_all
+    assert 'run_one "P0-03 route safety"' not in p0_all
+    assert 'run_one "P0-03/P0-04 route preview + goto"' in p0_all
     assert 'return "$code"' in p0_all
     assert "LINGTU_P0_GOAL_X" in p0_all
-    assert "explore/tare_explore" in p0_all
+    assert "LINGTU_P0_EXPLORE_MAP" in p0_all
+    assert "tare_explore" not in p0_all
+    assert "mode switch explore" not in p0_all
+    assert "mode switch explore" not in p0_explore
+    assert "/api/v1/session/start" not in p0_all
+    assert "/api/v1/session/end" not in p0_all
+    assert "session_start" not in p0_all
+    assert "session_end" not in p0_all
+    assert "profile switch" not in p0_all
+    assert "fastlio2" not in p0_all
+    assert "localizer" not in p0_all
 
     fail_return_index = p0_all.index('return "$code"')
-    route_index = p0_all.index('run_one "P0-03 route safety"')
-    confirm_index = p0_all.index("\nconfirm_after_preview\n")
-    goto_index = p0_all.index('run_one "P0-04 goto"')
-    assert fail_return_index < route_index
-    assert route_index < confirm_index < goto_index
+    goto_index = p0_all.index('run_one "P0-03/P0-04 route preview + goto"')
+    assert fail_return_index < goto_index
 
     for script in p0_scripts:
-        script.read_text(encoding="utf-8").encode("ascii")
+        script_text = script.read_text(encoding="utf-8")
+        script_text.encode("ascii")
+        if script.name.startswith("p0_"):
+            assert "/api/v1/session/start" not in script_text
+            assert "/api/v1/session/end" not in script_text
+            assert "/api/v1/map/activate" not in script_text
+            assert "sudo systemctl" not in script_text
+            assert "systemctl stop" not in script_text
+            assert "systemctl start" not in script_text
+            if script.name == "p0_mapping.sh":
+                assert "tomogram.pickle" not in script_text

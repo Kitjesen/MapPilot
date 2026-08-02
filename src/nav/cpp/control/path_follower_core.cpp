@@ -113,6 +113,11 @@ PathFollowerOutput computeControl(
     dirDiff = wrapPi(dirDiff + kPi);
     targetSpeed *= -1.0;
   }
+  const double minSpeed = clamp(p.minSpeed, 0.0, std::max(0.0, p.maxSpeed));
+  if (std::fabs(targetSpeed) > kSpeedEpsilon &&
+      std::fabs(targetSpeed) < minSpeed) {
+    targetSpeed = std::copysign(minSpeed, targetSpeed);
+  }
   out.dirDiff = dirDiff;
 
   double vehicleYawRate = -(

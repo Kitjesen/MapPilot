@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from runtime.backend_status import BackendStatus
 from runtime.registry import get, list_plugins
+
+if TYPE_CHECKING:
+    from perception.perception_module import PerceptionModule
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +168,7 @@ class BackendManager:
         }
 
     # ------------------------------------------------------------------
-    # Thin wrappers kept for backward compatibility with existing tests
+    # Backend construction
     # ------------------------------------------------------------------
 
     def _init_detector(self) -> tuple[Any, Any]:

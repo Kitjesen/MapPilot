@@ -256,6 +256,8 @@ class ReconstructionModule(Module, layer=3):
         self._taxonomy = load_semantic_taxonomy(config.get("semantic_taxonomy_path"))
         self._semantic_scan_labels_published = 0
         self._semantic_scan_labels_skipped = 0
+        self._last_map_observation_epoch = 0
+        self._last_map_observation_sequence = 0
 
         dyn_labels = config.get("dynamic_labels")
         if dyn_labels:
@@ -359,6 +361,15 @@ class ReconstructionModule(Module, layer=3):
 
     def _on_map_observation(self, observation: MapObservationFrame) -> None:
         """Label one accepted LiDAR scan without changing its point order."""
+        epoch = int(observation.reset_epoch)
+        sequence = int(observation.sequence)
+        if epoch < self._last_map_observation_epoch or (
+            epoch == self._last_map_observation_epoch
+            and sequence <= self._last_map_observation_sequence
+        ):
+            return
+        self._last_map_observation_epoch = epoch
+        self._last_map_observation_sequence = sequence
         self._ensure_labeler()
         with self._buf_lock:
             scene_graph = self._latest_sg
@@ -385,7 +396,10 @@ class ReconstructionModule(Module, layer=3):
                 taxonomy=self._taxonomy.name,
                 taxonomy_version=self._taxonomy.version,
                 source="reconstruction.scene_graph_projection",
-                metadata={"scene_graph_ts": float(scene_graph.ts)},
+                metadata={
+                    "scene_graph_ts": float(scene_graph.ts),
+                    "reset_epoch": observation.reset_epoch,
+                },
             )
         )
         self._semantic_scan_labels_published += 1

@@ -264,6 +264,12 @@ def _planner_contract(route: "PctRoute", planner: str) -> dict[str, Any]:
         safety = route.case.get("path_safety")
     if not isinstance(safety, dict):
         safety = {}
+    pct_planner_runtime_raw = route.plan.get("pct_planner_runtime")
+    pct_planner_runtime = (
+        dict(pct_planner_runtime_raw)
+        if isinstance(pct_planner_runtime_raw, dict)
+        else {}
+    )
     return {
         "source_report": str(route.source_report),
         "route": route.route,
@@ -279,8 +285,8 @@ def _planner_contract(route: "PctRoute", planner: str) -> dict[str, Any]:
         "path_safety_ok": bool(safety.get("ok", True)),
         "path_safety": safety,
         "plan_planner_class": route.plan.get("planner_class"),
-        "native_runtime_used": bool(route.plan.get("native_runtime_used")),
-        "native_runtime_ok": bool((route.plan.get("native_runtime") or {}).get("ok", True)),
+        "pct_planner_runtime": pct_planner_runtime,
+        "pct_planner_runtime_ok": pct_planner_runtime.get("ok") is True,
         "pct_optimizer_enabled": route.plan.get("pct_optimizer_enabled"),
         "pct_optimizer_attempted": route.plan.get("pct_optimizer_attempted"),
         "pct_optimizer_accepted": route.plan.get("pct_optimizer_accepted"),
@@ -460,10 +466,13 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
             blockers.append("source report selected_route_ok is false")
         if not source_contract["path_safety_ok"]:
             blockers.append("source report path_safety is not ok")
-        if planner_name == "pct" and not source_contract["native_runtime_used"]:
-            blockers.append("source report did not use PCT native runtime")
-        if planner_name == "pct" and not source_contract["native_runtime_ok"]:
-            blockers.append("source report PCT native_runtime is not ok")
+        pct_planner_runtime = source_contract["pct_planner_runtime"]
+        if planner_name == "pct" and not str(
+            pct_planner_runtime.get("runtime") or ""
+        ).strip():
+            blockers.append("source report PCT planner runtime is not selected")
+        if planner_name == "pct" and not source_contract["pct_planner_runtime_ok"]:
+            blockers.append("source report PCT planner runtime is not ok")
         if planner_name == "pct" and not source_contract["tomogram_exists"]:
             blockers.append("source report PCT tomogram is missing")
         if not map_artifacts.get("ok"):
@@ -486,13 +495,15 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                     }
                 },
                 "pct_planner_class": route.plan.get("planner_class"),
-                "pct_native_runtime_used": (
-                    bool(route.plan.get("native_runtime_used"))
+                "pct_planner_runtime": (
+                    source_contract["pct_planner_runtime"]
+                    if planner_name == "pct"
+                    else {}
+                ),
+                "pct_planner_runtime_ok": (
+                    source_contract["pct_planner_runtime_ok"]
                     if planner_name == "pct"
                     else False
-                ),
-                "pct_runtime_ok": bool(
-                    (route.plan.get("native_runtime") or {}).get("ok", True)
                 ),
                 "pct_path_count": len(route.path),
                 "pct_optimizer_enabled": source_contract["pct_optimizer_enabled"],
@@ -512,13 +523,20 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                 "contract_checks": {
                     "source_report_loads": True,
                     "planner_no_fallback": not source_contract["fallback_used"],
-                    "pct_native_runtime_used": (
-                        source_contract["native_runtime_used"]
+                    "pct_planner_runtime_selected": (
+                        bool(
+                            str(
+                                source_contract["pct_planner_runtime"].get(
+                                    "runtime"
+                                )
+                                or ""
+                            ).strip()
+                        )
                         if planner_name == "pct"
                         else None
                     ),
-                    "pct_native_runtime_ok": (
-                        source_contract["native_runtime_ok"]
+                    "pct_planner_runtime_ok": (
+                        source_contract["pct_planner_runtime_ok"]
                         if planner_name == "pct"
                         else None
                     ),
@@ -529,7 +547,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                     ),
                     "pct_path_mode_supported": (
                         source_contract["pct_planner_path_mode"]
-                        in {"native_astar_raw_path", "optimized_trajectory"}
+                        in {"astar_raw_path", "optimized_trajectory"}
                         if planner_name == "pct"
                         else None
                     ),
@@ -560,8 +578,8 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
         report["contract_checks"] = {
             "source_report_loads": False,
             "planner_no_fallback": False,
-            "pct_native_runtime_used": None,
-            "pct_native_runtime_ok": None,
+            "pct_planner_runtime_selected": None,
+            "pct_planner_runtime_ok": None,
             "pct_optimizer_mode_recorded": None,
             "pct_path_mode_supported": None,
             "pct_path_mode_matches_optimizer": None,
@@ -590,10 +608,10 @@ def _pct_path_mode_allowed_by_optimizer_contract(
 ) -> bool:
     if optimizer_enabled not in (True, False):
         return False
-    if path_mode not in {"native_astar_raw_path", "optimized_trajectory"}:
+    if path_mode not in {"astar_raw_path", "optimized_trajectory"}:
         return False
     if optimizer_enabled is False:
-        return path_mode == "native_astar_raw_path"
+        return path_mode == "astar_raw_path"
     if path_mode == "optimized_trajectory":
         return plan.get("pct_optimizer_accepted") is not False
     return _pct_optimizer_rejection_recorded(plan)
@@ -628,23 +646,28 @@ def _load_pct_route(source_report: Path, *, route: str, planner: str = "pct") ->
             raise ValueError(
                 f"source report selected planner is {selected_planner!r}; refusing PCT no-fallback gate"
             )
-        if selection.get("fallback_used") is True:
-            raise ValueError("source report used planner fallback; refusing PCT no-fallback gate")
+        if selection.get("fallback_used") is not False:
+            raise ValueError(
+                "source report fallback_used is not false; "
+                "refusing PCT no-fallback gate"
+            )
         if selection.get("selected_route_ok") is False:
             raise ValueError("source report selected PCT route is not route_ok")
-        if not selected.get("native_runtime_used"):
-            raise ValueError("PCT plan did not use native runtime")
-        runtime = selected.get("native_runtime") or {}
-        if runtime and not runtime.get("ok"):
-            raise ValueError("PCT native runtime is not healthy")
+        runtime = selected.get("pct_planner_runtime")
+        if not isinstance(runtime, dict) or not str(
+            runtime.get("runtime") or ""
+        ).strip():
+            raise ValueError("PCT planner runtime is not selected")
+        if runtime.get("ok") is not True:
+            raise ValueError("PCT planner runtime is not healthy")
         optimizer_enabled = selected.get("pct_optimizer_enabled")
         if optimizer_enabled not in (True, False):
             raise ValueError("PCT plan did not record optimizer enabled/disabled mode")
         path_mode = str(selected.get("pct_planner_path_mode") or "").strip()
-        if path_mode not in {"native_astar_raw_path", "optimized_trajectory"}:
+        if path_mode not in {"astar_raw_path", "optimized_trajectory"}:
             raise ValueError(
                 "PCT plan did not record a supported path mode "
-                "(native_astar_raw_path or optimized_trajectory)"
+                "(astar_raw_path or optimized_trajectory)"
             )
         if not _pct_path_mode_allowed_by_optimizer_contract(
             optimizer_enabled,
@@ -2732,13 +2755,13 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "slam_verified": False,
         "real_lidar_verified": False,
         "runtime": {
-            "global_planner": "pct_native" if planner_name == "pct" else planner_name,
+            "global_planner": "pct" if planner_name == "pct" else planner_name,
             "local_planner": "cmu_ros2_native/localPlanner",
             "path_follower": "cmu_ros2_native/pathFollower",
             "sim_driver": "MuJoCoEngine(kinematic)",
         },
         "planning_chain": {
-            "global_planner": "source_report/native_pct_tomogram",
+            "global_planner": "source_report/pct_tomogram",
             "local_planner": "cmu_ros2_native/localPlanner",
             "path_follower": "cmu_ros2_native/pathFollower",
             "motion_executor": "MuJoCoEngine(kinematic)",
@@ -2765,7 +2788,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "primary_planner": source_contract["primary_planner"],
         "selected_planner": source_contract["selected_planner"],
         "fallback_used": source_contract["fallback_used"],
-        "global_planner_source": "source_report/native_pct_tomogram",
+        "global_planner_source": "source_report/pct_tomogram",
         "source_planning_contract": source_contract,
         "source_tomogram": source_contract["tomogram"],
         "source_tomogram_sha256": source_contract["tomogram_sha256"],
@@ -2776,8 +2799,16 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             }
         },
         "pct_planner_class": route.plan.get("planner_class"),
-        "pct_native_runtime_used": bool(route.plan.get("native_runtime_used")) if planner_name == "pct" else False,
-        "pct_runtime_ok": bool((route.plan.get("native_runtime") or {}).get("ok", True)),
+        "pct_planner_runtime": (
+            source_contract["pct_planner_runtime"]
+            if planner_name == "pct"
+            else {}
+        ),
+        "pct_planner_runtime_ok": (
+            source_contract["pct_planner_runtime_ok"]
+            if planner_name == "pct"
+            else False
+        ),
         "pct_path_count": len(route.path),
         "pct_optimizer_enabled": source_contract["pct_optimizer_enabled"],
         "pct_optimizer_attempted": source_contract["pct_optimizer_attempted"],
@@ -3492,7 +3523,18 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
             and path_stats["count"] > 0
             and nonzero_cmd_count > 0
             and moved_m >= args.min_motion_m
-            and (planner_name != "pct" or bool(route.plan.get("native_runtime_used")))
+            and (
+                planner_name != "pct"
+                or (
+                    bool(
+                        str(
+                            source_contract["pct_planner_runtime"].get("runtime")
+                            or ""
+                        ).strip()
+                    )
+                    and source_contract["pct_planner_runtime_ok"]
+                )
+            )
             and (not obstacle_aware or not obstacle_clearance["collision"])
             and bool(trajectory_quality["ok"])
             and bool(local_path_evidence["ok"])

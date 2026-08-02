@@ -13,13 +13,14 @@
 
 ```text
 real/lidar/
-  __init__.py              # package exports and compatibility aliases
+  __init__.py              # canonical package exports
   module.py                # LidarModule - Blueprint runtime Module
   api/
     frames.py              # LivoxPointFrame, POINT_DTYPE (re-export)
     frame_stream.py        # LidarFrameStream ring buffer
   native/
     sdk.py                 # LidarSource protocol + LidarSourceFactory
+    model.py               # LidarState + LidarHealth
     module.hpp             # C++ native service boundary
     dds_module.hpp/.cpp    # C++ native DDS publisher module
   sdk2_stream/
@@ -28,12 +29,6 @@ real/lidar/
   impl/
     livox/
       sdk2_stream_source.py  # Python-managed SDK2 process source
-      native_factory.py      # Livox driver process factory
-  compat/
-    lidar.py               # Legacy Lidar class (DDS subscriber interface)
-    dds.py                 # Livox CustomMsg + Imu DDS IDL types
-    dds_adapter.py         # LivoxDdsAdapter for DDS topic subscription
-    native_factory.py      # Compatibility hook for old factory path
   deps/
     livox/Livox-SDK2/      # Official Livox SDK2 source
 ```
@@ -55,12 +50,12 @@ Python here is not the high-rate device driver.
 
 - `module.py` is the LingTu runtime module shell.
 - `native/sdk.py` defines the `LidarSource` protocol used by the module.
+- `native/model.py` owns the source lifecycle and health model.
 - `impl/livox/sdk2_stream_source.py` starts the C++ stream process for managed
   local runs and tests.
-- `compat/lidar.py`, `compat/dds.py`, and `compat/dds_adapter.py` are
-  compatibility/readback paths. Old imports such as
-  `drivers.real.lidar.lidar` and `drivers.real.lidar._dds` are aliases only,
-  mapped through `__init__.py` `_SUBMODULE_ALIASES`.
+- The removed Python ROS/Livox DDS mirror is not a field or Host runtime path.
+  Diagnostics that need typed DDS use `message.dds_types` and the explicit
+  diagnostic reader instead of a second LiDAR implementation.
 
 ## ROS2 fallback
 

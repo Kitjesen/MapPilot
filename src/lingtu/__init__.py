@@ -1,7 +1,7 @@
 """LingTu local Python facade.
 
-Use ``Robot`` for high-level local control, or ``lingtu.runtime`` to resolve
-and build Module-First systems directly.
+Use ``Robot`` for high-level local control. Product assembly owns field
+orchestration; Blueprint remains scoped to local and managed Host graphs.
 """
 
 from .robot import Robot

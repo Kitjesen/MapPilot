@@ -12,26 +12,32 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
-THUNDER_FIELD_RUNTIME_CONTRACT = "thunder_field"
-LEGACY_REAL_RUNTIME_CONTRACT = "real_s100p"
-REAL_RUNTIME_CONTRACT = THUNDER_FIELD_RUNTIME_CONTRACT
+REAL_RUNTIME_CONTRACT = "real"
+THUNDER_DATA_SOURCE = "thunder"
 THUNDER_LITE_RUNTIME_CONTRACT = "thunder_lite_local"
-THUNDER_FIELD_EVIDENCE_LABEL = "Thunder field evidence"
+REAL_RUNTIME_EVIDENCE_LABEL = "Real runtime evidence"
 
-DATA_SOURCE_ALIASES = {
-    LEGACY_REAL_RUNTIME_CONTRACT: THUNDER_FIELD_RUNTIME_CONTRACT,
+RUNTIME_CONTRACT_DATA_SOURCES = {
+    REAL_RUNTIME_CONTRACT: THUNDER_DATA_SOURCE,
 }
 
-
 def canonical_data_source_name(name: str | None) -> str | None:
-    """Return the canonical data-source/runtime-contract name."""
+    """Normalize a data-source/runtime-contract value."""
 
     if name is None:
         return None
-    value = str(name)
-    return DATA_SOURCE_ALIASES.get(value, value)
+    return str(name)
+
+
+def runtime_contract_data_source(name: str | None) -> str | None:
+    """Resolve an evidence contract to its concrete endpoint data source."""
+
+    normalized = canonical_data_source_name(name)
+    if normalized is None:
+        return None
+    return RUNTIME_CONTRACT_DATA_SOURCES.get(normalized, normalized)
 
 
 @dataclass(frozen=True)
@@ -125,14 +131,19 @@ class RuntimeTopics:
     odom_prior: str = "/slam/odom_prior"
     odometry: str = "/slam/odometry"
     registered_cloud: str = "/slam/registered_cloud"
+    map_observation: str = "/slam/map_observation"
     map_cloud: str = "/slam/map_cloud"
     cumulative_map_cloud: str = "/slam/cumulative_map_cloud"
     saved_map_cloud: str = "/slam/saved_map_cloud"
+    maps_activation_request: str = "/maps/activation/request"
+    maps_activation_ack: str = "/maps/activation/ack"
+    maps_state: str = "/maps/state"
+    maps_live_cloud: str = "/maps/live_cloud"
     maps_voxel_cloud: str = "/maps/voxel_cloud"
+    maps_accumulated_cloud: str = "/maps/accumulated_cloud"
     maps_occupancy: str = "/maps/occupancy"
     maps_elevation: str = "/maps/elevation"
     maps_esdf: str = "/maps/esdf"
-    maps_traversability: str = "/maps/traversability"
     maps_scene: str = "/maps/scene"
     slam_map_command: str = "/slam/map_command"
     slam_map_event: str = "/slam/map_event"
@@ -163,6 +174,10 @@ class RuntimeTopics:
     exploration_finish: str = "/exploration/finish"
     exploration_grid: str = "/nav/exploration_grid"
     exploration_snapshot: str = "/nav/exploration_snapshot"
+    exploration_execution_snapshot: str = "/nav/exploration_execution_snapshot"
+    exploration_segment_request: str = "/nav/exploration_segment/request"
+    exploration_segment_ack: str = "/nav/exploration_segment/ack"
+    exploration_segment_status: str = "/nav/exploration_segment/status"
     traversable_frontiers: str = "/nav/traversable_frontiers"
     frontier_candidate: str = "/nav/frontier_candidate"
     exploration_status: str = "/exploration/status"
@@ -179,11 +194,18 @@ class RuntimeTopics:
     teleop_cmd_vel: str = "/nav/teleop_cmd_vel"
     nav_command_request: str = "/nav/command/request"
     nav_command_ack: str = "/nav/command/ack"
+    operator_motion_control: str = "/nav/operator_motion/control"
+    operator_motion_sample: str = "/nav/operator_motion/sample"
+    operator_motion_ack: str = "/nav/operator_motion/ack"
+    operator_motion_status: str = "/nav/operator_motion/status"
+    nav_goal_status: str = "/nav/goal/status"
     exploration_command: str = "/nav/exploration/command"
     exploration_ack: str = "/nav/exploration/ack"
-    inspection_command: str = "/nav/inspection/command"
-    inspection_ack: str = "/nav/inspection/ack"
+    exploration_run_event: str = "/nav/exploration/run/event"
+    inspection_task_request: str = "/nav/inspection/task/request"
+    inspection_task_ack: str = "/nav/inspection/task/ack"
     inspection_status: str = "/nav/inspection/status"
+    inspection_task_event: str = "/nav/inspection/task/event"
     inspection_evidence_request: str = "/nav/inspection/evidence/request"
     inspection_evidence_result: str = "/nav/inspection/evidence/result"
     cmd_vel: str = "/nav/cmd_vel"
@@ -196,7 +218,7 @@ class RuntimeTopics:
     added_obstacles: str = "/nav/added_obstacles"
     check_obstacle: str = "/nav/check_obstacle"
     planner_status: str = "/nav/planner_status"
-    nav_state: str = "/nav/nav_state"
+    nav_state: str = "/nav/state"
     local_planner_clear_path: str = "/nav/local_planner/clear_path"
     local_planner_control_hint: str = "/nav/local_planner/control_hint"
 
@@ -390,6 +412,16 @@ class ProfileDataSourceBinding:
     note: str = ""
 
 
+@dataclass(frozen=True)
+class ProductDataSourceBinding:
+    """Which endpoint data source one Field Product is allowed to use."""
+
+    product: str
+    data_source: str
+    mode: str
+    note: str = ""
+
+
 FRAMES = RuntimeFrames()
 TOPICS = RuntimeTopics()
 
@@ -403,6 +435,7 @@ CANONICAL_NAV_TOPICS = (
     *CORE_ALGORITHM_ENTRY_TOPICS,
     TOPICS.exploration_grid,
     TOPICS.exploration_snapshot,
+    TOPICS.exploration_execution_snapshot,
     TOPICS.global_path,
     TOPICS.local_path,
     TOPICS.terrain_map,
@@ -503,6 +536,51 @@ RUNTIME_DATA_FLOW = (
         transport_policy="direct_default_shm_for_dense_maps_dds_for_external_exploration",
     ),
     RuntimeDataFlowStage(
+        name="tare_exploration",
+        inputs=(
+            TOPICS.odometry,
+            "/tf",
+            TOPICS.exploration_snapshot,
+            TOPICS.exploration_command,
+            TOPICS.nav_goal_status,
+            TOPICS.exploration_segment_ack,
+            TOPICS.exploration_segment_status,
+        ),
+        outputs=(
+            TOPICS.nav_command_request,
+            TOPICS.exploration_ack,
+            TOPICS.exploration_run_event,
+            TOPICS.exploration_segment_request,
+        ),
+        owner="native_explore_endpoint",
+        frame_role=FRAMES.map,
+        map_dependency="identity_versioned_rolling_occupancy_snapshot",
+        producer="native_explore_endpoint",
+        consumers=("native_nav_endpoint", "gateway"),
+        frequency="command_and_segment_event_driven",
+        transport_policy="typed_dds_process_boundary",
+    ),
+    RuntimeDataFlowStage(
+        name="rolling_map_segment_execution",
+        inputs=(
+            TOPICS.odometry,
+            TOPICS.exploration_execution_snapshot,
+            TOPICS.exploration_segment_request,
+        ),
+        outputs=(
+            TOPICS.global_path,
+            TOPICS.exploration_segment_ack,
+            TOPICS.exploration_segment_status,
+        ),
+        owner="native_nav_endpoint",
+        frame_role=FRAMES.map,
+        map_dependency="atomic_identity_bound_rolling_execution_grid",
+        producer="native_nav_endpoint",
+        consumers=("native_explore_endpoint", "local_planning_and_following", "gateway"),
+        frequency="segment_event_driven",
+        transport_policy="typed_dds_process_boundary",
+    ),
+    RuntimeDataFlowStage(
         name="global_planning",
         inputs=(
             TOPICS.odometry,
@@ -565,6 +643,13 @@ RUNTIME_DATA_FLOW = (
         frequency="20_50hz",
         transport_policy="direct_or_dds_to_driver_at_hardware_boundary",
     ),
+)
+
+PRODUCT_SCOPED_RUNTIME_DATA_FLOW_STAGE_NAMES = frozenset(
+    {
+        "tare_exploration",
+        "rolling_map_segment_execution",
+    }
 )
 
 LIDAR_EXTRINSICS = {
@@ -632,6 +717,28 @@ MESSAGE_FORMATS = {
         frame_role=FRAMES.body,
         required_fields=("x", "y", "z"),
         note="Robot/body-frame current scan after source normalization.",
+    ),
+    "map_observation": MessageFormat(
+        name="map_observation",
+        ros_type="lingtu.dds.MapObservation",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "observation_sequence",
+            "reset_epoch",
+            "sensor_frame",
+            "map_sensor",
+            "sensor_origin",
+            "scan",
+            "pose_confidence",
+            "localization_quality",
+            "pose_state",
+            "pose_reason",
+        ),
+        note=(
+            "Accepted incremental scan with its exact same-timestamp map<-sensor "
+            "transform. Consumers reject old epochs and non-increasing sequences."
+        ),
     ),
     "map_cloud": MessageFormat(
         name="map_cloud",
@@ -701,9 +808,21 @@ MESSAGE_FORMATS = {
     ),
     "cmd_vel": MessageFormat(
         name="cmd_vel",
-        ros_type="geometry_msgs/msg/TwistStamped",
+        ros_type="lingtu.dds.FinalVelocityCommand",
         frame_role=FRAMES.body,
-        note="Muxed command; endpoint adapters decide whether to relay it.",
+        required_fields=(
+            "header",
+            "host_boot_id",
+            "producer_boot_id",
+            "output_seq",
+            "source_wall_ns",
+            "twist",
+        ),
+        note=(
+            "Identity-bound final post-safety logical velocity envelope. "
+            "Only the field driver may forward it to Brainstem; simulation "
+            "adapters may explicitly project TwistStamped."
+        ),
     ),
     "teleop_cmd_vel": MessageFormat(
         name="teleop_cmd_vel",
@@ -720,46 +839,283 @@ MESSAGE_FORMATS = {
         name="nav_command_request",
         ros_type="lingtu.dds.NavigationCommandRequest",
         frame_role="request_dependent",
-        required_fields=("request_id", "kind"),
+        required_fields=("client_id", "task_id", "request_id", "kind"),
         note=(
-            "Typed C++ field command envelope. Goal, cancel, and operator velocity "
-            "requests share this reliable volatile request channel."
+            "Typed C++ field command envelope. task_id is stable across delivery "
+            "attempts identified by request_id."
         ),
     ),
     "nav_command_ack": MessageFormat(
         name="nav_command_ack",
         ros_type="lingtu.dds.NavigationCommandAck",
         frame_role=FRAMES.map,
-        required_fields=("request_id", "kind", "accepted", "reason"),
-        note="Endpoint business acceptance or rejection with a native map-frame Header.",
+        required_fields=("task_id", "request_id", "kind", "accepted", "reason"),
+        note="Endpoint request-attempt acceptance; never a terminal task result.",
+    ),
+    "operator_motion_control": MessageFormat(
+        name="operator_motion_control",
+        ros_type="lingtu.dds.OperatorMotionControl",
+        frame_role="metadata",
+        required_fields=(
+            "source_id",
+            "source_epoch",
+            "source_sequence",
+            "request_id",
+            "action",
+            "lease_ttl_ms",
+            "reason",
+        ),
+        note=(
+            "Low-rate native operator motion authority control. Adapters may claim, "
+            "release, or hold; the native endpoint remains the authority owner."
+        ),
+    ),
+    "operator_motion_sample": MessageFormat(
+        name="operator_motion_sample",
+        ros_type="lingtu.dds.OperatorMotionSample",
+        frame_role=FRAMES.body,
+        required_fields=(
+            "source_id",
+            "source_epoch",
+            "source_sequence",
+            "request_id",
+            "deadman",
+            "velocity",
+            "freshness_budget_ms",
+            "source_stamp_ns",
+        ),
+        note=(
+            "High-rate latest-only body-frame operator velocity intent. It is not "
+            "final velocity until native authority, obstacle, traversability, and "
+            "final safety checks publish /nav/cmd_vel."
+        ),
+    ),
+    "operator_motion_ack": MessageFormat(
+        name="operator_motion_ack",
+        ros_type="lingtu.dds.OperatorMotionAck",
+        frame_role="metadata",
+        required_fields=(
+            "source_id",
+            "source_epoch",
+            "source_sequence",
+            "request_id",
+            "action",
+            "accepted",
+            "reason",
+            "accepted_sequence",
+            "final_output_sequence",
+        ),
+        note=(
+            "Native business ACK for operator motion Claim, Hold, or Release only. "
+            "Sample is best-effort intent; status carries last_sample/admitted/final sequence evidence."
+        ),
+    ),
+    "operator_motion_status": MessageFormat(
+        name="operator_motion_status",
+        ros_type="lingtu.dds.OperatorMotionStatus",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "active_source_id",
+            "active_source_epoch",
+            "has_active_authority",
+            "holding",
+            "has_active_sample",
+            "last_sample_sequence",
+            "admitted_sequence",
+            "final_output_sequence",
+            "authority_reason",
+            "input_gate_reason",
+            "teleop_output",
+            "final_cmd_vel",
+        ),
+        note=(
+            "Native operator motion DDS evidence stream. No in-repo Python DDS reader "
+            "is declared today; Gateway readiness consumes the native JSON status mirror, "
+            "while external diagnostics may subscribe directly. Header is map/status-frame; "
+            "teleop_output and final_cmd_vel are body-frame twists."
+        ),
+    ),
+    "nav_goal_status": MessageFormat(
+        name="nav_goal_status",
+        ros_type="lingtu.dds.NavigationGoalStatus",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "boot_id",
+            "event_sequence",
+            "task_id",
+            "request_id",
+            "state",
+            "goal_epoch",
+            "reason",
+        ),
+        note=(
+            "Native navigation goal lifecycle status with a map-frame Header. "
+            "Host APIs expose event_sequence as sequence."
+        ),
+    ),
+    "navigation_state": MessageFormat(
+        name="navigation_state",
+        ros_type="lingtu.dds.NavigationState",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "boot_id",
+            "state_sequence",
+            "control_mode",
+            "lifecycle_state",
+            "active_task_id",
+            "active_request_id",
+            "goal_epoch",
+            "map_id",
+            "map_version",
+            "map_hash",
+            "planning_state",
+            "execution_state",
+            "recovery_state",
+            "progress",
+            "authority",
+            "hold_reason",
+            "failure_code",
+        ),
+        note=(
+            "Compact authoritative navd lifecycle state. Host APIs expose "
+            "state_sequence as sequence; diagnostics are a separate contract."
+        ),
     ),
     "exploration_command": MessageFormat(
         name="exploration_command",
         ros_type="lingtu.dds.ExplorationCommandRequest",
         frame_role=FRAMES.map,
-        required_fields=("request_id", "kind", "session_id", "reason"),
-        note="Typed start, pause, resume, or stop request for the native exploration FSM.",
+        required_fields=(
+            "request_id",
+            "exploration_run_id",
+            "kind",
+            "session_id",
+            "has_directed_target",
+            "directed_target_x",
+            "directed_target_y",
+            "directed_target_ttl_s",
+            "reason",
+        ),
+        note=(
+            "Typed lifecycle or directed-target request for one caller-owned exploration run. "
+            "exploration_run_id is a canonical uppercase ULID and is distinct from request_id. "
+            "Kinds 5 and 6 set and clear a directed map-frame target preference; the set "
+            "payload carries has_directed_target, directed_target_x/y, and directed_target_ttl_s. "
+            "It never authorizes a static-boundary path."
+        ),
     ),
     "exploration_ack": MessageFormat(
         name="exploration_ack",
         ros_type="lingtu.dds.ExplorationCommandAck",
         frame_role=FRAMES.map,
-        required_fields=("request_id", "kind", "accepted", "reason", "session_id"),
-        note="Native exploration business ACK; transport delivery alone is not acceptance.",
+        required_fields=(
+            "request_id",
+            "exploration_run_id",
+            "kind",
+            "accepted",
+            "duplicate",
+            "reason",
+            "session_id",
+            "intent_revision",
+        ),
+        note=(
+            "Native exploration admission ACK with endpoint-owned duplicate replay truth; "
+            "transport delivery alone is not acceptance or lifecycle truth. intent_revision "
+            "identifies the accepted directed-target intent."
+        ),
     ),
-    "inspection_command": MessageFormat(
-        name="inspection_command",
-        ros_type="lingtu.dds.InspectionCommandRequest",
+    "exploration_run_event": MessageFormat(
+        name="exploration_run_event",
+        ros_type="lingtu.dds.ExplorationRunEvent",
         frame_role=FRAMES.map,
-        required_fields=("request_id", "kind", "route_id", "route_revision"),
-        note="Typed start/pause/resume/cancel command referencing a native C++ route.",
+        required_fields=(
+            "timestamp_s",
+            "frame_id",
+            "boot_id",
+            "event_sequence",
+            "kind",
+            "exploration_run_id",
+            "start_request_id",
+            "command_request_id",
+            "product_session_id",
+            "state",
+            "route",
+            "map_id",
+            "map_version",
+            "artifact_hash",
+            "reason",
+            "motion_stop_confirmed",
+            "motion_stop_reason",
+        ),
+        note=(
+            "Ordered native Explore run fact. Terminal states are published only "
+            "after native motion-stop confirmation."
+        ),
     ),
-    "inspection_ack": MessageFormat(
-        name="inspection_ack",
-        ros_type="lingtu.dds.InspectionCommandAck",
+    "exploration_segment_request": MessageFormat(
+        name="exploration_segment_request",
+        ros_type="lingtu.dds.ExplorationSegmentRequest",
         frame_role=FRAMES.map,
-        required_fields=("request_id", "kind", "accepted", "reason", "run_id"),
-        note="Native inspection command acceptance or rejection with a map-frame Header.",
+        required_fields=(
+            "request_id",
+            "kind",
+            "session_id",
+            "reset_epoch",
+            "minimum_generation",
+            "target",
+            "reason",
+        ),
+        note=(
+            "Live exploration request for navd to select and validate an observed-free "
+            "rolling-map prefix. It is separate from generic saved-map navigation goals."
+        ),
+    ),
+    "exploration_segment_ack": MessageFormat(
+        name="exploration_segment_ack",
+        ros_type="lingtu.dds.ExplorationSegmentAck",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "request_id",
+            "kind",
+            "accepted",
+            "session_id",
+            "reset_epoch",
+            "generation",
+            "live",
+            "reason",
+        ),
+        note="navd business acceptance for an identity-bound rolling-map segment.",
+    ),
+    "exploration_segment_status": MessageFormat(
+        name="exploration_segment_status",
+        ros_type="lingtu.dds.ExplorationSegmentStatus",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "request_id",
+            "state",
+            "session_id",
+            "reset_epoch",
+            "generation",
+            "live",
+            "reason",
+        ),
+        note="navd lifecycle state for an identity-bound rolling-map segment.",
+    ),
+    "inspection_task_request": MessageFormat(
+        name="inspection_task_request",
+        ros_type="lingtu.dds.InspectionTaskRequest",
+        frame_role=FRAMES.map,
+        required_fields=("task_id", "request_id", "kind", "route_id", "route_revision"),
+        note="Product inspection lifecycle command with distinct task and request identities.",
+    ),
+    "inspection_task_ack": MessageFormat(
+        name="inspection_task_ack",
+        ros_type="lingtu.dds.InspectionTaskAck",
+        frame_role=FRAMES.map,
+        required_fields=("task_id", "request_id", "kind", "accepted", "reason", "run_id"),
+        note="Native inspection task admission result preserving caller task identity.",
     ),
     "inspection_status": MessageFormat(
         name="inspection_status",
@@ -767,6 +1123,37 @@ MESSAGE_FORMATS = {
         frame_role=FRAMES.map,
         required_fields=("run_id", "route_id", "state", "point_index", "point_count"),
         note="Live status from the native C++ multi-point inspection executor.",
+    ),
+    "inspection_task_event": MessageFormat(
+        name="inspection_task_event",
+        ros_type="lingtu.dds.InspectionTaskEvent",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "boot_id",
+            "event_sequence",
+            "kind",
+            "task_id",
+            "request_id",
+            "command_request_id",
+            "state",
+            "map_id",
+            "map_version",
+            "route_id",
+            "route_revision",
+            "point_index",
+            "point_count",
+            "loop_index",
+            "retry_count",
+            "point_id",
+            "action",
+            "action_request_id",
+            "evidence_id",
+            "reason",
+        ),
+        note=(
+            "Ordered native inspection task fact. boot_id and event_sequence detect "
+            "endpoint restart and delivery gaps."
+        ),
     ),
     "inspection_evidence_request": MessageFormat(
         name="inspection_evidence_request",
@@ -816,26 +1203,116 @@ MESSAGE_FORMATS = {
             "lingtu.dds.OccupancyGrid on the same runtime topic."
         ),
     ),
-    "maps_elevation": MessageFormat(
-        name="maps_elevation",
-        ros_type="application/json",
-        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
-        required_fields=("grid", "resolution", "origin"),
-        note="Map-domain elevation product; Python Module payload is a dict.",
+    "maps_state": MessageFormat(
+        name="maps_state",
+        ros_type="lingtu.dds.MapRuntimeState",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "producer_boot_id",
+            "running",
+            "live",
+            "reset_epoch",
+            "observation_sequence",
+            "generation",
+            "dds_write_failures",
+            "dds_unhealthy_writers",
+            "required_publications_ready",
+            "current_generation_published",
+            "realtime_clouds_published_generation",
+            "map_layers_published_generation",
+            "scene_published_generation",
+            "voxel_snapshot_omitted_cells",
+            "voxel_capacity_rejections",
+            "accumulated_capacity_rejections",
+            "capacity_limited",
+            "dds_scene_oversize_rejections",
+        ),
+        note=(
+            "Native mapd process, input, engine, DDS-output health, bounded "
+            "snapshot, and per-channel publication progress."
+        ),
     ),
-    "maps_esdf": MessageFormat(
-        name="maps_esdf",
-        ros_type="application/json",
-        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
-        required_fields=("distance", "resolution", "origin"),
-        note="Map-domain ESDF product; Python Module payload is a dict.",
+    "map_activation_request": MessageFormat(
+        name="map_activation_request",
+        ros_type="lingtu.dds.MapActivationRequest",
+        frame_role="metadata",
+        required_fields=(
+            "request_id",
+            "operation",
+            "target",
+            "previous",
+            "caller",
+            "reason",
+        ),
+        note="Exact native saved-map STAGE, RESTORE, or VERIFY request.",
+    ),
+    "map_activation_ack": MessageFormat(
+        name="map_activation_ack",
+        ros_type="lingtu.dds.MapActivationAck",
+        frame_role="metadata",
+        required_fields=(
+            "request_id",
+            "operation",
+            "accepted",
+            "message",
+            "changed",
+            "target",
+            "previous",
+            "active",
+            "producer_boot_id",
+        ),
+        note="Authoritative request-correlated result from native mapd.",
+    ),
+    "maps_cloud_layer": MessageFormat(
+        name="maps_cloud_layer",
+        ros_type="lingtu.dds.MapCloudLayer",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "layer",
+            "cloud",
+            "reset_epoch",
+            "observation_sequence",
+            "generation",
+            "live",
+        ),
+        note="Bounded native mapd point-cloud layer for live, voxel, or accumulated display.",
+    ),
+    "maps_grid": MessageFormat(
+        name="maps_grid",
+        ros_type="lingtu.dds.MapGrid",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "layer",
+            "info",
+            "data",
+            "reset_epoch",
+            "observation_sequence",
+            "generation",
+            "live",
+        ),
+        note="Native mapd occupancy, elevation, or ESDF grid layer.",
     ),
     "maps_scene": MessageFormat(
         name="maps_scene",
-        ros_type="application/json",
-        frame_role=f"{FRAMES.map}_or_{FRAMES.odom}",
-        required_fields=("schema_version", "layers"),
-        note="Layered map visualization/product snapshot for Gateway/Rerun-style consumers.",
+        ros_type="lingtu.dds.MapScene",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "producer_boot_id",
+            "reset_epoch",
+            "observation_sequence",
+            "generation",
+            "live",
+            "live_cloud",
+            "voxel_cloud",
+            "accumulated_cloud",
+            "occupancy",
+            "elevation",
+            "esdf",
+        ),
+        note="Atomic bounded scene snapshot published by native mapd for Gateway and diagnostics.",
     ),
     "lingtu.dds.Bool": MessageFormat(
         name="lingtu.dds.Bool",
@@ -892,6 +1369,27 @@ MESSAGE_FORMATS = {
         ),
         note="Strict trinary rolling occupancy snapshot with restart-safe map identity.",
     ),
+    "exploration_execution_snapshot": MessageFormat(
+        name="exploration_execution_snapshot",
+        ros_type="lingtu.dds.ExplorationExecutionGrid",
+        frame_role=FRAMES.map,
+        required_fields=(
+            "header",
+            "info",
+            "occupancy",
+            "terrain_cost",
+            "session_id",
+            "reset_epoch",
+            "generation",
+            "live",
+            "terrain_risk_stamp",
+            "terrain_risk_ready",
+        ),
+        note=(
+            "Atomic rolling occupancy and terrain-risk execution input. Missing, "
+            "stale, or inconsistent terrain risk blocks segment execution."
+        ),
+    ),
     "traversable_frontier_candidates": MessageFormat(
         name="traversable_frontier_candidates",
         ros_type="application/json",
@@ -914,12 +1412,14 @@ TOPIC_FORMATS = {
     "/tf": ("tf_message",),
     "/tf_static": ("tf_message",),
     TOPICS.raw_lidar_points: ("raw_livox_custom", "raw_timed_pointcloud2"),
+    TOPICS.raw_lidar_packet: ("raw_livox_custom",),
     TOPICS.raw_imu: ("lingtu.dds.Imu",),
     TOPICS.odom_prior: ("odometry",),
     TOPICS.driver_odometry: ("odometry",),
     TOPICS.odometry: ("odometry",),
     TOPICS.state_estimation_at_scan: ("state_estimation_at_scan",),
     TOPICS.registered_cloud: ("registered_cloud",),
+    TOPICS.map_observation: ("map_observation",),
     TOPICS.map_cloud: ("map_cloud",),
     TOPICS.camera_color: ("lingtu.dds.Image",),
     TOPICS.camera_depth: ("lingtu.dds.Image",),
@@ -929,11 +1429,15 @@ TOPIC_FORMATS = {
     TOPICS.gnss_odom: ("odometry",),
     TOPICS.cumulative_map_cloud: ("map_cloud",),
     TOPICS.saved_map_cloud: ("map_cloud",),
-    TOPICS.maps_voxel_cloud: ("map_cloud",),
-    TOPICS.maps_occupancy: ("nav_msgs/msg/OccupancyGrid",),
-    TOPICS.maps_elevation: ("maps_elevation",),
-    TOPICS.maps_esdf: ("maps_esdf",),
-    TOPICS.maps_traversability: ("traversability",),
+    TOPICS.maps_activation_request: ("map_activation_request",),
+    TOPICS.maps_activation_ack: ("map_activation_ack",),
+    TOPICS.maps_state: ("maps_state",),
+    TOPICS.maps_live_cloud: ("maps_cloud_layer",),
+    TOPICS.maps_voxel_cloud: ("maps_cloud_layer",),
+    TOPICS.maps_accumulated_cloud: ("maps_cloud_layer",),
+    TOPICS.maps_occupancy: ("maps_grid",),
+    TOPICS.maps_elevation: ("maps_grid",),
+    TOPICS.maps_esdf: ("maps_grid",),
     TOPICS.maps_scene: ("maps_scene",),
     TOPICS.slam_map_command: ("std_msgs/msg/String",),
     TOPICS.slam_map_event: ("std_msgs/msg/String",),
@@ -941,6 +1445,7 @@ TOPIC_FORMATS = {
     TOPICS.slam_relocalization_response: ("lingtu.dds.RelocalizationResponse",),
     TOPICS.exploration_grid: ("nav_msgs/msg/OccupancyGrid",),
     TOPICS.exploration_snapshot: ("exploration_snapshot",),
+    TOPICS.exploration_execution_snapshot: ("exploration_execution_snapshot",),
     TOPICS.traversable_frontiers: ("traversable_frontier_candidates",),
     TOPICS.frontier_candidate: ("traversable_frontier_candidates",),
     TOPICS.save_map_service: ("service",),
@@ -959,11 +1464,22 @@ TOPIC_FORMATS = {
     TOPICS.teleop_cmd_vel: ("teleop_cmd_vel",),
     TOPICS.nav_command_request: ("nav_command_request",),
     TOPICS.nav_command_ack: ("nav_command_ack",),
+    TOPICS.operator_motion_control: ("operator_motion_control",),
+    TOPICS.operator_motion_sample: ("operator_motion_sample",),
+    TOPICS.operator_motion_ack: ("operator_motion_ack",),
+    TOPICS.operator_motion_status: ("operator_motion_status",),
+    TOPICS.nav_goal_status: ("nav_goal_status",),
+    TOPICS.nav_state: ("navigation_state",),
     TOPICS.exploration_command: ("exploration_command",),
     TOPICS.exploration_ack: ("exploration_ack",),
-    TOPICS.inspection_command: ("inspection_command",),
-    TOPICS.inspection_ack: ("inspection_ack",),
+    TOPICS.exploration_run_event: ("exploration_run_event",),
+    TOPICS.exploration_segment_request: ("exploration_segment_request",),
+    TOPICS.exploration_segment_ack: ("exploration_segment_ack",),
+    TOPICS.exploration_segment_status: ("exploration_segment_status",),
+    TOPICS.inspection_task_request: ("inspection_task_request",),
+    TOPICS.inspection_task_ack: ("inspection_task_ack",),
     TOPICS.inspection_status: ("inspection_status",),
+    TOPICS.inspection_task_event: ("inspection_task_event",),
     TOPICS.inspection_evidence_request: ("inspection_evidence_request",),
     TOPICS.inspection_evidence_result: ("inspection_evidence_result",),
     TOPICS.cmd_vel: ("cmd_vel",),
@@ -1047,26 +1563,33 @@ TOPIC_ROS_TYPES = {topic: _ros_types_for_formats(formats) for topic, formats in 
 
 TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.lidar_scan: (FRAMES.lidar,),
+    TOPICS.raw_lidar_packet: (FRAMES.lidar,),
     TOPICS.imu: (FRAMES.lidar,),
     TOPICS.odom_prior: (FRAMES.odom,),
     TOPICS.driver_odometry: (FRAMES.odom,),
     TOPICS.odometry: (FRAMES.odom, FRAMES.map),
     TOPICS.state_estimation_at_scan: (FRAMES.odom,),
     TOPICS.registered_cloud: (FRAMES.body,),
+    TOPICS.map_observation: (FRAMES.map,),
     TOPICS.map_cloud: (FRAMES.map, FRAMES.odom),
     TOPICS.cumulative_map_cloud: (FRAMES.map, FRAMES.odom),
     TOPICS.saved_map_cloud: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_activation_request: (),
+    TOPICS.maps_activation_ack: (),
+    TOPICS.maps_state: (FRAMES.map,),
+    TOPICS.maps_live_cloud: (FRAMES.map,),
     TOPICS.maps_voxel_cloud: (FRAMES.map, FRAMES.odom),
+    TOPICS.maps_accumulated_cloud: (FRAMES.map,),
     TOPICS.maps_occupancy: (FRAMES.map, FRAMES.odom),
     TOPICS.maps_elevation: (FRAMES.map, FRAMES.odom),
     TOPICS.maps_esdf: (FRAMES.map, FRAMES.odom),
-    TOPICS.maps_traversability: (FRAMES.map, FRAMES.odom),
     TOPICS.maps_scene: (FRAMES.map, FRAMES.odom),
     TOPICS.gnss_fix: (FRAMES.gnss,),
     TOPICS.gnss_status: (FRAMES.gnss,),
     TOPICS.gnss_odom: (FRAMES.map, FRAMES.odom),
     TOPICS.exploration_grid: (FRAMES.map, FRAMES.odom),
     TOPICS.exploration_snapshot: (FRAMES.map,),
+    TOPICS.exploration_execution_snapshot: (FRAMES.map,),
     TOPICS.traversable_frontiers: (FRAMES.map, FRAMES.odom),
     TOPICS.frontier_candidate: (FRAMES.map, FRAMES.odom),
     TOPICS.terrain_map: (FRAMES.map, FRAMES.odom),
@@ -1076,11 +1599,22 @@ TOPIC_ALLOWED_FRAME_IDS = {
     TOPICS.teleop_cmd_vel: (FRAMES.body,),
     TOPICS.nav_command_request: (FRAMES.map, FRAMES.body),
     TOPICS.nav_command_ack: (FRAMES.map,),
+    TOPICS.operator_motion_control: (),
+    TOPICS.operator_motion_sample: (FRAMES.body,),
+    TOPICS.operator_motion_ack: (),
+    TOPICS.operator_motion_status: (FRAMES.map,),
+    TOPICS.nav_goal_status: (FRAMES.map,),
+    TOPICS.nav_state: (FRAMES.map,),
     TOPICS.exploration_command: (FRAMES.map,),
     TOPICS.exploration_ack: (FRAMES.map,),
-    TOPICS.inspection_command: (FRAMES.map,),
-    TOPICS.inspection_ack: (FRAMES.map,),
+    TOPICS.exploration_run_event: (FRAMES.map,),
+    TOPICS.exploration_segment_request: (FRAMES.map,),
+    TOPICS.exploration_segment_ack: (FRAMES.map,),
+    TOPICS.exploration_segment_status: (FRAMES.map,),
+    TOPICS.inspection_task_request: (FRAMES.map,),
+    TOPICS.inspection_task_ack: (FRAMES.map,),
     TOPICS.inspection_status: (FRAMES.map,),
+    TOPICS.inspection_task_event: (FRAMES.map,),
     TOPICS.inspection_evidence_request: (FRAMES.map,),
     TOPICS.inspection_evidence_result: (FRAMES.map,),
     TOPICS.global_path: (FRAMES.map, FRAMES.odom),
@@ -1094,11 +1628,13 @@ TOPIC_ALLOWED_FRAME_IDS = {
 REAL_RUNTIME_TOPIC_ALLOWED_FRAME_IDS = {
     **TOPIC_ALLOWED_FRAME_IDS,
     TOPICS.map_cloud: (FRAMES.map,),
+    TOPICS.maps_state: (FRAMES.map,),
+    TOPICS.maps_live_cloud: (FRAMES.map,),
     TOPICS.maps_voxel_cloud: (FRAMES.map,),
+    TOPICS.maps_accumulated_cloud: (FRAMES.map,),
     TOPICS.maps_occupancy: (FRAMES.map,),
     TOPICS.maps_elevation: (FRAMES.map,),
     TOPICS.maps_esdf: (FRAMES.map,),
-    TOPICS.maps_traversability: (FRAMES.map,),
     TOPICS.maps_scene: (FRAMES.map,),
     TOPICS.traversable_frontiers: (FRAMES.map,),
     TOPICS.frontier_candidate: (FRAMES.map,),
@@ -1239,10 +1775,33 @@ ALGORITHM_INTERFACES = {
             "/tf",
             TOPICS.exploration_snapshot,
             TOPICS.exploration_command,
+            TOPICS.nav_goal_status,
+            TOPICS.exploration_segment_ack,
+            TOPICS.exploration_segment_status,
         ),
-        outputs=(TOPICS.nav_command_request, TOPICS.exploration_ack),
+        outputs=(
+            TOPICS.nav_command_request,
+            TOPICS.exploration_ack,
+            TOPICS.exploration_run_event,
+            TOPICS.exploration_segment_request,
+        ),
         owner="native_explore_endpoint",
         map_dependency="identity_versioned_rolling_occupancy_snapshot",
+    ),
+    "rolling_map_segment_execution": AlgorithmInterface(
+        name="rolling_map_segment_execution",
+        inputs=(
+            TOPICS.odometry,
+            TOPICS.exploration_execution_snapshot,
+            TOPICS.exploration_segment_request,
+        ),
+        outputs=(
+            TOPICS.global_path,
+            TOPICS.exploration_segment_ack,
+            TOPICS.exploration_segment_status,
+        ),
+        owner="native_nav_endpoint",
+        map_dependency="atomic_identity_bound_rolling_execution_grid",
     ),
     "global_planning": AlgorithmInterface(
         name="global_planning",
@@ -1287,8 +1846,9 @@ RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES = {
         "exploration_strategy",
         "wavefront_frontier_exploration",
         "traversable_frontier_preview",
-        "tare_exploration",
     ),
+    "tare_exploration": ("tare_exploration",),
+    "rolling_map_segment_execution": ("rolling_map_segment_execution",),
     "global_planning": (
         "global_planning",
         "octoplanner3d_global_planning",
@@ -1311,8 +1871,8 @@ DATA_SOURCE_CONTRACTS = {
         localization_source="mock_or_in_process_odometry",
         mapping_source="mock_or_in_process_map",
     ),
-    REAL_RUNTIME_CONTRACT: DataSourceContract(
-        name=REAL_RUNTIME_CONTRACT,
+    THUNDER_DATA_SOURCE: DataSourceContract(
+        name=THUNDER_DATA_SOURCE,
         provider="hardware",
         owns=("mid360_lidar", "imu", "robot_actuation"),
         normalized_outputs=(TOPICS.lidar_scan, TOPICS.imu),
@@ -1474,7 +2034,7 @@ def _dedupe_runtime_tokens(tokens: tuple[str, ...]) -> tuple[str, ...]:
 def _data_source_contract(data_source: str | DataSourceContract) -> DataSourceContract:
     if isinstance(data_source, DataSourceContract):
         return data_source
-    data_source = canonical_data_source_name(data_source) or ""
+    data_source = runtime_contract_data_source(data_source) or ""
     try:
         return DATA_SOURCE_CONTRACTS[data_source]
     except KeyError as exc:
@@ -1482,16 +2042,11 @@ def _data_source_contract(data_source: str | DataSourceContract) -> DataSourceCo
         raise ValueError(f"unknown data source {data_source!r}; available: {available}") from exc
 
 
-def resolved_runtime_data_flow(
+def _resolved_runtime_data_flow(
     data_source: str | DataSourceContract,
+    *,
+    product_stage_names: frozenset[str],
 ) -> tuple[RuntimeDataFlowStage, ...]:
-    """Return concrete runtime data flow for one endpoint data source.
-
-    RUNTIME_DATA_FLOW is the shared template used by evidence validators. This
-    resolver expands the source-owned boundary so operators can inspect actual
-    topics and command sinks instead of template placeholders.
-    """
-
     source = _data_source_contract(data_source)
     stages: list[RuntimeDataFlowStage] = []
     minimal_command_only = (
@@ -1504,6 +2059,11 @@ def resolved_runtime_data_flow(
     minimal_stage_names = {"endpoint_adapter", "command_boundary"}
 
     for stage in RUNTIME_DATA_FLOW:
+        if (
+            stage.name in PRODUCT_SCOPED_RUNTIME_DATA_FLOW_STAGE_NAMES
+            and stage.name not in product_stage_names
+        ):
+            continue
         if minimal_command_only and stage.name not in minimal_stage_names:
             continue
 
@@ -1544,6 +2104,59 @@ def resolved_runtime_data_flow(
         )
 
     return tuple(stages)
+
+
+def resolved_runtime_data_flow(
+    data_source: str | DataSourceContract,
+) -> tuple[RuntimeDataFlowStage, ...]:
+    """Return the concrete data-source flow, excluding Product-only stages.
+
+    RUNTIME_DATA_FLOW is the shared template used by evidence validators. This
+    resolver expands the source-owned boundary so operators can inspect actual
+    topics and command sinks instead of template placeholders.
+    """
+
+    return _resolved_runtime_data_flow(
+        data_source,
+        product_stage_names=frozenset(),
+    )
+
+
+def product_runtime_data_flow_stage_names(
+    required_topics: Iterable[str],
+) -> tuple[str, ...]:
+    """Derive Product-only stages from one Product's declared topic surface.
+
+    A Product activates a scoped stage by declaring every output of that stage.
+    The runtime audit separately requires the Product to declare the complete
+    input/output topic closure before the stage is accepted.
+    """
+
+    declared_topics = frozenset(str(topic) for topic in required_topics)
+    stage_names: list[str] = []
+    for stage in RUNTIME_DATA_FLOW:
+        if stage.name not in PRODUCT_SCOPED_RUNTIME_DATA_FLOW_STAGE_NAMES:
+            continue
+        output_topics = frozenset(
+            token for token in stage.outputs if token.startswith("/")
+        )
+        if output_topics and output_topics <= declared_topics:
+            stage_names.append(stage.name)
+    return tuple(stage_names)
+
+
+def resolved_product_runtime_data_flow(
+    data_source: str | DataSourceContract,
+    required_topics: Iterable[str],
+) -> tuple[RuntimeDataFlowStage, ...]:
+    """Return the data-source flow plus stages activated by one Product."""
+
+    return _resolved_runtime_data_flow(
+        data_source,
+        product_stage_names=frozenset(
+            product_runtime_data_flow_stage_names(required_topics)
+        ),
+    )
 
 
 ADAPTER_TOPIC_ALIASES = {
@@ -1853,80 +2466,53 @@ PROFILE_DATA_SOURCE_BINDINGS = {
             "and simulated cmd_vel closure."
         ),
     ),
-    "sim_gazebo": ProfileDataSourceBinding(
-        profile="sim_gazebo",
-        data_source="gazebo_industrial",
-        mode="gazebo_ros_native_simulation",
-    ),
-    "sim_industrial": ProfileDataSourceBinding(
-        profile="sim_industrial",
-        data_source="gazebo_industrial",
-        mode="gazebo_industrial_delivery_demo",
-    ),
-    "sim_cmu_tare": ProfileDataSourceBinding(
-        profile="sim_cmu_tare",
-        data_source="cmu_unity_external",
-        mode="external_cmu_unity_tare_adapter",
-    ),
     "lite": ProfileDataSourceBinding(
         profile="lite",
         data_source="thunder_lite_local",
         mode="minimal_thunder_no_ros",
         note="Driver/safety/navigation shell only; no SLAM, map, semantic, ROS bridge, or external services.",
     ),
-    "teleop": ProfileDataSourceBinding(
-        profile="teleop",
-        data_source=REAL_RUNTIME_CONTRACT,
+}
+
+PRODUCT_DATA_SOURCE_BINDINGS = {
+    "teleop": ProductDataSourceBinding(
+        product="teleop",
+        data_source=THUNDER_DATA_SOURCE,
         mode="real_robot_remote_control",
         note="Operator command only; no autonomous navigation decision chain.",
     ),
-    "teleop_avoid": ProfileDataSourceBinding(
-        profile="teleop_avoid",
-        data_source=REAL_RUNTIME_CONTRACT,
+    "teleop_avoid": ProductDataSourceBinding(
+        product="teleop_avoid",
+        data_source=THUNDER_DATA_SOURCE,
         mode="real_robot_remote_control_with_obstacle_avoidance",
         note="Operator command with live SLAM, obstacle, and traversability gates; no saved map or global planning.",
     ),
-    "map": ProfileDataSourceBinding(
-        profile="map",
-        data_source=REAL_RUNTIME_CONTRACT,
+    "map": ProductDataSourceBinding(
+        product="map",
+        data_source=THUNDER_DATA_SOURCE,
         mode="real_robot_mapping",
     ),
-    "tracking": ProfileDataSourceBinding(
-        profile="tracking",
-        data_source=REAL_RUNTIME_CONTRACT,
+    "tracking": ProductDataSourceBinding(
+        product="tracking",
+        data_source=THUNDER_DATA_SOURCE,
         mode="real_robot_tracking",
         note="Follow explicit map-frame goals through native planning and path following.",
     ),
-    "nav": ProfileDataSourceBinding(
-        profile="nav",
-        data_source=REAL_RUNTIME_CONTRACT,
+    "nav": ProductDataSourceBinding(
+        product="nav",
+        data_source=THUNDER_DATA_SOURCE,
         mode="real_robot_saved_map_navigation",
     ),
-    "inspection": ProfileDataSourceBinding(
-        profile="inspection",
-        data_source=REAL_RUNTIME_CONTRACT,
+    "inspection": ProductDataSourceBinding(
+        product="inspection",
+        data_source=THUNDER_DATA_SOURCE,
         mode="real_robot_inspection",
         note="Typed multi-point inspection route execution over saved-map navigation.",
     ),
-    "explore": ProfileDataSourceBinding(
-        profile="explore",
-        data_source=REAL_RUNTIME_CONTRACT,
-        mode="real_robot_live_exploration",
-    ),
-    "tare_explore": ProfileDataSourceBinding(
-        profile="tare_explore",
-        data_source=REAL_RUNTIME_CONTRACT,
-        mode="real_robot_tare_exploration",
-    ),
-    "super_lio": ProfileDataSourceBinding(
-        profile="super_lio",
-        data_source=REAL_RUNTIME_CONTRACT,
-        mode="real_robot_super_lio_mapping",
-    ),
-    "super_lio_relocation": ProfileDataSourceBinding(
-        profile="super_lio_relocation",
-        data_source=REAL_RUNTIME_CONTRACT,
-        mode="real_robot_super_lio_relocalization",
+    "explore": ProductDataSourceBinding(
+        product="explore",
+        data_source=THUNDER_DATA_SOURCE,
+        mode="real_robot_exploration",
     ),
 }
 
@@ -2254,13 +2840,25 @@ def runtime_data_flow_topics(runtime_contract: str) -> tuple[str, ...]:
 
 
 def profile_data_source(profile: str) -> ProfileDataSourceBinding:
-    """Return the declared endpoint data-source binding for one CLI profile."""
+    """Return the declared data-source binding for one Host Profile."""
 
     try:
         return PROFILE_DATA_SOURCE_BINDINGS[profile]
     except KeyError as exc:
         available = ", ".join(sorted(PROFILE_DATA_SOURCE_BINDINGS))
         raise ValueError(f"unknown profile data-source binding {profile!r}; available: {available}") from exc
+
+
+def product_data_source(product: str) -> ProductDataSourceBinding:
+    """Return the declared data-source binding for one Field Product."""
+
+    try:
+        return PRODUCT_DATA_SOURCE_BINDINGS[product]
+    except KeyError as exc:
+        available = ", ".join(sorted(PRODUCT_DATA_SOURCE_BINDINGS))
+        raise ValueError(
+            f"unknown Product data-source binding {product!r}; available: {available}"
+        ) from exc
 
 
 def runtime_contract_manifest() -> dict[str, object]:
@@ -2274,7 +2872,8 @@ def runtime_contract_manifest() -> dict[str, object]:
         "frame_links": {name: asdict(link) for name, link in FRAME_LINKS.items()},
         "runtime_data_flow": [asdict(stage) for stage in RUNTIME_DATA_FLOW],
         "resolved_runtime_data_flow": {
-            name: [asdict(stage) for stage in resolved_runtime_data_flow(name)] for name in DATA_SOURCE_CONTRACTS
+            name: [asdict(stage) for stage in resolved_runtime_data_flow(name)]
+            for name in DATA_SOURCE_CONTRACTS
         },
         "lidar_extrinsics": {name: asdict(transform) for name, transform in LIDAR_EXTRINSICS.items()},
         "message_formats": {name: asdict(format_spec) for name, format_spec in MESSAGE_FORMATS.items()},
@@ -2286,7 +2885,9 @@ def runtime_contract_manifest() -> dict[str, object]:
         "real_runtime_topic_default_frame_ids": runtime_topic_default_frame_ids(REAL_RUNTIME_CONTRACT),
         "real_runtime_required_topic_frame_ids": REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
         "real_runtime_required_endpoint_input_topics": (REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS),
-        "runtime_data_flow_topics": {name: runtime_data_flow_topics(name) for name in DATA_SOURCE_CONTRACTS},
+        "runtime_data_flow_topics": {
+            name: runtime_data_flow_topics(name) for name in DATA_SOURCE_CONTRACTS
+        },
         "artifact_formats": {name: asdict(format_spec) for name, format_spec in ARTIFACT_FORMATS.items()},
         "algorithm_interfaces": runtime_algorithm_interface_contract(),
         "runtime_data_flow_stage_algorithm_interfaces": (runtime_stage_algorithm_interface_contract()),
@@ -2298,6 +2899,7 @@ def runtime_contract_manifest() -> dict[str, object]:
             name: [asdict(alias) for alias in aliases] for name, aliases in ADAPTER_RELAY_ALIASES.items()
         },
         "profile_data_sources": {name: asdict(binding) for name, binding in PROFILE_DATA_SOURCE_BINDINGS.items()},
+        "product_data_sources": {name: asdict(binding) for name, binding in PRODUCT_DATA_SOURCE_BINDINGS.items()},
     }
 
 

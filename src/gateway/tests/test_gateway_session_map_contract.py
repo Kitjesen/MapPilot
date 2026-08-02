@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -24,6 +25,25 @@ def _payload(response_or_payload):
     if hasattr(response_or_payload, "body"):
         return json.loads(response_or_payload.body)
     return response_or_payload
+
+
+async def _stream_body(response) -> bytes:
+    chunks = bytearray()
+    async for chunk in response.body_iterator:
+        chunks.extend(chunk.encode() if isinstance(chunk, str) else chunk)
+    return bytes(chunks)
+
+
+def _field_run_plan(profile: str):
+    from lingtu.assembly.products import resolve_product_host_runtime
+    from lingtu.assembly.profile_builder import compile_run_plan
+
+    resolved = resolve_product_host_runtime(profile, "real")
+    return compile_run_plan(
+        resolved.product,
+        resolved.env,
+        resolved.config,
+    )
 
 
 def _activate_map(map_root: Path, name: str) -> None:
@@ -140,8 +160,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "thunder_field",
-                "data_source": "thunder_field",
+                "source_profile": "thunder",
+                "data_source": "thunder",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -151,8 +171,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -161,8 +181,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                         "path": "tomogram.pickle",
                         "sha256": tomogram_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "frame_id": "map",
                         "shape": [1],
                     },
@@ -170,8 +190,8 @@ def _seed_map_artifacts(map_dir: Path) -> None:
                         "path": "octomap.ot",
                         "sha256": octomap_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "frame_id": "map",
                     },
                 },
@@ -204,8 +224,8 @@ def _seed_octomap_only_artifacts(map_dir: Path) -> None:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "thunder_field",
-                "data_source": "thunder_field",
+                "source_profile": "thunder",
+                "data_source": "thunder",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -215,8 +235,8 @@ def _seed_octomap_only_artifacts(map_dir: Path) -> None:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -225,8 +245,8 @@ def _seed_octomap_only_artifacts(map_dir: Path) -> None:
                         "path": "octomap.ot",
                         "sha256": octomap_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "frame_id": "map",
                     },
                 },
@@ -256,8 +276,8 @@ def _seed_pcd_only_metadata(map_dir: Path) -> None:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "thunder_field",
-                "data_source": "thunder_field",
+                "source_profile": "thunder",
+                "data_source": "thunder",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -267,8 +287,8 @@ def _seed_pcd_only_metadata(map_dir: Path) -> None:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -284,7 +304,7 @@ def _seed_ready_navigation(gateway):
     with gateway._state_lock:
         gateway._odom = {"x": 0.0, "y": 0.0, "z": 0.0}
         gateway._localization_status = {
-            "backend": "super_lio",
+            "backend": "genz",
             "state": "TRACKING",
             "confidence": 0.9,
             "health_source": "odom_map_cloud",
@@ -618,6 +638,12 @@ class _FakeMapOnlyPreviewNav:
             "ts": ts,
         }
 
+    def evaluate_path_safety(self, path):
+        svc = getattr(self, "_planner_svc", None)
+        if svc is not None and hasattr(svc, "evaluate_current_path_safety"):
+            return svc.evaluate_current_path_safety(path)
+        return None
+
 
 def _write_binary_xyz_pcd(path: Path) -> None:
     header = (
@@ -758,7 +784,7 @@ def test_session_routes_validate_idle_contracts():
     assert session.mode == "idle"
     assert session.explorer_available is False
     assert session.explorer_unavailable_reason == "explorer_backend_not_running"
-    assert session.explorer_required_profile == "explore_or_tare_explore"
+    assert session.explorer_required_product == "explore"
     assert ended.schema_version == 1
     assert ended.ok is True
     assert ended.success is True
@@ -787,15 +813,42 @@ def test_session_start_rejects_invalid_mode_with_stable_contract():
     assert "Unknown mode" in (rejected.message or "")
 
 
-def test_external_session_start_rejects_cross_product_profile_bypass(monkeypatch):
+def test_session_start_request_defaults_to_starting_task_and_accepts_deferred_task():
+    from gateway.schemas import SessionStartRequest
+
+    assert SessionStartRequest(mode="exploring").start_task is True
+    assert SessionStartRequest(mode="exploring", start_task=False).start_task is False
+
+
+def test_exploring_session_start_guidance_names_only_explore_product():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionStartRequest, SessionTransitionResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    response = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            SessionStartRequest(mode="exploring")
+        )
+    )
+    rejected = SessionTransitionResponse.model_validate(_payload(response))
+
+    assert response.status_code == 503
+    assert rejected.message == (
+        "Exploration backend not running - switch to the 'explore' Product."
+    )
+
+
+def test_external_session_start_rejects_cross_product_bypass(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    gateway = GatewayModule(manage_session_services=False)
+    monkeypatch.setenv("LINGTU_PRODUCT", "nav")
+    gateway = GatewayModule(run_plan=_field_run_plan("nav"))
     gateway.setup()
-    gateway._runtime_product_profile = "map"  # stale pre-restart in-memory target
+    gateway._session_product = "map"  # stale pre-restart in-memory target
 
     response = asyncio.run(
         _endpoint(gateway, "/api/v1/session/start")(
@@ -811,9 +864,9 @@ def test_external_session_start_rejects_cross_product_profile_bypass(monkeypatch
     assert response.status_code == 409
     assert rejected.ok is False
     assert rejected.detail is not None
-    assert rejected.detail["reason_code"] == "product_profile_mismatch"
-    assert rejected.detail["current_profile"] == "nav"
-    assert rejected.detail["requested_profile"] == "map"
+    assert rejected.detail["reason_code"] == "product_mismatch"
+    assert rejected.detail["current_product"] == "nav"
+    assert rejected.detail["requested_product"] == "map"
 
 
 def test_external_session_start_rejects_unknown_runtime_profile(monkeypatch):
@@ -821,8 +874,8 @@ def test_external_session_start_rejects_unknown_runtime_profile(monkeypatch):
     from gateway.schemas import SessionTransitionResponse
 
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.delenv("LINGTU_PROFILE", raising=False)
-    gateway = GatewayModule(manage_session_services=False)
+    monkeypatch.delenv("LINGTU_PRODUCT", raising=False)
+    gateway = GatewayModule()
     gateway.setup()
 
     response = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "mapping"}))
@@ -831,7 +884,8 @@ def test_external_session_start_rejects_unknown_runtime_profile(monkeypatch):
     assert response.status_code == 409
     assert rejected.detail is not None
     assert rejected.detail["reason_code"] == "product_mode_switch_required"
-    assert rejected.detail["current_profile"] is None
+    assert rejected.detail["current_product"] is None
+    assert rejected.detail["switch_plan"] == "/api/v1/runtime/switch-plan"
 
 
 def test_external_mapping_session_rejects_wrong_native_control_mode(
@@ -847,10 +901,10 @@ def test_external_mapping_session_rejects_wrong_native_control_mode(
         encoding="utf-8",
     )
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_PROFILE", "map")
+    monkeypatch.setenv("LINGTU_PRODUCT", "map")
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule(run_plan=_field_run_plan("map"))
     gateway.setup()
 
     response = asyncio.run(
@@ -885,9 +939,9 @@ def test_external_session_rejects_requested_profile_that_differs_from_runtime(
         encoding="utf-8",
     )
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_PROFILE", "nav")
+    monkeypatch.setenv("LINGTU_PRODUCT", "nav")
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule(run_plan=_field_run_plan("nav"))
     gateway.setup()
 
     response = asyncio.run(
@@ -897,9 +951,14 @@ def test_external_session_rejects_requested_profile_that_differs_from_runtime(
     rejected = SessionTransitionResponse.model_validate(_payload(response))
     assert response.status_code == 409
     assert rejected.detail is not None
-    assert rejected.detail["reason_code"] == "product_profile_mismatch"
-    assert rejected.detail["current_profile"] == "nav"
-    assert rejected.detail["requested_profile"] == "tracking"
+    assert rejected.detail["reason_code"] == "product_mismatch"
+    assert rejected.detail["current_product"] == "nav"
+    assert rejected.detail["requested_product"] == "tracking"
+    assert rejected.detail["switch_plan"] == "/api/v1/runtime/switch-plan"
+    assert rejected.detail["operator_command"] == (
+        "python -m lingtu.control switch tracking --env real "
+        "--current nav --relocalize"
+    )
 
 
 def test_external_mapping_session_accepts_matching_product_and_control_mode(
@@ -915,9 +974,10 @@ def test_external_mapping_session_accepts_matching_product_and_control_mode(
         encoding="utf-8",
     )
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_PROFILE", "map")
+    monkeypatch.setenv("LINGTU_PRODUCT", "map")
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
-    gateway = GatewayModule(manage_session_services=False)
+    monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
+    gateway = GatewayModule(run_plan=_field_run_plan("map"))
     gateway.setup()
 
     response = asyncio.run(
@@ -933,7 +993,7 @@ def test_external_mapping_session_accepts_matching_product_and_control_mode(
     assert accepted.ok is True
     assert accepted.session is not None
     assert accepted.session.mode == "mapping"
-    assert accepted.session.product_profile == "map"
+    assert accepted.session.product == "map"
 
     second_response = asyncio.run(
         _endpoint(gateway, "/api/v1/session/start")(
@@ -947,14 +1007,14 @@ def test_external_mapping_session_accepts_matching_product_and_control_mode(
     assert second.ok is True
     assert second.session is not None
     assert second.session.mode == "mapping"
-    assert second.session.product_profile == "map"
+    assert second.session.product == "map"
 
     ended_payload = asyncio.run(_endpoint(gateway, "/api/v1/session/end")())
     ended = SessionTransitionResponse.model_validate(_payload(ended_payload))
     assert ended.ok is True
     assert ended.session is not None
     assert ended.session.mode == "idle"
-    assert ended.session.product_profile == "map"
+    assert ended.session.product == "map"
     assert ended.session.product_session == "idle"
 
 
@@ -968,10 +1028,10 @@ def test_external_teleop_avoid_session_is_map_free(monkeypatch, tmp_path):
         encoding="utf-8",
     )
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_PROFILE", "teleop_avoid")
+    monkeypatch.setenv("LINGTU_PRODUCT", "teleop_avoid")
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule(run_plan=_field_run_plan("teleop_avoid"))
     gateway.setup()
     gateway._get_slam_profile = lambda: "fastlio2"
 
@@ -989,35 +1049,17 @@ def test_external_teleop_avoid_session_is_map_free(monkeypatch, tmp_path):
     assert accepted.ok is True
     assert accepted.session is not None
     assert accepted.session.mode == "navigating"
-    assert accepted.session.product_profile == "teleop_avoid"
+    assert accepted.session.product == "teleop_avoid"
     assert accepted.session.product_session == "teleop_avoid"
     assert accepted.session.active_map is None
     assert accepted.session.slam_profile == "fastlio2"
 
 
 def test_session_start_accepts_legacy_map_field(monkeypatch):
-    import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
-    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
-
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -1046,41 +1088,22 @@ def test_session_start_accepts_legacy_map_field(monkeypatch):
         assert transition.ts > 0
         assert transition.session is not None
         assert transition.session.mode == "navigating"
-        assert transition.session.product_profile == "nav"
+        assert transition.session.product == "nav"
         assert transition.session.product_session == "navigation"
         assert transition.session.active_map == "demo"
         assert transition.session.map_has_pcd is True
         assert transition.session.map_has_octomap is True
         assert transition.session.map_has_octomap is True
         assert gateway._session_map == "demo"
-        assert ("ensure", ("slam",)) in fake_service_manager.calls
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
 
 def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(monkeypatch):
-    import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
-    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
-
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -1107,7 +1130,7 @@ def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(mon
         assert transition.ok is True
         assert transition.session is not None
         assert transition.session.mode == "navigating"
-        assert transition.session.product_profile == "nav"
+        assert transition.session.product == "nav"
         assert transition.session.product_session == "navigation"
         assert transition.session.map_has_pcd is True
         assert transition.session.map_has_octomap is True
@@ -1116,17 +1139,20 @@ def test_session_start_accepts_octoplanner3d_octomap_without_legacy_tomogram(mon
 
 
 def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypatch):
-    import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
-    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
-    def fail_service_manager():
-        raise AssertionError("external DDS endpoint must not use service_manager")
-
-    monkeypatch.setattr(service_manager, "get_service_manager", fail_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
+
+    def fail_reload(*_args, **_kwargs):
+        raise AssertionError("field session start must not reload the Product-owned planner map")
+
+    monkeypatch.setattr(
+        session_routes.ControlCommandService,
+        "reload_navigation_map",
+        fail_reload,
+    )
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
     try:
@@ -1137,10 +1163,17 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
         map_dir = map_root / "dds_external"
         map_dir.mkdir(parents=True)
         _seed_octomap_only_artifacts(map_dir)
+        status_file = root / "nav_endpoint_status.json"
+        status_file.write_text(
+            json.dumps({"stamp_s": time.time(), "control_mode": "autonomy"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+        monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
 
-        gateway = GatewayModule(manage_session_services=False)
+        gateway = GatewayModule(run_plan=_field_run_plan("nav"))
         gateway.setup()
-        _attach_test_maps_service(gateway, map_root)
+        maps_service = _attach_test_maps_service(gateway, map_root)
         _activate_map(map_root, "dds_external")
         with gateway._state_lock:
             gateway._localization_status = {
@@ -1157,10 +1190,37 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
         assert transition.ok is True
         assert transition.session is not None
         assert transition.session.mode == "navigating"
-        assert transition.session.product_profile == "nav"
+        assert transition.session.product == "nav"
         assert transition.session.product_session == "navigation"
         assert transition.session.slam_profile == "fastlio2"
         assert gateway._session_map == "dds_external"
+        assert all(command["action"] != "set_active" for command in maps_service.commands)
+
+        repeated = SessionTransitionResponse.model_validate(
+            _payload(
+                asyncio.run(
+                    _endpoint(gateway, "/api/v1/session/start")(
+                        {"mode": "navigating", "map": "dds_external"}
+                    )
+                )
+            )
+        )
+        assert repeated.ok is True
+
+        other_map = map_root / "other"
+        other_map.mkdir()
+        _seed_octomap_only_artifacts(other_map)
+        _activate_map(map_root, "other")
+        stale_response = asyncio.run(
+            _endpoint(gateway, "/api/v1/session/start")(
+                {"mode": "navigating", "map": "dds_external"}
+            )
+        )
+        stale = SessionTransitionResponse.model_validate(_payload(stale_response))
+        assert stale_response.status_code == 409
+        assert stale.detail is not None
+        assert stale.detail["reason_code"] == "product_map_switch_required"
+        _activate_map(map_root, "dds_external")
 
         ended = SessionTransitionResponse.model_validate(
             _payload(asyncio.run(_endpoint(gateway, "/api/v1/session/end")()))
@@ -1168,7 +1228,21 @@ def test_session_start_external_endpoint_does_not_manage_robot_services(monkeypa
         assert ended.ok is True
         assert ended.session is not None
         assert ended.session.mode == "idle"
-        assert ended.session.product_profile is None
+        # Ending a low-level session does not switch the externally owned Product.
+        assert ended.session.product == "nav"
+
+        mismatch_response = asyncio.run(
+            _endpoint(gateway, "/api/v1/session/start")(
+                {"mode": "navigating", "map": "other"}
+            )
+        )
+        mismatch = SessionTransitionResponse.model_validate(_payload(mismatch_response))
+        assert mismatch_response.status_code == 409
+        assert mismatch.detail is not None
+        assert mismatch.detail["reason_code"] == "product_map_switch_required"
+        assert mismatch.detail["current_map"] == "dds_external"
+        assert mismatch.detail["requested_map"] == "other"
+        assert all(command["action"] != "set_active" for command in maps_service.commands)
         assert ended.session.product_session == "idle"
         assert gateway._session_map is None
     finally:
@@ -1194,7 +1268,7 @@ def test_session_start_rejects_legacy_active_map_symlink_alias(monkeypatch):
         except (NotImplementedError, OSError) as exc:
             pytest.skip(f"filesystem symlinks unavailable: {exc}")
 
-        gateway = GatewayModule(manage_session_services=False)
+        gateway = GatewayModule()
         gateway.setup()
         _attach_test_maps_service(gateway, map_root)
         with gateway._state_lock:
@@ -1264,7 +1338,7 @@ def test_session_start_prefers_maps_service_bundle(monkeypatch):
         map_dir.mkdir(parents=True)
         _seed_octomap_only_artifacts(map_dir)
 
-        gateway = GatewayModule(manage_session_services=False)
+        gateway = GatewayModule()
         gateway.setup()
         maps = _attach_test_maps_service(gateway, map_root)
         nav = FakeNav()
@@ -1341,7 +1415,7 @@ def test_session_snapshot_uses_maps_service_bundles_for_navigation_readiness():
                 },
             }
 
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule()
     gateway.setup()
     maps = FakeMapsService()
     gateway._all_modules = {"maps.service": maps}
@@ -1358,28 +1432,6 @@ def test_session_snapshot_uses_maps_service_bundles_for_navigation_readiness():
     assert ("native_active", "navigation_safety_3d") in maps.bundle_calls
 
 
-def test_session_snapshot_exposes_runtime_switch_pending():
-    from gateway.gateway_module import GatewayModule
-
-    gateway = GatewayModule(manage_session_services=False)
-    gateway.setup()
-    gateway._get_slam_profile = lambda: "bridge"
-    gateway._runtime_switch_pending = {
-        "command_id": "switch-in-flight",
-        "started_monotonic": time.monotonic(),
-    }
-
-    snapshot = gateway._session_snapshot()
-
-    assert snapshot["pending"] is True
-    assert snapshot["can_start_mapping"] is False
-    assert snapshot["can_start_navigating"] is False
-
-    gateway._runtime_switch_pending["started_monotonic"] = time.monotonic() - 301.0
-    expired = gateway._session_snapshot()
-
-    assert expired["pending"] is False
-    assert getattr(gateway, "_runtime_switch_pending", None) is None
 
 
 def test_session_snapshot_does_not_guess_navigation_readiness_without_maps_service(
@@ -1388,7 +1440,7 @@ def test_session_snapshot_does_not_guess_navigation_readiness_without_maps_servi
     import gateway.services.session_view as session_view
     from gateway.gateway_module import GatewayModule
 
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule()
     gateway.setup()
     gateway._all_modules = {}
     gateway._session_active_map_name = lambda: "orphaned_disk_map"
@@ -1499,16 +1551,10 @@ def test_saved_map_loader_never_reads_pcd_outside_maps_service():
 
 
 def test_session_start_preserves_product_session_for_tracking(monkeypatch):
-    import gateway.gateway_module as gateway_module
     import gateway.routes.session as session_routes
-    import runtime.service_manager as service_manager
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
 
-    def fail_service_manager():
-        raise AssertionError("external DDS endpoint must not use service_manager")
-
-    monkeypatch.setattr(service_manager, "get_service_manager", fail_service_manager)
     monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
@@ -1520,8 +1566,15 @@ def test_session_start_preserves_product_session_for_tracking(monkeypatch):
         map_dir = map_root / "tracking_map"
         map_dir.mkdir(parents=True)
         _seed_octomap_only_artifacts(map_dir)
+        status_file = root / "nav_endpoint_status.json"
+        status_file.write_text(
+            json.dumps({"stamp_s": time.time(), "control_mode": "autonomy"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
+        monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
 
-        gateway = GatewayModule(manage_session_services=False)
+        gateway = GatewayModule(run_plan=_field_run_plan("tracking"))
         gateway.setup()
         _attach_test_maps_service(gateway, map_root)
         _activate_map(map_root, "tracking_map")
@@ -1546,9 +1599,9 @@ def test_session_start_preserves_product_session_for_tracking(monkeypatch):
         assert transition.ok is True
         assert transition.session is not None
         assert transition.session.mode == "navigating"
-        assert transition.session.product_profile == "tracking"
+        assert transition.session.product == "tracking"
         assert transition.session.product_session == "tracking"
-        assert gateway._session_product_profile == "tracking"
+        assert gateway._session_product == "tracking"
         assert gateway._session_product_session == "tracking"
     finally:
         shutil.rmtree(root, ignore_errors=True)
@@ -1580,7 +1633,7 @@ def test_session_start_fails_when_planner_map_reload_fails(monkeypatch):
         _seed_octomap_only_artifacts(previous_dir)
         _activate_map(map_root, "previous")
 
-        gateway = GatewayModule(manage_session_services=False)
+        gateway = GatewayModule()
         gateway.setup()
         _attach_test_maps_service(gateway, map_root)
         gateway._all_modules["nav.mission"] = FakeNav()
@@ -1602,37 +1655,6 @@ def test_session_start_fails_when_planner_map_reload_fails(monkeypatch):
         assert (map_root / "active_map.txt").read_text(encoding="utf-8").strip() == "previous"
     finally:
         shutil.rmtree(root, ignore_errors=True)
-
-
-def test_session_identity_tolerates_legacy_contract_without_product_session(monkeypatch):
-    import gateway.routes.session as session_routes
-
-    monkeypatch.setitem(session_routes.PRODUCT_MODE_CONTRACTS, "map", object())
-
-    assert session_routes._normalize_product_identity(
-        {
-            "mode": "mapping",
-            "profile": "map",
-            "product_session": "mapping",
-        },
-        "mapping",
-    ) == ("map", "mapping")
-    assert session_routes._normalize_product_identity(
-        {"mode": "mapping", "profile": "map"},
-        "mapping",
-    ) == ("map", "mapping")
-
-
-def test_gateway_session_service_management_can_be_disabled_by_env(monkeypatch):
-    from gateway.gateway_module import GatewayModule
-
-    monkeypatch.setenv("LINGTU_MANAGE_SESSION_SERVICES", "0")
-    gateway = GatewayModule()
-    assert gateway._manage_session_services is False
-
-    monkeypatch.setenv("LINGTU_MANAGE_SESSION_SERVICES", "1")
-    gateway = GatewayModule(manage_session_services=False)
-    assert gateway._manage_session_services is False
 
 
 def test_map_validate_plan_rejects_missing_octomap_before_preview(monkeypatch):
@@ -2192,152 +2214,14 @@ def test_map_validate_plan_accepts_adjusted_goal_within_planner_tolerance(monkey
         shutil.rmtree(root, ignore_errors=True)
 
 
-def test_session_start_can_select_super_lio_backend(monkeypatch):
-    import runtime.service_manager as service_manager
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import SessionTransitionResponse
-
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-            self.services = {
-                "lidar": "running",
-                "slam": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "super_lio": "running",
-                "super_lio_relocation": "stopped",
-            }
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
-
-        def status(self, *names):
-            return {name: self.services.get(name, "stopped") for name in names}
-
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
-
-    gateway = GatewayModule()
-    gateway.setup()
-
-    payload = asyncio.run(_endpoint(gateway, "/api/v1/session/start")({"mode": "mapping", "slam_profile": "super_lio"}))
-
-    transition = SessionTransitionResponse.model_validate(payload)
-    assert transition.schema_version == 1
-    assert transition.ok is True
-    assert transition.success is True
-    assert transition.ts > 0
-    assert transition.session is not None
-    assert transition.session.mode == "mapping"
-    assert transition.session.slam_profile == "super_lio"
-    assert gateway._session_slam_profile == "super_lio"
-    assert (
-        "stop",
-        ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio_relocation"),
-    ) in fake_service_manager.calls
-    assert ("ensure", ("legacy_lidar", "super_lio")) in fake_service_manager.calls
-    assert ("wait_ready", ("legacy_lidar", "super_lio")) in fake_service_manager.calls
-
-
-def test_session_start_can_select_super_lio_relocation_backend(monkeypatch):
-    import gateway.routes.session as session_routes
-    import runtime.service_manager as service_manager
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import SessionTransitionResponse
-
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-            self.services = {
-                "lidar": "running",
-                "slam": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "super_lio": "stopped",
-                "super_lio_relocation": "running",
-            }
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
-
-        def status(self, *names):
-            return {name: self.services.get(name, "stopped") for name in names}
-
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
-    monkeypatch.setattr(session_routes.os, "symlink", lambda src, dst: None)
-
-    root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
-    try:
-        monkeypatch.setenv("HOME", str(root))
-        monkeypatch.setenv("USERPROFILE", str(root))
-        map_root = root / "custom_maps"
-        monkeypatch.setenv("NAV_MAP_DIR", str(map_root))
-        map_dir = map_root / "demo"
-        map_dir.mkdir(parents=True)
-        _seed_map_artifacts(map_dir)
-
-        gateway = GatewayModule()
-        gateway.setup()
-        _attach_test_maps_service(gateway, map_root)
-        auto_relocalize_calls: list[str] = []
-        monkeypatch.setattr(gateway, "_spawn_auto_relocalize", auto_relocalize_calls.append)
-
-        payload = asyncio.run(
-            _endpoint(gateway, "/api/v1/session/start")(
-                {
-                    "mode": "navigating",
-                    "map_name": "demo",
-                    "slam_profile": "super_lio_relocation",
-                }
-            )
-        )
-
-        payload = _payload(payload)
-        transition = SessionTransitionResponse.model_validate(payload)
-        assert transition.schema_version == 1
-        assert transition.ok is True
-        assert transition.success is True
-        assert transition.ts > 0
-        assert transition.session is not None
-        assert transition.session.mode == "navigating"
-        assert transition.session.slam_profile == "super_lio_relocation"
-        assert gateway._session_map == "demo"
-        assert gateway._session_slam_profile == "super_lio_relocation"
-        assert (
-            "stop",
-            ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio"),
-        ) in fake_service_manager.calls
-        assert ("ensure", ("legacy_lidar", "super_lio_relocation")) in (fake_service_manager.calls)
-        assert ("wait_ready", ("legacy_lidar", "super_lio_relocation")) in (fake_service_manager.calls)
-        assert auto_relocalize_calls == []
-    finally:
-        shutil.rmtree(root, ignore_errors=True)
-
-
 def test_map_routes_validate_json_contracts(monkeypatch):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
         MapLifecycleResponse,
         MapListResponse,
         MapPointsResponse,
-        MapRequest,
     )
+    from maps.client import ArtifactHandle
 
     root = Path.cwd() / ".tmp_gateway_tests" / uuid.uuid4().hex
     try:
@@ -2357,14 +2241,29 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         gateway.setup()
         _attach_test_maps_service(gateway, map_dir)
 
+        class MapClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str]] = []
+
+            def open_artifact(self, map_id: str, capability: str) -> ArtifactHandle:
+                self.calls.append((map_id, capability))
+                descriptor = os.open(demo / "map.pcd", os.O_RDONLY)
+                return ArtifactHandle(
+                    metadata={"success": True, "map_id": map_id},
+                    size_bytes=os.fstat(descriptor).st_size,
+                    filename="map.pcd",
+                    _descriptor=descriptor,
+                )
+
+        map_client = MapClient()
+        gateway._map_client = map_client
+
         maps_payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/maps")())
         live_points_payload = asyncio.run(_endpoint(gateway, "/api/v1/map/points")())
         saved_points_payload = asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/points")("demo"))
         pcd_response = asyncio.run(_endpoint(gateway, "/api/v1/maps/{name}/pcd")("demo"))
+        pcd_body = asyncio.run(_stream_body(pcd_response))
         reset_payload = asyncio.run(_endpoint(gateway, "/api/v1/map_cloud/reset")())
-        map_command_response = asyncio.run(_endpoint(gateway, "/api/v1/maps")(MapRequest(action="list")))
-        map_command_payload = _payload(map_command_response)
-
         maps = MapListResponse.model_validate(maps_payload)
         live_points = MapPointsResponse.model_validate(live_points_payload)
         saved_points = MapPointsResponse.model_validate(saved_points_payload)
@@ -2399,14 +2298,13 @@ def test_map_routes_validate_json_contracts(monkeypatch):
         assert saved_points.map_pcd_sha256 == hashlib.sha256((demo / "map.pcd").read_bytes()).hexdigest()
         assert saved_points.ts > 0
         assert saved_points.points == [(1.0, 2.0, 3.0), (4.0, 5.0, 6.0)]
-        assert Path(pcd_response.path).name == "map.pcd"
+        assert pcd_body == (demo / "map.pcd").read_bytes()
+        assert pcd_response.headers["content-disposition"] == 'attachment; filename="map.pcd"'
+        assert map_client.calls == [("demo", "source_pointcloud")]
         assert reset.schema_version == 1
         assert reset.ok is True
         assert reset.success is True
         assert reset.ts > 0
-        assert map_command_payload["schema_version"] == 1
-        assert map_command_payload["ok"] is True
-        assert map_command_payload["maps"]
     finally:
         shutil.rmtree(root, ignore_errors=True)
 
@@ -2635,7 +2533,6 @@ def test_map_activate_route_uses_map_service_gate():
     assert payload["ok"] is True
     assert manager.map_command.delivered == [
         {"action": "get_active"},
-        {"action": "get_active"},
         {"action": "set_active", "name": "demo"},
         {"action": "get_active"},
     ]
@@ -2709,7 +2606,7 @@ def test_map_activate_rolls_back_when_planner_reload_fails(tmp_path):
 
 def test_map_save_requires_injected_maps_service():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import MapLifecycleResponse
+    from gateway.schemas import MapSaveOperationResponse
 
     gateway = GatewayModule()
     gateway.setup()
@@ -2717,7 +2614,7 @@ def test_map_save_requires_injected_maps_service():
 
     response = asyncio.run(_endpoint(gateway, "/api/v1/map/save")({"name": "native_dds_demo"}))
     payload = _payload(response)
-    model = MapLifecycleResponse.model_validate(payload)
+    model = MapSaveOperationResponse.model_validate(payload)
 
     assert response.status_code == 503
     assert model.schema_version == 1
@@ -2725,71 +2622,31 @@ def test_map_save_requires_injected_maps_service():
     assert model.success is False
     assert model.ts > 0
     assert model.name == "native_dds_demo"
-    assert "ProductGraph/Blueprint must inject maps.service" in model.message
+    assert model.reason_code == "map_service_unavailable"
+    assert model.message == "Map service is unavailable."
     assert gateway._map_mgr is None
 
 
-def test_map_save_rejects_super_lio_relocation_profile(monkeypatch, tmp_path):
-    from gateway.gateway_module import GatewayModule
+def test_map_save_operation_response_status_is_an_admission_string():
+    from gateway.schemas import MapSaveOperationResponse
+
+    assert MapSaveOperationResponse(ok=True, status="running").status == "running"
+    with pytest.raises(ValueError):
+        MapSaveOperationResponse(ok=True, status={"state": "RUNNING"})
+
+
+def test_map_lifecycle_response_excludes_save_operation_fields():
     from gateway.schemas import MapLifecycleResponse
 
-    calls = []
+    properties = MapLifecycleResponse.model_json_schema()["properties"]
 
-    class FailingMapSaveAdapter:
-        def save_nav_map(self, *args, **kwargs):
-            calls.append(("nav", args, kwargs))
-            raise AssertionError("relocation map save should fail before adapter calls")
-
-        def save_slam_map(self, *args, **kwargs):
-            calls.append(("slam", args, kwargs))
-            raise AssertionError("relocation map save should fail before adapter calls")
-
-    monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-
-    gateway = GatewayModule(map_save_adapter=FailingMapSaveAdapter())
-    gateway.setup()
-    monkeypatch.setattr(gateway, "_get_slam_profile", lambda: "super_lio_relocation")
-
-    response = asyncio.run(_endpoint(gateway, "/api/v1/map/save")({"name": "relocation_demo"}))
-    payload = _payload(response)
-    model = MapLifecycleResponse.model_validate(payload)
-
-    assert response.status_code == 409
-    assert model.ok is False
-    assert model.success is False
-    assert model.name == "relocation_demo"
-    assert "not supported" in model.message
-    assert calls == []
-    assert not (tmp_path / "relocation_demo").exists()
-
-
-def test_maps_route_normalizes_public_action_aliases():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import MapLifecycleResponse, MapRequest
-
-    gateway = GatewayModule()
-    gateway.setup()
-    manager = _FakeMapManager()
-    gateway._map_mgr = manager
-    post_maps = _endpoint(gateway, "/api/v1/maps")
-
-    use_payload = asyncio.run(post_maps(MapRequest(action="use", name="demo")))
-    build_payload = asyncio.run(post_maps(MapRequest(action="build", name="demo")))
-    canonical_payload = asyncio.run(post_maps(MapRequest(action="build_octomap", name="demo")))
-    occupancy_payload = asyncio.run(post_maps(MapRequest(action="build_occupancy", name="demo")))
-
-    for payload in (use_payload, build_payload, canonical_payload, occupancy_payload):
-        model = MapLifecycleResponse.model_validate(payload)
-        assert model.schema_version == 1
-        assert model.ok is True
-        assert model.success is True
-        assert model.ts > 0
-    assert manager.map_command.delivered == [
-        {"action": "set_active", "name": "demo"},
-        {"action": "build_octomap", "name": "demo"},
-        {"action": "build_octomap", "name": "demo"},
-        {"action": "build_occupancy", "name": "demo"},
-    ]
+    assert not {
+        "accepted",
+        "request_id",
+        "job_id",
+        "job",
+        "replayed",
+    } & set(properties)
 
 
 def test_map_workbench_routes_forward_to_map_service(monkeypatch, tmp_path):
@@ -2876,8 +2733,13 @@ def test_map_workbench_import_route_writes_real_map_package(monkeypatch, tmp_pat
 
     gateway = GatewayModule()
     gateway.setup()
-    manager = MapsModule(map_dir=str(map_dir), data_dir=str(tmp_path / "data"))
-    manager.setup()
+    from gateway.tests._fs_maps_stub import install_filesystem_maps_patches
+    from maps.modules.service import MapsModule
+
+    store_patch, service_patch = install_filesystem_maps_patches()
+    with store_patch, service_patch:
+        manager = MapsModule(map_dir=str(map_dir), data_dir=str(tmp_path / "data"))
+        manager.setup()
     gateway._map_mgr = manager
 
     response = asyncio.run(
@@ -2925,44 +2787,11 @@ def test_map_workbench_import_rejects_host_path_escape(monkeypatch, tmp_path):
     assert "escapes configured root" in payload["message"]
 
 
-def test_maps_route_error_response_matches_openapi_contract():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import GatewayErrorResponse, MapRequest
-
-    gateway = GatewayModule()
-    gateway.setup()
-    manager = _FakeMapManager()
-    gateway._map_mgr = manager
-
-    def fail(request):
-        command = request.to_mapping()
-        manager.map_command.delivered.append(command)
-        return {
-            "action": command["action"],
-            "success": False,
-            "message": "map save failed",
-        }
-
-    manager.execute = fail
-
-    response = asyncio.run(_endpoint(gateway, "/api/v1/maps")(MapRequest(action="save", name="demo")))
-    payload = _payload(response)
-    model = GatewayErrorResponse.model_validate(payload)
-
-    assert response.status_code == 400
-    assert payload["schema_version"] == 1
-    assert payload["ok"] is False
-    assert model.error == "map save failed"
-    assert model.message == "map save failed"
-    assert model.detail["action"] == "save"
-    assert model.detail["success"] is False
-
-
 def test_operational_routes_validate_idle_json_contracts():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import (
-        BagOperationResponse,
-        BagStatusResponse,
+        RecordingOperationResponse,
+        RecordingStatusResponse,
         ExplorationStatusResponse,
         GatewayErrorResponse,
         SlamOperationResponse,
@@ -2991,8 +2820,8 @@ def test_operational_routes_validate_idle_json_contracts():
     explore_start_response = asyncio.run(_endpoint(gateway, "/api/v1/explore/start")())
     slam_status_payload = asyncio.run(_endpoint(gateway, "/api/v1/slam/status")())
     slam_switch_response = asyncio.run(_endpoint(gateway, "/api/v1/slam/switch")({"profile": "bad"}))
-    bag_status_payload = asyncio.run(_endpoint(gateway, "/api/v1/bag/status")())
-    bag_stop_response = asyncio.run(_endpoint(gateway, "/api/v1/bag/stop")())
+    recording_status_payload = asyncio.run(_endpoint(gateway, "/api/v1/recordings/status")())
+    recording_stop_response = asyncio.run(_endpoint(gateway, "/api/v1/recordings/stop")())
 
     temporal = TemporalMemoryResponse.model_validate(temporal_payload)
     semantic_ok = TemporalMemoryResponse.model_validate(semantic_payload)
@@ -3001,8 +2830,8 @@ def test_operational_routes_validate_idle_json_contracts():
     explore_start = GatewayErrorResponse.model_validate(_payload(explore_start_response))
     slam_status = SlamStatusResponse.model_validate(slam_status_payload)
     slam_switch = SlamOperationResponse.model_validate(_payload(slam_switch_response))
-    bag_status = BagStatusResponse.model_validate(bag_status_payload)
-    bag_stop = BagOperationResponse.model_validate(_payload(bag_stop_response))
+    recording_status = RecordingStatusResponse.model_validate(recording_status_payload)
+    recording_stop = RecordingOperationResponse.model_validate(_payload(recording_stop_response))
 
     assert temporal.count == 1
     assert temporal.observations[0]["label"] == "door"
@@ -3012,8 +2841,8 @@ def test_operational_routes_validate_idle_json_contracts():
     assert explore_status.can_start is False
     assert "explorer_backend_not_running" in explore_status.blockers
     assert explore_status.reason == "explorer_backend_not_running"
-    assert explore_status.required_profile == "explore_or_tare_explore"
-    assert explore_status.supported_profiles == ["explore", "tare_explore"]
+    assert explore_status.required_product == "explore"
+    assert explore_status.supported_products == ["explore"]
     assert explore_start.error == "Exploration backend not running"
     assert explore_start.detail["reason"] == "explorer_backend_not_running"
     assert slam_status.mode in {
@@ -3022,15 +2851,13 @@ def test_operational_routes_validate_idle_json_contracts():
         "localizer",
         "slam_only",
         "stopped",
-        "super_lio",
-        "super_lio_relocation",
     }
     assert slam_switch.schema_version == 1
     assert slam_switch.ok is False
     assert slam_switch.success is False
     assert slam_switch.ts > 0
-    assert bag_status.recording is False
-    assert bag_stop.error == "not_recording"
+    assert recording_status.recording is False
+    assert recording_stop.error == "native_recorder_unavailable"
 
 
 def test_tare_explorer_is_available_through_exploration_contracts():
@@ -3101,7 +2928,7 @@ def test_tare_explorer_is_available_through_exploration_contracts():
     assert snapshot["explorer_backend"] == "tare"
     assert snapshot["explorer_available"] is True
     assert snapshot["explorer_unavailable_reason"] is None
-    assert snapshot["explorer_required_profile"] is None
+    assert snapshot["explorer_required_product"] is None
     assert snapshot["can_start_exploring"] is True
     assert snapshot["exploration_blockers"] == []
 
@@ -3288,24 +3115,9 @@ def test_explore_start_rejects_safety_stop_before_backend_start():
     assert snapshot["safety"]["stop_active"] is True
 
 
-def test_exploring_session_start_rejects_localization_recovery_blocker(monkeypatch):
-    import runtime.service_manager as service_manager
+def test_exploring_session_start_rejects_localization_recovery_blocker():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
-
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
 
     class TAREExplorerModule:
         def __init__(self):
@@ -3317,9 +3129,6 @@ def test_exploring_session_start_rejects_localization_recovery_blocker(monkeypat
 
         def get_tare_status(self):
             return {"started": self.started}
-
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
 
     gateway = GatewayModule()
     gateway.setup()
@@ -3337,7 +3146,6 @@ def test_exploring_session_start_rejects_localization_recovery_blocker(monkeypat
     assert started.success is False
     assert "localization_recovery_active" in (started.message or "")
     assert started.detail["blockers"] == ["localization_recovery_active"]
-    assert fake_service_manager.calls == []
     assert tare.started is False
     assert gateway._session_mode == "idle"
 
@@ -3377,24 +3185,141 @@ def test_exploring_session_start_rejects_safety_stop_before_backend_start():
     assert gateway._session_mode == "idle"
 
 
-def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
-    import runtime.service_manager as service_manager
+def test_exploring_session_start_can_defer_task_and_preserve_map():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import SessionStartRequest, SessionTransitionResponse
+
+    gateway = GatewayModule()
+    gateway.setup()
+
+    def fail_readiness_check():
+        raise AssertionError("deferred Explore task must not check task readiness")
+
+    def fail_task_start():
+        raise AssertionError("deferred Explore task must not start the backend")
+
+    gateway._exploration_start_readiness = fail_readiness_check
+    gateway._begin_exploration = fail_task_start
+
+    payload = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            SessionStartRequest(
+                mode="exploring",
+                map_name="survey_area",
+                start_task=False,
+            )
+        )
+    )
+    started = SessionTransitionResponse.model_validate(_payload(payload))
+
+    assert started.ok is True
+    assert started.success is True
+    assert started.session is not None
+    assert started.session.mode == "exploring"
+    assert gateway._session_map == "survey_area"
+    assert gateway._exploring is False
+
+
+def test_deferred_exploring_session_allows_explicit_native_task_start(monkeypatch):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import (
+        ExplorationCommandResponse,
+        GatewayErrorResponse,
+        SessionStartRequest,
+        SessionTransitionResponse,
+    )
+    from gateway.services import exploration
+
+    class NativeCommands:
+        def __init__(self):
+            self.calls = []
+
+        def start_exploration(self, *, reason: str):
+            self.calls.append(("start", reason))
+            return True
+
+        def stop_exploration(self, *, reason: str):
+            self.calls.append(("stop", reason))
+            return True
+
+    commands = NativeCommands()
+    monkeypatch.setattr(exploration, "_native_commands", lambda _gw: commands)
+    monkeypatch.setattr(exploration, "_native_status", lambda: {"active": False})
+
+    gateway = GatewayModule()
+    gateway.setup()
+    _seed_ready_navigation(gateway)
+
+    session_payload = asyncio.run(
+        _endpoint(gateway, "/api/v1/session/start")(
+            SessionStartRequest(
+                mode="exploring",
+                map_name="survey_area",
+                start_task=False,
+            )
+        )
+    )
+    session_started = SessionTransitionResponse.model_validate(session_payload)
+
+    assert session_started.ok is True
+    assert gateway._session_mode == "exploring"
+    assert gateway._exploring is False
+    assert commands.calls == []
+
+    task_payload = asyncio.run(_endpoint(gateway, "/api/v1/explore/start")())
+    task_started = ExplorationCommandResponse.model_validate(_payload(task_payload))
+
+    assert task_started.status == {
+        "accepted": True,
+        "backend": "tare",
+        "runtime": "native_dds",
+    }
+    assert commands.calls == [("start", "gateway_start")]
+    assert gateway._exploring is True
+
+    repeated_response = asyncio.run(_endpoint(gateway, "/api/v1/explore/start")())
+    repeated = GatewayErrorResponse.model_validate(_payload(repeated_response))
+
+    assert repeated_response.status_code == 409
+    assert repeated.error == "exploration_not_ready"
+    assert "exploration_already_active" in repeated.detail["blockers"]
+    assert commands.calls == [("start", "gateway_start")]
+
+
+def test_explore_start_still_rejects_other_active_session_modes():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse
+
+    class WavefrontFrontierExplorer:
+        def __init__(self):
+            self.started = False
+
+        def begin_exploration(self):
+            self.started = True
+            return {"status": "started"}
+
+        def health(self):
+            return {"frontier_count": 1}
+
+    gateway = GatewayModule()
+    gateway.setup()
+    explorer = WavefrontFrontierExplorer()
+    gateway.on_system_modules({"WavefrontFrontierExplorer": explorer})
+    _seed_ready_navigation(gateway)
+    gateway._session_mode = "mapping"
+
+    response = asyncio.run(_endpoint(gateway, "/api/v1/explore/start")())
+    rejected = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert rejected.error == "exploration_not_ready"
+    assert "session_not_idle" in rejected.detail["blockers"]
+    assert explorer.started is False
+
+
+def test_tare_explorer_session_start_end_uses_exploration_backend():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
-
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
 
     class TAREExplorerModule:
         def __init__(self):
@@ -3415,9 +3340,6 @@ def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
         def get_tare_status(self):
             return {"started": self.started}
 
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
-
     gateway = GatewayModule()
     gateway.setup()
     tare = TAREExplorerModule()
@@ -3431,16 +3353,10 @@ def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
     assert started.success is True
     assert started.session is not None
     assert started.session.mode == "exploring"
-    assert started.session.slam_profile == "native_dds"
+    assert started.session.slam_profile == "genz"
     assert started.session.explorer_backend == "tare"
     assert tare.started is True
     assert tare.start_count == 1
-    assert (
-        "stop",
-        ("slam_pgo", "localizer", "hba", "genz_icp", "super_lio", "super_lio_relocation"),
-    ) in fake_service_manager.calls
-    assert ("ensure", ("slam",)) in fake_service_manager.calls
-    assert ("wait_ready", ("slam",)) in fake_service_manager.calls
 
     end_payload = asyncio.run(_endpoint(gateway, "/api/v1/session/end")())
     ended = SessionTransitionResponse.model_validate(end_payload)
@@ -3452,38 +3368,11 @@ def test_tare_explorer_session_start_end_uses_exploration_backend(monkeypatch):
     assert ended.session.explorer_backend == "tare"
     assert tare.started is False
     assert tare.stop_count == 1
-    assert (
-        "stop",
-        (
-            "super_lio_relocation",
-            "super_lio",
-            "hba",
-            "genz_icp",
-            "slam_pgo",
-            "localizer",
-            "slam",
-        ),
-    ) in fake_service_manager.calls
 
 
-def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeypatch):
-    import runtime.service_manager as service_manager
+def test_tare_external_session_start_with_none_is_logical_only():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionTransitionResponse
-
-    class FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-        def stop(self, *services: str) -> None:
-            self.calls.append(("stop", services))
-
-        def ensure(self, *services: str) -> None:
-            self.calls.append(("ensure", services))
-
-        def wait_ready(self, *services: str, timeout: float = 15.0) -> bool:
-            self.calls.append(("wait_ready", services))
-            return True
 
     class TAREExplorerModule:
         def __init__(self):
@@ -3500,9 +3389,6 @@ def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeyp
         def get_tare_status(self):
             return {"started": self.started}
 
-    fake_service_manager = FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake_service_manager)
-
     gateway = GatewayModule()
     gateway.setup()
     tare = TAREExplorerModule()
@@ -3517,23 +3403,15 @@ def test_tare_external_session_start_with_none_skips_robot_slam_services(monkeyp
     assert transition.session.mode == "exploring"
     assert transition.session.slam_profile == "none"
     assert tare.started is True
-    assert fake_service_manager.calls == [("stop", ())]
 
 
-def test_tare_external_session_get_preserves_exploring_with_none_slam(monkeypatch):
-    import runtime.service_manager as service_manager
+def test_tare_external_session_get_preserves_exploring_with_none_slam():
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import SessionResponse
-
-    class FakeServiceManager:
-        def status(self, *services: str) -> dict[str, str]:
-            return {name: "stopped" for name in services}
 
     class TAREExplorerModule:
         def get_tare_status(self):
             return {"started": True}
-
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: FakeServiceManager())
 
     gateway = GatewayModule()
     gateway.setup()
@@ -3555,280 +3433,70 @@ def test_tare_external_session_get_preserves_exploring_with_none_slam(monkeypatc
     assert gateway._cached_slam_profile == "none"
 
 
-def test_slam_status_uses_logical_service_states(monkeypatch):
-    import runtime.service_manager as service_manager
+def test_slam_status_uses_run_plan_and_native_telemetry():
     from gateway.gateway_module import GatewayModule
 
-    class _FakeServiceManager:
-        def __init__(self, services):
-            self._services = services
-
-        def status(self, *names):
-            assert names == (
-                "lidar",
-                "slam",
-                "traversability",
-                "nav",
-                "explore",
-                "slam_pgo",
-                "localizer",
-                "genz_icp",
-                "hba",
-                "super_lio",
-                "super_lio_relocation",
-            )
-            return dict(self._services)
-
-        def status_details(self, *names):
-            canonical = {
-                "lidar": "lingtu-livox-dds.service",
-                "slam": "lingtu-slam-dds.service",
-                "traversability": "lingtu-traversability-dds.service",
-                "nav": "lingtu-nav-dds.service",
-                "explore": "lingtu-explore-dds.service",
-            }
-            return {
-                name: {
-                    "status": self._services.get(name, "unknown"),
-                    "canonical_unit": canonical.get(name, f"{name}.service"),
-                    "selected_unit": canonical.get(name, f"{name}.service"),
-                    "installed_units": [canonical.get(name, f"{name}.service")],
-                    "active_units": (
-                        [canonical.get(name, f"{name}.service")] if self._services.get(name) == "running" else []
-                    ),
-                    "candidate_units": [f"{name}.service"],
-                }
-                for name in names
-            }
-
     gateway = GatewayModule()
+    gateway._compiled_run_plan = _field_run_plan("nav")
     gateway.setup()
     endpoint = _endpoint(gateway, "/api/v1/slam/status")
 
     gateway._localization_status = {
-        "backend": "cpp_dds_slam",
+        "backend": "fastlio2",
+        "health_source": "slam_runtime",
         "mode": "localization",
         "state": "TRACKING",
     }
-    monkeypatch.setattr(
-        service_manager,
-        "get_service_manager",
-        lambda: _FakeServiceManager(
-            {
-                "lidar": "running",
-                "slam": "running",
-                "traversability": "running",
-                "nav": "running",
-                "explore": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "genz_icp": "stopped",
-                "hba": "stopped",
-                "super_lio": "stopped",
-                "super_lio_relocation": "stopped",
-            }
-        ),
-    )
-    native_localizer_payload = asyncio.run(endpoint())
-    assert native_localizer_payload["mode"] == "native_dds"
-    assert native_localizer_payload["native_mode"] == "localization"
-    assert native_localizer_payload["product_runtime"] == "native_dds"
-    assert native_localizer_payload["ros2_required"] is False
-    assert native_localizer_payload["manual_systemctl_required"] is False
-    assert native_localizer_payload["service_groups"]["native_dds"] == [
+    native_payload = asyncio.run(endpoint())
+
+    assert native_payload["mode"] == "native_dds"
+    assert native_payload["native_mode"] == "localization"
+    assert native_payload["product_runtime"] == "native_dds"
+    assert native_payload["ros2_required"] is False
+    assert native_payload["manual_systemctl_required"] is False
+    assert native_payload["service_groups"]["native_dds"] == [
         "lidar",
         "slam",
+        "maps",
         "traversability",
         "nav",
         "driver",
         "explore",
     ]
-    assert "legacy_ros2_compat" in native_localizer_payload["service_groups"]
-    assert native_localizer_payload["service_metadata"]["slam_pgo"]["role"] == "map_optimization"
-    assert native_localizer_payload["service_metadata"]["slam_pgo"]["ros2_compat"] is True
-    assert native_localizer_payload["service_metadata"]["hba"]["role"] == "map_optimization"
-    assert native_localizer_payload["service_metadata"]["hba"]["experimental"] is True
-    assert native_localizer_payload["service_details"]["slam"]["status"] == "running"
-
-    gateway._localization_status = {}
-    monkeypatch.setattr(
-        service_manager,
-        "get_service_manager",
-        lambda: _FakeServiceManager(
-            {
-                "lidar": "running",
-                "slam": "stopped",
-                "traversability": "running",
-                "nav": "running",
-                "explore": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "running",
-                "genz_icp": "stopped",
-                "hba": "stopped",
-                "super_lio": "stopped",
-                "super_lio_relocation": "stopped",
-            }
-        ),
-    )
-    localizer_payload = asyncio.run(endpoint())
-    assert localizer_payload["mode"] == "localizer"
-    assert localizer_payload["services"]["localizer"] == "running"
-
-    monkeypatch.setattr(
-        service_manager,
-        "get_service_manager",
-        lambda: _FakeServiceManager(
-            {
-                "lidar": "running",
-                "slam": "running",
-                "traversability": "running",
-                "nav": "running",
-                "explore": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "genz_icp": "stopped",
-                "hba": "stopped",
-                "super_lio": "stopped",
-                "super_lio_relocation": "stopped",
-            }
-        ),
-    )
-    fastlio_payload = asyncio.run(endpoint())
-    assert fastlio_payload["mode"] == "native_dds"
-
-    monkeypatch.setattr(
-        service_manager,
-        "get_service_manager",
-        lambda: _FakeServiceManager(
-            {
-                "lidar": "running",
-                "slam": "stopped",
-                "traversability": "running",
-                "nav": "running",
-                "explore": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "genz_icp": "stopped",
-                "hba": "stopped",
-                "super_lio": "running",
-                "super_lio_relocation": "stopped",
-            }
-        ),
-    )
-    super_lio_payload = asyncio.run(endpoint())
-    assert super_lio_payload["mode"] == "super_lio"
-    assert super_lio_payload["services"]["super_lio"] == "running"
-
-    monkeypatch.setattr(
-        service_manager,
-        "get_service_manager",
-        lambda: _FakeServiceManager(
-            {
-                "lidar": "running",
-                "slam": "stopped",
-                "traversability": "running",
-                "nav": "running",
-                "explore": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "genz_icp": "running",
-                "hba": "stopped",
-                "super_lio": "stopped",
-                "super_lio_relocation": "stopped",
-            }
-        ),
-    )
-    genz_payload = asyncio.run(endpoint())
-    assert genz_payload["mode"] == "genz"
-    assert genz_payload["services"]["genz_icp"] == "running"
-
-    monkeypatch.setattr(
-        service_manager,
-        "get_service_manager",
-        lambda: _FakeServiceManager(
-            {
-                "lidar": "running",
-                "slam": "stopped",
-                "traversability": "running",
-                "nav": "running",
-                "explore": "stopped",
-                "slam_pgo": "stopped",
-                "localizer": "stopped",
-                "genz_icp": "stopped",
-                "hba": "stopped",
-                "super_lio": "stopped",
-                "super_lio_relocation": "running",
-            }
-        ),
-    )
-    relocation_payload = asyncio.run(endpoint())
-    assert relocation_payload["mode"] == "super_lio_relocation"
-    assert relocation_payload["services"]["super_lio_relocation"] == "running"
+    assert native_payload["service_metadata"]["slam_pgo"]["role"] == "map_optimization"
+    assert native_payload["services"]["slam"] == "running"
+    assert native_payload["service_details"]["slam"]["observed"]["run_plan"]["declared"] is True
 
 
-def test_service_status_exposes_catalog_readiness_contract(monkeypatch):
-    import runtime.service_manager as service_manager
+
+def test_service_status_exposes_catalog_readiness_contract(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import ServiceStatusResponse
-    from runtime.service_catalogs.thunder import thunder_service_metadata
 
-    metadata = thunder_service_metadata()
-
-    class _FakeServiceManager:
-        def status(self, *names):
-            assert names == ("camera", "lidar")
-            return {"camera": "running", "lidar": "stopped"}
-
-        def status_details(self, *names):
-            assert names == ("camera", "lidar")
-            return {
-                name: {
-                    "status": "running" if name == "camera" else "stopped",
-                    "ready": False,
-                    "blockers": ["dds_unchecked"] if name == "camera" else ["systemd_inactive", "dds_unchecked"],
-                    "observed": {
-                        "systemd": name == "camera",
-                        "native_binary": {
-                            "ok": True,
-                            "binaries": metadata[name].get("binaries", []),
-                            "blockers": [],
-                        },
-                        "status_file": {
-                            "ok": name == "camera",
-                            "files": [
-                                {
-                                    "path": "/dev/shm/lingtu/camera_status.json",
-                                    "exists": name == "camera",
-                                }
-                            ],
-                            "blockers": []
-                            if name == "camera"
-                            else ["status_file_missing:/dev/shm/lingtu/camera_status.json"],
-                        },
-                        "dds": {
-                            "ok": False,
-                            "checked": False,
-                            "enabled": False,
-                            "reason": "set LINGTU_SERVICE_DDS_CHECK=1 to sample DDS topics",
-                            "topics": metadata[name]["dds_topics"],
-                            "samples": {},
-                            "blockers": ["dds_unchecked"],
-                        },
+    evidence = tmp_path / "service_readiness.json"
+    evidence.write_text(
+        json.dumps(
+            {
+                "schema": "lingtu.thunder.service_readiness.v1",
+                "summary": {"ok": True, "blockers": [], "blocker_count": 0},
+                "systemd": {
+                    "lingtu-camera-dds.service": {
+                        "active_state": "active",
+                        "sub_state": "running",
                     },
-                    "contract": {
-                        "checks": metadata[name]["checks"],
-                        "topics": metadata[name]["topics"],
-                        "dds_topics": metadata[name]["dds_topics"],
-                        "files": metadata[name]["files"],
-                        "binaries": metadata[name].get("binaries", []),
+                    "lingtu-livox-dds.service": {
+                        "active_state": "inactive",
+                        "sub_state": "dead",
                     },
-                }
-                for name in names
+                },
             }
-
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: _FakeServiceManager())
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_SERVICE_READINESS_JSON", str(evidence))
 
     gateway = GatewayModule()
+    gateway._compiled_run_plan = _field_run_plan("nav")
     gateway.setup()
     endpoint = _endpoint(gateway, "/api/v1/services/status")
 
@@ -3846,61 +3514,34 @@ def test_service_status_exposes_catalog_readiness_contract(monkeypatch):
     assert status.service_metadata["camera"]["topics"] == ["/camera/color/camera_info"]
     assert status.service_metadata["camera"]["dds_topics"] == ["rt/camera/info"]
     assert status.service_details["camera"]["contract"]["dds_topics"] == ["rt/camera/info"]
-    assert status.service_details["camera"]["contract"]["files"] == ["/dev/shm/lingtu/camera_status.json"]
-    assert status.service_details["camera"]["contract"]["binaries"][1]["name"] == ("orbbec_capture")
-    assert status.service_details["camera"]["observed"]["systemd"] is True
-    assert status.service_details["camera"]["observed"]["native_binary"]["ok"] is True
-    assert status.service_details["camera"]["observed"]["status_file"]["ok"] is True
-    assert status.service_details["camera"]["observed"]["dds"] == {
-        "ok": False,
-        "checked": False,
-        "enabled": False,
-        "reason": "set LINGTU_SERVICE_DDS_CHECK=1 to sample DDS topics",
-        "topics": ["rt/camera/info"],
-        "samples": {},
-        "blockers": ["dds_unchecked"],
-    }
-    assert status.service_details["camera"]["ready"] is False
-    assert status.service_details["camera"]["blockers"] == ["dds_unchecked"]
-    assert status.service_details["lidar"]["blockers"] == [
-        "systemd_inactive",
-        "dds_unchecked",
+    assert status.service_details["camera"]["contract"]["files"] == [
+        "/dev/shm/lingtu/camera_status.json"
     ]
+    assert status.service_details["camera"]["contract"]["binaries"][1]["name"] == (
+        "orbbec_capture"
+    )
+    camera_observed = status.service_details["camera"]["observed"]
+    assert camera_observed["run_plan"]["declared"] is False
+    assert camera_observed["field_readiness"]["source"] == "field_readiness"
+    assert camera_observed["field_readiness"]["systemd"]["lingtu-camera-dds.service"][
+        "active_state"
+    ] == "active"
+    assert status.service_details["camera"]["ready"] is True
+    assert status.service_details["camera"]["blockers"] == []
+    assert status.service_details["lidar"]["observed"]["run_plan"]["declared"] is True
+    assert status.service_details["lidar"]["ready"] is False
+    assert status.service_details["lidar"]["blockers"] == ["status_stopped"]
 
 
-def test_service_status_default_names_follow_field_readiness_catalog(monkeypatch):
-    import runtime.service_manager as service_manager
+
+def test_service_status_default_names_follow_field_readiness_catalog():
     from gateway.gateway_module import GatewayModule
-    from runtime.service_catalogs.thunder import thunder_field_readiness_services
+    from runtime.service_catalogs.thunder import thunder_runtime_services
 
-    expected = tuple(dict.fromkeys((*thunder_field_readiness_services(), "gateway")))
-
-    class _FakeServiceManager:
-        def status(self, *names):
-            assert names == expected
-            return {name: "running" for name in names}
-
-        def status_details(self, *names):
-            assert names == expected
-            return {
-                name: {
-                    "status": "running",
-                    "ready": True,
-                    "blockers": [],
-                    "observed": {"systemd": True},
-                    "contract": {
-                        "checks": ["systemd"],
-                        "topics": [],
-                        "dds_topics": [],
-                        "files": [],
-                    },
-                }
-                for name in names
-            }
-
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: _FakeServiceManager())
+    expected = tuple(dict.fromkeys((*thunder_runtime_services(), "gateway")))
 
     gateway = GatewayModule()
+    gateway._compiled_run_plan = _field_run_plan("nav")
     gateway.setup()
     endpoint = _endpoint(gateway, "/api/v1/services/status")
 
@@ -3910,128 +3551,76 @@ def test_service_status_default_names_follow_field_readiness_catalog(monkeypatch
     assert "explore" not in payload["services"]
     assert "camera" in payload["service_metadata"]
     assert "gateway" in payload["service_metadata"]
+    assert payload["services"]["gateway"] == "running"
 
 
-def test_slam_switch_can_select_super_lio(monkeypatch):
-    import runtime.service_manager as service_manager
+
+def test_slam_switch_reconfigures_true_in_process_module(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
-    class _FakeServiceManager:
+    class SlamModule:
         def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
+            self.calls = []
 
-        def stop(self, *names):
-            self.calls.append(("stop", names))
+        def reconfigure_backend(self, category, backend, **config):
+            self.calls.append((category, backend, config))
+            return {
+                "ok": True,
+                "category": category,
+                "requested_backend": backend,
+            }
 
-        def ensure(self, *names):
-            self.calls.append(("ensure", names))
+    class NavMissionStub:
+        def health(self):
+            return {"state": "IDLE"}
 
-        def wait_ready(self, *names, timeout: float = 15.0):
-            self.calls.append(("wait_ready", names))
-            return True
-
-    fake = _FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
-
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "local_driver")
+    module = SlamModule()
     gateway = GatewayModule()
     gateway.setup()
+    gateway.on_system_modules(
+        {
+            "SlamModule": module,
+            "nav.mission": NavMissionStub(),
+        }
+    )
     endpoint = _endpoint(gateway, "/api/v1/slam/switch")
 
-    payload = asyncio.run(endpoint({"profile": "super_lio"}))
-
-    assert payload["schema_version"] == 1
-    assert payload["ok"] is True
-    assert payload["success"] is True
-    assert payload["ts"] > 0
-    assert payload["profile"] == "super_lio"
-    assert (
-        "stop",
-        ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio_relocation"),
-    ) in fake.calls
-    assert ("ensure", ("legacy_lidar", "super_lio")) in fake.calls
-    assert ("wait_ready", ("legacy_lidar", "super_lio")) in fake.calls
-
-
-def test_slam_switch_can_select_genz_icp(monkeypatch):
-    import runtime.service_manager as service_manager
-    from gateway.gateway_module import GatewayModule
-
-    class _FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
-
-        def stop(self, *names):
-            self.calls.append(("stop", names))
-
-        def ensure(self, *names):
-            self.calls.append(("ensure", names))
-
-        def wait_ready(self, *names, timeout: float = 15.0):
-            self.calls.append(("wait_ready", names))
-            return True
-
-    fake = _FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
-
-    gateway = GatewayModule()
-    gateway.setup()
-    endpoint = _endpoint(gateway, "/api/v1/slam/switch")
-
-    payload = asyncio.run(endpoint({"profile": "genz-icp"}))
+    payload = asyncio.run(endpoint({"profile": "genz"}))
 
     assert payload["schema_version"] == 1
     assert payload["ok"] is True
     assert payload["success"] is True
     assert payload["profile"] == "genz"
-    assert (
-        "stop",
-        ("slam", "slam_pgo", "localizer", "hba", "super_lio", "super_lio_relocation"),
-    ) in fake.calls
-    assert ("ensure", ("legacy_lidar", "genz_icp")) in fake.calls
-    assert ("wait_ready", ("legacy_lidar", "genz_icp")) in fake.calls
+    assert module.calls == [("slam", "genz", {})]
 
 
-def test_slam_switch_can_select_super_lio_relocation(monkeypatch):
-    import runtime.service_manager as service_manager
+def test_slam_switch_rejects_field_product_without_touching_module(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
-    class _FakeServiceManager:
-        def __init__(self):
-            self.calls: list[tuple[str, tuple[str, ...]]] = []
+    class SlamModule:
+        def reconfigure_backend(self, *_args, **_kwargs):
+            raise AssertionError("field Product must not hot-switch its SLAM module")
 
-        def stop(self, *names):
-            self.calls.append(("stop", names))
-
-        def ensure(self, *names):
-            self.calls.append(("ensure", names))
-
-        def wait_ready(self, *names, timeout: float = 15.0):
-            self.calls.append(("wait_ready", names))
-            return True
-
-    fake = _FakeServiceManager()
-    monkeypatch.setattr(service_manager, "get_service_manager", lambda: fake)
-
+    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     gateway = GatewayModule()
+    gateway._compiled_run_plan = _field_run_plan("nav")
     gateway.setup()
+    gateway.on_system_modules({"SlamModule": SlamModule()})
     endpoint = _endpoint(gateway, "/api/v1/slam/switch")
 
-    payload = asyncio.run(endpoint({"profile": "super_lio_reloc"}))
+    response = asyncio.run(endpoint({"profile": "localizer"}))
+    payload = _payload(response)
 
-    assert payload["schema_version"] == 1
-    assert payload["ok"] is True
-    assert payload["success"] is True
-    assert payload["ts"] > 0
-    assert payload["profile"] == "super_lio_relocation"
-    assert (
-        "stop",
-        ("slam", "slam_pgo", "localizer", "hba", "genz_icp", "super_lio"),
-    ) in fake.calls
-    assert ("ensure", ("legacy_lidar", "super_lio_relocation")) in fake.calls
-    assert ("wait_ready", ("legacy_lidar", "super_lio_relocation")) in fake.calls
+    assert response.status_code == 409
+    assert payload["ok"] is False
+    assert "active Product" in payload["message"]
+    assert "/api/v1/runtime/switch-plan" in payload["message"]
+    assert "ProductControl" in payload["message"]
 
 
-def test_super_lio_relocalize_endpoints_fail_fast_without_ros_call(monkeypatch):
+
+def test_genz_relocalize_endpoints_fail_fast_without_ros_call(monkeypatch):
     import subprocess
 
     from gateway.gateway_module import GatewayModule
@@ -4044,50 +3633,9 @@ def test_super_lio_relocalize_endpoints_fail_fast_without_ros_call(monkeypatch):
     gateway = GatewayModule()
     gateway.setup()
     gateway._localization_status = {
-        "localization_backend": "super_lio",
+        "localization_backend": "genz",
         "saved_map_relocalization_supported": False,
-        "recovery_method": "restart_super_lio",
-    }
-
-    auto_response = asyncio.run(_endpoint(gateway, "/api/v1/slam/auto_relocalize")())
-    relocalize_response = asyncio.run(
-        _endpoint(gateway, "/api/v1/slam/relocalize")({"map_name": "demo", "x": 1.0, "y": 2.0, "yaw": 0.3})
-    )
-
-    auto_payload = _payload(auto_response)
-    relocalize_payload = _payload(relocalize_response)
-    assert auto_response.status_code == 409
-    assert relocalize_response.status_code == 409
-    assert auto_payload["schema_version"] == 1
-    assert relocalize_payload["schema_version"] == 1
-    assert auto_payload["ok"] is False
-    assert relocalize_payload["ok"] is False
-    assert auto_payload["success"] is False
-    assert relocalize_payload["success"] is False
-    assert auto_payload["ts"] > 0
-    assert relocalize_payload["ts"] > 0
-    assert "unsupported" in auto_payload["message"]
-    assert "unsupported" in relocalize_payload["message"]
-
-
-def test_super_lio_relocation_relocalize_endpoints_fail_fast_without_ros_call(
-    monkeypatch,
-):
-    import subprocess
-
-    from gateway.gateway_module import GatewayModule
-
-    def fail_run(*_args, **_kwargs):
-        raise AssertionError("ROS relocalization service should not be called")
-
-    monkeypatch.setattr(subprocess, "run", fail_run)
-
-    gateway = GatewayModule()
-    gateway.setup()
-    gateway._localization_status = {
-        "localization_backend": "super_lio_relocation",
-        "saved_map_relocalization_supported": False,
-        "recovery_method": "restart_super_lio_relocation",
+        "recovery_method": "restart_genz_icp",
     }
 
     auto_response = asyncio.run(_endpoint(gateway, "/api/v1/slam/auto_relocalize")())

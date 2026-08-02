@@ -9,7 +9,7 @@ entry point.
 
 ## Product Direction
 
-LingTu is a Module-first outdoor inspection navigation stack. ROS 2 topics can
+LingTu is a Product-defined outdoor inspection navigation stack. ROS 2 topics can
 exist at endpoint adapters, but product acceptance should not require an
 operator to inspect `ros2 topic` output. The primary field-facing evidence is:
 
@@ -69,7 +69,7 @@ arbitrary publish into ModulePorts.
 
 `field-check` is the operator-facing one-screen readiness view. It consumes the
 same lower-level gates rather than replacing them. `non_motion` mode checks that
-Gateway exposes the product runtime boundary, Module-first dataflow, readiness,
+Gateway exposes the product runtime boundary, runtime dataflow, readiness,
 localization, navigation status, and command whitelist. `simulation` mode uses
 the same Gateway and ModulePorts surface but requires a live simulation
 endpoint, live Module samples, motion readiness, goal acceptance, and routecheck
@@ -102,7 +102,7 @@ python lingtu.py saved-map-artifact-gate <map-dir> \
 
 python lingtu.py real-runtime-evidence \
   --duration-sec 20 \
-  --json-out artifacts/real_s100p_runtime/report.json
+  --json-out artifacts/real_runtime/report.json
 
 python lingtu.py gateway-runtime-acceptance \
   --acceptance-mode field \
@@ -141,4 +141,4 @@ Script-related checks are split by how they should be run:
 
 The scripts under `tests/integration` may still be useful for ROS-node or legacy
 deployment checks, but they are no longer the canonical product acceptance path.
-Prefer the Gateway/runtime gates above for Module-first field validation.
+Prefer the Gateway/runtime gates above for Product field validation.

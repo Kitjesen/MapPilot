@@ -31,9 +31,9 @@ field runtime evidence.
 | `tests/` | Simulation integration and filesystem contract tests |
 | `launch/` | Legacy ROS launch/smoke compatibility files |
 
-`sim/scripts/mujoco/*` holds the canonical MuJoCo script implementations.
-Older `sim/scripts/<name>.py` files are compatibility wrappers only when
-profiles, deploy scripts, or field notes still reference them.
+`sim/scripts/mujoco/*` is the only current MuJoCo command and test path.
+Top-level MuJoCo compatibility wrappers are retired; dated field notes may keep
+their historical command text as evidence.
 
 ## Runtime Paths
 
@@ -57,7 +57,7 @@ MujocoDriverModule odometry/map_cloud
 Use it for fast wiring, map-layer, local-planner, visual-servo, and semantic
 pipeline checks.
 
-### MuJoCo Legacy Module Gates
+### MuJoCo Host Simulation Gates
 
 ```bash
 python lingtu.py sim_mujoco_live gate
@@ -66,9 +66,9 @@ python lingtu.py sim_mujoco_octo_live octo-moving-obstacle-video
 ```
 
 These profiles use external launchers and the `mujoco_fastlio2_live` contract.
-They validate legacy downstream Python Module wiring and video gates from
-normalized odometry/map-cloud evidence. They are simulation gates, not field
-proof or native DDS equivalence.
+They validate Host-side Python wiring and video gates from normalized
+odometry/map-cloud evidence. They are simulation gates, not field proof or
+native DDS equivalence.
 
 ### MuJoCo Native DDS Gate
 
@@ -85,13 +85,13 @@ Current native-DDS acceptance commands are:
 
 ```bash
 PYTHONPATH=src:. python sim/scripts/mujoco/native_navigation_acceptance.py \
-  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json \
   --mode motion \
   --record-video \
   --out-dir artifacts/mujoco_native_nav_60m
 
 PYTHONPATH=src:. python sim/scripts/mujoco/long_range_navigation_acceptance.py \
-  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json \
+  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json \
   --attempts 10 \
   --min-distance-m 50 \
   --max-distance-m 70 \
@@ -132,18 +132,26 @@ for the exact claim boundary. The accepted native-DDS navigation gate proves
 the simulated map/plan/local-follow/final-DDS-command/control loop; it does not
 prove field fault handling or physical locomotion.
 
-### Product Tasks On Simulation Endpoints
+### Products In `env=sim`
 
-Product profiles can bind to explicit simulation endpoints:
+ProductControl resolves a Product inside `env=sim`; the backend is internal
+environment implementation configuration, not a Product or Endpoint:
 
 ```bash
-python lingtu.py explore --endpoint mujoco_live
-python lingtu.py tare_explore --endpoint mujoco_live
-python lingtu.py explore --endpoint gazebo --record
+python -m lingtu.control switch nav --env sim --backend mujoco_native --map MAP_NAME --dry-run --json
+python -m lingtu.control switch explore --env sim --backend mujoco_host --dry-run --json
 ```
 
-Do not treat bare `nav`, `map`, or `explore` as simulation. Without an
-explicit endpoint they may target the product field runtime.
+Local `lingtu.py` Profiles remain development inputs; they do not select a
+Product deployment environment.
+
+### External CMU Unity Experiment
+
+`sim/scripts/launch_cmu_unity_baseline.sh` starts the upstream benchmark baseline.
+Manual topic-relay experiments may use
+`sim/engine/bridge/cmu_unity_lingtu_adapter.py` in an isolated ROS domain.
+Neither path is resolved by ProductControl, consumes a RunPlan, or proves that
+a LingTu Product is available on CMU Unity.
 
 ## LiDAR And IMU
 
@@ -336,6 +344,5 @@ and optional external packages.
   algorithm behavior.
 - Simulation cannot prove real MID-360 timing, real IMU noise, Thunder gait
   stability, physical calibration, or field safety.
-- ROS launch files under `sim/launch/` are legacy compatibility checks.
 - PCT and ROS2 local-planner gates are compatibility/benchmark surfaces unless
   a profile explicitly selects them.

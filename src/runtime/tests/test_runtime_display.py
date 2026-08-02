@@ -24,8 +24,8 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
 
     runtime = SimpleNamespace(
         endpoint=None,
-        data_source="thunder_field",
-        runtime_contract="thunder_field",
+        data_source="thunder",
+        runtime_contract="real",
         command_sink="driver",
         simulation_only=False,
         slam_source="lingtu_fastlio_or_external_robot_slam",
@@ -87,8 +87,8 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
     )
 
     assert format_runtime_boundary(runtime) == (
-        "endpoint=in_process data_source=thunder_field "
-        "runtime_contract=thunder_field "
+        "data_source=thunder "
+        "runtime_contract=real "
         "module_transport=local endpoint_transport=local "
         "command_sink=driver simulation_only=false"
     )
@@ -108,16 +108,16 @@ def test_runtime_display_formats_run_spec_like_object() -> None:
         "sensors=/nav/lidar_scan,/nav/imu localization_map=/nav/odometry,/nav/map_cloud command=driver"
     )
     assert format_product_runtime_boundary(runtime) == (
-        "mode=field runtime_contract=thunder_field module_transport=local "
+        "env=real runtime_contract=real module_transport=local "
         "endpoint_transport=local "
-        "primary=Gateway+ModulePorts adapter=endpoint_only "
+        "primary=Gateway+ModulePorts adapter=transport_only "
         "ros2_topic_inspection_required=false"
     )
     assert format_product_acceptance_commands(runtime) == (
         "python lingtu.py runtime-audit | "
         "python lingtu.py real-runtime-evidence --collector gateway "
         "--gateway-url http://<robot>:5050 --duration-sec 20 "
-        "--json-out artifacts/thunder_field_runtime/report.json | "
+        "--json-out artifacts/real_runtime/report.json | "
         "python lingtu.py gateway-runtime-acceptance --acceptance-mode field "
         "--gateway-url http://<robot>:5050"
     )
@@ -152,7 +152,7 @@ def test_product_runtime_boundary_exposes_route_contract_mode() -> None:
     from cli.runtime_display import format_product_runtime_boundary
 
     runtime = {
-        "runtime_contract": "thunder_field",
+        "runtime_contract": "real",
         "module_transport": "local",
         "endpoint_transport": "dds",
         "route_contract": "robot",
@@ -161,9 +161,9 @@ def test_product_runtime_boundary_exposes_route_contract_mode() -> None:
     }
 
     assert format_product_runtime_boundary(runtime) == (
-        "mode=field runtime_contract=thunder_field module_transport=local "
+        "env=real runtime_contract=real module_transport=local "
         "endpoint_transport=dds primary=Gateway+ModulePorts "
-        "adapter=endpoint_only ros2_topic_inspection_required=false "
+        "adapter=transport_only ros2_topic_inspection_required=false "
         "route_contract=robot routed_delivery=false"
     )
 
@@ -219,13 +219,13 @@ def test_runtime_contract_manifest_summary_exposes_interfaces_flow_and_frames() 
     assert "Real data flow:" in output
     assert "  endpoint_adapter" in output
     assert "Data sources:" in output
-    assert ("  thunder_field[hardware] source=/lidar/raw_frame,/imu/raw normalized=/lidar/raw_frame,/imu/raw") in output
+    assert ("  thunder[hardware] source=/lidar/raw_frame,/imu/raw normalized=/lidar/raw_frame,/imu/raw") in output
     assert "command=driver" in output
     assert (
         "  mujoco_fastlio2_live[mujoco] source=/lidar/raw_frame,/imu/raw normalized=/lidar/raw_frame,/imu/raw"
     ) in output
-    assert "Profile bindings:" in output
-    assert "  nav->thunder_field mode=real_robot_saved_map_navigation" in output
+    assert "Local profile data-source bindings:" in output
+    assert "  nav->thunder mode=real_robot_saved_map_navigation" in output
     assert ("  sim_mujoco_live->mujoco_fastlio2_live mode=mujoco_raw_mid360_fastlio_live") in output
     assert "Artifact formats:" in output
     assert "Adapter aliases:" in output
@@ -246,7 +246,7 @@ def test_runtime_contract_manifest_summary_exposes_interfaces_flow_and_frames() 
     assert "  fastlio_mapping[slam|" in output
 
 
-def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
+def test_runtime_spec_payload_summary_exposes_product_env_flow_and_metadata() -> None:
     from cli.runtime_display import format_runtime_spec_payload
 
     output = format_runtime_spec_payload(
@@ -254,9 +254,8 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
             "ok": True,
             "validation": {"ok": True, "blockers": []},
             "spec": {
-                "profile": "explore",
-                "endpoint": "mujoco_live",
-                "robot_preset": "sim",
+                "product": "explore",
+                "env": "sim",
                 "data_source": "mujoco_fastlio2_live",
                 "runtime_contract": "mujoco_fastlio2_live",
                 "module_transport": "local",
@@ -314,7 +313,6 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
                 "runtime_data_flow_stage_algorithm_interfaces": {},
             },
             "env": {
-                "LINGTU_ENDPOINT": "mujoco_live",
                 "LINGTU_DATA_SOURCE": "mujoco_fastlio2_live",
                 "LINGTU_RUNTIME_CONTRACT": "mujoco_fastlio2_live",
                 "LINGTU_COMMAND_SINK": "mujoco_velocity_adapter",
@@ -324,9 +322,9 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
     )
 
     assert "Runtime spec: PASS" in output
-    assert "Profile: profile=explore endpoint=mujoco_live robot_preset=sim" in output
+    assert "Runtime identity: product=explore env=sim" in output
     assert (
-        "Runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live "
+        "Runtime: data_source=mujoco_fastlio2_live "
         "runtime_contract=mujoco_fastlio2_live "
         "module_transport=local endpoint_transport=local "
         "command_sink=mujoco_velocity_adapter simulation_only=true"
@@ -337,9 +335,9 @@ def test_runtime_spec_payload_summary_exposes_profile_flow_and_env() -> None:
         "terrain=nanobind local_planner=nanobind path_follower=nav_kernel"
     ) in output
     assert (
-        "Product boundary: mode=simulation runtime_contract=mujoco_fastlio2_live "
+        "Product boundary: env=sim runtime_contract=mujoco_fastlio2_live "
         "module_transport=local endpoint_transport=local "
-        "primary=Gateway+ModulePorts adapter=endpoint_only "
+        "primary=Gateway+ModulePorts adapter=transport_only "
         "ros2_topic_inspection_required=false"
     ) in output
     assert "Product acceptance:" in output
@@ -376,9 +374,8 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
         {
             "ok": False,
             "from": {
-                "profile": "sim_mujoco_live",
-                "endpoint": "mujoco_live",
-                "robot_preset": "sim_endpoint",
+                "product": "explore",
+                "env": "sim",
                 "data_source": "mujoco_fastlio2_live",
                 "runtime_contract": "mujoco_fastlio2_live",
                 "command_sink": "mujoco_velocity_adapter",
@@ -413,11 +410,10 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
                 ],
             },
             "to": {
-                "profile": "explore",
-                "endpoint": "thunder_field",
-                "robot_preset": "thunder",
-                "data_source": "thunder_field",
-                "runtime_contract": "thunder_field",
+                "product": "explore",
+                "env": "real",
+                "data_source": "thunder",
+                "runtime_contract": "real",
                 "module_transport": "local",
                 "endpoint_transport": "dds",
                 "command_sink": "driver",
@@ -466,22 +462,22 @@ def test_runtime_switch_plan_summary_exposes_sim_real_boundary() -> None:
     )
 
     assert "Runtime switch plan: FAIL" in output
-    assert "Switch lifecycle: dry-run/preflight; endpoint changes require a fresh launcher" in output
-    assert "Current profile: profile=sim_mujoco_live endpoint=mujoco_live robot_preset=sim_endpoint" in output
-    assert "Target profile: profile=explore endpoint=thunder_field robot_preset=thunder" in output
-    assert "Current runtime: endpoint=mujoco_live data_source=mujoco_fastlio2_live" in output
-    assert "Target runtime: endpoint=thunder_field data_source=thunder_field" in output
+    assert "Switch lifecycle: dry-run/preflight; Product changes are applied only by ProductControl" in output
+    assert "Current runtime: product=explore env=sim" in output
+    assert "Target runtime: product=explore env=real" in output
+    assert "Current runtime: data_source=mujoco_fastlio2_live" in output
+    assert "Target runtime: data_source=thunder" in output
     assert (
-        "Current product boundary: mode=simulation "
+        "Current product boundary: env=sim "
         "runtime_contract=mujoco_fastlio2_live module_transport=local "
         "endpoint_transport=local "
-        "primary=Gateway+ModulePorts adapter=endpoint_only "
+        "primary=Gateway+ModulePorts adapter=transport_only "
         "ros2_topic_inspection_required=false"
     ) in output
     assert (
-        "Target product boundary: mode=field runtime_contract=thunder_field "
+        "Target product boundary: env=real runtime_contract=real "
         "module_transport=local endpoint_transport=dds "
-        "primary=Gateway+ModulePorts adapter=endpoint_only "
+        "primary=Gateway+ModulePorts adapter=transport_only "
         "ros2_topic_inspection_required=false"
     ) in output
     assert "Target product acceptance:" in output
@@ -516,7 +512,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                 "requires_prior_gates": [],
                 "conditional_prior_gates": [],
                 "proves": [
-                    "canonical_runtime_manifest_matches_yaml",
+                    "canonical_runtime_contract_matches_yaml",
                 ],
                 "operator_summary_sections": [
                     "Blockers",
@@ -526,7 +522,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                 ],
             },
             "checks": {
-                "yaml_manifest": {"ok": True, "blockers": []},
+                "yaml_contract": {"ok": True, "blockers": []},
                 "runtime_validation_gates": {
                     "ok": True,
                     "blockers": [],
@@ -537,7 +533,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                         "real_runtime_evidence": (
                             "python lingtu.py real-runtime-evidence --collector gateway "
                             "--gateway-url http://<robot>:5050 --duration-sec 20 "
-                            "--json-out artifacts/thunder_field_runtime/report.json"
+                            "--json-out artifacts/real_runtime/report.json"
                         ),
                     },
                     "acceptance": {
@@ -547,7 +543,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                             "requires_prior_gates": [],
                             "conditional_prior_gates": [],
                             "proves": [
-                                "canonical_runtime_manifest_matches_yaml",
+                                "canonical_runtime_contract_matches_yaml",
                             ],
                             "operator_summary_sections": [
                                 "Blockers",
@@ -575,13 +571,13 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
                         },
                         "real_runtime_evidence": {
                             "acceptance_step": 3,
-                            "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
+                            "required_when": "before_claiming_real_runtime_or_navigation",
                             "requires_prior_gates": ["runtime_audit"],
                             "conditional_prior_gates": [
                                 "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
                             ],
                             "proves": [
-                                "observed_thunder_field_runtime_contract",
+                                "observed_real_runtime_contract",
                                 "observed_resolved_runtime_data_flow",
                             ],
                             "operator_summary_sections": [
@@ -605,19 +601,19 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
         "  step=1 "
         "required_when=before_any_runtime_contract_or_field_readiness_claim "
         "prior=none conditional_prior=none "
-        "proves=canonical_runtime_manifest_matches_yaml "
+        "proves=canonical_runtime_contract_matches_yaml "
         "summary_sections=Blockers,Checks,Validation gate sequence,"
         "Validation commands"
     ) in output
     assert "Checks:" in output
-    assert "  yaml_manifest ok=true blockers=0" in output
+    assert "  yaml_contract ok=true blockers=0" in output
     assert "  runtime_validation_gates ok=true blockers=0" in output
     assert "Validation gate sequence:" in output
     assert (
         "  step=1 runtime_audit "
         "required_when=before_any_runtime_contract_or_field_readiness_claim "
         "prior=none conditional_prior=none "
-        "proves=canonical_runtime_manifest_matches_yaml "
+        "proves=canonical_runtime_contract_matches_yaml "
         "summary_sections=Blockers,Checks,Validation gate sequence,"
         "Validation commands"
     ) in output
@@ -630,7 +626,7 @@ def test_runtime_audit_payload_summary_exposes_checks_and_gate_sequence() -> Non
     ) in output
     assert (
         "  step=3 real_runtime_evidence "
-        "required_when=before_claiming_thunder_field_runtime_or_field_navigation "
+        "required_when=before_claiming_real_runtime_or_navigation "
         "prior=runtime_audit"
     ) in output
     assert (
@@ -669,7 +665,7 @@ def test_saved_map_artifact_gate_summary_exposes_frame_source_and_artifacts() ->
             "checked_allowed_frame_ids": ["map", "odom"],
             "checked_frame_id": "odom",
             "checked_expected": {
-                "data_source": "thunder_field",
+                "data_source": "thunder",
                 "source_profile": "nav",
                 "frame_id": "map",
             },
@@ -707,7 +703,7 @@ def test_saved_map_artifact_gate_summary_exposes_frame_source_and_artifacts() ->
     ) in output
     assert "Frame: observed=odom allowed=map,odom" in output
     assert "Expected:" in output
-    assert "  data_source=thunder_field" in output
+    assert "  data_source=thunder" in output
     assert "  source_profile=nav" in output
     assert "  frame_id=map" in output
     assert "Required artifacts:" in output
@@ -742,13 +738,13 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
             },
             "validation_gate": {
                 "acceptance_step": 3,
-                "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
+                "required_when": "before_claiming_real_runtime_or_navigation",
                 "requires_prior_gates": ["runtime_audit"],
                 "conditional_prior_gates": [
                     "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
                 ],
                 "proves": [
-                    "observed_thunder_field_runtime_contract",
+                    "observed_real_runtime_contract",
                     "observed_resolved_runtime_data_flow",
                 ],
                 "operator_summary_sections": [
@@ -759,7 +755,7 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
                     "Data-flow evidence",
                 ],
             },
-            "runtime_contract": {"name": "thunder_field", "ok": False},
+            "runtime_contract": {"name": "real", "ok": False},
             "runtime_evidence": {
                 "ok": False,
                 "blockers": [
@@ -819,12 +815,12 @@ def test_real_runtime_evidence_summary_exposes_blockers_and_boundary() -> None:
     )
 
     assert "Real runtime evidence: FAIL" in output
-    assert "Runtime contract: name=thunder_field ok=false" in output
+    assert "Runtime contract: name=real ok=false" in output
     assert "Validation gate:" in output
     assert (
-        "  step=3 required_when=before_claiming_thunder_field_runtime_or_field_navigation prior=runtime_audit"
+        "  step=3 required_when=before_claiming_real_runtime_or_navigation prior=runtime_audit"
     ) in output
-    assert ("proves=observed_thunder_field_runtime_contract,observed_resolved_runtime_data_flow") in output
+    assert ("proves=observed_real_runtime_contract,observed_resolved_runtime_data_flow") in output
     assert (
         "summary_sections=Blockers,Topic frame evidence,Frame link evidence,Stage evidence matrix,Data-flow evidence"
     ) in output

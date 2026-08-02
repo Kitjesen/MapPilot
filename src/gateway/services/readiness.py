@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import time
 import math
-from dataclasses import asdict, is_dataclass
+import time
 from collections.abc import Mapping
+from dataclasses import asdict, is_dataclass
 from numbers import Real
 from typing import Any
 
 from gateway.services.safety_status import safety_stop_active, safety_summary
-
+from runtime.runtime_interface import TOPICS
 
 READINESS_SCHEMA_VERSION = 1
 _CALIBRATION_CACHE_TTL_S = 30.0
@@ -32,6 +32,7 @@ _DATA_RELEVANT_REASON_PREFIXES = (
     "navigation_blocked:localization_initializing",
     "navigation_blocked:pose_stale",
     "runtime_blocked:",
+    "maps:",
     "localization:status_error",
     "navigation:status_error",
 )
@@ -46,6 +47,21 @@ _MISSION_ACTIVE_STATES = {
     "RECOVERING",
     "REPLANNING",
 }
+
+_NATIVE_OPERATOR_TOPICS = frozenset(
+    {
+        TOPICS.operator_motion_control,
+        TOPICS.operator_motion_sample,
+        TOPICS.operator_motion_ack,
+        TOPICS.operator_motion_status,
+    }
+)
+_NATIVE_OPERATOR_CAPABILITIES = frozenset(
+    {
+        "operator_motion_typed_dds_interface",
+        "native_operator_motion_authority",
+    }
+)
 
 
 def _json_safe(value: Any) -> Any:
@@ -73,6 +89,77 @@ def _json_safe(value: Any) -> Any:
     return str(value)
 
 
+def _compiled_product_contract(gw: Any) -> tuple[str, Any | None]:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    if plan is not None:
+        return str(getattr(plan, "product", "") or "").strip(), plan
+    return str(getattr(gw, "_compiled_product", "") or "").strip(), None
+
+
+def _run_plan_process_names(plan: Any | None) -> frozenset[str]:
+    if plan is None:
+        return frozenset()
+    return frozenset(
+        str(getattr(process, "name", "") or "").strip()
+        for process in getattr(plan, "processes", ())
+        if str(getattr(process, "name", "") or "").strip()
+    )
+
+
+def _managed_run_plan_missing(gw: Any) -> bool:
+    return bool(
+        getattr(gw, "_compiled_run_plan", None) is None
+        and (
+            getattr(gw, "_compiled_run_plan_fingerprint", "")
+            or getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
+        )
+    )
+
+
+def _contract_requires_native_readiness(gw: Any, contract: Any | None) -> bool:
+    if contract is None:
+        return False
+    return bool(
+        getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
+        or "nav" in _run_plan_process_names(contract)
+        or _NATIVE_OPERATOR_TOPICS
+        & frozenset(getattr(contract, "required_topics", ()))
+        or _NATIVE_OPERATOR_CAPABILITIES
+        & frozenset(getattr(contract, "required_capabilities", ()))
+    )
+
+
+def _product_contract_summary(gw: Any) -> dict[str, Any]:
+    product, contract = _compiled_product_contract(gw)
+    return {
+        "product": product or None,
+        "fingerprint": (
+            getattr(gw, "_compiled_run_plan_fingerprint", "") or None
+        ),
+        "command_output_mode": (
+            getattr(gw, "_compiled_command_output_mode", "") or None
+        ),
+        "hardware_control_boundary": (
+            getattr(gw, "_compiled_hardware_control_boundary", "") or None
+        ),
+        "processes": sorted(_run_plan_process_names(contract)),
+        "required_topics": (
+            sorted(getattr(contract, "required_topics", ()))
+            if contract is not None
+            else []
+        ),
+        "required_capabilities": (
+            sorted(getattr(contract, "required_capabilities", ()))
+            if contract is not None
+            else []
+        ),
+        "native_readiness_required": _contract_requires_native_readiness(
+            gw,
+            contract,
+        ),
+    }
+
+
 def _requires_runtime_readiness(gw: Any, modules: Mapping[str, Any]) -> bool:
     """Return True when /ready should include robot runtime readiness.
 
@@ -80,6 +167,10 @@ def _requires_runtime_readiness(gw: Any, modules: Mapping[str, Any]) -> bool:
     stacks load SLAM/localizer/navigation modules or expose localization
     evidence, so module liveness alone is too optimistic there.
     """
+    _product, contract = _compiled_product_contract(gw)
+    if _contract_requires_native_readiness(gw, contract):
+        return True
+
     names = " ".join(str(name).lower() for name in modules)
     if any(
         token in names
@@ -109,6 +200,45 @@ def _requires_runtime_readiness(gw: Any, modules: Mapping[str, Any]) -> bool:
             )
     except Exception:
         return False
+
+
+def _native_maps_readiness(
+    gw: Any,
+    modules: Mapping[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    """Enforce fresh/current mapd state and scene for products that require it."""
+
+    _profile, contract = _compiled_product_contract(gw)
+    if contract is None or not (
+        {TOPICS.maps_state, TOPICS.maps_scene}
+        & set(getattr(contract, "required_topics", ()))
+    ):
+        return [], {}
+    host_bus = modules.get("host.bus")
+    if host_bus is None:
+        return ["maps:host_bus_missing"], {"required": True}
+    try:
+        reason = (
+            host_bus.map_readiness()
+            if hasattr(host_bus, "map_readiness")
+            else "map_readiness_contract_missing"
+        )
+        health = host_bus.health() if hasattr(host_bus, "health") else {}
+    except Exception as exc:
+        return [f"maps:readiness_error:{exc}"], {
+            "required": True,
+            "error": str(exc),
+        }
+    detail = health.get("map_scene") if isinstance(health, Mapping) else {}
+    return (
+        [f"maps:{reason}"] if reason else [],
+        {
+            "required": True,
+            "ready": reason is None,
+            "reason": reason,
+            "host_bus": _json_safe(detail),
+        },
+    )
 
 
 def _source_name(control: Mapping[str, Any]) -> str:
@@ -259,8 +389,13 @@ def _runtime_readiness_reasons(gw: Any) -> tuple[list[str], dict[str, Any]]:
             runtime["boundary"] = {
                 "ok": boundary.get("ok"),
                 "declared": boundary.get("declared"),
-                "profile": boundary.get("profile"),
-                "endpoint": boundary.get("endpoint"),
+                "env": boundary.get("env"),
+                "product": boundary.get("product"),
+                "run_plan_fingerprint": boundary.get(
+                    "run_plan_fingerprint"
+                ),
+                "identity_source": boundary.get("identity_source"),
+                "simulation_only": boundary.get("simulation_only"),
                 "data_source": boundary.get("data_source"),
                 "runtime_contract": boundary.get("runtime_contract"),
                 "command_sink": boundary.get("command_sink"),
@@ -342,6 +477,115 @@ def _calibration_status(now: float | None = None) -> dict[str, Any]:
     return payload
 
 
+def _normalize_startup_status(source: Any, *, source_name: str) -> dict[str, Any]:
+    """Return normalized runtime startup evidence for readiness."""
+
+    if source is None:
+        return {
+            "startup_state": None,
+            "critical_modules": [],
+            "critical_failed_modules": [],
+            "optional_failed_modules": set(),
+            "advisories": [],
+        }
+
+    try:
+        raw_state = source.startup_state
+        raw_critical_modules = source.critical_modules
+        raw_failed_modules = source.failed_modules
+        raw_critical_failures = source.critical_failures
+    except Exception as exc:
+        return {
+            "startup_state": "failed",
+            "critical_modules": [],
+            "critical_failed_modules": [source_name],
+            "optional_failed_modules": set(),
+            "advisories": [
+                f"{source_name.lower()}_status_error:{type(exc).__name__}"
+            ],
+        }
+
+    startup_state = str(raw_state)
+    if isinstance(raw_critical_modules, (list, tuple, set)):
+        critical_modules = list(
+            dict.fromkeys(str(name) for name in raw_critical_modules)
+        )
+    else:
+        critical_modules = []
+    failed_modules = (
+        {str(name): str(reason) for name, reason in raw_failed_modules.items()}
+        if isinstance(raw_failed_modules, Mapping)
+        else {}
+    )
+    critical_failures = (
+        {str(name): str(reason) for name, reason in raw_critical_failures.items()}
+        if isinstance(raw_critical_failures, Mapping)
+        else {}
+    )
+
+    declared_critical = set(critical_modules)
+    critical_failed_modules = [
+        name
+        for name in critical_modules
+        if name in failed_modules or name in critical_failures
+    ]
+    critical_failed_modules.extend(
+        name
+        for name in critical_failures
+        if name not in critical_failed_modules
+    )
+    optional_failures = {
+        name: reason
+        for name, reason in failed_modules.items()
+        if name not in declared_critical and name not in critical_failures
+    }
+    advisories = [
+        f"optional_module_failed:{name}:{reason}"
+        for name, reason in optional_failures.items()
+    ]
+    try:
+        raw_advisories = getattr(source, "advisories", ())
+    except Exception:
+        raw_advisories = ()
+    if isinstance(raw_advisories, (list, tuple, set)):
+        advisories.extend(str(item) for item in raw_advisories if item)
+    return {
+        "startup_state": startup_state,
+        "critical_modules": critical_modules,
+        "critical_failed_modules": critical_failed_modules,
+        "optional_failed_modules": set(optional_failures),
+        "advisories": advisories,
+    }
+
+
+def _system_startup_status(gw: Any) -> dict[str, Any]:
+    """Return normalized runtime startup evidence for readiness."""
+
+    provider = getattr(gw, "_runtime_status_provider", None)
+    if provider is not None:
+        return _normalize_startup_status(
+            provider,
+            source_name=type(provider).__name__ or "RuntimeStatusProvider",
+        )
+    return _normalize_startup_status(
+        getattr(gw, "_system_handle", None),
+        source_name="SystemHandle",
+    )
+
+
+def _runtime_modules(gw: Any) -> Mapping[str, Any]:
+    provider = getattr(gw, "_runtime_status_provider", None)
+    if provider is not None:
+        try:
+            modules = provider.modules
+        except Exception:
+            modules = None
+        if isinstance(modules, Mapping):
+            return modules
+    modules = getattr(gw, "_all_modules", None)
+    return modules if isinstance(modules, Mapping) else {}
+
+
 def build_readiness_snapshot(
     gw: Any,
     now: float | None = None,
@@ -350,8 +594,19 @@ def build_readiness_snapshot(
 ) -> tuple[dict[str, Any], int]:
     """Return a stable /ready payload plus the HTTP status code."""
     ts = time.time() if now is None else now
-    modules = getattr(gw, "_all_modules", None) or {}
+    product_contract = _product_contract_summary(gw)
+    startup = _system_startup_status(gw)
+    startup_state = startup["startup_state"]
+    critical_modules = startup["critical_modules"]
+    critical_failed_modules = startup["critical_failed_modules"]
+    startup_blocked = startup_state is not None and startup_state != "ready"
+    startup_reasons = [
+        *(f"critical_module_failed:{name}" for name in critical_failed_modules),
+        *([f"startup_state:{startup_state}"] if startup_blocked else []),
+    ]
+    modules = _runtime_modules(gw)
     if not modules:
+        reasons = ["no_modules_loaded", *startup_reasons]
         return (
             {
                 "schema_version": READINESS_SCHEMA_VERSION,
@@ -362,9 +617,13 @@ def build_readiness_snapshot(
                 "non_motion_safe": True,
                 "modules": {},
                 "module_count": 0,
-                "failed_modules": [],
-                "reasons": ["no_modules_loaded"],
-                "advisories": [],
+                "failed_modules": list(critical_failed_modules),
+                "critical_failed_modules": list(critical_failed_modules),
+                "critical_modules": list(critical_modules),
+                "startup_state": startup_state,
+                "reasons": list(dict.fromkeys(reasons)),
+                "advisories": list(startup["advisories"]),
+                "product_contract": product_contract,
                 "ts": ts,
             },
             503,
@@ -380,17 +639,27 @@ def build_readiness_snapshot(
                 detail = mod.health() if hasattr(mod, "health") else {}
                 module_health[name]["detail"] = _json_safe(detail)
         except Exception as exc:
-            failed_modules.append(str(name))
+            module_name = str(name)
+            if module_name not in startup["optional_failed_modules"]:
+                failed_modules.append(module_name)
             module_health[name] = {"ok": False, "error": str(exc)}
 
-    reasons = [
-        f"module_failed:{name}"
-        for name in failed_modules
-    ]
+    failed_modules.extend(
+        name for name in critical_failed_modules if name not in failed_modules
+    )
+    reasons = [f"module_failed:{name}" for name in failed_modules]
+    reasons.extend(startup_reasons)
+    if _managed_run_plan_missing(gw):
+        reasons.append("run_plan_missing")
+    reasons = list(dict.fromkeys(reasons))
     runtime: dict[str, Any] = {}
     if _requires_runtime_readiness(gw, modules):
         runtime_reasons, runtime = _runtime_readiness_reasons(gw)
         reasons.extend(runtime_reasons)
+    map_reasons, map_runtime = _native_maps_readiness(gw, modules)
+    reasons.extend(map_reasons)
+    if map_runtime:
+        runtime["maps"] = map_runtime
 
     ready = not failed_modules and not reasons
     modes = _runtime_readiness_modes(
@@ -398,10 +667,15 @@ def build_readiness_snapshot(
         reasons=reasons,
         runtime=runtime,
     )
+    if startup_blocked:
+        modes["data_ready"] = False
+        modes["data_blockers"] = list(
+            dict.fromkeys([*modes["data_blockers"], f"startup_state:{startup_state}"])
+        )
     if runtime:
         runtime["summary"] = modes
     calibration = runtime.get("calibration")
-    advisories = []
+    advisories = list(startup["advisories"])
     if isinstance(calibration, Mapping):
         advisories.extend(str(w) for w in (calibration.get("warnings") or []) if w)
     payload = {
@@ -414,8 +688,12 @@ def build_readiness_snapshot(
         "modules": module_health,
         "module_count": len(modules),
         "failed_modules": failed_modules,
+        "critical_failed_modules": list(critical_failed_modules),
+        "critical_modules": list(critical_modules),
+        "startup_state": startup_state,
         "reasons": reasons,
         "advisories": list(dict.fromkeys(advisories)),
+        "product_contract": product_contract,
         "runtime": runtime,
         "ts": ts,
     }

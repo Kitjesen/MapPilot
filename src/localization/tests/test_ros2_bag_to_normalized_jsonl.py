@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "scripts" / "datasets" / "ros2_bag_to_normalized_jsonl.py"
+SCRIPT = ROOT / "scripts" / "compat" / "ros2" / "datasets" / "ros2_bag_to_normalized_jsonl.py"
 ROS_MODULES_BEFORE_IMPORT = {
     name for name in sys.modules if name == "rclpy" or name.startswith("rclpy.") or name == "rosbag2_py"
 }

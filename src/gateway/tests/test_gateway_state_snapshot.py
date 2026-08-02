@@ -170,6 +170,23 @@ def test_camera_media_status_accepts_canonical_camera_role():
     assert payload["frames"] == 4
 
 
+@pytest.mark.parametrize("removed_role", ["CameraBridgeModule", "CameraModule"])
+def test_camera_media_status_rejects_removed_graph_aliases(removed_role):
+    from gateway.services.media_status import build_camera_status
+
+    class Camera:
+        def health(self):
+            raise AssertionError("removed camera role must not be resolved")
+
+    payload = build_camera_status(
+        SimpleNamespace(_all_modules={removed_role: Camera()})
+    )
+
+    assert payload["role"] == "camera"
+    assert payload["status"] == "not_loaded"
+    assert payload["reason"] == "camera_not_loaded"
+
+
 def test_camera_media_status_marks_old_or_legacy_frames_stale():
     from gateway.services.media_status import build_camera_status
 

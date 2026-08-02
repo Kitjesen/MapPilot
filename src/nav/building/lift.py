@@ -109,7 +109,10 @@ class LiftTransitionService:
             return False, "floor_transition_route_unavailable"
         if request.connector_id and request.connector_id != plan.lift_id:
             return False, "lift_connector_mismatch"
-        return self._executor.start(plan, request_id=request.request_id)
+        accepted, reason = self._executor.start(plan, request_id=request.request_id)
+        if accepted is not True:
+            return False, str(reason or "lift_transition_rejected")
+        return True, str(reason or "lift_transition_started")
 
     def tick(self) -> tuple[str, str]:
         """Expose executor progress through the building-mission port contract."""
@@ -336,7 +339,7 @@ class LiftTransitionExecutor:
             )
         except Exception:
             return self._fail("target_map_relocalization_error")
-        if not switched:
+        if switched is not True:
             return self._fail(str(reason or "target_map_relocalization_failed"))
         self._set_phase(
             LiftTransitionPhase.VERIFY_TARGET_LOCALIZATION,
@@ -358,7 +361,7 @@ class LiftTransitionExecutor:
             localized = self._floors.is_localized(plan.target_floor)
         except Exception:
             return self._fail("target_localization_status_error")
-        if not localized:
+        if localized is not True:
             return self._status_with_reason("waiting_target_localization_verification")
         if not self._send_goal(plan.target_lobby, suffix="exit"):
             return self._status
@@ -428,9 +431,10 @@ class LiftTransitionExecutor:
             )
         except Exception:
             return False, "lift_request_error"
-        if accepted:
+        if accepted is True:
             self._lift_claimed = True
-        return bool(accepted), str(reason or "")
+            return True, str(reason or "")
+        return False, str(reason or "")
 
     def _release_lift(self) -> tuple[bool, str]:
         if not self._lift_claimed or self._plan is None:
@@ -442,9 +446,10 @@ class LiftTransitionExecutor:
             )
         except Exception:
             return False, "lift_release_error"
-        if released:
+        if released is True:
             self._lift_claimed = False
-        return bool(released), str(reason or "")
+            return True, str(reason or "")
+        return False, str(reason or "")
 
     def _validated_lift_state(self) -> tuple[LiftState | None, str]:
         plan = self._plan
@@ -463,7 +468,7 @@ class LiftTransitionExecutor:
         age_s = float(self._clock()) - float(state.stamp_s)
         if age_s < -0.5 or age_s > self._max_lift_state_age_s:
             return None, "lift_state_stale"
-        if not state.available:
+        if state.available is not True:
             return None, "lift_unavailable"
         if state.session_id != self._session_id:
             return None, "lift_session_mismatch"
@@ -562,7 +567,7 @@ class LiftTransitionExecutor:
             ready, reason = self._navigation.autonomy_ready()
         except Exception:
             return False, "native_autonomy_status_error"
-        return bool(ready), str(reason or "")
+        return ready is True, str(reason or "")
 
     @staticmethod
     def _normal(value: str) -> str:

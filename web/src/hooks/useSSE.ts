@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import * as api from '../services/api'
+import { observeAuthoritativeTruth } from '../services/authoritativeTruth'
 import type {
   AppBootstrapResponse,
   AppCapabilitiesResponse,
@@ -19,7 +20,6 @@ export type {
   MissionStatusEvent,
   SafetyStateEvent,
   SceneGraphEvent,
-  HeartbeatEvent,
   PingEvent,
   SnapshotEvent,
   MissionEvent,
@@ -63,6 +63,7 @@ const INITIAL_STATE: SSEState = {
   mapEvent: null,
   session: null,
   navigationStatus: null,
+  inspectionTaskEvent: null,
   lease: null,
   commandAck: null,
   locations: null,
@@ -87,12 +88,16 @@ const INITIAL_STATE: SSEState = {
   lastRefreshAt: null,
   lastRefreshReason: null,
   refreshError: null,
+  authoritativeStateSeen: false,
+  lastTruthAt: null,
+  truthError: null,
   connected: false,
   events: [],
 }
 
 const TRAFFIC_REFRESH_MS = 5000
-type SnapshotRefreshMode = 'full' | 'auxiliary'
+const AUTHORITATIVE_TRUTH_REFRESH_MS = 3000
+type SnapshotRefreshMode = 'full' | 'auxiliary' | 'truth'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
@@ -197,6 +202,7 @@ export function useSSE(url: string = '/api/v1/events') {
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const initialSnapshotFallbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const trafficTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const truthTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const refreshInFlight = useRef(false)
   const trafficInFlight = useRef(false)
   const trafficDiscoveryInFlight = useRef(false)
@@ -215,14 +221,16 @@ export function useSSE(url: string = '/api/v1/events') {
     if (refreshInFlight.current) return
     refreshInFlight.current = true
     try {
-      const statePromise: Promise<StateResponse | null> = mode === 'full'
+      const includeState = mode !== 'auxiliary'
+      const includeAuxiliary = mode !== 'truth'
+      const statePromise: Promise<StateResponse | null> = includeState
         ? api.fetchState()
         : Promise.resolve(null)
       const [stateResult, pathResult, sceneResult, locationsResult] = await Promise.allSettled([
         statePromise,
-        api.fetchPath(),
-        api.fetchSceneGraph(),
-        api.fetchLocations(),
+        includeAuxiliary ? api.fetchPath() : Promise.resolve(null),
+        includeAuxiliary ? api.fetchSceneGraph() : Promise.resolve(null),
+        includeAuxiliary ? api.fetchLocations() : Promise.resolve(null),
       ])
       if (!mountedRef.current) return
 
@@ -238,24 +246,46 @@ export function useSSE(url: string = '/api/v1/events') {
       const mission = statePayload ? snapshotMission(statePayload) : null
       const safety = statePayload ? snapshotSafety(statePayload) : null
 
-      setState(prev => ({
-        ...prev,
-        odometry: statePayload ? odometry : prev.odometry,
-        missionStatus: mission ?? prev.missionStatus,
-        safetyState: safety ?? prev.safetyState,
-        session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
-        navigationStatus: statePayload?.navigation ?? prev.navigationStatus,
-        lease: statePayload?.lease ?? prev.lease,
-        stateSnapshot: statePayload ?? prev.stateSnapshot,
-        globalPath: pathPayload
-          ? { type: 'global_path', points: pathPayload.path }
-          : prev.globalPath,
-        sceneGraph: scenePayload ? snapshotSceneGraph(scenePayload) : prev.sceneGraph,
-        locations: locationsPayload ?? prev.locations,
-        lastRefreshAt: Date.now(),
-        lastRefreshReason: reason,
-        refreshError: failures > 0 ? `${failures}_snapshot_fetch_failed` : null,
-      }))
+      const refreshedAt = Date.now()
+      setState(prev => {
+        const truth = !includeState
+          ? {
+              authoritativeStateSeen: prev.authoritativeStateSeen,
+              lastTruthAt: prev.lastTruthAt,
+              truthError: prev.truthError,
+            }
+          : observeAuthoritativeTruth(
+              prev,
+              statePayload
+                ? { ok: true }
+                : {
+                    ok: false,
+                    error: stateResult.status === 'rejected'
+                      ? stateResult.reason
+                      : 'authoritative_state_missing',
+                  },
+              refreshedAt,
+            )
+        return {
+          ...prev,
+          ...truth,
+          odometry: statePayload ? odometry : prev.odometry,
+          missionStatus: mission ?? prev.missionStatus,
+          safetyState: safety ?? prev.safetyState,
+          session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
+          navigationStatus: statePayload?.navigation ?? prev.navigationStatus,
+          lease: statePayload?.lease ?? prev.lease,
+          stateSnapshot: statePayload ?? prev.stateSnapshot,
+          globalPath: pathPayload
+            ? { type: 'global_path', points: pathPayload.path }
+            : prev.globalPath,
+          sceneGraph: scenePayload ? snapshotSceneGraph(scenePayload) : prev.sceneGraph,
+          locations: locationsPayload ?? prev.locations,
+          lastRefreshAt: refreshedAt,
+          lastRefreshReason: reason,
+          refreshError: failures > 0 ? `${failures}_snapshot_fetch_failed` : null,
+        }
+      })
     } catch (err) {
       if (!mountedRef.current) return
       setState(prev => ({
@@ -402,6 +432,7 @@ export function useSSE(url: string = '/api/v1/events') {
                 if (d.session)  next.session = d.session as never
                 if (d.navigation) next.navigationStatus = d.navigation as never
                 if (d.lease) next.lease = d.lease as never
+                Object.assign(next, observeAuthoritativeTruth(prev, { ok: true }))
                 break
               }
               case 'odometry':
@@ -421,6 +452,9 @@ export function useSSE(url: string = '/api/v1/events') {
                 break
               case 'navigation_status':
                 next.navigationStatus = (evt.data ?? evt) as never
+                break
+              case 'inspection_task_event':
+                next.inspectionTaskEvent = event as never
                 break
               case 'lease':
                 next.lease = (evt.data ?? evt) as never
@@ -503,7 +537,6 @@ export function useSSE(url: string = '/api/v1/events') {
               case 'agent_message':
                 next.agentMessage = event as never
                 break
-              case 'heartbeat':
               case 'ping':
                 next.lastHeartbeat = Date.now()
                 break
@@ -575,6 +608,18 @@ export function useSSE(url: string = '/api/v1/events') {
       }
     }
   }, [discoverTrafficEndpoint, refreshTraffic])
+
+  useEffect(() => {
+    truthTimer.current = setInterval(() => {
+      refreshRef.current('authoritative_truth_poll', 'truth')
+    }, AUTHORITATIVE_TRUTH_REFRESH_MS)
+    return () => {
+      if (truthTimer.current) {
+        clearInterval(truthTimer.current)
+        truthTimer.current = null
+      }
+    }
+  }, [])
 
   return state
 }

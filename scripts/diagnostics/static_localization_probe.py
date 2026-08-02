@@ -53,10 +53,7 @@ def _process_rows() -> list[dict[str, Any]]:
         "lingtu.py",
         "fastlio",
         "localizer",
-        "super_lio",
-        "super-lio",
         "lio_node",
-        "relocation_node",
     )
     for line in raw.splitlines()[1:]:
         if not any(needle in line for needle in needles):
@@ -69,10 +66,6 @@ def _process_rows() -> list[dict[str, Any]]:
         normalized = cmdline.lower().replace("-", "_")
         if "lingtu.py" in cmdline:
             label = "lingtu"
-        elif "super_lio_relocation" in normalized or "relocation_node" in normalized:
-            label = "super_lio_relocation"
-        elif "super_lio" in normalized:
-            label = "super_lio"
         elif "localizer_node" in cmdline:
             label = "localizer"
         elif "lio_node" in cmdline or "fastlio" in normalized:

@@ -952,13 +952,13 @@ status_demo() {
   if [[ -f "$run_root/latest.txt" ]]; then
     cat "$run_root/latest.txt"
   fi
-  pgrep -af "mujoco_live_gate.py" || true
-  pgrep -af "mujoco_native_dds_sensors.py" || true
+  pgrep -af "sim/scripts/mujoco/live_gate.py" || true
+  pgrep -af "sim/scripts/mujoco/native_dds_sensors.py" || true
 }
 
 stop_demo() {
-  pkill -f "mujoco_live_gate.py" >/dev/null 2>&1 || true
-  pkill -f "mujoco_native_dds_sensors.py" >/dev/null 2>&1 || true
+  pkill -f "sim/scripts/mujoco/live_gate.py" >/dev/null 2>&1 || true
+  pkill -f "sim/scripts/mujoco/native_dds_sensors.py" >/dev/null 2>&1 || true
   pkill -f "fastlio.*mujoco_fastlio2_live" >/dev/null 2>&1 || true
   pkill -f "mujoco_fastlio2_live.rviz" >/dev/null 2>&1 || true
   echo "Stopped LingTu MuJoCo Fast-LIO live gate processes."

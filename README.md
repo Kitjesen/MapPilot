@@ -1,8 +1,8 @@
 # LingTu
 
-LingTu is an autonomous navigation runtime for quadruped robots. It connects
-robot hardware, SLAM, maps, perception, semantic decision making, planning,
-safety, and operator interfaces through explicit runtime modules.
+LingTu is an autonomous navigation system for quadruped robots. A compiled
+Product declares native field processes plus one Python Host; typed DDS joins
+the field processes, while Modules and wires organize Host-local behavior.
 
 The physical robot path is not a ROS 2 application graph. The robot-side hot
 path uses native C++ services and typed DDS for high-rate sensor, SLAM, and
@@ -28,15 +28,22 @@ The main runtime concepts are:
 
 | Concept | Meaning |
 | --- | --- |
-| `Module` | A runtime component with typed input and output ports. |
-| `Blueprint` | A declarative assembly of modules and wires. |
+| `env` | The outer runtime environment: exactly `real` or `sim`. A simulator backend is internal env configuration. |
+| `Product` | An env-independent declaration of one mode's Host graph, logical native roles, topics, and capabilities. |
+| `RunPlan` | The immutable, fingerprinted result of resolving one Product inside one env. |
+| `ProductControl` | The only apply, switch, quiesce, restart, stop, readiness, and rollback transaction inside one fixed env. |
+| `Host` | The Python process containing Gateway, Agent, MCP, semantic logic, and selected adapters. |
+| `Module` | A Host-local runtime component with typed input and output ports. |
+| `Blueprint` | A declarative assembly of Modules and wires inside one Host process. |
 | Stack factory | A helper such as `driver()`, `slam()`, `planner()`, or `navigation()` that adds a coherent group of modules. |
 | Native service | A C++ process used for high-rate work such as LiDAR ingest, SLAM, and final robot navigation output. |
 | Compatibility adapter | A bridge for ROS 2, replay, simulation, or older algorithm paths. |
+| `RobotConfig` | Static physical robot/device/calibration data used internally by the real env, never a runtime selector. |
+| Endpoint | A concrete HTTP, DDS, or native-service communication access point, never a deployment identity. |
 
 ## Current Runtime Shape
 
-Status: current product contract as of 2026-07-18.
+Status: current product contract as of 2026-07-28.
 
 The runtime is split by responsibility:
 
@@ -44,17 +51,17 @@ The runtime is split by responsibility:
 | --- | --- |
 | Hardware | Robot driver, LiDAR, camera, GNSS, IMU ingress. |
 | Localization | Fast-LIO2, Point-LIO, saved-map localization, SLAM status. |
-| Maps | Occupancy, voxel, ESDF, elevation, traversability, saved-map artifacts. |
+| Maps | Native `mapd` live layers/scene and native saved-map records/artifacts; Python layers are development/simulation compatibility. |
 | Perception | Detection, embeddings, reconstruction, scene graph. |
 | Decision | Semantic planner, LLM/tool loop, goal grounding, visual servo intent. |
-| Navigation | Global planning, local planning, path following, mission state. |
-| Safety | Stop handling, geofence, velocity arbitration. |
+| Navigation | Native `navd` owns field planning, local avoidance, tracking, task state, and final logical velocity; Python navigation is development/simulation compatibility. |
+| Safety | Native endpoint and driver gates own field command safety; Host Modules cover local/simulation policy. |
 | Interface | CLI, Gateway, MCP, teleop, status streams. |
 
 High layers communicate through ports, messages, and explicit wires. They should
 not import lower-level implementation details directly.
 
-## Composable Blueprint API
+## Local/Host Blueprint API
 
 This API is implemented and usable. The stack factories are exported from
 `lingtu.assembly.stacks`, and `autoconnect()` builds a module graph by
@@ -94,11 +101,11 @@ system.start()
 system.stop()
 ```
 
-Production profiles use the same idea, but with additional stacks for LiDAR,
-SLAM, maps, perception, navigation, Gateway, and robot-side services. Hardware
-and native-service stacks still require the target robot configuration and
-Linux runtime dependencies; the API exists, but not every stack is expected to
-start on a local Windows checkout without those services.
+Field Products are resolved inside `env=real` into RunPlans and applied by
+ProductControl through its internal systemd runner. Blueprint does not start LiDAR, SLAM, mapd,
+navd, traversability, or
+the driver; it only materializes the Host graph. The factories below remain
+useful for local development, simulation, and the Host portion of a Product.
 
 Common stack factories:
 
@@ -107,11 +114,11 @@ Common stack factories:
 | `driver(robot)` | Robot or simulation driver. |
 | `lidar(enabled=True)` | Livox MID-360 module. |
 | `slam(profile)` | SLAM/localization module or adapter. |
-| `maps()` | Occupancy, voxel, ESDF, elevation, traversability, map manager. |
+| `maps()` | Development/simulation map layers plus the low-rate Host map adapter. |
 | `perception(detector, encoder)` | Detection, embeddings, reconstruction. |
 | `memory()` | Semantic, episodic, tagged, vector, and temporal memory modules. |
 | `planner(llm)` | Semantic planner, LLM module, visual servo module. |
-| `navigation(planner_backend)` | Mission, global planner, local planner, path follower, command output. Product default: `octoplanner3d`. |
+| `navigation(planner_backend)` | Development/simulation navigation Modules; field Products use native `navd`. |
 | `exploration(backend)` | `none` or TARE; wavefront is enabled from the navigation stack, not this factory. |
 | `safety()` | Safety ring, geofence, velocity mux. |
 | `gateway(port)` | REST, SSE, WebSocket, MCP, teleop/status surface. |
@@ -136,19 +143,9 @@ python lingtu.py log -f
 python lingtu.py stop
 ```
 
-Mapping and navigation from the interactive CLI:
-
-```bash
-python lingtu.py map
-> map save building_a
-> map list
-
-python lingtu.py nav
-> map use building_a
-> navigate 5 3
-> go charging station
-> stop
-```
+`lingtu.py` is the local application entry for development and simulation.
+ProductControl-managed field products intentionally reject direct startup so they
+cannot run with missing native processes.
 
 Robot-side operations should be run on the target Linux controller:
 
@@ -161,28 +158,37 @@ bash scripts/lingtu nav goal 5 3
 bash scripts/lingtu svc status
 ```
 
-## Profiles
+## Runtime Selections
 
 Use `python lingtu.py --list` for the normal profile list and
 `python lingtu.py --list --all` for the full registered catalog in the current
 checkout.
 
+Profiles are configuration inputs. Field Products are operator-managed runtime
+contracts; the two concepts share resolver machinery but are not one
+architecture category.
+
+### Local And Validation Profiles
+
 | Profile | Purpose |
 | --- | --- |
 | `stub` | Framework-only local test profile. |
 | `dev` | Semantic pipeline with mock dependencies. |
+| `lite` | Local Thunder hardware diagnostic Host; no independent systemd lifecycle. |
 | `sim` | MuJoCo simulation path. |
-| `sim_nav` | Pure-Python navigation simulation. |
-| `map` | Build and save a map. |
-| `nav` | Saved-map navigation through OctoPlanner3D. |
-| `teleop` / `teleop_avoid` / `lite` | Manual or lightweight field control modes with different safety/localization scope. |
-| `tracking` | Visual or semantic target tracking. |
-| `inspection` | Patrol and scheduled inspection workflows. |
-| `explore` | Wavefront frontier exploration/debug entry. |
-| `tare_explore` | TARE/traversable-frontier exploration integration. |
+| `sim_nav` | No-ROS navigation simulation; uses native planner extensions when built. |
 | `portable_mujoco` | Portable no-ROS MuJoCo planning/sensor path. |
-| `sim_gazebo`, `sim_industrial`, `sim_mujoco_live`, `sim_mujoco_octo_live`, `sim_cmu_tare` | Advanced simulation and validation profiles shown by `--list --all`. |
-| `super_lio`, `super_lio_relocation` | Explicit Super-LIO evaluation profiles. |
+| `sim_mujoco_live`, `sim_mujoco_octo_live` | Legacy MuJoCo validation harnesses shown only by `--list --all`. |
+
+### Field Products
+
+`teleop`, `teleop_avoid`, `map`, `explore`, `nav`, `tracking`, and
+`inspection` are declared under
+`config/runtime_graph/products/` and operated through ProductControl. Each
+compiled Product includes native process roles and one Blueprint-owned Host
+graph.
+
+TARE remains an internal exploration policy; it is not a separate Product.
 
 Some compatibility and validation profiles are intentionally visible only in
 the full catalog. They are useful for replay, ROS 2 checks, and algorithm
@@ -202,8 +208,7 @@ Web / CLI / MCP
   -> remote Brainstem gRPC
 ```
 
-The physical `thunder_field` endpoint is `endpoint_only + driver`: the native
-navigation endpoint owns logical `/nav/cmd_vel`, encoded on DDS as
+In `env=real`, the native navigation service owns logical `/nav/cmd_vel`, encoded on DDS as
 `rt/nav/cmd_vel`, and the unique `lingtu-driver` service forwards checked
 commands to the remote Brainstem controller. Python modules
 keep mission state, semantic planning, maps, status, and safety policy, but
@@ -296,7 +301,7 @@ native dependencies and DDS services installed.
 Start here:
 
 - [`docs/architecture/README.md`](docs/architecture/README.md)
-- [`docs/architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md`](docs/architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
+- [`docs/architecture/FIELD_PRODUCTS.md`](docs/architecture/FIELD_PRODUCTS.md)
 - [`docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md`](docs/architecture/NAVIGATION_RUNTIME_DATAFLOW.md)
 - [`docs/architecture/MAP_SERVICE_CONTRACT.md`](docs/architecture/MAP_SERVICE_CONTRACT.md)
 - [`docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md`](docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md)

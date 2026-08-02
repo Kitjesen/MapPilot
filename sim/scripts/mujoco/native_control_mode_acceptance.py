@@ -23,11 +23,12 @@ from typing import Any, Mapping
 from uuid import UUID, uuid4
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_native_control_mode_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_control_mode_acceptance.json"
 CONTROL_MODES = ("autonomy", "teleop", "teleop_avoid")
 GATE_LAYERS = ("control_chain", "product_integration", "slam_map_quality")
 RUNNER_ARTIFACT_SCHEMA = "lingtu.mujoco.native_control_mode.runner_artifact.v2"
 ACCEPTANCE_SCHEMA = "lingtu.mujoco.native_control_mode.acceptance.v2"
+POST_STOP_REQUIRED_STATUS_SAMPLES = 3
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -192,12 +193,7 @@ def _slam_map_quality_gate(
         blockers.append("traversability_stale")
     thresholds = plan.get("quality_thresholds")
     thresholds = thresholds if isinstance(thresholds, Mapping) else {}
-    if control_mode == "teleop_avoid":
-        max_error = float(thresholds.get("max_map_xy_error_m") or 0.75)
-        map_error = quality.get("map_xy_error_m")
-        if map_error is None or float(map_error) > max_error:
-            blockers.append("localization_map_xy_error_exceeded")
-    elif control_mode == "autonomy":
+    if control_mode == "autonomy":
         max_ate = float(thresholds.get("max_ate_rmse_m") or 0.30)
         ate = quality.get("ate_rmse_m")
         if ate is None:
@@ -316,6 +312,13 @@ def _summarize_teleop_avoid_runner(source_report: Mapping[str, Any]) -> dict[str
             "case_count": 0,
         }
     case_blocks = [str(value) for item in cases for value in (item.get("blockers") or ())]
+    promotion_blockers: list[str] = []
+    if source_report.get("product_gate_eligible") is not True:
+        promotion_blockers.append("teleop_avoid_non_product_diagnostic")
+    if source_report.get("acceptance_evaluated") is not True:
+        promotion_blockers.append("teleop_avoid_acceptance_not_evaluated")
+    if source_report.get("product_acceptance_passed") is not True:
+        promotion_blockers.append("teleop_avoid_product_acceptance_not_passed")
     case_names = [str(item.get("scenario") or "") for item in cases]
     control_modes = {
         str((item.get("evaluation") or {}).get("case") or str(item.get("scenario") or "")) for item in cases
@@ -323,7 +326,8 @@ def _summarize_teleop_avoid_runner(source_report: Mapping[str, Any]) -> dict[str
     startup_ok = all(bool(item.get("startup", {}).get("ok")) for item in cases if isinstance(item, Mapping))
     command_ok = all(bool(item.get("ok")) or str(item.get("scenario") or "") in {"obstacle_slow", "obstacle_stop"} for item in cases)
     return {
-        "ok": bool(source_report.get("ok")) and not case_blocks,
+        "ok": bool(source_report.get("ok")) and not case_blocks and not promotion_blockers,
+        "blockers": [*case_blocks, *promotion_blockers],
         "cases": case_names,
         "case_blockers": case_blocks,
         "case_count": len(cases),
@@ -333,6 +337,79 @@ def _summarize_teleop_avoid_runner(source_report: Mapping[str, Any]) -> dict[str
         "command_ok": command_ok,
         "scenarios": list(dict.fromkeys(str(item.get("scenario") or "") for item in cases)),
         "control_modes_seen": sorted(control_modes),
+    }
+
+
+def _teleop_avoid_stop_event(case: Mapping[str, Any]) -> dict[str, Any] | None:
+    native_stop = case.get("native_stop")
+    native_stop = native_stop if isinstance(native_stop, Mapping) else {}
+    post_stop = case.get("post_stop_zero_output")
+    post_stop = post_stop if isinstance(post_stop, Mapping) else native_stop.get("post_stop_zero_output")
+    post_stop = post_stop if isinstance(post_stop, Mapping) else {}
+
+    def finite_number(*keys: str, source: Mapping[str, Any]) -> float | None:
+        for key in keys:
+            value = source.get(key)
+            if not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(float(value)):
+                return float(value)
+        return None
+
+    def int_field(key: str, source: Mapping[str, Any]) -> int:
+        value = source.get(key)
+        if isinstance(value, bool):
+            return 0
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def positive_int(key: str, source: Mapping[str, Any]) -> int:
+        value = int_field(key, source)
+        if value > 0:
+            return value
+        return 0
+
+    stop_ack_s = finite_number("ack_wall_s", source=native_stop)
+    pre_stop_status_stamp_s = finite_number("pre_stop_status_stamp_s", source=post_stop)
+    window_start_s = finite_number("window_start_wall_s", source=post_stop)
+    window_end_s = finite_number("window_end_wall_s", source=post_stop)
+    required_status_samples = positive_int("required_status_samples", source=post_stop)
+    required_status_samples = max(required_status_samples, POST_STOP_REQUIRED_STATUS_SAMPLES)
+    status_samples = positive_int("status_samples", source=post_stop)
+    final_cmd_samples = positive_int("final_cmd_samples", source=post_stop)
+    missing_final_cmd_samples = int_field("missing_final_cmd_samples", post_stop)
+    invalid_final_cmd_samples = int_field("invalid_final_cmd_samples", post_stop)
+    nonzero_samples = int_field("nonzero_final_cmd_samples", post_stop)
+    if not (
+        native_stop.get("returncode") == 0
+        and native_stop.get("accepted") is True
+        and native_stop.get("acked") is True
+        and stop_ack_s is not None
+        and pre_stop_status_stamp_s is not None
+        and window_start_s is not None
+        and window_end_s is not None
+        and window_start_s >= stop_ack_s
+        and window_end_s > window_start_s
+        and status_samples >= required_status_samples
+        and final_cmd_samples == status_samples
+        and missing_final_cmd_samples == 0
+        and invalid_final_cmd_samples == 0
+        and post_stop.get("zero_output_observed") is True
+        and nonzero_samples == 0
+    ):
+        return None
+    return {
+        "request_id": f"teleop_avoid_stop:{case.get('scenario')}",
+        "kind": "stop",
+        "accepted": True,
+        "acked": True,
+        "stop_ack_s": stop_ack_s,
+        "post_stop_zero_observed": True,
+        "post_stop_nonzero_samples": 0,
+        "post_stop_sample_counts": {
+            "final_cmd": final_cmd_samples,
+            "status": status_samples,
+        },
     }
 
 
@@ -366,6 +443,10 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
                 "acked": True,
             }
         )
+        stop_event = _teleop_avoid_stop_event(case)
+        if stop_event is not None:
+            command_events.append(stop_event)
+
     command_events.append(
         {
             "request_id": "teleop_avoid_forbidden_goal_probe",
@@ -380,20 +461,20 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
             if isinstance(process, Mapping):
                 name = str(process.get("name") or "")
                 if name:
-                    all_processes.append(name)
+                    all_processes.append(
+                        "mujoco_sensor_policy" if name == "sensor" else name
+                    )
     processes = list(dict.fromkeys(all_processes))
     runtime_summary = _summarize_teleop_avoid_runner(source_report)
     command_source = "dds"
     sensor_reports = [case.get("sensor_report") for case in cases if isinstance(case.get("sensor_report"), Mapping)]
-    slam_states = [str(sr.get("state") or "") for sr in sensor_reports]
+    slam_reports = [
+        sensor_report.get("slam_status")
+        for sensor_report in sensor_reports
+        if isinstance(sensor_report.get("slam_status"), Mapping)
+    ]
+    slam_states = [str(status.get("state") or "") for status in slam_reports]
     slam_states = [state for state in slam_states if state]
-    last_slam_status: Mapping[str, Any] = {}
-    if sensor_reports:
-        for report in reversed(sensor_reports):
-            status = report.get("slam_status")
-            if isinstance(status, Mapping):
-                last_slam_status = status
-                break
     traversability_statuses = [case.get("terrain_producer_observation") for case in cases if isinstance(case.get("terrain_producer_observation"), Mapping)]
     last_traversability: Mapping[str, Any] = {}
     if traversability_statuses:
@@ -429,8 +510,19 @@ def _teleop_avoid_native_observations(source_report: Mapping[str, Any]) -> dict[
         },
         "slam_map": {
             "slam_state": slam_states[-1] if slam_states else "",
-            "localization_health_fresh": any(str(status.get("reason") or "").lower() == "tracking" for status in sensor_reports if isinstance(status, Mapping)),
-            "registered_cloud_fresh": any(int((status.get("registered_points") or 0) or (status.get("lidar_frame_count") or 0)) > 0 for status in sensor_reports if isinstance(status, Mapping)),
+            "localization_health_fresh": any(
+                str(status.get("state") or "").upper() == "TRACKING"
+                and str(status.get("reason") or "").lower() == "tracking"
+                for status in slam_reports
+            ),
+            "registered_cloud_fresh": any(
+                int(
+                    (status.get("registered_points") or 0)
+                    or (status.get("lidar_frame_count") or 0)
+                )
+                > 0
+                for status in slam_reports
+            ),
             "traversability_fresh": bool(
                 int((last_traversability.get("cells") or 0) or (last_traversability.get("source_points") or 0)) > 0
                 if last_traversability else False

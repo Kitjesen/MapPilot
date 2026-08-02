@@ -31,7 +31,7 @@
 | `service.py` | public API | Backend-neutral relocalization result, protocol, and stable `Localization` capability. |
 | `adapters/relocalization.py` | native adapter | Calls the C++ CycloneDDS SLAM control tool; no ROS dependency. |
 | `adapters/status.py` | native adapter | Converts the native SLAM endpoint status stream into localization-domain messages. |
-| `adapters/resolver.py` | composition adapter | Resolves the explicit localization adapter selected by the product profile; it never guesses a transport. |
+| `adapters/resolver.py` | composition adapter | Resolves the explicit localization adapter selected by Product/env resolution; it never guesses a transport. |
 | `slam/cpp/` | realtime | ROS-free C++ `ISlamBackend`, DDS runtime, SLAM control, native relocalization hooks. |
 | `slam/module.py` | module boundary | Python Module wrapper for downstream runtime consumers. |
 | `fastlio2/`, `pointlio/` | algorithm assets | LIO algorithm packages used by native SLAM backends or compatibility builds. |
@@ -41,7 +41,7 @@
 | `gnss_module.py`, `gnss_serial_driver.py`, `ntrip_client_module.py` | GNSS/RTK | GNSS input, corrections, and diagnostics. |
 | `interface/` | compatibility | Legacy ROS 2 message/service contracts for compatibility builds. Not the product default. |
 
-The product/runtime names may still use `slam_profile` and `slam.service` for compatibility with deployed robots. New Python imports should use `localization.*`.
+Compatibility configuration names may still use `slam_profile` and `slam.service` for deployed robots. New Python imports should use `localization.*`.
 
 ## Semantic Occupancy Localization
 
@@ -77,7 +77,7 @@ class/confidence weighting and mixed point-to-plane residuals remain a measured
 algorithm upgrade, not a claimed property of this baseline.
 
 The adoption decision and product gates are documented in
-`docs/architecture/SOCC_ICP_ADOPTION.md`.
+`docs/research/socc_icp_adoption.md`.
 
 ## Save-Map Optimization Policy
 

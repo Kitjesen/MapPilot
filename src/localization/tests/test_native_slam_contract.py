@@ -13,6 +13,15 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu, PointCloud2
 
 
+def _cyclone_runtime_source() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "slam"
+        / "cpp"
+        / "cyclone_runtime.cpp"
+    ).read_text(encoding="utf-8")
+
+
 def test_slam_module_exposes_pose_map_health_only() -> None:
     from localization.slam.module import SlamModule
 
@@ -69,6 +78,162 @@ def test_slam_module_consumes_lidar_inputs() -> None:
 
     assert outputs["lidar_buffer"] == 1
     assert outputs["imu_buffer"] == 1
+
+
+def test_native_cyclone_runtime_catches_up_imu_sensor_stream_batches() -> None:
+    source = _cyclone_runtime_source()
+
+    assert "constexpr std::size_t kSensorStreamCatchupBatches = 16;" in source
+    assert "void drainImu(Handler&& handler)" in source
+    assert (
+        "imu_reader_,\n"
+        "        lingtu_dds_Imu_desc,\n"
+        "        std::forward<Handler>(handler),\n"
+        "        kSensorStreamCatchupBatches"
+    ) in source
+
+
+def test_native_cyclone_runtime_drains_lidar_latest_only_with_descriptor_free() -> None:
+    source = _cyclone_runtime_source()
+    drain_lidar_start = source.index("void drainLidar(Handler&& handler)")
+    drain_lidar_end = source.index("template <typename Handler>", drain_lidar_start + 1)
+    drain_lidar = source[drain_lidar_start:drain_lidar_end]
+    latest_start = source.index("void drainLatestReader(")
+    latest_end = source.index("using lingtu::dds::QosProfile;", latest_start)
+    latest_reader = source[latest_start:latest_end]
+
+    assert "drainLatestReader<lingtu_dds_LivoxFrame>" in drain_lidar
+    assert "drainReader<lingtu_dds_LivoxFrame>" not in drain_lidar
+    assert "handler(*static_cast<T*>(latest_batch->samples()[latest_index]));" in latest_reader
+    assert latest_reader.count("handler(*static_cast<T*>") == 1
+    assert latest_reader.index("for (std::size_t batch = 0;") < latest_reader.index(
+        "handler(*static_cast<T*>(latest_batch->samples()[latest_index]));"
+    )
+    assert "latest_batch = std::move(current_batch);" in latest_reader
+    assert "std::unique_ptr<DdsSampleBatch<T>> latest_batch;" in latest_reader
+    assert "std::fprintf" not in latest_reader
+    assert "dds_sample_free(sample, &descriptor_, DDS_FREE_ALL);" in source
+
+
+def test_native_cyclone_runtime_dedupes_odom_and_scan_state_by_output_stamp() -> None:
+    source = _cyclone_runtime_source()
+
+    assert "double last_odometry_stamp_s = -1.0;" in source
+    assert "double last_state_estimation_stamp_s = -1.0;" in source
+
+    odom_start = source.index("if (out.odometry_odom_body.has_value() &&")
+    odom_end = source.index("if (out.state_estimation_at_scan.has_value() &&", odom_start)
+    odom_block = source[odom_start:odom_end]
+    assert "std::abs(out.stamp_s - last_odometry_stamp_s) > 1e-6" in odom_block
+    assert odom_block.index("last_odometry_stamp_s = out.stamp_s;") < odom_block.index(
+        "dds.writeOdom(msg);"
+    )
+    assert "registered_cloud_body->stamp_s" not in odom_block
+    assert "map_cloud_map->stamp_s" not in odom_block
+
+    state_start = source.index("if (out.state_estimation_at_scan.has_value() &&")
+    state_end = source.index("if (out.registered_cloud_body.has_value() &&", state_start)
+    state_block = source[state_start:state_end]
+    assert "std::abs(out.stamp_s - last_state_estimation_stamp_s) > 1e-6" in state_block
+    assert state_block.index("last_state_estimation_stamp_s = out.stamp_s;") < state_block.index(
+        "dds.writeState(msg);"
+    )
+    assert "registered_cloud_body->stamp_s" not in state_block
+    assert "map_cloud_map->stamp_s" not in state_block
+
+
+def test_native_cyclone_runtime_maps_fastlio_velocity_into_odom_twist_directly() -> None:
+    source = _cyclone_runtime_source()
+    odom_converter = source[
+        source.index("lingtu_dds_Odometry toDdsOdom(") : source.index("struct TfMessage")
+    ]
+
+    assert "double vx" in odom_converter
+    assert "double vy" in odom_converter
+    assert "double vz" in odom_converter
+    assert "out.twist.twist.linear.x = vx;" in odom_converter
+    assert "out.twist.twist.linear.y = vy;" in odom_converter
+    assert "out.twist.twist.linear.z = vz;" in odom_converter
+    assert "std::isfinite" not in odom_converter
+    assert "0.0" not in odom_converter
+
+    odom_start = source.index("const auto msg = toDdsOdom(\n            *out.odometry_odom_body")
+    odom_end = source.index("dds.writeOdom(msg);", odom_start)
+    odom_call = source[odom_start:odom_end]
+    state_start = source.index(
+        "const auto msg = toDdsOdom(\n            *out.state_estimation_at_scan"
+    )
+    state_end = source.index("dds.writeState(msg);", state_start)
+    state_call = source[state_start:state_end]
+    for call in (odom_call, state_call):
+        assert "out.fastlio_velocity_x" in call
+        assert "out.fastlio_velocity_y" in call
+        assert "out.fastlio_velocity_z" in call
+
+
+def test_native_slam_forwards_structured_fastlio_lidar_update_diagnostics() -> None:
+    root = Path(__file__).resolve().parents[1]
+    ieskf_header = (root / "fastlio2" / "src" / "map_builder" / "ieskf.h").read_text(
+        encoding="utf-8"
+    )
+    ieskf_source = (root / "fastlio2" / "src" / "map_builder" / "ieskf.cpp").read_text(
+        encoding="utf-8"
+    )
+    fastlio_source = (root / "slam" / "cpp" / "fastlio.cpp").read_text(encoding="utf-8")
+    cyclone_source = _cyclone_runtime_source()
+
+    for reason in (
+        "no_valid_measurement",
+        "pathological_degeneracy",
+        "candidate_translation_limit_exceeded",
+        "candidate_rotation_limit_exceeded",
+        "candidate_velocity_limit_exceeded",
+        "candidate_velocity_delta_limit_exceeded",
+        "nonconverged_update",
+        "degenerate_nonconverged_update",
+        "information_ldlt_decomposition_failed",
+        "information_ldlt_not_positive",
+        "candidate_covariance_nonfinite",
+        "candidate_covariance_nonpositive_diagonal",
+        "posterior_covariance_nonfinite",
+        "posterior_covariance_nonpositive_diagonal",
+    ):
+        assert f'"{reason}"' in ieskf_header
+
+    assert "LidarUpdateDiagnostics m_lidar_update_diagnostics" in ieskf_header
+    assert "previous_rejection_reason" in ieskf_header
+    assert "candidate_translation_m" in ieskf_header
+    assert "candidate_rotation_rad" in ieskf_header
+    assert "candidate_velocity_mps" in ieskf_header
+    assert "candidate_velocity_delta_mps" in ieskf_header
+    assert "information_ldlt_evaluated" in ieskf_header
+    assert "candidate_covariance_evaluated" in ieskf_header
+    assert "posterior_covariance_evaluated" in ieskf_header
+    update_source = ieskf_source[ieskf_source.index("bool IESKF::update()") :]
+    assert update_source.count("recordLidarUpdateRejection(") == update_source.count(
+        "return false;"
+    )
+    assert "builder_->lastLidarUpdateDiagnostics()" in fastlio_source
+
+    json_start = cyclone_source.index("std::string fastLioLidarUpdateJson(")
+    json_end = cyclone_source.index("std::string statusSnapshotJson(", json_start)
+    diagnostics_json = cyclone_source[json_start:json_end]
+    assert '"\\\"fastlio_lidar_update\\\":"' in cyclone_source
+    assert "fastLioLidarUpdateJson(out.fastlio_lidar_update)" in cyclone_source
+    for field in (
+        "attempt_sequence",
+        "rejection_reason",
+        "previous_rejection_reason",
+        "consecutive_rejections",
+        "downsampled_points",
+        "effective_points",
+        "candidate",
+        "thresholds",
+        "information_ldlt",
+        "candidate_covariance",
+        "posterior_covariance",
+    ):
+        assert f'\\\"{field}\\\"' in diagnostics_json
 
 
 class _ObservationRunner:
@@ -211,7 +376,7 @@ def test_slam_imu_contract_preserves_covariance() -> None:
 
 
 def test_slam_module_consumes_raw_livox_frame() -> None:
-    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from drivers.real.lidar.api.frames import POINT_DTYPE, LivoxPointFrame
     from localization.slam.module import SlamModule
 
     points = np.zeros(1, dtype=POINT_DTYPE)
@@ -237,7 +402,7 @@ def test_slam_module_consumes_raw_livox_frame() -> None:
 
 
 def test_pointlio_profile_accepts_raw_lidar_but_reports_pending_algorithm() -> None:
-    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from drivers.real.lidar.api.frames import POINT_DTYPE, LivoxPointFrame
     from localization.slam.module import SlamModule
 
     points = np.zeros(1, dtype=POINT_DTYPE)
@@ -384,15 +549,14 @@ def test_native_slam_wiring_covers_old_bridge_consumers() -> None:
     assert "DepthVisualOdomModule.visual_odometry->SlamModule.visual_odom" in wires
     assert "lidar.raw_scan->SlamModule.lidar_raw_scan" in wires
     assert "lidar.imu->SlamModule.lidar_imu" in wires
-    assert spec_by_wire["lidar.raw_scan->SlamModule.lidar_raw_scan"].transport == "dds"
+    assert spec_by_wire["lidar.raw_scan->SlamModule.lidar_raw_scan"].delivery == "dds"
     assert spec_by_wire["lidar.raw_scan->SlamModule.lidar_raw_scan"].topic == TOPICS.raw_lidar_points
-    assert spec_by_wire["lidar.imu->SlamModule.lidar_imu"].transport == "dds"
+    assert spec_by_wire["lidar.imu->SlamModule.lidar_imu"].delivery == "dds"
     assert spec_by_wire["lidar.imu->SlamModule.lidar_imu"].topic == TOPICS.raw_imu
 
 
-def test_native_slam_wiring_keeps_lidar_module_as_compat_fallback() -> None:
+def test_native_slam_wiring_requires_canonical_lidar_role() -> None:
     from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
-    from runtime.runtime_interface import TOPICS
 
     specs = full_stack_wire_specs(
         {
@@ -405,15 +569,9 @@ def test_native_slam_wiring_keeps_lidar_module_as_compat_fallback() -> None:
         slam_profile="fastlio2",
         enable_semantic=False,
     )
-    spec_by_wire = {f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}": spec for spec in specs}
+    wires = {f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}" for spec in specs}
 
-    raw = spec_by_wire["LidarModule.raw_scan->SlamModule.lidar_raw_scan"]
-    imu = spec_by_wire["LidarModule.imu->SlamModule.lidar_imu"]
-
-    assert raw.transport == "dds"
-    assert raw.topic == TOPICS.raw_lidar_points
-    assert imu.transport == "dds"
-    assert imu.topic == TOPICS.raw_imu
+    assert not any(wire.startswith("LidarModule.") for wire in wires)
 
 
 def test_mujoco_slam_wiring_prefers_lidar_role_over_driver_sensor_ports() -> None:
@@ -436,9 +594,9 @@ def test_mujoco_slam_wiring_prefers_lidar_role_over_driver_sensor_ports() -> Non
     raw = spec_by_wire["lidar.raw_scan->SlamModule.lidar_raw_scan"]
     imu = spec_by_wire["lidar.imu->SlamModule.lidar_imu"]
 
-    assert raw.transport == "dds"
+    assert raw.delivery == "dds"
     assert raw.topic == TOPICS.raw_lidar_points
-    assert imu.transport == "dds"
+    assert imu.delivery == "dds"
     assert imu.topic == TOPICS.raw_imu
 
 
@@ -484,32 +642,6 @@ def test_mujoco_slam_wiring_does_not_use_driver_sensor_ports_by_default() -> Non
     assert "MujocoDriverModule.imu->SlamModule.lidar_imu" not in spec_by_wire
 
 
-def test_mujoco_slam_wiring_keeps_driver_sensor_ports_as_legacy_fallback() -> None:
-    from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
-    from runtime.runtime_interface import TOPICS
-
-    specs = full_stack_wire_specs(
-        {
-            "MujocoDriverModule",
-            "SlamModule",
-        },
-        robot="sim_mujoco",
-        driver_module="MujocoDriverModule",
-        slam_profile="fastlio2",
-        enable_semantic=False,
-        legacy_driver_sensor_fallback=True,
-    )
-    spec_by_wire = {f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}": spec for spec in specs}
-
-    raw = spec_by_wire["MujocoDriverModule.raw_scan->SlamModule.lidar_raw_scan"]
-    imu = spec_by_wire["MujocoDriverModule.imu->SlamModule.lidar_imu"]
-
-    assert raw.transport == "dds"
-    assert raw.topic == TOPICS.raw_lidar_points
-    assert imu.transport == "dds"
-    assert imu.topic == TOPICS.raw_imu
-
-
 def test_slam_wiring_prefers_gnss_role_for_gnss_odom() -> None:
     from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
 
@@ -528,7 +660,7 @@ def test_slam_wiring_prefers_gnss_role_for_gnss_odom() -> None:
     assert "gnss.gnss_odom->SlamModule.gnss_odom" in wires
 
 
-def test_slam_wiring_keeps_gnss_module_as_compat_fallback() -> None:
+def test_slam_wiring_requires_canonical_gnss_role() -> None:
     from lingtu.assembly.full_stack_wiring import full_stack_wire_specs
 
     specs = full_stack_wire_specs(
@@ -543,7 +675,7 @@ def test_slam_wiring_keeps_gnss_module_as_compat_fallback() -> None:
     )
     wires = {f"{spec.out_module}.{spec.out_port}->{spec.in_module}.{spec.in_port}" for spec in specs}
 
-    assert "GnssModule.gnss_odom->SlamModule.gnss_odom" in wires
+    assert "GnssModule.gnss_odom->SlamModule.gnss_odom" not in wires
 
 
 def test_native_mapping_save_path_reports_patch_pose_graph_optimization() -> None:
@@ -594,15 +726,14 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "LINGTU_SLAM_BUILD_PYTHON_BINDINGS" in cmake
     assert "nanobind_add_module(_native bind.cpp)" in cmake
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in cmake
-    assert "add_executable(lingtu_slam_dds_runtime cyclone_runtime.cpp)" in cmake
-    assert "OUTPUT_NAME lingtu_slam_cyclone_runtime" in cmake
+    assert "add_executable(slamd cyclone_runtime.cpp)" in cmake
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" not in cmake
     assert "adapters/ros2" not in cmake
     assert "find_package(iceoryx_binding_c QUIET)" in cmake
     assert "find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)" in cmake
     assert "CycloneDDS::ddsc" in cmake
     assert "CycloneDDS-CXX" not in cmake
-    assert "add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)" in cmake
+    assert "add_executable(slamctl slam_control.cpp)" in cmake
     assert "LINGTU_SLAM_BUILD_DDS_RUNTIME" in build_script
     assert "LINGTU_SLAM_BUILD_ROS2_DDS_RUNTIME" not in build_script
     assert "CPU_BBS3D_ROOT" in build_script
@@ -640,6 +771,7 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert '#include "message/cpp/dds_qos_profiles.hpp"' in cyclone_runtime
     assert "using lingtu::dds::QosProfile" in cyclone_runtime
     assert "using lingtu::dds::make_qos" in cyclone_runtime
+    assert "QosProfile::RawLidarStream" in cyclone_runtime
     assert "QosProfile::SensorStream" in cyclone_runtime
     assert "QosProfile::TfDynamic" in cyclone_runtime
     assert "QosProfile::TfStatic" in cyclone_runtime
@@ -647,6 +779,8 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "QosProfile::LidarPointcloud" in cyclone_runtime
     assert "lingtu_dds_qos_profiles" in cmake
     assert '#include "message/cpp/dds_qos_profiles.hpp"' in sdk2_dds
+    assert "qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic)" in sdk2_dds
+    assert "qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic)" in sdk2_dds
     assert "make_qos(lingtu::dds::QosProfile::SensorStream)" in sdk2_dds
     assert "state_estimation_at_scan_ = odometry_odom_body_" in fastlio
     assert "map_odom_pose_ = result.map_odom" in fastlio
@@ -669,6 +803,26 @@ def test_slam_cpp_build_declares_python_native_binding() -> None:
     assert "backend->feedLidar" in cyclone_runtime
     assert "backend->feedImu" in cyclone_runtime
     assert "--log-status-s" in cyclone_runtime
+
+
+def test_native_slam_product_binary_names_hide_transport_details() -> None:
+    product_surfaces = (
+        Path("src/localization/slam/cpp/CMakeLists.txt"),
+        Path("scripts/build/build_slam_core.sh"),
+        Path("scripts/deploy/package_native_release.sh"),
+        Path("scripts/deploy/cut_release.sh"),
+        Path("scripts/deploy/thunder/run_slam_dds.sh"),
+        Path("scripts/deploy/thunder/lingtu-slam-dds.service"),
+        Path("src/runtime/service_catalogs/thunder.py"),
+        Path("config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json"),
+        Path("config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json"),
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in product_surfaces)
+
+    assert "build/slam_core/slamd" in combined
+    assert "build/slam_core/slamctl" in combined
+    assert "lingtu_slam_cyclone_runtime" not in combined
+    assert "lingtu_slam_control" not in combined
 
 
 def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
@@ -720,6 +874,50 @@ def test_slam_relocalization_has_typed_dds_request_reply_contract() -> None:
     assert "track_against_map_failures" in slam_control
     assert "cpp_typed_dds" in slam_control
     assert "kSlamMapCommand.dds_topic.data()" in slam_control
+
+def test_relocalization_response_preserves_overlap_evidence_across_boundaries() -> None:
+    from dataclasses import fields
+
+    from message.dds_types.slam import RelocalizationResponse
+    from message.dds_types_generated.types import (
+        RelocalizationResponse as GeneratedRelocalizationResponse,
+    )
+
+    evidence_fields = [
+        "refine_input_points",
+        "refine_evaluated_points",
+        "refine_support_ratio",
+        "refine_overlap_inlier_ratio",
+    ]
+    expected_declarations = [
+        "long refine_input_points;",
+        "long refine_evaluated_points;",
+        "double refine_support_ratio;",
+        "double refine_overlap_inlier_ratio;",
+    ]
+    idl = Path("src/message/idl/lingtu_slam.idl").read_text(encoding="utf-8")
+    response_struct = idl.split("struct RelocalizationResponse {", 1)[1].split(
+        "};", 1
+    )[0]
+    assert all(item in response_struct for item in expected_declarations)
+
+    for response_type in (RelocalizationResponse, GeneratedRelocalizationResponse):
+        field_names = [item.name for item in fields(response_type)]
+        assert field_names[
+            field_names.index("refine_inliers") + 1 : field_names.index(
+                "refine_converged"
+            )
+        ] == evidence_fields
+
+    cyclone_runtime = Path(
+        "src/localization/slam/cpp/cyclone_runtime.cpp"
+    ).read_text(encoding="utf-8")
+    slam_control = Path("src/localization/slam/cpp/slam_control.cpp").read_text(
+        encoding="utf-8"
+    )
+    for field_name in evidence_fields:
+        assert f"response.msg.{field_name}" in cyclone_runtime
+        assert f"response.{field_name}" in slam_control
 
 
 def test_native_relocalization_uses_map_icp_with_generation_guard() -> None:
@@ -822,7 +1020,7 @@ def test_fastlio_feed_lidar_only_queues_raw_frame() -> None:
 
 
 def test_slam_sensor_callbacks_are_enqueue_only(monkeypatch) -> None:
-    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from drivers.real.lidar.api.frames import POINT_DTYPE, LivoxPointFrame
     from localization.slam.module import SlamModule
 
     monkeypatch.setenv("LINGTU_DISABLE_NATIVE_SLAM_BINDING", "1")
@@ -847,7 +1045,7 @@ def test_slam_sensor_callbacks_are_enqueue_only(monkeypatch) -> None:
 
 
 def test_slam_status_reports_lidar_imu_sync_window(monkeypatch) -> None:
-    from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
+    from drivers.real.lidar.api.frames import POINT_DTYPE, LivoxPointFrame
     from localization.slam.module import SlamModule
 
     monkeypatch.setenv("LINGTU_DISABLE_NATIVE_SLAM_BINDING", "1")

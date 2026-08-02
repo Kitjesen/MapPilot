@@ -276,6 +276,13 @@ class Module:
         """
         return None
 
+    def startup_readiness(self) -> str | None:
+        """Return why startup is not ready, or None when ready."""
+
+        if self._running:
+            return None
+        return "not_running"
+
     def setup(self) -> None:
         """Configuration phase 鈥?register subscribers, load resources. Override in subclasses."""
         pass
@@ -391,10 +398,14 @@ class Module:
 
     @property
     def running(self) -> bool:
+        """Return whether the Module lifecycle is running."""
+
         return self._running
 
     @property
     def layer(self) -> int | None:
+        """Return the declared architecture layer."""
+
         return self._layer
 
     # -- System-level hooks -----------------------------------------------

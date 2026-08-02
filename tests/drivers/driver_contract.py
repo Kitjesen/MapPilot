@@ -1,7 +1,6 @@
 ﻿"""Test-only driver / sensor-source port contracts.
 
-NAV COMPUTE CONTRACT companion (docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md
-and docs/superpowers/plans/2026-05-30-repo-structure-redesign.md §4).
+NAV COMPUTE CONTRACT companion (docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md).
 
 Why this file exists
 --------------------

@@ -12,6 +12,7 @@ set(_LINGTU_IDL "${_LINGTU_ROOT}/src/message/idl/lingtu_slam.idl")
 set(_NAV_CPP_DIR "${_LINGTU_ROOT}/src/nav/cpp")
 set(_NAV_COMMANDS_CPP_DIR "${_NAV_CPP_DIR}/client")
 set(_NAV_TESTS_DIR "${_NAV_CPP_DIR}/tests")
+set(_NAV_ENDPOINT_TESTS_DIR "${_NAV_TESTS_DIR}/endpoint")
 set(_EXPLORE_CPP_DIR "${_LINGTU_ROOT}/src/explore/cpp")
 set(_PERCEPTION_INSPECTION_DIR "${_LINGTU_ROOT}/src/perception/inspection")
 set(_OCTOPLANNER3D_RUNTIME_DIR
@@ -22,6 +23,9 @@ set(_NAV_PLAN_CPP_DIR "${LINGTU_NAV_PLAN_CPP_DIR}")
 set(_NAV_GLOBAL_CPP_DIR "${LINGTU_NAV_GLOBAL_CPP_DIR}")
 set(_LOCAL_PLANNER_CPP_DIR "${LINGTU_NAV_LOCAL_CPP_DIR}")
 set(_NAV_KERNEL_DIR "${LINGTU_NAV_KERNEL_DIR}")
+set(_EP_DIRS
+  "${CMAKE_CURRENT_LIST_DIR}"
+  "${_LINGTU_ROOT}/src")
 
 if(NOT TARGET lingtu_maps)
   add_subdirectory(
@@ -136,25 +140,49 @@ target_compile_options(test_nav_client PRIVATE
 add_test(NAME test_nav_client COMMAND test_nav_client)
 endif()
 
-lingtu_sources_exist(_HAS_NAV_ENDPOINT_SOURCES
-  "${CMAKE_CURRENT_LIST_DIR}/nav_native_endpoint.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/nav_status_writer.cpp")
-
-if(_HAS_NAV_ENDPOINT_SOURCES AND _HAS_OCTOPLANNER3D_RUNTIME)
+if(_HAS_OCTOPLANNER3D_RUNTIME)
   add_executable(navd
-    active_octomap_gate.cpp
-    active_occupancy_gate.cpp
+    plan/active_octomap_gate.cpp
+    plan/active_occupancy_gate.cpp
+    plan/active_map_declared_identity.cpp
     nav_native_endpoint.cpp
-    global_plan_task.cpp
+    endpoint_loop.cpp
+    input/nav_input_state_projector.cpp
+    inspection/inspection_command_coordinator.cpp
+    inspection/inspection_runtime_controller.cpp
+    inspection/inspection_task_event_outbox.cpp
+    plan/active_path_blockage_policy.cpp
+    plan/global_plan_task.cpp
+    plan/bounded_goal_replan_controller.cpp
+    plan/goal_plan_controller.cpp
+    plan/goal_replan_runtime_coordinator.cpp
+    plan/goal_terminal_ingress_policy.cpp
     nav_dds_runtime.cpp
     nav_endpoint_config.cpp
-    input_gate.cpp
+    plan/input_gate.cpp
     nav_endpoint_messages.cpp
-    nav_status_writer.cpp
-    status_snapshot_file_writer.cpp
-    motion_layer.cpp
-    live_obstacle_layer.cpp
-    teleop_safety.cpp)
+    motion/control_loop_runtime_guard.cpp
+    motion/operator_motion_authority.cpp
+    status/control_loop_health.cpp
+    status/nav_status_writer.cpp
+    status/nav_status_publisher.cpp
+    status/nav_status_endpoint_adapter.cpp
+    status/navigation_goal_status_outbox.cpp
+    status/goal_terminal_status_delivery.cpp
+    status/navigation_state.cpp
+    status/status_snapshot_file_writer.cpp
+    status/inspection_status_file_writer.cpp
+    status/active_inspection_map_cache.cpp
+    motion/command_ingress_controller.cpp
+    motion/goal_task_cancel_router.cpp
+    motion/motion_stop_coordinator.cpp
+    motion/teleop_admission_controller.cpp
+    motion/teleop_tick_controller.cpp
+    motion/autonomy_tick_controller.cpp
+    motion/motion_layer.cpp
+    plan/live_obstacle_layer.cpp
+    motion/teleop_safety.cpp
+  )
 
   target_include_directories(navd PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
@@ -163,13 +191,16 @@ if(_HAS_NAV_ENDPOINT_SOURCES AND _HAS_OCTOPLANNER3D_RUNTIME)
     "${_NAV_GLOBAL_CPP_DIR}"
     "${_LOCAL_PLANNER_CPP_DIR}"
     "${_NAV_KERNEL_DIR}/include"
-    "${_OCTOPLANNER3D_RUNTIME_DIR}")
+    "${_EXPLORE_CPP_DIR}"
+    "${_OCTOPLANNER3D_RUNTIME_DIR}"
+    ${_EP_DIRS})
 
   target_link_libraries(navd PRIVATE
     lingtu_inspection_core
     lingtu_maps
     lingtu_nav_far
     lingtu_nav_plan_loop
+    lingtu_nav_rolling_segment
     lingtu_dds_messages
     octoplanner3d_runtime
     CycloneDDS::ddsc
@@ -188,18 +219,19 @@ if(_HAS_NAV_ENDPOINT_SOURCES AND _HAS_OCTOPLANNER3D_RUNTIME)
   set_target_properties(navd PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 else()
-  message(STATUS "Skipping navd: optional planner sources are incomplete")
+  message(FATAL_ERROR "Cannot build required navd target: OctoPlanner3D runtime is missing")
 endif()
 
 if(LINGTU_NAV_CPP_BUILD_TESTS)
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_global_plan_task.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_global_plan_task.cpp")
   add_executable(test_global_plan_task
-    test_global_plan_task.cpp
-    global_plan_task.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_global_plan_task.cpp"
+    plan/global_plan_task.cpp)
   target_include_directories(test_global_plan_task PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${_NAV_PLAN_CPP_DIR}"
     "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_global_plan_task PRIVATE
     pthread)
@@ -207,14 +239,174 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_global_plan_task.cpp")
   add_test(NAME test_global_plan_task COMMAND test_global_plan_task)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_live_obstacle_layer.cpp")
+if(NOT TARGET test_bounded_goal_replan_controller
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_bounded_goal_replan_controller.cpp")
+  add_executable(test_bounded_goal_replan_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_bounded_goal_replan_controller.cpp"
+    plan/bounded_goal_replan_controller.cpp)
+  target_include_directories(test_bounded_goal_replan_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS})
+  target_compile_options(test_bounded_goal_replan_controller PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME test_bounded_goal_replan_controller COMMAND test_bounded_goal_replan_controller)
+endif()
+
+if(NOT TARGET test_active_path_blockage_policy
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_blockage_policy.cpp"
+    AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/plan/active_path_blockage_policy.cpp")
+  add_executable(test_active_path_blockage_policy
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_blockage_policy.cpp"
+    plan/active_path_blockage_policy.cpp)
+  target_include_directories(test_active_path_blockage_policy PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_compile_options(test_active_path_blockage_policy PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME test_active_path_blockage_policy
+           COMMAND test_active_path_blockage_policy)
+endif()
+
+if(NOT TARGET test_goal_plan_controller
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_controller.cpp")
+  add_executable(test_goal_plan_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_controller.cpp"
+    plan/global_plan_task.cpp
+    plan/goal_plan_controller.cpp)
+  target_include_directories(test_goal_plan_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_goal_plan_controller PRIVATE pthread)
+  target_compile_options(test_goal_plan_controller PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME test_goal_plan_controller COMMAND test_goal_plan_controller)
+endif()
+
+if(NOT TARGET test_goal_replan_runtime_coordinator
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_replan_runtime_coordinator.cpp")
+  add_executable(test_goal_replan_runtime_coordinator
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_replan_runtime_coordinator.cpp"
+    motion/command_ingress_controller.cpp
+    motion/goal_task_cancel_router.cpp
+    motion/motion_stop_coordinator.cpp
+    plan/global_plan_task.cpp
+    plan/bounded_goal_replan_controller.cpp
+    plan/goal_plan_controller.cpp
+    plan/goal_replan_runtime_coordinator.cpp)
+  target_include_directories(test_goal_replan_runtime_coordinator PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_goal_replan_runtime_coordinator PRIVATE pthread)
+  target_compile_options(test_goal_replan_runtime_coordinator PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME test_goal_replan_runtime_coordinator
+           COMMAND test_goal_replan_runtime_coordinator)
+endif()
+
+if(NOT TARGET test_goal_terminal_ingress_policy
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_ingress_policy.cpp")
+  add_executable(test_goal_terminal_ingress_policy
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_ingress_policy.cpp"
+    plan/goal_terminal_ingress_policy.cpp)
+  target_include_directories(test_goal_terminal_ingress_policy PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_compile_options(test_goal_terminal_ingress_policy PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME test_goal_terminal_ingress_policy
+           COMMAND test_goal_terminal_ingress_policy)
+endif()
+
+if(NOT TARGET test_goal_plan_completion
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_completion.cpp")
+  add_executable(test_goal_plan_completion
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_plan_completion.cpp"
+    plan/global_plan_task.cpp
+    plan/goal_plan_controller.cpp)
+  target_include_directories(test_goal_plan_completion PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_goal_plan_completion PRIVATE pthread)
+  target_compile_options(test_goal_plan_completion PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME test_goal_plan_completion COMMAND test_goal_plan_completion)
+endif()
+
+if(NOT TARGET test_rolling_map_segment_executor
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_rolling_map_segment_executor.cpp")
+  add_executable(test_rolling_map_segment_executor
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_rolling_map_segment_executor.cpp")
+  target_link_libraries(test_rolling_map_segment_executor PRIVATE
+    lingtu_nav_rolling_segment)
+  target_compile_options(test_rolling_map_segment_executor PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_rolling_map_segment_executor
+    COMMAND test_rolling_map_segment_executor)
+endif()
+
+if(NOT TARGET test_rolling_segment_lifecycle
+    AND TARGET lingtu_nav_rolling_segment
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_rolling_segment_lifecycle.cpp")
+  add_executable(test_rolling_segment_lifecycle
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_rolling_segment_lifecycle.cpp")
+  target_include_directories(test_rolling_segment_lifecycle PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_link_libraries(test_rolling_segment_lifecycle PRIVATE
+    lingtu_nav_rolling_segment)
+  target_compile_options(test_rolling_segment_lifecycle PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_rolling_segment_lifecycle
+    COMMAND test_rolling_segment_lifecycle)
+endif()
+
+if(NOT TARGET test_rolling_segment_effect_coordinator
+    AND TARGET lingtu_nav_rolling_segment
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_rolling_segment_effect_coordinator.cpp")
+  add_executable(test_rolling_segment_effect_coordinator
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_rolling_segment_effect_coordinator.cpp")
+  target_include_directories(test_rolling_segment_effect_coordinator PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_link_libraries(test_rolling_segment_effect_coordinator PRIVATE
+    lingtu_nav_rolling_segment)
+  target_compile_options(test_rolling_segment_effect_coordinator PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_rolling_segment_effect_coordinator
+    COMMAND test_rolling_segment_effect_coordinator)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_live_obstacle_layer.cpp")
   add_executable(test_live_obstacle_layer
-    test_live_obstacle_layer.cpp
-    motion_layer.cpp
-    live_obstacle_layer.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_live_obstacle_layer.cpp"
+    motion/motion_layer.cpp
+    plan/live_obstacle_layer.cpp)
 
   target_include_directories(test_live_obstacle_layer PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
+    ${_EP_DIRS}
     "${_LINGTU_ROOT}/src")
 
   target_compile_options(test_live_obstacle_layer PRIVATE
@@ -224,13 +416,14 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_live_obstacle_layer.cpp")
   add_test(NAME test_live_obstacle_layer COMMAND test_live_obstacle_layer)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_motion_layer.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_layer.cpp")
   add_executable(test_motion_layer
-    test_motion_layer.cpp
-    motion_layer.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_layer.cpp"
+    motion/motion_layer.cpp)
 
   target_include_directories(test_motion_layer PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
+    ${_EP_DIRS}
     "${_LINGTU_ROOT}/src")
 
   target_compile_options(test_motion_layer PRIVATE
@@ -240,11 +433,12 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_motion_layer.cpp")
   add_test(NAME test_motion_layer COMMAND test_motion_layer)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_nav_endpoint_messages.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_messages.cpp")
   add_executable(test_nav_endpoint_messages
-    test_nav_endpoint_messages.cpp
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_messages.cpp"
     nav_endpoint_messages.cpp
-    teleop_safety.cpp)
+    motion/teleop_safety.cpp
+  )
 
   target_include_directories(test_nav_endpoint_messages PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
@@ -252,6 +446,7 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_nav_endpoint_messages.cpp")
     "${_NAV_PLAN_CPP_DIR}"
     "${_NAV_GLOBAL_CPP_DIR}"
     "${_LOCAL_PLANNER_CPP_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
 
   target_link_libraries(test_nav_endpoint_messages PRIVATE
@@ -266,14 +461,16 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_nav_endpoint_messages.cpp")
   add_test(NAME test_nav_endpoint_messages COMMAND test_nav_endpoint_messages)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_final_velocity_writer.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_final_velocity_writer.cpp")
   add_executable(test_final_velocity_writer
-    test_final_velocity_writer.cpp
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_final_velocity_writer.cpp"
     nav_dds_runtime.cpp)
   target_include_directories(test_final_velocity_writer PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
-    "${_NAV_KERNEL_DIR}/include")
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
   target_link_libraries(test_final_velocity_writer PRIVATE
     lingtu_inspection_core
     lingtu_dds_messages
@@ -289,14 +486,15 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_final_velocity_writer.cpp")
     COMMAND test_final_velocity_writer)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_inspection_evidence_dds.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_dds.cpp")
   add_executable(test_inspection_evidence_dds
-    test_inspection_evidence_dds.cpp
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_dds.cpp"
     nav_dds_runtime.cpp)
   target_include_directories(test_inspection_evidence_dds PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
-    "${_NAV_KERNEL_DIR}/include")
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
   target_link_libraries(test_inspection_evidence_dds PRIVATE
     lingtu_inspection_core
     lingtu_dds_messages
@@ -312,9 +510,36 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_inspection_evidence_dds.cpp")
     COMMAND test_inspection_evidence_dds)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_inspection_evidence_bridge.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_goal_status_dds.cpp")
+  add_executable(test_navigation_goal_status_dds
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_goal_status_dds.cpp"
+    nav_dds_runtime.cpp)
+  target_include_directories(test_navigation_goal_status_dds PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_navigation_goal_status_dds PRIVATE
+    lingtu_inspection_core
+    lingtu_dds_messages
+    CycloneDDS::ddsc
+    lingtu_dds_qos_profiles
+    pthread)
+  target_compile_options(test_navigation_goal_status_dds PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_navigation_goal_status_dds
+    COMMAND test_navigation_goal_status_dds)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_bridge.cpp")
   add_executable(test_inspection_evidence_bridge
-    test_inspection_evidence_bridge.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_evidence_bridge.cpp")
   target_include_directories(test_inspection_evidence_bridge PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src")
@@ -333,53 +558,451 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_inspection_evidence_bridge.cpp")
     COMMAND test_inspection_evidence_bridge)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_input_gate.cpp")
-  add_executable(test_input_gate test_input_gate.cpp input_gate.cpp)
-  target_include_directories(test_input_gate PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_input_gate.cpp")
+  add_executable(test_input_gate "${_NAV_ENDPOINT_TESTS_DIR}/test_input_gate.cpp" plan/input_gate.cpp)
+  target_include_directories(test_input_gate PRIVATE "${CMAKE_CURRENT_LIST_DIR}" ${_EP_DIRS})
   target_compile_options(test_input_gate PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_input_gate COMMAND test_input_gate)
 endif()
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_input_state_projector.cpp")
+  add_executable(test_nav_input_state_projector
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_input_state_projector.cpp"
+    input/nav_input_state_projector.cpp
+    nav_endpoint_messages.cpp
+    plan/input_gate.cpp
+    plan/live_obstacle_layer.cpp
+    motion/motion_layer.cpp)
+  target_include_directories(test_nav_input_state_projector PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_nav_input_state_projector PRIVATE
+    lingtu_dds_messages
+    CycloneDDS::ddsc
+    pthread)
+  target_compile_options(test_nav_input_state_projector PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_nav_input_state_projector
+    COMMAND test_nav_input_state_projector)
+endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_control_authority.cpp")
-  add_executable(test_control_authority test_control_authority.cpp)
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_command_ack_journal.cpp")
+  add_executable(test_command_ack_journal "${_NAV_ENDPOINT_TESTS_DIR}/test_command_ack_journal.cpp")
+  target_include_directories(test_command_ack_journal PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
+    "${_LINGTU_ROOT}/src")
+  target_compile_options(test_command_ack_journal PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(NAME test_command_ack_journal COMMAND test_command_ack_journal)
+endif()
+
+if(NOT TARGET test_command_ingress_controller
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_command_ingress_controller.cpp")
+  add_executable(test_command_ingress_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_command_ingress_controller.cpp"
+    motion/command_ingress_controller.cpp)
+  target_include_directories(test_command_ingress_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
+    "${_LINGTU_ROOT}/src")
+  target_compile_options(test_command_ingress_controller PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_command_ingress_controller
+    COMMAND test_command_ingress_controller)
+endif()
+
+if(NOT TARGET test_motion_stop_coordinator
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_stop_coordinator.cpp")
+  add_executable(test_motion_stop_coordinator
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_motion_stop_coordinator.cpp"
+    motion/motion_stop_coordinator.cpp)
+  target_include_directories(test_motion_stop_coordinator PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_compile_options(test_motion_stop_coordinator PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_motion_stop_coordinator
+    COMMAND test_motion_stop_coordinator)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_dds.cpp")
+  add_executable(test_operator_motion_dds
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_dds.cpp"
+    nav_dds_runtime.cpp)
+  target_include_directories(test_operator_motion_dds PRIVATE
+    "${CMAKE_CURRENT_BINARY_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_operator_motion_dds PRIVATE
+    lingtu_inspection_core
+    lingtu_dds_messages
+    CycloneDDS::ddsc
+    lingtu_dds_qos_profiles
+    pthread)
+  target_compile_options(test_operator_motion_dds PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_operator_motion_dds
+    COMMAND test_operator_motion_dds)
+endif()
+if(NOT TARGET test_operator_motion_authority
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_authority.cpp")
+  add_executable(test_operator_motion_authority
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_authority.cpp"
+    motion/operator_motion_authority.cpp)
+  target_include_directories(test_operator_motion_authority PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_compile_options(test_operator_motion_authority PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_operator_motion_authority
+    COMMAND test_operator_motion_authority)
+endif()
+
+if(NOT TARGET test_operator_motion_output_evidence
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_output_evidence.cpp")
+  add_executable(test_operator_motion_output_evidence
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_operator_motion_output_evidence.cpp")
+  target_include_directories(test_operator_motion_output_evidence PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_compile_options(test_operator_motion_output_evidence PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_operator_motion_output_evidence
+    COMMAND test_operator_motion_output_evidence)
+endif()
+if(NOT TARGET test_control_loop_health
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_control_loop_health.cpp"
+    AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/status/control_loop_health.cpp")
+  add_executable(test_control_loop_health
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_control_loop_health.cpp"
+    status/control_loop_health.cpp)
+  target_include_directories(test_control_loop_health PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_compile_options(test_control_loop_health PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_control_loop_health
+    COMMAND test_control_loop_health)
+endif()
+if(NOT TARGET test_control_loop_runtime_guard
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_control_loop_runtime_guard.cpp"
+    AND EXISTS
+      "${CMAKE_CURRENT_LIST_DIR}/motion/control_loop_runtime_guard.cpp")
+  add_executable(test_control_loop_runtime_guard
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_control_loop_runtime_guard.cpp"
+    motion/control_loop_runtime_guard.cpp)
+  target_include_directories(test_control_loop_runtime_guard PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_compile_options(test_control_loop_runtime_guard PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_control_loop_runtime_guard
+    COMMAND test_control_loop_runtime_guard)
+endif()
+if(NOT TARGET test_nav_status_publisher
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_status_publisher.cpp")
+  add_executable(test_nav_status_publisher
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_status_publisher.cpp"
+    status/nav_status_publisher.cpp
+    status/nav_status_writer.cpp
+    status/status_snapshot_file_writer.cpp)
+  target_include_directories(test_nav_status_publisher PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_nav_status_publisher PRIVATE pthread)
+  target_compile_options(test_nav_status_publisher PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_nav_status_publisher
+    COMMAND test_nav_status_publisher)
+endif()
+if(NOT TARGET test_navigation_state
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_state.cpp")
+  add_executable(test_navigation_state
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_navigation_state.cpp"
+    status/navigation_state.cpp)
+  target_include_directories(test_navigation_state PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS}
+    "${_NAV_KERNEL_DIR}/include")
+  target_compile_options(test_navigation_state PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_navigation_state
+    COMMAND test_navigation_state)
+endif()
+
+if(NOT TARGET test_inspection_command_coordinator
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp")
+  add_executable(test_inspection_command_coordinator
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_command_coordinator.cpp"
+    inspection/inspection_command_coordinator.cpp)
+  target_include_directories(test_inspection_command_coordinator PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
+  target_link_libraries(test_inspection_command_coordinator PRIVATE
+    lingtu_inspection_core)
+  target_compile_options(test_inspection_command_coordinator PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_inspection_command_coordinator
+    COMMAND test_inspection_command_coordinator)
+endif()
+
+if(NOT TARGET test_inspection_runtime_controller
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_runtime_controller.cpp")
+  add_executable(test_inspection_runtime_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_runtime_controller.cpp"
+    inspection/inspection_runtime_controller.cpp)
+  target_include_directories(test_inspection_runtime_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
+  target_link_libraries(test_inspection_runtime_controller PRIVATE
+    lingtu_inspection_core)
+  target_compile_options(test_inspection_runtime_controller PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_inspection_runtime_controller
+    COMMAND test_inspection_runtime_controller)
+endif()
+
+
+
+if(NOT TARGET test_teleop_admission_controller
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_admission_controller.cpp")
+  add_executable(test_teleop_admission_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_admission_controller.cpp"
+    motion/teleop_admission_controller.cpp)
+  target_include_directories(test_teleop_admission_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_KERNEL_DIR}/include")
+  target_compile_options(test_teleop_admission_controller PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_teleop_admission_controller
+    COMMAND test_teleop_admission_controller)
+endif()
+
+if(NOT TARGET test_teleop_tick_controller
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_tick_controller.cpp")
+  add_executable(test_teleop_tick_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_tick_controller.cpp"
+    motion/teleop_tick_controller.cpp
+    motion/teleop_safety.cpp)
+  target_include_directories(test_teleop_tick_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    "${_EXPLORE_CPP_DIR}"
+    ${_EP_DIRS})
+  target_link_libraries(test_teleop_tick_controller PRIVATE
+    lingtu_nav_plan_loop)
+  target_compile_options(test_teleop_tick_controller PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_teleop_tick_controller
+    COMMAND test_teleop_tick_controller)
+endif()
+
+if(NOT TARGET test_autonomy_tick_controller
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_autonomy_tick_controller.cpp")
+  add_executable(test_autonomy_tick_controller
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_autonomy_tick_controller.cpp"
+    motion/autonomy_tick_controller.cpp
+    motion/teleop_safety.cpp)
+  target_include_directories(test_autonomy_tick_controller PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_autonomy_tick_controller PRIVATE
+    lingtu_nav_plan_loop)
+  target_compile_options(test_autonomy_tick_controller PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_autonomy_tick_controller
+    COMMAND test_autonomy_tick_controller)
+endif()
+
+if(NOT TARGET test_active_inspection_map_cache
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_active_inspection_map_cache.cpp")
+  add_executable(test_active_inspection_map_cache
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_inspection_map_cache.cpp"
+    status/active_inspection_map_cache.cpp)
+  target_include_directories(test_active_inspection_map_cache PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS})
+  target_link_libraries(test_active_inspection_map_cache PRIVATE pthread)
+  target_compile_options(test_active_inspection_map_cache PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_active_inspection_map_cache
+    COMMAND test_active_inspection_map_cache)
+endif()
+
+if(NOT TARGET test_inspection_status_file_writer
+    AND EXISTS
+      "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_status_file_writer.cpp")
+  add_executable(test_inspection_status_file_writer
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_inspection_status_file_writer.cpp"
+    status/inspection_status_file_writer.cpp
+    status/status_snapshot_file_writer.cpp)
+  target_include_directories(test_inspection_status_file_writer PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
+  target_link_libraries(test_inspection_status_file_writer PRIVATE
+    lingtu_inspection_core
+    pthread)
+  target_compile_options(test_inspection_status_file_writer PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(
+    NAME test_inspection_status_file_writer
+    COMMAND test_inspection_status_file_writer)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_stop_confirmation.cpp")
+  add_executable(test_stop_confirmation "${_NAV_ENDPOINT_TESTS_DIR}/test_stop_confirmation.cpp")
+  target_include_directories(test_stop_confirmation PRIVATE
+    ${_EP_DIRS}
+    "${CMAKE_CURRENT_LIST_DIR}")
+  target_compile_options(test_stop_confirmation PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic)
+  add_test(NAME test_stop_confirmation COMMAND test_stop_confirmation)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_control_authority.cpp")
+  add_executable(test_control_authority "${_NAV_ENDPOINT_TESTS_DIR}/test_control_authority.cpp")
   target_include_directories(test_control_authority PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_compile_options(test_control_authority PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_control_authority COMMAND test_control_authority)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_teleop_safety.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_safety.cpp")
   add_executable(test_teleop_safety
-    test_teleop_safety.cpp
-    teleop_safety.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_teleop_safety.cpp"
+    motion/teleop_safety.cpp
+  )
   target_include_directories(test_teleop_safety PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${_NAV_PLAN_CPP_DIR}"
     "${_LOCAL_PLANNER_CPP_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_compile_options(test_teleop_safety PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_teleop_safety COMMAND test_teleop_safety)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_nav_endpoint_config.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_config.cpp")
   add_executable(test_nav_endpoint_config
-    test_nav_endpoint_config.cpp
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_endpoint_config.cpp"
     nav_endpoint_config.cpp)
   target_include_directories(test_nav_endpoint_config PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${_NAV_PLAN_CPP_DIR}"
     "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_EXPLORE_CPP_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_nav_endpoint_config PRIVATE lingtu_nav_far)
   target_compile_options(test_nav_endpoint_config PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_nav_endpoint_config COMMAND test_nav_endpoint_config)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_nav_status_debug_sampling.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_status_debug_sampling.cpp")
   add_executable(test_nav_status_debug_sampling
-    test_nav_status_debug_sampling.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_nav_status_debug_sampling.cpp")
   target_include_directories(test_nav_status_debug_sampling PRIVATE
+    ${_EP_DIRS}
     "${CMAKE_CURRENT_LIST_DIR}")
   target_compile_options(test_nav_status_debug_sampling PRIVATE
     -Wall
@@ -390,12 +1013,13 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_nav_status_debug_sampling.cpp")
     COMMAND test_nav_status_debug_sampling)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_status_snapshot_file_writer.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_status_snapshot_file_writer.cpp")
   add_executable(test_status_snapshot_file_writer
-    test_status_snapshot_file_writer.cpp
-    status_snapshot_file_writer.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_status_snapshot_file_writer.cpp"
+    status/status_snapshot_file_writer.cpp)
   target_include_directories(test_status_snapshot_file_writer PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
     "${_LINGTU_ROOT}/src")
   target_link_libraries(test_status_snapshot_file_writer PRIVATE pthread)
   target_compile_options(test_status_snapshot_file_writer PRIVATE
@@ -407,9 +1031,10 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_status_snapshot_file_writer.cpp")
     COMMAND test_status_snapshot_file_writer)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_dds_drain_policy.cpp")
-  add_executable(test_dds_drain_policy test_dds_drain_policy.cpp)
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_dds_drain_policy.cpp")
+  add_executable(test_dds_drain_policy "${_NAV_ENDPOINT_TESTS_DIR}/test_dds_drain_policy.cpp")
   target_include_directories(test_dds_drain_policy PRIVATE
+    ${_EP_DIRS}
     "${CMAKE_CURRENT_LIST_DIR}")
   target_compile_options(test_dds_drain_policy PRIVATE
     -Wall
@@ -418,14 +1043,16 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_dds_drain_policy.cpp")
   add_test(NAME test_dds_drain_policy COMMAND test_dds_drain_policy)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_active_octomap_gate.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_octomap_gate.cpp")
   add_executable(test_active_octomap_gate
-    test_active_octomap_gate.cpp
-    active_octomap_gate.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_octomap_gate.cpp"
+    plan/active_octomap_gate.cpp
+    plan/active_map_declared_identity.cpp)
   target_include_directories(test_active_octomap_gate PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${_NAV_PLAN_CPP_DIR}"
     "${_NAV_GLOBAL_CPP_DIR}"
+    ${_EP_DIRS}
     "${_OCTOPLANNER3D_RUNTIME_DIR}")
   target_link_libraries(test_active_octomap_gate PRIVATE
     lingtu_maps
@@ -434,12 +1061,14 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_active_octomap_gate.cpp")
   add_test(NAME test_active_octomap_gate COMMAND test_active_octomap_gate)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_active_occupancy_gate.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_occupancy_gate.cpp")
   add_executable(test_active_occupancy_gate
-    test_active_occupancy_gate.cpp
-    active_occupancy_gate.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_occupancy_gate.cpp"
+    plan/active_occupancy_gate.cpp
+    plan/active_map_declared_identity.cpp)
   target_include_directories(test_active_occupancy_gate PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
     "${_NAV_GLOBAL_CPP_DIR}")
   target_link_libraries(test_active_occupancy_gate PRIVATE
     lingtu_maps
@@ -448,35 +1077,50 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_active_occupancy_gate.cpp")
   add_test(NAME test_active_occupancy_gate COMMAND test_active_occupancy_gate)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_pose_buffer.cpp")
-  add_executable(test_pose_buffer test_pose_buffer.cpp)
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_saved_coverage_grid.cpp")
+  add_executable(test_saved_coverage_grid
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_saved_coverage_grid.cpp"
+    explore/saved_coverage_grid.cpp)
+  target_include_directories(test_saved_coverage_grid PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_EXPLORE_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}")
+  target_link_libraries(test_saved_coverage_grid PRIVATE lingtu_nav_far)
+  target_compile_options(test_saved_coverage_grid PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME test_saved_coverage_grid COMMAND test_saved_coverage_grid)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_pose_buffer.cpp")
+  add_executable(test_pose_buffer "${_NAV_ENDPOINT_TESTS_DIR}/test_pose_buffer.cpp")
   target_include_directories(test_pose_buffer PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_compile_options(test_pose_buffer PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_pose_buffer COMMAND test_pose_buffer)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_grid_inflation.cpp")
-  add_executable(test_grid_inflation test_grid_inflation.cpp)
-  target_include_directories(test_grid_inflation PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_grid_inflation.cpp")
+  add_executable(test_grid_inflation "${_NAV_ENDPOINT_TESTS_DIR}/test_grid_inflation.cpp")
+  target_include_directories(test_grid_inflation PRIVATE "${CMAKE_CURRENT_LIST_DIR}" ${_EP_DIRS})
   target_compile_options(test_grid_inflation PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_grid_inflation COMMAND test_grid_inflation)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_point_cloud_layout.cpp")
-  add_executable(test_point_cloud_layout test_point_cloud_layout.cpp)
-  target_include_directories(test_point_cloud_layout PRIVATE "${CMAKE_CURRENT_LIST_DIR}")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_point_cloud_layout.cpp")
+  add_executable(test_point_cloud_layout "${_NAV_ENDPOINT_TESTS_DIR}/test_point_cloud_layout.cpp")
+  target_include_directories(test_point_cloud_layout PRIVATE "${CMAKE_CURRENT_LIST_DIR}" ${_EP_DIRS})
   target_compile_options(test_point_cloud_layout PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_point_cloud_layout COMMAND test_point_cloud_layout)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_transform_buffer.cpp")
-  add_executable(test_transform_buffer test_transform_buffer.cpp)
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_transform_buffer.cpp")
+  add_executable(test_transform_buffer "${_NAV_ENDPOINT_TESTS_DIR}/test_transform_buffer.cpp")
   target_include_directories(test_transform_buffer PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_transform_buffer PRIVATE
     lingtu_dds_messages)
@@ -484,13 +1128,14 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_transform_buffer.cpp")
   add_test(NAME test_transform_buffer COMMAND test_transform_buffer)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_traversability_geometry.cpp")
-  add_executable(test_traversability_geometry test_traversability_geometry.cpp)
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_traversability_geometry.cpp")
+  add_executable(test_traversability_geometry "${_NAV_ENDPOINT_TESTS_DIR}/test_traversability_geometry.cpp")
   target_include_directories(test_traversability_geometry PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
     "${_LINGTU_ROOT}/src/maps/include"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_link_libraries(test_traversability_geometry PRIVATE
     lingtu_dds_messages)
@@ -498,21 +1143,23 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_traversability_geometry.cpp")
   add_test(NAME test_traversability_geometry COMMAND test_traversability_geometry)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_observed_free_cache.cpp")
-  add_executable(test_observed_free_cache test_observed_free_cache.cpp)
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_observed_free_cache.cpp")
+  add_executable(test_observed_free_cache "${_NAV_ENDPOINT_TESTS_DIR}/test_observed_free_cache.cpp")
   target_include_directories(test_observed_free_cache PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
-    "${_LINGTU_ROOT}/src/maps/include")
+    "${_LINGTU_ROOT}/src/maps/include"
+    ${_EP_DIRS})
   target_compile_options(test_observed_free_cache PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_observed_free_cache COMMAND test_observed_free_cache)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_safety_grid_probe.cpp")
-  add_executable(test_safety_grid_probe test_safety_grid_probe.cpp)
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_safety_grid_probe.cpp")
+  add_executable(test_safety_grid_probe "${_NAV_ENDPOINT_TESTS_DIR}/test_safety_grid_probe.cpp")
   target_include_directories(test_safety_grid_probe PRIVATE
     "${_LINGTU_ROOT}/src"
-    "${_LINGTU_ROOT}/src/maps/include")
+    "${_LINGTU_ROOT}/src/maps/include"
+    ${_EP_DIRS})
   target_compile_options(test_safety_grid_probe PRIVATE -Wall -Wextra -Wpedantic)
   add_test(NAME test_safety_grid_probe COMMAND test_safety_grid_probe)
 endif()
@@ -562,14 +1209,16 @@ if(TARGET GTest::gtest_main AND EXISTS "${_NAV_TESTS_DIR}/test_nav_loop.cpp")
   add_test(NAME test_nav_loop COMMAND test_nav_loop)
 endif()
 
-if(TARGET GTest::gtest_main AND EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_assisted_teleop.cpp")
+if(TARGET GTest::gtest_main AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_assisted_teleop.cpp")
   add_executable(test_assisted_teleop
-    test_assisted_teleop.cpp
-    teleop_safety.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_assisted_teleop.cpp"
+    motion/teleop_safety.cpp
+  )
   target_include_directories(test_assisted_teleop PRIVATE
     "${CMAKE_CURRENT_LIST_DIR}"
     "${_NAV_PLAN_CPP_DIR}"
     "${_LOCAL_PLANNER_CPP_DIR}"
+    ${_EP_DIRS}
     "${_NAV_KERNEL_DIR}/include")
   target_compile_definitions(test_assisted_teleop PRIVATE
     LINGTU_TEST_PATH_LIBRARY="${_NAV_CPP_DIR}/../local/paths")
@@ -607,16 +1256,17 @@ if(TARGET GTest::gtest_main AND EXISTS "${_NAV_TESTS_DIR}/test_local_planner_cor
 endif()
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/traversability_dds.cpp")
-  add_executable(lingtu_traversability_dds
-    traversability_dds.cpp
-    rolling_exploration_map.cpp)
+add_executable(lingtu_traversability_dds
+    traversability/traversability_dds.cpp
+    traversability/rolling_exploration_map.cpp
+  )
 
   target_include_directories(lingtu_traversability_dds PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
     "${_LINGTU_ROOT}/src/maps/include"
-    "${_NAV_KERNEL_DIR}/include")
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
 
   target_link_libraries(lingtu_traversability_dds PRIVATE
     lingtu_dds_messages
@@ -636,23 +1286,20 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/traversability_dds.cpp")
   lingtu_nav_enable_performance(lingtu_traversability_dds)
   set_target_properties(lingtu_traversability_dds PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-else()
-  message(STATUS "Skipping lingtu_traversability_dds: optional source is missing")
-endif()
 
-lingtu_sources_exist(_HAS_EXPLORE_SOURCES
-  "${CMAKE_CURRENT_LIST_DIR}/explore_dds.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/explore_input.cpp"
-  "${_EXPLORE_CPP_DIR}/frontier.cpp"
-  "${_EXPLORE_CPP_DIR}/keypose_graph.cpp"
-  "${_EXPLORE_CPP_DIR}/tare_policy.cpp")
 
-if(_HAS_EXPLORE_SOURCES)
-  add_executable(lingtu_explore_dds
-    explore_dds.cpp
-    explore_control.cpp
-    explore_input.cpp
-    status_snapshot_file_writer.cpp
+add_executable(lingtu_explore_dds
+    explore/explore_dds.cpp
+    explore/explore_control.cpp
+    explore/exploration_run_event_outbox.cpp
+    explore/exploration_run_lifecycle.cpp
+    explore/directed_exploration_intent.cpp
+    explore/explore_goal_lifecycle.cpp
+    explore/explore_input.cpp
+    explore/saved_coverage_grid.cpp
+    plan/active_occupancy_gate.cpp
+    plan/active_map_declared_identity.cpp
+    status/status_snapshot_file_writer.cpp
     "${_EXPLORE_CPP_DIR}/frontier.cpp"
     "${_EXPLORE_CPP_DIR}/keypose_graph.cpp"
     "${_EXPLORE_CPP_DIR}/tare_policy.cpp")
@@ -661,11 +1308,15 @@ if(_HAS_EXPLORE_SOURCES)
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
     "${_EXPLORE_CPP_DIR}"
-    "${_NAV_KERNEL_DIR}/include")
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
 
   target_link_libraries(lingtu_explore_dds PRIVATE
     lingtu_nav_client
     lingtu_dds_messages
+    lingtu_maps
+    lingtu_nav_far
     CycloneDDS::ddsc
     lingtu_dds_qos_profiles
     pthread)
@@ -676,17 +1327,15 @@ if(_HAS_EXPLORE_SOURCES)
     -Wpedantic)
   set_target_properties(lingtu_explore_dds PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-else()
-  message(STATUS "Skipping lingtu_explore_dds: optional explore sources are incomplete")
-endif()
 
 if(LINGTU_NAV_CPP_BUILD_TESTS)
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_explore_control.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_control.cpp")
   add_executable(test_explore_control
-    test_explore_control.cpp
-    explore_control.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_control.cpp"
+    explore/explore_control.cpp)
   target_include_directories(test_explore_control PRIVATE
-    "${_LINGTU_ROOT}/src")
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
   target_compile_options(test_explore_control PRIVATE
     -Wall
     -Wextra
@@ -695,15 +1344,69 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_explore_control.cpp")
   add_test(NAME test_explore_control COMMAND test_explore_control)
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/test_explore_input.cpp")
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_exploration_run_event_outbox.cpp")
+  add_executable(test_exploration_run_event_outbox
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_exploration_run_event_outbox.cpp"
+    explore/exploration_run_event_outbox.cpp
+    explore/exploration_run_lifecycle.cpp)
+  target_include_directories(test_exploration_run_event_outbox PRIVATE
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
+  target_compile_options(test_exploration_run_event_outbox PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -UNDEBUG)
+  add_test(
+    NAME test_exploration_run_event_outbox
+    COMMAND test_exploration_run_event_outbox)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_directed_exploration_intent.cpp")
+  add_executable(test_directed_exploration_intent
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_directed_exploration_intent.cpp"
+    explore/directed_exploration_intent.cpp)
+  target_include_directories(test_directed_exploration_intent PRIVATE
+    "${_LINGTU_ROOT}/src"
+    "${_EXPLORE_CPP_DIR}"
+    ${_EP_DIRS})
+  target_compile_options(test_directed_exploration_intent PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -UNDEBUG)
+  add_test(
+    NAME test_directed_exploration_intent
+    COMMAND test_directed_exploration_intent)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_goal_lifecycle.cpp")
+  add_executable(test_explore_goal_lifecycle
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_goal_lifecycle.cpp"
+    explore/explore_goal_lifecycle.cpp)
+  target_include_directories(test_explore_goal_lifecycle PRIVATE
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
+  target_compile_options(test_explore_goal_lifecycle PRIVATE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -UNDEBUG)
+  add_test(
+    NAME test_explore_goal_lifecycle
+    COMMAND test_explore_goal_lifecycle)
+endif()
+
+if(EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_input.cpp")
   add_executable(test_explore_input
-    test_explore_input.cpp
-    explore_input.cpp)
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_explore_input.cpp"
+    explore/explore_input.cpp)
   target_include_directories(test_explore_input PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
     "${_LINGTU_ROOT}/src"
     "${_EXPLORE_CPP_DIR}"
-    "${_NAV_KERNEL_DIR}/include")
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
   target_link_libraries(test_explore_input PRIVATE
     lingtu_dds_messages)
   target_compile_options(test_explore_input PRIVATE
@@ -730,13 +1433,13 @@ if(EXISTS "${_EXPLORE_CPP_DIR}/test_tare_policy.cpp")
   add_test(NAME test_tare_policy COMMAND test_tare_policy)
 endif()
 endif()
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/nav_control.cpp")
-  add_executable(lingtu_nav_control
-    nav_control.cpp)
+add_executable(lingtu_nav_control
+    motion/nav_control.cpp)
 
   target_include_directories(lingtu_nav_control PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
-    "${_LINGTU_ROOT}/src")
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
 
   target_link_libraries(lingtu_nav_control PRIVATE
     lingtu_nav_client
@@ -751,17 +1454,14 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/nav_control.cpp")
     -Wpedantic)
   set_target_properties(lingtu_nav_control PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-else()
-  message(STATUS "Skipping lingtu_nav_control: optional source is missing")
-endif()
 
-if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/motion_mock_dds.cpp")
-  add_executable(lingtu_motion_mock_dds
-    motion_mock_dds.cpp)
+add_executable(lingtu_motion_mock_dds
+    motion/motion_mock_dds.cpp)
 
   target_include_directories(lingtu_motion_mock_dds PRIVATE
     "${CMAKE_CURRENT_BINARY_DIR}"
-    "${_LINGTU_ROOT}/src")
+    "${_LINGTU_ROOT}/src"
+    ${_EP_DIRS})
 
   target_link_libraries(lingtu_motion_mock_dds PRIVATE
     lingtu_dds_messages
@@ -775,9 +1475,6 @@ if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/motion_mock_dds.cpp")
     -Wpedantic)
   set_target_properties(lingtu_motion_mock_dds PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
-else()
-  message(STATUS "Skipping lingtu_motion_mock_dds: optional source is missing")
-endif()
 
 set(_LINGTU_NAV_ENDPOINT_RUNTIME_TARGETS)
 foreach(_target IN ITEMS

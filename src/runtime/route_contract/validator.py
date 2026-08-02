@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from message.dds import dds_topic_name, topic_spec
 
 from .loader import REPO_ROOT, load_route_contract
-from .model import RouteBackend, RouteContract
+from .model import RouteBackend, RouteContract, TopicContract
 
 _PORT_BINDING_DIRECTIONS = frozenset({"in", "out"})
 _PORT_BINDING_BOUNDARIES = frozenset({"module", "endpoint", "native"})
@@ -49,7 +48,7 @@ def validate_route_contract(contract: RouteContract | None = None, *, route: str
             issues.append(_issue("topic_name_invalid", f"topic {topic!r} must start with /", topic))
         if not spec.producer:
             issues.append(_issue("topic_producer_missing", f"topic {topic} has no producer", topic))
-        if not spec.consumers:
+        if not spec.consumers and not _is_external_diagnostics_stream(spec):
             issues.append(_issue("topic_consumers_missing", f"topic {topic} has no consumers", topic))
         issues.extend(_validate_port_bindings(topic, spec.port_bindings))
 
@@ -216,6 +215,28 @@ def _read_cpp_topic_header() -> str:
 
 def _valid_topic_name(topic: str) -> bool:
     return topic.startswith("/") and "//" not in topic and len(topic) > 1
+
+
+def _is_external_diagnostics_stream(spec: TopicContract) -> bool:
+    """Allow intentionally output-only observability streams, never commands."""
+
+    role = str(spec.role).strip().lower()
+    schema = str(spec.schema).strip().lower()
+    observability_role = role.endswith(
+        ("_status", "_telemetry", "_diagnostic", "_diagnostics", "_event", "_events")
+    )
+    observability_schema = schema.endswith(
+        ("_status", "_telemetry", "_diagnostic", "_diagnostics", "_event", "_events")
+    )
+    output_only_boundary = bool(spec.port_bindings) and all(
+        binding.direction == "out" for binding in spec.port_bindings
+    )
+    return bool(
+        spec.external_diagnostics_subscribable
+        and observability_role
+        and observability_schema
+        and output_only_boundary
+    )
 
 
 def _issue(code: str, message: str, scope: str = "route", severity: str = "error") -> RouteIssue:

@@ -9,25 +9,27 @@ This package is deliberately separate from `src/runtime/blueprint.py`:
 ```text
 runtime.blueprint       = generic Module graph mechanism
 lingtu.assembly         = LingTu product recipes
-runtime.graph.RuntimePlan = native process lifecycle plan
-lingtu.launcher         = external RuntimePlan executor
+runtime.graph.ProcessSpec = env-resolved process data
+lingtu.control          = Product operation boundary
+lingtu.systemd          = internal ProductControl process executor
 ```
 
 ## Main Path
 
 ```text
-resolved profile
-  -> profile_builder.compile_product()
+env + Product
+  -> profile_builder.compile_run_plan()
        -> products/ -> stacks/ + wires/ -> Blueprint
-       -> Runtime Graph -> RuntimePlan
-  -> Product(Blueprint, RuntimePlan)
-       -> Product.build() -> Blueprint.build() -> SystemHandle
-       -> Launcher.apply() -> native processes
+       -> Runtime Graph env -> concrete ProcessSpec values
+  -> RunPlan(identity, launch, host, checks)
+       -> ProductControl -> fingerprinted RunPlan + transient session
+            -> Host verifies RunPlan -> Blueprint.build() -> SystemHandle
+            -> internal SystemdRunner.apply(RunPlan) -> native processes
 ```
 
 | Path | Owns |
 | --- | --- |
-| `profile_builder.py` | Compile one resolved profile and endpoint into one Product containing Blueprint + RuntimePlan. |
+| `profile_builder.py` | Build a local Profile graph or resolve one Product+env into a RunPlan. |
 | `products/` | Top-level product variants and mode composition. |
 | `stacks/` | Small reusable groups of Module declarations and constructor config. |
 | `wires/` | Explicit cross-stack port connections. |
@@ -53,10 +55,10 @@ resolved profile
 - hiding product policy inside Module constructors.
 
 Native processes such as LiDAR, SLAM, traversability, navigation, and the
-hardware driver are selected by product/endpoint contracts and executed through
-`lingtu.launcher`. `RuntimePlan` itself is data and never executes a command.
-Assembly may add typed DDS adapters to the Module graph, but it does not own
-those process lifecycles.
+hardware driver are selected by Product+env contracts and executed through
+`lingtu.control.ProductControl` and its internal `lingtu.systemd` runner. Assembly may add typed
+DDS adapters to the Module graph, but only ProductControl performs process lifecycle
+side effects.
 
 ## Dependency Rule
 

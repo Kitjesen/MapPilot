@@ -6,7 +6,7 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from runtime.contracts import CAMERA_COMPAT_ALIAS, CAMERA_ROLE
+from runtime.contracts import CAMERA_ROLE
 
 MEDIA_STATUS_SCHEMA_VERSION = 1
 CAMERA_STREAM_STALE_MS = 5000.0
@@ -43,10 +43,7 @@ def _find_module(gw: Any, token: str) -> Any | None:
 
 def _find_camera(gw: Any) -> Any | None:
     modules = getattr(gw, "_all_modules", {}) or {}
-    for name in (CAMERA_ROLE, "CameraModule", CAMERA_COMPAT_ALIAS):
-        if name in modules:
-            return modules[name]
-    return _find_module(gw, CAMERA_COMPAT_ALIAS) or _find_module(gw, CAMERA_ROLE)
+    return modules.get(CAMERA_ROLE)
 
 
 def _safe_health(module: Any) -> tuple[dict[str, Any], str | None]:

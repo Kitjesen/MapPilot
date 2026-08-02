@@ -5,8 +5,8 @@
 # Usage:
 #   bash tests/scripts/test_semantic_nav.sh [--unit-only]
 #
-# This is a repo-layout smoke script for the current Module-First Python
-# semantic navigation stack under src/perception/ and src/decision/. ROS2/Flutter legacy checks were removed
+# This is a repo-layout smoke script for the current Host-side Python semantic
+# stack under src/perception/ and src/decision/. ROS2/Flutter legacy checks were removed
 # from this relocated script because those surfaces no longer own the active
 # decision/perception runtime contract.
 # ============================================================

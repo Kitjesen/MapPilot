@@ -10,12 +10,8 @@ should consume their Module ports, not ROS topics or vendor SDK APIs directly.
   the `lingtu-driver` Brainstem control lease, and calls the checked
   Brainstem `RobotControl.WalkChecked` RPC. It never enables motors or changes
   pose.
-- `han_dog_module.py` - compatibility in-process `ThunderDriver`, registered
-  as `("driver", "thunder")` for lite/local Module graphs.
-- `connection.py` - **DEPRECATED**: `NovaDogConnection` legacy gRPC bridge.
-  Superseded by `ThunderDriver`. Kept only for backward compatibility.
-- `blueprints.py` - Legacy blueprint helpers (`nova_dog_basic`, `nova_dog_nav`,
-  `nova_dog_semantic`).
+- `han_dog_module.py` - local/Host `ThunderDriver`, registered as
+  `("driver", "thunder")` for lite and development Module graphs.
 
 ## `camera/` - Orbbec RGB-D Camera
 
@@ -23,24 +19,22 @@ should consume their Module ports, not ROS topics or vendor SDK APIs directly.
   starts/monitors the native C++ capture service and republishes validated SHM
   frames into `color_image`, `depth_image`, `camera_info`, and `alive` ports.
   Registered as `("camera", "orbbec")`.
-- `dds_module.py` - `DdsCameraModule`: compatibility registry name for the
-  SHM/DDS reader path. Full image payloads use POSIX SHM by default; typed DDS
-  image publishing is opt-in diagnostics/compatibility, while CameraInfo can
+- `dds_module.py` - `DdsCameraModule`, registered as `("camera", "dds")`,
+  reads the native SHM/DDS path. Full image payloads use POSIX SHM by default;
+  typed DDS image publishing is opt-in diagnostics, while CameraInfo can
   remain on DDS.
-- `native_camera_module.py` - compatibility re-export of
-  `OrbbecNativeCameraModule` for old import paths.
 - `native/capture_process.cpp` - no-ROS Orbbec SDK capture process.
 - `native/camera.cpp`, `native/camera_dds.cpp` - C++ camera and DDS
   publishing sources; `native/shm_frame_ring.hpp` defines the binary SHM ring.
 - `native/sdk.cpp` / `sdk.hpp` - C++ SDK wrapper.
 - `impl/orbbec/camera.cpp` / `camera.hpp` - Orbbec SDK C++ implementation.
 - `deps/orbbec/OrbbecSDK/` - preferred no-ROS Orbbec SDK checkout.
-- `deps/orbbec/OrbbecSDK_ROS2/` - temporary ROS2 wrapper fallback,
-  quarantined below the camera driver.
+- `deps/orbbec/OrbbecSDK_ROS2/` - quarantined vendor-source fallback used only
+  to locate the bundled Orbbec SDK when the standalone SDK checkout is absent.
 
-The ROS2 `orbbec_camera` launch remains a compatibility path only. Product
-dataflow should prefer the native Orbbec SDK capture plus SHM rings; do not add
-a Python DDS image reader to the main camera path.
+The camera runtime has no ROS2 bridge or Python DDS-reader fallback. Product
+dataflow selects the canonical `camera` role with the `orbbec` or `dds`
+backend.
 
 ## `lidar/` - Livox MID-360 LiDAR
 
@@ -48,14 +42,12 @@ a Python DDS image reader to the main camera path.
   `("lidar", "mid360")`. Delegates to a `LidarSource` protocol. Ports:
   `scan`, `raw_scan`, `imu`, `alive`.
 - `native/sdk.py` - `LidarSource` protocol and factory used by `LidarModule`.
+- `native/model.py` - source lifecycle and health status model.
 - `sdk2_stream/main.cpp` - C++ Livox SDK2 stream executable (product hot path).
 - `impl/livox/sdk2_stream_source.py` - Python-managed SDK2 process source for
   local runs.
 - `api/frames.py` - `LivoxPointFrame` and `POINT_DTYPE` re-exports.
 - `api/frame_stream.py` - `LidarFrameStream` ring buffer.
-- `compat/lidar.py` - legacy `Lidar` class (DDS subscriber interface).
-- `compat/dds.py` - Livox CustomMsg + Imu DDS IDL types for CycloneDDS.
-- `compat/dds_adapter.py` - `LivoxDdsAdapter` for DDS topic subscription.
 - `native/dds_module.hpp` / `dds_module.cpp` - C++ native DDS publisher.
 - `deps/livox/Livox-SDK2/` - official Livox SDK2 source.
 - The former ROS2 Livox compatibility fallback has been removed. Product

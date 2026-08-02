@@ -47,17 +47,19 @@ void writeRecord(
   header.format = format;
   header.timestamp_s = std::chrono::duration<double>(
       std::chrono::system_clock::now().time_since_epoch()).count();
-  header.fx = 500.0;
-  header.fy = 501.0;
-  header.cx = 1.0;
-  header.cy = 1.5;
-  header.depth_scale_m = 0.001;
+  if (kind == 1) {
+    header.fx = 500.0;
+    header.fy = 501.0;
+    header.cx = 1.0;
+    header.cy = 1.5;
+    header.depth_scale_m = 0.001;
+    header.dist_k1 = 0.1;
+    header.dist_k2 = 0.2;
+    header.dist_p1 = 0.3;
+    header.dist_p2 = 0.4;
+    header.dist_k3 = 0.5;
+  }
   header.payload_size = payload_size;
-  header.dist_k1 = 0.1;
-  header.dist_k2 = 0.2;
-  header.dist_p1 = 0.3;
-  header.dist_p2 = 0.4;
-  header.dist_k3 = 0.5;
   std::cout.write(reinterpret_cast<const char*>(&header), sizeof(header));
   if (payload_size > 0) {
     std::cout.write(static_cast<const char*>(payload), payload_size);

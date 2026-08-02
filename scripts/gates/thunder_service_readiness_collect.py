@@ -24,18 +24,22 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from runtime.config import load_config
-from runtime.service_catalogs.thunder import (
-    thunder_field_dds_topics,
-    thunder_field_native_binaries,
-    thunder_field_readiness_units,
-    thunder_field_status_files,
+from diagnostics.field.teleop_avoid_preflight import STAGES as TELEOP_AVOID_STAGES  # noqa: E402
+from diagnostics.field.teleop_avoid_preflight import evaluate_teleop_avoid_preflight  # noqa: E402
+from lingtu.product_lock import resolve_current_run_path  # noqa: E402
+from lingtu.run_plan import RunPlan  # noqa: E402
+from runtime.config import load_config  # noqa: E402
+from runtime.service_catalogs.thunder import (  # noqa: E402
+    thunder_runtime_dds_topics,
+    thunder_runtime_native_binaries,
+    thunder_runtime_units,
+    thunder_runtime_status_files,
 )
 
-SERVICES = thunder_field_readiness_units()
-STATUS_FILES = thunder_field_status_files()
-DDS_TOPICS = thunder_field_dds_topics()
-NATIVE_BINARIES = thunder_field_native_binaries()
+SERVICES = thunder_runtime_units()
+STATUS_FILES = thunder_runtime_status_files()
+DDS_TOPICS = thunder_runtime_dds_topics()
+NATIVE_BINARIES = thunder_runtime_native_binaries()
 
 
 NATIVE_BINARY_DEFAULTS: dict[str, str] = {name: item["path"] for name, item in NATIVE_BINARIES.items()}
@@ -171,6 +175,67 @@ def collect_status_files() -> dict[str, Any]:
                 entry["raw"] = text[:4096]
         files[name] = entry
     return files
+
+
+def _current_run_path() -> Path:
+    return resolve_current_run_path(environment=os.environ)
+
+
+def collect_current_run() -> dict[str, Any]:
+    """Read and cryptographically verify the current RunPlan record."""
+
+    current_path = _current_run_path()
+    result: dict[str, Any] = {
+        "path": str(current_path),
+        "exists": current_path.is_file(),
+        "state": {},
+        "run_plan_path": "",
+        "plan_exists": False,
+        "plan_verified": False,
+        "verified_fingerprint": "",
+        "run_plan": {},
+        "error": "",
+    }
+    if not result["exists"]:
+        result["error"] = "current_run_missing"
+        return result
+
+    try:
+        state = json.loads(current_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        result["error"] = f"current_run_invalid:{type(exc).__name__}"
+        return result
+    if not isinstance(state, dict):
+        result["error"] = "current_run_not_object"
+        return result
+    result["state"] = state
+
+    raw_run_plan_path = str(state.get("run_plan_path") or "").strip()
+    if not raw_run_plan_path:
+        result["error"] = "current_run_run_plan_path_missing"
+        return result
+    run_plan_path = Path(raw_run_plan_path).expanduser()
+    if not run_plan_path.is_absolute():
+        run_plan_path = current_path.parent / run_plan_path
+    result["run_plan_path"] = str(run_plan_path)
+    result["plan_exists"] = run_plan_path.is_file()
+    if not result["plan_exists"]:
+        result["error"] = "current_run_plan_missing"
+        return result
+
+    try:
+        run_plan = RunPlan.load(run_plan_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        result["error"] = f"current_run_plan_invalid:{type(exc).__name__}:{exc}"
+        return result
+    result.update(
+        {
+            "plan_verified": True,
+            "verified_fingerprint": run_plan.fingerprint,
+            "run_plan": run_plan.as_dict(),
+        }
+    )
+    return result
 
 
 def collect_native_binaries() -> dict[str, Any]:
@@ -650,12 +715,24 @@ def summarize_report(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_report(*, gateway_url: str, dds_seconds: float = 0.0, dds_domain: int = 0) -> dict[str, Any]:
+def build_report(
+    *,
+    gateway_url: str,
+    dds_seconds: float = 0.0,
+    dds_domain: int = 0,
+    teleop_avoid_stage: str | None = None,
+    status_max_age_s: float = DRIVER_STATUS_MAX_AGE_S,
+) -> dict[str, Any]:
     processes = collect_processes()
     dds = collect_dds(seconds=dds_seconds, domain_id=dds_domain)
     systemd = collect_systemd()
     status_files = collect_status_files()
     native_binaries = collect_native_binaries()
+    driver_readiness = collect_driver_readiness(
+        systemd=systemd,
+        native_binaries=native_binaries,
+        status_files=status_files,
+    )
     report = {
         "schema": "lingtu.thunder.service_readiness.v1",
         "stamp_s": time.time(),
@@ -674,13 +751,25 @@ def build_report(*, gateway_url: str, dds_seconds: float = 0.0, dds_domain: int 
             dds=dds,
             processes=processes,
         ),
-        "driver": collect_driver_readiness(
-            systemd=systemd,
-            native_binaries=native_binaries,
-            status_files=status_files,
-        ),
+        "driver": driver_readiness,
     }
     report["summary"] = summarize_report(report)
+    if teleop_avoid_stage is not None:
+        current_run = collect_current_run()
+        report["current_run"] = current_run
+        report["teleop_avoid_preflight"] = evaluate_teleop_avoid_preflight(
+            {
+                "current_run": current_run,
+                "status_files": status_files,
+                "driver_readiness": driver_readiness,
+                "expected_brainstem_host": os.environ.get(
+                    "LINGTU_BRAINSTEM_EXPECTED_HOST", ""
+                )
+                or os.environ.get("LINGTU_BRAINSTEM_HOST", ""),
+            },
+            stage=teleop_avoid_stage,
+            status_max_age_s=status_max_age_s,
+        )
     return report
 
 
@@ -689,6 +778,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gateway-url", default="http://127.0.0.1:5050")
     parser.add_argument("--dds-seconds", type=float, default=0.0)
     parser.add_argument("--dds-domain", type=int, default=0)
+    parser.add_argument(
+        "--teleop-avoid-stage",
+        choices=sorted(TELEOP_AVOID_STAGES),
+        help="evaluate the selected read-only teleop_avoid gate",
+    )
+    parser.add_argument(
+        "--status-max-age-s",
+        type=float,
+        default=DRIVER_STATUS_MAX_AGE_S,
+        help="maximum age for native status snapshots used by the selected gate",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="return non-zero when the selected gate (or general summary) is blocked",
+    )
     parser.add_argument("--json-out", type=Path)
     parser.add_argument("--pretty", action="store_true")
     return parser.parse_args()
@@ -700,13 +805,20 @@ def main() -> int:
         gateway_url=args.gateway_url,
         dds_seconds=args.dds_seconds,
         dds_domain=args.dds_domain,
+        teleop_avoid_stage=args.teleop_avoid_stage,
+        status_max_age_s=args.status_max_age_s,
     )
     text = json.dumps(report, indent=2 if args.pretty else None, sort_keys=True)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(text + "\n", encoding="utf-8")
     print(text)
-    return 0
+    selected_gate = (
+        report.get("teleop_avoid_preflight")
+        if args.teleop_avoid_stage is not None
+        else report.get("summary")
+    )
+    return 1 if args.strict and not bool((selected_gate or {}).get("ok")) else 0
 
 
 if __name__ == "__main__":

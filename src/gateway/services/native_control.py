@@ -17,12 +17,29 @@ from gateway.services.command_boundary import invoke_navigation_command
 from gateway.services.teleop import resolve_native_command_boundary
 
 
-def endpoint_only_enabled() -> bool:
-    """Resolve the native command boundary through the shared startup policy."""
+def endpoint_only_enabled(owner: Any | None = None) -> bool:
+    """Resolve the compiled command boundary."""
+
+    command_output_mode = ""
+    if owner is not None:
+        command_output_mode = str(
+            getattr(owner, "_compiled_command_output_mode", "") or ""
+        ).strip()
+        if not command_output_mode:
+            modules = getattr(owner, "_all_modules", None)
+            if isinstance(modules, dict):
+                for module in modules.values():
+                    command_output_mode = str(
+                        getattr(module, "_compiled_command_output_mode", "") or ""
+                    ).strip()
+                    if command_output_mode:
+                        break
 
     return resolve_native_command_boundary(
-        command_output_mode=os.environ.get("LINGTU_COMMAND_OUTPUT_MODE", ""),
-        legacy_dds_env=os.environ.get("LINGTU_TELEOP_CMD_DDS"),
+        command_output_mode=(
+            command_output_mode
+            or os.environ.get("LINGTU_COMMAND_OUTPUT_MODE", "")
+        ),
     )
 
 
@@ -81,7 +98,7 @@ def _deliver(owner: Any, method: str, **kwargs: Any) -> bool:
     return invoke_navigation_command(
         owner,
         method,
-        required=endpoint_only_enabled(),
+        required=endpoint_only_enabled(owner),
         **kwargs,
     )
 

@@ -12,7 +12,6 @@ def test_voice_turn_accepts_askme_payload_and_publishes_trimmed_unicode(monkeypa
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     published: list[str] = []
@@ -52,13 +51,55 @@ def test_voice_turn_accepts_askme_payload_and_publishes_trimmed_unicode(monkeypa
     assert published == ["前往三号泵站"]
 
 
+@pytest.mark.parametrize("malformed_ack", ["true", 1])
+def test_voice_turn_does_not_coerce_truthy_non_boolean_command_ack(
+    monkeypatch,
+    malformed_ack,
+):
+    from fastapi.testclient import TestClient
+
+    from gateway.gateway_module import GatewayModule
+    from gateway.services.control_commands import ControlCommandService
+
+    monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
+    monkeypatch.setattr(
+        ControlCommandService,
+        "run_motion_guarded_command",
+        lambda *args, **kwargs: {
+            "ok": malformed_ack,
+            "submitted": malformed_ack,
+            "status": "submitted",
+            "command": {
+                "name": "instruction",
+                "accepted": malformed_ack,
+                "replay": False,
+                "request_id": "voice-malformed-ack",
+                "client_id": "askme.voice",
+                "ts": 1.0,
+            },
+        },
+    )
+    gateway = GatewayModule()
+    gateway.setup()
+
+    response = TestClient(gateway._app).post(
+        "/api/v1/voice/turns",
+        json={"text": "move forward", "operator_id": "askme.voice"},
+        headers={"X-Request-Id": "voice-malformed-ack"},
+    )
+
+    assert response.status_code == 200
+    turn = response.json()["turn"]
+    assert turn["accepted"] is False
+    assert turn["submitted"] is False
+
+
 def test_voice_turn_rejects_mismatched_operator_identity(monkeypatch):
     from fastapi.testclient import TestClient
 
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
 
@@ -78,7 +119,6 @@ def test_voice_turn_replays_idempotency_key_without_republishing(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     published: list[str] = []
@@ -107,13 +147,47 @@ def test_voice_turn_replays_idempotency_key_without_republishing(monkeypatch):
     assert published == ["inspect the loading bay"]
 
 
+def test_voice_turn_rejects_changed_payload_for_the_same_idempotency_key(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from gateway.gateway_module import GatewayModule
+
+    monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
+    gateway = GatewayModule()
+    gateway.setup()
+    published: list[str] = []
+    gateway.instruction.subscribe(published.append)
+    client = TestClient(gateway._app)
+    headers = {
+        "Idempotency-Key": "voice-turn-conflict",
+        "X-Operator-Id": "askme.operator",
+    }
+
+    first = client.post(
+        "/api/v1/voice/turns",
+        json={"text": "inspect bay one", "submit": True},
+        headers=headers,
+    )
+    conflict = client.post(
+        "/api/v1/voice/turns",
+        json={"text": "inspect bay two", "submit": True},
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert conflict.status_code == 409
+    assert conflict.json()["error"] == "idempotency_conflict"
+    assert conflict.json()["command"]["accepted"] is False
+    assert conflict.json()["command"]["client_id"] == "askme.operator"
+    assert published == ["inspect bay one"]
+
+
 def test_voice_turn_replay_precedes_changed_safety_state(monkeypatch):
     from fastapi.testclient import TestClient
 
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     published: list[str] = []
@@ -144,7 +218,6 @@ def test_voice_turn_submit_false_is_a_handled_nonexecuting_preview(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
 
@@ -175,7 +248,6 @@ def test_voice_turn_safety_rejection_is_handled_without_publish(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     with gateway._state_lock:
@@ -207,7 +279,6 @@ def test_voice_turn_lease_rejection_is_handled_without_publish(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     assert gateway._lease.acquire("operator-a", 30.0) is True
@@ -239,7 +310,6 @@ def test_estop_get_combines_safety_state_and_gateway_mode(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     with gateway._state_lock:
@@ -260,7 +330,6 @@ def test_estop_post_is_idempotent_and_uses_local_compatibility(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     client = TestClient(gateway._app)
@@ -295,7 +364,6 @@ def test_estop_false_is_rejected_without_clearing_or_publishing(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     with gateway._state_lock:
@@ -320,7 +388,6 @@ def test_voice_and_estop_openapi_contracts_are_typed(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     openapi = gateway._app.openapi()
@@ -330,6 +397,9 @@ def test_voice_and_estop_openapi_contracts_are_typed(monkeypatch):
     assert voice_post["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith("/VoiceTurnRequest")
     assert voice_post["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/VoiceTurnResponse"
+    )
+    assert voice_post["responses"]["409"]["content"]["application/json"]["schema"]["$ref"].endswith(
+        "/GatewayErrorResponse"
     )
     assert estop_path["get"]["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith(
         "/SafetyEstopResponse"
@@ -345,7 +415,6 @@ def test_voice_and_estop_reject_oversized_identity_headers(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_COMMAND_OUTPUT_MODE", raising=False)
-    monkeypatch.delenv("LINGTU_TELEOP_CMD_DDS", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     client = TestClient(gateway._app)

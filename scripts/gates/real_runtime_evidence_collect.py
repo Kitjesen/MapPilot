@@ -2,7 +2,7 @@
 """Collect read-only Thunder field runtime evidence.
 
 This script does not publish goals, cmd_vel, or any robot-control topic. The
-default collector polls Gateway's Module-first read-only dataflow endpoints. A
+default collector polls Gateway's Product runtime read-only dataflow endpoints. A
 legacy ROS 2 graph collector remains available via ``--collector ros2`` for
 cross-checks.
 """

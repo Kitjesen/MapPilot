@@ -180,10 +180,6 @@ def _read_exact(stream: BinaryIO, size: int) -> bytes | None:
     return bytes(chunks)
 
 
-# Deprecated alias: "camera_bridge" is a legacy registry name kept only for
-# backward compatibility with old code/blueprints. New code should use the
-# short "camera" role (CAMERA_ROLE) below.
-@register("camera_bridge", "default", description="Native Orbbec SDK camera stream")
 @register(CAMERA_ROLE, CAMERA_BACKEND_ORBBEC, description="Orbbec RGB-D camera stream")
 class OrbbecNativeCameraModule(Module, layer=1):
     """Publish Orbbec RGB-D frames without ROS2."""

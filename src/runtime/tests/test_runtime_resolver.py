@@ -1,52 +1,52 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 import lingtu.assembly.graph as profile_graph
-from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS, RuntimeEndpointError
-from runtime.profiles.catalog.runtime_paths import (
-    DEFAULT_PLANNING_FRAME_ID,
-    RUNTIME_ODOM_FRAME_ID,
+from lingtu.assembly.products import (
+    FIELD_PRODUCT_HOST_DEFAULTS,
+    resolve_product_host_config,
+    resolve_product_host_runtime,
 )
-from runtime.profiles.endpoints import resolve_runtime_run_spec
+from runtime.profiles.catalog.runtime_paths import DEFAULT_PLANNING_FRAME_ID
+from runtime.profiles.profile_adapters import resolve_runtime_run_spec
 from runtime.profiles.resolver import (
-    PROFILE_ALIASES,
     canonical_profile_name,
     resolve_profile_config,
     resolve_runtime_config,
 )
 
 
-def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> None:
-    resolved = resolve_runtime_config("nav")
+def _resolve_named_runtime(name: str, **kwargs):
+    if name in FIELD_PRODUCT_HOST_DEFAULTS:
+        return resolve_product_host_runtime(
+            name,
+            kwargs.pop("env", "real"),
+            **kwargs,
+        )
+    return resolve_runtime_config(name, **kwargs)
 
-    assert resolved.runtime_endpoint == "thunder_field"
-    assert resolved.robot_preset == "thunder"
-    assert "_default_robot" not in resolved.product_config
-    assert "slam_profile" not in resolved.product_config
-    assert "command_output_mode" not in resolved.product_config
-    assert "localization_adapter" not in resolved.product_config
-    assert {"slam_profile", "detector", "encoder"}.isdisjoint(resolved.robot_config)
-    assert resolved.robot_runtime_config["slam_profile"] == "localizer"
-    assert resolved.robot_runtime_config["detector"] == "bpu"
-    assert resolved.robot_runtime_config["encoder"] == "mobileclip"
-    assert "slam_profile" not in resolved.endpoint_config
-    assert resolved.endpoint_config["localization_adapter"] == "cpp_slam_status"
-    assert "nav_in_adapter" not in resolved.endpoint_config
-    assert "nav_out_adapter" not in resolved.endpoint_config
-    assert resolved.endpoint_config["native_navigation_endpoint"] == "lingtu-nav-dds"
-    assert resolved.endpoint_config["enable_robot_driver"] is False
-    assert resolved.endpoint_config["enable_hw"] is False
-    assert resolved.endpoint_config["enable_lidar"] is False
-    assert resolved.endpoint_config["enable_camera"] is True
-    assert resolved.endpoint_config["camera_backend"] == "dds"
-    assert resolved.endpoint_config["command_output_mode"] == "endpoint_only"
-    assert resolved.endpoint_config["hardware_control_boundary"] == "driver"
-    assert "enable_nav_in" not in resolved.endpoint_config
-    assert "enable_nav_out" not in resolved.endpoint_config
-    assert resolved.endpoint_config["enable_map_out"] is False
+
+def _resolve_named_config(name: str, **kwargs):
+    if name in FIELD_PRODUCT_HOST_DEFAULTS:
+        return resolve_product_host_config(
+            name,
+            kwargs.pop("env", "real"),
+            **kwargs,
+        )
+    return resolve_profile_config(name, **kwargs)
+
+
+def test_profile_resolver_rejects_field_products() -> None:
+    with pytest.raises(KeyError, match="unknown profile: nav"):
+        resolve_runtime_config("nav")
+
+
+def test_real_env_applies_native_host_communication_config() -> None:
+    resolved = _resolve_named_runtime("nav")
+
+    assert resolved.product == "nav"
+    assert resolved.env == "real"
     assert resolved.config["slam_profile"] == "localizer"
     assert resolved.config["localization_adapter"] == "cpp_slam_status"
     assert "nav_in_adapter" not in resolved.config
@@ -62,50 +62,21 @@ def test_resolver_applies_default_hardware_endpoint_after_robot_defaults() -> No
     assert "enable_nav_in" not in resolved.config
     assert "enable_nav_out" not in resolved.config
     assert resolved.config["enable_map_out"] is False
-    assert resolved.config["_runtime_endpoint"] == "thunder_field"
+    assert resolved.config["_env"] == "real"
+    assert "_profile_adapter" not in resolved.config
+    assert "_driver_backend" not in resolved.config
     assert resolved.config["robot"] == "thunder"
     assert resolved.config["detector"] == "bpu"
-    spec = resolve_runtime_run_spec("nav", resolved.config)
-    assert spec.endpoint == "thunder_field"
-    assert spec.module_transport == "local"
-    assert spec.endpoint_transport == "dds"
-    assert spec.endpoint_contract == "thunder_field_dds_v1"
-    assert spec.route_contract == "robot"
-    assert spec.localization_adapter == "cpp_slam_status"
-    assert spec.global_planner == "octoplanner3d"
-    assert spec.fallback_global_planners == ()
-    assert spec.planner_latency_budget_ms == 800
-    assert spec.plan_safety_policy == "reject"
-    assert spec.autonomy_backends == {
-        "terrain_backend": "nanobind",
-        "local_planner_backend": "nanobind",
-        "path_follower_backend": "nav_kernel",
-    }
-    assert spec.env["LINGTU_MODULE_TRANSPORT"] == "local"
-    assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
-    assert spec.env["LINGTU_ENDPOINT_CONTRACT"] == "thunder_field_dds_v1"
-    assert spec.env["LINGTU_ROUTE_CONTRACT"] == "robot"
-    assert spec.env["LINGTU_LOCALIZATION_ADAPTER"] == "cpp_slam_status"
-    assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
-    assert spec.env["LINGTU_COMMAND_OUTPUT_MODE"] == "endpoint_only"
-    assert spec.env["LINGTU_NAV_GLOBAL_PLANNER"] == "octoplanner3d"
+    with pytest.raises(
+        ValueError,
+        match="Product RunPlans cannot be resolved through Profile adapters",
+    ):
+        resolve_runtime_run_spec("nav", resolved.config)
 
-
-def test_runtime_run_spec_propagates_explicit_far_selection() -> None:
-    config = resolve_profile_config("nav", overrides={"planner": "far"})
-    spec = resolve_runtime_run_spec("nav", config)
-
-    assert spec.global_planner == "far"
-    assert spec.env["LINGTU_NAV_GLOBAL_PLANNER"] == "far"
-    assert spec.env["LINGTU_HARDWARE_CONTROL_BOUNDARY"] == "driver"
-
-
-def test_thunder_field_run_specs_never_manage_sensor_or_driver_services() -> None:
-    for profile in RUNTIME_ENDPOINTS["thunder_field"].supported_profiles:
-        resolved = resolve_runtime_config(profile)
-        spec = resolve_runtime_run_spec(profile, resolved.config)
-
-        assert resolved.runtime_endpoint == "thunder_field"
+def test_real_product_hosts_never_manage_sensor_or_driver_services() -> None:
+    for product in FIELD_PRODUCT_HOST_DEFAULTS:
+        resolved = _resolve_named_runtime(product)
+        assert resolved.env == "real"
         assert resolved.config["enable_robot_driver"] is False
         assert resolved.config["enable_hw"] is False
         assert resolved.config["enable_lidar"] is False
@@ -118,27 +89,19 @@ def test_thunder_field_run_specs_never_manage_sensor_or_driver_services() -> Non
         assert "lidar_backend" not in resolved.config
         assert "imu_backend" not in resolved.config
 
-        assert spec.endpoint == "thunder_field"
-        assert spec.data_source == "thunder_field"
-        assert spec.endpoint_transport == "dds"
-        assert spec.endpoint_contract == "thunder_field_dds_v1"
-        assert spec.localization_adapter == "cpp_slam_status"
-        assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
-        assert spec.env["LINGTU_COMMAND_OUTPUT_MODE"] == "endpoint_only"
-        assert spec.env["LINGTU_HARDWARE_CONTROL_BOUNDARY"] == "driver"
+        with pytest.raises(
+            ValueError,
+            match="Product RunPlans cannot be resolved through Profile adapters",
+        ):
+            resolve_runtime_run_spec(product, resolved.config)
 
+def test_product_defaults_win_before_env_and_operator_overrides_win_last() -> None:
+    resolved = _resolve_named_runtime("map")
 
-def test_resolver_layers_keep_product_robot_endpoint_override_precedence() -> None:
-    resolved = resolve_runtime_config("map")
-
-    assert resolved.product_config["slam_profile"] == "fastlio2"
-    assert resolved.robot_config["robot"] == "thunder"
-    assert resolved.robot_runtime_config["slam_profile"] == "localizer"
-    assert resolved.endpoint_config["_runtime_endpoint"] == "thunder_field"
-    assert "slam_profile" not in resolved.endpoint_config
     assert resolved.config["slam_profile"] == "fastlio2"
+    assert resolved.config["robot"] == "thunder"
 
-    overridden = resolve_runtime_config(
+    overridden = _resolve_named_runtime(
         "map",
         overrides={
             "slam_profile": "manual_override",
@@ -150,10 +113,10 @@ def test_resolver_layers_keep_product_robot_endpoint_override_precedence() -> No
     assert overridden.config["planner_latency_budget_ms"] == 450
 
 
-def test_map_profile_default_field_endpoint_does_not_manage_lidar() -> None:
-    resolved = resolve_runtime_config("map")
+def test_map_product_real_env_does_not_manage_lidar() -> None:
+    resolved = _resolve_named_runtime("map")
 
-    assert resolved.runtime_endpoint == "thunder_field"
+    assert resolved.env == "real"
     assert resolved.config["slam_profile"] == "fastlio2"
     assert resolved.config["enable_robot_driver"] is False
     assert resolved.config["enable_lidar"] is False
@@ -161,131 +124,72 @@ def test_map_profile_default_field_endpoint_does_not_manage_lidar() -> None:
     assert resolved.config["localization_adapter"] == "cpp_slam_status"
 
 
-def test_managed_map_profile_uses_local_lidar_when_endpoint_is_bypassed() -> None:
-    config = resolve_profile_config("map", robot_preset="thunder")
-
-    assert "_runtime_endpoint" not in config
-    assert config["robot"] == "thunder"
-    assert config["slam_profile"] == "fastlio2"
-    assert "enable_lidar" not in config
-    assert "lidar_backend" not in config
-    assert "enable_imu" not in config
+def test_field_product_rejects_profile_driver_backend_bypass() -> None:
+    with pytest.raises(TypeError, match="reserved Product resolution key"):
+        resolve_product_host_config("map", "real", driver_backend="thunder")
 
 
-def test_resolver_layers_expose_endpoint_adapter_boundary() -> None:
-    resolved = resolve_runtime_config("nav")
+def test_real_env_exposes_communication_adapter_boundary() -> None:
+    resolved = _resolve_named_runtime("nav")
 
-    assert resolved.product_config["planner"] == "octoplanner3d"
-    assert "dog_host" not in resolved.product_config
-    assert "nav_out_adapter" not in resolved.product_config
-    assert resolved.robot_config["dog_host"] == "127.0.0.1"
-    assert "nav_out_adapter" not in resolved.robot_config
-    assert resolved.endpoint_config["_endpoint_transport"] == "dds"
-    assert "nav_out_adapter" not in resolved.endpoint_config
-    assert resolved.endpoint_config["native_navigation_endpoint"] == "lingtu-nav-dds"
-    assert "slam_profile" not in resolved.endpoint_config
     assert resolved.config["planner"] == "octoplanner3d"
     assert resolved.config["dog_host"] == "127.0.0.1"
+    assert resolved.config["_endpoint_transport"] == "dds"
+    assert resolved.config["_endpoint_contract"] == "thunder_dds_v1"
     assert "nav_out_adapter" not in resolved.config
     assert resolved.config["native_navigation_endpoint"] == "lingtu-nav-dds"
 
 
-def test_resolver_canonicalizes_thunder_field_endpoint_alias() -> None:
-    resolved = resolve_runtime_config(
-        "nav",
-        runtime_endpoint_name="thunder-field",
-    )
-    spec = resolve_runtime_run_spec("nav", resolved.config)
-
-    assert resolved.runtime_endpoint == "thunder_field"
-    assert resolved.robot_preset == "thunder"
-    assert resolved.config["_runtime_endpoint"] == "thunder_field"
-    assert spec.endpoint == "thunder_field"
-    assert spec.data_source == "thunder_field"
-    assert spec.runtime_contract == "thunder_field"
-    assert spec.endpoint_transport == "dds"
-    assert spec.endpoint_contract == "thunder_field_dds_v1"
-    assert spec.route_contract == "robot"
-    assert spec.localization_adapter == "cpp_slam_status"
-    assert spec.env["LINGTU_ENABLE_ROBOT_DRIVER"] == "0"
-    assert spec.env["LINGTU_COMMAND_OUTPUT_MODE"] == "endpoint_only"
-
-
-def test_resolver_keeps_legacy_real_endpoint_alias_for_compatibility() -> None:
-    resolved = resolve_runtime_config(
-        "nav",
-        runtime_endpoint_name="real_s100p",
-    )
-
-    assert resolved.runtime_endpoint == "thunder_field"
-    assert resolved.robot_preset == "thunder"
-
-
 @pytest.mark.parametrize(
-    "endpoint",
-    ["windows-fastlio2", "ubuntu-portable", "portable-lio", "portable_fastlio2"],
+    "env",
+    ["legacy_real_target", "mujoco_live", "real_s100p", "portable_fastlio2"],
 )
-def test_removed_portable_fastlio2_endpoint_aliases_fail_closed(endpoint: str) -> None:
-    with pytest.raises(RuntimeEndpointError, match="unknown runtime endpoint"):
-        resolve_runtime_config("map", runtime_endpoint_name=endpoint)
+def test_product_resolution_rejects_endpoint_names_as_env(env: str) -> None:
+    with pytest.raises(ValueError, match="unknown Env"):
+        _resolve_named_runtime("map", env=env)
 
 
-def test_product_endpoint_matrix_rejects_endpoint_catalog_drift(monkeypatch) -> None:
-    endpoint = RUNTIME_ENDPOINTS["cmu_unity"]
-    monkeypatch.setitem(
-        RUNTIME_ENDPOINTS,
-        "cmu_unity",
-        replace(endpoint, supported_profiles=(*endpoint.supported_profiles, "nav")),
-    )
-
-    with pytest.raises(RuntimeEndpointError, match="not a product endpoint"):
-        resolve_runtime_config("nav", runtime_endpoint_name="cmu_unity")
-
-
-def test_resolver_endpoint_layer_overrides_for_compatibility_runtime() -> None:
-    resolved = resolve_runtime_config(
+def test_sim_host_backend_applies_environment_adapter_config() -> None:
+    resolved = _resolve_named_runtime(
         "explore",
-        runtime_endpoint_name="mujoco_live",
+        env="sim",
+        env_config={"backend": "mujoco_host"},
     )
 
-    assert resolved.robot_preset == "sim_endpoint"
-    assert resolved.runtime_endpoint == "mujoco_live"
-    assert resolved.product_config["planner"] == "octoplanner3d"
-    assert resolved.endpoint_config["planner"] == "octoplanner3d"
+    assert resolved.env == "sim"
     assert resolved.config["planner"] == "octoplanner3d"
     assert resolved.config["robot"] == "sim_endpoint"
-    assert resolved.config["_runtime_endpoint"] == "mujoco_live"
-    assert resolved.config["_endpoint_data_source"] == "mujoco_fastlio2_live"
-    assert resolved.endpoint_config["_module_transport"] == "local"
-    assert resolved.endpoint_config["_endpoint_transport"] == "local"
-    assert resolved.endpoint_config["enable_map_out"] is False
-    assert "enable_nav_out" not in resolved.endpoint_config
+    assert resolved.config["_env"] == "sim"
+    assert resolved.config["_env_backend"] == "mujoco_host"
+    assert resolved.config["_module_transport"] == "local"
+    assert resolved.config["_endpoint_transport"] == "local"
     assert resolved.config["enable_map_out"] is False
     assert "enable_nav_out" not in resolved.config
 
 
-def test_resolver_preserves_intentional_tare_frame_endpoint_override() -> None:
-    resolved = resolve_runtime_config(
-        "tare_explore",
-        runtime_endpoint_name="mujoco_live",
+def test_explore_map_variant_preserves_saved_map_host_configuration() -> None:
+    resolved = _resolve_named_runtime(
+        "explore",
+        env="sim",
+        env_config={"backend": "mujoco_host"},
+        product_variant="map",
     )
 
-    assert resolved.product_config["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
-    assert resolved.endpoint_config["planning_frame_id"] == RUNTIME_ODOM_FRAME_ID
-    assert resolved.endpoint_config["occupancy_frame_id"] == RUNTIME_ODOM_FRAME_ID
-    assert resolved.endpoint_config["exploration_backend"] == "tare"
-    assert resolved.endpoint_config["enable_map_out"] is False
-    assert "enable_nav_out" not in resolved.endpoint_config
-    assert resolved.config["planning_frame_id"] == RUNTIME_ODOM_FRAME_ID
+    assert resolved.product == "explore"
+    assert resolved.config["_product_variant"] == "map"
+    assert resolved.config["slam_profile"] == "localizer"
+    assert resolved.config["map_artifact_gate_required"] is True
+    assert resolved.config["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
     assert resolved.config["exploration_backend"] == "tare"
     assert resolved.config["enable_map_out"] is False
     assert "enable_nav_out" not in resolved.config
 
 
 def test_resolver_user_overrides_win_after_endpoint_layer() -> None:
-    config = resolve_profile_config(
+    config = _resolve_named_config(
         "explore",
-        runtime_endpoint="mujoco_live",
+        env="sim",
+        env_config={"backend": "mujoco_host"},
         overrides={
             "planner": "pct",
             "enable_gateway": False,
@@ -296,32 +200,44 @@ def test_resolver_user_overrides_win_after_endpoint_layer() -> None:
     assert config["planner"] == "pct"
     assert config["llm"] == "openai"
     assert config["enable_gateway"] is False
-    assert config["_runtime_endpoint"] == "mujoco_live"
+    assert config["_env"] == "sim"
+    assert config["_env_backend"] == "mujoco_host"
 
 
-def test_resolver_allows_explicit_module_transport_override() -> None:
-    config = resolve_profile_config("nav", module_transport="shm")
-    spec = resolve_runtime_run_spec("nav", config)
+def test_resolver_does_not_mirror_hw_config_into_retired_keys() -> None:
+    config = _resolve_named_config("dev", overrides={"enable_hw": False})
+    legacy_config = _resolve_named_config(
+        "dev",
+        overrides={"enable_device_manager": False},
+    )
+
+    assert config["enable_hw"] is False
+    assert "enable_device_manager" not in config
+    assert "enable_hw" not in legacy_config
+
+
+def test_product_transport_override_still_cannot_enter_profile_adapter_resolver() -> None:
+    config = _resolve_named_config("nav", module_transport="shm")
 
     assert config["_module_transport"] == "local"
     assert config["module_transport"] == "shm"
-    assert spec.module_transport == "shm"
-    assert spec.endpoint_transport == "dds"
-    assert spec.env["LINGTU_MODULE_TRANSPORT"] == "shm"
-    assert spec.env["LINGTU_ENDPOINT_TRANSPORT"] == "dds"
+    with pytest.raises(
+        ValueError,
+        match="Product RunPlans cannot be resolved through Profile adapters",
+    ):
+        resolve_runtime_run_spec("nav", config)
 
+def test_sim_nav_enables_the_python_sim_lidar_source() -> None:
+    sim_nav = _resolve_named_config("sim_nav")
+    sim = _resolve_named_config("sim")
 
-def test_sim_nav_is_explicit_legacy_sim_lidar_opt_in() -> None:
-    sim_nav = resolve_profile_config("sim_nav")
-    sim = resolve_profile_config("sim")
-
-    assert sim_nav["enable_legacy_sim_lidar"] is True
-    assert sim.get("enable_legacy_sim_lidar") is not True
+    assert sim_nav["enable_sim_lidar"] is True
+    assert sim.get("enable_sim_lidar") is not True
 
 
 def test_portable_mujoco_is_explicit_legacy_driver_sensor_opt_in() -> None:
-    config = resolve_profile_config("portable_mujoco")
-    sim = resolve_profile_config("sim")
+    config = _resolve_named_config("portable_mujoco")
+    sim = _resolve_named_config("sim")
 
     assert config["use_driver_lidar"] is True
     assert config["use_driver_imu"] is True
@@ -330,7 +246,7 @@ def test_portable_mujoco_is_explicit_legacy_driver_sensor_opt_in() -> None:
 
 
 def test_resolver_cli_metadata_mode_keeps_launch_contracts_not_selection_key() -> None:
-    config = resolve_profile_config(
+    config = _resolve_named_config(
         "sim_mujoco_live",
         include_profile_metadata=True,
     )
@@ -340,48 +256,42 @@ def test_resolver_cli_metadata_mode_keeps_launch_contracts_not_selection_key() -
     )
     assert config["_external_launcher"] == "sim/scripts/mujoco/launch_fastlio2_live.sh"
     assert config["_runtime_contract"] == "mujoco_fastlio2_live"
-    assert "_default_robot" not in config
+    assert "_driver_backend" not in config
 
 
-def test_resolver_robot_preset_argument_applies_robot_layer() -> None:
-    config = resolve_profile_config("nav", robot_preset="stub")
-
-    assert config["robot"] == "stub"
-    assert config["detector"] == "yoloe"
-    assert config["encoder"] == "mobileclip"
-    assert config["slam_profile"] == "none"
-    assert "_runtime_endpoint" not in config
+def test_profile_rejects_public_driver_backend_selection() -> None:
+    with pytest.raises(ValueError, match="cannot select a driver backend"):
+        resolve_profile_config("dev", robot="stub")
+    with pytest.raises(ValueError, match="cannot select a driver backend"):
+        resolve_profile_config("dev", driver_backend="stub")
 
 
 def test_profile_graph_uses_runtime_resolver_entrypoint() -> None:
     assert profile_graph.resolve_profile_config is resolve_profile_config
 
 
-def test_thunder_product_aliases_resolve_to_canonical_profiles() -> None:
-    assert PROFILE_ALIASES["thunder-lite"] == "lite"
-    assert PROFILE_ALIASES["thunder-basic"] == "lite"
-    assert PROFILE_ALIASES["thunder-nav"] == "nav"
-    assert canonical_profile_name("thunder-lite") == "lite"
-    assert canonical_profile_name("thunder-explore") == "tare_explore"
+def test_retired_and_field_product_names_fail_closed() -> None:
+    assert canonical_profile_name("lite") == "lite"
+    assert canonical_profile_name("thunder-lite") == "thunder-lite"
+    assert canonical_profile_name("thunder-explore") == "thunder-explore"
 
-    resolved = resolve_runtime_config("thunder-nav")
-    alias_config = resolve_profile_config("thunder-nav")
-    canonical_config = resolve_profile_config("nav")
-
-    assert resolved.profile == "nav"
-    assert resolved.config["enable_robot_driver"] is False
-    assert resolved.config["command_output_mode"] == "endpoint_only"
-    assert alias_config == canonical_config
+    for retired_name in ("thunder-lite", "thunder-basic"):
+        with pytest.raises(KeyError, match=f"unknown profile: {retired_name}"):
+            resolve_runtime_config(retired_name)
+    with pytest.raises(KeyError, match="unknown profile: thunder-nav"):
+        resolve_runtime_config("thunder-nav")
+    with pytest.raises(ValueError, match="Unknown Product"):
+        resolve_product_host_config("thunder-nav", "real")
 
 
-def test_thunder_lite_alias_resolves_to_lightweight_runtime_contract() -> None:
-    resolved = resolve_runtime_config("thunder-lite")
-    config = resolve_profile_config("thunder-lite")
+def test_lite_profile_resolves_to_lightweight_runtime_contract() -> None:
+    resolved = _resolve_named_runtime("lite")
+    config = _resolve_named_config("lite")
     spec = resolve_runtime_run_spec("lite", config)
 
     assert resolved.profile == "lite"
-    assert resolved.runtime_endpoint == "thunder_lite"
-    assert resolved.robot_preset == "thunder"
+    assert resolved.profile_adapter == "thunder_lite"
+    assert resolved.driver_backend == "thunder"
     assert config["robot"] == "thunder"
     assert config["runtime_mode"] == "lite"
     assert config["slam_profile"] == "none"
@@ -392,7 +302,7 @@ def test_thunder_lite_alias_resolves_to_lightweight_runtime_contract() -> None:
     assert config["enable_gateway"] is False
     assert config["enable_map_modules"] is False
     assert config["enable_gnss"] is False
-    assert spec.endpoint == "thunder_lite"
+    assert spec.adapter == "thunder_lite"
     assert spec.data_source == "thunder_lite_local"
     assert spec.runtime_contract == "thunder_lite_local"
     assert spec.module_transport == "local"

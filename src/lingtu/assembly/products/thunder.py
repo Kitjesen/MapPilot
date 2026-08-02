@@ -7,64 +7,31 @@ compatibility names while new architecture work targets Thunder directly.
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 from typing import Any, Mapping
 
 from runtime.blueprint import Blueprint
 from runtime.profiles.binding_policy import (
-    LEGACY_MAP_OUT_ENABLE_KEYS,
-    LEGACY_NAV_IN_ENABLE_KEYS,
-    LEGACY_NAV_OUT_ENABLE_KEYS,
     MAP_OUT_ENABLE_KEYS,
     NAV_IN_ENABLE_KEYS,
     NAV_OUT_ENABLE_KEYS,
 )
-from runtime.profiles.catalog.product_intents import (
-    THUNDER_MAP_ARTIFACT_CONFIG,
-    THUNDER_OCTO_CONFIG,
-)
 from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_GATEWAY_PORT,
-    DEFAULT_PLANNING_FRAME_ID,
-    _resolve_octoplanner3d_map,
 )
 from runtime.runtime_policy import normalize_slam_profile
 
-DEFAULT_SEMANTIC_DIR = os.path.join(os.path.expanduser("~"), ".nova", "semantic")
-
-_THUNDER_BASE_CONFIG: dict[str, Any] = {
-    "robot": "thunder",
-    "slam_profile": "localizer",
-    "localization_adapter": "cpp_slam_status",
-    "detector": "bpu",
-    "encoder": "mobileclip",
-    "dog_host": "127.0.0.1",
-    "dog_port": 13145,
-    "auto_enable": False,
-    "auto_standup": False,
-    "planning_frame_id": DEFAULT_PLANNING_FRAME_ID,
-    "gateway_port": DEFAULT_GATEWAY_PORT,
-    "preview_timeout": 30.0,
-}
+DEFAULT_SEMANTIC_DIR = str(Path.home() / ".nova" / "semantic")
 _LITE_IGNORED_GRAPH_KEYS = (
     "enable_frontier",
     "enable_traversable_frontier",
     *NAV_IN_ENABLE_KEYS,
     *NAV_OUT_ENABLE_KEYS,
-    *LEGACY_NAV_IN_ENABLE_KEYS,
-    *LEGACY_NAV_OUT_ENABLE_KEYS,
     *MAP_OUT_ENABLE_KEYS,
-    *LEGACY_MAP_OUT_ENABLE_KEYS,
     "enable_ros2_camera_bridge",
     "enable_ros2_rerun_bridge",
     "exploration_backend",
 )
-
-
-def _with_overrides(config: dict[str, Any], **overrides: Any) -> dict[str, Any]:
-    resolved = dict(config)
-    resolved.update({k: v for k, v in overrides.items() if v is not None})
-    return resolved
 
 
 def _optional_bool(value: Any) -> bool | None:
@@ -106,7 +73,6 @@ def _is_lite_runtime(
     enable_teleop: bool,
     enable_map_modules: bool,
     enable_rerun: bool,
-    manage_external_services: bool,
     scene_xml: str,
     config: Mapping[str, Any],
 ) -> bool:
@@ -125,7 +91,6 @@ def _is_lite_runtime(
             enable_teleop,
             enable_map_modules,
             enable_rerun,
-            manage_external_services,
             bool(scene_xml),
         )
     ):
@@ -141,10 +106,7 @@ def _is_lite_runtime(
             "enable_traversable_frontier",
             *NAV_IN_ENABLE_KEYS,
             *NAV_OUT_ENABLE_KEYS,
-            *LEGACY_NAV_IN_ENABLE_KEYS,
-            *LEGACY_NAV_OUT_ENABLE_KEYS,
             *MAP_OUT_ENABLE_KEYS,
-            *LEGACY_MAP_OUT_ENABLE_KEYS,
             "enable_ros2_camera_bridge",
             "enable_ros2_rerun_bridge",
         )
@@ -160,7 +122,6 @@ def _lite_runtime_incompatibilities(
     enable_map_modules: bool,
     enable_navigation: bool,
     enable_rerun: bool,
-    manage_external_services: bool,
     run_startup_checks: bool,
     scene_xml: str,
     config: Mapping[str, Any],
@@ -176,15 +137,13 @@ def _lite_runtime_incompatibilities(
         problems.append("enable_teleop=True")
     if enable_map_modules:
         problems.append("enable_map_modules=True")
-    # enable_navigation is intentionally not checked here: Thunder Lite keeps
+    # enable_navigation is intentionally not checked here: the `lite` Profile keeps
     # the local nav.mission/local_planner/path_follower autonomy chain (see
-    # test_resolved_thunder_lite_profile_builds_only_local_lite_control_graph);
+    # test_resolved_lite_profile_builds_only_local_lite_control_graph);
     # it only strips the field/endpoint and semantic layers. _is_lite_runtime's
     # auto-detection heuristic mirrors this by omitting enable_navigation too.
     if enable_rerun:
         problems.append("enable_rerun=True")
-    if manage_external_services:
-        problems.append("manage_external_services=True")
     if run_startup_checks:
         problems.append("run_startup_checks=True")
     if scene_xml:
@@ -198,10 +157,7 @@ def _lite_runtime_incompatibilities(
         "enable_traversable_frontier",
         *NAV_IN_ENABLE_KEYS,
         *NAV_OUT_ENABLE_KEYS,
-        *LEGACY_NAV_IN_ENABLE_KEYS,
-        *LEGACY_NAV_OUT_ENABLE_KEYS,
         *MAP_OUT_ENABLE_KEYS,
-        *LEGACY_MAP_OUT_ENABLE_KEYS,
         "enable_ros2_camera_bridge",
         "enable_ros2_rerun_bridge",
     ):
@@ -235,7 +191,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
     scene_xml = str(cfg.pop("scene_xml", ""))
     runtime_mode = str(cfg.pop("runtime_mode", "") or cfg.pop("_runtime_mode", ""))
     run_startup_checks = bool(cfg.pop("run_startup_checks", True))
-    manage_external_services = bool(cfg.pop("manage_external_services", True))
     namespace = cfg.pop("namespace", None)
     semantic_save_dir = str(cfg.get("semantic_save_dir", DEFAULT_SEMANTIC_DIR))
     normalized_runtime_mode = runtime_mode.strip().lower()
@@ -249,14 +204,13 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             enable_map_modules=enable_map_modules,
             enable_navigation=enable_navigation,
             enable_rerun=enable_rerun,
-            manage_external_services=manage_external_services,
             run_startup_checks=run_startup_checks,
             scene_xml=scene_xml,
             config=cfg,
         )
         if lite_incompatibilities:
             joined = ", ".join(lite_incompatibilities)
-            raise ValueError(f"Thunder Lite runtime cannot enable full-stack capabilities: {joined}")
+            raise ValueError(f"lite Profile runtime cannot enable full-stack capabilities: {joined}")
 
     driver_module = _driver_name(robot)
     if _is_lite_runtime(
@@ -267,7 +221,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
         enable_teleop=enable_teleop,
         enable_map_modules=enable_map_modules,
         enable_rerun=enable_rerun,
-        manage_external_services=manage_external_services,
         scene_xml=scene_xml,
         config=cfg,
     ):
@@ -313,7 +266,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             enable_navigation=enable_navigation,
             enable_rerun=enable_rerun,
             scene_xml=scene_xml,
-            manage_external_services=manage_external_services,
             semantic_save_dir=semantic_save_dir,
             config=cfg,
         )
@@ -326,7 +278,6 @@ def _blueprint(config: dict[str, Any]) -> Blueprint:
             enable_semantic=enable_semantic,
             safety_stop_wiring=bool(cfg.get("safety_stop_wiring", True)),
             cmd_vel_mux_collision_monitor=bool(cfg.get("cmd_vel_mux_collision_monitor", False)),
-            legacy_driver_sensor_fallback=bool(cfg.get("legacy_driver_sensor_fallback", False)),
         )
 
     if run_startup_checks:
@@ -359,145 +310,3 @@ def thunder_blueprint(
     resolved = dict(config or {})
     resolved.update({k: v for k, v in overrides.items() if v is not None})
     return _blueprint(resolved)
-
-
-def thunder_basic_config(**overrides: Any) -> dict[str, Any]:
-    """Return the minimal Thunder driver/navigation product config."""
-
-    return _with_overrides(
-        {
-            **_THUNDER_BASE_CONFIG,
-            "runtime_mode": "lite",
-            "slam_profile": "none",
-            "llm": "mock",
-            "planner": "direct",
-            "enable_native": False,
-            "python_autonomy_backend": "simple",
-            "python_path_follower_backend": "pid",
-            "enable_semantic": False,
-            "enable_gateway": False,
-            "enable_teleop": False,
-            "enable_map_modules": False,
-            "enable_gnss": False,
-            "manage_external_services": False,
-            "run_startup_checks": False,
-        },
-        **overrides,
-    )
-
-
-def thunder_lite_config(**overrides: Any) -> dict[str, Any]:
-    """Return the lightweight Thunder local product config."""
-
-    return thunder_basic_config(**overrides)
-
-
-def thunder_map_config(**overrides: Any) -> dict[str, Any]:
-    """Return the Thunder mapping product config."""
-
-    return _with_overrides(
-        {
-            **_THUNDER_BASE_CONFIG,
-            "slam_profile": "fastlio2",
-            "llm": "mock",
-            "planner": "octoplanner3d",
-            "map_path": _resolve_octoplanner3d_map(),
-            "plan_safety_policy": "reject",
-            "fallback_planner_name": "",
-            **THUNDER_MAP_ARTIFACT_CONFIG,
-            **THUNDER_OCTO_CONFIG,
-            "enable_native": True,
-            "terrain_backend": "nanobind",
-            "terrain_strict_native": True,
-            "local_planner_backend": "nanobind",
-            "path_follower_backend": "nav_kernel",
-            "enable_semantic": False,
-            "enable_gateway": True,
-            "enable_map_modules": True,
-        },
-        **overrides,
-    )
-
-
-def thunder_nav_config(**overrides: Any) -> dict[str, Any]:
-    """Return the Thunder saved-map navigation product config."""
-
-    return _with_overrides(
-        {
-            **_THUNDER_BASE_CONFIG,
-            "llm": "qwen",
-            "planner": "octoplanner3d",
-            "map_path": _resolve_octoplanner3d_map(),
-            "plan_safety_policy": "reject",
-            "fallback_planner_name": "",
-            "waypoint_threshold": 0.20,
-            "final_waypoint_threshold": 0.10,
-            "local_planner_allow_direct_track_fallback": True,
-            "local_planner_direct_track_fallback_min_distance_m": 0.05,
-            "local_planner_min_trackable_local_path_m": 0.05,
-            "path_follower_goal_tolerance": 0.05,
-            "path_follower_lookahead": 0.35,
-            "path_follower_max_speed": 0.20,
-            "path_follower_min_speed": 0.08,
-            "path_follower_native_max_accel": 10.0,
-            **THUNDER_MAP_ARTIFACT_CONFIG,
-            **THUNDER_OCTO_CONFIG,
-            "enable_native": True,
-            "terrain_backend": "nanobind",
-            "terrain_strict_native": True,
-            "local_planner_backend": "nanobind",
-            "path_follower_backend": "nav_kernel",
-            "enable_semantic": True,
-            "enable_gateway": True,
-        },
-        **overrides,
-    )
-
-
-def thunder_explore_config(**overrides: Any) -> dict[str, Any]:
-    """Return the Thunder frontier-exploration product config."""
-
-    return _with_overrides(
-        {
-            **_THUNDER_BASE_CONFIG,
-            "slam_profile": "fastlio2",
-            "llm": "qwen",
-            "planner": "octoplanner3d",
-            "map_path": _resolve_octoplanner3d_map(),
-            "plan_safety_policy": "reject",
-            "fallback_planner_name": "",
-            **THUNDER_MAP_ARTIFACT_CONFIG,
-            **THUNDER_OCTO_CONFIG,
-            "enable_semantic": True,
-            "enable_gateway": True,
-            "enable_frontier": True,
-            "enable_traversable_frontier": True,
-            "exploration_backend": "none",
-            "enable_native": True,
-            "terrain_backend": "nanobind",
-            "terrain_strict_native": True,
-            "local_planner_backend": "nanobind",
-            "path_follower_backend": "nav_kernel",
-        },
-        **overrides,
-    )
-
-
-def thunder_map_blueprint(**overrides: Any) -> Blueprint:
-    return _blueprint(thunder_map_config(**overrides))
-
-
-def thunder_basic_blueprint(**overrides: Any) -> Blueprint:
-    return _blueprint(thunder_basic_config(**overrides))
-
-
-def thunder_lite_blueprint(**overrides: Any) -> Blueprint:
-    return _blueprint(thunder_lite_config(**overrides))
-
-
-def thunder_nav_blueprint(**overrides: Any) -> Blueprint:
-    return _blueprint(thunder_nav_config(**overrides))
-
-
-def thunder_explore_blueprint(**overrides: Any) -> Blueprint:
-    return _blueprint(thunder_explore_config(**overrides))

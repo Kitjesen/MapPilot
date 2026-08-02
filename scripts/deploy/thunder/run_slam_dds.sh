@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SLAM_BIN="${LINGTU_SLAM_BIN:-/opt/lingtu/current/build/slam_core/lingtu_slam_cyclone_runtime}"
+source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh slam
+
+SLAM_BIN="${LINGTU_SLAM_BIN:-/opt/lingtu/current/build/slam_core/slamd}"
 if [ ! -x "$SLAM_BIN" ]; then
   echo "ERROR: native SLAM DDS runtime is missing or not executable: $SLAM_BIN" >&2
   echo "Build it with: LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh" >&2

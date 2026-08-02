@@ -22,6 +22,21 @@
 
 ## 2. 实现边界
 
+字段运行时使用两条边界，不能混用：
+
+```text
+实时状态与场景
+  mapd -> typed DDS -> HostBus / native consumers
+
+本机低频 artifact 查询与大文件打开
+  Gateway -> plain MapClient -> /run/lingtu-mapd/mapd.sock -> mapd
+  mapd -> bounded JSON metadata + verified read-only fd
+```
+
+UDS 仅是 Sunrise 同机的私有请求/文件句柄通道，不取代 DDS，也不对局域网开放。当前生产 opcode 只有 `PING` 和 `OPEN_ARTIFACT`；active map 等运行状态仍以 `/maps/state` 为准。PCD 等大文件不分块塞入 DDS；Gateway 不解析地图目录或 artifact 路径，只把 `mapd` 返回的文件描述符流式转成 HTTP 响应。
+
+当前迁移期间，尚未迁走的地图管理命令仍走以下旧适配链：
+
 ```text
 Gateway / CLI / Planner / Localization
   -> typed MapsModule contract
@@ -34,6 +49,8 @@ Gateway / CLI / Planner / Localization
        -> ArtifactJobWorker
        -> map layers
 ```
+
+每迁完一组调用者，就删除该组 Python 字符串路由和 C ABI 生命周期；不得让 UDS 与旧链同时拥有同一写命令。`MapClient` 是普通无状态对象，不是 Module，不加入 Blueprint，也不管理进程生命周期。
 
 以下内容只能由 C++ 实现：
 
@@ -144,15 +161,21 @@ CREATED -> STALE -> READY -> ACTIVE
 - version/package 导出只允许写入 `LINGTU_MAP_EXPORT_DIR`；
 - 默认目录为 `<map-root>/.exchange/import` 和 `<map-root>/.exchange/export`；
 - 禁止绝对路径逃逸、`..`、symlink 越界和 Gateway 任意主机文件读取。
+- 下载时由 `mapd` 在 map lock 下解析声明身份，使用 `O_NOFOLLOW` 打开普通文件并核对 SHA256；Gateway 只接收只读 fd 和对应元数据。
 
 ## 8. 数据流
 
 ```text
 SLAM accepted scan + pose
   -> maps.voxel / maps.occupancy / maps.elevation
-  -> maps.esdf / maps.traversability / maps.semantic
+  -> maps.esdf / maps.semantic
   -> /maps/scene + typed layer outputs
-  -> local planner / safety / Gateway
+  -> Gateway
+
+SLAM registered cloud + odometry
+  -> standalone native traversability
+  -> /nav/traversability
+  -> local planner / final safety gate
 ```
 
 短 TTL 的实时障碍层可以复用 maps C++ layer 算法，但不能冒充持久地图产品。

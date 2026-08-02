@@ -17,22 +17,14 @@ def handle_localization_status(gw: Any, state: dict[str, Any]) -> None:
     if profile and profile != "unknown" and not data.get("backend"):
         data["backend"] = profile
     capability_defaults = backend_capability_defaults(profile)
-    if profile in {"genz", "super_lio", "super_lio_relocation"}:
+    if profile == "genz":
         data.setdefault("health_source", "odom_map_cloud")
         data["relocalization_supported"] = False
         data["saved_map_relocalization_supported"] = False
         data.setdefault("relocalization_state", "unsupported")
-        data["map_save_supported"] = profile == "super_lio"
-        if profile == "super_lio":
-            data.setdefault("map_save_source", "live_map_cloud_snapshot")
-        elif profile == "super_lio_relocation":
-            data.setdefault("map_save_source", "active_map")
+        data["map_save_supported"] = False
         if "map_state" not in data:
-            data["map_state"] = (
-                ("live_map_cloud" if profile in {"genz", "super_lio"} else "relocation_map_cloud")
-                if data.get("map_cloud_fresh")
-                else "map_cloud_stale"
-            )
+            data["map_state"] = "live_map_cloud" if data.get("map_cloud_fresh") else "map_cloud_stale"
         if "localizer_health" not in data:
             state_name = str(data.get("state", "") or "").upper()
             if state_name in {"LOST", "UNINIT", "UNINITIALIZED"}:
@@ -46,7 +38,7 @@ def handle_localization_status(gw: Any, state: dict[str, Any]) -> None:
     elif profile == "localizer":
         data.setdefault("relocalization_supported", True)
         data.setdefault("saved_map_relocalization_supported", True)
-    elif profile in {"fastlio2", "slam"}:
+    elif profile == "fastlio2":
         data.setdefault("relocalization_supported", False)
         data.setdefault("saved_map_relocalization_supported", False)
     data.setdefault(

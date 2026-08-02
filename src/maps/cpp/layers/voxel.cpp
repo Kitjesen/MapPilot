@@ -1,8 +1,11 @@
 #include "lingtu/maps/layers/voxel.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <queue>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_set>
 
 namespace lingtu::maps::layers {
@@ -55,6 +58,9 @@ VoxelLayerCore::VoxelLayerCore(VoxelLayerConfig config) : config_(config) {
   if (config_.prune_below_count < 0.0F || !IsFinite(config_.prune_below_count)) {
     throw std::invalid_argument("VoxelLayerConfig.prune_below_count must be finite and >= 0");
   }
+  if (config_.max_voxels == 0U) {
+    throw std::invalid_argument("VoxelLayerConfig.max_voxels must be non-zero");
+  }
   last_stats_.column_carving = config_.column_carving;
 }
 
@@ -68,6 +74,12 @@ void VoxelLayerCore::Reset() {
 
 void VoxelLayerCore::Update(const MapCloudFrame& frame) {
   const PointCloudView& cloud = frame.cloud;
+  if (frame.column_carving_z_range_enabled &&
+      (!IsFinite(frame.column_carving_min_z_m) ||
+       !IsFinite(frame.column_carving_max_z_m) ||
+       frame.column_carving_min_z_m > frame.column_carving_max_z_m)) {
+    throw std::invalid_argument("MapCloudFrame column carving z range is invalid");
+  }
 
   std::unordered_map<VoxelKey, float, VoxelKeyHash> frame_counts;
   std::unordered_map<ColumnKey, bool, ColumnKeyHash> observed_columns;
@@ -124,10 +136,23 @@ void VoxelLayerCore::Update(const MapCloudFrame& frame) {
   last_stamp_ns_ = cloud.stamp_ns;
   if (config_.column_carving && !observed_columns.empty()) {
     stats.carved_columns = observed_columns.size();
-    stats.carved_voxels = CarveColumnsUnlocked(observed_columns);
+    stats.carved_voxels = CarveColumnsUnlocked(
+        observed_columns,
+        frame.column_carving_z_range_enabled,
+        frame.column_carving_min_z_m,
+        frame.column_carving_max_z_m);
   }
   for (const auto& item : frame_counts) {
-    voxels_[item.first] += item.second;
+    const auto existing = voxels_.find(item.first);
+    if (existing != voxels_.end()) {
+      existing->second += item.second;
+      continue;
+    }
+    if (voxels_.size() >= config_.max_voxels) {
+      ++stats.capacity_rejected_voxels;
+      continue;
+    }
+    voxels_.emplace(item.first, item.second);
   }
   stats.total_voxels = voxels_.size();
   last_stats_ = stats;
@@ -149,6 +174,95 @@ OwnedPointCloud VoxelLayerCore::SnapshotCloud() const {
     cloud.x.push_back((static_cast<float>(key.x) + 0.5F) * config_.voxel_size_m);
     cloud.y.push_back((static_cast<float>(key.y) + 0.5F) * config_.voxel_size_m);
     cloud.z.push_back((static_cast<float>(key.z) + 0.5F) * config_.voxel_size_m);
+  }
+  return cloud;
+}
+
+OwnedPointCloud VoxelLayerCore::SnapshotCloud(
+    const VoxelSnapshotRequest& request,
+    VoxelSnapshotStats* stats) const {
+  if (!IsFinite(request.center_x_m) || !IsFinite(request.center_y_m) ||
+      !IsFinite(request.radius_m) || request.radius_m <= 0.0F ||
+      !IsFinite(request.min_z_m) || !IsFinite(request.max_z_m) ||
+      request.min_z_m > request.max_z_m || request.max_points == 0U) {
+    throw std::invalid_argument("voxel snapshot request is invalid");
+  }
+
+  struct Candidate {
+    float distance_squared{0.0F};
+    VoxelKey key;
+
+    bool operator<(const Candidate& other) const noexcept {
+      return std::tie(distance_squared, key.x, key.y, key.z) <
+          std::tie(
+                 other.distance_squared,
+                 other.key.x,
+                 other.key.y,
+                 other.key.z);
+    }
+  };
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::priority_queue<Candidate> nearest;
+  std::size_t eligible = 0U;
+  const float radius_squared = request.radius_m * request.radius_m;
+  for (const auto& item : voxels_) {
+    const VoxelKey& key = item.first;
+    const float x =
+        (static_cast<float>(key.x) + 0.5F) * config_.voxel_size_m;
+    const float y =
+        (static_cast<float>(key.y) + 0.5F) * config_.voxel_size_m;
+    const float z =
+        (static_cast<float>(key.z) + 0.5F) * config_.voxel_size_m;
+    const float dx = x - request.center_x_m;
+    const float dy = y - request.center_y_m;
+    const float distance_squared = dx * dx + dy * dy;
+    if (distance_squared > radius_squared || z < request.min_z_m ||
+        z > request.max_z_m) {
+      continue;
+    }
+    ++eligible;
+    Candidate candidate{distance_squared, key};
+    if (nearest.size() < request.max_points) {
+      nearest.push(candidate);
+    } else if (candidate < nearest.top()) {
+      nearest.pop();
+      nearest.push(candidate);
+    }
+  }
+
+  std::vector<Candidate> ordered;
+  ordered.reserve(nearest.size());
+  while (!nearest.empty()) {
+    ordered.push_back(nearest.top());
+    nearest.pop();
+  }
+  std::sort(ordered.begin(), ordered.end());
+
+  OwnedPointCloud cloud;
+  cloud.frame_id = last_frame_id_;
+  cloud.stamp_ns = last_stamp_ns_;
+  cloud.layout = CloudLayout::kXyzF32SoA;
+  cloud.point_count = ordered.size();
+  cloud.x.reserve(ordered.size());
+  cloud.y.reserve(ordered.size());
+  cloud.z.reserve(ordered.size());
+  for (const Candidate& candidate : ordered) {
+    cloud.x.push_back(
+        (static_cast<float>(candidate.key.x) + 0.5F) *
+        config_.voxel_size_m);
+    cloud.y.push_back(
+        (static_cast<float>(candidate.key.y) + 0.5F) *
+        config_.voxel_size_m);
+    cloud.z.push_back(
+        (static_cast<float>(candidate.key.z) + 0.5F) *
+        config_.voxel_size_m);
+  }
+  if (stats != nullptr) {
+    stats->total_voxels = voxels_.size();
+    stats->eligible_voxels = eligible;
+    stats->published_points = cloud.point_count;
+    stats->omitted_voxels = voxels_.size() - cloud.point_count;
   }
   return cloud;
 }
@@ -250,10 +364,20 @@ bool VoxelLayerCore::ReadPoint(
 }
 
 std::size_t VoxelLayerCore::CarveColumnsUnlocked(
-    const std::unordered_map<ColumnKey, bool, ColumnKeyHash>& columns) {
+    const std::unordered_map<ColumnKey, bool, ColumnKeyHash>& columns,
+    bool z_range_enabled,
+    float min_z_m,
+    float max_z_m) {
+  const std::int32_t min_z = z_range_enabled
+      ? static_cast<std::int32_t>(std::floor(min_z_m / config_.voxel_size_m))
+      : std::numeric_limits<std::int32_t>::min();
+  const std::int32_t max_z = z_range_enabled
+      ? static_cast<std::int32_t>(std::floor(max_z_m / config_.voxel_size_m))
+      : std::numeric_limits<std::int32_t>::max();
   std::size_t removed = 0;
   for (auto it = voxels_.begin(); it != voxels_.end();) {
-    if (columns.find({it->first.x, it->first.y}) != columns.end()) {
+    if (it->first.z >= min_z && it->first.z <= max_z &&
+        columns.find({it->first.x, it->first.y}) != columns.end()) {
       it = voxels_.erase(it);
       ++removed;
     } else {

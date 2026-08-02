@@ -14,7 +14,6 @@ from runtime.contracts import (
     GNSS_BACKENDS,
     GNSS_CONFIG_BACKEND,
     GNSS_ROLE,
-    HW_COMPAT_CONFIG_BRIDGE,
     HW_CONFIG_BRIDGE,
     HW_ROLE,
 )
@@ -60,10 +59,6 @@ def hw() -> Blueprint:
     return device_bp
 
 
-def device_manager() -> Blueprint:
-    return hw()
-
-
 def gnss(*, enabled: bool | None = None, backend: str | None = None) -> Blueprint:
     gnss_bp = Blueprint()
     if enabled is False:
@@ -78,7 +73,7 @@ def gnss(*, enabled: bool | None = None, backend: str | None = None) -> Blueprin
             serial_port = gnss_cfg.get("device") or gnss_cfg.get("serial_port")
             requested_backend = backend or gnss_cfg.get(GNSS_CONFIG_BACKEND) or gnss_cfg.get("backend")
             requested_backend = _normalize_gnss_backend(requested_backend)
-            use_hw_bridge = _optional_bool(gnss_cfg.get(HW_CONFIG_BRIDGE, gnss_cfg.get(HW_COMPAT_CONFIG_BRIDGE)))
+            use_hw_bridge = _optional_bool(gnss_cfg.get(HW_CONFIG_BRIDGE))
             if use_hw_bridge is None:
                 if requested_backend == GNSS_BACKEND_HW:
                     use_hw_bridge = True
@@ -169,68 +164,3 @@ def _normalize_gnss_backend(value: Any) -> str | None:
     if backend not in GNSS_BACKENDS:
         raise ValueError(f"Unsupported gnss backend: {value!r}; expected one of {GNSS_BACKENDS}")
     return backend
-
-
-def _needs_official_livox_service(config: dict[str, Any]) -> bool:
-    if _optional_bool(config.get("lidar_start_driver")) is not True:
-        return False
-    if _optional_bool(config.get("enable_lidar")) is False:
-        return False
-    if _optional_bool(config.get("manage_livox_driver")) is False:
-        return False
-    return True
-
-
-def external_services(
-    *,
-    enabled: bool,
-    driver_module: str,
-    slam_profile: str,
-    enable_semantic: bool,
-    config: dict[str, Any],
-) -> Blueprint:
-    """Return a runtime service plan without touching systemd at Blueprint build time."""
-
-    service_bp = Blueprint()
-    if not enabled or driver_module != "ThunderDriver":
-        return service_bp
-
-    from runtime.runtime_policy import normalize_slam_profile, slam_switch_plan
-
-    profile = normalize_slam_profile(slam_profile)
-    if profile in {"", "none", "bridge"}:
-        stop_services: list[str] = []
-        ensure_services: list[str] = []
-        wait_ready_services: list[str] = []
-    else:
-        plan = slam_switch_plan(profile)
-        stop_services = list(plan.stop)
-        ensure_services = list(plan.ensure)
-        wait_ready_services = list(plan.wait_ready)
-
-    needs_external_camera = enable_semantic and not bool(config.get("use_driver_camera", False))
-    if needs_external_camera:
-        ensure_services.append("camera")
-
-    if _needs_official_livox_service(config):
-        ensure_services.insert(0, "lidar")
-        wait_ready_services.insert(0, "lidar")
-
-    if not (stop_services or ensure_services or wait_ready_services):
-        return service_bp
-
-    try:
-        from runtime.external_service_module import ExternalServiceManagerModule
-
-        service_bp.add(
-            ExternalServiceManagerModule,
-            alias="ExternalServiceManagerModule",
-            stop_services=tuple(stop_services),
-            ensure_services=tuple(dict.fromkeys(ensure_services)),
-            wait_ready_services=tuple(dict.fromkeys(wait_ready_services)),
-            wait_ready_timeout=float(config.get("external_service_wait_ready_timeout", 10.0)),
-            stop_on_shutdown=bool(config.get("external_service_stop_on_shutdown", False)),
-        )
-    except Exception as exc:
-        logger.debug("ExternalServiceManagerModule not loaded: %s", exc)
-    return service_bp

@@ -2307,7 +2307,7 @@ def run_route_case(
         "cmd_vel_sent_to_hardware": False,
         "validation_limitations": [
             "kinematic MuJoCo mode does not verify gait policy, contacts, slip, actuator limits, or physical stairs",
-            "synthetic_lidar_map_alignment does not verify Fast-LIO2, localizer, Super-LIO, IMU timing, or ROS2 topic flow",
+            "synthetic_lidar_map_alignment does not verify Fast-LIO2, localizer, IMU timing, or ROS2 topic flow",
             "cross_floor route is floor-graph composition plus metadata transition, not native single-shot 3D PCT",
             "simple local planner backend does not verify CMU/nanobind terrain scoring",
         ],

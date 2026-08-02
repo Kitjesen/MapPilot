@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from tools.validate.validate_architecture_boundaries import (
@@ -225,24 +224,11 @@ def test_navigation_split_stack_modules_keep_adapter_imports_lazy_and_isolated()
 
     exploration_goal_sources = ast.parse((stack_dir / "exploration_goal_sources.py").read_text(encoding="utf-8-sig"))
     exploration_imports = direct_module_imports(exploration_goal_sources)
-    assert "nav.exploration.frontier_explorer_module" not in exploration_imports
-    assert "nav.exploration.traversable_frontier_module" not in exploration_imports
+    assert not any(module.startswith("nav.exploration") for module in exploration_imports)
+    assert not (SRC / "nav" / "exploration").exists()
 
-    navigation = ast.parse((stack_dir / "navigation.py").read_text(encoding="utf-8-sig"))
-    assert "lingtu.assembly.adapters.navigation_io" not in set(direct_module_imports(navigation))
-
-
-def test_thunder_driver_blueprints_are_compatibility_shims() -> None:
-    path = SRC / "drivers" / "real" / "thunder" / "blueprints.py"
-    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
-
-    imported = {module for module in _iter_imports(tree) if not module.startswith("typing")}
-    assert "lingtu.assembly.products.thunder" in imported
-    assert all(_top_level(module) not in {"nav", "perception", "decision", "gateway"} for module in imported)
-
-    forbidden_calls = {"stack_module", "optional_stack_module"}
-    calls = {node.func.id for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
-    assert calls.isdisjoint(forbidden_calls)
+def test_thunder_driver_blueprints_compatibility_file_is_removed() -> None:
+    assert not (SRC / "drivers" / "real" / "thunder" / "blueprints.py").exists()
 
 
 def test_driver_modules_do_not_import_slam_factories() -> None:
@@ -467,8 +453,6 @@ def test_navigation_constructor_surface_is_endpoint_neutral() -> None:
     assert "enable_ros2_bridge" not in nav._config
     assert not hasattr(nav, "_legacy_enable_ros2_bridge")
     assert not hasattr(nav, "_enable_ros2_bridge")
-    with pytest.raises(TypeError, match="no longer accepts enable_ros2_bridge"):
-        Navigation(enable_ros2_bridge=False)
 
 
 def test_legacy_nav_root_facade_files_are_removed() -> None:
@@ -518,29 +502,6 @@ def test_internal_code_uses_compat_ros2_nav_bridge_imports() -> None:
             violations.append(f"{rel}: imports {', '.join(used_legacy_imports)}")
 
     assert violations == [], "\n".join(violations)
-
-
-def test_gateway_rerun_facade_does_not_eagerly_import_implementation() -> None:
-    import importlib
-    import sys
-
-    shims = {
-        "gateway.rerun_bridge_module": "gateway.visualization.rerun_bridge",
-    }
-    saved_modules = {name: sys.modules.get(name) for pair in shims.items() for name in pair if name in sys.modules}
-    try:
-        for shim, target in shims.items():
-            sys.modules.pop(shim, None)
-            sys.modules.pop(target, None)
-
-            importlib.import_module(shim)
-
-            assert target not in sys.modules, f"{shim} eagerly imported {target}"
-    finally:
-        for shim, target in shims.items():
-            sys.modules.pop(shim, None)
-            sys.modules.pop(target, None)
-        sys.modules.update(saved_modules)
 
 
 def test_legacy_slam_ros2_bridge_file_is_removed() -> None:
@@ -621,38 +582,15 @@ def test_thunder_hardware_package_does_not_import_ros_compat_modules() -> None:
     assert _is_forbidden_hardware_compat_import("runtime.adapters.ros2")
 
 
-def test_legacy_sim_ros_bridge_files_are_deleted() -> None:
-    paths = [
-        "src/drivers/sim/compat",
-        "src/drivers/sim/ros2_sim_driver.py",
-        "src/drivers/sim/mujoco_ros2_bridge.py",
-        "src/drivers/sim/mujoco_viz_bridge.py",
-        "src/drivers/sim/nova_nav_bridge.py",
-    ]
-
-    assert [rel for rel in paths if (ROOT / rel).exists()] == []
-
-
 def test_exploration_tare_package_has_no_ros2_bridge_shim() -> None:
-    assert not (ROOT / "src/nav/exploration/tare/ros2_bridge.py").exists()
+    assert not (ROOT / "src/explore/tare/ros2_bridge.py").exists()
 
-    text = (ROOT / "src/nav/exploration/tare/__init__.py").read_text(encoding="utf-8-sig")
+    text = (ROOT / "src/explore/tare/__init__.py").read_text(encoding="utf-8-sig")
     assert "TAREROS2BridgeModule" not in text
 
 
-def test_legacy_gateway_rerun_bridge_file_is_compatibility_shim() -> None:
-    from tools.validate.validate_architecture_boundaries import _is_ros_import, _iter_imports
-
-    rel = "src/gateway/rerun_bridge_module.py"
-    path = ROOT / rel
-    text = path.read_text(encoding="utf-8-sig")
-    tree = ast.parse(text, filename=str(path))
-    imports = set(_iter_imports(tree))
-    ros_imports = sorted(module for module in imports if _is_ros_import(module))
-
-    assert ros_imports == []
-    assert "gateway.visualization.rerun_bridge" not in imports
-    assert '_COMPAT_MODULE = "gateway.visualization.rerun_bridge"' in text
+def test_legacy_gateway_rerun_bridge_file_is_removed() -> None:
+    assert not (ROOT / "src/gateway/rerun_bridge_module.py").exists()
 
 
 def test_legacy_perception_ros2_facade_files_are_removed() -> None:

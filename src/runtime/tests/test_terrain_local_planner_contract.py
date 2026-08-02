@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from nav.local.local_planner_backend import create_nanobind_backend
+from nav.local.native import create_nanobind_backend
 from nav.local.local_planner import LocalPlanner
 from nav.local.terrain import Terrain
 from runtime.config import load_config
@@ -157,7 +157,7 @@ def test_terrain_nanobind_preserves_height_intensity_for_local_planner():
 
 def test_nanobind_local_planner_applies_cmu_parity_config(monkeypatch):
     from nav.local import local_planner_runtime as runtime
-    from nav.local.local_planner_backend import (
+    from nav.local.native import (
         create_nanobind_backend,
     )
 

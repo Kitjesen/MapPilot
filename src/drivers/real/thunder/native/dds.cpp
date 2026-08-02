@@ -95,7 +95,7 @@ struct DdsReader::Impl {
             publisher, control_state_topic, control_qos.get(), nullptr),
         "dds_create_writer(driver_control_state)");
 
-    cancel_topic = checked(
+    safety_stop_topic = checked(
         dds_create_topic(
             participant,
             &lingtu_dds_NavigationCommandRequest_desc,
@@ -103,11 +103,12 @@ struct DdsReader::Impl {
             nullptr,
             nullptr),
         "dds_create_topic(nav_command_request)");
-    auto cancel_qos = lingtu::dds::make_qos(
+    auto safety_stop_qos = lingtu::dds::make_qos(
         lingtu::dds::qos_for_topic(
             lingtu::message::kNavCommandRequest.dds_topic));
-    cancel_writer = checked(
-        dds_create_writer(publisher, cancel_topic, cancel_qos.get(), nullptr),
+    safety_stop_writer = checked(
+        dds_create_writer(
+            publisher, safety_stop_topic, safety_stop_qos.get(), nullptr),
         "dds_create_writer(nav_command_request)");
   }
 
@@ -124,8 +125,8 @@ struct DdsReader::Impl {
   dds_entity_t reader{0};
   dds_entity_t control_state_topic{0};
   dds_entity_t control_state_writer{0};
-  dds_entity_t cancel_topic{0};
-  dds_entity_t cancel_writer{0};
+  dds_entity_t safety_stop_topic{0};
+  dds_entity_t safety_stop_writer{0};
   std::string host_boot_id;
 };
 
@@ -134,6 +135,17 @@ DdsReader::~DdsReader() = default;
 
 const std::string& DdsReader::hostBootId() const noexcept {
   return impl_->host_boot_id;
+}
+
+std::uint32_t DdsReader::matchedCommandWriters() const {
+  const dds_return_t count =
+      dds_get_matched_publications(impl_->reader, nullptr, 0);
+  if (count < 0) {
+    throw std::runtime_error(
+        std::string("dds_get_matched_publications(cmd_vel): ") +
+        dds_strretcode(-count));
+  }
+  return static_cast<std::uint32_t>(count);
 }
 
 ReadResult DdsReader::takeLatest() {
@@ -182,6 +194,8 @@ ReadResult DdsReader::takeLatest() {
 bool DdsReader::writeControlState(
     const ControlState& state,
     bool last_command_accepted,
+    const std::string& accepted_producer_boot_id,
+    std::uint64_t accepted_output_sequence,
     double stamp_s) {
   lingtu_dds_DriverControlState msg{};
   fillHeader(msg.header, stamp_s, "body");
@@ -192,6 +206,9 @@ bool DdsReader::writeControlState(
   msg.lease_valid = state.lease_valid;
   msg.lease_remaining_ms = state.lease_remaining_ms;
   msg.accepted_sequence = state.accepted_sequence;
+  msg.accepted_producer_boot_id =
+      const_cast<char*>(accepted_producer_boot_id.c_str());
+  msg.accepted_output_sequence = accepted_output_sequence;
   msg.last_command_accepted = last_command_accepted;
   msg.fsm = const_cast<char*>(state.fsm.c_str());
   msg.owner = const_cast<char*>(state.owner.c_str());
@@ -200,7 +217,7 @@ bool DdsReader::writeControlState(
   return dds_write(impl_->control_state_writer, &msg) >= 0;
 }
 
-bool DdsReader::writeNavigationCancel(
+bool DdsReader::writeNavigationStop(
     const std::string& reason,
     std::uint64_t sequence,
     double stamp_s) {
@@ -208,11 +225,12 @@ bool DdsReader::writeNavigationCancel(
   fillHeader(msg.header, stamp_s, "body");
   const std::string request_id =
       "lingtu-driver-safety-" + std::to_string(sequence);
+  msg.client_id = const_cast<char*>("lingtu-driver");
   msg.request_id = const_cast<char*>(request_id.c_str());
   msg.kind = static_cast<std::int32_t>(
-      lingtu::message::NavigationCommandKind::Cancel);
+      lingtu::message::NavigationCommandKind::Stop);
   msg.reason = const_cast<char*>(reason.c_str());
-  return dds_write(impl_->cancel_writer, &msg) >= 0;
+  return dds_write(impl_->safety_stop_writer, &msg) >= 0;
 }
 
 }  // namespace lingtu::driver

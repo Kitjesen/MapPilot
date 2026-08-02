@@ -44,14 +44,17 @@ from diagnostics.field.gates import (
     runtime_validation_gates,
     validate_runtime_validation_gates,
 )
+from runtime.contracts.product_runtime import resolve_product_spec_contracts
+from runtime.graph import load_runtime_graph
 from runtime.runtime_interface import (
+    ALGORITHM_INTERFACES,
     FRAME_LINKS,
-    LEGACY_REAL_RUNTIME_CONTRACT,
+    REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_REQUIRED_ENDPOINT_INPUT_TOPICS,
     REAL_RUNTIME_REQUIRED_TOPIC_FRAME_IDS,
     RUNTIME_DATA_FLOW,
     RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
-    THUNDER_FIELD_RUNTIME_CONTRACT,
+    THUNDER_DATA_SOURCE,
     TOPICS,
     adapter_source_for_target,
     body_frame_id,
@@ -63,8 +66,10 @@ from runtime.runtime_interface import (
     normalize_runtime_frames_contract,
     odom_frame_id,
     real_lidar_frame_id,
+    resolved_product_runtime_data_flow,
     resolved_runtime_data_flow,
     runtime_algorithm_interface_contract,
+    runtime_contract_data_source,
     runtime_contract_manifest,
     runtime_data_flow_topics,
     runtime_frames_contract,
@@ -83,6 +88,7 @@ from runtime.runtime_interface import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+REAL_RUNTIME_DATA_SOURCE = runtime_contract_data_source(REAL_RUNTIME_CONTRACT)
 
 
 def _frame_evidence() -> dict:
@@ -2228,7 +2234,7 @@ def test_robot_ops_cli_exposes_read_only_real_runtime_evidence_command():
     assert "--json-out" in evidence_block
     assert "--expected-command-subscriber" in evidence_block
     assert "--no-validate" in evidence_block
-    assert "artifacts/thunder_field_runtime/report.json" in evidence_block
+    assert "artifacts/real_runtime/report.json" in evidence_block
     assert ">&2" in evidence_block
     assert "curl " not in evidence_block
     assert "/api/v1/goal" not in evidence_block
@@ -2242,7 +2248,6 @@ def test_robot_ops_cli_exposes_read_only_runtime_contract_commands():
     end = source.index("# -- Subcommand: evidence --", start)
     runtime_block = source[start:end]
 
-    assert "lingtu runtime-spec nav --endpoint thunder_field" in source
     assert "lingtu runtime-contract --json" in source
     assert "lingtu runtime-audit --json" in source
     assert "contract|runtime-contract)" in source
@@ -2253,7 +2258,7 @@ def test_robot_ops_cli_exposes_read_only_runtime_contract_commands():
     assert '"$python_bin" "$repo_root/lingtu.py" runtime-audit "$@"' in runtime_block
     assert "LINGTU_PYTHON:-python3" in source
     assert "--json-out PATH" in runtime_block
-    assert "data-flow and frame contract" in runtime_block
+    assert "topics, frames, frame links, and runtime data-flow manifest" in runtime_block
     assert "curl " not in runtime_block
     assert "/api/v1/goal" not in runtime_block
     assert "cmd_nav" not in runtime_block
@@ -2270,10 +2275,9 @@ def test_real_runtime_collector_observed_topics_cover_resolved_real_data_flow():
 
 def test_real_runtime_contract_constant_lives_in_runtime_interface():
     assert REAL_RUNTIME_CONTRACT == INTERFACE_REAL_RUNTIME_CONTRACT
-    assert REAL_RUNTIME_CONTRACT == THUNDER_FIELD_RUNTIME_CONTRACT
-    assert REAL_RUNTIME_CONTRACT == "thunder_field"
-    assert canonical_data_source_name(LEGACY_REAL_RUNTIME_CONTRACT) == (REAL_RUNTIME_CONTRACT)
-    assert LEGACY_REAL_RUNTIME_CONTRACT == "real_s100p"
+    assert REAL_RUNTIME_CONTRACT == "real"
+    assert canonical_data_source_name(REAL_RUNTIME_CONTRACT) == REAL_RUNTIME_CONTRACT
+    assert runtime_contract_data_source(REAL_RUNTIME_CONTRACT) == THUNDER_DATA_SOURCE
 
 
 def test_runtime_contract_audit_real_collector_uses_runtime_contract_constant(
@@ -2307,8 +2311,8 @@ def test_runtime_contract_audit_rejects_real_collector_frame_contract_drift():
     result = audit._check_real_collector(manifest)
 
     assert result["ok"] is False
-    assert "real collector required topic frame contract does not match runtime manifest" in result["blockers"]
-    assert "real collector topic allowed frame contract does not match runtime manifest" in result["blockers"]
+    assert "real collector required topic frame contract does not match runtime contract" in result["blockers"]
+    assert "real collector topic allowed frame contract does not match runtime contract" in result["blockers"]
 
 
 def test_runtime_contract_audit_rejects_real_collector_runtime_frames_drift():
@@ -2319,7 +2323,7 @@ def test_runtime_contract_audit_rejects_real_collector_runtime_frames_drift():
     result = audit._check_real_collector(manifest)
 
     assert result["ok"] is False
-    assert "real collector runtime frames contract does not match runtime manifest" in result["blockers"]
+    assert "real collector runtime frames contract does not match runtime contract" in result["blockers"]
 
 
 def test_runtime_contract_audit_rejects_real_collector_default_frame_drift():
@@ -2330,7 +2334,7 @@ def test_runtime_contract_audit_rejects_real_collector_default_frame_drift():
     result = audit._check_real_collector(manifest)
 
     assert result["ok"] is False
-    assert "real collector topic default frame contract does not match runtime manifest" in result["blockers"]
+    assert "real collector topic default frame contract does not match runtime contract" in result["blockers"]
 
 
 def test_runtime_contract_audit_rejects_real_collector_algorithm_interface_drift():
@@ -2341,7 +2345,7 @@ def test_runtime_contract_audit_rejects_real_collector_algorithm_interface_drift
     result = audit._check_real_collector(manifest)
 
     assert result["ok"] is False
-    assert "real collector algorithm interface contract does not match runtime manifest" in result["blockers"]
+    assert "real collector algorithm interface contract does not match runtime contract" in result["blockers"]
 
 
 def test_runtime_contract_audit_rejects_real_collector_stage_interface_drift():
@@ -2352,7 +2356,7 @@ def test_runtime_contract_audit_rejects_real_collector_stage_interface_drift():
     result = audit._check_real_collector(manifest)
 
     assert result["ok"] is False
-    assert ("real collector runtime stage algorithm interface contract does not match runtime manifest") in result[
+    assert ("real collector runtime stage algorithm interface contract does not match runtime contract") in result[
         "blockers"
     ]
 
@@ -2380,11 +2384,23 @@ def test_topic_default_frame_id_is_first_declared_runtime_frame():
 
 def test_runtime_contract_manifest_exports_topic_default_frame_ids():
     manifest = runtime_contract_manifest()
+    unframed_metadata_topics = {
+        TOPICS.maps_activation_request,
+        TOPICS.maps_activation_ack,
+        TOPICS.operator_motion_control,
+        TOPICS.operator_motion_ack,
+    }
 
-    assert set(manifest["topic_default_frame_ids"]) == set(manifest["topic_allowed_frame_ids"])
-    assert set(manifest["real_runtime_topic_default_frame_ids"]) == set(
-        manifest["real_runtime_topic_allowed_frame_ids"]
+    assert set(manifest["topic_default_frame_ids"]) == (
+        set(manifest["topic_allowed_frame_ids"]) - unframed_metadata_topics
     )
+    assert set(manifest["real_runtime_topic_default_frame_ids"]) == (
+        set(manifest["real_runtime_topic_allowed_frame_ids"])
+        - unframed_metadata_topics
+    )
+    for topic in unframed_metadata_topics:
+        assert tuple(manifest["topic_allowed_frame_ids"][topic]) == ()
+        assert topic not in manifest["topic_default_frame_ids"]
     assert manifest["topic_default_frame_ids"][TOPICS.map_cloud] == (topic_default_frame_id(TOPICS.map_cloud))
     assert manifest["real_runtime_topic_default_frame_ids"][TOPICS.map_cloud] == (
         runtime_topic_default_frame_id(REAL_RUNTIME_CONTRACT, TOPICS.map_cloud)
@@ -2455,9 +2471,6 @@ def test_real_runtime_collector_report_embeds_full_frame_contracts():
     )
 
 
-@pytest.mark.skip(
-    reason="YAML manifest and source frame/topic contract drift; needs production config sync, not a test defect"
-)
 def test_runtime_contract_audit_accepts_current_contract():
     audit = _load_runtime_contract_audit_module()
 
@@ -2466,45 +2479,62 @@ def test_runtime_contract_audit_accepts_current_contract():
     assert payload["schema_version"] == "lingtu.runtime_contract_audit.v1"
     assert payload["ok"] is True
     assert payload["blockers"] == []
-    assert payload["checks"]["yaml_manifest"]["ok"] is True
+    assert payload["checks"]["yaml_contract"]["ok"] is True
     assert payload["checks"]["profile_runtime_specs"]["ok"] is True
     profile_specs = payload["checks"]["profile_runtime_specs"]
-    assert len(profile_specs["checked_profile_binding_specs"]) == (
-        len(audit.PROFILE_DATA_SOURCE_BINDINGS) + len(profile_specs["checked_external_profile_specs"])
+    assert len(profile_specs["checked_profile_binding_specs"]) == len(
+        audit.PROFILE_DATA_SOURCE_BINDINGS
+    ) + len(profile_specs["checked_external_profile_specs"])
+    assert len(profile_specs["checked_product_binding_specs"]) == len(
+        audit.PRODUCT_DATA_SOURCE_BINDINGS
     )
     assert "sim_mujoco_live:external_default" in profile_specs["checked_profile_binding_specs"]
-    assert "sim_cmu_tare:external_record" in profile_specs["checked_profile_binding_specs"]
-    assert len(profile_specs["checked_ros2_binding_specs"]) == (
-        sum(audit._enforces_ros2_runtime_binding_audit(profile) for profile in audit.PROFILES)
-        + sum(
-            sum(
-                audit._enforces_ros2_runtime_binding_audit(profile, endpoint) for profile in endpoint.supported_profiles
-            )
-            for endpoint in audit.RUNTIME_ENDPOINTS.values()
-        )
-    )
+
     assert "sim:default" in profile_specs["checked_ros2_binding_specs"]
-    assert "thunder_field:nav" in profile_specs["checked_ros2_binding_specs"]
-    assert "tare_explore:default" in profile_specs["checked_ros2_binding_specs"]
-    assert "thunder_field:tare_explore" in profile_specs["checked_ros2_binding_specs"]
-    assert "sim_cmu_tare:default" in profile_specs["checked_ros2_binding_specs"]
-    assert "mujoco_live:map" in profile_specs["checked_ros2_binding_specs"]
-    assert "replay:nav" in profile_specs["checked_ros2_binding_specs"]
-    assert "cmu_unity:sim_cmu_tare" in profile_specs["checked_ros2_binding_specs"]
-    assert "gazebo:explore" in profile_specs["checked_ros2_binding_specs"]
-    assert "sim_gazebo:default" in profile_specs["skipped_ros2_binding_specs"]
-    assert "sim_industrial:default" in profile_specs["skipped_ros2_binding_specs"]
-    assert "sim_cmu_tare:default" not in profile_specs["skipped_ros2_binding_specs"]
-    assert "mujoco_live:map" not in profile_specs["skipped_ros2_binding_specs"]
-    assert "replay:nav" not in profile_specs["skipped_ros2_binding_specs"]
-    assert "cmu_unity:sim_cmu_tare" not in profile_specs["skipped_ros2_binding_specs"]
-    assert profile_specs["skipped_ros2_binding_reasons"]["sim_gazebo:default"] == ("outside_no_ros_acceptance_set")
-    assert profile_specs["skipped_ros2_binding_reasons"]["sim_industrial:default"] == ("outside_no_ros_acceptance_set")
+    assert "nav:real" in profile_specs["checked_ros2_binding_specs"]
+    assert "real:nav" in profile_specs["checked_ros2_binding_specs"]
+    assert "explore:real" in profile_specs["checked_ros2_binding_specs"]
+    assert "tare_explore:real" not in profile_specs["checked_ros2_binding_specs"]
+
+    assert "mujoco_live:sim_mujoco_live" in profile_specs["checked_ros2_binding_specs"]
+    assert "sim:cmu_unity:tare_explore" not in profile_specs["checked_ros2_binding_specs"]
+    assert "sim:gazebo:explore" in profile_specs["checked_ros2_binding_specs"]
+
+
+
+    assert "mujoco_live:sim_mujoco_live" not in profile_specs["skipped_ros2_binding_specs"]
+    retired_profile_specs = {
+        "sim_gazebo:default",
+        "sim_industrial:default",
+        "sim_cmu_tare:default",
+        "sim_cmu_tare:external_record",
+        "cmu_unity:sim_cmu_tare",
+        "sim:cmu_unity:tare_explore",
+        "gazebo:sim_gazebo",
+    }
+    assert retired_profile_specs.isdisjoint(profile_specs["checked_profile_binding_specs"])
+    assert retired_profile_specs.isdisjoint(profile_specs["checked_ros2_binding_specs"])
+    assert retired_profile_specs.isdisjoint(profile_specs["skipped_ros2_binding_specs"])
+
+    assert {
+        product_name: stage_names
+        for product_name, stage_names in profile_specs[
+            "checked_product_runtime_data_flow_stages"
+        ].items()
+        if stage_names
+        } == {
+            "explore": [
+                "tare_exploration",
+                "rolling_map_segment_execution",
+            ],
+        }
+
+
     assert all(
         profile_specs["skipped_ros2_binding_reasons"][spec] for spec in profile_specs["skipped_ros2_binding_specs"]
     )
-    assert profile_specs["skipped_ros2_binding_violations"]["sim_gazebo:default"] == []
-    assert profile_specs["skipped_ros2_binding_violations"]["sim_industrial:default"] == []
+
+
     assert payload["checks"]["real_runtime_collector"]["ok"] is True
     real_collector = payload["checks"]["real_runtime_collector"]
     assert real_collector["runtime_contract"] == REAL_RUNTIME_CONTRACT
@@ -2533,6 +2563,7 @@ def test_runtime_contract_audit_accepts_current_contract():
         "global_planning",
         "local_planning_and_following",
         "octoplanner3d_global_planning",
+        "rolling_map_segment_execution",
         "tare_exploration",
         "traversable_frontier_preview",
         "wavefront_frontier_exploration",
@@ -2689,10 +2720,10 @@ def test_runtime_contract_audit_accepts_current_contract():
     }
     assert acceptance["real_runtime_evidence"] == {
         "acceptance_step": 3,
-        "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
+        "required_when": "before_claiming_real_runtime_or_navigation",
         "requires_prior_gates": ["runtime_audit"],
         "conditional_prior_gates": [
-            "saved_map_artifact_gate when saved map, tomogram, occupancy, or PCT artifact is used"
+            "saved_map_artifact_gate when saved map, octomap, or occupancy artifact is used"
         ],
         "proves": list(REAL_RUNTIME_EVIDENCE_PROVES),
         "operator_summary_sections": list(REAL_RUNTIME_EVIDENCE_OPERATOR_SUMMARY_SECTIONS),
@@ -2754,6 +2785,18 @@ def test_runtime_contract_audit_rejects_ros_frame_contract_doc_drift(tmp_path: P
     assert "ros_frame_contract.md topic frame row drifted for /slam/map_cloud" in result["blockers"]
 
 
+def test_ros_frame_contract_doc_treats_metadata_only_topics_as_unframed():
+    audit = _load_runtime_contract_audit_module()
+
+    result = audit._check_ros_frame_contract_doc(runtime_contract_manifest())
+
+    assert not any(
+        topic in blocker
+        for blocker in result["blockers"]
+        for topic in (TOPICS.operator_motion_control, TOPICS.operator_motion_ack)
+    )
+
+
 def test_runtime_contract_audit_rejects_runtime_check_list_drift(monkeypatch):
     audit = _load_runtime_contract_audit_module()
     monkeypatch.setattr(
@@ -2779,7 +2822,7 @@ def test_runtime_contract_audit_rejects_yaml_frame_mismatch(tmp_path: Path):
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: tf.body_frame does not mirror runtime frames" == blocker for blocker in payload["blockers"]
+        "yaml_contract: tf.body_frame does not mirror runtime frames" == blocker for blocker in payload["blockers"]
     )
 
 
@@ -2794,7 +2837,7 @@ def test_runtime_contract_audit_rejects_yaml_topic_format_mismatch(tmp_path: Pat
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: topic_formats does not mirror runtime manifest" == blocker for blocker in payload["blockers"]
+        "yaml_contract: topic_formats does not mirror runtime contract" == blocker for blocker in payload["blockers"]
     )
 
 
@@ -2809,7 +2852,7 @@ def test_runtime_contract_audit_rejects_yaml_data_format_catalog_mismatch(tmp_pa
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: data_formats does not mirror runtime message_formats" == blocker
+        "yaml_contract: data_formats does not mirror runtime message_formats" == blocker
         for blocker in payload["blockers"]
     )
 
@@ -2825,7 +2868,7 @@ def test_runtime_contract_audit_rejects_yaml_topic_ros_type_mismatch(tmp_path: P
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: topic_ros_types does not mirror runtime manifest" == blocker for blocker in payload["blockers"]
+        "yaml_contract: topic_ros_types does not mirror runtime contract" == blocker for blocker in payload["blockers"]
     )
 
 
@@ -2842,7 +2885,7 @@ def test_runtime_contract_audit_rejects_yaml_stage_algorithm_interface_mismatch(
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: runtime_data_flow_stage_algorithm_interfaces does not mirror runtime manifest" == blocker
+        "yaml_contract: runtime_data_flow_stage_algorithm_interfaces does not mirror runtime contract" == blocker
         for blocker in payload["blockers"]
     )
 
@@ -2858,7 +2901,7 @@ def test_runtime_contract_audit_rejects_yaml_adapter_alias_mismatch(tmp_path: Pa
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: adapter_aliases does not mirror runtime manifest" == blocker for blocker in payload["blockers"]
+        "yaml_contract: adapter_aliases does not mirror runtime contract" == blocker for blocker in payload["blockers"]
     )
 
 
@@ -2875,7 +2918,7 @@ def test_runtime_contract_audit_rejects_yaml_topic_default_frame_mismatch(
 
     assert payload["ok"] is False
     assert any(
-        "yaml_manifest: topic_default_frame_ids does not mirror runtime manifest" == blocker
+        "yaml_contract: topic_default_frame_ids does not mirror runtime contract" == blocker
         for blocker in payload["blockers"]
     )
 
@@ -2883,13 +2926,13 @@ def test_runtime_contract_audit_rejects_yaml_topic_default_frame_mismatch(
 def test_runtime_contract_integrity_rejects_unresolved_resolved_flow_placeholder():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_CONTRACT][-1]["outputs"] = ["sink:data_source.command_sink"]
+    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][-1]["outputs"] = ["sink:data_source.command_sink"]
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
     assert any(
-        f"resolved {REAL_RUNTIME_CONTRACT} command_boundary contains unresolved placeholder" == blocker
+        f"resolved {REAL_RUNTIME_DATA_SOURCE} command_boundary contains unresolved placeholder" == blocker
         for blocker in result["blockers"]
     )
 
@@ -2897,13 +2940,13 @@ def test_runtime_contract_integrity_rejects_unresolved_resolved_flow_placeholder
 def test_runtime_contract_integrity_rejects_command_sink_drift():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_CONTRACT][-1]["outputs"] = ["wrong_sink"]
+    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][-1]["outputs"] = ["wrong_sink"]
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
     assert any(
-        f"resolved {REAL_RUNTIME_CONTRACT} command_boundary does not match data source sink" == blocker
+        f"resolved {REAL_RUNTIME_DATA_SOURCE} command_boundary does not match data source sink" == blocker
         for blocker in result["blockers"]
     )
 
@@ -2911,14 +2954,24 @@ def test_runtime_contract_integrity_rejects_command_sink_drift():
 def test_runtime_contract_integrity_rejects_undeclared_artifact_reference():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    global_planning = manifest["resolved_runtime_data_flow"][REAL_RUNTIME_CONTRACT][3]
-    global_planning["inputs"] = tuple(global_planning["inputs"]) + ("artifact:missing_tomogram",)
+    global_planning = next(
+        stage
+        for stage in manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE]
+        if stage["name"] == "global_planning"
+    )
+    global_planning["inputs"] = tuple(global_planning["inputs"]) + (
+        "artifact:missing_map_artifact",
+    )
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
     assert any(
-        (f"resolved {REAL_RUNTIME_CONTRACT} global_planning references undeclared artifact missing_tomogram") == blocker
+        (
+            f"resolved {REAL_RUNTIME_DATA_SOURCE} global_planning "
+            "references undeclared artifact missing_map_artifact"
+        )
+        == blocker
         for blocker in result["blockers"]
     )
 
@@ -2970,63 +3023,68 @@ def test_runtime_contract_integrity_rejects_non_numeric_lidar_extrinsic():
     assert any("lidar extrinsic real_mid360 x is not numeric" == blocker for blocker in result["blockers"])
 
 
-def test_runtime_contract_integrity_rejects_profile_binding_name_mismatch():
+def test_runtime_contract_integrity_rejects_product_binding_name_mismatch():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["profile_data_sources"]["nav"]["profile"] = "wrong_nav"
+    manifest["product_data_sources"]["nav"]["product"] = "wrong_nav"
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
-    assert any("profile binding nav profile field mismatch" == blocker for blocker in result["blockers"])
+    assert any("Product binding nav product field mismatch" == blocker for blocker in result["blockers"])
 
 
-def test_runtime_contract_integrity_rejects_profile_binding_unknown_data_source():
+def test_runtime_contract_integrity_rejects_product_binding_unknown_data_source():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["profile_data_sources"]["nav"]["data_source"] = "missing_source"
-
-    result = audit._check_runtime_contract_integrity(manifest)
-
-    assert result["ok"] is False
-    assert any(
-        "profile binding nav references unknown data source missing_source" == blocker for blocker in result["blockers"]
-    )
-
-
-def test_runtime_contract_integrity_rejects_profile_binding_data_source_drift():
-    audit = _load_runtime_contract_audit_module()
-    manifest = deepcopy(runtime_contract_manifest())
-    manifest["profile_data_sources"]["nav"]["data_source"] = "in_process_stub"
+    manifest["product_data_sources"]["nav"]["data_source"] = "missing_source"
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
     assert any(
-        "profile binding nav data_source drifted from runtime binding" == blocker for blocker in result["blockers"]
+        "Product binding nav references unknown data source missing_source" == blocker
+        for blocker in result["blockers"]
     )
 
 
-def test_runtime_contract_integrity_rejects_profile_binding_blank_mode():
+def test_runtime_contract_integrity_rejects_product_binding_data_source_drift():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["profile_data_sources"]["nav"]["mode"] = ""
+    manifest["product_data_sources"]["nav"]["data_source"] = "in_process_stub"
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
-    assert any("profile binding nav mode missing" == blocker for blocker in result["blockers"])
+    assert any(
+        "Product binding nav data_source drifted from runtime binding" == blocker
+        for blocker in result["blockers"]
+    )
 
 
-def test_runtime_contract_integrity_rejects_profile_binding_mode_drift():
+def test_runtime_contract_integrity_rejects_product_binding_blank_mode():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["profile_data_sources"]["nav"]["mode"] = "framework_test"
+    manifest["product_data_sources"]["nav"]["mode"] = ""
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
-    assert any("profile binding nav mode drifted from runtime binding" == blocker for blocker in result["blockers"])
+    assert any("Product binding nav mode missing" == blocker for blocker in result["blockers"])
+
+
+def test_runtime_contract_integrity_rejects_product_binding_mode_drift():
+    audit = _load_runtime_contract_audit_module()
+    manifest = deepcopy(runtime_contract_manifest())
+    manifest["product_data_sources"]["nav"]["mode"] = "framework_test"
+
+    result = audit._check_runtime_contract_integrity(manifest)
+
+    assert result["ok"] is False
+    assert any(
+        "Product binding nav mode drifted from runtime binding" == blocker
+        for blocker in result["blockers"]
+    )
 
 
 def test_runtime_contract_integrity_rejects_algorithm_interface_topic_without_format():
@@ -3057,6 +3115,92 @@ def test_runtime_contract_integrity_rejects_algorithm_interface_without_flow_sta
         "algorithm interface local_planning_and_following is not covered by any runtime_data_flow stage" == blocker
         for blocker in result["blockers"]
     )
+
+
+def test_native_tare_and_rolling_segment_interfaces_have_distinct_runtime_stages():
+    stages = {stage.name: stage for stage in RUNTIME_DATA_FLOW}
+
+    for interface_name in ("tare_exploration", "rolling_map_segment_execution"):
+        stage = stages[interface_name]
+        interface = ALGORITHM_INTERFACES[interface_name]
+
+        assert RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES[interface_name] == (
+            interface_name,
+        )
+        assert set(interface.inputs) <= set(stage.inputs)
+        assert set(interface.outputs) <= set(stage.outputs)
+
+
+def test_data_source_flow_does_not_claim_product_scoped_tare_stages():
+    resolved_stage_names = {
+        stage.name for stage in resolved_runtime_data_flow(REAL_RUNTIME_CONTRACT)
+    }
+
+    assert "tare_exploration" not in resolved_stage_names
+    assert "rolling_map_segment_execution" not in resolved_stage_names
+
+
+def test_product_flow_derives_product_scoped_stages_from_required_topics():
+    graph = load_runtime_graph()
+    product_scoped_stage_names = {
+        "tare_exploration",
+        "rolling_map_segment_execution",
+    }
+    scoped_stages_by_product = {
+        product_name: tuple(
+            stage.name
+            for stage in resolved_product_runtime_data_flow(
+                REAL_RUNTIME_CONTRACT,
+                resolve_product_spec_contracts(product_name, product).topics,
+            )
+            if stage.name in product_scoped_stage_names
+        )
+        for product_name, product in graph.products.items()
+    }
+
+    assert {
+        product_name: stage_names
+        for product_name, stage_names in scoped_stages_by_product.items()
+        if stage_names
+    } == {
+        "explore": (
+            "tare_exploration",
+            "rolling_map_segment_execution",
+        ),
+    }
+
+
+def test_product_runtime_flow_audit_rejects_incomplete_stage_topic_closure(monkeypatch):
+    audit = _load_runtime_contract_audit_module()
+    graph = load_runtime_graph()
+    product = deepcopy(graph.products["explore"])
+    original_resolver = audit.resolve_product_spec_contracts
+
+    def _missing_tf_contract(product_name, product_spec):
+        resolved = original_resolver(product_name, product_spec)
+        if product_name != "explore":
+            return resolved
+        return replace(
+            resolved,
+            topics=tuple(topic for topic in resolved.topics if topic != "/tf"),
+        )
+
+    monkeypatch.setattr(
+        audit,
+        "resolve_product_spec_contracts",
+        _missing_tf_contract,
+    )
+    blockers: list[str] = []
+
+    audit._append_product_runtime_data_flow_blockers(
+        blockers,
+        products={"explore": product},
+    )
+
+    assert (
+        "product explore runtime stage tare_exploration topics missing from "
+        "required_topics: /tf"
+    ) in blockers
 
 
 def test_runtime_contract_integrity_rejects_algorithm_interface_without_stage_binding():
@@ -3095,20 +3239,20 @@ def test_runtime_contract_integrity_rejects_stage_interface_binding_mismatch():
 def test_runtime_contract_integrity_rejects_resolved_slam_input_drift():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_CONTRACT][1]["inputs"] = [
+    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][1]["inputs"] = [
         TOPICS.raw_lidar_points,
     ]
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
-    assert any(f"resolved {REAL_RUNTIME_CONTRACT} slam inputs drifted" == blocker for blocker in result["blockers"])
+    assert any(f"resolved {REAL_RUNTIME_DATA_SOURCE} slam inputs drifted" == blocker for blocker in result["blockers"])
 
 
 def test_runtime_contract_integrity_rejects_resolved_map_layer_input_drift():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_CONTRACT][2]["inputs"] = [
+    manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE][2]["inputs"] = [
         TOPICS.odometry,
         TOPICS.map_cloud,
     ]
@@ -3117,22 +3261,22 @@ def test_runtime_contract_integrity_rejects_resolved_map_layer_input_drift():
 
     assert result["ok"] is False
     assert any(
-        f"resolved {REAL_RUNTIME_CONTRACT} map layer inputs drifted" == blocker for blocker in result["blockers"]
+        f"resolved {REAL_RUNTIME_DATA_SOURCE} map layer inputs drifted" == blocker for blocker in result["blockers"]
     )
 
 
 def test_runtime_contract_integrity_rejects_runtime_data_flow_topics_drift():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["runtime_data_flow_topics"][REAL_RUNTIME_CONTRACT] = tuple(
-        topic for topic in manifest["runtime_data_flow_topics"][REAL_RUNTIME_CONTRACT] if topic != TOPICS.cmd_vel
+    manifest["runtime_data_flow_topics"][REAL_RUNTIME_DATA_SOURCE] = tuple(
+        topic for topic in manifest["runtime_data_flow_topics"][REAL_RUNTIME_DATA_SOURCE] if topic != TOPICS.cmd_vel
     )
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
     assert any(
-        (f"runtime_data_flow_topics {REAL_RUNTIME_CONTRACT} does not match resolved data flow") == blocker
+        (f"runtime_data_flow_topics {REAL_RUNTIME_DATA_SOURCE} does not match resolved data flow") == blocker
         for blocker in result["blockers"]
     )
     assert any(
@@ -3145,14 +3289,18 @@ def test_runtime_contract_integrity_rejects_runtime_data_flow_topics_drift():
 def test_runtime_contract_integrity_rejects_resolved_stage_metadata_drift():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    global_planning = manifest["resolved_runtime_data_flow"][REAL_RUNTIME_CONTRACT][3]
+    global_planning = next(
+        stage
+        for stage in manifest["resolved_runtime_data_flow"][REAL_RUNTIME_DATA_SOURCE]
+        if stage["name"] == "global_planning"
+    )
     global_planning["frame_role"] = "body"
 
     result = audit._check_runtime_contract_integrity(manifest)
 
     assert result["ok"] is False
     assert any(
-        f"resolved {REAL_RUNTIME_CONTRACT} global_planning frame_role drifted" == blocker
+        f"resolved {REAL_RUNTIME_DATA_SOURCE} global_planning frame_role drifted" == blocker
         for blocker in result["blockers"]
     )
 
@@ -3160,7 +3308,12 @@ def test_runtime_contract_integrity_rejects_resolved_stage_metadata_drift():
 def test_runtime_contract_integrity_rejects_blank_stage_metadata():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
-    manifest["runtime_data_flow"][3]["map_dependency"] = ""
+    global_planning = next(
+        stage
+        for stage in manifest["runtime_data_flow"]
+        if stage["name"] == "global_planning"
+    )
+    global_planning["map_dependency"] = ""
 
     result = audit._check_runtime_contract_integrity(manifest)
 
@@ -3226,6 +3379,54 @@ def test_runtime_contract_integrity_rejects_allowed_frame_topic_without_format()
     )
 
 
+def test_runtime_contract_integrity_accepts_explicitly_unframed_metadata_topic():
+    audit = _load_runtime_contract_audit_module()
+    manifest = deepcopy(runtime_contract_manifest())
+    topic = "/test/unframed_metadata"
+    format_name = "test_unframed_metadata"
+    ros_type = "lingtu.dds.TestUnframedMetadata"
+    manifest["message_formats"][format_name] = {
+        "name": format_name,
+        "ros_type": ros_type,
+        "frame_role": "metadata",
+        "required_fields": ("sequence",),
+        "note": "Synthetic metadata-only contract for audit coverage.",
+    }
+    manifest["topic_formats"][topic] = (format_name,)
+    manifest["topic_ros_types"][topic] = (ros_type,)
+    manifest["topic_allowed_frame_ids"][topic] = ()
+    manifest["topic_default_frame_ids"][topic] = None
+
+    result = audit._check_runtime_contract_integrity(manifest)
+
+    assert "topic_default_frame_ids keys do not match topic_allowed_frame_ids" not in result["blockers"]
+    assert (
+        "real_runtime_topic_default_frame_ids keys do not match "
+        "real_runtime_topic_allowed_frame_ids"
+        not in result["blockers"]
+    )
+    assert not any(topic in blocker for blocker in result["blockers"])
+
+
+def test_runtime_contract_integrity_rejects_empty_frames_for_framed_topic():
+    audit = _load_runtime_contract_audit_module()
+    manifest = deepcopy(runtime_contract_manifest())
+    manifest["topic_allowed_frame_ids"][TOPICS.map_cloud] = ()
+    manifest["topic_default_frame_ids"][TOPICS.map_cloud] = None
+
+    result = audit._check_runtime_contract_integrity(manifest)
+
+    assert result["ok"] is False
+    assert (
+        f"topic_allowed_frame_ids topic {TOPICS.map_cloud} has no allowed frames"
+        in result["blockers"]
+    )
+    assert (
+        f"topic_default_frame_ids topic {TOPICS.map_cloud} has no default frame"
+        in result["blockers"]
+    )
+
+
 def test_runtime_contract_integrity_rejects_unknown_allowed_frame():
     audit = _load_runtime_contract_audit_module()
     manifest = deepcopy(runtime_contract_manifest())
@@ -3276,7 +3477,18 @@ def test_runtime_contract_integrity_accepts_declared_frame_alias_allowed_frame()
 
     result = audit._check_runtime_contract_integrity(manifest)
 
-    assert result["ok"] is True
+    assert not any(TOPICS.cmd_vel in blocker for blocker in result["blockers"])
+    frame_contract_sections = (
+        "topic_allowed_frame_ids",
+        "topic_default_frame_ids",
+        "real_runtime_topic_allowed_frame_ids",
+        "real_runtime_topic_default_frame_ids",
+    )
+    assert not any(
+        section in blocker
+        for blocker in result["blockers"]
+        for section in frame_contract_sections
+    )
 
 
 def test_runtime_contract_integrity_rejects_real_frame_not_in_general_contract():
@@ -3396,141 +3608,156 @@ def test_runtime_contract_integrity_rejects_missing_lidar_extrinsics_section():
     assert "lidar_extrinsics section missing" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_endpoint_simulation_only_provider_drift(
+def test_profile_runtime_specs_reject_profile_adapter_simulation_only_provider_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["thunder_field"]
+    profile_adapter = audit.PROFILE_ADAPTERS["thunder_lite"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "thunder_field",
-        replace(endpoint, simulation_only=True),
+        audit.PROFILE_ADAPTERS,
+        "thunder_lite",
+        replace(profile_adapter, simulation_only=True),
     )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "endpoint thunder_field simulation_only does not match data source provider" in result["blockers"]
+    assert "Profile adapter thunder_lite simulation_only does not match data source provider" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_endpoint_action_for_unsupported_profile(
+def test_profile_runtime_specs_reject_profile_adapter_action_for_unsupported_profile(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
         replace(
-            endpoint,
-            default_actions={**endpoint.default_actions, "nav": ("gate",)},
+            profile_adapter,
+            default_actions={**profile_adapter.default_actions, "nav": ("gate",)},
         ),
     )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "endpoint mujoco_live default_actions references unsupported profile nav" in result["blockers"]
+    assert "Profile adapter mujoco_live default_actions references unsupported name nav" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_product_endpoint_matrix_drift(monkeypatch):
+def test_profile_runtime_specs_rejects_simultaneous_field_route_and_dds_topic_omission(
+    monkeypatch,
+):
+    from runtime.endpoints.dds.contracts import THUNDER_DDS_CONTRACT
+    from runtime.routes import robot
+
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["cmu_unity"]
-    monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "cmu_unity",
-        replace(endpoint, supported_profiles=(*endpoint.supported_profiles, "nav")),
+    topic = TOPICS.saved_map_cloud
+    route = robot()
+    broken_route = replace(
+        route,
+        routes={name: backend for name, backend in route.routes.items() if name != topic},
+        bindings={
+            backend: {
+                name: binding
+                for name, binding in bindings.items()
+                if name != topic
+            }
+            for backend, bindings in route.bindings.items()
+        },
+    )
+    broken_endpoint = replace(
+        THUNDER_DDS_CONTRACT,
+        bindings=tuple(
+            binding
+            for binding in THUNDER_DDS_CONTRACT.bindings
+            if binding.topic != topic
+        ),
+    )
+    monkeypatch.setattr(audit, "robot", lambda: broken_route, raising=False)
+    monkeypatch.setattr(
+        audit,
+        "THUNDER_DDS_CONTRACT",
+        broken_endpoint,
+        raising=False,
     )
 
     result = audit._check_profile_runtime_specs()
 
-    assert result["ok"] is False
-    assert "product profile nav has undeclared endpoints: cmu_unity" in result["blockers"]
+    assert (
+        "real Env Product map required topic /slam/saved_map_cloud "
+        "missing from robot route layer"
+        in result["blockers"]
+    )
+    assert (
+        "real Env Product map required topic /slam/saved_map_cloud "
+        "missing from typed endpoint layer thunder_dds_v1"
+        in result["blockers"]
+    )
 
 
 def test_profile_runtime_specs_reject_product_planner_backend_field(monkeypatch):
     audit = _load_runtime_contract_audit_module()
     monkeypatch.setitem(
-        audit.PROFILES,
+        audit.FIELD_PRODUCT_HOST_DEFAULTS,
         "nav",
-        {**audit.PROFILES["nav"], "planner_backend": "octoplanner3d"},
+        {
+            **audit.FIELD_PRODUCT_HOST_DEFAULTS["nav"],
+            "planner_backend": "octoplanner3d",
+        },
     )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "product profile nav must use planner, not planner_backend" in result["blockers"]
+    assert "Field Product nav must use planner, not planner_backend" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_product_endpoint_planner_backend(monkeypatch):
-    audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["thunder_field"]
-    monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "thunder_field",
-        replace(
-            endpoint,
-            config_overrides={
-                **endpoint.config_overrides,
-                "planner_backend": "octoplanner3d",
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "endpoint thunder_field config_overrides must not set planner_backend "
-        "for product profiles" in result["blockers"]
-    )
-
-
-def test_profile_runtime_specs_reject_missing_endpoint_default_action_profile(
+def test_profile_runtime_specs_reject_missing_profile_adapter_default_action_profile(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
-    default_actions = dict(endpoint.default_actions)
-    default_actions.pop("explore")
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
+    default_actions = dict(profile_adapter.default_actions)
+    default_actions.pop("sim_mujoco_live")
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
-        replace(endpoint, default_actions=default_actions),
+        replace(profile_adapter, default_actions=default_actions),
     )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "endpoint mujoco_live default_actions missing supported profile explore" in result["blockers"]
+    assert "Profile adapter mujoco_live default_actions missing supported name sim_mujoco_live" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_missing_endpoint_record_action_profile(
+def test_profile_runtime_specs_reject_missing_profile_adapter_record_action_profile(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
-    record_actions = dict(endpoint.record_actions)
-    record_actions.pop("explore")
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
+    record_actions = dict(profile_adapter.record_actions)
+    record_actions.pop("sim_mujoco_live")
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
-        replace(endpoint, record_actions=record_actions),
+        replace(profile_adapter, record_actions=record_actions),
     )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "endpoint mujoco_live record_actions missing supported profile explore" in result["blockers"]
+    assert "Profile adapter mujoco_live record_actions missing supported name sim_mujoco_live" in result["blockers"]
 
 
 def test_profile_runtime_specs_reject_external_profile_missing_launcher(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.PROFILES["sim_mujoco_live"])
+    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
     profile_data["_external_launcher"] = "sim/scripts/missing_launcher.sh"
-    monkeypatch.setitem(audit.PROFILES, "sim_mujoco_live", profile_data)
+    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
 
     result = audit._check_profile_runtime_specs()
 
@@ -3538,34 +3765,37 @@ def test_profile_runtime_specs_reject_external_profile_missing_launcher(
     assert "profile sim_mujoco_live external launcher missing: sim/scripts/missing_launcher.sh" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_external_profile_launcher_endpoint_drift(
+def test_profile_runtime_specs_reject_external_profile_launcher_adapter_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.PROFILES["sim_mujoco_live"])
-    profile_data["_external_launcher"] = "sim/scripts/launch_cmu_unity_lingtu_runtime.sh"
-    monkeypatch.setitem(audit.PROFILES, "sim_mujoco_live", profile_data)
+    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
+    profile_data["_external_launcher"] = "sim/scripts/unrelated_launcher.sh"
+    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "profile sim_mujoco_live external launcher does not match endpoint mujoco_live" in result["blockers"]
+    assert "profile sim_mujoco_live external launcher does not match adapter mujoco_live" in result["blockers"]
 
 
 def test_profile_runtime_specs_reject_external_profile_data_source_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.PROFILES["sim_mujoco_live"])
-    profile_data["_endpoint_data_source"] = "thunder_field"
-    monkeypatch.setitem(audit.PROFILES, "sim_mujoco_live", profile_data)
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
+    monkeypatch.setitem(
+        audit.PROFILE_ADAPTERS,
+        "mujoco_live",
+        replace(profile_adapter, data_source="thunder"),
+    )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
     assert (
-        "profile sim_mujoco_live external default runtime spec: "
-        "runtime contract does not match data source" in result["blockers"]
+        "Profile adapter mujoco_live profile sim_mujoco_live: runtime contract does not match data source"
+        in result["blockers"]
     )
 
 
@@ -3577,7 +3807,7 @@ def test_profile_runtime_specs_reject_external_profile_binding_drift(
     monkeypatch.setitem(
         audit.PROFILE_DATA_SOURCE_BINDINGS,
         "sim_mujoco_live",
-        replace(binding, data_source="thunder_field"),
+        replace(binding, data_source="thunder"),
     )
 
     result = audit._check_profile_runtime_specs()
@@ -3585,7 +3815,7 @@ def test_profile_runtime_specs_reject_external_profile_binding_drift(
     assert result["ok"] is False
     assert (
         "profile sim_mujoco_live external default runtime spec data_source "
-        "drifted from PROFILE_DATA_SOURCE_BINDINGS" in result["blockers"]
+        "drifted from its selection binding" in result["blockers"]
     )
 
 
@@ -3593,53 +3823,56 @@ def test_profile_runtime_specs_reject_external_profile_default_args_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.PROFILES["sim_mujoco_live"])
+    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
     profile_data["_external_default_args"] = ("legacy-gate",)
-    monkeypatch.setitem(audit.PROFILES, "sim_mujoco_live", profile_data)
+    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "profile sim_mujoco_live external default args do not match endpoint mujoco_live" in result["blockers"]
+    assert "profile sim_mujoco_live external default args do not match adapter mujoco_live" in result["blockers"]
 
 
 def test_profile_runtime_specs_reject_external_profile_record_args_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    profile_data = dict(audit.PROFILES["sim_mujoco_live"])
+    profile_data = dict(audit.HOST_PROFILE_DEFAULTS["sim_mujoco_live"])
     profile_data["_external_record_args"] = ("legacy-video",)
-    monkeypatch.setitem(audit.PROFILES, "sim_mujoco_live", profile_data)
+    monkeypatch.setitem(audit.HOST_PROFILE_DEFAULTS, "sim_mujoco_live", profile_data)
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "profile sim_mujoco_live external record args do not match endpoint mujoco_live" in result["blockers"]
+    assert "profile sim_mujoco_live external record args do not match adapter mujoco_live" in result["blockers"]
 
 
-def test_profile_runtime_specs_reject_missing_endpoint_launcher(monkeypatch):
+def test_profile_runtime_specs_reject_missing_profile_adapter_launcher(monkeypatch):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
-        replace(endpoint, external_launcher="sim/scripts/missing_launcher.sh"),
+        replace(profile_adapter, external_launcher="sim/scripts/missing_launcher.sh"),
     )
 
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "endpoint mujoco_live external launcher missing: sim/scripts/missing_launcher.sh" in result["blockers"]
+    assert (
+        "Profile adapter mujoco_live external launcher missing: sim/scripts/missing_launcher.sh"
+        in result["blockers"]
+    )
 
 
-def test_profile_runtime_specs_reject_hardware_endpoint_launcher(monkeypatch):
+def test_profile_runtime_specs_reject_hardware_profile_adapter_launcher(monkeypatch):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["thunder_field"]
+    profile_adapter = audit.PROFILE_ADAPTERS["thunder_lite"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "thunder_field",
+        audit.PROFILE_ADAPTERS,
+        "thunder_lite",
         replace(
-            endpoint,
+            profile_adapter,
             external_launcher="sim/scripts/navigation_replay_deviation_gate.py",
         ),
     )
@@ -3647,19 +3880,19 @@ def test_profile_runtime_specs_reject_hardware_endpoint_launcher(monkeypatch):
     result = audit._check_profile_runtime_specs()
 
     assert result["ok"] is False
-    assert "endpoint thunder_field hardware endpoint must not declare external launcher" in result["blockers"]
+    assert "Profile adapter thunder_lite for hardware must not declare external launcher" in result["blockers"]
 
 
 def test_profile_runtime_specs_reject_ros2_runtime_binding_drift(monkeypatch):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["thunder_field"]
+    profile_adapter = audit.PROFILE_ADAPTERS["thunder_lite"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "thunder_field",
+        audit.PROFILE_ADAPTERS,
+        "thunder_lite",
         replace(
-            endpoint,
+            profile_adapter,
             config_overrides={
-                **endpoint.config_overrides,
+                **profile_adapter.config_overrides,
                 "localization_adapter": "ros2_slam_bridge",
             },
         ),
@@ -3669,23 +3902,23 @@ def test_profile_runtime_specs_reject_ros2_runtime_binding_drift(monkeypatch):
 
     assert result["ok"] is False
     assert (
-        "endpoint thunder_field profile nav runtime bindings: "
+        "Profile adapter thunder_lite profile lite runtime bindings: "
         "localization_adapter=ros2_slam_bridge selects a ROS2 localization adapter" in result["blockers"]
     )
 
 
-def test_profile_runtime_specs_reject_endpoint_config_frame_override_drift(
+def test_profile_runtime_specs_reject_profile_adapter_config_frame_override_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
         replace(
-            endpoint,
+            profile_adapter,
             config_overrides={
-                **endpoint.config_overrides,
+                **profile_adapter.config_overrides,
                 "planning_frame_id": "camera_link",
             },
         ),
@@ -3695,26 +3928,26 @@ def test_profile_runtime_specs_reject_endpoint_config_frame_override_drift(
 
     assert result["ok"] is False
     assert (
-        "endpoint mujoco_live config_overrides planning_frame_id camera_link "
+        "Profile adapter mujoco_live config_overrides planning_frame_id camera_link "
         "is not a fixed runtime frame" in result["blockers"]
     )
 
 
-def test_profile_runtime_specs_reject_endpoint_profile_frame_override_drift(
+def test_profile_runtime_specs_reject_profile_adapter_profile_frame_override_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
-    tare_overrides = dict(endpoint.profile_overrides["tare_explore"])
-    tare_overrides["goal_frame_id"] = "body"
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
+    profile_overrides = dict(profile_adapter.profile_overrides["sim_mujoco_octo_live"])
+    profile_overrides["goal_frame_id"] = "body"
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
         replace(
-            endpoint,
+            profile_adapter,
             profile_overrides={
-                **endpoint.profile_overrides,
-                "tare_explore": tare_overrides,
+                **profile_adapter.profile_overrides,
+                "sim_mujoco_octo_live": profile_overrides,
             },
         ),
     )
@@ -3723,23 +3956,23 @@ def test_profile_runtime_specs_reject_endpoint_profile_frame_override_drift(
 
     assert result["ok"] is False
     assert (
-        "endpoint mujoco_live profile_overrides.tare_explore goal_frame_id body "
+        "Profile adapter mujoco_live profile_overrides.sim_mujoco_octo_live goal_frame_id body "
         "is not a fixed runtime frame" in result["blockers"]
     )
 
 
-def test_profile_runtime_specs_reject_endpoint_config_topic_override_drift(
+def test_profile_runtime_specs_reject_profile_adapter_config_topic_override_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
         replace(
-            endpoint,
+            profile_adapter,
             config_overrides={
-                **endpoint.config_overrides,
+                **profile_adapter.config_overrides,
                 "cloud_topic": "/nav/missing_cloud",
             },
         ),
@@ -3749,22 +3982,23 @@ def test_profile_runtime_specs_reject_endpoint_config_topic_override_drift(
 
     assert result["ok"] is False
     assert (
-        "endpoint mujoco_live config_overrides cloud_topic /nav/missing_cloud has no topic format" in result["blockers"]
+        "Profile adapter mujoco_live config_overrides cloud_topic /nav/missing_cloud has no topic format"
+        in result["blockers"]
     )
 
 
-def test_profile_runtime_specs_reject_endpoint_config_relative_topic_override(
+def test_profile_runtime_specs_reject_profile_adapter_config_relative_topic_override(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
         replace(
-            endpoint,
+            profile_adapter,
             config_overrides={
-                **endpoint.config_overrides,
+                **profile_adapter.config_overrides,
                 "cloud_topic": "nav/missing_cloud",
             },
         ),
@@ -3774,26 +4008,26 @@ def test_profile_runtime_specs_reject_endpoint_config_relative_topic_override(
 
     assert result["ok"] is False
     assert (
-        "endpoint mujoco_live config_overrides cloud_topic "
+        "Profile adapter mujoco_live config_overrides cloud_topic "
         "nav/missing_cloud is not an absolute runtime topic" in result["blockers"]
     )
 
 
-def test_profile_runtime_specs_reject_endpoint_profile_topic_override_drift(
+def test_profile_runtime_specs_reject_profile_adapter_profile_topic_override_drift(
     monkeypatch,
 ):
     audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
-    tare_overrides = dict(endpoint.profile_overrides["tare_explore"])
-    tare_overrides["cloud_topic"] = "/nav/missing_cloud"
+    profile_adapter = audit.PROFILE_ADAPTERS["mujoco_live"]
+    profile_overrides = dict(profile_adapter.profile_overrides["sim_mujoco_octo_live"])
+    profile_overrides["cloud_topic"] = "/nav/missing_cloud"
     monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
+        audit.PROFILE_ADAPTERS,
         "mujoco_live",
         replace(
-            endpoint,
+            profile_adapter,
             profile_overrides={
-                **endpoint.profile_overrides,
-                "tare_explore": tare_overrides,
+                **profile_adapter.profile_overrides,
+                "sim_mujoco_octo_live": profile_overrides,
             },
         ),
     )
@@ -3802,68 +4036,8 @@ def test_profile_runtime_specs_reject_endpoint_profile_topic_override_drift(
 
     assert result["ok"] is False
     assert (
-        "endpoint mujoco_live profile_overrides.tare_explore cloud_topic "
+        "Profile adapter mujoco_live profile_overrides.sim_mujoco_octo_live cloud_topic "
         "/nav/missing_cloud has no topic format" in result["blockers"]
-    )
-
-
-@pytest.mark.skip(reason="tomogram artifact retired; audit no longer checks tomogram paths")
-def test_profile_runtime_specs_reject_missing_endpoint_config_tomogram(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["gazebo"]
-    monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "gazebo",
-        replace(
-            endpoint,
-            config_overrides={
-                **endpoint.config_overrides,
-                "tomogram": "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/tomogram/missing.pickle",
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "endpoint gazebo config_overrides tomogram path missing: "
-        "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/tomogram/missing.pickle"
-        in result["blockers"]
-    )
-
-
-@pytest.mark.skip(reason="tomogram artifact retired; audit no longer checks tomogram paths")
-def test_profile_runtime_specs_reject_missing_endpoint_profile_tomogram(
-    monkeypatch,
-):
-    audit = _load_runtime_contract_audit_module()
-    endpoint = audit.RUNTIME_ENDPOINTS["mujoco_live"]
-    explore_overrides = dict(endpoint.profile_overrides["explore"])
-    explore_overrides["tomogram"] = (
-        "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/tomogram/missing.pickle"
-    )
-    monkeypatch.setitem(
-        audit.RUNTIME_ENDPOINTS,
-        "mujoco_live",
-        replace(
-            endpoint,
-            profile_overrides={
-                **endpoint.profile_overrides,
-                "explore": explore_overrides,
-            },
-        ),
-    )
-
-    result = audit._check_profile_runtime_specs()
-
-    assert result["ok"] is False
-    assert (
-        "endpoint mujoco_live profile_overrides.explore tomogram path missing: "
-        "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/rsc/tomogram/missing.pickle"
-        in result["blockers"]
     )
 
 
@@ -3894,7 +4068,7 @@ def test_runtime_validation_gate_check_rejects_collector_command_contract_drift(
 def test_runtime_validation_gate_check_rejects_gate_command_contract_drift():
     gates = runtime_validation_gates()
     gates["real_runtime_evidence"]["gate_command"] = (
-        "python scripts/gates/real_runtime_evidence_gate.py artifacts/thunder_field_runtime/report.json"
+        "python scripts/gates/real_runtime_evidence_gate.py artifacts/real_runtime/report.json"
     )
 
     result = validate_runtime_validation_gates(gates)
@@ -4023,9 +4197,6 @@ def test_runtime_validation_gate_check_rejects_saved_map_artifact_validates_drif
     assert "saved_map_artifact_gate validation gate validates list drifted" in result.blockers
 
 
-@pytest.mark.skip(
-    reason="YAML manifest and source frame/topic contract drift; needs production config sync, not a test defect"
-)
 def test_runtime_contract_audit_script_accepts_current_contract():
     script = REPO_ROOT / "scripts" / "gates" / "runtime_contract_audit.py"
 

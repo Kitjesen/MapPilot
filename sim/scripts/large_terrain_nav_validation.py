@@ -6,15 +6,19 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import pickle
 import platform
-import os
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable
+
+if TYPE_CHECKING:
+    from sim.engine.scenarios.large_terrain_assets import LargeTerrainAssets, TerrainRoute
+
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -23,7 +27,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from runtime.msgs.numpy_compat import numpy_import_is_safe
+from runtime.msgs.numpy_compat import numpy_import_is_safe  # noqa: E402
 
 np: Any = None
 GlobalPlanner: Any = None
@@ -61,7 +65,11 @@ def _load_runtime() -> None:
     if evaluate_plan_safety is None or grid_from_tomogram is None or path_distance is None:
         from nav.services.safety.plan_safety import (
             evaluate_plan_safety as _evaluate_plan_safety,
+        )
+        from nav.services.safety.plan_safety import (
             grid_from_tomogram as _grid_from_tomogram,
+        )
+        from nav.services.safety.plan_safety import (
             path_distance as _path_distance,
         )
 
@@ -158,7 +166,7 @@ def _source_map_artifacts(assets: LargeTerrainAssets) -> dict[str, Any]:
     }
 
 
-def _pct_runtime_evidence() -> dict[str, Any]:
+def _pct_planner_runtime_evidence() -> dict[str, Any]:
     global inspect_pct_runtime
 
     if inspect_pct_runtime is None:
@@ -168,33 +176,48 @@ def _pct_runtime_evidence() -> dict[str, Any]:
 
         inspect_pct_runtime = _inspect_pct_runtime
     try:
-        info = inspect_pct_runtime(ROOT)
-        evidence = {
-            "ok": bool(info.get("ok")),
-            "canonical_arch": info.get("canonical_arch"),
-            "python_tag": info.get("python_tag"),
-            "lib_dir": info.get("lib_dir"),
-            "missing": info.get("missing", []),
-            "shared_missing": info.get("shared_missing", []),
-            "error": info.get("error", ""),
+        inspection = dict(inspect_pct_runtime(ROOT))
+        selection = (
+            dict(inspection.get("planner_runtime"))
+            if isinstance(inspection.get("planner_runtime"), dict)
+            else {}
+        )
+        runtime = str(selection.get("resolved") or selection.get("requested") or "")
+        evidence: dict[str, Any] = {
+            "runtime": runtime,
+            "ok": inspection.get("ok") is True,
+            "requested": str(selection.get("requested") or runtime),
+            "supported": selection.get("supported") is True,
+            "error": str(inspection.get("error") or selection.get("error") or ""),
         }
-        for key in (
-            "known_good_python_tag",
-            "python_abi_matches_known_good",
-            "platform_system",
-            "os_name",
-            "native_binary_format",
-            "host_platform_supported",
-            "host_platform_blocker",
-            "candidate_diagnostics",
-            "recommended_build_command",
-        ):
-            if key in info:
-                evidence[key] = info[key]
+        optional_fields = {
+            "call_mode": inspection.get("rust_optimizer_call_mode"),
+            "searched": inspection.get("searched"),
+            "required": inspection.get("required"),
+            "missing": inspection.get("missing"),
+            "shared_missing": inspection.get("shared_missing"),
+            "recommended_build_command": inspection.get("recommended_build_command"),
+        }
+        evidence.update(
+            {key: value for key, value in optional_fields.items() if value not in (None, "")}
+        )
+        if runtime == "native":
+            evidence["parity_requirements"] = {
+                key: inspection.get(key)
+                for key in (
+                    "platform_system",
+                    "canonical_arch",
+                    "python_tag",
+                    "known_good_python_tag",
+                    "python_abi_matches_known_good",
+                    "host_platform_supported",
+                    "host_platform_blocker",
+                )
+                if key in inspection
+            }
         return evidence
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
-
+        return {"runtime": "rust_process", "ok": False, "error": str(exc)}
 
 def _environment_preflight_report(
     output_dir: str | Path,
@@ -207,50 +230,65 @@ def _environment_preflight_report(
     planner_names = _planner_names(planners)
     resolved_platform = platform_system or platform.system()
     numpy_safe = numpy_import_is_safe()
-    native_runtime = _pct_runtime_evidence() if "pct" in planner_names else None
+    pct_planner_runtime = (
+        _pct_planner_runtime_evidence() if "pct" in planner_names else None
+    )
+    pct_planner_runtime_ok = (
+        pct_planner_runtime.get("ok") is True
+        if isinstance(pct_planner_runtime, dict)
+        else None
+    )
 
     blockers: list[str] = []
     blocked_reason = ""
-    if (
+    numpy_blocked = bool(
         resolved_platform.lower() == "windows"
         and not numpy_safe
         and not allow_unstable_windows_numpy
-    ):
+    )
+    if numpy_blocked:
         blocked_reason = "windows_mingw_numpy_not_accepted"
         blockers.append(
-            "Windows/MINGW NumPy large-terrain runtime is not accepted; run this "
-            "gate on Linux or pass --allow-unstable-windows-numpy for manual diagnosis"
+            "Windows/MINGW NumPy large-terrain runtime is not accepted; use a host "
+            "with a stable NumPy runtime or pass --allow-unstable-windows-numpy "
+            "for manual diagnosis"
         )
-    pct_runtime_blocked = bool(
-        "pct" in planner_names
-        and isinstance(native_runtime, dict)
-        and native_runtime.get("ok") is not True
-    )
-    if pct_runtime_blocked:
-        blockers.append("PCT native runtime unavailable")
+    if pct_planner_runtime_ok is False:
+        blockers.append("PCT planner runtime unavailable")
         if not blocked_reason:
-            blocked_reason = "pct_native_runtime_unavailable"
+            blocked_reason = "pct_planner_runtime_unavailable"
 
-    host_guard_required = bool(
-        not allow_unstable_windows_numpy
-        and (
-            not numpy_safe
-            or (resolved_platform.lower() == "windows" and pct_runtime_blocked)
-        )
-    )
-    if not blockers or not host_guard_required:
+    if not blockers:
         return None
 
     environment = {
         "platform_system": resolved_platform,
         "accepted_host": False,
-        "accepted_platforms": ["Linux"],
         "numpy_import_safe": numpy_safe,
         "blocked_reason": blocked_reason,
         "blockers": blockers,
         "manual_diagnosis_flag": "--allow-unstable-windows-numpy",
         "claim_boundary": "environment_blocked_no_algorithm_claim",
     }
+
+    def blocked_plan(planner_name: str) -> dict[str, Any]:
+        plan: dict[str, Any] = {
+            "planner": planner_name,
+            "planner_requested": planner_name,
+            "selected_planner": planner_name,
+            "feasible": False,
+            "blocked": True,
+            "status": "blocked",
+            "failure_category": "environment_runtime",
+            "error": "; ".join(blockers),
+            "route_ok": False,
+            "path": [],
+        }
+        if planner_name == "pct":
+            plan["pct_planner_runtime"] = pct_planner_runtime
+            plan["pct_planner_runtime_ok"] = pct_planner_runtime_ok
+        return plan
+
     return {
         "schema_version": "lingtu.large_terrain_nav_validation.v1",
         "ok": False,
@@ -262,7 +300,8 @@ def _environment_preflight_report(
         "selection_policy": SELECTION_POLICY,
         "algorithm_backends": _not_exercised_algorithm_backends(),
         "assets": _asset_paths(output_dir),
-        "native_runtime": native_runtime,
+        "pct_planner_runtime": pct_planner_runtime,
+        "pct_planner_runtime_ok": pct_planner_runtime_ok,
         "environment": environment,
         "environment_blockers": blockers,
         "routes": list(routes),
@@ -271,23 +310,7 @@ def _environment_preflight_report(
             {
                 "route": str(route_name),
                 "ok": False,
-                "planning": [
-                    {
-                        "planner": planner_name,
-                        "planner_requested": planner_name,
-                        "selected_planner": planner_name,
-                        "feasible": False,
-                        "blocked": True,
-                        "native_backend_used": False,
-                        "native_runtime": native_runtime if planner_name == "pct" else None,
-                        "status": "blocked",
-                        "failure_category": "environment_runtime",
-                        "error": "; ".join(blockers),
-                        "route_ok": False,
-                        "path": [],
-                    }
-                    for planner_name in planner_names
-                ],
+                "planning": [blocked_plan(planner_name) for planner_name in planner_names],
                 "selection": {
                     "policy": SELECTION_POLICY,
                     "primary_planner": planner_names[0] if planner_names else "",
@@ -312,7 +335,6 @@ def _environment_preflight_report(
         ],
         "errors": blockers,
     }
-
 
 def _route_map(assets: LargeTerrainAssets) -> dict[str, TerrainRoute]:
     return {route.name: route for route in assets.routes}
@@ -340,7 +362,12 @@ def _with_route_endpoints(
     return deduped
 
 
-def _path_safety(path: list[tuple[float, float, float]] | list[list[float]], tomo: dict[str, Any], *, obstacle_thr: float) -> dict[str, Any]:
+def _path_safety(
+    path: list[tuple[float, float, float]] | list[list[float]],
+    tomo: dict[str, Any],
+    *,
+    obstacle_thr: float,
+) -> dict[str, Any]:
     return evaluate_plan_safety(path, grid_from_tomogram(tomo), obstacle_thr=obstacle_thr)
 
 
@@ -425,8 +452,8 @@ def _pct_planning_mode_fields(
     else:
         enabled = bool(optimizer_enabled)
     path_mode = str(diagnostics.get("pct_planner_path_mode") or "").strip()
-    if path_mode not in {"native_astar_raw_path", "optimized_trajectory"}:
-        path_mode = "optimized_trajectory" if enabled else "native_astar_raw_path"
+    if path_mode not in {"astar_raw_path", "optimized_trajectory"}:
+        path_mode = "optimized_trajectory" if enabled else "astar_raw_path"
 
     attempted = diagnostics.get("pct_optimizer_attempted")
     accepted = diagnostics.get("pct_optimizer_accepted")
@@ -489,13 +516,16 @@ def _pct_child_failure_report(
     planner_name: str,
     route: TerrainRoute,
     *,
-    native_runtime: dict[str, Any] | None,
+    pct_planner_runtime: dict[str, Any] | None,
     returncode: int | None,
     error: str,
     stdout: str = "",
     stderr: str = "",
     pct_optimizer_enabled: bool | None = None,
 ) -> dict[str, Any]:
+    pct_planner_runtime_ok = bool(
+        pct_planner_runtime and pct_planner_runtime.get("ok") is True
+    )
     report = {
         "planner": planner_name,
         "planner_requested": planner_name,
@@ -507,10 +537,10 @@ def _pct_child_failure_report(
         "backend_requested_class": "",
         "feasible": False,
         "blocked": True,
-        "backend_available": bool(native_runtime and native_runtime.get("ok") is True),
-        "backend_requested_available": bool(native_runtime and native_runtime.get("ok") is True),
-        "native_backend_used": False,
-        "native_runtime": native_runtime,
+        "backend_available": pct_planner_runtime_ok,
+        "backend_requested_available": pct_planner_runtime_ok,
+        "pct_planner_runtime": pct_planner_runtime,
+        "pct_planner_runtime_ok": pct_planner_runtime_ok,
         "status": "failed",
         "failure_category": "planner_process_crash",
         "load_error": "",
@@ -538,7 +568,7 @@ def _plan_with_backend_subprocess(
     route: TerrainRoute,
     *,
     obstacle_thr: float,
-    native_runtime: dict[str, Any] | None,
+    pct_planner_runtime: dict[str, Any] | None,
 ) -> dict[str, Any]:
     run_root = assets.metadata.parent / "_plan_cases"
     run_root.mkdir(parents=True, exist_ok=True)
@@ -582,7 +612,7 @@ def _plan_with_backend_subprocess(
         return _pct_child_failure_report(
             planner_name,
             route,
-            native_runtime=native_runtime,
+            pct_planner_runtime=pct_planner_runtime,
             returncode=None,
             error=f"PCT planner child process timed out after {exc.timeout}s",
             stdout=exc.stdout or "",
@@ -594,6 +624,10 @@ def _plan_with_backend_subprocess(
         try:
             loaded = json.loads(json_out.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
+                loaded["pct_planner_runtime"] = pct_planner_runtime
+                loaded["pct_planner_runtime_ok"] = bool(
+                    pct_planner_runtime and pct_planner_runtime.get("ok") is True
+                )
                 loaded.setdefault("child_process", {})
                 loaded["child_process"].update(
                     {
@@ -614,14 +648,13 @@ def _plan_with_backend_subprocess(
     return _pct_child_failure_report(
         planner_name,
         route,
-        native_runtime=native_runtime,
+        pct_planner_runtime=pct_planner_runtime,
         returncode=proc.returncode,
         error=_pct_child_exit_error(proc.returncode),
         stdout=proc.stdout or "",
         stderr=proc.stderr or "",
         pct_optimizer_enabled=pct_optimizer_enabled,
     )
-
 
 def _plan_with_backend_direct(
     planner_name: str,
@@ -631,22 +664,28 @@ def _plan_with_backend_direct(
     obstacle_thr: float,
 ) -> dict[str, Any]:
     planner_name = planner_name.lower().strip()
-    native_runtime = _pct_runtime_evidence() if planner_name == "pct" else None
+    pct_planner_runtime = (
+        _pct_planner_runtime_evidence() if planner_name == "pct" else None
+    )
+    pct_planner_runtime_ok = (
+        pct_planner_runtime.get("ok") is True
+        if isinstance(pct_planner_runtime, dict)
+        else None
+    )
     environment_blocked = bool(
-        planner_name == "pct"
-        and isinstance(native_runtime, dict)
-        and native_runtime.get("ok") is not True
+        planner_name == "pct" and pct_planner_runtime_ok is False
     )
     svc = GlobalPlanner(
         planner_name=planner_name,
-        tomogram=str(assets.tomogram),
+        map_path=str(assets.tomogram),
+        map_artifact_gate_required=False,
         downsample_dist=0.2,
         obstacle_thr=obstacle_thr,
     )
     try:
         svc.setup()
     except Exception as exc:
-        report = {
+        report: dict[str, Any] = {
             "planner": planner_name,
             "planner_requested": planner_name,
             "selected_planner": planner_name,
@@ -657,15 +696,18 @@ def _plan_with_backend_direct(
             "feasible": False,
             "blocked": True,
             "error": str(exc),
-            "native_backend_used": False,
-            "native_runtime": native_runtime,
             "status": "blocked" if environment_blocked else "failed",
-            "failure_category": "environment_runtime" if environment_blocked else "planner_runtime",
+            "failure_category": (
+                "environment_runtime" if environment_blocked else "planner_runtime"
+            ),
             "plan_ms": 0.0,
             "start": list(route.start),
             "goal": list(route.goal),
             "path": [],
         }
+        if planner_name == "pct":
+            report["pct_planner_runtime"] = pct_planner_runtime
+            report["pct_planner_runtime_ok"] = pct_planner_runtime_ok
         report.update(_pct_planning_mode_fields(planner_name))
         return report
     backend = svc._backend
@@ -679,7 +721,11 @@ def _plan_with_backend_direct(
             safe_goal_tolerance=0.0,
         )
         plan_report = _service_plan_report(svc)
-        elapsed_ms = float(plan_ms if plan_ms is not None else (time.perf_counter() - start_t) * 1000.0)
+        elapsed_ms = float(
+            plan_ms
+            if plan_ms is not None
+            else (time.perf_counter() - start_t) * 1000.0
+        )
         error = ""
     except Exception as exc:
         path = []
@@ -692,7 +738,6 @@ def _plan_with_backend_direct(
     if selected_planner != planner_name:
         selected_backend = getattr(svc, "_fallback_backend", None) or backend
     selected_backend_available = bool(getattr(selected_backend, "available", True))
-    native_backend_used = bool(selected_planner == "pct" and selected_backend_available and path)
     status = "passed" if path else "blocked" if environment_blocked else "failed"
     rejected_plans = plan_report.get("rejected_plans", [])
     planner_diagnostics = (
@@ -708,14 +753,14 @@ def _plan_with_backend_direct(
         "plan_safety_policy": str(plan_report.get("policy") or ""),
         "rejected_plans": rejected_plans if isinstance(rejected_plans, list) else [],
         "reached_goal": bool(plan_report.get("reached_goal", bool(path))),
-        "planner_class": selected_backend.__class__.__name__ if selected_backend is not None else "",
+        "planner_class": (
+            selected_backend.__class__.__name__ if selected_backend is not None else ""
+        ),
         "backend_requested_class": backend.__class__.__name__ if backend is not None else "",
         "feasible": bool(path),
         "blocked": bool(not path),
         "backend_available": selected_backend_available,
         "backend_requested_available": backend_available,
-        "native_backend_used": native_backend_used,
-        "native_runtime": native_runtime,
         "planner_diagnostics": planner_diagnostics,
         "status": status,
         "failure_category": (
@@ -730,8 +775,14 @@ def _plan_with_backend_direct(
         "plan_ms": round(float(elapsed_ms), 3),
         "start": list(route.start),
         "goal": list(route.goal),
-        "path": [[float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0] for p in path],
+        "path": [
+            [float(p[0]), float(p[1]), float(p[2]) if len(p) > 2 else 0.0]
+            for p in path
+        ],
     }
+    if planner_name == "pct":
+        report["pct_planner_runtime"] = pct_planner_runtime
+        report["pct_planner_runtime_ok"] = pct_planner_runtime_ok
     report.update(
         _pct_planning_mode_fields(
             planner_name,
@@ -749,11 +800,13 @@ def _plan_with_backend(
     obstacle_thr: float,
 ) -> dict[str, Any]:
     planner_name = planner_name.lower().strip()
-    native_runtime = _pct_runtime_evidence() if planner_name == "pct" else None
+    pct_planner_runtime = (
+        _pct_planner_runtime_evidence() if planner_name == "pct" else None
+    )
     environment_blocked = bool(
         planner_name == "pct"
-        and isinstance(native_runtime, dict)
-        and native_runtime.get("ok") is not True
+        and isinstance(pct_planner_runtime, dict)
+        and pct_planner_runtime.get("ok") is not True
     )
     if _should_isolate_pct_planner(planner_name) and not environment_blocked:
         return _plan_with_backend_subprocess(
@@ -761,7 +814,7 @@ def _plan_with_backend(
             assets,
             route,
             obstacle_thr=obstacle_thr,
-            native_runtime=native_runtime,
+            pct_planner_runtime=pct_planner_runtime,
         )
     return _plan_with_backend_direct(
         planner_name,
@@ -769,7 +822,6 @@ def _plan_with_backend(
         route,
         obstacle_thr=obstacle_thr,
     )
-
 
 def _run_internal_plan_case(
     output_dir: Path,
@@ -891,10 +943,17 @@ def run_validation(
     cases = []
     all_ok = True
     planner_names = _planner_names(planners)
-    native_runtime = _pct_runtime_evidence() if "pct" in planner_names else None
+    pct_planner_runtime = (
+        _pct_planner_runtime_evidence() if "pct" in planner_names else None
+    )
+    pct_planner_runtime_ok = (
+        pct_planner_runtime.get("ok") is True
+        if isinstance(pct_planner_runtime, dict)
+        else None
+    )
     environment_blockers: list[str] = []
-    if isinstance(native_runtime, dict) and native_runtime.get("ok") is not True:
-        environment_blockers.append("PCT native runtime unavailable")
+    if pct_planner_runtime_ok is False:
+        environment_blockers.append("PCT planner runtime unavailable")
     for route_name in routes:
         if route_name not in route_by_name:
             raise ValueError(f"unknown route {route_name!r}")
@@ -979,7 +1038,8 @@ def run_validation(
                 "same_source_map_artifact": map_artifacts.get("ok") is True,
             }
         },
-        "native_runtime": native_runtime,
+        "pct_planner_runtime": pct_planner_runtime,
+        "pct_planner_runtime_ok": pct_planner_runtime_ok,
         "environment_blockers": environment_blockers,
         "routes": list(routes),
         "planners": list(planner_names),

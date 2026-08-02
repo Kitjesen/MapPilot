@@ -3,13 +3,38 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+from maps.client import ArtifactHandle, MapClient
 from runtime.msgs.map import MapControlRequest
 from runtime.msgs.numpy_compat import np
 
 logger = logging.getLogger(__name__)
+
+
+def map_client(gw: Any) -> MapClient:
+    """Return the plain same-host client for native ``mapd`` queries."""
+
+    client = getattr(gw, "_map_client", None)
+    if client is None:
+        client = MapClient()
+        try:
+            gw._map_client = client
+        except (AttributeError, TypeError):
+            pass
+    return client
+
+
+def open_artifact(gw: Any, map_name: str, capability: str) -> ArtifactHandle:
+    """Open one artifact through ``mapd`` without exposing its path to Gateway."""
+
+    client = map_client(gw)
+    open_native = getattr(client, "open_artifact", None)
+    if not callable(open_native):
+        raise RuntimeError("mapd client has no artifact endpoint")
+    return open_native(map_name, capability)
 
 
 def maps_service(gw: Any) -> Any | None:
@@ -17,11 +42,7 @@ def maps_service(gw: Any) -> Any | None:
     if manager is not None:
         return manager
     modules = getattr(gw, "_all_modules", {}) or {}
-    for name in ("maps.service", "MapsModule", "MapManagerModule"):
-        manager = modules.get(name)
-        if manager is not None:
-            return manager
-    return None
+    return modules.get("maps.service")
 
 
 def ensure_maps_service(gw: Any) -> Any:
@@ -43,6 +64,35 @@ def map_service_command(gw: Any, cmd: dict[str, Any]) -> dict[str, Any]:
     if not callable(execute):
         raise RuntimeError("maps.service has no typed control endpoint")
     return execute(MapControlRequest.from_mapping(cmd))
+
+
+def map_runtime_lock():
+    """Return the shared product-level map mutation lock."""
+    from lingtu.map_runtime_transaction import MapRuntimeTransaction
+
+    return MapRuntimeTransaction.shared_lock()
+
+
+def activate_runtime_map(
+    gw: Any,
+    name: str,
+    planner_reload: Callable[[str], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Activate a map through the product-level runtime transaction."""
+
+    from lingtu.map_runtime_transaction import MapRuntimeTransaction
+
+    transaction = MapRuntimeTransaction(
+        lambda command: map_service_command(gw, command),
+        planner_reload,
+    )
+    with transaction.shared_lock():
+        return transaction.activate(
+            name,
+            session_mode=str(getattr(gw, "_session_mode", "") or ""),
+            session_map=str(getattr(gw, "_session_map", "") or ""),
+            session_pending=bool(getattr(gw, "_session_pending", False)),
+        )
 
 
 def map_service_query(gw: Any, query: dict[str, Any]) -> dict[str, Any]:

@@ -18,7 +18,7 @@ def test_large_terrain_records_pct_child_process_crash_without_numpy(tmp_path, m
         return subprocess.CompletedProcess(
             args=args[0],
             returncode=-11,
-            stdout="native planner stdout",
+            stdout="planner stdout",
             stderr="Segmentation fault (core dumped)",
         )
 
@@ -29,11 +29,14 @@ def test_large_terrain_records_pct_child_process_crash_without_numpy(tmp_path, m
         assets,
         route,
         obstacle_thr=49.9,
-        native_runtime={"ok": True, "missing": []},
+        pct_planner_runtime={"runtime": "rust_process", "ok": True},
     )
 
     assert plan["feasible"] is False
-    assert plan["native_backend_used"] is False
+    assert plan["pct_planner_runtime"] == {"runtime": "rust_process", "ok": True}
+    assert plan["pct_planner_runtime_ok"] is True
+    assert "native_runtime" not in plan
+    assert "native_backend_used" not in plan
     assert plan["status"] == "failed"
     assert plan["failure_category"] == "planner_process_crash"
     assert plan["returncode"] == -11
@@ -70,13 +73,12 @@ def test_large_terrain_pct_child_disables_optimizer_by_default(tmp_path, monkeyp
         assets,
         route,
         obstacle_thr=49.9,
-        native_runtime={"ok": True, "missing": []},
+        pct_planner_runtime={"runtime": "rust_process", "ok": True},
     )
 
     assert captured_env[mod.PCT_OPTIMIZE_TRAJECTORY_ENV] == "0"
     assert plan["pct_optimizer_enabled"] is False
-    assert plan["pct_planner_path_mode"] == "native_astar_raw_path"
-
+    assert plan["pct_planner_path_mode"] == "astar_raw_path"
 
 def test_large_terrain_pct_child_preserves_explicit_optimizer_env(tmp_path, monkeypatch):
     from sim.scripts import large_terrain_nav_validation as mod
@@ -106,7 +108,7 @@ def test_large_terrain_pct_child_preserves_explicit_optimizer_env(tmp_path, monk
         assets,
         route,
         obstacle_thr=49.9,
-        native_runtime={"ok": True, "missing": []},
+        pct_planner_runtime={"runtime": "rust_process", "ok": True},
     )
 
     assert captured_env[mod.PCT_OPTIMIZE_TRAJECTORY_ENV] == "1"
@@ -127,7 +129,7 @@ def test_large_terrain_pct_mode_fields_prefer_backend_diagnostics():
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
             "pct_optimizer_raw_blocked_sample_count": 0,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
         },
     )
 
@@ -137,4 +139,15 @@ def test_large_terrain_pct_mode_fields_prefer_backend_diagnostics():
     assert fields["pct_optimizer_reject_reason"] == "optimized_trajectory_hard_obstacle"
     assert fields["pct_optimizer_blocked_sample_count"] == 3
     assert fields["pct_optimizer_raw_blocked_sample_count"] == 0
-    assert fields["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert fields["pct_planner_path_mode"] == "astar_raw_path"
+
+def test_large_terrain_pct_mode_fields_do_not_accept_legacy_path_mode_alias():
+    from sim.scripts import large_terrain_nav_validation as mod
+
+    fields = mod._pct_planning_mode_fields(
+        "pct",
+        optimizer_enabled=True,
+        planner_diagnostics={"pct_planner_path_mode": "native_astar_raw_path"},
+    )
+
+    assert fields["pct_planner_path_mode"] == "optimized_trajectory"

@@ -1,8 +1,8 @@
 [Unit]
 Description=LingTu native Thunder driver
-After=network-online.target lingtu-nav-dds.service
-Wants=network-online.target lingtu-nav-dds.service
-Conflicts=lingtu-thunder-dds-endpoint.service thunder-dds-endpoint.service dds-endpoint.service lingtu-thunder-lite.service driver.service
+After=network-online.target
+Wants=network-online.target
+Conflicts=lingtu-thunder-dds-endpoint.service thunder-dds-endpoint.service dds-endpoint.service driver.service
 
 [Service]
 Type=notify

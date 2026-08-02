@@ -211,6 +211,19 @@ void MapIcp::fillDiagnostics(MapIcpResult &result, const ICPLocalizer &icp) {
   result.diagnostics.refine_backend = icp.getBackendName();
   result.diagnostics.refine_iterations = icp.getLastIterations();
   result.diagnostics.refine_inliers = icp.getLastInliers();
+  result.diagnostics.input_points = icp.getLastInputPoints();
+  result.diagnostics.evaluated_points = icp.getLastEvaluatedPoints();
+  result.diagnostics.support_ratio =
+      result.diagnostics.input_points > 0
+      ? static_cast<double>(result.diagnostics.evaluated_points) /
+          static_cast<double>(result.diagnostics.input_points)
+      : -1.0;
+  result.diagnostics.overlap_inlier_ratio =
+      result.diagnostics.evaluated_points > 0 &&
+          result.diagnostics.refine_inliers >= 0
+      ? static_cast<double>(result.diagnostics.refine_inliers) /
+          static_cast<double>(result.diagnostics.evaluated_points)
+      : -1.0;
   result.diagnostics.refine_converged = icp.getLastConverged();
   result.diagnostics.refine_pos_cov_trace = icp.getLastPosCovTrace();
 }

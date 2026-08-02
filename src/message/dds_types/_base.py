@@ -18,6 +18,7 @@ except ImportError:  # pragma: no cover - host may not have CycloneDDS Python
 
     class _Types:
         int32 = int
+        int64 = int
         uint32 = int
         uint64 = int
         uint8 = int

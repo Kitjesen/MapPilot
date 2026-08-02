@@ -106,7 +106,7 @@ export const guideDocuments: GuideDocument[] = [
   {
     id: 'concepts',
     title: '核心概念',
-    description: '理解 Module-First、Blueprint、端口、显式连线和传输边界。',
+    description: '理解 Product、Host、Blueprint、端口、显式连线和传输边界。',
     sourcePath: 'docs/02-concepts/README.md',
     content: concepts,
     status: 'Current',
@@ -290,7 +290,7 @@ export const guideDocuments: GuideDocument[] = [
   },
   {
     id: 'runtime-bus',
-    title: 'Module-First Runtime Bus',
+    title: 'Host Runtime Bus',
     description: 'Module、Blueprint、Port、Wire 与传输边界的运行时合同。',
     sourcePath: 'docs/architecture/LINGTU_RUNTIME_BUS_DECISION.md',
     content: runtimeBus,

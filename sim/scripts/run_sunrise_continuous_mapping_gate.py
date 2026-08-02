@@ -22,7 +22,7 @@ MAX_CYCLONEDDS_DOMAIN_ID = 232
 SYNC_PATHS = [
     "sim/scripts/mujoco/continuous_mapping_quality_gate.py",
     "sim/scripts/mujoco/native_dds_sensors.py",
-    "sim/scripts/mujoco_continuous_mapping_quality_gate.py",
+
     "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
     "src/localization/fastlio2/config/mid360_mujoco_native_dds_vel_tight.yaml",
 ]
@@ -85,7 +85,7 @@ def _run(
 ) -> dict:
     if kill_stale:
         command = (
-            f"pkill -f 'lingtu_slam_cyclone_runtime.*--domain-id {domain_id}' >/dev/null 2>&1 || true; "
+            f"pkill -f 'slamd.*--domain-id {domain_id}' >/dev/null 2>&1 || true; "
             f"sleep 1"
         )
         client.exec_command(command, timeout=15)

@@ -8,10 +8,9 @@ from typing import Any
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
-from runtime.plugin_seed import seed_registered_plugins
-from runtime.registry import auto_select, get
 from gateway.schemas import GatewayErrorResponse
 from gateway.services.media_status import build_camera_status
+from runtime.registry import auto_select, get
 
 
 def _error_response(
@@ -44,8 +43,14 @@ def _cached_gateway_jpeg(gw: Any | None) -> bytes | None:
 
 
 def _teleop_snapshot_jpeg(gw: Any | None) -> bytes | None:
-    teleop = getattr(gw, "_teleop_module", None) if gw is not None else None
-    snapshot = getattr(teleop, "snapshot_jpeg", None)
+    if gw is None:
+        return None
+    media = getattr(gw, "_camera_module", None) or getattr(
+        gw,
+        "_teleop_module",
+        None,
+    )
+    snapshot = getattr(media, "snapshot_jpeg", None)
     if not callable(snapshot):
         return None
     try:
@@ -72,33 +77,7 @@ def _camera_unavailable(gw: Any | None) -> JSONResponse | None:
     )
 
 
-def _seed_registered_camera_snapshot_plugins() -> None:
-    try:
-        seed_registered_plugins(groups=("camera_ros2",), reload_loaded=False)
-    except ValueError as exc:
-        if "camera_ros2" not in str(exc):
-            raise
-
-
-def _seed_camera_snapshot_plugins() -> None:
-    try:
-        from lingtu.plugin_seed import seed_builtin_plugins
-    except ModuleNotFoundError as exc:
-        if exc.name not in {"lingtu", "lingtu.plugin_seed"}:
-            raise
-        _seed_registered_camera_snapshot_plugins()
-        return
-
-    try:
-        seed_builtin_plugins(groups=("camera_ros2",), reload_loaded=False)
-    except ValueError as exc:
-        if "camera_ros2" not in str(exc):
-            raise
-        _seed_registered_camera_snapshot_plugins()
-
-
 def _registered_snapshot_adapter_jpeg() -> bytes | None:
-    _seed_camera_snapshot_plugins()
     adapter_name = auto_select("camera_snapshot_adapter")
     if not adapter_name:
         return None

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source /opt/lingtu/config/thunder-runtime-env.sh
+source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh explore
 
 prepend_cyclonedds_libs() {
     local prefix="${LINGTU_CYCLONEDDS_PREFIX:-}"
@@ -71,6 +72,8 @@ fi
 
 exec "${LINGTU_EXPLORE_DDS_BIN}" \
     --domain "${LINGTU_DDS_DOMAIN_ID}" \
+    --route "${LINGTU_EXPLORE_ROUTE}" \
+    --map-root "${NAV_MAP_DIR}" \
     --tick-hz "${LINGTU_EXPLORE_TICK_HZ}" \
     --command-retry-s "${LINGTU_EXPLORE_COMMAND_RETRY_S}" \
     --command-timeout-ms "${LINGTU_EXPLORE_COMMAND_TIMEOUT_MS}" \

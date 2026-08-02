@@ -49,17 +49,10 @@ All configurable WireSpec fields
       - "dds"           → DDS transport (cross-process / cross-machine)
       - "shm"           → shared-memory transport (same host, large payloads)
 
-    When ``delivery`` and ``transport`` are both set they must agree.
-    Prefer ``delivery`` in new code; ``transport`` is a backward-compat alias.
-
 ``topic`` (str | None)
     Stable topic name used by the transport layer. When ``None`` the system
     auto-generates ``/<out_module>/<out_port>``. Explicit topics are required
     for DDS routes that must match a robot-side subscriber topic.
-
-``transport`` (str | None)
-    Backward-compatible alias for ``delivery``. Do not mix with ``delivery``
-    unless both resolve to the same value.
 
 QoS profile integration
 -----------------------

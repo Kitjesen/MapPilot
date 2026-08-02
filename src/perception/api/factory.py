@@ -1,6 +1,6 @@
 """Semantic Perception API - Factory layer.
 
-Factories are kept as a thin compatibility layer over the canonical
+Factories are a thin adapter layer over the canonical
 implementations in perception.detection / perception.encoding /
 perception.tracking.  They adapt the canonical duck-typed APIs to the
 DetectorAPI / EncoderAPI / TrackerAPI ABCs used by external callers.
@@ -322,24 +322,7 @@ class _InstanceTrackerFactoryProvider:
 
 
 class PerceptionFactory:
-    """Compatibility factory over the canonical perception backends."""
-
-    @staticmethod
-    def create_perception(
-        detector_type: str = "yolo_world",
-        encoder_type: str = "clip",
-        tracker_type: str = "instance",
-        config: PerceptionConfig | None = None,
-    ) -> Any:
-        """Create a full perception pipeline.
-
-        Deprecated: the monolithic PerceptionImpl has been removed in favor of
-        ``PerceptionModule`` (runtime registry single-path).  Use component
-        factories or instantiate ``PerceptionModule`` directly.
-        """
-        raise ConfigurationError(
-            "PerceptionFactory.create_perception is deprecated. Use PerceptionModule or the component create_* methods."
-        )
+    """Component factory over the canonical perception backends."""
 
     @staticmethod
     def create_detector(
@@ -385,14 +368,6 @@ class PerceptionFactory:
                 f"Unknown tracker type: {tracker_type}. "
                 f"Supported types: {', '.join(PerceptionFactory.get_available_trackers())}"
             ) from None
-
-    @staticmethod
-    def create_from_config(config: PerceptionConfig) -> Any:
-        """Create a full perception pipeline from a config object.
-
-        Deprecated: use ``PerceptionModule`` directly.
-        """
-        raise ConfigurationError("PerceptionFactory.create_from_config is deprecated. Use PerceptionModule directly.")
 
     @staticmethod
     def get_available_detectors() -> list[str]:

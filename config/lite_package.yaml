@@ -1,0 +1,207 @@
+schema_version: lingtu.lite_package.v1
+profile: lite
+purpose: Minimal local lite Profile runtime package with local transports and no ROS, Gateway, SLAM, maps, or semantic stack.
+
+deploy:
+  required_files:
+    - scripts/deploy/thunder/runtime-env.sh
+  forbidden_markers:
+    - /opt/ros
+    - ros2-env.sh
+    - ROS_DOMAIN_ID
+    - RMW_IMPLEMENTATION
+    - colcon
+    - rclpy
+
+python:
+  lite_extra: lite
+  gateway_extra: gateway
+  thunder_extra: thunder
+  required_lite_dependencies:
+    - numpy
+    - scipy
+    - pyyaml
+    - pydantic
+  gateway_dependencies:
+    - fastapi
+    - uvicorn
+    - websockets
+  forbidden_base_dependencies:
+    - fastapi
+    - uvicorn
+    - websockets
+    - opencv-python-headless
+    - scikit-learn
+    - openai
+    - anthropic
+    - jieba
+    - langchain
+    - langchain-core
+    - langchain-openai
+    - torch
+    - ultralytics
+    - open-clip-torch
+    - chromadb
+  forbidden_lite_dependencies:
+    - fastapi
+    - uvicorn
+    - websockets
+    - opencv-python-headless
+    - scikit-learn
+    - openai
+    - anthropic
+    - jieba
+    - langchain
+    - langchain-core
+    - langchain-openai
+    - torch
+    - ultralytics
+    - open-clip-torch
+    - chromadb
+    - brainstem-api
+
+package:
+  include_paths:
+    - lingtu.py
+    - cli/
+    - pyproject.toml
+    - config/robot_config.yaml
+    - config/driver_backends/thunder.yaml
+    - config/devices.yaml
+    - config/topic_contract.yaml
+    - config/lite_package.yaml
+    - scripts/deploy/thunder/runtime-env.sh
+    - src/runtime/
+    - src/lingtu/
+    - src/drivers/__init__.py
+    - src/drivers/real/__init__.py
+    - src/drivers/real/thunder/
+    - src/nav/__init__.py
+    - src/nav/navigation.py
+    - src/nav/runtime/
+    - src/nav/model/
+    - src/nav/tracking/
+    - src/nav/services/plan/__init__.py
+    - src/nav/services/plan/contracts.py
+    - src/nav/services/plan/factory.py
+    - src/nav/services/plan/preview.py
+    - src/nav/services/plan/mapless/__init__.py
+    - src/nav/services/plan/mapless/direct.py
+    - src/nav/services/plan/mapless/direct_path.py
+    - src/nav/services/plan/global_planner/__init__.py
+    - src/nav/services/plan/global_planner/algorithm/__init__.py
+    - src/nav/services/safety/
+    - src/nav/services/safety/safety_ring.py
+    - src/nav/services/safety/velocity_mux.py
+    - src/nav/services/__init__.py
+    - src/nav/services/frame_transforms.py
+    - src/nav/services/goals.py
+    - src/nav/services/task_ledger.py
+    - src/nav/services/geofence.py
+    - src/nav/local/
+    - src/nav/kernel/__init__.py
+    - src/nav/kernel/loader.py
+    - src/nav/kernel/paths.py
+  exclude_paths:
+    - src/*/adapters/ros2/
+    - src/nav/adapters/dds/
+    - src/gateway/visualization/
+    - src/localization/
+    - src/perception/
+    - src/decision/
+    - src/memory/
+    - src/gateway/
+    - src/gateway/media/
+    - src/drivers/sim/
+    - sim/
+    - web/
+    - third_party/
+    - calibration/
+    - launch/
+  omit_paths:
+    - "**/__pycache__/"
+    - "**/*.pyc"
+    - "**/tests/"
+    - ".pytest_cache/"
+    - ".ruff_cache/"
+    - cli/repl.py
+    - src/nav/services/plan/global_planner/algorithm/pct/vendor/
+    - src/nav/services/plan/global_planner/service.py
+    - src/nav/services/plan/global_planner/algorithm/pct/
+    - src/nav/services/plan/global_planner/algorithm/pct/runtime/
+    - src/nav/cpp/planning/global/octoplanner/
+    - src/nav/services/plan/global_planner/artifacts.py
+    - src/nav/services/plan/global_planner/path_feasibility.py
+    - cli/runtime_audit.py
+    - cli/runtime_extra.py
+    - src/lingtu/assembly/full_stack.py
+    - src/lingtu/assembly/full_stack_wiring.py
+    - src/lingtu/assembly/multi_robot.py
+    - src/lingtu/assembly/profile_graph.py
+    - src/lingtu/assembly/simulation_contract.py
+    - src/lingtu/assembly/graph.py
+    - src/lingtu/assembly/stub.py
+    - src/lingtu/assembly/stacks/composition.py
+    - src/lingtu/assembly/stacks/exploration.py
+    - src/lingtu/assembly/stacks/gateway.py
+    - src/lingtu/assembly/stacks/lidar.py
+    - src/localization/adapters/resolver.py
+    - src/runtime/adapters/navigation_io.py
+    - src/lingtu/assembly/stacks/maps.py
+    - src/lingtu/assembly/stacks/memory.py
+    - src/lingtu/assembly/stacks/perception.py
+    - src/lingtu/assembly/stacks/planner.py
+    - src/lingtu/assembly/stacks/sim_lidar.py
+    - src/lingtu/assembly/stacks/slam.py
+    - src/lingtu/assembly/stacks/system.py
+    - src/lingtu/assembly/stacks/services.py
+    - src/lingtu/assembly/wires/
+    - src/lingtu/host_bus.py
+    - src/runtime/adapters/dds/reader.py
+    - src/runtime/devices/
+    - sim/diagnostics/gap_report.py
+    - sim/diagnostics/dataflow_report.py
+    - src/diagnostics/field/gateway_acceptance.py
+    - src/diagnostics/field/inspection.py
+    - src/diagnostics/field/field_check.py
+    - src/runtime/rerun_module.py
+    - src/diagnostics/field/evidence.py
+    - src/diagnostics/field/gates.py
+    - src/runtime/transport/dds.py
+    - src/runtime/transport/shm.py
+    - src/localization/adapters/relocalization.py
+    - src/drivers/real/thunder/blueprints.py
+    - src/drivers/real/thunder/connection.py
+    - src/lingtu/sdk/
+  forbidden_markers:
+    - rclpy
+    - sensor_msgs
+    - nav_msgs
+    - geometry_msgs
+    - launch_ros
+    - /opt/ros
+    - colcon
+
+runtime:
+  expected_spec:
+    adapter: thunder_lite
+    data_source: thunder_lite_local
+    runtime_contract: thunder_lite_local
+    module_transport: local
+    endpoint_transport: local
+    endpoint_contract: null
+    localization_adapter: null
+    simulation_only: false
+    command_sink: driver
+  expected_config:
+    runtime_mode: lite
+    slam_profile: none
+    enable_gateway: false
+    enable_semantic: false
+    enable_map_modules: false
+    enable_gnss: false
+    run_startup_checks: false
+    enable_native: false
+    planner: direct
+    python_autonomy_backend: simple
+    python_path_follower_backend: pid

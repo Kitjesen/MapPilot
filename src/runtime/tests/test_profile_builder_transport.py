@@ -2,15 +2,18 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 
 class _FakeBlueprint:
     def __init__(self) -> None:
         self.build_transport = "not-called"
         self.route_contract_name = None
+        self._module_names: list[str] = []
 
     @property
     def module_names(self) -> tuple[str, ...]:
-        return ()
+        return tuple(self._module_names)
 
     def build(self, transport=None) -> str:
         self.build_transport = transport
@@ -18,6 +21,10 @@ class _FakeBlueprint:
 
     def route_contract(self, name: str):
         self.route_contract_name = name
+        return self
+
+    def require_modules(self, *names: str):
+        self._module_names.extend(name for name in names if name not in self._module_names)
         return self
 
 
@@ -79,13 +86,46 @@ def test_resolved_endpoint_route_contract_is_boundary_metadata() -> None:
     )
 
     config = {
-        "_runtime_endpoint": "thunder_field",
+        "_profile_adapter": "thunder_dds",
         "_endpoint_transport": "dds",
-        "_endpoint_contract": "thunder_field_dds_v1",
+        "_endpoint_contract": "thunder_dds_v1",
     }
 
     assert route_contract_name_for_resolved_config(config) == "robot"
     validate_route_contract_for_resolved_config(config)
+
+
+def test_route_contract_failure_reports_issue_scope_without_masking_error(monkeypatch) -> None:
+    import runtime.route_contract as route_contract_mod
+
+    from lingtu.assembly.profile_builder import validate_route_contract_for_resolved_config
+    from runtime.route_contract import RouteIssue
+
+    monkeypatch.setattr(route_contract_mod, "load_route_contract", lambda _name: object())
+    monkeypatch.setattr(
+        route_contract_mod,
+        "validate_route_contract",
+        lambda _contract: [
+            RouteIssue(
+                code="topic_consumers_missing",
+                scope="/nav/example/status",
+                message="topic /nav/example/status has no consumers",
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        validate_route_contract_for_resolved_config(
+            {
+                "_profile_adapter": "thunder_dds",
+                "_endpoint_transport": "dds",
+                "_endpoint_contract": "thunder_dds_v1",
+            }
+        )
+
+    message = str(exc_info.value)
+    assert "topic_consumers_missing:/nav/example/status" in message
+    assert "has no consumers" in message
 
 
 def test_build_system_from_resolved_profile_attaches_route_contract(monkeypatch) -> None:
@@ -103,11 +143,11 @@ def test_build_system_from_resolved_profile_attaches_route_contract(monkeypatch)
         lambda config: None,
     )
 
-    from runtime.profiles.resolver import resolve_profile_config
+    from lingtu.assembly.products import resolve_product_host_config
 
-    config = resolve_profile_config("nav")
+    config = resolve_product_host_config("nav")
     config["_endpoint_transport"] = "dds"
-    config["_endpoint_contract"] = "thunder_field_dds_v1"
+    config["_endpoint_contract"] = "thunder_dds_v1"
     builder_mod.build_system_from_resolved_profile("nav", config)
 
     assert fake_bp.route_contract_name == "robot"

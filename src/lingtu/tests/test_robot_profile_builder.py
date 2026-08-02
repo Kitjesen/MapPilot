@@ -7,7 +7,7 @@ from pathlib import Path
 
 class _FakeSystem:
     def __init__(self) -> None:
-        self.modules = {"nav.mission": object()}
+        self.modules = {"nav.skills": object()}
         self.started = False
         self.stopped = False
 
@@ -21,6 +21,7 @@ class _FakeSystem:
 class _FakeBuilder:
     def __init__(self, system: _FakeSystem) -> None:
         self._system = system
+        self.required: list[str] = []
 
     def build(self, transport=None) -> _FakeSystem:
         del transport
@@ -29,34 +30,13 @@ class _FakeBuilder:
     def route_contract(self, _name: str) -> _FakeBuilder:
         return self
 
+    def require_modules(self, *names: str) -> _FakeBuilder:
+        self.required.extend(name for name in names if name not in self.required)
+        return self
+
     @property
     def module_names(self) -> tuple[str, ...]:
-        return ("nav.mission",)
-
-
-def test_robot_nav_uses_product_profile_builder(monkeypatch):
-    import lingtu.assembly.products as products_mod
-    from lingtu import Robot
-
-    case = unittest.TestCase()
-    captured: dict[str, object] = {}
-    fake_system = _FakeSystem()
-
-    def fake_thunder_blueprint(config=None, **overrides):
-        resolved = dict(config or {})
-        resolved.update(overrides)
-        captured["config"] = resolved
-        return _FakeBuilder(fake_system)
-
-    monkeypatch.setattr(products_mod, "thunder_blueprint", fake_thunder_blueprint)
-
-    robot = Robot("nav", llm="mock").start()
-
-    case.assertIs(robot.system, fake_system)
-    case.assertTrue(fake_system.started)
-    case.assertEqual(captured["config"]["robot"], "thunder")
-    case.assertEqual(captured["config"]["slam_profile"], "localizer")
-    case.assertEqual(captured["config"]["llm"], "mock")
+        return tuple(self.required)
 
 
 def test_robot_start_uses_local_runtime_boundary(monkeypatch):
@@ -75,12 +55,12 @@ def test_robot_start_uses_local_runtime_boundary(monkeypatch):
 
     monkeypatch.setattr(runtime_mod, "build_system", fake_build_system)
 
-    robot = Robot("nav", llm="mock").start()
+    robot = Robot("sim_nav", llm="mock").start()
 
     case.assertIs(robot.system, fake_system)
     case.assertTrue(fake_system.started)
     case.assertEqual(captured, {
-        "profile": "nav",
+        "profile": "sim_nav",
         "overrides": {"llm": "mock"},
         "kwargs": {},
     })

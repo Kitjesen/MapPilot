@@ -5,7 +5,7 @@
 # IMU samples, and GNSS fixes are owned by the camera/lidar/imu/gnss roles.
 #
 # The hw role may use this inventory for discovery, status, hotplug, open, and
-# close operations. Product profiles decide dataflow through explicit runtime
+# close operations. Products decide dataflow through explicit runtime
 # roles and service catalog entries, not through this file.
 
 version: 1

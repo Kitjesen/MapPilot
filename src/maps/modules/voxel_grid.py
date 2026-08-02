@@ -71,6 +71,8 @@ class VoxelGridModule(Module, layer=2):
         self._robot_xyz = [0.0, 0.0, 0.0]
         self._last_publish: float = 0.0
         self._scene_sequence: int = 0
+        self._last_observation_epoch: int = 0
+        self._last_observation_sequence: int = 0
         self._last_update: dict[str, Any] = {
             "input_points": 0,
             "accepted_points": 0,
@@ -152,14 +154,52 @@ class VoxelGridModule(Module, layer=2):
     def _on_cloud(self, cloud: PointCloud2) -> None:
         if cloud.is_empty:
             return
-        native = self._require_native()
         frame_id = normalize_frame_id(getattr(cloud, "frame_id", None)) or self._default_frame_id
         stamp_ns = int(float(getattr(cloud, "ts", 0.0) or time.time()) * 1_000_000_000)
-        native.update(
+        self._update_native(
             cloud.points,
             frame_id=frame_id,
             stamp_ns=stamp_ns,
             origin_xyz=tuple(float(v) for v in self._robot_xyz),
+        )
+
+    def _on_observation(self, frame: MapObservationFrame) -> None:
+        epoch = int(frame.reset_epoch)
+        sequence = int(frame.sequence)
+        if epoch < self._last_observation_epoch or (
+            epoch == self._last_observation_epoch
+            and sequence <= self._last_observation_sequence
+        ):
+            return
+        if self._last_observation_epoch and epoch > self._last_observation_epoch:
+            self._require_native().reset()
+        self._last_observation_epoch = epoch
+        self._last_observation_sequence = sequence
+        self._update_native(
+            frame.map_points(),
+            frame_id=frame.frame_id,
+            stamp_ns=int(float(frame.ts) * 1_000_000_000),
+            origin_xyz=(
+                float(frame.sensor_origin.x),
+                float(frame.sensor_origin.y),
+                float(frame.sensor_origin.z),
+            ),
+        )
+
+    def _update_native(
+        self,
+        points: Any,
+        *,
+        frame_id: str,
+        stamp_ns: int,
+        origin_xyz: tuple[float, float, float],
+    ) -> None:
+        native = self._require_native()
+        native.update(
+            points,
+            frame_id=frame_id,
+            stamp_ns=stamp_ns,
+            origin_xyz=origin_xyz,
         )
         stats = native.stats()
         self._last_cloud_frame_id = frame_id
@@ -177,9 +217,6 @@ class VoxelGridModule(Module, layer=2):
         if now - self._last_publish >= self._interval:
             self._last_publish = now
             self._decay_and_publish()
-
-    def _on_observation(self, frame: MapObservationFrame) -> None:
-        self._on_cloud(frame.to_map_pointcloud2())
 
     def _decay_and_publish(self) -> None:
         """Apply native decay, then publish a snapshot for Gateway/map consumers."""

@@ -24,6 +24,7 @@ systemd service:
   sudo systemctl enable --now ble_peripheral
 """
 
+import json
 import logging
 import signal
 import struct
@@ -62,6 +63,12 @@ MODE_TELEOP     = 0x02
 MODE_AUTONOMOUS = 0x03
 MODE_MAPPING    = 0x04
 MODE_ESTOP      = 0xFF
+
+ERROR_NONE                    = 0x0000
+ERROR_COMMAND_REJECTED        = 0x0001
+ERROR_MODE_SWITCH_UNAVAILABLE = 0x0002
+ERROR_INVALID_WIFI_PAYLOAD    = 0x0003
+ERROR_WIFI_CONFIG_FAILED      = 0x0004
 
 # Service UUID
 SERVICE_UUID     = "0000fff0-0000-1000-8000-00805f9b34fb"
@@ -137,19 +144,17 @@ class RobotState:
             -50,  # RSSI placeholder
         )
 
-    def set_mode(self, mode: int):
-        log.info(f"Mode switch: {self.mode:#x} -> {mode:#x}")
-        self.mode = mode
-
-    def emergency_stop(self):
+    def emergency_stop(self) -> bool:
         log.warning("EMERGENCY STOP received!")
+        if not self._send_estop_http():
+            self.error_code = ERROR_COMMAND_REJECTED
+            return False
         self.mode = MODE_ESTOP
-        # Call GatewayModule HTTP stop endpoint (best-effort, non-blocking)
-        import threading
-        threading.Thread(target=self._send_estop_http, daemon=True).start()
+        self.error_code = ERROR_NONE
+        return True
 
-    def _send_estop_http(self, gateway_url: str = "http://127.0.0.1:5050"):
-        """POST /api/v1/stop to the GatewayModule HTTP server."""
+    def _send_estop_http(self, gateway_url: str = "http://127.0.0.1:5050") -> bool:
+        """Synchronously request and verify the Gateway stop acknowledgement."""
         try:
             import urllib.request
             req = urllib.request.Request(
@@ -159,15 +164,32 @@ class RobotState:
                 method="POST",
             )
             with urllib.request.urlopen(req, timeout=2.0) as resp:  # noqa: S310  # trusted localhost gateway
-                log.info("E-stop sent to gateway: HTTP %d", resp.status)
+                payload = json.loads(resp.read().decode("utf-8"))
+                command = payload.get("command") if isinstance(payload, dict) else None
+                acknowledged = (
+                    resp.status == 200
+                    and payload.get("ok") is True
+                    and payload.get("status") == "stopped"
+                    and payload.get("stage") == "native_acknowledged"
+                    and payload.get("dds") is True
+                    and payload.get("native_control") == "estop"
+                    and isinstance(command, dict)
+                    and command.get("accepted") is True
+                )
+                if not acknowledged:
+                    log.error("Gateway rejected E-stop or returned an invalid acknowledgement")
+                    return False
+                log.info("E-stop acknowledged by gateway: HTTP %d", resp.status)
+                return True
         except Exception as e:
             log.error("E-stop HTTP call failed: %s — "
                       "ensure GatewayModule is running on %s", e, gateway_url)
+            return False
 
-    def configure_wifi(self, ssid: str, password: str):
-        log.info(f"WiFi config: SSID='{ssid}'")
+    def configure_wifi(self, ssid: str, password: str) -> bool:
+        log.info("WiFi config: SSID=%r", ssid)
         try:
-            subprocess.run(
+            result = subprocess.run(
                 ["nmcli", "dev", "wifi", "connect", ssid,
                  "password", password],
                 timeout=30,
@@ -175,13 +197,43 @@ class RobotState:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                check=False,
             )
-            log.info("WiFi configured via nmcli")
         except Exception as e:
-            log.error(f"WiFi config failed: {e}")
+            log.error("WiFi config failed: %s", e)
+            return False
+        if result.returncode != 0:
+            detail = str(result.stderr or result.stdout or "").strip()[:256]
+            log.error("WiFi config failed: nmcli exited %d%s",
+                      result.returncode, f": {detail}" if detail else "")
+            return False
+        log.info("WiFi configured via nmcli")
+        return True
 
 
 robot_state = RobotState()
+
+
+def parse_wifi_config_payload(payload: bytes) -> tuple[str, str] | None:
+    """Decode one exact [ssid_len, ssid, password_len, password] payload."""
+    if not payload:
+        return None
+    ssid_len = payload[0]
+    password_len_index = 1 + ssid_len
+    if not 1 <= ssid_len <= 32 or password_len_index >= len(payload):
+        return None
+    password_len = payload[password_len_index]
+    expected_len = password_len_index + 1 + password_len
+    if len(payload) != expected_len:
+        return None
+    try:
+        ssid = payload[1:password_len_index].decode("utf-8")
+        password = payload[password_len_index + 1:].decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if "\x00" in ssid or "\x00" in password:
+        return None
+    return ssid, password
 
 
 # ============================================================
@@ -207,8 +259,10 @@ def handle_command(data: bytes, notify_func) -> None:
         notify_func(resp)
 
     elif cmd == CMD_MODE_SWITCH:
-        if len(payload) >= 1:
-            robot_state.set_mode(payload[0])
+        # ProductControl is the sole product-switch authority.  No synchronous
+        # completion acknowledgement is connected to this BLE process.
+        robot_state.error_code = ERROR_MODE_SWITCH_UNAVAILABLE
+        log.error("Mode switch rejected: ProductControl boundary is unavailable")
         resp = build_packet(CMD_STATUS_RESP, robot_state.get_status_payload())
         notify_func(resp)
 
@@ -217,14 +271,17 @@ def handle_command(data: bytes, notify_func) -> None:
         notify_func(resp)
 
     elif cmd == CMD_WIFI_CONFIG:
-        if len(payload) >= 2:
-            ssid_len = payload[0]
-            ssid = payload[1:1 + ssid_len].decode("utf-8", errors="replace")
-            pass_len = payload[1 + ssid_len] if len(payload) > 1 + ssid_len else 0
-            password = payload[2 + ssid_len:2 + ssid_len + pass_len].decode(
-                "utf-8", errors="replace")
-            robot_state.configure_wifi(ssid, password)
-        resp = build_packet(CMD_WIFI_CONFIG_ACK)
+        credentials = parse_wifi_config_payload(payload)
+        if credentials is None:
+            robot_state.error_code = ERROR_INVALID_WIFI_PAYLOAD
+            log.error("WiFi config rejected: invalid BLE payload")
+            resp = build_packet(CMD_STATUS_RESP, robot_state.get_status_payload())
+        elif robot_state.configure_wifi(*credentials):
+            robot_state.error_code = ERROR_NONE
+            resp = build_packet(CMD_WIFI_CONFIG_ACK)
+        else:
+            robot_state.error_code = ERROR_WIFI_CONFIG_FAILED
+            resp = build_packet(CMD_STATUS_RESP, robot_state.get_status_payload())
         notify_func(resp)
 
     else:

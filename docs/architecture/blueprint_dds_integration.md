@@ -124,8 +124,8 @@ Current profiles:
 | `localization_health` | RELIABLE | VOLATILE | 10 | `/slam/localization_health` |
 | `final_velocity_command` | RELIABLE | VOLATILE | 1 | `/nav/cmd_vel` |
 | `control_commands` | RELIABLE | VOLATILE | 1 | `/nav/stop`, `/nav/way_point`, `/nav/teleop_cmd_vel` |
-| `navigation_command_request` | RELIABLE | VOLATILE | 32 | `/nav/command/request`, `/nav/exploration/command`, `/nav/inspection/command` |
-| `navigation_command_ack` | RELIABLE | TRANSIENT_LOCAL | 64 | `/nav/command/ack`, `/nav/exploration/ack`, `/nav/inspection/ack` |
+| `navigation_command_request` | RELIABLE | VOLATILE | 32 | `/nav/command/request`, `/nav/exploration/command`, `/nav/inspection/task/request` |
+| `navigation_command_ack` | RELIABLE | TRANSIENT_LOCAL | 64 | `/nav/command/ack`, `/nav/exploration/ack`, `/nav/inspection/task/ack` |
 | `inspection_status` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/inspection/status` |
 | `global_path` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/global_path`, `/nav/local_path` |
 | `map_grid` | RELIABLE | TRANSIENT_LOCAL | 1 | `/nav/traversability`, `/nav/exploration_grid` |
@@ -393,7 +393,6 @@ Write a unit test in `src/runtime/tests/` following the pattern in
 | `in_port` | `str` | Destination `In[T]` port attribute name |
 | `delivery` | `str \| None` | `"dds"`, `"shm"`, `"local"`, `None` (callback) |
 | `topic` | `str \| None` | Stable topic name; auto-generated as `/<out_module>/<out_port>` when `None` |
-| `transport` | `str \| None` | Backward-compatible alias for `delivery` |
 
 ---
 

@@ -44,10 +44,8 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
         "drivers.sim.mujoco.driver",
         "drivers.sim.endpoint",
     ),
-    "driver_legacy": ("drivers.real.thunder.connection",),
     "lidar": (
         "drivers.real.lidar.module",
-        "drivers.real.lidar.lidar_module",
         "drivers.sim.lidar.module",
     ),
     "imu": (
@@ -58,7 +56,6 @@ BASE_PLUGIN_MODULES: Mapping[str, tuple[str, ...]] = {
     "teleop": ("drivers.real.teleop_module",),
     "camera": (
         "drivers.real.camera.module",
-        "drivers.real.camera.native_camera_module",
         "drivers.real.camera.dds_module",
     ),
     "camera_sim": ("drivers.sim.camera.module",),

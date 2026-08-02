@@ -56,7 +56,7 @@ compatibility and metadata tests.
 Algorithmically, the upstream OctoPlanner3D core runs a constrained 3D A*
 search over OctoMap cells. In LingTu, `octoplanner3d` is still the planner
 implementation name; `octomap_3d_astar` is exposed only as the internal search-kernel
-diagnostic. Product profiles pass quadruped body-envelope and terrain-support
+diagnostic. Resolved RunPlans pass quadruped body-envelope and terrain-support
 constraints into the C++ core instead of relying on the upstream hard-coded
 defaults.
 
@@ -162,7 +162,7 @@ Input fields:
 - `obstacle_thr`: compatibility field from LingTu's planner service. C++
   OctoPlanner3D uses OctoMap occupancy, robot radius, ground support, and
   traversability checks for collision/traversal decisions.
-- `options`: C++ OctoPlanner3D options. LingTu product profiles set the
+- `options`: C++ OctoPlanner3D options. LingTu RunPlans set the
   quadruped bounding radius and terrain-support constraints here; the C++
   wrapper applies them before calling `GlobalPlanner::setOctomap()`. The
   vertical-motion and clearance fields keep routes away from walls/edges and

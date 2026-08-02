@@ -11,13 +11,14 @@ readiness gates pass.
 
 ## Safety and runtime boundary
 
-LingTu is **Module-First**: a `Module` is the runtime unit and a `Blueprint`
-is the orchestration unit. Typed ports and explicit wires carry product data;
-native DDS is used at deliberate process boundaries. ROS 2 is a compatibility
-surface, not the normal product runtime or operator entry point.
+LingTu has two explicit orchestration scopes. A fingerprinted `Product` declares
+the field processes and Host graph, while `ProductControl` applies
+that process contract. Inside the Python Host, a `Blueprint` constructs typed
+`Module` ports and wires. Native DDS is the field process boundary; ROS 2 is a
+compatibility surface, not the normal product runtime or operator entry point.
 
-On the current Thunder field endpoint, the final hardware command path is
-native-owned: `lingtu-nav-dds` publishes `/nav/cmd_vel`, the single
+In the current Thunder `env=real` Product runtime, the final hardware command
+path is native-owned: `navd` publishes `/nav/cmd_vel`, the single
 `lingtu-driver` consumes it, and `lingtu-driver` forwards checked commands to a
 remote Brainstem controller configured by `/opt/lingtu/config/brainstem.env`.
 Do not add another Python or ROS velocity writer to that field path.
@@ -30,11 +31,12 @@ Treat these environments as different evidence levels:
 | Simulation | `sim` or `sim_nav` | The selected simulated driver, dataflow, and configured scenario | Real LiDAR/IMU timing, calibration, gait, or field safety |
 | Field robot | `scripts/lingtu` preflight and supervised sessions | Only the evidence collected on that robot and map | Future runs, other robots, or unattended motion |
 
-Do not add a field endpoint to a local or simulation tutorial command. A
-product task plus an endpoint changes the source and sink of sensor and command
-data; inspect that boundary before launch with `runtime-spec` or
-`switch-plan`. A goal is not a motor command, but it can ultimately produce
-motion through planning, safety, velocity arbitration, and the driver boundary.
+Do not add a field env or Product switch to a local or simulation tutorial
+command. ProductControl resolves one Product inside one fixed `env` into a
+RunPlan; inspect that boundary before launch with a dry run, readiness
+report, or RunPlan audit. A goal is not a motor command, but it can
+ultimately produce motion through planning, safety, velocity arbitration, and
+the driver boundary.
 
 ## Choose a starting path
 
@@ -49,8 +51,9 @@ motion through planning, safety, velocity arbitration, and the driver boundary.
 
 The complete profile catalog is code-owned in
 [`src/runtime/profiles/catalog/`](../../src/runtime/profiles/catalog/). The CLI
-can list the current checkout's product profiles with `--list`, and the
-development, simulation, and compatibility profiles with `--list --all`.
+can list the current checkout's common local Profiles with `--list`, and field
+Products plus development, simulation, and compatibility Profiles with
+`--list --all`.
 
 ## Prepare the locked environment
 
@@ -67,10 +70,10 @@ uv run --locked python lingtu.py runtime-audit
 Expected checks:
 
 - `uv sync --locked` completes without rewriting `uv.lock`.
-- `--list --all` prints both product and advanced/development profiles.
+- `--list --all` prints field Products plus advanced/development Profiles.
 - `show-config stub --json` resolves a configuration without starting modules.
-- `runtime-audit` checks the repository's runtime manifest, YAML, profile, and
-  collector contracts without authorizing a motion session.
+- `runtime-audit` checks the repository's Product declarations, env mappings,
+  Profile catalog, and collector contracts without authorizing a motion session.
 
 `uv run --locked python lingtu.py ...` is the canonical form for every local
 LingTu CLI invocation in this documentation. It chooses the repository's
@@ -89,7 +92,7 @@ unlocked.
 
 - You are in a terminal at the repository root.
 - The locked environment check above passed.
-- No field endpoint, robot host override, or active robot service is being
+- No field env, robot host override, or active robot service is being
   attached to this local exercise.
 
 Start the framework-only profile with Gateway disabled so this first check does
@@ -153,7 +156,7 @@ uv run --locked python lingtu.py runtime-spec sim --json
 
 The `sim` profile is the in-process MuJoCo Module runtime. `sim_nav` is a
 no-ROS navigation simulation profile that uses the local simulation graph.
-Neither is a shortcut for a field profile.
+Neither is a shortcut for a field Product.
 
 ### Run a simulation profile
 
@@ -175,11 +178,11 @@ Expected checks:
   driver or adapter.
 - A passed run supports only the named simulation scenario and gate.
 
-Do not treat a green simulation as permission to run `map`, `nav`, `explore`,
-or `tare_explore` against hardware. Read the
+Do not treat a green simulation as permission to run `map`, `nav`, or
+`explore` against hardware. Read the
 [simulation integration contract](../architecture/SIMULATION_INTEGRATION_CONTRACT.md)
-and the [simulation guide](../../sim/README.md) before using explicit endpoints
-or claiming planner, SLAM, or closed-loop behavior.
+and the [simulation guide](../../sim/README.md) before claiming planner, SLAM,
+native-DDS equivalence, or closed-loop behavior.
 
 ## Enter the field path only after preflight
 
@@ -205,15 +208,16 @@ Start with read-only or no-motion checks on the robot:
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu doctor
+bash scripts/lingtu doctor --non-motion --strict
 bash scripts/lingtu dataflow /nav/odometry
 bash scripts/lingtu dataflow /nav/cmd_vel
-bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
+bash scripts/lingtu system-acceptance --map <map-name> --goal <x> <y> <yaw>
 ```
 
-`routecheck` is a non-motion route preflight: it requires no active command
-source and records planner and safety evidence. It must pass before a
-supervised motion procedure is considered. Use
+`system-acceptance` records runtime, map, localization, planner, and safety
+evidence without sending motion unless `--allow-motion` is explicitly supplied.
+Its Product transitions and cleanup are owned by ProductControl. It must pass
+before a supervised motion procedure is considered. Use
 [`lingtu_cli.md`](../04-deployment/lingtu_cli.md) for the current field
 command contract and [Testing and validation](../07-testing/README.md) for the
 applicable evidence gate.
@@ -227,8 +231,8 @@ needs the approved operator controls and safety boundary.
 ```bash
 bash scripts/lingtu map start
 bash scripts/lingtu map save <map-name>
-bash scripts/lingtu map check <map-name> --goal <x> <y> <yaw>
 bash scripts/lingtu map end
+bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
 ```
 
 A navigation-ready map is a package, not just a point cloud. At minimum,
@@ -243,11 +247,14 @@ After map validation, a navigation session can be prepared without sending a
 goal:
 
 ```bash
+bash scripts/lingtu system-acceptance \
+  --map <map-name> --goal <x> <y> <yaw> \
+  --with-relocalization --initial-pose <x> <y> <yaw>
 bash scripts/lingtu nav start <map-name> --initial-pose <x> <y> <yaw>
-bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
 ```
 
-`nav start` changes SLAM/session state and performs or requests saved-map
+The acceptance gate stops the Product session it owns after collecting its
+no-motion evidence. `nav start` then changes SLAM/session state and performs or requests saved-map
 relocalization; it is therefore not a read-only command. It does not itself
 submit a navigation goal. Confirm successful relocalization, a valid
 `map->odom` relationship, valid map artifacts, and a feasible no-motion route

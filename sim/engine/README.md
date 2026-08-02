@@ -46,8 +46,6 @@ python -m sim.engine.cli --scenario semantic_nav   # semantic nav test
 
 ```bash
 python lingtu.py sim                  # MuJoCo full simulation
-python lingtu.py sim_gazebo           # Gazebo ROS-native simulation
-python lingtu.py sim_cmu_tare         # CMU Unity + external TARE
 ```
 
 ## MuJoCo LiDAR Backend

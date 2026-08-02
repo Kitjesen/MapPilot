@@ -53,7 +53,7 @@ scale stability, or long-term mapping quality.
 ```powershell
 $env:PYTHONPATH='src;.'
 python sim/scripts/mujoco/native_navigation_acceptance.py `
-  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json `
+  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json `
   --mode motion `
   --no-prepare-assets `
   --record-video `
@@ -138,7 +138,7 @@ MuJoCo navigation attempts:
 ```powershell
 $env:PYTHONPATH='src;.'
 python sim/scripts/mujoco/long_range_navigation_acceptance.py `
-  --manifest config/runtime_graph/endpoints/mujoco_industrial_park_60m_navigation_acceptance.json `
+  --manifest config/runtime_graph/acceptance/mujoco_industrial_park_60m_navigation_acceptance.json `
   --attempts 10 `
   --min-distance-m 50 `
   --max-distance-m 70 `

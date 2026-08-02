@@ -299,7 +299,7 @@ def main() -> None:
     print(f"  1. Edit {mjcf_path} — adjust masses, inertias, geometry for your robot.")
     print(f"  2. Edit {init_path} — wire up the registration call.")
     if args.type == "quadruped":
-        print("  3. Add a gait config: sim/configs/<name>_gait.json")
+        print(f"  3. Add a gait policy manifest: sim/robots/{args.name}/policy_manifest.json")
         print("  4. Test in simulation: python lingtu.py sim --robot " + args.name)
     else:
         print("  3. Set wheel friction/motor gains in the MJCF for your surface.")

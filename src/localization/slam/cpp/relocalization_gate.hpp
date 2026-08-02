@@ -12,6 +12,7 @@ namespace lingtu::slam {
 struct RelocalizationGateConfig {
   double max_fitness{0.5};
   int min_inliers{30};
+  int min_evaluated_points{30};
   double max_pos_cov_trace{1.0};
   double max_alignment_translation_m{1.0};
   double max_alignment_yaw_rad{0.2617993877991494};
@@ -28,6 +29,7 @@ struct RelocalizationGateInput {
   bool converged{false};
   double fitness{-1.0};
   int inliers{-1};
+  int evaluated_points{-1};
   double pos_cov_trace{-1.0};
   bool alignment_update{false};
   Pose3d current_map_odom;
@@ -105,6 +107,16 @@ inline RelocalizationGateDecision EvaluateRelocalizationGate(const Relocalizatio
     decision.reason = "relocalization_inliers_rejected";
     return decision;
   }
+  const int min_evaluated_points = std::max(0, config.min_evaluated_points);
+  if (input.evaluated_points < 0 && min_evaluated_points > 0) {
+    decision.reason = "relocalization_evaluated_points_unavailable";
+    return decision;
+  }
+  if (input.evaluated_points >= 0 &&
+      input.evaluated_points < min_evaluated_points) {
+    decision.reason = "relocalization_evaluated_points_rejected";
+    return decision;
+  }
   if (input.pos_cov_trace >= 0.0 &&
       (!std::isfinite(input.pos_cov_trace) ||
        input.pos_cov_trace > std::max(0.0, config.max_pos_cov_trace))) {
@@ -126,7 +138,8 @@ inline RelocalizationGateDecision EvaluateRelocalizationGate(const Relocalizatio
     return decision;
   }
   if (config.require_alignment_degeneracy_metrics &&
-      (input.inliers < 0 || input.pos_cov_trace < 0.0)) {
+      (input.inliers < 0 || input.evaluated_points < 0 ||
+       input.pos_cov_trace < 0.0)) {
     decision.reason = "relocalization_degeneracy_metrics_unavailable";
     return decision;
   }

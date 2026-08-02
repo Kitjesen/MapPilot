@@ -5,16 +5,16 @@ from types import SimpleNamespace
 from typing import Any
 
 import nav.local.cmu_py as cmu_py
-from nav.local.local_planner_backend import (
-    CmuPyLocalPlannerRequest,
-    create_cmu_py_backend,
-    create_nanobind_backend,
-    local_planner_paths_dir,
-    plan_cmu_py_local_path,
+from nav.local.cmu_py import plan_cmu_py_local_path, score_cmu_py_paths
+from nav.local.models import CmuPyLocalPlannerRequest
+from nav.local.native import create_cmu_py_backend, create_nanobind_backend
+from nav.local.parameters import (
     read_local_planner_frame_params,
     read_local_planner_grid_config,
     read_local_planner_python_params,
-    score_cmu_py_paths,
+)
+from nav.local.path_tables import (
+    local_planner_paths_dir,
 )
 from runtime.msgs.numpy_compat import np
 

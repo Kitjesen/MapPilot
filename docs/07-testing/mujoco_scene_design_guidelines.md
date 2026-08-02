@@ -1,5 +1,7 @@
 # MuJoCo 导航场景设计准则
 
+Status: current simulation scene design reference
+
 这份文档约束 LingTu 的 MuJoCo 导航验收场景。目标不是做一个“看起来像房间”的演示，而是让场景能验证真实产品链路：
 
 ```text

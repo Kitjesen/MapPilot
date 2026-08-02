@@ -6,7 +6,10 @@
 #include "message/cpp/dds_topics.hpp"
 
 #include <array>
+#include <chrono>
+#include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -25,7 +28,8 @@ class DdsModule::Impl {
       bool navigation_fixture)
       : lidar_frame_(std::move(lidar_frame)),
         imu_frame_(std::move(imu_frame)),
-        navigation_fixture_(navigation_fixture) {
+        navigation_fixture_(navigation_fixture),
+        diagnostics_enabled_(diagnostics_enabled_from_environment()) {
     participant_ = checked(
         dds_create_participant(static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
         "dds_create_participant");
@@ -65,12 +69,16 @@ class DdsModule::Impl {
             nullptr),
         "dds_create_topic(odom_prior)");
 
+    auto lidar_qos = lingtu::dds::make_qos(
+        lingtu::dds::qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic));
+    auto raw_packet_qos = lingtu::dds::make_qos(
+        lingtu::dds::qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic));
     auto sensor_qos = lingtu::dds::make_qos(lingtu::dds::QosProfile::SensorStream);
     lidar_writer_ = checked(
-        dds_create_writer(publisher_, lidar_topic_, sensor_qos.get(), nullptr),
+        dds_create_writer(publisher_, lidar_topic_, lidar_qos.get(), nullptr),
         "dds_create_writer(lidar)");
     raw_packet_writer_ = checked(
-        dds_create_writer(publisher_, raw_packet_topic_, sensor_qos.get(), nullptr),
+        dds_create_writer(publisher_, raw_packet_topic_, raw_packet_qos.get(), nullptr),
         "dds_create_writer(raw_packet)");
     imu_writer_ = checked(
         dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr),
@@ -78,6 +86,9 @@ class DdsModule::Impl {
     odom_prior_writer_ = checked(
         dds_create_writer(publisher_, odom_prior_topic_, sensor_qos.get(), nullptr),
         "dds_create_writer(odom_prior)");
+
+    log_writer_qos(lidar_writer_, "raw_frame");
+    log_writer_qos(raw_packet_writer_, "raw_packet");
 
     if (navigation_fixture_) {
       slam_odom_topic_ = create_topic(
@@ -120,14 +131,15 @@ class DdsModule::Impl {
       std::uint8_t lidar_id,
       std::uint64_t timestamp_ns,
       const std::vector<Point>& points) {
-    publish_cloud_to(lidar_writer_, lidar_id, timestamp_ns, points);
+    publish_cloud_to(lidar_writer_, "raw_frame", lidar_id, timestamp_ns, points);
   }
 
   void publish_raw_packet(
       std::uint8_t lidar_id,
       std::uint64_t timestamp_ns,
       const std::vector<Point>& points) {
-    publish_cloud_to(raw_packet_writer_, lidar_id, timestamp_ns, points);
+    publish_cloud_to(
+        raw_packet_writer_, "raw_packet", lidar_id, timestamp_ns, points);
   }
 
   void publish_imu(std::uint64_t timestamp_ns, const ImuSample& imu) {
@@ -293,6 +305,7 @@ class DdsModule::Impl {
 
   void publish_cloud_to(
       dds_entity_t writer,
+      const char* stream,
       std::uint8_t lidar_id,
       std::uint64_t timestamp_ns,
       const std::vector<Point>& points) {
@@ -320,7 +333,160 @@ class DdsModule::Impl {
     msg.points._length = msg.point_num;
     msg.points._buffer = dds_points.data();
     msg.points._release = false;
-    checked(dds_write(writer, &msg), "dds_write(livox)");
+    if (!diagnostics_enabled_) {
+      checked(dds_write(writer, &msg), "dds_write(livox)");
+      return;
+    }
+
+    const auto write_started = std::chrono::steady_clock::now();
+    const dds_return_t write_rc = dds_write(writer, &msg);
+    const auto write_finished = std::chrono::steady_clock::now();
+    const double write_duration_ms =
+        std::chrono::duration<double, std::milli>(
+            write_finished - write_started)
+            .count();
+
+    dds_publication_matched_status_t matched_status{};
+    const dds_return_t matched_query_rc =
+        dds_get_publication_matched_status(writer, &matched_status);
+    constexpr std::uint64_t kLivoxPointPayloadBytes = 24;
+    const std::uint64_t payload_bytes =
+        static_cast<std::uint64_t>(dds_points.size()) *
+        kLivoxPointPayloadBytes;
+    std::fprintf(
+        stderr,
+        "{\"event\":\"livox_dds_write\",\"stream\":\"%s\","
+        "\"rc\":%d,\"rc_name\":\"%s\",\"duration_ms\":%.6f,"
+        "\"point_count\":%u,\"payload_bytes\":%llu,"
+        "\"publication_matched_query_rc\":%d,"
+        "\"publication_matched_query_rc_name\":\"%s\","
+        "\"publication_matched_current_count\":%d}\n",
+        stream,
+        static_cast<int>(write_rc),
+        return_code_name(write_rc),
+        write_duration_ms,
+        msg.point_num,
+        static_cast<unsigned long long>(payload_bytes),
+        static_cast<int>(matched_query_rc),
+        return_code_name(matched_query_rc),
+        static_cast<int>(matched_status.current_count));
+    checked(write_rc, "dds_write(livox)");
+  }
+
+  static bool diagnostics_enabled_from_environment() {
+    const char* value =
+        std::getenv("LINGTU_LIVOX_DDS_WRITE_DIAGNOSTICS");
+    return value != nullptr && std::strcmp(value, "1") == 0;
+  }
+
+  static const char* return_code_name(dds_return_t value) {
+    return dds_strretcode(value < 0 ? -value : value);
+  }
+
+  static const char* reliability_name(
+      dds_reliability_kind_t reliability,
+      bool present) {
+    if (!present) {
+      return "UNSET";
+    }
+    switch (reliability) {
+      case DDS_RELIABILITY_BEST_EFFORT:
+        return "BEST_EFFORT";
+      case DDS_RELIABILITY_RELIABLE:
+        return "RELIABLE";
+    }
+    return "UNKNOWN";
+  }
+
+  static const char* durability_name(
+      dds_durability_kind_t durability,
+      bool present) {
+    if (!present) {
+      return "UNSET";
+    }
+    switch (durability) {
+      case DDS_DURABILITY_VOLATILE:
+        return "VOLATILE";
+      case DDS_DURABILITY_TRANSIENT_LOCAL:
+        return "TRANSIENT_LOCAL";
+      case DDS_DURABILITY_TRANSIENT:
+        return "TRANSIENT";
+      case DDS_DURABILITY_PERSISTENT:
+        return "PERSISTENT";
+    }
+    return "UNKNOWN";
+  }
+
+  static const char* history_name(dds_history_kind_t history, bool present) {
+    if (!present) {
+      return "UNSET";
+    }
+    switch (history) {
+      case DDS_HISTORY_KEEP_LAST:
+        return "KEEP_LAST";
+      case DDS_HISTORY_KEEP_ALL:
+        return "KEEP_ALL";
+    }
+    return "UNKNOWN";
+  }
+
+  void log_writer_qos(dds_entity_t writer, const char* stream) const {
+    if (!diagnostics_enabled_) {
+      return;
+    }
+
+    auto qos = lingtu::dds::make_qos(lingtu::dds::QosProfile::Default);
+    const dds_return_t qos_rc = dds_get_qos(writer, qos.get());
+    dds_reliability_kind_t reliability{};
+    dds_duration_t max_blocking_time{};
+    dds_durability_kind_t durability{};
+    dds_history_kind_t history{};
+    std::int32_t depth = -1;
+    dds_duration_t lifespan{};
+    std::int32_t max_samples = -1;
+    std::int32_t max_instances = -1;
+    std::int32_t max_samples_per_instance = -1;
+    bool has_reliability = false;
+    bool has_durability = false;
+    bool has_history = false;
+    bool has_lifespan = false;
+    bool has_resource_limits = false;
+    if (qos_rc >= 0) {
+      has_reliability = dds_qget_reliability(
+          qos.get(), &reliability, &max_blocking_time);
+      has_durability = dds_qget_durability(qos.get(), &durability);
+      has_history = dds_qget_history(qos.get(), &history, &depth);
+      has_lifespan = dds_qget_lifespan(qos.get(), &lifespan);
+      has_resource_limits = dds_qget_resource_limits(
+          qos.get(),
+          &max_samples,
+          &max_instances,
+          &max_samples_per_instance);
+    }
+    const long long lifespan_ms = has_lifespan
+        ? static_cast<long long>(lifespan / DDS_MSECS(1))
+        : -1;
+    std::fprintf(
+        stderr,
+        "{\"event\":\"livox_dds_writer_qos\",\"stream\":\"%s\","
+        "\"profile\":\"RawLidarStream\",\"get_qos_rc\":%d,"
+        "\"get_qos_rc_name\":\"%s\",\"reliability\":\"%s\","
+        "\"durability\":\"%s\",\"history\":\"%s\",\"depth\":%d,"
+        "\"lifespan_ms\":%lld,\"resource_limits\":{"
+        "\"present\":%s,\"max_samples\":%d,\"max_instances\":%d,"
+        "\"max_samples_per_instance\":%d}}\n",
+        stream,
+        static_cast<int>(qos_rc),
+        return_code_name(qos_rc),
+        reliability_name(reliability, has_reliability),
+        durability_name(durability, has_durability),
+        history_name(history, has_history),
+        depth,
+        lifespan_ms,
+        has_resource_limits ? "true" : "false",
+        max_samples,
+        max_instances,
+        max_samples_per_instance);
   }
 
   static dds_entity_t checked(dds_return_t value, const char* what) {
@@ -343,6 +509,7 @@ class DdsModule::Impl {
   std::string lidar_frame_;
   std::string imu_frame_;
   bool navigation_fixture_{false};
+  bool diagnostics_enabled_{false};
   std::string map_frame_{"map"};
   std::string odom_frame_{"odom"};
   std::string body_frame_{"body"};

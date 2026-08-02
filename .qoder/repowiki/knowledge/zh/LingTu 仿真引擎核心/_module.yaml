@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: simulation
-title: LingTu 仿真引擎核心
-scope:
-    - sim/
-source_files: []
-depends_on: []
-related_to:
-    - path: core_engine

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # P0-04: point goal -> arrival.
 #
-# Pre-condition: localizer profile running + active map already loaded. The
+# Pre-condition: nav Product is committed and the active map is already loaded. The
 # script first runs the no-motion route preview, then requires operator
 # confirmation before sending /api/v1/goal and waiting for SUCCESS.
 
@@ -29,7 +29,7 @@ echo "[1/5] Sanity"
 HEALTH="$(curl -sf http://localhost:5050/api/v1/health)"
 HAS_ODOM="$(echo "$HEALTH" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("has_odom", False))')"
 if [[ "$HAS_ODOM" != "True" ]]; then
-  echo "FAIL: no odometry - is localizer running?"
+  echo "FAIL: no odometry - is the nav Product healthy?"
   exit 2
 fi
 

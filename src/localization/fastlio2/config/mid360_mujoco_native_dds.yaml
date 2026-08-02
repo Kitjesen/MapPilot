@@ -30,6 +30,10 @@ max_lidar_buffer: 3
 # covariance; this wider simulation-only transform bound lets a validated map
 # registration recover instead of leaving navigation on a stale transform.
 track_against_map_max_translation_m: 3.0
+# A high overlap ratio from only a tiny map-edge patch is not sufficient to
+# establish map->odom. The acceptance map currently yields about 298 supported
+# scan points at the verified seed, so require at least 100 independent samples.
+relocalization_min_evaluated_points: 100
 
 # Simulation-only diagnostic path. Keep the default off so MuJoCo acceptance
 # exercises Fast-LIO-only motion estimation unless an operator explicitly uses

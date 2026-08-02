@@ -54,7 +54,7 @@ jobs:
           python-version: '3.10'
           cache: pip
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+        run: pip install -e '.[dev,sim-mujoco]'
       - name: Run framework tests
         run: |
           python -m pytest src/runtime/tests/ tests/drivers/ src/gateway/tests/ \

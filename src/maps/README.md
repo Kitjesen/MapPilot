@@ -307,9 +307,14 @@ Livox / SLAM point cloud
   -> maps.ingest
   -> maps.voxel / maps.occupancy / maps.elevation
   -> maps.semantic (geometry-only or exact uint16 labels)
-  -> maps.esdf / maps.traversability
+  -> maps.esdf
   -> maps.bundle(capability)
-  -> nav planner / safety / gateway adapter
+  -> gateway adapter
+
+SLAM registered cloud + odometry
+  -> standalone native traversability
+  -> /nav/traversability
+  -> nav planner / safety
 ```
 
 The primary cloud payload should be a binary view over contiguous memory, not a
@@ -433,11 +438,11 @@ recoverable even when the legacy view is explicitly marked degraded.
 
 Runtime control operations are `save`, `save_status`, `cancel_save`,
 `retry_save`, `list_map_versions`, and `rollback_map_version`. Gateway exposes
-the same contract at
-`POST /api/v1/map/save`, `GET /api/v1/maps/save-jobs/{job_id}`,
-`GET /api/v1/maps/save-jobs`,
-`POST /api/v1/maps/save-jobs/{job_id}/cancel`, and
-`POST /api/v1/maps/save-jobs/{job_id}/retry`. Verified immutable versions are
+these native job operations through the public map-operation contract at
+`POST /api/v1/map/save`, `GET /api/v1/maps/operations/{operation_id}`,
+`GET /api/v1/maps/operations`,
+`POST /api/v1/maps/operations/{operation_id}/cancel`, and
+`POST /api/v1/maps/operations/{operation_id}/retry`. Verified immutable versions are
 available at `GET /api/v1/maps/{name}/versions`; rollback atomically changes the
 logical version pointer through
 `POST /api/v1/maps/{name}/versions/{version}/rollback` and then rebuilds the

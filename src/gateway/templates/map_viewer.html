@@ -62,7 +62,7 @@ body{background:#05060d;overflow:hidden;font-family:-apple-system,BlinkMacSystem
   <span id="missionTxt">待机</span>
   <div class="sep"></div>
   <button class="btn stop" onclick="doStop()">■&nbsp;停止</button>
-  <button class="btn" id="expBtn" onclick="toggleExplore()">▶&nbsp;探索</button>
+  <button class="btn" id="expBtn" onclick="toggleExplore()" disabled>…&nbsp;探索状态</button>
 </div>
 
 <div id="hint">单击地图发送导航目标 · 拖拽旋转 · 滚轮缩放 · WASD手动驾驶</div>
@@ -376,7 +376,7 @@ const $hmode = document.getElementById('hmode');
 const $hmission = document.getElementById('hmission');
 const $toast = document.getElementById('toast');
 const $expBtn = document.getElementById('expBtn');
-let _exploring = false;
+let _exploring = null;
 
 function showToast(msg, ms){
   $toast.textContent=msg; $toast.style.display='block';
@@ -388,18 +388,60 @@ function doStop(){
     .then(()=>showToast('■ 紧急停止'))
     .catch(e=>showToast('停止失败: '+e,4000));
 }
+let _exploreRequestPending=false;
+function _exploreFailureMessage(data, status){
+  data=(data&&typeof data==='object')?data:{};
+  const detail=(data.detail&&typeof data.detail==='object')?data.detail:{};
+  const reason=detail.reason||detail.reason_code||data.reason||data.reason_code||
+    data.message||data.error||('HTTP '+status);
+  const command=detail.operator_command||data.operator_command||'';
+  return String(reason)+(command?'；操作命令: '+command:'');
+}
+function _refreshExploreStatus(showError){
+  return fetch('/api/v1/explore/status',{cache:'no-store'}).then(r=>
+    r.text().then(raw=>{
+      let data={};
+      try{data=raw?JSON.parse(raw):{};}catch(_){}
+      if(!r.ok) throw new Error(_exploreFailureMessage(data,r.status));
+      return data;
+    })
+  ).then(data=>{
+    if(typeof data.exploring!=='boolean') throw new Error('探索状态响应缺少 exploring');
+    _setExploring(data.exploring);
+  }).catch(e=>{
+    if(showError) showToast('探索状态读取失败: '+e.message,4000);
+  });
+}
 function toggleExplore(){
-  const url = _exploring ? '/api/v1/explore/stop' : '/api/v1/explore/start';
-  fetch(url,{method:'POST'}).then(r=>r.json()).then(()=>{
-    showToast(_exploring ? '探索已停止' : '自主探索启动');
-  }).catch(e=>showToast('探索失败: '+e,4000));
+  if(_exploreRequestPending||typeof _exploring!=='boolean') return;
+  const stopping=_exploring;
+  const action=stopping?'停止':'启动';
+  const url=stopping?'/api/v1/explore/stop':'/api/v1/explore/start';
+  _exploreRequestPending=true;
+  $expBtn.disabled=true;
+  fetch(url,{method:'POST'}).then(r=>
+    r.text().then(raw=>{
+      let data={};
+      try{data=raw?JSON.parse(raw):{};}catch(_){}
+      if(!r.ok) throw new Error(_exploreFailureMessage(data,r.status));
+      return data;
+    })
+  ).then(()=>{
+    showToast('已发送探索'+action+'请求；等待状态确认');
+  }).catch(e=>showToast('探索'+action+'失败: '+e.message,5000))
+    .finally(()=>_refreshExploreStatus(false).finally(()=>{
+        _exploreRequestPending=false;
+        $expBtn.disabled=typeof _exploring!=='boolean';
+      }));
 }
 function _setExploring(v){
-  _exploring=v;
+  _exploring=!!v;
   $expBtn.textContent = v ? '■ 停止探索' : '▶ 探索';
   $expBtn.className = v ? 'btn active' : 'btn';
+  if(!_exploreRequestPending) $expBtn.disabled=false;
   $mission.textContent = v ? '自主探索中...' : '待机';
 }
+_refreshExploreStatus(false);
 
 // ── Click-to-navigate ──────────────────────────────────────────────────────
 const _ray = new THREE.Raycaster();
@@ -583,7 +625,10 @@ renderer.domElement.addEventListener('mouseup',   e=>{
   }
   function _connect(){
     const es=new EventSource('/api/v1/events');
-    es.onopen=()=>$dot.classList.add('live');
+    es.onopen=function(){
+      $dot.classList.add('live');
+      _refreshExploreStatus(false);
+    };
     es.onmessage=function(e){
       try{
         const ev=JSON.parse(e.data);

@@ -6,10 +6,17 @@ import {
   mapIsNavigationReady,
   navigationRuntimeReady,
   navigationSessionReady,
-  productProfileSessionReady,
+  productSessionReady,
   resolveNavigationTargetMapName,
-  waitForProductProfileReady,
+  waitForProductReady,
 } from '../src/services/mapReadiness.ts'
+import { prepareProductSwitch } from '../src/services/api.ts'
+
+const originalFetch = globalThis.fetch
+
+test.afterEach(() => {
+  globalThis.fetch = originalFetch
+})
 
 const source = readFileSync(
   new URL('../src/components/MapView.tsx', import.meta.url),
@@ -26,7 +33,7 @@ const productModeSource = readFileSync(
 
 test('map page exposes an explicit full product navigation action', () => {
   assert.match(source, /onNavigate/)
-  assert.match(source, /switchProductSession\('navigating'/)
+  assert.match(source, /copyProductSwitchCommand\('nav'/)
 })
 
 test('map-point goal is gated behind navigation-session readiness', () => {
@@ -47,7 +54,8 @@ test('map page trusts the artifact gate instead of OctoMap presence alone', () =
 test('navigation session must match the map and have live localization', () => {
   const base = {
     mode: 'navigating' as const,
-    product_profile: 'nav',
+    env: 'real' as const,
+    product: 'nav' as const,
     product_session: 'navigation',
     active_map: 'demo',
     saved_active_map: 'demo',
@@ -72,6 +80,7 @@ test('navigation session must match the map and have live localization', () => {
   assert.equal(navigationSessionReady({ ...base, active_map: null, saved_active_map: 'demo' }, 'demo'), false)
   assert.equal(navigationSessionReady({ ...base, localizer_ready: false }, 'demo'), false)
   assert.equal(navigationSessionReady({ ...base, pending: true }, 'demo'), false)
+  assert.equal(navigationSessionReady({ ...base, product: null }, 'demo'), false)
 
   const navigation = {
     can_accept_goal: true,
@@ -88,9 +97,10 @@ test('navigation session must match the map and have live localization', () => {
   )
 })
 
-test('scene map load uses the full navigation switch and never guesses origin', () => {
-  assert.match(sceneSource, /switchProductSession\('navigating'/)
-  assert.match(sceneSource, /await waitForMapNavigationReady\(name\)/)
+test('scene map load hands off the full navigation switch and never guesses origin', () => {
+  assert.match(sceneSource, /copyProductSwitchCommand\('nav'/)
+  assert.match(sceneSource, /ProductControl 命令已复制/)
+  assert.doesNotMatch(sceneSource, /waitForMapNavigationReady/)
   assert.match(sceneSource, /mapSwitchBusy/)
   assert.doesNotMatch(sceneSource, /relocalize\(name,\s*0,\s*0,\s*0\)/)
 })
@@ -104,10 +114,21 @@ test('scene cruise only uses the active map or an explicit current selection', (
   assert.doesNotMatch(sceneSource, /activeMapName \?\? savedActiveMapName/)
 })
 
-test('product profile readiness waits for the requested profile, map, and session state', () => {
+test('map-backed Explore renders its active saved map while live Explore stays unbound', () => {
+  const helper = sceneSource.match(
+    /function shouldShowSavedMapForSession[\s\S]*?\n\}/,
+  )?.[0] ?? ''
+
+  assert.match(helper, /productSession\s*===\s*'exploration'/)
+  assert.match(sceneSource, /activeMapName\s*&&\s*shouldShowSavedMapForSession\(productSession\)/)
+  assert.match(sceneSource, /isNavigationSession\s*=\s*showSavedMapInScene\s*&&\s*!isExplorationSession/)
+})
+
+test('Product readiness waits for the requested Product, map, and session state', () => {
   const navigationSession = {
     mode: 'navigating' as const,
-    product_profile: 'nav',
+    env: 'real' as const,
+    product: 'nav' as const,
     product_session: 'navigation',
     active_map: 'demo',
     saved_active_map: 'old-map',
@@ -127,24 +148,91 @@ test('product profile readiness waits for the requested profile, map, and sessio
     explorer_available: false,
   }
 
-  assert.equal(productProfileSessionReady(navigationSession, 'nav', 'demo'), true)
-  assert.equal(productProfileSessionReady({ ...navigationSession, active_map: 'other' }, 'nav', 'demo'), false)
-  assert.equal(productProfileSessionReady({ ...navigationSession, pending: true }, 'nav', 'demo'), false)
-  assert.equal(productProfileSessionReady({ ...navigationSession, product_profile: 'map' }, 'nav', 'demo'), false)
-  assert.equal(productProfileSessionReady({
+  assert.equal(productSessionReady(navigationSession, 'nav', 'demo'), true)
+  assert.equal(productSessionReady({ ...navigationSession, active_map: 'other' }, 'nav', 'demo'), false)
+  assert.equal(productSessionReady({ ...navigationSession, pending: true }, 'nav', 'demo'), false)
+  assert.equal(productSessionReady({ ...navigationSession, product: 'map' }, 'nav', 'demo'), false)
+  assert.equal(productSessionReady({
     ...navigationSession,
     mode: 'mapping',
-    product_profile: 'map',
+    product: 'map',
     product_session: 'mapping',
     active_map: null,
     localizer_ready: false,
   }, 'map'), true)
 })
 
-test('profile readiness polling survives the old runtime and returns the requested runtime', async () => {
+test('Explore readiness follows whether the session uses a saved map', () => {
+  const liveExplore = {
+    mode: 'exploring' as const,
+    env: 'real' as const,
+    product: 'explore' as const,
+    product_session: 'exploration',
+    active_map: null,
+    saved_active_map: 'old-map',
+    map_has_pcd: false,
+    map_has_tomogram: false,
+    map_has_octomap: false,
+    since: 1,
+    pending: false,
+    error: '',
+    icp_quality: 0,
+    localizer_ready: false,
+    pose_fresh: true,
+    can_start_mapping: false,
+    can_start_navigating: false,
+    can_start_exploring: false,
+    can_end: true,
+    explorer_available: true,
+  }
+
+  assert.equal(productSessionReady(liveExplore, 'explore', null), true)
+  assert.equal(productSessionReady({ ...liveExplore, active_map: 'demo' }, 'explore', null), false)
+
+  const savedMapExplore = {
+    ...liveExplore,
+    active_map: 'demo',
+    map_has_pcd: true,
+    map_has_tomogram: true,
+    localizer_ready: true,
+    pose_fresh: true,
+  }
+  assert.equal(productSessionReady(savedMapExplore, 'explore', 'demo'), true)
+  assert.equal(productSessionReady({ ...savedMapExplore, active_map: 'other' }, 'explore', 'demo'), false)
+  assert.equal(productSessionReady({ ...savedMapExplore, localizer_ready: false }, 'explore', 'demo'), false)
+  assert.equal(productSessionReady({ ...savedMapExplore, pose_fresh: false }, 'explore', 'demo'), false)
+})
+
+test('Explore preflight sends a map only when the operator selected one', async () => {
+  const requests: Array<Record<string, unknown>> = []
+  globalThis.fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>)
+    return new Response(JSON.stringify({
+      ok: true,
+      read_only: true,
+      dry_run: true,
+      motion: false,
+      operator_command: 'python -m lingtu.control switch explore',
+    }), { status: 200 })
+  }
+
+  await prepareProductSwitch('explore')
+  await prepareProductSwitch('explore', { mapName: 'demo' })
+  await prepareProductSwitch('explore', { mapName: 'demo', relocalize: false })
+
+  assert.deepEqual(requests.map(({ map_name, relocalize }) => ({ map_name, relocalize })), [
+    { map_name: null, relocalize: false },
+    { map_name: 'demo', relocalize: true },
+    { map_name: 'demo', relocalize: false },
+  ])
+  assert.equal(requests.some(request => 'variant' in request), false)
+})
+
+test('Product readiness polling survives the old runtime and returns the requested runtime', async () => {
   const ready = {
     mode: 'mapping' as const,
-    product_profile: 'map',
+    env: 'real' as const,
+    product: 'map' as const,
     product_session: 'mapping',
     active_map: null,
     saved_active_map: 'old-map',
@@ -165,11 +253,11 @@ test('profile readiness polling survives the old runtime and returns the request
   }
   let attempts = 0
 
-  const result = await waitForProductProfileReady('map', null, {
+  const result = await waitForProductReady('map', null, {
     fetchSession: async () => {
       attempts += 1
       return attempts === 1
-        ? { ...ready, mode: 'navigating', product_profile: 'nav', product_session: 'navigation' }
+        ? { ...ready, mode: 'navigating', product: 'nav' as const, product_session: 'navigation' }
         : ready
     },
     intervalMs: 0,
@@ -177,13 +265,14 @@ test('profile readiness polling survives the old runtime and returns the request
   })
 
   assert.equal(attempts, 2)
-  assert.equal(result.product_profile, 'map')
+  assert.equal(result.product, 'map')
 })
 
-test('saved-map profiles wait for native navigation readiness', async () => {
+test('saved-map Products wait for native navigation readiness', async () => {
   const session = {
     mode: 'navigating' as const,
-    product_profile: 'nav',
+    env: 'real' as const,
+    product: 'nav' as const,
     product_session: 'navigation',
     active_map: 'demo',
     saved_active_map: 'old-map',
@@ -204,7 +293,7 @@ test('saved-map profiles wait for native navigation readiness', async () => {
   }
   let navigationAttempts = 0
 
-  const result = await waitForProductProfileReady('nav', 'demo', {
+  const result = await waitForProductReady('nav', 'demo', {
     fetchSession: async () => session,
     fetchNavigation: async () => {
       navigationAttempts += 1
@@ -225,15 +314,16 @@ test('saved-map profiles wait for native navigation readiness', async () => {
   assert.equal(result.active_map, 'demo')
 })
 
-test('profile polling reports a target runtime error immediately', async () => {
+test('Product polling reports a target runtime error immediately', async () => {
   let attempts = 0
   await assert.rejects(
-    waitForProductProfileReady('map', null, {
+    waitForProductReady('map', null, {
       fetchSession: async () => {
         attempts += 1
         return {
           mode: 'idle',
-          product_profile: 'map',
+          env: 'real',
+          product: 'map',
           product_session: 'idle',
           active_map: null,
           saved_active_map: null,
@@ -260,13 +350,13 @@ test('profile polling reports a target runtime error immediately', async () => {
   assert.equal(attempts, 1)
 })
 
-test('all profile switch entry points wait for the target runtime before reporting success', () => {
-  assert.match(sceneSource, /await waitForProductProfileReady\('map'\)/)
-  assert.match(sceneSource, /await waitForMapNavigationReady\(navigationTargetMapName\)/)
+test('all Product switch entry points hand off ProductControl commands without claiming success', () => {
+  assert.match(sceneSource, /copyProductSwitchCommand\('map'/)
+  assert.match(sceneSource, /copyProductSwitchCommand\('nav'/)
   assert.match(sceneSource, /mapIsNavigationReady\(navigationTargetMap\)/)
-  assert.match(productModeSource, /await waitForProductProfileReady\(/)
-  assert.match(productModeSource, /fetchNavigation: api\.fetchNavigationStatus/)
-  assert.doesNotMatch(productModeSource, /switchAcceptedAtReconnects/)
+  assert.match(productModeSource, /copyProductSwitchCommand/)
+  assert.doesNotMatch(sceneSource, /waitForMapNavigationReady|waitForProductReady/)
+  assert.doesNotMatch(productModeSource, /waitForProductReady|switchAcceptedAtReconnects/)
 })
 
 test('scene goal feedback distinguishes an in-progress product switch', () => {

@@ -1,7 +1,4 @@
-"""Tests for MapsModule -- map CRUD, POI operations, command dispatch.
-
-All tests are pure-Python, no ROS2 / hardware required.
-"""
+"""Native MapsModule integration tests; no ROS or hardware is required."""
 
 from __future__ import annotations
 
@@ -9,15 +6,22 @@ import json
 import os
 import struct
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
+from maps.adapters.python.service import _load_native_maps_service_lib
 from maps.artifacts import sha256_file
 from maps.modules.service import MapsModule
 from nav.services.plan.global_planner.artifacts import SavedMapArtifacts
 from runtime.msgs.map import MapCloudFrame, MapControlRequest, SemanticSaveResult
 from runtime.msgs.sensor import PointCloud2
+
+pytestmark = pytest.mark.skipif(
+    _load_native_maps_service_lib() is None,
+    reason="built lingtu_maps native library is required",
+)
 
 # -- fixtures ------------------------------------------------------------------
 
@@ -52,6 +56,27 @@ def _cmd(mod, cmd: dict) -> dict:
     return mod._test_responses[-1]
 
 
+def _wait_for_save_terminal(mod, submitted: dict, *, timeout: float = 10.0) -> dict:
+    """Assert SaveMap admission and return its durable terminal job status."""
+    assert submitted.get("accepted") is True, submitted
+    job_id = str(submitted.get("job_id") or "")
+    assert job_id, submitted
+
+    deadline = time.monotonic() + timeout
+    last_status: dict = {}
+    while time.monotonic() < deadline:
+        response = _cmd(mod, {"action": "save_status", "job_id": job_id})
+        assert response.get("success") is True, response
+        last_status = response.get("status") or {}
+        assert last_status.get("job_id") == job_id, last_status
+        if last_status.get("state") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+            return last_status
+        time.sleep(0.01)
+
+    pytest.fail(f"SaveMap job {job_id!r} did not finish: {last_status}")
+
+
+
 def _write_minimal_pcd(map_dir: Path) -> None:
     """Write a minimal valid PCD file into an existing map dir."""
     (map_dir / "map.pcd").write_text(
@@ -59,6 +84,16 @@ def _write_minimal_pcd(map_dir: Path) -> None:
         "COUNT 1 1 1\nWIDTH 1\nHEIGHT 1\nPOINTS 1\nDATA ascii\n0.0 0.0 0.0\n",
         encoding="utf-8",
     )
+
+
+class _MinimalMapSaveAdapter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def save_slam_map(self, file_path, **_kwargs):
+        self.calls += 1
+        _write_minimal_pcd(Path(file_path).parent)
+        return {"success": True, "source": "test_adapter"}
 
 
 def _write_minimal_semantic_map(path: Path, *, corrupt: bool = False) -> None:
@@ -1042,17 +1077,18 @@ class TestMapsModule:
         assert stored.shape == (1, 3)
         assert info["source"] == "dds_adapter"
 
-    def test_map_cloud_frame_save_produces_global_planner_artifact(
+    def test_map_save_adapter_produces_global_planner_artifact(
         self,
         map_manager,
         tmp_path,
         monkeypatch,
     ):
-        """Typed SLAM map frames can become the active OctoPlanner3D map."""
+        """A generic SLAM map-save adapter can feed the active planner map."""
         import numpy as np
 
         monkeypatch.setenv("NAV_MAP_DIR", str(map_manager._map_dir))
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
+        map_manager.runtime_bridge.map_save_adapter = _MinimalMapSaveAdapter()
         map_manager._on_map_cloud_frame(
             MapCloudFrame(
                 points=np.array(
@@ -1074,14 +1110,18 @@ class TestMapsModule:
             )
         )
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
-            {"action": "save", "name": "frame_map", "slam_profile": "super_lio"},
+            {"action": "save", "name": "frame_map", "slam_profile": "native_dds"},
         )
-        assert saved["success"] is True, saved
-        assert saved["octomap_ok"] is True, saved
-        assert saved["occupancy_ok"] is True, saved
-        assert b"DATA binary\n" in Path(saved["pcd"]).read_bytes()
+        saved = _wait_for_save_terminal(map_manager, submitted)
+        assert saved["state"] == "SUCCEEDED", saved
+        record_response = _cmd(map_manager, {"action": "get_record", "name": "frame_map"})
+        assert record_response["success"] is True, record_response
+        artifact_types = {item["type"] for item in record_response["record"]["artifacts"]}
+        assert "OCTOMAP_3D" in artifact_types
+        assert "OCCUPANCY_2D" in artifact_types
+        assert b"DATA binary\n" in (Path(saved["version_dir"]) / "map.pcd").read_bytes()
 
         active = _cmd(map_manager, {"action": "set_active", "name": "frame_map"})
         assert active["success"] is True, active
@@ -1102,6 +1142,7 @@ class TestMapsModule:
         import numpy as np
 
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
+        map_manager.runtime_bridge.map_save_adapter = _MinimalMapSaveAdapter()
 
         def reject_legacy_package(*_args, **_kwargs):
             raise AssertionError("Python navigation-package orchestration is forbidden")
@@ -1116,25 +1157,28 @@ class TestMapsModule:
             )
         )
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
-            {"action": "save", "name": "transaction_map", "slam_profile": "super_lio"},
+            {"action": "save", "name": "transaction_map", "slam_profile": "native_dds"},
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
-        assert saved["success"] is True, saved
-        assert saved["status"] == "ready"
-        assert saved["navigation_ready"] is True
-        assert saved["octomap_ok"] is True
+        assert saved["state"] == "SUCCEEDED", saved
         assert saved["version"] == 1
-        assert Path(saved["manifest"]).is_file()
-        assert saved["transactional_visibility"] == ("immutable_version_then_atomic_pointer")
-        assert saved["source_map_transaction"]["success"] is True
+        assert Path(saved["manifest_path"]).is_file()
+        assert saved["source_report"]["success"] is True
+        record_response = _cmd(map_manager, {"action": "get_record", "name": "transaction_map"})
+        assert record_response["success"] is True, record_response
+        artifact_types = {item["type"] for item in record_response["record"]["artifacts"]}
+        assert "POINTCLOUD" in artifact_types
+        assert "OCTOMAP_3D" in artifact_types
         assert not _has_save_source_staging(Path(map_manager._map_dir) / "transaction_map")
 
     def test_map_save_commits_live_semantic_artifact(self, map_manager, tmp_path):
         import numpy as np
 
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
+        map_manager.runtime_bridge.map_save_adapter = _MinimalMapSaveAdapter()
         map_manager._on_map_cloud_frame(
             MapCloudFrame(
                 points=np.array(
@@ -1163,13 +1207,15 @@ class TestMapsModule:
 
         map_manager.semantic_save_request.subscribe(respond)
 
-        saved = map_manager._map_save("semantic_save", slam_profile="super_lio")
+        submitted = map_manager._map_save("semantic_save", slam_profile="native_dds")
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
-        assert saved["success"] is True
-        assert saved["semantic_ok"] is True
-        assert saved["semantic"]["generation"] == 4
-        assert saved["semantic"]["voxel_count"] == 12
-        semantic = next(item for item in saved["record"]["artifacts"] if item["type"] == "SEMANTIC")
+        assert saved["state"] == "SUCCEEDED", saved
+        record_response = _cmd(map_manager, {"action": "get_record", "name": "semantic_save"})
+        assert record_response["success"] is True, record_response
+        semantic = next(
+            item for item in record_response["record"]["artifacts"] if item["type"] == "SEMANTIC"
+        )
         assert ".versions" in semantic["uri"]
         assert Path(semantic["uri"]).is_file()
 
@@ -1205,25 +1251,26 @@ class TestMapsModule:
         map_manager.pipeline.map_prune_command = _fake_dynamic_filter(tmp_path)
         map_manager.runtime_bridge.map_save_adapter = PatchMapSaveAdapter()
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
             {"action": "save", "name": "optimized_map", "slam_profile": "native_dds"},
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
-        assert saved["success"] is True, saved
-        assert saved["map_optimization_ok"] is True
-        assert saved["map_optimization_performed"] is True
-        assert saved["map_optimization"]["performed"] is True
-        assert saved["map_optimization"]["strategy"] == "pgo"
-        assert saved["map_optimization"]["changed"] is True
-        assert saved["map_optimization"]["patch_count"] == 1
-        assert saved["source_map_transaction"]["dynamic_filter"]["success"] is True
-        assert saved["octomap_ok"] is True
-        assert saved["transactional_visibility"] == ("immutable_version_then_atomic_pointer")
-        assert saved["source_map_transaction"]["success"] is True
+        assert saved["state"] == "SUCCEEDED", saved
+        source_report = saved["source_report"]
+        map_optimization = source_report["map_optimization"]
+        assert map_optimization["performed"] is True
+        assert map_optimization["strategy"] == "pgo"
+        assert map_optimization["changed"] is True
+        assert map_optimization["patch_count"] == 1
+        assert source_report["dynamic_filter"]["success"] is True
+        assert source_report["success"] is True
+        version_dir = Path(saved["version_dir"])
         assert not _has_save_source_staging(Path(map_manager._map_dir) / "optimized_map")
-        assert b"POINTS 1\n" in Path(saved["pcd"]).read_bytes()
-        assert b"POINTS 1\n" in Path(saved["octomap"]).read_bytes()
+        assert b"POINTS 1\n" in (version_dir / "map.pcd").read_bytes()
+        assert b"POINTS 1\n" in (version_dir / "octomap.ot").read_bytes()
+
 
     @pytest.mark.parametrize("optimizer_required", (False, True))
     def test_map_save_preserves_upstream_slam_refinement_instead_of_rebuilding_from_poses(
@@ -1270,7 +1317,7 @@ class TestMapsModule:
         map_manager.pipeline.map_opt.required = optimizer_required
         map_manager.runtime_bridge.map_save_adapter = RefinedPatchMapSaveAdapter()
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
             {
                 "action": "save",
@@ -1278,22 +1325,21 @@ class TestMapsModule:
                 "slam_profile": "native_dds",
             },
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
         if optimizer_required:
-            assert saved["success"] is False, saved
+            assert saved["state"] == "FAILED", saved
             assert saved["reason_code"] == "map_optimization_failed"
             return
 
-        assert saved["success"] is True, saved
-        assert saved["map_optimization_ok"] is False
-        assert saved["map_optimization_performed"] is False
-        assert saved["map_optimization"]["status"] == "skipped"
-        assert saved["map_optimization"]["performed"] is False
-        assert saved["map_optimization"]["reason_code"] == (
-            "upstream_slam_optimization_preserved"
-        )
-        assert saved["map_optimization"]["changed"] is False
-        assert b"POINTS 1\n" in Path(saved["pcd"]).read_bytes()
+        assert saved["state"] == "SUCCEEDED", saved
+        map_optimization = saved["source_report"]["map_optimization"]
+        assert map_optimization["status"] == "skipped"
+        assert map_optimization["performed"] is False
+        assert map_optimization["reason_code"] == "upstream_slam_optimization_preserved"
+        assert map_optimization["changed"] is False
+        assert b"POINTS 1\n" in (Path(saved["version_dir"]) / "map.pcd").read_bytes()
+
 
     @pytest.mark.parametrize("dynamic_filter_required", (False, True))
     def test_map_save_skips_pose_based_cleaner_when_upstream_loop_poses_are_not_exported(
@@ -1344,7 +1390,7 @@ class TestMapsModule:
         )
         map_manager.runtime_bridge.map_save_adapter = LoopCorrectedMapSaveAdapter()
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
             {
                 "action": "save",
@@ -1352,19 +1398,21 @@ class TestMapsModule:
                 "slam_profile": "native_dds",
             },
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
         if dynamic_filter_required:
-            assert saved["success"] is False, saved
+            assert saved["state"] == "FAILED", saved
             assert saved["reason_code"] == "dynamic_filter_failed"
             return
 
-        assert saved["success"] is True, saved
-        dynamic_filter = saved["source_map_transaction"]["dynamic_filter"]
+        assert saved["state"] == "SUCCEEDED", saved
+        dynamic_filter = saved["source_report"]["dynamic_filter"]
         assert dynamic_filter["success"] is False
         assert dynamic_filter["status"] == "skipped"
         assert dynamic_filter["performed"] is False
         assert dynamic_filter["reason_code"] == "upstream_pose_map_consistency_unproven"
         assert dynamic_filter["changed"] is False
+
 
     def test_map_save_preserves_source_when_upstream_optimization_report_is_incomplete(
         self,
@@ -1406,7 +1454,7 @@ class TestMapsModule:
         map_manager.pipeline.map_prune_command = _fake_dynamic_filter(tmp_path)
         map_manager.runtime_bridge.map_save_adapter = IncompleteReportMapSaveAdapter()
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
             {
                 "action": "save",
@@ -1414,18 +1462,18 @@ class TestMapsModule:
                 "slam_profile": "native_dds",
             },
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
-        assert saved["success"] is True, saved
-        assert saved["map_optimization_ok"] is False
-        assert saved["map_optimization_performed"] is False
-        assert saved["map_optimization"]["success"] is False
-        assert saved["map_optimization"]["reason_code"] == (
-            "upstream_optimization_report_invalid"
-        )
-        dynamic_filter = saved["source_map_transaction"]["dynamic_filter"]
+        assert saved["state"] == "SUCCEEDED", saved
+        source_report = saved["source_report"]
+        map_optimization = source_report["map_optimization"]
+        assert map_optimization["success"] is False
+        assert map_optimization["reason_code"] == "upstream_optimization_report_invalid"
+        dynamic_filter = source_report["dynamic_filter"]
         assert dynamic_filter["success"] is False
         assert dynamic_filter["reason_code"] == "upstream_optimization_report_invalid"
-        assert b"POINTS 1\n" in Path(saved["pcd"]).read_bytes()
+        assert b"POINTS 1\n" in (Path(saved["version_dir"]) / "map.pcd").read_bytes()
+
 
     def test_map_save_fails_closed_when_required_dynamic_filter_fails(
         self,
@@ -1450,15 +1498,17 @@ class TestMapsModule:
         )
         map_manager.runtime_bridge.map_save_adapter = SnapshotAdapter()
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
             {"action": "save", "name": "filter_failed", "slam_profile": "native_dds"},
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
-        assert saved["success"] is False
-        assert saved["reason_code"] == "dynamic_filter_failed", saved
+        assert saved["state"] == "FAILED", saved
+        assert saved["reason_code"] == "dynamic_filter_failed"
         assert not _has_save_source_staging(Path(map_manager._map_dir) / "filter_failed")
         assert not (Path(map_manager._map_dir) / "filter_failed" / "current").exists()
+
 
     def test_map_save_without_octomap_fails_without_publishing(
         self,
@@ -1467,6 +1517,7 @@ class TestMapsModule:
         """A required OctoMap failure cannot publish a partial current version."""
         import numpy as np
 
+        map_manager.runtime_bridge.map_save_adapter = _MinimalMapSaveAdapter()
         map_manager._on_map_cloud_frame(
             MapCloudFrame(
                 points=np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.2]], dtype=np.float32),
@@ -1476,16 +1527,18 @@ class TestMapsModule:
             )
         )
 
-        saved = _cmd(
+        submitted = _cmd(
             map_manager,
-            {"action": "save", "name": "pcd_only", "slam_profile": "super_lio"},
+            {"action": "save", "name": "pcd_only", "slam_profile": "native_dds"},
         )
+        saved = _wait_for_save_terminal(map_manager, submitted)
 
-        assert saved["success"] is False, saved
+        assert saved["state"] == "FAILED", saved
         assert saved["reason_code"] == "octomap_build_failed"
         map_dir = Path(map_manager._map_dir) / "pcd_only"
         assert not (map_dir / "current_version.txt").exists()
         assert not (map_dir / "map.pcd").exists()
+
 
     def test_map_save_rejects_explicit_unhealthy_slam(
         self,
@@ -1495,6 +1548,7 @@ class TestMapsModule:
         import numpy as np
 
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
+        map_manager.runtime_bridge.map_save_adapter = _MinimalMapSaveAdapter()
         map_manager.runtime_bridge.on_localization_status({"state": "LOST", "message": "scan matching diverged"})
         map_manager._on_map_cloud_frame(
             MapCloudFrame(
@@ -1510,7 +1564,7 @@ class TestMapsModule:
 
         saved = _cmd(
             map_manager,
-            {"action": "save", "name": "unhealthy", "slam_profile": "super_lio"},
+            {"action": "save", "name": "unhealthy", "slam_profile": "native_dds"},
         )
 
         assert saved["success"] is False
@@ -1525,6 +1579,8 @@ class TestMapsModule:
         import numpy as np
 
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
+        adapter = _MinimalMapSaveAdapter()
+        map_manager.runtime_bridge.map_save_adapter = adapter
         map_manager._on_map_cloud_frame(
             MapCloudFrame(
                 points=np.array(
@@ -1539,17 +1595,19 @@ class TestMapsModule:
         command = {
             "action": "save",
             "name": "idempotent",
-            "slam_profile": "super_lio",
+            "slam_profile": "native_dds",
             "request_id": "stable_request",
         }
 
-        first = _cmd(map_manager, command)
+        first_submitted = _cmd(map_manager, command)
+        first = _wait_for_save_terminal(map_manager, first_submitted)
         second = _cmd(map_manager, command)
 
-        assert first["success"] is True, first
-        assert second["success"] is True, second
+        assert first["state"] == "SUCCEEDED", first
         assert second["replayed"] is True
+        assert first["job_id"] == second["job_id"] == "stable_request"
         assert first["version"] == second["version"] == 1
+        assert adapter.calls == 1
         jobs = _cmd(map_manager, {"action": "list_save_jobs", "limit": 10})
         assert jobs["count"] == 1
 
@@ -1561,6 +1619,7 @@ class TestMapsModule:
         import numpy as np
 
         map_manager._map_artifact_converter_command = _fake_octomap_converter(tmp_path)
+        map_manager.runtime_bridge.map_save_adapter = _MinimalMapSaveAdapter()
         map_manager._on_map_cloud_frame(
             MapCloudFrame(
                 points=np.array(
@@ -1572,26 +1631,28 @@ class TestMapsModule:
                 source="native_slam:test",
             )
         )
-        first = _cmd(
+        first_submitted = _cmd(
             map_manager,
             {
                 "action": "save",
                 "name": "versioned",
-                "slam_profile": "super_lio",
+                "slam_profile": "native_dds",
                 "request_id": "versioned_v1",
             },
         )
-        second = _cmd(
+        first = _wait_for_save_terminal(map_manager, first_submitted)
+        second_submitted = _cmd(
             map_manager,
             {
                 "action": "save",
                 "name": "versioned",
-                "slam_profile": "super_lio",
+                "slam_profile": "native_dds",
                 "request_id": "versioned_v2",
             },
         )
-        assert first["success"] is True, first
-        assert second["success"] is True, second
+        second = _wait_for_save_terminal(map_manager, second_submitted)
+        assert first["state"] == "SUCCEEDED", first
+        assert second["state"] == "SUCCEEDED", second
         assert (first["version"], second["version"]) == (1, 2)
 
         versions = _cmd(

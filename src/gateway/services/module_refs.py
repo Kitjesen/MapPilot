@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from localization.service import RelocalizationService
 from gateway.services.teleop import bind_navigation_commands
+from localization.service import RelocalizationService
 
 _BACKEND_RECONFIGURE_TARGETS = {
     "detector": ("PerceptionModule",),
@@ -72,6 +72,30 @@ def attach_module_refs(gw: Any, modules: dict[str, Any]) -> None:
 
 def backend_reconfigure_targets() -> dict[str, tuple[str, ...]]:
     return dict(_BACKEND_RECONFIGURE_TARGETS)
+
+
+def navigation_state(nav: Any) -> str:
+    """Return the uppercase navigation FSM state from a nav module reference.
+
+    Shared by GatewayModule and MCPServerModule to avoid duplication.
+    """
+    if nav is None:
+        return ""
+    health: dict[str, Any] = {}
+    if hasattr(nav, "health"):
+        try:
+            raw_health = nav.health() or {}
+            if isinstance(raw_health, dict):
+                health = raw_health
+        except Exception:
+            return "UNKNOWN"
+    state = health.get("state")
+    nested = health.get("navigation")
+    if state is None and isinstance(nested, dict):
+        state = nested.get("state")
+    if hasattr(state, "value"):
+        state = state.value
+    return str(state or "").upper()
 
 
 def _has_relocalization_capability(module: Any) -> bool:

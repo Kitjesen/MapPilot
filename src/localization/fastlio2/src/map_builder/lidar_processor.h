@@ -30,6 +30,10 @@ public:
     bool lastUpdateAttempted() const { return m_last_update_attempted; }
     bool lastUpdateAccepted() const { return m_last_update_accepted; }
     std::size_t consecutiveUpdateRejections() const { return m_consecutive_update_rejections; }
+    const LidarUpdateDiagnostics &lastUpdateDiagnostics() const
+    {
+        return m_last_update_diagnostics;
+    }
 
     void updateLossFunc(State &state, SharedState &share_data);
 
@@ -56,4 +60,5 @@ private:
     bool m_last_update_attempted = false;
     bool m_last_update_accepted = false;
     std::size_t m_consecutive_update_rejections = 0;
+    LidarUpdateDiagnostics m_last_update_diagnostics;
 };

@@ -104,40 +104,6 @@ std::string ConfigValue(
   return it == values.end() ? std::string{} : it->second;
 }
 
-ArtifactType ArtifactTypeForCapability(const std::string& capability, bool* ok) {
-  if (ok != nullptr) {
-    *ok = true;
-  }
-  if (capability == "source_pointcloud" || capability == "visualization") {
-    return ArtifactType::kPointCloud;
-  }
-  if (capability == "path_planning_2d" || capability == "path_planning" ||
-      capability == "global_2d_planning") {
-    return ArtifactType::kOccupancy2D;
-  }
-  if (capability == "terrain_reasoning" || capability == "global_planning_2_5d") {
-    return ArtifactType::kTraversability;
-  }
-  if (capability == "navigation_safety_3d" || capability == "global_planning_3d" ||
-      capability == "collision_3d") {
-    return ArtifactType::kOctomap3D;
-  }
-  if (capability == "trajectory_optimization" || capability == "esdf") {
-    return ArtifactType::kEsdf;
-  }
-  if (capability == "traversability" || capability == "navigation_cost" ||
-      capability == "local_planning_cost") {
-    return ArtifactType::kTraversability;
-  }
-  if (capability == "semantic_query" || capability == "semantic") {
-    return ArtifactType::kSemantic;
-  }
-  if (ok != nullptr) {
-    *ok = false;
-  }
-  return ArtifactType::kPointCloud;
-}
-
 std::string BoolJson(bool value) {
   return value ? "true" : "false";
 }
@@ -734,7 +700,8 @@ std::string MapsServiceCore::GetBundleJson(
           "\"schema_version\":\"map.bundle\","
           "\"reason_code\":\"missing_capability\","
           "\"map_id\":" + JsonString(resolved) + ","
-          "\"version_id\":" + JsonString(record->lineage_id + ":v" + std::to_string(record->version)) + ","
+          "\"version_id\":" +
+          JsonString(record->lineage_id + ":v" + std::to_string(record->version)) + ","
           "\"state\":" + JsonString(StateName(record->state)) + ","
           "\"capability\":" + JsonString(capability) + ","
           "\"message\":" + JsonString("capability unavailable: " + capability) + ","
@@ -748,7 +715,8 @@ std::string MapsServiceCore::GetBundleJson(
         "\"success\":true,"
         "\"schema_version\":\"map.bundle\","
         "\"map_id\":" + JsonString(record->map_id) + ","
-        "\"version_id\":" + JsonString(record->lineage_id + ":v" + std::to_string(record->version)) + ","
+        "\"version_id\":" +
+        JsonString(record->lineage_id + ":v" + std::to_string(record->version)) + ","
         "\"state\":" + JsonString(StateName(record->state)) + ","
         "\"frame_id\":" + JsonString(record->scope.frame_id) + ","
         "\"map_dir\":" + JsonString(dir.string()) + ","
@@ -2191,12 +2159,12 @@ const MapArtifact* MapsServiceCore::FindArtifactForCapability(
     const MapRecord& record,
     const std::string& capability) const {
   bool known = false;
-  const ArtifactType wanted = ArtifactTypeForCapability(capability, &known);
-  if (!known) {
+  const auto wanted = ArtifactTypeForCapability(capability);
+  if (!wanted.has_value()) {
     return nullptr;
   }
   for (const auto& artifact : record.artifacts) {
-    if (artifact.type == wanted) {
+    if (artifact.type == *wanted) {
       return &artifact;
     }
   }

@@ -18,6 +18,8 @@ Environment=LINGTU_CAMERA_INFO_TOPIC=rt/camera/info
 Environment=LINGTU_CAMERA_COLOR_SHM=/lingtu_camera_color
 Environment=LINGTU_CAMERA_DEPTH_SHM=/lingtu_camera_depth
 Environment=LINGTU_CAMERA_INFO_SHM=/lingtu_camera_info
+Environment=LINGTU_CAMERA_SHM_SLOT_COUNT=16
+Environment=LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES=1048576
 Environment=LINGTU_CAMERA_PUBLISH_IMAGE_DDS=1
 Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_CYCLONEDDS_PREFIX=
@@ -37,11 +39,8 @@ Environment=LINGTU_CAMERA_DEPTH_FPS=30
 Environment=LINGTU_CAMERA_CAPTURE_TIMEOUT_MS=1000
 Environment=LINGTU_CAMERA_STARTUP_FRAME_TIMEOUT_MS=10000
 Environment=LINGTU_CAMERA_CAPTURE_STALE_TIMEOUT_MS=15000
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh camera
 ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_camera_dds.sh
-Restart=on-failure
-RestartSec=3
 KillSignal=SIGINT
 TimeoutStopSec=20
-
-[Install]
-WantedBy=multi-user.target

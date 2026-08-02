@@ -28,9 +28,9 @@ struct ICPConfig
     double rough_score_thresh = 0.2;
     int rough_max_iteration = 5;
 
-    // Reserved for accelerated ICP backends. The runtime path currently uses
-    // PCL ICP because small_gicp has shown uncaught worker-thread exceptions
-    // on real robot scans.
+    // Worker count for parallel ICP backends such as small_gicp. Input and map
+    // clouds are published as immutable snapshots so backend search caches
+    // always match the point count seen by these workers.
     int num_threads = 4;
 };
 
@@ -79,6 +79,9 @@ public:
     /// Hessian. Larger = more uncertain
     /// translation. Returns -1 when no align() has succeeded yet.
     double getLastPosCovTrace() const { return m_last_pos_cov_trace; }
+    int getLastInputPoints() const {
+        return m_refine_inp ? static_cast<int>(m_refine_inp->size()) : 0;
+    }
     int getLastEvaluatedPoints() const { return m_last_evaluated_points; }
 
 private:
@@ -91,6 +94,9 @@ private:
     CloudType::Ptr m_rough_inp;
     CloudType::Ptr m_refine_tgt;
     CloudType::Ptr m_rough_tgt;
+    Eigen::Vector3f m_refine_min_bound{Eigen::Vector3f::Zero()};
+    Eigen::Vector3f m_refine_max_bound{Eigen::Vector3f::Zero()};
+    bool m_refine_bounds_valid{false};
     std::string m_pcd_path;
     std::string m_backend_name{
 #ifdef LINGTU_ENABLE_SMALL_GICP

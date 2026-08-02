@@ -33,10 +33,10 @@ own LiDAR ingestion, SLAM, PGO, HBA, or navigation compute.
 | Component | Current status | Evidence |
 | --- | --- | --- |
 | LiDAR DDS | Product-native C++ implemented. | `livox_sdk2_stream` in `src/drivers/real/lidar/sdk2_stream/`; deployed as `lingtu-livox-dds.service`. |
-| SLAM DDS | Product-native C++ implemented. | `lingtu_slam_cyclone_runtime` and `lingtu_slam_control` in `src/localization/slam/cpp/`; deployed as `lingtu-slam-dds.service`. |
+| SLAM DDS | Product-native C++ implemented. | `slamd` and `slamctl` in `src/localization/slam/cpp/`; deployed as `lingtu-slam-dds.service`. CycloneDDS is a transport detail, not part of the process name. |
 | Relocalization | Product-native support exists in the SLAM C++ contract, with optional BBS3D/small_gicp build support. | `native_relocalizer.cpp` in `src/localization/slam/cpp/`. |
 | Navigation DDS | Product-native C++ implemented. OctoPlanner3D is default; FAR is an explicit validated-occupancy option. | `navd`, `lingtu_nav_control`, `lingtu_traversability_dds` in `src/nav/cpp/endpoint/`; deployed as `lingtu-nav-dds.service` and `lingtu-traversability-dds.service`. |
-| Thunder driver | Product-native C++ implemented. | `lingtu_driver` in `src/drivers/real/thunder/native/`; deployed as `lingtu-driver.service`, conflicts with the old Python endpoint service, consumes `rt/nav/cmd_vel`, and calls remote Brainstem `WalkChecked`. |
+| Thunder driver | Product-native C++ implemented. | `lingtu_driver` in `src/drivers/real/thunder/native/`; deployed as `lingtu-driver.service`, consumes `rt/nav/cmd_vel`, and calls remote Brainstem `WalkChecked`. Its exact conflicts for retired Python endpoint unit names are cleanup tombstones only. |
 | Saved-map loop verification | `wip`: deterministic native shadow verifier exists; no map/pose mutation and no PGO feed yet. | `lt_loop_verify` emits versioned constraints/diagnostics, validates exact pose-patch provenance, and rejects changing inputs. |
 | PGO | `exp`: binary and solver exist; product save defaults to `off`. | `lt_pgo` refuses to rebuild a map when the graph has no independent geometric constraints and reports `skipped_no_independent_constraints`. |
 | HBA | `exp`: binary and solver exist; product save defaults to `off`. | `lt_hba` currently shares the same constraint gap; it is not a supported high-quality product action yet. |
@@ -111,28 +111,31 @@ native binaries exist.
 
 ## How To Use
 
-Start a complete product through the Runtime Graph control plane:
+Start a complete Product through ProductControl:
 
 ```bash
-bash scripts/lingtu nav start <map>
+bash scripts/lingtu --env real mode switch nav --map <map>
 ```
 
-`scripts/lingtu` resolves the selected Product and Endpoint into a typed
-`RuntimePlan`, then starts the declared processes in dependency order. Direct
-`systemctl` calls are reserved for service-level diagnosis; they are not a
-second product startup contract.
+`scripts/lingtu` is a thin adapter over `python -m lingtu.control switch`.
+ProductControl resolves one Product inside `env=real`, publishes the
+fingerprinted RunPlan, then applies its processes through the internal systemd runner in
+dependency order. Direct `systemctl` calls are reserved for service-level
+diagnosis; they are not a second product startup contract.
 
-`thunder_field` is an `endpoint_only + driver` product endpoint:
-`config/runtime_graph/endpoints/thunder_field.yaml` sets
+The `env=real` RunPlan uses the `thunder_dds_v1` typed DDS
+contract. `config/runtime_graph/envs/real.yaml` sets
 `localization_adapter=cpp_slam_status`,
 `command_output_mode=endpoint_only`, and
 `hardware_control_boundary=driver`. The deployed `lingtu.service` also sets
 `LINGTU_ENABLE_ROBOT_DRIVER=0`, so the Python process does not open a second
 robot hardware writer.
 
-`lingtu-thunder-dds-endpoint.service` remains in the repository as a
-compatibility Python endpoint, but `lingtu-driver.service` declares a systemd
-conflict against it. It is not part of the default field product chain.
+The former Python DDS field unit, installer, and deployment wrapper are physically
+removed. Exact legacy unit names remain only in `env=real` stop conflicts,
+`lingtu-driver.service` conflicts, and driver-installer disable cleanup; they are
+not executable deployment entries. Local replay and smoke diagnostics invoke
+`PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner` directly.
 
 To inspect native component state from a local build:
 

@@ -7,7 +7,7 @@ same-source tomogram + saved map -> relocalization LOCKED -> PCT preview ->
 native localPlanner/pathFollower -> MuJoCo closed-loop motion.
 
 It is intentionally simulation-only and delegates motion evidence to
-``native_pct_mujoco_gate.py`` instead of duplicating the local planner harness.
+``mujoco/native_pct_gate.py`` instead of duplicating the local planner harness.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -30,9 +32,28 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from drivers.sim.mujoco.scene import write_obstacle_metadata  # noqa: E402
+from nav.services.plan.global_planner.algorithm.pct.runtime.api import (  # noqa: E402
+    load_pct_planner_runtime,
+)
+from nav.services.plan.global_planner.algorithm.pct.runtime.preview import (  # noqa: E402
+    ACTUAL_SCHEMA,
+    build_preview_report,
+)
 
 DEFAULT_SAVED_MAP_GOAL = [4.5, 3.0]
 DEFAULT_RELOCALIZE_REPORT_MAX_AGE_S = 86_400.0
+
+
+class _PctPreviewConfig:
+    class planner:
+        use_quintic = True
+        optimize_trajectory = False
+        max_heading_rate = 10
+        obstacle_thr = 49.9
+
+    class wrapper:
+        tomo_dir = "/"
+        pcd_dir = None
 
 
 def _latest(patterns: tuple[str, ...]) -> Path | None:
@@ -397,10 +418,10 @@ def _mark_relocalization_prerequisite_failed(
         "map_pcd_matches_relocalization": None,
         "scene_xml_matches_saved_map": None,
         "pct_no_fallback": None,
-        "pct_native_runtime_used": None,
-        "pct_native_runtime_ok": None,
+        "pct_planner_runtime_selected": None,
+        "pct_planner_runtime_ok": None,
         "pct_optimizer_disabled": None,
-        "pct_native_raw_path": None,
+        "pct_astar_raw_path": None,
         "same_source_map_artifact": None,
         "same_source_hash_identity": None,
     }
@@ -409,107 +430,170 @@ def _mark_relocalization_prerequisite_failed(
     return report
 
 
-def _run_plan_preview(args: argparse.Namespace, *, tomogram: Path, out_path: Path) -> dict[str, Any]:
-    cmd = [
-        sys.executable,
-        str(ROOT / "scripts/planning/plan_preview.py"),
-        "--planner",
-        "pct",
-        "--tomogram",
-        str(tomogram),
-        "--map-root",
-        str(tomogram.parent),
-        "--internal-only",
-        "--strict",
-        "--compact",
-        "--max-endpoint-z-error-m",
-        str(args.max_endpoint_z_error_m),
-        "--timeout",
-        str(args.preview_timeout_s),
-    ]
-    if args.start:
-        cmd.extend(["--start", *[str(v) for v in args.start]])
-    if args.goal:
-        if not args.start:
-            cmd.append("--use-last-pose")
-        cmd.extend(["--goal", *[str(v) for v in args.goal]])
-    started = time.time()
-    proc = subprocess.run(
-        cmd,
-        cwd=str(ROOT),
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=max(5.0, float(args.preview_timeout_s) + 10.0),
-        check=False,
+def _last_pose_start(tomogram: Path) -> list[float]:
+    candidates = (
+        tomogram.parent / "active" / "last_pose.txt",
+        tomogram.parent / "last_pose.txt",
     )
-    stdout = proc.stdout.strip()
-    parsed: dict[str, Any] = {}
-    for line in reversed(stdout.splitlines()):
-        if line.strip().startswith("{"):
-            parsed = json.loads(line)
-            break
-    parsed.setdefault("command", cmd)
-    parsed.setdefault("returncode", proc.returncode)
-    parsed.setdefault("stderr_tail", proc.stderr[-2000:])
-    parsed.setdefault("wall_s", round(time.time() - started, 3))
+    invalid: list[Path] = []
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            parts = path.read_text(
+                encoding="utf-8",
+                errors="ignore",
+            ).strip().split()
+            if len(parts) < 3:
+                invalid.append(path)
+                continue
+            x = float(parts[0])
+            y = float(parts[1])
+            yaw = float(parts[2])
+        except (OSError, ValueError):
+            invalid.append(path)
+            continue
+        if np.all(np.isfinite([x, y, yaw])):
+            return [x, y]
+        invalid.append(path)
+
+    searched = ", ".join(str(path) for path in candidates)
+    if invalid:
+        raise ValueError(f"no valid last_pose.txt found for PCT preview; searched: {searched}")
+    raise FileNotFoundError(
+        f"--start omitted and no last_pose.txt found for PCT preview; searched: {searched}"
+    )
+
+
+def _preview_point(
+    values: list[float],
+    *,
+    label: str,
+    planner: Any,
+) -> np.ndarray:
+    point = np.asarray(values, dtype=np.float64).reshape(-1)
+    if point.size not in (2, 3):
+        raise ValueError(f"PCT preview {label} must contain x y or x y z")
+    if not np.all(np.isfinite(point)):
+        raise ValueError(f"PCT preview {label} must be finite")
+    if point.size == 2:
+        height = float(planner.get_surface_height(point[:2]))
+        point = np.asarray([point[0], point[1], height], dtype=np.float64)
+        if not np.all(np.isfinite(point)):
+            raise ValueError(f"PCT preview {label} surface height must be finite")
+    return point
+
+
+def _run_plan_preview(
+    args: argparse.Namespace,
+    *,
+    tomogram: Path,
+    out_path: Path,
+) -> tuple[dict[str, Any], Any]:
+    start_values = args.start if args.start is not None else _last_pose_start(tomogram)
+    if args.goal is None:
+        raise ValueError("PCT preview requires --goal")
+
+    runtime = load_pct_planner_runtime(
+        tomogram,
+        repo_root=ROOT,
+        planner_config=_PctPreviewConfig,
+    )
+    if runtime.runtime_paths is None:
+        raise RuntimeError("PCT planner runtime did not provide runtime paths")
+
+    planner = runtime.planner
+    start = _preview_point(start_values, label="start", planner=planner)
+    goal = _preview_point(args.goal, label="goal", planner=planner)
+    result = planner.plan(start[:2], goal[:2], float(start[2]), float(goal[2]))
+    preview = build_preview_report(
+        planner=planner,
+        runtime_paths=runtime.runtime_paths,
+        result=result,
+        start=start,
+        goal=goal,
+        tomogram_path=tomogram,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(parsed, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return parsed
+    out_path.write_text(
+        json.dumps(preview, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return preview, result
 
-
-def _point_xyz(point: dict[str, Any]) -> list[float]:
-    return [float(point.get("x", 0.0)), float(point.get("y", 0.0)), float(point.get("z", 0.0))]
 
 
 def _select_preview_case(preview: dict[str, Any]) -> dict[str, Any]:
-    returncode = preview.get("returncode")
-    if returncode not in (None, 0):
-        stderr = str(preview.get("stderr_tail") or "").strip()
-        suffix = f": {stderr[-500:]}" if stderr else ""
-        raise RuntimeError(
-            f"PCT plan preview command failed with returncode {returncode}{suffix}"
-        )
-    for case in preview.get("cases") or []:
-        body = case.get("preview") or {}
-        if case.get("feasible") is True and body.get("selected_planner") == "pct":
-            path = body.get("path") or []
-            if len(path) >= 2:
-                return case
-    raise RuntimeError("no feasible PCT preview case with a non-empty path")
+    if preview.get("schema") != ACTUAL_SCHEMA:
+        raise RuntimeError(f"unexpected PCT preview schema: {preview.get('schema')!r}")
+    if preview.get("ok") is not True:
+        status_code = str(preview.get("status_code") or "UNKNOWN")
+        error = str(preview.get("error") or "").strip()
+        suffix = f": {error}" if error else ""
+        raise RuntimeError(f"PCT preview failed: {status_code}{suffix}")
+    if preview.get("planner") != "pct":
+        raise RuntimeError("PCT preview did not report planner='pct'")
+    if int(preview.get("path_count") or 0) < 2:
+        raise RuntimeError("PCT preview returned fewer than two path points")
+    return preview
 
 
-def _pct_mode_evidence(
-    preview: dict[str, Any],
-    case: dict[str, Any],
-) -> dict[str, Any]:
-    optimizer = case.get("pct_optimizer_enabled")
-    if optimizer is None:
-        optimizer = preview.get("pct_optimizer_enabled")
-    path_mode = str(
-        case.get("pct_planner_path_mode")
-        or preview.get("pct_planner_path_mode")
-        or ""
-    )
+_PCT_PLANNER_PATH_MODES = {
+    "astar_raw_path": "astar_raw_path",
+    "native_astar_raw_path": "astar_raw_path",
+    "rust_astar_raw_path": "astar_raw_path",
+    "optimized_trajectory": "optimized_trajectory",
+    "native_optimized_trajectory": "optimized_trajectory",
+    "rust_optimized_trajectory": "optimized_trajectory",
+}
+
+
+def _canonical_pct_planner_path_mode(value: Any) -> str:
+    raw_mode = str(value or "").strip()
+    try:
+        return _PCT_PLANNER_PATH_MODES[raw_mode]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported PCT planner path mode: {raw_mode!r}"
+        ) from exc
+
+
+def _pct_planner_runtime_evidence(preview: dict[str, Any]) -> dict[str, Any]:
+    runtime = preview.get("runtime")
+    if not isinstance(runtime, dict):
+        runtime = {}
     return {
-        "pct_optimizer_enabled": optimizer,
-        "pct_planner_path_mode": path_mode,
+        **runtime,
+        "runtime": str(runtime.get("runtime") or ""),
+        "ok": preview.get("ok") is True,
     }
 
 
-def _pct_native_raw_path_blockers(mode: dict[str, Any]) -> list[str]:
+def _pct_mode_evidence(preview: dict[str, Any]) -> dict[str, Any]:
+    diagnostics = preview.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    return {
+        "pct_optimizer_enabled": diagnostics.get("last_optimizer_enabled"),
+        "pct_planner_path_mode": _canonical_pct_planner_path_mode(
+            diagnostics.get("last_path_mode")
+        ),
+    }
+
+
+def _pct_astar_raw_path_blockers(mode: dict[str, Any]) -> list[str]:
     blockers: list[str] = []
     if mode.get("pct_optimizer_enabled") is not False:
         blockers.append("PCT optimizer mode evidence is not disabled")
-    if mode.get("pct_planner_path_mode") != "native_astar_raw_path":
-        blockers.append("PCT planner path mode is not native_astar_raw_path")
+    if mode.get("pct_planner_path_mode") != "astar_raw_path":
+        blockers.append("PCT planner path mode is not astar_raw_path")
     return blockers
 
 
 def _build_source_report(
     *,
     preview: dict[str, Any],
-    case: dict[str, Any],
+    result: Any,
     tomogram: Path,
     scene_xml: Path,
     map_pcd: Path | None,
@@ -518,12 +602,23 @@ def _build_source_report(
     output: Path,
     route_name: str,
 ) -> dict[str, Any]:
-    body = case.get("preview") or {}
-    path = [_point_xyz(point) for point in body.get("path") or []]
+    path_array = np.asarray(result, dtype=np.float64)
+    if path_array.ndim != 2 or path_array.shape[0] < 2 or path_array.shape[1] < 3:
+        raise ValueError("PCT planner full result must contain at least two xyz points")
+    if not np.all(np.isfinite(path_array[:, :3])):
+        raise ValueError("PCT planner full result contains non-finite xyz values")
+    path = path_array[:, :3].tolist()
     start = path[0]
     goal = path[-1]
-    pct_runtime = preview.get("pct_runtime_libs") or {}
-    pct_mode = _pct_mode_evidence(preview, case)
+
+    status = preview.get("status")
+    if not isinstance(status, dict):
+        status = {"ok": preview.get("ok") is True}
+    diagnostics = preview.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        diagnostics = {}
+    pct_planner_runtime = _pct_planner_runtime_evidence(preview)
+    pct_mode = _pct_mode_evidence(preview)
     source = {
         "schema_version": "lingtu.pct_saved_map_navigation_source.v1",
         "validation_level": "saved_map_relocalized_pct_plan_preview",
@@ -534,7 +629,7 @@ def _build_source_report(
         "cases": [
             {
                 "route": route_name,
-                "passed": True,
+                "passed": preview.get("ok") is True,
                 "assets": {
                     "scene_xml": str(scene_xml),
                     "tomogram": str(tomogram),
@@ -546,22 +641,34 @@ def _build_source_report(
                 },
                 "selection": {
                     "primary_planner": "pct",
-                    "selected_planner": "pct",
+                    "selected_planner": str(preview.get("planner") or ""),
                     "fallback_used": False,
-                    "selected_route_ok": True,
+                    "selected_route_ok": preview.get("ok") is True,
                     "policy": "saved_map_relocalized_pct_no_fallback",
                 },
-                "path_safety": body.get("path_safety") or {"ok": True},
+                "path_safety": status,
                 "planning": [
                     {
                         "planner": "pct",
-                        "planner_class": case.get("planner_class") or body.get("planner_class") or "PCTPlanner",
-                        "native_runtime_used": bool(pct_runtime.get("ok", True)),
-                        "native_runtime": pct_runtime or {"ok": True},
+                        "planner_class": pct_planner_runtime.get("planner_impl_class"),
+                        "pct_planner_runtime": pct_planner_runtime,
                         **pct_mode,
-                        "plan_ms": body.get("plan_ms"),
-                        "route_ok": True,
-                        "path_safety": body.get("path_safety") or {"ok": True},
+                        "pct_optimizer_attempted": diagnostics.get(
+                            "last_optimizer_attempted"
+                        ),
+                        "pct_optimizer_accepted": diagnostics.get(
+                            "last_optimizer_accepted"
+                        ),
+                        "pct_optimizer_reject_reason": str(
+                            diagnostics.get("last_optimizer_reject_reason") or ""
+                        ),
+                        "pct_optimizer_blocked_sample_count": int(
+                            diagnostics.get("last_optimizer_blocked_sample_count")
+                            or 0
+                        ),
+                        "plan_ms": None,
+                        "route_ok": preview.get("ok") is True,
+                        "path_safety": status,
                         "start": start,
                         "goal": goal,
                         "path": path,
@@ -703,7 +810,7 @@ def _validate_source_identity(
         map_artifacts=map_artifacts,
     )
     blockers.extend(hash_blockers)
-    blockers.extend(_pct_native_raw_path_blockers(source_contract))
+    blockers.extend(_pct_astar_raw_path_blockers(source_contract))
 
     return {
         "source_planning_contract": source_contract,
@@ -723,14 +830,19 @@ def _validate_source_identity(
                 route.scene_xml, scene_xml
             ),
             "pct_no_fallback": not source_contract["fallback_used"],
-            "pct_native_runtime_used": source_contract["native_runtime_used"],
-            "pct_native_runtime_ok": source_contract["native_runtime_ok"],
+            "pct_planner_runtime_selected": bool(
+                str(
+                    source_contract["pct_planner_runtime"].get("runtime")
+                    or ""
+                ).strip()
+            ),
+            "pct_planner_runtime_ok": source_contract["pct_planner_runtime_ok"],
             "pct_optimizer_disabled": (
                 source_contract.get("pct_optimizer_enabled") is False
             ),
-            "pct_native_raw_path": (
+            "pct_astar_raw_path": (
                 source_contract.get("pct_planner_path_mode")
-                == "native_astar_raw_path"
+                == "astar_raw_path"
             ),
             "same_source_map_artifact": map_artifacts.get("ok") is True,
             "same_source_hash_identity": hash_identity.get("ok") is True,
@@ -772,7 +884,7 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
         "validation_limitations": [
             "Validates saved-map/PCT source-report binding only.",
             "Does not run PCT plan_preview.",
-            "Does not launch native_pct_mujoco_gate.py motion execution.",
+            "Does not launch mujoco/native_pct_gate.py motion execution.",
             "Does not prove localPlanner/pathFollower cmd_vel or MuJoCo goal reaching.",
         ],
         "blockers": [],
@@ -865,8 +977,10 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                 "execution_mode": "contract_only",
                 "selected_planner": source_contract["selected_planner"],
                 "fallback_used": source_contract["fallback_used"],
-                "pct_native_runtime_used": source_contract["native_runtime_used"],
-                "pct_runtime_ok": source_contract["native_runtime_ok"],
+                "pct_planner_runtime": source_contract["pct_planner_runtime"],
+                "pct_planner_runtime_ok": source_contract[
+                    "pct_planner_runtime_ok"
+                ],
                 "reached_goal": False,
                 "claim_boundary": "contract_only_no_mujoco_motion",
             }
@@ -888,19 +1002,26 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
                     route.scene_xml, scene_xml
                 ),
                 "pct_no_fallback": not source_contract["fallback_used"],
-                "pct_native_runtime_used": source_contract["native_runtime_used"],
-                "pct_native_runtime_ok": source_contract["native_runtime_ok"],
+                "pct_planner_runtime_selected": bool(
+                    str(
+                        source_contract["pct_planner_runtime"].get("runtime")
+                        or ""
+                    ).strip()
+                ),
+                "pct_planner_runtime_ok": source_contract[
+                    "pct_planner_runtime_ok"
+                ],
                 "pct_optimizer_disabled": (
                     source_contract.get("pct_optimizer_enabled") is False
                 ),
-                "pct_native_raw_path": (
+                "pct_astar_raw_path": (
                     source_contract.get("pct_planner_path_mode")
-                    == "native_astar_raw_path"
+                    == "astar_raw_path"
                 ),
                 "same_source_map_artifact": map_artifacts.get("ok") is True,
                 "same_source_hash_identity": hash_identity.get("ok") is True,
             }
-            blockers.extend(_pct_native_raw_path_blockers(source_contract))
+            blockers.extend(_pct_astar_raw_path_blockers(source_contract))
         report["blockers"] = blockers
         report["ok"] = not blockers
     except Exception as exc:
@@ -914,10 +1035,10 @@ def _contract_only_report(args: argparse.Namespace) -> dict[str, Any]:
             "map_pcd_matches_relocalization": False,
             "scene_xml_matches_saved_map": False,
             "pct_no_fallback": False,
-            "pct_native_runtime_used": None,
-            "pct_native_runtime_ok": None,
+            "pct_planner_runtime_selected": None,
+            "pct_planner_runtime_ok": None,
             "pct_optimizer_disabled": None,
-            "pct_native_raw_path": None,
+            "pct_astar_raw_path": None,
             "same_source_map_artifact": False,
             "same_source_hash_identity": False,
         }
@@ -1001,20 +1122,31 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         }
 
         preview_path = run_dir / "pct_plan_preview.json"
-        preview = _run_plan_preview(args, tomogram=tomogram, out_path=preview_path)
-        case = _select_preview_case(preview)
-        pct_mode = _pct_mode_evidence(preview, case)
+        preview, planner_result = _run_plan_preview(
+            args,
+            tomogram=tomogram,
+            out_path=preview_path,
+        )
+        selected_preview = _select_preview_case(preview)
+        pct_planner_runtime = _pct_planner_runtime_evidence(selected_preview)
+        pct_mode = _pct_mode_evidence(selected_preview)
         report["plan_preview"] = {
-            "ok": bool(preview.get("ok")),
+            "ok": selected_preview.get("ok") is True,
             "path": str(preview_path),
-            "selected_case": case.get("name"),
-            "selected_planner": (case.get("preview") or {}).get("selected_planner"),
-            "fallback_reason": (case.get("preview") or {}).get("fallback_reason"),
-            "path_count": len((case.get("preview") or {}).get("path") or []),
+            "schema": selected_preview.get("schema"),
+            "status_code": selected_preview.get("status_code"),
+            "selected_case": args.route_name,
+            "selected_planner": selected_preview.get("planner"),
+            "fallback_reason": "",
+            "path_count": int(selected_preview.get("path_count") or 0),
             **pct_mode,
-            "pct_runtime_libs": preview.get("pct_runtime_libs"),
+            "pct_planner_runtime": pct_planner_runtime,
         }
-        preview_mode_blockers = _pct_native_raw_path_blockers(report["plan_preview"])
+        preview_mode_blockers = _pct_astar_raw_path_blockers(report["plan_preview"])
+        if not pct_planner_runtime["runtime"]:
+            preview_mode_blockers.append("PCT planner runtime is not selected")
+        if pct_planner_runtime["ok"] is not True:
+            preview_mode_blockers.append("PCT planner runtime is not ok")
         if preview_mode_blockers:
             report["native_gate"] = {
                 "ok": False,
@@ -1028,8 +1160,8 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
 
         source_report_path = run_dir / "pct_saved_map_source_report.json"
         _build_source_report(
-            preview=preview,
-            case=case,
+            preview=selected_preview,
+            result=planner_result,
             tomogram=tomogram,
             scene_xml=scene_xml,
             map_pcd=map_pcd,
@@ -1074,7 +1206,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         if report["plan_preview"]["fallback_reason"]:
             pre_native_blockers.append("PCT preview reported fallback_reason")
         pre_native_blockers.extend(
-            _pct_native_raw_path_blockers(report["plan_preview"])
+            _pct_astar_raw_path_blockers(report["plan_preview"])
         )
         pre_native_blockers.extend(source_identity["blockers"])
         if pre_native_blockers:
@@ -1127,11 +1259,14 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--run-dir", type=Path, default=ROOT / "artifacts/server_sim_closure/pct_saved_map_navigation")
-    parser.add_argument("--json-out", type=Path, default=ROOT / "artifacts/server_sim_closure/pct_saved_map_navigation/report.json")
+    parser.add_argument(
+        "--json-out",
+        type=Path,
+        default=ROOT / "artifacts/server_sim_closure/pct_saved_map_navigation/report.json",
+    )
     parser.add_argument("--route-name", default="saved_map_internal")
     parser.add_argument("--ros-domain-id", default=os.environ.get("ROS_DOMAIN_ID", "161"))
-    parser.add_argument("--preview-timeout-s", type=float, default=45.0)
-    parser.add_argument("--max-endpoint-z-error-m", type=float, default=1.0)
+
     parser.add_argument(
         "--max-relocalize-report-age-s",
         type=float,

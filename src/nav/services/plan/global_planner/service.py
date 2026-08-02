@@ -157,7 +157,7 @@ class GlobalPlanner(
                                     (_try_primary_safe_replan) or take the safe
                                     prefix of the original path (_try_primary_safe_prefix)
           6. Fallback planner     -legacy explicit fallback path, disabled in
-                                    product profiles and CLI defaults
+                                    Products and local Profile defaults
           7. Downsample + return  -thin waypoints to minimum spacing, log stats
 
         If the goal lands on an obstacle, BFS-searches the nearest free cell

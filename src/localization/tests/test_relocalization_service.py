@@ -60,7 +60,7 @@ def _capture_native_call(monkeypatch, result: str):
 
 
 def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path) -> None:
-    binary = str(tmp_path / "lingtu_slam_control")
+    binary = str(tmp_path / "slamctl")
     pcd_path = tmp_path / "map with spaces" / "map.pcd"
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
@@ -94,7 +94,7 @@ def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path)
 
 
 def test_native_global_relocalization_uses_control_binary(monkeypatch, tmp_path) -> None:
-    binary = str(tmp_path / "lingtu_slam_control")
+    binary = str(tmp_path / "slamctl")
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
     calls = _capture_native_call(
@@ -121,7 +121,7 @@ def test_native_global_relocalization_uses_control_binary(monkeypatch, tmp_path)
 
 
 def test_native_global_status_uses_typed_control_binary(monkeypatch, tmp_path) -> None:
-    binary = str(tmp_path / "lingtu_slam_control")
+    binary = str(tmp_path / "slamctl")
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
     calls = _capture_native_call(
@@ -146,7 +146,7 @@ def test_native_global_status_uses_typed_control_binary(monkeypatch, tmp_path) -
 
 
 def test_native_track_against_map_uses_typed_control_binary(monkeypatch, tmp_path) -> None:
-    binary = str(tmp_path / "lingtu_slam_control")
+    binary = str(tmp_path / "slamctl")
     pcd_path = tmp_path / "map" / "map.pcd"
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")

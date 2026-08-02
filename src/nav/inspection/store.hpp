@@ -46,5 +46,6 @@ class Store {
 std::string RouteToJson(const Route& route);
 std::string RouteListToJson(const std::vector<RouteSummary>& routes);
 std::string RunStatusToJson(const RunStatus& status);
+std::string TaskEventToJson(const TaskEvent& event);
 
 }  // namespace lingtu::nav::inspection

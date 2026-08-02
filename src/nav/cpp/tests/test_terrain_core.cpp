@@ -12,6 +12,7 @@ namespace {
 
 TerrainParams smallTerrainParams() {
   TerrainParams p;
+  EXPECT_EQ(p.workerThreads, 2);
   p.terrainVoxelHalfWidth = 2;
   p.planarVoxelHalfWidth = 2;
   p.terrainVoxelSize = 1.0;

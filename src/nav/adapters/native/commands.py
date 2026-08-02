@@ -10,12 +10,13 @@ from nav.adapters.native.abi import (
     NativeCommandSession,
     get_native_command_session,
 )
+from runtime.msgs import NavigationCommandReceipt
 
 NavigationClientError = NativeCommandClientError
 
 
 class NativeNavigationClient:
-    """Narrow Python interface for goal, teleop, and motion-control commands."""
+    """Narrow Python interface for task-oriented navigation and safety-control commands."""
 
     def __init__(
         self,
@@ -52,55 +53,75 @@ class NativeNavigationClient:
         session.ensure_navigation_abi()
         return instance
 
-    def send_goal(
+    def start_task(
         self,
         x: float,
         y: float,
         z: float,
         yaw: float,
         *,
+        task_id: str,
         request_id: str | None = None,
-    ) -> None:
-        """Submit one map-frame navigation goal and wait for its business ACK."""
+    ) -> NavigationCommandReceipt:
+        """Submit one product navigation task and return its business ACK."""
 
-        self._session.call(
-            "lingtu_nav_client_send_goal_with_id",
-            str(request_id or "").encode("utf-8"),
+        receipt = self._session.start_navigation_task(
+            str(task_id or ""),
+            str(request_id or ""),
             float(x),
             float(y),
             float(z),
             float(yaw),
-            self._session.goal_timeout_ms,
         )
+        return NavigationCommandReceipt(**receipt)
 
-    def cancel(self, reason: str = "cancel", *, request_id: str | None = None) -> None:
-        """Cancel the active native navigation task."""
-
-        self._session.call(
-            "lingtu_nav_client_cancel_with_id",
-            str(request_id or "").encode("utf-8"),
-            str(reason or "cancel").encode("utf-8"),
-            self._session.cancel_timeout_ms,
-        )
-
-    def send_teleop(
+    def cancel_task(
         self,
-        vx: float,
-        vy: float,
-        wz: float,
+        task_id: str,
+        reason: str = "cancel",
         *,
         request_id: str | None = None,
-    ) -> None:
-        """Submit one body-frame operator velocity request."""
+    ) -> NavigationCommandReceipt:
+        """Cancel one native navigation task."""
 
-        self._session.call(
-            "lingtu_nav_client_send_teleop_with_id",
-            str(request_id or "").encode("utf-8"),
-            float(vx),
-            float(vy),
-            float(wz),
-            self._session.teleop_timeout_ms,
+        receipt = self._session.cancel_navigation_task(
+            str(task_id or ""),
+            str(request_id or ""),
+            str(reason or "cancel"),
         )
+        return NavigationCommandReceipt(**receipt)
+
+    def pause_task(
+        self,
+        task_id: str,
+        reason: str = "operator_pause",
+        *,
+        request_id: str | None = None,
+    ) -> NavigationCommandReceipt:
+        """Request a stop-confirmed pause for one native navigation task."""
+
+        receipt = self._session.pause_navigation_task(
+            str(task_id or ""),
+            str(request_id or ""),
+            str(reason or "operator_pause"),
+        )
+        return NavigationCommandReceipt(**receipt)
+
+    def resume_task(
+        self,
+        task_id: str,
+        reason: str = "operator_resume",
+        *,
+        request_id: str | None = None,
+    ) -> NavigationCommandReceipt:
+        """Request continuation of the same paused native navigation task."""
+
+        receipt = self._session.resume_navigation_task(
+            str(task_id or ""),
+            str(request_id or ""),
+            str(reason or "operator_resume"),
+        )
+        return NavigationCommandReceipt(**receipt)
 
     def stop(self, reason: str = "stop", *, request_id: str | None = None) -> None:
         """Immediately clear active motion without latching estop."""

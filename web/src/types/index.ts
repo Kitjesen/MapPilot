@@ -588,6 +588,150 @@ export interface InspectionCommandResponse {
   ts: number
 }
 
+export interface InspectionTaskCommandResponse {
+  schema_version: 'lingtu.inspection.task.v1'
+  ok: boolean
+  accepted: boolean
+  action: 'start' | 'pause' | 'resume' | 'cancel'
+  task_id: string
+  request_id: string
+  route_id?: string | null
+  map_id?: string | null
+  revision?: number | null
+  lifecycle: 'submission_accepted'
+  terminal: false
+  ts: number
+}
+
+export interface InspectionTaskProgress {
+  known: boolean
+  completed_points: number
+  point_count: number
+  current_point_number?: number | null
+  current_point_id: string
+  loop_number?: number | null
+  retry_count: number
+  action: string
+  evidence_id: string
+}
+
+export interface InspectionTaskStatusResponse {
+  schema_version: 'lingtu.inspection.task.v1'
+  found: boolean
+  task_id: string
+  current_state: string
+  state_source: 'native_task_event' | 'business_ack_only' | 'continuity_monitor' | 'none' | string
+  execution_confirmed: boolean
+  terminal: boolean
+  terminal_source: string
+  reason: string
+  progress: InspectionTaskProgress
+  available_actions: Array<'pause' | 'resume' | 'cancel' | string>
+  can_pause: boolean
+  can_resume: boolean
+  can_cancel: boolean
+  identity: {
+    task_id: string
+    route_id?: string | null
+    map_id?: string | null
+    map_version?: number | null
+    route_revision?: number | null
+  }
+  last_submission?: Record<string, unknown> | null
+  latest_event?: Record<string, unknown> | null
+  timeline: Array<Record<string, unknown>>
+  delivery: {
+    continuity?: string
+    history_complete?: boolean
+    reason?: string
+    retention?: string
+    boot_id?: string
+    event_sequence?: number
+  }
+  updated_at: number
+}
+
+export interface InspectionTaskListResponse {
+  schema_version: 'lingtu.inspection.task.v1'
+  retention: 'process_local_gateway_projection' | 'durable_gateway_projection'
+  count: number
+  tasks: InspectionTaskStatusResponse[]
+  ts: number
+}
+
+export interface InspectionTaskReportPoint {
+  loop_index: number
+  point_index: number
+  point_id: string
+  action: string
+  status:
+    | 'PENDING'
+    | 'IN_PROGRESS'
+    | 'COMPLETED'
+    | 'MISSING_EVIDENCE'
+    | 'INVALID_EVIDENCE'
+    | 'UNAVAILABLE_EVIDENCE'
+    | 'UNKNOWN'
+  evidence_status:
+    | 'NOT_REQUIRED'
+    | 'PENDING'
+    | 'VERIFIED'
+    | 'MISSING'
+    | 'INVALID'
+    | 'UNAVAILABLE'
+    | 'UNKNOWN'
+  evidence_id: string
+  reason: string
+}
+
+export interface InspectionTaskReportResponse {
+  schema_version: 'lingtu.inspection.report.v1'
+  task_id: string
+  report_status:
+    | 'IN_PROGRESS'
+    | 'COMPLETE'
+    | 'PARTIAL'
+    | 'FAILED'
+    | 'CANCELLED'
+    | 'UNKNOWN'
+  acceptance: 'PENDING' | 'ACCEPTABLE' | 'REVIEW_REQUIRED' | 'NOT_ACCEPTABLE' | 'UNKNOWN'
+  terminal: boolean
+  execution: {
+    state: string
+    terminal: boolean
+    confirmed: boolean
+    reason: string
+    history_complete: boolean
+    history_reason: string
+  }
+  identity: {
+    route_id: string
+    route_revision: number
+    map_id: string
+    map_version: number
+  }
+  coverage: {
+    required_points: number
+    completed_points: number
+    required_evidence: number
+    verified_evidence: number
+    missing_evidence: number
+    invalid_evidence: number
+    unavailable_evidence: number
+    unknown_evidence: number
+  }
+  points: InspectionTaskReportPoint[]
+  issues: Array<{
+    code: string
+    reason?: string
+    loop_index?: number
+    point_index?: number
+    point_id?: string
+    action?: string
+    evidence_id?: string
+  }>
+}
+
 export interface InspectionEvidenceWorkerStatus {
   ready: boolean
   reason?: string | null
@@ -873,6 +1017,52 @@ export interface NavigationStatusResponse {
   ts: number
 }
 
+/** Explicit TARE direction intent. This is never a navigation goal. */
+export interface DirectedExplorationTargetRequest {
+  x: number
+  y: number
+  ttl_s?: number
+  reason?: string
+  request_id?: string | null
+}
+
+export interface DirectedExplorationIntent {
+  active: boolean
+  x?: number | null
+  y?: number | null
+  ttl_s?: number | null
+  session_id: string
+  frame_id: string
+  reason: string
+  request_id?: string | null
+}
+
+export interface DirectedExplorationResponse {
+  schema_version: number
+  ok: true
+  accepted: boolean
+  status: 'accepted' | 'cleared'
+  intent: DirectedExplorationIntent
+  native: Record<string, unknown>
+}
+
+export interface ExplorationStatusResponse {
+  available: boolean
+  backend: 'none' | 'frontier' | 'tare' | string
+  exploring: boolean
+  frontier_count: number
+  can_start: boolean
+  blockers: string[]
+  advisories: string[]
+  navigation: Record<string, unknown>
+  reason?: string | null
+  required_profile?: string | null
+  supported_profiles?: string[] | null
+  action?: string | null
+  tare?: Record<string, unknown> | null
+  supervisor?: Record<string, unknown> | null
+}
+
 export interface ClientLinks {
   bootstrap?: string
   capabilities?: string
@@ -885,11 +1075,12 @@ export interface ClientLinks {
   localization_status?: string
   navigation_status?: string
   navigation_dds_snapshot?: string
+  navigation_goal_status?: string
+  navigation_task_status?: string
   runtime_dataflow?: string
   runtime_dataflow_topic?: string
   runtime_dataflow_subscribe?: string
   runtime_switch_plan?: string
-  runtime_switch?: string
   algorithm_benchmark_latest?: string
   devices?: string
   readiness?: string
@@ -913,35 +1104,48 @@ export interface ClientLinks {
   inspection_acceptance?: string
   inspection_routes?: string
   inspection_route_detail?: string
-  inspection_route_start?: string
+  inspection_tasks?: string
+  inspection_task_status?: string
+  inspection_task_report?: string
+  inspection_task_pause?: string
+  inspection_task_resume?: string
+  inspection_task_cancel?: string
   inspection_status?: string
-  inspection_pause?: string
-  inspection_resume?: string
-  inspection_cancel?: string
   navigation_cancel?: string
+  navigation_task_cancel?: string
+  navigation_task_pause?: string
+  navigation_task_resume?: string
   navigation_resume?: string
   goal?: string
   navigate_click?: string
   stop?: string
+  estop_reset?: string
   instruction?: string
   visual_servo?: string
   mode?: string
   lease?: string
   maps?: string
-  map_lifecycle?: string
+  map_delete?: string
   map_activate?: string
   map_rename?: string
   map_save?: string
+  map_operations?: string
+  map_operation_status?: string
+  map_operation_cancel?: string
+  map_operation_retry?: string
   map_import_pcd?: string
   map_crop?: string
   map_mark_zone?: string
   map_build_octomap?: string
+  map_build_occupancy?: string
   map_validate_plan?: string
   map_restore_predufo?: string
   map_cloud_reset?: string
   map_points?: string
   saved_map_points?: string
   explore_status?: string
+  explore_directed?: string
+  explore_directed_clear?: string
   explore_start?: string
   explore_stop?: string
   slam_status?: string
@@ -953,6 +1157,9 @@ export interface ClientLinks {
   bag_start?: string
   bag_stop?: string
   bag_status?: string
+  recording_start?: string
+  recording_stop?: string
+  recording_status?: string
   memory_temporal?: string
   memory_temporal_semantic?: string
   diagnostic_pack?: string
@@ -1039,7 +1246,6 @@ export interface RealtimeEventsCapability {
   snapshot_type?: string
   event_types?: string[]
   diagnostic_event_types?: string[]
-  legacy_event_types?: string[]
   named_events?: boolean
   browser_handler?: string
   retry_ms?: number
@@ -1054,7 +1260,6 @@ export interface RealtimeTeleopCapability {
   transport: 'websocket'
   control_messages: string[]
   binary_camera_frames: boolean
-  legacy_camera_query?: string
 }
 
 export interface RealtimeCameraCapability {
@@ -1220,8 +1425,9 @@ export interface RuntimeDataflowResponse {
   schema_version: number
   ts: number
   runtime_contract?: string | null
-  runtime_boundary: Record<string, unknown>
+  runtime_boundary: RuntimeIdentity
   transport_layers: Record<string, Record<string, unknown>>
+  motion_path: Record<string, unknown>
   ros2_topic_required: boolean
   module_ports: Record<string, unknown>
   topics: RuntimeDataflowTopicSummary[]
@@ -1242,7 +1448,7 @@ export interface RuntimeDataflowTopicDetailResponse {
   selector: string
   topic?: RuntimeDataflowTopicSummary | null
   runtime_contract?: string | null
-  runtime_boundary: Record<string, unknown>
+  runtime_boundary: RuntimeIdentity
   inspection: RuntimeDataflowTopicInspection
   control_boundary: RuntimeDataflowResponse['control_boundary']
   available_topics: string[]
@@ -1275,11 +1481,11 @@ export interface RuntimeDataflowSubscribeResponse {
 }
 
 export interface RuntimeSwitchPlanRequest {
-  current_profile?: string | null
-  target_profile?: string | null
-  current_endpoint?: string | null
-  target_endpoint?: string | null
-  endpoint?: string | null
+  current_product?: ProductName | null
+  target_product: ProductName
+  map_name?: string | null
+  relocalize?: boolean
+  initial_pose?: [number, number, number] | null
 }
 
 export interface RuntimeSwitchValidationSummary {
@@ -1296,27 +1502,38 @@ export interface RuntimeSwitchPlanResponse {
   dry_run: boolean
   motion: boolean
   publishes: string[]
-  lifecycle: string
   inputs: Record<string, unknown>
   from: Record<string, unknown>
   to: Record<string, unknown>
   changed: string[]
   current_validation: RuntimeSwitchValidationSummary
   target_validation: RuntimeSwitchValidationSummary
-  product_mode_switch?: Record<string, unknown> | null
+  run_plan?: Record<string, unknown> | null
+  operator_command?: string | null
   blockers: string[]
   links: ClientLinks
   error?: string | null
 }
 
-export type ProductModeProfile =
+export type EnvName = 'real' | 'sim'
+
+export interface RuntimeIdentity {
+  env: EnvName
+  product: ProductName | null
+  run_plan_fingerprint?: string | null
+  identity_source?: string | null
+  simulation_only?: boolean
+  [key: string]: unknown
+}
+
+export type ProductName =
   | 'teleop'
   | 'teleop_avoid'
   | 'map'
-  | 'tracking'
+  | 'explore'
   | 'nav'
+  | 'tracking'
   | 'inspection'
-  | 'tare_explore'
 
 export type VisualServoMode = 'find' | 'follow' | 'stop'
 
@@ -1325,49 +1542,6 @@ export interface VisualServoRequest {
   target?: string | null
   client_id?: string
   request_id?: string | null
-}
-
-export interface RuntimeSwitchRequest {
-  current_profile?: string | null
-  target_profile: ProductModeProfile
-  current_endpoint?: string | null
-  target_endpoint?: string | null
-  endpoint?: string | null
-  map_name?: string | null
-  relocalize?: boolean
-  initial_pose?: [number, number, number] | null
-  strategy?: 'auto' | 'hot' | 'warm' | 'cold'
-  execute?: boolean
-  allow_restart?: boolean
-  client_id?: string
-  request_id?: string | null
-}
-
-export interface RuntimeSwitchResponse {
-  schema_version: 'lingtu.runtime_switch.v1'
-  ok: boolean
-  ts: number
-  accepted: boolean
-  status: string
-  read_only: boolean
-  dry_run: boolean
-  motion: boolean
-  lifecycle: string
-  strategy: string
-  current_profile?: string | null
-  target_profile: string
-  map_name?: string | null
-  relocalize: boolean
-  plan: Record<string, unknown>
-  product_mode_switch?: Record<string, unknown> | null
-  effects: string[]
-  command: string[]
-  command_id?: string | null
-  pid?: number | null
-  log_path?: string | null
-  blockers: string[]
-  links: ClientLinks
-  error?: string | null
 }
 
 export interface AppBootstrapResponse {
@@ -1416,7 +1590,9 @@ export interface AppCapabilitiesResponse {
 
 export interface CommandReceipt {
   name: string
+  task_id?: string | null
   request_id?: string | null
+  native_request_id?: string | null
   client_id: string
   accepted: boolean
   replay: boolean
@@ -1455,6 +1631,11 @@ export interface ControlCommandResponse {
   ok: boolean
   status: string
   command: CommandReceipt
+  task_id?: string | null
+  request_id?: string | null
+  native_request_id?: string | null
+  stage?: string | null
+  execution_confirmed?: boolean | null
   goal?: number[] | null
   yaw?: number | null
   frame_id?: string | null
@@ -1463,6 +1644,31 @@ export interface ControlCommandResponse {
   reason?: string | null
   target?: ConstructedGoalTarget | null
   [key: string]: unknown
+}
+
+export interface NavigationGoalStatus {
+  task_id: string
+  request_id: string
+  boot_id?: string
+  sequence?: number
+  event_sequence?: number
+  state?: number
+  state_name?: string
+  goal_epoch?: number
+  reason?: string
+  terminal?: boolean
+  ts?: number
+  [key: string]: unknown
+}
+
+export interface NavigationTaskStatusQueryResponse {
+  schema_version: number
+  found: boolean
+  task_id: string
+  request_id: string
+  status: NavigationGoalStatus | null
+  reason: string
+  ts: number
 }
 
 export type LeaseAction = 'acquire' | 'release' | 'renew'
@@ -1515,10 +1721,6 @@ export interface SceneGraphEvent {
   objects: Array<{ id: string; label: string; x: number; y: number; confidence: number }>
 }
 
-export interface HeartbeatEvent {
-  type: 'heartbeat'
-}
-
 export interface PingEvent {
   type: 'ping'
 }
@@ -1551,6 +1753,40 @@ export interface SafetyEvent {
 export interface NavigationStatusEvent {
   type: 'navigation_status'
   data?: NavigationStatusResponse
+}
+
+export interface InspectionTaskEvent {
+  type: 'inspection_task_event'
+  schema_version?: number
+  event_id?: number
+  ts?: number
+  data?: {
+    event_id: string
+    task_id: string
+    request_id: string
+    boot_id: string
+    event_sequence: number
+    kind: number
+    kind_name: string
+    state: number
+    state_name: string
+    terminal: boolean
+    map_id: string
+    map_version: number
+    route_id: string
+    route_revision: number
+    point_index: number
+    point_count: number
+    loop_index: number
+    retry_count: number
+    point_id: string
+    action: string
+    action_request_id: string
+    evidence_id: string
+    reason: string
+    ts: number
+    [key: string]: unknown
+  }
 }
 
 export interface LeaseEvent {
@@ -1726,7 +1962,8 @@ export interface SessionEvent {
   type: 'session'
   data: {
     mode: 'idle' | 'mapping' | 'navigating' | 'exploring'
-    product_profile?: string | null
+    env: EnvName
+    product?: ProductName | null
     product_session?: string | null
     slam_profile?: string | null
     localization_backend?: string | null
@@ -1760,7 +1997,7 @@ export interface SessionEvent {
     can_end: boolean
     explorer_available: boolean
     explorer_unavailable_reason?: string | null
-    explorer_required_profile?: string | null
+    explorer_required_product?: string | null
   }
 }
 
@@ -1855,12 +2092,12 @@ export type SSEEvent = SSEEnvelopeFields & (
   | MissionStatusEvent
   | SafetyStateEvent
   | SceneGraphEvent
-  | HeartbeatEvent
   | PingEvent
   | SnapshotEvent
   | MissionEvent
   | SafetyEvent
   | NavigationStatusEvent
+  | InspectionTaskEvent
   | LeaseEvent
   | LocationEvent
   | LocationsEvent
@@ -1902,6 +2139,7 @@ export interface SSEState {
   mapEvent: MapLifecycleEvent['data'] | null
   session: SessionEvent['data'] | null
   navigationStatus: NavigationStatusResponse | null
+  inspectionTaskEvent: InspectionTaskEvent | null
   lease: LeaseResponse | Record<string, unknown> | null
   commandAck: CommandAckEvent['data'] | null
   locations: LocationsResponse | null
@@ -1926,6 +2164,9 @@ export interface SSEState {
   lastRefreshAt: number | null
   lastRefreshReason: string | null
   refreshError: string | null
+  authoritativeStateSeen: boolean
+  lastTruthAt: number | null
+  truthError: string | null
   connected: boolean
   events: SSEEvent[]
 }
@@ -1946,8 +2187,6 @@ export type SlamProfile =
   | 'fastlio2'
   | 'genz'
   | 'localizer'
-  | 'super_lio'
-  | 'super_lio_relocation'
   | 'stop'
 
 export interface SlamServiceDetail {
@@ -1995,7 +2234,7 @@ export interface SlamOperationResponse {
   [key: string]: unknown
 }
 
-export interface BagStatusResponse {
+export interface RecordingStatusResponse {
   recording: boolean
   path?: string | null
   duration_s: number
@@ -2006,7 +2245,7 @@ export interface BagStatusResponse {
   disk_total: number
 }
 
-export interface BagOperationResponse {
+export interface RecordingOperationResponse {
   status?: string | null
   path?: string | null
   pid?: number | null

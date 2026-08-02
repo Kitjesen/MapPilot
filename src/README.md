@@ -53,7 +53,7 @@ Gateway / MCP / CLI
 
 `GlobalPlanner` is an internal planning service used by `Navigation`; it is not
 a peer Module in the Python runtime graph. The default physical
-`thunder_field` product path uses native typed DDS services and the unique
+`env=real` Product path uses native typed DDS services and the unique
 `lingtu-driver` hardware sink; simulation and compatibility profiles may still
 use the Python Module-owned local autonomy chain.
 

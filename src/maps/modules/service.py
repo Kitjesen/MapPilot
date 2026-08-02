@@ -1,8 +1,8 @@
-"""Native maps service Module.
+"""Host-side saved-map service Module.
 
-This file is the Python Module/runtime adapter for the native maps domain. It
-owns ports, command dispatch, and compatibility helpers; map ids, active-map
-state, and live layer math are owned by ``lingtu_maps`` under ``src/maps``.
+This transitional Host adapter owns low-rate saved-map commands and queries.
+It does not call the field ``mapd`` process: native map control/query transport
+is still pending. Realtime map layers remain owned by ``mapd``.
 
 Maps are stored as directories under map_dir:
 
@@ -16,8 +16,8 @@ Maps are stored as directories under map_dir:
         occupancy.npz
 
 Ports:
-    In:  map_command (str)   -- JSON command string
-    Out: map_response (dict) -- operation result dict
+    In:  map_command (MapControlRequest) -- validated in-process request
+    Out: map_response (dict)              -- operation result dict
     Out: map_event (dict)    -- lifecycle/artifact events for UI/Gateway
 """
 
@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from lingtu.product_lock import ProductControlBusy, ProductControlLock
 from maps.paths import nav_map_root_str
 from maps.services.api import MapAPIService
 from maps.services.command_router import dispatch_map_command
@@ -49,14 +50,14 @@ from runtime.msgs.map import (
 )
 from runtime.msgs.sensor import PointCloud2
 from runtime.registry import register
+from runtime.runtime_interface import THUNDER_DATA_SOURCE
 
 logger = logging.getLogger(__name__)
 
 
-@register("map", "manager", description="Native saved-map lifecycle module")
 @register("map", "service", description="Native saved-map lifecycle module")
 class MapsModule(Module, MapsFacadeMixin, layer=6):
-    """Map command/query Module backed by native maps storage.
+    """Transitional Host map command/query Module.
 
     Maps are stored as subdirectories.  Each map directory contains:
         map.pcd          -- SLAM point cloud saved via map-save adapter
@@ -70,8 +71,7 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
     /slam/map_cloud LiDAR topic at runtime and rebuild their maps on each frame.
     No persistent artifact is needed or read by those modules at startup.
 
-    ``active_map.txt`` is the native active-map source of truth. The legacy
-    ``active`` symlink may still be written only for compatibility consumers.
+    ``active_map.txt`` is the active-map source of truth.
     """
 
     runtime_id = "maps.service"
@@ -111,8 +111,8 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
             .lower()
         )
         self._runtime_data_source = (
-            str(config.get("data_source") or os.environ.get("LINGTU_RUNTIME_DATA_SOURCE") or "thunder_field").strip()
-            or "thunder_field"
+            str(config.get("data_source") or os.environ.get("LINGTU_DATA_SOURCE") or THUNDER_DATA_SOURCE).strip()
+            or THUNDER_DATA_SOURCE
         )
         self._source_profile = (
             str(
@@ -177,6 +177,22 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
         self._semantic_save_lock = threading.Lock()
         self._semantic_save_waiters: dict[str, tuple[threading.Event, list[SemanticSaveResult], str, Path]] = {}
 
+    def preflight(self) -> str | None:
+        """Verify the native map query contract before Host readiness."""
+
+        try:
+            response = self.api.get_map_types()
+        except Exception as exc:
+            return f"native_map_service_unavailable: {exc}"
+        if (
+            not isinstance(response, dict)
+            or response.get("success") is not True
+            or response.get("schema_version") != "map.types"
+        ):
+            return "native_map_service_unavailable: expected map.types response"
+        return None
+
+
     def setup(self) -> None:
         self.map_cloud.subscribe(self._on_map_cloud)
         self.map_cloud.set_policy("latest")
@@ -192,7 +208,7 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
         super().stop()
 
     def _on_map_cloud(self, cloud: PointCloud2) -> None:
-        """Store the latest finite XYZ map cloud for Super-LIO snapshot saves."""
+        """Store the latest finite XYZ map cloud for runtime map consumers."""
         self.runtime_bridge.on_map_cloud(cloud)
 
     def _on_map_cloud_frame(self, frame: MapCloudFrame | dict[str, Any]) -> None:
@@ -478,7 +494,17 @@ class MapsModule(Module, MapsFacadeMixin, layer=6):
         return self.storage.native_service.cancel_save_map(job_id)
 
     def _retry_save_map(self, job_id: str) -> dict[str, Any]:
-        return self.storage.native_service.retry_save_map(job_id)
+        try:
+            with ProductControlLock(environment=os.environ, timeout_s=0.0):
+                return self.storage.native_service.retry_save_map(job_id)
+        except ProductControlBusy:
+            return {
+                "action": "retry_save_map",
+                "success": False,
+                "reason_code": "product_transition_in_progress",
+                "message": "map save retry cannot start during a Product transition",
+                "job_id": job_id,
+            }
 
     def _list_map_versions(self, name: str) -> dict[str, Any]:
         return self.storage.native_service.list_map_versions(name)

@@ -9,7 +9,7 @@ The normal path is in-process:
 - `local_planner.py` owns the Module ports and publishes a local path.
 - `path_follower.py` turns the selected local path into velocity commands.
 - `local_planner_runtime.py` selects and validates the configured backend.
-- `local_planner_backend.py`, `native.py`, `parameters.py`,
+- `models.py`, `native.py`, `parameters.py`, `path_tables.py`, `cmu_py.py`,
   `geometry.py`, and `obstacles.py` hold the local planner implementation
   details.
 - `cpp/` is the ROS-free C++ hot path.

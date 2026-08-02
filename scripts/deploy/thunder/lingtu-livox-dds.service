@@ -17,11 +17,8 @@ Environment=LINGTU_DDS_DOMAIN_ID=0
 Environment=LINGTU_CYCLONEDDS_PREFIX=
 Environment=LINGTU_TIME_SYNC_WAIT_SECONDS=8
 ExecStartPre=-/bin/bash /opt/lingtu/current/scripts/deploy/thunder/wait_for_time_sync.sh
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh lidar
 ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_livox_dds.sh
-Restart=on-failure
-RestartSec=3
 KillSignal=SIGINT
 TimeoutStopSec=20
-
-[Install]
-WantedBy=multi-user.target

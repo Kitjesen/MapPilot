@@ -39,9 +39,15 @@ const NAV_STATE_ZH: Record<string, string> = {
 
 interface ChatPanelProps {
   sseState: SSEState
+  motionStartAllowed: boolean
+  motionStartBlockedReason: string
 }
 
-export function ChatPanel({ sseState }: ChatPanelProps) {
+export function ChatPanel({
+  sseState,
+  motionStartAllowed,
+  motionStartBlockedReason,
+}: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: nextId(),
@@ -154,6 +160,11 @@ export function ChatPanel({ sseState }: ChatPanelProps) {
       return
     }
 
+    if (!motionStartAllowed) {
+      addSystem(`为避免依据旧状态触发运动，智能指令暂未发送：${motionStartBlockedReason}`)
+      return
+    }
+
     setSending(true)
     setThinking({ hint: '发送指令…', startedAt: Date.now() })
     try {
@@ -169,7 +180,7 @@ export function ChatPanel({ sseState }: ChatPanelProps) {
     } finally {
       setSending(false)
     }
-  }, [input, sending, sseState, addSystem])
+  }, [input, sending, sseState, addSystem, motionStartAllowed, motionStartBlockedReason])
 
   // Accept the currently highlighted suggestion — inserts command
   // name + trailing space, so the user can immediately type args.

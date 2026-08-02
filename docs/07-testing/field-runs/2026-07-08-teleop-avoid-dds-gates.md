@@ -79,9 +79,9 @@ limited: cmd_vel received as vx=0.4, pose advanced
 - `/nav/cmd_vel` remains the final post-safety command and must stay single-writer.
 - `nav_endpoint` status names are intentionally shorter than the binary name.
 - Field Gateway should use `LINGTU_TELEOP_BRIDGE_ADDR=127.0.0.1:7520`.
-- `cyclonedds-python` is not required for the field teleop path. The Python DDS
-  writer remains only as an explicit development fallback via
-  `LINGTU_TELEOP_CMD_DDS=1`.
+- `cyclonedds-python` is not required for the field teleop path. The environment
+  switch used during this historical run has since been retired; current
+  Products compile the command boundary into `command_output_mode`.
 - At the time of this run, `teleop_avoid` did not invoke OctoPlanner3D or
   PathFollower. Current assisted teleop still does not invoke OctoPlanner3D, but
   it does use native LocalPlanner and PathFollower for short-horizon detours.

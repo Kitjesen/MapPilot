@@ -1,20 +1,20 @@
-"""Thunder Lite product composition.
+"""Local `lite` Profile composition.
 
 This module is intentionally independent from the full-stack composition and
-wire aggregators. Thunder Lite is the local, lightweight product surface: it
-keeps the robot driver, Python navigation chain, safety ring, and velocity
-mux, without SLAM, maps, semantic modules, Gateway, or ROS compatibility.
+wire aggregators. It builds the local, lightweight Host graph for the `lite`
+Profile: it keeps the robot driver, Python navigation chain, safety ring, and
+velocity mux, without SLAM, maps, semantic modules, Gateway, or ROS compatibility.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from runtime.blueprint import Blueprint, autoconnect
 from lingtu.assembly.stacks.driver import driver
 from lingtu.assembly.stacks.navigation import navigation
 from lingtu.assembly.stacks.safety import safety
 from lingtu.assembly.stacks.stack_config import driver_stack_config
+from runtime.blueprint import Blueprint, autoconnect
 
 
 def compose_thunder_lite_modules(
@@ -26,7 +26,7 @@ def compose_thunder_lite_modules(
     enable_native: bool,
     config: dict[str, Any] | None = None,
 ) -> Blueprint:
-    """Compose the Thunder Lite runtime graph before explicit wires."""
+    """Compose the `lite` Profile runtime graph before explicit wires."""
 
     cfg = dict(config or {})
     enable_robot_driver = bool(cfg.get("enable_robot_driver", True))
@@ -50,7 +50,7 @@ def apply_thunder_lite_wires(
     driver_module: str,
     safety_stop_wiring: bool = True,
 ) -> Blueprint:
-    """Apply the explicit control and safety wires for Thunder Lite."""
+    """Apply the explicit control and safety wires for the `lite` Profile."""
 
     names = set(bp.export_graph().module_names)
 

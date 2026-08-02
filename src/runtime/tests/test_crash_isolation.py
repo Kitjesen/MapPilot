@@ -91,7 +91,7 @@ class TestCrashIsolationTransport(unittest.TestCase):
         bp.add(RobotDriver)
         bp.add(Perception)
         bp.wire("RobotDriver", "odometry", "Perception", "odometry",
-                transport="local")
+                delivery="local")
         handle = bp.build()
         handle.start()
 
@@ -131,7 +131,7 @@ class TestThreeTierWiring(unittest.TestCase):
 
         # Tier 3: semantic — transport decoupled
         bp.wire("Perception", "scene_graph", "Planner", "scene_graph",
-                transport="local")
+                delivery="local")
 
         bp.auto_wire()
         handle = bp.build()
@@ -172,7 +172,7 @@ class TestTransportDataIntegrity(unittest.TestCase):
         bp.add(Perception)
         bp.add(Planner)
         bp.wire("Perception", "scene_graph", "Planner", "scene_graph",
-                transport="local")
+                delivery="local")
         handle = bp.build()
         handle.start()
 

@@ -16,7 +16,7 @@ def test_native_map_save_rejects_success_without_pcd(monkeypatch, tmp_path):
         stdout = '{"success": true, "message": "accepted"}\n'
         stderr = ""
 
-    monkeypatch.setattr(map_save, "_control_binary", lambda: "lingtu_slam_control")
+    monkeypatch.setattr(map_save, "_control_binary", lambda: "slamctl")
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Completed())
 
     adapter = map_save.NativeSlamMapSaveAdapter()
@@ -50,7 +50,7 @@ def test_native_map_save_returns_point_count(monkeypatch, tmp_path):
         )
         return Completed()
 
-    monkeypatch.setattr(map_save, "_control_binary", lambda: "lingtu_slam_control")
+    monkeypatch.setattr(map_save, "_control_binary", lambda: "slamctl")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
     adapter = map_save.NativeSlamMapSaveAdapter()

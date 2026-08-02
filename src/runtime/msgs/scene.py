@@ -235,12 +235,3 @@ class ViewNode:
     room_id: int = -1
     object_ids: list[int] = field(default_factory=list)
     key_labels: list[str] = field(default_factory=list)
-
-
-def __getattr__(name: str):
-    """Backward-compatible lazy export for symbols moved out of runtime.msgs.scene."""
-    if name == "TrackedObject":
-        from perception.tracking.tracked_objects import TrackedObject
-
-        return TrackedObject
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

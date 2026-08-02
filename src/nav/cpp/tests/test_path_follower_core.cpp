@@ -244,6 +244,40 @@ TEST(PathFollowerSlow, SlowFactorReducesSpeed) {
   EXPECT_LT(speed2, speed1);
 }
 
+TEST(PathFollowerSlow, MinimumSpeedPreventsFarPathStall) {
+  PathFollowerParams p;
+  p.maxSpeed = 0.2;
+  p.minSpeed = 0.08;
+  p.maxAccel = 100.0;
+  p.dirDiffThre = 0.5;
+  PathFollowerState state;
+  const std::vector<Vec3> path = {{1.0, 0.0, 0.0}, {5.0, 0.0, 0.0}};
+
+  const auto out = computeControl(
+      {0.0, 0.0, 0.0}, 0.0, path, 0.1, 0.0, 1.0, 0, p, state);
+
+  EXPECT_TRUE(out.canAccel);
+  EXPECT_NEAR(out.cmd.vx, 0.08, 1e-6);
+}
+
+TEST(PathFollowerSlow, MinimumSpeedDoesNotDefeatGoalSlowdown) {
+  PathFollowerParams p;
+  p.maxSpeed = 0.2;
+  p.minSpeed = 0.08;
+  p.maxAccel = 100.0;
+  p.dirDiffThre = 0.5;
+  p.stopDisThre = 0.01;
+  p.slowDwnDisThre = 1.0;
+  PathFollowerState state;
+  const std::vector<Vec3> path = {{0.025, 0.0, 0.0}, {0.05, 0.0, 0.0}};
+
+  const auto out = computeControl(
+      {0.0, 0.0, 0.0}, 0.0, path, 0.1, 0.0, 1.0, 0, p, state);
+
+  EXPECT_TRUE(out.canAccel);
+  EXPECT_NEAR(out.cmd.vx, 0.004, 1e-6);
+}
+
 TEST(PathFollowerSlow, TurnSpeedCouplingReducesHighYawLinearSpeed) {
   PathFollowerParams p;
   p.maxSpeed = 1.0;

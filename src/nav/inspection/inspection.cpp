@@ -28,6 +28,22 @@ bool SafeId(const std::string& value) {
   return true;
 }
 
+bool SafeTaskId(const std::string& value) {
+  if (value.empty() || value.size() > 128U) {
+    return false;
+  }
+  if (value.front() == '.' || value.front() == '-' ||
+      value.find("..") != std::string::npos) {
+    return false;
+  }
+  for (const unsigned char ch : value) {
+    if (!std::isalnum(ch) && ch != '-' && ch != '_' && ch != '.' && ch != ':') {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool SafeActionToken(const std::string& value) {
   if (value.empty()) return true;
   if (value.size() > 128U || value.front() == '.' || value.front() == '-' ||
@@ -113,13 +129,27 @@ const char* RunStateName(RunState state) noexcept {
     case RunState::kCancelled: return "cancelled";
     case RunState::kSettling: return "settling";
     case RunState::kActionPending: return "action_pending";
+    case RunState::kPausing: return "pausing";
+    case RunState::kCancelling: return "cancelling";
+  }
+  return "unknown";
+}
+
+const char* TaskEventKindName(TaskEventKind kind) noexcept {
+  switch (kind) {
+    case TaskEventKind::kTaskAccepted: return "task_accepted";
+    case TaskEventKind::kStateChanged: return "state_changed";
+    case TaskEventKind::kMilestone: return "milestone";
+    case TaskEventKind::kStopConfirmationFailed: return "stop_confirmation_failed";
+    case TaskEventKind::kEvidenceRecorded: return "evidence_recorded";
   }
   return "unknown";
 }
 
 bool Executor::Start(
     Route route,
-    std::string run_id,
+    std::string task_id,
+    std::string request_id,
     const std::string& active_map_id,
     std::int64_t active_map_version,
     double now_s,
@@ -127,32 +157,47 @@ bool Executor::Start(
   status_ = {};
   has_route_ = false;
   route_ = {};
+  pending_stop_reason_.clear();
   ResetPointPhase();
   status_.state = RunState::kValidating;
   if (!Finite(now_s)) {
-    Fail("invalid_start_time");
+    Fail("invalid_start_time", now_s);
     if (error != nullptr) *error = status_.reason;
     return false;
   }
   const auto validation = ValidateRoute(route);
   if (!validation.ok) {
-    Fail(validation.reason);
+    Fail(validation.reason, now_s);
     if (error != nullptr) *error = validation.reason;
     return false;
   }
-  if (!SafeId(run_id) || run_id.size() > 96U) {
-    Fail("invalid_run_id");
+  if (!SafeTaskId(task_id) || task_id.size() > 96U) {
+    Fail("invalid_task_id", now_s);
+    if (error != nullptr) *error = status_.reason;
+    return false;
+  }
+  if (!request_id.empty() && (!SafeTaskId(request_id) || request_id.size() > 96U)) {
+    Fail("invalid_request_id", now_s);
+    if (error != nullptr) *error = status_.reason;
+    return false;
+  }
+  if (!request_id.empty() && task_id == request_id) {
+    Fail("task_id_must_differ_from_request_id", now_s);
     if (error != nullptr) *error = status_.reason;
     return false;
   }
   route_ = std::move(route);
   has_route_ = true;
-  status_.run_id = std::move(run_id);
+  status_.task_id = std::move(task_id);
+  status_.run_id = status_.task_id;
+  status_.request_id = std::move(request_id);
+  status_.map_id = route_.map_id;
+  status_.map_version = route_.map_version;
   status_.route_id = route_.id;
   status_.route_revision = route_.revision;
   status_.point_count = validation.enabled_points;
   if (!MapMatches(active_map_id, active_map_version)) {
-    Fail("route_map_version_mismatch");
+    Fail("route_map_version_mismatch", now_s);
     if (error != nullptr) *error = status_.reason;
     return false;
   }
@@ -162,10 +207,11 @@ bool Executor::Start(
   goal_submitted_ = false;
   ResetPointPhase();
   if (!SelectCurrentPoint()) {
-    Fail("route_has_no_enabled_points");
+    Fail("route_has_no_enabled_points", now_s);
     if (error != nullptr) *error = status_.reason;
     return false;
   }
+  RecordTaskEvent(TaskEventKind::kTaskAccepted, now_s, status_.request_id);
   if (!BeginPlanning(now_s, "route_started")) {
     if (error != nullptr) *error = status_.reason;
     return false;
@@ -173,33 +219,104 @@ bool Executor::Start(
   return true;
 }
 
-bool Executor::Pause(const std::string& reason) {
-  if (!active() || status_.state == RunState::kPaused) return false;
-  status_.state = RunState::kPaused;
-  status_.reason = reason.empty() ? "paused" : reason;
+bool Executor::Start(
+    Route route,
+    std::string run_id,
+    const std::string& active_map_id,
+    std::int64_t active_map_version,
+    double now_s,
+    std::string* error) {
+  return Start(
+      std::move(route),
+      std::move(run_id),
+      "",
+      active_map_id,
+      active_map_version,
+      now_s,
+      error);
+}
+
+bool Executor::RequestPause(
+    const std::string& reason,
+    const std::string& request_id,
+    double now_s) {
+  if (!active() || status_.state == RunState::kPaused ||
+      status_.state == RunState::kPausing || status_.state == RunState::kCancelling) {
+    return false;
+  }
+  if (!SetRequestId(request_id)) return false;
+  pending_stop_reason_ = reason.empty() ? "paused" : reason;
+  status_.state = RunState::kPausing;
+  status_.reason = "pause_requested";
   goal_submitted_ = false;
   ResetPointPhase();
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s, request_id);
   return true;
+}
+
+bool Executor::CommitPause(double now_s) {
+  if (status_.state != RunState::kPausing) return false;
+  status_.state = RunState::kPaused;
+  status_.reason = pending_stop_reason_;
+  pending_stop_reason_.clear();
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
+  return true;
+}
+
+bool Executor::RequestCancel(
+    const std::string& reason,
+    const std::string& request_id,
+    double now_s) {
+  if (!active() || status_.state == RunState::kPausing ||
+      status_.state == RunState::kCancelling) {
+    return false;
+  }
+  if (!SetRequestId(request_id)) return false;
+  pending_stop_reason_ = reason.empty() ? "cancelled" : reason;
+  status_.state = RunState::kCancelling;
+  status_.reason = "cancel_requested";
+  goal_submitted_ = false;
+  ResetPointPhase();
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s, request_id);
+  return true;
+}
+
+bool Executor::CommitCancel(double now_s) {
+  if (status_.state != RunState::kCancelling) return false;
+  status_.state = RunState::kCancelled;
+  status_.reason = pending_stop_reason_;
+  pending_stop_reason_.clear();
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
+  return true;
+}
+
+void Executor::MarkStopConfirmationFailed(std::string reason, double now_s) {
+  if (status_.state != RunState::kPausing && status_.state != RunState::kCancelling) {
+    return;
+  }
+  status_.reason = reason.empty() ? "stop_confirmation_unconfirmed" : std::move(reason);
+  RecordTaskEvent(TaskEventKind::kStopConfirmationFailed, now_s);
+}
+
+bool Executor::Pause(const std::string& reason) {
+  return RequestPause(reason) && CommitPause();
 }
 
 bool Executor::Resume(
     const std::string& active_map_id,
     std::int64_t active_map_version,
-    double now_s) {
+    double now_s,
+    const std::string& request_id) {
   if (status_.state != RunState::kPaused ||
       !MapMatches(active_map_id, active_map_version)) {
     return false;
   }
+  if (!SetRequestId(request_id)) return false;
   return BeginPlanning(now_s, "resumed_replan_current_leg");
 }
 
 bool Executor::Cancel(const std::string& reason) {
-  if (!active()) return false;
-  status_.state = RunState::kCancelled;
-  status_.reason = reason.empty() ? "cancelled" : reason;
-  goal_submitted_ = false;
-  ResetPointPhase();
-  return true;
+  return RequestCancel(reason) && CommitCancel();
 }
 
 std::optional<Point> Executor::PendingGoal() const {
@@ -220,6 +337,7 @@ bool Executor::OnPlanningStarted(double now_s) {
   }
   goal_submitted_ = true;
   status_.reason = "planning_started";
+  RecordTaskEvent(TaskEventKind::kMilestone, now_s);
   return true;
 }
 
@@ -235,6 +353,7 @@ bool Executor::OnPlanReady(double now_s) {
   status_.phase_started_at_s = now_s;
   status_.deadline_s = now_s + kNavigationTimeoutS;
   status_.reason = "leg_path_ready";
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
   return true;
 }
 
@@ -284,6 +403,7 @@ void Executor::OnGoalReached(double now_s) {
   status_.phase_started_at_s = now_s;
   status_.deadline_s = now_s + kSettlingTimeoutS;
   status_.reason = "point_reached_settling";
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
 }
 
 bool Executor::OnArrivalSample(const ArrivalSample& sample, double now_s) {
@@ -337,6 +457,7 @@ std::optional<ActionRequest> Executor::PendingAction() const {
   }
   return ActionRequest{
       status_.action_request_id,
+      status_.task_id,
       status_.run_id,
       status_.route_id,
       status_.route_revision,
@@ -356,6 +477,7 @@ bool Executor::OnActionStarted(const std::string& request_id, double now_s) {
   status_.phase_started_at_s = now_s;
   status_.deadline_s = now_s + kActionTimeoutS;
   status_.reason = "point_action_started";
+  RecordTaskEvent(TaskEventKind::kMilestone, now_s, request_id);
   return true;
 }
 
@@ -377,6 +499,7 @@ bool Executor::OnActionResult(
     }
     status_.evidence_id = evidence_id;
     status_.reason = "point_action_succeeded";
+    RecordTaskEvent(TaskEventKind::kEvidenceRecorded, now_s, request_id);
     ResetPointPhase();
     AdvanceOrFinish(now_s);
     return true;
@@ -420,8 +543,10 @@ void Executor::Tick(double now_s) {
 void Executor::OnMapChanged(
     const std::string& active_map_id,
     std::int64_t active_map_version) {
-  if (active() && !MapMatches(active_map_id, active_map_version)) {
-    Fail("active_map_changed");
+  if (active() && status_.state != RunState::kPausing &&
+      status_.state != RunState::kCancelling &&
+      !MapMatches(active_map_id, active_map_version)) {
+    Fail("active_map_changed", status_.phase_started_at_s);
   }
 }
 
@@ -435,6 +560,8 @@ bool Executor::active() const noexcept {
     case RunState::kActionPending:
     case RunState::kPaused:
     case RunState::kRecovering:
+    case RunState::kPausing:
+    case RunState::kCancelling:
       return true;
     default:
       return false;
@@ -447,6 +574,56 @@ const Route* Executor::route() const noexcept {
 
 bool Executor::MapMatches(const std::string& map_id, std::int64_t map_version) const {
   return has_route_ && route_.map_id == map_id && route_.map_version == map_version;
+}
+
+bool Executor::SetRequestId(const std::string& request_id) {
+  if (request_id.empty()) return true;
+  if (!SafeTaskId(request_id) || request_id.size() > 96U || request_id == status_.task_id) {
+    return false;
+  }
+  status_.request_id = request_id;
+  return true;
+}
+
+void Executor::RecordTaskEvent(
+    TaskEventKind kind,
+    double timestamp_s,
+    const std::string& request_id) {
+  if (status_.task_id.empty()) return;
+  const double safe_timestamp = Finite(timestamp_s) ? timestamp_s : status_.phase_started_at_s;
+  task_events_.push_back(TaskEvent{
+      next_task_event_sequence_++,
+      Finite(safe_timestamp) ? safe_timestamp : 0.0,
+      kind,
+      request_id.empty() ? status_.request_id : request_id,
+      status_,
+  });
+}
+
+std::size_t Executor::FlushTaskEvents(
+    const std::function<bool(const TaskEvent&)>& accept,
+    std::size_t max_events) {
+  if (!accept || max_events == 0U) return 0U;
+
+  std::size_t delivered = 0U;
+  while (delivered < max_events && !task_events_.empty()) {
+    if (!accept(task_events_.front())) {
+      break;
+    }
+    task_events_.pop_front();
+    ++delivered;
+  }
+  return delivered;
+}
+
+std::vector<TaskEvent> Executor::TakeTaskEvents() {
+  std::vector<TaskEvent> result;
+  result.reserve(task_events_.size());
+  while (!task_events_.empty()) {
+    result.push_back(std::move(task_events_.front()));
+    task_events_.pop_front();
+  }
+  return result;
 }
 
 bool Executor::SelectCurrentPoint() {
@@ -462,7 +639,7 @@ bool Executor::SelectCurrentPoint() {
 
 bool Executor::BeginPlanning(double now_s, std::string reason) {
   if (!Finite(now_s)) {
-    Fail("invalid_transition_time");
+    Fail("invalid_transition_time", now_s);
     return false;
   }
   ResetPointPhase();
@@ -471,6 +648,7 @@ bool Executor::BeginPlanning(double now_s, std::string reason) {
   status_.phase_started_at_s = now_s;
   status_.deadline_s = now_s + kPlanningTimeoutS;
   status_.reason = std::move(reason);
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
   return true;
 }
 
@@ -482,6 +660,7 @@ void Executor::BeginDwell(double now_s) {
   status_.deadline_s = dwell_deadline_s_;
   status_.reason = "point_settled_dwelling";
   stable_sample_count_ = 0U;
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
 }
 
 void Executor::BeginAction(double now_s) {
@@ -493,6 +672,7 @@ void Executor::BeginAction(double now_s) {
   status_.action_request_id =
       status_.run_id + "-action-" + std::to_string(++action_request_serial_);
   status_.reason = "point_action_pending";
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
 }
 
 void Executor::HandlePointFailure(std::string reason, double now_s) {
@@ -506,6 +686,7 @@ void Executor::HandlePointFailure(std::string reason, double now_s) {
   }
   if (route_.failure_policy == FailurePolicy::kSkip) {
     status_.reason = std::move(reason);
+    RecordTaskEvent(TaskEventKind::kMilestone, now_s);
     AdvanceOrFinish(now_s);
     return;
   }
@@ -552,13 +733,16 @@ void Executor::AdvanceOrFinish(double now_s) {
   status_.point_id.clear();
   status_.action.clear();
   status_.reason = "route_complete";
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
 }
 
-void Executor::Fail(std::string reason) {
+void Executor::Fail(std::string reason, double now_s) {
   ResetPointPhase();
   status_.state = RunState::kFailed;
   status_.reason = std::move(reason);
   goal_submitted_ = false;
+  pending_stop_reason_.clear();
+  RecordTaskEvent(TaskEventKind::kStateChanged, now_s);
 }
 
 }  // namespace lingtu::nav::inspection

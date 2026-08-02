@@ -5,8 +5,6 @@ from runtime.contracts import (
     CAMERA_BACKEND_ORBBEC,
     CAMERA_BACKEND_REPLAY,
     CAMERA_BACKEND_SIM,
-    CAMERA_COMPAT_ALIAS,
-    CAMERA_COMPAT_CONFIG_FORCE,
     CAMERA_CONFIG_FORCE,
     CAMERA_CONTRACT,
     CAMERA_PORTS,
@@ -15,13 +13,9 @@ from runtime.contracts import (
     GNSS_BACKEND_HW,
     GNSS_BACKEND_REPLAY,
     GNSS_BACKEND_WTRTK980,
-    GNSS_COMPAT_ALIAS,
     GNSS_CONTRACT,
     GNSS_PORTS,
     GNSS_ROLE,
-    HW_COMPAT_ALIAS,
-    HW_COMPAT_CONFIG_BRIDGE,
-    HW_COMPAT_CONFIG_ENABLE,
     HW_CONFIG_BRIDGE,
     HW_CONFIG_ENABLE,
     HW_CONTRACT,
@@ -38,7 +32,6 @@ from runtime.contracts import (
     LIDAR_BACKEND_MID360,
     LIDAR_BACKEND_MUJOCO,
     LIDAR_BACKEND_REPLAY,
-    LIDAR_COMPAT_ALIAS,
     LIDAR_CONTRACT,
     LIDAR_PORTS,
     LIDAR_ROLE,
@@ -49,7 +42,6 @@ from runtime.contracts import (
     validate_message,
 )
 from runtime.runtime_interface import (
-    LEGACY_REAL_RUNTIME_CONTRACT,
     REAL_RUNTIME_CONTRACT,
     THUNDER_LITE_RUNTIME_CONTRACT,
     TOPICS,
@@ -63,9 +55,9 @@ from runtime.runtime_interface import (
 def test_camera_contract_defines_generic_stream_boundary():
     assert CAMERA_ROLE == "camera"
     assert CAMERA_CONTRACT.alias == "camera"
-    assert CAMERA_CONTRACT.compat_aliases == (CAMERA_COMPAT_ALIAS,)
     assert CAMERA_CONTRACT.config_keys == (CAMERA_CONFIG_FORCE,)
-    assert CAMERA_CONTRACT.compat_config_keys == (CAMERA_COMPAT_CONFIG_FORCE,)
+    assert "compat_aliases" not in CAMERA_CONTRACT.to_dict()
+    assert "compat_config_keys" not in CAMERA_CONTRACT.to_dict()
     assert CAMERA_CONTRACT.backends == (
         CAMERA_BACKEND_ORBBEC,
         CAMERA_BACKEND_REPLAY,
@@ -83,19 +75,17 @@ def test_camera_contract_defines_generic_stream_boundary():
 def test_hw_contract_defines_generic_inventory_boundary():
     assert HW_ROLE == "hw"
     assert HW_CONTRACT.alias == "hw"
-    assert HW_CONTRACT.compat_aliases == (HW_COMPAT_ALIAS,)
+    assert HW_CONTRACT.compat_aliases == ()
     assert HW_CONTRACT.config_keys == (HW_CONFIG_ENABLE, HW_CONFIG_BRIDGE)
-    assert HW_CONTRACT.compat_config_keys == (
-        HW_COMPAT_CONFIG_ENABLE,
-        HW_COMPAT_CONFIG_BRIDGE,
-    )
+    assert HW_CONTRACT.compat_config_keys == ()
     assert HW_PORTS == ("device_status", "device_event", "alive")
 
 
 def test_lidar_contract_defines_generic_raw_sensor_boundary():
     assert LIDAR_ROLE == "lidar"
     assert LIDAR_CONTRACT.alias == "lidar"
-    assert LIDAR_CONTRACT.compat_aliases == (LIDAR_COMPAT_ALIAS,)
+    assert "compat_aliases" not in LIDAR_CONTRACT.to_dict()
+    assert "compat_config_keys" not in LIDAR_CONTRACT.to_dict()
     assert LIDAR_CONTRACT.backends == (
         LIDAR_BACKEND_MID360,
         LIDAR_BACKEND_MUJOCO,
@@ -127,7 +117,8 @@ def test_imu_contract_defines_generic_motion_sensor_boundary():
 def test_gnss_contract_defines_generic_position_sensor_boundary():
     assert GNSS_ROLE == "gnss"
     assert GNSS_CONTRACT.alias == "gnss"
-    assert GNSS_CONTRACT.compat_aliases == (GNSS_COMPAT_ALIAS,)
+    assert "compat_aliases" not in GNSS_CONTRACT.to_dict()
+    assert "compat_config_keys" not in GNSS_CONTRACT.to_dict()
     assert GNSS_CONTRACT.backends == (
         GNSS_BACKEND_WTRTK980,
         GNSS_BACKEND_HW,
@@ -309,7 +300,7 @@ def test_runtime_contract_registry_exports_json_ready_manifest():
     assert manifest["contract_registry_schema_version"] == registry.schema_version
     assert isinstance(manifest["core_required_topics"], list)
     assert manifest["topic_ros_types"][TOPICS.cmd_vel] == [
-        "geometry_msgs/msg/TwistStamped",
+        "lingtu.dds.FinalVelocityCommand",
     ]
     assert manifest["message_contracts"]["mission_status"]["envelope"]["type"] == ("mission_status")
     assert registry.validate_manifest(manifest) == []
@@ -321,7 +312,9 @@ def test_runtime_contract_registry_resolves_topic_and_data_source_contracts():
     cmd_vel = registry.topic_contract(TOPICS.cmd_vel)
     assert cmd_vel.formats == ("cmd_vel",)
     assert cmd_vel.default_frame_id == "body"
-    assert registry.topic_ros_types(TOPICS.cmd_vel) == ("geometry_msgs/msg/TwistStamped",)
+    assert registry.topic_ros_types(TOPICS.cmd_vel) == (
+        "lingtu.dds.FinalVelocityCommand",
+    )
     assert registry.topic_ros_types(TOPICS.map_cloud) == ("sensor_msgs/msg/PointCloud2",)
     assert topic_ros_types(TOPICS.odometry) == ("nav_msgs/msg/Odometry",)
     assert topic_ros_types(TOPICS.lidar_scan) == (
@@ -342,7 +335,7 @@ def test_runtime_contract_registry_resolves_topic_and_data_source_contracts():
     assert topic_ros_types(TOPICS.height_rays) == ("application/json",)
     assert runtime_contract_manifest()["topic_ros_types"][TOPICS.map_cloud] == ("sensor_msgs/msg/PointCloud2",)
     assert topic_formats(TOPICS.maps_scene) == ("maps_scene",)
-    assert topic_ros_types(TOPICS.maps_scene) == ("application/json",)
+    assert topic_ros_types(TOPICS.maps_scene) == ("lingtu.dds.MapScene",)
     maps_scene = registry.topic_contract(TOPICS.maps_scene)
     assert maps_scene.allowed_frame_ids == ("map", "odom")
     assert maps_scene.default_frame_id == "map"
@@ -360,9 +353,7 @@ def test_runtime_contract_registry_resolves_topic_and_data_source_contracts():
     assert TOPICS.height_rays in mujoco.normalized_outputs
     assert mujoco.algorithm_context_outputs == (TOPICS.height_rays,)
 
-    legacy = registry.data_source_contract(LEGACY_REAL_RUNTIME_CONTRACT)
     current = registry.data_source_contract(REAL_RUNTIME_CONTRACT)
-    assert legacy is current
     assert current.name == REAL_RUNTIME_CONTRACT
 
     lite_cmd_vel = registry.topic_contract(

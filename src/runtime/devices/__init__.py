@@ -1,8 +1,4 @@
-"""LingTu hardware device framework.
-
-Use ``Hw`` as the runtime inventory/status module. ``DeviceManager`` remains a
-compatibility alias for older imports.
-"""
+"""LingTu hardware device framework."""
 
 from runtime.devices.base import (
     Device,
@@ -14,13 +10,12 @@ from runtime.devices.decoder import (
     decoder_registry,
     register_decoder,
 )
-from runtime.devices.manager import DeviceManager, Hw
+from runtime.devices.manager import Hw
 from runtime.devices.spec import DeviceSpec, load_device_specs
 
 __all__ = [
     "Decoder",
     "Device",
-    "DeviceManager",
     "DeviceSpec",
     "DeviceStatus",
     "DeviceType",

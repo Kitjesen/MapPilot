@@ -1,0 +1,179 @@
+{
+  "schema_version": "lingtu.mujoco.native_navigation_acceptance.v1",
+  "name": "mujoco_native_navigation",
+  "description": "MuJoCo sensors and ThunderV4 locomotion around the same C++ typed-DDS SLAM, native maps (mapd), traversability, and navigation processes used by the field runtime.",
+  "domain_id_base": 220,
+  "world": "",
+  "start": [0.0, 0.0, 0.48, 0.0],
+  "goal": [1.0, 0.0, 0.3, 0.0],
+  "map_dir": "",
+  "asset_builder": {
+    "kind": "saved_map_plan_gate",
+    "scene_preset": "corridor",
+    "length": 3.0,
+    "width": 1.8,
+    "spacing": 0.2,
+    "hits_per_cell": 4,
+    "resolution": 0.2,
+    "map_source": "mujoco_lidar",
+    "lidar_scans": 12,
+    "lidar_duration_s": 8.0,
+    "lidar_timeout_s": 20.0,
+    "lidar_vx_mps": 0.2,
+    "lidar_publish_hz": 10.0,
+    "mid360_samples_per_frame": 15000
+  },
+  "map_files": {
+    "slam": "map.pcd",
+    "planner": "octomap.ot",
+    "metadata": "metadata.json"
+  },
+  "paths": {
+    "slam_config": "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
+    "path_library": "src/nav/local/paths",
+    "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
+  },
+  "binaries": {
+    "sensor_publisher": {
+      "env": "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN",
+      "candidates": [
+        "build/mujoco_native_livox/livox_sdk2_stream",
+        "build/livox_sdk2_stream/livox_sdk2_stream"
+      ]
+    },
+    "slam": {
+      "env": "LINGTU_MUJOCO_SLAM_BIN",
+      "candidates": [
+        "build/mujoco_native_slam/slamd",
+        "build/slam_core/slamd"
+      ]
+    },
+    "mapd": {
+      "env": "LINGTU_MUJOCO_MAPD_BIN",
+      "candidates": [
+        "build/maps/mapd",
+        "build/mujoco_native_maps/mapd",
+        "/opt/lingtu/current/build/maps/mapd"
+      ]
+    },
+    "traversability": {
+      "env": "LINGTU_MUJOCO_TRAVERSABILITY_BIN",
+      "candidates": [
+        "build/mujoco_native_nav/lingtu_traversability_dds",
+        "build/nav_endpoint/lingtu_traversability_dds"
+      ]
+    },
+    "navigation": {
+      "env": "LINGTU_MUJOCO_NAV_BIN",
+      "candidates": [
+        "build/mujoco_native_nav/navd",
+        "build/nav_endpoint/navd",
+        "/home/thunder/lingtu_nav_mode_verify/navd"
+      ]
+    },
+    "navigation_control": {
+      "env": "LINGTU_MUJOCO_NAV_CONTROL_BIN",
+      "candidates": [
+        "build/mujoco_native_nav/lingtu_nav_control",
+        "build/nav_endpoint/lingtu_nav_control"
+      ]
+    },
+    "cmd_vel_tap": {
+      "env": "LINGTU_MUJOCO_CMD_VEL_TAP_BIN",
+      "candidates": [
+        "build/mujoco_native_dds/lingtu_mujoco_cmd_vel_tap"
+      ]
+    }
+  },
+  "phases": {
+    "no_motion": {
+      "duration_s": 12.0,
+      "warmup_s": 15.0,
+      "publish_cmd_vel": false,
+      "require_nonzero_cmd_vel": false
+    },
+    "motion": {
+      "duration_s": 25.0,
+      "warmup_s": 15.0,
+      "publish_cmd_vel": true,
+      "require_nonzero_cmd_vel": true
+    }
+  },
+  "thresholds": {
+    "startup_timeout_s": 25.0,
+    "plan_timeout_s": 12.0,
+    "min_global_path_points": 2,
+    "min_local_path_points": 2,
+    "min_cmd_vel_samples": 3,
+    "min_track_against_map_successes": 1,
+    "max_track_against_map_success_age_s": 3.0,
+    "max_consecutive_track_against_map_failures": 3,
+    "max_no_motion_slam_map_xy_error_m": 0.35,
+    "max_no_motion_slam_odom_xy_m": 0.35,
+    "max_motion_slam_map_xy_error_m": 0.75,
+    "min_motion_m": 0.15,
+    "min_goal_distance_reduction_m": 0.10
+  },
+  "runtime_tolerances": {
+    "sim_hardware_realtime_factor": 1.0,
+    "odom_max_age_s": 0.60,
+    "tf_max_age_s": 0.60,
+    "cloud_max_age_s": 0.60,
+    "cloud_pose_max_gap_s": 0.20,
+    "input_future_tolerance_s": 0.05,
+    "input_recovery_frames": 1,
+    "track_against_map_period_s": 5.0
+  },
+  "frame_contract": {
+    "traversability_geometry_frame_current": "map",
+    "traversability_header_frame_current": "map",
+    "navigation_query_frame": "map",
+    "max_map_odom_tf_age_s": 0.60,
+    "map_odom_identity_translation_tolerance_m": 0.05,
+    "map_odom_identity_rotation_tolerance_rad": 0.05,
+    "required_fix": ""
+  },
+  "contracts": {
+    "sensor_inputs": [
+      "rt/lidar/raw_frame",
+      "rt/imu/raw"
+    ],
+    "slam_outputs": [
+      "rt/slam/odometry",
+      "rt/slam/registered_cloud"
+    ],
+    "mapd_input": "rt/slam/map_observation",
+    "mapd_outputs": [
+      "rt/maps/state",
+      "rt/maps/scene",
+      "rt/maps/live_cloud"
+    ],
+    "terrain_output": "rt/nav/traversability",
+    "navigation_traversability_authority": "rt/nav/traversability",
+    "navigation_inputs": [
+      "rt/nav/command/request",
+      "rt/nav/operator_motion/control",
+      "rt/nav/operator_motion/sample",
+      "rt/slam/odometry",
+      "rt/slam/registered_cloud",
+      "rt/nav/traversability"
+    ],
+    "navigation_command_ack": "rt/nav/command/ack",
+    "operator_motion_ack": "rt/nav/operator_motion/ack",
+    "operator_motion_status": "rt/nav/operator_motion/status",
+    "navigation_goal_status": "rt/nav/goal/status",
+    "navigation_command_transport": "typed_dds_request_ack",
+    "navigation_telemetry": [
+      "rt/nav/global_path",
+      "rt/nav/local_path"
+    ],
+    "locomotion_input": "rt/nav/cmd_vel",
+    "local_path_role": "dds_telemetry_and_preview",
+    "path_follower_role": "embedded_before_cmd_vel_gate",
+    "forbidden_compute": [
+      "Python global planner",
+      "Python local planner",
+      "Python path follower"
+    ]
+  }
+}

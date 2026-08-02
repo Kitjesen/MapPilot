@@ -31,9 +31,11 @@ WireSpec    = one declared data-flow connection
 Blueprint   = one application Module graph before it starts
 Route       = runtime contract (metadata) and optional routed delivery mode
 SystemHandle = the running graph
-RuntimePlan = endpoint-owned native process lifecycle plan
-Product     = one compiled Blueprint + optional RuntimePlan
-Launcher    = external process-plan executor; not part of runtime core
+ProcessSpec = one env-resolved deployment process
+Product     = one env-independent operating-mode declaration
+RunPlan     = one Product resolved inside one env
+ProductControl = the only Product transaction owner
+SystemdRunner = ProductControl's internal process executor
 ```
 
 Normal Module flow is:
@@ -59,7 +61,7 @@ GatewayModule.goal_pose
   -> Driver
 ```
 
-The default physical `thunder_field` navigation path is not this Python
+The default `env=real` native navigation path is not this Python
 autonomy chain. Field navigation is owned by native DDS services:
 
 ```text

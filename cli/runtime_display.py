@@ -7,6 +7,7 @@ from typing import Any
 
 from runtime.runtime_interface import (
     REAL_RUNTIME_CONTRACT,
+    runtime_contract_data_source,
     runtime_required_topic_frame_ids,
 )
 
@@ -33,11 +34,9 @@ def join_runtime_items(items: Any) -> str:
 
 
 def format_runtime_boundary(runtime: Any) -> str:
-    endpoint = _get_attr_or_item(runtime, "endpoint") or "in_process"
     runtime_contract = _get_attr_or_item(runtime, "runtime_contract") or "none"
     simulation_only = str(bool(_get_attr_or_item(runtime, "simulation_only"))).lower()
     text = (
-        f"endpoint={endpoint} "
         f"data_source={_get_attr_or_item(runtime, 'data_source')} "
         f"runtime_contract={runtime_contract} "
         f"module_transport={_get_attr_or_item(runtime, 'module_transport', 'local')} "
@@ -200,17 +199,18 @@ def format_runtime_flow_stages(runtime: Any) -> str:
 def format_product_runtime_boundary(runtime: Any) -> str:
     """Return the product-facing runtime interface boundary."""
 
-    simulation_only = bool(_get_attr_or_item(runtime, "simulation_only"))
+    env = _get_attr_or_item(runtime, "env")
+    if env not in {"real", "sim"}:
+        env = "sim" if bool(_get_attr_or_item(runtime, "simulation_only")) else "real"
     runtime_contract = _get_attr_or_item(runtime, "runtime_contract") or "none"
     route_contract = _get_attr_or_item(runtime, "route_contract")
     routed_delivery = _get_attr_or_item(runtime, "routed_delivery")
-    mode = "simulation" if simulation_only else "field"
     text = (
-        f"mode={mode} runtime_contract={runtime_contract} "
+        f"env={env} runtime_contract={runtime_contract} "
         f"module_transport={_get_attr_or_item(runtime, 'module_transport', 'local')} "
         f"endpoint_transport={_get_attr_or_item(runtime, 'endpoint_transport', 'local')} "
         "primary=Gateway+ModulePorts "
-        "adapter=endpoint_only "
+        "adapter=transport_only "
         "ros2_topic_inspection_required=false"
     )
     if route_contract:
@@ -220,10 +220,10 @@ def format_product_runtime_boundary(runtime: Any) -> str:
     return text
 
 
-def format_product_semantic_overrides(runtime: Any) -> str:
-    """Return endpoint-induced product semantic changes, if any."""
+def format_profile_semantic_overrides(runtime: Any) -> str:
+    """Return Profile semantic changes introduced by its adapter, if any."""
 
-    raw_overrides = _get_attr_or_item(runtime, "product_semantic_overrides") or ()
+    raw_overrides = _get_attr_or_item(runtime, "profile_semantic_overrides") or ()
     if not isinstance(raw_overrides, (list, tuple)):
         return "none"
     parts: list[str] = []
@@ -233,9 +233,9 @@ def format_product_semantic_overrides(runtime: Any) -> str:
         field = item.get("field")
         if not field:
             continue
-        product_value = _format_override_value(item.get("product_value"))
-        endpoint_value = _format_override_value(item.get("endpoint_value"))
-        parts.append(f"{field}={product_value}->{endpoint_value}")
+        profile_value = _format_override_value(item.get("profile_value"))
+        adapter_value = _format_override_value(item.get("adapter_value"))
+        parts.append(f"{field}={profile_value}->{adapter_value}")
     return " | ".join(parts) if parts else "none"
 
 
@@ -250,7 +250,7 @@ def format_product_acceptance_commands(runtime: Any) -> str:
     real_evidence = (
         "python lingtu.py real-runtime-evidence --collector gateway "
         "--gateway-url http://<robot>:5050 --duration-sec 20 "
-        "--json-out artifacts/thunder_field_runtime/report.json"
+        "--json-out artifacts/real_runtime/report.json"
     )
     gateway_field = (
         "python lingtu.py gateway-runtime-acceptance --acceptance-mode field --gateway-url http://<robot>:5050"
@@ -259,12 +259,17 @@ def format_product_acceptance_commands(runtime: Any) -> str:
 
 
 def format_runtime_switch_plan(payload: Mapping[str, Any]) -> str:
-    """Return a human-readable sim/replay/real runtime switch diff."""
+    """Return a human-readable Product switch within one fixed Env."""
 
     current = payload.get("from")
     target = payload.get("to")
     current_payload = current if isinstance(current, Mapping) else {}
     target_payload = target if isinstance(target, Mapping) else {}
+    if (
+        current_payload.get("kind") == "run_plan"
+        and target_payload.get("kind") == "run_plan"
+    ):
+        return _format_run_plan_switch(payload, current_payload, target_payload)
     current_validation = payload.get("current_validation")
     target_validation = payload.get("target_validation")
     current_validation_payload = current_validation if isinstance(current_validation, Mapping) else {}
@@ -274,9 +279,9 @@ def format_runtime_switch_plan(payload: Mapping[str, Any]) -> str:
 
     lines = [
         f"Runtime switch plan: {status}",
-        "Switch lifecycle: dry-run/preflight; endpoint changes require a fresh launcher or explicit stop/start",
-        _format_switch_profile_line("Current", current_payload),
-        _format_switch_profile_line("Target", target_payload),
+        "Switch lifecycle: dry-run/preflight; Product changes are applied only by ProductControl",
+        _format_switch_identity_line("Current", current_payload),
+        _format_switch_identity_line("Target", target_payload),
         f"Current runtime: {format_runtime_boundary(current_payload)}",
         f"Target runtime: {format_runtime_boundary(target_payload)}",
         f"Current SLAM: {format_runtime_sources(current_payload)}",
@@ -310,13 +315,13 @@ def format_runtime_switch_plan(payload: Mapping[str, Any]) -> str:
     )
     _append_contract_section(
         lines,
-        "Current product semantic overrides",
-        format_product_semantic_overrides(current_payload),
+        "Current Profile adapter overrides",
+        format_profile_semantic_overrides(current_payload),
     )
     _append_contract_section(
         lines,
-        "Target product semantic overrides",
-        format_product_semantic_overrides(target_payload),
+        "Target Profile adapter overrides",
+        format_profile_semantic_overrides(target_payload),
     )
     _append_contract_section(
         lines,
@@ -377,6 +382,78 @@ def format_runtime_switch_plan(payload: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _format_run_plan_switch(
+    payload: Mapping[str, Any],
+    current: Mapping[str, Any],
+    target: Mapping[str, Any],
+) -> str:
+    ok = payload.get("ok")
+    status = "PASS" if ok is True else "FAIL" if ok is False else "UNKNOWN"
+    lines = [
+        f"RunPlan switch preview: {status}",
+        "Execution: dry-run only; ProductControl is the sole switch owner",
+        _format_run_plan_identity("Current", current),
+        _format_run_plan_identity("Target", target),
+        (
+            "Current lifecycle: "
+            f"slam={current.get('slam_mode', 'unknown')} "
+            f"control={current.get('native_control_mode', 'unknown')} "
+            f"requires_map={str(bool(current.get('requires_map'))).lower()}"
+        ),
+        (
+            "Target lifecycle: "
+            f"slam={target.get('slam_mode', 'unknown')} "
+            f"control={target.get('native_control_mode', 'unknown')} "
+            f"requires_map={str(bool(target.get('requires_map'))).lower()}"
+        ),
+    ]
+    _append_contract_section(
+        lines,
+        "Current processes",
+        join_runtime_items(current.get("processes")),
+    )
+    _append_contract_section(
+        lines,
+        "Target processes",
+        join_runtime_items(target.get("processes")),
+    )
+    _append_contract_section(
+        lines,
+        "Current Host modules",
+        join_runtime_items(current.get("host_modules")),
+    )
+    _append_contract_section(
+        lines,
+        "Target Host modules",
+        join_runtime_items(target.get("host_modules")),
+    )
+    _append_contract_section(
+        lines,
+        "Changed RunPlan fields",
+        join_runtime_items(payload.get("changed")),
+    )
+    product_switch = payload.get("product_mode_switch")
+    if isinstance(product_switch, Mapping):
+        lines.append(
+            "Switch lifecycle: "
+            f"{product_switch.get('required_lifecycle', 'unknown')} "
+            f"({product_switch.get('reason', '')})"
+        )
+    current_validation = payload.get("current_validation")
+    target_validation = payload.get("target_validation")
+    _append_switch_validation(
+        lines,
+        "Current RunPlan validation",
+        current_validation if isinstance(current_validation, Mapping) else {},
+    )
+    _append_switch_validation(
+        lines,
+        "Target RunPlan validation",
+        target_validation if isinstance(target_validation, Mapping) else {},
+    )
+    return "\n".join(lines)
+
+
 def format_runtime_contract_manifest(manifest: Mapping[str, Any]) -> str:
     """Return a compact operator-facing view of the canonical runtime contract."""
 
@@ -403,8 +480,13 @@ def format_runtime_contract_manifest(manifest: Mapping[str, Any]) -> str:
     )
     _append_contract_section(
         lines,
-        "Profile bindings",
-        _format_manifest_profile_bindings(manifest),
+        "Local profile data-source bindings",
+        _format_manifest_selection_bindings(manifest, "profile_data_sources"),
+    )
+    _append_contract_section(
+        lines,
+        "Product bindings",
+        _format_manifest_selection_bindings(manifest, "product_data_sources"),
     )
     _append_contract_section(
         lines,
@@ -446,24 +528,34 @@ def format_runtime_spec_payload(payload: Mapping[str, Any]) -> str:
     ok = validation_payload.get("ok")
     status = "PASS" if ok is True else "FAIL" if ok is False else "UNKNOWN"
 
+    product = spec_payload.get("product")
+    env = spec_payload.get("env")
+    if product and env:
+        identity = f"Runtime identity: product={product} env={env}"
+        boundary_label = "Product boundary"
+        acceptance_label = "Product acceptance"
+    else:
+        identity = (
+            "Local Profile: "
+            f"profile={spec_payload.get('profile', 'unknown')} "
+            f"adapter={spec_payload.get('adapter') or 'in_process'}"
+        )
+        boundary_label = "Host boundary"
+        acceptance_label = "Profile validation"
+
     lines = [
         f"Runtime spec: {status}",
-        (
-            "Profile: "
-            f"profile={spec_payload.get('profile', 'unknown')} "
-            f"endpoint={spec_payload.get('endpoint', 'unknown')} "
-            f"robot_preset={spec_payload.get('robot_preset', 'unknown')}"
-        ),
+        identity,
         f"Runtime: {format_runtime_boundary(spec_payload)}",
         f"Algorithms: {format_runtime_algorithms(spec_payload)}",
         f"SLAM: {format_runtime_sources(spec_payload)}",
-        f"Product boundary: {format_product_runtime_boundary(spec_payload)}",
+        f"{boundary_label}: {format_product_runtime_boundary(spec_payload)}",
         f"Frames: {format_runtime_frames(spec_payload)}",
         f"Frame links: {format_frame_links(spec_payload)}",
     ]
     _append_contract_section(
         lines,
-        "Product acceptance",
+        acceptance_label,
         format_product_acceptance_commands(spec_payload),
         separator=" | ",
     )
@@ -474,8 +566,8 @@ def format_runtime_spec_payload(payload: Mapping[str, Any]) -> str:
     )
     _append_contract_section(
         lines,
-        "Product semantic overrides",
-        format_product_semantic_overrides(spec_payload),
+        "Profile adapter overrides",
+        format_profile_semantic_overrides(spec_payload),
     )
     _append_contract_section(
         lines,
@@ -703,10 +795,10 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
     evidence = _get_mapping(payload, "evidence")
     algorithm_payload = _get_mapping(payload, "algorithm")
     algorithm = _get_mapping(algorithm_payload, "strict_benchmark")
-    active_product_profile = algorithm_payload.get("active_product_profile") or "inspection_mvp"
-    product_profile = _get_mapping(
-        _get_mapping(algorithm_payload, "product_profiles"),
-        str(active_product_profile),
+    active_benchmark_variant = algorithm_payload.get("active_benchmark_variant") or "inspection_mvp"
+    benchmark_variant = _get_mapping(
+        _get_mapping(algorithm_payload, "benchmark_variants"),
+        str(active_benchmark_variant),
     )
     status = payload.get("summary") or ("PASS" if payload.get("ok") else "FAIL")
     mode = payload.get("mode")
@@ -731,7 +823,7 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
             f"gateway={runtime.get('gateway', 'UNKNOWN')} "
             f"readiness={runtime.get('readiness', 'UNKNOWN')} "
             f"localization={runtime.get('localization', 'UNKNOWN')} "
-            f"dataflow={runtime.get('dataflow', 'UNKNOWN')} "
+            f"gateway_observability={runtime.get('gateway_observability', 'UNKNOWN')} "
             f"stages={runtime.get('stages', 'UNKNOWN')} "
             f"command_boundary={runtime.get('command_boundary', 'UNKNOWN')} "
             f"frontier_preview={runtime.get('frontier_preview', 'UNKNOWN')} "
@@ -756,8 +848,8 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
             f"dry_run={str(bool(runtime_switch.get('dry_run'))).lower()} "
             f"motion={str(bool(runtime_switch.get('motion'))).lower()} "
             f"publishes={join_runtime_items(runtime_switch.get('publishes'))} "
-            f"from={_get_mapping(runtime_switch, 'from').get('endpoint', 'unknown')} "
-            f"to={_get_mapping(runtime_switch, 'to').get('endpoint', 'unknown')}"
+            f"from={_format_runtime_identity(_get_mapping(runtime_switch, 'from'))} "
+            f"to={_format_runtime_identity(_get_mapping(runtime_switch, 'to'))}"
         ),
         (
             "Navigation: "
@@ -768,7 +860,7 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
         ),
         (
             "Evidence: "
-            f"thunder_field={evidence.get('thunder_field', 'UNKNOWN')} "
+            f"field_runtime={evidence.get('field_runtime', 'UNKNOWN')} "
             f"age={age} mode={evidence.get('mode', payload.get('mode', 'unknown'))}"
         ),
         (
@@ -776,8 +868,8 @@ def format_product_field_check(payload: Mapping[str, Any]) -> str:
             f"strict_benchmark={algorithm.get('status', 'UNKNOWN')} "
             f"claim_allowed={str(bool(algorithm.get('claim_allowed'))).lower()} "
             f"missing={missing} "
-            f"product_profile={active_product_profile}:"
-            f"{product_profile.get('status', 'UNKNOWN')}"
+            f"benchmark_variant={active_benchmark_variant}:"
+            f"{benchmark_variant.get('status', 'UNKNOWN')}"
         ),
     ]
     _append_contract_section(
@@ -827,8 +919,8 @@ def format_inspection_acceptance(payload: Mapping[str, Any]) -> str:
             f"dry_run={str(bool(runtime_switch.get('dry_run'))).lower()} "
             f"motion={str(bool(runtime_switch.get('motion'))).lower()} "
             f"publishes={join_runtime_items(runtime_switch.get('publishes'))} "
-            f"from={_get_mapping(runtime_switch, 'from').get('endpoint', 'unknown')} "
-            f"to={_get_mapping(runtime_switch, 'to').get('endpoint', 'unknown')}"
+            f"from={_format_runtime_identity(_get_mapping(runtime_switch, 'from'))} "
+            f"to={_format_runtime_identity(_get_mapping(runtime_switch, 'to'))}"
         )
     for target in payload.get("targets") or []:
         if not isinstance(target, Mapping):
@@ -863,7 +955,6 @@ def _get_mapping(payload: Mapping[str, Any], key: str) -> Mapping[str, Any]:
 
 def _format_runtime_env(env: Mapping[str, Any]) -> str:
     keys = (
-        "LINGTU_ENDPOINT",
         "LINGTU_DATA_SOURCE",
         "LINGTU_MODULE_TRANSPORT",
         "LINGTU_ENDPOINT_TRANSPORT",
@@ -880,13 +971,25 @@ def _format_runtime_env(env: Mapping[str, Any]) -> str:
     return " ".join(parts) if parts else "none"
 
 
-def _format_switch_profile_line(label: str, runtime: Mapping[str, Any]) -> str:
+def _format_runtime_identity(runtime: Mapping[str, Any]) -> str:
     return (
-        f"{label} profile: "
-        f"profile={runtime.get('profile', 'unknown')} "
-        f"endpoint={runtime.get('endpoint', 'unknown')} "
-        f"robot_preset={runtime.get('robot_preset', 'unknown')}"
+        f"product={runtime.get('product', 'unknown')} "
+        f"env={runtime.get('env', 'unknown')}"
     )
+
+
+def _format_run_plan_identity(label: str, plan: Mapping[str, Any]) -> str:
+    fingerprint = str(plan.get("run_plan_fingerprint") or "unknown")
+    return (
+        f"{label} RunPlan: product={plan.get('product', 'unknown')} "
+        f"env={plan.get('env', 'unknown')} "
+        f"controller={plan.get('controller', 'unknown')} "
+        f"fingerprint={fingerprint}"
+    )
+
+
+def _format_switch_identity_line(label: str, runtime: Mapping[str, Any]) -> str:
+    return f"{label} runtime: {_format_runtime_identity(runtime)}"
 
 
 def _append_switch_validation(
@@ -1043,7 +1146,8 @@ def _format_manifest_data_flow(
     flows = manifest.get("resolved_runtime_data_flow")
     if not isinstance(flows, Mapping):
         return "none"
-    stages = flows.get(runtime_contract)
+    data_source = runtime_contract_data_source(runtime_contract) or runtime_contract
+    stages = flows.get(data_source)
     if not isinstance(stages, list):
         return "none"
     return format_runtime_flow_stages(
@@ -1078,19 +1182,19 @@ def _format_manifest_data_sources(manifest: Mapping[str, Any]) -> str:
     return " | ".join(parts) if parts else "none"
 
 
-def _format_manifest_profile_bindings(manifest: Mapping[str, Any]) -> str:
-    raw_bindings = manifest.get("profile_data_sources")
+def _format_manifest_selection_bindings(manifest: Mapping[str, Any], section: str) -> str:
+    raw_bindings = manifest.get(section)
     if not isinstance(raw_bindings, Mapping):
         return "none"
     parts: list[str] = []
-    for profile, raw_binding in raw_bindings.items():
+    for selection, raw_binding in raw_bindings.items():
         if not isinstance(raw_binding, Mapping):
             continue
         data_source = raw_binding.get("data_source") or "unknown"
         mode = raw_binding.get("mode") or "unknown"
         note = raw_binding.get("note") or ""
         note_suffix = f" note={note}" if note else ""
-        parts.append(f"{profile}->{data_source} mode={mode}{note_suffix}")
+        parts.append(f"{selection}->{data_source} mode={mode}{note_suffix}")
     return " | ".join(parts) if parts else "none"
 
 
@@ -1339,6 +1443,3 @@ def _tuple_for_display(value: Any) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         return tuple(str(item) for item in value if item)
     return ()
-
-
-format_runtime_frame_links = format_frame_links

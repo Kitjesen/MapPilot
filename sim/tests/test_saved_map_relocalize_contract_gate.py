@@ -413,8 +413,7 @@ def test_saved_map_relocalize_gate_locks_navigation_contract():
     assert localizer["map_save_source"] == "active_map"
     assert localizer["saved_map_relocalization_supported"] is True
     assert localizer["recovery_method"] == "relocalize_service"
-    for backend in ("fastlio2", "super_lio", "super_lio_relocation"):
-        assert report["contracts"][backend]["saved_map_relocalization_supported"] is False
+    assert report["contracts"]["fastlio2"]["saved_map_relocalization_supported"] is False
     assert report["plans"]["session_navigating_native_dds"]["ensure"] == ("slam",)
     assert report["plans"]["switch_localizer"]["ensure"] == ("slam",)
     assert all(report["localizer_services"].values())

@@ -9,11 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 
 SCHEMA = "lingtu.pct_gpmp_migration_contract.v1"
 
@@ -56,7 +54,7 @@ PCT_RUST_PROCESS_GN_GOLDEN = (
 PCT_NATIVE_RUST_PARITY = "tools/bench/pct_native_rust_parity.py"
 RUST_KERNEL_BUILD_SCRIPT = "scripts/build/build_rust_kernels.py"
 ROS_WORKSPACE_BUILD_SCRIPT = "scripts/build/build_ros_workspace.sh"
-SERVER_SETUP_SCRIPT = "scripts/deploy/setup_server_ros_pct.sh"
+SERVER_SETUP_SCRIPT = "sim/scripts/setup_linux_validation_host.sh"
 
 
 @dataclass(frozen=True)

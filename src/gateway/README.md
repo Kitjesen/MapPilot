@@ -17,7 +17,7 @@ algorithms.
 | route helper logic | `services/` |
 | inspection HTTP surface | `routes/inspection.py` plus native inspection/evidence service adapters |
 | dashboard templates and static assets | `templates/` |
-| optional visualization bridge | `rerun_bridge_module.py` |
+| optional visualization bridge | `visualization/rerun_bridge.py` |
 | auth helpers | `auth.py` |
 
 ## Request Flow

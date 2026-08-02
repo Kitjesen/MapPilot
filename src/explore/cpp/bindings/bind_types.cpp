@@ -3,6 +3,7 @@
 #include <new>
 
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/vector.h>
 
 #include "explore_contract.hpp"
@@ -36,6 +37,14 @@ void bind_types(nb::module_& m) {
     .def_rw("y", &Pose2D::y)
     .def_rw("yaw", &Pose2D::yaw);
 
+  nb::class_<DirectedTarget>(m, "DirectedTarget")
+    .def(nb::init<>())
+    .def("__init__", [](DirectedTarget* target, double x, double y) {
+      new (target) DirectedTarget{x, y};
+    }, nb::arg("x") = 0.0, nb::arg("y") = 0.0)
+    .def_rw("x", &DirectedTarget::x)
+    .def_rw("y", &DirectedTarget::y);
+
   nb::class_<ExploreMapIdentity>(m, "ExploreMapIdentity")
     .def(nb::init<>())
     .def_rw("frame_id", &ExploreMapIdentity::frame_id)
@@ -55,6 +64,8 @@ void bind_types(nb::module_& m) {
     .def_rw("visited_goals", &ExploreInput::visited_goals)
     .def_rw("stamp_s", &ExploreInput::stamp_s)
     .def_rw("map_frame", &ExploreInput::map_frame)
+    .def_rw("directed_target", &ExploreInput::directed_target)
+    .def_rw("directed_intent_revision", &ExploreInput::directed_intent_revision)
     .def_rw("map", &ExploreInput::map);
 
   nb::class_<ExploreCandidate>(m, "ExploreCandidate")
@@ -80,6 +91,7 @@ void bind_types(nb::module_& m) {
     .def_rw("reset_epoch", &ExploreDiagnostics::reset_epoch)
     .def_rw("generation", &ExploreDiagnostics::generation)
     .def_rw("accepted_generation", &ExploreDiagnostics::accepted_generation)
+    .def_rw("accepted_intent_revision", &ExploreDiagnostics::accepted_intent_revision)
     .def_rw("reachable_free_cells", &ExploreDiagnostics::reachable_free_cells)
     .def_rw("frontier_cells", &ExploreDiagnostics::frontier_cells)
     .def_rw("frontier_clusters", &ExploreDiagnostics::frontier_clusters)

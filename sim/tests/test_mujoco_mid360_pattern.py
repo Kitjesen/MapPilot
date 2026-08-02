@@ -256,8 +256,7 @@ def test_pct_saved_map_navigation_passes_short_route_progress_threshold() -> Non
     assert args.min_route_progress_ratio == 0.90
     assert args.goal == DEFAULT_SAVED_MAP_GOAL
     assert '"--min-route-progress-ratio"' in script
-    assert '"--use-last-pose"' in script
-    assert '"--map-root"' in script
+    assert args.start is None
 
 
 def test_fastlio_live_gate_reports_exploration_coverage_growth() -> None:
@@ -413,18 +412,43 @@ def test_fastlio_live_gate_uses_trackable_path_defaults_for_live_explore() -> No
     assert "stuck_dist_thre=0.05" in text
 
 
-def test_mujoco_tare_stack_reframes_cmu_waypoints_to_live_odom_contract() -> None:
-    stack = Path("src/drivers/sim/mujoco/stack.py")
-    text = stack.read_text(encoding="utf-8")
-    endpoint_catalog = Path("src/runtime/profiles/catalog/endpoints.py").read_text(encoding="utf-8")
-    exploration_stack = Path("src/lingtu/assembly/stacks/exploration.py").read_text(encoding="utf-8")
+def test_mujoco_explore_map_variant_uses_live_odom_only_as_host_simulation_contract() -> None:
+    from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
 
-    assert "goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID" in text
-    assert "hold_active_goal_until_terminal=True" in text
-    assert '"goal_frame_id"' in endpoint_catalog
-    assert '"goal_frame_id"' in exploration_stack
-    assert '"hold_active_goal_until_terminal"' in endpoint_catalog
-    assert '"hold_active_goal_until_terminal"' in exploration_stack
+    graph = load_runtime_graph()
+    product = resolve_product_variant_spec(
+        "explore",
+        graph.products["explore"],
+        product_variant="map",
+    )
+    sim_env = graph.envs["sim"]
+    host_backend = sim_env["backends"]["mujoco_host"]
+    native_backend = sim_env["backends"]["mujoco_native"]
+    acceptance_path = ROOT / native_backend["control_mode_manifest"]
+    acceptance = json.loads(acceptance_path.read_text(encoding="utf-8"))
+    autonomy_acceptance = acceptance["control_modes"]["autonomy"]
+    stack = (ROOT / "src/drivers/sim/mujoco/stack.py").read_text(encoding="utf-8")
+
+    assert product["native_control_mode"] == "autonomy"
+    assert product["slam_mode"] == "localization"
+    assert product["requires_map"] is True
+    assert product["autonomy_owner"] == "explore_endpoint"
+    assert "explore" in host_backend["supported_products"]
+    assert host_backend["runner"] == "sim/scripts/mujoco/launch_fastlio2_live.sh"
+    assert host_backend["endpoints"]["contract"]["real_equivalent"] is False
+    assert "/nav/way_point" in host_backend["endpoints"]["contract"]["provided_topics"]
+    assert "goal_frame_id=MUJOCO_LIVE_GOAL_FRAME_ID" in stack
+    assert "hold_active_goal_until_terminal=True" in stack
+
+    assert "explore" not in native_backend["supported_products"]
+    assert "explore" not in native_backend["acceptance_manifests"]
+    assert autonomy_acceptance["runner"]["kind"] == "native_navigation_acceptance"
+    assert {
+        "python_nav_mission",
+        "python_local_planner",
+        "python_path_follower",
+    } <= set(autonomy_acceptance["forbidden_processes"])
+
 
 
 def test_mujoco_inspection_stack_keeps_static_tomogram_saved_map_frame_contract() -> None:

@@ -172,8 +172,10 @@ cost, not from `slope_weight`.
 
 The traversability factor uses the maximum risk sampled along the candidate
 group centerline. The hard comparison is inclusive (`>=`); the soft comparison
-is strict (`>`). Out-of-grid or non-finite cells currently contribute zero
-risk, so freshness and coverage must be enforced at the endpoint input gate.
+is strict (`>`). When a traversability grid is present, out-of-grid,
+non-finite, or invalid cells are fail-closed and contribute hard risk. Freshness
+and coverage must still be enforced at the endpoint input gate so the planner
+does not confuse stale silence with free space.
 
 ### 3.3 Output path is not one of the 343 primitives
 
@@ -193,6 +195,45 @@ published path is a rotated/scaled canonical `startPath` for the winning group.
 The C++ core emits this path in the body frame. `NavLoop` transforms it to the
 map frame for endpoint publication. The Python `LocalPlanner` Module publishes
 in its configured planning frame.
+
+### 3.4 Local recovery contract
+
+Native autonomous recovery is part of local planning, not a separate product
+mode. `NavLoop` may enter recovery only from autonomy when the normal local
+planner cannot produce a safe path or odometry shows insufficient progress for
+the configured blocked interval. Plain `teleop` and `teleop_avoid` never trigger
+autonomous recovery; assisted teleop must stop or publish only a verified
+operator-intent path.
+
+Recovery is candidate-based:
+
+- Translation candidates search an 8-neighbor body-frame lattice. They may
+  include side steps and guarded reverse motion, but every segment must pass
+  the same full-footprint obstacle and traversability checks before it can be
+  tracked.
+- Candidate validation samples the padded robot footprint, not only the path
+  centerline. Obstacle overlap, missing traversability coverage, out-of-grid
+  cells, non-finite cells, and cells at or above hard cost all reject the
+  candidate.
+- `NavLoop` tracks a verified recovery translation with a dedicated slow
+  follower state. Recovery progress is measured from odometry pose/yaw change,
+  not from command publication or elapsed time alone.
+- If no safe translation exists, the planner may produce a verified direct
+  rotation command. Rotation must sample the swept padded footprint in both
+  candidate directions before selecting a direction.
+- Failed translation or rotation directions are not retried blindly in the same
+  recovery episode. Recovery stops after the configured attempt limit and
+  reports exhaustion instead of degrading into an unchecked backup.
+
+Recovery output remains below the final safety gate. A verified recovery path
+or direct rotation is only pre-safety intent; the endpoint safety evaluator and
+control-authority arbitration still have the highest authority over
+`rt/nav/cmd_vel`.
+
+The Python compatibility lane must not replace a recovery stop or direct
+rotation with a synthetic straight-line track. If the native core reports a
+non-zero recovery state, the Python direct-track fallback stays disabled and
+lets the safer stop/recovery status propagate.
 
 ## 4. PathFollower control contract
 

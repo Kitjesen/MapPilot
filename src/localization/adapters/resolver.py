@@ -8,6 +8,13 @@ from typing import Any
 from runtime.plugin_seed import seed_registered_plugins
 from runtime.registry import get
 
+_REMOVED_LOCALIZATION_ADAPTER_ALIASES = {
+    "native",
+    "native_slam",
+    "native_slam_status",
+    "slam",
+}
+
 
 def localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
     """Resolve an explicit localization adapter.
@@ -18,9 +25,15 @@ def localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
     adapter = str(adapter_name or "").strip().lower()
     if not adapter or adapter in {"auto", "default"}:
         raise ImportError("Localization adapter must be explicit; choose 'cpp_slam_status' or 'dds_endpoint'")
+    if adapter in _REMOVED_LOCALIZATION_ADAPTER_ALIASES:
+        raise ImportError(
+            f"Localization adapter alias '{adapter}' was removed; "
+            "omit localization_adapter for SlamModule or use "
+            "'cpp_slam_status'/'dds_endpoint'"
+        )
     if adapter in {"ros2", "ros2_slam_bridge"} or adapter.startswith("ros2_"):
         raise ImportError("ROS2 localization adapters were removed; use 'cpp_slam_status' or 'dds_endpoint'")
-    if adapter in {"cpp_slam_status", "native_slam_status"}:
+    if adapter == "cpp_slam_status":
         preferred = (("localization_adapter", "cpp_slam_status"),)
         fallback_module = "localization.adapters.status"
         fallback_class = "CppSlamStatusAdapterModule"

@@ -1,0 +1,325 @@
+schema_version: lingtu.runtime_graph.env.v1
+name: sim
+summary: Simulation environment with an explicit backend implementation selected per run.
+simulation_only: true
+parameter_overrides:
+  map_input.max_cells: 262144
+  map_input.max_age_s: 0.50
+supported_products:
+  - teleop_avoid
+  - map
+  - nav
+  - explore
+backends:
+  mujoco_native:
+    summary: MuJoCo sensors and ThunderV4 locomotion around the native C++ typed-DDS chain.
+    supported_products:
+      - nav
+      - teleop_avoid
+    process_control: acceptance_runner
+    acceptance_runner: sim/scripts/mujoco/native_navigation_acceptance.py
+    acceptance_manifests:
+      nav: config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json
+      teleop_avoid: config/runtime_graph/acceptance/mujoco_teleop_avoid_native_acceptance.json
+    control_mode_manifest: config/runtime_graph/acceptance/mujoco_native_control_mode_acceptance.json
+    provided_roles:
+      - lidar
+      - slam
+      - maps
+      - traversability
+      - nav
+      - driver
+    host_config:
+      robot: sim_endpoint
+      _module_transport: local
+      _endpoint_transport: dds
+      _endpoint_contract: thunder_dds_v1
+      enable_hw: false
+      enable_visual_backup: false
+      enable_robot_driver: false
+      enable_lidar: false
+      enable_imu: false
+      command_output_mode: endpoint_only
+      hardware_control_boundary: driver
+      localization_adapter: cpp_slam_status
+      native_navigation_endpoint: lingtu-nav-dds
+      enable_map_out: false
+      enable_map_layers: false
+      enable_camera: false
+      use_driver_camera: false
+    endpoints:
+      contract:
+        name: mujoco_native_dds_acceptance_v1
+        transport: dds
+        runtime_class: native_dds
+        data_plane: native_dds
+        real_equivalent: true
+        sensor_publisher: livox_sdk2_stream --stdin-records --dds
+        simulation_command_consumer: ThunderV4 RL policy via C++ typed-DDS cmd_vel tap
+        navigation_command_boundary:
+          request: /nav/command/request
+          ack: /nav/command/ack
+          goal_status: /nav/goal/status
+          client_completion: business_ack_required
+        exploration_command_boundary:
+          request: /nav/exploration/command
+          ack: /nav/exploration/ack
+          client_completion: business_ack_required
+          directed_target:
+            set_kind: 5
+            clear_kind: 6
+            request_fields: [has_directed_target, directed_target_x, directed_target_y, directed_target_ttl_s]
+            ack_field: intent_revision
+            policy: soft_tare_candidate_preference
+            grants_static_boundary_path_authorization: false
+          status_source: /dev/shm/lingtu/explore_status.json
+          status_authoritative_for_commands: false
+        exploration_run_event_stream:
+          topic: /nav/exploration/run/event
+          ordering_cursor: [boot_id, event_sequence]
+          terminal_truth: native_motion_stop_confirmation_before_terminal
+        exploration_segment_boundary:
+          execution_snapshot: /nav/exploration_execution_snapshot
+          request: /nav/exploration_segment/request
+          ack: /nav/exploration_segment/ack
+          status: /nav/exploration_segment/status
+          client_completion: matching_business_ack_and_terminal_status_required
+          request_identity_fields: [session_id, reset_epoch, minimum_generation]
+          response_identity_fields: [session_id, reset_epoch, generation, live]
+        inspection_task_boundary:
+          request: /nav/inspection/task/request
+          ack: /nav/inspection/task/ack
+          status: /nav/inspection/status
+          client_completion: business_ack_required
+          request_identity_fields: [task_id, request_id]
+          response_identity_fields: [task_id, request_id]
+        inspection_task_event_stream:
+          topic: /nav/inspection/task/event
+          ordering_cursor: [boot_id, event_sequence]
+          terminal_truth: native_stop_evidence_before_terminal_state
+        inspection_evidence_boundary:
+          request: /nav/inspection/evidence/request
+          result: /nav/inspection/evidence/result
+          client_completion: matching_persisted_result_required
+        map_activation_boundary:
+          request: /maps/activation/request
+          ack: /maps/activation/ack
+          client_completion: matching_business_ack_required
+          operations: [STAGE, RESTORE, VERIFY]
+          request_identity_fields: [target, previous]
+          stale_rollback_policy: reject_unless_active_exactly_matches_target
+        in_process_navigation_chain:
+          - OctoPlanner3D
+          - LocalPlanner
+          - PathFollower
+          - final command safety gate
+        local_path_role: dds_telemetry_and_preview
+        path_follower_role: embedded_before_cmd_vel_gate
+        source_topics:
+          - /tf
+          - /tf_static
+          - /lidar/raw_frame
+          - /imu/raw
+          - /nav/command/request
+          - /nav/operator_motion/control
+          - /nav/operator_motion/sample
+          - /nav/exploration/command
+          - /nav/inspection/task/request
+          - /nav/inspection/evidence/result
+          - /nav/traversability
+          - /maps/activation/request
+        exposed_topics:
+          - /slam/odometry
+          - /slam/registered_cloud
+          - /slam/map_observation
+          - /slam/map_cloud
+          - /slam/saved_map_cloud
+          - /slam/localization_health
+          - /slam/localization_quality
+          - /maps/state
+          - /maps/scene
+          - /maps/activation/ack
+          - /nav/exploration_grid
+          - /nav/exploration_snapshot
+          - /nav/exploration_execution_snapshot
+          - /nav/exploration_segment/request
+          - /nav/exploration_segment/ack
+          - /nav/exploration_segment/status
+          - /nav/global_path
+          - /nav/local_path
+          - /nav/way_point
+          - /nav/cmd_vel
+          - /nav/command/ack
+          - /nav/operator_motion/ack
+          - /nav/operator_motion/status
+          - /nav/goal/status
+          - /nav/state
+          - /nav/exploration/ack
+          - /nav/exploration/run/event
+          - /nav/inspection/task/ack
+          - /nav/inspection/status
+          - /nav/inspection/task/event
+          - /nav/inspection/evidence/request
+        compatibility_topics:
+          - /nav/teleop_cmd_vel
+          - /nav/goal_pose
+          - /nav/cancel
+        forbidden_modules:
+          - SimEndpointDriverModule
+          - Python GlobalPlanner
+          - Python LocalPlanner
+          - Python PathFollower
+        forbidden_claims:
+          - module_sim_real_equivalence
+          - python_slam
+          - ros2_bridge_required
+  mujoco_host:
+    summary: MuJoCo Host simulation fed by normalized odometry and map-cloud adapters.
+    supported_products:
+      - map
+      - explore
+    process_control: external_runner
+    runner: sim/scripts/mujoco/launch_fastlio2_live.sh
+    provided_roles:
+      - lidar
+      - slam
+      - maps
+      - traversability
+      - nav
+      - driver
+      - explore
+      - host
+    host_config:
+      robot: sim_endpoint
+      _module_transport: local
+      _endpoint_transport: local
+      enable_hw: false
+      enable_native: false
+      enable_map_modules: true
+      enable_map_out: false
+      enable_camera: false
+      use_driver_camera: false
+      enable_gateway: true
+    endpoints:
+      contract:
+        name: mujoco_host_adapter_v1
+        transport: local
+        runtime_class: host_simulation
+        data_plane: python_module_wiring
+        real_equivalent: false
+        source_topics:
+          - /slam/odometry
+          - /slam/map_cloud
+        exposed_topics:
+          - /nav/global_path
+          - /nav/local_path
+          - /nav/cmd_vel
+        provided_topics:
+          - /tf
+          - /lidar/raw_frame
+          - /imu/raw
+          - /slam/odometry
+          - /slam/registered_cloud
+          - /slam/map_observation
+          - /slam/map_cloud
+          - /slam/saved_map_cloud
+          - /slam/localization_health
+          - /maps/state
+          - /maps/scene
+          - /maps/activation/request
+          - /maps/activation/ack
+          - /nav/exploration/command
+          - /nav/exploration/ack
+          - /nav/exploration/run/event
+          - /nav/command/request
+          - /nav/command/ack
+          - /nav/goal/status
+          - /nav/state
+          - /nav/operator_motion/control
+          - /nav/operator_motion/sample
+          - /nav/operator_motion/ack
+          - /nav/operator_motion/status
+          - /nav/traversability
+          - /nav/exploration_snapshot
+          - /nav/exploration_execution_snapshot
+          - /nav/exploration_segment/request
+          - /nav/exploration_segment/ack
+          - /nav/exploration_segment/status
+          - /nav/global_path
+          - /nav/local_path
+          - /nav/way_point
+          - /nav/cmd_vel
+        allowed_modules:
+          - SimEndpointDriverModule
+        forbidden_claims:
+          - real_robot_readiness
+          - native_dds_raw_sensor_equivalence
+          - field_runtime_equivalence
+  gazebo:
+    summary: Gazebo industrial simulation connected through the Host simulation adapter.
+    supported_products:
+      - explore
+    supported_product_variants:
+      explore:
+        - live
+    process_control: external_runner
+    runner: sim/scripts/launch_lingtu_gazebo_industrial_demo.sh
+    provided_roles:
+      - lidar
+      - slam
+      - maps
+      - traversability
+      - nav
+      - driver
+      - explore
+      - host
+    host_config:
+      robot: sim_endpoint
+      _module_transport: local
+      _endpoint_transport: local
+      enable_hw: false
+      enable_native: false
+      enable_map_modules: true
+      enable_map_out: false
+      enable_camera: true
+      use_driver_camera: true
+      enable_gateway: true
+    endpoints:
+      contract:
+        name: gazebo_industrial_adapter_v1
+        transport: local
+        runtime_class: host_simulation
+        data_plane: python_module_wiring
+        real_equivalent: false
+        provided_topics:
+          - /tf
+          - /lidar/raw_frame
+          - /imu/raw
+          - /slam/odometry
+          - /slam/registered_cloud
+          - /slam/map_observation
+          - /slam/map_cloud
+          - /slam/localization_health
+          - /maps/state
+          - /maps/scene
+          - /nav/exploration/command
+          - /nav/exploration/ack
+          - /nav/exploration/run/event
+          - /nav/command/request
+          - /nav/command/ack
+          - /nav/goal/status
+          - /nav/state
+          - /nav/traversability
+          - /nav/exploration_snapshot
+          - /nav/exploration_execution_snapshot
+          - /nav/exploration_segment/request
+          - /nav/exploration_segment/ack
+          - /nav/exploration_segment/status
+          - /nav/global_path
+          - /nav/local_path
+          - /nav/cmd_vel
+        allowed_modules:
+          - SimEndpointDriverModule
+        forbidden_claims:
+          - native_dds_raw_sensor_equivalence
+          - field_runtime_equivalence

@@ -27,6 +27,43 @@ def _payload() -> dict:
             "iter_num": 4,
             "converged": True,
         },
+        "fastlio_lidar_update": {
+            "attempted": True,
+            "accepted": False,
+            "attempt_sequence": 9,
+            "rejection_reason": "candidate_translation_limit_exceeded",
+            "previous_rejection_reason": "no_valid_measurement",
+            "consecutive_rejections": 2,
+            "downsampled_points": 1832,
+            "effective_points": 417,
+            "candidate": {
+                "translation_m": 0.72,
+                "rotation_rad": 0.03,
+                "velocity_mps": 0.91,
+                "velocity_delta_mps": 0.12,
+            },
+            "thresholds": {
+                "max_translation_m": 0.5,
+                "max_rotation_rad": 0.35,
+                "max_velocity_mps": 3.0,
+                "max_velocity_delta_mps": 1.0,
+            },
+            "information_ldlt": {
+                "evaluated": False,
+                "decomposition_success": False,
+                "positive": False,
+            },
+            "candidate_covariance": {
+                "evaluated": False,
+                "finite": False,
+                "positive_diagonal": False,
+            },
+            "posterior_covariance": {
+                "evaluated": False,
+                "finite": False,
+                "positive_diagonal": False,
+            },
+        },
     }
 
 
@@ -66,13 +103,25 @@ def test_cpp_slam_adapter_does_not_invent_metrics_when_block_is_missing() -> Non
     assert "condition_number" not in status
 
 
+def test_cpp_slam_adapter_forwards_fastlio_lidar_update_diagnostics_unchanged() -> None:
+    adapter = CppSlamStatusAdapterModule()
+    statuses: list[dict] = []
+    adapter.localization_status.subscribe(statuses.append)
+    payload = _payload()
+
+    adapter._publish_status_snapshot(payload)
+
+    assert statuses[-1]["reason"] == "tracking"
+    assert statuses[-1]["fastlio_lidar_update"] == payload["fastlio_lidar_update"]
+
+
 def test_fastlio_degeneracy_reaches_gateway_sse_and_rest_without_semantic_policy() -> None:
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import LocalizationStatusResponse
     from gateway.services.runtime_status import build_localization_status
 
     adapter = CppSlamStatusAdapterModule()
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule()
     events = gateway._sse_subscribe()
     adapter.localization_status.subscribe(gateway._on_localization_status)
 

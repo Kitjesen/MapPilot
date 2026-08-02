@@ -17,6 +17,7 @@
 sensor:
   # Raw SLAM input topics used when a runtime validates Fast-LIO from sensors.
   raw_lidar_points: /lidar/raw_frame          # sensor_msgs/PointCloud2 or Livox CustomMsg
+  raw_lidar_packet: /lidar/raw_packet         # packet-level LivoxFrame diagnostics
   raw_imu: /imu/raw                      # sensor_msgs/Imu
 
   # Canonical post-adapter sensor topics for LingTu modules.
@@ -27,17 +28,22 @@ slam:
   odom_prior: /slam/odom_prior              # optional native odometry prior for SLAM
   odometry: /slam/odometry                # nav_msgs/Odometry; canonical localization pose
   registered_cloud: /slam/registered_cloud # sensor_msgs/PointCloud2; robot/body frame
+  map_observation: /slam/map_observation   # exact scan + map<-sensor pose + origin
   map_cloud: /slam/map_cloud              # sensor_msgs/PointCloud2; map/world frame
   cumulative_map_cloud: /slam/cumulative_map_cloud # simulation/debug accumulated cloud
   saved_map_cloud: /slam/saved_map_cloud  # sensor_msgs/PointCloud2; static localization map
   save_map_service: /slam/save_map        # map-save service
 
 maps:
+  activation_request: /maps/activation/request # typed exact STAGE/RESTORE/VERIFY transaction
+  activation_ack: /maps/activation/ack       # request-correlated authoritative result
+  state: /maps/state                    # native mapd process and data health
+  live_cloud: /maps/live_cloud          # current accepted scan in map frame
   voxel_cloud: /maps/voxel_cloud          # cleaned accumulated voxel cloud
+  accumulated_cloud: /maps/accumulated_cloud # bounded persistent block-grid view
   occupancy: /maps/occupancy              # map-domain occupancy product
   elevation: /maps/elevation              # map-domain elevation product
   esdf: /maps/esdf                        # map-domain distance field
-  traversability: /maps/traversability    # map-domain risk product
   scene: /maps/scene                      # layered Gateway/Rerun scene product
 
 driver:
@@ -58,6 +64,7 @@ exploration:
   way_point: /exploration/way_point      # strategy waypoint from TARE/exploration
   exploration_grid: /nav/exploration_grid # nav_msgs/OccupancyGrid
   exploration_snapshot: /nav/exploration_snapshot # lingtu.dds.ExplorationGrid
+  execution_snapshot: /nav/exploration_execution_snapshot # lingtu.dds.ExplorationExecutionGrid
   traversable_frontiers: /nav/traversable_frontiers # read-only candidate list
   frontier_candidate: /nav/frontier_candidate # read-only best candidate
   cmu_local_planner_path: /exploration/cmu_local_planner_path # optional CMU native planner path evidence
@@ -69,13 +76,14 @@ planning:
   planner_status: /nav/planner_status
   adapter_status: /nav/adapter_status
   mission_status: /nav/mission_status
+  navigation_state: /nav/state            # compact authoritative native nav lifecycle
 
 autonomy:
   terrain_map: /nav/terrain_map          # sensor_msgs/PointCloud2
   terrain_map_ext: /nav/terrain_map_ext  # sensor_msgs/PointCloud2
   height_rays: /nav/height_rays          # application/json fixed-pattern terrain rays
   local_path: /nav/local_path            # nav_msgs/Path
-  cmd_vel: /nav/cmd_vel                  # geometry_msgs/TwistStamped or Twist adapter
+  cmd_vel: /nav/cmd_vel                  # native lingtu.dds.FinalVelocityCommand; adapters may project TwistStamped
   stop: /nav/stop
   slow_down: /nav/slow_down
   way_point: /nav/way_point              # current execution waypoint/progress marker
@@ -87,16 +95,25 @@ autonomy:
   navigation_boundary: /nav/navigation_boundary
   added_obstacles: /nav/added_obstacles
   check_obstacle: /nav/check_obstacle
-  nav_state: /nav/nav_state
 
 control:
   nav_command_request: /nav/command/request  # typed C++ goal/cancel/teleop command
   nav_command_ack: /nav/command/ack          # native business-level ACK
+  operator_motion_control: /nav/operator_motion/control # native authority claim/release/hold
+  operator_motion_sample: /nav/operator_motion/sample # latest-only body-frame operator velocity intent
+  operator_motion_ack: /nav/operator_motion/ack # native operator motion business ACK
+  operator_motion_status: /nav/operator_motion/status # native authority/output evidence
+  nav_goal_status: /nav/goal/status           # request-correlated native goal lifecycle
   exploration_command: /nav/exploration/command # typed native exploration lifecycle command
   exploration_ack: /nav/exploration/ack      # matching exploration business ACK
-  inspection_command: /nav/inspection/command # typed route start/pause/resume/cancel
-  inspection_ack: /nav/inspection/ack        # native inspection business ACK
+  exploration_run_event: /nav/exploration/run/event # immutable ordered finite-run facts
+  exploration_segment_request: /nav/exploration_segment/request # identity-bound rolling-map execution request
+  exploration_segment_ack: /nav/exploration_segment/ack # native segment business ACK
+  exploration_segment_status: /nav/exploration_segment/status # native segment lifecycle state
+  inspection_task_request: /nav/inspection/task/request # task-addressed native inspection request
+  inspection_task_ack: /nav/inspection/task/ack # task-id preserving native inspection ACK
   inspection_status: /nav/inspection/status  # route and current point progress
+  inspection_task_event: /nav/inspection/task/event # immutable ordered inspection task facts
   goal_pose: /nav/goal_pose              # geometry_msgs/PoseStamped
   goal_point: /nav/goal_point            # geometry_msgs/PointStamped
   patrol_goals: /nav/patrol_goals        # JSON route command
@@ -154,6 +171,8 @@ required_runtime_topics:
 - /slam/registered_cloud
 - /slam/map_cloud
 - /nav/exploration_grid
+- /nav/exploration_snapshot
+- /nav/exploration_execution_snapshot
 - /nav/global_path
 - /nav/local_path
 - /nav/terrain_map
@@ -166,6 +185,8 @@ required_nav_topics:
 - /slam/registered_cloud
 - /slam/map_cloud
 - /nav/exploration_grid
+- /nav/exploration_snapshot
+- /nav/exploration_execution_snapshot
 - /nav/global_path
 - /nav/local_path
 - /nav/terrain_map
@@ -320,6 +341,12 @@ data_formats:
     ros_type: sensor_msgs/msg/PointCloud2
     frame_role: body
     required_fields: [x, y, z]
+  map_observation:
+    topic: /slam/map_observation
+    ros_type: lingtu.dds.MapObservation
+    frame_role: map
+    required_fields: [header, observation_sequence, reset_epoch, sensor_frame, map_sensor, sensor_origin, scan, pose_confidence, localization_quality, pose_state, pose_reason]
+    note: Accepted incremental scan with its exact same-timestamp map<-sensor transform. Consumers reject old epochs and non-increasing sequences.
   map_cloud:
     topic: /slam/map_cloud
     ros_type: sensor_msgs/msg/PointCloud2
@@ -355,21 +382,36 @@ data_formats:
     frame_role: imu
     required_fields: [header, orientation, angular_velocity, linear_acceleration]
     note: Native DDS IMU payload; ROS Imu is compatibility only.
-  maps_elevation:
-    topic: /maps/elevation
-    ros_type: application/json
-    frame_role: map_or_odom
-    required_fields: [grid, resolution, origin]
-  maps_esdf:
-    topic: /maps/esdf
-    ros_type: application/json
-    frame_role: map_or_odom
-    required_fields: [distance, resolution, origin]
+  maps_state:
+    topic: /maps/state
+    ros_type: lingtu.dds.MapRuntimeState
+    frame_role: map
+    required_fields: [producer_boot_id, running, live, reset_epoch, observation_sequence, generation, dds_write_failures, dds_unhealthy_writers, required_publications_ready, current_generation_published, realtime_clouds_published_generation, map_layers_published_generation, scene_published_generation, voxel_snapshot_omitted_cells, voxel_capacity_rejections, accumulated_capacity_rejections, capacity_limited, dds_scene_oversize_rejections]
+  map_activation_request:
+    topic: /maps/activation/request
+    ros_type: lingtu.dds.MapActivationRequest
+    frame_role: metadata
+    required_fields: [request_id, operation, target, previous, caller, reason]
+  map_activation_ack:
+    topic: /maps/activation/ack
+    ros_type: lingtu.dds.MapActivationAck
+    frame_role: metadata
+    required_fields: [request_id, operation, accepted, message, changed, target, previous, active, producer_boot_id]
+  maps_cloud_layer:
+    topic: /maps/voxel_cloud
+    ros_type: lingtu.dds.MapCloudLayer
+    frame_role: map
+    required_fields: [header, layer, cloud, reset_epoch, observation_sequence, generation, live]
+  maps_grid:
+    topic: /maps/occupancy
+    ros_type: lingtu.dds.MapGrid
+    frame_role: map
+    required_fields: [header, layer, info, data, reset_epoch, observation_sequence, generation, live]
   maps_scene:
     topic: /maps/scene
-    ros_type: application/json
-    frame_role: map_or_odom
-    required_fields: [schema_version, layers]
+    ros_type: lingtu.dds.MapScene
+    frame_role: map
+    required_fields: [header, producer_boot_id, reset_epoch, observation_sequence, generation, live, live_cloud, voxel_cloud, accumulated_cloud, occupancy, elevation, esdf]
   odometry:
     topic: /slam/odometry
     ros_type: nav_msgs/msg/Odometry
@@ -380,8 +422,10 @@ data_formats:
     frame_role: odom_to_body
   cmd_vel:
     topic: /nav/cmd_vel
-    ros_type: geometry_msgs/msg/TwistStamped
+    ros_type: lingtu.dds.FinalVelocityCommand
     frame_role: body
+    required_fields: [header, host_boot_id, producer_boot_id, output_seq, source_wall_ns, twist]
+    note: Final post-safety logical velocity envelope. Only the field driver may forward it to Brainstem; ROS adapters may explicitly project TwistStamped.
   height_rays:
     topic: /nav/height_rays
     ros_type: application/json
@@ -403,6 +447,12 @@ data_formats:
     frame_role: map
     required_fields: [header, info, data, session_id, map_id, map_version, artifact_hash, reset_epoch, generation, live]
     note: Strict trinary rolling occupancy snapshot with restart-safe map identity.
+  exploration_execution_snapshot:
+    topic: /nav/exploration_execution_snapshot
+    ros_type: lingtu.dds.ExplorationExecutionGrid
+    frame_role: map
+    required_fields: [header, info, occupancy, terrain_cost, session_id, reset_epoch, generation, live, terrain_risk_stamp, terrain_risk_ready]
+    note: Atomic rolling occupancy and terrain-risk execution input. Missing, stale, or inconsistent terrain risk blocks segment execution.
   local_planner_control_hint:
     topic: /nav/local_planner/control_hint
     ros_type: application/json
@@ -433,44 +483,110 @@ data_formats:
     topic: /nav/command/request
     ros_type: lingtu.dds.NavigationCommandRequest
     frame_role: request_dependent
-    required_fields: [request_id, kind]
-    note: Typed C++ field command envelope. Goal, cancel, and operator velocity requests share this reliable volatile request channel.
+    required_fields: [client_id, task_id, request_id, kind]
+    note: Typed C++ field command envelope. task_id is the stable logical navigation task and request_id is one delivery attempt; goal/cancel commands use a separate journal from high-rate teleop.
   nav_command_ack:
     topic: /nav/command/ack
     ros_type: lingtu.dds.NavigationCommandAck
     frame_role: map
-    required_fields: [request_id, kind, accepted, reason]
-    note: Endpoint business acceptance or rejection with a native map-frame Header.
+    required_fields: [task_id, request_id, kind, accepted, reason]
+    note: Endpoint business acceptance or rejection for one request attempt; this ACK is not a terminal task result.
+  operator_motion_control:
+    topic: /nav/operator_motion/control
+    ros_type: lingtu.dds.OperatorMotionControl
+    frame_role: metadata
+    required_fields: [source_id, source_epoch, source_sequence, request_id, action, lease_ttl_ms, reason]
+    note: Low-rate native operator motion authority control. Adapters may claim, release, or hold; the native endpoint remains the authority owner.
+  operator_motion_sample:
+    topic: /nav/operator_motion/sample
+    ros_type: lingtu.dds.OperatorMotionSample
+    frame_role: body
+    required_fields: [source_id, source_epoch, source_sequence, request_id, deadman, velocity, freshness_budget_ms, source_stamp_ns]
+    note: High-rate latest-only body-frame operator velocity intent. It is not final velocity until native authority, obstacle, traversability, and final safety checks publish /nav/cmd_vel.
+  operator_motion_ack:
+    topic: /nav/operator_motion/ack
+    ros_type: lingtu.dds.OperatorMotionAck
+    frame_role: metadata
+    required_fields: [source_id, source_epoch, source_sequence, request_id, action, accepted, reason, accepted_sequence, final_output_sequence]
+    note: Native business ACK for operator motion Claim, Hold, or Release only. Sample is best-effort intent; status carries last_sample/admitted/final sequence evidence.
+  operator_motion_status:
+    topic: /nav/operator_motion/status
+    ros_type: lingtu.dds.OperatorMotionStatus
+    frame_role: map
+    required_fields: [active_source_id, active_source_epoch, has_active_authority, holding, has_active_sample, last_sample_sequence, admitted_sequence, final_output_sequence, authority_reason, input_gate_reason, teleop_output, final_cmd_vel]
+    note: Native operator motion DDS evidence stream. No in-repo Python DDS reader is declared today; Gateway readiness consumes the native JSON status mirror, while external diagnostics may subscribe directly. Header is map/status-frame; teleop_output and final_cmd_vel are body-frame twists.
+  nav_goal_status:
+    topic: /nav/goal/status
+    ros_type: lingtu.dds.NavigationGoalStatus
+    frame_role: map
+    required_fields: [header, boot_id, event_sequence, task_id, request_id, state, goal_epoch, reason]
+    note: Native navigation task lifecycle transition. task_id remains stable across request retries; boot_id plus event_sequence provides at-least-once replay deduplication across Host restarts.
+  navigation_state:
+    topic: /nav/state
+    ros_type: lingtu.dds.NavigationState
+    frame_role: map
+    required_fields: [header, boot_id, state_sequence, control_mode, lifecycle_state, active_task_id, active_request_id, goal_epoch, map_id, map_version, map_hash, planning_state, execution_state, recovery_state, progress, authority, hold_reason, failure_code]
+    note: Compact authoritative navd lifecycle state; Host APIs normalize state_sequence to sequence and diagnostics remain a separate contract.
   exploration_command:
     topic: /nav/exploration/command
     ros_type: lingtu.dds.ExplorationCommandRequest
     frame_role: map
-    required_fields: [request_id, kind, session_id, reason]
-    note: Typed start, pause, resume, or stop request for the native exploration FSM.
+    required_fields: [request_id, exploration_run_id, kind, session_id, has_directed_target, directed_target_x, directed_target_y, directed_target_ttl_s, reason]
+    note: Typed admission request for the native exploration FSM. exploration_run_id is a caller-created canonical uppercase ULID for one finite execution; request_id is only the idempotency key. Kinds 5 and 6 set and clear a directed map-frame target preference.
   exploration_ack:
     topic: /nav/exploration/ack
     ros_type: lingtu.dds.ExplorationCommandAck
     frame_role: map
-    required_fields: [request_id, kind, accepted, reason, session_id]
-    note: Native exploration business ACK; transport delivery alone is not acceptance.
-  inspection_command:
-    topic: /nav/inspection/command
-    ros_type: lingtu.dds.InspectionCommandRequest
+    required_fields: [request_id, exploration_run_id, kind, accepted, duplicate, reason, session_id, intent_revision]
+    note: Native exploration admission ACK echoing request_id and exploration_run_id. duplicate is endpoint-owned replay truth. The ACK is not lifecycle or terminal truth; intent_revision identifies an accepted directed-target intent.
+  exploration_run_event:
+    topic: /nav/exploration/run/event
+    ros_type: lingtu.dds.ExplorationRunEvent
     frame_role: map
-    required_fields: [request_id, kind, route_id, route_revision]
-    note: Typed start/pause/resume/cancel command referencing a native C++ route.
-  inspection_ack:
-    topic: /nav/inspection/ack
-    ros_type: lingtu.dds.InspectionCommandAck
+    required_fields: [timestamp_s, frame_id, boot_id, event_sequence, kind, exploration_run_id, start_request_id, command_request_id, product_session_id, state, route, map_id, map_version, artifact_hash, reason, motion_stop_confirmed, motion_stop_reason]
+    note: Immutable ordered exploration-run fact. boot_id plus event_sequence is the ordering cursor. Paused and terminal states are authoritative only with motion_stop_confirmed=true and explicit motion_stop_reason.
+  exploration_segment_request:
+    topic: /nav/exploration_segment/request
+    ros_type: lingtu.dds.ExplorationSegmentRequest
     frame_role: map
-    required_fields: [request_id, kind, accepted, reason, run_id]
-    note: Native inspection command acceptance or rejection with a map-frame Header.
+    required_fields: [request_id, kind, session_id, reset_epoch, minimum_generation, target, reason]
+    note: TARE-only request for navd to select and validate an observed-free rolling-map prefix. It is separate from generic navigation goals.
+  exploration_segment_ack:
+    topic: /nav/exploration_segment/ack
+    ros_type: lingtu.dds.ExplorationSegmentAck
+    frame_role: map
+    required_fields: [request_id, kind, accepted, session_id, reset_epoch, generation, live, reason]
+    note: navd business acceptance for an identity-bound rolling-map segment.
+  exploration_segment_status:
+    topic: /nav/exploration_segment/status
+    ros_type: lingtu.dds.ExplorationSegmentStatus
+    frame_role: map
+    required_fields: [request_id, state, session_id, reset_epoch, generation, live, reason]
+    note: navd lifecycle state for an identity-bound rolling-map segment.
+  inspection_task_request:
+    topic: /nav/inspection/task/request
+    ros_type: lingtu.dds.InspectionTaskRequest
+    frame_role: map
+    required_fields: [task_id, request_id, kind, route_id, route_revision]
+    note: Product inspection lifecycle command with distinct task and request identities.
+  inspection_task_ack:
+    topic: /nav/inspection/task/ack
+    ros_type: lingtu.dds.InspectionTaskAck
+    frame_role: map
+    required_fields: [task_id, request_id, kind, accepted, reason, run_id]
+    note: Native inspection task admission result preserving caller task identity.
   inspection_status:
     topic: /nav/inspection/status
     ros_type: lingtu.dds.InspectionStatus
     frame_role: map
     required_fields: [run_id, route_id, state, point_index, point_count]
     note: Live status from the native C++ multi-point inspection executor.
+  inspection_task_event:
+    topic: /nav/inspection/task/event
+    ros_type: lingtu.dds.InspectionTaskEvent
+    frame_role: map
+    required_fields: [boot_id, event_sequence, kind, task_id, request_id, command_request_id, state, map_id, map_version, route_id, route_revision, point_index, point_count, loop_index, retry_count, point_id, action, action_request_id, evidence_id, reason]
+    note: Ordered native task fact; boot_id plus event_sequence exposes endpoint restart and event gaps.
   inspection_evidence_request:
     topic: /nav/inspection/evidence/request
     ros_type: lingtu.dds.InspectionEvidenceRequest
@@ -492,6 +608,8 @@ topic_formats:
   /lidar/raw_frame:
   - raw_livox_custom
   - raw_timed_pointcloud2
+  /lidar/raw_packet:
+  - raw_livox_custom
   /imu/raw:
   - lingtu.dds.Imu
   /slam/odom_prior:
@@ -504,6 +622,8 @@ topic_formats:
   - state_estimation_at_scan
   /slam/registered_cloud:
   - registered_cloud
+  /slam/map_observation:
+  - map_observation
   /slam/map_cloud:
   - map_cloud
   /camera/color/image_raw:
@@ -522,16 +642,24 @@ topic_formats:
   - map_cloud
   /slam/saved_map_cloud:
   - map_cloud
+  /maps/state:
+  - maps_state
+  /maps/activation/request:
+  - map_activation_request
+  /maps/activation/ack:
+  - map_activation_ack
+  /maps/live_cloud:
+  - maps_cloud_layer
   /maps/voxel_cloud:
-  - map_cloud
+  - maps_cloud_layer
+  /maps/accumulated_cloud:
+  - maps_cloud_layer
   /maps/occupancy:
-  - nav_msgs/msg/OccupancyGrid
+  - maps_grid
   /maps/elevation:
-  - maps_elevation
+  - maps_grid
   /maps/esdf:
-  - maps_esdf
-  /maps/traversability:
-  - traversability
+  - maps_grid
   /maps/scene:
   - maps_scene
   /slam/map_command:
@@ -546,6 +674,8 @@ topic_formats:
   - nav_msgs/msg/OccupancyGrid
   /nav/exploration_snapshot:
   - exploration_snapshot
+  /nav/exploration_execution_snapshot:
+  - exploration_execution_snapshot
   /nav/traversable_frontiers:
   - traversable_frontier_candidates
   /nav/frontier_candidate:
@@ -583,16 +713,38 @@ topic_formats:
   - nav_command_request
   /nav/command/ack:
   - nav_command_ack
+  /nav/operator_motion/control:
+  - operator_motion_control
+  /nav/operator_motion/sample:
+  - operator_motion_sample
+  /nav/operator_motion/ack:
+  - operator_motion_ack
+  /nav/operator_motion/status:
+  - operator_motion_status
+  /nav/goal/status:
+  - nav_goal_status
+  /nav/state:
+  - navigation_state
   /nav/exploration/command:
   - exploration_command
   /nav/exploration/ack:
   - exploration_ack
-  /nav/inspection/command:
-  - inspection_command
-  /nav/inspection/ack:
-  - inspection_ack
+  /nav/exploration/run/event:
+  - exploration_run_event
+  /nav/exploration_segment/request:
+  - exploration_segment_request
+  /nav/exploration_segment/ack:
+  - exploration_segment_ack
+  /nav/exploration_segment/status:
+  - exploration_segment_status
+  /nav/inspection/task/request:
+  - inspection_task_request
+  /nav/inspection/task/ack:
+  - inspection_task_ack
   /nav/inspection/status:
   - inspection_status
+  /nav/inspection/task/event:
+  - inspection_task_event
   /nav/inspection/evidence/request:
   - inspection_evidence_request
   /nav/inspection/evidence/result:
@@ -724,6 +876,8 @@ topic_ros_types:
   /lidar/raw_frame:
   - livox_ros_driver2/msg/CustomMsg
   - sensor_msgs/msg/PointCloud2
+  /lidar/raw_packet:
+  - livox_ros_driver2/msg/CustomMsg
   /imu/raw:
   - sensor_msgs/msg/Imu
   /slam/odom_prior:
@@ -736,6 +890,8 @@ topic_ros_types:
   - nav_msgs/msg/Odometry
   /slam/registered_cloud:
   - sensor_msgs/msg/PointCloud2
+  /slam/map_observation:
+  - lingtu.dds.MapObservation
   /slam/map_cloud:
   - sensor_msgs/msg/PointCloud2
   /camera/color/image_raw:
@@ -754,18 +910,26 @@ topic_ros_types:
   - sensor_msgs/msg/PointCloud2
   /slam/saved_map_cloud:
   - sensor_msgs/msg/PointCloud2
+  /maps/state:
+  - lingtu.dds.MapRuntimeState
+  /maps/activation/request:
+  - lingtu.dds.MapActivationRequest
+  /maps/activation/ack:
+  - lingtu.dds.MapActivationAck
+  /maps/live_cloud:
+  - lingtu.dds.MapCloudLayer
   /maps/voxel_cloud:
-  - sensor_msgs/msg/PointCloud2
+  - lingtu.dds.MapCloudLayer
+  /maps/accumulated_cloud:
+  - lingtu.dds.MapCloudLayer
   /maps/occupancy:
-  - nav_msgs/msg/OccupancyGrid
+  - lingtu.dds.MapGrid
   /maps/elevation:
-  - application/json
+  - lingtu.dds.MapGrid
   /maps/esdf:
-  - application/json
-  /maps/traversability:
-  - application/json
+  - lingtu.dds.MapGrid
   /maps/scene:
-  - application/json
+  - lingtu.dds.MapScene
   /slam/map_command:
   - std_msgs/msg/String
   /slam/map_event:
@@ -778,6 +942,8 @@ topic_ros_types:
   - nav_msgs/msg/OccupancyGrid
   /nav/exploration_snapshot:
   - lingtu.dds.ExplorationGrid
+  /nav/exploration_execution_snapshot:
+  - lingtu.dds.ExplorationExecutionGrid
   /nav/traversable_frontiers:
   - application/json
   /nav/frontier_candidate:
@@ -815,22 +981,44 @@ topic_ros_types:
   - lingtu.dds.NavigationCommandRequest
   /nav/command/ack:
   - lingtu.dds.NavigationCommandAck
+  /nav/operator_motion/control:
+  - lingtu.dds.OperatorMotionControl
+  /nav/operator_motion/sample:
+  - lingtu.dds.OperatorMotionSample
+  /nav/operator_motion/ack:
+  - lingtu.dds.OperatorMotionAck
+  /nav/operator_motion/status:
+  - lingtu.dds.OperatorMotionStatus
+  /nav/goal/status:
+  - lingtu.dds.NavigationGoalStatus
+  /nav/state:
+  - lingtu.dds.NavigationState
   /nav/exploration/command:
   - lingtu.dds.ExplorationCommandRequest
   /nav/exploration/ack:
   - lingtu.dds.ExplorationCommandAck
-  /nav/inspection/command:
-  - lingtu.dds.InspectionCommandRequest
-  /nav/inspection/ack:
-  - lingtu.dds.InspectionCommandAck
+  /nav/exploration/run/event:
+  - lingtu.dds.ExplorationRunEvent
+  /nav/exploration_segment/request:
+  - lingtu.dds.ExplorationSegmentRequest
+  /nav/exploration_segment/ack:
+  - lingtu.dds.ExplorationSegmentAck
+  /nav/exploration_segment/status:
+  - lingtu.dds.ExplorationSegmentStatus
+  /nav/inspection/task/request:
+  - lingtu.dds.InspectionTaskRequest
+  /nav/inspection/task/ack:
+  - lingtu.dds.InspectionTaskAck
   /nav/inspection/status:
   - lingtu.dds.InspectionStatus
+  /nav/inspection/task/event:
+  - lingtu.dds.InspectionTaskEvent
   /nav/inspection/evidence/request:
   - lingtu.dds.InspectionEvidenceRequest
   /nav/inspection/evidence/result:
   - lingtu.dds.InspectionEvidenceResult
   /nav/cmd_vel:
-  - geometry_msgs/msg/TwistStamped
+  - lingtu.dds.FinalVelocityCommand
   /nav/stop:
   - std_msgs/msg/Bool
   /nav/slow_down:
@@ -951,6 +1139,8 @@ topic_ros_types:
 topic_allowed_frame_ids:
   /lidar/raw_frame:
   - lidar_link
+  /lidar/raw_packet:
+  - lidar_link
   /imu/raw:
   - lidar_link
   /slam/odom_prior:
@@ -964,6 +1154,8 @@ topic_allowed_frame_ids:
   - odom
   /slam/registered_cloud:
   - body
+  /slam/map_observation:
+  - map
   /slam/map_cloud:
   - map
   - odom
@@ -973,9 +1165,17 @@ topic_allowed_frame_ids:
   /slam/saved_map_cloud:
   - map
   - odom
+  /maps/state:
+  - map
+  /maps/activation/request: []
+  /maps/activation/ack: []
+  /maps/live_cloud:
+  - map
   /maps/voxel_cloud:
   - map
   - odom
+  /maps/accumulated_cloud:
+  - map
   /maps/occupancy:
   - map
   - odom
@@ -983,9 +1183,6 @@ topic_allowed_frame_ids:
   - map
   - odom
   /maps/esdf:
-  - map
-  - odom
-  /maps/traversability:
   - map
   - odom
   /maps/scene:
@@ -1002,6 +1199,8 @@ topic_allowed_frame_ids:
   - map
   - odom
   /nav/exploration_snapshot:
+  - map
+  /nav/exploration_execution_snapshot:
   - map
   /nav/traversable_frontiers:
   - map
@@ -1027,15 +1226,35 @@ topic_allowed_frame_ids:
   - body
   /nav/command/ack:
   - map
+  /nav/operator_motion/control: []
+  /nav/operator_motion/sample:
+  - body
+  /nav/operator_motion/ack: []
+  /nav/operator_motion/status:
+  - map
+  /nav/goal/status:
+  - map
+  /nav/state:
+  - map
   /nav/exploration/command:
   - map
   /nav/exploration/ack:
   - map
-  /nav/inspection/command:
+  /nav/exploration/run/event:
   - map
-  /nav/inspection/ack:
+  /nav/exploration_segment/request:
+  - map
+  /nav/exploration_segment/ack:
+  - map
+  /nav/exploration_segment/status:
+  - map
+  /nav/inspection/task/request:
+  - map
+  /nav/inspection/task/ack:
   - map
   /nav/inspection/status:
+  - map
+  /nav/inspection/task/event:
   - map
   /nav/inspection/evidence/request:
   - map
@@ -1061,26 +1280,31 @@ topic_allowed_frame_ids:
   - body
 topic_default_frame_ids:
   /lidar/raw_frame: lidar_link
+  /lidar/raw_packet: lidar_link
   /imu/raw: lidar_link
   /slam/odom_prior: odom
   /driver/odometry: odom
   /slam/odometry: odom
   /slam/state_at_scan: odom
   /slam/registered_cloud: body
+  /slam/map_observation: map
   /slam/map_cloud: map
   /slam/cumulative_map_cloud: map
   /slam/saved_map_cloud: map
+  /maps/state: map
+  /maps/live_cloud: map
   /maps/voxel_cloud: map
+  /maps/accumulated_cloud: map
   /maps/occupancy: map
   /maps/elevation: map
   /maps/esdf: map
-  /maps/traversability: map
   /maps/scene: map
   /gnss/fix: gnss_antenna
   /gnss/status: gnss_antenna
   /gnss/odom: map
   /nav/exploration_grid: map
   /nav/exploration_snapshot: map
+  /nav/exploration_execution_snapshot: map
   /nav/traversable_frontiers: map
   /nav/frontier_candidate: map
   /nav/terrain_map: map
@@ -1090,11 +1314,20 @@ topic_default_frame_ids:
   /nav/teleop_cmd_vel: body
   /nav/command/request: map
   /nav/command/ack: map
+  /nav/operator_motion/sample: body
+  /nav/operator_motion/status: map
+  /nav/goal/status: map
+  /nav/state: map
   /nav/exploration/command: map
   /nav/exploration/ack: map
-  /nav/inspection/command: map
-  /nav/inspection/ack: map
+  /nav/exploration/run/event: map
+  /nav/exploration_segment/request: map
+  /nav/exploration_segment/ack: map
+  /nav/exploration_segment/status: map
+  /nav/inspection/task/request: map
+  /nav/inspection/task/ack: map
   /nav/inspection/status: map
+  /nav/inspection/task/event: map
   /nav/inspection/evidence/request: map
   /nav/inspection/evidence/result: map
   /nav/global_path: map
@@ -1105,6 +1338,8 @@ topic_default_frame_ids:
   /nav/cmd_vel: body
 real_runtime_topic_allowed_frame_ids:
   /lidar/raw_frame:
+  - lidar_link
+  /lidar/raw_packet:
   - lidar_link
   /imu/raw:
   - lidar_link
@@ -1119,6 +1354,8 @@ real_runtime_topic_allowed_frame_ids:
   - odom
   /slam/registered_cloud:
   - body
+  /slam/map_observation:
+  - map
   /slam/map_cloud:
   - map
   /slam/cumulative_map_cloud:
@@ -1127,15 +1364,21 @@ real_runtime_topic_allowed_frame_ids:
   /slam/saved_map_cloud:
   - map
   - odom
+  /maps/state:
+  - map
+  /maps/activation/request: []
+  /maps/activation/ack: []
+  /maps/live_cloud:
+  - map
   /maps/voxel_cloud:
+  - map
+  /maps/accumulated_cloud:
   - map
   /maps/occupancy:
   - map
   /maps/elevation:
   - map
   /maps/esdf:
-  - map
-  /maps/traversability:
   - map
   /maps/scene:
   - map
@@ -1150,6 +1393,8 @@ real_runtime_topic_allowed_frame_ids:
   - map
   - odom
   /nav/exploration_snapshot:
+  - map
+  /nav/exploration_execution_snapshot:
   - map
   /nav/traversable_frontiers:
   - map
@@ -1173,15 +1418,35 @@ real_runtime_topic_allowed_frame_ids:
   - body
   /nav/command/ack:
   - map
+  /nav/operator_motion/control: []
+  /nav/operator_motion/sample:
+  - body
+  /nav/operator_motion/ack: []
+  /nav/operator_motion/status:
+  - map
+  /nav/goal/status:
+  - map
+  /nav/state:
+  - map
   /nav/exploration/command:
   - map
   /nav/exploration/ack:
   - map
-  /nav/inspection/command:
+  /nav/exploration/run/event:
   - map
-  /nav/inspection/ack:
+  /nav/exploration_segment/request:
+  - map
+  /nav/exploration_segment/ack:
+  - map
+  /nav/exploration_segment/status:
+  - map
+  /nav/inspection/task/request:
+  - map
+  /nav/inspection/task/ack:
   - map
   /nav/inspection/status:
+  - map
+  /nav/inspection/task/event:
   - map
   /nav/inspection/evidence/request:
   - map
@@ -1206,26 +1471,31 @@ real_runtime_topic_allowed_frame_ids:
   - body
 real_runtime_topic_default_frame_ids:
   /lidar/raw_frame: lidar_link
+  /lidar/raw_packet: lidar_link
   /imu/raw: lidar_link
   /slam/odom_prior: odom
   /driver/odometry: odom
   /slam/odometry: odom
   /slam/state_at_scan: odom
   /slam/registered_cloud: body
+  /slam/map_observation: map
   /slam/map_cloud: map
   /slam/cumulative_map_cloud: map
   /slam/saved_map_cloud: map
+  /maps/state: map
+  /maps/live_cloud: map
   /maps/voxel_cloud: map
+  /maps/accumulated_cloud: map
   /maps/occupancy: map
   /maps/elevation: map
   /maps/esdf: map
-  /maps/traversability: map
   /maps/scene: map
   /gnss/fix: gnss_antenna
   /gnss/status: gnss_antenna
   /gnss/odom: map
   /nav/exploration_grid: map
   /nav/exploration_snapshot: map
+  /nav/exploration_execution_snapshot: map
   /nav/traversable_frontiers: map
   /nav/frontier_candidate: map
   /nav/terrain_map: map
@@ -1235,11 +1505,20 @@ real_runtime_topic_default_frame_ids:
   /nav/teleop_cmd_vel: body
   /nav/command/request: map
   /nav/command/ack: map
+  /nav/operator_motion/sample: body
+  /nav/operator_motion/status: map
+  /nav/goal/status: map
+  /nav/state: map
   /nav/exploration/command: map
   /nav/exploration/ack: map
-  /nav/inspection/command: map
-  /nav/inspection/ack: map
+  /nav/exploration/run/event: map
+  /nav/exploration_segment/request: map
+  /nav/exploration_segment/ack: map
+  /nav/exploration_segment/status: map
+  /nav/inspection/task/request: map
+  /nav/inspection/task/ack: map
   /nav/inspection/status: map
+  /nav/inspection/task/event: map
   /nav/inspection/evidence/request: map
   /nav/inspection/evidence/result: map
   /nav/global_path: map
@@ -1281,7 +1560,7 @@ runtime_data_flow_topics:
   - /nav/added_obstacles
   - /nav/check_obstacle
   - /nav/planner_status
-  thunder_field:
+  thunder:
   - /lidar/raw_frame
   - /imu/raw
   - /slam/odometry
@@ -1433,11 +1712,16 @@ algorithm_interfaces:
     owner: lingtu_traversable_frontier
     map_dependency: live_occupancy_grid_and_traversability_layers_read_only_preview
   tare_exploration:
-    inputs: [/slam/odometry, /tf, /nav/exploration_snapshot, /nav/exploration/command]
-    outputs: [/nav/command/request, /nav/exploration/ack]
+    inputs: [/slam/odometry, /tf, /nav/exploration_snapshot, /nav/exploration/command, /nav/goal/status, /nav/exploration_segment/ack, /nav/exploration_segment/status]
+    outputs: [/nav/command/request, /nav/exploration/ack, /nav/exploration/run/event, /nav/exploration_segment/request]
     owner: native_explore_endpoint
     map_dependency: identity_versioned_rolling_occupancy_snapshot
     safety_contract: stale_odometry_or_snapshot_cancels_active_goal_before_replan
+  rolling_map_segment_execution:
+    inputs: [/slam/odometry, /nav/exploration_execution_snapshot, /nav/exploration_segment/request]
+    outputs: [/nav/global_path, /nav/exploration_segment/ack, /nav/exploration_segment/status]
+    owner: native_nav_endpoint
+    map_dependency: atomic_identity_bound_rolling_execution_grid
   global_planning:
     inputs: [/slam/odometry, /slam/map_cloud, /exploration/way_point, /nav/goal_pose]
     outputs: [/nav/global_path, /nav/way_point]
@@ -1462,7 +1746,10 @@ runtime_data_flow_stage_algorithm_interfaces:
   - exploration_strategy
   - wavefront_frontier_exploration
   - traversable_frontier_preview
+  tare_exploration:
   - tare_exploration
+  rolling_map_segment_execution:
+  - rolling_map_segment_execution
   global_planning:
   - global_planning
   - octoplanner3d_global_planning
@@ -1531,6 +1818,48 @@ runtime_data_flow:
   - exploration
   frequency: map_layers_1_10hz_frontier_0.5_2hz
   transport_policy: direct_default_shm_for_dense_maps_dds_for_external_exploration
+- name: tare_exploration
+  inputs:
+  - /slam/odometry
+  - /tf
+  - /nav/exploration_snapshot
+  - /nav/exploration/command
+  - /nav/goal/status
+  - /nav/exploration_segment/ack
+  - /nav/exploration_segment/status
+  outputs:
+  - /nav/command/request
+  - /nav/exploration/ack
+  - /nav/exploration/run/event
+  - /nav/exploration_segment/request
+  owner: native_explore_endpoint
+  frame_role: map
+  map_dependency: identity_versioned_rolling_occupancy_snapshot
+  producer: native_explore_endpoint
+  consumers:
+  - native_nav_endpoint
+  - gateway
+  frequency: command_and_segment_event_driven
+  transport_policy: typed_dds_process_boundary
+- name: rolling_map_segment_execution
+  inputs:
+  - /slam/odometry
+  - /nav/exploration_execution_snapshot
+  - /nav/exploration_segment/request
+  outputs:
+  - /nav/global_path
+  - /nav/exploration_segment/ack
+  - /nav/exploration_segment/status
+  owner: native_nav_endpoint
+  frame_role: map
+  map_dependency: atomic_identity_bound_rolling_execution_grid
+  producer: native_nav_endpoint
+  consumers:
+  - native_explore_endpoint
+  - local_planning_and_following
+  - gateway
+  frequency: segment_event_driven
+  transport_policy: typed_dds_process_boundary
 - name: global_planning
   inputs:
   - /slam/odometry
@@ -1726,7 +2055,7 @@ resolved_runtime_data_flow:
     consumers: []
     frequency: ''
     transport_policy: direct
-  thunder_field:
+  thunder:
   - name: endpoint_adapter
     inputs:
     - /lidar/raw_frame
@@ -2476,7 +2805,7 @@ data_sources:
     slam_source: none
     localization_source: mock_or_in_process_odometry
     mapping_source: mock_or_in_process_map
-  thunder_field:
+  thunder:
     provider: hardware
     owns: [mid360_lidar, imu, robot_actuation]
     normalized_outputs: [/lidar/raw_frame, /imu/raw]
@@ -2585,73 +2914,44 @@ profile_data_sources:
     data_source: mujoco_fastlio2_live
     mode: mujoco_raw_mid360_fastlio_octoplanner3d_closed_loop
     note: 'OctoPlanner3D MuJoCo path: MID-360 + Fast-LIO source, OctoPlanner3D global plan, local planner/path follower, and simulated cmd_vel closure.'
-  sim_gazebo:
-    profile: sim_gazebo
-    data_source: gazebo_industrial
-    mode: gazebo_ros_native_simulation
-    note: ''
-  sim_industrial:
-    profile: sim_industrial
-    data_source: gazebo_industrial
-    mode: gazebo_industrial_delivery_demo
-    note: ''
-  sim_cmu_tare:
-    profile: sim_cmu_tare
-    data_source: cmu_unity_external
-    mode: external_cmu_unity_tare_adapter
-    note: ''
   lite:
     profile: lite
     data_source: thunder_lite_local
     mode: minimal_thunder_no_ros
     note: Driver/safety/navigation shell only; no SLAM, map, semantic, ROS bridge, or external services.
+product_data_sources:
   teleop:
-    profile: teleop
-    data_source: thunder_field
+    product: teleop
+    data_source: thunder
     mode: real_robot_remote_control
     note: Operator command only; no autonomous navigation decision chain.
   teleop_avoid:
-    profile: teleop_avoid
-    data_source: thunder_field
+    product: teleop_avoid
+    data_source: thunder
     mode: real_robot_remote_control_with_obstacle_avoidance
     note: Operator command with live SLAM, obstacle, and traversability gates; no saved map or global planning.
   map:
-    profile: map
-    data_source: thunder_field
+    product: map
+    data_source: thunder
     mode: real_robot_mapping
     note: ''
   tracking:
-    profile: tracking
-    data_source: thunder_field
+    product: tracking
+    data_source: thunder
     mode: real_robot_tracking
     note: Follow explicit map-frame goals through native planning and path following.
   nav:
-    profile: nav
-    data_source: thunder_field
+    product: nav
+    data_source: thunder
     mode: real_robot_saved_map_navigation
     note: ''
   inspection:
-    profile: inspection
-    data_source: thunder_field
+    product: inspection
+    data_source: thunder
     mode: real_robot_inspection
     note: Typed multi-point inspection route execution over saved-map navigation.
   explore:
-    profile: explore
-    data_source: thunder_field
-    mode: real_robot_live_exploration
-    note: ''
-  tare_explore:
-    profile: tare_explore
-    data_source: thunder_field
-    mode: real_robot_tare_exploration
-    note: ''
-  super_lio:
-    profile: super_lio
-    data_source: thunder_field
-    mode: real_robot_super_lio_mapping
-    note: ''
-  super_lio_relocation:
-    profile: super_lio_relocation
-    data_source: thunder_field
-    mode: real_robot_super_lio_relocalization
+    product: explore
+    data_source: thunder
+    mode: real_robot_exploration
     note: ''

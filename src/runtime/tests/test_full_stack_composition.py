@@ -33,13 +33,11 @@ def test_compose_full_stack_modules_builds_minimal_stub_graph() -> None:
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={},
     )
     names = _entry_names(bp)
@@ -51,7 +49,6 @@ def test_compose_full_stack_modules_builds_minimal_stub_graph() -> None:
     assert "TaskSchedulerModule" not in names
     assert "nav.safety" in names
     assert "nav.velocity_mux" in names
-    assert "ExternalServiceManagerModule" not in names
     assert "PerceptionModule" not in names
     assert "GatewayModule" not in names
 
@@ -65,13 +62,11 @@ def test_compose_endpoint_only_stack_uses_native_safety_and_omits_python_control
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={"command_output_mode": "endpoint_only"},
     )
     names = _entry_names(bp)
@@ -79,6 +74,33 @@ def test_compose_endpoint_only_stack_uses_native_safety_and_omits_python_control
     assert "nav.safety" not in names
     assert "GeofenceManagerModule" not in names
     assert "nav.velocity_mux" not in names
+
+
+def test_compose_endpoint_only_gateway_uses_camera_relay_without_python_teleop() -> None:
+    bp = compose_full_stack_modules(
+        robot="stub",
+        driver_module="StubDogModule",
+        slam_profile="none",
+        detector="yoloe",
+        encoder="mobileclip",
+        llm="mock",
+        planner_backend="astar",
+        gateway_port=5050,
+        enable_native=False,
+        enable_semantic=False,
+        enable_gateway=True,
+        enable_teleop=True,
+        enable_map_modules=False,
+        config={"command_output_mode": "endpoint_only"},
+    )
+    names = _entry_names(bp)
+    media_entry = next(entry for entry in bp._entries if entry.name == "CameraJpegRelayModule")
+
+    assert "CameraJpegRelayModule" in names
+    assert "TeleopModule" not in names
+    assert not hasattr(media_entry.module_cls, "joy_input")
+    assert not hasattr(media_entry.module_cls, "cmd_vel")
+    assert not hasattr(media_entry.module_cls, "teleop_active")
 
 
 def test_compose_full_stack_modules_can_disable_support_services() -> None:
@@ -90,13 +112,11 @@ def test_compose_full_stack_modules_can_disable_support_services() -> None:
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={
             "enable_goals": False,
             "enable_patrol_routes": False,
@@ -119,30 +139,24 @@ def test_compose_full_stack_modules_can_disable_endpoint_host_services() -> None
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=True,
         enable_map_modules=False,
-        manage_external_services=False,
         config={
             "enable_hw": False,
             "enable_robot_driver": False,
             "localization_adapter": "dds_endpoint",
-            "manage_session_services": False,
         },
     )
     names = _entry_names(bp)
-    gateway_entry = next(entry for entry in bp._entries if entry.name == "GatewayModule")
 
     assert "hw" not in names
-    assert "ExternalServiceManagerModule" not in names
     assert "StubDogModule" not in names
-    assert gateway_entry.config["manage_session_services"] is False
 
 
-def test_compose_full_stack_modules_does_not_add_legacy_sim_lidar_by_scene_xml_only() -> None:
+def test_compose_full_stack_modules_does_not_add_sim_lidar_by_scene_xml_only() -> None:
     bp = compose_full_stack_modules(
         robot="stub",
         driver_module="StubDogModule",
@@ -151,21 +165,19 @@ def test_compose_full_stack_modules_does_not_add_legacy_sim_lidar_by_scene_xml_o
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         scene_xml="sim/worlds/mujoco/building_scene.xml",
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={},
     )
 
     assert "SimPointCloudProvider" not in _entry_names(bp)
 
 
-def test_compose_full_stack_modules_keeps_legacy_sim_lidar_opt_in() -> None:
+def test_compose_full_stack_modules_adds_explicit_sim_lidar() -> None:
     bp = compose_full_stack_modules(
         robot="stub",
         driver_module="StubDogModule",
@@ -174,47 +186,16 @@ def test_compose_full_stack_modules_keeps_legacy_sim_lidar_opt_in() -> None:
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         scene_xml="sim/worlds/mujoco/building_scene.xml",
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
-        config={"enable_legacy_sim_lidar": True},
+        config={"enable_sim_lidar": True},
     )
 
     assert "SimPointCloudProvider" in _entry_names(bp)
-
-
-def test_compose_full_stack_modules_honors_session_service_env_override(monkeypatch) -> None:
-    monkeypatch.setenv("LINGTU_MANAGE_SESSION_SERVICES", "0")
-
-    bp = compose_full_stack_modules(
-        robot="stub",
-        driver_module="StubDogModule",
-        slam_profile="bridge",
-        detector="yoloe",
-        encoder="mobileclip",
-        llm="mock",
-        planner_backend="astar",
-        tomogram="",
-        gateway_port=5050,
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=True,
-        enable_map_modules=False,
-        manage_external_services=False,
-        config={
-            "enable_hw": False,
-            "enable_robot_driver": False,
-            "localization_adapter": "dds_endpoint",
-        },
-    )
-    gateway_entry = next(entry for entry in bp._entries if entry.name == "GatewayModule")
-
-    assert gateway_entry.config["manage_session_services"] is False
 
 
 def test_compose_full_stack_modules_can_disable_local_lidar_driver() -> None:
@@ -226,13 +207,11 @@ def test_compose_full_stack_modules_can_disable_local_lidar_driver() -> None:
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={
             "enable_hw": False,
             "enable_robot_driver": False,
@@ -248,60 +227,6 @@ def test_compose_full_stack_modules_can_disable_local_lidar_driver() -> None:
     assert "SlamBridgeModule" not in names
 
 
-def test_compose_full_stack_modules_keeps_lidar_driver_start_opt_in() -> None:
-    default_bp = compose_full_stack_modules(
-        robot="thunder",
-        driver_module="ThunderDriver",
-        slam_profile="none",
-        detector="yoloe",
-        encoder="mobileclip",
-        llm="mock",
-        planner_backend="astar",
-        tomogram="",
-        gateway_port=5050,
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=False,
-        enable_map_modules=False,
-        manage_external_services=False,
-        config={
-            "enable_hw": False,
-            "enable_robot_driver": False,
-            "enable_lidar": True,
-            "lidar_ip": "192.0.2.10",
-        },
-    )
-    explicit_bp = compose_full_stack_modules(
-        robot="thunder",
-        driver_module="ThunderDriver",
-        slam_profile="none",
-        detector="yoloe",
-        encoder="mobileclip",
-        llm="mock",
-        planner_backend="astar",
-        tomogram="",
-        gateway_port=5050,
-        enable_native=False,
-        enable_semantic=False,
-        enable_gateway=False,
-        enable_map_modules=False,
-        manage_external_services=False,
-        config={
-            "enable_hw": False,
-            "enable_robot_driver": False,
-            "enable_lidar": True,
-            "lidar_ip": "192.0.2.10",
-            "lidar_start_driver": True,
-        },
-    )
-
-    assert _entry_config(default_bp, "lidar") == {"ip": "192.0.2.10"}
-    assert _entry_config(explicit_bp, "lidar") == {
-        "ip": "192.0.2.10",
-        "start_driver": True,
-    }
-
-
 def test_compose_full_stack_modules_does_not_pass_lidar_transport() -> None:
     bp = compose_full_stack_modules(
         robot="thunder",
@@ -311,13 +236,11 @@ def test_compose_full_stack_modules_does_not_pass_lidar_transport() -> None:
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={
             "enable_hw": False,
             "enable_robot_driver": False,
@@ -337,13 +260,11 @@ def test_compose_full_stack_modules_uses_mujoco_lidar_backend_for_mujoco_driver(
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={
             "enable_hw": False,
             "enable_lidar": True,
@@ -363,13 +284,11 @@ def test_compose_full_stack_modules_keeps_mujoco_driver_sensor_publish_off_by_de
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={"enable_hw": False},
     )
 
@@ -387,13 +306,11 @@ def test_compose_full_stack_modules_adds_imu_role_when_enabled() -> None:
         encoder="mobileclip",
         llm="mock",
         planner_backend="astar",
-        tomogram="",
         gateway_port=5050,
         enable_native=False,
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         config={
             "enable_hw": False,
             "enable_imu": True,
@@ -556,6 +473,26 @@ def test_gnss_stack_rejects_unknown_explicit_backend(monkeypatch) -> None:
         gnss(backend="serial")
 
 
+def test_gnss_stack_does_not_read_retired_device_manager_bridge_key(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "runtime.config.get_config",
+        lambda: _RawConfig(
+            {
+                "gnss": {
+                    "enabled": True,
+                    "device": "/dev/wtrtk980",
+                    "gnss_backend": "wtrtk980",
+                    "device_manager_bridge": True,
+                }
+            }
+        ),
+    )
+
+    assert "GnssBridgeModule" not in _entry_names(gnss())
+
+
 @pytest.mark.parametrize("backend", ["dds", "replay"])
 def test_gnss_stack_enabled_argument_can_create_non_serial_role_without_config(
     monkeypatch,
@@ -622,7 +559,6 @@ def test_product_blueprint_keeps_wiring_outside_stack_composition() -> None:
         enable_semantic=False,
         enable_gateway=False,
         enable_map_modules=False,
-        manage_external_services=False,
         run_startup_checks=False,
     )
     names = _entry_names(bp)

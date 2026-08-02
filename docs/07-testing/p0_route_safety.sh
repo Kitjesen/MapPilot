@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # P0-03: no-motion route safety preview.
 #
-# Pre-condition: localizer/navigation profile is running, active map is loaded,
+# Pre-condition: nav Product is committed and healthy, the active map is loaded,
 # odometry is healthy, and the robot is stationary. This script previews a
 # route through Gateway without publishing goal_pose or cmd_vel.
 

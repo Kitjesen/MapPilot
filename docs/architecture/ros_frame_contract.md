@@ -68,25 +68,33 @@ table and the mirror tests.
 | Topic | Thunder field default frame | General allowed frames | Thunder field evidence required | Thunder field allowed frames |
 | --- | --- | --- | --- | --- |
 | `/lidar/raw_frame` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
+| `/lidar/raw_packet` | `lidar_link` | `lidar_link` | no | `lidar_link` |
 | `/imu/raw` | `lidar_link` | `lidar_link` | yes | `lidar_link` |
 | `/slam/odom_prior` | `odom` | `odom` | no | `odom` |
 | `/driver/odometry` | `odom` | `odom` | no | `odom` |
 | `/slam/odometry` | `odom` | `odom`, `map` | yes | `odom`, `map` |
 | `/slam/state_at_scan` | `odom` | `odom` | no | `odom` |
 | `/slam/registered_cloud` | `body` | `body` | yes | `body` |
+| `/slam/map_observation` | `map` | `map` | no | `map` |
 | `/slam/map_cloud` | `map` | `map`, `odom` | yes | `map` |
 | `/slam/cumulative_map_cloud` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/slam/saved_map_cloud` | `map` | `map`, `odom` | no | `map`, `odom` |
+| `/maps/state` | `map` | `map` | no | `map` |
+| `/maps/activation/request` | `n/a` | `n/a` | no | `n/a` |
+| `/maps/activation/ack` | `n/a` | `n/a` | no | `n/a` |
+| `/maps/live_cloud` | `map` | `map` | no | `map` |
 | `/maps/voxel_cloud` | `map` | `map`, `odom` | no | `map` |
+| `/maps/accumulated_cloud` | `map` | `map` | no | `map` |
 | `/maps/occupancy` | `map` | `map`, `odom` | no | `map` |
 | `/maps/elevation` | `map` | `map`, `odom` | no | `map` |
 | `/maps/esdf` | `map` | `map`, `odom` | no | `map` |
-| `/maps/traversability` | `map` | `map`, `odom` | no | `map` |
 | `/maps/scene` | `map` | `map`, `odom` | no | `map` |
 | `/gnss/fix` | `gnss_antenna` | `gnss_antenna` | no | `gnss_antenna` |
 | `/gnss/status` | `gnss_antenna` | `gnss_antenna` | no | `gnss_antenna` |
 | `/gnss/odom` | `map` | `map`, `odom` | no | `map`, `odom` |
 | `/nav/exploration_grid` | `map` | `map`, `odom` | no | `map`, `odom` |
+| `/nav/exploration_snapshot` | `map` | `map` | no | `map` |
+| `/nav/exploration_execution_snapshot` | `map` | `map` | no | `map` |
 | `/nav/traversable_frontiers` | `map` | `map`, `odom` | no | `map` |
 | `/nav/frontier_candidate` | `map` | `map`, `odom` | no | `map` |
 | `/nav/terrain_map` | `map` | `map`, `odom` | no | `map`, `odom` |
@@ -96,9 +104,21 @@ table and the mirror tests.
 | `/nav/teleop_cmd_vel` | `body` | `body` | no | `body` |
 | `/nav/command/request` | `map` | `map`, `body` | no | `map`, `body` |
 | `/nav/command/ack` | `map` | `map` | no | `map` |
-| `/nav/inspection/command` | `map` | `map` | no | `map` |
-| `/nav/inspection/ack` | `map` | `map` | no | `map` |
+| `/nav/operator_motion/control` | `n/a` | `n/a` | no | `n/a` |
+| `/nav/operator_motion/sample` | `body` | `body` | no | `body` |
+| `/nav/operator_motion/ack` | `n/a` | `n/a` | no | `n/a` |
+| `/nav/operator_motion/status` | `map` | `map` | no | `map` |
+| `/nav/goal/status` | `map` | `map` | no | `map` |
+| `/nav/state` | `map` | `map` | no | `map` |
+| `/nav/exploration/command` | `map` | `map` | no | `map` |
+| `/nav/exploration/ack` | `map` | `map` | no | `map` |
+| `/nav/exploration_segment/request` | `map` | `map` | no | `map` |
+| `/nav/exploration_segment/ack` | `map` | `map` | no | `map` |
+| `/nav/exploration_segment/status` | `map` | `map` | no | `map` |
 | `/nav/inspection/status` | `map` | `map` | no | `map` |
+| `/nav/inspection/task/request` | `map` | `map` | no | `map` |
+| `/nav/inspection/task/ack` | `map` | `map` | no | `map` |
+| `/nav/inspection/task/event` | `map` | `map` | no | `map` |
 | `/nav/inspection/evidence/request` | `map` | `map` | no | `map` |
 | `/nav/inspection/evidence/result` | `map` | `map` | no | `map` |
 | `/nav/global_path` | `map` | `map`, `odom` | yes | `map` |
@@ -156,9 +176,9 @@ ports. It should translate model frames into the canonical contract above.
 
 ## Current Gaps
 
-1. Gazebo/GZ now has a first-class `sim_gazebo` profile and launch entry, but
-   the default robot is a navigation proxy model for ROS-native validation, not
-   a full Thunder/S100P dynamics model.
+1. Gazebo/GZ remains a native simulation backend contract, but no longer has
+   a broken Host Profile entrypoint; use ProductControl sim env backends or
+   dedicated validation launchers instead.
 2. `body`/`base_link` aliasing is still bridge-level convention, not enforced by
    a real TF validation gate.
 3. `/slam/map_cloud` semantics are mixed across legacy simulation code. New code

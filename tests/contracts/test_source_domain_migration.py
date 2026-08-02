@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 SCAN_ROOTS = (
@@ -15,7 +14,7 @@ SCAN_ROOTS = (
     ROOT / "tests",
 )
 
-ACTIVE_TEXT_ROOTS = SCAN_ROOTS + (ROOT / ".github",)
+ACTIVE_TEXT_ROOTS = (*SCAN_ROOTS, ROOT / ".github")
 
 REMOVED_TOP_LEVEL_PACKAGES = (
     "core",
@@ -26,7 +25,7 @@ REMOVED_TOP_LEVEL_PACKAGES = (
     "webrtc",
 )
 
-REMOVED_IMPORT_ROOTS = REMOVED_TOP_LEVEL_PACKAGES + (
+REMOVED_IMPORT_ROOTS = (*REMOVED_TOP_LEVEL_PACKAGES,
     "nav.core",
     "kernels.nav_core",
     "_nav_core",
@@ -88,12 +87,10 @@ OLD_NAME_TOKENS = (
 )
 
 TOKEN_SCAN_ALLOWLIST = {
-    "tests/contracts/test_module_first_runtime_boundaries.py",
+    "tests/contracts/test_runtime_architecture_boundaries.py",
     "tests/contracts/test_source_domain_migration.py",
-    # These files describe an external CMU Unity workspace layout, not LingTu src.
-    "sim/scripts/cmu_unity_sim_gate.py",
+    # This file describes an external CMU Unity workspace layout, not LingTu src.
     "sim/scripts/launch_cmu_unity_baseline.sh",
-    "sim/scripts/launch_cmu_unity_lingtu_runtime.sh",
     # Explains, by name, that src/semantic/ was retired and stays deleted -- the
     # token appears as historical/explanatory prose, not a live reference.
     "src/perception/README.md",

@@ -209,7 +209,7 @@ LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF \
 ```
 
 Expected outputs include the Livox stream executable and
-`build/slam_core/lingtu_slam_cyclone_runtime`. The default Fast-LIO2 build is
+`build/slam_core/slamd`. The default Fast-LIO2 build is
 ROS-free; its dependency probe checks the native C++ libraries listed above.
 
 For global saved-map relocalization without an initial pose, build the optional
@@ -278,12 +278,13 @@ Use the smallest checks that validate the artifacts you built:
 ```bash
 uv run --locked python -m pytest src/runtime/tests/ -q
 uv run --locked python lingtu.py runtime-audit
-uv run --locked python lingtu.py runtime-spec nav --endpoint thunder_field --json
+python -m lingtu.control switch nav --env real --map MAP_NAME --dry-run --json
 bash scripts/build/build_octoplanner3d.sh --diagnose
 ```
 
-The first three commands inspect Python contracts and the resolved field
-boundary; they do not start a field session. The final diagnostic reports the
+The first three commands inspect Python contracts and the resolved Product
+boundary; the ProductControl command is a dry run and does not start a field
+session. The final diagnostic reports the
 configured planner build and linkage state. Native build scripts also run their
 targeted tests unless their documented test control environment variable has
 been deliberately changed.
@@ -344,7 +345,7 @@ applicable field gate as described in
 | Fast-LIO CMake probe fails | Native SLAM C++ dependencies | Install/repair Eigen3, PCL components, and yaml-cpp; rerun the script. |
 | Native endpoint test catalog is incomplete | C++ test dependency/build configuration | Install GoogleTest development files and reconfigure with the build script. |
 | OctoPlanner3D PCL converter cannot link | PCL prefix/configuration | Run `build_octoplanner3d.sh --diagnose`; follow the vendored-PCL guide if needed. |
-| A product launch asks for ROS 2 | Compatibility configuration leaked into a native path | Check the selected profile/endpoint; ROS 2 is not a normal native field prerequisite. |
+| A Product launch asks for ROS 2 | Compatibility configuration leaked into a native path | Check the selected Product, env, and RunPlan; ROS 2 is not a normal native field prerequisite. |
 | A field service is running but navigation is blocked | Runtime readiness, not compilation | Stop treating it as a build issue; inspect localization, map artifacts, route preview, and safety via `scripts/lingtu`. |
 
 ## Related references

@@ -10,12 +10,13 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from nav.services.plan.contracts import (
+    GlobalPlanningMap,
     GlobalPlanRequest,
     GlobalPlanResult,
-    GlobalPlanningMap,
     coerce_planning_map,
 )
 from runtime.msgs.numpy_compat import np
+from runtime.runtime_interface import map_frame_id
 
 _ABI_VERSION = 1
 
@@ -241,7 +242,7 @@ class FarPlannerBackend:
         self._grid = None
         self._resolution = 0.2
         self._origin = np.asarray([0.0, 0.0], dtype=float)
-        self._frame_id = "map"
+        self._frame_id = map_frame_id()
         self._generation = 0
         self._last_plan_error = ""
         self._last_plan_reached_goal = False
@@ -302,13 +303,14 @@ class FarPlannerBackend:
             else np.asarray([0.0, 0.0], dtype=float)
         )
         requested_generation = int(getattr(planning_map, "generation", 0) or 0)
+        frame_id = str(planning_map.frame_id or map_frame_id())
         same_unversioned_map = bool(
             requested_generation == 0
             and self._grid is not None
             and self._grid.shape == grid.shape
             and float(self._resolution) == float(planning_map.resolution)
             and np.array_equal(self._origin, origin)
-            and self._frame_id == str(planning_map.frame_id or "map")
+            and self._frame_id == frame_id
             and np.array_equal(self._grid, grid)
         )
         generation = (
@@ -323,7 +325,7 @@ class FarPlannerBackend:
         map_value.resolution_m = float(planning_map.resolution)
         map_value.origin_x_m = float(origin[0])
         map_value.origin_y_m = float(origin[1])
-        frame_bytes = _bytes(planning_map.frame_id or "map")
+        frame_bytes = _bytes(frame_id)
         map_value.frame_id = frame_bytes
         map_value.generation = generation
         map_value.cells = states.ctypes.data_as(ctypes.POINTER(ctypes.c_int8))
@@ -337,7 +339,7 @@ class FarPlannerBackend:
         self._grid = grid.copy()
         self._resolution = float(planning_map.resolution)
         self._origin = origin.copy()
-        self._frame_id = str(planning_map.frame_id or "map")
+        self._frame_id = frame_id
         self._generation = generation
         self._last_plan_diagnostics = {
             "planner": "far",

@@ -1,5 +1,7 @@
 # LingTu API Docs
 
+Status: generated reference index
+
 Generated API inventories. Regenerate them from source before relying on route
 or tool counts.
 
@@ -7,6 +9,7 @@ or tool counts.
 
 | Doc | Description | Source |
 |------|------|------|
+| [External map API](external_map_api.md) | Supported partner-facing map operations and API-key setup | Maintained contract |
 | [MCP tools](mcp_tools.md) | `@skill` methods exposed through JSON-RPC MCP | Scans Module source files under `src/` |
 | [Gateway REST API](gateway_rest.md) | Gateway REST/HTTP endpoints on port 5050 | Scans FastAPI route registrations under `src/gateway/routes/` |
 
@@ -14,6 +17,7 @@ or tool counts.
 
 ```bash
 python scripts/docs/extract_api_docs.py
+python scripts/docs/extract_api_docs.py --check
 ```
 
 ## Runtime boundary

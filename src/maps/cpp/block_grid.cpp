@@ -7,7 +7,10 @@
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <queue>
 #include <stdexcept>
+#include <tuple>
+#include <unordered_set>
 
 #if defined(_WIN32)
 #define NOMINMAX
@@ -128,6 +131,10 @@ void ValidateConfig(const BlockGridConfig &config) {
   if (!IsFinite(config.prune_abs_log_odds_below) || config.prune_abs_log_odds_below < 0.0F) {
     throw std::invalid_argument("BlockGridConfig.prune_abs_log_odds_below is invalid");
   }
+  if (config.max_runtime_cells == 0U || config.max_runtime_blocks == 0U ||
+      config.max_persisted_cells == 0U) {
+    throw std::invalid_argument("BlockGridConfig capacity limits must be non-zero");
+  }
 }
 
 void WriteHeader(std::ofstream &file, const Header &header) {
@@ -214,6 +221,7 @@ PersistentBlockGrid::PersistentBlockGrid(BlockGridConfig config) : config_(confi
 
 void PersistentBlockGrid::Reset() {
   blocks_.clear();
+  live_cell_count_ = 0U;
   ++generation_;
   last_stats_ = {};
 }
@@ -230,10 +238,14 @@ void PersistentBlockGrid::InsertHit(float x_m, float y_m, float z_m) {
   if (!IsFinite(x_m) || !IsFinite(y_m) || !IsFinite(z_m)) {
     return;
   }
-  ApplyHit(ToCellKey(x_m, y_m, z_m, config_.cell_size_m));
-  ++generation_;
+  const bool applied =
+      ApplyHit(ToCellKey(x_m, y_m, z_m, config_.cell_size_m));
+  if (applied) {
+    ++generation_;
+  }
   last_stats_ = {};
-  last_stats_.hit_updates = 1U;
+  last_stats_.hit_updates = applied ? 1U : 0U;
+  last_stats_.capacity_rejections = applied ? 0U : 1U;
   last_stats_.total_cells = CellCount();
 }
 
@@ -293,6 +305,28 @@ BlockGridUpdateStats PersistentBlockGrid::InsertRays(const float *origins_xyz,
 
     const auto hit_key = ToCellKey(hx, hy, hz, config_.cell_size_m);
     const int steps = std::max(1, static_cast<int>(std::ceil(length / step_m)));
+    std::vector<CellKey> free_keys;
+    free_keys.reserve(std::min<std::size_t>(
+        static_cast<std::size_t>(steps), config_.max_runtime_cells));
+    std::unordered_set<BlockKey, BlockKeyHash> new_blocks;
+    std::size_t new_cells = 0U;
+    bool capacity_rejected = false;
+    const std::size_t available_cells =
+        static_cast<std::size_t>(config_.max_runtime_cells) - live_cell_count_;
+    const std::size_t available_blocks =
+        static_cast<std::size_t>(config_.max_runtime_blocks) - blocks_.size();
+    const auto register_new_cell = [&](const CellKey &key) {
+      if (FindCell(key) != nullptr) {
+        return true;
+      }
+      ++new_cells;
+      const BlockKey block_key = ToBlockKey(key, config_.block_size);
+      if (blocks_.find(block_key) == blocks_.end()) {
+        new_blocks.insert(block_key);
+      }
+      return new_cells <= available_cells && new_blocks.size() <= available_blocks;
+    };
+
     CellKey previous_free{std::numeric_limits<std::int32_t>::min(), 0, 0};
     for (int i = 0; i < steps; ++i) {
       const float t = static_cast<float>(i) / static_cast<float>(steps);
@@ -300,15 +334,35 @@ BlockGridUpdateStats PersistentBlockGrid::InsertRays(const float *origins_xyz,
       if (free_key == hit_key || free_key == previous_free) {
         continue;
       }
-      ApplyMiss(free_key);
+      free_keys.push_back(free_key);
+      if (!register_new_cell(free_key)) {
+        capacity_rejected = true;
+        break;
+      }
       previous_free = free_key;
+    }
+    if (!capacity_rejected && !register_new_cell(hit_key)) {
+      capacity_rejected = true;
+    }
+    if (capacity_rejected) {
+      stats.capacity_rejections += std::max<std::size_t>(1U, new_cells);
+      ++stats.rays;
+      continue;
+    }
+
+    for (const CellKey &free_key : free_keys) {
+      if (!ApplyMiss(free_key)) {
+        throw std::logic_error("block grid ray capacity preflight invariant failed");
+      }
       ++stats.free_updates;
     }
-    ApplyHit(hit_key);
+    if (!ApplyHit(hit_key)) {
+      throw std::logic_error("block grid ray hit capacity preflight invariant failed");
+    }
     ++stats.hit_updates;
     ++stats.rays;
   }
-  if (stats.rays > 0U) {
+  if (stats.free_updates > 0U || stats.hit_updates > 0U) {
     ++generation_;
   }
   stats.total_cells = CellCount();
@@ -320,7 +374,43 @@ std::size_t PersistentBlockGrid::ClearColumn(float x_m, float y_m) {
   if (!IsFinite(x_m) || !IsFinite(y_m)) {
     return 0U;
   }
-  const auto column = ToCellKey(x_m, y_m, 0.0F, config_.cell_size_m);
+  const float column[2] = {x_m, y_m};
+  return ClearColumns(
+      column,
+      1U,
+      -std::numeric_limits<float>::max(),
+      std::numeric_limits<float>::max());
+}
+
+std::size_t PersistentBlockGrid::ClearColumns(
+    const float *columns_xy,
+    std::size_t column_count,
+    float min_z_m,
+    float max_z_m) {
+  if (column_count == 0U) {
+    return 0U;
+  }
+  if (columns_xy == nullptr || !IsFinite(min_z_m) || !IsFinite(max_z_m) ||
+      min_z_m > max_z_m) {
+    throw std::invalid_argument("ClearColumns arguments are invalid");
+  }
+  std::unordered_set<std::uint64_t> columns;
+  columns.reserve(column_count);
+  for (std::size_t index = 0U; index < column_count; ++index) {
+    const float x_m = columns_xy[index * 2U];
+    const float y_m = columns_xy[index * 2U + 1U];
+    if (!IsFinite(x_m) || !IsFinite(y_m)) {
+      continue;
+    }
+    const auto key = ToCellKey(x_m, y_m, 0.0F, config_.cell_size_m);
+    columns.insert(
+        (static_cast<std::uint64_t>(static_cast<std::uint32_t>(key.x)) << 32U) |
+        static_cast<std::uint32_t>(key.y));
+  }
+  if (columns.empty()) {
+    return 0U;
+  }
+
   std::size_t cleared = 0U;
   for (auto &item : blocks_) {
     Block &block = item.second;
@@ -333,10 +423,24 @@ std::size_t PersistentBlockGrid::ClearColumn(float x_m, float y_m) {
           static_cast<std::int32_t>((offset / config_.block_size) % config_.block_size);
       const std::int32_t global_x = item.first.x * config_.block_size + local_x;
       const std::int32_t global_y = item.first.y * config_.block_size + local_y;
-      if (global_x == column.x && global_y == column.y) {
+      const std::int32_t local_z =
+          static_cast<std::int32_t>(
+              offset / (config_.block_size * config_.block_size));
+      const std::int32_t global_z =
+          item.first.z * config_.block_size + local_z;
+      const float center_z =
+          (static_cast<float>(global_z) + 0.5F) * config_.cell_size_m;
+      const std::uint64_t column =
+          (static_cast<std::uint64_t>(
+               static_cast<std::uint32_t>(global_x))
+           << 32U) |
+          static_cast<std::uint32_t>(global_y);
+      if (center_z >= min_z_m && center_z <= max_z_m &&
+          columns.find(column) != columns.end()) {
         block.occupied[offset] = 0U;
         block.cells[offset] = {};
         --block.live_count;
+        --live_cell_count_;
         ++cleared;
       }
     }
@@ -356,23 +460,29 @@ std::size_t PersistentBlockGrid::Decay(float factor) {
     throw std::invalid_argument("Decay factor must be in [0, 1]");
   }
   std::size_t pruned = 0U;
+  bool changed = false;
   for (auto &item : blocks_) {
     Block &block = item.second;
     for (std::size_t i = 0U; i < block.occupied.size(); ++i) {
       if (block.occupied[i] == 0U) {
         continue;
       }
+      const float previous = block.cells[i].log_odds;
       block.cells[i].log_odds *= factor;
+      changed = changed || block.cells[i].log_odds != previous;
       if (std::fabs(block.cells[i].log_odds) < config_.prune_abs_log_odds_below) {
         block.occupied[i] = 0U;
         block.cells[i] = {};
         --block.live_count;
+        --live_cell_count_;
         ++pruned;
       }
     }
   }
   if (pruned > 0U) {
     PruneEmptyBlocks();
+  }
+  if (changed) {
     ++generation_;
   }
   last_stats_ = {};
@@ -394,11 +504,7 @@ float PersistentBlockGrid::OccupancyProbability(float x_m, float y_m, float z_m)
 }
 
 std::size_t PersistentBlockGrid::CellCount() const {
-  std::size_t count = 0U;
-  for (const auto &item : blocks_) {
-    count += item.second.live_count;
-  }
-  return count;
+  return live_cell_count_;
 }
 
 std::uint64_t PersistentBlockGrid::Generation() const {
@@ -410,12 +516,91 @@ BlockGridUpdateStats PersistentBlockGrid::LastStats() const {
 }
 
 BlockGridSnapshot PersistentBlockGrid::Snapshot(const BlockGridRoi &roi) const {
+  if (roi.enabled &&
+      (!IsFinite(roi.min_x_m) || !IsFinite(roi.min_y_m) ||
+       !IsFinite(roi.min_z_m) || !IsFinite(roi.max_x_m) ||
+       !IsFinite(roi.max_y_m) || !IsFinite(roi.max_z_m) ||
+       roi.min_x_m > roi.max_x_m || roi.min_y_m > roi.max_y_m ||
+       roi.min_z_m > roi.max_z_m)) {
+    throw std::invalid_argument("block grid snapshot ROI is invalid");
+  }
   BlockGridSnapshot snapshot;
   snapshot.frame_id = frame_id_;
   snapshot.stamp_ns = stamp_ns_;
   snapshot.cell_size_m = config_.cell_size_m;
   snapshot.generation = generation_;
-  const std::size_t reserve = CellCount();
+  std::vector<CellKey> keys;
+  const std::size_t reserve = roi.max_cells > 0U
+      ? std::min(CellCount(), roi.max_cells)
+      : CellCount();
+  keys.reserve(reserve);
+  using Candidate =
+      std::tuple<double, std::int32_t, std::int32_t, std::int32_t>;
+  std::priority_queue<Candidate> nearest;
+  const double center_x =
+      roi.enabled ? 0.5 * (roi.min_x_m + roi.max_x_m) : 0.0;
+  const double center_y =
+      roi.enabled ? 0.5 * (roi.min_y_m + roi.max_y_m) : 0.0;
+  const double center_z =
+      roi.enabled ? 0.5 * (roi.min_z_m + roi.max_z_m) : 0.0;
+
+  for (const auto &item : blocks_) {
+    const BlockKey &block_key = item.first;
+    const Block &block = item.second;
+    for (std::size_t offset = 0U; offset < block.occupied.size(); ++offset) {
+      if (block.occupied[offset] == 0U) {
+        continue;
+      }
+      const std::int32_t local_x =
+          static_cast<std::int32_t>(offset % config_.block_size);
+      const std::int32_t local_y = static_cast<std::int32_t>(
+          (offset / config_.block_size) % config_.block_size);
+      const std::int32_t local_z = static_cast<std::int32_t>(
+          offset / (config_.block_size * config_.block_size));
+      const CellKey key{
+          block_key.x * config_.block_size + local_x,
+          block_key.y * config_.block_size + local_y,
+          block_key.z * config_.block_size + local_z,
+      };
+      const float cx =
+          (static_cast<float>(key.x) + 0.5F) * config_.cell_size_m;
+      const float cy =
+          (static_cast<float>(key.y) + 0.5F) * config_.cell_size_m;
+      const float cz =
+          (static_cast<float>(key.z) + 0.5F) * config_.cell_size_m;
+      if (roi.enabled &&
+          (cx < roi.min_x_m || cx > roi.max_x_m ||
+           cy < roi.min_y_m || cy > roi.max_y_m ||
+           cz < roi.min_z_m || cz > roi.max_z_m)) {
+        continue;
+      }
+      if (roi.max_cells == 0U) {
+        keys.push_back(key);
+        continue;
+      }
+      const double dx = static_cast<double>(cx) - center_x;
+      const double dy = static_cast<double>(cy) - center_y;
+      const double dz = static_cast<double>(cz) - center_z;
+      const Candidate candidate{
+          dx * dx + dy * dy + dz * dz, key.x, key.y, key.z};
+      if (nearest.size() < roi.max_cells) {
+        nearest.push(candidate);
+      } else if (candidate < nearest.top()) {
+        nearest.pop();
+        nearest.push(candidate);
+      }
+    }
+  }
+  while (!nearest.empty()) {
+    const auto &[distance, x, y, z] = nearest.top();
+    static_cast<void>(distance);
+    keys.push_back({x, y, z});
+    nearest.pop();
+  }
+  std::sort(keys.begin(), keys.end(), [](const CellKey &lhs, const CellKey &rhs) {
+    return std::tie(lhs.x, lhs.y, lhs.z) < std::tie(rhs.x, rhs.y, rhs.z);
+  });
+
   snapshot.ix.reserve(reserve);
   snapshot.iy.reserve(reserve);
   snapshot.iz.reserve(reserve);
@@ -426,46 +611,32 @@ BlockGridSnapshot PersistentBlockGrid::Snapshot(const BlockGridRoi &roi) const {
   snapshot.hit_count.reserve(reserve);
   snapshot.miss_count.reserve(reserve);
 
-  for (const auto &item : blocks_) {
-    const BlockKey &block_key = item.first;
-    const Block &block = item.second;
-    for (std::size_t offset = 0U; offset < block.occupied.size(); ++offset) {
-      if (block.occupied[offset] == 0U) {
-        continue;
-      }
-      const std::int32_t local_x = static_cast<std::int32_t>(offset % config_.block_size);
-      const std::int32_t local_y =
-          static_cast<std::int32_t>((offset / config_.block_size) % config_.block_size);
-      const std::int32_t local_z =
-          static_cast<std::int32_t>(offset / (config_.block_size * config_.block_size));
-      const CellKey key{
-          block_key.x * config_.block_size + local_x,
-          block_key.y * config_.block_size + local_y,
-          block_key.z * config_.block_size + local_z,
-      };
-      const float cx = (static_cast<float>(key.x) + 0.5F) * config_.cell_size_m;
-      const float cy = (static_cast<float>(key.y) + 0.5F) * config_.cell_size_m;
-      const float cz = (static_cast<float>(key.z) + 0.5F) * config_.cell_size_m;
-      if (roi.enabled && (cx < roi.min_x_m || cx > roi.max_x_m || cy < roi.min_y_m ||
-                          cy > roi.max_y_m || cz < roi.min_z_m || cz > roi.max_z_m)) {
-        continue;
-      }
-      const Cell &cell = block.cells[offset];
-      snapshot.ix.push_back(key.x);
-      snapshot.iy.push_back(key.y);
-      snapshot.iz.push_back(key.z);
-      snapshot.center_x_m.push_back(cx);
-      snapshot.center_y_m.push_back(cy);
-      snapshot.center_z_m.push_back(cz);
-      snapshot.occupancy_probability.push_back(ProbabilityFromLogOdds(cell.log_odds));
-      snapshot.hit_count.push_back(cell.hits);
-      snapshot.miss_count.push_back(cell.misses);
+  for (const CellKey &key : keys) {
+    const Cell *cell = FindCell(key);
+    if (cell == nullptr) {
+      continue;
     }
+    snapshot.ix.push_back(key.x);
+    snapshot.iy.push_back(key.y);
+    snapshot.iz.push_back(key.z);
+    snapshot.center_x_m.push_back(
+        (static_cast<float>(key.x) + 0.5F) * config_.cell_size_m);
+    snapshot.center_y_m.push_back(
+        (static_cast<float>(key.y) + 0.5F) * config_.cell_size_m);
+    snapshot.center_z_m.push_back(
+        (static_cast<float>(key.z) + 0.5F) * config_.cell_size_m);
+    snapshot.occupancy_probability.push_back(
+        ProbabilityFromLogOdds(cell->log_odds));
+    snapshot.hit_count.push_back(cell->hits);
+    snapshot.miss_count.push_back(cell->misses);
   }
   return snapshot;
 }
 
 void PersistentBlockGrid::SaveBinary(const std::filesystem::path &path) const {
+  if (CellCount() > config_.max_persisted_cells) {
+    throw std::runtime_error("block grid cell count exceeds persisted artifact limit");
+  }
   std::vector<std::uint8_t> body;
   const auto snapshot = Snapshot();
   body.reserve(frame_id_.size() + snapshot.Size() * sizeof(PersistedCell));
@@ -556,6 +727,9 @@ PersistentBlockGrid PersistentBlockGrid::LoadBinary(const std::filesystem::path 
   if (header.cell_count > limits.max_persisted_cells) {
     throw std::runtime_error("block grid binary cell count exceeds limit");
   }
+  if (header.cell_count > limits.max_runtime_cells) {
+    throw std::runtime_error("block grid binary exceeds runtime cell capacity");
+  }
   const std::uint64_t expected_body =
       static_cast<std::uint64_t>(header.frame_id_size) +
       header.cell_count * static_cast<std::uint64_t>(sizeof(PersistedCell));
@@ -601,6 +775,9 @@ PersistentBlockGrid PersistentBlockGrid::LoadBinary(const std::filesystem::path 
       throw std::runtime_error("block grid binary contains non-finite log odds");
     }
     auto *cell = grid.EnsureCell({stored.ix, stored.iy, stored.iz});
+    if (cell == nullptr) {
+      throw std::runtime_error("block grid binary exceeds runtime block capacity");
+    }
     cell->log_odds = std::max(config.min_log_odds, std::min(config.max_log_odds, stored.log_odds));
     cell->hits = stored.hits;
     cell->misses = stored.misses;
@@ -685,25 +862,50 @@ const PersistentBlockGrid::Cell *PersistentBlockGrid::FindCell(const CellKey &ke
 
 PersistentBlockGrid::Cell *PersistentBlockGrid::EnsureCell(const CellKey &key) {
   const BlockKey block_key = ToBlockKey(key, config_.block_size);
-  Block &block = EnsureBlock(block_key);
+  auto block_it = blocks_.find(block_key);
+  if (block_it == blocks_.end()) {
+    if (blocks_.size() >= config_.max_runtime_blocks ||
+        live_cell_count_ >= config_.max_runtime_cells) {
+      return nullptr;
+    }
+    block_it = blocks_.emplace(block_key, Block{}).first;
+    const auto count = static_cast<std::size_t>(config_.block_size) *
+        static_cast<std::size_t>(config_.block_size) *
+        static_cast<std::size_t>(config_.block_size);
+    block_it->second.cells.resize(count);
+    block_it->second.occupied.assign(count, 0U);
+  }
+  Block &block = block_it->second;
   const std::size_t offset = CellOffset(key, block_key, config_.block_size);
   if (block.occupied[offset] == 0U) {
+    if (live_cell_count_ >= config_.max_runtime_cells) {
+      return nullptr;
+    }
     block.occupied[offset] = 1U;
     ++block.live_count;
+    ++live_cell_count_;
   }
   return &block.cells[offset];
 }
 
-void PersistentBlockGrid::ApplyMiss(const CellKey &key) {
+bool PersistentBlockGrid::ApplyMiss(const CellKey &key) {
   Cell *cell = EnsureCell(key);
+  if (cell == nullptr) {
+    return false;
+  }
   cell->log_odds = std::max(config_.min_log_odds, cell->log_odds - config_.miss_log_odds);
   cell->misses = SaturatingIncrement(cell->misses);
+  return true;
 }
 
-void PersistentBlockGrid::ApplyHit(const CellKey &key) {
+bool PersistentBlockGrid::ApplyHit(const CellKey &key) {
   Cell *cell = EnsureCell(key);
+  if (cell == nullptr) {
+    return false;
+  }
   cell->log_odds = std::min(config_.max_log_odds, cell->log_odds + config_.hit_log_odds);
   cell->hits = SaturatingIncrement(cell->hits);
+  return true;
 }
 
 void PersistentBlockGrid::PruneEmptyBlocks() {

@@ -23,7 +23,7 @@ class TestExplorationSupervisorContract:
 
     def test_instantiation(self):
         """Create ExplorationSupervisorModule with default params."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_UNINIT,
         )
@@ -37,7 +37,7 @@ class TestExplorationSupervisorContract:
 
     def test_instantiation_with_custom_timeouts(self):
         """Custom timeout values must be reflected in module state."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
         )
 
@@ -50,7 +50,7 @@ class TestExplorationSupervisorContract:
 
     def test_input_port_types(self):
         """Must declare tare_stats: In[dict]."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
         )
 
@@ -61,7 +61,7 @@ class TestExplorationSupervisorContract:
 
     def test_output_port_types(self):
         """Must declare supervisor_state: Out[dict] and exploration_ready: Out[bool]."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
         )
 
@@ -80,7 +80,7 @@ class TestExplorationSupervisorContract:
 
     def test_lifecycle_setup(self):
         """setup() must not raise."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
         )
 
@@ -89,7 +89,7 @@ class TestExplorationSupervisorContract:
 
     def test_lifecycle_start_stop_idempotent(self):
         """start()/stop() transitions without error and stop is idempotent."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
         )
 
@@ -105,7 +105,7 @@ class TestExplorationSupervisorContract:
 
     def test_evaluate_uninit(self):
         """_evaluate returns 'uninit' when no stats received."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_UNINIT,
         )
@@ -118,7 +118,7 @@ class TestExplorationSupervisorContract:
 
     def test_evaluate_starting(self):
         """_evaluate returns 'starting' when alive but no waypoint yet."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_STARTING,
         )
@@ -132,7 +132,7 @@ class TestExplorationSupervisorContract:
     def test_evaluate_healthy(self):
         """_evaluate returns 'healthy' when stats are alive, have waypoints,
         and waypoint_age_s is within warn_timeout_s."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_HEALTHY,
         )
@@ -151,7 +151,7 @@ class TestExplorationSupervisorContract:
 
     def test_evaluate_degraded(self):
         """_evaluate returns 'degraded' when waypoint_age_s > warn_timeout_s."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_DEGRADED,
         )
@@ -169,7 +169,7 @@ class TestExplorationSupervisorContract:
 
     def test_evaluate_fallback(self):
         """_evaluate returns 'fallback' when waypoint_age_s > fallback_timeout_s."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_FALLBACK,
         )
@@ -187,7 +187,7 @@ class TestExplorationSupervisorContract:
 
     def test_evaluate_finished(self):
         """_evaluate returns 'finished' when stats say finished."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             ExplorationSupervisorModule,
             MODE_FINISHED,
         )

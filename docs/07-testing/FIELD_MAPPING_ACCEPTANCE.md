@@ -1,5 +1,7 @@
 # Field Mapping Acceptance
 
+Status: current field acceptance gate
+
 This page defines the operator loop for proving that a saved map is usable for
 navigation. It is stricter than checking whether files exist.
 

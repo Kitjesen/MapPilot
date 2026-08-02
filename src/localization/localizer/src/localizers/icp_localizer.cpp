@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <Eigen/Cholesky>
+#include <pcl/common/common.h>
 #include <pcl/common/point_tests.h>
 #include <Eigen/Eigenvalues>
 #include <pcl/kdtree/kdtree_flann.h>
@@ -165,6 +166,7 @@ struct FixedTransformDiagnostics
 {
     double fitness = -1.0;
     int inliers = -1;
+    int evaluated_points = 0;
     double position_covariance_trace = -1.0;
 };
 
@@ -172,17 +174,24 @@ FixedTransformDiagnostics evaluateFixedTransform(
     const CloudType::ConstPtr &source,
     pcl::KdTreeFLANN<PointType> &tree,
     const Eigen::Matrix4f &source_to_target,
-    double max_correspondence_distance_m)
+    double max_correspondence_distance_m,
+    const Eigen::Vector3f &target_min_bound,
+    const Eigen::Vector3f &target_max_bound)
 {
     FixedTransformDiagnostics diagnostics;
     const CloudType::ConstPtr target = tree.getInputCloud();
     if (!source || !target || source->empty() || target->empty() ||
-        !source_to_target.allFinite() || !(max_correspondence_distance_m > 0.0)) {
+        !source_to_target.allFinite() || !(max_correspondence_distance_m > 0.0) ||
+        !target_min_bound.allFinite() || !target_max_bound.allFinite()) {
         return diagnostics;
     }
 
     const double max_distance_sq =
         max_correspondence_distance_m * max_correspondence_distance_m;
+    const Eigen::Vector3f support_margin =
+        Eigen::Vector3f::Constant(static_cast<float>(max_correspondence_distance_m));
+    const Eigen::Vector3f support_min = target_min_bound - support_margin;
+    const Eigen::Vector3f support_max = target_max_bound + support_margin;
     Eigen::Matrix<double, 6, 6> hessian =
         Eigen::Matrix<double, 6, 6>::Zero();
     double squared_error = 0.0;
@@ -204,6 +213,12 @@ FixedTransformDiagnostics evaluateFixedTransform(
         query.x = transformed.x();
         query.y = transformed.y();
         query.z = transformed.z();
+        const Eigen::Vector3f query_position(query.x, query.y, query.z);
+        if ((query_position.array() < support_min.array()).any() ||
+            (query_position.array() > support_max.array()).any()) {
+            continue;
+        }
+        ++diagnostics.evaluated_points;
         if (tree.nearestKSearch(query, 1, indices, distances_sq) != 1 ||
             !std::isfinite(distances_sq[0]) ||
             static_cast<double>(distances_sq[0]) > max_distance_sq) {
@@ -292,27 +307,56 @@ bool ICPLocalizer::setMap(const CloudType::Ptr &cloud)
     if (finite->size() < kMinGicpPoints) {
         return false;
     }
+    auto refine_target = std::make_shared<CloudType>();
+    auto rough_target = std::make_shared<CloudType>();
     if (m_config.refine_map_resolution > 0)
     {
         m_voxel_filter.setLeafSize(m_config.refine_map_resolution, m_config.refine_map_resolution, m_config.refine_map_resolution);
         m_voxel_filter.setInputCloud(finite);
-        m_voxel_filter.filter(*m_refine_tgt);
+        m_voxel_filter.filter(*refine_target);
     }
     else
     {
-        pcl::copyPointCloud(*finite, *m_refine_tgt);
+        pcl::copyPointCloud(*finite, *refine_target);
     }
 
     if (m_config.rough_map_resolution > 0)
     {
         m_voxel_filter.setLeafSize(m_config.rough_map_resolution, m_config.rough_map_resolution, m_config.rough_map_resolution);
         m_voxel_filter.setInputCloud(finite);
-        m_voxel_filter.filter(*m_rough_tgt);
+        m_voxel_filter.filter(*rough_target);
     }
     else
     {
-        pcl::copyPointCloud(*finite, *m_rough_tgt);
+        pcl::copyPointCloud(*finite, *rough_target);
     }
+
+    if (rough_target->size() < kMinGicpPoints ||
+        refine_target->size() < kMinGicpPoints) {
+        return false;
+    }
+    PointType min_point;
+    PointType max_point;
+    pcl::getMinMax3D(*refine_target, min_point, max_point);
+    const Eigen::Vector3f refine_min_bound =
+        Eigen::Vector3f(min_point.x, min_point.y, min_point.z);
+    const Eigen::Vector3f refine_max_bound =
+        Eigen::Vector3f(max_point.x, max_point.y, max_point.z);
+    const bool refine_bounds_valid =
+        refine_min_bound.allFinite() && refine_max_bound.allFinite() &&
+        (refine_min_bound.array() <= refine_max_bound.array()).all();
+    if (!refine_bounds_valid) {
+        return false;
+    }
+
+    // RegistrationPCL caches search structures by shared_ptr identity. Publish
+    // immutable snapshots so a changed map cannot reuse an index built for the
+    // previous point count.
+    m_refine_tgt = std::move(refine_target);
+    m_rough_tgt = std::move(rough_target);
+    m_refine_min_bound = refine_min_bound;
+    m_refine_max_bound = refine_max_bound;
+    m_refine_bounds_valid = true;
 
     // Build the target search structures once when the map changes. Rebuilding
     // them for every alignment adds avoidable O(N log N) work to the hot path.
@@ -321,42 +365,49 @@ bool ICPLocalizer::setMap(const CloudType::Ptr &cloud)
     m_refine_icp.setMaximumIterations(m_config.refine_max_iteration);
     m_refine_icp.setInputTarget(m_refine_tgt);
     m_refine_tree.setInputCloud(m_refine_tgt);
-
-    return m_rough_tgt->size() >= kMinGicpPoints &&
-        m_refine_tgt->size() >= kMinGicpPoints;
+    return true;
 }
 void ICPLocalizer::setInput(const CloudType::Ptr &cloud)
 {
     const CloudType::Ptr finite = finiteCloud(cloud);
-    m_refine_inp->clear();
-    m_rough_inp->clear();
+    auto refine_input = std::make_shared<CloudType>();
+    auto rough_input = std::make_shared<CloudType>();
     if (m_config.refine_scan_resolution > 0)
     {
         m_voxel_filter.setLeafSize(m_config.refine_scan_resolution, m_config.refine_scan_resolution, m_config.refine_scan_resolution);
         m_voxel_filter.setInputCloud(finite);
-        m_voxel_filter.filter(*m_refine_inp);
+        m_voxel_filter.filter(*refine_input);
     }
     else
     {
-        pcl::copyPointCloud(*finite, *m_refine_inp);
+        pcl::copyPointCloud(*finite, *refine_input);
     }
 
     if (m_config.rough_scan_resolution > 0)
     {
         m_voxel_filter.setLeafSize(m_config.rough_scan_resolution, m_config.rough_scan_resolution, m_config.rough_scan_resolution);
         m_voxel_filter.setInputCloud(finite);
-        m_voxel_filter.filter(*m_rough_inp);
+        m_voxel_filter.filter(*rough_input);
     }
     else
     {
-        pcl::copyPointCloud(*finite, *m_rough_inp);
+        pcl::copyPointCloud(*finite, *rough_input);
     }
+
+    // RegistrationPCL skips rebuilding source search structures when the
+    // shared_ptr is unchanged. Replacing snapshots prevents stale indices when
+    // filtering changes the point count between scans.
+    m_refine_inp = std::move(refine_input);
+    m_rough_inp = std::move(rough_input);
 }
 
 bool ICPLocalizer::align(M4F &guess)
 {
-    CloudType::Ptr aligned_cloud(new CloudType);
+    CloudType::Ptr rough_aligned_cloud(new CloudType);
+    CloudType::Ptr refine_aligned_cloud(new CloudType);
+    m_last_evaluated_points = 0;
     if (!guess.allFinite() ||
+        !m_refine_bounds_valid ||
         m_refine_tgt->size() < kMinGicpPoints ||
         m_rough_tgt->size() < kMinGicpPoints ||
         m_refine_inp->size() < kMinGicpPoints ||
@@ -372,7 +423,7 @@ bool ICPLocalizer::align(M4F &guess)
         // setInputTarget + setMaximumIterations were done in loadMap()
         // (KD-tree already cached).
         m_rough_icp.setInputSource(m_rough_inp);
-        m_rough_icp.align(*aligned_cloud, guess);
+        m_rough_icp.align(*rough_aligned_cloud, guess);
         const M4F rough_transform = m_rough_icp.getFinalTransformation();
         const double rough_fitness = m_rough_icp.getFitnessScore();
         if (!m_rough_icp.hasConverged() || !rough_transform.allFinite() ||
@@ -386,22 +437,16 @@ bool ICPLocalizer::align(M4F &guess)
             return false;
         }
         m_refine_icp.setInputSource(m_refine_inp);
-        m_refine_icp.align(*aligned_cloud, rough_transform);
-        m_last_fitness_score = m_refine_icp.getFitnessScore();
+        m_refine_icp.align(*refine_aligned_cloud, rough_transform);
+        const double backend_fitness = m_refine_icp.getFitnessScore();
+        m_last_fitness_score = backend_fitness;
         m_last_iterations = -1;
         m_last_inliers = -1;
         m_last_converged = m_refine_icp.hasConverged();
         m_last_pos_cov_trace = -1.0;
-#ifdef LINGTU_ENABLE_SMALL_GICP
-        const auto &detail = m_refine_icp.getRegistrationResult();
-        m_last_iterations = static_cast<int>(detail.iterations);
-        m_last_inliers = static_cast<int>(detail.num_inliers);
-        m_last_converged = detail.converged;
-        m_last_pos_cov_trace = positionCovarianceTrace(detail.H);
-#else
         const M4F refine_transform = m_refine_icp.getFinalTransformation();
         if (!m_last_converged || !refine_transform.allFinite() ||
-            !std::isfinite(m_last_fitness_score)) {
+            !std::isfinite(backend_fitness)) {
             return false;
         }
         const double correspondence_distance = std::max(
@@ -409,6 +454,13 @@ bool ICPLocalizer::align(M4F &guess)
             3.0 * std::max(
                 m_config.refine_scan_resolution,
                 m_config.refine_map_resolution));
+#ifdef LINGTU_ENABLE_SMALL_GICP
+        const auto &detail = m_refine_icp.getRegistrationResult();
+        m_last_iterations = static_cast<int>(detail.iterations);
+        m_last_inliers = static_cast<int>(detail.num_inliers);
+        m_last_converged = detail.converged;
+        m_last_pos_cov_trace = positionCovarianceTrace(detail.H);
+#else
         const PclRegistrationDiagnostics diagnostics = computePclDiagnostics(
             m_refine_inp,
             m_refine_tgt,
@@ -417,10 +469,31 @@ bool ICPLocalizer::align(M4F &guess)
         m_last_inliers = diagnostics.inliers;
         m_last_pos_cov_trace = diagnostics.position_covariance_trace;
 #endif
+        const FixedTransformDiagnostics support_diagnostics =
+            evaluateFixedTransform(
+                m_refine_inp,
+                m_refine_tree,
+                refine_transform,
+                correspondence_distance,
+                m_refine_min_bound,
+                m_refine_max_bound);
+        m_last_evaluated_points = support_diagnostics.evaluated_points;
+        m_last_inliers = support_diagnostics.inliers;
+        m_last_fitness_score = support_diagnostics.fitness;
+        if (m_last_pos_cov_trace < 0.0) {
+            m_last_pos_cov_trace =
+                support_diagnostics.position_covariance_trace;
+        }
 
-        if (!m_last_converged || m_last_fitness_score > m_config.refine_score_thresh)
+        if (!m_last_converged ||
+            m_last_evaluated_points < static_cast<int>(kMinGicpPoints) ||
+            m_last_inliers < static_cast<int>(kMinGicpPoints) ||
+            !std::isfinite(m_last_fitness_score) ||
+            m_last_fitness_score < 0.0 ||
+            m_last_fitness_score > m_config.refine_score_thresh) {
             return false;
-        guess = m_refine_icp.getFinalTransformation();
+        }
+        guess = refine_transform;
         return true;
     } catch (const std::exception &e) {
         std::cerr << "[ICPLocalizer] align exception: " << e.what() << std::endl;
@@ -432,6 +505,7 @@ bool ICPLocalizer::align(M4F &guess)
     m_last_inliers = -1;
     m_last_converged = false;
     m_last_pos_cov_trace = -1.0;
+    m_last_evaluated_points = 0;
     return false;
 }
 
@@ -439,12 +513,23 @@ bool ICPLocalizer::evaluate(
     const M4F &transform,
     double max_correspondence_distance_m)
 {
-    m_last_evaluated_points = static_cast<int>(m_refine_inp->size());
+    m_last_evaluated_points = 0;
+    if (!m_refine_bounds_valid) {
+        m_last_fitness_score = -1.0;
+        m_last_iterations = 0;
+        m_last_inliers = -1;
+        m_last_pos_cov_trace = -1.0;
+        m_last_converged = false;
+        return false;
+    }
     const FixedTransformDiagnostics diagnostics = evaluateFixedTransform(
         m_refine_inp,
         m_refine_tree,
         transform,
-        max_correspondence_distance_m);
+        max_correspondence_distance_m,
+        m_refine_min_bound,
+        m_refine_max_bound);
+    m_last_evaluated_points = diagnostics.evaluated_points;
     m_last_fitness_score = diagnostics.fitness;
     m_last_iterations = 0;
     m_last_inliers = diagnostics.inliers;

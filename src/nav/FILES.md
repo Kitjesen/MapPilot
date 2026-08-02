@@ -16,7 +16,7 @@ registration, tests, and external deployments may import them directly.
 | Live map layers | `../maps/modules/occupancy.py`, `../maps/modules/voxel_grid.py`, `../maps/modules/esdf.py`, `../maps/modules/elevation.py`, `../maps/modules/traversability.py` |
 | Safety stop or velocity ownership | `services/safety/safety_ring.py`, `services/safety/velocity_mux.py`, `services/geofence.py` |
 | Frontier exploration | `exploration/frontier_explorer_module.py`, `exploration/traversable_frontier_module.py` |
-| Thunder Lite / mapless navigation | `services/plan/factory.py`, `services/plan/compat/direct.py`, `services/plan/compat/direct_path.py` |
+| `lite` Profile / mapless navigation | `services/plan/factory.py`, `services/plan/mapless/direct.py`, `services/plan/mapless/direct_path.py` |
 | C++ local planning hot paths | `local/cpp/`, `kernel/bindings/bindings.cpp`; map-layer algorithms live in `src/maps/include/lingtu/maps/layers/` |
 | Building / multi-floor missions | `building/orchestrator.py`, `building/lift.py`, `building/native_navigation.py` |
 | Native command adapter | `commands/module.py`, `adapters/native/commands.py` |
@@ -24,7 +24,7 @@ registration, tests, and external deployments may import them directly.
 
 ## Main runtime chains
 
-The physical `thunder_field` chain is native C++ service + DDS. Python keeps
+The `env=real` chain is native C++ service + DDS. Python keeps
 the task, Gateway, map-management, semantic, and status layers around it, but
 does not own local planning, path following, or final `/nav/cmd_vel` publishing.
 
@@ -158,8 +158,8 @@ inspection core built into the nav endpoint.
 | `services/plan/contracts.py` | Protocols for planner backends and planner services. `Navigation` should depend on this boundary, not a concrete planner. |
 | `services/plan/factory.py` | Creates either map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`. |
 | `services/plan/global_planner/service.py` | Map-backed global planner coordinator. Selects OctoPlanner3D by default, keeps PCT as an explicit legacy backend, validates map artifacts, and reports diagnostics. |
-| `services/plan/compat/direct.py` | Lightweight planner service for Thunder Lite/local runtimes that must avoid map-backed planner imports. |
-| `services/plan/compat/direct_path.py` | Direct start-to-goal planner used by mapless mode. |
+| `services/plan/mapless/direct.py` | Lightweight planner service for the `lite` Profile and other local runtimes that must avoid map-backed planner imports. |
+| `services/plan/mapless/direct_path.py` | Direct start-to-goal planner used by mapless mode. |
 | `services/plan/global_planner/algorithm/octoplanner3d.py` | LingTu OctoPlanner3D runtime binding and planner registration. |
 | `services/plan/global_planner/algorithm/far.py` | Thin native FAR registration; no Python planner fallback. |
 | `cpp/planning/global/octoplanner/` | Canonical product OctoPlanner3D source, headless runtime, and system-OctoMap build boundary. |
@@ -180,7 +180,7 @@ inspection core built into the nav endpoint.
 | `local/geometry.py` | Path-point coercion, planning-origin, corridor-goal, and line helpers. |
 | `local/obstacles.py` | Terrain/boundary/added-obstacle point-cloud merge helpers. |
 | `local/models.py` | Shared backend dataclasses and CMU constants. |
-| `local/local_planner_backend.py` | Typed backend bundles used by runtime setup. |
+| `local/models.py`, `local/native.py` | Typed local-planner backend bundles and factories. |
 | `local/path_follower.py` | Converts `local_path` into velocity commands. |
 | `local/path_follower_runtime.py` | Path-follower backend setup. |
 | `local/path_follower_backend.py` | Path-follower backend bundles. |
@@ -278,7 +278,7 @@ Safety services own reflex stop, plan safety, and velocity arbitration.
 | `test_scheduler.py` | Task scheduler command behavior. |
 | `test_nav_corridor_scenario.py` | Corridor scenario and A* detour behavior. |
 | `test_nav_semantic.py` | Shared message and semantic nav primitives. |
-| `test_nav_skills.py` | NavSkills L6 adapter, compatibility alias, and profile wiring. |
+| `test_nav_skills.py` | NavSkills L6 adapter and Host graph wiring. |
 | `test_command_module.py`, `test_command_client.py` | Native command adapter module and client. |
 | `test_inspection_service.py`, `test_inspection_command_client.py` | Inspection facade and native inspection commands. |
 | `test_building_mission_orchestrator.py`, `test_lift_transition_executor.py`, `test_floor_localization_adapter.py`, `test_native_building_navigation_port.py` | Building / multi-floor orchestration coverage. |

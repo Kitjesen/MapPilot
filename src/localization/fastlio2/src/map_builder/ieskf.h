@@ -3,12 +3,104 @@
 #include <sophus/so3.hpp>
 #include "commons.h"
 
+#include <cstddef>
+#include <cstdint>
+
 using M12D = Eigen::Matrix<double, 12, 12>;
 using M21D = Eigen::Matrix<double, 21, 21>;
 
 using V12D = Eigen::Matrix<double, 12, 1>;
 using V21D = Eigen::Matrix<double, 21, 1>;
 using M21X12D = Eigen::Matrix<double, 21, 12>;
+
+enum class LidarUpdateRejectionReason : std::uint8_t
+{
+    None = 0,
+    NoValidMeasurement = 1,
+    PathologicalDegeneracy = 2,
+    CandidateTranslationLimitExceeded = 3,
+    CandidateRotationLimitExceeded = 4,
+    CandidateVelocityLimitExceeded = 5,
+    CandidateVelocityDeltaLimitExceeded = 6,
+    NonconvergedUpdate = 7,
+    DegenerateNonconvergedUpdate = 8,
+    InformationLdltDecompositionFailed = 9,
+    InformationLdltNotPositive = 10,
+    CandidateCovarianceNonfinite = 11,
+    CandidateCovarianceNonpositiveDiagonal = 12,
+    PosteriorCovarianceNonfinite = 13,
+    PosteriorCovarianceNonpositiveDiagonal = 14,
+};
+
+inline const char *lidarUpdateRejectionReasonName(
+    LidarUpdateRejectionReason reason) noexcept
+{
+    switch (reason)
+    {
+    case LidarUpdateRejectionReason::None:
+        return "none";
+    case LidarUpdateRejectionReason::NoValidMeasurement:
+        return "no_valid_measurement";
+    case LidarUpdateRejectionReason::PathologicalDegeneracy:
+        return "pathological_degeneracy";
+    case LidarUpdateRejectionReason::CandidateTranslationLimitExceeded:
+        return "candidate_translation_limit_exceeded";
+    case LidarUpdateRejectionReason::CandidateRotationLimitExceeded:
+        return "candidate_rotation_limit_exceeded";
+    case LidarUpdateRejectionReason::CandidateVelocityLimitExceeded:
+        return "candidate_velocity_limit_exceeded";
+    case LidarUpdateRejectionReason::CandidateVelocityDeltaLimitExceeded:
+        return "candidate_velocity_delta_limit_exceeded";
+    case LidarUpdateRejectionReason::NonconvergedUpdate:
+        return "nonconverged_update";
+    case LidarUpdateRejectionReason::DegenerateNonconvergedUpdate:
+        return "degenerate_nonconverged_update";
+    case LidarUpdateRejectionReason::InformationLdltDecompositionFailed:
+        return "information_ldlt_decomposition_failed";
+    case LidarUpdateRejectionReason::InformationLdltNotPositive:
+        return "information_ldlt_not_positive";
+    case LidarUpdateRejectionReason::CandidateCovarianceNonfinite:
+        return "candidate_covariance_nonfinite";
+    case LidarUpdateRejectionReason::CandidateCovarianceNonpositiveDiagonal:
+        return "candidate_covariance_nonpositive_diagonal";
+    case LidarUpdateRejectionReason::PosteriorCovarianceNonfinite:
+        return "posterior_covariance_nonfinite";
+    case LidarUpdateRejectionReason::PosteriorCovarianceNonpositiveDiagonal:
+        return "posterior_covariance_nonpositive_diagonal";
+    }
+    return "unknown";
+}
+
+struct LidarUpdateDiagnostics
+{
+    bool attempted = false;
+    bool accepted = false;
+    std::uint64_t attempt_sequence = 0U;
+    LidarUpdateRejectionReason rejection_reason = LidarUpdateRejectionReason::None;
+    LidarUpdateRejectionReason previous_rejection_reason = LidarUpdateRejectionReason::None;
+    std::size_t consecutive_rejections = 0U;
+    std::size_t downsampled_points = 0U;
+    std::size_t effective_points = 0U;
+
+    double candidate_translation_m = 0.0;
+    double candidate_rotation_rad = 0.0;
+    double candidate_velocity_mps = 0.0;
+    double candidate_velocity_delta_mps = 0.0;
+    double max_update_translation_m = 0.0;
+    double max_update_rotation_rad = 0.0;
+    double max_update_velocity_mps = 0.0;
+    double max_update_velocity_delta_mps = 0.0;
+
+    bool information_ldlt_evaluated = false;
+    bool information_ldlt_decomposition_success = false;
+    bool information_ldlt_positive = false;
+    bool candidate_covariance_evaluated = false;
+    bool candidate_covariance_finite = false;
+    bool candidate_covariance_positive_diagonal = false;
+    bool posterior_covariance_evaluated = false;
+    bool posterior_covariance_finite = false;
+    bool posterior_covariance_positive_diagonal = false;
+};
 
 M3D Jr(const V3D &inp);
 M3D JrInv(const V3D &inp);
@@ -45,6 +137,7 @@ public:
     double res = 1e10;
     bool valid = false;
     size_t iter_num = 0;
+    std::size_t effective_points = 0U;
     DegeneracyInfo degeneracy;
 };
 struct Input
@@ -130,6 +223,11 @@ public:
 
     const DegeneracyInfo &degeneracy() const { return m_degeneracy; }
 
+    const LidarUpdateDiagnostics &lastLidarUpdateDiagnostics() const
+    {
+        return m_lidar_update_diagnostics;
+    }
+
     // Per-dimension P diagonal upper bounds for 21-state IESKF:
     // [θ_wi(0:3), t_wi(3:6), θ_il(6:9), t_il(9:12), v(12:15), bg(15:18), ba(18:21)]
     static constexpr double P_MAX[21] = {
@@ -152,14 +250,20 @@ public:
     };
 
 private:
+    void beginLidarUpdateAttempt();
+    void recordLidarUpdateRejection(LidarUpdateRejectionReason reason);
+    void recordAcceptedLidarUpdate();
+
     size_t m_max_iter = 10;
     State m_x;
-    M21D m_P;
+    // Match IKFoM's prior: Eigen fixed-size matrices are otherwise uninitialized.
+    M21D m_P = M21D::Identity();
     loss_func m_loss_func;
     stop_func m_stop_func;
     M21D m_F;
     M21X12D m_G;
     DegeneracyInfo m_degeneracy;
+    LidarUpdateDiagnostics m_lidar_update_diagnostics;
     int m_degeneracy_max_update_dof = 2;
     double m_degeneracy_max_condition = 50000.0;
     double m_max_update_translation_m = 0.5;

@@ -8,13 +8,17 @@ import type {
   AppTrafficResponse,
   AuthCheckResponse,
   AuthLoginResponse,
-  BagOperationResponse,
-  BagStatusResponse,
+  RecordingOperationResponse,
+  RecordingStatusResponse,
   ClientLinks,
   CommandReceipt,
   ControlCommandResponse,
   DevicesResponse,
+  EnvName,
+  DirectedExplorationResponse,
+  DirectedExplorationTargetRequest,
   DynamicFilterResult,
+  ExplorationStatusResponse,
   GatewayErrorResponse,
   GoalCandidateRequest,
   GoalCandidateResponse,
@@ -31,6 +35,10 @@ import type {
   InspectionRouteRequest,
   InspectionRouteResponse,
   InspectionStatusResponse,
+  InspectionTaskCommandResponse,
+  InspectionTaskListResponse,
+  InspectionTaskReportResponse,
+  InspectionTaskStatusResponse,
   LeaseAction,
   LeaseResponse,
   LocationOperationResponse,
@@ -42,12 +50,13 @@ import type {
   MapPointsResponse,
   NavigationStatusResponse,
   NavigationDdsSnapshotResponse,
+  NavigationTaskStatusQueryResponse,
   PathResponse,
   PlanPreviewRequest,
   PlanPreviewResponse,
   ProductFieldCheckRequest,
   ProductFieldCheckResponse,
-  ProductModeProfile,
+  ProductName,
   ReadinessResponse,
   RealRuntimeEvidenceLatestResponse,
   RoutecheckLatestResponse,
@@ -55,8 +64,6 @@ import type {
   RuntimeDataflowSubscribeRequest,
   RuntimeDataflowSubscribeResponse,
   RuntimeDataflowTopicDetailResponse,
-  RuntimeSwitchRequest,
-  RuntimeSwitchResponse,
   RuntimeSwitchPlanRequest,
   RuntimeSwitchPlanResponse,
   SceneGraphResponse,
@@ -69,16 +76,11 @@ import type {
   VisualServoMode,
   VisualServoRequest,
 } from '../types'
+import { currentNavigationTaskStore } from './currentNavigationTask.ts'
 
 const WEB_CLIENT_ID = 'web-dashboard'
 
 type CommandResponse = ControlCommandResponse | LeaseResponse
-
-interface RestartSlamOptions {
-  currentProfile?: string | null
-  targetProfile?: ProductModeProfile
-  mapName?: string | null
-}
 
 export interface SavedMapPointCloud {
   points: number[]
@@ -228,12 +230,35 @@ function inspectionRouteDetailPath(routeId: string): string {
     : `/api/v1/inspection/routes/${encoded}`
 }
 
-function inspectionRouteStartPath(routeId: string): string {
-  const encoded = encodeURIComponent(routeId)
-  const template = apiPath('inspection_route_start', '/api/v1/inspection/routes/{route_id}/start')
-  return template.includes('{route_id}')
-    ? template.replace('{route_id}', encoded)
-    : `/api/v1/inspection/routes/${encoded}/start`
+function inspectionTaskPath(taskId: string): string {
+  const encoded = encodeURIComponent(taskId)
+  const template = apiPath('inspection_task_status', '/api/v1/inspection/tasks/{task_id}')
+  return template.includes('{task_id}')
+    ? template.replace('{task_id}', encoded)
+    : `/api/v1/inspection/tasks/${encoded}`
+}
+
+function inspectionTaskReportPath(taskId: string): string {
+  const encoded = encodeURIComponent(taskId)
+  const template = apiPath(
+    'inspection_task_report',
+    '/api/v1/inspection/tasks/{task_id}/report',
+  )
+  return template.includes('{task_id}')
+    ? template.replace('{task_id}', encoded)
+    : '/api/v1/inspection/tasks/' + encoded + '/report'
+}
+
+function inspectionTaskActionPath(
+  taskId: string,
+  linkName: 'inspection_task_pause' | 'inspection_task_resume' | 'inspection_task_cancel',
+  fallback: string,
+): string {
+  const encoded = encodeURIComponent(taskId)
+  const template = apiPath(linkName, fallback)
+  return template.includes('{task_id}')
+    ? template.replace('{task_id}', encoded)
+    : fallback.replace('{task_id}', encoded)
 }
 
 function inspectionEvidenceDetailPath(evidenceId: string): string {
@@ -249,7 +274,7 @@ export function inspectionEvidenceArtifactUrl(
 
 function mapNamedPath(linkName: keyof ClientLinks, fallback: string, name: string): string {
   const encoded = encodeURIComponent(name)
-  const template = apiPath(linkName, fallback)
+  const template = apiPath(linkName, fallback).replace(/%7Bname%7D/gi, '{name}')
   return template.includes('{name}')
     ? template.replace('{name}', encoded)
     : fallback.replace('{name}', encoded)
@@ -405,32 +430,14 @@ export async function subscribeRuntimeDataflow(
 }
 
 export async function runRuntimeSwitchPlan(
-  request: RuntimeSwitchPlanRequest = {},
+  request: RuntimeSwitchPlanRequest,
 ): Promise<RuntimeSwitchPlanResponse> {
   return postJson<RuntimeSwitchPlanResponse>(
     apiPath('runtime_switch_plan', '/api/v1/runtime/switch-plan'),
-    {
-      target_profile: 'explore',
-      ...request,
-    },
+    request,
   )
 }
 
-export async function runRuntimeSwitch(
-  request: RuntimeSwitchRequest,
-): Promise<RuntimeSwitchResponse> {
-  return postJson<RuntimeSwitchResponse>(
-    apiPath('runtime_switch', '/api/v1/runtime/switch'),
-    {
-      relocalize: true,
-      strategy: 'auto',
-      execute: false,
-      allow_restart: false,
-      client_id: WEB_CLIENT_ID,
-      ...request,
-    },
-  )
-}
 
 export async function runProductFieldCheck(
   request: ProductFieldCheckRequest = {},
@@ -458,6 +465,23 @@ export async function fetchPath(): Promise<PathResponse> {
 
 export async function fetchNavigationStatus(): Promise<NavigationStatusResponse> {
   return fetchJson<NavigationStatusResponse>(apiPath('navigation_status', '/api/v1/navigation/status'))
+}
+
+export async function fetchNavigationTaskStatus(
+  taskId: string,
+): Promise<NavigationTaskStatusQueryResponse> {
+  const normalized = taskId.trim()
+  if (!normalized) throw new Error('navigation_task_id_required')
+  const encoded = encodeURIComponent(normalized)
+  const template = apiPath(
+    'navigation_task_status',
+    '/api/v1/navigation/tasks/{task_id}',
+  )
+  return fetchJson<NavigationTaskStatusQueryResponse>(
+    template.includes('{task_id}')
+      ? template.replace('{task_id}', encoded)
+      : `/api/v1/navigation/tasks/${encoded}`,
+  )
 }
 
 export async function fetchNavigationDdsSnapshot(): Promise<NavigationDdsSnapshotResponse> {
@@ -529,13 +553,45 @@ export async function deleteInspectionRoute(
   return readJsonResponse<InspectionCommandResponse>(res)
 }
 
-export async function startInspectionRoute(
+export async function fetchInspectionTasks(
+  options: {
+    mapId?: string | null
+    routeId?: string | null
+    includeTerminal?: boolean
+    limit?: number
+  } = {},
+): Promise<InspectionTaskListResponse> {
+  const query = new URLSearchParams()
+  if (options.mapId) query.set('map_id', options.mapId)
+  if (options.routeId) query.set('route_id', options.routeId)
+  if (options.includeTerminal === true) query.set('include_terminal', 'true')
+  if (options.limit !== undefined) query.set('limit', String(options.limit))
+  const path = apiPath('inspection_tasks', '/api/v1/inspection/tasks')
+  return fetchJson<InspectionTaskListResponse>(
+    query.size > 0 ? `${path}?${query.toString()}` : path,
+  )
+}
+
+export async function fetchInspectionTask(
+  taskId: string,
+): Promise<InspectionTaskStatusResponse> {
+  return fetchJson<InspectionTaskStatusResponse>(inspectionTaskPath(taskId))
+}
+
+export async function fetchInspectionTaskReport(
+  taskId: string,
+): Promise<InspectionTaskReportResponse> {
+  return fetchJson<InspectionTaskReportResponse>(inspectionTaskReportPath(taskId))
+}
+
+export async function startInspectionTask(
   routeId: string,
   options: { map_id?: string | null; revision?: number | null } = {},
-): Promise<InspectionCommandResponse> {
-  return postJson<InspectionCommandResponse>(
-    inspectionRouteStartPath(routeId),
+): Promise<InspectionTaskCommandResponse> {
+  return postJson<InspectionTaskCommandResponse>(
+    apiPath('inspection_tasks', '/api/v1/inspection/tasks'),
     {
+      route_id: routeId,
       map_id: options.map_id ?? null,
       revision: options.revision ?? 0,
       request_id: makeRequestId('inspection_start'),
@@ -543,39 +599,48 @@ export async function startInspectionRoute(
   )
 }
 
-export async function pauseInspectionRun(
-  mapId?: string | null,
-): Promise<InspectionCommandResponse> {
-  return postJson<InspectionCommandResponse>(
-    apiPath('inspection_pause', '/api/v1/inspection/run/pause'),
+export async function pauseInspectionTask(
+  taskId: string,
+): Promise<InspectionTaskCommandResponse> {
+  return postJson<InspectionTaskCommandResponse>(
+    inspectionTaskActionPath(
+      taskId,
+      'inspection_task_pause',
+      '/api/v1/inspection/tasks/{task_id}/pause',
+    ),
     {
-      map_id: mapId ?? null,
       reason: 'operator_pause',
       request_id: makeRequestId('inspection_pause'),
     },
   )
 }
 
-export async function resumeInspectionRun(
-  mapId?: string | null,
-): Promise<InspectionCommandResponse> {
-  return postJson<InspectionCommandResponse>(
-    apiPath('inspection_resume', '/api/v1/inspection/run/resume'),
+export async function resumeInspectionTask(
+  taskId: string,
+): Promise<InspectionTaskCommandResponse> {
+  return postJson<InspectionTaskCommandResponse>(
+    inspectionTaskActionPath(
+      taskId,
+      'inspection_task_resume',
+      '/api/v1/inspection/tasks/{task_id}/resume',
+    ),
     {
-      map_id: mapId ?? null,
       reason: 'operator_resume',
       request_id: makeRequestId('inspection_resume'),
     },
   )
 }
 
-export async function cancelInspectionRun(
-  mapId?: string | null,
-): Promise<InspectionCommandResponse> {
-  return postJson<InspectionCommandResponse>(
-    apiPath('inspection_cancel', '/api/v1/inspection/run/cancel'),
+export async function cancelInspectionTask(
+  taskId: string,
+): Promise<InspectionTaskCommandResponse> {
+  return postJson<InspectionTaskCommandResponse>(
+    inspectionTaskActionPath(
+      taskId,
+      'inspection_task_cancel',
+      '/api/v1/inspection/tasks/{task_id}/cancel',
+    ),
     {
-      map_id: mapId ?? null,
       reason: 'operator_cancel',
       request_id: makeRequestId('inspection_cancel'),
     },
@@ -656,15 +721,46 @@ export interface SendGoalOptions {
   metadata?: Record<string, unknown>
 }
 
+export const DIRECTED_EXPLORATION_TTL_S = 30
+
+export interface DirectedExplorationTargetOptions {
+  ttl_s?: number
+  reason?: string
+  request_id?: string | null
+}
+
 export async function sendGoal(
   x: number,
   y: number,
   options: SendGoalOptions = {},
 ): Promise<ControlCommandResponse> {
-  return postJson<ControlCommandResponse>(
+  const response = await postJson<ControlCommandResponse>(
     apiPath('goal', '/api/v1/goal'),
     commandBody('goal', { x, y, ...options }),
   )
+  currentNavigationTaskStore.trackAccepted(response)
+  return response
+}
+
+export async function fetchExplorationStatus(): Promise<ExplorationStatusResponse> {
+  return fetchJson<ExplorationStatusResponse>(apiPath('explore_status', '/api/v1/explore/status'))
+}
+
+export async function setDirectedExplorationTarget(
+  x: number,
+  y: number,
+  options: DirectedExplorationTargetOptions = {},
+): Promise<DirectedExplorationResponse> {
+  // The Gateway schema forbids client_id here. Keep this body limited to the
+  // explicit directed-exploration contract rather than using commandBody().
+  const body: DirectedExplorationTargetRequest = {
+    x,
+    y,
+    ttl_s: options.ttl_s ?? DIRECTED_EXPLORATION_TTL_S,
+    reason: options.reason ?? 'web_scene_directed_explore',
+    request_id: options.request_id ?? makeRequestId('directed-explore'),
+  }
+  return postJson<DirectedExplorationResponse>(apiPath('explore_directed', '/api/v1/explore/directed'), body)
 }
 
 export async function navigateClick(
@@ -672,10 +768,12 @@ export async function navigateClick(
   y: number,
   options: SendGoalOptions = {},
 ): Promise<ControlCommandResponse> {
-  return postJson<ControlCommandResponse>(
+  const response = await postJson<ControlCommandResponse>(
     apiPath('navigate_click', '/api/v1/navigate/click'),
     commandBody('navigate_click', { x, y, ...options }),
   )
+  currentNavigationTaskStore.trackAccepted(response)
+  return response
 }
 
 export async function constructGoalCandidate(
@@ -712,10 +810,77 @@ export async function sendStop(): Promise<ControlCommandResponse> {
   )
 }
 
+export async function resetEstop(): Promise<ControlCommandResponse> {
+  return postJson<ControlCommandResponse>(
+    apiPath('estop_reset', '/api/v1/estop/reset'),
+    commandBody('estop_reset', {}),
+  )
+}
+
 export async function cancelNavigation(reason = 'client_cancel'): Promise<ControlCommandResponse> {
   return postJson<ControlCommandResponse>(
     apiPath('navigation_cancel', '/api/v1/navigation/cancel'),
     commandBody('navigation_cancel', { reason }),
+  )
+}
+
+export async function cancelNavigationTask(
+  taskId: string,
+  reason = 'web_operator_cancel',
+): Promise<ControlCommandResponse> {
+  const normalized = taskId.trim()
+  if (!normalized) throw new Error('navigation_task_id_required')
+  const encoded = encodeURIComponent(normalized)
+  const template = apiPath(
+    'navigation_task_cancel',
+    '/api/v1/navigation/tasks/{task_id}/cancel',
+  )
+  const path = template.includes('{task_id}')
+    ? template.replace('{task_id}', encoded)
+    : `/api/v1/navigation/tasks/${encoded}/cancel`
+  return postJson<ControlCommandResponse>(
+    path,
+    commandBody('navigation_task_cancel', { task_id: normalized, reason }),
+  )
+}
+
+export async function pauseNavigationTask(
+  taskId: string,
+  reason = 'web_operator_pause',
+): Promise<ControlCommandResponse> {
+  const normalized = taskId.trim()
+  if (!normalized) throw new Error('navigation_task_id_required')
+  const encoded = encodeURIComponent(normalized)
+  const template = apiPath(
+    'navigation_task_pause',
+    '/api/v1/navigation/tasks/{task_id}/pause',
+  )
+  const path = template.includes('{task_id}')
+    ? template.replace('{task_id}', encoded)
+    : `/api/v1/navigation/tasks/${encoded}/pause`
+  return postJson<ControlCommandResponse>(
+    path,
+    commandBody('navigation_task_pause', { task_id: normalized, reason }),
+  )
+}
+
+export async function resumeNavigationTask(
+  taskId: string,
+  reason = 'web_operator_resume',
+): Promise<ControlCommandResponse> {
+  const normalized = taskId.trim()
+  if (!normalized) throw new Error('navigation_task_id_required')
+  const encoded = encodeURIComponent(normalized)
+  const template = apiPath(
+    'navigation_task_resume',
+    '/api/v1/navigation/tasks/{task_id}/resume',
+  )
+  const path = template.includes('{task_id}')
+    ? template.replace('{task_id}', encoded)
+    : `/api/v1/navigation/tasks/${encoded}/resume`
+  return postJson<ControlCommandResponse>(
+    path,
+    commandBody('navigation_task_resume', { task_id: normalized, reason }),
   )
 }
 
@@ -762,43 +927,6 @@ export async function fetchSlamStatus(): Promise<SlamStatusResponse> {
   return fetchJson<SlamStatusResponse>(apiPath('slam_status', '/api/v1/slam/status'))
 }
 
-export async function restartSlam(options: RestartSlamOptions = {}): Promise<SlamOperationResponse> {
-  const res = await fetch(apiPath('slam_restart', '/api/v1/slam/restart'), { method: 'POST' })
-  if (res.status === 404) {
-    if (!clientLinks.runtime_switch) {
-      throw new Error('Gateway does not expose the localization restart endpoint yet. Deploy the updated Gateway and retry.')
-    }
-    const targetProfile = options.targetProfile ?? (options.mapName ? 'nav' : 'map')
-    const switched = await runRuntimeSwitch({
-      current_profile: options.currentProfile ?? null,
-      target_profile: targetProfile,
-      map_name: targetProfile === 'nav' ? options.mapName ?? null : null,
-      relocalize: targetProfile === 'nav',
-      strategy: 'cold',
-      execute: true,
-      allow_restart: true,
-    })
-    if (!switched.ok && !switched.accepted) {
-      const blockers = switched.blockers?.filter(Boolean).join('；')
-      throw new Error(blockers || switched.error || switched.status || 'Runtime restart request was not accepted')
-    }
-    return {
-      schema_version: 1,
-      ok: true,
-      success: true,
-      profile: 'native_dds',
-      message: switched.accepted
-        ? 'Localization restart accepted'
-        : 'Localization pipeline restarted',
-      ts: Date.now() / 1000,
-      accepted: switched.accepted,
-      status: switched.status,
-      command_id: switched.command_id,
-    }
-  }
-  return readSlamOperation(res)
-}
-
 // --- Maps ---
 
 export async function fetchMapList(): Promise<MapListResponse> {
@@ -820,10 +948,8 @@ export async function activateMap(name: string): Promise<MapLifecycleResponse> {
 }
 
 export async function deleteMap(name: string): Promise<MapLifecycleResponse> {
-  const res = await fetch(apiPath('map_lifecycle', '/api/v1/maps'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'delete', name }),
+  const res = await fetch(mapNamedPath('map_delete', '/api/v1/maps/{name}', name), {
+    method: 'DELETE',
   })
   return readMapLifecycle(res)
 }
@@ -961,43 +1087,85 @@ export async function resumeNavigation(): Promise<ControlCommandResponse> {
 }
 
 export interface ProductSessionSwitchOptions {
-  currentProfile?: string | null
+  currentProduct?: ProductName | null
   mapName?: string | null
+  relocalize?: boolean
   initialPose?: [number, number, number] | null
-  endpoint?: string | null
 }
 
-const PRODUCT_PROFILE_BY_SESSION_MODE: Record<SessionMode, ProductModeProfile> = {
-  mapping: 'map',
-  navigating: 'nav',
-  exploring: 'tare_explore',
+export interface ProductControlHandoff {
+  plan: RuntimeSwitchPlanResponse
+  command: string
 }
 
-export async function switchProductSession(
-  mode: SessionMode,
+const SAVED_MAP_SWITCH_PRODUCTS = new Set<ProductName>(['nav', 'tracking', 'inspection'])
+
+async function copyOperatorCommand(command: string): Promise<void> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
+    throw new Error('Clipboard access is unavailable; use the ProductControl command shown in the preflight result')
+  }
+  await navigator.clipboard.writeText(command)
+}
+
+export async function prepareProductSwitch(
+  targetProduct: ProductName,
   options: ProductSessionSwitchOptions = {},
-): Promise<RuntimeSwitchResponse> {
+): Promise<ProductControlHandoff> {
   const mapName = options.mapName?.trim() || null
-  if (mode === 'navigating' && !mapName) {
-    throw new Error('Navigation product switch requires a saved map')
+  const requiresSavedMap = SAVED_MAP_SWITCH_PRODUCTS.has(targetProduct)
+  if (requiresSavedMap && !mapName) {
+    throw new Error(`${targetProduct} Product switch requires a saved map`)
   }
-  const response = await runRuntimeSwitch({
-    current_profile: options.currentProfile ?? null,
-    target_profile: PRODUCT_PROFILE_BY_SESSION_MODE[mode],
-    target_endpoint: options.endpoint ?? 'thunder_field',
-    endpoint: options.endpoint ?? 'thunder_field',
-    map_name: mode === 'navigating' ? mapName : null,
-    relocalize: mode === 'navigating',
-    initial_pose: mode === 'navigating' ? options.initialPose : null,
-    strategy: 'cold',
-    execute: true,
-    allow_restart: true,
+  const usesSavedMap = requiresSavedMap || (targetProduct === 'explore' && mapName !== null)
+  const relocalize = usesSavedMap && options.relocalize !== false
+  const plan = await runRuntimeSwitchPlan({
+    current_product: options.currentProduct ?? null,
+    target_product: targetProduct,
+    map_name: usesSavedMap ? mapName : null,
+    relocalize,
+    initial_pose: usesSavedMap ? options.initialPose : null,
   })
-  if (!response.ok || !response.accepted) {
-    const blocker = response.blockers?.filter(Boolean).join('; ')
-    throw new Error(blocker || response.error || response.status || 'Product mode switch was rejected')
+  if (!plan.ok || !plan.read_only || !plan.dry_run || plan.motion) {
+    const blocker = plan.blockers?.filter(Boolean).join('; ')
+    throw new Error(blocker || plan.error || 'Product switch preflight was rejected')
   }
-  return response
+  const command = plan.operator_command?.trim()
+  if (!command) {
+    throw new Error('Gateway did not return a ProductControl command')
+  }
+  return { plan, command }
+}
+
+export async function copyProductSwitchCommand(
+  targetProduct: ProductName,
+  options: ProductSessionSwitchOptions = {},
+): Promise<ProductControlHandoff> {
+  const handoff = await prepareProductSwitch(targetProduct, options)
+  await copyOperatorCommand(handoff.command)
+  return handoff
+}
+
+export function productControlStopCommand(env: EnvName): string {
+  return `python -m lingtu.control stop-session --env ${env}`
+}
+
+export async function copyProductControlStopCommand(env: EnvName): Promise<string> {
+  const command = productControlStopCommand(env)
+  await copyOperatorCommand(command)
+  return command
+}
+
+export function productControlRestartCommand(env: EnvName, process: 'slam'): string {
+  return `python -m lingtu.control restart --process ${process} --env ${env}`
+}
+
+export async function copyProductControlRestartCommand(
+  env: EnvName,
+  process: 'slam',
+): Promise<string> {
+  const command = productControlRestartCommand(env, process)
+  await copyOperatorCommand(command)
+  return command
 }
 
 export async function fetchSession(): Promise<SessionState> {
@@ -1093,19 +1261,22 @@ export async function autoRelocalize(): Promise<SlamOperationResponse> {
 
 // --- Diagnostics / bag recording ---
 
-export async function fetchBagStatus(): Promise<BagStatusResponse> {
-  return fetchJson<BagStatusResponse>(apiPath('bag_status', '/api/v1/bag/status'))
+export async function fetchRecordingStatus(): Promise<RecordingStatusResponse> {
+  return fetchJson<RecordingStatusResponse>(apiPath('recording_status', '/api/v1/recordings/status'))
 }
 
-export async function startBagRecording(
+export async function startRecording(
   duration = 600,
   prefix = 'web',
-): Promise<BagOperationResponse> {
-  return postJson<BagOperationResponse>(apiPath('bag_start', '/api/v1/bag/start'), { duration, prefix })
+): Promise<RecordingOperationResponse> {
+  return postJson<RecordingOperationResponse>(
+    apiPath('recording_start', '/api/v1/recordings/start'),
+    { duration, prefix },
+  )
 }
 
-export async function stopBagRecording(): Promise<BagOperationResponse> {
-  return postJson<BagOperationResponse>(apiPath('bag_stop', '/api/v1/bag/stop'))
+export async function stopRecording(): Promise<RecordingOperationResponse> {
+  return postJson<RecordingOperationResponse>(apiPath('recording_stop', '/api/v1/recordings/stop'))
 }
 
 // --- Auth ---

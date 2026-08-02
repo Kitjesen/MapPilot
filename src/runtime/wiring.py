@@ -23,35 +23,20 @@ class WireDelivery(str, Enum):
 
 @dataclass(frozen=True)
 class WireSpec:
-    """Connect one output port to one input port.
-
-    ``transport`` is kept as a compatibility alias for older call sites. New
-    code should use ``delivery`` because this is a per-wire delivery mode, not
-    the system communication architecture.
-    """
+    """Connect one output port to one input port."""
 
     out_module: str
     out_port: str
     in_module: str
     in_port: str
-    transport: Any = None
-    topic: str | None = None
     delivery: Any = None
-
-    def __post_init__(self) -> None:
-        if self.delivery is None or self.transport is None:
-            return
-        if wire_delivery_name(self.delivery) != wire_delivery_name(self.transport):
-            raise ValueError(
-                "WireSpec received conflicting delivery and transport values: "
-                f"{self.delivery!r} != {self.transport!r}"
-            )
+    topic: str | None = None
 
     @property
     def delivery_spec(self) -> Any:
         """Return the effective delivery selector."""
 
-        return self.delivery if self.delivery is not None else self.transport
+        return self.delivery
 
     def label(self) -> str:
         label = f"{self.out_module}.{self.out_port}->{self.in_module}.{self.in_port}"
@@ -65,7 +50,7 @@ class WireSpec:
             self.out_port,
             self.in_module,
             self.in_port,
-            delivery=self.delivery_spec,
+            delivery=self.delivery,
             topic=self.topic,
         )
 

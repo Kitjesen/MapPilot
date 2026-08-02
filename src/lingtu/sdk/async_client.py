@@ -1,4 +1,4 @@
-﻿"""Asynchronous HTTP client for the LingTu robot Gateway.
+"""Asynchronous HTTP client for the LingTu robot Gateway.
 
 Requires the ``aiohttp`` package.
 
@@ -12,31 +12,42 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import json
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 try:
     import aiohttp
     import aiohttp.client_exceptions
 except ImportError:  # pragma: no cover
-    msg = (
-        "The async LingTu client requires aiohttp. "
-        "Install it with: pip install 'lingtu[sdk-async]'"
-    )
+    msg = "The async LingTu client requires aiohttp. Install it with: pip install 'lingtu[sdk-async]'"
     raise ImportError(msg) from None
 
 from lingtu.sdk.client import (
     CommandResult,
     HealthStatus,
     LingTuClient,
-    MapInfo,
     MapList,
     NavigationStatus,
     Position,
     RobotState,
     SessionInfo,
     _connection_error_payload,
+    _mapping,
+    _navigation_failure_reason,
+    _navigation_state,
+    _navigation_wait_outcome,
+    _new_request_id,
+    _parse_command_result,
+    _parse_navigation_status,
+    _save_operation_failure_reason,
+    _save_response_is_connection_unknown,
+    _validate_save_operation_identity,
+    _validated_map_save_receipt,
 )
 
 
@@ -97,7 +108,14 @@ class AsyncLingTuClient:
     # Navigation
     # ------------------------------------------------------------------
 
-    async def go(self, x: float, y: float, yaw: float = 0.0) -> CommandResult:
+    async def go(
+        self,
+        x: float,
+        y: float,
+        yaw: float = 0.0,
+        *,
+        request_id: str | None = None,
+    ) -> CommandResult:
         """Navigate to map coordinates.
 
         Args:
@@ -109,7 +127,14 @@ class AsyncLingTuClient:
 
             await robot.go(10.0, 5.0)
         """
-        return await self._command("/api/v1/goal", {"x": x, "y": y, "yaw": yaw})
+        resolved_request_id = str(request_id or "").strip() or _new_request_id()
+        result = await self._command(
+            "/api/v1/goal",
+            {"x": x, "y": y, "yaw": yaw, "request_id": resolved_request_id},
+        )
+        if result.request_id is None:
+            result.request_id = resolved_request_id
+        return result
 
     async def go_to(self, target: str) -> CommandResult:
         """Navigate by semantic label or natural-language instruction.
@@ -161,13 +186,17 @@ class AsyncLingTuClient:
             ])
         """
         results: list[CommandResult] = []
-        for i, (x, y, yaw) in enumerate(waypoints):
+        for x, y, yaw in waypoints:
+            baseline = await self.navigation_status()
             result = await self.go(x, y, yaw)
             results.append(result)
             if not result.ok:
                 break
-            if i < len(waypoints) - 1:
-                await self.wait_until_arrived()
+            await self.wait_until_arrived(
+                request_id=result.request_id,
+                expected_goal=(x, y, yaw),
+                baseline=baseline,
+            )
         return results
 
     async def wait_until_arrived(
@@ -175,6 +204,10 @@ class AsyncLingTuClient:
         timeout: float = 120.0,
         poll_interval: float = 0.5,
         distance_threshold: float = 0.3,
+        *,
+        request_id: str | None = None,
+        expected_goal: tuple[float, float, float] | None = None,
+        baseline: NavigationStatus | None = None,
     ) -> NavigationStatus:
         """Wait (async) until the current navigation mission completes.
 
@@ -189,21 +222,30 @@ class AsyncLingTuClient:
 
         Raises:
             TimeoutError: If the mission does not finish in time.
+            RuntimeError: If the mission fails or is cancelled.
         """
         deadline = time.monotonic() + timeout
+        active_seen = False
+        status = baseline or NavigationStatus()
         while time.monotonic() < deadline:
             status = await self.navigation_status()
-            state = status.state
-            if state in ("idle", "completed", "failed", "cancelled"):
+            active_seen, outcome = _navigation_wait_outcome(
+                status,
+                request_id=request_id,
+                expected_goal=expected_goal,
+                baseline=baseline,
+                active_seen=active_seen,
+                distance_threshold=distance_threshold,
+            )
+            if outcome == "success":
                 return status
-            if status.distance_to_goal is not None and status.distance_to_goal <= distance_threshold:
-                return status
+            if outcome == "failure":
+                state = _navigation_state(status)
+                raise RuntimeError(f"Navigation {state}: {_navigation_failure_reason(status)}")
             await asyncio_sleep(poll_interval)
 
-        raise TimeoutError(
-            f"Navigation did not complete within {timeout}s "
-            f"(state={status.state}, dist={status.distance_to_goal:.2f}m)"
-        )
+        distance = "unknown" if status.distance_to_goal is None else f"{status.distance_to_goal:.2f}m"
+        raise TimeoutError(f"Navigation did not complete within {timeout}s (state={status.state}, dist={distance})")
 
     # ------------------------------------------------------------------
     # State
@@ -247,19 +289,7 @@ class AsyncLingTuClient:
     async def navigation_status(self) -> NavigationStatus:
         """Get current navigation mission status."""
         raw = await self._get("/api/v1/navigation/status")
-        goal_raw = raw.get("goal", {})
-        return NavigationStatus(
-            state=raw.get("state", "idle"),
-            distance_to_goal=raw.get("distance_to_goal", 0.0),
-            time_elapsed=raw.get("time_elapsed", 0.0),
-            goal=Position(
-                x=goal_raw.get("x", 0.0),
-                y=goal_raw.get("y", 0.0),
-                z=goal_raw.get("z", 0.0),
-                yaw=goal_raw.get("yaw", 0.0),
-            ),
-            raw=raw,
-        )
+        return _parse_navigation_status(raw)
 
     async def localization_status(self) -> dict[str, Any]:
         """Get localization health: alignment, residual, fix quality."""
@@ -292,16 +322,127 @@ class AsyncLingTuClient:
         raw = await self._get("/api/v1/slam/maps")
         return LingTuClient._parse_map_list(raw)
 
-    async def save_map(self, name: str | None = None) -> CommandResult:
-        """Save the current SLAM map.
-
-        Args:
-            name: Map name.  If omitted the server auto-generates one.
-        """
-        body: dict[str, Any] = {}
+    async def save_map(
+        self,
+        name: str | None = None,
+        *,
+        optimization: str | None = None,
+        request_id: str | None = None,
+    ) -> CommandResult:
+        """Queue a durable save of the current SLAM map."""
+        resolved_request_id = str(request_id or "").strip() or _new_request_id()
+        body: dict[str, Any] = {"request_id": resolved_request_id}
         if name:
             body["name"] = name
-        return await self._command("/api/v1/map/save", body)
+        if optimization is not None:
+            body["optimization"] = optimization
+        result = await self._command("/api/v1/map/save", body)
+        if result.request_id is None:
+            result.request_id = resolved_request_id
+        return result
+
+    async def save_map_and_wait(
+        self,
+        name: str | None = None,
+        *,
+        optimization: str | None = None,
+        request_id: str | None = None,
+        timeout: float = 300.0,
+        poll_interval: float = 1.0,
+    ) -> dict[str, Any]:
+        """Save the current map and wait for its durable terminal result."""
+        deadline = time.monotonic() + timeout
+        resolved_request_id = str(request_id or "").strip() or _new_request_id()
+        while True:
+            receipt = await self.save_map(
+                name,
+                optimization=optimization,
+                request_id=resolved_request_id,
+            )
+            operation_id, submission_unknown = _validated_map_save_receipt(
+                receipt,
+                resolved_request_id,
+            )
+            if receipt.ok and receipt.accepted and operation_id:
+                break
+            if not submission_unknown:
+                raise RuntimeError("Map save response did not include operation_id")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Map save admission remained unknown until the timeout")
+            await asyncio_sleep(poll_interval)
+        state = ""
+        while time.monotonic() < deadline:
+            response = await self.get_map_operation(operation_id)
+            _validate_save_operation_identity(response, operation_id)
+            operation = _mapping(response.get("operation"))
+            state = str(operation.get("state") or "").strip().upper()
+            if state == "SUCCEEDED":
+                return response
+            if state in {"FAILED", "CANCELLED", "CANCELED"}:
+                raise RuntimeError(f"Map save {state}: {_save_operation_failure_reason(response)}")
+            reason_code = str(operation.get("reason_code") or response.get("reason_code") or "").strip().lower()
+            transient = reason_code == "operation_not_found" or _save_response_is_connection_unknown(response)
+            explicit_error = (
+                response.get("ok") is False
+                or response.get("success") is False
+                or response.get("error") is not None
+                or response.get("detail") is not None
+                or operation.get("error") is not None
+                or operation.get("detail") is not None
+                or state in {"ERROR", "REJECTED", "NOT_FOUND"}
+            )
+            if explicit_error and not transient:
+                raise RuntimeError(f"Map save status query failed: {_save_operation_failure_reason(response)}")
+            await asyncio_sleep(poll_interval)
+        raise TimeoutError(f"Map save did not complete within {timeout}s (state={state or 'UNKNOWN'})")
+
+    async def get_map_operation(self, operation_id: str) -> dict[str, Any]:
+        """Return the durable state of one map-save operation."""
+        encoded_operation_id = quote(operation_id, safe="")
+        return await self._get(f"/api/v1/maps/operations/{encoded_operation_id}")
+
+    async def cancel_map_operation(self, operation_id: str) -> CommandResult:
+        """Request cancellation of one map-save operation."""
+        encoded_operation_id = quote(operation_id, safe="")
+        return await self._command(f"/api/v1/maps/operations/{encoded_operation_id}/cancel")
+
+    async def retry_map_operation(self, operation_id: str) -> CommandResult:
+        """Retry one failed map-save operation."""
+        encoded_operation_id = quote(operation_id, safe="")
+        return await self._command(f"/api/v1/maps/operations/{encoded_operation_id}/retry")
+
+    async def download_map_pcd(self, name: str, target: str | Path) -> Path:
+        """Stream a saved map PCD artifact to ``target`` atomically."""
+        destination = Path(target)
+        encoded_name = quote(name, safe="")
+        headers: dict[str, str] = {}
+        if self._api_key:
+            headers["X-API-Key"] = self._api_key
+        session = self._require_session()
+        temporary_path: Path | None = None
+        try:
+            async with session.get(
+                self.base_url + f"/api/v1/maps/{encoded_name}/pcd",
+                headers=headers,
+            ) as response:
+                response.raise_for_status()
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    dir=destination.parent,
+                    prefix=f".{destination.name}.",
+                    suffix=".part",
+                    delete=False,
+                ) as output:
+                    temporary_path = Path(output.name)
+                    async for chunk in response.content.iter_chunked(1024 * 1024):
+                        if chunk:
+                            await asyncio.to_thread(output.write, chunk)
+            temporary_path.replace(destination)
+        except BaseException:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+            raise
+        return destination
 
     async def use_map(self, name: str) -> CommandResult:
         """Activate a saved map for navigation."""
@@ -405,7 +546,12 @@ class AsyncLingTuClient:
         """Hot-switch the SLAM profile."""
         return await self._command("/api/v1/slam/switch", {"profile": profile})
 
-    async def slam_relocalize(self, x: float | None = None, y: float | None = None, yaw: float | None = None) -> CommandResult:
+    async def slam_relocalize(
+        self,
+        x: float | None = None,
+        y: float | None = None,
+        yaw: float | None = None,
+    ) -> CommandResult:
         """Relocalize against a saved map with optional pose guess."""
         body: dict[str, Any] = {}
         if x is not None:
@@ -437,23 +583,40 @@ class AsyncLingTuClient:
         return await self._get("/api/v1/explore/status")
 
     # ------------------------------------------------------------------
-    # Rosbag recording
+    # Native MCAP recording
     # ------------------------------------------------------------------
 
+    async def recording_start(
+        self,
+        prefix: str | None = None,
+        *,
+        duration: int = 600,
+    ) -> CommandResult:
+        """Start a native MCAP recording session."""
+        body: dict[str, Any] = {"duration": duration}
+        if prefix:
+            body["prefix"] = prefix
+        return await self._command("/api/v1/recordings/start", body)
+
+    async def recording_stop(self) -> CommandResult:
+        """Stop the active native MCAP recording session."""
+        return await self._command("/api/v1/recordings/stop")
+
+    async def recording_status(self) -> dict[str, Any]:
+        """Get native MCAP recording status."""
+        return await self._get("/api/v1/recordings/status")
+
     async def bag_start(self, name: str | None = None) -> CommandResult:
-        """Start rosbag recording."""
-        body: dict[str, Any] = {}
-        if name:
-            body["name"] = name
-        return await self._command("/api/v1/bag/start", body)
+        """Deprecated alias for :meth:`recording_start`."""
+        return await self.recording_start(name)
 
     async def bag_stop(self) -> CommandResult:
-        """Stop rosbag recording."""
-        return await self._command("/api/v1/bag/stop")
+        """Deprecated alias for :meth:`recording_stop`."""
+        return await self.recording_stop()
 
     async def bag_status(self) -> dict[str, Any]:
-        """Get rosbag recording status."""
-        return await self._get("/api/v1/bag/status")
+        """Deprecated alias for :meth:`recording_status`."""
+        return await self.recording_status()
 
     # ------------------------------------------------------------------
     # Temporal memory
@@ -473,21 +636,35 @@ class AsyncLingTuClient:
 
     async def acquire_lease(self, client_id: str, ttl: float = 30.0) -> CommandResult:
         """Acquire the control lease (only one client at a time)."""
-        return await self._command("/api/v1/lease", {
-            "action": "acquire", "client_id": client_id, "ttl": ttl,
-        })
+        return await self._command(
+            "/api/v1/lease",
+            {
+                "action": "acquire",
+                "client_id": client_id,
+                "ttl": ttl,
+            },
+        )
 
     async def release_lease(self, client_id: str) -> CommandResult:
         """Release the control lease."""
-        return await self._command("/api/v1/lease", {
-            "action": "release", "client_id": client_id,
-        })
+        return await self._command(
+            "/api/v1/lease",
+            {
+                "action": "release",
+                "client_id": client_id,
+            },
+        )
 
     async def renew_lease(self, client_id: str, ttl: float = 30.0) -> CommandResult:
         """Renew the control lease before it expires."""
-        return await self._command("/api/v1/lease", {
-            "action": "renew", "client_id": client_id, "ttl": ttl,
-        })
+        return await self._command(
+            "/api/v1/lease",
+            {
+                "action": "renew",
+                "client_id": client_id,
+                "ttl": ttl,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -595,14 +772,7 @@ class AsyncLingTuClient:
 
     async def _command(self, path: str, data: dict[str, Any] | None = None) -> CommandResult:
         raw = await self._post(path, data)
-        ok = raw.get("ok", False) or raw.get("success", False)
-        if not ok and "error" not in raw and "message" not in raw:
-            ok = True  # no error signal = success
-        return CommandResult(
-            ok=ok,
-            message=raw.get("message", raw.get("reason", raw.get("error", ""))),
-            raw=raw,
-        )
+        return _parse_command_result(raw)
 
     async def _get(self, path: str) -> dict[str, Any]:
         s = self._require_session()
@@ -643,8 +813,6 @@ class AsyncLingTuClient:
 # ---------------------------------------------------------------------------
 # asyncio sleep helper; Python 3.13+ asyncio.sleep is fine, just an alias.
 # ---------------------------------------------------------------------------
-import asyncio
-
 asyncio_sleep = asyncio.sleep
 
 
@@ -665,4 +833,3 @@ async def _read_json_response(resp: aiohttp.ClientResponse, path: str) -> dict[s
             "detail": detail,
             "path": path,
         }
-

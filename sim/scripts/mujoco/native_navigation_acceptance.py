@@ -22,6 +22,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_EVIDENCE_SAMPLE_PERIOD_S = 0.20
+DEFAULT_PARENT_SENSOR_DIAGNOSTICS_PERIOD_S = 0.5
 
 
 def _phase_runtime_timeout_s(
@@ -37,6 +38,26 @@ def _phase_runtime_timeout_s(
         60.0,
         float(shutdown_grace_s),
     )
+
+
+def _parent_sensor_diagnostics_args(
+    artifact: Path,
+    runtime_tolerances: dict[str, Any],
+) -> list[str]:
+    period_s = float(
+        runtime_tolerances.get(
+            "parent_diagnostics_period_s",
+            DEFAULT_PARENT_SENSOR_DIAGNOSTICS_PERIOD_S,
+        )
+    )
+    if not math.isfinite(period_s) or period_s <= 0.0:
+        raise ValueError("runtime_tolerances.parent_diagnostics_period_s must be positive and finite")
+    return [
+        "--parent-diagnostics-json",
+        str(Path(artifact).expanduser().resolve()),
+        "--parent-diagnostics-period-s",
+        f"{period_s:g}",
+    ]
 
 
 def _motion_health_collection_active(motion_complete_marker: Path) -> bool:
@@ -65,7 +86,7 @@ from sim.scripts.mujoco.native_dds_sensors import (
     _wsl_pid_alive,
 )
 
-DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_native_navigation_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_navigation_acceptance.json"
 DEFAULT_THUNDERV4_MJCF = ROOT / "sim" / "robots" / "thunderv4" / "mjcf" / "thunderv4.xml"
 
 
@@ -705,9 +726,29 @@ def _prepare_acceptance_assets(
 
     scene_xml = Path(str(report.get("scene_xml") or "")).expanduser().resolve()
     map_dir = Path(str(report.get("map_dir") or "")).expanduser().resolve()
-    build_ok = bool((report.get("build") or {}).get("ok"))
-    artifact_ok = bool((report.get("artifact_gate") or {}).get("ok"))
+    build = dict(report.get("build") or {})
+    artifact_gate = dict(report.get("artifact_gate") or {})
+    build_ok = bool(build.get("ok"))
+    artifact_ok = bool(artifact_gate.get("ok"))
     ok = build_ok and artifact_ok and scene_xml.is_file() and map_dir.is_dir()
+    blockers: list[str] = []
+    if not build_ok:
+        nested_build = build.get("octomap_result")
+        build_reason = (
+            str((nested_build or {}).get("reason_code") or "")
+            if isinstance(nested_build, dict)
+            else ""
+        )
+        build_reason = build_reason or str(
+            build.get("reason_code") or build.get("status") or "unknown"
+        )
+        blockers.append(f"asset_octomap_build_failed:{build_reason}")
+    if not artifact_ok:
+        blockers.append("asset_artifact_gate_failed")
+    if not scene_xml.is_file():
+        blockers.append(f"asset_scene_missing:{scene_xml}")
+    if not map_dir.is_dir():
+        blockers.append(f"asset_map_dir_missing:{map_dir}")
     if ok:
         manifest["world"] = str(scene_xml)
         manifest["map_dir"] = str(map_dir)
@@ -727,10 +768,17 @@ def _prepare_acceptance_assets(
         "map_dir": str(map_dir),
         "build_ok": build_ok,
         "artifact_gate_ok": artifact_ok,
+        "blockers": blockers,
+        "build": build,
+        "artifact_gate": artifact_gate,
     }
 
 
-def _preflight(manifest: dict[str, Any]) -> tuple[dict[str, Path], dict[str, Path], list[str], dict[str, Any]]:
+def _preflight_runtime(
+    manifest: dict[str, Any],
+    *,
+    require_map: bool,
+) -> tuple[dict[str, Path], dict[str, Path], list[str], dict[str, Any]]:
     blockers: list[str] = []
     binaries: dict[str, Path] = {}
     state_provider = str(
@@ -771,9 +819,17 @@ def _preflight(manifest: dict[str, Any]) -> tuple[dict[str, Path], dict[str, Pat
         if not world_candidate.is_file():
             blockers.append(f"runtime_path_missing:world:{world_candidate}")
 
-    map_paths, map_blockers, provenance = _validate_map(manifest)
-    blockers.extend(map_blockers)
-    paths.update(map_paths)
+    if require_map:
+        map_paths, map_blockers, provenance = _validate_map(manifest)
+        blockers.extend(map_blockers)
+        paths.update(map_paths)
+    else:
+        provenance = {
+            "map_contract": {
+                "required": False,
+                "reason": "caller_selected_map_free_product",
+            }
+        }
 
     policy_value = str(paths_cfg.get("policy") or "").strip()
     policy = (
@@ -786,6 +842,22 @@ def _preflight(manifest: dict[str, Any]) -> tuple[dict[str, Path], dict[str, Pat
         blockers.append(f"thunderv4_policy_missing:{policy}")
     provenance.update(provenance_probe)
     return binaries, paths, blockers, provenance
+
+
+def _preflight(
+    manifest: dict[str, Any],
+) -> tuple[dict[str, Path], dict[str, Path], list[str], dict[str, Any]]:
+    """Resolve generic native-navigation inputs with a mandatory saved map."""
+
+    return _preflight_runtime(manifest, require_map=True)
+
+
+def _preflight_map_free(
+    manifest: dict[str, Any],
+) -> tuple[dict[str, Path], dict[str, Path], list[str], dict[str, Any]]:
+    """Resolve runtime inputs for a Product that explicitly does not own a map."""
+
+    return _preflight_runtime(manifest, require_map=False)
 
 
 def _build_helper() -> dict[str, Any]:
@@ -1341,8 +1413,6 @@ def _evaluate_phase(
         nav_status = evidence.last_nav or {}
         if str(nav_status.get("control_mode") or "") != "autonomy":
             blockers.append("native_control_mode_not_autonomy")
-        if bool(nav_status.get("legacy_motion_inputs_enabled")):
-            blockers.append("legacy_motion_inputs_enabled")
         if nav_status.get("check_obstacle") is not True:
             blockers.append("obstacle_slow_stop_not_enabled")
         if nav_status.get("use_traversability_cost") is not True:
@@ -1588,6 +1658,7 @@ def _run_phase(
     traversability_status = phase_dir / "traversability_status.json"
     nav_status = phase_dir / "nav_status.json"
     sensor_report_path = phase_dir / "sensor_report.json"
+    parent_sensor_diagnostics_path = phase_dir / "parent_sensor_diagnostics.json"
     motion_log_path = phase_dir / "motion.jsonl"
     motion_complete_marker = phase_dir / "motion_complete.json"
     sensor_publisher_pid = phase_dir / "sensor_publisher.pid"
@@ -1597,6 +1668,7 @@ def _run_phase(
         traversability_status,
         nav_status,
         sensor_report_path,
+        parent_sensor_diagnostics_path,
         motion_log_path,
         motion_complete_marker,
     ):
@@ -1797,6 +1869,10 @@ def _run_phase(
         str(motion_complete_marker),
         "--json-out",
         str(sensor_report_path),
+        *_parent_sensor_diagnostics_args(
+            parent_sensor_diagnostics_path,
+            runtime_tolerances,
+        ),
     ]
     if use_slam_process:
         sensor_args.extend(
@@ -1941,6 +2017,7 @@ def _run_phase(
         process_cleanup.append(_cleanup_pid_file("cmd_vel_tap", cmd_vel_tap_pid))
 
     sensor_report = _load_json(sensor_report_path)
+    parent_sensor_diagnostics = _load_json(parent_sensor_diagnostics_path)
     sensor_acceptance = _navigation_sensor_assessment(sensor_report, thresholds)
     video_report: dict[str, Any] = {
         "requested": record_video,
@@ -2027,6 +2104,10 @@ def _run_phase(
         },
         "evidence": evidence.to_dict(),
         "sensor_report": sensor_report,
+        "parent_sensor_diagnostics": {
+            "path": str(parent_sensor_diagnostics_path),
+            "snapshot": parent_sensor_diagnostics,
+        },
         "sensor_acceptance": sensor_acceptance,
         "acceptance_scope": manifest.get("acceptance_scope") or {},
         "video": video_report,

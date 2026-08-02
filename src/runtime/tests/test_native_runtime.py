@@ -8,7 +8,7 @@ def _read(name: str) -> str:
     return (NATIVE_RUNTIME / name).read_text(encoding="utf-8")
 
 
-def test_native_runtime_manifest_declares_product_cpp_components() -> None:
+def test_native_run_plan_declares_product_cpp_components() -> None:
     text = _read("components.cpp")
 
     assert '"lidar"' in text

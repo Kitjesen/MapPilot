@@ -68,8 +68,8 @@ There are three separate runtime contracts:
 
 | Contract | Answers | Example |
 | --- | --- | --- |
-| `runtime_contract` | What semantic data source does this profile use? | `thunder_field`, `mujoco_fastlio2_live` |
-| `endpoint_contract` | What endpoint protocol/schema is used at the process boundary? | `thunder_field_dds_v1` |
+| `runtime_contract` | What evidence/data-source label does this resolved runtime report? | `real`, `mujoco_fastlio2_live` |
+| `endpoint_contract` | What endpoint protocol/schema is used at the process boundary? | `thunder_dds_v1` |
 | `route_contract` | Which canonical topics are external bus topics, and which Module/endpoint ports bind to them? | `robot`, `replay`, `sim` |
 
 Default product rule:
@@ -85,7 +85,7 @@ So a field run can have:
 ```text
 module_transport=local
 endpoint_transport=dds
-endpoint_contract=thunder_field_dds_v1
+endpoint_contract=thunder_dds_v1
 route_contract=robot
 ```
 
@@ -126,9 +126,14 @@ Below `/nav/cmd_vel`:
 | System service | Owns | Needed for current base? |
 | --- | --- | --- |
 | `lingtu-driver.service` | Native real robot command sink, remote Brainstem gRPC client, lease owner, `WalkChecked` ACK path. | yes for real motion |
-| `lingtu-thunder-dds-endpoint.service` | Compatibility Python command sink; conflicts with `lingtu-driver.service`. | no |
-| `robot-brainstem.service` | Legacy/local low-level control bridge if used by a non-field setup. | no for current `thunder_field` deployment |
+| `robot-brainstem.service` | Legacy/local low-level control bridge if used by a non-field setup. | no for current `env=real` deployment |
 | `can-setup.service` | CAN setup for legacy/local bridge deployments. | no for current remote Brainstem gRPC deployment |
+
+The former Python DDS field unit, installer, and deployment wrapper are physically
+removed. Their exact unit names remain only as conflict/disable tombstones for
+cleaning older robot installs. The retained Python runner is a local diagnostic
+interface invoked with `PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner`;
+it is not a Product process adapter.
 
 Current `lingtu-nav-dds.service` still contains multiple internal parts:
 
@@ -182,7 +187,7 @@ ROS still present, but should be treated as compatibility or legacy:
 | Explicit adapters | `src/runtime/adapters/ros2/**`, `src/nav/adapters/ros2/**`, `src/localization/adapters/ros2/**` | keep only as opt-in compatibility |
 | Python DDS reader | `src/runtime/adapters/dds/reader.py` | keep as DDS compatibility/diagnostics utility, not product control loop |
 | Vendor packages | `src/drivers/adapters/ros2/lidar/livox_driver2`, `src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2` | quarantine or make optional vendor bundles |
-| Legacy systemd | `scripts/deploy/s100p/*.service` using `ros2 run` | not product default |
+| Removed legacy systemd seam | Former S100P ROS2 installer and unit templates | keep absent; legacy unit names remain detection tombstones only |
 | ROS simulation gates | Gazebo/ROS bridge scripts under `sim/**` | keep as compatibility tests, not product proof |
 | Legacy demos/tools | `scripts/perception/live_*.py`, old OTA colcon scripts | archive or mark legacy |
 | Docs | historical plans and archived papers | archive stale claims when touched |
@@ -190,9 +195,10 @@ ROS still present, but should be treated as compatibility or legacy:
 ## Next Cleanup Order
 
 1. Keep this document and `NAVIGATION_RUNTIME_DATAFLOW.md` as the visible map.
-2. Add one product-runtime audit test: product profiles must not import or
+2. Add one product-runtime audit test: field Products must not import or
    launch ROS unless the endpoint explicitly says compatibility.
-3. Move or mark legacy ROS launch/systemd/OTA scripts as compatibility-only.
+3. Keep removed legacy ROS systemd and OTA executable seams absent; retain only
+   explicit compatibility diagnostics and optional vendor code.
 4. Split `lingtu-nav-dds` internally before splitting processes.
 5. Extract global planner service, then command safety gate.
 

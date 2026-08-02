@@ -11,8 +11,11 @@ from importlib import import_module
 from typing import Any
 
 _EXPORTS = {
+    "ArtifactHandle": ("maps.client", "ArtifactHandle"),
     "InvalidMapName": ("maps.services", "InvalidMapName"),
     "MapAPIService": ("maps.services", "MapAPIService"),
+    "MapClient": ("maps.client", "MapClient"),
+    "MapClientError": ("maps.client", "MapClientError"),
     "MapControlService": ("maps.services", "MapControlService"),
     "MapPipelineService": ("maps.services", "MapPipelineService"),
     "MapRuntimeBridge": ("maps.services", "MapRuntimeBridge"),

@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -62,7 +61,7 @@ def test_legacy_cpp_shim_directories_are_removed() -> None:
 
 def test_global_planner_contract_does_not_expose_octomap_storage() -> None:
     contract = _read("src/nav/cpp/planning/global/global_planner_contract.hpp")
-    adapter = _read("src/nav/cpp/endpoint/active_octomap_gate.hpp")
+    adapter = _read("src/nav/cpp/endpoint/plan/active_octomap_gate.hpp")
 
     assert "map_path" not in contract
     assert "octomap" not in contract.lower()
@@ -73,11 +72,13 @@ def test_global_planner_contract_does_not_expose_octomap_storage() -> None:
 
 def test_endpoint_rejects_stale_plans_and_reuses_validated_maps() -> None:
     endpoint = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
-    gate = _read("src/nav/cpp/endpoint/active_octomap_gate.cpp")
+    controller = _read("src/nav/cpp/endpoint/plan/goal_plan_controller.cpp")
+    stale_guard = _read("src/nav/cpp/endpoint/plan/global_plan_task.cpp")
+    gate = _read("src/nav/cpp/endpoint/plan/active_octomap_gate.cpp")
 
-    assert "globalPlanStaleReason" in endpoint
-    assert "frame_epoch" in endpoint
-    assert "goal_epoch" in endpoint
+    assert "globalPlanStaleReason" in controller
+    assert "frame_epoch" in stale_guard
+    assert "goal_epoch" in stale_guard
     assert "PlannerSession" in endpoint
     assert "sameMapIdentity" in gate
     assert "cached_artifact_" in gate
@@ -86,7 +87,7 @@ def test_endpoint_rejects_stale_plans_and_reuses_validated_maps() -> None:
 def test_far_is_optional_native_backend_with_active_map_gate() -> None:
     root_cmake = _read("src/nav/cpp/CMakeLists.txt")
     endpoint = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
-    gate = _read("src/nav/cpp/endpoint/active_occupancy_gate.cpp")
+    gate = _read("src/nav/cpp/endpoint/plan/active_occupancy_gate.cpp")
 
     assert "lingtu_nav_far" in root_cmake
     assert "GlobalPlannerBackend::Far" in endpoint
@@ -154,6 +155,7 @@ def test_active_sources_do_not_reference_retired_navigation_cpp_paths() -> None:
         "vendor",
     }
     violations: list[str] = []
+    this_file = Path(__file__).resolve()
     for scan_root in scan_roots:
         for directory, child_directories, filenames in os.walk(scan_root):
             child_directories[:] = [
@@ -164,6 +166,8 @@ def test_active_sources_do_not_reference_retired_navigation_cpp_paths() -> None:
             ]
             for filename in filenames:
                 path = Path(directory, filename)
+                if path.resolve() == this_file:
+                    continue
                 if path.suffix.lower() not in suffixes:
                     continue
                 relative = path.relative_to(ROOT).as_posix()
@@ -232,6 +236,61 @@ def test_release_activation_is_atomic_and_rollback_safe() -> None:
     assert "rm -rf" not in release
 
 
+def test_release_bundles_native_sensor_slam_and_driver_artifacts() -> None:
+    release = _read("scripts/deploy/cut_release.sh")
+
+    for required in (
+        'LIVOX_BUILD_DIR="${LINGTU_LIVOX_SDK2_STREAM_BUILD_DIR:-$DEV_DIR/build/livox_sdk2_stream}"',
+        'SLAM_BUILD_DIR="${LINGTU_SLAM_CORE_BUILD_DIR:-$DEV_DIR/build/slam_core}"',
+        'DRIVER_BUILD_DIR="${LINGTU_DRIVER_BUILD_DIR:-$DEV_DIR/build/driver}"',
+        'LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON',
+        'bash "$DEV_DIR/scripts/build/build_livox_sdk2_stream.sh"',
+        'LINGTU_SLAM_BUILD_DDS_RUNTIME=ON',
+        'LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF',
+        'bash "$DEV_DIR/scripts/build/build_slam_core.sh"',
+        'bash "$DEV_DIR/scripts/build/build_mapd.sh"',
+        'bash "$DEV_DIR/scripts/build/build_dds_probe.sh"',
+        'bash "$DEV_DIR/scripts/build/build_driver.sh"',
+        'build/livox_sdk2_stream/livox_sdk2_stream',
+        'build/slam_core/slamd',
+        'build/maps/mapd',
+        'build/dds_probe/lingtu_dds_probe',
+        'build/driver/lingtu_driver',
+        'write_release_native_sha256_manifest',
+        'verify_release_native_sha256_manifest "$CURRENT_LINK"',
+        'verify_driver_uses_current_release',
+        'verify_mapd_uses_current_release',
+    ):
+        assert required in release
+
+    activation = release.split("activation_destinations() {", 1)[1].split(
+        "\n}\n\nrelease_source_for_destination()", 1
+    )[0]
+    source_mapping = release.split("release_source_for_destination() {", 1)[1].split(
+        "\n}\n\nbackup_label_for_path()", 1
+    )[0]
+    verification = release.split("verify_activation_files() {", 1)[1].split(
+        "\n}\n\ncleanup_activation_backup()", 1
+    )[0]
+    for section in (activation, source_mapping, verification):
+        assert "lingtu-driver.service" in section
+    assert "resolve_release_services" not in release
+    assert 'driver = selected_process("driver")' in release
+    assert 'CURRENT_DRIVER_UNIT="${fields[5]}"' in release
+    assert 'systemctl is-enabled --quiet "$CURRENT_DRIVER_UNIT"' in release
+
+    switch = release.index('sudo ln -sfn -- "$TARGET_DIR" "$CURRENT_LINK"')
+    reapply = release.index('reapply_committed_run_plan "activation"', switch)
+    assert switch < reapply
+    assert 'sudo systemctl restart' not in release
+    assert 'restart_service_list' not in release
+    assert '/api/v1/health' not in release
+    assert '/ready' not in release
+    assert 'DEADLINE=$((SECONDS + 60))' not in release
+    assert 'sleep 3' not in release
+    assert 'while [ $SECONDS -lt $DEADLINE ]' not in release
+
+
 def test_runtime_env_selects_the_map_for_the_configured_global_planner() -> None:
     runtime_env = _read("scripts/deploy/thunder/runtime-env.sh")
     runner = _read("scripts/deploy/thunder/run_nav_dds.sh")
@@ -244,16 +303,32 @@ def test_runtime_env_selects_the_map_for_the_configured_global_planner() -> None
     assert '--global-planner "${LINGTU_NAV_GLOBAL_PLANNER}"' in runner
     assert '--map "${LINGTU_ACTIVE_PLANNER_MAP}"' in runner
 
-def test_tare_explore_declares_saved_map_localization_capability() -> None:
-    product = _read("config/runtime_graph/products/tare_explore.yaml")
+def test_explore_map_variant_declares_saved_map_localization_capability() -> None:
+    from runtime.contracts.product_runtime import resolve_product_spec_contracts
+    from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
 
-    assert "slam_mode: localization" in product
-    assert "requires_map: true" in product
-    assert "  - saved_map_relocalization" in product
-    assert "  - native_slam_mapping" not in product
+    graph = load_runtime_graph()
+    product = resolve_product_variant_spec(
+        "explore",
+        graph.products["explore"],
+        product_variant="map",
+    )
+    contract = resolve_product_spec_contracts(
+        "explore",
+        graph.products["explore"],
+        product_variant="map",
+    )
+
+    assert product["slam_mode"] == "localization"
+    assert product["requires_map"] is True
+    assert "saved_map_relocalization" in contract.capabilities
+    assert "native_slam_mapping" not in contract.capabilities
 
 def test_mujoco_native_endpoint_closes_exploration_contract() -> None:
-    endpoint = _read("config/runtime_graph/endpoints/mujoco_native_dds.yaml")
+    sim_env = _read("config/runtime_graph/envs/sim.yaml")
+    endpoint = sim_env.split("  mujoco_native:\n", 1)[1].split(
+        "  mujoco_host:\n", 1
+    )[0]
 
     for required in (
         "exploration_command_boundary:",

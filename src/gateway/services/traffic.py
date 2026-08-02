@@ -24,7 +24,10 @@ SSE_EVENT_TYPES = (
     "scene_graph",
     "safety",
     "mission",
+    "navigation_state",
+    "navigation_goal_status",
     "navigation_status",
+    "inspection_task_event",
     "lease",
     "command_ack",
     "eval",
@@ -51,8 +54,6 @@ SSE_DIAGNOSTIC_EVENT_TYPES = (
     "tare_stats",
     "exploration_supervisor",
 )
-SSE_LEGACY_EVENT_TYPES = ("heartbeat",)
-
 DROP_OLDEST_POLICY = "drop_oldest"
 
 RECOMMENDED_CLIENT_RATES_HZ: dict[str, float] = {

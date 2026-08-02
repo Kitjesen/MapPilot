@@ -197,7 +197,7 @@ export function Landing() {
                 7 层模块化设计
               </h2>
               <p className={styles.sectionBody} style={{ margin: '0 auto' }}>
-                Module-First 架构 — 每层只依赖下层，没有环形依赖，任何模块可独立替换。
+                Product 驱动架构 — 现场进程所有权明确，Host 内组件保持单向依赖并可独立替换。
               </p>
             </div>
 

@@ -21,13 +21,12 @@ except ImportError:
     print("paramiko required: pip install paramiko", file=sys.stderr)
     raise SystemExit(2)
 
-from run_sunrise_continuous_mapping_gate import (
+from run_sunrise_continuous_mapping_gate import (  # noqa: E402
     MAX_CYCLONEDDS_DOMAIN_ID,
     REMOTE_ROOT,
     ROOT,
     _connect,
     _mkdir_p,
-    _sync_files,
     _validate_domain_id,
 )
 
@@ -46,7 +45,7 @@ VEL_TIGHT_SLAM_CONFIG = (
 SYNC_PATHS = [
     "sim/scripts/mujoco/continuous_mapping_quality_gate.py",
     "sim/scripts/mujoco/native_dds_sensors.py",
-    "sim/scripts/mujoco_continuous_mapping_quality_gate.py",
+
     "sim/scripts/run_sunrise_continuous_mapping_gate.py",
     "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
     "src/localization/fastlio2/config/mid360_mujoco_native_dds_vel_tight.yaml",
@@ -96,7 +95,7 @@ def _remote_exec(client: paramiko.SSHClient, command: str, timeout_s: float) -> 
 
 def _kill_stale_slam(client: paramiko.SSHClient, domain_id: int) -> None:
     command = (
-        f"pkill -f 'lingtu_slam_cyclone_runtime.*--domain-id {domain_id}' >/dev/null 2>&1 || true; "
+        f"pkill -f 'slamd.*--domain-id {domain_id}' >/dev/null 2>&1 || true; "
         f"sleep 1"
     )
     _remote_exec(client, command, timeout_s=15.0)

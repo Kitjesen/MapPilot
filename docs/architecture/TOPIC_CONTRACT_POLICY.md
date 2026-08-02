@@ -186,7 +186,7 @@ Implemented:
 
 - Python canonical topic guard based on `TOPICS`;
 - `/tf` and `/tf_static` included in the guarded set;
-- product-mode contracts changed to use `TOPICS`;
+- compiled Product and lifecycle consumers no longer keep a second topic list;
 - runtime-graph validator changed to use `TOPICS`;
 - runtime-audit wording changed to use `TOPICS`;
 - failure message now explains how to fix violations.

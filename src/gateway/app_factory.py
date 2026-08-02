@@ -6,16 +6,16 @@ construction, middleware, and route registration.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
 from typing import Any
 
 from gateway.schemas import (
     DriverSwapRequest,
     DriverSwapResponse,
     GatewayErrorResponse,
-    MapLifecycleResponse,
-    MapRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,6 @@ def build_gateway_app(gw: Any):
 
     from gateway.auth import APIKeyMiddleware, gateway_api_key_required
     from gateway.routes import (
-        map_lifecycle_payload,
         mount_dashboard_assets,
         register_app_routes,
         register_auth_routes,
@@ -65,11 +64,66 @@ def build_gateway_app(gw: Any):
         register_status_routes,
         register_voice_routes,
     )
+    from gateway.services.rate_limit import RateLimitMiddleware
 
     app.add_middleware(
         APIKeyMiddleware,
         require_key=gateway_api_key_required(),
     )
+    # Rate limiting is outermost: reject floods before auth processing.
+    app.add_middleware(RateLimitMiddleware)
+
+    # ------------------------------------------------------------------
+    # Global exception handlers - structured JSON errors for all routes
+    # ------------------------------------------------------------------
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request, exc):
+        """Catch-all handler: log the traceback and return a safe JSON body."""
+        logger.error(
+            "Unhandled exception on %s %s: %s",
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "internal_server_error",
+                "message": "An unexpected error occurred. Check gateway logs.",
+                "path": str(request.url.path),
+            },
+        )
+
+    @app.exception_handler(asyncio.TimeoutError)
+    async def _timeout_exception_handler(request, exc):
+        """Return 504 when a request exceeds its time budget."""
+        logger.warning(
+            "Request timeout on %s %s",
+            request.method,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=504,
+            content={
+                "error": "gateway_timeout",
+                "message": "The request exceeded its time budget.",
+                "path": str(request.url.path),
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # Request timing middleware - adds X-Response-Time header
+    # ------------------------------------------------------------------
+
+    @app.middleware("http")
+    async def _timing_middleware(request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        response.headers["X-Response-Time-Ms"] = f"{elapsed_ms:.1f}"
+        return response
 
     @app.post("/api/v1/runtime/backend")
     async def post_runtime_backend(body: dict[str, Any]):
@@ -128,49 +182,6 @@ def build_gateway_app(gw: Any):
     register_command_routes(app, gw)
     register_inspection_routes(app, gw)
     register_voice_routes(app, gw)
-
-    @app.post(
-        "/api/v1/maps",
-        summary="Map lifecycle management",
-        response_model=MapLifecycleResponse,
-        responses={
-            400: {"model": GatewayErrorResponse},
-            503: {"model": GatewayErrorResponse},
-        },
-    )
-    async def post_maps(body: MapRequest):
-        action = {
-            "use": "set_active",
-            "build": "build_octomap",
-        }.get(body.action, body.action)
-        cmd = {"action": action}
-        if body.name:
-            cmd["name"] = body.name
-        if body.new_name:
-            cmd["new_name"] = body.new_name
-        try:
-            from gateway.services.map_service import map_service_command
-
-            resp = map_service_command(gw, cmd)
-        except RuntimeError as exc:
-            message = str(exc)
-            return JSONResponse(
-                status_code=503,
-                content=GatewayErrorResponse(error=message, message=message).model_dump(),
-            )
-        if not resp.get("success"):
-            message = str(resp.get("message") or "failed")
-            return JSONResponse(
-                status_code=400,
-                content=GatewayErrorResponse(
-                    error=message,
-                    message=message,
-                    detail=resp,
-                ).model_dump(),
-            )
-        legacy = dict(resp)
-        legacy.pop("success", None)
-        return map_lifecycle_payload(True, **legacy)
 
     register_auth_routes(app)
     register_app_routes(app, gw)

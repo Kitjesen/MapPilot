@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from runtime.contracts import CAMERA_COMPAT_ALIAS, CAMERA_ROLE
+from runtime.contracts import CAMERA_ROLE
 from runtime.runtime_interface import TOPICS
 
 MAP_CLOUD_CONSUMERS = (
@@ -95,20 +95,14 @@ class WiringContext:
     camera_src: str
     color_out: str
     nav_odom_src: str
-    legacy_driver_sensor_fallback: bool = False
 
 
 def camera_source(names: set[str] | frozenset[str], *, driver_module: str) -> tuple[str, str]:
     if CAMERA_ROLE in names:
         camera_src = CAMERA_ROLE
-    # Backward-compat fallback: prefer the short "camera" role (CAMERA_ROLE)
-    # above; only fall back to the legacy CameraBridgeModule name
-    # (CAMERA_COMPAT_ALIAS) when an old blueprint still uses it.
-    elif CAMERA_COMPAT_ALIAS in names:
-        camera_src = CAMERA_COMPAT_ALIAS
     else:
         camera_src = driver_module
-    color_out = "color_image" if camera_src in {CAMERA_ROLE, CAMERA_COMPAT_ALIAS} else "camera_image"
+    color_out = "color_image" if camera_src == CAMERA_ROLE else "camera_image"
     return camera_src, color_out
 
 
@@ -120,7 +114,6 @@ def build_wiring_context(
     slam_profile: str,
     scene_xml: str = "",
     enable_semantic: bool = True,
-    legacy_driver_sensor_fallback: bool = False,
 ) -> WiringContext:
     names = frozenset(module_names)
     slam_module = _selected_slam_module(names, slam_profile=slam_profile)
@@ -137,7 +130,6 @@ def build_wiring_context(
         camera_src=camera_src,
         color_out=color_out,
         nav_odom_src=nav_odom_src,
-        legacy_driver_sensor_fallback=legacy_driver_sensor_fallback,
     )
 
 

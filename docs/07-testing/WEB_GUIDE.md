@@ -76,12 +76,11 @@ LingTu 的验证是分层的。通过的检查只证明它实际覆盖的边界�
     bash scripts/lingtu status
     bash scripts/lingtu health
     bash scripts/lingtu doctor --non-motion --json --strict
-    bash scripts/lingtu plan-preview --internal-only --strict
 
 对于已保存地图工作，请在考虑目标之前验证完整地图包并预览精确路线：
 
     bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-    bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
+    bash scripts/lingtu system-acceptance --map <map-name> --goal <x> <y> <yaw>
 
 **预期结果：** 每个门槛都会为选定的 profile、端点、地图、定位状态和规划器报告可追溯结果。请将原始输出、时间戳、修订和拒绝原因随验证记录保存。
 

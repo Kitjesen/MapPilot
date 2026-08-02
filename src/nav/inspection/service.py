@@ -48,39 +48,59 @@ class Inspection(Module, layer=4):
         return self._store_call("status")
 
     @rpc
-    def start_route(
+    def start_task(
         self,
+        task_id: str,
         route_id: str,
         revision: int = 0,
         request_id: str | None = None,
     ) -> bool:
         return self._command(
-            "start_inspection",
+            "start_inspection_task",
+            task_id=task_id,
             route_id=route_id,
             revision=revision,
             request_id=request_id,
         )
 
     @rpc
-    def pause(self, reason: str, request_id: str | None = None) -> bool:
+    def pause_task(
+        self,
+        task_id: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> bool:
         return self._command(
-            "pause_inspection",
+            "pause_inspection_task",
+            task_id=task_id,
             reason=reason,
             request_id=request_id,
         )
 
     @rpc
-    def resume(self, reason: str, request_id: str | None = None) -> bool:
+    def resume_task(
+        self,
+        task_id: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> bool:
         return self._command(
-            "resume_inspection",
+            "resume_inspection_task",
+            task_id=task_id,
             reason=reason,
             request_id=request_id,
         )
 
     @rpc
-    def cancel(self, reason: str, request_id: str | None = None) -> bool:
+    def cancel_task(
+        self,
+        task_id: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> bool:
         return self._command(
-            "cancel_inspection",
+            "cancel_inspection_task",
+            task_id=task_id,
             reason=reason,
             request_id=request_id,
         )
@@ -95,7 +115,17 @@ class Inspection(Module, layer=4):
         operation = getattr(self._commands, method, None)
         if not callable(operation):
             raise RuntimeError(f"native navigation command capability does not implement {method}")
-        return bool(operation(**kwargs))
+        accepted = operation(**kwargs)
+        if accepted is False:
+            # A negative native acknowledgement is a normal domain outcome.
+            # Preserve it for the HTTP boundary so it can distinguish an
+            # invalid task transition from a broken endpoint.
+            return False
+        if accepted is not True:
+            raise RuntimeError(
+                f"native navigation command {method} returned an invalid acknowledgement"
+            )
+        return True
 
 
 __all__ = ["Inspection"]

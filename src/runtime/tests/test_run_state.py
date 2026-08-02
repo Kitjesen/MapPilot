@@ -68,9 +68,9 @@ class TestSaveReadClear:
         from cli.run_state import read_run_state, save_run_state
 
         runtime = {
-            "endpoint": "thunder_field",
-            "data_source": "thunder_field",
-            "runtime_contract": "thunder_field",
+            "adapter": "thunder_lite",
+            "data_source": "thunder",
+            "runtime_contract": "real",
             "command_sink": "driver",
             "resolved_runtime_data_flow": [
                 {
@@ -81,7 +81,7 @@ class TestSaveReadClear:
         }
         save_run_state(
             "nav",
-            {"robot": "s100p"},
+            {"robot": "thunder"},
             str(isolated_run_dir),
             runtime=runtime,
         )
@@ -223,9 +223,9 @@ def _runtime_status_state() -> dict:
         "host": "test-host",
         "version": "test",
         "runtime": {
-            "endpoint": "thunder_field",
-            "data_source": "thunder_field",
-            "runtime_contract": "thunder_field",
+            "adapter": "thunder_lite",
+            "data_source": "thunder",
+            "runtime_contract": "real",
             "command_sink": "driver",
             "simulation_only": False,
             "slam_source": "lingtu_fastlio_or_external_robot_slam",
@@ -299,7 +299,7 @@ def test_status_human_output_includes_runtime_boundary(monkeypatch, capsys):
     ui.cmd_status_external(as_json=False)
 
     out = capsys.readouterr().out
-    assert "Runtime:  endpoint=thunder_field data_source=thunder_field" in out
+    assert "Runtime:  data_source=thunder" in out
     assert "SLAM:     slam_source=lingtu_fastlio_or_external_robot_slam" in out
     assert (
         "Frame ids: map=map odom=odom body=body lidar=lidar_link "
@@ -326,8 +326,8 @@ def test_status_json_output_includes_runtime_boundary(monkeypatch, capsys):
 
     report = json.loads(capsys.readouterr().out)
     assert report["runtime_status"] == "running"
-    assert report["runtime"]["endpoint"] == "thunder_field"
-    assert report["runtime"]["data_source"] == "thunder_field"
+    assert report["runtime"]["adapter"] == "thunder_lite"
+    assert report["runtime"]["data_source"] == "thunder"
     assert report["runtime"]["command_sink"] == "driver"
     assert report["runtime"]["topic_allowed_frame_ids"]["/slam/map_cloud"] == ["map"]
     assert report["runtime"]["frames"]["axis_convention"] == "x_forward_y_left_z_up"
@@ -357,3 +357,42 @@ def test_stop_force_falls_back_when_sigkill_is_unavailable(monkeypatch, capsys):
     assert sent_signals == [(1234, ui.signal.SIGTERM)]
     assert cleared["called"] is True
     assert "Force killed." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_command"),
+    (
+        ("stop", "python -m lingtu.control stop --env real"),
+        ("restart", "python -m lingtu.control reapply --env real"),
+    ),
+)
+def test_local_lifecycle_rejects_managed_product(
+    monkeypatch,
+    capsys,
+    tmp_path,
+    action,
+    expected_command,
+):
+    from cli import ui
+
+    current_path = tmp_path / "current.json"
+    current_path.write_text(
+        json.dumps({"product": "nav", "env": "real"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LINGTU_CURRENT_FILE", str(current_path))
+    monkeypatch.setattr(
+        ui,
+        "read_run_state",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("managed lifecycle must not read local Host state")
+        ),
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        (ui.cmd_stop if action == "stop" else ui.cmd_restart)()
+
+    assert excinfo.value.code == 2
+    output = capsys.readouterr().out
+    assert "managed by ProductControl" in output
+    assert expected_command in output

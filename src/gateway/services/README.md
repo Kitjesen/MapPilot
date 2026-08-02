@@ -29,10 +29,9 @@ SLAM behavior.
 | `odometry.py` | Odometry validation, cache update, and SSE forwarding |
 | `pose_recovery.py` | Last-pose persistence, auto relocalization, map->odom TF, and reset helpers |
 | `readiness.py` | Readiness summaries |
-| `runtime_cache.py` | Runtime status cache primitives |
-| `runtime_dataflow.py` | Runtime dataflow status summaries |
+| `loc_cache.py`, `session_cache.py` | Runtime status cache primitives |
+| `runtime_dataflow.py` | Read-only Gateway observability; never motion orchestration |
 | `runtime_status.py` | Module/runtime status aggregation |
-| `runtime_switch_execute.py` | Safe runtime switch execution |
 | `runtime_switch_plan.py` | Safe runtime switch preview |
 | `saved_map_loader.py` | Active saved-map point loading and SSE push loop |
 | `safety_status.py` | Safety status aggregation |

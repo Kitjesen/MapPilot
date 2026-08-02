@@ -11,8 +11,8 @@ local logs, generated maps, or site-private overrides here.
   participant.
 - Gateway HTTP/WS/SSE listens on port `5050`; MCP JSON-RPC listens on port
   `8090`.
-- The current Thunder field profile uses `endpoint_only` command output and
-  `driver` as the hardware control boundary.
+- The `real` environment uses native field processes; the local `lite` Profile
+  uses its `thunder_lite` ProfileAdapter and the in-process driver boundary.
 - `lingtu-driver` is the unique speed exit. It consumes `rt/nav/cmd_vel` and
   calls a remote Brainstem gRPC endpoint configured by
   `/opt/lingtu/config/brainstem.env`.
@@ -25,9 +25,9 @@ local logs, generated maps, or site-private overrides here.
 | --- | --- |
 | `robot_config.yaml` | Physical robot geometry, calibration, control limits, and default ports. |
 | `devices.yaml` | Hardware registry for camera, LiDAR, IMU, GNSS, and control devices. |
-| `endpoints.yaml` | Endpoint and transport defaults for local, simulation, and field profiles. |
+| `endpoints.yaml` | Concrete HTTP, DDS, native-service, and stream access points. |
 | `topic_contract.yaml` | Canonical runtime stream/topic contract shared by ModulePorts, Gateway, and endpoint adapters. |
-| `runtime_graph/` | Runtime graph endpoints and DDS/SHM boundary declarations. |
+| `runtime_graph/` | Product declarations plus `real`/`sim` process and DDS/SHM boundary mappings. |
 | `go2rtc.yaml` | go2rtc WebRTC/WHEP camera stream template. |
 | `cyclonedds.xml` | CycloneDDS configuration used by native DDS participants. |
 | `fastdds_no_shm.xml` | FastDDS no-shared-memory compatibility profile for Docker or legacy tests. |

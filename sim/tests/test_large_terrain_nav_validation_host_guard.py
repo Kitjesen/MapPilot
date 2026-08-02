@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-pytestmark = [pytest.mark.sim]
-
 from sim.scripts import large_terrain_nav_validation as gate
+
+pytestmark = [pytest.mark.sim]
 
 
 def test_large_terrain_preflight_writes_host_guard_without_importing_runtime(
@@ -18,15 +18,11 @@ def test_large_terrain_preflight_writes_host_guard_without_importing_runtime(
     monkeypatch.setattr(gate, "numpy_import_is_safe", lambda: False)
     monkeypatch.setattr(
         gate,
-        "_pct_runtime_evidence",
+        "_pct_planner_runtime_evidence",
         lambda: {
+            "runtime": "rust_process",
             "ok": False,
-            "canonical_arch": "x86_64",
-            "python_tag": "py313",
-            "platform_system": "windows",
-            "host_platform_supported": False,
-            "host_platform_blocker": "PCT native artifacts are Linux ELF extension modules",
-            "error": "No runnable PCT native modules",
+            "error": "Rust PCT planner process is unavailable",
         },
     )
 
@@ -46,25 +42,29 @@ def test_large_terrain_preflight_writes_host_guard_without_importing_runtime(
     assert report["environment"]["accepted_host"] is False
     assert report["environment"]["blocked_reason"] == "windows_mingw_numpy_not_accepted"
     assert report["environment"]["claim_boundary"] == "environment_blocked_no_algorithm_claim"
-    assert report["native_runtime"]["python_tag"] == "py313"
-    assert "PCT native runtime unavailable" in report["environment_blockers"]
-    assert report["cases"][0]["planning"][0]["failure_category"] == "environment_runtime"
+    assert report["pct_planner_runtime"]["runtime"] == "rust_process"
+    assert report["pct_planner_runtime_ok"] is False
+    assert "PCT planner runtime unavailable" in report["environment_blockers"]
+    plan = report["cases"][0]["planning"][0]
+    assert plan["failure_category"] == "environment_runtime"
+    assert plan["pct_planner_runtime"]["runtime"] == "rust_process"
+    assert plan["pct_planner_runtime_ok"] is False
+    assert "native_runtime" not in report
+    assert "native_backend_used" not in plan
 
 
-def test_large_terrain_preflight_does_not_block_linux_pct_diagnostics(
+def test_large_terrain_preflight_blocks_unavailable_pct_on_any_host(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setattr(gate, "numpy_import_is_safe", lambda: True)
     monkeypatch.setattr(
         gate,
-        "_pct_runtime_evidence",
+        "_pct_planner_runtime_evidence",
         lambda: {
+            "runtime": "rust_process",
             "ok": False,
-            "canonical_arch": "x86_64",
-            "python_tag": "py313",
-            "platform_system": "linux",
-            "error": "No runnable PCT native modules",
+            "error": "Rust PCT planner process is unavailable",
         },
     )
 
@@ -73,6 +73,30 @@ def test_large_terrain_preflight_does_not_block_linux_pct_diagnostics(
         routes=("terrain_short",),
         planners=("pct", "astar"),
         platform_system="Linux",
+    )
+
+    assert report is not None
+    assert report["environment"]["blocked_reason"] == "pct_planner_runtime_unavailable"
+    assert report["environment_blockers"] == ["PCT planner runtime unavailable"]
+    assert report["pct_planner_runtime_ok"] is False
+    assert "accepted_platforms" not in report["environment"]
+
+def test_large_terrain_preflight_accepts_ready_rust_runtime_on_windows(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(gate, "numpy_import_is_safe", lambda: True)
+    monkeypatch.setattr(
+        gate,
+        "_pct_planner_runtime_evidence",
+        lambda: {"runtime": "rust_process", "ok": True, "error": ""},
+    )
+
+    report = gate._environment_preflight_report(
+        tmp_path,
+        routes=("terrain_short",),
+        planners=("pct",),
+        platform_system="Windows",
     )
 
     assert report is None

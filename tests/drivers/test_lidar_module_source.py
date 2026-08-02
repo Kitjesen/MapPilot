@@ -6,8 +6,6 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
-
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import PointCloud2
 
@@ -140,34 +138,10 @@ def test_lidar_module_publishes_injected_source_imu() -> None:
     assert received == [imu_msg]
 
 
-def test_dds_imu_converter_preserves_covariance() -> None:
-    from drivers.real.lidar._dds import dds_imu_to_imu
-
-    msg = SimpleNamespace(
-        header=SimpleNamespace(
-            stamp=SimpleNamespace(sec=10, nanosec=500_000_000),
-            frame_id="livox_imu",
-        ),
-        orientation=SimpleNamespace(x=0.0, y=0.0, z=0.0, w=1.0),
-        orientation_covariance=[0.1] * 9,
-        angular_velocity=SimpleNamespace(x=0.1, y=0.2, z=0.3),
-        angular_velocity_covariance=[0.2] * 9,
-        linear_acceleration=SimpleNamespace(x=0.0, y=0.0, z=9.81),
-        linear_acceleration_covariance=[0.3] * 9,
-    )
-
-    imu = dds_imu_to_imu(msg)
-
-    assert imu.frame_id == "livox_imu"
-    assert abs(imu.ts - 10.5) < 1e-9
-    assert imu.orientation_covariance == [0.1] * 9
-    assert imu.angular_velocity_covariance == [0.2] * 9
-    assert imu.linear_acceleration_covariance == [0.3] * 9
-
-
 def test_lidar_module_reads_mock_sdk2_process_stream(monkeypatch, tmp_path) -> None:
-    from drivers.real.lidar import LidarModule, sdk2_stream_source
-    from drivers.real.lidar.sdk2_stream_source import (
+    from drivers.real.lidar import LidarModule
+    from drivers.real.lidar.impl.livox import sdk2_stream_source
+    from drivers.real.lidar.impl.livox.sdk2_stream_source import (
         _HEADER,
         _IMU_PAYLOAD,
         _MAGIC,
@@ -289,7 +263,7 @@ def test_lidar_module_reads_software_livox_device_process(monkeypatch, tmp_path)
     assert imus[0].orientation_covariance[0] == -1.0
 
 
-def test_lidar_module_passes_arguments_to_source_factory() -> None:
+def test_lidar_module_passes_ip_to_source_factory() -> None:
     from drivers.real.lidar import LidarModule
 
     calls = []
@@ -301,8 +275,6 @@ def test_lidar_module_passes_arguments_to_source_factory() -> None:
 
     module = LidarModule(
         ip="192.0.2.20",
-        scan_topic="/test/scan",
-        imu_topic="/test/imu",
         source_factory=factory,
     )
 
@@ -310,30 +282,6 @@ def test_lidar_module_passes_arguments_to_source_factory() -> None:
     assert calls == [
         {
             "ip": "192.0.2.20",
-            "scan_topic": "/test/scan",
-            "imu_topic": "/test/imu",
-        }
-    ]
-
-
-def test_lidar_module_passes_explicit_legacy_driver_flag_to_source_factory() -> None:
-    from drivers.real.lidar import LidarModule
-
-    calls = []
-    source = _FakeLidarSource()
-
-    def factory(**kwargs):
-        calls.append(kwargs)
-        return source
-
-    LidarModule(source_factory=factory, start_driver=True)
-
-    assert calls == [
-        {
-            "ip": None,
-            "scan_topic": "/lidar/raw_frame",
-            "imu_topic": "/imu/raw",
-            "start_driver": True,
         }
     ]
 
@@ -352,13 +300,11 @@ def test_lidar_module_start_failure_publishes_not_alive() -> None:
 
 
 def test_create_lidar_source_builds_default_sdk2_source_without_connecting() -> None:
-    from drivers.real.lidar.source import create_lidar_source
+    from drivers.real.lidar.native.sdk import create_lidar_source
 
     sys.modules.pop("drivers.adapters.ros2.livox_driver", None)
     source = create_lidar_source(
         ip="192.0.2.30",
-        scan_topic="/default/scan",
-        imu_topic="/default/imu",
     )
 
     assert source.__class__.__name__ == "Sdk2Source"
@@ -367,31 +313,27 @@ def test_create_lidar_source_builds_default_sdk2_source_without_connecting() -> 
     assert "drivers.adapters.ros2.livox_driver" not in sys.modules
 
 
-def test_create_lidar_source_rejects_embedded_driver_process_ownership() -> None:
-    from drivers.real.lidar.source import create_lidar_source
+def test_lidar_host_apis_do_not_expose_process_start_switch() -> None:
+    import inspect
 
-    with pytest.raises(ValueError, match=r"C\+\+ Livox DDS service"):
-        create_lidar_source(start_driver=True)
-
-
-def test_lidar_stack_default_does_not_enable_legacy_livox_driver() -> None:
+    from drivers.real.lidar import LidarModule
+    from drivers.real.lidar.native.sdk import create_lidar_source
     from lingtu.assembly.stacks.lidar import lidar
 
-    bp = lidar(enabled=True, backend="mid360")
-
-    assert len(bp._entries) == 1
-    entry = bp._entries[0]
-    assert entry.name == "lidar"
-    assert entry.config.get("start_driver") is not True
+    assert "start_driver" not in inspect.signature(LidarModule.__init__).parameters
+    assert "start_driver" not in inspect.signature(create_lidar_source).parameters
+    assert "start_driver" not in inspect.signature(lidar).parameters
+    assert "scan_topic" not in inspect.signature(LidarModule.__init__).parameters
+    assert "imu_topic" not in inspect.signature(LidarModule.__init__).parameters
 
 
 def test_lidar_ros2_process_factory_is_removed() -> None:
     root = Path(__file__).resolve().parents[2]
-    stack_source = (root / "src" / "runtime" / "blueprints" / "stacks" / "lidar.py").read_text(encoding="utf-8")
+    stack_source = (root / "src" / "lingtu" / "assembly" / "stacks" / "lidar.py").read_text(encoding="utf-8")
     module_source = (root / "src" / "drivers" / "real" / "lidar" / "module.py").read_text(encoding="utf-8")
 
     assert not (root / "src/drivers/real/lidar/impl/livox/native_factory.py").exists()
-    assert not (root / "src/drivers/real/lidar/compat/native_factory.py").exists()
+    assert not (root / "src/drivers/real/lidar/compat").exists()
     assert "from drivers.adapters.ros2" not in stack_source
     assert "from drivers.adapters.ros2" not in module_source
 

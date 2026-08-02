@@ -15,7 +15,7 @@ under `scripts/`; runtime code belongs under `src/`.
 | `perception/` | BPU model export and ONNX-to-HBM conversion. |
 | `reconstruction/` | Offline 3D reconstruction and recorded dataset replay helpers. |
 | `validate/` | Static contract validators for config, topics, architecture, packages, and migration gates. |
-| `package_thunder_lite.py` | Thunder Lite package builder; runs its validator first. |
+| `package_lite.py` | `lite` Profile package builder; runs its validator first. |
 
 Generated code, caches, and long-running robot services do not belong here.
 Protobuf generation belongs under `scripts/proto/`; Python bytecode caches stay
@@ -30,15 +30,15 @@ python tools/validate/validate_config.py
 # Topic contract validation
 python tools/validate/validate_topics.py
 
-# Module-First package boundary validation
+# Product, Host, and package boundary validation
 python tools/validate/validate_architecture_boundaries.py
 
-# Thunder Lite package contract + package build
-python tools/validate/validate_thunder_lite_package.py
-python tools/package_thunder_lite.py --output artifacts/thunder-lite-package --force
+# `lite` Profile package contract + package build
+python tools/validate/validate_lite_package.py
+python tools/package_lite.py --output artifacts/lite-package --force
 
 # Thunder field native DDS / systemd deployment contract
-python tools/validate/validate_thunder_field_deployment.py
+python tools/validate/validate_real_deployment.py
 
 # YOLO-World -> ONNX -> BPU
 python tools/perception/export_yoloworld_bpu.py

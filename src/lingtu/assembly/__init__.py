@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib
 from typing import Any
 
-
 _EXPORTS = {
     # Import concrete stack modules directly. If a stack submodule was imported
     # first, Python sets ``lingtu.assembly.stacks.<name>`` to that module object;
@@ -23,14 +22,6 @@ _EXPORTS = {
     "safety": ("lingtu.assembly.stacks.safety", "safety"),
     "sim_lidar": ("lingtu.assembly.stacks.sim_lidar", "sim_lidar"),
     "slam": ("lingtu.assembly.stacks.slam", "slam"),
-    "stub_blueprint": ("lingtu.assembly.stub", "stub_blueprint"),
-    "thunder_basic_blueprint": ("lingtu.assembly.products", "thunder_basic_blueprint"),
-    "thunder_explore_blueprint": (
-        "lingtu.assembly.products",
-        "thunder_explore_blueprint",
-    ),
-    "thunder_map_blueprint": ("lingtu.assembly.products", "thunder_map_blueprint"),
-    "thunder_nav_blueprint": ("lingtu.assembly.products", "thunder_nav_blueprint"),
 }
 
 __all__ = list(_EXPORTS)

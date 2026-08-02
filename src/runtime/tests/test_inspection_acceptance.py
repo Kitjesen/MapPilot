@@ -14,7 +14,7 @@ def _field_check(*, ok: bool = True) -> dict:
         "ok": ok,
         "summary": "PASS" if ok else "FAIL",
         "mode": "field",
-        "blockers": [] if ok else ["Thunder field evidence is not passing"],
+        "blockers": [] if ok else ["Real runtime evidence is not passing"],
         "advisories": [],
     }
 
@@ -70,8 +70,8 @@ def test_inspection_acceptance_passes_field_ready_targets():
         "dry_run": True,
         "motion": False,
         "publishes": [],
-        "from": {"endpoint": "mujoco_live"},
-        "to": {"endpoint": "thunder_field"},
+        "from": {"env": "sim"},
+        "to": {"env": "real"},
     }
 
     payload = build_inspection_acceptance(
@@ -95,7 +95,7 @@ def test_inspection_acceptance_passes_field_ready_targets():
     assert payload["runtime_switch"]["dry_run"] is True
     assert payload["runtime_switch"]["motion"] is False
     assert payload["evidence"]["frontier_preview"]["candidate"]["source"] == ("traversable_frontier")
-    assert payload["evidence"]["runtime_switch"]["to"]["endpoint"] == "thunder_field"
+    assert payload["evidence"]["runtime_switch"]["to"]["env"] == "real"
 
 
 def test_inspection_acceptance_formats_runtime_switch_preflight():
@@ -110,8 +110,8 @@ def test_inspection_acceptance_formats_runtime_switch_preflight():
         "dry_run": True,
         "motion": False,
         "publishes": [],
-        "from": {"endpoint": "mujoco_live"},
-        "to": {"endpoint": "thunder_field"},
+        "from": {"env": "sim"},
+        "to": {"env": "real"},
     }
 
     payload = build_inspection_acceptance(
@@ -125,7 +125,7 @@ def test_inspection_acceptance_formats_runtime_switch_preflight():
 
     assert "LingTu Inspection Acceptance: PASS" in output
     assert (
-        "Runtime switch: status=PASS dry_run=true motion=false publishes=none from=mujoco_live to=thunder_field"
+        "Runtime switch: status=PASS dry_run=true motion=false publishes=none from=sim to=real"
     ) in output
 
 
@@ -140,7 +140,7 @@ def test_inspection_acceptance_blocks_when_field_ready_fails():
 
     assert payload["ok"] is False
     assert payload["summary"] == "BLOCKED"
-    assert "field: Thunder field evidence is not passing" in payload["blockers"]
+    assert "field: Real runtime evidence is not passing" in payload["blockers"]
 
 
 def test_inspection_acceptance_fails_infeasible_goal_candidate_preview():

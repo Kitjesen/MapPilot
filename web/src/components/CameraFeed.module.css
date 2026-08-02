@@ -199,6 +199,37 @@
   box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.5);
 }
 
+.btnReset {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btnReset:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+.btnReset:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.resetNotice {
+  max-width: 310px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
 .hint {
   font-family: var(--font-mono);
   font-size: 11px;

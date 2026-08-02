@@ -1,6 +1,6 @@
 [Unit]
 Description=LingTu native traversability DDS producer
-After=network-online.target lingtu-slam-dds.service
+After=network-online.target
 Wants=network-online.target
 
 [Service]
@@ -23,9 +23,9 @@ Environment=LINGTU_TRAVERSABILITY_TERRAIN_SOFT_HEIGHT_M=0.08
 Environment=LINGTU_TRAVERSABILITY_TERRAIN_HARD_HEIGHT_M=0.20
 Environment=LINGTU_TRAVERSABILITY_TERRAIN_SOFT_SLOPE_DEG=12
 Environment=LINGTU_TRAVERSABILITY_TERRAIN_HARD_SLOPE_DEG=28
-Environment=LINGTU_TRAVERSABILITY_SENSOR_OFFSET_X_M=-0.011
-Environment=LINGTU_TRAVERSABILITY_SENSOR_OFFSET_Y_M=-0.02329
-Environment=LINGTU_TRAVERSABILITY_SENSOR_OFFSET_Z_M=0.04412
+Environment=LINGTU_TRAVERSABILITY_SENSOR_OFFSET_X_M=0.402876074867229
+Environment=LINGTU_TRAVERSABILITY_SENSOR_OFFSET_Y_M=0
+Environment=LINGTU_TRAVERSABILITY_SENSOR_OFFSET_Z_M=0.0582019450665819
 Environment=LINGTU_TRAVERSABILITY_TERRAIN_DECAY_S=2.0
 Environment=LINGTU_TRAVERSABILITY_TERRAIN_MIN_BLOCK_POINTS=10
 Environment=LINGTU_TRAVERSABILITY_TERRAIN_QUANTILE=0.25
@@ -51,11 +51,8 @@ Environment=LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_RAYCAST_MIN_FRAMES=2
 Environment=LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_RAYCAST_MAX_RANGE=6.0
 Environment=LINGTU_TRAVERSABILITY_STATUS_FILE=/dev/shm/lingtu/traversability_status.json
 Environment=LINGTU_CYCLONEDDS_PREFIX=
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh traversability
 ExecStart=/bin/bash -lc 'source /opt/lingtu/config/thunder-runtime-env.sh; if [ -n "${LINGTU_CYCLONEDDS_PREFIX}" ] && [ -d "${LINGTU_CYCLONEDDS_PREFIX}/lib" ]; then export LD_LIBRARY_PATH="${LINGTU_CYCLONEDDS_PREFIX}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"; fi; if [ ! -x "${LINGTU_TRAVERSABILITY_DDS_BIN}" ]; then echo "ERROR: native traversability DDS producer is missing or not executable: ${LINGTU_TRAVERSABILITY_DDS_BIN}" >&2; echo "Build it with: bash scripts/build/build_nav_endpoint.sh" >&2; exit 2; fi; exec "${LINGTU_TRAVERSABILITY_DDS_BIN}" --domain-id "${LINGTU_DDS_DOMAIN_ID}" --publish-hz "${LINGTU_TRAVERSABILITY_PUBLISH_HZ}" --slow-hz "${LINGTU_TRAVERSABILITY_TERRAIN_MAP_HZ}" --tick-hz "${LINGTU_TRAVERSABILITY_TICK_HZ}" --cloud-pose-max-gap-s "${LINGTU_TRAVERSABILITY_CLOUD_POSE_MAX_GAP_S}" --resolution "${LINGTU_TRAVERSABILITY_RESOLUTION}" --radius "${LINGTU_TRAVERSABILITY_RADIUS}" --max-points "${LINGTU_TRAVERSABILITY_MAX_POINTS}" --robot-radius "${LINGTU_TRAVERSABILITY_ROBOT_RADIUS_M}" --observed-free-ttl-s "${LINGTU_TRAVERSABILITY_OBSERVED_FREE_TTL_S}" --terrain-soft-height-m "${LINGTU_TRAVERSABILITY_TERRAIN_SOFT_HEIGHT_M}" --terrain-hard-height-m "${LINGTU_TRAVERSABILITY_TERRAIN_HARD_HEIGHT_M}" --terrain-soft-slope-deg "${LINGTU_TRAVERSABILITY_TERRAIN_SOFT_SLOPE_DEG}" --terrain-hard-slope-deg "${LINGTU_TRAVERSABILITY_TERRAIN_HARD_SLOPE_DEG}" --sensor-offset-x-m "${LINGTU_TRAVERSABILITY_SENSOR_OFFSET_X_M}" --sensor-offset-y-m "${LINGTU_TRAVERSABILITY_SENSOR_OFFSET_Y_M}" --sensor-offset-z-m "${LINGTU_TRAVERSABILITY_SENSOR_OFFSET_Z_M}" --terrain-decay-s "${LINGTU_TRAVERSABILITY_TERRAIN_DECAY_S}" --terrain-min-block-points "${LINGTU_TRAVERSABILITY_TERRAIN_MIN_BLOCK_POINTS}" --terrain-quantile "${LINGTU_TRAVERSABILITY_TERRAIN_QUANTILE}" --terrain-cache-max-points "${LINGTU_TRAVERSABILITY_TERRAIN_CACHE_MAX_POINTS}" --terrain-clear-dy-obs "${LINGTU_TRAVERSABILITY_TERRAIN_CLEAR_DY_OBS}" --terrain-min-dy-obs-dis "${LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_DIS}" --terrain-min-dy-obs-angle "${LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_ANGLE}" --terrain-min-dy-obs-rel-z "${LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_REL_Z}" --terrain-abs-dy-obs-rel-z-thre "${LINGTU_TRAVERSABILITY_TERRAIN_ABS_DY_OBS_REL_Z_THRE}" --terrain-min-dy-obs-vfov "${LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_VFOV}" --terrain-max-dy-obs-vfov "${LINGTU_TRAVERSABILITY_TERRAIN_MAX_DY_OBS_VFOV}" --terrain-min-dy-obs-point-num "${LINGTU_TRAVERSABILITY_TERRAIN_MIN_DY_OBS_POINT_NUM}" --terrain-no-data-obstacle "${LINGTU_TRAVERSABILITY_TERRAIN_NO_DATA_OBSTACLE}" --terrain-no-data-block-skip-num "${LINGTU_TRAVERSABILITY_TERRAIN_NO_DATA_BLOCK_SKIP_NUM}" --dynamic-clear "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR}" --dynamic-clear-voxel-size "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_VOXEL_SIZE}" --dynamic-clear-weak-ttl-s "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_WEAK_TTL_S}" --dynamic-clear-static-ttl-s "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_STATIC_TTL_S}" --dynamic-clear-static-min-hits "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_STATIC_MIN_HITS}" --dynamic-clear-static-min-frames "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_STATIC_MIN_FRAMES}" --dynamic-clear-raycast "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_RAYCAST}" --dynamic-clear-raycast-min-frames "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_RAYCAST_MIN_FRAMES}" --dynamic-clear-raycast-max-range "${LINGTU_TRAVERSABILITY_DYNAMIC_CLEAR_RAYCAST_MAX_RANGE}" --status-file "${LINGTU_TRAVERSABILITY_STATUS_FILE}"'
-Restart=on-failure
-RestartSec=3
 KillSignal=SIGINT
 TimeoutStopSec=20
-
-[Install]
-WantedBy=multi-user.target

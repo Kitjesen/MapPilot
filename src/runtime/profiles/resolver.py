@@ -1,10 +1,10 @@
-"""Resolve product profiles into runtime-ready blueprint config.
+"""Resolve named Host defaults into runtime-ready Blueprint config.
 
 The resolver keeps the startup layers explicit:
 
-1. Product profile chooses the task and high-level behavior.
-2. Robot preset supplies hardware defaults without overriding product behavior.
-3. Runtime endpoint applies compatibility or simulation adaptations.
+1. Host defaults choose the in-process Python graph.
+2. The Profile's internal driver backend supplies local driver defaults.
+3. A Profile adapter applies hardware, data-source, or simulation adaptations.
 4. User overrides win last.
 """
 
@@ -13,44 +13,32 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from runtime.contracts import HW_COMPAT_CONFIG_ENABLE, HW_CONFIG_ENABLE
-from runtime.profiles.catalog.endpoints import (
-    PRODUCT_PROFILE_ENDPOINTS,
-    RUNTIME_ENDPOINTS,
-    RuntimeEndpointError,
-    RuntimeEndpointSpec,
+from runtime.profiles.catalog.driver_backends import DRIVER_BACKENDS
+from runtime.profiles.catalog.driver_runtime_defaults import DRIVER_RUNTIME_DEFAULTS
+from runtime.profiles.catalog.host_defaults import HOST_PROFILE_DEFAULTS
+from runtime.profiles.catalog.profile_adapters import (
+    PROFILE_ADAPTERS,
+    ProfileAdapterError,
+    ProfileAdapterSpec,
+    profile_adapter_names_for_profile,
 )
-from runtime.profiles.catalog.products import PRODUCT_PROFILES, PROFILES
-from runtime.profiles.catalog.robot_runtime_defaults import ROBOT_RUNTIME_DEFAULTS
-from runtime.profiles.catalog.robots import ROBOT_PRESETS
-from runtime.profiles.endpoint_config import (
-    endpoint_config_for_profile,
-    merge_runtime_endpoint_config,
-)
-from runtime.profiles.endpoints import runtime_endpoint
 from runtime.profiles.planner_backends import (
     planner_fallback_chain,
     resolve_planner_runtime_profile,
 )
-from runtime.runtime_interface import DATA_SOURCE_CONTRACTS, profile_data_source
+from runtime.profiles.profile_adapter_config import (
+    merge_profile_adapter_config,
+    profile_adapter_config_for_profile,
+)
+from runtime.profiles.profile_adapters import profile_adapter
+from runtime.runtime_interface import (
+    DATA_SOURCE_CONTRACTS,
+    profile_data_source,
+)
 
-PROFILE_ALIASES: dict[str, str] = {
-    "thunder-basic": "lite",
-    "thunder-lite": "lite",
-    "remote": "teleop",
-    "remote-control": "teleop",
-    "teleop-avoid": "teleop_avoid",
-    "remote-avoid": "teleop_avoid",
-    "mapping": "map",
-    "thunder-map": "map",
-    "navigation": "nav",
-    "thunder-nav": "nav",
-    "inspect": "inspection",
-    "patrol": "inspection",
-    "thunder-explore": "tare_explore",
-    "thunder-tare": "tare_explore",
-    "thunder-tare-explore": "tare_explore",
-}
+_RESERVED_PROFILE_OVERRIDE_KEYS = frozenset(
+    {"robot", "driver_backend", "_driver_backend"}
+)
 
 
 @dataclass(frozen=True)
@@ -58,76 +46,104 @@ class ResolvedRuntimeConfig:
     """Resolved config plus the layers that produced it."""
 
     profile: str
-    robot_preset: str
-    runtime_endpoint: str | None
-    product_config: Mapping[str, Any]
-    robot_config: Mapping[str, Any]
-    robot_runtime_config: Mapping[str, Any]
-    endpoint_config: Mapping[str, Any]
+    driver_backend: str
+    profile_adapter: str | None
+    host_defaults: Mapping[str, Any]
+    driver_config: Mapping[str, Any]
+    driver_runtime_config: Mapping[str, Any]
+    adapter_config: Mapping[str, Any]
     overrides: Mapping[str, Any]
     config: Mapping[str, Any]
 
 
 @dataclass(frozen=True)
 class _RuntimeConfigLayers:
-    """Resolver-owned layers, ordered from product intent to operator input."""
+    """Resolver-owned layers, ordered from Host defaults to operator input."""
 
-    product_intent: dict[str, Any]
-    robot_preset: dict[str, Any]
-    robot_runtime_defaults: dict[str, Any]
-    endpoint_adapter: dict[str, Any]
+    host_defaults: dict[str, Any]
+    driver_backend_defaults: dict[str, Any]
+    driver_runtime_defaults: dict[str, Any]
+    profile_adapter: dict[str, Any]
     user_overrides: dict[str, Any]
 
 
 def resolve_runtime_config(
     profile: str,
     *,
-    runtime_endpoint_name: str | None = None,
-    robot_preset: str | None = None,
+    profile_adapter_name: str | None = None,
     overrides: Mapping[str, Any] | None = None,
     include_profile_metadata: bool = False,
 ) -> ResolvedRuntimeConfig:
-    """Resolve profile config through product, robot, endpoint, override layers."""
+    """Resolve a local/development Host Profile.
+
+    Field Products are intentionally rejected here. Product assembly uses
+    ``lingtu.assembly.products.resolve_product_host_config`` instead.
+    """
 
     profile = canonical_profile_name(profile)
-    if profile not in PROFILES:
-        raise KeyError(f"unknown profile: {profile}")
-
-    product_source = PROFILES[profile]
-    endpoint = (
-        runtime_endpoint(runtime_endpoint_name)
-        if runtime_endpoint_name
-        else _default_runtime_endpoint(profile, robot_preset=robot_preset)
-    )
-    if endpoint is not None:
-        endpoint.require_profile(profile)
-        _require_product_endpoint(profile, endpoint)
-
-    selected_robot = _selected_robot_preset(
+    return resolve_named_host_config(
         profile,
-        product_source,
-        endpoint=endpoint,
-        robot_preset=robot_preset,
-    )
-    layers = _resolve_runtime_layers(
-        profile,
-        product_source,
-        selected_robot,
-        endpoint=endpoint,
+        HOST_PROFILE_DEFAULTS,
+        profile_adapter_name=profile_adapter_name,
         overrides=overrides,
         include_profile_metadata=include_profile_metadata,
-        allow_custom_robot=robot_preset is not None,
     )
-    config = _merge_runtime_layers(profile, layers)
+
+
+def resolve_named_host_config(
+    name: str,
+    defaults: Mapping[str, Mapping[str, Any]],
+    *,
+    profile_adapter_name: str | None = None,
+    overrides: Mapping[str, Any] | None = None,
+    include_profile_metadata: bool = False,
+) -> ResolvedRuntimeConfig:
+    """Apply local Host hardware and communication layers."""
+
+    if name not in defaults:
+        raise KeyError(f"unknown profile: {name}")
+
+    host_defaults = defaults[name]
+    adapter = (
+        profile_adapter(profile_adapter_name)
+        if profile_adapter_name
+        else _default_profile_adapter(name)
+    )
+    if adapter is not None:
+        if name not in adapter.supported_profiles:
+            supported = ", ".join(adapter.supported_profiles)
+            raise ProfileAdapterError(
+                f"profile adapter '{adapter.name}' does not support profile '{name}' "
+                f"(supported: {supported})"
+            )
+        _require_named_adapter(
+            name,
+            adapter,
+        )
+
+    selected_driver = _selected_driver_backend(
+        host_defaults,
+        adapter=adapter,
+    )
+    layers = _resolve_runtime_layers(
+        name,
+        host_defaults,
+        selected_driver,
+        adapter=adapter,
+        overrides=overrides,
+        include_profile_metadata=include_profile_metadata,
+    )
+    config = _merge_runtime_layers(name, layers)
+    config["_selection_kind"] = "profile"
 
     return ResolvedRuntimeConfig(
-        profile=profile,
-        robot_preset=selected_robot,
-        runtime_endpoint=endpoint.name if endpoint is not None else None,
-        product_config=layers.product_intent,
-        robot_config=layers.robot_preset,
-        robot_runtime_config=layers.robot_runtime_defaults,
-        endpoint_config=layers.endpoint_adapter,
+        profile=name,
+        driver_backend=selected_driver,
+        profile_adapter=adapter.name if adapter is not None else None,
+        host_defaults=layers.host_defaults,
+        driver_config=layers.driver_backend_defaults,
+        driver_runtime_config=layers.driver_runtime_defaults,
+        adapter_config=layers.profile_adapter,
         overrides=layers.user_overrides,
         config=config,
     )
@@ -136,8 +152,7 @@ def resolve_runtime_config(
 def resolve_profile_config(
     profile: str,
     *,
-    runtime_endpoint: str | None = None,
-    robot_preset: str | None = None,
+    profile_adapter: str | None = None,
     overrides: Mapping[str, Any] | None = None,
     include_profile_metadata: bool = False,
     **inline_overrides: Any,
@@ -148,8 +163,7 @@ def resolve_profile_config(
     merged_overrides.update(inline_overrides)
     resolved = resolve_runtime_config(
         profile,
-        runtime_endpoint_name=runtime_endpoint,
-        robot_preset=robot_preset,
+        profile_adapter_name=profile_adapter,
         overrides=merged_overrides,
         include_profile_metadata=include_profile_metadata,
     )
@@ -157,68 +171,79 @@ def resolve_profile_config(
 
 
 def canonical_profile_name(profile: str) -> str:
-    """Return the canonical catalog profile for a CLI/product alias."""
+    """Return a normalized local Host Profile name."""
 
-    return PROFILE_ALIASES.get(profile, profile)
+    return profile
 
 
-def _require_product_endpoint(profile: str, endpoint: RuntimeEndpointSpec) -> None:
-    allowed = PRODUCT_PROFILE_ENDPOINTS.get(profile)
-    if allowed is None or endpoint.name in allowed:
+def _require_named_adapter(
+    name: str,
+    adapter: ProfileAdapterSpec,
+) -> None:
+    allowed = profile_adapter_names_for_profile(name)
+    if not allowed or adapter.name in allowed:
         return
     choices = ", ".join(allowed)
-    raise RuntimeEndpointError(
-        f"endpoint '{endpoint.name}' is not a product endpoint for profile '{profile}' (allowed: {choices})"
+    raise ProfileAdapterError(
+        f"profile adapter '{adapter.name}' does not accept profile '{name}' "
+        f"(allowed: {choices})"
     )
 
 
 def _resolve_runtime_layers(
     profile: str,
-    product_source: Mapping[str, Any],
-    selected_robot: str,
+    host_defaults: Mapping[str, Any],
+    selected_driver: str,
     *,
-    endpoint: RuntimeEndpointSpec | None,
+    adapter: ProfileAdapterSpec | None,
     overrides: Mapping[str, Any] | None,
     include_profile_metadata: bool,
-    allow_custom_robot: bool,
 ) -> _RuntimeConfigLayers:
     """Build explicit resolver layers without merging them."""
 
     return _RuntimeConfigLayers(
-        product_intent=_product_intent_layer(
-            product_source,
+        host_defaults=_host_defaults_layer(
+            host_defaults,
             include_profile_metadata=include_profile_metadata,
         ),
-        robot_preset=_robot_preset_layer(
+        driver_backend_defaults=_driver_backend_layer(
             profile,
-            selected_robot,
-            allow_custom_robot=allow_custom_robot,
+            selected_driver,
         ),
-        robot_runtime_defaults=_robot_runtime_defaults_layer(
+        driver_runtime_defaults=_driver_runtime_defaults_layer(
             profile,
-            selected_robot,
-            allow_custom_robot=allow_custom_robot,
+            selected_driver,
         ),
-        endpoint_adapter=(endpoint_config_for_profile(endpoint, profile) if endpoint is not None else {}),
-        user_overrides=dict(overrides or {}),
+        profile_adapter=(
+            profile_adapter_config_for_profile(adapter, profile)
+            if adapter is not None
+            else {}
+        ),
+        user_overrides=_validated_profile_overrides(overrides),
     )
 
 
 def _merge_runtime_layers(profile: str, layers: _RuntimeConfigLayers) -> dict[str, Any]:
     """Merge layers in the resolver contract order."""
 
-    config = dict(layers.product_intent)
-    _apply_robot_defaults(config, layers.robot_preset)
-    _apply_robot_defaults(config, layers.robot_runtime_defaults)
-    if layers.endpoint_adapter:
-        config = merge_runtime_endpoint_config(config, layers.endpoint_adapter)
+    config = dict(layers.host_defaults)
+    _apply_driver_defaults(config, layers.driver_backend_defaults)
+    _apply_driver_defaults(config, layers.driver_runtime_defaults)
+    if layers.profile_adapter:
+        config = merge_profile_adapter_config(config, layers.profile_adapter)
     config.update(layers.user_overrides)
-    _normalize_hw_keys(config)
+    return finalize_host_config(profile, config)
+
+
+def finalize_host_config(name: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    """Apply shared derived Host settings after all owning layers are merged."""
+
+    config = dict(config)
     config.setdefault(
         "cmd_vel_mux_collision_monitor",
         bool(config.get("enable_teleop", True) and config.get("enable_map_modules", True)),
     )
-    planner_profile = resolve_planner_runtime_profile(profile, config)
+    planner_profile = resolve_planner_runtime_profile(name, config)
     config["planner"] = planner_profile["primary"]
     config["fallback_planners"] = list(planner_profile["fallback_planners"])
     configured_fallbacks = planner_fallback_chain(config.get("fallback_planner_name"))
@@ -231,42 +256,25 @@ def _merge_runtime_layers(profile: str, layers: _RuntimeConfigLayers) -> dict[st
     return config
 
 
-def _normalize_hw_keys(config: dict[str, Any]) -> None:
-    if HW_CONFIG_ENABLE not in config and HW_COMPAT_CONFIG_ENABLE in config:
-        config[HW_CONFIG_ENABLE] = config[HW_COMPAT_CONFIG_ENABLE]
-    elif HW_CONFIG_ENABLE in config and HW_COMPAT_CONFIG_ENABLE not in config:
-        config[HW_COMPAT_CONFIG_ENABLE] = config[HW_CONFIG_ENABLE]
-
-
-def _selected_robot_preset(
-    profile: str,
-    product_config: Mapping[str, Any],
+def _selected_driver_backend(
+    host_defaults: Mapping[str, Any],
     *,
-    endpoint: RuntimeEndpointSpec | None,
-    robot_preset: str | None,
+    adapter: ProfileAdapterSpec | None,
 ) -> str:
-    if robot_preset:
-        return robot_preset
-    if endpoint is not None:
-        return endpoint.robot_preset
-    return str(product_config.get("_default_robot", "stub"))
+    if adapter is not None:
+        return adapter.driver_backend
+    return str(host_defaults.get("_driver_backend", "stub"))
 
 
-def _default_runtime_endpoint(
-    profile: str,
-    *,
-    robot_preset: str | None,
-) -> RuntimeEndpointSpec | None:
-    """Return the default hardware endpoint for product profiles.
+def _default_profile_adapter(profile: str) -> ProfileAdapterSpec | None:
+    """Return the single default hardware adapter for a Host Profile.
 
     Simulation and dev profiles keep their historical profile-only resolution.
-    Product profiles that bind to a hardware data source get the single matching
-    non-simulation endpoint, so endpoint-owned compatibility choices are applied
+    Host profiles that bind to a hardware data source get the single matching
+    non-simulation adapter, so adapter-owned compatibility choices are applied
     before the module graph is built.
     """
 
-    if robot_preset is not None or profile not in PRODUCT_PROFILES:
-        return None
     try:
         data_source = profile_data_source(profile).data_source
         source = DATA_SOURCE_CONTRACTS[data_source]
@@ -276,55 +284,67 @@ def _default_runtime_endpoint(
         return None
 
     candidates = [
-        endpoint
-        for endpoint in RUNTIME_ENDPOINTS.values()
-        if endpoint.data_source == data_source
-        and profile in endpoint.supported_profiles
-        and not endpoint.simulation_only
+        adapter
+        for adapter in PROFILE_ADAPTERS.values()
+        if adapter.data_source == data_source
+        and profile in adapter.supported_profiles
+        and not adapter.simulation_only
     ]
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _product_intent_layer(
-    product_config: Mapping[str, Any],
+def _host_defaults_layer(
+    host_defaults: Mapping[str, Any],
     *,
     include_profile_metadata: bool,
 ) -> dict[str, Any]:
     if include_profile_metadata:
-        return {key: value for key, value in product_config.items() if key != "_default_robot"}
-    return {key: value for key, value in product_config.items() if not key.startswith("_")}
+        return {
+            key: value
+            for key, value in host_defaults.items()
+            if key != "_driver_backend"
+        }
+    return {key: value for key, value in host_defaults.items() if not key.startswith("_")}
 
 
-def _robot_preset_layer(
+def _driver_backend_layer(
     profile: str,
-    selected_robot: str,
-    *,
-    allow_custom_robot: bool,
+    selected_driver: str,
 ) -> dict[str, Any]:
-    if selected_robot in ROBOT_PRESETS:
-        return dict(ROBOT_PRESETS[selected_robot])
-    if allow_custom_robot:
-        return {"robot": selected_robot}
-    raise KeyError(f"unknown robot preset for profile {profile}: {selected_robot}")
+    if selected_driver in DRIVER_BACKENDS:
+        return dict(DRIVER_BACKENDS[selected_driver])
+    raise KeyError(f"unknown driver backend for profile {profile}: {selected_driver}")
 
 
-def _robot_runtime_defaults_layer(
+def _driver_runtime_defaults_layer(
     profile: str,
-    selected_robot: str,
-    *,
-    allow_custom_robot: bool,
+    selected_driver: str,
 ) -> dict[str, Any]:
-    if selected_robot in ROBOT_RUNTIME_DEFAULTS:
-        return dict(ROBOT_RUNTIME_DEFAULTS[selected_robot])
-    if allow_custom_robot:
-        return {}
-    raise KeyError(f"unknown robot runtime defaults for profile {profile}: {selected_robot}")
+    if selected_driver in DRIVER_RUNTIME_DEFAULTS:
+        return dict(DRIVER_RUNTIME_DEFAULTS[selected_driver])
+    raise KeyError(f"unknown driver runtime defaults for profile {profile}: {selected_driver}")
 
 
-def _apply_robot_defaults(
+def _apply_driver_defaults(
     config: dict[str, Any],
     robot_config: Mapping[str, Any],
 ) -> None:
     for key, value in robot_config.items():
         if key == "robot" or key not in config:
             config[key] = value
+
+
+def _validated_profile_overrides(
+    overrides: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    values = dict(overrides or {})
+    reserved = sorted(
+        key
+        for key in values
+        if key in _RESERVED_PROFILE_OVERRIDE_KEYS or key.endswith("_preset")
+    )
+    if reserved:
+        raise ValueError(
+            "Profile overrides cannot select a driver backend: " + ", ".join(reserved)
+        )
+    return values

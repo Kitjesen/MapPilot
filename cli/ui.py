@@ -11,10 +11,10 @@ import time
 from collections import deque
 from pathlib import Path
 
-from runtime.profiles.resolver import PROFILE_ALIASES
+from runtime.profiles.catalog.host_defaults import HOST_PROFILE_DEFAULTS
+from runtime.profiles.catalog.local_host_defaults import LOCAL_PROFILE_NAMES
 
 from . import term as T
-from .profiles_data import PROFILES
 from .run_state import clear_run_state, is_pid_alive, read_run_state, resolve_log_file
 from .runtime_display import (
     format_frame_links,
@@ -46,87 +46,41 @@ _TAGLINE = "  Autonomous Navigation for Quadruped Robots"
 
 # Profile icons and accent colors
 _PROFILE_META = {
-    "teleop": ("T", "Remote control only", T.green),
-    "teleop_avoid": ("A", "Remote control with safety obstacle avoidance", T.green),
-    "lite": ("L", "Lightweight Thunder runtime", T.green),
-    "tracking": ("K", "Track supplied path or waypoint", T.green),
-    "inspection": ("I", "Saved-map patrol and semantic inspection", T.green),
-    "tare_explore": ("E", "TARE exploration", T.cyan),
-    "nav": ("◉", "Navigate using a saved map", T.green),
-    "explore": ("◎", "Explore unknown area", T.cyan),
-    "map": ("⊕", "Build a new map", T.yellow),
+    "lite": ("L", "Local Thunder hardware diagnostic", T.green),
     "sim": ("◈", "MuJoCo simulation", T.blue),
+    "sim_nav": ("N", "No-ROS navigation simulation", T.blue),
     "portable_mujoco": ("μ", "Portable no-ROS MuJoCo planning + sensors", T.blue),
-    "sim_gazebo": ("▣", "Gazebo/GZ ROS-native simulation", T.blue),
     "sim_mujoco_live": ("M", "MuJoCo MID-360 + Fast-LIO live simulation", T.blue),
     "sim_mujoco_octo_live": ("O", "MuJoCo Fast-LIO + OctoPlanner3D closed-loop simulation", T.blue),
-    "sim_industrial": ("#", "Gazebo industrial-yard delivery simulation", T.blue),
-    "sim_cmu_tare": ("C", "CMU Unity + external TARE simulation", T.blue),
     "dev": ("◇", "Test perception & planning without a robot", T.navy),
     "stub": ("○", "Framework testing only", T.dim),
 }
 
-_PRODUCT_PROFILE_NAMES = (
-    "teleop",
-    "teleop_avoid",
-    "map",
-    "tracking",
-    "nav",
-    "inspection",
-    "tare_explore",
-)
-_ADVANCED_PROFILE_NAMES = ("explore",)
-_EXPERIMENTAL_PROFILE_NAMES = ("super_lio", "super_lio_relocation")
-_PROFILE_ALIASES_BY_CANONICAL: dict[str, tuple[str, ...]] = {}
-for _alias, _canonical in PROFILE_ALIASES.items():
-    _PROFILE_ALIASES_BY_CANONICAL.setdefault(_canonical, ())
-    _PROFILE_ALIASES_BY_CANONICAL[_canonical] = (
-        *_PROFILE_ALIASES_BY_CANONICAL[_canonical],
-        _alias,
-    )
-
-
 def _profile_tier(name: str) -> str:
-    if name in _PRODUCT_PROFILE_NAMES:
-        return "product"
-    if name in _ADVANCED_PROFILE_NAMES:
-        return "advanced"
-    if name in _EXPERIMENTAL_PROFILE_NAMES:
-        return "experimental"
+    if name in LOCAL_PROFILE_NAMES:
+        return "local"
     return "dev"
 
 
 def _visible_profile_names(*, show_all: bool = False) -> list[str]:
     if show_all:
-        return list(PROFILES.keys())
-    return [name for name in _PRODUCT_PROFILE_NAMES if name in PROFILES]
-
-
-def _profile_alias_note(name: str) -> str:
-    aliases = _PROFILE_ALIASES_BY_CANONICAL.get(name, ())
-    if not aliases:
-        return ""
-    return f" alias={','.join(aliases)}"
+        return list(HOST_PROFILE_DEFAULTS)
+    return [
+        name
+        for name in ("stub", "dev", "sim", "sim_nav")
+        if name in HOST_PROFILE_DEFAULTS
+    ]
 
 
 # Which wizard questions are relevant per profile.
 # Keys: "semantic", "gateway", "teleop"
 _PROFILE_WIZARD: dict[str, tuple[bool, bool, bool]] = {
     #                  semantic  gateway  teleop
-    "teleop": (False, True, True),
-    "teleop_avoid": (False, True, True),
-    "nav": (True, True, True),  # full stack
-    "tracking": (False, True, False),
-    "inspection": (True, True, False),
-    "explore": (True, True, False),  # exploring — no joystick needed
-    "map": (False, True, True),  # mapping needs teleop to move while saving map
     "sim": (True, True, True),  # full stack in sim
+    "sim_nav": (False, True, False),  # no-ROS navigation simulation
     "portable_mujoco": (False, False, False),  # no-ROS/no-gateway desktop gate
-    "sim_gazebo": (True, True, True),  # ROS-native Gazebo simulation
     "sim_mujoco_live": (False, True, False),  # external MuJoCo/Fast-LIO live gate
     "sim_mujoco_octo_live": (False, True, False),  # external MuJoCo/Fast-LIO/OctoPlanner3D gate
-    "sim_industrial": (True, True, False),  # ROS-native delivery simulation
-    "sim_cmu_tare": (False, True, False),  # external CMU Unity/TARE graph
     "dev": (True, True, False),  # no robot → no teleop
     "stub": (False, True, False),  # bare framework
 }
@@ -238,7 +192,10 @@ def select_interactive() -> str:
     print(T.navy(f"  ├{'─' * W}┤"))
 
     for i, name in enumerate(names, 1):
-        icon, desc, color = _PROFILE_META.get(name, ("·", PROFILES[name].get("_desc", ""), T.dim))
+        icon, desc, color = _PROFILE_META.get(
+            name,
+            ("·", HOST_PROFILE_DEFAULTS[name].get("_desc", ""), T.dim),
+        )
         num = T.dim(f" {i} ")
         tag = color(f" {icon} {name:<9}")
         body = T.dim(f" {desc}")
@@ -264,11 +221,17 @@ def select_interactive() -> str:
             if 0 <= idx < len(names):
                 selected = names[idx]
                 icon, _, color = _PROFILE_META.get(selected, ("·", "", T.dim))
-                print(f"\n  {color(f'✓ {selected}')}  {T.dim(PROFILES[selected].get('_desc', ''))}\n")
+                print(
+                    f"\n  {color(f'✓ {selected}')}  "
+                    f"{T.dim(HOST_PROFILE_DEFAULTS[selected].get('_desc', ''))}\n"
+                )
                 return selected
-        if choice in PROFILES:
+        if choice in HOST_PROFILE_DEFAULTS:
             icon, _, color = _PROFILE_META.get(choice, ("·", "", T.dim))
-            print(f"\n  {color(f'✓ {choice}')}  {T.dim(PROFILES[choice].get('_desc', ''))}\n")
+            print(
+                f"\n  {color(f'✓ {choice}')}  "
+                f"{T.dim(HOST_PROFILE_DEFAULTS[choice].get('_desc', ''))}\n"
+            )
             return choice
         print(f"  {T.red('✗')} {T.dim(f'Unknown: {choice!r}  (try 1–{len(names)})')}")
 
@@ -360,14 +323,13 @@ def wizard_interactive(profile_name: str, cfg: dict) -> None:
 
 
 def list_profiles(*, show_all: bool = False):
-    title = "Available product profiles" if not show_all else "Available profiles"
+    title = "Available Host Profiles" if not show_all else "All Host Profiles"
     print(f"\n  {T.bold(title + ':')}\n")
     for name in _visible_profile_names(show_all=show_all):
-        p = PROFILES[name]
+        p = HOST_PROFILE_DEFAULTS[name]
         tier = _profile_tier(name)
-        tier_note = "" if tier == "product" else f" [{tier}]"
-        alias_note = _profile_alias_note(name)
-        print(f"  {T.green(f'{name:10s}')} {p['_desc']}{T.dim(tier_note + alias_note)}")
+        tier_note = f" [{tier}]"
+        print(f"  {T.green(f'{name:10s}')} {p['_desc']}{T.dim(tier_note)}")
         parts = []
         if p.get("robot"):
             parts.append(f"robot={p['robot']}")
@@ -381,15 +343,46 @@ def list_profiles(*, show_all: bool = False):
             parts.append("no-semantic")
         print(f"  {T.dim('           ' + ', '.join(parts))}")
     if not show_all:
-        print(T.dim("  Use --list --all to show advanced, simulation, and dev profiles."))
-    print("\n  Override any flag: lingtu nav --llm mock\n")
+        print(
+            T.dim(
+                "  Use --list --all to show every local and simulation Host Profile."
+            )
+        )
+    print("\n  Example: python lingtu.py dev --llm mock\n")
 
 
 def _force_stop_signal() -> int:
     return getattr(signal, "SIGKILL", signal.SIGTERM)
 
 
-def cmd_stop(force: bool = False) -> None:
+def _reject_managed_product_lifecycle(action: str) -> None:
+    from lingtu.product_lock import resolve_current_run_path
+
+    current_path = resolve_current_run_path(environment=os.environ)
+    if not current_path.is_file():
+        return
+    env = "real"
+    product = "unknown"
+    try:
+        current = json.loads(current_path.read_text(encoding="utf-8"))
+        if isinstance(current, dict):
+            env = str(current.get("env") or env)
+            product = str(current.get("product") or product)
+    except (OSError, ValueError):
+        pass
+    command = (
+        f"python -m lingtu.control stop --env {env}"
+        if action == "stop"
+        else f"python -m lingtu.control reapply --env {env}"
+    )
+    print(
+        f"  {T.red('Refused')}: {product} is managed by ProductControl; "
+        f"use `{command}`"
+    )
+    raise SystemExit(2)
+
+
+def _stop_local_instance(force: bool = False) -> None:
     state = read_run_state()
     if state is None:
         print("  No running instance found (.lingtu/run.json missing)")
@@ -427,6 +420,13 @@ def cmd_stop(force: bool = False) -> None:
         print(f"  {T.green('Force killed.')}")
     except OSError:
         print(f"  Could not kill PID {pid}. Manual cleanup needed.")
+
+
+def cmd_stop(force: bool = False) -> None:
+    """Stop one local Profile Host without touching managed Products."""
+
+    _reject_managed_product_lifecycle("stop")
+    _stop_local_instance(force=force)
 
 
 def cmd_status_external(as_json: bool = False) -> None:
@@ -501,8 +501,8 @@ def cmd_status_external(as_json: bool = False) -> None:
 
 
 _PUBLIC_RESOLVED_METADATA = {
-    "_runtime_endpoint": "runtime_endpoint",
-    "_endpoint_data_source": "endpoint_data_source",
+    "_profile_adapter": "profile_adapter",
+    "_profile_adapter_data_source": "profile_adapter_data_source",
     "_runtime_contract": "runtime_contract",
     "_endpoint_contract": "endpoint_contract",
     "_module_transport": "module_transport",
@@ -529,7 +529,9 @@ def cmd_show_config_external(profile_name: str, cfg: dict, as_json: bool = False
 
 
 def cmd_restart() -> None:
-    """Stop current instance, then restart it with the same argv + cwd."""
+    """Restart one local Profile Host with the same argv and cwd."""
+
+    _reject_managed_product_lifecycle("restart")
     state = read_run_state()
     if state is None:
         print("  No running instance to restart (.lingtu/run.json missing)")
@@ -538,7 +540,7 @@ def cmd_restart() -> None:
     argv = list(state.get("argv") or [])
     cwd = state.get("cwd") or os.getcwd()
 
-    cmd_stop(force=False)
+    _stop_local_instance(force=False)
     # read_run_state is cleared by cmd_stop on success; wait briefly for cleanup.
     time.sleep(0.5)
 

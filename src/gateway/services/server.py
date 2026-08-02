@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 def run_server(gw: Any, stop_event: threading.Event | None = None) -> bool:
+    gw._server_error = None
     if gw._app is None:
+        gw._server_error = "RuntimeError: FastAPI app is not configured"
         logger.error("uvicorn server cannot start: FastAPI app is not configured")
         return False
     stop_event = stop_event or gw._stop_event
@@ -21,6 +23,7 @@ def run_server(gw: Any, stop_event: threading.Event | None = None) -> bool:
         try:
             import uvicorn
         except ImportError:
+            gw._server_error = "ImportError: uvicorn is not installed"
             logger.error("uvicorn not installed -run: pip install 'uvicorn[standard]'")
             return False
         server = None
@@ -45,9 +48,13 @@ def run_server(gw: Any, stop_event: threading.Event | None = None) -> bool:
             if bool(getattr(server, "should_exit", False)) or bool(getattr(server, "force_exit", False)):
                 logger.info("uvicorn server stopped cleanly")
                 return True
+            gw._server_error = (
+                "RuntimeError: uvicorn server.run() returned without a shutdown signal"
+            )
             logger.error("uvicorn server.run() returned without a shutdown signal")
             return False
-        except Exception:
+        except (Exception, SystemExit) as exc:
+            gw._server_error = f"{type(exc).__name__}: {exc}"
             logger.exception("uvicorn crashed")
             return False
         finally:

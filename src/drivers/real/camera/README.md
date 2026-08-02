@@ -13,8 +13,9 @@ Orbbec SDK capture process
   -> color_image / depth_image / camera_info Module ports
 ```
 
-`DdsCameraModule` is the compatibility registry name. It does not import or
-start a Python DDS reader. Full image payloads use POSIX SHM by default.
+`DdsCameraModule` is registered under the canonical `camera` role with the
+`dds` backend. It does not import or start a Python DDS reader. Full image
+payloads use POSIX SHM by default.
 
 ## SHM objects
 
@@ -85,7 +86,7 @@ override paths with `LINGTU_CAMERA_COLOR_SHM`, `LINGTU_CAMERA_DEPTH_SHM`, and
 ```bash
 python -m pytest tests/drivers/test_camera_shm.py \
   tests/drivers/test_camera_dds_module.py \
-  tests/drivers/test_orbbec_native_camera_module.py -q
+  tests/drivers/test_orbbec_camera_module.py -q
 
 g++ -std=c++17 -Wall -Wextra -Wpedantic -O2 \
   src/drivers/real/camera/native/tests/test_shm_frame_ring.cpp \

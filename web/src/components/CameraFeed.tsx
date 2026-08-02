@@ -1,22 +1,37 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, StopCircle, RefreshCw } from 'lucide-react'
+import { Camera, StopCircle, RefreshCw, LockOpen } from 'lucide-react'
 import { useCamera } from '../hooks/useCamera'
 import { useWHEP } from '../hooks/useWHEP'
 import { CameraHud } from './CameraHud'
 import type { SSEState } from '../types'
+import { text, type Locale } from '../i18n'
 import styles from './CameraFeed.module.css'
 
 interface CameraFeedProps {
   onStop:   () => void
+  onResetEstop: () => void
   estop:    boolean
+  resetBusy: boolean
+  resetAllowed: boolean
+  resetBlockedReason: string
   sseState: SSEState
+  locale: Locale
 }
 
 type Source = 'whep' | 'jpeg'
 type CameraHealth = 'live' | 'degraded' | 'connecting' | 'offline'
 const STREAM_TIMEOUT_MS = 8_000
 
-export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
+export function CameraFeed({
+  onStop,
+  onResetEstop,
+  estop,
+  resetBusy,
+  resetAllowed,
+  resetBlockedReason,
+  sseState,
+  locale,
+}: CameraFeedProps) {
   // Two-tier fallback, fastest-first:
   //   1. go2rtc WHEP sidecar (native Go, ~30–60 ms LAN)
   //   2. JPEG-over-WebSocket (~250 ms, universal fallback)
@@ -126,6 +141,31 @@ export function CameraFeed({ onStop, estop, sseState }: CameraFeedProps) {
           <StopCircle size={18} />
           紧急停止
         </button>
+        {estop && (
+          <button
+            className={styles.btnReset}
+            onClick={onResetEstop}
+            disabled={resetBusy || !resetAllowed}
+            title={resetAllowed
+              ? text(locale, 'Release the software E-stop latch', '解除软件急停锁')
+              : resetBlockedReason}
+            aria-label={text(locale, 'Reset emergency stop', '解除急停')}
+          >
+            <LockOpen size={17} />
+            {resetBusy
+              ? text(locale, 'Confirming…', '确认解除中…')
+              : text(locale, 'Reset E-stop', '解除急停')}
+          </button>
+        )}
+        {estop && (
+          <span className={styles.resetNotice}>
+            {text(
+              locale,
+              'Reset keeps the robot stopped; the old task will not resume automatically.',
+              '解除后机器人仍保持停止，旧任务不会自动恢复。',
+            )}
+          </span>
+        )}
         <span className={styles.hint}>{sourceLabel}</span>
       </div>
     </div>

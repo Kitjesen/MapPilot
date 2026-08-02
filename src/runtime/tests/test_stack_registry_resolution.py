@@ -37,7 +37,7 @@ def test_driver_stack_keeps_runtime_compat_resolution_in_adapter():
         ("thunder", "ThunderDriver"),
         ("sim_mujoco", "MujocoDriverModule"),
         ("sim_endpoint", "SimEndpointDriverModule"),
-        ("sim_gazebo", "SimEndpointDriverModule"),
+
     ],
 )
 def test_driver_stack_resolves_runtime_driver_keys(robot, class_name):
@@ -48,6 +48,20 @@ def test_driver_stack_resolves_runtime_driver_keys(robot, class_name):
         clear()
 
         assert driver_name(robot) == class_name
+    finally:
+        restore(saved)
+
+
+@pytest.mark.parametrize("robot", ["s100p", "navigate", "sim_gazebo"])
+def test_driver_stack_rejects_removed_backend_aliases(robot):
+    from lingtu.assembly.stacks.driver import driver_name
+
+    saved = snapshot()
+    try:
+        clear()
+
+        with pytest.raises(KeyError):
+            driver_name(robot)
     finally:
         restore(saved)
 
@@ -65,7 +79,7 @@ def test_driver_stack_recovers_runtime_driver_after_registry_clear_with_loaded_m
         restore(saved)
 
 
-def test_driver_stack_does_not_resolve_removed_ros2_bridge_profile():
+def test_driver_stack_does_not_resolve_removed_ros2_driver_backend():
     from lingtu.assembly.stacks.driver import driver
 
     saved = snapshot()
@@ -73,7 +87,7 @@ def test_driver_stack_does_not_resolve_removed_ros2_bridge_profile():
         clear()
 
         with pytest.raises(KeyError):
-            driver(profile="ros2")
+            driver(driver_backend="ros2")
     finally:
         restore(saved)
 
@@ -126,29 +140,6 @@ def test_lidar_stack_prefers_registered_mid360_module():
         assert _entry_classes(bp) == [FakeLidar]
         assert _entry_names(bp) == ["lidar"]
         assert bp._entries[0].config == {"ip": "192.0.2.10"}
-    finally:
-        restore(saved)
-
-
-def test_lidar_stack_only_starts_legacy_driver_when_explicit():
-    from lingtu.assembly.stacks.lidar import lidar
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("lidar", "mid360")
-        class FakeLidar(Module, layer=1):
-            pass
-
-        default_bp = lidar(ip="192.0.2.10")
-        explicit_bp = lidar(ip="192.0.2.10", start_driver=True)
-
-        assert default_bp._entries[0].config == {"ip": "192.0.2.10"}
-        assert explicit_bp._entries[0].config == {
-            "ip": "192.0.2.10",
-            "start_driver": True,
-        }
     finally:
         restore(saved)
 
@@ -299,7 +290,6 @@ def test_gateway_stack_prefers_registered_interface_modules():
         ]
         assert bp._entries[0].config == {
             "port": 5051,
-            "manage_session_services": True,
         }
         assert bp._entries[1].config == {"port": 8091}
         assert bp._entries[2].config == {"port": 5051}
@@ -522,7 +512,6 @@ def test_perception_stack_prefers_registered_scene_and_camera_modules():
         bp = perception(
             detector="bpu",
             encoder="mobileclip",
-            manage_services=False,
             force_camera=True,
             camera_rotate=90,
         )
@@ -536,7 +525,7 @@ def test_perception_stack_prefers_registered_scene_and_camera_modules():
         restore(saved)
 
 
-def test_perception_stack_does_not_default_external_camera_to_ros2_bridge():
+def test_perception_stack_defaults_external_camera_to_canonical_backend():
     from lingtu.assembly.stacks.perception import perception
 
     saved = snapshot()
@@ -550,65 +539,12 @@ def test_perception_stack_does_not_default_external_camera_to_ros2_bridge():
         bp = perception(
             detector="bpu",
             encoder="mobileclip",
-            manage_services=False,
             force_camera=True,
         )
 
-        assert FakePerception in _entry_classes(bp)
-        if "camera" in _entry_names(bp):
-            camera_cls = bp._entries[_entry_names(bp).index("camera")].module_cls
-            assert ".adapters.ros2." not in camera_cls.__module__
-        assert "PerceptionModule" in _entry_names(bp)
-    finally:
-        restore(saved)
-
-
-def test_perception_stack_ignores_removed_explicit_ros2_camera_bridge():
-    from lingtu.assembly.stacks.perception import perception
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("perception", "scene")
-        class FakePerception(Module, layer=3):
-            pass
-
-        bp = perception(
-            detector="bpu",
-            encoder="mobileclip",
-            manage_services=False,
-            force_camera=True,
-            enable_ros2_camera_bridge=True,
-        )
-
-        assert "camera" not in _entry_names(bp)
-        assert "PerceptionModule" in _entry_names(bp)
-    finally:
-        restore(saved)
-
-
-def test_perception_stack_ignores_registered_ros2_camera_bridge_without_flag():
-    from lingtu.assembly.stacks.perception import perception
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("perception", "scene")
-        class FakePerception(Module, layer=3):
-            pass
-
-        bp = perception(
-            detector="bpu",
-            encoder="mobileclip",
-            manage_services=False,
-            force_camera=True,
-        )
-
-        if "camera" in _entry_names(bp):
-            camera_cls = bp._entries[_entry_names(bp).index("camera")].module_cls
-            assert ".adapters.ros2." not in camera_cls.__module__
+        assert "camera" in _entry_names(bp)
+        camera_cls = bp._entries[_entry_names(bp).index("camera")].module_cls
+        assert camera_cls.__module__ == "drivers.real.camera.module"
         assert "PerceptionModule" in _entry_names(bp)
     finally:
         restore(saved)
@@ -655,7 +591,6 @@ def test_perception_stack_skips_camera_resolution_for_driver_camera(
         bp = perception_stack.perception(
             detector="bpu",
             encoder="mobileclip",
-            manage_services=False,
             **config,
         )
 
@@ -703,11 +638,10 @@ def test_perception_stack_resolves_camera_for_mujoco_role(monkeypatch):
         bp = perception_stack.perception(
             detector="bpu",
             encoder="mobileclip",
-            manage_services=False,
             _driver_cls_name="MujocoDriverModule",
         )
 
-        assert calls == [{"enable_ros2": False, "backend": "sim"}]
+        assert calls == [{"backend": "sim"}]
         assert _entry_classes(bp) == [FakeCamera, FakePerception]
         assert _entry_names(bp) == ["camera", "PerceptionModule"]
     finally:
@@ -751,7 +685,6 @@ def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
         bp = perception_stack.perception(
             detector="bpu",
             encoder="mobileclip",
-            manage_services=False,
             _driver_cls_name="ROS2SimDriverModule",
             use_driver_camera=False,
         )
@@ -765,14 +698,9 @@ def test_perception_stack_resolves_camera_for_external_camera(monkeypatch):
 
 def test_wiring_context_accepts_canonical_camera_name():
     from lingtu.assembly.wires.context import camera_source
-    from runtime.contracts import CAMERA_COMPAT_ALIAS
 
     assert camera_source({"camera"}, driver_module="Driver") == (
         "camera",
-        "color_image",
-    )
-    assert camera_source({CAMERA_COMPAT_ALIAS}, driver_module="Driver") == (
-        CAMERA_COMPAT_ALIAS,
         "color_image",
     )
     assert camera_source(set(), driver_module="Driver") == ("Driver", "camera_image")
@@ -812,7 +740,6 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
         bp = perception(
             detector="bpu",
             encoder="mobileclip",
-            manage_services=False,
             force_camera=True,
             enable_standalone_encoder=True,
             recon_save_dir="/tmp/lingtu-recon",
@@ -843,8 +770,8 @@ def test_perception_stack_prefers_registered_optional_tool_modules():
 
 
 def test_maps_stack_does_not_default_map_output_to_ros2():
-    from maps.adapters.resolver import map_output_adapter_module
     from lingtu.assembly.stacks.maps import maps
+    from maps.adapters.resolver import map_output_adapter_module
 
     saved = snapshot()
     try:
@@ -1145,36 +1072,6 @@ def test_navigation_stack_prefers_registered_autonomy_modules_with_canonical_ali
         restore(saved)
 
 
-def test_lidar_stack_keeps_legacy_driver_start_opt_in():
-    from lingtu.assembly.stacks.lidar import lidar
-
-    saved = snapshot()
-    try:
-        clear()
-
-        @register("lidar", "mid360")
-        class FakeLidar(Module, layer=1):
-            pass
-
-        default_bp = lidar(enabled=True, backend="mid360", ip="192.0.2.30")
-        legacy_bp = lidar(
-            enabled=True,
-            backend="mid360",
-            ip="192.0.2.30",
-            start_driver=True,
-        )
-
-        assert _entry_classes(default_bp) == [FakeLidar]
-        assert _entry_names(default_bp) == ["lidar"]
-        assert default_bp._entries[0].config == {"ip": "192.0.2.30"}
-        assert legacy_bp._entries[0].config == {
-            "ip": "192.0.2.30",
-            "start_driver": True,
-        }
-    finally:
-        restore(saved)
-
-
 def test_slam_stack_rejects_removed_ros2_adapter_even_if_registered(monkeypatch):
     from lingtu.assembly.stacks.slam import slam
 
@@ -1190,7 +1087,6 @@ def test_slam_stack_rejects_removed_ros2_adapter_even_if_registered(monkeypatch)
         bp = slam(
             "bridge",
             enable_visual_backup=True,
-            manage_services=False,
             localization_adapter="ros2_slam_bridge",
         )
 
@@ -1235,7 +1131,6 @@ def test_slam_stack_visual_backup_does_not_import_cv2_at_build_time():
         bp = slam(
             "bridge",
             enable_visual_backup=True,
-            manage_services=False,
             localization_adapter="test_lcm_adapter",
         )
 
@@ -1259,7 +1154,7 @@ def test_slam_stack_without_explicit_adapter_does_not_import_ros2_bridge():
         clear()
         sys.modules.pop("localization.adapters.ros2.slam_bridge", None)
 
-        bp = slam("bridge", enable_visual_backup=True, manage_services=False)
+        bp = slam("bridge", enable_visual_backup=True)
 
         assert _entry_names(bp) == []
         assert "localization.adapters.ros2.slam_bridge" not in sys.modules

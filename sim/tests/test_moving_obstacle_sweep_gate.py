@@ -35,7 +35,7 @@ def _write_child_report(
         },
         "nav_data_source": "fastlio2",
         "true_mapping_input_path": (
-            "/points_raw + /imu_raw -> fastlio2 -> /Odometry + /cloud_map "
+            "/lidar/raw_frame + /imu/raw -> fastlio2 "
             "-> /slam/odometry + /slam/map_cloud"
         ),
         "outputs": {

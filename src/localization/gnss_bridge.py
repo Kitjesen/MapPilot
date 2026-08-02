@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from runtime.contracts import HW_COMPAT_ALIAS, HW_ROLE
+from runtime.contracts import HW_ROLE
 from runtime.module import Module
 from runtime.registry import register
 from runtime.stream import Out
@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 @register("gnss_bridge", "hw", description="hw -> GnssModule bridge")
-@register("gnss_bridge", "device_manager", description="compat hw -> GnssModule bridge")
 class GnssBridgeModule(Module, layer=1):
     """Forward GNSS fixes from hw into the existing GnssModule pipeline."""
 
@@ -35,7 +34,7 @@ class GnssBridgeModule(Module, layer=1):
     def on_system_modules(self, modules: dict) -> None:
         """Called by Blueprint after all modules are constructed."""
         self._gnss_module = modules.get(self._gnss_module_name)
-        self._hw = modules.get(HW_ROLE) or modules.get(HW_COMPAT_ALIAS)
+        self._hw = modules.get(HW_ROLE)
         if self._hw is None:
             logger.warning("GnssBridge: hw not in system")
             return

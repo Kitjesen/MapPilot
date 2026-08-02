@@ -23,12 +23,7 @@ class PerceptionAPI(ABC):
     - 维护场景图
     - 提供统一的感知接口
 
-    使用示例：
-        perception = PerceptionFactory.create_perception(
-            detector_type="yolo_world",
-            encoder_type="clip",
-            config=config
-        )
+    运行时实现由 ``PerceptionModule`` 提供；本接口只描述组件合同。
 
         detections = perception.process_frame(
             rgb_image, depth_image, camera_info, transform

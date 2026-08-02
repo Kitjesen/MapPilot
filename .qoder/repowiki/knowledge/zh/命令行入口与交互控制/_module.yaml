@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: cli
-title: 命令行入口与交互控制
-scope:
-    - cli/
-source_files: []
-depends_on: []
-related_to:
-    - path: sdk

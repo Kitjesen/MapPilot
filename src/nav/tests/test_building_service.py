@@ -8,7 +8,12 @@ from typing import Any
 
 import pytest
 
-from nav.building import BuildingMissionRequest, BuildingService
+from nav.building import (
+    BuildingMissionPhase,
+    BuildingMissionRequest,
+    BuildingMissionStatus,
+    BuildingService,
+)
 
 
 class FakeMapsAPI:
@@ -88,8 +93,13 @@ class MapsModuleWrapper:
 
 
 class FakeMissionPort:
-    def __init__(self, result: tuple[bool, str] = (True, "building_mission_accepted")) -> None:
+    def __init__(
+        self,
+        result: tuple[bool, str] = (True, "building_mission_accepted"),
+        cancel_result: Any = (True, "building_mission_cancelled"),
+    ) -> None:
         self.result = result
+        self.cancel_result = cancel_result
         self.requests: list[BuildingMissionRequest] = []
         self.cancellations: list[str] = []
 
@@ -99,7 +109,7 @@ class FakeMissionPort:
 
     def cancel(self, reason: str):
         self.cancellations.append(reason)
-        return None
+        return self.cancel_result
 
 
 def _command(
@@ -436,3 +446,54 @@ def test_input_ports_parse_json_and_cancel_through_mission_owner() -> None:
     assert statuses[-1]["action"] == "building_cancel"
     assert statuses[-1]["request_id"] == "voice-turn-cancel"
     assert statuses[-1]["accepted"] is True
+
+
+@pytest.mark.parametrize(
+    "malformed_result",
+    [
+        "true",
+        1,
+        None,
+        {"accepted": "true"},
+        {"accepted": 1},
+        {"accepted": None},
+    ],
+)
+def test_building_cancel_rejects_malformed_mission_ack(malformed_result) -> None:
+    mission = FakeMissionPort(cancel_result=malformed_result)
+    service, _, _ = _service(mission=mission)
+
+    result = service.cancel("operator_cancel", request_id="cancel-malformed")
+
+    assert result["accepted"] is False
+    assert result["success"] is False
+    assert result["reason"] == "mission_response_invalid"
+    assert mission.cancellations == ["operator_cancel"]
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_building_submit_rejects_malformed_mission_ack(malformed_ack) -> None:
+    mission = FakeMissionPort(result=(malformed_ack, "malformed_submit_ack"))
+    service, _, _ = _service(mission=mission)
+
+    result = service.submit(_command())
+
+    assert result["accepted"] is False
+    assert result["success"] is False
+    assert result["reason"] == "mission_response_invalid"
+
+
+def test_building_cancel_accepts_typed_cancelled_status_data() -> None:
+    mission = FakeMissionPort(
+        cancel_result=BuildingMissionStatus(
+            BuildingMissionPhase.CANCELLED,
+            request_id="building-task-1",
+            reason="operator_cancel",
+        )
+    )
+    service, _, _ = _service(mission=mission)
+
+    result = service.cancel("operator_cancel", request_id="cancel-status")
+
+    assert result["accepted"] is True
+    assert result["reason"] == "operator_cancel"

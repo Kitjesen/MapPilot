@@ -65,6 +65,8 @@ class ElevationMapModule(Module, layer=2):
         self._gs = int(2 * map_radius / resolution)
         self._default_frame_id = normalize_frame_id(frame_id) or topic_default_frame_id(TOPICS.map_cloud)
         self._map_kernel = None
+        self._last_observation_epoch = 0
+        self._last_observation_sequence = 0
 
     def setup(self) -> None:
         self._map_kernel = create_map_kernel_backend()
@@ -83,28 +85,60 @@ class ElevationMapModule(Module, layer=2):
     def _on_cloud(self, cloud: PointCloud2) -> None:
         if cloud.is_empty:
             return
-        pts = cloud.points[:, :3]
+        frame_id = normalize_frame_id(getattr(cloud, "frame_id", None)) or self._default_frame_id
+        self._build_from_points(
+            cloud.points,
+            robot_x=float(self._robot_xy[0]),
+            robot_y=float(self._robot_xy[1]),
+            frame_id=frame_id,
+            ts=float(getattr(cloud, "ts", 0.0) or time.time()),
+        )
 
+    def _on_observation(self, frame: MapObservationFrame) -> None:
+        epoch = int(frame.reset_epoch)
+        sequence = int(frame.sequence)
+        if epoch < self._last_observation_epoch or (
+            epoch == self._last_observation_epoch
+            and sequence <= self._last_observation_sequence
+        ):
+            return
+        self._last_observation_epoch = epoch
+        self._last_observation_sequence = sequence
+        self._build_from_points(
+            frame.map_points(),
+            robot_x=float(frame.sensor_origin.x),
+            robot_y=float(frame.sensor_origin.y),
+            frame_id=frame.frame_id,
+            ts=float(frame.ts),
+        )
+
+    def _build_from_points(
+        self,
+        points: Any,
+        *,
+        robot_x: float,
+        robot_y: float,
+        frame_id: str,
+        ts: float,
+    ) -> None:
+        pts = points[:, :3]
         mask = (pts[:, 2] > self._z_floor) & (pts[:, 2] < self._z_ceil)
         pts = pts[mask]
         if pts.shape[0] == 0:
             return
-        frame_id = normalize_frame_id(getattr(cloud, "frame_id", None)) or self._default_frame_id
-        now = time.time()
 
         result = self._map_kernel.runtime.build_elevation_map(
             np.ascontiguousarray(pts[:, :3], dtype=np.float32).ravel().tolist(),
-            float(self._robot_xy[0]),
-            float(self._robot_xy[1]),
+            robot_x,
+            robot_y,
             float(self._res),
             float(self._radius),
             float(self._z_floor),
             float(self._z_ceil),
         )
-        self.elevation_map.publish(elevation_result_to_payload(result, ts=now, frame_id=frame_id))
-
-    def _on_observation(self, frame: MapObservationFrame) -> None:
-        self._on_cloud(frame.to_map_pointcloud2())
+        self.elevation_map.publish(
+            elevation_result_to_payload(result, ts=ts, frame_id=frame_id)
+        )
 
     def health(self) -> dict[str, Any]:
         info = super().port_summary()

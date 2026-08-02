@@ -720,7 +720,7 @@ class TestLocalPlannerBackends:
         """cmu_py setup should consume the backend adapter bundle only."""
         from nav.local import local_planner as module_under_test
         from nav.local import local_planner_runtime as runtime_under_test
-        from nav.local.local_planner_backend import (
+        from nav.local.models import (
             CmuPyLocalPlannerBackend,
         )
 
@@ -756,7 +756,7 @@ class TestLocalPlannerBackends:
         """Default local planner must fail fast when LingTu native navigation kernel is unavailable."""
         from nav.local import local_planner as module_under_test
         from nav.local import local_planner_runtime as runtime_under_test
-        from nav.local.local_planner_backend import (
+        from nav.local.models import (
             NanobindLocalPlannerBackend,
         )
 

@@ -126,7 +126,7 @@ def create_route_transport_adapter(
 ) -> Any:
     """Create a transport adapter for a validated runtime route.
 
-    Unlike the legacy ``wire(transport="dds")`` path, route-selected DDS is
+    Unlike per-wire ``wire(delivery="dds")``, route-selected DDS is
     allowed to carry registered product topics because the route contract has
     already declared the topic/backend pair.
     """

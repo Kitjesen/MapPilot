@@ -4,16 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import signal
-import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any
-
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_GAZEBO_WORLD = (
@@ -200,7 +199,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
         "--goal-republish-sec",
         str(args.frontier_goal_republish_sec),
     ]
-    if args.check_explored_map_pct or args.frontier_build_tomogram:
+    if args.frontier_build_tomogram:
         frontier_smoke_cmd.extend(
             [
                 "--pcd-out",
@@ -220,9 +219,7 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
     frontier_smoke_cmd.append("--require-trajectory-quality")
     frontier_smoke_cmd.append("--require-terrain-map-topics")
     frontier_gate_requested = bool(
-        args.check_frontier_exploration
-        or args.check_cumulative_map
-        or args.check_explored_map_pct
+        args.check_frontier_exploration or args.check_cumulative_map
     )
     if frontier_gate_requested:
         frontier_smoke_cmd.append("--require-cumulative-map")
@@ -322,7 +319,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
                         ("trajectory_quality", frontier_gate_requested),
                         ("cmu_style_terrain_topics", frontier_gate_requested),
                         ("cumulative_map", frontier_gate_requested),
-                        ("explored_map_pct", args.check_explored_map_pct),
                         ("tare_contract", args.check_tare_contract),
                     )
                     if enabled
@@ -366,7 +362,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
                 args.check_nav_loop
                 or args.check_frontier_exploration
                 or args.check_cumulative_map
-                or args.check_explored_map_pct
             ) and report["ok"]:
                 if args.isolate_nav_gate:
                     report["gate"]["launch_returncode_before_nav_relaunch"] = proc.poll()
@@ -485,65 +480,6 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
                     ]
                     report["gate"]["frontier_smoke_cmd"] = frontier_smoke_cmd
                     report["gate"]["frontier_smoke_returncode"] = frontier_smoke.returncode
-                    if args.check_explored_map_pct and report["ok"]:
-                        pct_preview_cmd = [
-                            sys.executable,
-                            str(ROOT / "scripts" / "planning" / "plan_preview.py"),
-                            "--tomogram",
-                            str(Path(args.frontier_tomogram_out)),
-                            "--planner",
-                            "pct",
-                            "--internal-only",
-                            "--strict",
-                            "--compact",
-                            "--timeout",
-                            str(args.pct_preview_timeout_sec),
-                        ]
-                        pct_preview = subprocess.run(
-                            pct_preview_cmd,
-                            cwd=str(ROOT),
-                            env=active_env,
-                            text=True,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            timeout=args.pct_preview_timeout_sec + 10.0,
-                        )
-                        pct_report = _json_from_stdout(pct_preview.stdout)
-                        pct_errors = list(pct_report.get("errors") or [])
-                        if pct_report.get("error"):
-                            pct_errors.append(str(pct_report["error"]))
-                        for case in pct_report.get("cases") or []:
-                            if not isinstance(case, dict):
-                                continue
-                            preview = case.get("preview") or {}
-                            path_safety = preview.get("path_safety") or {}
-                            if isinstance(path_safety, dict) and path_safety.get("ok") is not True:
-                                name = case.get("name") or "pct_case"
-                                blocked = path_safety.get("blocked_sample_count")
-                                pct_errors.append(
-                                    f"{name}:path_safety_failed:{blocked}"
-                                    if blocked is not None
-                                    else f"{name}:path_safety_failed"
-                                )
-                        if pct_preview.returncode != 0 and pct_report.get("ok") is not True:
-                            pct_errors.append(
-                                f"plan_preview pct exited with code {pct_preview.returncode}"
-                            )
-                        pct_ok = bool(pct_report.get("ok")) and not pct_errors
-                        pct_report["ok"] = pct_ok
-                        pct_report["errors"] = pct_errors
-                        pct_report["simulation_only"] = True
-                        pct_report["real_robot_motion"] = False
-                        pct_report["cmd_vel_sent_to_hardware"] = False
-                        if pct_preview.stderr:
-                            pct_report["stderr_tail"] = pct_preview.stderr[-2000:]
-                        report["explored_map_pct"] = pct_report
-                        report["ok"] = bool(report["ok"]) and pct_ok
-                        report["errors"] = list(report.get("errors") or []) + [
-                            f"explored_map_pct: {err}" for err in pct_errors
-                        ]
-                        report["gate"]["pct_preview_cmd"] = pct_preview_cmd
-                        report["gate"]["pct_preview_returncode"] = pct_preview.returncode
                 report["gate"]["nav_launch_cmd"] = nav_launch_cmd
                 report["gate"]["frontier_nav_launch_cmd"] = frontier_nav_launch_cmd
             if args.check_tare_contract and report["ok"]:
@@ -583,23 +519,28 @@ def run_gate(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def _tare_contract_report(*, require_runtime: bool) -> dict[str, Any]:
-    source_root = ROOT / "src" / "exploration"
-    tare_root = source_root / "tare_planner"
-    installed_binary = ROOT / "install" / "tare_planner" / "lib" / "tare_planner" / "tare_planner_node"
-    binary = shutil.which("tare_planner_node") or (
-        str(installed_binary) if installed_binary.exists() else ""
+    source_root = ROOT / "src" / "explore"
+    tare_root = source_root / "tare"
+    kernel_spec = importlib.util.find_spec("lingtu_explore_kernel")
+    built_kernels = tuple((source_root / "cpp" / "build_nb").glob("lingtu_explore_kernel*"))
+    installed_kernels = tuple((ROOT / "src").glob("lingtu_explore_kernel*"))
+    kernel_path = (
+        str(kernel_spec.origin)
+        if kernel_spec is not None and kernel_spec.origin
+        else str((built_kernels + installed_kernels)[0])
+        if built_kernels or installed_kernels
+        else ""
     )
     checks = {
-        "source_package": (tare_root / "package.xml").exists(),
-        "launch_files": (tare_root / "launch" / "explore_forest.launch").exists(),
-        "bridge_module": (source_root / "tare_explorer_module.py").exists(),
-        "native_factory": (source_root / "native_factories.py").exists(),
-        "supervisor_module": (source_root / "exploration_supervisor_module.py").exists(),
+        "native_policy_source": (source_root / "cpp" / "tare_policy.cpp").exists(),
+        "bridge_module": (tare_root / "module.py").exists(),
+        "native_backend": (tare_root / "backend.py").exists(),
+        "supervisor_module": (tare_root / "supervisor.py").exists(),
     }
-    runtime_available = bool(binary)
+    runtime_available = bool(kernel_path)
     errors = [f"{name} missing" for name, ok in checks.items() if not ok]
     if require_runtime and not runtime_available:
-        errors.append("tare_planner_node runtime binary missing")
+        errors.append("lingtu_explore_kernel runtime extension missing")
     return {
         "schema_version": "lingtu.gazebo_tare_exploration_contract.v1",
         "ok": not errors,
@@ -610,7 +551,7 @@ def _tare_contract_report(*, require_runtime: bool) -> dict[str, Any]:
         "source_contract_ok": all(checks.values()),
         "runtime_required": bool(require_runtime),
         "runtime_available": runtime_available,
-        "binary": binary,
+        "binary": kernel_path,
         "checks": checks,
         "gazebo_runtime_verified": False,
         "errors": errors,
@@ -634,7 +575,6 @@ def main() -> int:
     parser.add_argument("--check-nav-loop", action="store_true")
     parser.add_argument("--check-frontier-exploration", action="store_true")
     parser.add_argument("--check-cumulative-map", action="store_true")
-    parser.add_argument("--check-explored-map-pct", action="store_true")
     parser.add_argument("--check-tare-contract", action="store_true")
     parser.add_argument("--require-tare-runtime", action="store_true")
     parser.add_argument(
@@ -688,7 +628,6 @@ def main() -> int:
         default="artifacts/server_sim_closure/gazebo_runtime/tomogram.pickle",
     )
     parser.add_argument("--frontier-build-tomogram", action="store_true")
-    parser.add_argument("--pct-preview-timeout-sec", type=float, default=8.0)
     parser.add_argument(
         "--ros-domain-id",
         type=int,

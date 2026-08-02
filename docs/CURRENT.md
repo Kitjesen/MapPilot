@@ -1,10 +1,30 @@
-# Current Documentation Map
+# LingTu Current Status
 
-Status: current routing map as of 2026-07-18
+Status: runtime and documentation snapshot as of 2026-07-31
+
+## Usability Snapshot
+
+This snapshot separates code-level verification from target and motion acceptance.
+
+| Surface | Status now | Safe use | Still required |
+| --- | --- | --- | --- |
+| Local/validation Host Profiles (`stub`, `dev`, `sim`, `sim_nav`, `portable_mujoco`, `lite`) | Development/contract-ready | Blueprint/Module development, configuration inspection, and focused tests | Hardware behavior still needs its named target gate |
+| Product assembly and switch preview | Contract-ready | Resolve one Product in fixed `env`, inspect its fingerprinted RunPlan, and copy the ProductControl command | A preview never proves Linux processes started or became ready |
+| Gateway, SDK, and map HTTP contracts | Integration-ready | Client development, auth/route contracts, saved-map queries, and read-only switch planning | Typed native map control/query migration is still active |
+| ProductControl and SystemdRunner | Code and contract verified | Review and test switch, stop, readiness, rollback, and conflict cleanup transactions | Rebuild the release and execute the transaction on Linux/systemd |
+| Native C++ LiDAR/SLAM/map/navigation/driver chain | Not revalidated in this cleanup | Source and contracts may be developed | Rebuild current C++ artifacts and pass native simulation/replay gates |
+| S100P field autonomy and motion | Not accepted | No-motion diagnostics only after deployment | Fresh release provenance, no-motion readiness, fault injection, then bounded supervised motion |
+| Super-LIO | Lab-only experimental integration | Stationary external ROS 2 evaluation using `integrations/super_lio/` | Typed adapter, ProductControl ownership, native release inclusion, and S100P acceptance |
+
+Overall verdict: the repository is usable for local development and interface/architecture validation. It is not yet evidence that the current checkout is production-ready for autonomous S100P motion.
+
+The remaining promotion order is maintained in `plans/current-roadmap.md`; dated simulation and field evidence lives under `07-testing/`.
+
+## Documentation Map
 
 Use this file when deciding which document is authoritative.
 
-For cleanup decisions and archive candidates, see `DOCS_TRIAGE.md`.
+For documentation placement and the deletion ledger, see `DOCS_TRIAGE.md`.
 
 ## Curated Documentation Entry Points
 
@@ -13,8 +33,9 @@ contracts and references listed later in this file.
 
 | Need | Curated entry point |
 | --- | --- |
+| Understand the inspection product and result-acceptance model | `product/README.md` |
 | Choose a local, simulation, or field starting path | `01-getting-started/README.md` |
-| Learn Module-First concepts | `02-concepts/README.md` |
+| Learn Product, Host, Blueprint, Module, and DDS concepts | `02-concepts/README.md` |
 | Find the owning development surface | `03-development/README.md` |
 | Build a REST, SDK, MCP, SSE, or teleoperation integration | `09-integrations/README.md` |
 | Map, navigate, use semantic goals, or explore | `05-guides/README.md` |
@@ -41,12 +62,15 @@ reports, and field-run evidence out of its primary reading paths.
 
 | Topic | Source of truth |
 | --- | --- |
+| Inspection product intent and acceptance semantics | `docs/product/inspection-product.md` |
 | System architecture | `docs/architecture/SYSTEM_DESIGN.md` |
 | Module, Blueprint, Port/Wire model | `docs/architecture/LINGTU_RUNTIME_BUS_DECISION.md` |
-| Runtime Graph endpoint/topic contract | `config/runtime_graph/README.md` |
+| Runtime Graph env/Product/topic contract | `config/runtime_graph/README.md` |
 | Global planning input/output | `docs/architecture/GLOBAL_PLANNING_CONTRACT.md` |
 | Saved map types and artifact bundles | `docs/architecture/MAP_SERVICE_CONTRACT.md` |
 | Navigation compute chain | `docs/architecture/NAVIGATION_COMPUTE_CONTRACT.md` |
+| Navigation capability maturity and evidence gaps | `docs/architecture/NAVIGATION_CAPABILITY_MATRIX.md` |
+| Native navigation/map data-plane migration boundary | `docs/architecture/NATIVE_DATA_PLANE_MIGRATION.md` |
 | Local planner I/O | `docs/architecture/local_planner_io_contract.md` |
 | Frame contract | `docs/architecture/ros_frame_contract.md` |
 | Repository placement | `docs/REPO_LAYOUT.md` |
@@ -54,7 +78,7 @@ reports, and field-run evidence out of its primary reading paths.
 | SDK, REST, MCP, SSE, and teleoperation integration usage | `docs/09-integrations/README.md` |
 | Software control ownership, motion gate, and stop/recovery usage | `docs/10-safety/README.md` |
 | Known product gaps | `docs/known_gaps.md` |
-| Native field endpoint | `config/runtime_graph/endpoints/thunder_field.yaml` |
+| Physical runtime Env | `config/runtime_graph/envs/real.yaml` |
 | Native DDS IDL and typed message contracts | `src/message/idl/README.md` |
 | Thunder driver deployment boundary | `scripts/deploy/thunder/lingtu-driver.service` |
 | MuJoCo native-DDS navigation acceptance | `docs/07-testing/MUJOCO_NAVIGATION_ACCEPTANCE.md` |
@@ -64,25 +88,24 @@ reports, and field-run evidence out of its primary reading paths.
 
 | Location | How to use |
 | --- | --- |
-| `docs/archive/` | Placeholder only. Old snapshots were removed; use git history. |
-| `docs/superpowers/` | Work plans and old execution notes. Not product contract. |
-| `docs/07-testing/*AUDIT*.md` | Evidence snapshots. Date-bound, not architecture. |
+| `docs/research/` | Upstream evaluations and algorithm investigations. Not product contract or acceptance evidence. |
+| `docs/07-testing/field-runs/` | Dated evidence snapshots. They support only the named run and environment. |
 | `docs/plans/` | Forward-looking PRDs and migration plans. Not shipped behavior. |
-| `docs/09-paper/` | Publication drafts and build output. Not runtime docs. |
 | `.qoder/`, `.hermes/`, `.codex/`, `.omx/` | Tool-generated workspace memory. Regenerate with the owning tool; do not treat as product documentation. |
 
 ## Current Product Defaults
 
 | Area | Current position |
 | --- | --- |
-| Runtime unit | `Module` |
-| Orchestration unit | `Blueprint` |
+| Host runtime unit | `Module` |
+| Host graph assembly | `Blueprint` |
+| Product operation | `ProductControl(env).switch(Product) -> RunPlan -> systemd` |
 | Dataflow model | `Port -> Wire -> Transport` |
 | Product global planner | `octoplanner3d` through `GlobalPlanner` |
 | Compatibility planners | `direct` for lightweight/direct paths; `pct` and `astar` for explicit legacy/manual comparison |
 | UI global path payload | `lingtu.global_plan.v1` |
 | ROS 2 role | Compatibility, replay, benchmark, and legacy gate adapter only |
-| Physical field endpoint | `thunder_field` |
+| Physical runtime env | `real` |
 | Field command output | `endpoint_only`: logical `/nav/cmd_vel`, DDS wire `rt/nav/cmd_vel`, then `lingtu-driver` |
 | Brainstem boundary | Remote gRPC target loaded from `/opt/lingtu/config/brainstem.env` |
 | Gateway / MCP defaults | Gateway `5050`, MCP JSON-RPC `8090` |

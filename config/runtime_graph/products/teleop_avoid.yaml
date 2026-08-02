@@ -1,5 +1,7 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: teleop_avoid
+contracts:
+  - lingtu.product.teleop_avoid.v1
 summary: Operator-assisted teleoperation with native local detour planning, live obstacle/traversability checks, and final command arbitration.
 operator_switchable: true
 product_mode: teleop_avoid
@@ -13,43 +15,40 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+native_nav:
+  control_mode: teleop_avoid
+  publish_cmd_vel: true
+  check_obstacle: true
+  use_traversability_cost: true
+  allow_teleop_takeover: false
+  teleop_local_planner: true
 processes:
   - lidar
   - slam
+  - maps
   - traversability
   - nav
   - driver
-  - runtime
-required_topics:
-  # Operator intent input. This is intentionally separate from /nav/cmd_vel
-  # because /nav/cmd_vel is the final post-safety command output.
-  - /nav/command/request
-  - /nav/command/ack
-  # Native localization and live obstacle context.
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/localization_health
-  - /nav/traversability
-  - /nav/local_path
-  - /nav/way_point
-  # Final command after collision/traversability veto and velocity limiting.
-  - /nav/cmd_vel
-required_capabilities:
-  - teleop
-  - localization_health_gate
-  - registered_cloud_collision_check
-  - traversability_costmap
-  - local_planner_collision_and_traversability_scoring
-  - path_follower_pre_command_output
-  - operator_assisted_local_planner_control
-  - final_cmd_vel_single_writer
-  - cmd_vel_arbitration
+  - host
+critical_modules:
+  - host.bus
+  - SlamAdapterModule
+  - nav.commands
+  - GatewayModule
 forbidden_modules:
+  - TeleopModule
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.mission
   - nav.local_planner
   - nav.path_follower
   - SemanticPlannerModule
+  - OccupancyGridModule
+  - VoxelGridModule
+  - ElevationMapModule
+  - ESDFModule
+  - TraversabilityCostModule
+  - SemanticMapModule
 forbidden_claims:
   - autonomous_navigation
   - global_planning
@@ -58,9 +57,3 @@ transport_rules:
   product_bus: typed_dds
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
-target_chain:
-  - Gateway/TeleopModule sends a typed operator velocity request through /nav/command/request and waits for endpoint acceptance on /nav/command/ack.
-  - Native command endpoint runs in control_mode=teleop_avoid, rejects autonomous goals/paths, and interprets joystick translation as a short-horizon body-frame intent.
-  - It reads the accepted velocity request in memory plus /slam/odometry, /slam/registered_cloud, and /nav/traversability.
-  - Native LocalPlanner selects a detour within the configured direction deviation and PathFollower produces a pre-safety command; no-path has no recovery motion and becomes zero.
-  - The endpoint checks the curved local path again, publishes /nav/local_path and /nav/way_point telemetry, and remains the sole writer of final body-frame Twist to /nav/cmd_vel.

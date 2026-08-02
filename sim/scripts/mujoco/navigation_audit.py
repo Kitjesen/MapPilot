@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
-GATE = ROOT / "sim" / "scripts" / "mujoco_live_gate.py"
+GATE = ROOT / "sim" / "scripts" / "mujoco" / "live_gate.py"
 
 
 def _tail(text: str, limit: int = 4000) -> str:

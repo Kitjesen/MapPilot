@@ -74,6 +74,10 @@ void fillMapIcpDiagnostics(
   result.refine_backend = diagnostics.refine_backend;
   result.refine_iterations = diagnostics.refine_iterations;
   result.refine_inliers = diagnostics.refine_inliers;
+  result.input_points = diagnostics.input_points;
+  result.evaluated_points = diagnostics.evaluated_points;
+  result.support_ratio = diagnostics.support_ratio;
+  result.overlap_inlier_ratio = diagnostics.overlap_inlier_ratio;
   result.refine_converged = diagnostics.refine_converged;
   result.refine_pos_cov_trace = diagnostics.refine_pos_cov_trace;
 }

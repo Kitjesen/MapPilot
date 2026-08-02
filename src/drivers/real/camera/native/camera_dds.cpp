@@ -482,6 +482,23 @@ lingtu::drivers::camera::shm::FrameMetadata toShmMetadata(
   return metadata;
 }
 
+RecordHeader withCalibrationFrom(
+    const RecordHeader& frame,
+    const RecordHeader& calibration) {
+  RecordHeader merged = frame;
+  merged.fx = calibration.fx;
+  merged.fy = calibration.fy;
+  merged.cx = calibration.cx;
+  merged.cy = calibration.cy;
+  merged.depth_scale_m = calibration.depth_scale_m;
+  merged.dist_k1 = calibration.dist_k1;
+  merged.dist_k2 = calibration.dist_k2;
+  merged.dist_p1 = calibration.dist_p1;
+  merged.dist_p2 = calibration.dist_p2;
+  merged.dist_k3 = calibration.dist_k3;
+  return merged;
+}
+
 lingtu_dds_Image toImageMsg(
     const RecordHeader& header,
     std::vector<std::uint8_t>& payload,
@@ -654,8 +671,11 @@ int main(int argc, char** argv) {
         next_info_publish_s = nowSeconds() + 1.0;
       } else if (header.kind == kKindColor) {
         const std::string encoding = encodingFor(header.format);
+        const RecordHeader shm_header = has_info
+            ? withCalibrationFrom(header, last_info_header)
+            : header;
         const auto metadata = toShmMetadata(
-            header,
+            shm_header,
             lingtu::drivers::camera::shm::StreamKind::kColor,
             encoding,
             cfg.frame_id);
@@ -669,8 +689,11 @@ int main(int argc, char** argv) {
         status.color_frames += 1;
       } else if (header.kind == kKindDepth) {
         const std::string encoding = encodingFor(header.format);
+        const RecordHeader shm_header = has_info
+            ? withCalibrationFrom(header, last_info_header)
+            : header;
         const auto metadata = toShmMetadata(
-            header,
+            shm_header,
             lingtu::drivers::camera::shm::StreamKind::kDepth,
             encoding,
             cfg.frame_id);

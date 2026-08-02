@@ -11,6 +11,8 @@ import styles from './MapView.module.css'
 interface MapViewProps {
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
+  motionStartAllowed: boolean
+  motionStartBlockedReason: string
 }
 // ── Map type classification ────────────────────────────────────
 // 可导航地图 — has PCD + OctoMap artifact (OctoPlanner3D ready)
@@ -170,7 +172,12 @@ function MapCard({ m, selected, onPreview, onNavigate, onActivate, onRename, onD
 }
 
 // ── Main ───────────────────────────────────────────────────────
-export function MapView({ showToast, locale }: MapViewProps) {
+export function MapView({
+  showToast,
+  locale,
+  motionStartAllowed,
+  motionStartBlockedReason,
+}: MapViewProps) {
   const [maps,        setMaps       ] = useState<MapInfo[]>([])
   const [loading,     setLoading    ] = useState(true)
   const [error,       setError      ] = useState('')
@@ -266,28 +273,6 @@ export function MapView({ showToast, locale }: MapViewProps) {
     }
   }
 
-  const waitForNavigationSession = async (mapName: string) => {
-    const deadline = Date.now() + 60_000
-    let lastError = ''
-    while (Date.now() < deadline) {
-      try {
-        const [session, navigation] = await Promise.all([
-          api.fetchSession(),
-          api.fetchNavigationStatus(),
-        ])
-        if (navigationRuntimeReady(session, navigation, mapName)) return
-        lastError = navigation.readiness?.blockers?.join(', ')
-          || session.error
-          || session.relocalization_state
-          || session.mode
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error)
-      }
-      await new Promise(resolve => window.setTimeout(resolve, 1_000))
-    }
-    throw new Error(lastError || '导航运行时在 60 秒内未就绪')
-  }
-
   const confirmNavigate = async () => {
     const name = navigateFrom
     setNavigateFrom(null)
@@ -299,12 +284,15 @@ export function MapView({ showToast, locale }: MapViewProps) {
         api.fetchNavigationStatus(),
       ])
       if (!navigationRuntimeReady(currentSession, currentNavigation, name)) {
-        const result = await api.switchProductSession('navigating', {
-          currentProfile: currentSession.product_profile,
+        const handoff = await api.copyProductSwitchCommand('nav', {
+          currentProduct: currentSession.product,
           mapName: name,
         })
-        showToast(`导航切换已受理，等待服务重启和重定位：${result.status}`, 'info')
-        await waitForNavigationSession(name)
+        showToast(
+          `ProductControl 命令已复制：${handoff.command}`,
+          'info',
+        )
+        return
       }
       setSelectedMap(name)
       showToast(`导航已就绪：${name}`, 'success')
@@ -367,6 +355,10 @@ export function MapView({ showToast, locale }: MapViewProps) {
 
   const confirmPickedGoal = async () => {
     if (!pickedPoint || !selectedMap) return
+    if (!motionStartAllowed) {
+      showToast(motionStartBlockedReason, 'error')
+      return
+    }
     try {
       await ensureNavigationSession(selectedMap)
       const res = await api.navigateClick(pickedPoint.x, pickedPoint.y, {
@@ -465,7 +457,14 @@ export function MapView({ showToast, locale }: MapViewProps) {
               </span>
             </div>
             <div className={styles.pickActions}>
-              <button className={styles.btnTinyAccent} onClick={confirmPickedGoal}>发送目标</button>
+              <button
+                className={styles.btnTinyAccent}
+                onClick={confirmPickedGoal}
+                disabled={!motionStartAllowed}
+                title={motionStartAllowed ? '发送导航目标' : motionStartBlockedReason}
+              >
+                发送目标
+              </button>
               <button className={styles.btnTiny} onClick={() => setPickedPoint(null)}>取消</button>
             </div>
           </div>

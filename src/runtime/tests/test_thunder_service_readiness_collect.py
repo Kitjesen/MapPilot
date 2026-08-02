@@ -27,9 +27,10 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
     assert module.STATUS_FILES["driver"] == "/dev/shm/lingtu/driver_status.json"
     assert module.SERVICES == (
         "lingtu-livox-dds.service",
-        "lingtu-camera-dds.service",
-        "lingtu-slam-dds.service",
-        "lingtu-traversability-dds.service",
+            "lingtu-camera-dds.service",
+            "lingtu-slam-dds.service",
+            "mapd.service",
+            "lingtu-traversability-dds.service",
         "lingtu-nav-dds.service",
         "lingtu-driver.service",
         "lingtu.service",
@@ -46,10 +47,10 @@ def test_thunder_service_readiness_collector_is_read_only() -> None:
     assert module.NATIVE_BINARY_ENV["traversability_dds"] == ("LINGTU_TRAVERSABILITY_DDS_BIN")
     assert module.NATIVE_BINARY_DEFAULTS == {name: item["path"] for name, item in module.NATIVE_BINARIES.items()}
     assert module.NATIVE_BINARY_ENV == {name: item["env"] for name, item in module.NATIVE_BINARIES.items()}
-    assert "thunder_field_readiness_units" in source
-    assert "thunder_field_status_files" in source
-    assert "thunder_field_native_binaries" in source
-    assert "thunder_field_dds_topics" in source
+    assert "thunder_runtime_units" in source
+    assert "thunder_runtime_status_files" in source
+    assert "thunder_runtime_native_binaries" in source
+    assert "thunder_runtime_dds_topics" in source
     assert "/api/v1/services/status" in source
 
     for mutating in (
@@ -780,6 +781,7 @@ def test_thunder_service_readiness_collector_lists_catalog_dds_topics() -> None:
         "rt/nav/traversability",
         "rt/nav/terrain_map",
         "rt/nav/terrain_map_ext",
+        "rt/nav/exploration_execution_snapshot",
     ]
     assert report["services"]["driver"]["dds_topics"] == [
         "rt/nav/cmd_vel",

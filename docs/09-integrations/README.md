@@ -63,9 +63,8 @@ flowchart LR
 
 - 你知道目标环境已批准的 Gateway 基础 URL。可移植配置请使用
   `http://<robot>:5050` 这样的占位符；不要把现场机器人地址硬编码进客户端或文档。
-- 你知道目标是仿真、回放还是物理端点。profile 命名任务图；端点命名连接/所有权
-  边界。例如，`thunder_field` 是规范的物理现场端点名，`thunder-field` 是可接受的
-  CLI 别名。
+- 你知道目标是本地 Profile、`env=sim` 还是物理 `env=real` Product。端点只命名
+  连接或通信契约，例如 Gateway URL 或 DDS/native-service 边界；它不命名部署身份。
 - 对物理目标，负责的操作员和本地紧急处置流程已经就位。TCP 连接成功并不代表
   已具备现场运行条件。
 
@@ -225,7 +224,7 @@ SDK 提供 `Position`、`HealthStatus`、`NavigationStatus`、`MapList`、`Sessi
 | SDK 接口 | 影响 | 说明 |
 | --- | --- | --- |
 | `state`、`health`、`position`、`session`、`navigation_status`、`path`、`maps`、`scene`、`locations`、`capabilities`、`bootstrap`、`devices`、`readiness`、`runtime_contract`、`auth_check` | 只读 | 用于观察和 UI 状态，不能单独用作运动授权。 |
-| `save_map`、`use_map`、`rename_map`、`restore_map`、`reset_map_cloud`、`tag_location`、`delete_location`、`slam_switch`、`slam_relocalize`、`start_session`、`end_session`、`swap_driver`、`switch_backend`、租约方法、bag 控制 | 状态变更或无运动诊断 | 这些方法可能改变地图数据、会话、进程/backend 选择或控制所有权。保持机器人静止并重新检查就绪度。 |
+| `save_map`、`use_map`、`rename_map`、`restore_map`、`reset_map_cloud`、`tag_location`、`delete_location`、`slam_switch`、`slam_relocalize`、`start_session`、`end_session`、`swap_driver`、`switch_backend`、租约方法、bag 控制 | 状态变更或无运动诊断 | 这些方法可能改变地图数据、会话、进程/backend 选择或控制所有权。`start_session`/`end_session` 只用于本地 Profile；现场 Product 生命周期必须通过 `scripts/lingtu` 或 `python -m lingtu.control`，Gateway 会拒绝绕过 ProductControl 的会话结束请求。 |
 | `go`、`go_to`、`navigate_click`、`drive`、`explore_start` | 可运动 | 不要从无人值守循环、后台重试或初始连通性测试中调用。 |
 | `stop`、`cancel`、`explore_stop` | 控制状态 | `stop` 在 REST 边界具有紧急停止语义；`cancel` 是平缓的任务取消。恢复语义请参阅安全文档。 |
 

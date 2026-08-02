@@ -6,14 +6,11 @@ describe how to install, operate, diagnose, and roll back LingTu deployments.
 Executable deployment scripts live under `scripts/deploy/`:
 
 - Canonical Thunder executable source: `scripts/deploy/thunder/`.
-- Canonical Thunder deploy entrypoint: `scripts/deploy/deploy_thunder.sh`.
-- Legacy compatibility source: `scripts/deploy/s100p/`.
+- The only deploy entrypoint is `scripts/deploy/deploy_thunder.sh`. It
+  deploys/builds artifacts by default; optional activation uses
+  `LINGTU_DEPLOY_PRODUCT=<product>` or a Product argument and delegates to
+  `scripts/lingtu --env real mode switch`.
 
-The `s100p` deployment path is retained for compatibility with existing robot
-service files and field procedures. New product-facing deployment work should
-refer to Thunder naming and use `scripts/deploy/thunder/` unless a procedure is
-explicitly about legacy ROS/SLAM compatibility.
-
-Current runbooks in this directory may still mention `s100p` where they describe
-legacy service files or historical S100P field state. Those mentions are not new
-deployment authority.
+No executable deployment source or alias remains under the S100P name. The
+former ROS2 installer and systemd unit templates are removed; historical S100P
+hardware references are not deployment authority.

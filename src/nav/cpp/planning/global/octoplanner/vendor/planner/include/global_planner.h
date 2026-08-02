@@ -72,6 +72,14 @@ struct PointPose
     double z;
 };
 
+struct ExternalBlockedRegion
+{
+  PointPose center{};
+  double radius_xy_m{0.0};
+  double min_z{0.0};
+  double max_z{0.0};
+};
+
 struct PlannerConfig
 {
   double robot_radius{0.20};
@@ -103,6 +111,22 @@ struct PlannerConfig
 class OctoPlanner3D
 {
 public:
+  struct EndpointResolutionInfo
+  {
+    enum class Failure
+    {
+      None,
+      StartSnapExhausted,
+      GoalSnapExhausted,
+    };
+
+    Failure failure{Failure::None};
+    bool start_raw_outside_bounds{false};
+    bool goal_raw_outside_bounds{false};
+    bool start_snapped{false};
+    bool goal_snapped{false};
+  };
+
   OctoPlanner3D();
 
   ~OctoPlanner3D();
@@ -111,11 +135,15 @@ public:
 
   void setCancelCheck(std::function<bool()> cancel_check);
 
+  void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
+
   void setOctomap(std::shared_ptr<octomap::OcTree> map);
 
   void makePlan(const PointPose start,const PointPose goal);
 
   void getPlannerResults(std::vector<PointPose>& plannerResults);
+
+  EndpointResolutionInfo endpointResolution() const noexcept;
 
 private:
   enum class TraversabilityFailure
@@ -157,6 +185,8 @@ private:
   bool hasSameLevelNeighborWithOccupiedAbove(const GridIndex & idx) const;
 
   void rebuildPreblockedCells();
+
+  void rebuildExternalPreblockedCells();
 
   void rebuildPreblockedCostmap();
 
@@ -206,7 +236,7 @@ private:
     int support_depth_cells,
     GridIndex & out) const;
 
-  bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal) const;
+  bool resolvePlanEndpoints(GridIndex & start, GridIndex & goal);
 
   std::vector<GridIndex> make26Directions() const;
 
@@ -257,6 +287,7 @@ private:
   PointPose start_point_;
   PointPose goal_point_;
 
+  EndpointResolutionInfo endpoint_resolution_{};
   std::vector<PointPose> planner_results_;
 
   std::function<bool()> cancel_check_;
@@ -265,6 +296,7 @@ private:
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
   std::unordered_set<GridIndex, GridIndexHash> preblocked_cells_;
+  std::vector<ExternalBlockedRegion> external_preblocked_regions_;
   std::unordered_set<GridIndex, GridIndexHash> external_preblocked_cells_;
   std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
   std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;

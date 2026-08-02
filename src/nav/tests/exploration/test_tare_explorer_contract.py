@@ -25,7 +25,7 @@ class TestTAREExplorerContract:
 
     def test_instantiation(self):
         """Create TAREExplorerModule with default params."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule()
         assert mod._backend_status.configured == "tare"
@@ -34,14 +34,14 @@ class TestTAREExplorerContract:
 
     def test_instantiation_with_disabled_auto_start(self):
         """auto_start=False must suppress start signal on start()."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         assert mod._auto_start is False
 
     def test_input_port_types(self):
         """All In ports must be declared with correct message types."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule()
         expected_in = {
@@ -59,7 +59,7 @@ class TestTAREExplorerContract:
 
     def test_output_port_types(self):
         """All Out ports must be declared with correct message types."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule()
         expected_out = {
@@ -79,14 +79,14 @@ class TestTAREExplorerContract:
 
     def test_lifecycle_setup(self):
         """setup() must not raise."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         mod.setup()
 
     def test_lifecycle_start_stop_idempotent(self):
         """start()/stop() transitions without error and stop is idempotent."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         mod.setup()
@@ -101,7 +101,7 @@ class TestTAREExplorerContract:
     def test_start_exploration_skill_dispatch(self):
         """start_tare_exploration skill must publish exploring=True and return
         JSON with status 'started'."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         mod.setup()
@@ -121,7 +121,7 @@ class TestTAREExplorerContract:
     def test_stop_exploration_skill_dispatch(self):
         """stop_tare_exploration skill must publish exploring=False and return
         JSON with status 'stopped'."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         mod.setup()

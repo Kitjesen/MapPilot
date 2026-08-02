@@ -4,8 +4,8 @@
 
 namespace lingtu::message {
 
-// Stable values carried by InspectionCommandRequest.kind and
-// InspectionCommandAck.kind.
+// Stable values carried by InspectionTaskRequest.kind and
+// InspectionTaskAck.kind.
 enum class InspectionCommandKind : std::int32_t {
   kStart = 1,
   kPause = 2,

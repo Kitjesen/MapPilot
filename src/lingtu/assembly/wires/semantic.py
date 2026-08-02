@@ -82,20 +82,26 @@ def recorder_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     return tuple(specs)
 
 
-def visual_servo_specs() -> tuple[WireSpec, ...]:
+def visual_servo_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     """Wire visual servo inputs and outputs."""
-    return (
+    goal_sink = "nav.goals" if "nav.goals" in ctx.names else "nav.mission"
+    goal_port = "goal_request" if goal_sink == "nav.goals" else "goal_pose"
+    specs = [
         WireSpec("GatewayModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("SemanticPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
         WireSpec("AgentPlannerModule", "servo_target", "VisualServoModule", "servo_target"),
-        WireSpec("VisualServoModule", "goal_pose", "nav.mission", "goal_pose"),
-        WireSpec("VisualServoModule", "nav_stop", "nav.mission", "stop_signal"),
+        WireSpec("VisualServoModule", "goal_pose", goal_sink, goal_port),
         WireSpec("VisualServoModule", "cmd_vel", "nav.velocity_mux", "visual_servo_cmd_vel"),
-    )
+    ]
+    if "nav.mission" in ctx.names:
+        specs.append(WireSpec("VisualServoModule", "nav_stop", "nav.mission", "stop_signal"))
+    return tuple(specs)
 
 
 def vla_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     """VLA module input/output wiring."""
+    goal_sink = "nav.goals" if "nav.goals" in ctx.names else "nav.mission"
+    goal_port = "goal_request" if goal_sink == "nav.goals" else "goal_pose"
     return (
         WireSpec(ctx.camera_src, ctx.color_out, "VLAModule", "color_image"),
         WireSpec(ctx.camera_src, "depth_image", "VLAModule", "depth_image"),
@@ -104,6 +110,6 @@ def vla_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
         WireSpec("PerceptionModule", "scene_graph", "VLAModule", "scene_graph"),
         WireSpec("GatewayModule", "instruction", "VLAModule", "instruction"),
         WireSpec("MCPServerModule", "instruction", "VLAModule", "instruction"),
-        WireSpec("VLAModule", "goal_pose", "nav.mission", "goal_pose"),
+        WireSpec("VLAModule", "goal_pose", goal_sink, goal_port),
         WireSpec("VLAModule", "cmd_vel", "nav.velocity_mux", "vla_cmd_vel"),
     )

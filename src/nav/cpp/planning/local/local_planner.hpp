@@ -11,6 +11,7 @@
 #pragma once
 
 #include "nav_kernel/types.hpp"
+#include "recovery_planner.hpp"
 #include "local_planner_scoring.hpp"
 #include "nav_kernel/simd_accel.hpp"
 #include <cmath>
@@ -23,6 +24,7 @@
 #include <limits>
 #include <sstream>
 #include <algorithm>
+#include <cstdint>
 
 namespace nav_kernel {
 
@@ -75,6 +77,7 @@ struct LocalPlannerParams {
   double traversabilityHardCost = 90.0;
   double traversabilitySoftCost = 40.0;
   double traversabilityWeight   = 0.01;
+  int    scoringThreads         = 2;
   int    debugCandidateLimit    = 0;
 
   // Recovery
@@ -91,8 +94,18 @@ struct LocalPlanResult {
   int  slowDown    = 0;     // 0-3
   bool pathFound   = false;
   bool nearFieldStop = false;
-  int  recoveryState = 0;   // 0=normal, 1=rotating, 2=backing_up
+  int  recoveryState = 0;   // ABI: 0=idle, 1=true rotation, 2=validated translation
   bool recoveryExhausted = false;
+  bool recoveryActive = false;
+  bool recoveryVerified = false;
+  bool recoveryDirectCommand = false;
+  bool recoveryObservationRefreshRequired = false;
+  RecoveryAction recoveryAction = RecoveryAction::None;
+  std::string recoveryReason;
+  double recoveryProgress = 0.0;
+  int recoveryAttempt = 0;
+  int recoveryCandidateCount = 0;
+  int recoveryRotationDirection = 0;
 };
 
 enum class LocalCandidateState {
@@ -264,8 +277,54 @@ public:
         true);
   }
 
+  /// Force recovery planning after the execution layer has detected a stall
+  /// even when the ordinary local planner can still produce a geometric path.
+  LocalPlanResult planRecovery(const float* obstacle_pts,
+                               int n_pts,
+                               double timestamp) {
+    LocalPlanResult result;
+    odomTime_ = timestamp;
+    debugSnapshot_ = {};
+
+    const double relGoalX =
+        (goalX_ - vx_) * cosYaw_ + (goalY_ - vy_) * sinYaw_;
+    const double relGoalY =
+        -(goalX_ - vx_) * sinYaw_ + (goalY_ - vy_) * cosYaw_;
+    const double goalDirectionBodyRad = std::atan2(relGoalY, relGoalX);
+    result.nearFieldStop =
+        checkNearFieldStop(obstacle_pts, n_pts, goalDirectionBodyRad) ||
+        (p_.traversabilityNearFieldStop &&
+         checkNearFieldTraversability(goalDirectionBodyRad));
+    buildPlannerCloud(obstacle_pts, n_pts);
+    buildRecoveryPath(result, goalDirectionBodyRad, true);
+    populateRecoveryResult(result);
+    return result;
+  }
+
+  /// Explicit lifecycle boundary used when missions or control modes change.
+  void resetRecovery() {
+    recoverySessionActive_ = false;
+    recoveryState_ = 0;
+    blockedStartTime_ = -1.0;
+    recoveryPhaseStart_ = -1.0;
+    recoveryCycleCount_ = 0;
+    recoveryAction_ = RecoveryAction::None;
+    recoveryWorldPath_.clear();
+    recoveryPathCumulative_.clear();
+    recoveryPathLength_ = 0.0;
+    recoveryTargetYawDelta_ = 0.0;
+    recoveryRotationDirection_ = 0;
+    recoveryDirectionBin_ = -1;
+    recoveryRejectedTranslationMask_ = 0;
+    recoveryRejectedRotationMask_ = 0;
+    recoveryLastProgress_ = 0.0;
+    recoveryLastProgressTime_ = -1.0;
+    recoveryCandidateCount_ = 0;
+    recoveryReason_.clear();
+  }
+
   /// Plan from an operator motion intent without requiring a global path.
-  /// Automatic recovery rotation/back-up is disabled for assisted teleop.
+  /// Automatic recovery is disabled for assisted teleop.
   LocalPlanResult planIntent(const float* obstacle_pts,
                              int n_pts,
                              double timestamp,
@@ -275,9 +334,7 @@ public:
                              double max_dir_deviation_deg) {
     if (!pathsLoaded_) return {};
     freezeStatus_ = 0;
-    recoveryState_ = 0;
-    blockedStartTime_ = -1.0;
-    recoveryCycleCount_ = 0;
+    resetRecovery();
     return planForIntent(
         obstacle_pts,
         n_pts,
@@ -320,14 +377,19 @@ public:
     if (p_.pathRangeBySpeed) pathRange = p_.adjacentRange * joySpeed;
     if (pathRange < p_.minPathRange) pathRange = p_.minPathRange;
 
+    // Guard against degenerate scale params: pathScale <= 0 would divide by
+    // zero below (pathRange = ... / defPathScale), and minPathScale <= 0 would
+    // make 1/curPathScale blow up inside scoreAndSelect.
     double defPathScale = p_.pathScale;
+    if (defPathScale <= 1e-3) defPathScale = 1.0;
+    const double minPathScale = std::max(p_.minPathScale, 1e-3);
     double curPathScale = defPathScale;
     if (p_.pathScaleBySpeed) curPathScale = defPathScale * joySpeed;
-    if (curPathScale < p_.minPathScale) curPathScale = p_.minPathScale;
+    if (curPathScale < minPathScale) curPathScale = minPathScale;
 
     bool pathFound = false;
 
-    while (curPathScale >= p_.minPathScale && pathRange >= p_.minPathRange) {
+    while (curPathScale >= minPathScale && pathRange >= p_.minPathRange) {
       int selectedGroupID = scoreAndSelect(
           curPathScale,
           pathRange,
@@ -351,14 +413,11 @@ public:
         buildOutputPath(selectedGroupID, curPathScale, pathRange, relGoalDis, result);
         if (result.pathFound) {
           pathFound = true;
-          recoveryState_ = 0;
-          blockedStartTime_ = -1.0;
-          recoveryCycleCount_ = 0;
-          result.recoveryExhausted = false;
+          resetRecovery();
         }
         break;
       }
-      if (curPathScale >= p_.minPathScale + p_.pathScaleStep) {
+      if (curPathScale >= minPathScale + p_.pathScaleStep) {
         curPathScale -= p_.pathScaleStep;
         pathRange = p_.adjacentRange * curPathScale / defPathScale;
       } else {
@@ -369,10 +428,10 @@ public:
     result.pathFound = pathFound;
 
     if (!pathFound && allowRecovery) {
-      buildRecoveryPath(result);
+      buildRecoveryPath(result, joyDir * M_PI / 180.0, false);
     }
 
-    result.recoveryState = recoveryState_;
+    populateRecoveryResult(result);
     return result;
   }
 
@@ -436,11 +495,29 @@ public:
   int freezeStatus_ = 0;
   double freezeStartTime_ = 0;
 
-  // Recovery state
-  int    recoveryState_       = 0;
-  double blockedStartTime_    = -1.0;
-  double recoveryPhaseStart_  = -1.0;
-  int    recoveryCycleCount_  = 0;
+  // Recovery execution state. Candidate generation stays stateless in
+  // RecoveryPlanner; this class owns odometry progress and retry policy.
+  bool recoverySessionActive_ = false;
+  int recoveryState_ = 0;
+  double blockedStartTime_ = -1.0;
+  double recoveryPhaseStart_ = -1.0;
+  int recoveryCycleCount_ = 0;
+  RecoveryAction recoveryAction_ = RecoveryAction::None;
+  std::vector<Vec3> recoveryWorldPath_;
+  std::vector<double> recoveryPathCumulative_;
+  double recoveryPathLength_ = 0.0;
+  double recoveryTargetYawDelta_ = 0.0;
+  double recoveryStartX_ = 0.0;
+  double recoveryStartY_ = 0.0;
+  double recoveryStartYaw_ = 0.0;
+  double recoveryLastProgress_ = 0.0;
+  double recoveryLastProgressTime_ = -1.0;
+  int recoveryCandidateCount_ = 0;
+  int recoveryRotationDirection_ = 0;
+  int recoveryDirectionBin_ = -1;
+  std::uint32_t recoveryRejectedTranslationMask_ = 0;
+  int recoveryRejectedRotationMask_ = 0;
+  std::string recoveryReason_;
 
   // Path library
   struct PathPoint { float x, y, z; };
@@ -651,10 +728,10 @@ public:
     int col = static_cast<int>((wx - traversabilityOriginX_) / traversabilityResolution_);
     int row = static_cast<int>((wy - traversabilityOriginY_) / traversabilityResolution_);
     if (row < 0 || row >= traversabilityRows_ || col < 0 || col >= traversabilityCols_) {
-      return 0.0f;
+      return 100.0f;
     }
     float risk = traversabilityGrid_[row * traversabilityCols_ + col];
-    if (!std::isfinite(risk)) return 0.0f;
+    if (!std::isfinite(risk)) return 100.0f;
     return std::clamp(risk, 0.0f, 100.0f);
   }
 
@@ -970,10 +1047,13 @@ public:
       };
 
       // Parallel execution: each rotation has its own scratch buffers
-      if (nValidRotDirs_ >= 4 && cloudSize >= 100) {
+      const int scoringThreads = std::clamp(p_.scoringThreads, 1, 4);
+      if (nValidRotDirs_ >= 4 && cloudSize >= 100 && scoringThreads > 1) {
         // Allocate per-thread scratch (one pair per rotation)
         parRotBufs_.resize(nValidRotDirs_ * 2 * cloudSize);
-        #pragma omp parallel for schedule(dynamic) if(nValidRotDirs_ >= 6)
+        // A bounded team avoids oversubscribing the control process when SLAM
+        // and traversability are running concurrently on the same robot CPU.
+        #pragma omp parallel for schedule(static) num_threads(scoringThreads) if(nValidRotDirs_ >= 6)
         for (int vi = 0; vi < nValidRotDirs_; vi++) {
           float* rxBuf = parRotBufs_.data() + vi * 2 * cloudSize;
           float* ryBuf = rxBuf + cloudSize;
@@ -1466,83 +1546,487 @@ public:
     result.pathFound = !result.path.empty();
   }
 
-  void buildRecoveryPath(LocalPlanResult& result) {
-    if (blockedStartTime_ < 0) blockedStartTime_ = odomTime_;
-    double blockedDur = odomTime_ - blockedStartTime_;
+  enum class RecoveryUpdate { Active, Completed, Failed };
 
-    if (recoveryState_ == 0 && blockedDur >= p_.recoveryBlockedThre) {
-      if (recoveryCycleCount_ >= p_.recoveryMaxCycles) {
-        result.recoveryExhausted = true;
-        recoveryState_ = 0;
-        result.path.clear();
-        return;
-      } else {
-        recoveryState_ = 1;
-        recoveryPhaseStart_ = odomTime_;
-      }
-    } else if (recoveryState_ == 1 &&
-               odomTime_ - recoveryPhaseStart_ >= p_.recoveryRotateTime) {
-      recoveryState_ = 2;
-      recoveryPhaseStart_ = odomTime_;
-    } else if (recoveryState_ == 2 &&
-               odomTime_ - recoveryPhaseStart_ >= p_.recoveryBackupTime) {
-      recoveryState_ = 0;
-      blockedStartTime_ = odomTime_;
-      recoveryCycleCount_++;
+  struct RecoveryPathProjection {
+    double progress{0.0};
+    double alongDistance{0.0};
+    double crossTrackDistance{std::numeric_limits<double>::infinity()};
+    std::size_t segmentIndex{0};
+  };
+
+  RecoveryPlannerParams makeRecoveryPlannerParams() const {
+    RecoveryPlannerParams params;
+    params.vehicleLength = p_.vehicleLength;
+    params.vehicleWidth = p_.vehicleWidth;
+    params.footprintPadding = p_.footprintPadding;
+    params.obstacleHeightThreshold = p_.obstacleHeightThre;
+    params.useTerrainAnalysis = p_.useTerrainAnalysis;
+    params.checkObstacles = p_.checkObstacle;
+    params.requireTraversability = p_.useTraversabilityCost;
+    params.traversabilityHardCost = p_.traversabilityHardCost;
+
+    const double configuredRange =
+        std::isfinite(p_.adjacentRange) ? std::max(0.0, p_.adjacentRange)
+                                        : params.searchRadius;
+    params.searchRadius = std::max(
+        params.minTranslationDistance + params.latticeResolution,
+        std::min(params.searchRadius, configuredRange));
+    return params;
+  }
+
+  Pose recoveryVehiclePose() const {
+    Pose pose;
+    pose.position = {vx_, vy_, vz_};
+    pose.yaw = vyaw_;
+    return pose;
+  }
+
+  RecoveryPlannerInput makeRecoveryPlannerInput(
+      double goalDirectionBodyRad) const {
+    RecoveryPlannerInput input;
+    input.vehiclePose = recoveryVehiclePose();
+    if (p_.checkObstacle && cloud_.size > 0) {
+      input.obstacleX = cloud_.x.data();
+      input.obstacleY = cloud_.y.data();
+      input.obstacleHeight = cloud_.h.data();
+      input.obstacleCount = cloud_.size;
+    }
+    if (!traversabilityGrid_.empty()) {
+      input.traversabilityGrid = traversabilityGrid_.data();
+      input.traversabilityRows = traversabilityRows_;
+      input.traversabilityCols = traversabilityCols_;
+      input.traversabilityResolution = traversabilityResolution_;
+      input.traversabilityOriginX = traversabilityOriginX_;
+      input.traversabilityOriginY = traversabilityOriginY_;
+    }
+    input.goalDirectionBodyRad = goalDirectionBodyRad;
+    input.rejectedTranslationDirectionMask =
+        recoveryRejectedTranslationMask_;
+    input.rejectedRotationDirectionMask = recoveryRejectedRotationMask_;
+    return input;
+  }
+
+  static const char* recoverySafetyFailureName(SafetyFailure failure) {
+    switch (failure) {
+      case SafetyFailure::None:
+        return "none";
+      case SafetyFailure::InvalidInput:
+        return "invalid_input";
+      case SafetyFailure::ObstacleCollision:
+        return "obstacle_collision";
+      case SafetyFailure::TraversabilityUnavailable:
+        return "traversability_unavailable";
+      case SafetyFailure::TraversabilityOutOfBounds:
+        return "traversability_out_of_bounds";
+      case SafetyFailure::TraversabilityNonFinite:
+        return "traversability_non_finite";
+      case SafetyFailure::TraversabilityInvalidValue:
+        return "traversability_invalid_value";
+      case SafetyFailure::TraversabilityBlocked:
+        return "traversability_blocked";
+    }
+    return "invalid_input";
+  }
+
+  void populateRecoveryResult(LocalPlanResult& result) const {
+    result.recoveryState = recoveryState_;
+    result.recoveryActive = recoverySessionActive_;
+    result.recoveryVerified = recoveryState_ != 0;
+    result.recoveryDirectCommand =
+        result.recoveryVerified && recoveryAction_ == RecoveryAction::Rotate;
+    result.recoveryAction =
+        result.recoveryVerified ? recoveryAction_ : RecoveryAction::None;
+    result.recoveryReason = recoveryReason_;
+    result.recoveryProgress =
+        std::clamp(recoveryLastProgress_, 0.0, 1.0);
+    result.recoveryAttempt =
+        recoveryState_ != 0 ? recoveryCycleCount_ + 1 : recoveryCycleCount_;
+    result.recoveryCandidateCount = recoveryCandidateCount_;
+    result.recoveryRotationDirection =
+        recoveryState_ == 1 ? recoveryRotationDirection_ : 0;
+  }
+
+  void clearActiveRecovery() {
+    recoveryState_ = 0;
+    recoveryPhaseStart_ = -1.0;
+    recoveryAction_ = RecoveryAction::None;
+    recoveryWorldPath_.clear();
+    recoveryPathCumulative_.clear();
+    recoveryPathLength_ = 0.0;
+    recoveryTargetYawDelta_ = 0.0;
+    recoveryRotationDirection_ = 0;
+    recoveryDirectionBin_ = -1;
+  }
+
+  void finishRecovery(const char* reason) {
+    clearActiveRecovery();
+    recoverySessionActive_ = false;
+    blockedStartTime_ = -1.0;
+    recoveryCycleCount_ = 0;
+    recoveryRejectedTranslationMask_ = 0;
+    recoveryRejectedRotationMask_ = 0;
+    recoveryLastProgress_ = 1.0;
+    recoveryLastProgressTime_ = odomTime_;
+    recoveryReason_ = reason;
+  }
+
+  void rejectActiveRecovery(const std::string& reason) {
+    if (recoveryAction_ == RecoveryAction::Translate &&
+        recoveryDirectionBin_ >= 0 && recoveryDirectionBin_ < 16) {
+      recoveryRejectedTranslationMask_ |=
+          std::uint32_t{1} << recoveryDirectionBin_;
+    } else if (recoveryAction_ == RecoveryAction::Rotate) {
+      recoveryRejectedRotationMask_ |=
+          recoveryRotationDirection_ > 0 ? 0x1 : 0x2;
+    }
+    ++recoveryCycleCount_;
+    clearActiveRecovery();
+    recoveryReason_ = reason;
+  }
+
+  void markRecoveryExhausted(
+      LocalPlanResult& result,
+      const std::string& reason) {
+    clearActiveRecovery();
+    recoverySessionActive_ = false;
+    result.path.clear();
+    result.pathFound = false;
+    result.recoveryExhausted = true;
+    recoveryReason_ = reason;
+  }
+
+  void buildRecoveryPathCumulative() {
+    recoveryPathCumulative_.assign(recoveryWorldPath_.size(), 0.0);
+    for (std::size_t i = 1; i < recoveryWorldPath_.size(); ++i) {
+      recoveryPathCumulative_[i] =
+          recoveryPathCumulative_[i - 1] +
+          distance2D(recoveryWorldPath_[i - 1], recoveryWorldPath_[i]);
+    }
+    recoveryPathLength_ =
+        recoveryPathCumulative_.empty() ? 0.0
+                                        : recoveryPathCumulative_.back();
+  }
+
+  RecoveryPathProjection projectRecoveryPath() const {
+    RecoveryPathProjection projection;
+    if (recoveryWorldPath_.size() < 2 ||
+        recoveryPathCumulative_.size() != recoveryWorldPath_.size() ||
+        recoveryPathLength_ <= 1e-9) {
+      return projection;
     }
 
+    const Vec3 vehicle{vx_, vy_, vz_};
+    double bestDistanceSq = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i + 1 < recoveryWorldPath_.size(); ++i) {
+      const Vec3& a = recoveryWorldPath_[i];
+      const Vec3& b = recoveryWorldPath_[i + 1];
+      const double dx = b.x - a.x;
+      const double dy = b.y - a.y;
+      const double segmentLengthSq = dx * dx + dy * dy;
+      if (segmentLengthSq <= 1e-12) continue;
+
+      const double t = std::clamp(
+          ((vehicle.x - a.x) * dx + (vehicle.y - a.y) * dy) /
+              segmentLengthSq,
+          0.0,
+          1.0);
+      const double nearestX = a.x + t * dx;
+      const double nearestY = a.y + t * dy;
+      const double errorX = vehicle.x - nearestX;
+      const double errorY = vehicle.y - nearestY;
+      const double distanceSq = errorX * errorX + errorY * errorY;
+      if (distanceSq < bestDistanceSq) {
+        bestDistanceSq = distanceSq;
+        const double segmentLength = std::sqrt(segmentLengthSq);
+        projection.segmentIndex = i;
+        projection.alongDistance =
+            recoveryPathCumulative_[i] + t * segmentLength;
+      }
+    }
+
+    projection.crossTrackDistance = std::sqrt(bestDistanceSq);
+    projection.progress = std::clamp(
+        projection.alongDistance / recoveryPathLength_, 0.0, 1.0);
+    return projection;
+  }
+
+  std::vector<Vec3> remainingRecoveryPathBody(
+      std::size_t segmentIndex) const {
+    const Pose currentPose = recoveryVehiclePose();
+    const std::vector<Vec3> body =
+        RecoveryPlanner::worldPathToBody(recoveryWorldPath_, currentPose);
+    std::vector<Vec3> remaining;
+    remaining.reserve(body.size() + 1);
+    remaining.push_back({0.0, 0.0, 0.0});
+    if (body.empty()) return remaining;
+
+    const std::size_t first =
+        std::min(segmentIndex + 1, body.size() - 1);
+    for (std::size_t i = first; i < body.size(); ++i) {
+      if (distance2D(remaining.back(), body[i]) > 1e-4) {
+        remaining.push_back(body[i]);
+      }
+    }
+    return remaining;
+  }
+
+  bool activateRecoveryCandidate(const RecoveryPlanResult& candidate) {
+    if (!candidate.found()) return false;
+
+    recoveryAction_ = candidate.action;
+    recoveryStartX_ = vx_;
+    recoveryStartY_ = vy_;
+    recoveryStartYaw_ = vyaw_;
+    recoveryPhaseStart_ = odomTime_;
+    recoveryLastProgress_ = 0.0;
+    recoveryLastProgressTime_ = odomTime_;
+    recoveryCandidateCount_ =
+        candidate.diagnostics.candidateCount +
+        candidate.diagnostics.rotationCandidateCount;
+    recoveryDirectionBin_ = candidate.diagnostics.selectedDirectionBin;
+
+    if (candidate.action == RecoveryAction::Translate) {
+      recoveryWorldPath_ = candidate.pathWorld;
+      if (recoveryWorldPath_.empty()) {
+        recoveryWorldPath_ = RecoveryPlanner::bodyPathToWorld(
+            candidate.pathBody, recoveryVehiclePose());
+      }
+      const Vec3 start{vx_, vy_, vz_};
+      if (recoveryWorldPath_.empty() ||
+          distance2D(recoveryWorldPath_.front(), start) > 1e-4) {
+        recoveryWorldPath_.insert(recoveryWorldPath_.begin(), start);
+      }
+      buildRecoveryPathCumulative();
+      if (recoveryWorldPath_.size() < 2 ||
+          recoveryPathLength_ <= 1e-6 ||
+          recoveryDirectionBin_ < 0 ||
+          recoveryDirectionBin_ >= 16) {
+        clearActiveRecovery();
+        return false;
+      }
+      recoveryState_ = 2;
+      recoveryRotationDirection_ = 0;
+      recoveryReason_ = "recovery_translation_active";
+      return true;
+    }
+
+    if (candidate.action == RecoveryAction::Rotate &&
+        std::isfinite(candidate.rotationDeltaRad) &&
+        std::fabs(candidate.rotationDeltaRad) > 1e-6) {
+      recoveryState_ = 1;
+      recoveryTargetYawDelta_ = candidate.rotationDeltaRad;
+      recoveryRotationDirection_ =
+          candidate.rotationDeltaRad > 0.0 ? 1 : -1;
+      recoveryReason_ = "recovery_rotation_active";
+      return true;
+    }
+
+    clearActiveRecovery();
+    return false;
+  }
+
+  RecoveryUpdate updateActiveRecovery(
+      const RecoveryPlanner& planner,
+      const RecoveryPlannerInput& input,
+      LocalPlanResult& result,
+      std::string* failureReason) {
+    if (recoveryLastProgressTime_ > odomTime_) {
+      recoveryLastProgressTime_ = odomTime_;
+    }
+
+    if (recoveryAction_ == RecoveryAction::Translate) {
+      const RecoveryPathProjection projection = projectRecoveryPath();
+      const double crossTrackLimit =
+          std::max(0.20, footprintHalfWidth());
+      const double observedProgress =
+          projection.crossTrackDistance <= crossTrackLimit
+              ? projection.progress
+              : recoveryLastProgress_;
+      if (observedProgress > recoveryLastProgress_ + 0.01) {
+        recoveryLastProgress_ = observedProgress;
+        recoveryLastProgressTime_ = odomTime_;
+      }
+
+      const double completionDistance =
+          std::max(0.08, makeRecoveryPlannerParams().latticeResolution * 1.25);
+      if (recoveryPathLength_ - projection.alongDistance <=
+          completionDistance) {
+        finishRecovery("recovery_translation_complete");
+        return RecoveryUpdate::Completed;
+      }
+
+      std::vector<Vec3> remaining =
+          remainingRecoveryPathBody(projection.segmentIndex);
+      SafetyFailure failure = SafetyFailure::None;
+      if (remaining.size() < 2 ||
+          !planner.validateBodyPath(input, remaining, &failure)) {
+        if (failureReason != nullptr) {
+          *failureReason =
+              std::string("recovery_translation_unsafe_") +
+              recoverySafetyFailureName(failure);
+        }
+        return RecoveryUpdate::Failed;
+      }
+
+      const double timeout =
+          std::isfinite(p_.recoveryBackupTime)
+              ? std::max(0.05, p_.recoveryBackupTime)
+              : 0.05;
+      if (odomTime_ - recoveryLastProgressTime_ >= timeout) {
+        if (failureReason != nullptr) {
+          *failureReason = "recovery_translation_no_progress";
+        }
+        return RecoveryUpdate::Failed;
+      }
+
+      result.path = std::move(remaining);
+      result.pathFound = result.path.size() >= 2;
+      recoveryReason_ = "recovery_translation_active";
+      return RecoveryUpdate::Active;
+    }
+
+    if (recoveryAction_ == RecoveryAction::Rotate) {
+      const double target = std::fabs(recoveryTargetYawDelta_);
+      const double signedTravel =
+          normalizeAngle(vyaw_ - recoveryStartYaw_) *
+          static_cast<double>(recoveryRotationDirection_);
+      const double observedProgress =
+          target > 1e-9
+              ? std::clamp(std::max(0.0, signedTravel) / target, 0.0, 1.0)
+              : 0.0;
+      if (observedProgress > recoveryLastProgress_ + 0.01) {
+        recoveryLastProgress_ = observedProgress;
+        recoveryLastProgressTime_ = odomTime_;
+      }
+
+      const double remainingMagnitude =
+          std::max(0.0, target - std::max(0.0, signedTravel));
+      if (remainingMagnitude <= 0.05) {
+        result.recoveryObservationRefreshRequired = true;
+        finishRecovery("recovery_rotation_complete");
+        return RecoveryUpdate::Completed;
+      }
+
+      const double remainingDelta =
+          static_cast<double>(recoveryRotationDirection_) *
+          remainingMagnitude;
+      SafetyFailure failure = SafetyFailure::None;
+      if (!planner.validateRotation(input, remainingDelta, &failure)) {
+        if (failureReason != nullptr) {
+          *failureReason =
+              std::string("recovery_rotation_unsafe_") +
+              recoverySafetyFailureName(failure);
+        }
+        return RecoveryUpdate::Failed;
+      }
+
+      const double timeout =
+          std::isfinite(p_.recoveryRotateTime)
+              ? std::max(0.05, p_.recoveryRotateTime)
+              : 0.05;
+      if (odomTime_ - recoveryLastProgressTime_ >= timeout) {
+        if (failureReason != nullptr) {
+          *failureReason = "recovery_rotation_no_progress";
+        }
+        return RecoveryUpdate::Failed;
+      }
+
+      result.path.clear();
+      result.pathFound = false;
+      recoveryReason_ = "recovery_rotation_active";
+      return RecoveryUpdate::Active;
+    }
+
+    if (failureReason != nullptr) {
+      *failureReason = "recovery_invalid_active_action";
+    }
+    return RecoveryUpdate::Failed;
+  }
+
+  void buildRecoveryPath(
+      LocalPlanResult& result,
+      double goalDirectionBodyRad,
+      bool forceStart) {
     result.path.clear();
+    result.pathFound = false;
 
-    if (recoveryState_ == 1) {
-      // Rotate toward goal
-      double goalAngle = std::atan2(goalY_ - vy_, goalX_ - vx_);
-      double relAngle = goalAngle - vyaw_;
-      while (relAngle > M_PI) relAngle -= 2.0 * M_PI;
-      while (relAngle < -M_PI) relAngle += 2.0 * M_PI;
-      double turnDir = (relAngle >= 0) ? 1.0 : -1.0;
+    if (!std::isfinite(odomTime_) ||
+        !std::isfinite(goalDirectionBodyRad)) {
+      recoveryReason_ = "recovery_invalid_input";
+      return;
+    }
+    if (blockedStartTime_ < 0.0 || blockedStartTime_ > odomTime_) {
+      blockedStartTime_ = odomTime_;
+    }
 
-      // Check rotation safety (using SoA cloud)
-      bool safe = true;
-      for (int ci = 0; ci < cloud_.size; ci++) {
-        float px = cloud_.x[ci], py = cloud_.y[ci];
-        double dist = std::hypot(px, py);
-        if (dist < 0.9 && dist > 0.1) {
-          double ptAngle = std::atan2(py, px);
-          bool inSweep = turnDir > 0 ? (ptAngle > 0 && ptAngle < 1.5)
-                                     : (ptAngle < 0 && ptAngle > -1.5);
-          if (inSweep && (cloud_.h[ci] > p_.obstacleHeightThre * 0.5 || !p_.useTerrainAnalysis)) {
-            safe = false;
-            break;
-          }
-        }
+    const int maxAttempts = std::max(0, p_.recoveryMaxCycles);
+    if (maxAttempts == 0 || recoveryCycleCount_ >= maxAttempts) {
+      markRecoveryExhausted(result, "recovery_exhausted");
+      return;
+    }
+
+    const RecoveryPlanner planner(makeRecoveryPlannerParams());
+    RecoveryPlannerInput input =
+        makeRecoveryPlannerInput(goalDirectionBodyRad);
+    bool retryAfterFailure = false;
+
+    if (recoveryState_ != 0) {
+      std::string failureReason;
+      const RecoveryUpdate update =
+          updateActiveRecovery(planner, input, result, &failureReason);
+      if (update == RecoveryUpdate::Active ||
+          update == RecoveryUpdate::Completed) {
+        return;
       }
-      double dir = safe ? turnDir : -turnDir;
-      for (int i = 1; i <= 6; i++) {
-        double arc = dir * i * 0.25;
-        result.path.push_back({0.15 * i * std::cos(arc), 0.15 * i * std::sin(arc), 0.0});
+
+      rejectActiveRecovery(failureReason);
+      retryAfterFailure = true;
+      if (recoveryCycleCount_ >= maxAttempts) {
+        markRecoveryExhausted(
+            result, failureReason + "_exhausted");
+        return;
       }
-    } else if (recoveryState_ == 2) {
-      // Backup: check rear safety
-      bool safe = true;
-      for (int ci = 0; ci < cloud_.size; ci++) {
-        float px = cloud_.x[ci];
-        if (px < -0.1f && px > -1.2f && std::fabs(cloud_.y[ci]) < 0.35f) {
-          if (cloud_.h[ci] > p_.obstacleHeightThre * 0.5 || !p_.useTerrainAnalysis) {
-            safe = false; break;
-          }
-        }
+      input = makeRecoveryPlannerInput(goalDirectionBodyRad);
+    }
+
+    const double blockedThreshold =
+        std::isfinite(p_.recoveryBlockedThre)
+            ? std::max(0.0, p_.recoveryBlockedThre)
+            : 0.0;
+    if (!forceStart && !retryAfterFailure &&
+        odomTime_ - blockedStartTime_ < blockedThreshold) {
+      recoveryReason_ = "recovery_blocked_wait";
+      return;
+    }
+
+    recoverySessionActive_ = true;
+    const RecoveryPlanResult candidate = planner.plan(input);
+    recoveryCandidateCount_ =
+        candidate.diagnostics.candidateCount +
+        candidate.diagnostics.rotationCandidateCount;
+    if (!candidate.found() || !activateRecoveryCandidate(candidate)) {
+      ++recoveryCycleCount_;
+      recoveryReason_ =
+          std::string("recovery_no_safe_candidate_") +
+          recoverySafetyFailureName(candidate.safetyFailure);
+      if (recoveryCycleCount_ >= maxAttempts) {
+        markRecoveryExhausted(
+            result, recoveryReason_ + "_exhausted");
       }
-      if (safe) {
-        for (int i = 1; i <= 5; i++)
-          result.path.push_back({-0.2 * i, 0.0, 0.0});
-      } else {
-        recoveryState_ = 0;
-        blockedStartTime_ = odomTime_;
-        recoveryCycleCount_++;
-        result.path.push_back({0, 0, 0});
+      return;
+    }
+
+    input = makeRecoveryPlannerInput(goalDirectionBodyRad);
+    std::string failureReason;
+    const RecoveryUpdate update =
+        updateActiveRecovery(planner, input, result, &failureReason);
+    if (update == RecoveryUpdate::Failed) {
+      rejectActiveRecovery(failureReason);
+      if (recoveryCycleCount_ >= maxAttempts) {
+        markRecoveryExhausted(
+            result, failureReason + "_exhausted");
       }
-    } else {
-      result.path.push_back({0, 0, 0});
     }
   }
 };

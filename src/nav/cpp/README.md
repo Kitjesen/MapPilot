@@ -9,10 +9,18 @@ Current targets:
 | --- | --- |
 | `lingtu_nav_path_follower` | Path-following control algorithm |
 | `lingtu_nav_plan_loop` | Local planning and path-following loop |
+| `lingtu_nav_rolling_segment` | Rolling-map segment lifecycle and ordered effect coordination |
 | `lingtu_nav_far` | Optional native 2D visibility-graph global planner |
 | `lingtu_nav_far_c_api` / `libnav_far` | Versioned FAR C ABI |
 | `octoplanner3d_runtime` | Default 3D global planner runtime |
 | `navd` | Linux product endpoint, enabled with `LINGTU_NAV_CPP_BUILD_ENDPOINT` |
+
+`RollingSegmentEffectCoordinator` is transport-free: `navd` injects concrete
+authority, path, DDS publication, and motion-clear actions at its process boundary.
+
+`InspectionCommandCoordinator` is transport-free and exposes one command
+interface for validation, FIFO ACK replay, inspection admission, zero-motion
+downgrade, and observable ACK delivery.
 
 Rules:
 

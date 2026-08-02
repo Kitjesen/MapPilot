@@ -132,7 +132,7 @@ SIMULATION_RUNTIME_CONTRACTS = {
     "gazebo_industrial": SimulationRuntimeContract(
         name="gazebo_industrial",
         provider="gazebo",
-        profile="sim_industrial",
+        profile=None,
         world="sim/worlds/gazebo/lingtu_gazebo_industrial_park.sdf",
         launch_script="sim/scripts/launch_lingtu_gazebo_industrial_demo.sh",
         rviz_config="sim/planning/lingtu_industrial_demo.rviz",
@@ -251,74 +251,9 @@ SIMULATION_RUNTIME_CONTRACTS = {
         forbidden_claims=(
             "lingtu_planning_validated",
             "lingtu_cmd_vel_owner",
-            "lingtu_product_profile",
+            "lingtu_product",
             "lingtu_fastlio_mapping_validated",
             "lingtu_slam_localization_validated",
-            "real_robot_readiness",
-        ),
-    ),
-    "cmu_unity_external": SimulationRuntimeContract(
-        name="cmu_unity_external",
-        provider="cmu_unity",
-        profile="sim_cmu_tare",
-        world=None,
-        launch_script="sim/scripts/launch_cmu_unity_lingtu_runtime.sh",
-        rviz_config="sim/planning/cmu_unity_lingtu_runtime.rviz",
-        adapter_script="sim/engine/bridge/cmu_unity_lingtu_adapter.py",
-        data_source_contract="cmu_unity_external",
-        command_topic=_data_source("cmu_unity_external").command_sink,
-        canonical_topics=CANONICAL_NAV_TOPICS,
-        native_topics=(*_source_outputs("cmu_unity_external"), "/cmd_vel"),
-        lingtu_owns=(
-            "map_ingestion",
-            "tare_waypoint_supervision",
-            "global_planning",
-            "local_planning",
-            "path_following",
-            "cmd_vel_mux",
-            "safety",
-        ),
-        simulator_owns=(
-            "world_geometry",
-            "physics",
-            "sensor_rendering",
-            "external_tare_runtime",
-            "simulation_actuation",
-        ),
-        required_runtime_topics=_runtime_topics_for(
-            "cmu_unity_external",
-            TOPICS.global_path,
-            TOPICS.local_path,
-            TOPICS.cmd_vel,
-        ),
-        required_path_topics=(TOPICS.global_path, TOPICS.local_path),
-        required_map_growth_topics=(TOPICS.map_cloud, TOPICS.terrain_map_ext),
-        required_scan_topics=("/registered_scan", TOPICS.registered_cloud),
-        contract_role="lingtu_tare_adapter_execution_gate",
-        runtime_stage="external_live_map_execution",
-        map_dependency="cmu_unity_live_registered_scan_or_same_source_tomogram",
-        world_sensor_owner="cmu_unity",
-        slam_source=_slam_source("cmu_unity_external"),
-        localization_source=_localization_source("cmu_unity_external"),
-        mapping_source=_mapping_source("cmu_unity_external"),
-        slam_validated=False,
-        exploration_owner="cmu_tare_external",
-        global_planning_owner="lingtu_navigation_optional_pct",
-        local_planning_owner="lingtu_navigation",
-        path_following_owner="lingtu_path_follower",
-        cmd_vel_owner="lingtu_adapter_relay_to_cmu_vehicle_simulator",
-        validated_claims=(
-            "external_tare_waypoints_ingested",
-            "lingtu_execution_chain_closed_loop",
-            "simulation_only_cmd_vel_relay",
-        ),
-        forbidden_claims=(
-            "cmu_baseline_equivalence",
-            "pure_lingtu_exploration",
-            "pct_is_tare_executor",
-            "lingtu_fastlio_mapping_validated",
-            "lingtu_slam_localization_validated",
-            "true_lingtu_mapping_closure",
             "real_robot_readiness",
         ),
     ),
@@ -400,9 +335,11 @@ def simulation_runtime_contract(name: str) -> SimulationRuntimeContract:
 
 
 def runtime_contracts_for_profile(profile: str) -> tuple[SimulationRuntimeContract, ...]:
-    from runtime.runtime_profiles import PROFILES
+    from runtime.profiles.catalog.host_defaults import HOST_PROFILE_DEFAULTS
 
-    declared_contract = str(PROFILES.get(profile, {}).get("_runtime_contract") or "")
+    declared_contract = str(
+        HOST_PROFILE_DEFAULTS.get(profile, {}).get("_runtime_contract") or ""
+    )
     return tuple(
         contract
         for contract in SIMULATION_RUNTIME_CONTRACTS.values()

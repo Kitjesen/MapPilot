@@ -95,7 +95,6 @@ def full_stack_wire_specs(
     enable_semantic: bool = True,
     safety_stop_wiring: bool = True,
     cmd_vel_mux_collision_monitor: bool = False,
-    legacy_driver_sensor_fallback: bool = False,
     nav_plan_transport: str | None = None,
 ) -> tuple[WireSpec, ...]:
     """Return module-name-filtered full-stack wire specs.
@@ -113,7 +112,6 @@ def full_stack_wire_specs(
         slam_profile=slam_profile,
         scene_xml=scene_xml,
         enable_semantic=enable_semantic,
-        legacy_driver_sensor_fallback=legacy_driver_sensor_fallback,
     )
 
     specs: list[WireSpec] = []
@@ -140,10 +138,10 @@ def full_stack_wire_specs(
     specs.extend(semantic_scene_specs())
     specs.extend(recorder_specs(ctx))
     specs.extend(safety_status_specs())
-    specs.extend(gateway_status_specs())
+    specs.extend(gateway_status_specs(ctx))
     specs.extend(navigation_execution_specs())
     specs.extend(navigation_support_specs())
-    specs.extend(visual_servo_specs())
+    specs.extend(visual_servo_specs(ctx))
     specs.extend(vla_specs(ctx))
     specs.extend(teleop_media_specs(ctx))
     if cmd_vel_mux_collision_monitor:
@@ -163,7 +161,6 @@ def apply_full_stack_wires(
     enable_semantic: bool = True,
     safety_stop_wiring: bool = True,
     cmd_vel_mux_collision_monitor: bool = False,
-    legacy_driver_sensor_fallback: bool = False,
     nav_plan_transport: str | None = None,
 ) -> Blueprint:
     """Apply explicit cross-stack wires to a composed full-stack Blueprint."""
@@ -192,7 +189,6 @@ def apply_full_stack_wires(
         enable_semantic=enable_semantic,
         safety_stop_wiring=safety_stop_wiring,
         cmd_vel_mux_collision_monitor=cmd_vel_mux_collision_monitor,
-        legacy_driver_sensor_fallback=legacy_driver_sensor_fallback,
         nav_plan_transport=nav_plan_transport,
     ):
         key = wire_key(spec)

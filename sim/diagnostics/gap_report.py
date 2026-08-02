@@ -72,7 +72,7 @@ DIMOS_REFERENCE_SURFACES: dict[str, dict[str, str]] = {
 
 DIMOS_SOURCE_LINKS = {
     "dimos_repository": "https://github.com/dimensionalOS/dimos",
-    "lingtu_gap_matrix": "docs/07-testing/DIMOS_BENCHMARK_GAP_MATRIX.md",
+    "lingtu_gap_matrix": "docs/research/dimos_benchmark_matrix.md",
     "lingtu_validation_flow": "docs/07-testing/ALGORITHM_VALIDATION_FLOW.md",
 }
 PIPELINE_TRACE = {
@@ -89,8 +89,8 @@ PIPELINE_TRACE = {
             "runtime_evidence_gate": "large_terrain",
         },
         {
-            "id": "pct_backend",
-            "role": "PCT planner loads tomogram/native runtime and returns global path",
+            "id": "pct_planner_runtime",
+            "role": "PCT planner selects a runtime over the source-report tomogram and returns a global path",
             "code": [
                 "src/nav/services/plan/global_planner/algorithm/pct/planner.py",
                 "src/nav/services/plan/global_planner/algorithm/pct/runtime/runtime.py",
@@ -178,9 +178,9 @@ PIPELINE_TRACE = {
     "gate_to_trace": {
         "blocked_route_replan_preflight": ["blocked_route_replanning"],
         "navigation_replay_deviation": ["offline_navigation_replay"],
-        "large_terrain": ["global_planning_dispatch", "pct_backend"],
+        "large_terrain": ["global_planning_dispatch", "pct_planner_runtime"],
         "native_pct_mujoco": [
-            "pct_backend",
+            "pct_planner_runtime",
             "legacy_pct_to_local_autonomy",
             "mujoco_motion_executor",
         ],
@@ -191,25 +191,25 @@ PIPELINE_TRACE = {
         ],
         "fastlio2_dynamic_inspection": [
             "live_fastlio_feedback",
-            "pct_backend",
+            "pct_planner_runtime",
             "legacy_pct_to_local_autonomy",
         ],
         "moving_obstacle_sweep": [
             "live_fastlio_feedback",
-            "pct_backend",
+            "pct_planner_runtime",
             "legacy_pct_to_local_autonomy",
             "mujoco_motion_executor",
         ],
         "large_loop_closure": [
             "live_fastlio_feedback",
-            "pct_backend",
+            "pct_planner_runtime",
             "legacy_pct_to_local_autonomy",
             "mujoco_motion_executor",
         ],
         "saved_map_relocalize": ["saved_map_relocalize_pct", "live_fastlio_feedback"],
         "pct_saved_map_navigation": [
             "saved_map_relocalize_pct",
-            "pct_backend",
+            "pct_planner_runtime",
             "legacy_pct_to_local_autonomy",
             "mujoco_motion_executor",
         ],
@@ -218,7 +218,10 @@ PIPELINE_TRACE = {
 
 BLOCKER_ACTIONS = {
     "product_data_plane": "fix the Gateway/runtime data-plane report, then rerun the gate",
-    "environment_runtime": "fix host runtime first: Linux, ROS 2 Humble, CPython 3.10 PCT ABI, MuJoCo EGL",
+    "environment_runtime": (
+        "fix unavailable runtime dependencies first (for example PCT planner runtime, "
+        "ROS 2, or simulator), then rerun host preflight"
+    ),
     "artifact_contract": "generate a fresh report at the expected path with strict freshness enabled",
     "slam_localization": "debug Fast-LIO/localization stability, then rerun the live sensor gate",
     "dynamic_obstacle": "rerun the dynamic obstacle matrix with required speed/density bins and live-chain checks",
@@ -234,14 +237,13 @@ SUMMARY_STALE_BLOCKER = "algorithm benchmark summary is stale"
 HOST_PREFLIGHT_SCHEMA_VERSION = "lingtu.server_sim_host_preflight.v1"
 HOST_PREFLIGHT_EXECUTION_MODE = "host_preflight_only"
 HOST_CHECK_ACTIONS = {
-    "pct_native": (
-        "run on a Linux simulation host with the CPython 3.10 PCT native "
-        "extension built and importable; start from pct_runtime_preflight.py "
-        "and scripts/deploy/setup_server_ros_pct.sh"
+    "pct_planner_runtime": (
+        "build or install the selected PCT planner runtime, verify it with "
+        "pct_runtime_preflight.py, then rerun the DimOS host preflight"
     ),
     "ros2_humble": (
         "install/source ROS 2 Humble before running ROS-backed gates; reuse "
-        "scripts/deploy/setup_server_ros_pct.sh before gate execution"
+        "scripts/compat/ros2/setup_fastlio2_validation_host.sh before gate execution"
     ),
     "mujoco_headless": ("install the MuJoCo Python runtime and set MUJOCO_GL to egl or osmesa"),
     "gazebo_runtime": (
@@ -255,13 +257,15 @@ HOST_CHECK_ACTIONS = {
         "prove hardware command topics have no physical robot subscribers on "
         "the simulation domain before using --run-missing"
     ),
-    "localizer_runtime": "build/source the localizer runtime on the ROS 2 simulation host",
+    "localizer_runtime": ("build/source the localizer runtime on the ROS 2 simulation host"),
     "local_non_motion": "keep local non-motion gates fresh on the current Python host",
-    "local_numeric_nav": "rerun local planner numeric gates on a Linux Python host with a stable NumPy/native planner runtime",
+    "local_numeric_nav": (
+        "rerun local planner numeric gates on a Linux Python host with a stable NumPy/native planner runtime"
+    ),
 }
 HOST_CHECK_PRIORITY = (
     "local_numeric_nav",
-    "pct_native",
+    "pct_planner_runtime",
     "ros2_humble",
     "mujoco_headless",
     "gazebo_runtime",
@@ -274,30 +278,30 @@ PREFLIGHT_COMMAND = (
     "--preset dimos_benchmark --required-only --host-preflight "
     "--json-out artifacts/server_sim_closure/host_preflight_dimos_benchmark.json"
 )
-SETUP_COMMAND = "bash scripts/deploy/setup_server_ros_pct.sh"
+SETUP_LINUX_VALIDATION_HOST_COMMAND = "bash sim/scripts/setup_linux_validation_host.sh"
+SETUP_FASTLIO2_VALIDATION_HOST_COMMAND = "bash scripts/compat/ros2/setup_fastlio2_validation_host.sh"
 SAVED_MAP_RELOCALIZE_PREFLIGHT_COMMAND = (
     "PYTHONPATH=src:. python3 sim/scripts/saved_map_relocalize_runtime_gate.py "
     "--preflight-only "
     "--json-out artifacts/server_sim_closure/saved_map_relocalize_runtime_preflight/report.json"
 )
 HOST_CHECK_DIAGNOSTIC_COMMANDS = {
-    "pct_native": (
+    "pct_planner_runtime": (
         "PYTHONPATH=src:. python3 sim/scripts/pct_runtime_preflight.py "
         "--json-out artifacts/server_sim_closure/pct_runtime_preflight/report.json",
-        SETUP_COMMAND,
         "PYTHONPATH=src:. python3 sim/scripts/pct_runtime_preflight.py "
         "--strict --json-out artifacts/server_sim_closure/pct_runtime_preflight/report.json",
         PREFLIGHT_COMMAND,
     ),
     "ros2_humble": (
         SAVED_MAP_RELOCALIZE_PREFLIGHT_COMMAND,
-        SETUP_COMMAND,
+        SETUP_FASTLIO2_VALIDATION_HOST_COMMAND,
         SAVED_MAP_RELOCALIZE_PREFLIGHT_COMMAND,
         PREFLIGHT_COMMAND,
     ),
     "localizer_runtime": (
         SAVED_MAP_RELOCALIZE_PREFLIGHT_COMMAND,
-        SETUP_COMMAND,
+        SETUP_FASTLIO2_VALIDATION_HOST_COMMAND,
         SAVED_MAP_RELOCALIZE_PREFLIGHT_COMMAND,
         PREFLIGHT_COMMAND,
     ),
@@ -717,7 +721,7 @@ def _host_setup_command_rows(host_setup_plan: Mapping[str, Any]) -> list[dict[st
             )
 
     if not commands:
-        add(command=SETUP_COMMAND)
+        add(command=SETUP_LINUX_VALIDATION_HOST_COMMAND)
         add(command=PREFLIGHT_COMMAND)
     return commands
 

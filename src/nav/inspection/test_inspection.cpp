@@ -220,6 +220,107 @@ void TestRunStateCompatibility() {
          "action_pending");
 }
 
+void TestTaskIdentityAndOrderedLifecycleEvents() {
+  inspection::Executor executor;
+  std::string error;
+  assert(executor.Start(
+      MakeRoute(),
+      "inspection-task-42",
+      "request-start-42",
+      "factory",
+      7,
+      10.0,
+      &error));
+
+  const auto started = executor.TakeTaskEvents();
+  assert(started.size() == 2U);
+  assert(started[0].kind == inspection::TaskEventKind::kTaskAccepted);
+  assert(started[0].sequence == 1U);
+  assert(started[0].timestamp_s == 10.0);
+  assert(started[0].request_id == "request-start-42");
+  assert(started[0].status.task_id == "inspection-task-42");
+  assert(started[0].status.run_id == "inspection-task-42");
+  assert(started[0].status.request_id == "request-start-42");
+  assert(started[0].status.map_id == "factory");
+  assert(started[0].status.map_version == 7);
+  assert(started[1].kind == inspection::TaskEventKind::kStateChanged);
+  assert(started[1].sequence == 2U);
+  assert(started[1].status.state == inspection::RunState::kPlanning);
+
+  assert(executor.RequestPause("operator_hold", "request-pause-42", 11.0));
+  executor.MarkStopConfirmationFailed("driver_stop_confirmation_timeout", 11.2);
+  assert(executor.CommitPause(11.4));
+
+  const auto paused = executor.TakeTaskEvents();
+  assert(paused.size() == 3U);
+  assert(paused[0].kind == inspection::TaskEventKind::kStateChanged);
+  assert(paused[0].sequence == 3U);
+  assert(paused[0].request_id == "request-pause-42");
+  assert(paused[0].status.state == inspection::RunState::kPausing);
+  assert(paused[1].kind == inspection::TaskEventKind::kStopConfirmationFailed);
+  assert(paused[1].sequence == 4U);
+  assert(paused[1].status.state == inspection::RunState::kPausing);
+  assert(paused[1].status.reason == "driver_stop_confirmation_timeout");
+  assert(paused[2].kind == inspection::TaskEventKind::kStateChanged);
+  assert(paused[2].sequence == 5U);
+  assert(paused[2].status.state == inspection::RunState::kPaused);
+  assert(paused[2].status.reason == "operator_hold");
+
+  assert(executor.Resume("factory", 7, 12.0, "request-resume-42"));
+  const auto resumed = executor.TakeTaskEvents();
+  assert(resumed.size() == 1U);
+  assert(resumed[0].kind == inspection::TaskEventKind::kStateChanged);
+  assert(resumed[0].sequence == 6U);
+  assert(resumed[0].request_id == "request-resume-42");
+  assert(resumed[0].status.state == inspection::RunState::kPlanning);
+
+  assert(executor.RequestCancel("operator_cancel", "request-cancel-42", 13.0));
+  assert(executor.CommitCancel(13.1));
+  const auto cancelled = executor.TakeTaskEvents();
+  assert(cancelled.size() == 2U);
+  assert(cancelled[0].sequence == 7U);
+  assert(cancelled[0].status.state == inspection::RunState::kCancelling);
+  assert(cancelled[1].sequence == 8U);
+  assert(cancelled[1].status.state == inspection::RunState::kCancelled);
+  assert(cancelled[1].status.task_id == "inspection-task-42");
+  assert(cancelled[1].status.request_id == "request-cancel-42");
+
+  const auto json = inspection::TaskEventToJson(cancelled.back());
+  assert(json.find("\"schema_version\":\"nav.inspection.task-event.v1\"") !=
+         std::string::npos);
+  assert(json.find("\"task_id\":\"inspection-task-42\"") != std::string::npos);
+  assert(json.find("\"request_id\":\"request-cancel-42\"") != std::string::npos);
+  assert(json.find("\"state\":\"cancelled\"") != std::string::npos);
+}
+
+void TestTaskEventDeliveryRetainsRejectedHead() {
+  inspection::Executor executor;
+  std::string error;
+  assert(executor.Start(
+      MakeRoute(),
+      "inspection-task-delivery",
+      "request-start-delivery",
+      "factory",
+      7,
+      10.0,
+      &error));
+
+  std::vector<std::uint64_t> attempted;
+  assert(executor.FlushTaskEvents([&](const inspection::TaskEvent& event) {
+           attempted.push_back(event.sequence);
+           return false;
+         }) == 0U);
+  assert((attempted == std::vector<std::uint64_t>{1U}));
+
+  std::vector<std::uint64_t> delivered;
+  assert(executor.FlushTaskEvents([&](const inspection::TaskEvent& event) {
+           delivered.push_back(event.sequence);
+           return true;
+         }) == 2U);
+  assert((delivered == std::vector<std::uint64_t>{1U, 2U}));
+  assert(executor.TakeTaskEvents().empty());
+}
+
 void TestActionValidation() {
   auto route = MakeRoute();
   route.points[0].action = "capture:bin_full";
@@ -605,6 +706,8 @@ int main() {
   TestActionHandshakeAndEvidence();
   TestInvalidEvidenceIdFailsActionImmediately();
   TestPointFailurePoliciesAndTimeouts();
+  TestTaskIdentityAndOrderedLifecycleEvents();
+  TestTaskEventDeliveryRetainsRejectedHead();
   TestPlanningTimeoutUsesRouteFailurePolicy();
   TestNavigationTimeoutStopsTheRoute();
   TestNavigationProgressExtendsDeadlineWithoutKillingLongLegs();

@@ -8,7 +8,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SIM_NAV_LAUNCH = REPO_ROOT / "sim" / "planning" / "sim_navigation.launch.py"
-LEGACY_MUJOCO_LAUNCH = REPO_ROOT / "sim" / "launch" / "sim.launch.py"
 PRODUCT_MUJOCO_WORLD = REPO_ROOT / "sim" / "worlds" / "mujoco" / "industrial_park_scene.xml"
 
 
@@ -22,12 +21,6 @@ def _read_strip_bom(path: Path) -> str:
 
 def test_sim_navigation_launch_text_is_ascii_to_avoid_mojibake() -> None:
     text = _read_strip_bom(SIM_NAV_LAUNCH)
-
-    assert text.isascii()
-
-
-def test_legacy_mujoco_launch_text_is_ascii_to_avoid_mojibake() -> None:
-    text = _read_strip_bom(LEGACY_MUJOCO_LAUNCH)
 
     assert text.isascii()
 

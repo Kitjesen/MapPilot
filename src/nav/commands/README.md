@@ -35,9 +35,9 @@ Gateway / GoalService / Explore
 
 ## Compatibility
 
-The endpoint's old goal, path, cancel, and teleop topic readers are explicit
-legacy adapters. They are created only when
-`--allow-legacy-motion-inputs=true`; field product profiles keep this disabled.
+This directory is the only compatibility client path for typed command ingress.
+Path, legacy goal, cancel, and legacy teleop topic readers were removed from
+`navd`; native field commanding uses typed request paths only.
 
 ## Tests
 

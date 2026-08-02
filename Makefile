@@ -1,112 +1,116 @@
-# LingTu Navigation — build shortcuts
+# LingTu native Product build shortcuts
 
-.PHONY: help build nav_kernel test clean install health benchmark format lint codegen-idl
+.PHONY: help build build-debug nav_kernel codegen-idl test test-python test-native clean install health benchmark format lint py-lint py-format py-fix mapping navigation sync-version docker-build docker-run docker-stop docs check
 
 .DEFAULT_GOAL := help
-ROS_DISTRO ?= humble
-ROS_SETUP ?= /opt/ros/$(ROS_DISTRO)/setup.bash
+
+PYTHON ?= python3
+BUILD_TYPE ?= Release
+NATIVE_TEST_BUILD_DIR ?= build/nav-cpp
 
 help:
-	@echo "LingTu Navigation — available targets"
+	@echo "LingTu — available targets"
 	@echo ""
 	@echo "  Build:"
-	@echo "    make build       - colcon build (full workspace, needs ROS2)"
-	@echo "    make nav_kernel    - build LingTu native navigation kernel (no ROS2 needed)"
+	@echo "    make build       - build the native field Product ($(BUILD_TYPE))"
+	@echo "    make build-debug - build the native field Product in Debug mode"
+	@echo "    make nav_kernel  - build the native navigation Python extension"
 	@echo "    make codegen-idl - generate Python DDS types from IDL"
-	@echo "    make build-debug - colcon build in Debug mode"
 	@echo ""
 	@echo "  Test:"
-	@echo "    make test        - colcon test"
-	@echo "    make test-integration - integration tests"
+	@echo "    make test        - run Python and portable native C++ tests"
+	@echo "    make test-python - run the configured pytest suite"
+	@echo "    make test-native - build and run portable navigation C++ tests"
 	@echo ""
 	@echo "  Ops:"
-	@echo "    make install     - install systemd services"
-	@echo "    make health      - system health check"
-	@echo "    make clean       - remove build/ install/ log/"
+	@echo "    make install     - install the canonical native field services"
+	@echo "    make mapping     - switch ProductControl to the map Product"
+	@echo "    make navigation MAP=<name> - switch to nav with a saved map"
+	@echo "    make health      - run the system health check"
+	@echo "    make clean       - remove local build artifacts"
 	@echo ""
 	@echo "  Code quality:"
-	@echo "    make format      - clang-format all C++ sources"
-	@echo "    make lint        - clang-tidy"
-	@echo ""
-	@echo "  Launch (Module-First profiles via lingtu.py):"
-	@echo "    make mapping     - start mapping mode (lingtu.py map)"
-	@echo "    make navigation  - start navigation mode (lingtu.py nav)"
+	@echo "    make format      - format C++ sources"
+	@echo "    make lint        - run Python lint checks"
 	@echo ""
 
 build:
-	@echo "Building workspace..."
-	@bash -c "source '$(ROS_SETUP)' && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Release"
-	@echo "Done."
+	@echo "Building native field Product ($(BUILD_TYPE))..."
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_native_runtime.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON bash scripts/build/build_livox_sdk2_stream.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh
+	@if [ -f scripts/build/build_mapd.sh ]; then CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_mapd.sh; fi
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_dds_probe.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_nav_endpoint.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_driver.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_RECORDING_BUILD_DDS=ON bash scripts/build/build_native_recording.sh
+	@echo "Native field Product build complete."
+
+build-debug:
+	@$(MAKE) build BUILD_TYPE=Debug
 
 nav_kernel:
-	@echo "Building LingTu native navigation kernel (nanobind, no ROS2 needed)..."
+	@echo "Building LingTu native navigation kernel..."
 	@bash scripts/build/build_nav_kernel.sh
 
 # Windows: .\scripts\codegen\run_codegen.ps1
 codegen-idl:
-	python scripts/codegen/idl_to_python.py src/message/idl/lingtu_slam.idl --output src/message/dds_types_generated/
+	@$(PYTHON) scripts/codegen/idl_to_python.py src/message/idl/lingtu_slam.idl --output src/message/dds_types_generated/
 
-build-debug:
-	@echo "Building workspace (Debug)..."
-	@bash -c "source '$(ROS_SETUP)' && colcon build --cmake-args -DCMAKE_BUILD_TYPE=Debug"
-	@echo "Done."
+test: test-python test-native
 
-test:
-	@echo "Running tests..."
-	@bash -c "source '$(ROS_SETUP)' && source install/setup.bash && colcon test"
-	@bash -c "source '$(ROS_SETUP)' && colcon test-result --verbose"
+test-python:
+	@$(PYTHON) -m pytest
 
-test-integration:
-	@echo "Running integration tests..."
-	@bash tests/integration/run_all.sh
+test-native:
+	@cmake -S src/nav/cpp -B "$(NATIVE_TEST_BUILD_DIR)" -DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" -DLINGTU_NAV_CPP_BUILD_TESTS=ON -DLINGTU_NAV_CPP_BUILD_ENDPOINT=OFF -DLINGTU_NAV_CPP_BUILD_PYTHON=OFF
+	@cmake --build "$(NATIVE_TEST_BUILD_DIR)" --parallel
+	@ctest --test-dir "$(NATIVE_TEST_BUILD_DIR)" --output-on-failure
 
 clean:
-	@echo "Cleaning build artifacts..."
+	@echo "Cleaning local build artifacts..."
 	@rm -rf build/ install/ log/
 	@echo "Done."
 
 install:
-	@echo "Installing systemd services..."
-	@bash scripts/deploy/s100p/install_services.sh
+	@echo "Installing canonical native field services..."
+	@bash scripts/deploy/thunder/install_services.sh field-cpp
 	@echo "Done."
 
 health:
-	@python3 lingtu.py health
+	@$(PYTHON) lingtu.py health
 
-benchmark:
-	@bash tests/benchmark/run_all.sh
+benchmark: nav_kernel
+	@$(PYTHON) tests/benchmark/benchmark_local_planner.py
 
 format:
 	@echo "Formatting C++ sources..."
-	@find src -name "*.cpp" -o -name "*.hpp" | xargs clang-format -i
+	@find src -type f \( -name "*.cpp" -o -name "*.hpp" \) -print0 | xargs -0 clang-format -i
 	@echo "Done."
 
-lint:
-	@echo "Running clang-tidy..."
-	@bash -c "source '$(ROS_SETUP)' && colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
-	@find src -name "*.cpp" | xargs clang-tidy -p build/
+lint: py-lint
 
 py-lint:
-	ruff check src/ cli/
+	@ruff check src/ cli/ tests/
 
 py-format:
-	ruff format src/ cli/
+	@ruff format src/ cli/ tests/
 
 py-fix:
-	ruff check --fix src/ cli/
-	@echo "Done."
+	@ruff check --fix src/ cli/ tests/
 
 mapping:
-	@bash -c "source '$(ROS_SETUP)' && source install/setup.bash && python3 lingtu.py map"
+	@$(PYTHON) -m lingtu.control switch map --json
 
 navigation:
-	@bash -c "source '$(ROS_SETUP)' && source install/setup.bash && python3 lingtu.py nav"
+	$(if $(strip $(MAP)),,$(error MAP is required; use: make navigation MAP=<saved-map>))
+	@$(PYTHON) -m lingtu.control switch nav --map "$(MAP)" --json
 
 sync-version:
 	@bash scripts/deploy/sync_versions.sh
 
 docker-build:
-	@docker build -f docker/Dockerfile -t mappilot-nav:latest .
+	@docker build -f docker/Dockerfile -t lingtu:latest .
 
 docker-run:
 	@docker-compose up -d
@@ -117,4 +121,4 @@ docker-stop:
 docs:
 	@doxygen Doxyfile 2>/dev/null || echo "Doxygen not installed, skipping."
 
-check: build test health
+check: build test lint health

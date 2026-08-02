@@ -331,7 +331,8 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
     std::int32_t shift_x,
     std::int32_t shift_y,
     std::int32_t shift_z,
-    std::int64_t stamp_ns) {
+    std::int64_t stamp_ns,
+    bool commit_revision) {
   if (shift_x == 0 && shift_y == 0 && shift_z == 0) {
     RollingOccupancyCellChunk empty;
     empty.frame_id = frame_id_;
@@ -408,7 +409,9 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollByLocked(
   ring_y_ = PositiveMod(ring_y_ + shift_y, config_.size_y);
   ring_z_ = PositiveMod(ring_z_ + shift_z, config_.size_z);
   stamp_ns_ = std::max(stamp_ns_, stamp_ns);
-  ++generation_;
+  if (commit_revision) {
+    ++generation_;
+  }
   last_rolled_out_ = chunk;
   return chunk;
 }
@@ -417,7 +420,8 @@ RollingOccupancyGrid::RollResult RollingOccupancyGrid::RollToCenterLocked(
     float center_x_m,
     float center_y_m,
     float center_z_m,
-    std::int64_t stamp_ns) {
+    std::int64_t stamp_ns,
+    bool commit_revision) {
   if (!IsFinite(center_x_m) || !IsFinite(center_y_m) || !IsFinite(center_z_m) ||
       stamp_ns < 0) {
     throw std::invalid_argument("rolling occupancy center is invalid");
@@ -465,7 +469,8 @@ RollingOccupancyGrid::RollResult RollingOccupancyGrid::RollToCenterLocked(
       checked_shift(shift_x_64),
       checked_shift(shift_y_64),
       checked_shift(shift_z_64),
-      stamp_ns);
+      stamp_ns,
+      commit_revision);
   result.rolled = true;
   return result;
 }
@@ -476,7 +481,7 @@ RollingOccupancyCellChunk RollingOccupancyGrid::RollToCenter(
     float center_z_m,
     std::int64_t stamp_ns) {
   std::unique_lock<std::shared_mutex> lock(mutex_);
-  return RollToCenterLocked(center_x_m, center_y_m, center_z_m, stamp_ns).chunk;
+  return RollToCenterLocked(center_x_m, center_y_m, center_z_m, stamp_ns, true).chunk;
 }
 
 bool RollingOccupancyGrid::ClipRayToWindow(
@@ -635,10 +640,13 @@ std::size_t RollingOccupancyGrid::DecayLocked(std::int64_t now_ns) {
 RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& frame) {
   const PointCloudView& cloud = frame.cloud;
   const std::string incoming_frame = cloud.frame_id.empty() ? "map" : cloud.frame_id;
-  if (cloud.stamp_ns < 0 || !IsFinite(frame.sensor_origin_x_m) ||
+  if (cloud.stamp_ns < 0 || frame.decay_stamp_ns < 0 ||
+      !IsFinite(frame.sensor_origin_x_m) ||
       !IsFinite(frame.sensor_origin_y_m) || !IsFinite(frame.sensor_origin_z_m)) {
     throw std::invalid_argument("rolling occupancy observation metadata is invalid");
   }
+  const std::int64_t decay_stamp_ns =
+      frame.decay_stamp_ns > 0 ? frame.decay_stamp_ns : cloud.stamp_ns;
   std::unique_lock<std::shared_mutex> lock(mutex_);
   if (incoming_frame != frame_id_) {
     throw std::invalid_argument(
@@ -657,11 +665,12 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
         frame.sensor_origin_x_m,
         frame.sensor_origin_y_m,
         frame.sensor_origin_z_m,
-        cloud.stamp_ns);
+        cloud.stamp_ns,
+        false);
     stats.rolled = roll.rolled;
     stats.rolled_out_cells = roll.chunk.Size();
   }
-  stats.decayed_cells = DecayLocked(cloud.stamp_ns);
+  stats.decayed_cells = DecayLocked(decay_stamp_ns);
 
   AdvanceMarkEpoch();
   std::vector<std::size_t> free_indices;
@@ -744,7 +753,7 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     cell.observed = true;
     cell.log_odds = std::max(config_.min_log_odds, cell.log_odds - config_.miss_log_odds);
     cell.misses = SaturatingIncrement(cell.misses);
-    cell.last_observed_ns = cloud.stamp_ns;
+    cell.last_observed_ns = decay_stamp_ns;
     ++stats.free_updates;
   }
   for (const std::size_t physical : hit_indices) {
@@ -752,12 +761,12 @@ RollingOccupancyUpdateStats RollingOccupancyGrid::Update(const MapCloudFrame& fr
     cell.observed = true;
     cell.log_odds = std::min(config_.max_log_odds, cell.log_odds + config_.hit_log_odds);
     cell.hits = SaturatingIncrement(cell.hits);
-    cell.last_observed_ns = cloud.stamp_ns;
+    cell.last_observed_ns = decay_stamp_ns;
     ++stats.hit_updates;
   }
-  if (stats.free_updates > 0U || stats.hit_updates > 0U || stats.decayed_cells > 0U) {
-    ++generation_;
-  }
+  // Update is the externally committed rolling-map transaction. Auto-roll,
+  // decay, and observation mutation share this single revision advance.
+  ++generation_;
   stamp_ns_ = std::max(stamp_ns_, cloud.stamp_ns);
   stats.generation = generation_;
   last_stats_ = stats;
@@ -773,7 +782,6 @@ std::size_t RollingOccupancyGrid::Decay(std::int64_t now_ns) {
   if (changed > 0U) {
     ++generation_;
   }
-  stamp_ns_ = std::max(stamp_ns_, now_ns);
   last_stats_ = {};
   last_stats_.decayed_cells = changed;
   last_stats_.generation = generation_;

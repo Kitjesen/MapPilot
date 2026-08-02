@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import os
 import threading
 import time
@@ -22,7 +23,9 @@ from gateway.schemas import (
     LocationsResponse,
     LocationUpsertRequest,
     NavigationDdsSnapshotResponse,
+    NavigationGoalStatusQueryResponse,
     NavigationStatusResponse,
+    NavigationTaskStatusQueryResponse,
     PathResponse,
     ReadinessResponse,
     RuntimeDataflowResponse,
@@ -31,22 +34,16 @@ from gateway.schemas import (
     RuntimeDataflowTopicDetailResponse,
     RuntimeSwitchPlanRequest,
     RuntimeSwitchPlanResponse,
-    RuntimeSwitchRequest,
-    RuntimeSwitchResponse,
     SceneGraphResponse,
     SSEEventEnvelope,
     StateResponse,
 )
 from gateway.services.map_service import map_service_query
 from gateway.services.media_status import build_camera_status
-from maps.paths import active_map_name, nav_map_root
-
-try:
-    from runtime.contracts import CAMERA_ROLE, HW_COMPAT_ALIAS, HW_ROLE
-except ImportError:
-    CAMERA_ROLE = "camera"
-    HW_ROLE = "hw"
-    HW_COMPAT_ALIAS = "DeviceManager"
+from gateway.services.navigation_lifecycle import (
+    query_navigation_goal_status,
+    query_navigation_task_status,
+)
 from gateway.services.readiness import build_readiness_snapshot
 from gateway.services.runtime_dataflow import (
     build_runtime_dataflow_snapshot,
@@ -57,7 +54,6 @@ from gateway.services.runtime_status import (
     build_localization_status,
     build_navigation_status,
 )
-from gateway.services.runtime_switch_execute import build_runtime_switch_response
 from gateway.services.runtime_switch_plan import build_runtime_switch_plan
 from gateway.services.sse import subscribe_with_event_id, unsubscribe
 from gateway.services.state_snapshot import build_state_snapshot
@@ -74,6 +70,8 @@ from gateway.services.traffic import (
 from gateway.services.traffic import (
     snapshot as traffic_snapshot,
 )
+from maps.paths import active_map_name, nav_map_root
+from runtime.contracts import CAMERA_ROLE, HW_ROLE, LIDAR_ROLE
 
 DEFAULT_NAV_ENDPOINT_STATUS_FILE = "/dev/shm/lingtu/nav_endpoint_status.json"
 DEFAULT_TRAVERSABILITY_STATUS_FILE = "/dev/shm/lingtu/traversability_status.json"
@@ -132,23 +130,142 @@ def _native_float(value: Any) -> float:
         return 0.0
 
 
+def _native_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _operator_motion_twist_payload(twist: Any) -> dict[str, Any]:
+    if not isinstance(twist, Mapping):
+        return {
+            "linear": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "angular": {"x": 0.0, "y": 0.0, "z": 0.0},
+        }
+    return {
+        "linear": {
+            "x": _native_float(twist.get("vx")),
+            "y": _native_float(twist.get("vy")),
+            "z": 0.0,
+        },
+        "angular": {
+            "x": 0.0,
+            "y": 0.0,
+            "z": _native_float(twist.get("wz")),
+        },
+    }
+
+
+def _native_operator_motion_trace(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, Mapping):
+        return {}
+    operator_motion = payload.get("operator_motion")
+    if not isinstance(operator_motion, Mapping):
+        return {}
+
+    operator_status = operator_motion.get("status")
+    operator_status = operator_status if isinstance(operator_status, Mapping) else {}
+    last_ack = operator_motion.get("last_ack")
+    last_ack = last_ack if isinstance(last_ack, Mapping) else {}
+
+    teleop_output = operator_status.get("teleop_output")
+    final_cmd_vel = operator_status.get("final_cmd_vel")
+    input_gate_reason = operator_status.get("input_gate_reason")
+    teleop_reason = operator_status.get("authority_reason")
+
+    return {
+        "operator_motion": {
+            "schema_version": _native_int(operator_motion.get("schema_version")),
+            "interface_enabled": operator_motion.get("interface_enabled") is True,
+            "authority_owner": operator_motion.get("authority_owner"),
+            "control_mode": operator_motion.get("control_mode"),
+            "allow_teleop_takeover": operator_motion.get("allow_teleop_takeover") is True,
+            "teleop_output": _operator_motion_twist_payload(teleop_output),
+            "final_cmd_vel": _operator_motion_twist_payload(final_cmd_vel),
+            "teleop": {
+                "reason": str(teleop_reason or ""),
+                "output": _operator_motion_twist_payload(teleop_output),
+            },
+            "input_gate": {
+                "reason": str(input_gate_reason or ""),
+            },
+            "last_ack": {
+                "observed": last_ack.get("observed") is True,
+                "published": last_ack.get("published") is True,
+                "source_id": str(last_ack.get("source_id") or ""),
+                "request_id": str(last_ack.get("request_id") or ""),
+                "source_sequence": _native_int(last_ack.get("source_sequence")),
+                "final_output_sequence": _native_int(last_ack.get("final_output_sequence")),
+                "accepted": last_ack.get("accepted") is True,
+                "reason": str(last_ack.get("reason") or ""),
+            },
+            "status": {
+                "observed": operator_status.get("observed") is True,
+                "published": operator_status.get("published") is True,
+                "has_active_sample": operator_status.get("has_active_sample") is True,
+                "holding": operator_status.get("holding") is True,
+                "has_active_authority": operator_status.get("has_active_authority") is True,
+                "last_sample_sequence": _native_int(
+                    operator_status.get("last_sample_sequence")
+                ),
+                "admitted_sequence": _native_int(operator_status.get("admitted_sequence")),
+                "final_output_sequence": _native_int(
+                    operator_status.get("final_output_sequence")
+                ),
+            },
+        }
+    }
+
+
 def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
     if not isinstance(payload, Mapping):
         return None
-    cmd = payload.get("final_cmd_vel")
+
     control_mode = str(payload.get("control_mode") or "")
-    active_source = "native_nav_endpoint"
-    if not isinstance(cmd, Mapping) and control_mode in {"teleop", "teleop_avoid"}:
+    active_cmd_source = str(payload.get("active_cmd_source") or "")
+    teleop_active = (
+        control_mode in {"teleop", "teleop_avoid"}
+        or active_cmd_source == "teleop"
+    )
+    final_output = payload.get("final_output")
+    final_output = final_output if isinstance(final_output, Mapping) else {}
+    output_sequence = _native_int(final_output.get("output_sequence"))
+    final_output_published = (
+        payload.get("publish_cmd_vel") is True
+        and final_output.get("published") is True
+        and output_sequence > 0
+    )
+
+    cmd = payload.get("final_cmd_vel")
+    if isinstance(cmd, Mapping):
+        active_source = "native_teleop" if teleop_active else "native_nav_endpoint"
+        if not final_output_published:
+            active_source = f"{active_source}_preview"
+        evidence_stage = (
+            "final_output_published"
+            if final_output_published
+            else "final_policy_output_not_published"
+        )
+    else:
         teleop = payload.get("teleop")
-        cmd = teleop.get("output") if isinstance(teleop, Mapping) else None
-    if control_mode in {"teleop", "teleop_avoid"}:
-        active_source = "native_teleop"
-    if not isinstance(cmd, Mapping):
-        last_local = payload.get("last_local")
-        cmd = last_local.get("cmd_vel") if isinstance(last_local, Mapping) else None
+        cmd = (
+            teleop.get("output")
+            if teleop_active and isinstance(teleop, Mapping)
+            else None
+        )
+        if isinstance(cmd, Mapping):
+            active_source = "native_teleop_policy_preview"
+            evidence_stage = "teleop_policy_output"
+        else:
+            last_local = payload.get("last_local")
+            cmd = last_local.get("cmd_vel") if isinstance(last_local, Mapping) else None
+            active_source = "native_local_planner_preview"
+            evidence_stage = "local_planner_output"
     if not isinstance(cmd, Mapping):
         return None
-    return {
+
+    cmd_vel_payload = {
         "frame_id": "base_link",
         "linear": {
             "x": _native_float(cmd.get("vx")),
@@ -160,40 +277,69 @@ def _native_cmd_vel_payload(payload: Mapping[str, Any] | None) -> dict[str, Any]
             "y": 0.0,
             "z": _native_float(cmd.get("wz")),
         },
-        "active_source": (active_source if payload.get("publish_cmd_vel") is True else f"{active_source}_preview"),
+        "active_source": active_source,
+        "evidence_stage": evidence_stage,
+        "final_output_confirmed": final_output_published,
+        "driver_acknowledged": (
+            final_output_published and final_output.get("driver_acknowledged") is True
+        ),
+        "output_sequence": output_sequence if final_output_published else 0,
         "ts": payload.get("stamp_s"),
     }
 
+    operator_motion = _native_operator_motion_trace(payload)
+    if operator_motion:
+        cmd_vel_payload["operator_motion"] = operator_motion.get("operator_motion")
+    return cmd_vel_payload
+
 
 def _probe_brainstem() -> dict[str, Any]:
-    import brainstem_api as bapi
-    import grpc
+    """Project the authoritative native driver snapshot into health telemetry."""
 
-    ch = grpc.insecure_channel("127.0.0.1:13145")
+    path = os.environ.get("LINGTU_DRIVER_STATUS_FILE", "").strip() or (
+        "/dev/shm/lingtu/driver_status.json"
+    )
+    payload = _read_json_snapshot(path)
+    if payload is None:
+        return {
+            "status": "unavailable",
+            "source": "lingtu-driver-status",
+            "reason": "driver_status_missing",
+            "driver_status_file": path,
+        }
+
+    brainstem = payload.get("brainstem")
+    brainstem = dict(brainstem) if isinstance(brainstem, Mapping) else {}
+    output_ack = payload.get("output_ack")
+    output_ack = dict(output_ack) if isinstance(output_ack, Mapping) else {}
     try:
-        stub = bapi.RobotControlStub(ch)
-        state = stub.GetCmsState(bapi.Empty(), timeout=1.0)
-        fsm_map = {
-            0: "ZERO",
-            1: "GROUNDED",
-            2: "STANDING",
-            3: "WALKING",
-            4: "TRANSITIONING",
+        stamp_s = float(payload.get("stamp_s"))
+        max_age_s = float(os.environ.get("LINGTU_DRIVER_STATUS_MAX_AGE_S", "1.5") or "1.5")
+        age_s = time.time() - stamp_s
+    except (TypeError, ValueError):
+        age_s = math.inf
+        max_age_s = 1.5
+    stale = not math.isfinite(age_s) or age_s < -0.05 or age_s > max_age_s
+    connected = payload.get("connected") is True
+    status = "stale" if stale else ("connected" if connected else "unreachable")
+
+    info = dict(brainstem)
+    info.update(
+        {
+            "status": status,
+            "source": "lingtu-driver-status",
+            "driver_status_file": path,
+            "host": str(brainstem.get("target") or ""),
+            "connected": connected,
+            "ready": payload.get("ready") is True,
+            "output_ack": output_ack,
+            "last_reason": payload.get("last_reason"),
+            "last_error": payload.get("last_error"),
+            "status_age_s": round(age_s, 3) if math.isfinite(age_s) else None,
+            "stale": stale,
         }
-        info: dict[str, Any] = {
-            "status": "connected",
-            "host": "127.0.0.1:13145",
-            "fsm": fsm_map.get(state.kind, str(state.kind)),
-        }
-        try:
-            v = stub.GetVoltage(bapi.Empty(), timeout=1.0)
-            if v.values:
-                info["voltage_avg"] = round(sum(v.values) / len(v.values), 1)
-        except (grpc.RpcError, AttributeError, KeyError):
-            pass
-        return info
-    finally:
-        ch.close()
+    )
+    return info
 
 
 _BRAINSTEM_TRANSIENT_FIELDS = {
@@ -211,15 +357,11 @@ def _cacheable_brainstem_info(info: dict[str, Any]) -> dict[str, Any]:
 def _probe_brainstem_safely() -> dict[str, Any]:
     try:
         return _probe_brainstem()
-    except ImportError:
-        return {
-            "status": "unavailable",
-            "reason": "brainstem_api not installed",
-        }
     except Exception as e:
         return {
             "status": "unreachable",
-            "host": "127.0.0.1:13145",
+            "source": "lingtu-driver-status",
+            "reason": "driver_status_probe_failed",
             "error": str(e)[:120],
         }
 
@@ -295,8 +437,12 @@ async def _brainstem_health(gw, *, force_live: bool = False) -> dict[str, Any]:
                 return info
             return {
                 "status": "unknown",
-                "host": "127.0.0.1:13145",
-                "reason": "probe_pending",
+                "source": "lingtu-driver-status",
+                "reason": "driver_status_probe_pending",
+                "driver_status_file": (
+                    os.environ.get("LINGTU_DRIVER_STATUS_FILE", "").strip()
+                    or "/dev/shm/lingtu/driver_status.json"
+                ),
                 "cached": False,
                 "stale": True,
                 "refreshing": bool(scheduled or refreshing),
@@ -306,7 +452,12 @@ async def _brainstem_health(gw, *, force_live: bool = False) -> dict[str, Any]:
         loop = asyncio.get_running_loop()
         info = await loop.run_in_executor(None, _probe_brainstem_safely)
     except Exception as e:
-        info = {"status": "unreachable", "error": str(e)[:120]}
+        info = {
+            "status": "unreachable",
+            "source": "lingtu-driver-status",
+            "reason": "driver_status_probe_failed",
+            "error": str(e)[:120],
+        }
 
     info = dict(info)
     info["cached"] = False
@@ -317,11 +468,11 @@ async def _brainstem_health(gw, *, force_live: bool = False) -> dict[str, Any]:
 
 def _health_module_needs_detail(name: str) -> bool:
     lowered = name.lower()
+    if lowered in {LIDAR_ROLE, CAMERA_ROLE}:
+        return True
     return any(
         token in lowered
         for token in (
-            "lidarmodule",
-            "camera",
             "slambridge",
             "slamadapter",
             "slammodule",
@@ -824,6 +975,7 @@ def register_status_routes(app, gw) -> None:
         cmd_vel = (
             None if endpoint_only else (navigation.get("control", {}).get("cmd_vel_mux", {}).get("last_driver_cmd_vel"))
         )
+        operator_motion = _native_operator_motion_trace(nav_endpoint)
         if not endpoint_only and isinstance(cmd_vel, Mapping):
             cmd_payload = {
                 "frame_id": "base_link",
@@ -834,6 +986,8 @@ def register_status_routes(app, gw) -> None:
             }
         else:
             cmd_payload = _native_cmd_vel_payload(nav_endpoint)
+        if cmd_payload is not None and operator_motion:
+            cmd_payload["operator_motion"] = operator_motion.get("operator_motion")
         return {
             "schema_version": "lingtu.navigation.dds_snapshot.v1",
             "global_path": build_path_response(global_path, robot),
@@ -863,8 +1017,24 @@ def register_status_routes(app, gw) -> None:
         return build_navigation_status(gw)
 
     @app.get(
+        "/api/v1/navigation/goals/{request_id}",
+        summary="Request-correlated native navigation lifecycle status",
+        response_model=NavigationGoalStatusQueryResponse,
+    )
+    async def get_navigation_goal_status(request_id: str):
+        return query_navigation_goal_status(gw, request_id)
+
+    @app.get(
+        "/api/v1/navigation/tasks/{task_id}",
+        summary="Stable native navigation task lifecycle status",
+        response_model=NavigationTaskStatusQueryResponse,
+    )
+    async def get_navigation_task_status(task_id: str):
+        return query_navigation_task_status(gw, task_id)
+
+    @app.get(
         "/api/v1/runtime/dataflow",
-        summary="Runtime dataflow and Module port observability",
+        summary="Read-only Product motion and Gateway observability",
         response_model=RuntimeDataflowResponse,
     )
     async def get_runtime_dataflow():
@@ -872,7 +1042,7 @@ def register_status_routes(app, gw) -> None:
 
     @app.get(
         "/api/v1/runtime/dataflow/topic",
-        summary="Inspect one runtime dataflow topic",
+        summary="Inspect one Gateway-observable Product topic",
         response_model=RuntimeDataflowTopicDetailResponse,
     )
     async def get_runtime_dataflow_topic(
@@ -882,7 +1052,7 @@ def register_status_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/runtime/dataflow/subscribe",
-        summary="Create a read-only runtime dataflow SSE subscription plan",
+        summary="Create a read-only Gateway SSE subscription plan",
         response_model=RuntimeDataflowSubscribeResponse,
     )
     async def post_runtime_dataflow_subscribe(
@@ -892,31 +1062,13 @@ def register_status_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/runtime/switch-plan",
-        summary="Dry-run runtime endpoint switch plan",
+        summary="Dry-run Product switch plan in the current Env",
         response_model=RuntimeSwitchPlanResponse,
     )
     async def post_runtime_switch_plan(
         request: RuntimeSwitchPlanRequest,
     ):
-        return build_runtime_switch_plan(request)
-
-    @app.post(
-        "/api/v1/runtime/switch",
-        summary="Validate and optionally execute a product mode switch",
-        response_model=RuntimeSwitchResponse,
-    )
-    async def post_runtime_switch(
-        request: RuntimeSwitchRequest,
-    ):
-        return build_runtime_switch_response(gw, request)
-
-    @app.get(
-        "/api/v1/navigation",
-        response_model=NavigationStatusResponse,
-        include_in_schema=False,
-    )
-    async def get_navigation_status_legacy_alias():
-        return build_navigation_status(gw)
+        return build_runtime_switch_plan(request, gw=gw)
 
     @app.get(
         "/api/v1/devices",
@@ -925,7 +1077,7 @@ def register_status_routes(app, gw) -> None:
     )
     async def get_devices():
         modules = getattr(gw, "_all_modules", None) or {}
-        mgr = modules.get(HW_ROLE) or modules.get(HW_COMPAT_ALIAS)
+        mgr = modules.get(HW_ROLE)
         if mgr is None:
             return {"devices": [], "manager": "not_loaded"}
         try:
@@ -963,23 +1115,28 @@ def register_status_routes(app, gw) -> None:
         modules_fail = 0
         module_summary: dict[str, str] = {}
 
-        modules = getattr(gw, "_all_modules", None) or {}
-        if modules:
+        def _probe_modules() -> tuple[dict[str, str], dict[str, Any], int, int]:
+            """Probe module health in a thread to avoid blocking the event loop."""
+            _summary: dict[str, str] = {}
+            _sensors: dict[str, Any] = {}
+            _ok = 0
+            _fail = 0
+            modules = getattr(gw, "_all_modules", None) or {}
             for name, mod in modules.items():
                 probe_module = details or _health_module_needs_detail(str(name))
                 if not probe_module:
-                    module_summary[name] = "ok"
-                    modules_ok += 1
+                    _summary[name] = "ok"
+                    _ok += 1
                     continue
                 try:
                     h = mod.health() if hasattr(mod, "health") else {}
-                    module_summary[name] = "ok"
-                    modules_ok += 1
+                    _summary[name] = "ok"
+                    _ok += 1
 
                     name_l = str(name).lower()
-                    if "LidarModule" in name:
+                    if name_l == LIDAR_ROLE:
                         lidar_h = h.get("lidar", {})
-                        sensors["lidar"] = {
+                        _sensors["lidar"] = {
                             "status": lidar_h.get("state", "unknown"),
                             "ip": lidar_h.get("ip", "?"),
                             "cloud_hz": round(
@@ -987,15 +1144,15 @@ def register_status_routes(app, gw) -> None:
                                 1,
                             ),
                         }
-                    elif name_l == CAMERA_ROLE or "camera" in name_l:
-                        sensors["camera"] = build_camera_status(gw)
+                    elif name_l == CAMERA_ROLE:
+                        _sensors["camera"] = build_camera_status(gw)
                     elif "slam" in name_l:
                         slam_status = _module_odometry_status(h)
                         if slam_status is not None:
-                            sensors["slam"] = slam_status
+                            _sensors["slam"] = slam_status
                     elif "nav.mission" in name:
                         nav = h.get("navigation", h)
-                        sensors["navigation"] = {
+                        _sensors["navigation"] = {
                             "state": nav.get(
                                 "state",
                                 h.get("mission_state", "idle"),
@@ -1006,8 +1163,16 @@ def register_status_routes(app, gw) -> None:
                             ),
                         }
                 except Exception:
-                    module_summary[name] = "error"
-                    modules_fail += 1
+                    _summary[name] = "error"
+                    _fail += 1
+            return _summary, _sensors, _ok, _fail
+
+        # Run module probing in a thread to avoid blocking SSE/WS heartbeats
+        modules = getattr(gw, "_all_modules", None) or {}
+        if modules:
+            module_summary, sensors, modules_ok, modules_fail = (
+                await asyncio.get_running_loop().run_in_executor(None, _probe_modules)
+            )
 
         localization_status = getattr(gw, "_localization_status", None)
         localization_status = localization_status if isinstance(localization_status, Mapping) else {}
@@ -1088,6 +1253,10 @@ def register_status_routes(app, gw) -> None:
         localization_status = localization_status if isinstance(localization_status, Mapping) else {}
         camera = build_camera_status(gw)
         map_points = gw._cloud_viewer.cache_point_count()
+        nav_endpoint = _native_nav_endpoint_status() or {}
+        control_loop_health = nav_endpoint.get("control_loop_health")
+        if not isinstance(control_loop_health, Mapping):
+            control_loop_health = {}
 
         processed_scan_hz = _positive_float(localization_status.get("processed_scan_hz"))
         lidar_input_hz = _positive_float(localization_status.get("lidar_input_hz"))
@@ -1117,6 +1286,10 @@ def register_status_routes(app, gw) -> None:
                 "mode": localization_status.get("mode"),
                 "map_tf": localization_status.get("map_tf"),
             },
+            "navigation": {
+                "tick_hz": _positive_float(nav_endpoint.get("tick_hz")),
+                "control_loop_health": dict(control_loop_health),
+            },
             "map": {
                 "points": map_points,
                 "active": getattr(gw, "_active_map", None),
@@ -1131,6 +1304,16 @@ def register_status_routes(app, gw) -> None:
             },
             "traffic": traffic,
             "commands": commands,
+            "websocket": (
+                gw._ws_registry.snapshot()
+                if hasattr(gw, "_ws_registry") and gw._ws_registry is not None
+                else {}
+            ),
+            "audit": (
+                gw._audit_journal.snapshot(limit=10)
+                if hasattr(gw, "_audit_journal") and gw._audit_journal is not None
+                else {}
+            ),
         }
 
     @app.get(

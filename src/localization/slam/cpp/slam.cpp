@@ -1,6 +1,7 @@
 #include "slam.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -152,7 +153,8 @@ Status writeLatestPatch(
 class ContractBackend final : public ISlamBackend {
  public:
   explicit ContractBackend(std::string backend_name)
-      : backend_name_(std::move(backend_name)) {}
+      : backend_name_(std::move(backend_name)),
+        source_epoch_(newSourceEpoch()) {}
 
   Status configure(const SlamConfig& config) override {
     config_ = config;
@@ -362,6 +364,7 @@ class ContractBackend final : public ISlamBackend {
     out.saved_map_cloud_map = saved_map_cloud_map_;
     out.map_odom_tf = Transform3d{config_.map_frame, config_.odom_frame, Pose3d{}};
     out.observation_sequence = observation_sequence_;
+    out.source_epoch = source_epoch_;
     out.saved_map_points = saved_map_points_;
     out.alive = alive_;
     out.map_loaded = map_loaded_;
@@ -418,6 +421,7 @@ class ContractBackend final : public ISlamBackend {
   int imu_buffer_ = 0;
   int lidar_buffer_ = 0;
   std::uint64_t observation_sequence_ = 0U;
+  std::uint64_t source_epoch_ = 0U;
   int dropped_lidar_frames_ = 0;
   int dropped_imu_frames_ = 0;
   std::optional<Pose3d> odometry_odom_body_;
@@ -431,6 +435,28 @@ class ContractBackend final : public ISlamBackend {
 };
 
 }  // namespace
+
+std::uint64_t newSourceEpoch() noexcept {
+  constexpr std::uint64_t kResetCounterBits = 16U;
+  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+  const std::uint64_t wall_epoch =
+      static_cast<std::uint64_t>(std::max<std::int64_t>(1, now_ms))
+      << kResetCounterBits;
+  static std::atomic<std::uint64_t> last_epoch{0U};
+  std::uint64_t observed = last_epoch.load(std::memory_order_relaxed);
+  for (;;) {
+    const std::uint64_t candidate = std::max(wall_epoch, observed + 1U);
+    if (last_epoch.compare_exchange_weak(
+            observed,
+            candidate,
+            std::memory_order_relaxed,
+            std::memory_order_relaxed)) {
+      return candidate;
+    }
+  }
+}
 
 std::string toString(SlamState state) {
   switch (state) {

@@ -25,7 +25,7 @@ from runtime.msgs.sensor import PointCloud2
 from runtime.registry import register
 from runtime.stream import In, Out
 
-logger = logging.getLogger("gateway.rerun_bridge_module")
+logger = logging.getLogger(__name__)
 
 # Robot body dimensions (half-sizes in meters) 鈥?Thunder quadruped
 _ROBOT_HALF = [0.35, 0.155, 0.15]

@@ -19,6 +19,7 @@ struct PathFollowerParams {
   double stopYawRateGain  = 7.5;
   double maxYawRate        = 45.0;  // degrees
   double maxSpeed          = 1.0;
+  double minSpeed          = 0.0;
   double maxAccel          = 1.0;   // m/s^2
   double nominalDt         = 0.01;
   double maxDt             = 0.10;

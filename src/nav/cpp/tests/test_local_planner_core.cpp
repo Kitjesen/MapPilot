@@ -1,15 +1,17 @@
-#include <gtest/gtest.h>
-#include "local_planner.hpp"
-#include "local_planner_scoring.hpp"
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <gtest/gtest.h>
+#include <limits>
 #include <string>
 #include <vector>
 
+#include "local_planner.hpp"
+#include "local_planner_scoring.hpp"
+
 using namespace nav_kernel;
 
-static std::filesystem::path writeMinimalPlannerPaths(const std::string& name) {
+static std::filesystem::path writeMinimalPlannerPaths(const std::string &name) {
   auto dir = std::filesystem::temp_directory_path() / name;
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
@@ -707,6 +709,55 @@ TEST(LocalPlannerCore, TraversabilityHardCostBlocksPathSelection) {
 
   EXPECT_FALSE(result.pathFound);
 }
+TEST(LocalPlannerCore, TraversabilityOutsideGridFailsClosed) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_traversability_out_of_grid_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilityHardCost = 90.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.recoveryBlockedThre = 0.0;
+  p.recoveryMaxCycles = 0;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> riskGrid(3 * 3, 0.0f);
+  planner.setTraversabilityGrid(riskGrid.data(), 3, 3, 0.2, -0.3, -0.3);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+
+  EXPECT_FALSE(result.pathFound);
+}
+
+TEST(LocalPlannerCore, UnknownTraversabilityCellFailsClosed) {
+  auto pathsDir = writeMinimalPlannerPaths("nav_kernel_traversability_unknown_fixture");
+
+  LocalPlannerParams p;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilityHardCost = 90.0;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.recoveryBlockedThre = 0.0;
+  p.recoveryMaxCycles = 0;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setVehicle(0, 0, 0, 0);
+  planner.setGoal(5, 0);
+
+  std::vector<float> riskGrid(5 * 5, std::numeric_limits<float>::quiet_NaN());
+  planner.setTraversabilityGrid(riskGrid.data(), 5, 5, 1.0, -2.5, -2.5);
+
+  const auto result = planner.plan(nullptr, 0, 0.0);
+
+  EXPECT_FALSE(result.pathFound);
+}
 
 TEST(LocalPlannerCore, ReportsRecoveryExhaustedWithoutChangingRecoveryStateAbi) {
   auto pathsDir = writeMinimalPlannerPaths(
@@ -735,6 +786,184 @@ TEST(LocalPlannerCore, ReportsRecoveryExhaustedWithoutChangingRecoveryStateAbi) 
   EXPECT_TRUE(result.recoveryExhausted);
   EXPECT_EQ(result.recoveryState, 0);
   EXPECT_TRUE(result.path.empty());
+}
+
+TEST(LocalPlannerCore, RaisesObservationRefreshOnlyWhenVerifiedRotationCompletes) {
+  auto pathsDir = writeMinimalPlannerPaths(
+      "nav_kernel_recovery_rotation_refresh_fixture");
+
+  LocalPlannerParams p;
+  p.vehicleLength = 0.80;
+  p.vehicleWidth = 0.60;
+  p.footprintPadding = 0.27;
+  p.checkObstacle = false;
+  p.useTraversabilityCost = true;
+  p.traversabilityHardCost = 90.0;
+  p.adjacentRange = 1.2;
+  p.pathScaleBySpeed = false;
+  p.pathRangeBySpeed = false;
+  p.recoveryBlockedThre = 0.0;
+  p.recoveryRotateTime = 10.0;
+  p.recoveryMaxCycles = 3;
+
+  LocalPlannerCore planner(p);
+  ASSERT_TRUE(planner.loadPaths(pathsDir.string()));
+  planner.setGoal(5, 0);
+
+  constexpr int kRows = 201;
+  constexpr int kCols = 201;
+  constexpr double kResolution = 0.02;
+  constexpr double kOrigin = -2.01;
+  std::vector<float> riskGrid(kRows * kCols, 95.0f);
+  for (int row = 0; row < kRows; ++row) {
+    const double y = kOrigin + (static_cast<double>(row) + 0.5) * kResolution;
+    for (int col = 0; col < kCols; ++col) {
+      const double x = kOrigin + (static_cast<double>(col) + 0.5) * kResolution;
+      if (std::abs(x) <= 0.84 && std::abs(y) <= 0.84) {
+        riskGrid[row * kCols + col] = 0.0f;
+      }
+    }
+  }
+  planner.setTraversabilityGrid(
+      riskGrid.data(), kRows, kCols, kResolution, kOrigin, kOrigin);
+
+  planner.setVehicle(0, 0, 0, 0);
+  const auto started = planner.planRecovery(nullptr, 0, 1.0);
+
+  ASSERT_TRUE(started.recoveryVerified);
+  ASSERT_EQ(started.recoveryAction, RecoveryAction::Rotate);
+  ASSERT_NE(started.recoveryRotationDirection, 0);
+  EXPECT_TRUE(started.recoveryDirectCommand);
+  EXPECT_FALSE(started.recoveryObservationRefreshRequired);
+
+  const double partialYaw =
+      static_cast<double>(started.recoveryRotationDirection) * 0.20;
+  planner.setVehicle(0, 0, 0, partialYaw);
+  const auto rotating = planner.planRecovery(nullptr, 0, 1.1);
+
+  EXPECT_TRUE(rotating.recoveryVerified);
+  EXPECT_EQ(rotating.recoveryAction, RecoveryAction::Rotate);
+  EXPECT_FALSE(rotating.recoveryObservationRefreshRequired);
+
+  const double completionYaw =
+      static_cast<double>(started.recoveryRotationDirection) * 0.35;
+  planner.setVehicle(0, 0, 0, completionYaw);
+  const auto completed = planner.planRecovery(nullptr, 0, 1.2);
+
+  EXPECT_TRUE(completed.recoveryObservationRefreshRequired);
+  EXPECT_FALSE(completed.recoveryActive);
+  EXPECT_FALSE(completed.recoveryVerified);
+  EXPECT_EQ(completed.recoveryAction, RecoveryAction::None);
+  EXPECT_EQ(completed.recoveryReason, "recovery_rotation_complete");
+
+  planner.setVehicle(0, 0, 0, completionYaw);
+  const auto subsequent = planner.planRecovery(nullptr, 0, 1.3);
+
+  EXPECT_FALSE(subsequent.recoveryObservationRefreshRequired);
+}
+
+TEST(RecoveryPlanner, FallsBackToVerifiedRotationWhenTranslationIsBlocked) {
+  RecoveryPlannerParams params;
+  params.vehicleLength = 0.80;
+  params.vehicleWidth = 0.60;
+  params.footprintPadding = 0.27;
+  params.checkObstacles = false;
+  params.requireTraversability = true;
+  params.traversabilityHardCost = 90.0;
+  params.searchRadius = 1.2;
+  params.latticeResolution = 0.1;
+  params.minTranslationDistance = 0.35;
+  params.rotationStepRad = 0.35;
+  params.rotationSampleStepRad = 0.05;
+
+  constexpr int kRows = 201;
+  constexpr int kCols = 201;
+  constexpr double kResolution = 0.02;
+  constexpr double kOrigin = -2.01;
+  std::vector<float> grid(kRows * kCols, 95.0f);
+  for (int row = 0; row < kRows; ++row) {
+    const double y = kOrigin + (static_cast<double>(row) + 0.5) * kResolution;
+    for (int col = 0; col < kCols; ++col) {
+      const double x = kOrigin + (static_cast<double>(col) + 0.5) * kResolution;
+      if (std::abs(x) <= 0.84 && std::abs(y) <= 0.84) {
+        grid[row * kCols + col] = 0.0f;
+      }
+    }
+  }
+
+  RecoveryPlannerInput input;
+  input.traversabilityGrid = grid.data();
+  input.traversabilityRows = kRows;
+  input.traversabilityCols = kCols;
+  input.traversabilityResolution = kResolution;
+  input.traversabilityOriginX = kOrigin;
+  input.traversabilityOriginY = kOrigin;
+
+  const RecoveryPlanResult result = RecoveryPlanner(params).plan(input);
+
+  EXPECT_TRUE(result.verified);
+  EXPECT_EQ(result.status, PlanStatus::RotationReady);
+  EXPECT_EQ(result.action, RecoveryAction::Rotate);
+  EXPECT_TRUE(result.pathBody.empty());
+  EXPECT_NEAR(std::abs(result.rotationDeltaRad), params.rotationStepRad, 1e-9);
+  EXPECT_GT(std::abs(result.directCommand.wz), 0.0);
+}
+
+TEST(RecoveryPlanner, LimitedForwardObservationRejectsRearAndSideTranslations) {
+  RecoveryPlannerParams params;
+  params.vehicleLength = 0.80;
+  params.vehicleWidth = 0.60;
+  params.footprintPadding = 0.27;
+  params.checkObstacles = false;
+  params.requireTraversability = true;
+  params.traversabilityHardCost = 90.0;
+  params.searchRadius = 1.2;
+  params.latticeResolution = 0.1;
+  params.minTranslationDistance = 0.35;
+  params.rotationStepRad = 0.35;
+  params.rotationSampleStepRad = 0.05;
+
+  constexpr int kRows = 201;
+  constexpr int kCols = 201;
+  constexpr double kResolution = 0.02;
+  constexpr double kOrigin = -2.01;
+  std::vector<float> grid(kRows * kCols, 100.0f);
+
+  const auto setFree = [&](double x, double y) {
+    const int col = static_cast<int>(std::floor((x - kOrigin) / kResolution));
+    const int row = static_cast<int>(std::floor((y - kOrigin) / kResolution));
+    if (row >= 0 && row < kRows && col >= 0 && col < kCols) {
+      grid[row * kCols + col] = 0.0f;
+    }
+  };
+
+  for (double x = -0.68; x <= 0.68; x += kResolution) {
+    for (double y = -0.58; y <= 0.58; y += kResolution) {
+      setFree(x, y);
+    }
+  }
+  for (double x = 0.40; x <= 1.20; x += kResolution) {
+    setFree(x, 0.0);
+    setFree(x, 0.10);
+    setFree(x, -0.10);
+  }
+
+  RecoveryPlannerInput input;
+  input.traversabilityGrid = grid.data();
+  input.traversabilityRows = kRows;
+  input.traversabilityCols = kCols;
+  input.traversabilityResolution = kResolution;
+  input.traversabilityOriginX = kOrigin;
+  input.traversabilityOriginY = kOrigin;
+  input.goalDirectionBodyRad = M_PI;
+
+  const RecoveryPlanResult result = RecoveryPlanner(params).plan(input);
+
+  EXPECT_NE(result.status, PlanStatus::TranslationReady);
+  EXPECT_NE(result.action, RecoveryAction::Translate);
+  EXPECT_TRUE(result.pathBody.empty());
+  EXPECT_TRUE(result.status == PlanStatus::RotationReady ||
+              result.status == PlanStatus::NoSafeCandidate);
 }
 TEST(LocalPlannerCore, DebugSnapshotShowsRepresentativeCandidatesAndSelection) {
   auto pathsDir = writeMinimalPlannerPaths("nav_kernel_debug_candidates_fixture");

@@ -22,6 +22,8 @@ fi
 : "${LINGTU_CAMERA_COLOR_SHM:=/lingtu_camera_color}"
 : "${LINGTU_CAMERA_DEPTH_SHM:=/lingtu_camera_depth}"
 : "${LINGTU_CAMERA_INFO_SHM:=/lingtu_camera_info}"
+: "${LINGTU_CAMERA_SHM_SLOT_COUNT:=16}"
+: "${LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES:=1048576}"
 : "${LINGTU_CAMERA_PUBLISH_IMAGE_DDS:=0}"
 : "${LINGTU_DDS_DOMAIN_ID:=0}"
 : "${LINGTU_CYCLONEDDS_PREFIX:=}"
@@ -107,6 +109,8 @@ runtime_args=(
     --color-shm "${LINGTU_CAMERA_COLOR_SHM}"
     --depth-shm "${LINGTU_CAMERA_DEPTH_SHM}"
     --info-shm "${LINGTU_CAMERA_INFO_SHM}"
+    --shm-slot-count "${LINGTU_CAMERA_SHM_SLOT_COUNT}"
+    --shm-slot-capacity-bytes "${LINGTU_CAMERA_SHM_SLOT_CAPACITY_BYTES}"
     --status-file "${LINGTU_CAMERA_STATUS_FILE}"
     --capture-stale-timeout-ms "${LINGTU_CAMERA_CAPTURE_STALE_TIMEOUT_MS}"
 )

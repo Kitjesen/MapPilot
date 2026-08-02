@@ -16,7 +16,7 @@ details into Navigation, Gateway, UI, or transport code.
 | Planner service factory | `src/nav/services/plan/factory.py` |
 | Map-backed planner service | `src/nav/services/plan/global_planner/service.py` |
 | Saved-map bundle lookup | `src/nav/services/plan/global_planner/artifacts.py` |
-| Mapless/direct service | `src/nav/services/plan/compat/direct.py` |
+| Mapless/direct service | `src/nav/services/plan/mapless/direct.py` |
 | Backend runtime adapter | `src/nav/services/plan/global_planner/backend_runtime.py` |
 | OctoPlanner3D backend | `src/nav/services/plan/global_planner/algorithm/octoplanner3d_planner.py` |
 | Native planning contract | `src/nav/cpp/planning/global/global_planner_contract.hpp` |
@@ -28,6 +28,11 @@ details into Navigation, Gateway, UI, or transport code.
 | Mission integration | `src/nav/runtime/planning.py` |
 
 ## 2. Boundary
+
+Global planning is the saved-map Goal route. It requires a current pose and a
+target in the planning frame plus a validated active map artifact. Map-free
+exploration does not enter this boundary; it uses the native `Live` rolling
+segment route.
 
 Navigation calls the planner through one method:
 
@@ -143,7 +148,7 @@ and return `GlobalPlanResult`.
 | `octoplanner3d` | Default map-backed product planner. |
 | `far` | Explicit native 2D visibility-graph planner over validated occupancy. |
 | `pct` | Legacy/manual experiment planner. |
-| `direct` | Mapless direct path for explicit lightweight or fallback use. |
+| `direct` | Development-only mapless helper; never a field Goal fallback. |
 
 Backend-specific map formats, native libraries, subprocesses, or diagnostics
 must be normalized before leaving the planner service boundary.

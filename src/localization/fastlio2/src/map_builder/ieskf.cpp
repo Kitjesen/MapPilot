@@ -1,6 +1,7 @@
 #include "ieskf.h"
 
 #include <cmath>
+#include <limits>
 
 double State::gravity = 9.81;
 
@@ -145,8 +146,61 @@ void IESKF::injectVerticalVelocityConstraint(double sigma_v)
     clampCovariance();
 }
 
+void IESKF::beginLidarUpdateAttempt()
+{
+    const std::uint64_t previous_attempt_sequence =
+        m_lidar_update_diagnostics.attempt_sequence;
+    const std::size_t previous_consecutive_rejections =
+        m_lidar_update_diagnostics.consecutive_rejections;
+    const LidarUpdateRejectionReason previous_rejection_reason =
+        m_lidar_update_diagnostics.rejection_reason !=
+                LidarUpdateRejectionReason::None
+            ? m_lidar_update_diagnostics.rejection_reason
+            : m_lidar_update_diagnostics.previous_rejection_reason;
+
+    m_lidar_update_diagnostics = LidarUpdateDiagnostics{};
+    m_lidar_update_diagnostics.attempted = true;
+    m_lidar_update_diagnostics.attempt_sequence =
+        previous_attempt_sequence < std::numeric_limits<std::uint64_t>::max()
+            ? previous_attempt_sequence + 1U
+            : previous_attempt_sequence;
+    m_lidar_update_diagnostics.previous_rejection_reason =
+        previous_rejection_reason;
+    m_lidar_update_diagnostics.consecutive_rejections =
+        previous_consecutive_rejections;
+    m_lidar_update_diagnostics.max_update_translation_m =
+        m_max_update_translation_m;
+    m_lidar_update_diagnostics.max_update_rotation_rad =
+        m_max_update_rotation_rad;
+    m_lidar_update_diagnostics.max_update_velocity_mps =
+        m_max_update_velocity_mps;
+    m_lidar_update_diagnostics.max_update_velocity_delta_mps =
+        m_max_update_velocity_delta_mps;
+}
+
+void IESKF::recordLidarUpdateRejection(
+    LidarUpdateRejectionReason reason)
+{
+    m_lidar_update_diagnostics.accepted = false;
+    m_lidar_update_diagnostics.rejection_reason = reason;
+    if (m_lidar_update_diagnostics.consecutive_rejections <
+        std::numeric_limits<std::size_t>::max())
+    {
+        ++m_lidar_update_diagnostics.consecutive_rejections;
+    }
+}
+
+void IESKF::recordAcceptedLidarUpdate()
+{
+    m_lidar_update_diagnostics.accepted = true;
+    m_lidar_update_diagnostics.rejection_reason =
+        LidarUpdateRejectionReason::None;
+    m_lidar_update_diagnostics.consecutive_rejections = 0U;
+}
+
 bool IESKF::update()
 {
+    beginLidarUpdateAttempt();
     State predict_x = m_x;
     M21D P_prior = m_P;  // snapshot predict-time covariance for degenerate-DOF retention
     SharedState shared_data;
@@ -299,32 +353,80 @@ bool IESKF::update()
     // we ran the max iterations without convergence — flag for diagnostics.
     m_degeneracy.converged = (shared_data.iter_num < m_max_iter);
     const V21D update_delta = m_x - predict_x;
+    m_lidar_update_diagnostics.effective_points =
+        shared_data.effective_points;
+    m_lidar_update_diagnostics.candidate_translation_m =
+        update_delta.segment<3>(3).norm();
+    m_lidar_update_diagnostics.candidate_rotation_rad =
+        update_delta.segment<3>(0).norm();
+    m_lidar_update_diagnostics.candidate_velocity_mps =
+        m_x.v.norm();
+    m_lidar_update_diagnostics.candidate_velocity_delta_mps =
+        update_delta.segment<3>(12).norm();
     const bool update_translation_too_large =
         m_max_update_translation_m > 0.0
-        && update_delta.segment<3>(3).norm() > m_max_update_translation_m;
+        && m_lidar_update_diagnostics.candidate_translation_m >
+            m_max_update_translation_m;
     const bool update_rotation_too_large =
         m_max_update_rotation_rad > 0.0
-        && update_delta.segment<3>(0).norm() > m_max_update_rotation_rad;
+        && m_lidar_update_diagnostics.candidate_rotation_rad >
+            m_max_update_rotation_rad;
     const bool velocity_too_large =
         m_max_update_velocity_mps > 0.0
-        && m_x.v.norm() > m_max_update_velocity_mps;
+        && m_lidar_update_diagnostics.candidate_velocity_mps >
+            m_max_update_velocity_mps;
     const bool velocity_delta_too_large =
         m_max_update_velocity_delta_mps > 0.0
-        && update_delta.segment<3>(12).norm() > m_max_update_velocity_delta_mps;
+        && m_lidar_update_diagnostics.candidate_velocity_delta_mps >
+            m_max_update_velocity_delta_mps;
+
+    LidarUpdateRejectionReason guard_rejection =
+        LidarUpdateRejectionReason::None;
+    if (!has_valid_measurement)
+    {
+        guard_rejection = LidarUpdateRejectionReason::NoValidMeasurement;
+    }
+    else if (pathological)
+    {
+        guard_rejection = LidarUpdateRejectionReason::PathologicalDegeneracy;
+    }
+    else if (update_translation_too_large)
+    {
+        guard_rejection =
+            LidarUpdateRejectionReason::CandidateTranslationLimitExceeded;
+    }
+    else if (update_rotation_too_large)
+    {
+        guard_rejection =
+            LidarUpdateRejectionReason::CandidateRotationLimitExceeded;
+    }
+    else if (velocity_too_large)
+    {
+        guard_rejection =
+            LidarUpdateRejectionReason::CandidateVelocityLimitExceeded;
+    }
+    else if (velocity_delta_too_large)
+    {
+        guard_rejection =
+            LidarUpdateRejectionReason::CandidateVelocityDeltaLimitExceeded;
+    }
+    else if (m_reject_nonconverged_update && !m_degeneracy.converged)
+    {
+        guard_rejection = LidarUpdateRejectionReason::NonconvergedUpdate;
+    }
+    else if (m_reject_degenerate_nonconverged_update
+             && has_degeneracy
+             && !m_degeneracy.converged)
+    {
+        guard_rejection =
+            LidarUpdateRejectionReason::DegenerateNonconvergedUpdate;
+    }
 
     // Pathological degeneracy: revert to IMU prediction entirely (eigenbasis
     // is numerically unreliable so OC projection cannot be trusted either).
-    if (!has_valid_measurement
-        || pathological
-        || update_translation_too_large
-        || update_rotation_too_large
-        || velocity_too_large
-        || velocity_delta_too_large
-        || (m_reject_nonconverged_update && !m_degeneracy.converged)
-        || (m_reject_degenerate_nonconverged_update
-            && has_degeneracy
-            && !m_degeneracy.converged))
+    if (guard_rejection != LidarUpdateRejectionReason::None)
     {
+        recordLidarUpdateRejection(guard_rejection);
         m_x = predict_x;
         clampCovariance();
         m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
@@ -335,8 +437,19 @@ bool IESKF::update()
     L.block<3, 3>(0, 0) = Jr(delta.segment<3>(0));
     L.block<3, 3>(6, 6) = Jr(delta.segment<3>(6));
     auto H_ldlt = H.ldlt();
-    if (H_ldlt.info() != Eigen::Success || !H_ldlt.isPositive())
+    m_lidar_update_diagnostics.information_ldlt_evaluated = true;
+    m_lidar_update_diagnostics.information_ldlt_decomposition_success =
+        H_ldlt.info() == Eigen::Success;
+    m_lidar_update_diagnostics.information_ldlt_positive =
+        m_lidar_update_diagnostics.information_ldlt_decomposition_success
+        && H_ldlt.isPositive();
+    if (!m_lidar_update_diagnostics.information_ldlt_decomposition_success
+        || !m_lidar_update_diagnostics.information_ldlt_positive)
     {
+        recordLidarUpdateRejection(
+            m_lidar_update_diagnostics.information_ldlt_decomposition_success
+                ? LidarUpdateRejectionReason::InformationLdltNotPositive
+                : LidarUpdateRejectionReason::InformationLdltDecompositionFailed);
         m_x = predict_x;
         m_P = P_prior;
         clampCovariance();
@@ -345,9 +458,19 @@ bool IESKF::update()
     }
     M21D P_candidate = L * H_ldlt.solve(L.transpose());  // P = L * H^{-1} * L^T
     P_candidate = (0.5 * (P_candidate + P_candidate.transpose())).eval();
-    if (!P_candidate.allFinite()
-        || (P_candidate.diagonal().array() <= 0.0).any())
+    m_lidar_update_diagnostics.candidate_covariance_evaluated = true;
+    m_lidar_update_diagnostics.candidate_covariance_finite =
+        P_candidate.allFinite();
+    m_lidar_update_diagnostics.candidate_covariance_positive_diagonal =
+        m_lidar_update_diagnostics.candidate_covariance_finite
+        && (P_candidate.diagonal().array() > 0.0).all();
+    if (!m_lidar_update_diagnostics.candidate_covariance_finite
+        || !m_lidar_update_diagnostics.candidate_covariance_positive_diagonal)
     {
+        recordLidarUpdateRejection(
+            m_lidar_update_diagnostics.candidate_covariance_finite
+                ? LidarUpdateRejectionReason::CandidateCovarianceNonpositiveDiagonal
+                : LidarUpdateRejectionReason::CandidateCovarianceNonfinite);
         m_x = predict_x;
         m_P = P_prior;
         clampCovariance();
@@ -378,8 +501,19 @@ bool IESKF::update()
         m_P.block<6, 6>(0, 0) = saved_evecs * P_post_eig * saved_evecs.transpose();
     }
     m_P = (0.5 * (m_P + m_P.transpose())).eval();
-    if (!m_P.allFinite() || (m_P.diagonal().array() <= 0.0).any())
+    m_lidar_update_diagnostics.posterior_covariance_evaluated = true;
+    m_lidar_update_diagnostics.posterior_covariance_finite =
+        m_P.allFinite();
+    m_lidar_update_diagnostics.posterior_covariance_positive_diagonal =
+        m_lidar_update_diagnostics.posterior_covariance_finite
+        && (m_P.diagonal().array() > 0.0).all();
+    if (!m_lidar_update_diagnostics.posterior_covariance_finite
+        || !m_lidar_update_diagnostics.posterior_covariance_positive_diagonal)
     {
+        recordLidarUpdateRejection(
+            m_lidar_update_diagnostics.posterior_covariance_finite
+                ? LidarUpdateRejectionReason::PosteriorCovarianceNonpositiveDiagonal
+                : LidarUpdateRejectionReason::PosteriorCovarianceNonfinite);
         m_x = predict_x;
         m_P = P_prior;
         clampCovariance();
@@ -389,5 +523,6 @@ bool IESKF::update()
 
     clampCovariance();
     m_degeneracy.pos_cov_trace = m_P.diagonal().segment<3>(3).sum();
+    recordAcceptedLidarUpdate();
     return true;
 }

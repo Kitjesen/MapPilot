@@ -128,7 +128,7 @@ occupancy.npz
 If the planner returns no path:
 
 1. Confirm the goal is inside the loaded map.
-2. Run `lingtu plan-preview --internal-only --strict`.
+2. Run `bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy`.
 3. Check `octomap.ot` and `metadata.json`.
 4. Rebuild map artifacts from `lingtu map save <name>` or the Gateway map API.
 5. Lower traversability/cost strictness only after map artifacts are healthy.
@@ -184,7 +184,7 @@ diagnostic tools only. Product localization still needs the real SLAM chain.
 ### Planner Returns Empty Path
 
 1. Check active map and goal coordinates.
-2. Run `lingtu plan-preview --internal-only --strict`.
+2. Run `bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy`.
 3. Rebuild `octomap.ot` and `occupancy.npz`.
 4. Treat `tomogram.pickle` as legacy/PCT unless the profile explicitly selects
    PCT.
@@ -200,10 +200,10 @@ curl "http://${LINGTU_HOST}:5050/api/v1/config" | jq '.path_follower'
 curl "http://${LINGTU_HOST}:5050/api/v1/health" | jq '.'
 ```
 
-REPL:
+Local simulation REPL:
 
 ```bash
-python lingtu.py nav
+python lingtu.py sim_nav
 > config local_planner
 > module PathFollowerModule
 > teleop status
@@ -213,7 +213,7 @@ Robot operations CLI:
 
 ```bash
 bash scripts/lingtu status
-bash scripts/lingtu plan-preview --internal-only --strict
+bash scripts/lingtu doctor --non-motion --strict
 ```
 
 ## Safety Baselines

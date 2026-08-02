@@ -212,6 +212,11 @@ class DynamicClearCore {
       if (ev.last_hit_frame != current_frame) {
         ev.last_hit_frame = current_frame;
         ++ev.frames;
+        // A fresh hit invalidates all accumulated raycast-free evidence for
+        // this voxel; without this reset, stale free_frames from a previous
+        // clearing episode could incorrectly remove a re-observed obstacle.
+        ev.free_hits = 0;
+        ev.free_frames = 0;
       }
       ev.last_seen_s = stamp_s;
     }
@@ -228,7 +233,7 @@ class DynamicClearCore {
     std::unordered_set<DynamicVoxelKey, DynamicVoxelHash> free_keys;
     free_keys.reserve(p_.maxRayCount * 64);
     for (std::size_t i = 0; i < endpoints.size(); i += stride) {
-      collectRayFree(origin, endpoints[i], free_keys);
+      collectRayFree(origin, endpoints[i], hit_keys, free_keys);
       ++stats.raycast_rays;
     }
     stats.raycast_voxels = free_keys.size();
@@ -249,6 +254,7 @@ class DynamicClearCore {
   void collectRayFree(
       const DynamicClearOrigin& origin,
       const CurrentPoint& endpoint,
+      const std::unordered_set<DynamicVoxelKey, DynamicVoxelHash>& occupied,
       std::unordered_set<DynamicVoxelKey, DynamicVoxelHash>& free_keys) const {
     const double dx = static_cast<double>(endpoint.x) - origin.x;
     const double dy = static_cast<double>(endpoint.y) - origin.y;
@@ -264,10 +270,17 @@ class DynamicClearCore {
     const int steps = static_cast<int>(std::floor(stop / step));
     for (int i = 1; i <= steps; ++i) {
       const double t = (static_cast<double>(i) * step) / range;
-      free_keys.insert(voxelKey(
+      const DynamicVoxelKey key = voxelKey(
           static_cast<float>(origin.x + dx * t),
           static_cast<float>(origin.y + dy * t),
-          static_cast<float>(origin.z + dz * t)));
+          static_cast<float>(origin.z + dz * t));
+      // Stop at the first currently-occupied voxel: the ray is blocked there,
+      // so voxels beyond it must not be marked free (prevents clearing
+      // legitimate obstacles hidden behind a nearer surface).
+      if (occupied.count(key) != 0) {
+        break;
+      }
+      free_keys.insert(key);
     }
   }
 

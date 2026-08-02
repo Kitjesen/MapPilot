@@ -95,6 +95,7 @@ struct TerrainParams {
   // Planar grid (finer resolution for ground estimation)
   double planarVoxelSize = 0.2;
   int planarVoxelHalfWidth = 25;  // grid is (2*half+1)^2
+  int workerThreads = 2;
 };
 
 // ── Result ──
@@ -157,6 +158,11 @@ public:
     R_[0][0] = cy*cp; R_[0][1] = cy*sp*sr - sy*cr; R_[0][2] = cy*sp*cr + sy*sr;
     R_[1][0] = sy*cp; R_[1][1] = sy*sp*sr + cy*cr; R_[1][2] = sy*sp*cr - cy*sr;
     R_[2][0] = -sp;   R_[2][1] = cp*sr;             R_[2][2] = cp*cr;
+
+    // Precompute inverse rotation trig for body-frame FOV check
+    dyaw_c_ = static_cast<float>(cy);  dyaw_s_ = static_cast<float>(sy);
+    dpitch_c_ = static_cast<float>(cp); dpitch_s_ = static_cast<float>(sp);
+    droll_c_ = static_cast<float>(cr);  droll_s_ = static_cast<float>(sr);
 
     if (noDataInited_ == 0) {
       vrecx_ = vx_; vrecy_ = vy_;
@@ -337,6 +343,11 @@ private:
   double vrecx_ = 0, vrecy_ = 0;
   int noDataInited_ = 0;
 
+  // Precomputed body-frame rotation (inverse ZYX) for dynamic obstacle FOV check
+  float dyaw_c_ = 1, dyaw_s_ = 0;
+  float dpitch_c_ = 1, dpitch_s_ = 0;
+  float droll_c_ = 1, droll_s_ = 0;
+
   // System time
   bool systemInited_ = false;
   double systemInitTime_ = 0;
@@ -409,7 +420,8 @@ private:
     double timeThre = p_.voxelTimeUpdateThre;
 
     // Each voxel is independent -- parallel-safe (no shared writes)
-    #pragma omp parallel for schedule(dynamic, 16) if(terrainVoxelNum_ >= 100)
+    const int workerThreads = std::clamp(p_.workerThreads, 1, 4);
+    #pragma omp parallel for schedule(static, 16) num_threads(workerThreads) if(terrainVoxelNum_ >= 100 && workerThreads > 1)
     for (int idx = 0; idx < terrainVoxelNum_; idx++) {
       auto& vc = terrainVoxelCloud_[idx];
       const bool over_limit =
@@ -618,7 +630,8 @@ private:
       bool limitLift = p_.limitGroundLift;
       float maxLift = static_cast<float>(p_.maxGroundLift);
       // 2601 voxels, each nth_element is independent --embarrassingly parallel
-      #pragma omp parallel for schedule(dynamic, 64) if(planarVoxelNum_ >= 256)
+      const int workerThreads = std::clamp(p_.workerThreads, 1, 4);
+      #pragma omp parallel for schedule(static, 64) num_threads(workerThreads) if(planarVoxelNum_ >= 256 && workerThreads > 1)
       for (int i = 0; i < planarVoxelNum_; i++) {
         auto& elev = planarPointElev_[i];
         if (elev.empty()) continue;
@@ -636,7 +649,8 @@ private:
         }
       }
     } else {
-      #pragma omp parallel for schedule(dynamic, 64) if(planarVoxelNum_ >= 256)
+      const int workerThreads = std::clamp(p_.workerThreads, 1, 4);
+      #pragma omp parallel for schedule(static, 64) num_threads(workerThreads) if(planarVoxelNum_ >= 256 && workerThreads > 1)
       for (int i = 0; i < planarVoxelNum_; i++) {
         auto& elev = planarPointElev_[i];
         if (!elev.empty())
@@ -832,21 +846,16 @@ private:
       if (angle <= static_cast<float>(p_.minDyObsAngle)) {
         return;
       }
-      const float cy = std::cos(static_cast<float>(vyaw_));
-      const float sy = std::sin(static_cast<float>(vyaw_));
-      const float cp = std::cos(static_cast<float>(vpitch_));
-      const float sp = std::sin(static_cast<float>(vpitch_));
-      const float cr = std::cos(static_cast<float>(vroll_));
-      const float sr = std::sin(static_cast<float>(vroll_));
-      const float x2 = dx * cy + dy * sy;
-      const float y2 = -dx * sy + dy * cy;
+      // Use precomputed body-frame rotation (constant per frame)
+      const float x2 = dx * dyaw_c_ + dy * dyaw_s_;
+      const float y2 = -dx * dyaw_s_ + dy * dyaw_c_;
       const float z2 = dz;
-      const float x3 = x2 * cp - z2 * sp;
+      const float x3 = x2 * dpitch_c_ - z2 * dpitch_s_;
       const float y3 = y2;
-      const float z3 = x2 * sp + z2 * cp;
+      const float z3 = x2 * dpitch_s_ + z2 * dpitch_c_;
       const float x4 = x3;
-      const float y4 = y3 * cr + z3 * sr;
-      const float z4 = -y3 * sr + z3 * cr;
+      const float y4 = y3 * droll_c_ + z3 * droll_s_;
+      const float z4 = -y3 * droll_s_ + z3 * droll_c_;
       const float dis4 = std::sqrt(x4 * x4 + y4 * y4);
       const float angle4 =
           std::atan2(z4, std::max(dis4, 1e-6f)) * 180.0f / static_cast<float>(M_PI);

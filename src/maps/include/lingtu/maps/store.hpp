@@ -37,6 +37,28 @@ struct ArtifactCheck {
   std::string sha256;
 };
 
+struct DeclaredArtifactIdentity {
+  std::string map_id;
+  std::int64_t version{0};
+  ArtifactType type{ArtifactType::kPointCloud};
+  std::filesystem::path map_dir;
+  std::filesystem::path artifact_path;
+  std::string artifact_sha256;
+  std::string frame_id;
+
+  bool valid() const {
+    return !map_id.empty() && version > 0 && !artifact_sha256.empty() &&
+        !frame_id.empty() && !artifact_path.empty();
+  }
+};
+
+struct DeclaredArtifactIdentityResult {
+  std::optional<DeclaredArtifactIdentity> identity;
+  std::string reason;
+
+  bool ok() const { return identity.has_value(); }
+};
+
 struct ArtifactValidationResult {
   bool ok{false};
   bool map_found{false};
@@ -74,6 +96,10 @@ class MapStore {
   MapStoreResult DeleteMap(const std::string& map_id);
   MapStoreResult RenameMap(const std::string& map_id, const std::string& new_map_id);
   MapStoreResult RetireMap(const std::string& map_id);
+  DeclaredArtifactIdentityResult ReadDeclaredArtifactIdentity(
+      const std::string& map_id,
+      ArtifactType type,
+      const std::string& expected_frame_id) const;
   ArtifactValidationResult ValidateArtifacts(
       const std::string& map_id,
       const ArtifactValidationOptions& options) const;

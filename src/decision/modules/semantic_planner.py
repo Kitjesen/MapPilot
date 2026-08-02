@@ -178,13 +178,12 @@ class SemanticPlannerModule(Module, layer=4):
         self._backends = BackendManager(modules)
         self._nav_goal_service_available = self._backends.get("nav.goals") is not None
         self._nav_building_service_available = self._backends.get("nav.building") is not None
-        self._maps_service = self._backends.get("maps.service") or self._backends.get("MapsModule")
+        self._maps_service = self._backends.get("maps.service")
         self._place_catalog = None
         if self._maps_service is None:
             return
         try:
-            # Prefer the dict-returning API service; the MapsModule skill
-            # compatibility methods intentionally return JSON strings.
+            # Prefer the dict-returning maps service interface.
             catalog_source = getattr(self._maps_service, "api", None) or self._maps_service
             self._place_catalog = PlaceCatalog(catalog_source)
         except Exception as exc:
@@ -307,10 +306,10 @@ class SemanticPlannerModule(Module, layer=4):
         if self._try_semantic_navigation_intent(text):
             return
 
-        self._continue_legacy_instruction(text)
+        self._continue_scene_resolution(text)
 
-    def _continue_legacy_instruction(self, text: str) -> None:
-        """Run the pre-existing scene-graph/vector/frontier path for ``text``."""
+    def _continue_scene_resolution(self, text: str) -> None:
+        """Run scene-graph, vector-memory, and frontier resolution for ``text``."""
 
         plan = self._decompose(text)
         if plan:
@@ -333,7 +332,7 @@ class SemanticPlannerModule(Module, layer=4):
         """Handle first-version symbolic navigation commands before scene-graph matching.
 
         Returns True when the command has been safely handled or intentionally
-        refused.  Returns False when legacy scene-graph/vector/frontier behavior
+        refused. Returns False when scene-graph/vector/frontier resolution
         should continue.
         """
 
@@ -491,8 +490,12 @@ class SemanticPlannerModule(Module, layer=4):
         if not self._handle_place_navigation_intent(intent, expected_symbolic_epoch=epoch):
             if not self._symbolic_llm_epoch_is_current(epoch):
                 return
-            self._chat("thinking", "Symbolic intent was not grounded; trying legacy navigation.", phase="semantic_llm")
-            self._continue_legacy_instruction(raw_text)
+            self._chat(
+                "thinking",
+                "Symbolic intent was not grounded; trying scene-based resolution.",
+                phase="semantic_llm",
+            )
+            self._continue_scene_resolution(raw_text)
 
     @staticmethod
     def _parse_symbolic_llm_json(text: str) -> dict[str, Any] | None:
@@ -519,35 +522,37 @@ class SemanticPlannerModule(Module, layer=4):
             )
             return
 
-        action_payload: dict[SemanticAction, dict[str, str]] = {
-            SemanticAction.START_TOUR: {
-                "action": "inspection",
-                "route_id": intent.tour_id,
-            },
-            SemanticAction.PAUSE_TOUR: {
-                "action": "inspection_pause",
-                "reason": "semantic_pause",
-            },
-            SemanticAction.RESUME_TOUR: {
-                "action": "inspection_resume",
-                "reason": "semantic_resume",
-            },
-            SemanticAction.CANCEL_TOUR: {
-                "action": "inspection_cancel",
-                "reason": "semantic_cancel",
-            },
-        }
-        payload = action_payload.get(intent.action)
-        if payload is None:
+        if intent.action in {
+            SemanticAction.PAUSE_TOUR,
+            SemanticAction.RESUME_TOUR,
+            SemanticAction.CANCEL_TOUR,
+        }:
+            # A semantic phrase such as "pause the tour" has no stable task
+            # identity.  Sending it to a singleton/current-task compatibility
+            # API could control a different operator's run, so keep the
+            # selection explicit in the task console until session-scoped task
+            # selection is designed and wired end-to-end.
+            self.planner_status.publish("TOUR_TASK_SELECTION_REQUIRED")
+            self._chat(
+                "assistant",
+                "Select the inspection task in the operations console before pausing, resuming, or cancelling it.",
+                phase="tour",
+            )
+            return
+        if intent.action is not SemanticAction.START_TOUR:
             self.planner_status.publish("TOUR_COMMAND_REJECTED")
             return
+        payload = {
+            "action": "inspection",
+            "route_id": intent.tour_id,
+        }
         if expected_symbolic_epoch is not None and not self._symbolic_llm_epoch_is_current(expected_symbolic_epoch):
             return
         self.nav_command.publish(_json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
-        self.planner_status.publish("TOUR_COMMAND_DISPATCHED")
+        self.planner_status.publish("TOUR_SUBMISSION_REQUESTED")
         self._chat(
             "assistant",
-            "Tour command sent to the native inspection service.",
+            "Tour task submission requested; waiting for native task confirmation.",
             phase="tour",
         )
 

@@ -18,6 +18,7 @@ struct VoxelLayerConfig {
   float max_z_m{3.0F};
   float decay_rate{0.01F};
   float prune_below_count{1.0F};
+  std::size_t max_voxels{500000U};
   bool column_carving{true};
 };
 
@@ -28,9 +29,26 @@ struct VoxelUpdateStats {
   std::size_t input_columns{0};
   std::size_t carved_columns{0};
   std::size_t carved_voxels{0};
+  std::size_t capacity_rejected_voxels{0};
   std::size_t total_voxels{0};
   std::string frame_id{"map"};
   bool column_carving{true};
+};
+
+struct VoxelSnapshotRequest {
+  float center_x_m{0.0F};
+  float center_y_m{0.0F};
+  float radius_m{30.0F};
+  float min_z_m{-3.0F};
+  float max_z_m{5.0F};
+  std::size_t max_points{200000U};
+};
+
+struct VoxelSnapshotStats {
+  std::size_t total_voxels{0U};
+  std::size_t eligible_voxels{0U};
+  std::size_t published_points{0U};
+  std::size_t omitted_voxels{0U};
 };
 
 class VoxelLayer {
@@ -48,6 +66,9 @@ class VoxelLayerCore final : public VoxelLayer {
   void Reset() override;
   void Update(const MapCloudFrame& frame) override;
   OwnedPointCloud SnapshotCloud() const override;
+  OwnedPointCloud SnapshotCloud(
+      const VoxelSnapshotRequest& request,
+      VoxelSnapshotStats* stats) const;
 
   void Decay();
   bool Contains(float x_m, float y_m, float z_m) const;
@@ -92,7 +113,10 @@ class VoxelLayerCore final : public VoxelLayer {
       float* z_m);
 
   std::size_t CarveColumnsUnlocked(
-      const std::unordered_map<ColumnKey, bool, ColumnKeyHash>& columns);
+      const std::unordered_map<ColumnKey, bool, ColumnKeyHash>& columns,
+      bool z_range_enabled,
+      float min_z_m,
+      float max_z_m);
 
   VoxelLayerConfig config_;
   mutable std::mutex mutex_;

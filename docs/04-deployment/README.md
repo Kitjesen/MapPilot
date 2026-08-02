@@ -1,17 +1,17 @@
 # LingTu Thunder Deployment
 
-Status: current Thunder deployment guide as of 2026-07-18.
+Status: current Thunder deployment guide as of 2026-07-25.
 
 How LingTu is laid out on the field robot, how to install, update, roll back,
 and diagnose the running stack. The product runtime is native DDS plus
-Module-first Python/C++ services; ROS 2 compatibility services are optional
+Product-managed native services and scoped Host Modules; ROS 2 compatibility services are optional
 fallbacks and must be enabled explicitly.
 
 ## One-Liner Status
 
 ```bash
 export LINGTU_ROBOT_HOST=ROBOT_IP_OR_HOSTNAME
-ssh sunrise@"$LINGTU_ROBOT_HOST" 'systemctl status lingtu-livox-dds lingtu-slam-dds lingtu-nav-dds lingtu-driver lingtu'
+ssh sunrise@"$LINGTU_ROBOT_HOST" 'systemctl status lingtu-livox-dds lingtu-slam-dds mapd lingtu-traversability-dds lingtu-nav-dds lingtu-driver lingtu'
 ssh sunrise@"$LINGTU_ROBOT_HOST" 'bash /opt/lingtu/current/scripts/lingtu status'
 ```
 
@@ -22,25 +22,32 @@ The `lingtu` CLI gives an 8-section snapshot; see `lingtu_cli.md`.
 ```text
 Sensor DDS     lingtu-livox-dds     Livox SDK2 -> typed DDS       [systemd]
 SLAM DDS       lingtu-slam-dds      C++ SLAM runtime + snapshots  [systemd]
+Maps           mapd                 Native layers/state/scene     [systemd]
+Risk Grid      traversability       Native control-risk grid      [systemd]
 Nav Endpoint   lingtu-nav-dds       Native DDS planner/control    [systemd]
 Driver         lingtu-driver        DDS cmd_vel -> Brainstem gRPC [systemd]
 
 Control        remote Brainstem     Dart gRPC :13145              [external]
-Camera         robot-camera         Orbbec camera service         [systemd]
+Camera         lingtu-camera-dds     Native Orbbec -> typed DDS    [systemd]
 
-Application    lingtu               python lingtu.py nav          [systemd]
-                                     HTTP :5050  MCP :8090
+Host           lingtu               RunPlan -> Blueprint          [systemd]
+                                     Gateway HTTP :5050 / MCP :8090
 ```
 
-`robot-fastlio2.service`, `robot-localizer.service`, and `robot-lidar.service`
-are legacy ROS2 compatibility units. They are useful for fallback or comparison
-work, but they are not the product default and should not run beside the native
-DDS chain unless a specific compatibility test requires it.
+Product mode changes run through
+`scripts/lingtu -> lingtu.control.ProductControl -> systemd`.
+`lingtu.py` is the Host process entry after it verifies the published RunPlan;
+it is not a second field-process controller.
 
-Runtime plugin registration follows the same rule: ROS2 adapter groups such as
-`ros2_slam_bridge` and `ros2_map_output` are not part of the product plugin
-catalog unless `LINGTU_ENABLE_ROS2_COMPAT=1` or
-`LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` is set before startup.
+`robot-camera.service`, `robot-fastlio2.service`,
+`robot-localizer.service`, and `robot-lidar.service` are retired ROS2 unit-name
+tombstones. The repository ships neither their templates nor an installer, and
+ProductControl never starts them. Doctor, the service catalog, and the real-env
+conflict list retain the names only to detect externally installed conflicts.
+
+Runtime plugin registration is a separate opt-in boundary: ROS2 adapter groups
+such as `ros2_slam_bridge` and `ros2_map_output` are not part of the product
+plugin catalog unless `LINGTU_ENABLE_ROS2_COMPAT=1` is set before startup.
 
 There is no standalone `lingtu-gateway.service`: Gateway runs inside
 `lingtu.service` and exposes HTTP `:5050` plus MCP `:8090` from the same
@@ -52,13 +59,14 @@ In the current field path, `lingtu.service` runs with
 publishes the only product velocity stream (`rt/nav/cmd_vel`), and
 `lingtu-driver.service` is the unique speed exit to the remote Brainstem gRPC
 server. The Python application must not enable a second robot driver in this
-profile.
+Product.
 
-Only `robot-camera.service` should own the Orbbec ROS driver. Legacy camera
-units such as `camera.service` or `orbbec-camera.service` must stay stopped or
-masked; if they run together with `robot-camera.service`, duplicate Orbbec node
-instances or image publishers can appear. Seeing one `/camera/camera` node and
-one `/camera/camera_container` node is normal for the component launch.
+`lingtu-camera-dds.service` owns the current native Orbbec capture path.
+`robot-camera.service`, `camera.service`, and `orbbec-camera.service` are
+retired unit-name tombstones kept only for conflict detection. If any is
+externally installed, disable or remove it before starting
+`lingtu-camera-dds.service`. The `/camera/camera` and
+`/camera/camera_container` nodes belong only to that historical graph.
 
 ## Service Inventory
 
@@ -66,13 +74,15 @@ one `/camera/camera_container` node is normal for the component launch.
 | --- | --- | --- |
 | `lingtu-livox-dds` | Livox MID-360 SDK2 publisher into typed DDS | yes |
 | `lingtu-slam-dds` | C++ SLAM/localization runtime and status snapshots | yes |
-| `lingtu-nav-dds` | Native DDS navigation endpoint | yes |
+| `mapd` | Native realtime map ingestion, layers, state, and scene | yes where declared by Product |
+| `lingtu-traversability-dds` | Native control-risk grid and unique `/nav/traversability` writer | yes for obstacle-aware Products |
+| `lingtu-nav-dds` | Native DDS navigation endpoint and final logical command owner | yes |
 | `lingtu-driver` | Native Thunder driver: typed DDS `rt/nav/cmd_vel` to remote Brainstem gRPC | yes |
-| `lingtu` | Gateway, session control, navigation module graph | yes |
+| `lingtu` | Python Host for Gateway, Agent, MCP, and low-rate adapters | yes |
 | remote Brainstem | Quadruped leg-control gRPC on a separate computer | yes |
-| `robot-camera` | Camera service | yes |
-| `robot-fastlio2` / `robot-localizer` / `robot-lidar` | ROS2 compatibility fallback | no |
-| `robot-genz-icp` / `robot-hba` / `robot-super-lio*` | experimental evaluation backends | no |
+| `lingtu-camera-dds` | Native Orbbec capture and typed DDS publisher | yes where declared by Product |
+| `lingtu-explore-dds` | Native exploration policy process | yes where declared by Product |
+| `robot-camera` / `robot-fastlio2` / `robot-localizer` / `robot-lidar` | retired ROS2 unit-name tombstones; external conflicts only | no |
 
 ## Filesystem Layout
 
@@ -89,7 +99,11 @@ one `/camera/camera_container` node is normal for the component launch.
 /etc/systemd/system/
   lingtu-livox-dds.service
   lingtu-slam-dds.service
+  mapd.service
+  lingtu-traversability-dds.service
   lingtu-nav-dds.service
+  lingtu-camera-dds.service
+  lingtu-explore-dds.service
   lingtu-driver.service
   lingtu.service
 
@@ -107,8 +121,10 @@ Developer checkout on the robot usually lives at
 cd ~/data/SLAM/navigation
 bash scripts/build/build_livox_sdk2_stream.sh
 LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh
+bash scripts/build/build_mapd.sh
 bash scripts/build/build_nav_endpoint.sh
 bash scripts/build/build_driver.sh
+bash scripts/build/build_native_recording.sh
 bash scripts/build/build_nav_kernel.sh --clean
 bash scripts/build/build_octoplanner3d.sh --require-pcl
 
@@ -124,17 +140,14 @@ LINGTU_BRAINSTEM_TLS_CERT_FILE=/opt/lingtu/config/tls/lingtu-driver.crt \
 LINGTU_BRAINSTEM_TLS_KEY_FILE=/opt/lingtu/config/tls/lingtu-driver.key \
   bash scripts/deploy/thunder/install_services.sh field-cpp
 
-# 4. Start the selected product through its resolved RuntimePlan
-bash scripts/lingtu mode switch nav --map MAP_NAME --endpoint thunder_field
+# 4. Start the Product through ProductControl in env=real
+bash scripts/lingtu --env real mode switch nav --map MAP_NAME
 ```
 
-The product command validates the map and endpoint contract, removes stale
+The Product command validates the map and RunPlan contract, removes stale
 mode-owned services, starts the declared processes in dependency order, and
 waits for role-specific readiness. Direct multi-service `systemctl start`
 commands are diagnostic procedures, not a supported product startup path.
-
-The legacy installer under `docs/04-deployment/services/install.sh` is guarded by
-`LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1` and should not be used for new installs.
 
 The driver installer persists the remote endpoint to
 `/opt/lingtu/config/brainstem.env`. The remote Brainstem must support the
@@ -172,8 +185,15 @@ LINGTU_RELEASE_GLOBAL_PLANNER=far \
 
 That release requires the active, validated `occupancy.npz`; it does not
 silently fall back to OctoPlanner3D. The nanobind Python kernel is optional via
-`LINGTU_RELEASE_REQUIRE_PYTHON_NAV_KERNEL=1`. ROS2 compatibility package checks
-run only when `LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
+`LINGTU_RELEASE_REQUIRE_PYTHON_NAV_KERNEL=1`.
+
+Before any build or activation, `cut_release.sh` loads the canonical
+ProductControl `current.json` and its referenced RunPlan. A missing record,
+invalid fingerprint, or Product/Env mismatch stops the release. Product identity,
+native control mode, and the driver/mapd process targets come from that exact
+RunPlan; ambient `LINGTU_PRODUCT` values and hand-written unit lists are not
+release inputs. ROS2 compatibility packages and services are outside this native
+release path and remain isolated under `scripts/compat/ros2/`.
 
 ## Common Operations
 
@@ -181,9 +201,12 @@ run only when `LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1`.
 | --- | --- |
 | One-screen status | `bash scripts/lingtu status` |
 | Watch status | `bash scripts/lingtu watch` |
-| Restart native SLAM | `bash scripts/lingtu svc restart slam` |
-| Restart localization chain | `bash scripts/lingtu svc restart localization` |
-| Restart full native chain | `bash scripts/lingtu svc restart all` |
+| Restart the logical SLAM process | `bash scripts/lingtu svc restart slam` |
+| Restart the logical Host process | `bash scripts/lingtu svc restart host` |
+| Reapply the committed Product | `bash scripts/lingtu svc reapply` |
+| Record native DDS | `bash scripts/lingtu record` |
+| Record native DDS and camera | `bash scripts/lingtu record --camera` |
+| Verify a recording | `bash scripts/lingtu record verify SESSION_DIR` |
 | Tail app logs | `journalctl -u lingtu -f` |
 | Tail native SLAM logs | `journalctl -u lingtu-slam-dds -f` |
 | Tail native Livox logs | `journalctl -u lingtu-livox-dds -f` |
@@ -225,52 +248,50 @@ Use `lingtu doctor --ros2` only for explicit compatibility graph inspection.
 bash scripts/lingtu dataflow /nav/odometry
 bash scripts/lingtu dataflow /nav/map_cloud
 bash scripts/lingtu soak --duration 120 --interval 2 --json --strict
-bash scripts/lingtu svc restart localization
+bash scripts/lingtu svc restart slam
 ```
 
 `lingtu soak` is the preferred non-motion evidence command after boot or sensor
 reconnects. It samples Gateway readiness, localization freshness, map-cloud
 stability, command-source idleness, and stationary odometry displacement.
 
-`svc restart localization` is the narrow restart path for native localization:
-it stops conflicting legacy/experimental localization units, keeps or starts
-`lingtu-livox-dds.service`, restarts `lingtu-slam-dds.service`, then waits for
-the SLAM status snapshot and Gateway readiness. Use `svc restart all` only when
-Livox, SLAM, nav DDS, and Gateway all need a cold restart.
+`svc restart slam` is a thin operator entry. It sends the logical `slam` label
+unchanged to ProductControl, which resolves and restarts exactly that process
+from the committed RunPlan and owns its readiness and failure handling. Bash
+does not select a backend, sequence a service chain, or poll readiness itself.
+Use `svc reapply` (equivalently, `svc restart all`) only when the exact committed
+Product must be reapplied.
 
 Restart and relocalization are different gates:
 
 | Operation | Command | What It Proves |
 | --- | --- | --- |
-| Restart localization process | `bash scripts/lingtu svc restart localization` | native SLAM DDS can restart and produce status again |
+| Restart SLAM process | `bash scripts/lingtu svc restart slam` | the single native SLAM DDS process can restart and produce status again |
 | Seeded saved-map relocalization | `bash scripts/lingtu nav relocalize <map> X Y YAW` | saved map accepts an operator-provided initial pose |
 | Global saved-map relocalization | `bash scripts/lingtu nav global-relocalize <map>` | backend can find a saved-map alignment without a seed |
-| Static drift gate | `bash scripts/lingtu slamcompare --map <map>` | stationary pose stays within configured drift limits |
+| Stationary RunPlan gate | `bash scripts/lingtu doctor --non-motion --strict` | declared processes and live no-motion readiness agree |
+| Integrated saved-map/plan gate | `bash scripts/lingtu system-acceptance --map <map> --goal X Y YAW` | map, localization, and requested plan evidence pass without motion |
 
 Do not treat `TRACKING` alone as navigation-ready. For saved-map navigation,
 `map_odom_tf` must be valid and the odometry must be inside the active map
 frame. A relocalization result with low quality or identity `map->odom` is a
 failed localization gate even if the SLAM process is alive.
 
-### Legacy ROS2 Compatibility
+### Legacy ROS2 Detection
 
-The compatibility path remains available for field comparison:
+The repository no longer ships the S100P ROS2 installer or its systemd unit
+templates. Field doctor still detects a legacy ROS graph that is already present
+on a robot so operators can collect comparison or removal evidence:
 
 ```bash
-LINGTU_ENABLE_LEGACY_ROS2_SERVICES=1 bash scripts/deploy/thunder/install_services.sh ros-compat
-bash scripts/lingtu svc restart legacy_lidar
-bash scripts/lingtu svc restart legacy_fastlio2
-bash scripts/lingtu svc restart legacy_localizer
-bash scripts/lingtu svc status-legacy
 bash scripts/lingtu doctor --ros2
 ```
 
-Do not leave legacy LiDAR/SLAM services active beside the native DDS chain unless
-the test plan explicitly requires it; duplicate drivers can fight for the same
-sensor ports.
+Do not leave externally installed legacy LiDAR/SLAM services active beside the
+native DDS chain; duplicate drivers can fight for the same sensor ports.
 
 ## References
 
 - `lingtu_cli.md` - operations CLI subcommands
-- `super_lio_backend.md` - experimental Super-LIO evaluation path
-- `OTA_GUIDE.md` - historical OTA design
+- `native_recording.md` - native C++ recording, replay, safety, and recovery boundary
+- `OTA_GUIDE.md` - native release packaging, external OTA distribution boundary, installation, and rollback

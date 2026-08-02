@@ -45,11 +45,12 @@ class FakeLiftPort:
         self.state: LiftState | None = None
         self.requests: list[tuple[str, str, str]] = []
         self.releases: list[tuple[str, str]] = []
+        self.request_ack = True
         self.release_ok = True
 
     def request(self, *, lift_id, destination_floor_id, session_id):
         self.requests.append((lift_id, destination_floor_id, session_id))
-        return True, "lift_request_accepted"
+        return self.request_ack, "lift_request_accepted"
 
     def release(self, *, lift_id, session_id):
         self.releases.append((lift_id, session_id))
@@ -185,6 +186,53 @@ def test_lift_transition_runs_approach_call_enter_ride_relocalize_exit() -> None
     assert lift.releases == [("lift-a", "building-task-1:lift")]
 
 
+@pytest.mark.parametrize("malformed_ready", ["true", 1, None])
+def test_lift_transition_rejects_malformed_autonomy_readiness(
+    malformed_ready,
+) -> None:
+    executor, navigation, _lift, _floors = _executor()
+    navigation.ready = (malformed_ready, "malformed_autonomy_readiness")
+
+    accepted, reason = executor.start(_plan(), request_id="building-task-1")
+
+    assert accepted is False
+    assert reason == "autonomy_not_ready:malformed_autonomy_readiness"
+    assert navigation.goals == []
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_lift_transition_rejects_malformed_lift_request_ack(
+    malformed_ack,
+) -> None:
+    executor, navigation, lift, _floors = _executor()
+    lift.request_ack = malformed_ack
+    assert executor.start(_plan(), request_id="building-task-1")[0] is True
+    navigation.progress["building-task-1:lift:approach"] = GoalProgress.SUCCEEDED
+
+    status = executor.tick()
+
+    assert status.phase is LiftTransitionPhase.FAILED
+    assert "lift_request_accepted" in status.reason
+    assert all(goal[-1] != "building-task-1:lift:enter" for goal in navigation.goals)
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_lift_transition_keeps_release_pending_for_malformed_release_ack(
+    malformed_ack,
+) -> None:
+    executor, navigation, lift, _floors = _executor()
+    assert executor.start(_plan(), request_id="building-task-1")[0] is True
+    navigation.progress["building-task-1:lift:approach"] = GoalProgress.SUCCEEDED
+    assert executor.tick().phase is LiftTransitionPhase.WAIT_SOURCE_DOOR
+    lift.release_ok = malformed_ack
+
+    status = executor.cancel(reason="operator_cancel")
+
+    assert status.phase is LiftTransitionPhase.CANCELLED
+    assert status.release_pending is True
+    assert "lift_release_pending" in status.reason
+
+
 def test_reverse_lift_transition_runs_floor_two_to_floor_one() -> None:
     plan = _plan(reverse=True)
     executor, navigation, lift, floors = _executor(initial_floor=_floor(2))
@@ -254,6 +302,26 @@ def test_lift_transition_fails_closed_on_missing_unavailable_or_hijacked_state(
     assert lift.releases == [("lift-a", "building-task-1:lift")]
 
 
+@pytest.mark.parametrize("malformed_available", ["true", 1, None])
+def test_lift_transition_rejects_malformed_lift_availability(
+    malformed_available,
+) -> None:
+    executor, navigation, lift, _floors = _executor()
+    assert executor.start(_plan(), request_id="building-task-1")[0] is True
+    navigation.progress["building-task-1:lift:approach"] = GoalProgress.SUCCEEDED
+    assert executor.tick().phase is LiftTransitionPhase.WAIT_SOURCE_DOOR
+    lift.state = _lift_state(
+        floor_id="floor-1",
+        available=malformed_available,
+    )
+
+    status = executor.tick()
+
+    assert status.phase is LiftTransitionPhase.FAILED
+    assert status.reason == "lift_unavailable"
+    assert all(goal[-1] != "building-task-1:lift:enter" for goal in navigation.goals)
+
+
 def test_lift_transition_aborts_if_door_closes_while_robot_enters() -> None:
     executor, navigation, lift, _floors = _executor()
     executor.start(_plan(), request_id="building-task-1")
@@ -291,6 +359,55 @@ def test_lift_transition_does_not_exit_until_target_localization_is_verified() -
     floors.localized = True
     assert executor.tick().phase is LiftTransitionPhase.EXIT_CABIN
     assert navigation.goals[-1][-1] == "building-task-1:lift:exit"
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_lift_transition_rejects_malformed_relocalization_ack(
+    malformed_ack,
+) -> None:
+    executor, navigation, lift, floors = _executor()
+    assert executor.start(_plan(), request_id="building-task-1")[0] is True
+    navigation.progress["building-task-1:lift:approach"] = GoalProgress.SUCCEEDED
+    assert executor.tick().phase is LiftTransitionPhase.WAIT_SOURCE_DOOR
+    lift.state = _lift_state(floor_id="floor-1")
+    assert executor.tick().phase is LiftTransitionPhase.ENTER_CABIN
+    navigation.progress["building-task-1:lift:enter"] = GoalProgress.SUCCEEDED
+    assert executor.tick().phase is LiftTransitionPhase.RIDE
+
+    def switch_and_relocalize(floor, seed):
+        floors.switch_calls.append((floor, seed))
+        return malformed_ack, "malformed_relocalization_ack"
+
+    floors.switch_and_relocalize = switch_and_relocalize
+    lift.state = _lift_state(floor_id="floor-2")
+
+    status = executor.tick()
+
+    assert status.phase is LiftTransitionPhase.FAILED
+    assert "malformed_relocalization_ack" in status.reason
+    assert all(goal[-1] != "building-task-1:lift:exit" for goal in navigation.goals)
+
+
+@pytest.mark.parametrize("malformed_status", ["true", 1, None])
+def test_lift_transition_does_not_treat_malformed_localization_status_as_verified(
+    malformed_status,
+) -> None:
+    executor, navigation, lift, floors = _executor()
+    assert executor.start(_plan(), request_id="building-task-1")[0] is True
+    navigation.progress["building-task-1:lift:approach"] = GoalProgress.SUCCEEDED
+    assert executor.tick().phase is LiftTransitionPhase.WAIT_SOURCE_DOOR
+    lift.state = _lift_state(floor_id="floor-1")
+    assert executor.tick().phase is LiftTransitionPhase.ENTER_CABIN
+    navigation.progress["building-task-1:lift:enter"] = GoalProgress.SUCCEEDED
+    assert executor.tick().phase is LiftTransitionPhase.RIDE
+    lift.state = _lift_state(floor_id="floor-2")
+    assert executor.tick().phase is LiftTransitionPhase.VERIFY_TARGET_LOCALIZATION
+    floors.localized = malformed_status
+
+    status = executor.tick()
+
+    assert status.phase is LiftTransitionPhase.VERIFY_TARGET_LOCALIZATION
+    assert all(goal[-1] != "building-task-1:lift:exit" for goal in navigation.goals)
 
 
 @pytest.mark.parametrize(
@@ -445,3 +562,32 @@ def test_lift_transition_service_resolves_only_configured_directed_route() -> No
         False,
         "floor_transition_route_unavailable",
     )
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_lift_transition_service_rejects_malformed_executor_start_ack(
+    malformed_ack,
+) -> None:
+    class MalformedExecutor:
+        def start(self, plan, *, request_id):
+            return malformed_ack, "malformed_transition_ack"
+
+    service = LiftTransitionService(
+        catalog=StaticLiftTransitionCatalog([_plan()]),
+        executor=MalformedExecutor(),
+    )
+    request = BuildingMissionRequest(
+        request_id="building-task-1",
+        source="native_test",
+        fleet_name="",
+        robot_name="thunder-01",
+        building_id="factory-a",
+        floor_id="floor-2",
+        map_id="factory-a-floor-2",
+        target=_pose(12.0, -3.0, 3.6),
+    )
+
+    accepted, reason = service.start(request, source_floor=_floor(1))
+
+    assert accepted is False
+    assert reason == "malformed_transition_ack"

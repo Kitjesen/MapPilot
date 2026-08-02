@@ -1,0 +1,256 @@
+:global(.app) > .card {
+  position: absolute;
+  z-index: 20;
+}
+
+.card {
+  right: 16px;
+  bottom: calc(var(--statusbar-h) + 14px);
+  width: min(360px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 13px 14px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-layer-2) 88%, transparent);
+  backdrop-filter: blur(24px) saturate(130%);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  transition: border-color 160ms var(--ease-out), opacity 160ms var(--ease-out);
+}
+
+.cardStale {
+  border-color: color-mix(in srgb, var(--warn) 42%, var(--border));
+}
+
+.header,
+.stateRow,
+.reasonRow,
+.meta,
+.heading,
+.freshness {
+  display: flex;
+  align-items: center;
+}
+
+.header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.heading {
+  min-width: 0;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  border-radius: var(--r-sm);
+}
+
+.dismiss {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--text-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: color 140ms var(--ease-out), background 140ms var(--ease-out), border-color 140ms var(--ease-out);
+}
+
+.dismiss:hover {
+  color: var(--text);
+  background: var(--glass-hi);
+  border-color: var(--border);
+}
+
+.stateRow {
+  min-width: 0;
+  gap: 8px;
+}
+
+.stateDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.active {
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.success {
+  background: var(--accent);
+}
+
+.danger {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red-glow);
+}
+
+.muted {
+  background: var(--text-faint);
+}
+
+.waiting {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn-glow);
+  animation: pulse-soft 2s var(--ease-in-out) infinite;
+}
+
+.stateLabel {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staleBadge {
+  margin-left: auto;
+  padding: 2px 6px;
+  color: var(--warn);
+  background: var(--warn-glow);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  border-radius: var(--r-full);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+
+.reasonRow {
+  min-width: 0;
+  gap: 9px;
+  padding: 8px 9px;
+  background: var(--glass-lo);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+}
+
+.label {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.reason {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pauseButton,
+.resumeButton,
+.cancelButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out), border-color 140ms var(--ease-out);
+}
+
+.pauseButton {
+  color: var(--warn);
+  background: var(--warn-glow);
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, transparent);
+}
+
+.resumeButton {
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, transparent);
+}
+
+.cancelButton {
+  color: var(--red);
+  background: var(--red-dim);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, transparent);
+}
+
+.pauseButton:hover:not(:disabled),
+.resumeButton:hover:not(:disabled),
+.cancelButton:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.pauseButton:disabled,
+.resumeButton:disabled,
+.cancelButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.meta {
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-faint);
+  font-size: 10px;
+}
+
+.meta code {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: inherit;
+}
+
+.freshness {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+@media (max-width: 640px) {
+  .card {
+    right: 10px;
+    bottom: calc(var(--statusbar-h) + 10px);
+    width: calc(100vw - 20px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .waiting {
+    animation: none;
+  }
+}

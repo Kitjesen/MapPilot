@@ -24,6 +24,10 @@ public:
     {
         return m_lidar_processor->consecutiveUpdateRejections();
     }
+    const LidarUpdateDiagnostics &lastLidarUpdateDiagnostics() const
+    {
+        return m_lidar_processor->lastUpdateDiagnostics();
+    }
     void saveMap(const std::string &path);
 
 private:

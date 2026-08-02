@@ -21,18 +21,12 @@ from gateway.services.native_control import (
 from gateway.services.native_control import (
     status_is_fresh as native_control_status_is_fresh,
 )
-from gateway.services.runtime_switch_execute import runtime_switch_pending
 from gateway.services.safety_status import (
     SAFETY_STOP_BLOCKER,
     safety_stop_active,
     safety_summary,
 )
-from runtime.profiles.native_nav_config import native_nav_profile_config
-from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
-from runtime.profiles.resolver import (
-    canonical_profile_name,
-    resolve_profile_config,
-)
+from runtime.profiles.native_nav_config import compile_native_nav_config
 from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, map_frame_id
 from runtime.runtime_policy import (
     backend_capability_defaults as _backend_capability_defaults,
@@ -271,14 +265,14 @@ def safe_session(gw: Any) -> dict[str, Any]:
         snapshot = gw._session_snapshot()
         if isinstance(snapshot, Mapping):
             result = dict(snapshot)
-            result["pending"] = bool(result.get("pending", False) or runtime_switch_pending(gw))
+            result["pending"] = bool(result.get("pending", False))
             return result
     except Exception:
         logger.debug("safe_session_snapshot failed", exc_info=True)
     return {
         "mode": getattr(gw, "_session_mode", "unknown"),
         "active_map": getattr(gw, "_session_map", None),
-        "pending": bool(getattr(gw, "_session_pending", False) or runtime_switch_pending(gw)),
+        "pending": bool(getattr(gw, "_session_pending", False)),
         "error": "session_snapshot_unavailable",
         "can_start_mapping": False,
         "can_start_navigating": False,
@@ -461,6 +455,8 @@ def build_localization_status_from_parts(
     session: Mapping[str, Any],
     icp_quality: float,
     status: Any,
+    *,
+    gw: Any | None = None,
 ) -> dict[str, Any]:
     diagnostics = _mapping(status)
     diag_received_mono = _as_float(diagnostics.get("_gateway_received_mono"))
@@ -502,7 +498,7 @@ def build_localization_status_from_parts(
     map_save_source = diagnostics.get("map_save_source")
     if map_save_source is None:
         map_save_source = capability_defaults["map_save_source"]
-    runtime_boundary = _runtime_boundary_status()
+    runtime_boundary = _runtime_boundary_status(gw)
     frames = _localization_frame_summary(
         odometry,
         diagnostics,
@@ -594,6 +590,21 @@ def build_localization_status_from_parts(
         "relocalization_state": diagnostics.get("relocalization_state"),
         "relocalization_quality": _as_float(diagnostics.get("relocalization_quality")),
         "relocalization_map_body": diagnostics.get("relocalization_map_body"),
+        "relocalization_refine_backend": diagnostics.get("relocalization_refine_backend"),
+        "relocalization_refine_iterations": _as_optional_int(diagnostics.get("relocalization_refine_iterations")),
+        "relocalization_refine_inliers": _as_optional_int(diagnostics.get("relocalization_refine_inliers")),
+        "relocalization_refine_input_points": _as_optional_int(diagnostics.get("relocalization_refine_input_points")),
+        "relocalization_refine_evaluated_points": _as_optional_int(
+            diagnostics.get("relocalization_refine_evaluated_points")
+        ),
+        "relocalization_min_inliers": _as_optional_int(diagnostics.get("relocalization_min_inliers")),
+        "relocalization_min_evaluated_points": _as_optional_int(diagnostics.get("relocalization_min_evaluated_points")),
+        "relocalization_refine_support_ratio": _as_float(diagnostics.get("relocalization_refine_support_ratio")),
+        "relocalization_refine_overlap_inlier_ratio": _as_float(
+            diagnostics.get("relocalization_refine_overlap_inlier_ratio")
+        ),
+        "relocalization_refine_converged": _as_optional_bool(diagnostics.get("relocalization_refine_converged")),
+        "relocalization_refine_pos_cov_trace": _as_float(diagnostics.get("relocalization_refine_pos_cov_trace")),
         "recovery_signal": diagnostics.get("recovery_signal"),
         "recovery_action": diagnostics.get("recovery_action"),
         "localizer_health": diagnostics.get("localizer_health"),
@@ -629,6 +640,7 @@ def build_localization_status(gw: Any) -> dict[str, Any]:
         session,
         float(getattr(gw, "_icp_quality", 0.0)),
         localization_status,
+        gw=gw,
     )
 
 
@@ -748,9 +760,7 @@ def _control_summary(
         "lease": dict(lease),
         "authority_source": authority_source,
         "authority_available": source_available,
-        "native_endpoint_available": (
-            source_available if endpoint_authoritative else False
-        ),
+        "native_endpoint_available": (source_available if endpoint_authoritative else False),
         "active_cmd_source": active_source,
         "command_owner": meta["owner"],
         "source_category": meta["category"],
@@ -1015,10 +1025,7 @@ def _navigation_reason_codes(
 
     if control.get("preempting_autonomy"):
         codes.append(f"control_preempted_by_{control.get('active_cmd_source')}")
-    if (
-        control.get("authority_source") != "native_endpoint"
-        and not control.get("mux_available", False)
-    ):
+    if control.get("authority_source") != "native_endpoint" and not control.get("mux_available", False):
         codes.append("cmd_vel_mux_unavailable")
     if map_artifact_gate.get("required") is True and map_artifact_gate.get("ok") is not True:
         codes.append("map_artifact_gate_failed")
@@ -1072,10 +1079,10 @@ _NAVIGATION_BLOCKER_CODES = {
     "native_active_cmd_source_invalid",
     "native_resume_required",
     "native_estop_latched",
-    "native_profile_expectation_unavailable",
-    "native_profile_mismatch",
-    "native_profile_fingerprint_mismatch",
-    "native_profile_parameters_mismatch",
+    "native_product_expectation_unavailable",
+    "native_product_mismatch",
+    "native_product_fingerprint_mismatch",
+    "native_product_parameters_mismatch",
     "native_teleop_local_planner_disabled",
     "native_obstacle_check_disabled",
     "native_traversability_cost_disabled",
@@ -1083,6 +1090,15 @@ _NAVIGATION_BLOCKER_CODES = {
     "native_global_planner_mismatch",
     "native_planner_map_missing",
     "native_cmd_vel_publish_disabled",
+    "native_control_loop_unhealthy",
+    "native_control_loop_health_unavailable",
+    "native_operator_motion_status_missing",
+    "native_operator_motion_schema_mismatch",
+    "native_operator_motion_interface_disabled",
+    "native_operator_motion_authority_invalid",
+    "native_operator_motion_control_mode_mismatch",
+    "native_operator_motion_ack_scope_invalid",
+    "native_operator_motion_sample_evidence_invalid",
 }
 
 
@@ -1273,11 +1289,34 @@ def _navigation_frame_summary(
     }
 
 
-def _runtime_boundary_status() -> dict[str, Any]:
-    from runtime.profiles.endpoints import canonical_runtime_endpoint_name
+def runtime_identity(gw: Any | None = None) -> dict[str, Any]:
+    """Return the Gateway's fixed Env and active Product identity."""
+
+    plan = getattr(gw, "_compiled_run_plan", None) if gw is not None else None
+    plan_env = str(getattr(plan, "env", "") or "").strip()
+    process_env = str(os.environ.get("LINGTU_ENV") or "").strip()
+    env = plan_env or process_env or "real"
+    if env not in {"real", "sim"}:
+        raise ValueError(f"Env must be 'real' or 'sim', received {env!r}")
+
+    plan_product = str(getattr(plan, "product", "") or "").strip()
+    compiled_product = str(getattr(gw, "_compiled_product", "") or "").strip() if gw is not None else ""
+    product = plan_product or compiled_product or str(os.environ.get("LINGTU_PRODUCT") or "").strip()
+    return {
+        "env": env,
+        "product": product or None,
+        "run_plan_fingerprint": (str(getattr(plan, "fingerprint", "") or "").strip() or None),
+        "identity_source": ("run_plan" if plan is not None else "environment" if process_env or product else "default"),
+    }
+
+
+def _runtime_boundary_status(gw: Any | None = None) -> dict[str, Any]:
     from runtime.runtime_interface import (
+        DATA_SOURCE_CONTRACTS,
         FRAMES,
+        REAL_RUNTIME_CONTRACT,
         RUNTIME_DATA_FLOW_STAGE_ALGORITHM_INTERFACES,
+        THUNDER_LITE_RUNTIME_CONTRACT,
         canonical_data_source_name,
         resolved_runtime_data_flow,
         runtime_contract_manifest,
@@ -1287,19 +1326,16 @@ def _runtime_boundary_status() -> dict[str, Any]:
         runtime_topic_default_frame_ids,
     )
 
-    env = {
-        "profile": os.environ.get("LINGTU_PROFILE"),
-        "endpoint": os.environ.get("LINGTU_ENDPOINT"),
+    identity = runtime_identity(gw)
+    runtime_settings = {
         "data_source": os.environ.get("LINGTU_DATA_SOURCE"),
         "runtime_contract": os.environ.get("LINGTU_RUNTIME_CONTRACT"),
         "command_sink": os.environ.get("LINGTU_COMMAND_SINK"),
-        "simulation_only": os.environ.get("LINGTU_SIMULATION_ONLY"),
     }
-    declared = any(value not in (None, "") for value in env.values())
-    endpoint = canonical_runtime_endpoint_name(env["endpoint"]) if env["endpoint"] else env["endpoint"]
-    data_source = canonical_data_source_name(env["data_source"])
-    runtime_contract = canonical_data_source_name(env["runtime_contract"])
-    command_sink = env["command_sink"]
+    declared = any(value not in (None, "") for value in runtime_settings.values())
+    data_source = canonical_data_source_name(runtime_settings["data_source"])
+    runtime_contract = canonical_data_source_name(runtime_settings["runtime_contract"])
+    command_sink = runtime_settings["command_sink"]
     blockers: list[str] = []
     manifest: dict[str, Any] = {}
     data_sources: Mapping[str, Any] = {}
@@ -1337,7 +1373,12 @@ def _runtime_boundary_status() -> dict[str, Any]:
 
     topic_contract = runtime_contract or data_source
     if topic_contract:
-        if topic_contract in data_sources:
+        frame_contracts = {
+            *DATA_SOURCE_CONTRACTS,
+            REAL_RUNTIME_CONTRACT,
+            THUNDER_LITE_RUNTIME_CONTRACT,
+        }
+        if topic_contract in frame_contracts:
             topic_allowed_frames = {
                 topic: list(frame_ids) for topic, frame_ids in runtime_topic_allowed_frame_ids(topic_contract).items()
             }
@@ -1352,11 +1393,10 @@ def _runtime_boundary_status() -> dict[str, Any]:
     return {
         "ok": not blockers,
         "declared": declared,
-        "profile": env["profile"],
-        "endpoint": endpoint,
+        **identity,
         "data_source": data_source,
         "runtime_contract": runtime_contract,
-        "simulation_only": _as_optional_bool(env["simulation_only"]),
+        "simulation_only": identity["env"] == "sim",
         "command_sink": command_sink or expected_command_sink,
         "expected_command_sink": expected_command_sink,
         "slam_source": source.get("slam_source"),
@@ -1480,8 +1520,47 @@ def _navigation_blockers(reason_codes: list[str]) -> list[str]:
     return [code for code in reason_codes if code in _NAVIGATION_BLOCKER_CODES]
 
 
-def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
-    required = endpoint_only_enabled() and _session_mode(session) in {"navigating", "exploring"}
+def _native_endpoint_readiness(
+    session: Mapping[str, Any],
+    gw: Any | None = None,
+) -> dict[str, Any]:
+    plan = getattr(gw, "_compiled_run_plan", None) if gw is not None else None
+    raw_product = str(
+        getattr(plan, "product", "") or session.get("product") or os.environ.get("LINGTU_PRODUCT") or ""
+    ).strip()
+    product = raw_product
+    required_capabilities = tuple(getattr(plan, "required_capabilities", ()) if plan is not None else ())
+    process_names = {
+        str(getattr(process, "name", "") or "").strip()
+        for process in getattr(plan, "processes", ())
+        if str(getattr(process, "name", "") or "").strip()
+    }
+    operator_motion_required = bool(
+        {
+            "operator_motion_typed_dds_interface",
+            "native_operator_motion_authority",
+        }
+        & set(required_capabilities)
+    )
+    native_nav = getattr(plan, "native_nav", {}) if plan is not None else {}
+    expected_control_mode = (
+        str(native_nav.get("control_mode", "autonomy") if isinstance(native_nav, Mapping) else "autonomy")
+        .strip()
+        .lower()
+    )
+    product_requires_native_endpoint = "nav" in process_names
+    managed_run_plan_missing = bool(
+        plan is None
+        and gw is not None
+        and (
+            getattr(gw, "_compiled_run_plan_fingerprint", "")
+            or getattr(gw, "_compiled_command_output_mode", "") == "endpoint_only"
+        )
+    )
+    legacy_runtime_requires_native_endpoint = (
+        plan is None and endpoint_only_enabled(gw) and _session_mode(session) in {"navigating", "exploring"}
+    )
+    required = product_requires_native_endpoint or managed_run_plan_missing or legacy_runtime_requires_native_endpoint
     if not required:
         return {
             "required": False,
@@ -1491,6 +1570,26 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
             "status_available": None,
             "active_cmd_source": None,
             "control_authority": {},
+            "expected_control_mode": expected_control_mode,
+            "operator_motion": {
+                "required": operator_motion_required,
+                "status_available": None,
+            },
+        }
+    if managed_run_plan_missing:
+        return {
+            "required": True,
+            "ok": False,
+            "blockers": ["run_plan_missing"],
+            "input_gate": {},
+            "status_available": None,
+            "active_cmd_source": "unknown",
+            "control_authority": {},
+            "expected_control_mode": expected_control_mode,
+            "operator_motion": {
+                "required": False,
+                "status_available": None,
+            },
         }
     snapshot = read_native_control_status()
     if not native_control_status_is_fresh(snapshot):
@@ -1502,9 +1601,26 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
             "status_available": False,
             "active_cmd_source": "unknown",
             "control_authority": {},
+            "expected_control_mode": expected_control_mode,
+            "operator_motion": {
+                "required": operator_motion_required,
+                "status_available": False,
+            },
         }
     input_gate = _mapping(snapshot.get("input_gate"))
+    control_loop_health = _mapping(snapshot.get("control_loop_health"))
     blockers: list[str] = []
+    control_loop_reason = str(control_loop_health.get("reason") or "").strip().lower()
+    if not control_loop_health:
+        blockers.append("native_control_loop_health_unavailable")
+    elif control_loop_health.get("ready") is False:
+        if control_loop_reason != "warming_up":
+            blockers.append("native_control_loop_health_unavailable")
+    elif control_loop_health.get("ready") is True:
+        if control_loop_health.get("healthy") is not True:
+            blockers.append("native_control_loop_unhealthy")
+    else:
+        blockers.append("native_control_loop_health_unavailable")
     if input_gate.get("ready") is not True:
         blockers.append("native_input_gate_not_ready")
     active_cmd_source = str(snapshot.get("active_cmd_source") or "").strip().lower()
@@ -1514,67 +1630,84 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
     if str(control_authority.get("owner") or "").strip().lower() != "native_endpoint":
         blockers.append("native_control_authority_invalid")
     estop_latched = control_authority.get("estop_latched") is True
-    operator_takeover_latched = (
-        control_authority.get("operator_takeover_latched") is True
-    )
+    operator_takeover_latched = control_authority.get("operator_takeover_latched") is True
     resume_required = control_authority.get("resume_required") is True
     if estop_latched or active_cmd_source == "estop":
         blockers.append("native_estop_latched")
-    if (
-        operator_takeover_latched
-        or resume_required
-        or active_cmd_source in {"teleop", "manual_hold"}
-    ):
+    if operator_takeover_latched or resume_required or active_cmd_source in {"teleop", "manual_hold"}:
         blockers.append("native_resume_required")
     control_mode = str(snapshot.get("control_mode") or "").strip().lower()
-    raw_profile = str(
-        session.get("product_profile")
-        or session.get("profile")
-        or os.environ.get("LINGTU_PROFILE")
-        or ""
-    ).strip()
-    profile = canonical_profile_name(raw_profile) if raw_profile else ""
-    contract = PRODUCT_MODE_CONTRACTS.get(profile)
-    expected_control_mode = contract.native_control_mode if contract is not None else "autonomy"
     expected_config_fingerprint: str | None = None
     actual_config_fingerprint: str | None = None
     parameter_mismatches: dict[str, dict[str, float | None]] = {}
     expected_parameters: Mapping[str, Any] = {}
-    observed_native_profile = _mapping(snapshot.get("native_profile"))
-    native_profile_required = contract is not None and "nav" in contract.processes
-    if native_profile_required:
-        endpoint = str(os.environ.get("LINGTU_ENDPOINT") or "thunder_field").strip()
+    observed_native_product = _mapping(snapshot.get("native_product"))
+    native_product_required = plan is not None and "nav" in process_names
+    if native_product_required:
         try:
-            expected_native = native_nav_profile_config(
-                profile,
-                resolve_profile_config(profile, runtime_endpoint=endpoint),
+            plan_config = dict(getattr(plan, "host_config", {}))
+            plan_config["native_nav"] = dict(native_nav)
+            plan_config["native_control_mode"] = expected_control_mode
+            expected_native = compile_native_nav_config(
+                product,
+                plan_config,
             ).as_dict()
         except (KeyError, TypeError, ValueError, RuntimeError) as exc:
-            logger.error("cannot resolve expected native navigation profile: %s", exc)
-            blockers.append("native_profile_expectation_unavailable")
+            logger.error("cannot resolve expected native navigation configuration: %s", exc)
+            blockers.append("native_product_expectation_unavailable")
         else:
             expected_config_fingerprint = str(expected_native["fingerprint"])
-            actual_profile = str(observed_native_profile.get("profile") or "").strip()
-            actual_config_fingerprint = str(
-                observed_native_profile.get("config_fingerprint") or ""
-            ).strip()
-            if actual_profile != profile:
-                blockers.append("native_profile_mismatch")
+            actual_product = str(observed_native_product.get("product") or "").strip()
+            actual_config_fingerprint = str(observed_native_product.get("config_fingerprint") or "").strip()
+            if actual_product != product:
+                blockers.append("native_product_mismatch")
             if actual_config_fingerprint != expected_config_fingerprint:
-                blockers.append("native_profile_fingerprint_mismatch")
+                blockers.append("native_product_fingerprint_mismatch")
 
             expected_parameters = expected_native["parameters"]
             observed_path_follower = _mapping(snapshot.get("path_follower"))
             observed_nav_loop = _mapping(snapshot.get("nav_loop"))
             observed_parameters = (
-                ("path_follower.max_speed_mps", observed_path_follower.get("max_speed_mps"), "path_follower_max_speed_mps"),
-                ("path_follower.min_speed_mps", observed_path_follower.get("min_speed_mps"), "path_follower_min_speed_mps"),
-                ("path_follower.max_accel_mps2", observed_path_follower.get("max_accel_mps2"), "path_follower_max_accel_mps2"),
-                ("path_follower.lookahead_m", observed_path_follower.get("lookahead_m"), "path_follower_lookahead_m"),
-                ("path_follower.goal_tolerance_m", observed_path_follower.get("goal_tolerance_m"), "path_follower_goal_tolerance_m"),
-                ("nav_loop.waypoint_reached_m", observed_nav_loop.get("waypoint_reached_m"), "waypoint_reached_m"),
-                ("nav_loop.goal_reached_m", observed_nav_loop.get("goal_reached_m"), "goal_reached_m"),
-                ("nav_loop.corridor_lookahead_m", observed_nav_loop.get("corridor_lookahead_m"), "corridor_lookahead_m"),
+                (
+                    "path_follower.max_speed_mps",
+                    observed_path_follower.get("max_speed_mps"),
+                    "path_follower_max_speed_mps",
+                ),
+                (
+                    "path_follower.min_speed_mps",
+                    observed_path_follower.get("min_speed_mps"),
+                    "path_follower_min_speed_mps",
+                ),
+                (
+                    "path_follower.max_accel_mps2",
+                    observed_path_follower.get("max_accel_mps2"),
+                    "path_follower_max_accel_mps2",
+                ),
+                (
+                    "path_follower.lookahead_m",
+                    observed_path_follower.get("lookahead_m"),
+                    "path_follower_lookahead_m",
+                ),
+                (
+                    "path_follower.goal_tolerance_m",
+                    observed_path_follower.get("goal_tolerance_m"),
+                    "path_follower_goal_tolerance_m",
+                ),
+                (
+                    "nav_loop.waypoint_reached_m",
+                    observed_nav_loop.get("waypoint_reached_m"),
+                    "waypoint_reached_m",
+                ),
+                (
+                    "nav_loop.goal_reached_m",
+                    observed_nav_loop.get("goal_reached_m"),
+                    "goal_reached_m",
+                ),
+                (
+                    "nav_loop.corridor_lookahead_m",
+                    observed_nav_loop.get("corridor_lookahead_m"),
+                    "corridor_lookahead_m",
+                ),
             )
             for field, raw_actual, expected_key in observed_parameters:
                 actual = _as_float(raw_actual, None)
@@ -1590,22 +1723,20 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
                         "expected": expected,
                     }
             if parameter_mismatches:
-                blockers.append("native_profile_parameters_mismatch")
+                blockers.append("native_product_parameters_mismatch")
     if control_mode != expected_control_mode:
         blockers.append("native_control_mode_mismatch")
     global_planner = str(snapshot.get("global_planner") or "").strip().lower()
-    assisted_teleop_required = contract is not None and bool(
+    assisted_teleop_required = plan is not None and bool(
         {
             "operator_assisted_local_planner_control",
             "operator_assisted_local_planner_takeover",
         }
-        & set(contract.required_capabilities)
+        & set(required_capabilities)
     )
     teleop_local_planner = _as_optional_bool(snapshot.get("teleop_local_planner"))
     check_obstacle = _as_optional_bool(snapshot.get("check_obstacle"))
-    use_traversability_cost = _as_optional_bool(
-        snapshot.get("use_traversability_cost")
-    )
+    use_traversability_cost = _as_optional_bool(snapshot.get("use_traversability_cost"))
     if assisted_teleop_required and expected_parameters:
         for field, raw_actual, expected_key in (
             (
@@ -1621,12 +1752,10 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
         ):
             actual = _as_float(raw_actual, None)
             expected = float(expected_parameters[expected_key])
-            if actual is None or not math.isclose(
-                actual, expected, rel_tol=1e-9, abs_tol=1e-9
-            ):
+            if actual is None or not math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-9):
                 parameter_mismatches[field] = {"actual": actual, "expected": expected}
-        if parameter_mismatches and "native_profile_parameters_mismatch" not in blockers:
-            blockers.append("native_profile_parameters_mismatch")
+        if parameter_mismatches and "native_product_parameters_mismatch" not in blockers:
+            blockers.append("native_product_parameters_mismatch")
     if assisted_teleop_required:
         if teleop_local_planner is not True:
             blockers.append("native_teleop_local_planner_disabled")
@@ -1634,22 +1763,45 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
             blockers.append("native_obstacle_check_disabled")
         if use_traversability_cost is not True:
             blockers.append("native_traversability_cost_disabled")
-    expected_global_planner = str(
-        session.get("global_planner")
-        or session.get("planner")
-        or os.environ.get("LINGTU_NAV_GLOBAL_PLANNER")
-        or "octoplanner3d"
-    ).strip().lower()
+    expected_global_planner = (
+        str(
+            session.get("global_planner")
+            or session.get("planner")
+            or os.environ.get("LINGTU_NAV_GLOBAL_PLANNER")
+            or "octoplanner3d"
+        )
+        .strip()
+        .lower()
+    )
     aliases = {"octo": "octoplanner3d", "octplanner": "octoplanner3d"}
     global_planner = aliases.get(global_planner, global_planner)
     expected_global_planner = aliases.get(expected_global_planner, expected_global_planner)
     planner_map = str(snapshot.get("planner_map") or "").strip()
-    required_capabilities = contract.required_capabilities if contract is not None else ()
-    global_planner_required = contract is None or contract.requires_map or bool(
-        {"global_planning", "octoplanner3d_global_planning"}
-        & set(required_capabilities)
+    operator_motion = _mapping(snapshot.get("operator_motion"))
+    operator_motion_status_available = bool(operator_motion)
+    if operator_motion_required:
+        if not operator_motion_status_available:
+            blockers.append("native_operator_motion_status_missing")
+        else:
+            if _as_int(operator_motion.get("schema_version"), -1) != 1:
+                blockers.append("native_operator_motion_schema_mismatch")
+            if operator_motion.get("interface_enabled") is not True:
+                blockers.append("native_operator_motion_interface_disabled")
+            if str(operator_motion.get("authority_owner") or "").strip().lower() != "native_endpoint":
+                blockers.append("native_operator_motion_authority_invalid")
+            if str(operator_motion.get("control_mode") or "").strip().lower() != expected_control_mode:
+                blockers.append("native_operator_motion_control_mode_mismatch")
+            if operator_motion.get("control_ack_scope") != "claim_hold_release":
+                blockers.append("native_operator_motion_ack_scope_invalid")
+            if operator_motion.get("sample_evidence") != "status_sequences":
+                blockers.append("native_operator_motion_sample_evidence_invalid")
+    requires_map = "saved_map_relocalization" in set(required_capabilities)
+    global_planner_required = (
+        plan is None
+        or requires_map
+        or bool({"global_planning", "octoplanner3d_global_planning"} & set(required_capabilities))
     )
-    planner_map_required = contract is None or contract.requires_map
+    planner_map_required = plan is None or requires_map
     if global_planner_required:
         if not global_planner:
             blockers.append("native_global_planner_missing")
@@ -1668,10 +1820,11 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
         "active_cmd_source": active_cmd_source,
         "control_authority": control_authority,
         "stamp_s": _as_float(snapshot.get("stamp_s"), None),
+        "control_loop_health": control_loop_health,
         "input_gate": input_gate,
         "control_mode": control_mode,
         "expected_control_mode": expected_control_mode,
-        "native_profile": observed_native_profile,
+        "native_product": observed_native_product,
         "expected_config_fingerprint": expected_config_fingerprint,
         "actual_config_fingerprint": actual_config_fingerprint,
         "parameter_mismatches": parameter_mismatches,
@@ -1685,6 +1838,11 @@ def _native_endpoint_readiness(session: Mapping[str, Any]) -> dict[str, Any]:
         "check_obstacle": check_obstacle,
         "use_traversability_cost": use_traversability_cost,
         "active_occupancy": snapshot.get("active_occupancy"),
+        "operator_motion": {
+            "required": operator_motion_required,
+            "status_available": operator_motion_status_available,
+            **operator_motion,
+        },
     }
 
 
@@ -1727,18 +1885,59 @@ def _readiness_summary(
     }
 
 
+def _mission_from_navigation_state(state: Mapping[str, Any]) -> dict[str, Any]:
+    lifecycle = str(state.get("lifecycle_state_name") or "UNKNOWN").upper()
+    return {
+        "state": lifecycle,
+        "ts": state.get("ts"),
+        "frame_id": state.get("frame_id"),
+        "planning_frame_id": state.get("frame_id"),
+        "failure_reason": state.get("failure_code") or "",
+        "active_task_id": state.get("active_task_id") or "",
+        "active_request_id": state.get("active_request_id") or "",
+        "goal_epoch": state.get("goal_epoch"),
+        "map_id": state.get("map_id") or "",
+        "map_version": state.get("map_version"),
+        "map_hash": state.get("map_hash") or "",
+        "hold_reason": state.get("hold_reason") or "",
+        "progress": state.get("progress"),
+    }
+
+
 def build_navigation_status(gw: Any) -> dict[str, Any]:
     with gw._state_lock:
-        mission = _mapping(gw._mission)
+        legacy_mission = _mapping(gw._mission)
+        native_state = _mapping(getattr(gw, "_navigation_state", None))
+        mission = _mission_from_navigation_state(native_state) if native_state else legacy_mission
         odometry = gw._odom
         path_len = len(gw._last_path)
         mode = gw._mode
         safety = gw._safety
+        task_statuses = getattr(gw, "_navigation_goal_status_by_task", {})
+        goal_statuses = getattr(gw, "_navigation_goal_status_by_request", {})
+        latest_goal_status = getattr(gw, "_latest_navigation_goal_status", None)
+    state_source = "native_navigation_state" if native_state else "mission_status"
+    active_task_id = str(mission.get("active_task_id") or "")
+    active_request_id = str(mission.get("active_request_id") or "")
+    active_goal_status = (
+        task_statuses.get(active_task_id)
+        if active_task_id and hasattr(task_statuses, "get")
+        else goal_statuses.get(active_request_id)
+        if active_request_id and hasattr(goal_statuses, "get")
+        else None
+    )
+    goal_status = (
+        dict(active_goal_status)
+        if isinstance(active_goal_status, Mapping)
+        else dict(latest_goal_status)
+        if isinstance(latest_goal_status, Mapping)
+        else None
+    )
 
     session = safe_session(gw)
     lease = safe_lease(gw)
     localization = build_localization_status(gw)
-    native_endpoint = _native_endpoint_readiness(session)
+    native_endpoint = _native_endpoint_readiness(session, gw=gw)
     cmd_vel = {} if native_endpoint.get("required") is True else _cmd_vel_health(gw)
     nav_runtime = _navigation_status_from_module(gw)
     state = str(mission.get("state", "IDLE"))
@@ -1769,6 +1968,15 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         cmd_vel=cmd_vel,
         native_endpoint=native_endpoint,
     )
+    if native_state:
+        control.update(
+            {
+                "authority_source": "native_navigation_state",
+                "command_owner": str(native_state.get("authority") or "unknown"),
+                "control_mode": str(native_state.get("control_mode_name") or "UNKNOWN"),
+                "hold_reason": str(native_state.get("hold_reason") or ""),
+            }
+        )
     control["safety_clear"] = not safety_stop_active(safety)
     progress = _progress_summary(
         state=state,
@@ -1777,6 +1985,9 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         path_points=path_len,
         replan_count=replan_count,
     )
+    native_progress = _as_float(native_state.get("progress"), None)
+    if native_progress is not None and native_progress >= 0.0:
+        progress["fraction"] = max(0.0, min(1.0, native_progress))
     frame_mission = dict(mission)
     for key in (
         "frame_id",
@@ -1797,7 +2008,7 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
         localization,
     )
     real_runtime_evidence = _real_runtime_evidence_status(session)
-    runtime_boundary = _runtime_boundary_status()
+    runtime_boundary = _runtime_boundary_status(gw)
     reason_codes = _navigation_reason_codes(
         state=state,
         failure_reason=failure_reason,
@@ -1813,13 +2024,8 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
     )
     reason_codes.extend(str(code) for code in native_endpoint.get("blockers", []))
     reason_codes = list(dict.fromkeys(reason_codes))
-    native_endpoint_ready = (
-        native_endpoint.get("required") is not True
-        or native_endpoint.get("ok") is True
-    )
-    can_accept_goal = (
-        base_can_accept_goal and native_endpoint_ready and not _navigation_blockers(reason_codes)
-    )
+    native_endpoint_ready = native_endpoint.get("required") is not True or native_endpoint.get("ok") is True
+    can_accept_goal = base_can_accept_goal and native_endpoint_ready and not _navigation_blockers(reason_codes)
     readiness = _readiness_summary(
         can_accept_goal=can_accept_goal,
         reason_codes=reason_codes,
@@ -1856,6 +2062,7 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
 
     return {
         "schema_version": NAVIGATION_STATUS_SCHEMA_VERSION,
+        "state_source": state_source,
         "state": state,
         "has_odometry": odometry is not None,
         "can_accept_goal": can_accept_goal,
@@ -1908,5 +2115,7 @@ def build_navigation_status(gw: Any) -> dict[str, Any]:
             "state": state,
             "raw": mission,
         },
+        "goal_status": goal_status,
+        "navigation_state": dict(native_state),
         "ts": mission_ts,
     }

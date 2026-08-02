@@ -1,5 +1,7 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: teleop
+contracts:
+  - lingtu.product.teleop.v1
 summary: Operator teleoperation without autonomous navigation decisions.
 operator_switchable: true
 product_mode: teleop
@@ -13,20 +15,24 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+native_nav:
+  control_mode: teleop
+  publish_cmd_vel: true
+  check_obstacle: false
+  use_traversability_cost: false
+  allow_teleop_takeover: false
+  teleop_local_planner: false
 processes:
   - nav
   - driver
-  - runtime
-required_topics:
-  - /nav/command/request
-  - /nav/command/ack
-  - /nav/cmd_vel
-required_capabilities:
-  - teleop
-  - command_staleness_gate
-  - velocity_limit
-  - final_cmd_vel_single_writer
+  - host
+critical_modules:
+  - host.bus
+  - nav.commands
+  - GatewayModule
 forbidden_modules:
+  - TeleopModule
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.mission
   - nav.local_planner
@@ -42,8 +48,3 @@ transport_rules:
   product_bus: typed_dds
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
-target_chain:
-  - Gateway/TeleopModule sends typed operator velocity requests through /nav/command/request and waits for /nav/command/ack.
-  - Native command endpoint runs in control_mode=teleop and rejects autonomous goals/paths.
-  - Command age, linear speed, and yaw rate are checked without requiring SLAM or a map.
-  - Native command endpoint publishes final body-frame Twist to /nav/cmd_vel.

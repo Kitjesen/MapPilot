@@ -43,6 +43,10 @@ add_library(lingtu_maps STATIC
   cpp/layers/exploration_projection.cpp
   cpp/layers/semantic_occupancy.cpp
   cpp/layers/voxel.cpp
+  cpp/mapd/activation.cpp
+  cpp/mapd/engine.cpp
+  cpp/mapd/query_core.cpp
+  cpp/mapd/query_server.cpp
   cpp/sources/unity_scene.cpp
 )
 target_link_libraries(lingtu_maps PUBLIC lingtu_maps_contract Threads::Threads)
@@ -76,6 +80,78 @@ target_compile_definitions(lingtu_maps_c_api PRIVATE LINGTU_MAPS_C_API_BUILD)
 set_target_properties(lingtu_maps_c_api PROPERTIES
   OUTPUT_NAME "lingtu_maps"
 )
+
+option(LINGTU_MAPS_BUILD_MAPD "Build the native typed-DDS mapd process" OFF)
+
+if(LINGTU_MAPS_BUILD_MAPD)
+  enable_language(C)
+  find_package(CycloneDDS REQUIRED)
+  if(NOT TARGET lingtu_dds_qos_profiles)
+    add_subdirectory(
+      "${CMAKE_CURRENT_SOURCE_DIR}/../message/cpp"
+      "${CMAKE_CURRENT_BINARY_DIR}/message_cpp"
+    )
+  endif()
+  set(_LINGTU_MAPD_IDL
+    "${CMAKE_CURRENT_SOURCE_DIR}/../message/idl/lingtu_slam.idl"
+  )
+  lingtu_add_dds_c_messages(lingtu_mapd_dds_messages "${_LINGTU_MAPD_IDL}")
+
+  add_library(lingtu_maps_mapd_dds STATIC cpp/mapd/dds.cpp)
+  target_include_directories(
+    lingtu_maps_mapd_dds
+    PUBLIC
+      "${CMAKE_CURRENT_SOURCE_DIR}/cpp/mapd"
+    PRIVATE
+      "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  )
+  target_link_libraries(
+    lingtu_maps_mapd_dds
+    PUBLIC
+      lingtu_maps
+      lingtu_mapd_dds_messages
+      lingtu_dds_qos_profiles
+      Threads::Threads
+  )
+  set_target_properties(
+    lingtu_maps_mapd_dds
+    PROPERTIES POSITION_INDEPENDENT_CODE ON
+  )
+
+  add_executable(mapd cpp/mapd/main.cpp)
+  target_include_directories(
+    mapd
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  )
+  target_link_libraries(mapd PRIVATE lingtu_maps_mapd_dds)
+  add_executable(lingtu_mapctl cpp/tools/mapctl.cpp)
+  target_include_directories(
+    lingtu_mapctl
+    PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/.."
+  )
+  target_link_libraries(
+    lingtu_mapctl
+    PRIVATE
+      lingtu_maps
+      lingtu_mapd_dds_messages
+      lingtu_dds_qos_profiles
+      Threads::Threads
+  )
+  set_target_properties(lingtu_mapctl PROPERTIES OUTPUT_NAME "lingtu-mapctl")
+  if(MSVC)
+    target_compile_options(lingtu_maps_mapd_dds PRIVATE /W4)
+    target_compile_options(mapd PRIVATE /W4)
+    target_compile_options(lingtu_mapctl PRIVATE /W4)
+  else()
+    target_compile_options(
+      lingtu_maps_mapd_dds
+      PRIVATE -Wall -Wextra -Wpedantic
+    )
+    target_compile_options(mapd PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(lingtu_mapctl PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+  install(TARGETS mapd lingtu_mapctl RUNTIME DESTINATION bin)
+endif()
 
 option(LINGTU_MAPS_BUILD_TOOLS "Build LingTu maps command-line tools" ON)
 
@@ -224,6 +300,60 @@ if(LINGTU_MAPS_BUILD_TESTS)
   )
 
   add_executable(
+    lingtu_maps_mapd_engine_test
+    tests/cpp/mapd_engine_test.cpp
+  )
+  target_link_libraries(lingtu_maps_mapd_engine_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_mapd_engine_test
+    COMMAND lingtu_maps_mapd_engine_test
+  )
+
+  add_executable(
+    lingtu_maps_map_activation_test
+    tests/cpp/map_activation_test.cpp
+  )
+  target_link_libraries(lingtu_maps_map_activation_test PRIVATE lingtu_maps)
+  add_test(
+    NAME lingtu_maps_map_activation_test
+    COMMAND lingtu_maps_map_activation_test
+  )
+
+  if(LINGTU_MAPS_BUILD_MAPD)
+    add_executable(
+      lingtu_maps_mapd_dds_test
+      tests/cpp/mapd_dds_test.cpp
+    )
+    target_include_directories(
+      lingtu_maps_mapd_dds_test
+      PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/cpp/mapd"
+        "${CMAKE_CURRENT_SOURCE_DIR}/.."
+    )
+    target_link_libraries(
+      lingtu_maps_mapd_dds_test
+      PRIVATE
+        lingtu_maps_mapd_dds
+    )
+    add_test(
+      NAME lingtu_maps_mapd_dds_test
+      COMMAND lingtu_maps_mapd_dds_test
+    )
+  endif()
+
+  if(UNIX AND NOT APPLE)
+    add_executable(
+      lingtu_maps_mapd_uds_test
+      tests/cpp/mapd_uds_test.cpp
+    )
+    target_link_libraries(lingtu_maps_mapd_uds_test PRIVATE lingtu_maps)
+    add_test(
+      NAME lingtu_maps_mapd_uds_test
+      COMMAND lingtu_maps_mapd_uds_test
+    )
+  endif()
+
+  add_executable(
     lingtu_maps_maintenance_test
     tests/cpp/map_maintenance_test.cpp
   )
@@ -351,6 +481,8 @@ if(LINGTU_MAPS_BUILD_TESTS)
     lingtu_maps_artifact_jobs_test
     lingtu_maps_process_test
     lingtu_maps_block_grid_scene_test
+    lingtu_maps_mapd_engine_test
+    lingtu_maps_map_activation_test
     lingtu_maps_maintenance_test
     lingtu_maps_map_graph_test
     lingtu_maps_active_slots_test
@@ -364,6 +496,12 @@ if(LINGTU_MAPS_BUILD_TESTS)
     lingtu_maps_semantic_localization_client_test
     lingtu_maps_grid_c_api_test
   )
+  if(LINGTU_MAPS_BUILD_MAPD)
+    list(APPEND LINGTU_MAPS_TEST_TARGETS lingtu_maps_mapd_dds_test)
+  endif()
+  if(UNIX AND NOT APPLE)
+    list(APPEND LINGTU_MAPS_TEST_TARGETS lingtu_maps_mapd_uds_test)
+  endif()
   foreach(test_target IN LISTS LINGTU_MAPS_TEST_TARGETS)
     if(MSVC)
       target_compile_options(${test_target} PRIVATE /UNDEBUG)

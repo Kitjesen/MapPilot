@@ -1,0 +1,231 @@
+schema_version: lingtu.runtime_graph.env.v1
+name: real
+summary: Physical Thunder robot environment with native typed-DDS runtime processes.
+simulation_only: false
+parameter_overrides:
+  map_input.max_cells: 262144
+  # Traversability publishes at 10 Hz; 0.35 s covers more than three frames.
+  map_input.max_age_s: 0.35
+supported_products:
+  - teleop
+  - teleop_avoid
+  - map
+  - tracking
+  - nav
+  - inspection
+  - explore
+robot_config_ref: config/robot_config.yaml
+host_config:
+  robot: thunder
+  _module_transport: local
+  _endpoint_transport: dds
+  _endpoint_contract: thunder_dds_v1
+  enable_hw: false
+  enable_visual_backup: false
+  enable_robot_driver: false
+  enable_lidar: false
+  enable_imu: false
+  command_output_mode: endpoint_only
+  hardware_control_boundary: driver
+  localization_adapter: cpp_slam_status
+  native_navigation_endpoint: lingtu-nav-dds
+  enable_map_out: false
+  enable_map_layers: false
+  enable_camera: true
+  camera_backend: dds
+process_control: systemd
+process_manager: systemd
+provided_roles:
+  - lidar
+  - slam
+  - maps
+  - traversability
+  - nav
+  - driver
+  - camera
+  - explore
+  - host
+processes:
+  lidar:
+    target: lingtu-livox-dds.service
+    lifecycle: mode
+    order: 10
+    timeout_s: 20
+  slam:
+    target: lingtu-slam-dds.service
+    lifecycle: mode
+    order: 20
+    timeout_s: 35
+  maps:
+    target: mapd.service
+    lifecycle: mode
+    order: 25
+    timeout_s: 20
+  traversability:
+    target: lingtu-traversability-dds.service
+    lifecycle: mode
+    order: 30
+    timeout_s: 20
+  nav:
+    target: lingtu-nav-dds.service
+    lifecycle: mode
+    order: 40
+    timeout_s: 20
+  driver:
+    target: lingtu-driver.service
+    lifecycle: persistent
+    order: 50
+    timeout_s: 20
+  camera:
+    target: lingtu-camera-dds.service
+    lifecycle: mode
+    order: 60
+    timeout_s: 20
+  explore:
+    target: lingtu-explore-dds.service
+    lifecycle: mode
+    order: 70
+    timeout_s: 20
+  host:
+    target: lingtu.service
+    lifecycle: mode
+    order: 90
+    timeout_s: 45
+conflicts:
+  - lingtu-teleop-dds.service
+  # Negative cleanup targets for lab-only Super-LIO units that may remain
+  # installed from an older deployment. They are not Product process roles.
+  - robot-super-lio.service
+  - robot-super-lio-relocation.service
+  - super_lio.service
+  - super_lio_relocation.service
+  - robot-hba.service
+  - robot-genz-icp.service
+  - robot-localizer.service
+  - robot-fastlio2.service
+  - robot-lidar.service
+  - lidar.service
+  - localization.service
+  - slam.service
+  - traversability-dds.service
+  - traversability.service
+  - nav-dds.service
+  - nav.service
+  - explore-dds.service
+  - explore.service
+  - lingtu-thunder-dds-endpoint.service
+  - thunder-dds-endpoint.service
+endpoints:
+  contract:
+    name: thunder_dds_v1
+    transport: dds
+    runtime_class: native_dds
+    data_plane: native_dds
+    real_equivalent: true
+    exploration_command_boundary:
+      request: /nav/exploration/command
+      ack: /nav/exploration/ack
+      client_completion: business_ack_required
+      directed_target:
+        set_kind: 5
+        clear_kind: 6
+        request_fields: [has_directed_target, directed_target_x, directed_target_y, directed_target_ttl_s]
+        ack_field: intent_revision
+        policy: soft_tare_candidate_preference
+        grants_static_boundary_path_authorization: false
+      status_source: /dev/shm/lingtu/explore_status.json
+      status_authoritative_for_commands: false
+    exploration_run_event_stream:
+      topic: /nav/exploration/run/event
+      ordering_cursor: [boot_id, event_sequence]
+      terminal_truth: native_motion_stop_confirmation_before_terminal
+    exploration_segment_boundary:
+      execution_snapshot: /nav/exploration_execution_snapshot
+      request: /nav/exploration_segment/request
+      ack: /nav/exploration_segment/ack
+      status: /nav/exploration_segment/status
+      client_completion: matching_business_ack_and_terminal_status_required
+      request_identity_fields: [session_id, reset_epoch, minimum_generation]
+      response_identity_fields: [session_id, reset_epoch, generation, live]
+    inspection_task_boundary:
+      request: /nav/inspection/task/request
+      ack: /nav/inspection/task/ack
+      status: /nav/inspection/status
+      client_completion: business_ack_required
+      request_identity_fields: [task_id, request_id]
+      response_identity_fields: [task_id, request_id]
+    inspection_task_event_stream:
+      topic: /nav/inspection/task/event
+      ordering_cursor: [boot_id, event_sequence]
+      terminal_truth: native_stop_evidence_before_terminal_state
+    inspection_evidence_boundary:
+      request: /nav/inspection/evidence/request
+      result: /nav/inspection/evidence/result
+      client_completion: matching_persisted_result_required
+    map_activation_boundary:
+      request: /maps/activation/request
+      ack: /maps/activation/ack
+      client_completion: matching_business_ack_required
+      operations: [STAGE, RESTORE, VERIFY]
+      request_identity_fields: [target, previous]
+      stale_rollback_policy: reject_unless_active_exactly_matches_target
+    source_topics:
+      - /tf
+      - /tf_static
+      - /lidar/raw_frame
+      - /imu/raw
+      - /nav/command/request
+      - /nav/operator_motion/control
+      - /nav/operator_motion/sample
+      - /nav/exploration/command
+      - /nav/inspection/task/request
+      - /nav/inspection/evidence/result
+      - /nav/traversability
+      - /maps/activation/request
+    exposed_topics:
+      - /slam/odometry
+      - /slam/registered_cloud
+      - /slam/map_observation
+      - /slam/map_cloud
+      - /slam/saved_map_cloud
+      - /slam/localization_health
+      - /slam/localization_quality
+      - /maps/state
+      - /maps/live_cloud
+      - /maps/voxel_cloud
+      - /maps/accumulated_cloud
+      - /maps/occupancy
+      - /maps/elevation
+      - /maps/esdf
+      - /maps/scene
+      - /maps/activation/ack
+      - /nav/exploration_grid
+      - /nav/exploration_snapshot
+      - /nav/exploration_execution_snapshot
+      - /nav/exploration_segment/request
+      - /nav/exploration_segment/ack
+      - /nav/exploration_segment/status
+      - /nav/global_path
+      - /nav/local_path
+      - /nav/way_point
+      - /nav/cmd_vel
+      - /nav/command/ack
+      - /nav/operator_motion/ack
+      - /nav/operator_motion/status
+      - /nav/goal/status
+      - /nav/state
+      - /nav/exploration/ack
+      - /nav/exploration/run/event
+      - /nav/inspection/task/ack
+      - /nav/inspection/status
+      - /nav/inspection/task/event
+      - /nav/inspection/evidence/request
+    compatibility_topics:
+      - /nav/teleop_cmd_vel
+      - /nav/goal_pose
+      - /nav/cancel
+    forbidden_modules:
+      - SimEndpointDriverModule
+    forbidden_claims:
+      - module_sim_real_equivalence
+      - ros2_bridge_required

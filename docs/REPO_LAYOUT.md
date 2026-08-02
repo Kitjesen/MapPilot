@@ -40,14 +40,14 @@ where code belongs before adding a new file.
 | --- | --- |
 | `config/` | Robot, device, topic, endpoint, package configuration. |
 | `calibration/` | Camera, IMU, LiDAR, camera-LiDAR calibration tools. |
-| `sim/` | Simulation engines, worlds, robots, assets, public script gates, validation, and tests. MuJoCo implementations live under `sim/scripts/mujoco/`; old `sim/scripts/<name>` entrypoints are compatibility wrappers. |
+| `sim/` | Simulation engines, worlds, robots, assets, public script gates, validation, and tests. `sim/scripts/mujoco/` is the only current MuJoCo command and test path. |
 | `scripts/` | Build, deploy, OTA, diagnostics, native/test wrappers plus ROS workspace compatibility tools and robot-side operations. |
 | `scripts/perception/` | ROS2 compatibility perception demos; product camera and detection paths remain under `src/` and Gateway. |
 | `scripts/deploy/thunder/` | Thunder field systemd units and run/install wrappers, including the canonical `lingtu-driver` remote Brainstem boundary. |
 | `tools/` | Developer validation, benchmarks, offline analysis, one-shot packaging. |
 | `tests/` | Remaining integration/script tests outside package-owned tests. |
 | `web/` | React/Vite dashboard. |
-| `docs/` | Current docs plus archived design material. |
+| `docs/` | Current guides/contracts, one active roadmap, non-authoritative research, and dated evidence. Git history is the archive. |
 
 ## Placement Rules
 
@@ -64,5 +64,6 @@ where code belongs before adding a new file.
 ```bash
 python tools/validate/validate_architecture_boundaries.py --verbose
 python tools/validate/validate_topics.py
-python -m pytest tests/contracts/test_module_first_runtime_boundaries.py -q
+python tools/validate/validate_docs.py
+python -m pytest tests/contracts/test_runtime_architecture_boundaries.py -q
 ```

@@ -12,7 +12,7 @@ from runtime.runtime_interface import TOPICS, topic_default_frame_id
 
 
 def test_gateway_map_odom_tf_updates_frame_tree() -> None:
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule()
 
     gateway._on_map_odom_tf({
         "tx": 1.0,
@@ -46,7 +46,7 @@ def test_gateway_map_odom_tf_updates_frame_tree() -> None:
 
 
 def test_gateway_odometry_updates_frame_tree_for_diagnostics() -> None:
-    gateway = GatewayModule(manage_session_services=False)
+    gateway = GatewayModule()
 
     gateway._on_odometry(
         Odometry(

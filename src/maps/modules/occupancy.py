@@ -81,6 +81,8 @@ class OccupancyGridModule(Module, layer=2):
         self._robot_yaw = 0.0
         self._gs = int(2 * self._radius / self._res)
         self._map_kernel = None
+        self._last_observation_epoch = 0
+        self._last_observation_sequence = 0
 
     def setup(self) -> None:
         self._map_kernel = create_map_kernel_backend()
@@ -101,7 +103,45 @@ class OccupancyGridModule(Module, layer=2):
     def _on_cloud(self, cloud: PointCloud2) -> None:
         if cloud.is_empty:
             return
-        pts = np.asarray(cloud.points[:, :3], dtype=np.float32)
+        self._build_from_points(
+            cloud.points,
+            robot_x=float(self._robot_xy[0]),
+            robot_y=float(self._robot_xy[1]),
+            robot_yaw=float(self._robot_yaw),
+            frame_id=str(getattr(cloud, "frame_id", "") or self._frame_id),
+            ts=float(getattr(cloud, "ts", 0.0) or time.time()),
+        )
+
+    def _on_observation(self, frame: MapObservationFrame) -> None:
+        epoch = int(frame.reset_epoch)
+        sequence = int(frame.sequence)
+        if epoch < self._last_observation_epoch or (
+            epoch == self._last_observation_epoch
+            and sequence <= self._last_observation_sequence
+        ):
+            return
+        self._last_observation_epoch = epoch
+        self._last_observation_sequence = sequence
+        self._build_from_points(
+            frame.map_points(),
+            robot_x=float(frame.sensor_origin.x),
+            robot_y=float(frame.sensor_origin.y),
+            robot_yaw=float(frame.map_sensor_pose.orientation.yaw),
+            frame_id=frame.frame_id,
+            ts=float(frame.ts),
+        )
+
+    def _build_from_points(
+        self,
+        points: Any,
+        *,
+        robot_x: float,
+        robot_y: float,
+        robot_yaw: float,
+        frame_id: str,
+        ts: float,
+    ) -> None:
+        pts = np.asarray(points[:, :3], dtype=np.float32)
         valid = np.isfinite(pts).all(axis=1)
         pts = np.ascontiguousarray(pts[valid], dtype=np.float32)
         if pts.shape[0] == 0:
@@ -111,9 +151,9 @@ class OccupancyGridModule(Module, layer=2):
 
         result = self._map_kernel.runtime.build_occupancy_grid(
             pts,
-            robot_x=float(self._robot_xy[0]),
-            robot_y=float(self._robot_xy[1]),
-            robot_yaw=float(self._robot_yaw),
+            robot_x=robot_x,
+            robot_y=robot_y,
+            robot_yaw=robot_yaw,
             resolution=float(self._res),
             radius=float(self._radius),
             z_min=float(self._z_min),
@@ -138,10 +178,9 @@ class OccupancyGridModule(Module, layer=2):
             source="raycast_lidar" if self._raycast_free_space else "projected_lidar",
             counts=counts,
             raycast=self._raycast_free_space,
+            frame_id=frame_id,
+            ts=ts,
         )
-
-    def _on_observation(self, frame: MapObservationFrame) -> None:
-        self._on_cloud(frame.to_map_pointcloud2())
 
     def _publish_grids(
         self,
@@ -152,18 +191,20 @@ class OccupancyGridModule(Module, layer=2):
         source: str,
         counts: dict[str, int],
         raycast: bool = False,
+        frame_id: str,
+        ts: float,
     ) -> None:
         origin_pose = Pose(
             position=Vector3(float(origin_xy[0]), float(origin_xy[1]), 0.0),
             orientation=Quaternion(0, 0, 0, 1),
         )
-        now = time.time()
+        now = float(ts)
         og = OccupancyGrid(
             grid=occupancy_grid,
             resolution=self._res,
             origin=origin_pose,
             ts=now,
-            frame_id=self._frame_id,
+            frame_id=frame_id,
         )
         common = {
             "resolution": self._res,
@@ -173,7 +214,7 @@ class OccupancyGridModule(Module, layer=2):
             "height": int(occupancy_grid.shape[0]),
             "width": int(occupancy_grid.shape[1]),
             "ts": now,
-            "frame_id": self._frame_id,
+            "frame_id": frame_id,
             "raycast": bool(raycast),
             "counts": counts,
             "accumulation": "rolling_local_window",

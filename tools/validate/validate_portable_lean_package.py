@@ -9,7 +9,6 @@ import importlib.util
 import json
 import re
 import sys
-import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -17,12 +16,9 @@ from typing import Any, Iterable
 ROOT_DIR = Path(__file__).resolve().parents[2]
 SRC_DIR = ROOT_DIR / "src"
 PYPROJECT_PATH = ROOT_DIR / "pyproject.toml"
-REQUIREMENTS_CORE_PORTABLE_PATH = ROOT_DIR / "requirements-core-portable.txt"
-REQUIREMENTS_LITE_PATH = ROOT_DIR / "requirements-lite.txt"
-REQUIREMENTS_SIM_MUJOCO_PATH = ROOT_DIR / "requirements-sim-mujoco.txt"
 
 CORE_PORTABLE_DEPS = frozenset({"numpy", "scipy", "pyyaml", "pydantic"})
-SIM_MUJOCO_DEPS = frozenset({"mujoco", "mujoco-lidar"})
+SIM_MUJOCO_DEPS = frozenset({"mujoco", "mujoco-lidar", "onnxruntime"})
 
 ROS_COMPAT_ONLY = frozenset(
     {
@@ -122,7 +118,7 @@ CRITICAL_SCAN_EXCLUDES = (
     "/build_nb/",
     "/_deps/",
     # Legacy/manual-experiment PCT backend vendor code. Tracked as a known
-    # native-heavy (Open3D) surface in docs/architecture/PORTABLE_LEAN_PACKAGE_MATRIX.md
+    # native-heavy (Open3D) surface in docs/research/portable_lean_package_matrix.md
     # ("Isolate PCT/GTSAM/Open3D"); not on the default portable runtime path.
     "src/nav/services/plan/global_planner/algorithm/pct/vendor/",
 )
@@ -164,8 +160,90 @@ def _module_dep_name(module: str) -> str:
     return module.strip().lower().replace("_", "-")
 
 
+def _strip_toml_comment(line: str) -> str:
+    quote: str | None = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote is not None:
+            escaped = True
+            continue
+        if char in {'"', "'"}:
+            if quote == char:
+                quote = None
+            elif quote is None:
+                quote = char
+            continue
+        if char == "#" and quote is None:
+            return line[:index]
+    return line
+
+
+def _parse_pyproject_dependency_lists(text: str) -> tuple[list[str], dict[str, list[str]]]:
+    project_dependencies: list[str] = []
+    optional_dependencies: dict[str, list[str]] = {}
+    current_section = ""
+    collecting_key: str | None = None
+    collecting_section = ""
+    collecting_lines: list[str] = []
+
+    def finish_collection() -> None:
+        nonlocal collecting_key, collecting_section, collecting_lines, project_dependencies
+        if collecting_key is None:
+            return
+        value = ast.literal_eval(" ".join(collecting_lines))
+        if collecting_section == "project" and collecting_key == "dependencies":
+            project_dependencies = list(value)
+        elif collecting_section == "project.optional-dependencies":
+            optional_dependencies[collecting_key] = list(value)
+        collecting_key = None
+        collecting_section = ""
+        collecting_lines = []
+
+    for raw_line in text.splitlines():
+        line = _strip_toml_comment(raw_line).strip()
+        if not line:
+            continue
+        if collecting_key is not None:
+            collecting_lines.append(line)
+            if "]" in line:
+                finish_collection()
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line.strip("[]")
+            continue
+        if current_section not in {"project", "project.optional-dependencies"}:
+            continue
+        if "=" not in line:
+            continue
+        key, raw_value = (part.strip() for part in line.split("=", 1))
+        if not raw_value.startswith("["):
+            continue
+        if "]" in raw_value:
+            value = ast.literal_eval(raw_value)
+            if current_section == "project" and key == "dependencies":
+                project_dependencies = list(value)
+            elif current_section == "project.optional-dependencies":
+                optional_dependencies[key] = list(value)
+            continue
+        collecting_key = key
+        collecting_section = current_section
+        collecting_lines = [raw_value]
+
+    finish_collection()
+    return project_dependencies, optional_dependencies
+
+
 def _read_pyproject() -> tuple[list[str], dict[str, list[str]]]:
-    data = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8-sig"))
+    text = PYPROJECT_PATH.read_text(encoding="utf-8-sig")
+    try:
+        import tomllib  # type: ignore[attr-defined]
+    except ModuleNotFoundError:
+        return _parse_pyproject_dependency_lists(text)
+
+    data = tomllib.loads(text)
     project = data.get("project") or {}
     return (
         list(project.get("dependencies") or []),
@@ -260,77 +338,6 @@ def _check_base_dependencies() -> Check:
             "unexpected_in_base": unexpected,
             "missing_core_dependencies": missing,
             "optional_groups": {key: sorted(_dep_name(dep) for dep in value) for key, value in optional_deps.items()},
-        },
-    )
-
-
-def _check_lite_requirements() -> Check:
-    lite_names = {_dep_name(dep) for dep in _read_requirements(REQUIREMENTS_LITE_PATH)}
-    forbidden = sorted(lite_names & FORBIDDEN_BASE_DEPS)
-    unexpected = sorted(lite_names - CORE_PORTABLE_DEPS)
-    missing = sorted(CORE_PORTABLE_DEPS - lite_names)
-    status = "pass" if not forbidden and not unexpected and not missing else "fail"
-    return Check(
-        name="requirements_lite",
-        status=status,
-        summary=(
-            "requirements-lite.txt mirrors the portable core dependency set"
-            if status == "pass"
-            else "requirements-lite.txt is not portable-lean clean"
-        ),
-        evidence={
-            "requirements_lite": sorted(lite_names),
-            "forbidden_in_lite": forbidden,
-            "unexpected_in_lite": unexpected,
-            "missing_core_dependencies": missing,
-        },
-    )
-
-
-def _check_core_portable_requirements() -> Check:
-    core_names = {_dep_name(dep) for dep in _read_requirements(REQUIREMENTS_CORE_PORTABLE_PATH)}
-    forbidden = sorted(core_names & FORBIDDEN_BASE_DEPS)
-    unexpected = sorted(core_names - CORE_PORTABLE_DEPS)
-    missing = sorted(CORE_PORTABLE_DEPS - core_names)
-    status = "pass" if not forbidden and not unexpected and not missing else "fail"
-    return Check(
-        name="requirements_core_portable",
-        status=status,
-        summary=(
-            "requirements-core-portable.txt is limited to the portable core dependency set"
-            if status == "pass"
-            else "requirements-core-portable.txt is not portable-lean clean"
-        ),
-        evidence={
-            "requirements_core_portable": sorted(core_names),
-            "forbidden_in_core_portable": forbidden,
-            "unexpected_in_core_portable": unexpected,
-            "missing_core_dependencies": missing,
-        },
-    )
-
-
-def _check_sim_mujoco_requirements() -> Check:
-    sim_names = {_dep_name(dep) for dep in _read_requirements(REQUIREMENTS_SIM_MUJOCO_PATH)}
-    expected = CORE_PORTABLE_DEPS | SIM_MUJOCO_DEPS
-    forbidden = sorted((sim_names & FORBIDDEN_BASE_DEPS) - SIM_MUJOCO_DEPS)
-    unexpected = sorted(sim_names - expected)
-    missing = sorted(expected - sim_names)
-    status = "pass" if not forbidden and not unexpected and not missing else "fail"
-    return Check(
-        name="requirements_sim_mujoco",
-        status=status,
-        summary=(
-            "requirements-sim-mujoco.txt layers only MuJoCo on top of portable core"
-            if status == "pass"
-            else "requirements-sim-mujoco.txt includes dependencies outside portable core + MuJoCo"
-        ),
-        evidence={
-            "requirements_sim_mujoco": sorted(sim_names),
-            "expected": sorted(expected),
-            "forbidden_in_sim_mujoco": forbidden,
-            "unexpected_in_sim_mujoco": unexpected,
-            "missing_dependencies": missing,
         },
     )
 
@@ -531,9 +538,6 @@ def run(profile: str) -> dict[str, Any]:
     checks = [
         _check_base_dependencies(),
         _check_optional_dependency_tiers(),
-        _check_core_portable_requirements(),
-        _check_lite_requirements(),
-        _check_sim_mujoco_requirements(),
         _check_profile(profile),
         _check_surface_imports(),
         _check_bottom_layer_imports(),

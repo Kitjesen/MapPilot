@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 
 from runtime.runtime_interface import REAL_RUNTIME_CONTRACT, TOPICS
 
-GATEWAY_RUNTIME_ACCEPTANCE_SCHEMA_VERSION = "lingtu.gateway_runtime_acceptance.v1"
+GATEWAY_RUNTIME_ACCEPTANCE_SCHEMA_VERSION = "lingtu.gateway_runtime_acceptance.v3"
 DEFAULT_GATEWAY_URL = "http://127.0.0.1:5050"
 IN_PROCESS_STUB_RUNTIME_CONTRACT = "in_process_stub"
 ACCEPTANCE_MODES = ("non_motion", "simulation", "field")
@@ -299,7 +299,7 @@ def _has_gateway_sse_stream(topic_entry: Mapping[str, Any]) -> bool:
     return False
 
 
-def _check_dataflow(
+def _check_gateway_observability(
     dataflow: Mapping[str, Any],
     mode: str,
     blockers: list[str],
@@ -308,24 +308,31 @@ def _check_dataflow(
     topic_entries = _topic_index(dataflow)
     missing_topics = [topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic not in topic_entries]
     if missing_topics:
-        blockers.append("runtime dataflow missing product topics: " + ", ".join(missing_topics))
+        blockers.append("Gateway observability missing product topics: " + ", ".join(missing_topics))
 
     non_observable = [
         topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic in topic_entries and not _observable(topic_entries[topic])
     ]
     if non_observable:
         blockers.append(
-            "runtime dataflow topics are not observable through Gateway/Module ports: " + ", ".join(non_observable)
+            "product topics are not observable through Gateway: " + ", ".join(non_observable)
         )
 
+    stream_required_topics = PRODUCT_OBSERVABLE_TOPICS
+    if dataflow.get("runtime_contract") == IN_PROCESS_STUB_RUNTIME_CONTRACT:
+        # The non-motion in-process stub exposes the command boundary through
+        # Module ports; it does not synthesize an outbound cmd_vel SSE event.
+        stream_required_topics = tuple(
+            topic for topic in PRODUCT_OBSERVABLE_TOPICS if topic != TOPICS.cmd_vel
+        )
     missing_stream_interfaces = [
         topic
-        for topic in PRODUCT_OBSERVABLE_TOPICS
+        for topic in stream_required_topics
         if topic in topic_entries and not _has_gateway_sse_stream(topic_entries[topic])
     ]
     if missing_stream_interfaces:
         blockers.append(
-            "runtime dataflow topics missing Gateway SSE subscription: " + ", ".join(missing_stream_interfaces)
+            "product topics missing Gateway SSE subscription: " + ", ".join(missing_stream_interfaces)
         )
 
     missing_live = [topic for topic in FIELD_LIVE_TOPICS if topic in topic_entries and not _live(topic_entries[topic])]
@@ -341,15 +348,6 @@ def _check_dataflow(
     endpoint_topic_required = bool(dataflow.get("endpoint_topic_required", dataflow.get("ros2_topic_required")))
     if endpoint_topic_required:
         blockers.append("Gateway acceptance must not require endpoint topic inspection")
-
-    transport_layers = _mapping(dataflow.get("transport_layers"))
-    module_bus = _mapping(transport_layers.get("module_port_bus"))
-    endpoint_adapter = _mapping(transport_layers.get("endpoint_adapter") or transport_layers.get("ros2_adapter"))
-    ros2_adapter = _mapping(transport_layers.get("ros2_adapter"))
-    if module_bus.get("primary") is not True:
-        blockers.append("module_port_bus must be the primary dataflow boundary")
-    if endpoint_adapter.get("primary") is True:
-        blockers.append("endpoint_adapter must not be the primary acceptance boundary")
 
     control_boundary = _mapping(dataflow.get("control_boundary"))
     if control_boundary.get("arbitrary_publish_supported") is not False:
@@ -373,8 +371,6 @@ def _check_dataflow(
         "ok": not missing_topics
         and not non_observable
         and not endpoint_topic_required
-        and module_bus.get("primary") is True
-        and endpoint_adapter.get("primary") is not True
         and control_boundary.get("arbitrary_publish_supported") is False
         and bool(command_interfaces)
         and not missing_command_paths
@@ -384,9 +380,6 @@ def _check_dataflow(
         "runtime_contract": dataflow.get("runtime_contract"),
         "endpoint_topic_required": endpoint_topic_required,
         "ros2_topic_required": bool(dataflow.get("ros2_topic_required")),
-        "module_port_bus_primary": module_bus.get("primary"),
-        "endpoint_adapter_primary": endpoint_adapter.get("primary"),
-        "ros2_adapter_primary": ros2_adapter.get("primary"),
         "arbitrary_publish_supported": control_boundary.get("arbitrary_publish_supported"),
         "command_interface_count": len(command_interfaces),
         "missing_command_interfaces": missing_command_paths,
@@ -403,6 +396,46 @@ def _check_dataflow(
         "non_observable_topics": non_observable,
         "missing_stream_interfaces": missing_stream_interfaces,
         "missing_live_topics": missing_live,
+    }
+
+
+def _check_motion_path(
+    dataflow: Mapping[str, Any],
+    mode: str,
+    blockers: list[str],
+) -> dict[str, Any]:
+    motion = _mapping(dataflow.get("motion_path"))
+    runtime_boundary = _mapping(dataflow.get("runtime_boundary"))
+    field_runtime = (
+        str(dataflow.get("runtime_contract") or "") == REAL_RUNTIME_CONTRACT
+        and _as_bool(runtime_boundary.get("simulation_only")) is False
+    )
+    expected = {
+        "kind": "native_field",
+        "motion_owner": "nav",
+        "final_velocity_writer": "nav",
+        "actuator_owner": "driver",
+    }
+    mismatches: list[str] = []
+    if field_runtime:
+        for key, value in expected.items():
+            if motion.get(key) != value:
+                mismatches.append(f"{key}={motion.get(key)!r}, expected {value!r}")
+        if len(motion.get("stages") or []) != 5:
+            mismatches.append("stages must contain command, localization, risk, motion, and actuation")
+    if mismatches:
+        detail = "; ".join(mismatches)
+        if mode in MOTION_ACCEPTANCE_MODES or field_runtime:
+            blockers.append(f"native motion path mismatch: {detail}")
+    return {
+        "ok": not mismatches,
+        "field_runtime": field_runtime,
+        "kind": motion.get("kind"),
+        "motion_owner": motion.get("motion_owner"),
+        "final_velocity_writer": motion.get("final_velocity_writer"),
+        "actuator_owner": motion.get("actuator_owner"),
+        "stage_count": len(motion.get("stages") or []),
+        "mismatches": mismatches,
     }
 
 
@@ -517,11 +550,11 @@ def _check_stage_evidence(
         if mode in MOTION_ACCEPTANCE_MODES:
             blockers.append(f"{mode} acceptance requires runtime stage evidence")
         else:
-            blockers.append("runtime dataflow missing stage_evidence")
+            blockers.append("Gateway observability is missing stage evidence")
 
     missing_stages = [stage for stage in PRODUCT_REQUIRED_STAGE_NAMES if stage not in stage_entries]
     if missing_stages:
-        blockers.append("runtime dataflow missing required stages: " + ", ".join(missing_stages))
+        blockers.append("Gateway observability missing required stages: " + ", ".join(missing_stages))
 
     missing_tokens: dict[str, dict[str, list[str]]] = {}
     non_observable_stages: list[str] = []
@@ -562,7 +595,7 @@ def _check_stage_evidence(
                     "outputs": not_live_outputs,
                 }
     if not_live_stages:
-        blockers.append(f"{mode} acceptance requires live dataflow stages: " + ", ".join(not_live_stages))
+        blockers.append(f"{mode} acceptance requires live observed stages: " + ", ".join(not_live_stages))
 
     advisory_not_live = [
         name
@@ -620,7 +653,7 @@ def _check_runtime_mode(
     runtime_boundary = _mapping(dataflow.get("runtime_boundary"))
     simulation_only = _as_bool(runtime_boundary.get("simulation_only"))
     data_source = runtime_boundary.get("data_source")
-    endpoint = runtime_boundary.get("endpoint")
+    env = runtime_boundary.get("env")
     command_sink = runtime_boundary.get("command_sink")
     boundary_blockers = [str(item) for item in runtime_boundary.get("blockers") or [] if item]
     if runtime_boundary.get("ok") is False or boundary_blockers:
@@ -641,14 +674,14 @@ def _check_runtime_mode(
         if runtime_contract != REAL_RUNTIME_CONTRACT:
             check_blockers.append(f"field acceptance requires {REAL_RUNTIME_CONTRACT} runtime contract")
         if simulation_only is True:
-            check_blockers.append("field acceptance must not run against simulation endpoint")
+            check_blockers.append("field acceptance must not run in the sim Env")
         if command_sink != HARDWARE_COMMAND_SINK:
             check_blockers.append("field acceptance requires hardware command sink after VelocityMux")
     blockers.extend(check_blockers)
 
     return {
         "ok": not check_blockers,
-        "endpoint": endpoint,
+        "env": env,
         "data_source": data_source,
         "runtime_contract": runtime_contract,
         "simulation_only": simulation_only,
@@ -877,11 +910,16 @@ def evaluate_gateway_runtime_acceptance(
     advisories: list[str] = []
 
     gateway_contract = _check_gateway_contract(snapshots, blockers, advisories)
-    dataflow = _check_dataflow(
+    gateway_observability = _check_gateway_observability(
         _mapping(snapshots.get("runtime_dataflow")),
         mode,
         blockers,
         advisories,
+    )
+    motion = _check_motion_path(
+        _mapping(snapshots.get("runtime_dataflow")),
+        mode,
+        blockers,
     )
     stage_evidence = _check_stage_evidence(
         _mapping(snapshots.get("runtime_dataflow")),
@@ -937,7 +975,8 @@ def evaluate_gateway_runtime_acceptance(
     checks = {
         "gateway_contract": gateway_contract,
         "runtime_mode": runtime_mode,
-        "module_first_dataflow": dataflow,
+        "gateway_observability": gateway_observability,
+        "motion": motion,
         "stage_evidence": stage_evidence,
         "frontier_preview": frontier_preview,
         "readiness": readiness,
@@ -961,13 +1000,16 @@ def evaluate_gateway_runtime_acceptance(
         "simulation_only": top_level_simulation_only,
         "real_robot_motion": top_level_real_robot_motion,
         "cmd_vel_sent_to_hardware": top_level_cmd_vel_sent_to_hardware,
-        "target_result": ("Gateway-only product runtime acceptance; endpoint topic inspection is not required."),
-        "runtime_contract": dataflow.get("runtime_contract"),
-        "endpoint_topic_required": dataflow.get(
-            "endpoint_topic_required",
-            dataflow.get("ros2_topic_required"),
+        "target_result": (
+            "Gateway observability plus the declared native motion path; "
+            "endpoint topic inspection is not required."
         ),
-        "ros2_topic_required": dataflow.get("ros2_topic_required"),
+        "runtime_contract": gateway_observability.get("runtime_contract"),
+        "endpoint_topic_required": gateway_observability.get(
+            "endpoint_topic_required",
+            gateway_observability.get("ros2_topic_required"),
+        ),
+        "ros2_topic_required": gateway_observability.get("ros2_topic_required"),
         "blockers": blockers,
         "advisories": advisories,
         "checks": checks,
@@ -1068,8 +1110,8 @@ def _collect_in_process_stub_gateway_snapshots() -> dict[str, dict[str, Any]]:
 
     env = {
         "LINGTU_BLACKBOX_ENABLED": "0",
+        "LINGTU_ENV": "sim",
         "LINGTU_PROFILE": "stub",
-        "LINGTU_ENDPOINT": "in_process_gateway_stub",
         "LINGTU_DATA_SOURCE": IN_PROCESS_STUB_RUNTIME_CONTRACT,
         "LINGTU_RUNTIME_CONTRACT": IN_PROCESS_STUB_RUNTIME_CONTRACT,
         "LINGTU_SIMULATION_ONLY": "1",

@@ -32,6 +32,7 @@ void bind_tare(nb::module_& m) {
     .def_rw("gain_weight", &TarePolicyConfig::gain_weight)
     .def_rw("travel_weight", &TarePolicyConfig::travel_weight)
     .def_rw("momentum_weight", &TarePolicyConfig::momentum_weight)
+    .def_rw("directed_progress_weight", &TarePolicyConfig::directed_progress_weight)
     .def_rw("revisit_weight", &TarePolicyConfig::revisit_weight)
     .def_rw("max_plan_time_ms", &TarePolicyConfig::max_plan_time_ms)
     .def_rw("route_2opt_iterations", &TarePolicyConfig::route_2opt_iterations)

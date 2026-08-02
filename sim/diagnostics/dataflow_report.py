@@ -431,20 +431,51 @@ def _same_source_provenance_from_live(
     }
 
 
-def _pct_provenance_from_native(report: Mapping[str, Any]) -> dict[str, Any]:
+def _pct_planner_runtime_contract(report: Mapping[str, Any]) -> dict[str, Any]:
+    pct_planner_runtime = _mapping(report.get("pct_planner_runtime"))
+    runtime_name = str(pct_planner_runtime.get("runtime") or "").strip()
+    runtime_entry_ok = pct_planner_runtime.get("ok") is True
+    runtime_ok = report.get("pct_planner_runtime_ok") is True
+    global_planner_source = str(report.get("global_planner_source") or "")
+    checked = "pct_planner_runtime" in report or "pct_planner_runtime_ok" in report or bool(global_planner_source)
+    if not runtime_name:
+        reason = "PCT planner runtime is not selected"
+    elif not runtime_entry_ok:
+        reason = "PCT planner runtime entry is not ok"
+    elif not runtime_ok:
+        reason = "pct_planner_runtime_ok is not true"
+    elif global_planner_source != "source_report/pct_tomogram":
+        reason = "global planner source is not source_report/pct_tomogram"
+    else:
+        reason = ""
+    return {
+        "checked": checked,
+        "ok": checked and not reason,
+        "pct_planner_runtime": dict(pct_planner_runtime),
+        "pct_planner_runtime_name": runtime_name,
+        "pct_planner_runtime_entry_ok": runtime_entry_ok,
+        "pct_planner_runtime_ok": runtime_ok,
+        "global_planner_source": global_planner_source,
+        "reason": reason,
+    }
+
+
+def _pct_provenance_from_runtime_report(
+    report: Mapping[str, Any],
+) -> dict[str, Any]:
     planner = str(report.get("selected_planner") or report.get("planner") or "").lower()
     fallback_used = _bool_true(report.get("fallback_used"))
-    pct_runtime_ok = report.get("pct_runtime_ok") is True
+    runtime_contract = _pct_planner_runtime_contract(report)
     pct_path_count = _safe_int(report.get("pct_path_count"))
-    ok = planner == "pct" and not fallback_used and pct_runtime_ok and pct_path_count >= 2
+    ok = planner == "pct" and not fallback_used and runtime_contract["ok"] and pct_path_count >= 2
     if ok:
         reason = ""
     elif planner != "pct":
         reason = "selected planner is not pct"
     elif fallback_used:
         reason = "planner fallback was used"
-    elif not pct_runtime_ok:
-        reason = "PCT runtime is not ok"
+    elif not runtime_contract["ok"]:
+        reason = str(runtime_contract["reason"])
     else:
         reason = "PCT path is too short"
     return {
@@ -452,13 +483,18 @@ def _pct_provenance_from_native(report: Mapping[str, Any]) -> dict[str, Any]:
         "ok": ok,
         "planner": planner,
         "fallback_used": fallback_used,
-        "pct_runtime_ok": pct_runtime_ok,
+        "pct_planner_runtime": runtime_contract["pct_planner_runtime"],
+        "pct_planner_runtime_ok": runtime_contract["pct_planner_runtime_ok"],
+        "global_planner_source": runtime_contract["global_planner_source"],
         "pct_path_count": pct_path_count,
+        "runtime_contract": runtime_contract,
         "reason": reason,
     }
 
 
-def _pct_optimizer_mode_from_native(report: Mapping[str, Any]) -> dict[str, Any]:
+def _pct_optimizer_mode_from_runtime_report(
+    report: Mapping[str, Any],
+) -> dict[str, Any]:
     source_contract = _mapping(report.get("source_planning_contract"))
     enabled = _value_from(
         report.get("pct_optimizer_enabled"),
@@ -495,14 +531,14 @@ def _pct_optimizer_mode_from_native(report: Mapping[str, Any]) -> dict[str, Any]
     checked = enabled in (True, False) or bool(path_mode)
     rejection_recorded = attempted is True and accepted is False and bool(reject_reason)
     if enabled is False:
-        ok = path_mode == "native_astar_raw_path"
-        reason = "" if ok else "optimizer disabled but path mode is not native_astar_raw_path"
+        ok = path_mode == "astar_raw_path"
+        reason = "" if ok else "optimizer disabled but path mode is not astar_raw_path"
     elif enabled is True and path_mode == "optimized_trajectory":
         ok = accepted is not False
         reason = "" if ok else "optimized trajectory path mode is marked rejected"
-    elif enabled is True and path_mode == "native_astar_raw_path":
+    elif enabled is True and path_mode == "astar_raw_path":
         ok = rejection_recorded
-        reason = "" if ok else "native raw path mode lacks recorded optimizer rejection"
+        reason = "" if ok else "raw path mode lacks recorded optimizer rejection"
     elif not checked:
         ok = False
         reason = "optimizer mode evidence missing"
@@ -884,7 +920,8 @@ def _has_live_dataflow_shape(report: Mapping[str, Any]) -> bool:
 def _has_native_pct_shape(report: Mapping[str, Any]) -> bool:
     return (
         str(report.get("schema_version") or "").startswith("lingtu.native_pct_mujoco_gate")
-        or "pct_runtime_ok" in report
+        or "pct_planner_runtime" in report
+        or "pct_planner_runtime_ok" in report
         or "cmd_count_nonzero" in report
     )
 
@@ -1757,46 +1794,51 @@ def _large_terrain_pct_provenance(report: Mapping[str, Any]) -> dict[str, Any]:
         if str(_value_from(row.get("planner_requested"), row.get("planner")) or "").lower() == "pct"
         or str(row.get("planner") or "").lower() == "pct"
     ]
-    runtime = _mapping(report.get("native_runtime"))
+    pct_planner_runtime = _mapping(report.get("pct_planner_runtime"))
+    runtime_name = str(pct_planner_runtime.get("runtime") or "").strip()
+    pct_planner_runtime_ok = (
+        bool(runtime_name) and pct_planner_runtime.get("ok") is True and report.get("pct_planner_runtime_ok") is True
+    )
     fallback_rows = [
         row
         for row in pct_rows
         if str(row.get("selected_planner") or "").lower() != "pct" or bool(str(row.get("fallback_reason") or ""))
     ]
-    native_rows = [
-        row
-        for row in pct_rows
-        if row.get("native_backend_used") is True
-        and str(row.get("selected_planner") or "").lower() == "pct"
-        and row.get("feasible") is True
-        and row.get("route_ok") is True
-    ]
-    runtime_ok = runtime.get("ok") is True or (
-        bool(pct_rows) and all(_mapping(row.get("native_runtime")).get("ok") is True for row in pct_rows)
-    )
-    ok = bool(pct_rows) and len(native_rows) == len(pct_rows) and not fallback_rows and runtime_ok
+    planner_runtime_rows = []
+    for row in pct_rows:
+        row_runtime = _mapping(row.get("pct_planner_runtime"))
+        if (
+            str(row_runtime.get("runtime") or "").strip() == runtime_name
+            and row_runtime.get("ok") is True
+            and row.get("pct_planner_runtime_ok") is True
+            and str(row.get("selected_planner") or "").lower() == "pct"
+            and row.get("feasible") is True
+            and row.get("route_ok") is True
+        ):
+            planner_runtime_rows.append(row)
+    ok = bool(pct_rows) and len(planner_runtime_rows) == len(pct_rows) and not fallback_rows and pct_planner_runtime_ok
     if ok:
         reason = ""
     elif not pct_rows:
         reason = "no PCT planning case found"
-    elif not runtime_ok:
-        reason = "PCT native runtime is not ok"
+    elif not pct_planner_runtime_ok:
+        reason = "PCT planner runtime unavailable"
     elif fallback_rows:
         reason = "PCT planner fallback or repair was used"
-    elif len(native_rows) != len(pct_rows):
-        reason = "not every PCT case used native backend with a safe route"
+    elif len(planner_runtime_rows) != len(pct_rows):
+        reason = "not every PCT case used the selected planner runtime with a safe route"
     else:
-        reason = "PCT native global planning is not proven"
+        reason = "PCT global planning is not proven"
     return {
-        "checked": bool(pct_rows or runtime),
+        "checked": bool(pct_rows or "pct_planner_runtime" in report or "pct_planner_runtime_ok" in report),
         "ok": ok,
         "reason": reason,
         "planner": "pct" if pct_rows else "",
         "pct_plan_count": len(pct_rows),
-        "native_pct_plan_count": len(native_rows),
+        "pct_planner_runtime_plan_count": len(planner_runtime_rows),
         "fallback_used": bool(fallback_rows),
-        "pct_runtime_ok": runtime_ok,
-        "native_runtime": runtime,
+        "pct_planner_runtime_ok": pct_planner_runtime_ok,
+        "pct_planner_runtime": dict(pct_planner_runtime),
         "routes": [row.get("route") for row in pct_rows],
     }
 
@@ -1889,7 +1931,7 @@ def _summarize_large_terrain_report(
     )
     edges = [
         _edge(
-            "native_pct_global_planning",
+            "pct_planner_runtime",
             pct_provenance.get("ok") is True,
             pct_provenance,
         ),
@@ -1958,16 +2000,17 @@ def _summarize_native_pct_report(
     ros2_runtime_ready = not (
         report.get("native_gate_skipped") is True and claim_boundary == "ros2_runtime_unavailable"
     )
-    optimizer_mode = _pct_optimizer_mode_from_native(report)
+    runtime_contract = _pct_planner_runtime_contract(report)
+    optimizer_mode = _pct_optimizer_mode_from_runtime_report(report)
     edges = [
         _edge(
-            "pct_backend",
-            report.get("pct_runtime_ok") is True
+            "pct_planner_runtime",
+            runtime_contract["ok"]
             and pct_path_count >= 2
             and planner.lower() == "pct"
             and report.get("fallback_used") is not True,
             {
-                "pct_runtime_ok": report.get("pct_runtime_ok"),
+                **runtime_contract,
                 "pct_path_count": pct_path_count,
                 "selected_planner": report.get("selected_planner") or report.get("planner"),
                 "fallback_used": report.get("fallback_used"),
@@ -2036,7 +2079,7 @@ def _summarize_native_pct_report(
         "schema_detected": "native_pct_mujoco",
         "primary_blocker": failed[0]["id"] if failed else "",
         "flow": edges,
-        "pct_provenance": _pct_provenance_from_native(report),
+        "pct_provenance": _pct_provenance_from_runtime_report(report),
         "pct_optimizer_mode": optimizer_mode,
         "same_source_provenance": _same_source_provenance_from_live(report, {}),
         "remaining_gaps": list(report.get("remaining_gaps") or []),
@@ -2234,16 +2277,20 @@ def _summarize_pct_saved_map_navigation_report(
     relocalization = _mapping(report.get("relocalization"))
     plan_preview = _mapping(report.get("plan_preview"))
     native = _mapping(report.get("native_gate"))
+    preview_runtime = _mapping(plan_preview.get("pct_planner_runtime"))
     relocalization_ok = relocalization.get("ok") is True
     preview_ok = (
         plan_preview.get("ok") is True
         and str(plan_preview.get("selected_planner") or "").lower() == "pct"
         and not str(plan_preview.get("fallback_reason") or "")
         and _safe_int(plan_preview.get("path_count")) >= 2
+        and bool(str(preview_runtime.get("runtime") or "").strip())
+        and preview_runtime.get("ok") is True
     )
     native_planner = str(native.get("selected_planner") or native.get("planner") or "")
+    runtime_contract = _pct_planner_runtime_contract(native)
     native_pct_ok = (
-        native.get("pct_runtime_ok") is True
+        runtime_contract["ok"]
         and _safe_int(native.get("pct_path_count")) >= 2
         and native_planner.lower() == "pct"
         and native.get("fallback_used") is not True
@@ -2277,6 +2324,7 @@ def _summarize_pct_saved_map_navigation_report(
                 "fallback_reason": plan_preview.get("fallback_reason"),
                 "path_count": _safe_int(plan_preview.get("path_count")),
                 "path": plan_preview.get("path") or "",
+                "pct_planner_runtime": dict(preview_runtime),
                 "pct_optimizer_enabled": plan_preview.get("pct_optimizer_enabled"),
                 "pct_planner_path_mode": plan_preview.get("pct_planner_path_mode") or "",
             },
@@ -2300,10 +2348,10 @@ def _summarize_pct_saved_map_navigation_report(
             },
         ),
         _edge(
-            "native_pct_backend",
+            "pct_planner_runtime",
             native_pct_ok,
             {
-                "pct_runtime_ok": native.get("pct_runtime_ok"),
+                **runtime_contract,
                 "pct_path_count": _safe_int(native.get("pct_path_count")),
                 "selected_planner": native.get("selected_planner") or native.get("planner"),
                 "fallback_used": native.get("fallback_used"),
@@ -2352,7 +2400,7 @@ def _summarize_pct_saved_map_navigation_report(
         "schema_detected": "pct_saved_map_navigation",
         "primary_blocker": failed[0]["id"] if failed else "",
         "flow": edges,
-        "pct_provenance": _pct_provenance_from_native(native),
+        "pct_provenance": _pct_provenance_from_runtime_report(native),
         "same_source_provenance": {
             **same_source_provenance,
             "tomogram": same_source_provenance.get("tomogram") or tomogram,

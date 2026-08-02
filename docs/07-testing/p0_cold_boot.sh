@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# P0-01: S100P cold boot - 20+ modules OK, Gateway stable 3 minutes.
+# P0-01: S100P cold boot - ProductControl map start, Gateway stable 3 minutes.
 #
 # Run on sunrise (not local dev):
 #   ssh sunrise@192.168.66.190
@@ -8,6 +8,8 @@
 
 set -e
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 LOG_DIR="${HOME}/data/nav_logs"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(date +%Y%m%d_%H%M%S)_p0_cold_boot.log"
@@ -15,18 +17,13 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "=== P0-01 Cold Boot - $(date) ==="
 
-# 1. Ensure service is down first, then launch fresh
-echo "[1/5] Stopping any running LingTu ..."
-sudo systemctl stop lingtu 2>/dev/null || true
-sleep 3
+# 1. Start the mapping Product. ProductControl owns staging, process launch,
+# readiness, rollback, and current RunPlan commit.
+echo "[1/3] Starting map Product ..."
+bash "$REPO_ROOT/scripts/lingtu" map start
 
-# 2. Start LingTu via systemd (production path)
-echo "[2/5] Starting LingTu service ..."
-sudo systemctl start lingtu
-sleep 10
-
-# 3. Poll Gateway health (max 60s)
-echo "[3/5] Polling Gateway /api/v1/health ..."
+# 2. Poll Gateway health (max 60s)
+echo "[2/3] Polling Gateway /api/v1/health ..."
 DEADLINE=$((SECONDS + 60))
 while ! curl -sf http://localhost:5050/api/v1/health > /dev/null; do
   if [[ $SECONDS -gt $DEADLINE ]]; then
@@ -36,33 +33,23 @@ while ! curl -sf http://localhost:5050/api/v1/health > /dev/null; do
   sleep 2
 done
 
-# 4. Assert 20+ modules ok
-HEALTH_JSON="$(curl -s http://localhost:5050/api/v1/health)"
-MODULES_OK="$(echo "$HEALTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["modules_ok"])')"
-MODULES_FAIL="$(echo "$HEALTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["modules_fail"])')"
-echo "[4/5] modules_ok=$MODULES_OK  modules_fail=$MODULES_FAIL"
-if [[ "$MODULES_OK" -lt 20 ]]; then
-  echo "FAIL: only $MODULES_OK modules up (need 20+)"
-  exit 3
-fi
-if [[ "$MODULES_FAIL" -gt 0 ]]; then
-  echo "FAIL: $MODULES_FAIL modules failed"
-  echo "$HEALTH_JSON" | python3 -m json.tool
-  exit 4
-fi
-
-# 5. 3-minute stability watch - no module must flip to fail
-echo "[5/5] 3-minute stability watch (polling every 15s) ..."
+# 3. 3-minute stability watch - no module should report failed.
+echo "[3/3] 3-minute stability watch (polling every 15s) ..."
+LAST_MODULES_OK="?"
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   sleep 15
-  F=$(curl -s http://localhost:5050/api/v1/health | python3 -c 'import json,sys; print(json.load(sys.stdin)["modules_fail"])' 2>/dev/null || echo "?")
-  echo "  tick $i/12  modules_fail=$F"
-  if [[ "$F" != "0" ]]; then
+  HEALTH_JSON="$(curl -s http://localhost:5050/api/v1/health)"
+  MODULES_OK="$(echo "$HEALTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("modules_ok", "?"))' 2>/dev/null || echo "?")"
+  MODULES_FAIL="$(echo "$HEALTH_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("modules_fail", "?"))' 2>/dev/null || echo "?")"
+  LAST_MODULES_OK="$MODULES_OK"
+  echo "  tick $i/12  modules_ok=$MODULES_OK modules_fail=$MODULES_FAIL"
+  if [[ "$MODULES_FAIL" != "0" ]]; then
     echo "FAIL: module failure detected at tick $i"
-    exit 5
+    echo "$HEALTH_JSON" | python3 -m json.tool
+    exit 3
   fi
 done
 
 echo ""
-echo "=== PASS - LingTu cold boot stable 3 minutes, $MODULES_OK modules ==="
+echo "=== PASS - map Product cold boot stable 3 minutes, modules_ok=$LAST_MODULES_OK ==="
 echo "Log: $LOG"

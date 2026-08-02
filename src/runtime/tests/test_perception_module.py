@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from perception.perception_module import (
+    PERCEPTION_MAP_FRAME_ID,
     PerceptionModule,
     _quat_to_rotation,
 )
@@ -387,7 +388,11 @@ class TestSceneGraphMetadata:
 
         mod._tracker = _FakeTracker()
 
-        sg = mod._build_scene_graph()
+        sg = mod._scene_graph_service.build_scene_graph(
+            mod._latest_core_detections,
+            PERCEPTION_MAP_FRAME_ID,
+            tracker=mod._tracker,
+        )
 
         assert len(sg.objects) == 1
         assert sg.objects[0].bbox_2d == [10.0, 20.0, 30.0, 40.0]
@@ -502,8 +507,8 @@ class TestDetectorConfiguration:
             tracking_iou_threshold=0.27,
             confidence_threshold=0.91,
         )
-        mod._init_detector = MagicMock(return_value=None)
-        mod._init_clip_encoder = MagicMock(return_value=None)
+        mod._backend_manager._init_detector = MagicMock(return_value=(None, None))
+        mod._backend_manager._init_clip_encoder = MagicMock(return_value=None)
 
         mod.setup()
 
@@ -527,7 +532,7 @@ class TestDetectorConfiguration:
             detector_device="cuda:0",
         )
 
-        created = mod._init_detector()
+        created, observer = mod._backend_manager._init_detector()
 
         yoloe_cls.assert_called_once_with(
             model_size="m",
@@ -538,6 +543,7 @@ class TestDetectorConfiguration:
         )
         backend.load_model.assert_called_once_with()
         assert created is backend
+        assert observer is None
 
     @patch("perception.detection.yolo_world_detector.YOLOWorldDetector")
     def test_init_yolo_world_detector_forwards_iou(self, yolo_world_cls):
@@ -552,7 +558,7 @@ class TestDetectorConfiguration:
             detector_device="cpu",
         )
 
-        created = mod._init_detector()
+        created, observer = mod._backend_manager._init_detector()
 
         yolo_world_cls.assert_called_once_with(
             model_size="s",
@@ -562,6 +568,7 @@ class TestDetectorConfiguration:
         )
         backend.load_model.assert_called_once_with()
         assert created is backend
+        assert observer is None
 
     @patch("perception.detection.bpu_detector.BPUDetector")
     def test_init_bpu_detector_forwards_recall_params(self, bpu_cls):
@@ -577,7 +584,7 @@ class TestDetectorConfiguration:
             detector_model_path="D:/models/people.hbm",
         )
 
-        created = mod._init_detector()
+        created, observer = mod._backend_manager._init_detector()
 
         bpu_cls.assert_called_once_with(
             model_path="D:/models/people.hbm",
@@ -588,6 +595,7 @@ class TestDetectorConfiguration:
         )
         backend.load_model.assert_called_once_with()
         assert created is backend
+        assert observer is None
 
     @patch("perception.tracking.bpu_tracker.BPUTracker")
     def test_init_detector_tracker_for_bpu(self, tracker_cls):
@@ -598,7 +606,7 @@ class TestDetectorConfiguration:
         mod = PerceptionModule(detector_type="bpu")
         mod._detector = backend
 
-        created = mod._init_detector_tracker()
+        created = mod._backend_manager._init_detector_tracker()
 
         tracker_cls.assert_called_once_with(backend, tracker_type="botsort")
         assert created is tracker
@@ -631,7 +639,7 @@ class TestDetectorConfiguration:
             },
         )()
 
-        converted = mod._convert_detections([det])
+        converted = mod._detection_service.convert_to_core_detections([det])
 
         assert converted[0].id == "track_42"
         assert converted[0].label == "person"

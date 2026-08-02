@@ -16,7 +16,7 @@ import unittest
 
 
 def _make_supervisor(warn: float = 20.0, fallback: float = 60.0):
-    from nav.exploration.tare.supervisor import (
+    from explore.tare.supervisor import (
         ExplorationSupervisorModule,
     )
     m = ExplorationSupervisorModule(

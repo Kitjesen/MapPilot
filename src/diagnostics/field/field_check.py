@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from maps.paths import active_map_dir
-from runtime.runtime_interface import THUNDER_FIELD_EVIDENCE_LABEL
+from runtime.runtime_interface import REAL_RUNTIME_EVIDENCE_LABEL
 
 FIELD_CHECK_SCHEMA_VERSION = "lingtu.product_field_check.v1"
 HARDWARE_COMMAND_SINK = "driver"
@@ -86,9 +86,9 @@ def _algorithm_benchmark_status(
             "blocking_categories": {},
             "source": "server_sim_closure",
             "preset": "dimos_benchmark",
-            "active_product_profile": "inspection_mvp",
-            "strict_benchmark_profile": "dimos_benchmark",
-            "product_profiles": {},
+            "active_benchmark_variant": "inspection_mvp",
+            "strict_benchmark_variant": "dimos_benchmark",
+            "benchmark_variants": {},
         }
 
     blockers = _string_list(algorithm_gate.get("blockers"))
@@ -130,9 +130,9 @@ def _algorithm_benchmark_status(
         "blocking_categories": _mapping(algorithm_gate.get("blocking_categories")),
         "source": algorithm_gate.get("source") or "server_sim_closure",
         "preset": algorithm_gate.get("preset") or "dimos_benchmark",
-        "active_product_profile": (algorithm_gate.get("active_product_profile") or "inspection_mvp"),
-        "strict_benchmark_profile": (algorithm_gate.get("strict_benchmark_profile") or "dimos_benchmark"),
-        "product_profiles": _mapping(algorithm_gate.get("product_profiles")),
+        "active_benchmark_variant": (algorithm_gate.get("active_benchmark_variant") or "inspection_mvp"),
+        "strict_benchmark_variant": (algorithm_gate.get("strict_benchmark_variant") or "dimos_benchmark"),
+        "benchmark_variants": _mapping(algorithm_gate.get("benchmark_variants")),
     }
 
 
@@ -215,18 +215,10 @@ def _runtime_graph_status() -> dict[str, Any]:
 
 
 def _default_switch_plan_request(mode: str) -> dict[str, Any]:
-    if mode == "field":
-        return {
-            "current_profile": "explore",
-            "current_endpoint": "thunder_field",
-            "target_profile": "explore",
-            "target_endpoint": "mujoco_live",
-        }
-    return {
-        "current_profile": "sim_mujoco_live",
-        "target_profile": "explore",
-        "target_endpoint": "thunder_field",
-    }
+    del mode
+    # Gateway owns one fixed Env; the active RunPlan determines the
+    # current Product and ProductControl resolves the target in that same Env.
+    return {"target_product": "explore"}
 
 
 def build_product_field_check(
@@ -242,7 +234,7 @@ def build_product_field_check(
     checks = _mapping(gateway_acceptance.get("checks"))
     gateway = _mapping(checks.get("gateway_contract"))
     runtime_mode = _mapping(checks.get("runtime_mode"))
-    dataflow = _mapping(checks.get("module_first_dataflow"))
+    observability = _mapping(checks.get("gateway_observability"))
     stage_evidence = _mapping(checks.get("stage_evidence"))
     frontier_preview = _mapping(checks.get("frontier_preview"))
     readiness = _mapping(checks.get("readiness"))
@@ -258,9 +250,9 @@ def build_product_field_check(
     runtime_graph = _runtime_graph_status()
 
     command_boundary_ok = (
-        dataflow.get("arbitrary_publish_supported") is False
-        and not dataflow.get("missing_command_interfaces")
-        and not dataflow.get("unexpected_command_interfaces")
+        observability.get("arbitrary_publish_supported") is False
+        and not observability.get("missing_command_interfaces")
+        and not observability.get("unexpected_command_interfaces")
         and (
             gateway_acceptance.get("mode") != "field"
             or (runtime_mode.get("ok") is True and runtime_mode.get("command_sink") == HARDWARE_COMMAND_SINK)
@@ -275,7 +267,7 @@ def build_product_field_check(
     if field_mode and routecheck.get("ok") is not True:
         blockers.append("route preview is not passing or unavailable")
     if field_mode and evidence.get("ok") is not True:
-        blockers.append(f"{THUNDER_FIELD_EVIDENCE_LABEL} is not passing")
+        blockers.append(f"{REAL_RUNTIME_EVIDENCE_LABEL} is not passing")
     if field_mode and frontier_preview and frontier_preview.get("ok") is not True:
         blockers.append("traversable frontier preview is not passing")
     if algorithm["required"] and algorithm["ok"] is not True:
@@ -310,7 +302,7 @@ def build_product_field_check(
             "gateway": _status(gateway.get("ok") is True),
             "readiness": _status(readiness.get("ok") is True),
             "localization": _status(localization.get("ok") is True),
-            "dataflow": _status(dataflow.get("ok") is True),
+            "gateway_observability": _status(observability.get("ok") is True),
             "stages": _status(stage_evidence.get("ok") is True),
             "command_boundary": _status(command_boundary_ok),
             "frontier_preview": _status(
@@ -320,7 +312,7 @@ def build_product_field_check(
             "runtime_switch": runtime_switch["status"],
             "runtime_graph": runtime_graph["status"],
             "ros2_topic_required": gateway_acceptance.get("ros2_topic_required"),
-            "arbitrary_publish_supported": dataflow.get("arbitrary_publish_supported"),
+            "arbitrary_publish_supported": observability.get("arbitrary_publish_supported"),
         },
         "stage_evidence": {
             "required": stage_evidence.get("required"),
@@ -358,16 +350,16 @@ def build_product_field_check(
             "cmd_vel_mux": _status(evidence.get("cmd_vel_sent_to_hardware") is True),
         },
         "evidence": {
-            "thunder_field": _status(evidence.get("ok") is True),
+            "field_runtime": _status(evidence.get("ok") is True),
             "age_s": evidence.get("report_age_s"),
             "mode": mode,
             "runtime_contract": evidence.get("runtime_contract"),
             "map": dict(map_gate) if map_checked else None,
         },
         "algorithm": {
-            "active_product_profile": algorithm["active_product_profile"],
-            "strict_benchmark_profile": algorithm["strict_benchmark_profile"],
-            "product_profiles": algorithm["product_profiles"],
+            "active_benchmark_variant": algorithm["active_benchmark_variant"],
+            "strict_benchmark_variant": algorithm["strict_benchmark_variant"],
+            "benchmark_variants": algorithm["benchmark_variants"],
             "strict_benchmark": algorithm,
         },
         "blockers": list(dict.fromkeys(blockers)),
@@ -377,7 +369,7 @@ def build_product_field_check(
             "real_runtime_evidence": (
                 "python lingtu.py real-runtime-evidence --collector gateway "
                 "--gateway-url http://<robot>:5050 --duration-sec 20 "
-                "--json-out artifacts/thunder_field_runtime/report.json"
+                "--json-out artifacts/real_runtime/report.json"
             ),
             "gateway_field_acceptance": (
                 "python lingtu.py gateway-runtime-acceptance --acceptance-mode field --gateway-url http://<robot>:5050"

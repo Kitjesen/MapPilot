@@ -131,7 +131,7 @@ class BuildingMissionOrchestrator:
                 )
             except Exception:
                 return self._reject(request, "floor_transition_start_error")
-            if not accepted:
+            if accepted is not True:
                 return self._reject(request, str(reason or "floor_transition_rejected"))
             self._status = BuildingMissionStatus(
                 phase=BuildingMissionPhase.FLOOR_TRANSITION,
@@ -313,7 +313,7 @@ class BuildingMissionOrchestrator:
             ready, reason = self._navigation.autonomy_ready()
         except Exception:
             return False, "native_autonomy_status_error"
-        return bool(ready), str(reason or "")
+        return ready is True, str(reason or "")
 
     def _validate_target_binding(self, request: BuildingMissionRequest) -> str:
         if not self._has_target_binding(request):
@@ -325,7 +325,7 @@ class BuildingMissionOrchestrator:
             valid, reason = validator(request)
         except Exception:
             return "target_binding_validation_error"
-        if not valid:
+        if valid is not True:
             return str(reason or "target_binding_validation_failed")
         return ""
 

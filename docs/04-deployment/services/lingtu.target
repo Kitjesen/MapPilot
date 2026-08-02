@@ -1,8 +1,0 @@
-[Unit]
-Description=LEGACY co-located LingTu target example (not used by Thunder field runtime)
-Documentation=https://github.com/Kitjesen/MapPilot
-Wants=robot-camera.service robot-lidar.service robot-fastlio2.service robot-localizer.service lingtu.service
-After=network.target robot-camera.service robot-lidar.service robot-fastlio2.service robot-localizer.service lingtu.service
-
-[Install]
-WantedBy=multi-user.target

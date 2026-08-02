@@ -10,7 +10,7 @@ import pytest
 from sim.scripts.mujoco import native_control_mode_acceptance as acceptance
 
 ROOT = Path(__file__).resolve().parents[2]
-MANIFEST = ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_native_control_mode_acceptance.json"
+MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_control_mode_acceptance.json"
 
 
 def _sha256(path: Path) -> str:
@@ -86,13 +86,21 @@ def test_each_control_mode_has_an_exclusive_product_execution_plan() -> None:
     assert teleop_avoid["command_kind"] == "teleop"
     assert set(teleop_avoid["required_processes"]) == {
         "slam",
+        "mapd",
         "traversability",
         "navigation",
         "mujoco_sensor_policy",
     }
+    assert "rt/nav/operator_motion/control" in teleop_avoid["required_inputs"]
+    assert "rt/nav/operator_motion/sample" in teleop_avoid["required_inputs"]
+    assert "rt/slam/map_observation" in teleop_avoid["required_inputs"]
     assert "rt/slam/localization_health" in teleop_avoid["required_inputs"]
     assert "rt/nav/traversability" in teleop_avoid["required_inputs"]
     assert teleop_avoid["runner"]["kind"] == "teleop_avoid_native_acceptance"
+    assert any(
+        str(value).endswith("mujoco_teleop_avoid_native_acceptance.json")
+        for value in teleop_avoid["runner"]["arguments"]
+    )
 
     with pytest.raises(ValueError, match="unsupported control mode"):
         acceptance.build_execution_plan(manifest, "both")
@@ -135,6 +143,7 @@ def test_teleop_avoid_fails_closed_when_traversability_is_stale() -> None:
         "runtime": {
             "processes": [
                 "slam",
+                "mapd",
                 "traversability",
                 "navigation",
                 "mujoco_sensor_policy",
@@ -152,7 +161,6 @@ def test_teleop_avoid_fails_closed_when_traversability_is_stale() -> None:
             "localization_health_fresh": True,
             "registered_cloud_fresh": True,
             "traversability_fresh": False,
-            "map_xy_error_m": 0.12,
         },
     }
 
@@ -332,6 +340,7 @@ def test_run_mode_fails_honestly_when_full_mode_harness_is_unavailable(
 
 def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_it(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     stale_report = tmp_path / "harness" / "report.json"
     stale_report.parent.mkdir()
@@ -346,6 +355,36 @@ def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_i
         ),
         encoding="utf-8",
     )
+    runner_calls: list[list[str]] = []
+
+    def fake_run(command: list[str], **_kwargs: object) -> object:
+        runner_calls.append(command)
+        assert Path(command[1]).name == "teleop_avoid_native_acceptance.py"
+        harness_dir = Path(command[command.index("--artifact-dir") + 1])
+        assert harness_dir.parent.parent == tmp_path / "runs"
+        assert command[-1] == "--strict"
+        (harness_dir / "report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
+                    "ok": True,
+                    "blockers": [],
+                    "cases": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return type(
+            "Completed",
+            (),
+            {
+                "returncode": 2,
+                "stdout": "fake runner did not execute scenes",
+                "stderr": "",
+            },
+        )()
+
+    monkeypatch.setattr(acceptance.subprocess, "run", fake_run)
     args = acceptance.build_parser().parse_args(
         [
             "--control-mode",
@@ -360,6 +399,9 @@ def test_run_mode_executes_native_teleop_avoid_acceptance_but_does_not_promote_i
     report = acceptance.run(args)
     artifact = json.loads((tmp_path / "runner_artifact.json").read_text(encoding="utf-8"))
 
+    assert len(runner_calls) == 1
+    assert artifact["execution"]["command"] == runner_calls[0]
+    assert artifact["execution"]["returncode"] == 2
     assert artifact["runner_blockers"] == []
     assert artifact["source_report"]["schema_version"] == ("lingtu.mujoco.teleop_avoid_native_acceptance.v1")
     assert artifact["source_report"]["sha256"]
@@ -476,6 +518,8 @@ def test_autonomy_adapter_recomputes_proofs_from_harness_report(
             "command": [
                 "python",
                 str(script_path),
+                    "--manifest",
+                    "config/runtime_graph/acceptance/mujoco_native_navigation_acceptance.json",
                 "--mode",
                 "motion",
                 "--out-dir",
@@ -512,13 +556,21 @@ def test_teleop_avoid_native_observations_aggregate_case_evidence() -> None:
         "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
         "ok": True,
         "product_gate_eligible": True,
+        "acceptance_evaluated": True,
+        "product_acceptance_passed": True,
         "preflight": {"ok": True},
         "cases": [
             {
                 "scenario": "free",
-                "ok": False,
+                "ok": True,
                 "startup": {"ok": True},
-                "processes": [{"name": "slam"}, {"name": "navigation"}, {"name": "traversability"}, {"name": "sensor"}],
+                "processes": [
+                    {"name": "slam"},
+                    {"name": "mapd"},
+                    {"name": "navigation"},
+                    {"name": "traversability"},
+                    {"name": "sensor"},
+                ],
                 "process_cleanup": {"zero_leftovers": True},
                 "sensor_report": {
                     "policy_loaded": True,
@@ -531,26 +583,279 @@ def test_teleop_avoid_native_observations_aggregate_case_evidence() -> None:
                 "terrain_producer_observation": {"cells": 12},
                 "evaluation": {
                     "case": "free",
-                    "ok": False,
+                    "ok": True,
                     "injected": False,
-                    "blockers": ["free_command_not_accepted"],
+                    "blockers": [],
                     "metrics": {
                         "steady_nonzero_cmd_samples": 4,
                         "teleop_reasons": ["terrain_stop", "obstacle"],
                         "policy_motion_xy_m": 0.42,
                     },
                 },
-                "typed_teleop": {"probe": {"returncode": 0, "stdout": "accepted teleop"}},
+                "native_stop": {
+                    "returncode": 0,
+                    "accepted": True,
+                    "acked": True,
+                    "ack_wall_s": 100.0,
+                },
+                "post_stop_zero_output": {
+                    "zero_output_observed": True,
+                    "pre_stop_status_stamp_s": 99.0,
+                    "window_start_wall_s": 100.1,
+                    "window_end_wall_s": 100.8,
+                    "required_status_samples": 3,
+                    "status_samples": 4,
+                    "final_cmd_samples": 4,
+                    "missing_final_cmd_samples": 0,
+                    "nonzero_final_cmd_samples": 0,
+                },
+                "typed_teleop": {
+                    "probe": {"returncode": 0, "stdout": "accepted teleop"},
+                    "native_status_correlation": {
+                        "ok": True,
+                        "hold_zero_barrier_samples": 1,
+                        "release_zero_barrier_samples": 1,
+                    },
+                },
             }
         ],
     }
 
     observations = acceptance.extract_runner_observations("teleop_avoid_native_acceptance", source_report)
-    assert observations["runtime"]["processes"] == ["slam", "navigation", "traversability", "sensor"]
+    assert observations["runtime"]["processes"] == [
+        "slam",
+        "mapd",
+        "navigation",
+        "traversability",
+        "mujoco_sensor_policy",
+    ]
     assert observations["endpoint"]["command_events"][0]["kind"] == "teleop"
+    assert observations["endpoint"]["command_events"][1] == {
+        "request_id": "teleop_avoid_stop:free",
+        "kind": "stop",
+        "accepted": True,
+        "acked": True,
+        "stop_ack_s": 100.0,
+        "post_stop_zero_observed": True,
+        "post_stop_nonzero_samples": 0,
+        "post_stop_sample_counts": {"final_cmd": 4, "status": 4},
+    }
     assert observations["endpoint"]["final_cmd_topic"] == "rt/nav/cmd_vel"
     assert observations["endpoint"]["nonzero_cmd_samples"] == 4
     assert observations["summary"]["case_count"] == 1
     assert observations["runtime"]["motion_m"] == 0.42
     assert observations["summary"]["case_motion_m"] == [0.42]
     assert observations["summary"]["case_cmd_samples"] == [("free", 4)]
+    assert observations["slam_map"]["slam_state"] == "TRACKING"
+    assert observations["slam_map"]["localization_health_fresh"] is True
+    assert observations["slam_map"]["registered_cloud_fresh"] is True
+
+
+@pytest.mark.parametrize(
+    "correlation",
+    [
+        None,
+        {"ok": False, "hold_zero_barrier_samples": 1, "release_zero_barrier_samples": 1},
+        {"ok": True, "hold_zero_barrier_samples": 1, "release_zero_barrier_samples": 0},
+    ],
+)
+def test_teleop_avoid_stop_evidence_fails_closed_without_correlated_zero_barriers(
+    correlation: dict | None,
+) -> None:
+    case: dict = {
+        "scenario": "free",
+        "native_stop": {"returncode": 0},
+    }
+    if correlation is not None:
+        case["typed_teleop"] = {"native_status_correlation": correlation}
+
+    assert acceptance._teleop_avoid_stop_event(case) is None
+
+
+@pytest.mark.parametrize(
+    "native_stop,post_stop",
+    [
+        (
+            {"returncode": 0, "accepted": True, "acked": True, "ack_wall_s": 10.0},
+            {},
+        ),
+        (
+            {"returncode": 0, "accepted": True, "acked": True, "ack_wall_s": 10.0},
+            {
+                "zero_output_observed": True,
+                "pre_stop_status_stamp_s": 9.0,
+                "window_start_wall_s": 10.1,
+                "window_end_wall_s": 10.5,
+                "required_status_samples": 1,
+                "status_samples": 1,
+                "final_cmd_samples": 1,
+                "nonzero_final_cmd_samples": 1,
+            },
+        ),
+        (
+            {"returncode": 0, "accepted": True, "acked": True, "ack_wall_s": 10.0},
+            {
+                "zero_output_observed": True,
+                "pre_stop_status_stamp_s": 9.0,
+                "window_start_wall_s": 9.9,
+                "window_end_wall_s": 10.5,
+                "required_status_samples": 1,
+                "status_samples": 1,
+                "final_cmd_samples": 1,
+            },
+        ),
+        (
+            {"returncode": 0, "accepted": True, "acked": False, "ack_wall_s": 10.0},
+            {
+                "zero_output_observed": True,
+                "pre_stop_status_stamp_s": 9.0,
+                "window_start_wall_s": 10.1,
+                "window_end_wall_s": 10.5,
+                "required_status_samples": 1,
+                "status_samples": 1,
+                "final_cmd_samples": 1,
+            },
+        ),
+        (
+            {"returncode": 0, "accepted": True, "acked": True, "ack_wall_s": 10.0},
+            {
+                "zero_output_observed": True,
+                "pre_stop_status_stamp_s": 9.0,
+                "window_start_wall_s": 10.1,
+                "window_end_wall_s": 10.5,
+                "required_status_samples": 2,
+                "status_samples": 1,
+                "final_cmd_samples": 1,
+            },
+        ),
+        (
+            {"returncode": 0, "accepted": True, "acked": True, "ack_wall_s": 10.0},
+            {
+                "zero_output_observed": True,
+                "window_start_wall_s": 10.1,
+                "window_end_wall_s": 10.5,
+                "required_status_samples": 3,
+                "status_samples": 3,
+                "final_cmd_samples": 3,
+            },
+        ),
+        (
+            {"returncode": 0, "accepted": True, "acked": True, "ack_wall_s": 10.0},
+            {
+                "zero_output_observed": True,
+                "pre_stop_status_stamp_s": 9.0,
+                "window_start_wall_s": 10.1,
+                "window_end_wall_s": 10.5,
+                "required_status_samples": 1,
+                "status_samples": 1,
+                "final_cmd_samples": 1,
+            },
+        ),
+    ],
+)
+def test_teleop_avoid_stop_evidence_fails_closed_without_post_stop_zero_samples(
+    native_stop: dict,
+    post_stop: dict,
+) -> None:
+    assert (
+        acceptance._teleop_avoid_stop_event(
+            {
+                "scenario": "free",
+                "native_stop": native_stop,
+                "post_stop_zero_output": post_stop,
+            }
+        )
+        is None
+    )
+
+
+def test_teleop_avoid_cleanup_rc_zero_without_post_stop_samples_blocks_promotion(
+    tmp_path: Path,
+) -> None:
+    source_report = {
+        "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
+        "ok": True,
+        "product_gate_eligible": True,
+        "acceptance_evaluated": True,
+        "product_acceptance_passed": True,
+        "preflight": {"ok": True},
+        "cases": [
+            {
+                "scenario": "free",
+                "ok": True,
+                "startup": {"ok": True},
+                "processes": [
+                    {"name": "slam"},
+                    {"name": "mapd"},
+                    {"name": "navigation"},
+                    {"name": "traversability"},
+                    {"name": "sensor"},
+                ],
+                "process_cleanup": {"zero_leftovers": True},
+                "sensor_report": {
+                    "policy_loaded": True,
+                    "slam_status": {
+                        "state": "TRACKING",
+                        "registered_points": 123,
+                        "reason": "tracking",
+                    },
+                },
+                "terrain_producer_observation": {"cells": 12},
+                "evaluation": {
+                    "case": "free",
+                    "ok": True,
+                    "blockers": [],
+                    "metrics": {
+                        "steady_nonzero_cmd_samples": 4,
+                        "policy_motion_xy_m": 0.42,
+                        "teleop_reasons": ["accepted"],
+                    },
+                },
+                "native_stop": {"returncode": 0},
+                "typed_teleop": {
+                    "native_status_correlation": {
+                        "ok": True,
+                        "hold_zero_barrier_samples": 1,
+                        "release_zero_barrier_samples": 1,
+                    },
+                },
+            }
+        ],
+    }
+
+    observations = acceptance.extract_runner_observations(
+        "teleop_avoid_native_acceptance",
+        source_report,
+    )
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    report = acceptance.evaluate_observations(manifest, "teleop_avoid", observations)
+
+    assert report["promotion_eligible"] is False
+    assert "control_chain:native_stop_observation_missing" in report["blockers"]
+
+
+def test_teleop_avoid_non_product_diagnostic_cannot_be_promoted() -> None:
+    source_report = {
+        "schema_version": "lingtu.mujoco.teleop_avoid_native_acceptance.v1",
+        "ok": True,
+        "product_gate_eligible": False,
+        "acceptance_evaluated": True,
+        "product_acceptance_passed": False,
+        "preflight": {"ok": True},
+        "cases": [
+            {
+                "scenario": "free",
+                "ok": True,
+                "blockers": [],
+                "startup": {"ok": True},
+            }
+        ],
+    }
+
+    observations = acceptance.extract_runner_observations(
+        "teleop_avoid_native_acceptance", source_report
+    )
+
+    assert observations["ok"] is False
+    assert "teleop_avoid_non_product_diagnostic" in observations["blockers"]
+    assert "teleop_avoid_product_acceptance_not_passed" in observations["blockers"]

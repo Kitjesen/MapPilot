@@ -61,9 +61,16 @@ struct OwnedPointCloud {
 
 struct MapCloudFrame {
   PointCloudView cloud;
+  // Local monotonic time used only for TTL/decay. A value of zero preserves
+  // the legacy behavior of using cloud.stamp_ns. Geometry and published
+  // timestamps always remain on the sensor timestamp carried by cloud.
+  std::int64_t decay_stamp_ns{0};
   float sensor_origin_x_m{0.0F};
   float sensor_origin_y_m{0.0F};
   float sensor_origin_z_m{0.0F};
+  bool column_carving_z_range_enabled{false};
+  float column_carving_min_z_m{0.0F};
+  float column_carving_max_z_m{0.0F};
   bool full_map{false};
   bool incremental{true};
   bool keyframe{false};

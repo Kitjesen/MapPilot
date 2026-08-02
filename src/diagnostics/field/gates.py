@@ -12,8 +12,8 @@ from diagnostics.field.evidence import (
 )
 
 RUNTIME_AUDIT_COMMAND = "python lingtu.py runtime-audit --json-out artifacts/runtime_contract_audit.json"
-REAL_RUNTIME_EVIDENCE_ARTIFACT = "artifacts/thunder_field_runtime/report.json"
-REAL_RUNTIME_EVIDENCE_GATE_ARTIFACT = "artifacts/thunder_field_runtime/profiles_evidence.json"
+REAL_RUNTIME_EVIDENCE_ARTIFACT = "artifacts/real_runtime/report.json"
+REAL_RUNTIME_EVIDENCE_GATE_ARTIFACT = "artifacts/real_runtime/profiles_evidence.json"
 REAL_RUNTIME_EVIDENCE_COMMAND = (
     "python lingtu.py real-runtime-evidence "
     "--collector gateway "
@@ -44,10 +44,10 @@ SAVED_MAP_ARTIFACT_GATE_COMMAND = (
 )
 
 RUNTIME_AUDIT_VALIDATES = (
-    "runtime_manifest_vs_topic_contract_yaml",
+    "runtime_contract_vs_topic_contract_yaml",
     "profile_runtime_switch_specs",
     "profile_runtime_bindings_do_not_select_ros2",
-    "thunder_field_collector_topic_coverage",
+    "real_runtime_collector_topic_coverage",
     "canonical_frame_links",
     "topic_default_frame_integrity",
     "ros_frame_contract_doc_mirror",
@@ -61,7 +61,7 @@ RUNTIME_AUDIT_VALIDATES = (
     "collector_is_read_only",
 )
 RUNTIME_AUDIT_CHECKS = (
-    "yaml_manifest",
+    "yaml_contract",
     "profile_runtime_specs",
     "runtime_contract_integrity",
     "real_runtime_collector",
@@ -71,10 +71,10 @@ RUNTIME_AUDIT_CHECKS = (
     "source_topic_contracts",
 )
 RUNTIME_AUDIT_VALIDATE_CHECK_COVERAGE = {
-    "runtime_manifest_vs_topic_contract_yaml": ("yaml_manifest",),
+    "runtime_contract_vs_topic_contract_yaml": ("yaml_contract",),
     "profile_runtime_switch_specs": ("profile_runtime_specs",),
     "profile_runtime_bindings_do_not_select_ros2": ("profile_runtime_specs",),
-    "thunder_field_collector_topic_coverage": ("real_runtime_collector",),
+    "real_runtime_collector_topic_coverage": ("real_runtime_collector",),
     "canonical_frame_links": ("runtime_contract_integrity",),
     "topic_default_frame_integrity": ("runtime_contract_integrity",),
     "ros_frame_contract_doc_mirror": ("ros_frame_contract_doc",),
@@ -127,7 +127,7 @@ SAVED_MAP_ARTIFACT_GATE_VALIDATES = (
     "artifact_gate_payload_declares_checked_artifacts_frames_sources",
 )
 RUNTIME_AUDIT_PROVES = (
-    "canonical_runtime_manifest_matches_yaml",
+    "canonical_runtime_contract_matches_yaml",
     "profile_endpoint_runtime_specs_resolve",
     "source_code_uses_canonical_topics_and_frames",
     "real_runtime_collector_is_read_only",
@@ -139,7 +139,7 @@ RUNTIME_AUDIT_OPERATOR_SUMMARY_SECTIONS = (
     "Validation commands",
 )
 REAL_RUNTIME_EVIDENCE_PROVES = (
-    "observed_thunder_field_runtime_contract",
+    "observed_real_runtime_contract",
     "observed_required_topic_frame_ids",
     "observed_map_odom_body_lidar_tf_links",
     "observed_resolved_runtime_data_flow",
@@ -191,9 +191,9 @@ _RUNTIME_VALIDATION_GATES: dict[str, dict[str, Any]] = {
     },
     "real_runtime_evidence": {
         "schema_version": "lingtu.real_runtime_evidence.v1",
-        "scope": "observed_thunder_field_runtime",
+        "scope": "observed_real_runtime",
         "acceptance_step": 3,
-        "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
+        "required_when": "before_claiming_real_runtime_or_navigation",
         "requires_prior_gates": ["runtime_audit"],
         "conditional_prior_gates": ["saved_map_artifact_gate when saved map, octomap, or occupancy artifact is used"],
         "proves": list(REAL_RUNTIME_EVIDENCE_PROVES),
@@ -250,7 +250,7 @@ _GATE_ACCEPTANCE_EXPECTATIONS: dict[str, dict[str, Any]] = {
     },
     "real_runtime_evidence": {
         "acceptance_step": 3,
-        "required_when": "before_claiming_thunder_field_runtime_or_field_navigation",
+        "required_when": "before_claiming_real_runtime_or_navigation",
         "requires_prior_gates": ["runtime_audit"],
         "conditional_prior_gates": ["saved_map_artifact_gate when saved map, octomap, or occupancy artifact is used"],
         "proves": list(REAL_RUNTIME_EVIDENCE_PROVES),

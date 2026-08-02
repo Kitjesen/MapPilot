@@ -23,7 +23,11 @@ REST
   POST /api/v1/instruction   {text}
   POST /api/v1/mode          {mode: manual|autonomous|estop}
   POST /api/v1/lease         {action: acquire|release|renew, client_id, request_id?, ttl?}
-  POST /api/v1/maps          {action: list|save|delete|rename|set_active|build_octomap, name?, new_name?}
+  GET  /api/v1/slam/maps
+  DELETE /api/v1/maps/{name}
+  POST /api/v1/maps/{name}/build_occupancy
+  POST /api/v1/map/save      {name?, request_id?}
+  GET  /api/v1/maps/operations/{operation_id}
   GET  /api/v1/state         full snapshot (odom, safety, mission, mode, lease)
   GET  /api/v1/scene_graph
   GET  /api/v1/health
@@ -50,8 +54,11 @@ import asyncio
 import logging
 import os
 import threading
+from collections.abc import Mapping
 from functools import lru_cache
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+from fastapi.responses import JSONResponse
 
 from gateway.app_factory import build_gateway_app
 from gateway.services.commands import (
@@ -61,7 +68,7 @@ from gateway.services.commands import (
 from gateway.services.drift import (
     current_odom_divergence,
     odom_diverged,
-    restart_after_drift,
+    report_drift,
     watchdog_loop,
 )
 from gateway.services.driver_swap import handle_driver_swap
@@ -69,11 +76,15 @@ from gateway.services.event_handlers import (
     handle_agent_message,
     handle_dialogue,
     handle_eval,
+    handle_exploration_run_event,
     handle_exploration_supervisor,
     handle_frontier_candidate,
     handle_gnss_fusion_health,
+    handle_inspection_task_event,
     handle_map_event,
     handle_mission,
+    handle_navigation_goal_status,
+    handle_navigation_state,
     handle_safety,
     handle_scene_graph,
     handle_tare_stats,
@@ -106,6 +117,7 @@ from gateway.services.init_state import (
     init_runtime_status_state,
     init_server_state,
 )
+from gateway.services.inspection_task_lifecycle import ensure_inspection_task_timeline
 from gateway.services.lifecycle import start_background_threads, stop_background_threads
 from gateway.services.localization_status import handle_localization_status
 from gateway.services.map_service import (
@@ -144,6 +156,7 @@ from gateway.services.saved_map_loader import load_saved_maps_loop
 from gateway.services.server import run_server
 from gateway.services.session_view import (
     detect_current_mode,
+    recover_external_explore_session,
     recover_external_mapping_session,
     session_snapshot,
 )
@@ -181,6 +194,9 @@ from gateway.services.sse import (
 )
 from gateway.services.subscriptions import setup_subscriptions
 from gateway.services.teleop import (
+    claim as teleop_claim,
+)
+from gateway.services.teleop import (
     configure_teleop as teleop_configure,
 )
 from gateway.services.teleop import (
@@ -190,6 +206,9 @@ from gateway.services.teleop import (
 )
 from gateway.services.teleop import (
     on_joy as teleop_on_joy,
+)
+from gateway.services.teleop import (
+    on_joy_with_request_id as teleop_on_joy_with_request_id,
 )
 from gateway.services.teleop import (
     parse_bridge_addr as parse_teleop_bridge_addr,
@@ -223,9 +242,20 @@ from maps.services.storage import (
     safe_map_name as _map_safe_map_name,
 )
 from runtime.module import Module
+
+if TYPE_CHECKING:
+    from runtime.status_provider import RuntimeStatusProvider
 from runtime.msgs.geometry import PoseStamped, Twist
 from runtime.msgs.map import MapSceneFrame
-from runtime.msgs.nav import Odometry, Path
+from runtime.msgs.nav import (
+    ExplorationRunEvent,
+    InspectionTaskEvent,
+    NavigationGoalStatus,
+    NavigationState,
+    Odometry,
+    OperatorMotionReceipt,
+    Path,
+)
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import ExecutionEval, SafetyState, SceneGraph
 from runtime.msgs.sensor import PointCloud2
@@ -291,12 +321,34 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _coerce_bool(value: Any, default: bool) -> bool:
-    if value is None:
-        return default
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on"}
-    return bool(value)
+def _compiled_setting(value: Any, *environment_names: str) -> str:
+    """Prefer an explicitly compiled runtime value over process environment."""
+
+    if value is not None:
+        return str(value).strip()
+    for name in environment_names:
+        raw = os.environ.get(name)
+        if raw is not None:
+            return raw.strip()
+    return ""
+
+
+def _run_plan_setting(
+    plan_value: Any,
+    explicit_value: Any,
+    *,
+    field: str,
+) -> str:
+    """Return one RunPlan-owned value and reject conflicting fragments."""
+
+    plan_text = str(plan_value or "").strip()
+    explicit_text = str(explicit_value or "").strip()
+    if explicit_text and plan_text and explicit_text != plan_text:
+        raise ValueError(
+            f"Gateway {field} conflicts with RunPlan: "
+            f"explicit={explicit_text!r} plan={plan_text!r}"
+        )
+    return plan_text or explicit_text
 
 
 # Convenience alias - canonical implementation in maps.services.storage.
@@ -312,7 +364,7 @@ _safe_map_name = _map_safe_map_name
 class GatewayModule(Module, layer=6):
     """HTTP/WebSocket gateway with typed APIs and thread-safe telemetry.
 
-    In:  odometry, scene_graph, safety_state, mission_status,
+    In:  odometry, scene_graph, safety_state, navigation_state, mission_status,
          execution_eval, dialogue_state, map_event
     Out: goal_pose, cmd_vel, stop_cmd, cancel, instruction, servo_target, mode_cmd
     """
@@ -331,7 +383,7 @@ class GatewayModule(Module, layer=6):
         {
             "_session_mode",
             "_session_product_session",
-            "_session_product_profile",
+            "_session_product",
             "_session_map",
             "_session_slam_profile",
             "_session_since",
@@ -375,6 +427,10 @@ class GatewayModule(Module, layer=6):
     map_odom_tf: In[dict]  # from SlamBridge -{tx,ty,tz,qx,qy,qz,qw,valid} for map->odom
     scene_graph: In[SceneGraph]
     safety_state: In[SafetyState]
+    navigation_state: In[NavigationState]
+    navigation_goal_status: In[NavigationGoalStatus]
+    exploration_run_event: In[ExplorationRunEvent]
+    inspection_task_event: In[InspectionTaskEvent]
     mission_status: In[dict]
     map_event: In[dict]
     execution_eval: In[ExecutionEval]
@@ -401,10 +457,71 @@ class GatewayModule(Module, layer=6):
     servo_target: Out[str]
     mode_cmd: Out[str]
 
-    def __init__(self, port: int = 5050, host: str = "0.0.0.0", **kw):
-        super().__init__(**kw)
+    def __init__(
+        self,
+        port: int = 5050,
+        host: str = "0.0.0.0",
+        command_output_mode: str | None = None,
+        hardware_control_boundary: str | None = None,
+        product: str | None = None,
+        run_plan_fingerprint: str | None = None,
+        run_plan: Any | None = None,
+        map_save_adapter: Any | None = None,
+        frame_tree: Any | None = None,
+        **kw,
+    ):
+        if kw:
+            raise TypeError(
+                "unsupported GatewayModule configuration field(s): "
+                + ", ".join(sorted(kw))
+            )
+        super().__init__()
         self._port = port
         self._host = host
+        self._compiled_run_plan = run_plan
+        if run_plan is not None:
+            plan_host_config = getattr(run_plan, "host_config", None)
+            if not isinstance(plan_host_config, Mapping):
+                raise ValueError("Gateway RunPlan is missing host_config")
+            self._compiled_command_output_mode = _run_plan_setting(
+                plan_host_config.get("command_output_mode"),
+                command_output_mode,
+                field="command_output_mode",
+            )
+            self._compiled_hardware_control_boundary = _run_plan_setting(
+                plan_host_config.get("hardware_control_boundary"),
+                hardware_control_boundary,
+                field="hardware_control_boundary",
+            )
+            self._compiled_product = _run_plan_setting(
+                getattr(run_plan, "product", None),
+                product,
+                field="product",
+            )
+            self._compiled_run_plan_fingerprint = _run_plan_setting(
+                getattr(run_plan, "fingerprint", None),
+                run_plan_fingerprint,
+                field="run_plan_fingerprint",
+            )
+            if not self._compiled_product or not self._compiled_run_plan_fingerprint:
+                raise ValueError("Gateway RunPlan is missing identity")
+        else:
+            self._compiled_command_output_mode = _compiled_setting(
+                command_output_mode,
+                "LINGTU_COMMAND_OUTPUT_MODE",
+            )
+            self._compiled_hardware_control_boundary = _compiled_setting(
+                hardware_control_boundary,
+                "LINGTU_HARDWARE_CONTROL_BOUNDARY",
+            )
+            self._compiled_product = _compiled_setting(
+                product,
+                "LINGTU_PRODUCT",
+            )
+            self._compiled_run_plan_fingerprint = _compiled_setting(
+                run_plan_fingerprint,
+                "LINGTU_RUN_PLAN_FINGERPRINT",
+            )
 
         init_core_state(
             self,
@@ -420,8 +537,9 @@ class GatewayModule(Module, layer=6):
                 DEFAULT_SSE_SLOPE_PAYLOAD_ENABLED,
             ),
         )
+        if self._compiled_product:
+            self._session_product = self._compiled_product
 
-        teleop_dds_env = os.environ.get("LINGTU_TELEOP_CMD_DDS")
         init_teleop_state(
             self,
             max_speed=_env_float("LINGTU_TELEOP_MAX_SPEED_MPS", 0.5),
@@ -429,22 +547,16 @@ class GatewayModule(Module, layer=6):
             release_timeout=_env_float("LINGTU_TELEOP_RELEASE_TIMEOUT_S", 0.5),
             bridge_addr_raw=os.environ.get("LINGTU_TELEOP_BRIDGE_ADDR", ""),
             dds_enabled=resolve_native_command_boundary(
-                command_output_mode=os.environ.get("LINGTU_COMMAND_OUTPUT_MODE", ""),
-                legacy_dds_env=teleop_dds_env,
+                command_output_mode=self._compiled_command_output_mode,
             ),
         )
 
-        self._manage_session_services: bool = _coerce_bool(
-            kw.get("manage_session_services"),
-            _env_bool("LINGTU_MANAGE_SESSION_SERVICES", True),
-        )
         init_module_refs(
             self,
-            map_save_adapter=kw.get("map_save_adapter"),
-            manage_session_services=self._manage_session_services,
+            map_save_adapter=map_save_adapter,
         )
         init_recording_state(self)
-        init_cloud_and_frame_state(self, frame_tree=kw.get("frame_tree"))
+        init_cloud_and_frame_state(self, frame_tree=frame_tree)
 
         self._go2rtc_upstream: str = os.environ.get(
             "LINGTU_GO2RTC_URL",
@@ -461,20 +573,17 @@ class GatewayModule(Module, layer=6):
 
         init_drift_watchdog_state(
             self,
-            enabled=(
-                self._manage_session_services
-                and os.environ.get("LINGTU_DRIFT_WATCHDOG", "1") not in ("0", "false", "False")
-            ),
+            enabled=os.environ.get("LINGTU_DRIFT_WATCHDOG", "1") not in ("0", "false", "False"),
             interval_s=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_INTERVAL", "5")),
             xy_limit=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_XY_LIMIT", "50")),
             v_limit=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_V_LIMIT", "10")),
             cooldown_s=float(os.environ.get("LINGTU_DRIFT_WATCHDOG_COOLDOWN", "300")),
-            restart_delay_s=float(os.environ.get("LINGTU_DRIFT_RESTART_DELAY_S", "2.0")),
         )
 
         # Crash-time black box. Records the gateway's view of the world (odom,
         # slam_diag, gnss_fusion, map_odom_tf) and dumps to disk before the
-        # watchdog stops services, so we can attribute divergences offline.
+        # watchdog requests the Product-owned SLAM restart, so we can attribute
+        # divergences offline.
         from runtime.utils.blackbox_recorder import BlackBoxRecorder
 
         self._blackbox = BlackBoxRecorder.from_env()
@@ -484,8 +593,39 @@ class GatewayModule(Module, layer=6):
 
     # -- lifecycle ----------------------------------------------------------
 
+    def set_system_handle(self, handle: Any) -> None:
+        """Bind the assembled system so readiness can report critical failures."""
+
+        self._system_handle = handle
+
+    def set_runtime_status_provider(self, provider: RuntimeStatusProvider) -> None:
+        """Bind read-only runtime status without giving Gateway orchestration control."""
+
+        self._runtime_status_provider = provider
+
+    def startup_readiness(self) -> str | None:
+        """Require the externally visible HTTP server to be accepting traffic."""
+
+        base_reason = super().startup_readiness()
+        if base_reason is not None:
+            return base_reason
+        if self._defer_server:
+            return None
+        if self._server_error:
+            return f"server_error:{self._server_error}"
+        thread = self._server_thread
+        if thread is None or not thread.is_alive():
+            return "server_thread_not_running"
+        server = self._server
+        if server is None:
+            return "server_not_created"
+        if getattr(server, "started", False) is not True:
+            return "server_not_started"
+        return None
+
     def setup(self) -> None:
         recover_external_mapping_session(self)
+        recover_external_explore_session(self)
         setup_subscriptions(self)
 
     def start(self) -> None:
@@ -533,18 +673,16 @@ class GatewayModule(Module, layer=6):
     def _drift_watchdog_loop(self, stop_event: threading.Event | None = None) -> None:
         watchdog_loop(self, stop_event=stop_event)
 
-    def _drift_restart_do_restart(
+    def _drift_report_divergence(
         self,
         *,
         xy: float,
         y_abs: float,
         v: float,
         stop_event: threading.Event | None = None,
-    ) -> None:
-        """Stop SLAM services, clear odom cache, ensure session-appropriate
-        services back up. Pushes SSE event so Web shows a banner.
-        """
-        restart_after_drift(self, xy=xy, y_abs=y_abs, v=v, stop_event=stop_event)
+    ) -> bool:
+        """Report SLAM divergence without taking ProductControl ownership."""
+        return report_drift(self, xy=xy, y_abs=y_abs, v=v, stop_event=stop_event)
 
     def _saved_map_loader_loop(self, stop_event: threading.Event | None = None) -> None:
         load_saved_maps_loop(self, stop_event=stop_event)
@@ -698,12 +836,18 @@ class GatewayModule(Module, layer=6):
         *,
         publish_local_compat: bool = True,
         request_id: str | None = None,
+        source_id: str | None = None,
+        source_epoch: int | None = None,
+        sequence: int | None = None,
     ) -> bool:
         return teleop_publish_remote_velocity_request(
             self,
             twist,
             publish_local_compat=publish_local_compat,
             request_id=request_id,
+            source_id=source_id,
+            source_epoch=source_epoch,
+            sequence=sequence,
         )
 
     def _teleop_twist_from_joy(self, lx: float, ly: float, az: float) -> Twist:
@@ -783,7 +927,10 @@ class GatewayModule(Module, layer=6):
         return self._active_map_from_maps_service()
 
     def _session_snapshot(self) -> dict:
-        return session_snapshot(self)
+        snapshot = session_snapshot(self)
+        if not snapshot.get("product") and self._compiled_product:
+            snapshot["product"] = self._compiled_product
+        return snapshot
 
     def _on_saved_map(self, cloud: PointCloud2) -> None:
         """DDS-stream saved-map -intentionally ignored.
@@ -865,6 +1012,18 @@ class GatewayModule(Module, layer=6):
 
     def _on_mission(self, status: dict) -> None:
         handle_mission(self, status)
+
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        handle_navigation_state(self, state)
+
+    def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
+        handle_navigation_goal_status(self, status)
+
+    def _on_exploration_run_event(self, event: ExplorationRunEvent) -> None:
+        handle_exploration_run_event(self, event)
+
+    def _on_inspection_task_event(self, event: InspectionTaskEvent) -> None:
+        handle_inspection_task_event(self, event)
 
     def _on_map_event(self, event: dict) -> None:
         handle_map_event(self, event)
@@ -1029,9 +1188,13 @@ class GatewayModule(Module, layer=6):
         self,
         command: str,
         body: Any,
-        action: Callable[[], dict[str, Any]],
-    ) -> dict[str, Any]:
-        return run_control_command(self, command, body, action)
+        action: Callable[[], Mapping[str, Any] | JSONResponse],
+        *,
+        success_status_code: int = 200,
+    ) -> dict[str, Any] | JSONResponse:
+        return run_control_command(
+            self, command, body, action, success_status_code=success_status_code
+        )
 
     # -- teleop internals (forwarded to TeleopModule) -------------------------
 
@@ -1049,11 +1212,72 @@ class GatewayModule(Module, layer=6):
         with self._teleop_clients_lock:
             return self._teleop_clients
 
-    def _teleop_on_joy(self, lx: float, ly: float, az: float) -> bool:
-        return teleop_on_joy(self, lx, ly, az)
+    def _teleop_on_joy(
+        self,
+        lx: float,
+        ly: float,
+        az: float,
+        *,
+        request_id: str | None = None,
+        source_id: str = "gateway:teleop",
+        source_epoch: int = 1,
+        sequence: int = 1,
+    ) -> bool:
+        if (
+            request_id is None
+            and source_id == "gateway:teleop"
+            and source_epoch == 1
+            and sequence == 1
+        ):
+            return teleop_on_joy(self, lx, ly, az)
+        return teleop_on_joy_with_request_id(
+            self,
+            lx,
+            ly,
+            az,
+            request_id=request_id,
+            source_id=source_id,
+            source_epoch=source_epoch,
+            sequence=sequence,
+        )
 
-    def _teleop_release(self) -> bool:
-        return teleop_release(self)
+    def _teleop_claim(
+        self,
+        *,
+        source_id: str,
+        source_epoch: int,
+        sequence: int,
+        lease_ttl_ms: int,
+        request_id: str | None = None,
+    ) -> OperatorMotionReceipt | bool | None:
+        return teleop_claim(
+            self,
+            source_id=source_id,
+            source_epoch=source_epoch,
+            sequence=sequence,
+            lease_ttl_ms=lease_ttl_ms,
+            request_id=request_id,
+        )
+
+    def _teleop_release(
+        self,
+        *,
+        source_id: str = "gateway:teleop",
+        source_epoch: int = 1,
+        sequence: int = 1,
+        release_sequence: int | None = None,
+        request_id: str | None = None,
+        reason: str = "operator_hold",
+    ) -> OperatorMotionReceipt | bool | None:
+        return teleop_release(
+            self,
+            source_id=source_id,
+            source_epoch=source_epoch,
+            sequence=sequence,
+            release_sequence=release_sequence,
+            request_id=request_id,
+            reason=reason,
+        )
 
     # -- FastAPI app --------------------------------------------------------
 
@@ -1081,6 +1305,7 @@ class GatewayModule(Module, layer=6):
             "traffic": traffic,
             "cloud": self._cloud_debug_snapshot(),
             "commands": commands,
+            "inspection_task_projection": ensure_inspection_task_timeline(self).health(),
         }
         return info
 

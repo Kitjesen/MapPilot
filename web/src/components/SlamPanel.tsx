@@ -128,35 +128,23 @@ export function SlamPanel({ sseState, showToast, locale }: SlamPanelProps) {
     setBusy(true)
     try {
       const currentSession = action.kind === 'end' ? session : await api.fetchSession()
-      if (action.kind === 'start-mapping') {
-        const result = await api.switchProductSession('mapping', {
-          currentProfile: currentSession?.product_profile,
-        })
-        showToast(
-          `${text(locale, 'Mapping switch accepted; waiting for service restart', '建图切换已受理，等待服务重启')}: ${result.status}`,
-          'info',
-        )
-      } else if (action.kind === 'start-navigating') {
-        const result = await api.switchProductSession('navigating', {
-          currentProfile: currentSession?.product_profile,
-          mapName: action.mapName,
-        })
-        showToast(
-          `${text(locale, 'Navigation switch accepted; waiting for localization restart', '导航切换已受理，等待定位服务重启')}: ${result.status}`,
-          'info',
-        )
-      } else if (action.kind === 'start-exploring') {
-        const result = await api.switchProductSession('exploring', {
-          currentProfile: currentSession?.product_profile,
-        })
-        showToast(
-          `${text(locale, 'Exploration switch accepted; waiting for service restart', '探索切换已受理，等待服务重启')}: ${result.status}`,
-          'info',
-        )
+      if (action.kind === 'end') {
+        if (!currentSession?.env) {
+          throw new Error('Runtime Env is unknown')
+        }
+        const command = await api.copyProductControlStopCommand(currentSession.env)
+        showToast(`${text(locale, 'ProductControl stop command copied', 'ProductControl 停止命令已复制')}: ${command}`, 'info')
       } else {
-        const s = await api.endSession()
-        setLastSession(s)
-        showToast('会话已结束', 'success')
+        const targetProduct = action.kind === 'start-mapping'
+          ? 'map'
+          : action.kind === 'start-navigating'
+            ? 'nav'
+            : 'explore'
+        const handoff = await api.copyProductSwitchCommand(targetProduct, {
+          currentProduct: currentSession?.product,
+          mapName: action.kind === 'start-navigating' ? action.mapName : null,
+        })
+        showToast(`${text(locale, 'ProductControl command copied', 'ProductControl 命令已复制')}: ${handoff.command}`, 'info')
       }
     } catch (e: unknown) {
       showToast(`切换失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
@@ -242,27 +230,21 @@ export function SlamPanel({ sseState, showToast, locale }: SlamPanelProps) {
     }
   }, [showToast])
 
-  const canRestartSlam = !restartBusy && !busy && !pendingTx
+  const canRestartSlam = Boolean(session?.product) && !restartBusy && !busy && !pendingTx
   const handleRestartSlam = useCallback(async () => {
     setRestartBusy(true)
     try {
-      showToast('正在重启底层定位链路…', 'info')
-      const r = await api.restartSlam()
-      if (!r.success) {
-        showToast(`重启失败: ${r.message || 'SLAM 服务未就绪'}`, 'error')
-        return
+      if (!session?.env) {
+        throw new Error('Runtime Env is unknown')
       }
-      showToast('底层定位链路已重启，位姿会从新会话重新起算', 'success')
-      try {
-        const s = await api.fetchSession()
-        setLastSession(s)
-      } catch { /* ignore */ }
+      const command = await api.copyProductControlRestartCommand(session.env, 'slam')
+      showToast(`已复制 ProductControl 重启命令：${command}`, 'info')
     } catch (e) {
-      showToast(`重启请求失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
+      showToast(`复制重启命令失败: ${e instanceof Error ? e.message : String(e)}`, 'error')
     } finally {
       setRestartBusy(false)
     }
-  }, [showToast])
+  }, [session?.env, showToast])
 
   const quality = session?.icp_quality ?? 0
   const qualityClass = quality <= 0 ? '' : quality < 0.15 ? styles.qualityGood : quality < 0.3 ? styles.qualityWarn : styles.qualityBad
@@ -381,13 +363,13 @@ export function SlamPanel({ sseState, showToast, locale }: SlamPanelProps) {
           className={canRestartSlam ? styles.primaryBtn : styles.primaryBtnDisabled}
           onClick={canRestartSlam ? handleRestartSlam : undefined}
           disabled={!canRestartSlam}
-          title="强制重启 lingtu-slam-dds.service；用于把当前定位链路清干净重新开始。"
+          title="复制由 ProductControl 执行的定位进程重启命令"
         >
           <LocateFixed size={14} />
-          <span>重启定位链路</span>
+          <span>复制重启命令</span>
           {restartBusy && <span className={styles.spinnerInline} />}
         </button>
-        <p className={styles.hint}>这会重启底层 SLAM 服务；不是清除可视化点云。</p>
+        <p className={styles.hint}>命令由现场操作员执行，Web 不直接控制 systemd。</p>
       </div>
 
       {/* Stats */}
