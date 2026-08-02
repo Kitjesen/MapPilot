@@ -331,6 +331,39 @@ endif()
 if(LINGTU_NAV_CPP_BUILD_TESTS
     AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
     AND EXISTS
+      "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_replan_cycle.cpp")
+  find_package(Threads REQUIRED)
+  add_executable(test_active_path_replan_cycle
+    "${LINGTU_NAV_TESTS_DIR}/endpoint/test_active_path_replan_cycle.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/active_path_blockage_policy.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/motion/autonomy_tick_controller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/motion/motion_stop_coordinator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/motion/teleop_safety.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/global_plan_task.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/bounded_goal_replan_controller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/goal_plan_controller.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan/goal_replan_runtime_coordinator.cpp")
+  target_include_directories(test_active_path_replan_cycle PRIVATE
+    "${LINGTU_SRC_ROOT}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/motion"
+    "${CMAKE_CURRENT_SOURCE_DIR}/endpoint/plan"
+    "${LINGTU_NAV_PLAN_CPP_DIR}"
+    "${LINGTU_NAV_GLOBAL_CPP_DIR}"
+    "${LINGTU_NAV_LOCAL_CPP_DIR}"
+    "${LINGTU_NAV_KERNEL_DIR}/include")
+  target_link_libraries(test_active_path_replan_cycle PRIVATE Threads::Threads)
+  target_compile_options(test_active_path_replan_cycle PRIVATE
+    $<$<CXX_COMPILER_ID:MSVC>:/W4>
+    $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:-Wall -Wextra -Wpedantic>)
+  add_test(
+    NAME test_active_path_replan_cycle
+    COMMAND test_active_path_replan_cycle)
+endif()
+
+if(LINGTU_NAV_CPP_BUILD_TESTS
+    AND NOT LINGTU_NAV_CPP_BUILD_ENDPOINT
+    AND EXISTS
       "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_ingress_policy.cpp")
   add_executable(test_goal_terminal_ingress_policy
     "${LINGTU_NAV_TESTS_DIR}/endpoint/test_goal_terminal_ingress_policy.cpp"

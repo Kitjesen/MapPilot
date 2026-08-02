@@ -311,6 +311,33 @@ if(NOT TARGET test_goal_replan_runtime_coordinator
            COMMAND test_goal_replan_runtime_coordinator)
 endif()
 
+if(NOT TARGET test_active_path_replan_cycle
+    AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp")
+  add_executable(test_active_path_replan_cycle
+    "${_NAV_ENDPOINT_TESTS_DIR}/test_active_path_replan_cycle.cpp"
+    plan/active_path_blockage_policy.cpp
+    motion/autonomy_tick_controller.cpp
+    motion/motion_stop_coordinator.cpp
+    motion/teleop_safety.cpp
+    plan/global_plan_task.cpp
+    plan/bounded_goal_replan_controller.cpp
+    plan/goal_plan_controller.cpp
+    plan/goal_replan_runtime_coordinator.cpp)
+  target_include_directories(test_active_path_replan_cycle PRIVATE
+    "${CMAKE_CURRENT_LIST_DIR}"
+    "${_LINGTU_ROOT}/src"
+    "${_NAV_PLAN_CPP_DIR}"
+    "${_NAV_GLOBAL_CPP_DIR}"
+    "${_LOCAL_PLANNER_CPP_DIR}"
+    "${_NAV_KERNEL_DIR}/include"
+    ${_EP_DIRS})
+  target_link_libraries(test_active_path_replan_cycle PRIVATE pthread)
+  target_compile_options(test_active_path_replan_cycle PRIVATE
+    -Wall -Wextra -Wpedantic)
+  add_test(NAME test_active_path_replan_cycle
+           COMMAND test_active_path_replan_cycle)
+endif()
+
 if(NOT TARGET test_goal_terminal_ingress_policy
     AND EXISTS "${_NAV_ENDPOINT_TESTS_DIR}/test_goal_terminal_ingress_policy.cpp")
   add_executable(test_goal_terminal_ingress_policy
