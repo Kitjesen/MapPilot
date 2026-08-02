@@ -984,9 +984,11 @@ def test_native_endpoint_accepts_only_typed_command_and_operator_motion_inputs()
     assert "dds_write(global_path)" in runtime
 
 
-def test_native_endpoint_goal_terminal_runtime_is_ticketed_and_outbox_backed() -> None:
+def test_native_endpoint_navigation_runtime_orders_ticketed_terminal_lifecycle() -> None:
     bootstrap = _read("src/nav/cpp/endpoint/nav_native_endpoint.cpp")
     loop = _read("src/nav/cpp/endpoint/endpoint_loop.cpp")
+    controller = _read("src/nav/cpp/endpoint/navigation_runtime_controller.cpp")
+    terminal_transaction = _read("src/nav/cpp/endpoint/status/goal_terminal_transaction.cpp")
     cmake = _read("src/nav/cpp/endpoint/CMakeLists.txt")
 
     callback = bootstrap.split("goal_plan_actions.publish_status", 1)[1].split(
@@ -1000,6 +1002,8 @@ def test_native_endpoint_goal_terminal_runtime_is_ticketed_and_outbox_backed() -
     assert "return dds.writeNavigationGoalStatus" in bootstrap
     assert "status/navigation_goal_status_outbox.cpp" in cmake
     assert "status/goal_terminal_status_delivery.cpp" in cmake
+    assert "navigation_runtime_controller.cpp" in cmake
+    assert "NavigationRuntimeController navigation_runtime_controller" in loop
 
     for old_bypass in (
         "goal_plan.advance(",
@@ -1009,22 +1013,54 @@ def test_native_endpoint_goal_terminal_runtime_is_ticketed_and_outbox_backed() -
     ):
         assert old_bypass not in loop
 
-    advance = loop.index("goal_replan_runtime.advancePlanningCycle")
-    snapshot = loop.index("const auto goal_snapshot_for_tick")
-    autonomy = loop.index("autonomy_tick.tick", snapshot)
-    outcome = loop.index("goal_replan_runtime.handleAutonomyOutcome", autonomy)
-    terminal_service = loop.index("service_terminal(terminal_runtime_result)", outcome)
-    terminal_helper = loop.index("auto service_terminal")
-    staged = loop.index("goal_terminal_delivery.stage", terminal_helper)
-    committed = loop.index("goal_terminal_delivery.markCommitted", staged)
-    delivery = loop.index("goal_terminal_delivery.flushAndAcknowledge", committed)
-    drain = loop.index("goal_replan_runtime.drainPendingCycle", delivery)
-    assert advance < snapshot < autonomy < outcome < terminal_service < drain
-    assert staged < committed < delivery
-    assert "if (!goal_terminal_delivery.isCommitted(runtime_result.terminal_intent_id))" in loop
-    assert "service_terminal(terminal_runtime_result).delivery_acknowledged" in loop
+    for controller_owned_operation in (
+        "advancePlanningCycle",
+        "handleAutonomyOutcome",
+        "drainPendingCycle",
+        "decideGoalTerminalScheduling",
+        "goal_terminal_transaction.advance",
+    ):
+        assert controller_owned_operation not in loop
+
+    frame_lifecycle = controller.split("NavigationRuntimeController::advanceFrame", 1)[1].split(
+        "bool NavigationRuntimeController::terminalPending", 1
+    )[0]
+    ordered_frame_steps = (
+        "goal_replan_runtime_.advancePlanningCycle(frame)",
+        "completeTerminal(result.planning_result)",
+        "actions.complete_endpoint_work_before_autonomy(result.planning_result)",
+        "goal_plan_.snapshot()",
+        "actions.run_autonomy(pre_autonomy_goal_snapshot)",
+        "goal_replan_runtime_.handleAutonomyOutcome(",
+        "actions.apply_autonomy_outputs(runtime_outcome)",
+        "completeTerminal(terminal_candidate)",
+        "goal_replan_runtime_.drainPendingCycle(frame)",
+    )
+    cursor = 0
+    for step in ordered_frame_steps:
+        position = frame_lifecycle.find(step, cursor)
+        assert position >= 0, f"missing ordered navigation runtime step: {step}"
+        cursor = position + len(step)
+    assert "if (!goal_replan_runtime_.terminalPending())" in frame_lifecycle
+
+    terminal_advance = terminal_transaction.split("GoalTerminalTransaction::advance(", 1)[1].split(
+        "GoalTerminalTransaction::stopWhileTerminalPending", 1
+    )[0]
+    ordered_ticket_steps = (
+        "goal_terminal_delivery_.stage(",
+        "goal_terminal_delivery_.markCommitted(",
+        "goal_terminal_delivery_.flushAndAcknowledge(",
+    )
+    cursor = 0
+    for step in ordered_ticket_steps:
+        position = terminal_advance.find(step, cursor)
+        assert position >= 0, f"missing ordered goal terminal ticket step: {step}"
+        cursor = position + len(step)
+    assert (
+        "if (!goal_terminal_delivery_.isCommitted(runtime_result.terminal_intent_id))"
+        in terminal_advance
+    )
     assert "ack.accepted = terminal_delivery_acknowledged" not in loop
-    assert "if (!goal_replan_runtime.terminalPending())" in loop
     assert "goal_status_outbox.flush" in loop
 
     inspection_stop = bootstrap.split("inspection_command_actions.stop_and_commit", 1)[1].split(
@@ -1042,6 +1078,7 @@ def test_native_endpoint_goal_terminal_runtime_is_ticketed_and_outbox_backed() -
 
 def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_goals() -> None:
     loop = _read("src/nav/cpp/endpoint/endpoint_loop.cpp")
+    terminal_transaction = _read("src/nav/cpp/endpoint/status/goal_terminal_transaction.cpp")
 
     assert "evaluateGoalTerminalIngress" in loop
     for ingress in (
@@ -1065,15 +1102,24 @@ def test_native_endpoint_terminal_barrier_gates_ingress_and_stages_inspection_go
         assert ingress in loop
     assert "k" + "Legacy" not in loop
 
-    assert "motion_stop.stopPreservingGoalTerminal" in loop
-    assert "motion_stop.estopPreservingGoalTerminal" in loop
+    assert "motion_stop_.stopPreservingGoalTerminal" in terminal_transaction
+    assert "motion_stop_.estopPreservingGoalTerminal" in terminal_transaction
+    assert "motion_stop.stopPreservingGoalTerminal" not in loop
+    assert "motion_stop.estopPreservingGoalTerminal" not in loop
     assert "inspection_command_coordinator.reject" in loop
     assert "RollingSegmentIngressRejected" in loop
-    assert "goal_replan_runtime.terminalPending()" in loop
-    assert (
-        "inspection_tick_input.goal_plan_busy =\n        goal_plan.snapshot().busy || "
-        "goal_replan_runtime.terminalPending();" in loop
-    )
+    assert "goal_replan_runtime.terminalPending()" not in loop
+
+    terminal_barrier = loop.split("auto terminal_ingress", 1)[1].split(
+        "GoalTaskCancelRouter", 1
+    )[0]
+    assert "navigation_runtime_controller.terminalPending()" in terminal_barrier
+
+    inspection_busy = loop.split("inspection_tick_input.goal_plan_busy =", 1)[1].split(
+        ";", 1
+    )[0]
+    assert "goal_plan.snapshot().busy" in inspection_busy
+    assert "navigation_runtime_controller.terminalPending()" in inspection_busy
     assert "staged_inspection_goal" in loop
     assert 'completeGoalDispatch(false, "goal_terminal_pending"' not in loop
 

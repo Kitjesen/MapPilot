@@ -35,6 +35,7 @@
 #include "nav_endpoint_config.hpp"
 #include "nav_endpoint_messages.hpp"
 #include "nav_loop.hpp"
+#include "navigation_runtime_controller.hpp"
 #include "plan/active_path_blockage_policy.hpp"
 #include "plan/goal_plan_controller.hpp"
 #include "plan/goal_replan_runtime_coordinator.hpp"
@@ -254,13 +255,6 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
   };
 
   std::optional<InspectionGoalDispatchIntent> staged_inspection_goal;
-  std::optional<AutonomyTickOutcome> deferred_inspection_autonomy_outcome;
-  auto terminal_ingress = [&](GoalTerminalIngressKind kind) {
-    return evaluateGoalTerminalIngress(goal_replan_runtime.terminalPending()
-                                           ? GoalTerminalBarrierState::kTerminalPending
-                                           : GoalTerminalBarrierState::kOpen,
-                                       kind);
-  };
   auto terminal_delivery_error = [&](const std::string &reason) {
     frames.last_error = reason;
     nav_status.requestImmediate();
@@ -277,13 +271,19 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                                                         },
                                                         sync_goal_plan_diagnostics,
                                                     });
-  auto service_terminal = [&](const GoalReplanRuntimeResult &runtime_result) {
-    return goal_terminal_transaction.advance(runtime_result);
+  NavigationRuntimeController navigation_runtime_controller(goal_plan, goal_replan_runtime,
+                                                            goal_terminal_transaction);
+  auto terminal_ingress = [&](GoalTerminalIngressKind kind) {
+    return evaluateGoalTerminalIngress(navigation_runtime_controller.terminalPending()
+                                           ? GoalTerminalBarrierState::kTerminalPending
+                                           : GoalTerminalBarrierState::kOpen,
+                                       kind);
   };
   GoalTaskCancelRouter task_cancel_router(
       goal_plan, goal_replan_runtime,
       [&](const GoalReplanRuntimeResult &runtime_result) {
-        const GoalTerminalTransactionResult serviced = service_terminal(runtime_result);
+        const GoalTerminalTransactionResult serviced =
+            navigation_runtime_controller.completeTerminal(runtime_result);
         return GoalTaskCancelTerminalServiceResult{serviced.action_committed, serviced.reason};
       },
       [&] { nav_status.requestImmediate(); });
@@ -349,7 +349,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
         const auto interrupt_result =
             goal_replan_runtime.interrupt(GoalReplanRuntimeInterruption::kNewGoal, steadySeconds());
         if (interrupt_result.terminal_after_stop) {
-          (void)service_terminal(interrupt_result);
+          (void)navigation_runtime_controller.completeTerminal(interrupt_result);
           nav_status.requestImmediate();
           return {false, "goal_terminal_pending"};
         }
@@ -486,7 +486,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       const auto runtime_result =
           goal_replan_runtime.interrupt(GoalReplanRuntimeInterruption::kStop, steadySeconds());
       if (runtime_result.terminal_after_stop && runtime_result.terminal_intent_id != 0U) {
-        const auto terminal_result = service_terminal(runtime_result);
+        const auto terminal_result = navigation_runtime_controller.completeTerminal(runtime_result);
         return {terminal_result.action_committed,
                 terminal_result.action_committed ? "stopped" : terminal_result.reason};
       }
@@ -497,7 +497,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       const auto runtime_result =
           goal_replan_runtime.interrupt(GoalReplanRuntimeInterruption::kEstop, steadySeconds());
       if (runtime_result.terminal_after_stop && runtime_result.terminal_intent_id != 0U) {
-        const auto terminal_result = goal_terminal_transaction.advance(runtime_result, reason);
+        const auto terminal_result =
+            navigation_runtime_controller.completeTerminal(runtime_result, reason);
         return {terminal_result.action_committed,
                 terminal_result.action_committed ? "estop_latched" : terminal_result.reason};
       }
@@ -832,12 +833,12 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
               return {false, std::string(terminal_verdict.reason)};
             }
             if (terminal_verdict.decision == GoalTerminalIngressDecision::kSafetyStop) {
-              const auto preserved = goal_terminal_transaction.stopWhileTerminalPending();
+              const auto preserved = navigation_runtime_controller.stopWhileTerminalPending();
               return {preserved.accepted, preserved.reason};
             }
             if (terminal_verdict.decision == GoalTerminalIngressDecision::kSafetyEstop) {
               const auto preserved =
-                  goal_terminal_transaction.estopWhileTerminalPending(payload.reason);
+                  navigation_runtime_controller.estopWhileTerminalPending(payload.reason);
               return {preserved.accepted, preserved.reason};
             }
             std::pair<bool, std::string> result;
@@ -954,7 +955,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       record_zero_publish_failure("driver_control_blocked:" + driver_blocker);
     }
     driver_authority_previous = driver_authority_now;
-    if (staged_inspection_goal && !goal_replan_runtime.terminalPending()) {
+    if (staged_inspection_goal && !navigation_runtime_controller.terminalPending()) {
       const auto verdict = terminal_ingress(GoalTerminalIngressKind::kInspectionGoalDispatch);
       if (verdict.decision == GoalTerminalIngressDecision::kAllow) {
         const auto identity = next_internal_goal_identity("inspection-leg");
@@ -978,167 +979,163 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
     runtime_frame.inspection_active = inspection_executor.active();
     runtime_frame.rolling_segment_active = rolling_segment.snapshot().active;
     runtime_frame.control_hold = control_loop_guard_latched();
-    const auto runtime_advance_result = goal_replan_runtime.advancePlanningCycle(runtime_frame);
-    const bool runtime_advance_surfaced_terminal =
-        runtime_advance_result.terminal_after_stop.has_value();
-    const GoalTerminalSchedulingDecision terminal_scheduling =
-        decideGoalTerminalScheduling(runtime_advance_result, goal_replan_runtime.terminalPending());
-    bool terminal_delivery_acknowledged = false;
-    if (runtime_advance_surfaced_terminal && terminal_scheduling.service_terminal) {
-      terminal_delivery_acknowledged =
-          service_terminal(runtime_advance_result).delivery_acknowledged;
-    }
-    const auto &plan_advance = runtime_advance_result.plan_advance;
-    if (plan_advance.completion_consumed) {
-      sync_goal_plan_diagnostics();
-      timing.global_plan_ms = plan_advance.elapsed_ms;
-      if (plan_advance.counted_failure) {
-        ++plan_fail_count;
-      }
-      if (plan_advance.record_frame_error) {
-        frames.last_error = last_plan.reason;
-      }
-      if (plan_advance.path_activated) {
-        ++path_count;
-        std::fprintf(stderr,
-                     "nav_native: %s path accepted waypoints=%zu elapsed_ms=%.1f reached=%d\n",
-                     globalPlannerBackendName(cfg.global_planner), last_plan.waypoints,
-                     last_plan.elapsed_ms, last_plan.reached_goal ? 1 : 0);
-      } else if (!last_plan.reason.empty()) {
-        std::fprintf(
-            stderr, "nav_native: %s plan completed reason=%s map_check=%s elapsed_ms=%.1f\n",
-            globalPlannerBackendName(cfg.global_planner), last_plan.reason.c_str(),
-            plan_advance.map_identity_error.empty() ? "ok"
-                                                    : plan_advance.map_identity_error.c_str(),
-            last_plan.elapsed_ms);
-      }
-      if (plan_advance.inspection_status_changed) {
-        inspection_runtime.requestStatus();
-      }
-    }
-    const double inspection_now = nowSeconds();
-    std::vector<InspectionRuntimeEvidenceResult> inspection_evidence_results;
-    dds.drainInspectionEvidenceResults([&](const lingtu_dds_InspectionEvidenceResult &result) {
-      inspection_evidence_results.push_back({stringValue(result.request_id), result.persisted,
-                                             stringValue(result.evidence_id),
-                                             stringValue(result.reason)});
-    });
-    InspectionRuntimeTickInput inspection_tick_input;
-    inspection_tick_input.now_s = inspection_now;
-    inspection_tick_input.odom_generation = odom_generation;
-    inspection_tick_input.arrival_sample = lingtu::nav::inspection::ArrivalSample{
-        last_odom_s, last_odom_linear_speed_mps, last_odom_angular_speed_radps};
-    if (map_body) {
-      inspection_tick_input.robot_position =
-          InspectionRuntimeRobotPosition{map_body->position.x, map_body->position.y};
-    }
-    inspection_tick_input.path_active = control_authority.pathActive();
-    inspection_tick_input.goal_plan_busy =
-        goal_plan.snapshot().busy || goal_replan_runtime.terminalPending();
-    if (const auto active_map = active_map_identity()) {
-      inspection_tick_input.active_map =
-          InspectionRuntimeMapIdentity{active_map->first, active_map->second};
-    }
-    inspection_tick_input.evidence_worker_matched = dds.inspectionEvidenceWorkerMatched();
-    inspection_tick_input.evidence_results = std::move(inspection_evidence_results);
-    const auto inspection_result = inspection_runtime.tick(inspection_tick_input);
-    for (const auto &intent : inspection_result.ordered_intents) {
-      if (intent.kind == InspectionRuntimeIntentKind::kStopControlAuthority) {
-        control_authority.stop();
-      } else {
-        if (!motion_stop.clearEndpointMotion(intent.reason)) {
-          record_zero_publish_failure(intent.reason);
-        }
-      }
-    }
-    if (inspection_result.goal_dispatch && !staged_inspection_goal) {
-      staged_inspection_goal = *inspection_result.goal_dispatch;
-    }
-    timing.input_callbacks_ms = elapsedMs(input_start);
-    if (inspection_result.evidence_dispatch) {
-      const auto &dispatch = *inspection_result.evidence_dispatch;
-      const bool published = dds.writeInspectionEvidenceRequest(
-          dispatch.action, dispatch.map_id, dispatch.map_version, dispatch.deadline_s);
-      const auto completion = inspection_runtime.completeEvidenceDispatch(
-          dispatch.action.request_id, published, inspection_now);
-      if (completion.clear_motion_reason) {
-        if (!motion_stop.clearEndpointMotion(*completion.clear_motion_reason)) {
-          record_zero_publish_failure(*completion.clear_motion_reason);
-        }
-      }
-    }
-    (void)input_projector.materializeLiveObstacleSnapshot(timing);
-    if (control_authority.estopLatched()) {
-      last_local.seen = true;
-      last_local.active = false;
-      last_local.near_field_stop = true;
-      last_local.reason = "estop_latched";
-      last_local.cmd_vel = {};
-      last_teleop.fresh = false;
-      last_teleop.published = cfg.publish_cmd_vel;
-      last_teleop.stopped = true;
-      last_teleop.output = {};
-      last_teleop.reason = "estop_latched";
-      if (!motion_stop.keepZeroFresh()) {
-        record_zero_publish_failure("estop_latched");
-      }
-    }
-    const auto &active_teleop_request = control_authority.teleopRequest();
-    const bool path_active = control_authority.pathActive();
-    auto teleop_result = teleop_tick.tick(TeleopTickInput{
-        cfg, safety_config, map_body, input_gate_state,
-        active_teleop_request ? &*active_teleop_request : nullptr, path_active, obstacle_xyzh,
-        traversability_grid, last_traversability_receive_s, last_teleop, timing});
-    if (teleop_result.handled) {
-      last_teleop = std::move(teleop_result.teleop);
-      if (teleop_result.local) {
-        const auto local_write_start = SteadyClock::now();
-        if (teleop_result.publish.local_path) {
-          dds.writeLocalPath(teleop_result.local_path);
-        }
-        if (teleop_result.publish.waypoint) {
-          dds.writeWayPoint(teleop_result.waypoint);
-        }
-        timing.dds_write_ms += elapsedMs(local_write_start);
-        last_local = std::move(*teleop_result.local);
-        last_local_path = std::move(teleop_result.local_path);
-        last_local_planner_debug = std::move(teleop_result.local_planner_debug);
-      }
-      bool cmd_vel_published = false;
-      if (teleop_result.publish.cmd_vel) {
-        const auto write_start = SteadyClock::now();
-        const auto receipt = dds.writeCmdVelSequenced(teleop_result.publish.command);
-        cmd_vel_published = receipt.has_value();
-        timing.dds_write_ms += elapsedMs(write_start);
-        if (cmd_vel_published) {
-          operator_motion_final_output_sequence = receipt->output_sequence;
-        } else {
-          operator_motion_final_output_sequence = 0U;
-          fail_closed_after_cmd_vel_write("teleop_cmd_vel_publish_failed");
-        }
-      } else if (operator_motion_admitted_sequence != 0U) {
-        operator_motion_final_output_sequence = 0U;
-      }
-      if (cmd_vel_published) {
-        cmd_vel_count += teleop_result.delta.cmd_vel_count;
-      }
-      teleop_output_count += teleop_result.delta.teleop_output_count;
-      teleop_stop_count += teleop_result.delta.teleop_stop_count;
-      teleop_slow_count += teleop_result.delta.teleop_slow_count;
-      teleop_limited_count += teleop_result.delta.teleop_limited_count;
-      output_count += teleop_result.delta.output_count;
-      if (teleop_result.timing.nav_tick_measured) {
-        timing.nav_tick_ms = teleop_result.timing.nav_tick_ms;
-      }
-    }
-    timing.teleop_gate_ms = teleop_result.timing.teleop_gate_ms;
-    if (rolling_segment.snapshot().active) {
-      (void)rolling_segment_effect_coordinator.apply(
-          rolling_segment.step(RollingSegmentRevalidate{rolling_segment_context()}));
-    }
-    const bool path_active_for_tick = control_authority.pathActive();
-    if (terminal_scheduling.run_autonomy_tick) {
-      const auto goal_snapshot_for_tick = goal_plan.snapshot();
+    bool path_active_for_tick = false;
+    AutonomyTickResult autonomy_result;
+    NavigationRuntimeFrameActions runtime_actions;
+    runtime_actions.complete_endpoint_work_before_autonomy =
+        [&](const GoalReplanRuntimeResult &runtime_advance_result) {
+          const auto &plan_advance = runtime_advance_result.plan_advance;
+          if (plan_advance.completion_consumed) {
+            sync_goal_plan_diagnostics();
+            timing.global_plan_ms = plan_advance.elapsed_ms;
+            if (plan_advance.counted_failure) {
+              ++plan_fail_count;
+            }
+            if (plan_advance.record_frame_error) {
+              frames.last_error = last_plan.reason;
+            }
+            if (plan_advance.path_activated) {
+              ++path_count;
+              std::fprintf(
+                  stderr, "nav_native: %s path accepted waypoints=%zu elapsed_ms=%.1f reached=%d\n",
+                  globalPlannerBackendName(cfg.global_planner), last_plan.waypoints,
+                  last_plan.elapsed_ms, last_plan.reached_goal ? 1 : 0);
+            } else if (!last_plan.reason.empty()) {
+              std::fprintf(
+                  stderr, "nav_native: %s plan completed reason=%s map_check=%s elapsed_ms=%.1f\n",
+                  globalPlannerBackendName(cfg.global_planner), last_plan.reason.c_str(),
+                  plan_advance.map_identity_error.empty() ? "ok"
+                                                          : plan_advance.map_identity_error.c_str(),
+                  last_plan.elapsed_ms);
+            }
+            if (plan_advance.inspection_status_changed) {
+              inspection_runtime.requestStatus();
+            }
+          }
+          const double inspection_now = nowSeconds();
+          std::vector<InspectionRuntimeEvidenceResult> inspection_evidence_results;
+          dds.drainInspectionEvidenceResults(
+              [&](const lingtu_dds_InspectionEvidenceResult &result) {
+                inspection_evidence_results.push_back(
+                    {stringValue(result.request_id), result.persisted,
+                     stringValue(result.evidence_id), stringValue(result.reason)});
+              });
+          InspectionRuntimeTickInput inspection_tick_input;
+          inspection_tick_input.now_s = inspection_now;
+          inspection_tick_input.odom_generation = odom_generation;
+          inspection_tick_input.arrival_sample = lingtu::nav::inspection::ArrivalSample{
+              last_odom_s, last_odom_linear_speed_mps, last_odom_angular_speed_radps};
+          if (map_body) {
+            inspection_tick_input.robot_position =
+                InspectionRuntimeRobotPosition{map_body->position.x, map_body->position.y};
+          }
+          inspection_tick_input.path_active = control_authority.pathActive();
+          inspection_tick_input.goal_plan_busy =
+              goal_plan.snapshot().busy || navigation_runtime_controller.terminalPending();
+          if (const auto active_map = active_map_identity()) {
+            inspection_tick_input.active_map =
+                InspectionRuntimeMapIdentity{active_map->first, active_map->second};
+          }
+          inspection_tick_input.evidence_worker_matched = dds.inspectionEvidenceWorkerMatched();
+          inspection_tick_input.evidence_results = std::move(inspection_evidence_results);
+          const auto inspection_result = inspection_runtime.tick(inspection_tick_input);
+          for (const auto &intent : inspection_result.ordered_intents) {
+            if (intent.kind == InspectionRuntimeIntentKind::kStopControlAuthority) {
+              control_authority.stop();
+            } else {
+              if (!motion_stop.clearEndpointMotion(intent.reason)) {
+                record_zero_publish_failure(intent.reason);
+              }
+            }
+          }
+          if (inspection_result.goal_dispatch && !staged_inspection_goal) {
+            staged_inspection_goal = *inspection_result.goal_dispatch;
+          }
+          timing.input_callbacks_ms = elapsedMs(input_start);
+          if (inspection_result.evidence_dispatch) {
+            const auto &dispatch = *inspection_result.evidence_dispatch;
+            const bool published = dds.writeInspectionEvidenceRequest(
+                dispatch.action, dispatch.map_id, dispatch.map_version, dispatch.deadline_s);
+            const auto completion = inspection_runtime.completeEvidenceDispatch(
+                dispatch.action.request_id, published, inspection_now);
+            if (completion.clear_motion_reason) {
+              if (!motion_stop.clearEndpointMotion(*completion.clear_motion_reason)) {
+                record_zero_publish_failure(*completion.clear_motion_reason);
+              }
+            }
+          }
+          (void)input_projector.materializeLiveObstacleSnapshot(timing);
+          if (control_authority.estopLatched()) {
+            last_local.seen = true;
+            last_local.active = false;
+            last_local.near_field_stop = true;
+            last_local.reason = "estop_latched";
+            last_local.cmd_vel = {};
+            last_teleop.fresh = false;
+            last_teleop.published = cfg.publish_cmd_vel;
+            last_teleop.stopped = true;
+            last_teleop.output = {};
+            last_teleop.reason = "estop_latched";
+            if (!motion_stop.keepZeroFresh()) {
+              record_zero_publish_failure("estop_latched");
+            }
+          }
+          const auto &active_teleop_request = control_authority.teleopRequest();
+          const bool path_active = control_authority.pathActive();
+          auto teleop_result = teleop_tick.tick(TeleopTickInput{
+              cfg, safety_config, map_body, input_gate_state,
+              active_teleop_request ? &*active_teleop_request : nullptr, path_active, obstacle_xyzh,
+              traversability_grid, last_traversability_receive_s, last_teleop, timing});
+          if (teleop_result.handled) {
+            last_teleop = std::move(teleop_result.teleop);
+            if (teleop_result.local) {
+              const auto local_write_start = SteadyClock::now();
+              if (teleop_result.publish.local_path) {
+                dds.writeLocalPath(teleop_result.local_path);
+              }
+              if (teleop_result.publish.waypoint) {
+                dds.writeWayPoint(teleop_result.waypoint);
+              }
+              timing.dds_write_ms += elapsedMs(local_write_start);
+              last_local = std::move(*teleop_result.local);
+              last_local_path = std::move(teleop_result.local_path);
+              last_local_planner_debug = std::move(teleop_result.local_planner_debug);
+            }
+            bool cmd_vel_published = false;
+            if (teleop_result.publish.cmd_vel) {
+              const auto write_start = SteadyClock::now();
+              const auto receipt = dds.writeCmdVelSequenced(teleop_result.publish.command);
+              cmd_vel_published = receipt.has_value();
+              timing.dds_write_ms += elapsedMs(write_start);
+              if (cmd_vel_published) {
+                operator_motion_final_output_sequence = receipt->output_sequence;
+              } else {
+                operator_motion_final_output_sequence = 0U;
+                fail_closed_after_cmd_vel_write("teleop_cmd_vel_publish_failed");
+              }
+            } else if (operator_motion_admitted_sequence != 0U) {
+              operator_motion_final_output_sequence = 0U;
+            }
+            if (cmd_vel_published) {
+              cmd_vel_count += teleop_result.delta.cmd_vel_count;
+            }
+            teleop_output_count += teleop_result.delta.teleop_output_count;
+            teleop_stop_count += teleop_result.delta.teleop_stop_count;
+            teleop_slow_count += teleop_result.delta.teleop_slow_count;
+            teleop_limited_count += teleop_result.delta.teleop_limited_count;
+            output_count += teleop_result.delta.output_count;
+            if (teleop_result.timing.nav_tick_measured) {
+              timing.nav_tick_ms = teleop_result.timing.nav_tick_ms;
+            }
+          }
+          timing.teleop_gate_ms = teleop_result.timing.teleop_gate_ms;
+          if (rolling_segment.snapshot().active) {
+            (void)rolling_segment_effect_coordinator.apply(
+                rolling_segment.step(RollingSegmentRevalidate{rolling_segment_context()}));
+          }
+          path_active_for_tick = control_authority.pathActive();
+        };
+    runtime_actions.run_autonomy = [&](const GoalPlanSnapshot &goal_snapshot_for_tick) {
       std::optional<GoalReplanIdentity> active_goal_identity;
       if (goal_snapshot_for_tick.active_origin &&
           *goal_snapshot_for_tick.active_origin == GoalPlanOrigin::kExternal &&
@@ -1174,7 +1171,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
       blockage_observation.cloud_generation = cloud_generation;
       blockage_observation.traversability_generation = traversability_generation;
       auto obstruction_trigger = active_path_blockage_policy.observe(blockage_observation);
-      auto autonomy_result = autonomy_tick.tick(AutonomyTickInput{
+      autonomy_result = autonomy_tick.tick(AutonomyTickInput{
           safety_config, map_body, input_gate_state, path_active_for_tick,
           goal_snapshot_for_tick.active_map_identity,
           control_authority.motionAllowed() && !control_loop_guard_latched(),
@@ -1190,11 +1187,11 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           autonomy_result.outcome.reason == "active_path_map_identity_missing" ||
           autonomy_result.outcome.reason == "active_map_unavailable_during_navigation" ||
           autonomy_result.outcome.reason == "active_map_changed_during_navigation";
-      const auto runtime_outcome_result = goal_replan_runtime.handleAutonomyOutcome(
-          autonomy_frame, GoalReplanRuntimeAutonomyEvent{
-                              autonomy_result.outcome, goal_snapshot_for_tick,
-                              inspection_executor.active(), rolling_segment.snapshot().active});
-      std::optional<GoalReplanRuntimeResult> inspection_fallback_terminal;
+      return NavigationRuntimeAutonomyObservation{
+          autonomy_frame, autonomy_result.outcome, autonomy_result.handled,
+          inspection_executor.active(), rolling_segment.snapshot().active};
+    };
+    runtime_actions.apply_autonomy_outputs = [&](const GoalReplanRuntimeResult &) {
       if (autonomy_result.handled) {
         if (autonomy_result.local) {
           last_local = std::move(*autonomy_result.local);
@@ -1253,55 +1250,34 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                     RollingSegmentMotionOutcomeKind::kReached, autonomy_result.outcome.reason}));
             break;
           case AutonomyTickOutcomeKind::kGoalFailed:
-            if (!runtime_outcome_result.handled &&
-                inspection_executor.status().state ==
-                    lingtu::nav::inspection::RunState::kNavigating &&
-                !deferred_inspection_autonomy_outcome) {
-              deferred_inspection_autonomy_outcome = autonomy_result.outcome;
-              inspection_fallback_terminal = goal_replan_runtime.interrupt(
-                  GoalReplanRuntimeInterruption::kControlHold, autonomy_frame.steady_now_s);
-            }
-            break;
           case AutonomyTickOutcomeKind::kGoalReached:
-            if (!runtime_outcome_result.handled &&
-                autonomy_result.outcome.inspection_arrival_intent && inspection_executor.active() &&
-                !deferred_inspection_autonomy_outcome) {
-              deferred_inspection_autonomy_outcome = autonomy_result.outcome;
-              inspection_fallback_terminal = goal_replan_runtime.interrupt(
-                  GoalReplanRuntimeInterruption::kControlHold, autonomy_frame.steady_now_s);
-            }
-            break;
           case AutonomyTickOutcomeKind::kNone:
             break;
         }
       }
-      const GoalReplanRuntimeResult &terminal_runtime_result =
-          inspection_fallback_terminal ? *inspection_fallback_terminal : runtime_outcome_result;
-      const GoalTerminalSchedulingDecision outcome_terminal_scheduling =
-          decideGoalTerminalScheduling(terminal_runtime_result,
-                                       goal_replan_runtime.terminalPending());
-      if (outcome_terminal_scheduling.service_terminal) {
-        terminal_delivery_acknowledged =
-            service_terminal(terminal_runtime_result).delivery_acknowledged;
-      }
-    }
-    if (terminal_delivery_acknowledged && deferred_inspection_autonomy_outcome) {
-      if (deferred_inspection_autonomy_outcome->kind == AutonomyTickOutcomeKind::kGoalFailed) {
-        (void)inspection_executor.OnNavigationFailed(deferred_inspection_autonomy_outcome->reason,
-                                                     nowSeconds());
-      } else if (deferred_inspection_autonomy_outcome->kind ==
+      return NavigationRuntimePostAutonomyState{inspection_executor.active(),
+                                                inspection_executor.status().state ==
+                                                    lingtu::nav::inspection::RunState::kNavigating};
+    };
+    const NavigationRuntimeFrameResult runtime_frame_result =
+        navigation_runtime_controller.advanceFrame(runtime_frame, runtime_actions);
+    if (runtime_frame_result.inspection_completion) {
+      if (runtime_frame_result.inspection_completion->kind ==
+          AutonomyTickOutcomeKind::kGoalFailed) {
+        (void)inspection_executor.OnNavigationFailed(
+            runtime_frame_result.inspection_completion->reason, nowSeconds());
+      } else if (runtime_frame_result.inspection_completion->kind ==
                  AutonomyTickOutcomeKind::kGoalReached) {
         inspection_runtime.onGoalReached(nowSeconds());
       }
       inspection_runtime.requestStatus();
-      deferred_inspection_autonomy_outcome.reset();
     }
-    if (!goal_replan_runtime.terminalPending()) {
-      const auto pending_result = goal_replan_runtime.drainPendingCycle(runtime_frame);
-      if (pending_result.pending_resumed) {
-        sync_goal_plan_diagnostics();
-        nav_status.requestImmediate();
-      }
+    if (runtime_frame_result.pending_cycle_advanced &&
+        runtime_frame_result.pending_result.pending_resumed) {
+      sync_goal_plan_diagnostics();
+      nav_status.requestImmediate();
+    }
+    if (!navigation_runtime_controller.terminalPending()) {
       (void)goal_status_outbox.flush();
     }
     const double now = nowSeconds();
@@ -1451,7 +1427,7 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
                    "delivery_acknowledged=%d terminal_flush=%d)\n",
                    shutdown_transaction.reason.c_str(), shutdown_transaction.stop_confirmed ? 1 : 0,
                    shutdown_transaction.terminal_required ? 1 : 0,
-                   goal_replan_runtime.terminalPending() ? 1 : 0,
+                   navigation_runtime_controller.terminalPending() ? 1 : 0,
                    shutdown_transaction.delivery_acknowledged ? 1 : 0,
                    static_cast<int>(shutdown_transaction.terminal_flush));
       next_shutdown_pending_log = shutdown_log_now + kShutdownPendingLogInterval;
