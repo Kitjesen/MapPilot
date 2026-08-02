@@ -10,12 +10,15 @@
 #include <vector>
 
 #include "plan/active_path_blockage_policy.hpp"
+#include "plan/goal_plan_controller.hpp"
 
 namespace {
 
 using lingtu::nav::endpoint::ActivePathBlockageObservation;
 using lingtu::nav::endpoint::ActivePathBlockagePolicy;
 using lingtu::nav::endpoint::ActivePathBlockagePolicyConfig;
+using lingtu::nav::endpoint::goalPlanAcceptsReplanTrigger;
+using lingtu::nav::endpoint::GoalPlanSnapshot;
 using lingtu::nav::endpoint::GoalReplanIdentity;
 using lingtu::nav::endpoint::GoalReplanTriggerKind;
 using lingtu::nav::plan::MapIdentity;
@@ -341,6 +344,45 @@ void testInactiveInvalidAndMalformedEvidenceReset() {
   require(!policy.snapshot().goal.has_value(), "inactive external goal retained binding");
 }
 
+void testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger() {
+  const auto active_path = path();
+  const auto blocked = staticBlockage();
+  struct GateCase {
+    bool GoalPlanSnapshot::*blocked_state;
+  };
+  constexpr std::array<GateCase, 3> cases{{
+      {&GoalPlanSnapshot::busy},
+      {&GoalPlanSnapshot::pending_plan_queued},
+      {&GoalPlanSnapshot::active_paused},
+  }};
+
+  for (const auto &gate_case : cases) {
+    ActivePathBlockagePolicy policy(config());
+    GoalPlanSnapshot goal_plan;
+    auto observe = [&](double now_s, std::uint64_t generation) {
+      return policy.observe(observation(now_s, generation, generation, active_path, blocked,
+                                        goalIdentity(), 3U, {0.0, 0.0, 0.0},
+                                        goalPlanAcceptsReplanTrigger(goal_plan)));
+    };
+
+    require(!observe(110.0, 1U), "goal-plan gate setup triggered");
+    require(!observe(110.6, 2U), "goal-plan gate setup triggered early");
+
+    goal_plan.*(gate_case.blocked_state) = true;
+    require(!observe(111.2, 3U), "inadmissible goal plan emitted a persistent blockage trigger");
+    require(!policy.snapshot().goal.has_value() &&
+                policy.snapshot().fresh_blocked_observations == 0U &&
+                !policy.snapshot().trigger_emitted,
+            "inadmissible goal plan did not reset pending blockage evidence");
+
+    goal_plan.*(gate_case.blocked_state) = false;
+    require(!observe(112.0, 4U), "re-admitted blockage inherited prior evidence");
+    require(!observe(112.5, 5U), "re-admitted blockage triggered before persistence threshold");
+    require(observe(113.0, 6U).has_value(),
+            "re-admitted blockage did not emit a fresh persistent trigger");
+  }
+}
+
 void testConfigValidation() {
   auto expect_invalid = [](ActivePathBlockagePolicyConfig invalid, const char *message) {
     bool threw = false;
@@ -384,6 +426,7 @@ int main() {
   testClockAndGenerationRollbackResetEvidence();
   testOverlayIsDeterministicDeduplicatedAndBounded();
   testInactiveInvalidAndMalformedEvidenceReset();
+  testInadmissibleGoalPlanStateDoesNotConsumeOneShotTrigger();
   testConfigValidation();
   return 0;
 }
