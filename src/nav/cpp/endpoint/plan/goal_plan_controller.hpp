@@ -183,6 +183,10 @@ struct GoalPlanSnapshot {
   GoalPlanDiagnostics diagnostics;
 };
 
+[[nodiscard]] inline bool goalPlanAcceptsReplanTrigger(const GoalPlanSnapshot &snapshot) noexcept {
+  return !snapshot.active_paused && !snapshot.busy && !snapshot.pending_plan_queued;
+}
+
 class GoalPlanController {
  public:
   GoalPlanController(GlobalPlanTask::Planner planner, GoalPlanActions actions);

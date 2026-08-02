@@ -1276,8 +1276,8 @@ int runEndpointLoop(EndpointLoopContext &ctx, const std::atomic_bool &running) {
           cfg.global_planner == GlobalPlannerBackend::OctoPlanner3D && cfg.check_obstacle &&
           path_active_for_tick && active_goal_identity.has_value() && map_body.has_value() &&
           input_gate_state.ready && control_authority.motionAllowed() &&
-          !control_loop_guard_latched() && !inspection_executor.active() &&
-          !rolling_segment.snapshot().active;
+          goalPlanAcceptsReplanTrigger(goal_snapshot_for_tick) && !control_loop_guard_latched() &&
+          !inspection_executor.active() && !rolling_segment.snapshot().active;
       if (active_goal_identity) {
         blockage_observation.goal = *active_goal_identity;
       }

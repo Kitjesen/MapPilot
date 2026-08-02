@@ -742,8 +742,7 @@ GoalReplanRuntimeCoordinator::handleAutonomyOutcome(const GoalReplanRuntimeFrame
                            true);
     return result;
   }
-  if (current_snapshot.active_paused || current_snapshot.busy ||
-      current_snapshot.pending_plan_queued || !frame.fresh_admission.motion_allowed ||
+  if (!goalPlanAcceptsReplanTrigger(current_snapshot) || !frame.fresh_admission.motion_allowed ||
       frame.fresh_admission.operator_takeover_latched || !frame.fresh_admission.autonomy_mode ||
       !frame.fresh_admission.driver_control_blocker.empty() || !frame.fresh_admission.input_ready) {
     return result;
