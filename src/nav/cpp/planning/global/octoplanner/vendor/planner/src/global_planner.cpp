@@ -1,9 +1,12 @@
 #include "global_planner.h"
 
+#include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cmath>
 #include <limits>
 #include <queue>
+#include <stdexcept>
 
 namespace global_planner
 {
@@ -51,6 +54,21 @@ namespace global_planner
         cancel_check_ = std::move(cancel_check);
     }
 
+    void OctoPlanner3D::setExternalPreblockedRegions(
+        std::vector<ExternalBlockedRegion> regions)
+    {
+        external_preblocked_regions_ = std::move(regions);
+        if (!octree_)
+        {
+            return;
+        }
+        rebuildExternalPreblockedCells();
+        rebuildPreblockedCells();
+        rebuildDerivedLayers();
+        rebuildPreblockedCostmap();
+        rebuildObstacleClearanceCostmap();
+    }
+
     void OctoPlanner3D::setOctomap(std::shared_ptr<octomap::OcTree> map)
     {
         if (!map)
@@ -67,6 +85,7 @@ namespace global_planner
 
         octree_ = map;
         map_ready_ = true;
+        rebuildExternalPreblockedCells();
         rebuildPreblockedCells();
         rebuildDerivedLayers();
         rebuildPreblockedCostmap();
@@ -843,6 +862,115 @@ namespace global_planner
         }
         }
         return true;
+    }
+
+    void OctoPlanner3D::rebuildExternalPreblockedCells()
+    {
+        external_preblocked_cells_.clear();
+        if (!octree_)
+        {
+            return;
+        }
+
+        constexpr std::uint64_t kMaxExternalPreblockedCells = 500000U;
+        struct RasterRegion
+        {
+            const ExternalBlockedRegion * region;
+            GridIndex minimum;
+            GridIndex maximum;
+        };
+
+        double map_min_x = 0.0;
+        double map_min_y = 0.0;
+        double map_min_z = 0.0;
+        double map_max_x = 0.0;
+        double map_max_y = 0.0;
+        double map_max_z = 0.0;
+        octree_->getMetricMin(map_min_x, map_min_y, map_min_z);
+        octree_->getMetricMax(map_max_x, map_max_y, map_max_z);
+
+        std::uint64_t raster_cell_count = 0U;
+        std::vector<RasterRegion> raster_regions;
+        raster_regions.reserve(external_preblocked_regions_.size());
+        for (const auto & region : external_preblocked_regions_)
+        {
+            if (!std::isfinite(region.center.x) || !std::isfinite(region.center.y) ||
+                !std::isfinite(region.center.z) || !std::isfinite(region.radius_xy_m) ||
+                !std::isfinite(region.min_z) || !std::isfinite(region.max_z) ||
+                region.radius_xy_m <= 0.0 || region.min_z > region.max_z)
+            {
+                continue;
+            }
+
+            const double min_x = std::max(
+                map_min_x, region.center.x - region.radius_xy_m);
+            const double max_x = std::min(
+                map_max_x, region.center.x + region.radius_xy_m);
+            const double min_y = std::max(
+                map_min_y, region.center.y - region.radius_xy_m);
+            const double max_y = std::min(
+                map_max_y, region.center.y + region.radius_xy_m);
+            const double min_z = std::max(map_min_z, region.min_z);
+            const double max_z = std::min(map_max_z, region.max_z);
+            if (min_x > max_x || min_y > max_y || min_z > max_z)
+            {
+                continue;
+            }
+
+            const GridIndex minimum = worldToGrid(
+                min_x, min_y, min_z);
+            const GridIndex maximum = worldToGrid(
+                max_x, max_y, max_z);
+            const auto x_cells = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(maximum.x) - minimum.x + 1);
+            const auto y_cells = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(maximum.y) - minimum.y + 1);
+            const auto z_cells = static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(maximum.z) - minimum.z + 1);
+            if (x_cells == 0U || y_cells == 0U || z_cells == 0U ||
+                x_cells > kMaxExternalPreblockedCells / y_cells ||
+                x_cells * y_cells > kMaxExternalPreblockedCells / z_cells)
+            {
+                throw std::length_error("temporary_overlay_raster_budget_exceeded");
+            }
+            const std::uint64_t region_cell_count = x_cells * y_cells * z_cells;
+            if (region_cell_count > kMaxExternalPreblockedCells - raster_cell_count)
+            {
+                throw std::length_error("temporary_overlay_raster_budget_exceeded");
+            }
+            raster_cell_count += region_cell_count;
+            raster_regions.push_back(RasterRegion{&region, minimum, maximum});
+        }
+
+        external_preblocked_cells_.reserve(
+            external_preblocked_cells_.size() +
+            static_cast<std::size_t>(raster_cell_count));
+        for (const auto & raster : raster_regions)
+        {
+            const auto & region = *raster.region;
+            const double radius_squared = region.radius_xy_m * region.radius_xy_m;
+            for (int x = raster.minimum.x; x <= raster.maximum.x; ++x)
+            {
+                for (int y = raster.minimum.y; y <= raster.maximum.y; ++y)
+                {
+                    for (int z = raster.minimum.z; z <= raster.maximum.z; ++z)
+                    {
+                        const GridIndex index{x, y, z};
+                        if (!isInsideMetricBounds(index))
+                        {
+                            continue;
+                        }
+                        const auto point = gridToWorld(index);
+                        const double dx = static_cast<double>(point.x()) - region.center.x;
+                        const double dy = static_cast<double>(point.y()) - region.center.y;
+                        if (dx * dx + dy * dy <= radius_squared)
+                        {
+                            external_preblocked_cells_.insert(index);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     void OctoPlanner3D::rebuildPreblockedCells()

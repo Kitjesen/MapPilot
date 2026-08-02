@@ -5,7 +5,9 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <limits>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -95,6 +97,60 @@ std::filesystem::path writeHumpMap()
   return path;
 }
 
+std::filesystem::path writeOverlayMap()
+{
+  octomap::OcTree tree(kResolution);
+  tree.setProbHit(0.7);
+  addFloor(tree);
+  addRemoteBoundsPillar(tree);
+  tree.updateInnerOccupancy();
+
+  auto path = std::filesystem::temp_directory_path() / "octoplanner3d_temporary_overlay.bt";
+  if (!tree.writeBinary(path.string())) {
+    throw std::runtime_error("failed to write temporary-overlay OctoMap: " + path.string());
+  }
+  return path;
+}
+
+std::filesystem::path writeOverlayBudgetMap()
+{
+  constexpr double resolution = 0.01;
+  octomap::OcTree tree(resolution);
+  tree.setProbHit(0.7);
+  for (const double x : {-2.0, 2.0}) {
+    for (const double y : {-2.0, 2.0}) {
+      for (const double z : {0.0, 3.0}) {
+        tree.updateNode(octomap::point3d(x, y, z), true);
+      }
+    }
+  }
+  tree.updateInnerOccupancy();
+
+  auto path = std::filesystem::temp_directory_path() /
+    "octoplanner3d_temporary_overlay_budget.bt";
+  if (!tree.writeBinary(path.string())) {
+    throw std::runtime_error("failed to write temporary-overlay budget OctoMap: " + path.string());
+  }
+  return path;
+}
+
+bool pathIntersects(
+  const std::vector<octoplanner3d::runtime::Point> & path,
+  const lingtu::nav::plan::GlobalPlanBlockedRegion & region)
+{
+  for (const auto & point : path) {
+    if (point.z < region.min_z || point.z > region.max_z) {
+      continue;
+    }
+    const double dx = point.x - region.center.x;
+    const double dy = point.y - region.center.y;
+    if (dx * dx + dy * dy <= region.radius_xy_m * region.radius_xy_m) {
+      return true;
+    }
+  }
+  return false;
+}
+
 octoplanner3d::runtime::PlannerOptions testOptions()
 {
   octoplanner3d::runtime::PlannerOptions options;
@@ -157,6 +213,124 @@ int main()
     if (!reloaded.ok || session.mapLoadCount() != 2) {
       std::cerr << "changed map identity did not reload the in-memory OctoMap\n";
       return 12;
+    }
+
+    const auto overlay_map_path = writeOverlayMap();
+    lingtu::nav::plan::MapIdentity overlay_map_identity{
+      "overlay-smoke-map", 1, "overlay-fixture-sha256", "map"};
+    octoplanner3d::runtime::PlannerSession overlay_session;
+    octoplanner3d::runtime::PlanRequest overlay_request;
+    overlay_request.start = start;
+    overlay_request.goal = {center(18), center(0), center(1)};
+    overlay_request.options = testOptions();
+    const auto unobstructed =
+      overlay_session.run(overlay_map_path, overlay_map_identity, overlay_request);
+    lingtu::nav::plan::GlobalPlanBlockedRegion blocked_region;
+    blocked_region.center = {center(0), center(0), center(1)};
+    blocked_region.radius_xy_m = 0.8;
+    blocked_region.min_z = center(0);
+    blocked_region.max_z = center(3);
+    if (!unobstructed.ok || !unobstructed.reached_goal ||
+        !pathIntersects(unobstructed.path, blocked_region)) {
+      std::cerr << "temporary-overlay fixture did not produce the expected direct baseline\n";
+      return 17;
+    }
+    overlay_request.temporary_overlay.revision = 1U;
+    overlay_request.temporary_overlay.frame_epoch = 7U;
+    overlay_request.temporary_overlay.obstacle_generation = 11U;
+    overlay_request.temporary_overlay.traversability_generation = 13U;
+    overlay_request.temporary_overlay.blocked_regions.push_back(blocked_region);
+    const auto detoured =
+      overlay_session.run(overlay_map_path, overlay_map_identity, overlay_request);
+    if (!detoured.ok || !detoured.reached_goal ||
+        pathIntersects(detoured.path, blocked_region)) {
+      std::cerr << "request-scoped temporary overlay did not force a safe detour\n";
+      return 18;
+    }
+    if (detoured.overlay_revision != overlay_request.temporary_overlay.revision ||
+        detoured.overlay_frame_epoch != overlay_request.temporary_overlay.frame_epoch ||
+        detoured.overlay_obstacle_generation !=
+          overlay_request.temporary_overlay.obstacle_generation ||
+        detoured.overlay_traversability_generation !=
+          overlay_request.temporary_overlay.traversability_generation ||
+        overlay_session.mapLoadCount() != 1U) {
+      std::cerr << "temporary overlay identity was not echoed or reloaded the immutable map\n";
+      return 19;
+    }
+    auto invalid_overlay_request = overlay_request;
+    invalid_overlay_request.temporary_overlay.revision = 0U;
+    const auto invalid_overlay =
+      overlay_session.run(overlay_map_path, overlay_map_identity, invalid_overlay_request);
+    if (invalid_overlay.ok || !invalid_overlay.path.empty() ||
+        invalid_overlay.failure_reason != "temporary_overlay_revision_missing") {
+      std::cerr << "temporary overlay without an identity was not rejected\n";
+      return 20;
+    }
+    octoplanner3d::runtime::PlannerSession invalid_overlay_session;
+    const auto invalid_before_load = invalid_overlay_session.run(
+      overlay_map_path, overlay_map_identity, invalid_overlay_request);
+    if (invalid_before_load.ok || invalid_overlay_session.mapLoadCount() != 0U) {
+      std::cerr << "invalid temporary overlay caused an immutable map load\n";
+      return 22;
+    }
+    const auto rejectedBeforeLoad = [&](const auto & overlay, const std::string & reason) {
+      octoplanner3d::runtime::PlannerSession rejected_session;
+      auto rejected_request = overlay_request;
+      rejected_request.temporary_overlay = overlay;
+      const auto rejected = rejected_session.run(
+        overlay_map_path, overlay_map_identity, rejected_request);
+      return !rejected.ok && rejected.path.empty() &&
+             rejected.failure_reason == reason && rejected_session.mapLoadCount() == 0U;
+    };
+    auto missing_frame = overlay_request.temporary_overlay;
+    missing_frame.frame_epoch = 0U;
+    auto missing_obstacles = overlay_request.temporary_overlay;
+    missing_obstacles.obstacle_generation = 0U;
+    auto missing_traversability = overlay_request.temporary_overlay;
+    missing_traversability.traversability_generation = 0U;
+    auto invalid_geometry = overlay_request.temporary_overlay;
+    invalid_geometry.blocked_regions.front().radius_xy_m = 0.0;
+    auto overflowing_geometry = overlay_request.temporary_overlay;
+    overflowing_geometry.blocked_regions.front().center.x =
+      std::numeric_limits<double>::max();
+    overflowing_geometry.blocked_regions.front().radius_xy_m =
+      std::numeric_limits<double>::max();
+    auto too_many_regions = overlay_request.temporary_overlay;
+    too_many_regions.blocked_regions.assign(65U, blocked_region);
+    if (!rejectedBeforeLoad(missing_frame, "temporary_overlay_frame_epoch_missing") ||
+        !rejectedBeforeLoad(
+          missing_obstacles, "temporary_overlay_obstacle_generation_missing") ||
+        !rejectedBeforeLoad(
+          missing_traversability, "temporary_overlay_traversability_generation_missing") ||
+        !rejectedBeforeLoad(invalid_geometry, "temporary_overlay_region_invalid") ||
+        !rejectedBeforeLoad(overflowing_geometry, "temporary_overlay_region_invalid") ||
+        !rejectedBeforeLoad(
+          too_many_regions, "temporary_overlay_region_limit_exceeded")) {
+      std::cerr << "temporary overlay validation was not fail-closed before map loading\n";
+      return 23;
+    }
+
+    const auto overlay_budget_map_path = writeOverlayBudgetMap();
+    lingtu::nav::plan::MapIdentity overlay_budget_map_identity{
+      "overlay-budget-smoke-map", 1, "overlay-budget-fixture-sha256", "map"};
+    octoplanner3d::runtime::PlannerSession overlay_budget_session;
+    const auto over_budget = overlay_budget_session.run(
+      overlay_budget_map_path, overlay_budget_map_identity, overlay_request);
+    if (over_budget.ok || !over_budget.path.empty() ||
+        over_budget.failure_reason != "temporary_overlay_raster_budget_exceeded" ||
+        overlay_budget_session.mapLoadCount() != 1U) {
+      std::cerr << "temporary overlay raster budget was not enforced\n";
+      return 24;
+    }
+    auto cleared_overlay_request = overlay_request;
+    cleared_overlay_request.temporary_overlay = {};
+    const auto cleared_overlay =
+      overlay_session.run(overlay_map_path, overlay_map_identity, cleared_overlay_request);
+    if (!cleared_overlay.ok || !cleared_overlay.reached_goal ||
+        !pathIntersects(cleared_overlay.path, blocked_region) ||
+        overlay_session.mapLoadCount() != 1U) {
+      std::cerr << "temporary overlay leaked into a later request or reloaded the saved map\n";
+      return 21;
     }
 
     octoplanner3d::runtime::PlanRequest cancelled_request;
@@ -321,6 +495,8 @@ int main()
       << "\"outside_static_map_rejected\":true,"
       << "\"start_static_map_boundary_rejected\":true,"
       << "\"same_floor_z_excursion_rejected\":true,"
+      << "\"temporary_overlay_detour\":true,"
+      << "\"temporary_overlay_request_scoped\":true,"
       << "\"map_path\":\"" << map_path.string() << "\"}\n";
     return 0;
   } catch (const std::exception & exc) {

@@ -16,6 +16,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "global_planner.h"
@@ -26,6 +27,9 @@
 
 namespace octoplanner3d::runtime {
 namespace {
+
+constexpr std::size_t kMaxTemporaryBlockedRegions = 64U;
+constexpr double kMaxTemporaryOverlayRasterCells = 500000.0;
 
 global_planner::PointPose toPlannerPoint(const Point & point)
 {
@@ -42,6 +46,115 @@ global_planner::PointPose toPlannerPoint(const Point & point)
 Point fromPlannerPoint(const global_planner::PointPose & point)
 {
   return Point{point.x, point.y, point.z};
+}
+
+void copyOverlayIdentity(const PlanRequest & request, PlanResult & result)
+{
+  result.overlay_revision = request.temporary_overlay.revision;
+  result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
+  result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
+  result.overlay_traversability_generation =
+    request.temporary_overlay.traversability_generation;
+}
+
+std::string validateTemporaryOverlay(const PlanRequest & request)
+{
+  const auto & overlay = request.temporary_overlay;
+  if (overlay.empty()) {
+    return {};
+  }
+  if (overlay.revision == 0U) {
+    return "temporary_overlay_revision_missing";
+  }
+  if (overlay.frame_epoch == 0U) {
+    return "temporary_overlay_frame_epoch_missing";
+  }
+  if (overlay.obstacle_generation == 0U) {
+    return "temporary_overlay_obstacle_generation_missing";
+  }
+  if (overlay.traversability_generation == 0U) {
+    return "temporary_overlay_traversability_generation_missing";
+  }
+  if (overlay.blocked_regions.size() > kMaxTemporaryBlockedRegions) {
+    return "temporary_overlay_region_limit_exceeded";
+  }
+  for (const auto & region : overlay.blocked_regions) {
+    const double min_x = region.center.x - region.radius_xy_m;
+    const double max_x = region.center.x + region.radius_xy_m;
+    const double min_y = region.center.y - region.radius_xy_m;
+    const double max_y = region.center.y + region.radius_xy_m;
+    if (!std::isfinite(region.center.x) || !std::isfinite(region.center.y) ||
+        !std::isfinite(region.center.z) || !std::isfinite(region.radius_xy_m) ||
+        !std::isfinite(region.min_z) || !std::isfinite(region.max_z) ||
+        !std::isfinite(min_x) || !std::isfinite(max_x) ||
+        !std::isfinite(min_y) || !std::isfinite(max_y) ||
+        region.radius_xy_m <= 0.0 || region.min_z > region.max_z) {
+      return "temporary_overlay_region_invalid";
+    }
+  }
+  return {};
+}
+
+std::vector<global_planner::ExternalBlockedRegion> toPlannerBlockedRegions(
+  const lingtu::nav::plan::GlobalPlanTemporaryOverlay & overlay)
+{
+  std::vector<global_planner::ExternalBlockedRegion> regions;
+  regions.reserve(overlay.blocked_regions.size());
+  for (const auto & region : overlay.blocked_regions) {
+    global_planner::ExternalBlockedRegion converted;
+    converted.center = toPlannerPoint(region.center);
+    converted.radius_xy_m = region.radius_xy_m;
+    converted.min_z = region.min_z;
+    converted.max_z = region.max_z;
+    regions.push_back(converted);
+  }
+  return regions;
+}
+
+std::string validateTemporaryOverlayForMap(
+  const std::shared_ptr<octomap::OcTree> & map,
+  const PlanRequest & request)
+{
+  if (request.temporary_overlay.empty()) {
+    return {};
+  }
+
+  double map_min_x = 0.0;
+  double map_min_y = 0.0;
+  double map_min_z = 0.0;
+  double map_max_x = 0.0;
+  double map_max_y = 0.0;
+  double map_max_z = 0.0;
+  map->getMetricMin(map_min_x, map_min_y, map_min_z);
+  map->getMetricMax(map_max_x, map_max_y, map_max_z);
+  const double resolution = map->getResolution();
+  if (!std::isfinite(resolution) || resolution <= 0.0) {
+    return "temporary_overlay_map_resolution_invalid";
+  }
+
+  double total_cells = 0.0;
+  for (const auto & region : request.temporary_overlay.blocked_regions) {
+    const double min_x = std::max(map_min_x, region.center.x - region.radius_xy_m);
+    const double max_x = std::min(map_max_x, region.center.x + region.radius_xy_m);
+    const double min_y = std::max(map_min_y, region.center.y - region.radius_xy_m);
+    const double max_y = std::min(map_max_y, region.center.y + region.radius_xy_m);
+    const double min_z = std::max(map_min_z, region.min_z);
+    const double max_z = std::min(map_max_z, region.max_z);
+    if (min_x > max_x || min_y > max_y || min_z > max_z) {
+      continue;
+    }
+
+    const double x_cells = std::ceil((max_x - min_x) / resolution) + 1.0;
+    const double y_cells = std::ceil((max_y - min_y) / resolution) + 1.0;
+    const double z_cells = std::ceil((max_z - min_z) / resolution) + 1.0;
+    const double region_cells = x_cells * y_cells * z_cells;
+    if (!std::isfinite(region_cells) || region_cells <= 0.0 ||
+        region_cells > kMaxTemporaryOverlayRasterCells - total_cells) {
+      return "temporary_overlay_raster_budget_exceeded";
+    }
+    total_cells += region_cells;
+  }
+  return {};
 }
 
 std::filesystem::path pcdOutputPath(const std::filesystem::path & pcd_path)
@@ -242,8 +355,23 @@ PlanResult cancelledResult(
 {
   PlanResult result;
   result.options = request.options;
+  copyOverlayIdentity(request, result);
   result.cancelled = true;
   result.failure_reason = "cancelled";
+  result.elapsed_ms = std::chrono::duration<double, std::milli>(
+    std::chrono::steady_clock::now() - started).count();
+  return result;
+}
+
+PlanResult invalidTemporaryOverlayResult(
+  const PlanRequest & request,
+  std::string failure_reason,
+  const std::chrono::steady_clock::time_point & started)
+{
+  PlanResult result;
+  result.options = request.options;
+  result.failure_reason = std::move(failure_reason);
+  copyOverlayIdentity(request, result);
   result.elapsed_ms = std::chrono::duration<double, std::milli>(
     std::chrono::steady_clock::now() - started).count();
   return result;
@@ -277,6 +405,10 @@ PlanResult runWithLoadedMap(
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
   }
+  const std::string overlay_map_error = validateTemporaryOverlayForMap(map, request);
+  if (!overlay_map_error.empty()) {
+    return invalidTemporaryOverlayResult(request, overlay_map_error, started);
+  }
   const auto start = toPlannerPoint(request.start);
   const auto goal = toPlannerPoint(request.goal);
 
@@ -284,6 +416,7 @@ PlanResult runWithLoadedMap(
   global_planner::OctoPlanner3D planner;
   planner.setConfig(plannerConfig(request.options));
   planner.setCancelCheck(cancel_check);
+  planner.setExternalPreblockedRegions(toPlannerBlockedRegions(request.temporary_overlay));
   planner.setOctomap(map);
   planner.makePlan(start, goal);
   planner.getPlannerResults(native_path);
@@ -291,6 +424,7 @@ PlanResult runWithLoadedMap(
 
   PlanResult result;
   result.options = request.options;
+  copyOverlayIdentity(request, result);
   result.cancelled = cancel_check && cancel_check();
   if (result.cancelled) {
     return cancelledResult(request, started);
@@ -346,6 +480,10 @@ PlanResult runPlan(
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
   }
+  const std::string overlay_error = validateTemporaryOverlay(request);
+  if (!overlay_error.empty()) {
+    return invalidTemporaryOverlayResult(request, overlay_error, started);
+  }
   return runWithLoadedMap(
     loadOctomap(map_path.string()), request, cancel_check, started);
 }
@@ -378,6 +516,12 @@ PlanResult PlannerSession::run(
   const auto started = std::chrono::steady_clock::now();
   if (cancel_check && cancel_check()) {
     return cancelledResult(request, started);
+  }
+  const std::string overlay_error = validateTemporaryOverlay(request);
+  if (!overlay_error.empty()) {
+    auto result = invalidTemporaryOverlayResult(request, overlay_error, started);
+    result.map_identity = map_identity;
+    return result;
   }
 
   std::lock_guard<std::mutex> lock(impl_->mutex);

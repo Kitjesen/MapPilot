@@ -72,6 +72,14 @@ struct PointPose
     double z;
 };
 
+struct ExternalBlockedRegion
+{
+  PointPose center{};
+  double radius_xy_m{0.0};
+  double min_z{0.0};
+  double max_z{0.0};
+};
+
 struct PlannerConfig
 {
   double robot_radius{0.20};
@@ -127,6 +135,8 @@ public:
 
   void setCancelCheck(std::function<bool()> cancel_check);
 
+  void setExternalPreblockedRegions(std::vector<ExternalBlockedRegion> regions);
+
   void setOctomap(std::shared_ptr<octomap::OcTree> map);
 
   void makePlan(const PointPose start,const PointPose goal);
@@ -175,6 +185,8 @@ private:
   bool hasSameLevelNeighborWithOccupiedAbove(const GridIndex & idx) const;
 
   void rebuildPreblockedCells();
+
+  void rebuildExternalPreblockedCells();
 
   void rebuildPreblockedCostmap();
 
@@ -284,6 +296,7 @@ private:
 
   std::unordered_set<GridIndex, GridIndexHash> traversable_cells_;
   std::unordered_set<GridIndex, GridIndexHash> preblocked_cells_;
+  std::vector<ExternalBlockedRegion> external_preblocked_regions_;
   std::unordered_set<GridIndex, GridIndexHash> external_preblocked_cells_;
   std::unordered_map<GridIndex, double, GridIndexHash> preblocked_costmap_;
   std::unordered_map<GridIndex, double, GridIndexHash> obstacle_clearance_costmap_;

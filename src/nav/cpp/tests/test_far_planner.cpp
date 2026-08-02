@@ -73,6 +73,31 @@ TEST(FarPlanner, PlansDirectlyAcrossKnownFreeSpace) {
   EXPECT_FALSE(planner.LastDiagnostics().used_unknown_space);
 }
 
+TEST(FarPlanner, RejectsTemporaryOverlayUntilBackendCanHonorIt) {
+  FarPlanner planner(TestConfig());
+  planner.UpdateMap(OpenMap());
+
+  auto request = Request();
+  request.temporary_overlay.revision = 3U;
+  request.temporary_overlay.frame_epoch = 5U;
+  request.temporary_overlay.obstacle_generation = 7U;
+  request.temporary_overlay.blocked_regions.push_back(
+      {{7.5, 5.25, 0.0}, 1.0, -0.5, 0.5});
+
+  const auto result = planner.Plan(request);
+
+  EXPECT_FALSE(result.ok);
+  EXPECT_EQ(result.failure_reason, "far_temporary_overlay_unsupported");
+  EXPECT_EQ(result.overlay_revision, request.temporary_overlay.revision);
+  EXPECT_EQ(result.overlay_frame_epoch, request.temporary_overlay.frame_epoch);
+  EXPECT_EQ(
+      result.overlay_obstacle_generation,
+      request.temporary_overlay.obstacle_generation);
+  EXPECT_EQ(
+      result.overlay_traversability_generation,
+      request.temporary_overlay.traversability_generation);
+}
+
 TEST(FarPlanner, RoutesAroundOccupiedWallWithVisibilityCorners) {
   auto map = OpenMap();
   AddVerticalWall(&map, 15, 3, 16);

@@ -13,6 +13,25 @@ struct GlobalPlanPoint {
   double z{0.0};
 };
 
+// Request-scoped hard no-go cylinder in the planning frame. It overlays an
+// immutable saved map for one planning request and is never persisted.
+struct GlobalPlanBlockedRegion {
+  GlobalPlanPoint center{};
+  double radius_xy_m{0.0};
+  double min_z{0.0};
+  double max_z{0.0};
+};
+
+struct GlobalPlanTemporaryOverlay {
+  std::uint64_t revision{0U};
+  std::uint64_t frame_epoch{0U};
+  std::uint64_t obstacle_generation{0U};
+  std::uint64_t traversability_generation{0U};
+  std::vector<GlobalPlanBlockedRegion> blocked_regions{};
+
+  bool empty() const noexcept { return blocked_regions.empty(); }
+};
+
 struct GlobalPlannerOptions {
   double robot_radius{0.25};
   double body_clearance_below_m{0.0};
@@ -70,6 +89,7 @@ struct GlobalPlanRequest {
   GlobalPlannerOptions options{};
   MapIdentity map_identity{};
   std::uint64_t map_generation{0U};
+  GlobalPlanTemporaryOverlay temporary_overlay{};
 };
 
 struct GlobalPlanResult {
@@ -84,6 +104,10 @@ struct GlobalPlanResult {
   GlobalPlannerOptions options{};
   MapIdentity map_identity{};
   std::uint64_t map_generation{0U};
+  std::uint64_t overlay_revision{0U};
+  std::uint64_t overlay_frame_epoch{0U};
+  std::uint64_t overlay_obstacle_generation{0U};
+  std::uint64_t overlay_traversability_generation{0U};
   std::vector<GlobalPlanPoint> path{};
 };
 

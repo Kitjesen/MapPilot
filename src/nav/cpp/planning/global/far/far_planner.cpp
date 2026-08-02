@@ -30,6 +30,14 @@ bool SameIdentity(const MapIdentity& lhs, const MapIdentity& rhs) {
       lhs.artifact_sha256 == rhs.artifact_sha256 && lhs.frame_id == rhs.frame_id;
 }
 
+void CopyOverlayIdentity(const GlobalPlanRequest& request, GlobalPlanResult* result) {
+  result->overlay_revision = request.temporary_overlay.revision;
+  result->overlay_frame_epoch = request.temporary_overlay.frame_epoch;
+  result->overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
+  result->overlay_traversability_generation =
+      request.temporary_overlay.traversability_generation;
+}
+
 }  // namespace
 
 std::size_t FarGridMap::CellCount() const noexcept {
@@ -633,6 +641,7 @@ GlobalPlanResult FarPlanner::FailureResult(
   result.options = request.options;
   result.map_identity = map_.identity;
   result.map_generation = map_.generation;
+  CopyOverlayIdentity(request, &result);
   return result;
 }
 
@@ -672,6 +681,10 @@ GlobalPlanResult FarPlanner::Plan(
   if (request.map_identity.valid() &&
       (!map_.identity.valid() || !sameMapIdentity(request.map_identity, map_.identity))) {
     return FailureResult(request, "far_map_identity_mismatch", false, elapsed_ms());
+  }
+  if (!request.temporary_overlay.empty()) {
+    return FailureResult(
+        request, "far_temporary_overlay_unsupported", false, elapsed_ms());
   }
 
   EndpointCell start{};
@@ -810,6 +823,7 @@ GlobalPlanResult FarPlanner::Plan(
   result.options = request.options;
   result.map_identity = map_.identity;
   result.map_generation = map_.generation;
+  CopyOverlayIdentity(request, &result);
   result.elapsed_ms = elapsed_ms();
   const auto snapped_goal = CellCenter(selected.goal.cell, request.goal.z);
   result.goal_error_m = Distance3D(snapped_goal, request.goal);
