@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from lingtu.assembly.products import resolve_product_host_config
 from runtime.profiles.planner_backends import (
     normalize_planner_name,
     resolve_planner_runtime_profile,
@@ -14,8 +15,8 @@ def test_planner_name_normalization_maps_octplanner_alias() -> None:
     assert normalize_planner_name(" OctoPlanner3D ") == "octoplanner3d"
 
 
-def test_thunder_lite_resolves_direct_planner_profile() -> None:
-    config = resolve_profile_config("thunder-lite")
+def test_lite_resolves_direct_planner_profile() -> None:
+    config = resolve_profile_config("lite")
 
     assert config["planner"] == "direct"
     assert config["planner_latency_budget_ms"] == 50
@@ -29,8 +30,8 @@ def test_thunder_lite_resolves_direct_planner_profile() -> None:
     }
 
 
-def test_thunder_field_navigation_resolves_octoplanner3d_without_fallback_profile() -> None:
-    config = resolve_profile_config("thunder-nav")
+def test_real_navigation_resolves_octoplanner3d_without_fallback_profile() -> None:
+    config = resolve_product_host_config("nav", "real")
 
     assert config["planner"] == "octoplanner3d"
     assert config["map_path"].endswith((".bt", ".ot", ".octomap", ".pcd"))
@@ -75,8 +76,9 @@ def test_simulation_profile_uses_octoplanner3d_without_fallback_chain() -> None:
 
 
 def test_octoplanner_override_is_runtime_profile_selectable() -> None:
-    config = resolve_profile_config(
-        "thunder-nav",
+    config = resolve_product_host_config(
+        "nav",
+        "real",
         planner="octplanner",
         fallback_planner_name="pct",
         planner_latency_budget_ms=1200,
@@ -101,3 +103,9 @@ def test_resolve_planner_runtime_profile_accepts_fallback_list() -> None:
 
     assert profile["primary"] == "octoplanner3d"
     assert profile["fallback_planners"] == ["pct", "direct"]
+
+
+def test_retired_tare_product_name_has_no_special_planner_profile() -> None:
+    profile = resolve_planner_runtime_profile("tare_explore", {})
+
+    assert profile["latency_budget_ms"] == 500

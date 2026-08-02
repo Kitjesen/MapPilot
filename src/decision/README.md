@@ -59,9 +59,10 @@ Navigation are:
 src/lingtu/assembly/wires/semantic.py
 ```
 
-Profiles with semantic planning enabled include `dev`, `sim`, `nav`,
-`explore`, and `tare_explore`. `stub` and `sim_nav` are smaller profiles and may
-not include the semantic stack.
+Local Profiles with semantic planning enabled include `dev` and `sim`. Field
+Products such as `nav` and `explore` may include semantic
+planning through their Product/env RunPlan. `stub` and `sim_nav` are smaller
+local Profiles and may not include the semantic stack.
 
 ## Runtime Data Flow
 
@@ -106,12 +107,12 @@ VisualServoModule
 
 | Path | Runtime status | Purpose |
 | --- | --- | --- |
-| `modules/` | Product entrypoints | Runtime `Module` classes registered into the blueprint system. |
-| `goals/` | Product strategy | Fast/slow goal grounding, route selection, SG-Nav helper, tokenizer. |
-| `tasks/` | Product strategy | Task decomposition, action shaping, agent loop, service wrappers. |
-| `frontiers/` | Product strategy | Frontier extraction, scoring, and exploration fallback. |
-| `llm/` | Product utility | LLM clients and prompt builders. |
-| `vision/` | Product utility | BBox navigation, person tracking, Re-ID, VLM helpers. |
+| `modules/` | Runtime entrypoints | Runtime `Module` classes registered into the blueprint system. |
+| `goals/` | Decision strategy | Fast/slow goal grounding, route selection, SG-Nav helper, tokenizer. |
+| `tasks/` | Decision strategy | Task decomposition, action shaping, agent loop, service wrappers. |
+| `frontiers/` | Decision strategy | Frontier extraction, scoring, and exploration fallback. |
+| `llm/` | Decision utility | LLM clients and prompt builders. |
+| `vision/` | Decision utility | BBox navigation, person tracking, Re-ID, VLM helpers. |
 | `tests/` | Tests | Decision-layer regression tests. |
 
 ## Strategy Entrypoints

@@ -4,6 +4,7 @@ import json
 import os
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -95,10 +96,12 @@ def _write_saved_map_contract_assets(
                             {
                                 "planner": "pct",
                                 "planner_class": "PCTPlanner",
-                                "native_runtime_used": True,
-                                "native_runtime": {"ok": True},
+                                "pct_planner_runtime": {
+                                    "runtime": "rust_process",
+                                    "ok": True,
+                                },
                                 "pct_optimizer_enabled": False,
-                                "pct_planner_path_mode": "native_astar_raw_path",
+                                "pct_planner_path_mode": "astar_raw_path",
                                 "plan_ms": 2.5,
                                 "path_safety": {"ok": True},
                                 "goal": [1.0, 0.0, 0.0],
@@ -134,8 +137,6 @@ def _saved_map_full_args(
         json_out=tmp_path / "full_report.json",
         route_name="saved_map_internal",
         ros_domain_id="pytest",
-        preview_timeout_s=1.0,
-        max_endpoint_z_error_m=1.0,
         timeout_s=1.0,
         min_route_progress_ratio=0.9,
         near_field_stop_distance=0.35,
@@ -157,32 +158,59 @@ def _saved_map_full_args(
     )
 
 
+def _pct_full_result() -> list[list[float]]:
+    return [
+        [0.0, 0.0, 0.5],
+        [1.0, 0.0, 0.5],
+    ]
+
+
 def _pct_preview_report() -> dict:
     return {
+        "schema": "lingtu.pct.preview.actual.v2",
         "ok": True,
-        "pct_optimizer_enabled": False,
-        "pct_planner_path_mode": "native_astar_raw_path",
-        "pct_runtime_libs": {"ok": True},
-        "cases": [
-            {
-                "name": "saved_map_internal",
-                "pct_optimizer_enabled": False,
-                "pct_planner_path_mode": "native_astar_raw_path",
-                "feasible": True,
-                "planner_class": "PCTPlanner",
-                "preview": {
-                    "selected_planner": "pct",
-                    "fallback_reason": "",
-                    "planner_class": "PCTPlanner",
-                    "path_safety": {"ok": True},
-                    "plan_ms": 2.5,
-                    "path": [
-                        {"x": 0.0, "y": 0.0, "z": 0.5},
-                        {"x": 1.0, "y": 0.0, "z": 0.5},
-                    ],
-                },
-            }
-        ],
+        "status": {
+            "ok": True,
+            "code": "SUCCESS",
+            "reached_goal": True,
+            "returned_path_blocked_sample_count": 0,
+            "obstacle_clear": True,
+            "kinematics": {"ok": True},
+        },
+        "status_code": "SUCCESS",
+        "planner": "pct",
+        "path_count": 2,
+        "start": [0.0, 0.0, 0.5],
+        "goal": [1.0, 0.0, 0.5],
+        "first": [0.0, 0.0, 0.5],
+        "last": [1.0, 0.0, 0.5],
+        "path": {
+            "count": 2,
+            "finite": True,
+            "samples": {
+                "by_index": [
+                    {"index": 0, "point": [0.0, 0.0, 0.5]},
+                    {"index": 1, "point": [1.0, 0.0, 0.5]},
+                ]
+            },
+        },
+        "diagnostics": {
+            "last_optimizer_enabled": False,
+            "last_optimizer_attempted": False,
+            "last_optimizer_accepted": None,
+            "last_optimizer_reject_reason": "",
+            "last_optimizer_blocked_sample_count": 0,
+            "last_path_mode": "rust_astar_raw_path",
+            "optimize_trajectory": False,
+        },
+        "runtime": {
+            "runtime": "rust_process",
+            "planner_impl_class": "TomogramPlanner",
+            "official_native_pct_impl": False,
+            "lib_dir": "/rust/pct",
+            "arch": "x86_64",
+            "python": "py310",
+        },
     }
 
 
@@ -194,6 +222,185 @@ def test_pct_saved_map_defaults_use_open_saved_map_route() -> None:
     assert args.goal == [4.5, 3.0]
     assert args.near_field_stop_distance == 0.35
     assert args.goal_threshold_m == 0.50
+
+
+def test_run_plan_preview_uses_canonical_runtime_with_optimizer_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sim.scripts import pct_saved_map_navigation_gate as gate
+
+    tomogram = tmp_path / "tomogram.pickle"
+    tomogram.write_bytes(b"trusted test tomogram")
+    full_result = [
+        [0.0, 0.0, 0.5],
+        [0.5, 0.0, 0.5],
+        [1.0, 0.0, 0.5],
+    ]
+    captured: dict[str, object] = {}
+
+    class Planner:
+        def plan(self, start_xy, goal_xy, start_z, goal_z):
+            captured["plan_args"] = (start_xy.tolist(), goal_xy.tolist(), start_z, goal_z)
+            return full_result
+
+    runtime = SimpleNamespace(
+        planner=Planner(),
+        runtime_paths=SimpleNamespace(
+            lib_dir=tmp_path / "runtime",
+            canonical_arch="x86_64",
+            python_tag="py310",
+        ),
+    )
+    canonical_report = {
+        "schema": "lingtu.pct.preview.actual.v2",
+        "ok": True,
+        "planner": "pct",
+        "path_count": len(full_result),
+        "diagnostics": {
+            "last_optimizer_enabled": False,
+            "last_path_mode": "rust_astar_raw_path",
+        },
+        "runtime": {"planner_impl_class": "TomogramPlanner"},
+    }
+
+    def fake_load(path, *, repo_root, planner_config):
+        captured["load"] = (path, repo_root)
+        assert planner_config.planner.optimize_trajectory is False
+        return runtime
+
+    def fake_build_preview_report(**kwargs):
+        captured["preview_kwargs"] = kwargs
+        assert kwargs["result"] is full_result
+        return canonical_report
+
+    def fail_subprocess(*_args, **_kwargs):
+        raise AssertionError("plan preview must not launch a subprocess")
+
+    monkeypatch.setattr(gate, "load_pct_planner_runtime", fake_load, raising=False)
+    monkeypatch.setattr(gate, "build_preview_report", fake_build_preview_report, raising=False)
+    monkeypatch.setattr(gate.subprocess, "run", fail_subprocess)
+
+    report, result = gate._run_plan_preview(
+        argparse.Namespace(
+            start=[0.0, 0.0, 0.5],
+            goal=[1.0, 0.0, 0.5],
+        ),
+        tomogram=tomogram,
+        out_path=tmp_path / "preview.json",
+    )
+
+    assert captured["load"] == (tomogram, gate.ROOT)
+    assert captured["plan_args"] == ([0.0, 0.0], [1.0, 0.0], 0.5, 0.5)
+    preview_kwargs = captured["preview_kwargs"]
+    assert isinstance(preview_kwargs, dict)
+    assert preview_kwargs["planner"] is runtime.planner
+    assert preview_kwargs["runtime_paths"] is runtime.runtime_paths
+    assert preview_kwargs["result"] is full_result
+    assert preview_kwargs["start"].tolist() == [0.0, 0.0, 0.5]
+    assert preview_kwargs["goal"].tolist() == [1.0, 0.0, 0.5]
+    assert preview_kwargs["tomogram_path"] == tomogram
+    assert report is canonical_report
+    assert result is full_result
+    assert json.loads((tmp_path / "preview.json").read_text(encoding="utf-8")) == canonical_report
+
+
+def test_run_plan_preview_uses_active_last_pose_when_start_is_omitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from sim.scripts import pct_saved_map_navigation_gate as gate
+
+    map_dir = tmp_path / "map"
+    active_dir = map_dir / "active"
+    active_dir.mkdir(parents=True)
+    tomogram = map_dir / "tomogram.pickle"
+    tomogram.write_bytes(b"trusted test tomogram")
+    (map_dir / "last_pose.txt").write_text("9.0 9.0 0.0\n", encoding="utf-8")
+    (active_dir / "last_pose.txt").write_text("1.25 2.5 0.75\n", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class Planner:
+        @staticmethod
+        def get_surface_height(point):
+            captured.setdefault("height_points", []).append(point.tolist())
+            return 0.4
+
+        @staticmethod
+        def plan(start_xy, goal_xy, start_z, goal_z):
+            captured["plan_args"] = (start_xy.tolist(), goal_xy.tolist(), start_z, goal_z)
+            return [[1.25, 2.5, 0.4], [3.0, 4.0, 0.4]]
+
+    planner = Planner()
+    runtime = SimpleNamespace(
+        planner=planner,
+        runtime_paths=SimpleNamespace(
+            lib_dir=tmp_path / "runtime",
+            canonical_arch="x86_64",
+            python_tag="py310",
+        ),
+    )
+    canonical_report = {
+        "schema": "lingtu.pct.preview.actual.v2",
+        "ok": True,
+        "planner": "pct",
+        "path_count": 2,
+        "diagnostics": {
+            "last_optimizer_enabled": False,
+            "last_path_mode": "rust_astar_raw_path",
+        },
+        "runtime": {"planner_impl_class": "TomogramPlanner"},
+    }
+
+    monkeypatch.setattr(
+        gate,
+        "load_pct_planner_runtime",
+        lambda *_args, **_kwargs: runtime,
+    )
+    monkeypatch.setattr(
+        gate,
+        "build_preview_report",
+        lambda **_kwargs: canonical_report,
+    )
+
+    gate._run_plan_preview(
+        argparse.Namespace(start=None, goal=[3.0, 4.0]),
+        tomogram=tomogram,
+        out_path=tmp_path / "preview.json",
+    )
+
+    assert captured["height_points"] == [[1.25, 2.5], [3.0, 4.0]]
+    assert captured["plan_args"] == ([1.25, 2.5], [3.0, 4.0], 0.4, 0.4)
+
+
+@pytest.mark.parametrize("last_pose_contents", [None, "invalid pose\n", "1.0 2.0\n", "nan 2.0 0.0\n"])
+def test_run_plan_preview_fails_closed_without_a_valid_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    last_pose_contents: str | None,
+) -> None:
+    from sim.scripts import pct_saved_map_navigation_gate as gate
+
+    tomogram = tmp_path / "map" / "tomogram.pickle"
+    tomogram.parent.mkdir(parents=True)
+    tomogram.write_bytes(b"trusted test tomogram")
+    if last_pose_contents is not None:
+        (tomogram.parent / "last_pose.txt").write_text(
+            last_pose_contents,
+            encoding="utf-8",
+        )
+
+    def fail_load(*_args, **_kwargs):
+        raise AssertionError("runtime must not load without a valid start")
+
+    monkeypatch.setattr(gate, "load_pct_planner_runtime", fail_load)
+
+    with pytest.raises((FileNotFoundError, ValueError), match="last_pose.txt"):
+        gate._run_plan_preview(
+            argparse.Namespace(start=None, goal=[3.0, 4.0]),
+            tomogram=tomogram,
+            out_path=tmp_path / "preview.json",
+        )
 
 
 def test_run_native_gate_forwards_control_params(
@@ -346,20 +553,117 @@ def test_resolve_tomogram_rejects_missing_explicit_same_source_file(
         )
 
 
-def test_select_preview_case_reports_preview_command_failure() -> None:
+def test_select_preview_case_reports_canonical_preview_failure() -> None:
     from sim.scripts import pct_saved_map_navigation_gate as gate
 
-    with pytest.raises(
-        RuntimeError,
-        match="PCT plan preview command failed with returncode 2",
-    ):
+    with pytest.raises(RuntimeError, match="PCT preview failed: NO_PATH"):
         gate._select_preview_case(
             {
-                "returncode": 2,
-                "stderr_tail": "plan_preview.py: error: unrecognized arguments",
-                "cases": [],
+                "schema": "lingtu.pct.preview.actual.v2",
+                "ok": False,
+                "planner": "pct",
+                "path_count": 0,
+                "status_code": "NO_PATH",
+                "error": "pct returned no path",
             }
         )
+
+
+def test_build_source_report_uses_full_planner_result(
+    tmp_path: Path,
+) -> None:
+    from sim.scripts import pct_saved_map_navigation_gate as gate
+
+    preview = _pct_preview_report()
+    preview["diagnostics"]["last_path_mode"] = "rust_astar_raw_path"
+    preview["runtime"] = {
+        "runtime": "rust_process",
+        "planner_impl_class": "TomogramPlanner",
+        "lib_dir": "/rust/pct",
+        "arch": "x86_64",
+        "python": "py310",
+    }
+    preview["path_count"] = 4
+    preview["path"]["count"] = 4
+    preview["path"]["samples"]["by_index"] = [
+        {"index": 0, "point": [0.0, 0.0, 0.5]},
+        {"index": 3, "point": [1.5, 0.0, 0.5]},
+    ]
+    full_result = [
+        [0.0, 0.0, 0.5],
+        [0.5, 0.0, 0.5],
+        [1.0, 0.0, 0.5],
+        [1.5, 0.0, 0.5],
+    ]
+    tomogram = tmp_path / "tomogram.pickle"
+    scene_xml = tmp_path / "scene.xml"
+    obstacle_metadata = tmp_path / "obstacles.json"
+    output = tmp_path / "source.json"
+
+    source = gate._build_source_report(
+        preview=gate._select_preview_case(preview),
+        result=full_result,
+        tomogram=tomogram,
+        scene_xml=scene_xml,
+        map_pcd=None,
+        map_metadata=None,
+        obstacle_metadata=obstacle_metadata,
+        output=output,
+        route_name="saved_map_internal",
+    )
+
+    planning = source["cases"][0]["planning"][0]
+    assert planning["path"] == full_result
+    assert planning["path"] != [
+        sample["point"] for sample in preview["path"]["samples"]["by_index"]
+    ]
+    assert planning["planner_class"] == "TomogramPlanner"
+    assert planning["pct_planner_runtime"]["ok"] is True
+    assert planning["pct_planner_runtime"]["runtime"] == "rust_process"
+    assert planning["pct_optimizer_enabled"] is False
+    assert planning["pct_planner_path_mode"] == "astar_raw_path"
+    assert "native_runtime_used" not in planning
+    assert "native_runtime" not in planning
+    assert json.loads(output.read_text(encoding="utf-8")) == source
+
+
+@pytest.mark.parametrize(
+    "raw_path_mode",
+    [
+        "native_optimized_trajectory",
+        "rust_optimized_trajectory",
+    ],
+)
+def test_build_source_report_normalizes_runtime_optimized_path_modes(
+    tmp_path: Path,
+    raw_path_mode: str,
+) -> None:
+    from sim.scripts import pct_saved_map_navigation_gate as gate
+
+    preview = _pct_preview_report()
+    preview["diagnostics"].update(
+        {
+            "last_optimizer_enabled": True,
+            "last_optimizer_attempted": True,
+            "last_optimizer_accepted": True,
+            "last_path_mode": raw_path_mode,
+        }
+    )
+
+    source = gate._build_source_report(
+        preview=gate._select_preview_case(preview),
+        result=_pct_full_result(),
+        tomogram=tmp_path / "tomogram.pickle",
+        scene_xml=tmp_path / "scene.xml",
+        map_pcd=None,
+        map_metadata=None,
+        obstacle_metadata=tmp_path / "obstacles.json",
+        output=tmp_path / "source.json",
+        route_name="saved_map_internal",
+    )
+
+    planning = source["cases"][0]["planning"][0]
+    assert planning["pct_planner_path_mode"] == "optimized_trajectory"
 
 
 def test_pct_saved_map_contract_only_validates_source_binding(
@@ -397,10 +701,10 @@ def test_pct_saved_map_contract_only_validates_source_binding(
         "map_pcd_matches_relocalization": True,
         "scene_xml_matches_saved_map": True,
         "pct_no_fallback": True,
-        "pct_native_runtime_used": True,
-        "pct_native_runtime_ok": True,
+        "pct_planner_runtime_selected": True,
+        "pct_planner_runtime_ok": True,
         "pct_optimizer_disabled": True,
-        "pct_native_raw_path": True,
+        "pct_astar_raw_path": True,
         "same_source_map_artifact": True,
         "same_source_hash_identity": True,
     }
@@ -553,7 +857,7 @@ def test_pct_saved_map_full_run_validates_source_identity_before_native(
     def fake_preview(args, *, tomogram, out_path):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(preview), encoding="utf-8")
-        return preview
+        return preview, _pct_full_result()
 
     def fake_native(args, *, source_report, out_path):
         native_called["source_report"] = source_report
@@ -564,7 +868,11 @@ def test_pct_saved_map_full_run_validates_source_identity_before_native(
             "selected_planner": "pct",
             "fallback_used": False,
             "reached_goal": True,
-            "pct_runtime_ok": True,
+            "pct_planner_runtime": {
+                "runtime": "rust_process",
+                "ok": True,
+            },
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 2,
             "path_count": 1,
             "max_path_poses": 2,
@@ -589,15 +897,15 @@ def test_pct_saved_map_full_run_validates_source_identity_before_native(
     assert report["same_source_hash_identity"]["ok"] is True
     assert all(report["same_source_hash_identity"]["checks"].values())
     assert report["plan_preview"]["pct_optimizer_enabled"] is False
-    assert report["plan_preview"]["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert report["plan_preview"]["pct_planner_path_mode"] == "astar_raw_path"
     source_report = json.loads(native_called["source_report"].read_text(encoding="utf-8"))
     planning = source_report["cases"][0]["planning"][0]
     assert planning["pct_optimizer_enabled"] is False
-    assert planning["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert planning["pct_planner_path_mode"] == "astar_raw_path"
     assert report["source_planning_contract"]["pct_optimizer_enabled"] is False
     assert (
         report["source_planning_contract"]["pct_planner_path_mode"]
-        == "native_astar_raw_path"
+        == "astar_raw_path"
     )
     assert report["contract_checks"]["relocalization_locked"] is True
     assert report["contract_checks"]["same_source_hash_identity"] is True
@@ -612,15 +920,13 @@ def test_pct_saved_map_full_run_rejects_missing_pct_path_mode_before_native(
 
     relocalize, tomogram, scene_xml, _source = _write_saved_map_contract_assets(tmp_path)
     preview = json.loads(json.dumps(_pct_preview_report()))
-    preview.pop("pct_optimizer_enabled")
-    preview.pop("pct_planner_path_mode")
-    preview["cases"][0].pop("pct_optimizer_enabled")
-    preview["cases"][0].pop("pct_planner_path_mode")
+    preview["diagnostics"].pop("last_optimizer_enabled")
+    preview["diagnostics"].pop("last_path_mode")
 
     def fake_preview(args, *, tomogram, out_path):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(preview), encoding="utf-8")
-        return preview
+        return preview, _pct_full_result()
 
     def fail_native(args, *, source_report, out_path):
         raise AssertionError("native gate must not run without PCT mode evidence")
@@ -638,7 +944,7 @@ def test_pct_saved_map_full_run_rejects_missing_pct_path_mode_before_native(
     )
 
     assert report["ok"] is False
-    assert "PCT optimizer mode evidence is not disabled" in report["blockers"]
+    assert report["blockers"] == ["unsupported PCT planner path mode: ''"]
 
 
 def test_pct_saved_map_full_run_rejects_optimized_trajectory_mode_before_native(
@@ -649,15 +955,13 @@ def test_pct_saved_map_full_run_rejects_optimized_trajectory_mode_before_native(
 
     relocalize, tomogram, scene_xml, _source = _write_saved_map_contract_assets(tmp_path)
     preview = json.loads(json.dumps(_pct_preview_report()))
-    preview["pct_optimizer_enabled"] = True
-    preview["pct_planner_path_mode"] = "optimized_trajectory"
-    preview["cases"][0]["pct_optimizer_enabled"] = True
-    preview["cases"][0]["pct_planner_path_mode"] = "optimized_trajectory"
+    preview["diagnostics"]["last_optimizer_enabled"] = True
+    preview["diagnostics"]["last_path_mode"] = "optimized_trajectory"
 
     def fake_preview(args, *, tomogram, out_path):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(preview), encoding="utf-8")
-        return preview
+        return preview, _pct_full_result()
 
     def fail_native(args, *, source_report, out_path):
         raise AssertionError("native gate must not run for optimized trajectory mode")
@@ -676,7 +980,7 @@ def test_pct_saved_map_full_run_rejects_optimized_trajectory_mode_before_native(
 
     assert report["ok"] is False
     assert "PCT optimizer mode evidence is not disabled" in report["blockers"]
-    assert "PCT planner path mode is not native_astar_raw_path" in report["blockers"]
+    assert "PCT planner path mode is not astar_raw_path" in report["blockers"]
 
 
 def test_pct_saved_map_full_run_skips_preview_when_relocalization_fails(
@@ -735,7 +1039,7 @@ def test_pct_saved_map_full_run_rejects_bad_source_identity_before_native(
     def fake_preview(args, *, tomogram, out_path):
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(preview), encoding="utf-8")
-        return preview
+        return preview, _pct_full_result()
 
     def fail_native(args, *, source_report, out_path):
         raise AssertionError("native gate must not run with mismatched source identity")

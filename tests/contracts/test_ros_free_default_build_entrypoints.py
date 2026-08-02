@@ -1,6 +1,6 @@
 """Contracts for the default native build and release entrypoints."""
 
-# ruff: noqa: S101 - pytest contracts use assert statements by design.
+# ruff: noqa: S101 - contracts use asserts.
 
 from pathlib import Path
 
@@ -26,9 +26,72 @@ FORBIDDEN_DEFAULT_BUILD_MARKERS = (
     "from ros:",
     "ros2 topic",
     "rmw_implementation",
-    "scripts/deploy/s100p/install_services.sh",
+    "scripts/deploy/s100p/",
     "scripts/ota/",
 )
+
+
+def test_legacy_lingtu_shell_is_physically_absent() -> None:
+    """The retired root shell must not survive as an executable tombstone."""
+
+    canonical_shell = ROOT / "scripts" / "lingtu"
+    legacy_shell = ROOT / "scripts" / ("lingtu" + ".sh")
+
+    assert canonical_shell.is_file()
+    assert not legacy_shell.exists()
+
+def test_field_doctor_requires_explicit_ros2_compatibility_mode() -> None:
+    """Default doctor diagnostics must stay on the native Product path."""
+
+    content = (ROOT / "scripts/lingtu").read_text(encoding="utf-8", errors="replace")
+    implementation = (ROOT / "src/diagnostics/field/doctor.py").read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
+    doctor = content.split("cmd_doctor() {", maxsplit=1)[1].split(
+        "# -- Subcommand: soak --",
+        maxsplit=1,
+    )[0]
+
+    assert "ros2=0" in doctor
+    assert "--ros2)" in doctor
+    assert '[ "$ros2" = "1" ] && source_robot_env' in doctor
+    assert doctor.count("source_robot_env") == 1
+    assert '"$py" -m diagnostics.field.doctor' in doctor
+    assert "ROS2 compatibility graph checks skipped; use --ros2" in implementation
+    assert content.count("source_robot_env") == 2
+    for forbidden in (
+        "systemctl",
+        "journalctl",
+        "RunPlan.load",
+        "Runtime" + "Manifest.load",
+        "<<'PY'",
+        "cmd_doctor_json",
+    ):
+        assert forbidden not in doctor
+
+
+def test_real_runtime_evidence_defaults_to_gateway_collector() -> None:
+    """ROS2 evidence collection must require an explicit compatibility flag."""
+
+    content = (ROOT / "scripts/gates/real_runtime_evidence_collect.py").read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
+    collector_argument = content.split(
+        'parser.add_argument(\n        "--collector"',
+        maxsplit=1,
+    )[1].split("parser.add_argument", maxsplit=1)[0]
+    dispatch = content.split("def run_collect(", maxsplit=1)[1].split(
+        "def build_unavailable_real_runtime_report(",
+        maxsplit=1,
+    )[0]
+
+    assert 'choices=["gateway", "ros2"]' in collector_argument
+    assert 'default="gateway"' in collector_argument
+    assert 'if args.collector == "gateway":' in dispatch
+    assert 'if args.collector == "ros2":' in dispatch
+    assert "--collector ros2" in content
 
 
 def test_default_build_release_and_container_entrypoints_are_ros_free() -> None:
@@ -94,8 +157,15 @@ def test_active_ci_and_tag_release_use_native_aarch64_artifacts() -> None:
     assert "build/maps/liblingtu_maps.so" in package_script_text
     assert 'INSTALLER_SOURCE="${SCRIPT_ROOT}/scripts/deploy/install_native_release.sh"' in package_script_text
     assert "Active Product requires maps/mapd" in installer_script_text
-    assert 'process.get("lifecycle", "")' in installer_script_text
+    assert "RunPlan.load" in installer_script_text
+    assert "plan.processes" in installer_script_text
+    assert 'process.get("lifecycle", "")' not in installer_script_text
     assert 'product_control "${TARGET_DIR}" restart "${process}"' in installer_script_text
+    assert 'product_control "${TARGET_DIR}" reapply' in installer_script_text
+    assert 'product_control "${OLD_TARGET}" reapply' in installer_script_text
+    assert '--state-dir "${STATE_DIR}"' in installer_script_text
+    assert 'product_control "${TARGET_DIR}" apply' not in installer_script_text
+    assert 'product_control "${OLD_TARGET}" apply' not in installer_script_text
     assert "restore_previous_release" in installer_script_text
     assert "python3 -m lingtu.control" in installer_script_text
     assert "systemctl" not in installer_script_text

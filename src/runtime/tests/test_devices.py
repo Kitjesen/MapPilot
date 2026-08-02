@@ -13,7 +13,6 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from runtime.devices import (
-    DeviceManager,
     DeviceStatus,
     DeviceType,
     Hw,
@@ -207,18 +206,26 @@ class _FakePort:
 
 
 class TestHw:
-    def test_hw_short_role_and_device_manager_alias_resolve_same_module(self):
-        assert DeviceManager is Hw
+    def test_hw_is_the_only_registered_inventory_role(self):
         assert get("hw", "default") is Hw
-        assert get("device_manager", "default") is Hw
+        with pytest.raises(KeyError, match="device_manager"):
+            get("device_manager", "default")
 
-    def test_blueprint_stack_exports_hw_not_device_manager(self):
+    def test_blueprint_stack_exposes_only_hw(self):
         import lingtu.assembly.stacks as stacks
-        from lingtu.assembly.stacks.system import device_manager, hw
+        from lingtu.assembly.stacks import system
 
         assert "hw" in stacks.__all__
         assert "device_manager" not in stacks.__all__
-        assert [entry.name for entry in hw()._entries] == [entry.name for entry in device_manager()._entries]
+        assert not hasattr(system, "device_manager")
+        assert [entry.name for entry in system.hw()._entries] == ["hw"]
+
+    def test_gnss_bridge_has_no_device_manager_registry_alias(self):
+        from localization.gnss_bridge import GnssBridgeModule
+
+        assert get("gnss_bridge", "hw") is GnssBridgeModule
+        with pytest.raises(KeyError, match="device_manager"):
+            get("gnss_bridge", "device_manager")
 
     def _make(self, tmp_path):
         cfg = tmp_path / "devices.yaml"

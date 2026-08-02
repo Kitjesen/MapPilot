@@ -254,7 +254,12 @@ Use it with LingTu:
   export LINGTU_OCTOPLANNER3D_EXECUTABLE="$exe"
   export LINGTU_OCTOMAP_EDITOR="$editor"
 $(if [[ -x "$converter" ]]; then printf '  export LINGTU_MAP_ARTIFACT_CONVERTER="%s"\n' "$converter"; else printf '  # no LINGTU_MAP_ARTIFACT_CONVERTER export; build again with --require-pcl\n'; fi)
-  python lingtu.py nav --planner octoplanner3d
+
+Local development:
+  python lingtu.py sim_nav --planner octoplanner3d
+
+Field Product startup after a saved map exists:
+  bash scripts/lingtu nav start <map>
 EOF
 
 print_dependency_diagnostics

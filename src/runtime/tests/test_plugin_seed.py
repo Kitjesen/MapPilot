@@ -36,7 +36,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
         report = seed_builtin_plugins(
             groups=(
                 "driver",
-                "driver_legacy",
                 "driver_sim",
                 "lidar",
                 "map",
@@ -55,7 +54,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
 
         assert set(BUILTIN_PLUGIN_MODULES) >= {
             "driver",
-            "driver_legacy",
             "driver_sim",
             "lidar",
             "map",
@@ -76,7 +74,6 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "thunder",
             "sim_mujoco",
             "sim_endpoint",
-            "nova_dog",
         } <= set(list_plugins("driver"))
         assert {"lidar_mid360"} <= set(list_plugins("driver"))
         assert {"mid360"} <= set(list_plugins("lidar"))
@@ -84,9 +81,8 @@ def test_builtin_plugin_seed_restores_core_plugin_surfaces_after_clear():
             "occupancy_grid",
             "voxel",
             "esdf",
-            "elevation",
-            "traversability_cost",
-            "manager",
+                "elevation",
+                "traversability_cost",
         } <= set(list_plugins("map"))
         assert list_plugins("planner_backend") == ["far", "octoplanner3d"]
         assert {"nanobind", "simple"} <= set(list_plugins("terrain"))
@@ -171,14 +167,10 @@ def test_driver_plugin_seed_does_not_mutate_sys_path():
         assert sys.path == sys_path_before
         assert {"stub", "thunder"} <= set(list_plugins("driver"))
         assert "sim_mujoco" not in list_plugins("driver")
-        assert "nova_dog" not in list_plugins("driver")
         assert "sim_ros2" not in list_plugins("driver")
 
         seed_builtin_plugins(groups=("driver_sim",), reload_loaded=True)
         assert {"sim_mujoco", "sim_endpoint"} <= set(list_plugins("driver"))
-
-        seed_builtin_plugins(groups=("driver_legacy",), reload_loaded=True)
-        assert {"nova_dog"} <= set(list_plugins("driver"))
 
     finally:
         sys.path[:] = sys_path_before
@@ -227,11 +219,13 @@ def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
         seed_builtin_plugins(reload_loaded=True)
 
         assert "driver" in DEFAULT_BUILTIN_PLUGIN_GROUPS
-        assert "driver_legacy" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
         assert "driver_sim" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
         assert "planner_backend" in DEFAULT_BUILTIN_PLUGIN_GROUPS
         assert "map_save_adapter" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
-        assert "camera_ros2" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
+        assert BUILTIN_PLUGIN_MODULES["camera"] == (
+            "drivers.real.camera.module",
+            "drivers.real.camera.dds_module",
+        )
         assert not any(group.endswith("_ros2") for group in DEFAULT_BUILTIN_PLUGIN_GROUPS)
         assert "navigation_lcm" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
         assert "slam_lcm" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
@@ -239,7 +233,6 @@ def test_builtin_plugin_seed_default_groups_skip_optional_runtime_surfaces():
         assert "visualization" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
         assert "webrtc" not in DEFAULT_BUILTIN_PLUGIN_GROUPS
         assert {"stub", "thunder"} <= set(list_plugins("driver"))
-        assert "nova_dog" not in list_plugins("driver")
         assert "sim_mujoco" not in list_plugins("driver")
         assert "sim_ros2" not in list_plugins("driver")
         assert "ros2_map_output" not in list_plugins("map")

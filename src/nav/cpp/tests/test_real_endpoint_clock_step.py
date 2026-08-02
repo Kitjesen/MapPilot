@@ -33,15 +33,13 @@ def _configure_client(library: ctypes.CDLL) -> None:
         ctypes.c_int,
     ]
     library.lingtu_nav_client_stop_with_id.restype = ctypes.c_int
-    library.lingtu_nav_client_send_teleop_with_id.argtypes = [
+    library.lingtu_nav_client_clear_estop_with_id.argtypes = [
         ctypes.c_void_p,
         ctypes.c_char_p,
-        ctypes.c_double,
-        ctypes.c_double,
-        ctypes.c_double,
+        ctypes.c_char_p,
         ctypes.c_int,
     ]
-    library.lingtu_nav_client_send_teleop_with_id.restype = ctypes.c_int
+    library.lingtu_nav_client_clear_estop_with_id.restype = ctypes.c_int
     library.lingtu_nav_client_last_error.argtypes = [ctypes.c_void_p]
     library.lingtu_nav_client_last_error.restype = ctypes.c_char_p
 
@@ -128,25 +126,23 @@ def main() -> int:
                 os.kill(process.pid, signal.SIGSTOP)
                 result: dict[str, object] = {}
 
-                def send_teleop() -> None:
-                    result["code"] = library.lingtu_nav_client_send_teleop_with_id(
+                def send_clock_sensitive_command() -> None:
+                    result["code"] = library.lingtu_nav_client_clear_estop_with_id(
                         client,
-                        b"clock-step-teleop",
-                        0.1,
-                        0.0,
-                        0.0,
+                        b"clock-step-clear-estop",
+                        b"clock_step_test",
                         4000,
                     )
                     result["error"] = library.lingtu_nav_client_last_error(client).decode()
 
-                sender = threading.Thread(target=send_teleop, daemon=True)
+                sender = threading.Thread(target=send_clock_sensitive_command, daemon=True)
                 sender.start()
                 time.sleep(0.2)
                 offset_file.write_text("2.6\n", encoding="ascii")
                 os.kill(process.pid, signal.SIGCONT)
                 sender.join(timeout=6.0)
                 if sender.is_alive():
-                    raise RuntimeError("teleop client did not finish after clock step")
+                    raise RuntimeError("clear-estop client did not finish after clock step")
             finally:
                 if process.poll() is None:
                     try:
@@ -163,7 +159,7 @@ def main() -> int:
                     library.lingtu_nav_client_destroy(client)
 
         log_text = endpoint_log.read_text(encoding="utf-8", errors="replace")
-        match = re.search(r"teleop_source_stamp_stale age_s=([0-9.]+)", log_text)
+        match = re.search(r"clear_estop_source_stamp_stale age_s=([0-9.]+)", log_text)
         if not match or float(match.group(1)) < 2.0:
             raise RuntimeError("synthetic clock step did not reach the real endpoint stale gate")
         if result.get("code") != 0:

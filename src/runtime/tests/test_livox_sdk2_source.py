@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from drivers.real.lidar.frames import POINT_DTYPE, LivoxPointFrame
-from drivers.real.lidar.sdk2_stream_source import (
+from drivers.real.lidar.api.frames import POINT_DTYPE, LivoxPointFrame
+from drivers.real.lidar.impl.livox.sdk2_stream_source import (
     _HEADER,
     _IMU_PAYLOAD,
     _MAGIC,
@@ -14,7 +14,7 @@ from drivers.real.lidar.sdk2_stream_source import (
     _RECORD_IMU,
     _parse_record,
 )
-from drivers.real.lidar.source import create_lidar_source
+from drivers.real.lidar.native.sdk import create_lidar_source
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu
 
@@ -81,6 +81,19 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     assert "lingtu_dds_LivoxFrame_desc" in dds_module
     assert "lingtu_dds_Imu_desc" in dds_module
     assert "kLidarRawPacket" in dds_module
+    assert "qos_for_topic(lingtu::message::kLidarRawFrame.dds_topic)" in dds_module
+    assert "qos_for_topic(lingtu::message::kLidarRawPacket.dds_topic)" in dds_module
+    assert "dds_create_writer(publisher_, lidar_topic_, lidar_qos.get(), nullptr)" in dds_module
+    assert (
+        "dds_create_writer(publisher_, raw_packet_topic_, raw_packet_qos.get(), nullptr)"
+        in dds_module
+    )
+    assert "make_qos(lingtu::dds::QosProfile::SensorStream)" in dds_module
+    assert "dds_create_writer(publisher_, imu_topic_, sensor_qos.get(), nullptr)" in dds_module
+    assert (
+        "dds_create_writer(publisher_, odom_prior_topic_, sensor_qos.get(), nullptr)"
+        in dds_module
+    )
     assert "ScanAccumulator" in main
     assert "--publish-freq" in main
     assert "--stdin-records" in main
@@ -91,3 +104,24 @@ def test_sdk2_stream_declares_optional_native_dds_publisher() -> None:
     assert "LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS:-ON" in build_script
     assert '-DLIVOX_SDK2_DIR="$ROOT/src/drivers/real/lidar/deps/livox/Livox-SDK2"' in build_script
     assert "LINGTU_CYCLONEDDS_PREFIX" in build_script
+
+
+def test_native_lidar_dds_write_diagnostics_are_explicit_and_opt_in() -> None:
+    dds_module = Path("src/drivers/real/lidar/native/dds_module.cpp").read_text(
+        encoding="utf-8"
+    )
+
+    assert "LINGTU_LIVOX_DDS_WRITE_DIAGNOSTICS" in dds_module
+    assert 'std::strcmp(value, "1") == 0' in dds_module
+    assert "dds_get_qos(writer, qos.get())" in dds_module
+    assert '\\"profile\\":\\"RawLidarStream\\"' in dds_module
+    assert "dds_qget_reliability" in dds_module
+    assert "dds_qget_durability" in dds_module
+    assert "dds_qget_history" in dds_module
+    assert "dds_qget_lifespan" in dds_module
+    assert "dds_qget_resource_limits" in dds_module
+    assert "std::chrono::steady_clock::now()" in dds_module
+    assert "const dds_return_t write_rc = dds_write(writer, &msg)" in dds_module
+    assert "dds_get_publication_matched_status(writer, &matched_status)" in dds_module
+    assert "kLivoxPointPayloadBytes = 24" in dds_module
+    assert "checked(write_rc, \"dds_write(livox)\")" in dds_module

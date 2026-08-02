@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import json
@@ -11,8 +12,7 @@ import pytest
 
 pytestmark = [pytest.mark.sim]
 
-from runtime.contracts.simulation import simulation_runtime_contract
-from runtime.runtime_interface import resolved_runtime_data_flow
+from runtime.runtime_interface import TOPICS, resolved_runtime_data_flow
 from sim.scripts import server_sim_closure
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -96,7 +96,10 @@ def _write_moving_obstacle_child_report(
                 "scan_time_model_contract": ("physical_subscans_with_actual_sim_time_offsets"),
             },
             "nav_data_source": "fastlio2",
-            "true_mapping_input_path": ("/points_raw + /imu_raw -> fastlio2 -> /nav/odometry + /nav/map_cloud"),
+            "true_mapping_input_path": (
+                f"{TOPICS.raw_lidar_points} + {TOPICS.raw_imu} -> fastlio2 -> "
+                f"{TOPICS.odometry} + {TOPICS.map_cloud}"
+            ),
             "outputs": {
                 "fastlio2_cloud_registered": 20,
                 "fastlio2_odometry": 20,
@@ -296,22 +299,20 @@ def test_g4_server_full_sim_required_gates_come_from_core_algorithm_gate_constan
     assert "gazebo_runtime" not in G4_SERVER_FULL_SIM_REQUIRED_GATES
 
 
-def test_readme_current_full_closure_gates_match_g4_server_full_sim_preset():
-    from runtime.algorithm_gates import G4_SERVER_FULL_SIM_REQUIRED_GATES
-
-    assert _readme_current_full_closure_gates() == tuple(G4_SERVER_FULL_SIM_REQUIRED_GATES)
-
-
-def test_readme_full_closure_command_uses_g4_server_full_sim_preset():
+def test_readme_no_longer_embeds_full_closure_gate_table():
     readme = (REPO_ROOT / "sim/README.md").read_text(encoding="utf-8")
-    command_section = readme.split(
-        "PYTHONPATH=src:. python sim/scripts/server_sim_closure.py",
-        1,
-    )[1].split("```", 1)[0]
 
-    assert "--preset g4_server_full_sim" in command_section
-    assert "--required-only" in command_section
-    assert "--run-missing" not in command_section
+    assert "Current full closure gates:" not in readme
+    assert "Server aggregate gates live in `sim/scripts/server_sim_closure.py`" in readme
+
+
+def test_g4_full_sim_preset_is_exposed_by_closure_cli_not_readme_gate_table():
+    parser = server_sim_closure._build_parser()
+    args = parser.parse_args(["--preset", "g4_server_full_sim", "--required-only"])
+
+    assert args.preset == "g4_server_full_sim"
+    assert args.required_only is True
+    assert args.run_missing is False
 
 
 def test_g4_required_gates_have_report_override_options():
@@ -501,7 +502,7 @@ def test_structured_planner_import_dependency_skip_report(tmp_path: Path):
 
 def _complete_gateway_runtime_acceptance_report() -> dict:
     return {
-        "schema_version": "lingtu.gateway_runtime_acceptance.v1",
+        "schema_version": "lingtu.gateway_runtime_acceptance.v3",
         "ok": True,
         "simulation_only": True,
         "real_robot_motion": False,
@@ -517,19 +518,17 @@ def _complete_gateway_runtime_acceptance_report() -> dict:
                 "ok": True,
                 "missing_links": [],
             },
-            "module_first_dataflow": {
+            "gateway_observability": {
                 "ok": True,
                 "runtime_contract": "real_s100p",
                 "ros2_topic_required": False,
-                "module_port_bus_primary": True,
-                "ros2_adapter_primary": False,
                 "arbitrary_publish_supported": False,
                 "command_interface_count": 6,
                 "missing_command_interfaces": [],
                 "unexpected_command_interfaces": [],
                 "observable_topics": [
-                    "/nav/odometry",
-                    "/nav/map_cloud",
+                    TOPICS.odometry,
+                    TOPICS.map_cloud,
                     "/nav/localization_health",
                     "/nav/global_path",
                     "/nav/local_path",
@@ -537,8 +536,8 @@ def _complete_gateway_runtime_acceptance_report() -> dict:
                     "/nav/mission_status",
                 ],
                 "streamable_topics": [
-                    "/nav/odometry",
-                    "/nav/map_cloud",
+                    TOPICS.odometry,
+                    TOPICS.map_cloud,
                     "/nav/localization_health",
                     "/nav/global_path",
                     "/nav/local_path",
@@ -549,6 +548,11 @@ def _complete_gateway_runtime_acceptance_report() -> dict:
                 "non_observable_topics": [],
                 "missing_stream_interfaces": [],
                 "missing_live_topics": [],
+            },
+            "motion": {
+                "ok": True,
+                "kind": "host_or_simulation",
+                "motion_owner": "configured_host_or_simulation_driver",
             },
             "stage_evidence": {
                 "ok": True,
@@ -585,16 +589,16 @@ def _complete_native_pct_mujoco_report() -> dict:
         "primary_planner": "pct",
         "selected_planner": "pct",
         "fallback_used": False,
-        "global_planner_source": "source_report/native_pct_tomogram",
-        "pct_native_backend_used": True,
-        "pct_runtime_ok": True,
+        "global_planner_source": "source_report/pct_tomogram",
+        "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+        "pct_planner_runtime_ok": True,
         "pct_path_count": 8,
         "pct_optimizer_enabled": True,
         "pct_optimizer_attempted": True,
         "pct_optimizer_accepted": False,
         "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
         "pct_optimizer_blocked_sample_count": 3,
-        "pct_planner_path_mode": "native_astar_raw_path",
+        "pct_planner_path_mode": "astar_raw_path",
         "moved_m": 10.0,
         "frames": {"goal": "map", "cmd_vel": "base_link"},
         "planning_chain": {
@@ -607,7 +611,7 @@ def _complete_native_pct_mujoco_report() -> dict:
             "selected_planner": "pct",
             "fallback_used": False,
             "path_safety_ok": True,
-            "native_backend_used": True,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             "tomogram_exists": True,
             "tomogram_sha256": "abc123",
             "pct_optimizer_enabled": True,
@@ -615,7 +619,7 @@ def _complete_native_pct_mujoco_report() -> dict:
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
         },
         "deliverable_contract": {
             "checks": {"same_source_map_artifact": True},
@@ -675,6 +679,12 @@ def _runtime_frame_evidence() -> dict:
             "ok": True,
             "parent": "body",
             "child": "camera_link",
+            "static": True,
+        },
+        "body_to_gnss": {
+            "ok": True,
+            "parent": "body",
+            "child": "gnss_antenna",
             "static": True,
         },
     }
@@ -751,7 +761,7 @@ def _complete_fastlio2_tare_report() -> dict:
             "health": {"plan_safety_policy": "reject"},
         },
         "map_growth": {
-            "accepted_cumulative_growth_source": "/nav/map_cloud",
+            "accepted_cumulative_growth_source": TOPICS.map_cloud,
             "exploration_area_samples": 4,
             "exploration_grid_accumulation": "rolling_local_window",
             "exploration_grid_growth_is_acceptance_metric": False,
@@ -811,7 +821,7 @@ def _complete_fastlio2_inspection_report() -> dict:
             "health": {"plan_safety_policy": "reject"},
         },
         "map_growth": {
-            "accepted_cumulative_growth_source": "/nav/map_cloud",
+            "accepted_cumulative_growth_source": TOPICS.map_cloud,
             "min_map_area_growth_m2": 1.0,
             "nav_map_cloud_xy_area": {"growth_m2": 2.0},
             "nav_map_cloud_area_samples": 4,
@@ -851,7 +861,7 @@ def _complete_fastlio2_dynamic_inspection_report(tmp_path: Path) -> dict:
     report["video_frame_count"] = 181
     report["video_sample_count"] = 181
     report["true_mapping_input_path"] = (
-        "/points_raw + /imu_raw -> fastlio2 -> /Odometry + /cloud_map -> /nav/odometry + /nav/map_cloud"
+        f"{TOPICS.raw_lidar_points} + {TOPICS.raw_imu} -> fastlio2 -> {TOPICS.odometry} + {TOPICS.map_cloud}"
     )
     report["fastlio2_z_consistency"] = {
         "checked": True,
@@ -976,16 +986,16 @@ def _complete_pct_saved_map_navigation_report() -> dict:
         "primary_planner": "pct",
         "selected_planner": "pct",
         "fallback_used": False,
-        "global_planner_source": "source_report/native_pct_tomogram",
-        "pct_native_backend_used": True,
-        "pct_runtime_ok": True,
+        "global_planner_source": "source_report/pct_tomogram",
+        "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+        "pct_planner_runtime_ok": True,
         "pct_path_count": 3,
         "pct_optimizer_enabled": False,
         "pct_optimizer_attempted": False,
         "pct_optimizer_accepted": False,
         "pct_optimizer_reject_reason": "",
         "pct_optimizer_blocked_sample_count": 0,
-        "pct_planner_path_mode": "native_astar_raw_path",
+        "pct_planner_path_mode": "astar_raw_path",
         "moved_m": 10.0,
         "frames": {"goal": "map", "cmd_vel": "base_link"},
         "planning_chain": {
@@ -998,7 +1008,7 @@ def _complete_pct_saved_map_navigation_report() -> dict:
             "selected_planner": "pct",
             "fallback_used": False,
             "path_safety_ok": True,
-            "native_backend_used": True,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             "tomogram_exists": True,
             "tomogram_sha256": "abc123",
             "pct_optimizer_enabled": False,
@@ -1006,7 +1016,7 @@ def _complete_pct_saved_map_navigation_report() -> dict:
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "",
             "pct_optimizer_blocked_sample_count": 0,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
         },
         "deliverable_contract": {
             "checks": {"same_source_map_artifact": True},
@@ -1136,22 +1146,22 @@ def _complete_gazebo_report() -> dict:
         "odometry_frame_id": "odom",
         "odometry_child_frame_id": "body",
         "topic_samples": {
-            "/nav/map_cloud": 3,
-            "/nav/registered_cloud": 3,
+            TOPICS.map_cloud: 3,
+            TOPICS.registered_cloud: 3,
             "/camera/color/image_raw": 3,
             "/camera/depth/image_raw": 3,
             "/camera/color/camera_info": 3,
         },
         "topic_frames": {
-            "/nav/map_cloud": "odom",
-            "/nav/registered_cloud": "body",
+            TOPICS.map_cloud: "odom",
+            TOPICS.registered_cloud: "body",
             "/camera/color/image_raw": "camera_link",
             "/camera/depth/image_raw": "camera_link",
             "/camera/color/camera_info": "camera_link",
         },
         "point_counts": {
-            "/nav/map_cloud": 1024,
-            "/nav/registered_cloud": 1024,
+            TOPICS.map_cloud: 1024,
+            TOPICS.registered_cloud: 1024,
         },
         "nav_loop": {
             "ok": True,
@@ -1171,7 +1181,7 @@ def _complete_gazebo_report() -> dict:
                 "/nav/global_path": 2,
                 "/nav/local_path": 12,
                 "/nav/cmd_vel": 18,
-                "/nav/odometry": 16,
+                TOPICS.odometry: 16,
             },
             "publisher_contract": {
                 "ok": True,
@@ -1191,7 +1201,7 @@ def _complete_gazebo_report() -> dict:
                         "publishers": ["/pathFollower"],
                         "disallowed_node_names": [],
                     },
-                    "/nav/odometry": {
+                    TOPICS.odometry: {
                         "ok": True,
                         "publishers": ["/lingtu_gazebo_runtime_adapter"],
                         "disallowed_node_names": [],
@@ -1293,12 +1303,12 @@ def _complete_gazebo_report() -> dict:
                 "/nav/global_path": 2,
                 "/nav/local_path": 12,
                 "/nav/cmd_vel": 18,
-                "/nav/odometry": 16,
-                "/nav/map_cloud": 3,
+                TOPICS.odometry: 16,
+                TOPICS.map_cloud: 3,
                 "/nav/terrain_map": 3,
                 "/nav/terrain_map_ext": 9,
                 "/nav/cumulative_map_cloud": 9,
-                "/nav/registered_cloud": 9,
+                TOPICS.registered_cloud: 9,
             },
         },
         "tare_exploration": {
@@ -1315,425 +1325,27 @@ def _complete_gazebo_report() -> dict:
     }
 
 
-def _complete_cmu_unity_report() -> dict:
-    return {
-        "schema_version": "lingtu.cmu_unity_sim_gate.v1",
-        "ok": True,
-        "simulation_only": True,
-        "real_robot_motion": False,
-        "cmd_vel_sent_to_hardware": False,
-        "runtime_executed": False,
-        "cmu_workspace": {
-            "path": "/tmp/cmu",
-            "branch": "humble",
-            "head": "abc1234",
-            "remote": "https://github.com/jizhang-cmu/autonomy_stack_mecanum_wheel_platform.git",
-            "topic_contract": {
-                "/registered_scan": True,
-                "/state_estimation": True,
-                "/state_estimation_at_scan": True,
-                "/terrain_map": True,
-                "/terrain_map_ext": True,
-                "/way_point": True,
-                "/path": True,
-                "/cmd_vel": True,
-                "/navigation_boundary": True,
-            },
-        },
-        "lingtu_contract": {
-            "remaps": {
-                "/registered_scan": "/nav/map_cloud",
-                "/state_estimation": "/nav/odometry",
-                "/state_estimation_at_scan": "/nav/odometry",
-                "/terrain_map": "/nav/terrain_map",
-                "/terrain_map_ext": "/nav/terrain_map_ext",
-                "/way_point": "/exploration/way_point",
-            },
-            "adapter_required_relays": {
-                "/state_estimation->/nav/odometry": "nav_msgs/msg/Odometry",
-                "/state_estimation_at_scan->/nav/state_estimation_at_scan": "nav_msgs/msg/Odometry",
-                "/registered_scan->/nav/map_cloud": "sensor_msgs/msg/PointCloud2",
-                "/terrain_map->/nav/terrain_map": "sensor_msgs/msg/PointCloud2",
-                "/terrain_map_ext->/nav/terrain_map_ext": "sensor_msgs/msg/PointCloud2",
-                "/way_point->/exploration/way_point": "geometry_msgs/msg/PointStamped",
-                "/exploration/start->/start_exploration": "std_msgs/msg/Bool",
-                "/nav/cmd_vel->/cmd_vel": "geometry_msgs/msg/TwistStamped",
-            },
-        },
-        "checks": [
-            {"name": "host_ros_humble_setup", "ok": True, "required": True},
-            {"name": "host_ros2_cli", "ok": True, "required": True},
-            {"name": "host_ros2_cli_functional", "ok": True, "required": True},
-            {"name": "host_colcon_cli", "ok": True, "required": True},
-            {"name": "host_colcon_cli_functional", "ok": True, "required": True},
-            {"name": "cmu_workspace_exists", "ok": True, "required": True},
-            {"name": "cmu_git_workspace", "ok": True, "required": True},
-            {"name": "cmu_humble_branch", "ok": True, "required": True},
-            {"name": "cmu_required_source_paths", "ok": True, "required": True},
-            {"name": "cmu_unity_environment_assets", "ok": True, "required": True},
-            {"name": "cmu_colcon_build_output", "ok": True, "required": True},
-            {"name": "cmu_topic_contract", "ok": True, "required": True},
-            {"name": "lingtu_tare_remap_contract", "ok": True, "required": True},
-            {"name": "lingtu_tare_explore_profile", "ok": True, "required": True},
-            {"name": "lingtu_cmu_tare_profile", "ok": True, "required": True},
-            {"name": "lingtu_cmu_adapter_exists", "ok": True, "required": True},
-            {"name": "lingtu_cmu_adapter_relay_contract", "ok": True, "required": True},
-            {"name": "lingtu_cmu_adapter_safety_contract", "ok": True, "required": True},
-        ],
-        "blockers": [],
-    }
-
-
-def _complete_cmu_unity_runtime_contract_report(
-    *,
-    planner_diagnostics_required: bool = False,
-    planner_diagnostics_available: bool = False,
-    errors: list[str] | None = None,
-) -> dict:
-    contract_errors = list(errors or [])
-    return {
-        "name": "cmu_unity_external",
-        "ok": not contract_errors,
-        "definition": simulation_runtime_contract("cmu_unity_external").as_report(),
-        "data_flow_evidence": _data_flow_evidence("cmu_unity_external"),
-        "frame_evidence": _runtime_frame_evidence(),
-        "topic_evidence": {
-            "/nav/odometry": {"samples": 12, "delta_m": 0.121, "ok": True},
-            "/nav/state_estimation_at_scan": {
-                "samples": 12,
-                "delta_m": 0.121,
-                "ok": True,
-            },
-            "/registered_scan": {"samples": 4, "area_delta_m2": 0.75, "ok": True},
-            "/nav/registered_cloud": {"samples": 4, "area_delta_m2": 0.75, "ok": True},
-            "/nav/map_cloud": {"samples": 4, "area_delta_m2": 0.75, "ok": True},
-            "/nav/terrain_map_ext": {"samples": 4, "area_delta_m2": 0.75, "ok": True},
-            "/exploration/way_point": {"samples": 1, "frames": ["map"], "ok": True},
-            "/nav/global_path": {
-                "samples": 1,
-                "nonempty_samples": 1,
-                "max_poses": 5,
-                "frames": ["map"],
-                "ok": True,
-            },
-            "/nav/local_path": {
-                "samples": 4,
-                "nonempty_samples": 4,
-                "max_poses": 101,
-                "frames": ["map"],
-                "ok": True,
-            },
-            "/nav/cmd_vel": {
-                "samples": 8,
-                "nonzero_samples": 4,
-                "max_norm": 0.22,
-                "ok": True,
-            },
-        },
-        "publisher_identity": {
-            "subscribers": {"/cmd_vel": ["/vehicle_simulator"], "/nav/cmd_vel": []},
-            "publishers": {
-                "/cmd_vel": ["/lingtu_cmu_unity_adapter"],
-                "/nav/cmd_vel": ["/lingtu_navigation"],
-            },
-            "blocked_hardware_nodes": [],
-            "unexpected_command_publishers": [],
-        },
-        "planner_diagnostics_required": planner_diagnostics_required,
-        "planner_diagnostics_available": planner_diagnostics_available,
-        "errors": contract_errors,
-    }
-
-
-def _complete_cmu_unity_runtime_report() -> dict:
-    return {
-        "schema_version": "lingtu.cmu_unity_runtime_gate.v1",
-        "ok": True,
-        "runtime_executed": True,
-        "simulation_only": True,
-        "real_robot_motion": False,
-        "cmd_vel_sent_to_hardware": False,
-        "ros_domain_id": "73",
-        "thresholds": {
-            "min_waypoint_samples": 1,
-            "min_cmd_vel": 0.01,
-            "min_cmd_vel_samples": 3,
-            "min_odom_delta_m": 0.10,
-            "min_map_area_delta_m2": 0.5,
-            "late_window_sec": 60.0,
-            "min_late_odom_delta_m": 0.5,
-            "min_late_cmd_vel_samples": 10,
-            "min_late_path_samples": 5,
-            "min_late_map_area_delta_m2": 1.0,
-            "allow_flat_late_map_after_total_growth": True,
-            "require_frontier_no_gain_stall": True,
-            "require_tare_strategy_quality": True,
-            "min_tare_waypoints": 1,
-            "min_tare_paths": 1,
-            "min_tare_strategy_paths": 1,
-            "min_tare_navigation_successes": 1,
-            "max_tare_suppressed_waypoint_ratio": 0.75,
-        },
-        "waypoints": {
-            "/way_point": {"samples": 1, "frames": ["map"], "last": [1.2, 0.0, 0.75]},
-            "/exploration/way_point": {"samples": 1, "frames": ["map"], "last": [1.2, 0.0, 0.75]},
-        },
-        "cmd_vel": {"samples": 8, "nonzero_samples": 4, "max_norm": 0.22},
-        "odometry": {
-            "/nav/odometry": {"samples": 12, "first_xy": [0.0, 0.0], "last_xy": [0.12, 0.02], "delta_m": 0.121},
-            "/state_estimation": {"samples": 12, "first_xy": [0.0, 0.0], "last_xy": [0.12, 0.02], "delta_m": 0.121},
-        },
-        "cloud_coverage": {
-            "best_topic": "/nav/terrain_map_ext",
-            "best_cells_delta": 12,
-            "best_area_delta_m2": 0.75,
-            "topics": {
-                "/registered_scan": {"samples": 4, "area_delta_m2": 0.75},
-                "/nav/registered_cloud": {"samples": 4, "area_delta_m2": 0.75},
-                "/nav/map_cloud": {"samples": 4, "area_delta_m2": 0.75},
-                "/nav/terrain_map_ext": {"samples": 4, "area_delta_m2": 0.75},
-            },
-        },
-        "paths": {
-            "/nav/global_path": {"samples": 1, "nonempty_samples": 1, "max_poses": 5, "frames": ["map"]},
-            "/nav/local_path": {"samples": 4, "nonempty_samples": 4, "max_poses": 101, "frames": ["map"]},
-        },
-        "path_requirements": {
-            "/nav/global_path": {
-                "observed_nonempty_samples": 1,
-                "observed_max_poses": 5,
-                "ok": True,
-            },
-            "/nav/local_path": {
-                "observed_nonempty_samples": 4,
-                "observed_max_poses": 101,
-                "ok": True,
-            },
-        },
-        "scan_requirements": {
-            "/registered_scan": {"observed_samples": 4, "ok": True},
-            "/nav/registered_cloud": {"observed_samples": 4, "ok": True},
-        },
-        "map_requirements": {
-            "/nav/map_cloud": {"observed_area_delta_m2": 0.75, "ok": True},
-            "/nav/terrain_map_ext": {"observed_area_delta_m2": 0.75, "ok": True},
-        },
-        "hardware_safety": {
-            "topics": {"/cmd_vel": ["/vehicle_simulator"], "/nav/cmd_vel": []},
-            "blocked_hardware_nodes": [],
-        },
-        "tare_navigation": {
-            "available": True,
-            "backend": "tare",
-            "started": True,
-            "success_count": 1,
-            "failure_count": 0,
-            "terminal_count": 1,
-            "last_navigation_status": {"state": "SUCCESS"},
-        },
-        "tare_strategy_quality": {
-            "checked": True,
-            "ok": True,
-            "available": True,
-            "source": "gateway_exploration_status.tare.stats",
-            "backend": "tare",
-            "started": True,
-            "thresholds": {
-                "min_tare_waypoints": 1,
-                "min_tare_paths": 1,
-                "min_tare_strategy_paths": 1,
-                "min_tare_navigation_successes": 1,
-                "max_tare_suppressed_waypoint_ratio": 0.75,
-            },
-            "waypoint_count": 2,
-            "path_count": 2,
-            "strategy_path_count": 1,
-            "suppressed_waypoint_count": 0,
-            "suppressed_far_waypoint_count": 0,
-            "suppressed_waypoint_ratio": 0.0,
-            "navigation_terminal_count": 1,
-            "navigation_success_count": 1,
-            "navigation_failure_count": 0,
-            "reject_reasons": [],
-            "blockers": [],
-        },
-        "late_activity": {
-            "odometry": {
-                "window_sec": 60.0,
-                "required_delta_m": 0.5,
-                "observed_best_delta_m": 0.75,
-                "ok": True,
-            },
-            "cmd_vel": {
-                "window_sec": 60.0,
-                "required_nonzero_samples": 10,
-                "observed_nonzero_samples": 12,
-                "ok": True,
-            },
-            "paths": {
-                "window_sec": 60.0,
-                "topics": {
-                    "/nav/local_path": {
-                        "required_nonempty_samples": 5,
-                        "observed_nonempty_samples": 8,
-                        "ok": True,
-                    }
-                },
-                "ok": True,
-            },
-            "map_growth": {
-                "window_sec": 60.0,
-                "required_area_delta_m2": 1.0,
-                "observed_best_area_delta_m2": 1.25,
-                "accepted_flat_after_total_growth": False,
-                "ok": True,
-            },
-        },
-        "frontier_no_gain_stall": {
-            "checked": True,
-            "ok": True,
-            "mode": "late_activity_observation",
-            "stop_reason": "late_activity_window_verified",
-            "required_observation_s": 60.0,
-            "observed_s": 60.0,
-            "duration_sec": 180.0,
-            "late_activity": {
-                "odometry_ok": True,
-                "cmd_vel_ok": True,
-                "paths_ok": True,
-                "map_growth_ok": True,
-                "map_growth_accepted_flat_after_total_growth": False,
-            },
-            "tare_navigation": {
-                "available": True,
-                "success_count": 1,
-                "failure_count": 0,
-                "terminal_count": 1,
-            },
-            "blockers": [],
-        },
-        "runtime_contract": _complete_cmu_unity_runtime_contract_report(),
-        "blockers": [],
-    }
-
-
-def _complete_cmu_unity_pct_strict_report() -> dict:
-    report = _complete_cmu_unity_runtime_report()
-    report["cmd_vel"] = {"samples": 24, "nonzero_samples": 18, "max_norm": 0.52}
-    report["odometry"] = {
-        "/nav/odometry": {"samples": 32, "first_xy": [0.0, 0.0], "last_xy": [2.6, 0.1], "delta_m": 2.602},
-        "/state_estimation": {"samples": 32, "first_xy": [0.0, 0.0], "last_xy": [2.6, 0.1], "delta_m": 2.602},
-    }
-    report["cloud_coverage"] = {
-        "best_topic": "/nav/registered_cloud",
-        "best_cells_delta": 2349,
-        "best_area_delta_m2": 146.8125,
-        "topics": {
-            "/nav/registered_cloud": {
-                "samples": 4,
-                "area_delta_m2": 146.8125,
-                "cells_delta": 2349,
-                "points_seen": 11200,
-                "frames": ["map"],
-            },
-            "/nav/map_cloud": {
-                "samples": 4,
-                "area_delta_m2": 146.8125,
-                "cells_delta": 2349,
-                "points_seen": 11200,
-                "frames": ["map"],
-            },
-            "/nav/terrain_map_ext": {
-                "samples": 4,
-                "area_delta_m2": 71.6875,
-                "cells_delta": 1147,
-                "points_seen": 2821,
-                "frames": ["map"],
-            },
-        },
-    }
-    report["paths"] = {
-        "/nav/global_path": {"samples": 2, "nonempty_samples": 1, "max_poses": 5, "frames": ["map"]},
-        "/nav/local_path": {"samples": 4, "nonempty_samples": 4, "max_poses": 101, "frames": ["map"]},
-    }
-    report["path_requirements"] = {
-        "/nav/global_path": {
-            "required_nonempty_samples": 1,
-            "required_min_poses": 2,
-            "observed_nonempty_samples": 1,
-            "observed_max_poses": 5,
-            "ok": True,
-        },
-        "/nav/local_path": {
-            "required_nonempty_samples": 1,
-            "required_min_poses": 2,
-            "observed_nonempty_samples": 4,
-            "observed_max_poses": 101,
-            "ok": True,
-        },
-    }
-    report["scan_requirements"] = {
-        "/nav/registered_cloud": {"required_samples": 1, "observed_samples": 4, "ok": True},
-    }
-    report["map_requirements"] = {
-        "/nav/map_cloud": {
-            "required_area_delta_m2": 2.0,
-            "observed_area_delta_m2": 146.8125,
-            "ok": True,
-        },
-        "/nav/terrain_map_ext": {
-            "required_area_delta_m2": 2.0,
-            "observed_area_delta_m2": 71.6875,
-            "ok": True,
-        },
-    }
-    report["hardware_safety"] = {
-        "topics": {"/cmd_vel": ["/vehicleSimulator"], "/nav/cmd_vel": []},
-        "publishers": {"/cmd_vel": ["/lingtu_cmu_unity_adapter"], "/nav/cmd_vel": ["/lingtu_navigation"]},
-        "blocked_hardware_nodes": [],
-        "unexpected_command_publishers": [],
-    }
-    report["cmd_vel_exclusive_to_lingtu"] = True
-    report["planner_diagnostics"] = {
-        "available": True,
-        "primary_planner": "pct",
-        "selected_planner": "pct",
-        "policy": "pct",
-        "fallback_used": False,
-        "fallback_reason": "",
-        "rejected_plan_count": 0,
-        "reached_goal": True,
-        "last_plan_report": {
-            "primary_planner": "pct",
-            "selected_planner": "pct",
-            "reached_goal": True,
-            "rejected_plans": [],
-        },
-    }
-    report["runtime_contract"] = _complete_cmu_unity_runtime_contract_report(
-        planner_diagnostics_required=True,
-        planner_diagnostics_available=True,
-    )
-    report["navigation_failure"] = {"failed": False, "state": "REACHED", "reason_codes": [], "failure_reason": ""}
-    report["direct_goal_fallback"] = {"used": False, "reason": "", "goal": None, "ts": None}
-    return report
-
-
 def test_gateway_goal_dry_run_gate_publishes_goal_without_cmd_vel():
-    pytest.importorskip("fastapi")
-    from sim.scripts.gateway_goal_dry_run_gate import run_gate
+    report = {
+        "ok": True,
+        "simulation_only": True,
+        "real_robot_motion": False,
+        "cmd_vel_sent_to_hardware": False,
+        "gateway_used": True,
+        "driver_used": False,
+        "target": {"x": 1.2, "y": -0.4, "z": 0.0},
+        "frames": {"published_goal": "map", "cmd_vel": "not_published"},
+        "published": {"goal_pose": 1, "cmd_vel": 0, "stop_cmd": 0},
+    }
 
-    report = run_gate(x=1.2, y=-0.4, z=0.0, client_id="pytest")
+    ok, blockers, evidence = server_sim_closure._eval_gateway_dry_run(report)
 
-    assert report["ok"] is True
-    assert report["simulation_only"] is True
-    assert report["real_robot_motion"] is False
-    assert report["cmd_vel_sent_to_hardware"] is False
-    assert report["driver_used"] is False
-    assert report["frames"]["published_goal"] == "map"
-    assert report["frames"]["cmd_vel"] == "not_published"
-    assert report["published"]["goal_pose"] == 1
-    assert report["published"]["cmd_vel"] == 0
+    assert ok is True
+    assert blockers == []
+    assert evidence["frames"]["published_goal"] == "map"
+    assert evidence["frames"]["cmd_vel"] == "not_published"
+    assert evidence["published"]["goal_pose"] == 1
+    assert evidence["published"]["cmd_vel"] == 0
 
 
 def test_routecheck_preflight_gate_writes_non_motion_summary(tmp_path: Path):
@@ -2060,6 +1672,22 @@ def test_gazebo_runtime_gate_uses_existing_sim_script_paths():
     assert "tests/planning/sim_navigation.launch.py" not in launcher_source
 
 
+def test_gazebo_tare_contract_checks_current_internal_explore_runtime():
+    from sim.scripts.gazebo_runtime_gate import _tare_contract_report
+
+    report = _tare_contract_report(require_runtime=False)
+
+    assert report["ok"] is True
+    assert report["source_contract_ok"] is True
+    assert report["checks"] == {
+        "native_policy_source": True,
+        "bridge_module": True,
+        "native_backend": True,
+        "supervisor_module": True,
+    }
+    assert "tare_planner_node" not in " ".join(report["errors"])
+
+
 def test_gazebo_frontier_smoke_reports_post_pass_stall_metric():
     from sim.scripts.gazebo_frontier_exploration_smoke import GazeboFrontierExplorationResult
 
@@ -2078,50 +1706,6 @@ def test_gazebo_frontier_smoke_reports_post_pass_stall_metric():
     assert payload["frontier_no_gain_stall"]["checked"] is True
     assert payload["frontier_no_gain_stall"]["ok"] is True
     assert payload["frontier_no_gain_stall"]["stop_reason"] == "post_pass_observation_elapsed"
-
-
-def test_server_sim_closure_cmu_unity_sim_command_runs_preflight_gate():
-    spec = next(item for item in server_sim_closure.GATES if item.name == "cmu_unity_sim")
-
-    assert "sim/scripts/cmu_unity_sim_gate.py" in spec.command
-    assert "server_sim_closure/cmu_unity_sim/report.json" in spec.command
-    assert "--strict" in spec.command
-    assert spec.host_requirements == server_sim_closure.LOCAL_NUMERIC_SIM_HOST_REQUIREMENTS
-
-
-def test_server_sim_closure_cmu_unity_runtime_command_runs_runtime_gate():
-    spec = next(item for item in server_sim_closure.GATES if item.name == "cmu_unity_runtime")
-
-    assert "source /opt/ros/humble/setup.bash" in spec.command
-    assert "sim/scripts/cmu_unity_runtime_gate.py" in spec.command
-    assert "server_sim_closure/cmu_unity_runtime/report.json" in spec.command
-    assert "--strict" in spec.command
-
-
-def test_server_sim_closure_cmu_unity_pct_strict_command_runs_no_fallback_gate():
-    spec = next(item for item in server_sim_closure.GATES if item.name == "cmu_unity_pct_strict")
-
-    assert "sim/scripts/launch_cmu_unity_lingtu_runtime.sh start --gate --rviz" in spec.command
-    assert "LINGTU_CMU_PLANNER=pct" in spec.command
-    assert "LINGTU_CMU_START_CMU_TARE=1" in spec.command
-    assert "LINGTU_CMU_TARE_SCENARIO=${LINGTU_CMU_TARE_SCENARIO:-indoor_large}" in spec.command
-    assert "LINGTU_CMU_TARE_AUTOSTART=0" in spec.command
-    assert "LINGTU_CMU_ENABLE_FRONTIER=0" in spec.command
-    assert "FASTDDS_BUILTIN_TRANSPORTS=${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}" in spec.command
-    assert "LINGTU_CMU_AUTO_SESSION=1" in spec.command
-    assert "LINGTU_CMU_EXPLORATION_AUTO_START=0" in spec.command
-    assert "LINGTU_CMU_ALLOW_DIRECT_GOAL_FALLBACK=0" in spec.command
-    assert "LINGTU_CMU_AUTO_TOMOGRAM=${LINGTU_CMU_AUTO_TOMOGRAM:-1}" in spec.command
-    assert (
-        "LINGTU_CMU_TOMOGRAM_TOPICS=${LINGTU_CMU_TOMOGRAM_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}" in spec.command
-    )
-    assert "LINGTU_CMU_TOMOGRAM_MODE=${LINGTU_CMU_TOMOGRAM_MODE:-official}" in spec.command
-    assert "LINGTU_CMU_GATE_TIMEOUT_SEC=${LINGTU_CMU_GATE_TIMEOUT_SEC:-240}" in spec.command
-    assert "LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS=${LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS:-3}" in spec.command
-    assert (
-        "LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS=${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/nav/map_cloud,/nav/terrain_map_ext}"
-        in spec.command
-    )
 
 
 def test_server_sim_closure_dynamic_obstacle_command_uses_nanobind_module_gate():
@@ -2203,6 +1787,8 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "cases": [
                 {
                     "route": "terrain_long",
@@ -2210,7 +1796,7 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
                     "planning": [
                         {
                             "planner": "pct",
-                            "native_backend_used": True,
+                            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                         }
                     ],
                 }
@@ -2230,16 +1816,16 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
             "primary_planner": "pct",
             "selected_planner": "pct",
             "fallback_used": False,
-            "global_planner_source": "source_report/native_pct_tomogram",
-            "pct_native_backend_used": True,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
             "moved_m": 10.0,
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "planning_chain": {
@@ -2252,7 +1838,7 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
                 "selected_planner": "pct",
                 "fallback_used": False,
                 "path_safety_ok": True,
-                "native_backend_used": True,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "tomogram_exists": True,
                 "tomogram_sha256": "abc123",
                 "pct_optimizer_enabled": True,
@@ -2260,7 +1846,7 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
                 "pct_optimizer_accepted": False,
                 "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
                 "pct_optimizer_blocked_sample_count": 3,
-                "pct_planner_path_mode": "native_astar_raw_path",
+                "pct_planner_path_mode": "astar_raw_path",
             },
             "deliverable_contract": {
                 "checks": {"same_source_map_artifact": True},
@@ -2442,15 +2028,6 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
         },
     )
     gazebo = _write_json(tmp_path / "gazebo.json", _complete_gazebo_report())
-    cmu_unity = _write_json(tmp_path / "cmu_unity.json", _complete_cmu_unity_report())
-    cmu_unity_runtime = _write_json(
-        tmp_path / "cmu_unity_runtime.json",
-        _complete_cmu_unity_runtime_report(),
-    )
-    cmu_unity_pct_strict = _write_json(
-        tmp_path / "cmu_unity_pct_strict.json",
-        _complete_cmu_unity_pct_strict_report(),
-    )
     saved_map_report = _complete_saved_map_relocalize_runtime_report()
     saved_map_report["map_pcd"] = str(_write_artifact(tmp_path / "same_source_map" / "map.pcd"))
     saved_map_relocalize = _write_json(
@@ -2477,9 +2054,6 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
             "gateway_dry_run": gateway,
             "routecheck_preflight": routecheck,
             "gazebo_runtime": gazebo,
-            "cmu_unity_sim": cmu_unity,
-            "cmu_unity_runtime": cmu_unity_runtime,
-            "cmu_unity_pct_strict": cmu_unity_pct_strict,
             "saved_map_relocalize": saved_map_relocalize,
             "pct_saved_map_navigation": pct_saved_map_navigation,
         },
@@ -2494,9 +2068,6 @@ def test_server_sim_closure_accepts_complete_report_set(tmp_path: Path):
             "gateway_dry_run",
             "routecheck_preflight",
             "gazebo_runtime",
-            "cmu_unity_sim",
-            "cmu_unity_runtime",
-            "cmu_unity_pct_strict",
             "saved_map_relocalize",
             "pct_saved_map_navigation",
         },
@@ -2555,9 +2126,10 @@ def test_server_sim_closure_multifloor_surfaces_pct_runtime_blocker(tmp_path: Pa
         case["native_pct_gate"] = {
             "ok": False,
             "status": "blocked",
-            "runtime": {
+            "pct_planner_runtime": {
+                "runtime": "rust_process",
                 "ok": False,
-                "error": "No runnable PCT native modules for arch=x86_64 python=py313",
+                "error": "PCT planner runtime unavailable",
             },
         }
     report_path = _write_json(tmp_path / "multifloor_pct_runtime_missing.json", weak)
@@ -2568,7 +2140,7 @@ def test_server_sim_closure_multifloor_surfaces_pct_runtime_blocker(tmp_path: Pa
     )
 
     gate = summary["gates"]["multifloor_exploration"]
-    assert "PCT native runtime unavailable" in gate["blockers"]
+    assert "PCT planner runtime unavailable" in gate["blockers"]
     assert "environment_runtime" in summary["algorithm_validation"]["gate_categories"]["multifloor_exploration"]
     action = summary["algorithm_validation"]["next_actions"][0]
     assert action["gate"] == "multifloor_exploration"
@@ -2649,6 +2221,8 @@ def test_server_sim_closure_separates_optional_gaps(tmp_path: Path, monkeypatch)
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "cases": [
                 {
                     "route": "terrain_long",
@@ -2656,7 +2230,7 @@ def test_server_sim_closure_separates_optional_gaps(tmp_path: Path, monkeypatch)
                     "planning": [
                         {
                             "planner": "pct",
-                            "native_backend_used": True,
+                            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                         }
                     ],
                 }
@@ -2686,11 +2260,13 @@ def test_server_sim_closure_can_summarize_required_only(tmp_path: Path, monkeypa
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "cases": [
                 {
                     "route": "terrain_long",
                     "path_safety": {"ok": True},
-                    "planning": [{"planner": "pct", "native_backend_used": True}],
+                    "planning": [{"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}}],
                 }
             ],
         },
@@ -2747,6 +2323,8 @@ def test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports(tmp_
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "algorithm_backends": {
                 "local_planner": {
                     "status": "not_exercised",
@@ -2761,7 +2339,7 @@ def test_server_sim_closure_summarizes_algorithm_backends_from_gate_reports(tmp_
                 {
                     "route": "terrain_long",
                     "path_safety": {"ok": True},
-                    "planning": [{"planner": "pct", "native_backend_used": True}],
+                    "planning": [{"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}}],
                 }
             ],
         },
@@ -2830,11 +2408,13 @@ def test_server_sim_closure_can_require_fresh_reports(tmp_path: Path):
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "cases": [
                 {
                     "route": "terrain_long",
                     "path_safety": {"ok": True},
-                    "planning": [{"planner": "pct", "native_backend_used": True}],
+                    "planning": [{"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}}],
                 }
             ],
         },
@@ -2878,8 +2458,8 @@ def test_server_sim_closure_summary_lists_missing_required_commands(
     assert "LINGTU_PCT_OPTIMIZE_TRAJECTORY=1" in command["command"]
     assert command["expected_report_path"] == ("artifacts/server_sim_closure/large_terrain/report.json")
     assert "artifacts/large_terrain_nav_validation*/report.json" in command["accepted_patterns"]
-    assert any("PCT native extension modules" in item for item in command["host_requirements"])
-    assert any("CPython 3.10" in item for item in command["host_requirements"])
+    assert any("PCT planner runtime available" in item for item in command["host_requirements"])
+    assert not any("CPython" in item for item in command["host_requirements"])
     assert summary["gates"]["large_terrain"]["host_requirements"] == command["host_requirements"]
     assert summary["gates"]["large_terrain"]["expected_report_path"] == command["expected_report_path"]
     assert summary["host_requirements"]["large_terrain"] == command["host_requirements"]
@@ -2910,12 +2490,14 @@ def test_server_sim_closure_run_missing_executes_missing_required_gate(
                 "simulation_only": True,
                 "real_robot_motion": False,
                 "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
                 "cases": [
                     {
                         "route": "terrain_long",
                         "path_safety": {"ok": True},
                         "planning": [
-                            {"planner": "pct", "native_backend_used": True},
+                            {"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}},
                         ],
                     }
                 ],
@@ -2962,12 +2544,14 @@ def test_server_sim_closure_run_missing_failure_overrides_matching_report(
                 "simulation_only": True,
                 "real_robot_motion": False,
                 "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
                 "cases": [
                     {
                         "route": "terrain_long",
                         "path_safety": {"ok": True},
                         "planning": [
-                            {"planner": "pct", "native_backend_used": True},
+                            {"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}},
                         ],
                     }
                 ],
@@ -3074,12 +2658,14 @@ def test_server_sim_closure_run_missing_records_host_blocked_gate(
                 "simulation_only": True,
                 "real_robot_motion": False,
                 "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
                 "cases": [
                     {
                         "route": "terrain_long",
                         "path_safety": {"ok": True},
                         "planning": [
-                            {"planner": "pct", "native_backend_used": True},
+                            {"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}},
                         ],
                     }
                 ],
@@ -3223,11 +2809,13 @@ def test_server_sim_closure_run_missing_blocks_live_dependents_when_fastlio2_dyn
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "cases": [
                 {
                     "route": "terrain_long",
                     "path_safety": {"ok": True},
-                    "planning": [{"planner": "pct", "native_backend_used": True}],
+                    "planning": [{"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}}],
                 }
             ],
         },
@@ -3321,7 +2909,7 @@ def test_server_sim_closure_keeps_bash_gate_command_shell_based_on_windows():
 
 def test_server_sim_closure_keeps_shell_expansion_gate_command_shell_based_on_windows():
     command, invocation = server_sim_closure._normalized_gate_run_invocation(
-        "PYTHONPATH=src:.:$PYTHONPATH python3 sim/scripts/cmu_unity_runtime_gate.py",
+        "PYTHONPATH=src:.:$PYTHONPATH python3 sim/scripts/gazebo_runtime_gate.py",
         platform_system="Windows",
     )
 
@@ -3341,11 +2929,13 @@ def test_server_sim_closure_run_missing_skips_verified_required_gate(
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "cases": [
                 {
                     "route": "terrain_long",
                     "path_safety": {"ok": True},
-                    "planning": [{"planner": "pct", "native_backend_used": True}],
+                    "planning": [{"planner": "pct", "pct_planner_runtime": {"runtime": "rust_process", "ok": True}}],
                 }
             ],
         },
@@ -3823,7 +3413,7 @@ def test_server_sim_closure_rejects_gazebo_without_navigation_loop(tmp_path: Pat
         "odom_delta_m": 0.01,
         "samples": {
             "/nav/cmd_vel": 4,
-            "/nav/odometry": 4,
+            TOPICS.odometry: 4,
         },
     }
     report = _write_json(tmp_path / "gazebo_weak.json", weak)
@@ -3921,7 +3511,7 @@ def test_server_sim_closure_rejects_gazebo_without_frontier_exploration(tmp_path
         "frontier_count_max": 0,
         "samples": {
             "/nav/cmd_vel": 4,
-            "/nav/odometry": 4,
+            TOPICS.odometry: 4,
         },
     }
     report = _write_json(tmp_path / "gazebo_weak_frontier.json", weak)
@@ -3969,340 +3559,6 @@ def test_server_sim_closure_rejects_gazebo_when_tare_contract_missing(tmp_path: 
     assert "tare_exploration runtime required but unavailable" in gaps
 
 
-def test_server_sim_closure_rejects_cmu_unity_without_required_assets(tmp_path: Path):
-    weak_report = _complete_cmu_unity_report()
-    weak_report["ok"] = False
-    for check in weak_report["checks"]:
-        if check["name"] in {"cmu_unity_environment_assets", "cmu_colcon_build_output"}:
-            check["ok"] = False
-    weak_report["blockers"] = ["cmu_unity_environment_assets", "cmu_colcon_build_output"]
-    weak = _write_json(tmp_path / "cmu_unity_weak.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_sim": weak},
-        required={"cmu_unity_sim"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_sim"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "cmu_unity_environment_assets is not true" in gaps
-    assert "cmu_colcon_build_output is not true" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_without_motion(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["ok"] = False
-    weak_report["cmd_vel"]["nonzero_samples"] = 0
-    weak_report["odometry"]["/nav/odometry"]["delta_m"] = 0.0
-    weak_report["odometry"]["/state_estimation"]["delta_m"] = 0.0
-    weak_report["cloud_coverage"]["best_area_delta_m2"] = 0.0
-    weak = _write_json(tmp_path / "cmu_unity_runtime_weak.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "/nav/cmd_vel nonzero_samples below threshold" in gaps
-    assert "odom delta below threshold" in gaps
-    assert "map/exploration area delta below threshold" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_without_contract(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report.pop("runtime_contract")
-    weak = _write_json(tmp_path / "cmu_unity_runtime_missing_contract.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "runtime_contract missing" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_failed_contract(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["runtime_contract"] = _complete_cmu_unity_runtime_contract_report(
-        errors=["/nav/global_path path contract not satisfied"],
-    )
-    weak = _write_json(tmp_path / "cmu_unity_runtime_failed_contract.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "runtime_contract.ok is not true" in gaps
-    assert "runtime_contract: /nav/global_path path contract not satisfied" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_tampered_contract_definition(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["runtime_contract"]["definition"]["adapter_script"] = "/tmp/fake_adapter.py"
-    weak_report["runtime_contract"]["definition"]["slam_source"] = "fastlio2"
-    weak = _write_json(tmp_path / "cmu_unity_runtime_tampered_contract.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "runtime_contract.definition.adapter_script does not match canonical contract" in gaps
-    assert "runtime_contract.definition.slam_source does not match canonical contract" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_missing_topic_evidence(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["runtime_contract"]["topic_evidence"].pop("/nav/global_path")
-    weak = _write_json(tmp_path / "cmu_unity_runtime_missing_topic_evidence.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "runtime_contract topic evidence missing or failed for /nav/global_path" in gaps
-
-
-def test_server_sim_closure_cmu_runtime_uses_shared_runtime_evidence(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["hardware_safety"]["unexpected_command_publishers"] = ["/foreign_cmd_source"]
-    weak = _write_json(tmp_path / "cmu_unity_runtime_unsafe_cmd.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    evidence = summary["gates"]["cmu_unity_runtime"]["evidence"]["runtime_evidence"]
-    assert evidence["checked"] is True
-    assert evidence["expected_contract"] == "cmu_unity_external"
-    assert evidence["frame_links_required"] is True
-    assert evidence["data_flow_required"] is True
-    assert "unexpected command publisher present" in evidence["blockers"]
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "unexpected command publisher present" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_missing_frame_evidence(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["runtime_contract"].pop("frame_evidence")
-    weak = _write_json(tmp_path / "cmu_unity_runtime_missing_frame_evidence.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    evidence = summary["gates"]["cmu_unity_runtime"]["evidence"]["runtime_evidence"]
-    assert evidence["frame_links_required"] is True
-    assert "frame evidence missing" in evidence["blockers"]
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "frame evidence missing" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_missing_data_flow_stage(tmp_path: Path):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["runtime_contract"]["data_flow_evidence"].pop("local_planning_and_following")
-    weak = _write_json(tmp_path / "cmu_unity_runtime_missing_data_flow.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    evidence = summary["gates"]["cmu_unity_runtime"]["evidence"]["runtime_evidence"]
-    assert evidence["data_flow_required"] is True
-    assert "data-flow evidence missing or failed for local_planning_and_following" in evidence["blockers"]
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "data-flow evidence missing or failed for local_planning_and_following" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_without_frontier_stall_evidence(
-    tmp_path: Path,
-):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report.pop("frontier_no_gain_stall")
-    weak = _write_json(tmp_path / "cmu_unity_runtime_missing_frontier_stall.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "frontier_no_gain_stall missing" in gaps
-    assert "frontier_no_gain_stall.checked is not true" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_short_frontier_stall_window(
-    tmp_path: Path,
-):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["frontier_no_gain_stall"]["observed_s"] = 20.0
-    weak = _write_json(tmp_path / "cmu_unity_runtime_short_frontier_stall.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "frontier_no_gain_stall.observed_s below required" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_without_tare_strategy_quality(
-    tmp_path: Path,
-):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report.pop("tare_strategy_quality", None)
-    weak = _write_json(tmp_path / "cmu_unity_runtime_missing_tare_strategy.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "tare_strategy_quality missing" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_runtime_weak_tare_strategy_quality(
-    tmp_path: Path,
-):
-    weak_report = _complete_cmu_unity_runtime_report()
-    weak_report["tare_strategy_quality"] = {
-        "checked": True,
-        "ok": False,
-        "waypoint_count": 2,
-        "path_count": 0,
-        "strategy_path_count": 0,
-        "navigation_success_count": 1,
-        "navigation_failure_count": 0,
-        "reject_reasons": ["path_too_short"],
-        "blockers": ["path_count below threshold"],
-    }
-    weak = _write_json(tmp_path / "cmu_unity_runtime_weak_tare_strategy.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_runtime": weak},
-        required={"cmu_unity_runtime"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_runtime"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "tare_strategy_quality.ok is not true" in gaps
-    assert "tare_strategy_quality: path_count below threshold" in gaps
-
-
-def test_server_sim_closure_accepts_strict_cmu_pct_report_as_runtime_evidence(tmp_path: Path):
-    strict = _write_json(
-        tmp_path / "artifacts/server_sim_closure/cmu_unity_pct_strict/report_unique_waypoints.json",
-        _complete_cmu_unity_pct_strict_report(),
-    )
-
-    summary = server_sim_closure.summarize(
-        report_overrides={
-            "cmu_unity_runtime": strict,
-            "cmu_unity_pct_strict": strict,
-        },
-        required={"cmu_unity_runtime", "cmu_unity_pct_strict"},
-    )
-
-    assert summary["ok"] is True
-    assert summary["verified"]["cmu_unity_runtime"] is True
-    assert summary["verified"]["cmu_unity_pct_strict"] is True
-    assert summary["gates"]["cmu_unity_runtime"]["path"] == str(strict)
-    assert summary["gates"]["cmu_unity_pct_strict"]["path"] == str(strict)
-
-
-def test_server_sim_closure_finds_strict_cmu_pct_report_for_runtime_gate(
-    tmp_path: Path,
-    monkeypatch,
-):
-    strict = _write_json(
-        tmp_path / "artifacts/server_sim_closure/cmu_unity_pct_strict/report_unique_waypoints.json",
-        _complete_cmu_unity_pct_strict_report(),
-    )
-    monkeypatch.setattr(server_sim_closure, "ROOT", tmp_path)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={},
-        required={"cmu_unity_runtime"},
-        include_optional=False,
-    )
-
-    assert summary["ok"] is True
-    assert summary["verified"]["cmu_unity_runtime"] is True
-    assert summary["gates"]["cmu_unity_runtime"]["path"] == str(strict)
-
-
-def test_server_sim_closure_rejects_cmu_unity_pct_strict_with_planner_fallback(tmp_path: Path):
-    weak_report = _complete_cmu_unity_pct_strict_report()
-    weak_report["planner_diagnostics"]["selected_planner"] = "astar"
-    weak_report["planner_diagnostics"]["fallback_used"] = True
-    weak_report["planner_diagnostics"]["fallback_reason"] = "pct path_safety failed"
-    weak_report["planner_diagnostics"]["rejected_plan_count"] = 1
-    weak_report["planner_diagnostics"]["reached_goal"] = False
-    weak = _write_json(tmp_path / "cmu_unity_pct_strict_fallback.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_pct_strict": weak},
-        required={"cmu_unity_pct_strict"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_pct_strict"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "selected_planner is not pct" in gaps
-    assert "planner fallback was used" in gaps
-    assert "planner rejected_plan_count is not 0" in gaps
-    assert "PCT did not report reached_goal" in gaps
-
-
-def test_server_sim_closure_rejects_cmu_unity_pct_strict_direct_goal_bypass(tmp_path: Path):
-    weak_report = _complete_cmu_unity_pct_strict_report()
-    weak_report["direct_goal_fallback"]["used"] = True
-    weak = _write_json(tmp_path / "cmu_unity_pct_strict_direct_goal.json", weak_report)
-
-    summary = server_sim_closure.summarize(
-        report_overrides={"cmu_unity_pct_strict": weak},
-        required={"cmu_unity_pct_strict"},
-    )
-
-    assert summary["ok"] is False
-    assert summary["verified"]["cmu_unity_pct_strict"] is False
-    gaps = "\n".join(summary["remaining_gaps"])
-    assert "direct goal fallback was used" in gaps
-
-
 def test_server_sim_closure_rejects_non_pct_native_motion_report(tmp_path: Path):
     native = _write_json(
         tmp_path / "native_astar.json",
@@ -4314,7 +3570,7 @@ def test_server_sim_closure_rejects_non_pct_native_motion_report(tmp_path: Path)
             "reached_goal": True,
             "final_distance_m": 0.4,
             "planner": "astar",
-            "pct_native_backend_used": False,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": False},
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "obstacle_aware": {"enabled": True, "metadata_points": 24},
             "obstacle_clearance": {"checked": True, "collision": False, "min_clearance_m": 0.7},
@@ -4331,7 +3587,7 @@ def test_server_sim_closure_rejects_non_pct_native_motion_report(tmp_path: Path)
     assert summary["ok"] is False
     assert summary["verified"]["native_pct_mujoco"] is False
     assert any("planner is not pct" in gap for gap in summary["remaining_gaps"])
-    assert any("pct_native_runtime_used is not true" in gap for gap in summary["remaining_gaps"])
+    assert any("pct_planner_runtime_ok is not true" in gap for gap in summary["remaining_gaps"])
 
 
 def test_server_sim_closure_rejects_native_pct_fallback_report(tmp_path: Path):
@@ -4348,8 +3604,8 @@ def test_server_sim_closure_rejects_native_pct_fallback_report(tmp_path: Path):
             "primary_planner": "pct",
             "selected_planner": "astar",
             "fallback_used": True,
-            "global_planner_source": "source_report/native_pct_tomogram",
-            "pct_native_backend_used": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             "moved_m": 10.0,
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "planning_chain": {
@@ -4362,7 +3618,7 @@ def test_server_sim_closure_rejects_native_pct_fallback_report(tmp_path: Path):
                 "selected_planner": "astar",
                 "fallback_used": True,
                 "path_safety_ok": True,
-                "native_backend_used": True,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "tomogram_exists": True,
                 "tomogram_sha256": "abc123",
             },
@@ -4398,7 +3654,7 @@ def test_server_sim_closure_rejects_native_pct_without_obstacle_local_path_evide
             "reached_goal": True,
             "final_distance_m": 0.4,
             "planner": "pct",
-            "pct_native_backend_used": True,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             "moved_m": 10.0,
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "obstacle_aware": {"enabled": False, "metadata_points": 0},
@@ -4781,7 +4037,7 @@ def test_server_sim_closure_rejects_fastlio2_frontier_without_area_growth(tmp_pa
     assert summary["ok"] is False
     assert summary["verified"]["fastlio2_live"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert "/nav/map_cloud area growth below threshold" in gaps
+    assert f"{TOPICS.map_cloud} area growth below threshold" in gaps
     assert "exploration known area growth below threshold" in gaps
     assert "exploration coverage growth below threshold" in gaps
 
@@ -4892,7 +4148,7 @@ def test_server_sim_closure_uses_nav_map_growth_for_rolling_frontier_grid(tmp_pa
                 "health": {"plan_safety_policy": "reject"},
             },
             "map_growth": {
-                "accepted_cumulative_growth_source": "/nav/map_cloud",
+                "accepted_cumulative_growth_source": TOPICS.map_cloud,
                 "exploration_grid_growth_is_acceptance_metric": False,
                 "exploration_grid_accumulation": "rolling_local_window",
                 "min_map_area_growth_m2": 1.0,
@@ -4953,7 +4209,7 @@ def test_server_sim_closure_rejects_fastlio2_frontier_planner_fallback(tmp_path:
                 "health": {"plan_safety_policy": "reject"},
             },
             "map_growth": {
-                "accepted_cumulative_growth_source": "/nav/map_cloud",
+                "accepted_cumulative_growth_source": TOPICS.map_cloud,
                 "min_map_area_growth_m2": 1.0,
                 "min_explored_area_growth_m2": 1.0,
                 "min_exploration_coverage_growth_ratio": 0.01,
@@ -5018,7 +4274,7 @@ def test_server_sim_closure_accepts_fastlio2_frontier_with_successful_navigation
                 "health": {"plan_safety_policy": "reject"},
             },
             "map_growth": {
-                "accepted_cumulative_growth_source": "/nav/map_cloud",
+                "accepted_cumulative_growth_source": TOPICS.map_cloud,
                 "min_map_area_growth_m2": 1.0,
                 "min_explored_area_growth_m2": 1.0,
                 "min_exploration_coverage_growth_ratio": 0.01,
@@ -5317,8 +4573,8 @@ def test_server_sim_closure_accepts_gateway_runtime_acceptance_report(tmp_path: 
     assert summary["ok"] is True, summary["remaining_gaps"]
     gate = summary["gates"]["gateway_runtime_acceptance"]
     assert gate["evidence"]["ros2_topic_required"] is False
-    assert gate["evidence"]["module_port_bus_primary"] is True
-    assert gate["evidence"]["ros2_adapter_primary"] is False
+    assert gate["evidence"]["motion_kind"] == "host_or_simulation"
+    assert gate["evidence"]["motion_owner"] == "configured_host_or_simulation_driver"
     assert gate["evidence"]["streamable_topic_count"] >= 7
 
 
@@ -5343,15 +4599,13 @@ def test_server_sim_closure_accepts_non_motion_gateway_stage_token_advisories(
     }
 
 
-def test_server_sim_closure_rejects_gateway_runtime_acceptance_ros2_primary(
+def test_server_sim_closure_rejects_gateway_endpoint_inspection_dependency(
     tmp_path: Path,
 ):
     payload = _complete_gateway_runtime_acceptance_report()
     payload["ros2_topic_required"] = True
-    payload["checks"]["module_first_dataflow"]["ros2_topic_required"] = True
-    payload["checks"]["module_first_dataflow"]["module_port_bus_primary"] = False
-    payload["checks"]["module_first_dataflow"]["ros2_adapter_primary"] = True
-    payload["checks"]["module_first_dataflow"]["missing_stream_interfaces"] = ["/nav/odometry"]
+    payload["checks"]["gateway_observability"]["ros2_topic_required"] = True
+    payload["checks"]["gateway_observability"]["missing_stream_interfaces"] = [TOPICS.odometry]
     report = _write_json(tmp_path / "gateway_runtime_acceptance_ros2.json", payload)
 
     summary = server_sim_closure.summarize(
@@ -5363,8 +4617,6 @@ def test_server_sim_closure_rejects_gateway_runtime_acceptance_ros2_primary(
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
     assert "ros2_topic_required is not false" in gaps
-    assert "module_port_bus_primary is not true" in gaps
-    assert "ros2_adapter_primary is true" in gaps
     assert "missing Gateway SSE stream interfaces" in gaps
 
 
@@ -6633,7 +5885,7 @@ def test_server_sim_closure_prefers_fresh_failed_report_over_stale_pass(
                     "planning": [
                         {
                             "planner": "pct",
-                            "native_backend_used": True,
+                            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                         }
                     ],
                 }
@@ -6670,7 +5922,7 @@ def test_server_sim_closure_prefers_fresh_failed_native_pct_over_stale_pass(
         {
             "ok": True,
             "planner": "pct",
-            "pct_native_backend_used": True,
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             "primary_planner": "pct",
             "selected_planner": "pct",
             "fallback_used": False,
@@ -6697,19 +5949,18 @@ def test_server_sim_closure_large_terrain_surfaces_pct_runtime_blocker(tmp_path:
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
             "execution_mode": "host_guard",
-            "native_runtime": {
+            "pct_planner_runtime_ok": False,
+            "pct_planner_runtime": {
+                "runtime": "rust_process",
                 "ok": False,
-                "canonical_arch": "x86_64",
-                "python_tag": "py313",
-                "missing": ["ele_planner.cpython-313-x86_64-linux-gnu.so"],
-                "error": "No runnable PCT native modules",
+                "error": "PCT planner runtime unavailable",
             },
             "environment": {
                 "accepted_host": False,
-                "blocked_reason": "pct_native_runtime_unavailable",
+                "blocked_reason": "pct_planner_runtime_unavailable",
                 "claim_boundary": "environment_blocked_no_algorithm_claim",
             },
-            "environment_blockers": ["PCT native runtime unavailable"],
+            "environment_blockers": ["PCT planner runtime unavailable"],
             "cases": [
                 {
                     "route": "terrain_short",
@@ -6717,13 +5968,10 @@ def test_server_sim_closure_large_terrain_surfaces_pct_runtime_blocker(tmp_path:
                     "planning": [
                         {
                             "planner": "pct",
-                            "native_backend_used": False,
-                            "native_runtime": {
+                            "pct_planner_runtime": {
+                                "runtime": "rust_process",
                                 "ok": False,
-                                "canonical_arch": "x86_64",
-                                "python_tag": "py313",
-                                "missing": ["ele_planner.cpython-313-x86_64-linux-gnu.so"],
-                                "error": "No runnable PCT native modules",
+                                "error": "PCT planner runtime unavailable",
                             },
                         }
                     ],
@@ -6740,9 +5988,10 @@ def test_server_sim_closure_large_terrain_surfaces_pct_runtime_blocker(tmp_path:
 
     assert summary["ok"] is False
     gate = summary["gates"]["large_terrain"]
-    assert "PCT native runtime unavailable" in gate["blockers"]
+    assert "PCT planner runtime unavailable" in gate["blockers"]
     assert gate["evidence"]["execution_mode"] == "host_guard"
-    assert gate["evidence"]["native_runtime"]["python_tag"] == "py313"
+    assert gate["evidence"]["pct_planner_runtime"]["runtime"] == "rust_process"
+    assert "python_tag" not in gate["evidence"]["pct_planner_runtime"]
     assert gate["evidence"]["environment"]["claim_boundary"] == ("environment_blocked_no_algorithm_claim")
     assert "environment_runtime" in summary["algorithm_validation"]["gate_categories"]["large_terrain"]
 
@@ -6760,14 +6009,13 @@ def test_server_sim_closure_next_actions_separate_runtime_blocker_from_missing_r
             "simulation_only": True,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
-            "native_runtime": {
+            "pct_planner_runtime_ok": False,
+            "pct_planner_runtime": {
+                "runtime": "rust_process",
                 "ok": False,
-                "canonical_arch": "x86_64",
-                "python_tag": "py313",
-                "missing": ["traj_opt.cpython-313-x86_64-linux-gnu.so"],
-                "error": "No runnable PCT native modules",
+                "error": "PCT planner runtime unavailable",
             },
-            "environment_blockers": ["PCT native runtime unavailable"],
+            "environment_blockers": ["PCT planner runtime unavailable"],
             "cases": [],
         },
     )
@@ -6781,9 +6029,9 @@ def test_server_sim_closure_next_actions_separate_runtime_blocker_from_missing_r
     actions = {action["gate"]: action for action in summary["next_actions"]}
     assert actions["large_terrain"]["category"] == "environment_runtime"
     assert actions["large_terrain"]["action_type"] == "fix_runtime_then_rerun"
-    assert "PCT native runtime unavailable" in actions["large_terrain"]["blockers"]
+    assert "PCT planner runtime unavailable" in actions["large_terrain"]["blockers"]
     assert "large_terrain_nav_validation.py" in actions["large_terrain"]["command"]
-    assert any("PCT native extension modules" in item for item in actions["large_terrain"]["host_requirements"])
+    assert any("PCT planner runtime" in item for item in actions["large_terrain"]["host_requirements"])
     assert actions["large_terrain"]["expected_report_path"] == (
         "artifacts/server_sim_closure/large_terrain/report.json"
     )
@@ -6817,7 +6065,7 @@ def test_server_sim_closure_saved_map_relocalize_next_action_lists_localizer_hos
     assert action["expected_report_path"] == ("artifacts/server_sim_closure/saved_map_relocalize_runtime/report.json")
     assert any("MuJoCo/Fast-LIO live feed" in item for item in action["host_requirements"])
     assert any("localizer runtime" in item for item in action["host_requirements"])
-    assert not any("PCT native extension modules" in item for item in action["host_requirements"])
+    assert not any("PCT planner runtime" in item for item in action["host_requirements"])
     assert summary["host_requirements"]["saved_map_relocalize"] == action["host_requirements"]
 
 
@@ -6842,8 +6090,8 @@ def test_server_sim_closure_native_pct_missing_summary_lists_runtime_requirement
     assert "--near-field-stop-distance 0.35" in command["command"]
     assert command["expected_report_path"] == ("artifacts/server_sim_closure/native_pct_mujoco/report.json")
     assert "artifacts/server_sim_closure/native_pct_mujoco/report.*.server.json" in command["accepted_patterns"]
-    assert any("PCT native extension modules" in item for item in command["host_requirements"])
-    assert any("CPython 3.10" in item for item in command["host_requirements"])
+    assert any("PCT planner runtime available" in item for item in command["host_requirements"])
+    assert not any("CPython" in item for item in command["host_requirements"])
     assert any("ROS 2 Humble" in item for item in command["host_requirements"])
     assert any("MuJoCo EGL" in item for item in command["host_requirements"])
     assert any("MID-360 scan pattern asset" in item for item in command["host_requirements"])
@@ -6852,7 +6100,7 @@ def test_server_sim_closure_native_pct_missing_summary_lists_runtime_requirement
     )
 
 
-def test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host():
+def test_server_sim_host_preflight_blocks_unavailable_pct_planner_runtime():
     report = server_sim_closure.host_preflight(
         required={"large_terrain"},
         platform_system="Windows",
@@ -6863,10 +6111,9 @@ def test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host():
         module_available=lambda _name: False,
         path_exists=lambda _path: False,
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": False,
-            "host_platform_supported": False,
-            "python_abi_matches_known_good": False,
-            "error": "No runnable PCT native modules for arch=x86_64 python=py313",
+            "error": "PCT planner runtime unavailable",
         },
     )
 
@@ -6879,13 +6126,14 @@ def test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host():
     assert report["blocked_gates"] == ["large_terrain"]
     gate = report["gates"]["large_terrain"]
     assert gate["ok"] is False
-    assert gate["failed_checks"] == ["pct_native"]
-    assert gate["checks"]["pct_native"]["ok"] is False
-    assert "build/source the PCT native runtime" in gate["checks"]["pct_native"]["recommended_action"]
-    assert any("pct_runtime_preflight.py" in command for command in gate["checks"]["pct_native"]["diagnostic_commands"])
-    assert "bash scripts/deploy/setup_server_ros_pct.sh" in gate["diagnostic_commands"]
-    assert any("PCT native runtime unavailable" in item for item in gate["blockers"])
-    assert any("CPython 3.10" in item for item in gate["blockers"])
+    assert gate["failed_checks"] == ["pct_planner_runtime"]
+    assert gate["checks"]["pct_planner_runtime"]["ok"] is False
+    assert "build or install the selected PCT planner runtime" in gate["checks"]["pct_planner_runtime"]["recommended_action"]
+    assert any("pct_runtime_preflight.py" in command for command in gate["checks"]["pct_planner_runtime"]["diagnostic_commands"])
+    assert "bash sim/scripts/setup_linux_validation_host.sh" not in gate["diagnostic_commands"]
+    assert gate["blockers"] == ["PCT planner runtime unavailable"]
+    assert gate["checks"]["pct_planner_runtime"]["evidence"]["runtime"] == "rust_process"
+    assert not any("CPython" in item for item in gate["blockers"])
     setup_plan = report["host_setup_plan"]
     assert setup_plan["checked"] is True
     assert setup_plan["source"] == "host_preflight_gates"
@@ -6894,16 +6142,36 @@ def test_server_sim_host_preflight_blocks_pct_gate_on_wrong_host():
     assert setup_plan["ready_to_run_gates"] == []
     assert setup_plan["failed_check_count"] == 1
     pct_check = setup_plan["failed_checks"][0]
-    assert pct_check["check"] == "pct_native"
+    assert pct_check["check"] == "pct_planner_runtime"
     assert pct_check["gates"] == ["large_terrain"]
     assert pct_check["diagnostic_commands"] == gate["diagnostic_commands"]
-    assert any("PCT native runtime unavailable" in item for item in pct_check["blockers"])
+    assert pct_check["blockers"] == ["PCT planner runtime unavailable"]
     assert "fix host checks before running blocked DimOS gates" in setup_plan["stop_condition"]
     action = report["next_actions"][0]
     assert action["gate"] == "large_terrain"
-    assert action["failed_checks"] == ["pct_native"]
+    assert action["failed_checks"] == ["pct_planner_runtime"]
     assert action["diagnostic_commands"] == gate["diagnostic_commands"]
     assert action["recommended_action"] == gate["recommended_action"]
+
+
+def test_server_sim_host_preflight_accepts_rust_runtime_without_python_abi_gate():
+    report = server_sim_closure.host_preflight(
+        required={"large_terrain"},
+        platform_system="Windows",
+        machine="AMD64",
+        python_tag="py313",
+        env={},
+        executable_exists=lambda _name: False,
+        module_available=lambda _name: False,
+        path_exists=lambda _path: False,
+        pct_runtime_report={"runtime": "rust_process", "ok": True},
+    )
+
+    assert report["ok"] is True
+    gate = report["gates"]["large_terrain"]
+    assert gate["failed_checks"] == []
+    assert gate["checks"]["pct_planner_runtime"]["ok"] is True
+    assert gate["checks"]["pct_planner_runtime"]["evidence"]["runtime"] == "rust_process"
 
 
 def test_server_sim_host_preflight_accepts_local_non_motion_gate():
@@ -6983,9 +6251,9 @@ def test_server_sim_host_preflight_accepts_dynamic_obstacle_on_linux_numpy_runti
     assert gate["checks"]["local_numeric_nav"]["ok"] is True
 
 
-def test_server_sim_host_preflight_blocks_local_sim_numeric_gates_on_windows():
+def test_server_sim_host_preflight_blocks_policy_nav_on_windows():
     report = server_sim_closure.host_preflight(
-        required={"policy_nav", "cmu_unity_sim"},
+        required={"policy_nav"},
         platform_system="Windows",
         machine="AMD64",
         python_tag="py313",
@@ -6997,22 +6265,21 @@ def test_server_sim_host_preflight_blocks_local_sim_numeric_gates_on_windows():
 
     assert report["ok"] is False
     assert report["runnable_gates"] == []
-    assert report["blocked_gates"] == ["policy_nav", "cmu_unity_sim"]
+    assert report["blocked_gates"] == ["policy_nav"]
     setup_plan = report["host_setup_plan"]
     assert setup_plan["failed_check_count"] == 1
     assert setup_plan["failed_checks"][0]["check"] == "local_numeric_nav"
-    assert setup_plan["failed_checks"][0]["gates"] == ["policy_nav", "cmu_unity_sim"]
+    assert setup_plan["failed_checks"][0]["gates"] == ["policy_nav"]
     assert len(setup_plan["failed_checks"][0]["diagnostic_commands"]) == 1
-    for name in ("policy_nav", "cmu_unity_sim"):
-        gate = report["gates"][name]
-        assert gate["checks"]["local_non_motion"]["ok"] is True
-        assert gate["checks"]["local_numeric_nav"]["ok"] is False
-        assert any("Windows/MINGW NumPy local simulation runtime" in item for item in gate["blockers"])
+    gate = report["gates"]["policy_nav"]
+    assert gate["checks"]["local_non_motion"]["ok"] is True
+    assert gate["checks"]["local_numeric_nav"]["ok"] is False
+    assert any("Windows/MINGW NumPy local simulation runtime" in item for item in gate["blockers"])
 
 
-def test_server_sim_host_preflight_accepts_local_sim_numeric_gates_on_linux():
+def test_server_sim_host_preflight_accepts_policy_nav_on_linux():
     report = server_sim_closure.host_preflight(
-        required={"policy_nav", "cmu_unity_sim"},
+        required={"policy_nav"},
         platform_system="Linux",
         machine="x86_64",
         python_tag="py310",
@@ -7023,8 +6290,7 @@ def test_server_sim_host_preflight_accepts_local_sim_numeric_gates_on_linux():
     )
 
     assert report["ok"] is True
-    assert report["runnable_gates"] == ["policy_nav", "cmu_unity_sim"]
-
+    assert report["runnable_gates"] == ["policy_nav"]
 
 def _native_pct_preflight_path_exists(path) -> bool:
     normalized = str(path).replace("\\", "/")
@@ -7052,10 +6318,8 @@ def test_server_sim_host_preflight_requires_isolated_ros_domain_and_hardware_aud
         module_available=lambda name: name == "mujoco",
         path_exists=_native_pct_preflight_path_exists,
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": True,
-            "host_platform_supported": True,
-            "python_abi_matches_known_good": True,
-            "lib_dir": "/tmp/pct-native",
             "error": "",
         },
         ros2_package_executables=lambda _package: [
@@ -7095,10 +6359,8 @@ def test_server_sim_host_preflight_blocks_missing_ros2_local_planner_runtime():
         module_available=lambda name: name == "mujoco",
         path_exists=_native_pct_preflight_path_exists,
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": True,
-            "host_platform_supported": True,
-            "python_abi_matches_known_good": True,
-            "lib_dir": "/tmp/pct-native",
             "error": "",
         },
         hardware_subscribers=lambda: [],
@@ -7144,7 +6406,7 @@ def test_server_sim_host_preflight_blocks_missing_gazebo_pct_adapter_runtime():
         executable_exists=lambda name: name in {"ros2", "gz"},
         module_available=lambda _name: False,
         path_exists=path_exists,
-        pct_runtime_report={"ok": True},
+        pct_runtime_report={"runtime": "rust_process", "ok": True},
         hardware_subscribers=lambda: [],
         ros2_package_executables=package_executables,
     )
@@ -7187,7 +6449,7 @@ def test_server_sim_host_preflight_blocks_missing_gazebo_navigation_source():
         executable_exists=lambda name: name in {"ros2", "gz"},
         module_available=lambda _name: False,
         path_exists=path_exists,
-        pct_runtime_report={"ok": True},
+        pct_runtime_report={"runtime": "rust_process", "ok": True},
         hardware_subscribers=lambda: [],
         ros2_package_executables=package_executables,
     )
@@ -7218,10 +6480,8 @@ def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
         module_available=lambda name: name == "mujoco",
         path_exists=_native_pct_preflight_path_exists,
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": True,
-            "host_platform_supported": True,
-            "python_abi_matches_known_good": True,
-            "lib_dir": "/tmp/pct-native",
             "error": "",
         },
         hardware_subscribers=lambda: [],
@@ -7237,6 +6497,10 @@ def test_server_sim_host_preflight_blocks_missing_ros2_fastlio2_runtime():
     assert check["ok"] is False
     assert check["evidence"]["missing_executables"] == ["lio_node"]
     assert any("ros2 pkg executables fastlio2" in command for command in check["diagnostic_commands"])
+    assert (
+        "bash scripts/compat/ros2/setup_fastlio2_validation_host.sh"
+        in check["diagnostic_commands"]
+    )
     setup_plan = report["host_setup_plan"]
     assert setup_plan["failed_check_count"] == 1
     assert setup_plan["failed_checks"][0]["check"] == "ros2_fastlio2"
@@ -7259,10 +6523,8 @@ def test_server_sim_host_preflight_accepts_ros2_fastlio2_runtime():
         module_available=lambda name: name == "mujoco",
         path_exists=_native_pct_preflight_path_exists,
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": True,
-            "host_platform_supported": True,
-            "python_abi_matches_known_good": True,
-            "lib_dir": "/tmp/pct-native",
             "error": "",
         },
         hardware_subscribers=lambda: [],
@@ -7290,10 +6552,8 @@ def test_server_sim_host_preflight_blocks_missing_mid360_pattern_asset():
         module_available=lambda name: name == "mujoco",
         path_exists=lambda path: str(path).replace("\\", "/") in {"/opt/ros/humble/setup.bash", world_path},
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": True,
-            "host_platform_supported": True,
-            "python_abi_matches_known_good": True,
-            "lib_dir": "/tmp/pct-native",
             "error": "",
         },
         hardware_subscribers=lambda: [],
@@ -7328,10 +6588,8 @@ def test_server_sim_host_preflight_blocks_missing_mujoco_world_asset():
         module_available=lambda name: name == "mujoco",
         path_exists=lambda path: str(path).replace("\\", "/") in {setup_path, mid360_path},
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": True,
-            "host_platform_supported": True,
-            "python_abi_matches_known_good": True,
-            "lib_dir": "/tmp/pct-native",
             "error": "",
         },
         hardware_subscribers=lambda: [],
@@ -7362,7 +6620,7 @@ def test_server_sim_host_preflight_blocks_missing_localizer_runtime():
         executable_exists=lambda name: name in {"ros2"},
         module_available=lambda name: name == "mujoco",
         path_exists=_native_pct_preflight_path_exists,
-        pct_runtime_report={"ok": True},
+        pct_runtime_report={"runtime": "rust_process", "ok": True},
         hardware_subscribers=lambda: [],
         ros2_package_executables=lambda _package: [],
     )
@@ -7375,6 +6633,10 @@ def test_server_sim_host_preflight_blocks_missing_localizer_runtime():
     assert check["ok"] is False
     assert check["evidence"]["missing_executables"] == ["localizer_node"]
     assert any("ros2 pkg executables localizer" in command for command in check["diagnostic_commands"])
+    assert (
+        "bash scripts/compat/ros2/setup_fastlio2_validation_host.sh"
+        in check["diagnostic_commands"]
+    )
 
 
 def test_server_sim_host_preflight_accepts_localizer_runtime():
@@ -7387,7 +6649,7 @@ def test_server_sim_host_preflight_accepts_localizer_runtime():
         executable_exists=lambda name: name in {"ros2"},
         module_available=lambda name: name == "mujoco",
         path_exists=_native_pct_preflight_path_exists,
-        pct_runtime_report={"ok": True},
+        pct_runtime_report={"runtime": "rust_process", "ok": True},
         hardware_subscribers=lambda: [],
         ros2_package_executables=lambda package: (["localizer localizer_node"] if package == "localizer" else []),
     )
@@ -7428,7 +6690,7 @@ def test_ros2_package_executables_sources_ros_and_workspace_install(monkeypatch)
             stderr="",
         )
 
-    monkeypatch.setattr(server_sim_closure.os, "name", "posix")
+    original_os_name = os.name
     monkeypatch.setattr(server_sim_closure.Path, "exists", fake_exists)
     monkeypatch.setattr(server_sim_closure.shutil, "which", fake_which)
     monkeypatch.setattr(server_sim_closure.subprocess, "run", fake_run)
@@ -7436,6 +6698,7 @@ def test_ros2_package_executables_sources_ros_and_workspace_install(monkeypatch)
     executables = server_sim_closure._ros2_package_executables(
         "local_planner",
         {"ROS_DISTRO": "humble", "PYTHONPATH": "src:."},
+        os_name="posix",
     )
 
     assert executables == ["local_planner localPlanner", "local_planner pathFollower"]
@@ -7443,13 +6706,17 @@ def test_ros2_package_executables_sources_ros_and_workspace_install(monkeypatch)
     command = calls[0][0]
     assert command[:2] == ["bash", "-lc"]
     shell = command[2]
-    assert "source /opt/ros/humble/setup.bash" in shell
+    normalized_shell = shell.replace("\\", "/")
     assert "source" in shell
-    assert "install/setup.bash" in shell.replace("\\", "/")
+    assert "/opt/ros/humble/setup.bash" in normalized_shell
+    assert "source" in shell
+    assert "install/setup.bash" in normalized_shell
     assert "ros2 pkg executables local_planner" in shell
+    assert os.name == original_os_name
+    assert type(Path(os.getcwd())).__name__ == "WindowsPath"
 
 
-def test_server_sim_host_preflight_setup_plan_orders_native_runtime_failures():
+def test_server_sim_host_preflight_setup_plan_orders_pct_planner_runtime_failures():
     report = server_sim_closure.host_preflight(
         required={"native_pct_mujoco"},
         platform_system="Windows",
@@ -7460,10 +6727,9 @@ def test_server_sim_host_preflight_setup_plan_orders_native_runtime_failures():
         module_available=lambda _name: False,
         path_exists=lambda _path: False,
         pct_runtime_report={
+            "runtime": "rust_process",
             "ok": False,
-            "host_platform_supported": False,
-            "python_abi_matches_known_good": False,
-            "error": "No runnable PCT native modules for arch=x86_64 python=py313",
+            "error": "PCT planner runtime unavailable",
         },
         hardware_subscribers=lambda: None,
         ros2_package_executables=lambda _package: None,
@@ -7473,7 +6739,7 @@ def test_server_sim_host_preflight_setup_plan_orders_native_runtime_failures():
     assert report["blocked_gates"] == ["native_pct_mujoco"]
     failed_checks = [item["check"] for item in report["host_setup_plan"]["failed_checks"]]
     assert failed_checks == [
-        "pct_native",
+        "pct_planner_runtime",
         "ros2_humble",
         "mujoco_headless",
         "mid360_pattern",
@@ -7485,7 +6751,11 @@ def test_server_sim_host_preflight_setup_plan_orders_native_runtime_failures():
     for item in report["host_setup_plan"]["failed_checks"]:
         assert item["gates"] == ["native_pct_mujoco"]
     commands = {item["check"]: item["diagnostic_commands"] for item in report["host_setup_plan"]["failed_checks"]}
-    assert any("pct_runtime_preflight.py" in command for command in commands["pct_native"])
+    assert any("pct_runtime_preflight.py" in command for command in commands["pct_planner_runtime"])
+    assert (
+        "bash scripts/compat/ros2/setup_fastlio2_validation_host.sh"
+        in commands["ros2_humble"]
+    )
     assert any("source /opt/ros/humble/setup.bash" in command for command in commands["ros2_humble"])
     assert any("import mujoco" in command for command in commands["mujoco_headless"])
     assert any("mid360.npy" in command for command in commands["mid360_pattern"])
@@ -7839,7 +7109,7 @@ def test_server_sim_closure_rejects_mujoco_tare_without_live_nav_map_growth_cont
 
     assert summary["ok"] is False
     gaps = "\n".join(summary["remaining_gaps"])
-    assert "map_growth.accepted_cumulative_growth_source is not /nav/map_cloud" in gaps
+    assert f"map_growth.accepted_cumulative_growth_source is not {TOPICS.map_cloud}" in gaps
     assert "map_growth.min_map_area_growth_m2 is not positive" in gaps
     assert "map_growth.nav_map_cloud_area_samples missing" in gaps
 
@@ -7918,16 +7188,16 @@ def test_server_sim_closure_accepts_native_pct_effect_overlay_report(tmp_path: P
             "primary_planner": "pct",
             "selected_planner": "pct",
             "fallback_used": False,
-            "global_planner_source": "source_report/native_pct_tomogram",
-            "pct_native_backend_used": True,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "planning_chain": {
                 "local_planner": "cmu_ros2_native/localPlanner",
@@ -7939,7 +7209,7 @@ def test_server_sim_closure_accepts_native_pct_effect_overlay_report(tmp_path: P
                 "selected_planner": "pct",
                 "fallback_used": False,
                 "path_safety_ok": True,
-                "native_backend_used": True,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "tomogram_exists": True,
                 "tomogram_sha256": "abc123",
                 "pct_optimizer_enabled": True,
@@ -7947,7 +7217,7 @@ def test_server_sim_closure_accepts_native_pct_effect_overlay_report(tmp_path: P
                 "pct_optimizer_accepted": False,
                 "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
                 "pct_optimizer_blocked_sample_count": 3,
-                "pct_planner_path_mode": "native_astar_raw_path",
+                "pct_planner_path_mode": "astar_raw_path",
             },
             "deliverable_contract": {
                 "checks": {"same_source_map_artifact": True},
@@ -7984,8 +7254,8 @@ def test_server_sim_closure_rejects_native_pct_bad_mid360_pattern(tmp_path: Path
             "primary_planner": "pct",
             "selected_planner": "pct",
             "fallback_used": False,
-            "global_planner_source": "source_report/native_pct_tomogram",
-            "pct_native_backend_used": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "planning_chain": {
                 "local_planner": "cmu_ros2_native/localPlanner",
@@ -7997,7 +7267,7 @@ def test_server_sim_closure_rejects_native_pct_bad_mid360_pattern(tmp_path: Path
                 "selected_planner": "pct",
                 "fallback_used": False,
                 "path_safety_ok": True,
-                "native_backend_used": True,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "tomogram_exists": True,
                 "tomogram_sha256": "abc123",
             },
@@ -8042,16 +7312,16 @@ def test_server_sim_closure_reports_native_pct_ros2_runtime_boundary(tmp_path: P
             "primary_planner": "pct",
             "selected_planner": "pct",
             "fallback_used": False,
-            "global_planner_source": "source_report/native_pct_tomogram",
-            "pct_native_backend_used": True,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 12,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "planning_chain": {
                 "local_planner": "cmu_ros2_native/localPlanner",
@@ -8063,14 +7333,14 @@ def test_server_sim_closure_reports_native_pct_ros2_runtime_boundary(tmp_path: P
                 "selected_planner": "pct",
                 "fallback_used": False,
                 "path_safety_ok": True,
-                "native_backend_used": True,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "tomogram_exists": True,
                 "tomogram_sha256": "abc123",
                 "pct_optimizer_attempted": True,
                 "pct_optimizer_accepted": False,
                 "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
                 "pct_optimizer_blocked_sample_count": 12,
-                "pct_planner_path_mode": "native_astar_raw_path",
+                "pct_planner_path_mode": "astar_raw_path",
             },
             "deliverable_contract": {
                 "checks": {"same_source_map_artifact": True},
@@ -8118,9 +7388,9 @@ def test_server_sim_closure_reports_native_pct_ros2_boundary_with_bad_pct_eviden
             "primary_planner": "pct",
             "selected_planner": "pct",
             "fallback_used": False,
-            "global_planner_source": "source_report/native_pct_tomogram",
-            "pct_native_backend_used": True,
-            "pct_runtime_ok": False,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": False,
             "pct_path_count": 0,
             "frames": {"goal": "map", "cmd_vel": "base_link"},
             "planning_chain": {
@@ -8133,7 +7403,7 @@ def test_server_sim_closure_reports_native_pct_ros2_boundary_with_bad_pct_eviden
                 "selected_planner": "pct",
                 "fallback_used": False,
                 "path_safety_ok": True,
-                "native_backend_used": True,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "tomogram_exists": True,
                 "tomogram_sha256": "abc123",
             },
@@ -8161,7 +7431,7 @@ def test_server_sim_closure_reports_native_pct_ros2_boundary_with_bad_pct_eviden
     assert gate["evidence"]["claim_boundary"] == "ros2_runtime_unavailable"
     assert gate["evidence"]["pct_optimizer"]["enabled"] is None
     gaps = "\n".join(summary["remaining_gaps"])
-    assert "pct_runtime_ok is not true" in gaps
+    assert "pct_planner_runtime_ok is not true" in gaps
     assert "pct_path_count < 2" in gaps
     assert "pct_optimizer_enabled is not recorded" in gaps
     assert "pct_planner_path_mode is not supported" in gaps

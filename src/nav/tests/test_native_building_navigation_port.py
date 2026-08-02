@@ -15,11 +15,11 @@ class FakeNavigationClient:
         self.cancels = []
         self.stops = []
 
-    def send_goal(self, x, y, z, yaw, *, request_id=None):
-        self.goals.append((x, y, z, yaw, request_id))
+    def start_task(self, x, y, z, yaw, *, task_id, request_id=None):
+        self.goals.append((x, y, z, yaw, task_id, request_id))
 
-    def cancel(self, reason="cancel", *, request_id=None):
-        self.cancels.append((reason, request_id))
+    def cancel_task(self, task_id, reason="cancel", *, request_id=None):
+        self.cancels.append((task_id, reason, request_id))
 
     def stop(self, reason="stop", *, request_id=None):
         self.stops.append((reason, request_id))

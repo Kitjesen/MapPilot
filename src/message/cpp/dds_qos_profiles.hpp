@@ -22,6 +22,7 @@ enum class QosProfile {
   OperatorMotionAck,      // admission replies: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=64
   OperatorMotionStatus,   // authority/output state: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   InspectionEvidence,  // evidence handshake: RELIABLE, bounded and expiring
+  TaskEvent,           // immutable task facts: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=512
   CameraStream,     // color/depth: BEST_EFFORT, KEEP_LAST=1
   CameraInfo,       // camera_info: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
   GlobalPath,       // paths: RELIABLE, TRANSIENT_LOCAL, KEEP_LAST=1
@@ -111,6 +112,11 @@ inline void apply_qos_profile(dds_qos_t* qos, QosProfile profile) {
       dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 32);
       dds_qset_deadline(qos, DDS_SECS(5));
       dds_qset_lifespan(qos, DDS_SECS(35));
+      break;
+    case QosProfile::TaskEvent:
+      dds_qset_reliability(qos, DDS_RELIABILITY_RELIABLE, DDS_SECS(1));
+      dds_qset_durability(qos, DDS_DURABILITY_TRANSIENT_LOCAL);
+      dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 512);
       break;
     case QosProfile::CameraStream:
       dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT, DDS_SECS(1));
@@ -207,9 +213,10 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
   if (dds_topic == "rt/nav/stop")
     return QosProfile::ControlCommand;
   if (dds_topic == "rt/nav/command/request" ||
+      dds_topic == "rt/maps/activation/request" ||
       dds_topic == "rt/nav/exploration/command" ||
       dds_topic == "rt/nav/exploration_segment/request" ||
-      dds_topic == "rt/nav/inspection/command")
+      dds_topic == "rt/nav/inspection/task/request")
     return QosProfile::CommandRequest;
   if (dds_topic == "rt/nav/operator_motion/control")
     return QosProfile::OperatorMotionControl;
@@ -220,15 +227,19 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
   if (dds_topic == "rt/nav/operator_motion/status")
     return QosProfile::OperatorMotionStatus;
   if (dds_topic == "rt/nav/command/ack" ||
+      dds_topic == "rt/maps/activation/ack" ||
       dds_topic == "rt/nav/goal/status" ||
       dds_topic == "rt/nav/exploration/ack" ||
       dds_topic == "rt/nav/exploration_segment/ack" ||
       dds_topic == "rt/nav/exploration_segment/status" ||
-      dds_topic == "rt/nav/inspection/ack")
+      dds_topic == "rt/nav/inspection/task/ack")
     return QosProfile::CommandAck;
   if (dds_topic == "rt/nav/inspection/evidence/request" ||
       dds_topic == "rt/nav/inspection/evidence/result")
     return QosProfile::InspectionEvidence;
+  if (dds_topic == "rt/nav/inspection/task/event" ||
+      dds_topic == "rt/nav/exploration/run/event")
+    return QosProfile::TaskEvent;
   if (dds_topic == "rt/nav/inspection/status" ||
       dds_topic == "rt/nav/state" ||
       dds_topic == "rt/maps/state" ||
@@ -258,8 +269,7 @@ inline QosProfile qos_for_topic(std::string_view dds_topic) {
       dds_topic == "rt/nav/exploration_execution_snapshot" ||
       dds_topic == "rt/maps/occupancy" ||
       dds_topic == "rt/maps/elevation" ||
-      dds_topic == "rt/maps/esdf" ||
-      dds_topic == "rt/maps/traversability")
+      dds_topic == "rt/maps/esdf")
     return QosProfile::MapGrid;
   // TF
   if (dds_topic == "rt/tf")

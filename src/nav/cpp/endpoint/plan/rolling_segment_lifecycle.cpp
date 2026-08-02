@@ -13,11 +13,11 @@ constexpr double kPlanarTolerance = 1e-6;
 constexpr double kRequestMaxAgeS = 1.0;
 constexpr double kRequestFutureToleranceS = 0.25;
 constexpr double kQuaternionNormTolerance = 1e-3;
-constexpr std::size_t kMaximumCells = 262'144U;
 constexpr std::size_t kTerminalCacheLimit = 128U;
+constexpr std::size_t kRejectedIngressCacheLimit = 128U;
 
 struct DecodedGrid {
-  std::optional<RollingMapSegmentSnapshot> snapshot;
+  std::optional<rolling::SegmentSnapshot> snapshot;
   std::string reason;
 };
 
@@ -50,7 +50,7 @@ bool originPlanar(const RollingSegmentExecutionGrid &grid) {
          std::abs(grid.origin_qw - 1.0) <= kPlanarTolerance;
 }
 
-DecodedGrid decodeGrid(const RollingSegmentExecutionGrid &grid) {
+DecodedGrid decodeGrid(const RollingSegmentExecutionGrid &grid, std::size_t maximum_cells) {
   DecodedGrid decoded;
   if (!grid.payload_complete) {
     decoded.reason = "execution_grid_payload_incomplete";
@@ -76,7 +76,7 @@ DecodedGrid decodeGrid(const RollingSegmentExecutionGrid &grid) {
 
   const std::size_t width = static_cast<std::size_t>(grid.width);
   const std::size_t height = static_cast<std::size_t>(grid.height);
-  if (width == 0U || height == 0U || width > kMaximumCells / height ||
+  if (width == 0U || height == 0U || maximum_cells == 0U || width > maximum_cells / height ||
       width > static_cast<std::size_t>(std::numeric_limits<int>::max()) ||
       height > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
     decoded.reason = "execution_grid_dimensions_invalid";
@@ -93,7 +93,7 @@ DecodedGrid decodeGrid(const RollingSegmentExecutionGrid &grid) {
     return decoded;
   }
 
-  RollingMapSegmentSnapshot snapshot;
+  rolling::SegmentSnapshot snapshot;
   snapshot.occupancy.width = static_cast<int>(width);
   snapshot.occupancy.height = static_cast<int>(height);
   snapshot.occupancy.resolution = grid.resolution;
@@ -156,8 +156,8 @@ RollingSegmentAck rejection(const RollingSegmentCommand &command, std::string re
 
 }  // namespace
 
-RollingSegmentLifecycle::RollingSegmentLifecycle(RollingMapSegmentExecutorConfig executor_config)
-    : executor_(std::move(executor_config)) {}
+RollingSegmentLifecycle::RollingSegmentLifecycle(rolling::SegmentExecutorConfig executor_config)
+    : map_input_policy_(executor_config.map_input), executor_(std::move(executor_config)) {}
 
 RollingSegmentStepResult RollingSegmentLifecycle::step(const RollingSegmentEvent &event) {
   return std::visit([this](const auto &value) { return handle(value); }, event);
@@ -185,7 +185,13 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentBeg
   RollingSegmentStepResult result;
   for (auto &terminal : terminal_cache_) {
     if (!terminal.status_delivered && terminal.execution) {
-      result.effects.emplace_back(makeTerminalStatusEffect(terminal));
+      if (terminal.motion_cleared) {
+        result.effects.emplace_back(makeTerminalStatusEffect(terminal));
+      } else {
+        auto stop = makeSafeStopEffects(terminal);
+        result.effects.insert(result.effects.end(), std::make_move_iterator(stop.effects.begin()),
+                              std::make_move_iterator(stop.effects.end()));
+      }
     }
   }
   return result;
@@ -193,7 +199,7 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentBeg
 
 RollingSegmentStepResult
 RollingSegmentLifecycle::handle(const RollingSegmentObserveExecutionGrid &event) {
-  auto decoded = decodeGrid(event.grid);
+  auto decoded = decodeGrid(event.grid, map_input_policy_.max_grid_cells);
   if (!decoded.snapshot) {
     latest_input_.reset();
     input_error_ = decoded.reason;
@@ -207,12 +213,10 @@ RollingSegmentLifecycle::handle(const RollingSegmentObserveExecutionGrid &event)
   if (latest_input_) {
     const auto &previous = latest_input_->snapshot;
     const auto &incoming = *decoded.snapshot;
-    if (previous.identity.sameSource(incoming.identity) &&
-        (incoming.identity.reset_epoch < previous.identity.reset_epoch ||
-         (incoming.identity.reset_epoch == previous.identity.reset_epoch &&
-          (incoming.identity.generation < previous.identity.generation ||
-           (incoming.identity.generation == previous.identity.generation &&
-            incoming.stamp_s + 1e-9 < previous.stamp_s))))) {
+    const auto previous_stamp = previous.mapStamp();
+    const auto incoming_stamp = incoming.mapStamp();
+    if (previous_stamp.sameEpoch(incoming_stamp) &&
+        incoming_stamp.revision < previous_stamp.revision) {
       latest_input_.reset();
       input_error_ = "execution_grid_provenance_regressed";
       input_invalidated_this_tick_ = true;
@@ -222,8 +226,43 @@ RollingSegmentLifecycle::handle(const RollingSegmentObserveExecutionGrid &event)
       executor_.reset();
       return {};
     }
+    if (previous_stamp.sameEpoch(incoming_stamp) &&
+        incoming_stamp.revision == previous_stamp.revision) {
+      if (incoming_stamp.timestamp != previous_stamp.timestamp) {
+        latest_input_.reset();
+        input_error_ = "execution_grid_revision_stamp_conflict";
+        input_invalidated_this_tick_ = true;
+        if (active_) {
+          return terminateActive(ExplorationSegmentState::kStaleBinding, input_error_);
+        }
+        executor_.reset();
+        return {};
+      }
+      if (!incoming.samePayload(previous)) {
+        latest_input_.reset();
+        input_error_ = "execution_grid_stamp_payload_conflict";
+        input_invalidated_this_tick_ = true;
+        if (active_) {
+          return terminateActive(ExplorationSegmentState::kStaleBinding, input_error_);
+        }
+        executor_.reset();
+        return {};
+      }
+      return {};
+    }
+    if (!previous_stamp.sameEpoch(incoming_stamp)) {
+      rolling::SegmentInput input;
+      input.snapshot = std::move(*decoded.snapshot);
+      latest_input_ = std::move(input);
+      input_error_.clear();
+      if (active_) {
+        return terminateActive(ExplorationSegmentState::kStaleBinding, "segment_map_epoch_changed");
+      }
+      executor_.reset();
+      return {};
+    }
   }
-  RollingMapSegmentInput input;
+  rolling::SegmentInput input;
   input.snapshot = std::move(*decoded.snapshot);
   latest_input_ = std::move(input);
   input_error_.clear();
@@ -245,7 +284,18 @@ RollingSegmentLifecycle::handle(const RollingSegmentObserveInvalidInput &event) 
 }
 
 RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCommandEvent &event) {
-  const auto &command = event.command;
+  return handleCommand(event.command, event.context, nullptr);
+}
+
+RollingSegmentStepResult
+RollingSegmentLifecycle::handle(const RollingSegmentIngressRejected &event) {
+  return handleCommand(event.command, event.context, &event.reason);
+}
+
+RollingSegmentStepResult
+RollingSegmentLifecycle::handleCommand(const RollingSegmentCommand &command,
+                                       const RollingSegmentRuntimeContext &context,
+                                       const std::string *ingress_rejection_reason) {
   RollingSegmentStepResult result;
   auto reject = [&](std::string reason, bool terminal_execute = false) {
     if (terminal_execute) {
@@ -285,7 +335,9 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
                                     command.reset_epoch == active_->identity.reset_epoch &&
                                     command.minimum_generation == active_->minimum_generation;
   TerminalSegment *terminal = findTerminal(command);
-  if (!requestFresh(command, event.context.now_s) && terminal == nullptr && !exact_active_binding) {
+  const RejectedIngressReceipt *rejected_ingress = findRejectedIngress(command);
+  if (!requestFresh(command, context.now_s) && terminal == nullptr && rejected_ingress == nullptr &&
+      !exact_active_binding) {
     reject("segment_request_stale_or_invalid");
     return result;
   }
@@ -300,11 +352,18 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
         terminal->execution ? terminal->execution->identity.reset_epoch : command.reset_epoch,
         terminal->execution ? terminal->execution->generation : command.minimum_generation,
         terminal->execution && terminal->execution->identity.live,
-        "segment_terminal_replayed",
+        terminal->execution && !terminal->motion_cleared ? "segment_terminal_stop_pending"
+                                                         : "segment_terminal_replayed",
     };
     result.effects.emplace_back(std::move(effect));
     if (terminal->execution) {
-      result.effects.emplace_back(makeTerminalStatusEffect(*terminal));
+      if (terminal->motion_cleared) {
+        result.effects.emplace_back(makeTerminalStatusEffect(*terminal));
+      } else {
+        auto stop = makeSafeStopEffects(*terminal);
+        result.effects.insert(result.effects.end(), std::make_move_iterator(stop.effects.begin()),
+                              std::make_move_iterator(stop.effects.end()));
+      }
     }
     return result;
   }
@@ -315,6 +374,31 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
     }
     if (!exact_active_binding) {
       reject("segment_cancel_binding_mismatch");
+      return result;
+    }
+    if (rejected_ingress != nullptr) {
+      RollingSegmentAckEffect effect;
+      effect.effect_id = nextEffectId();
+      effect.ack = rejected_ingress->ack;
+      result.effects.emplace_back(std::move(effect));
+      return result;
+    }
+    if (ingress_rejection_reason != nullptr) {
+      RollingSegmentAck ack{
+          command.request_id,
+          command.kind,
+          false,
+          active_->identity.session_id,
+          active_->identity.reset_epoch,
+          active_->generation,
+          active_->identity.live,
+          ingress_rejection_reason->empty() ? "goal_terminal_pending" : *ingress_rejection_reason,
+      };
+      const auto &receipt = rememberRejectedIngress(command, std::move(ack));
+      RollingSegmentAckEffect effect;
+      effect.effect_id = nextEffectId();
+      effect.ack = receipt.ack;
+      result.effects.emplace_back(std::move(effect));
       return result;
     }
     RollingSegmentAckEffect ack_effect;
@@ -346,6 +430,10 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
     reject("segment_target_orientation_invalid");
     return result;
   }
+  if (motionClearPending()) {
+    reject("segment_motion_clear_pending");
+    return result;
+  }
   if (active_) {
     if (!exact_active_binding) {
       reject("segment_already_active");
@@ -375,6 +463,13 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
     result.effects.emplace_back(std::move(status_effect));
     return result;
   }
+  if (rejected_ingress != nullptr) {
+    RollingSegmentAckEffect effect;
+    effect.effect_id = nextEffectId();
+    effect.ack = rejected_ingress->ack;
+    result.effects.emplace_back(std::move(effect));
+    return result;
+  }
   if (input_invalidated_this_tick_) {
     reject("execution_grid_invalidated_this_tick", true);
     return result;
@@ -389,26 +484,37 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
     reject("segment_request_binding_mismatch", true);
     return result;
   }
-  if (event.context.generic_navigation_active) {
+  if (ingress_rejection_reason != nullptr) {
+    RollingSegmentAck ack =
+        rejection(command, ingress_rejection_reason->empty() ? "goal_terminal_pending"
+                                                             : *ingress_rejection_reason);
+    const auto &receipt = rememberRejectedIngress(command, std::move(ack));
+    RollingSegmentAckEffect effect;
+    effect.effect_id = nextEffectId();
+    effect.ack = receipt.ack;
+    result.effects.emplace_back(std::move(effect));
+    return result;
+  }
+  if (context.generic_navigation_active) {
     reject("generic_navigation_active", true);
     return result;
   }
-  if (!event.context.input_ready || !event.context.autonomy_mode || !event.context.motion_allowed ||
-      event.context.operator_takeover_latched || !event.context.driver_control_ready ||
-      !event.context.robot_pose || !event.context.map_z || !std::isfinite(*event.context.map_z)) {
+  if (!context.input_ready || !context.autonomy_mode || !context.motion_allowed ||
+      context.operator_takeover_latched || !context.driver_control_ready || !context.robot_pose ||
+      !context.map_z || !std::isfinite(*context.map_z)) {
     reject("segment_inputs_not_ready", true);
     return result;
   }
 
   auto input = *latest_input_;
-  input.now_s = event.context.now_s;
-  input.robot_pose = *event.context.robot_pose;
+  input.now_s = context.now_s;
+  input.robot_pose = *context.robot_pose;
   input.input_ready = true;
   const auto decision = executor_.plan(input, {
                                                   {command.target.x, command.target.y},
                                                   command.minimum_generation,
                                               });
-  if (decision.action != RollingMapSegmentAction::Accepted || decision.path.size() < 2U ||
+  if (decision.action != rolling::SegmentAction::Accepted || decision.path.size() < 2U ||
       !decision.executed_map.valid()) {
     executor_.reset();
     reject(decision.reason.empty() ? "segment_safe_prefix_rejected" : decision.reason, true);
@@ -418,7 +524,7 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
   active_ = ActiveSegment{
       command.request_id,
       decision.executed_map,
-      decision.executed_generation,
+      decision.executed_revision,
       command.minimum_generation,
   };
 
@@ -432,14 +538,14 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
   result.effects.emplace_back(RollingSegmentInstallPathEffect{
       nextEffectId(),
       decision.path,
-      *event.context.map_z,
-      event.context.now_s,
+      *context.map_z,
+      context.now_s,
   });
   result.effects.emplace_back(RollingSegmentPublishPathEffect{
       nextEffectId(),
       decision.path,
-      *event.context.map_z,
-      event.context.now_s,
+      *context.map_z,
+      context.now_s,
   });
 
   RollingSegmentAckEffect ack_effect;
@@ -451,7 +557,7 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
       true,
       decision.executed_map.session_id,
       decision.executed_map.reset_epoch,
-      decision.executed_generation,
+      decision.executed_revision,
       decision.executed_map.live,
       decision.reason,
   };
@@ -471,7 +577,7 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentCom
         state,
         decision.executed_map.session_id,
         decision.executed_map.reset_epoch,
-        decision.executed_generation,
+        decision.executed_revision,
         decision.executed_map.live,
         reason,
     };
@@ -498,10 +604,16 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentRev
                       event.context.driver_control_ready && event.context.robot_pose.has_value();
   input.robot_pose = event.context.robot_pose.value_or(lingtu::explore::Pose2D{});
   const auto decision = executor_.revalidate(input);
-  if (decision.action != RollingMapSegmentAction::Cancel && executor_.active()) {
+  if (decision.action != rolling::SegmentAction::Cancel && executor_.active()) {
+    if (decision.executed_map.valid() && decision.executed_revision != 0U) {
+      active_->identity = decision.executed_map;
+      active_->generation = decision.executed_revision;
+    }
     return {};
   }
-  const bool unsafe = decision.reason == "segment_path_no_longer_safe";
+  const bool unsafe = decision.reason == "segment_path_no_longer_safe" ||
+                      decision.reason == "segment_path_outside_rolling_map" ||
+                      decision.reason == "segment_risk_stop_threshold_exceeded";
   return terminateActive(unsafe ? ExplorationSegmentState::kFailed
                                 : ExplorationSegmentState::kStaleBinding,
                          decision.reason.empty() ? "segment_revalidation_failed" : decision.reason);
@@ -537,6 +649,35 @@ RollingSegmentStepResult RollingSegmentLifecycle::handle(const RollingSegmentShu
 
 RollingSegmentStepResult
 RollingSegmentLifecycle::handle(const RollingSegmentEffectFeedback &event) {
+  const auto motion_clear_pending = pending_motion_clears_.find(event.effect_id);
+  if (motion_clear_pending != pending_motion_clears_.end()) {
+    const TerminalKey key = motion_clear_pending->second;
+    pending_motion_clears_.erase(motion_clear_pending);
+    if (!event.success) {
+      return {};
+    }
+    auto *terminal = findTerminal(key);
+    if (terminal == nullptr) {
+      return {};
+    }
+    terminal->motion_cleared = true;
+    for (auto it = pending_motion_clears_.begin(); it != pending_motion_clears_.end();) {
+      const auto &other = it->second;
+      if (other.request_id == key.request_id && other.session_id == key.session_id &&
+          other.reset_epoch == key.reset_epoch &&
+          other.minimum_generation == key.minimum_generation) {
+        it = pending_motion_clears_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    RollingSegmentStepResult result;
+    if (!terminal->status_delivered) {
+      result.effects.emplace_back(makeTerminalStatusEffect(*terminal));
+    }
+    return result;
+  }
+
   const auto terminal_pending = pending_terminal_statuses_.find(event.effect_id);
   if (terminal_pending != pending_terminal_statuses_.end()) {
     if (event.success) {
@@ -636,6 +777,42 @@ RollingSegmentLifecycle::rememberTerminal(TerminalSegment terminal) {
   return terminal_cache_.back();
 }
 
+const RollingSegmentLifecycle::RejectedIngressReceipt *
+RollingSegmentLifecycle::findRejectedIngress(const RollingSegmentCommand &command) const {
+  for (auto it = rejected_ingress_cache_.rbegin(); it != rejected_ingress_cache_.rend(); ++it) {
+    if (it->request_id == command.request_id && it->kind == command.kind &&
+        it->session_id == command.session_id && it->reset_epoch == command.reset_epoch &&
+        it->minimum_generation == command.minimum_generation) {
+      return &*it;
+    }
+  }
+  return nullptr;
+}
+
+RollingSegmentLifecycle::RejectedIngressReceipt &
+RollingSegmentLifecycle::rememberRejectedIngress(const RollingSegmentCommand &command,
+                                                 RollingSegmentAck ack) {
+  for (auto it = rejected_ingress_cache_.rbegin(); it != rejected_ingress_cache_.rend(); ++it) {
+    if (it->request_id == command.request_id && it->kind == command.kind &&
+        it->session_id == command.session_id && it->reset_epoch == command.reset_epoch &&
+        it->minimum_generation == command.minimum_generation) {
+      return *it;
+    }
+  }
+  if (rejected_ingress_cache_.size() >= kRejectedIngressCacheLimit) {
+    rejected_ingress_cache_.pop_front();
+  }
+  rejected_ingress_cache_.push_back(RejectedIngressReceipt{
+      command.request_id,
+      command.kind,
+      command.session_id,
+      command.reset_epoch,
+      command.minimum_generation,
+      std::move(ack),
+  });
+  return rejected_ingress_cache_.back();
+}
+
 RollingSegmentStatusEffect
 RollingSegmentLifecycle::makeTerminalStatusEffect(TerminalSegment &terminal) {
   RollingSegmentStatusEffect effect;
@@ -660,6 +837,33 @@ RollingSegmentLifecycle::makeTerminalStatusEffect(TerminalSegment &terminal) {
   return effect;
 }
 
+RollingSegmentStepResult RollingSegmentLifecycle::makeSafeStopEffects(TerminalSegment &terminal) {
+  RollingSegmentStepResult result;
+  result.effects.emplace_back(RollingSegmentStopAuthorityEffect{nextEffectId()});
+  const std::uint64_t clear_effect_id = nextEffectId();
+  pending_motion_clears_.insert_or_assign(clear_effect_id, TerminalKey{
+                                                               terminal.request_id,
+                                                               terminal.session_id,
+                                                               terminal.reset_epoch,
+                                                               terminal.minimum_generation,
+                                                           });
+  result.effects.emplace_back(RollingSegmentClearMotionEffect{
+      clear_effect_id,
+      RollingSegmentEffectFailurePolicy::kAbortBatch,
+      terminal.reason,
+  });
+  return result;
+}
+
+bool RollingSegmentLifecycle::motionClearPending() const noexcept {
+  for (const auto &terminal : terminal_cache_) {
+    if (terminal.execution && !terminal.motion_cleared) {
+      return true;
+    }
+  }
+  return false;
+}
+
 RollingSegmentStepResult RollingSegmentLifecycle::terminateActive(ExplorationSegmentState state,
                                                                   std::string reason) {
   RollingSegmentStepResult result;
@@ -679,13 +883,7 @@ RollingSegmentStepResult RollingSegmentLifecycle::terminateActive(ExplorationSeg
       false,
   });
 
-  result.effects.emplace_back(RollingSegmentStopAuthorityEffect{nextEffectId()});
-  result.effects.emplace_back(makeTerminalStatusEffect(terminal));
-  result.effects.emplace_back(RollingSegmentClearMotionEffect{
-      nextEffectId(),
-      RollingSegmentEffectFailurePolicy::kAbortBatch,
-      terminal.reason,
-  });
+  result = makeSafeStopEffects(terminal);
   active_.reset();
   executor_.reset();
   return result;

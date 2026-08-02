@@ -17,7 +17,6 @@ curl -fsS "http://${LINGTU_HOST}:5050/api/v1/health"
 | SSH user | `sunrise` |
 | Role | Primary robot target for deploying LingTu navigation algorithms |
 | Primary release path | `/opt/lingtu/current` via `scripts/deploy/cut_release.sh` |
-| Legacy OTA path | `/opt/lingtu/nav/current` via `scripts/ota/install_nav.sh` |
 | Dev checkout | `~/data/SLAM/navigation` or `~/data/inovxio/lingtu` |
 | Gateway | `http://${LINGTU_HOST}:5050` |
 | MCP | `http://${LINGTU_HOST}:8090/mcp` |

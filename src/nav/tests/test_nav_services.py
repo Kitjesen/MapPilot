@@ -45,7 +45,7 @@ class TestWavefrontFrontierExplorer(unittest.TestCase):
     """Test frontier discovery, scoring, and health."""
 
     def _make_explorer(self, **kw):
-        from nav.exploration.frontier_explorer_module import WavefrontFrontierExplorer
+        from explore.frontier import WavefrontFrontierExplorer
 
         kw.setdefault("min_frontier_size", 2)
         mod = WavefrontFrontierExplorer(**kw)

@@ -232,7 +232,7 @@ class GlobalPlannerGridSafetyMixin:
              candidate and return the first path that passes live safety.
 
         This keeps the configured primary backend, such as OctoPlanner3D, as
-        the only planner in product profiles where fallback_planner_name is
+        the only planner in Products where fallback_planner_name is
         intentionally empty.
         """
         # --- Phase 1: Grid validation and param extraction ---

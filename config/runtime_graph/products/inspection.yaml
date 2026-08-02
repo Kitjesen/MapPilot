@@ -1,5 +1,7 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: inspection
+contracts:
+  - lingtu.product.inspection.v1
 summary: Operator or semantic inspection tasks over saved-map native navigation.
 operator_switchable: true
 product_mode: inspection
@@ -14,45 +16,39 @@ data_plane: typed_dds
 control_owner: autonomy
 autonomy_owner: native_nav_endpoint
 goal_owner: operator_or_semantic_planner
+native_nav:
+  control_mode: autonomy
+  publish_cmd_vel: true
+  check_obstacle: true
+  use_traversability_cost: true
+  allow_teleop_takeover: true
+  teleop_local_planner: true
 processes:
   - lidar
   - slam
+  - maps
   - traversability
   - nav
   - driver
   - camera
-  - runtime
-required_topics:
-  - /tf
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_cloud
-  - /slam/localization_health
-  - /nav/command/request
-  - /nav/command/ack
-  - /nav/inspection/command
-  - /nav/inspection/ack
-  - /nav/inspection/status
-  - /nav/inspection/evidence/request
-  - /nav/inspection/evidence/result
-  - /nav/traversability
-  - /nav/global_path
-  - /nav/local_path
-  - /nav/way_point
-  - /nav/cmd_vel
-required_capabilities:
-  - saved_map_relocalization
-  - operator_or_semantic_goal_source
-  - octoplanner3d_global_planning
-  - local_planner_collision_and_traversability_scoring
-  - final_cmd_vel_single_writer
-  - operator_teleop_takeover_with_safety_veto
-  - operator_assisted_local_planner_takeover
-  - inspection_evidence_capture_and_result_ack
+  - host
+critical_modules:
+  - host.bus
+  - nav.commands
+  - GatewayModule
 forbidden_modules:
+  - TeleopModule
+  - nav.mission
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.local_planner
   - nav.path_follower
+  - OccupancyGridModule
+  - VoxelGridModule
+  - ElevationMapModule
+  - ESDFModule
+  - TraversabilityCostModule
+  - SemanticMapModule
 forbidden_claims:
   - module_sim_real_equivalence
   - ros2_bridge_required
@@ -60,22 +56,41 @@ transport_rules:
   product_bus: typed_dds
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
-inspection_command_boundary:
-  request: /nav/inspection/command
-  ack: /nav/inspection/ack
+inspection_task_boundary:
+  request: /nav/inspection/task/request
+  ack: /nav/inspection/task/ack
   status: /nav/inspection/status
   client_completion: business_ack_required
+  request_identity_fields: [task_id, request_id]
+  response_identity_fields: [task_id, request_id]
+inspection_task_event_stream:
+  topic: /nav/inspection/task/event
+  ordering_cursor: [boot_id, event_sequence]
+  consumer_status: host_bus_gateway_projection_enabled
+  retention: durable_gateway_projection
+  task_journal_status: gateway_atomic_projection_enabled_native_restart_reconciliation_pending
+  recording_status: native_mcap_task_verification_enabled_native_task_journal_pending
+inspection_report_contract:
+  path: /api/v1/inspection/tasks/{task_id}/report
+  source: native_task_events_plus_task_route_snapshot_plus_verified_evidence
+  route_requirements: minimal_snapshot_persisted_with_task_journal
+  route_snapshot_required: true
+  request_id_binding: durable_before_native_command
+  native_identity_conflict: reject_event_and_require_review
+  execution_truth: native_task_event_only
+  acceptance: separate_from_execution_terminal
+  incomplete_history: unknown_review_required
+  diagnostic_recording: optional_not_an_acceptance_source
+recording_contract:
+  activation: explicit_product_operation
+  native_preset: inspection-evidence-v1
+  identity: task_id
+  completion: unique_native_terminal_after_boot_matched_zero_output_and_driver_confirmation
+  output: atomic_mcap_plus_session_manifest
+  replay_policy: sensors_only_recorded_control_and_task_facts_are_never_republished
+  offline_verification: player_dry_run_same_task_timeline_and_stop_evidence
+  lifecycle_binding: pending
 inspection_evidence_boundary:
   request: /nav/inspection/evidence/request
   result: /nav/inspection/evidence/result
   client_completion: matching_persisted_result_required
-target_chain:
-  - Operator requests or SemanticPlanner select inspection routes and goals.
-  - Gateway and GoalService send route lifecycle requests through the persistent C++ client on /nav/inspection/command and wait for /nav/inspection/ack.
-  - Native nav endpoint publishes current run and route-point progress on /nav/inspection/status.
-  - Native nav endpoint requests point evidence on /nav/inspection/evidence/request and waits for the perception worker result on /nav/inspection/evidence/result.
-  - Direct goals and operator motion intents continue to use /nav/command/request and /nav/command/ack.
-  - Native nav endpoint runs OctoPlanner3D, LocalPlanner, and PathFollower as C++ calls.
-  - Native nav endpoint publishes path state and final /nav/cmd_vel.
-  - Operator takeover pauses motion without restarting the inspection runtime; release holds zero until explicit resume and a fresh inspection goal.
-  - Assisted takeover routes joystick translation through native LocalPlanner and PathFollower without automatic recovery rotation or backing up.

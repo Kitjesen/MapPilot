@@ -12,7 +12,7 @@ class SessionCache:
     def __init__(self) -> None:
         self._session_mode = "idle"
         self._session_product_session = "idle"
-        self._session_product_profile: str | None = None
+        self._session_product: str | None = None
         self._session_map: str | None = None
         self._session_slam_profile = "stopped"
         self._session_since = time.time()

@@ -81,12 +81,15 @@ inline constexpr TopicContract kMapsElevation{
 inline constexpr TopicContract kMapsEsdf{
     "/maps/esdf", "rt/maps/esdf",
     "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
-inline constexpr TopicContract kMapsTraversability{
-    "/maps/traversability", "rt/maps/traversability",
-    "lingtu.dds.MapGrid", "lingtu::dds::MapGrid"};
 inline constexpr TopicContract kMapsScene{
     "/maps/scene", "rt/maps/scene",
     "lingtu.dds.MapScene", "lingtu::dds::MapScene"};
+inline constexpr TopicContract kMapsActivationRequest{
+    "/maps/activation/request", "rt/maps/activation/request",
+    "lingtu.dds.MapActivationRequest", "lingtu::dds::MapActivationRequest"};
+inline constexpr TopicContract kMapsActivationAck{
+    "/maps/activation/ack", "rt/maps/activation/ack",
+    "lingtu.dds.MapActivationAck", "lingtu::dds::MapActivationAck"};
 inline constexpr TopicContract kCameraColor{
     "/camera/color/image_raw", "rt/camera/color",
     "lingtu.dds.Image", "lingtu::dds::Image"};
@@ -177,6 +180,10 @@ inline constexpr TopicContract kNavExplorationAck{
     "/nav/exploration/ack", "rt/nav/exploration/ack",
     "lingtu.dds.ExplorationCommandAck",
     "lingtu::dds::ExplorationCommandAck"};
+inline constexpr TopicContract kNavExplorationRunEvent{
+    "/nav/exploration/run/event", "rt/nav/exploration/run/event",
+    "lingtu.dds.ExplorationRunEvent",
+    "lingtu::dds::ExplorationRunEvent"};
 inline constexpr TopicContract kNavExplorationSegmentRequest{
     "/nav/exploration_segment/request", "rt/nav/exploration_segment/request",
     "lingtu.dds.ExplorationSegmentRequest",
@@ -189,14 +196,14 @@ inline constexpr TopicContract kNavExplorationSegmentStatus{
     "/nav/exploration_segment/status", "rt/nav/exploration_segment/status",
     "lingtu.dds.ExplorationSegmentStatus",
     "lingtu::dds::ExplorationSegmentStatus"};
-inline constexpr TopicContract kNavInspectionCommand{
-    "/nav/inspection/command", "rt/nav/inspection/command",
-    "lingtu.dds.InspectionCommandRequest",
-    "lingtu::dds::InspectionCommandRequest"};
-inline constexpr TopicContract kNavInspectionAck{
-    "/nav/inspection/ack", "rt/nav/inspection/ack",
-    "lingtu.dds.InspectionCommandAck",
-    "lingtu::dds::InspectionCommandAck"};
+inline constexpr TopicContract kNavInspectionTaskRequest{
+    "/nav/inspection/task/request", "rt/nav/inspection/task/request",
+    "lingtu.dds.InspectionTaskRequest",
+    "lingtu::dds::InspectionTaskRequest"};
+inline constexpr TopicContract kNavInspectionTaskAck{
+    "/nav/inspection/task/ack", "rt/nav/inspection/task/ack",
+    "lingtu.dds.InspectionTaskAck",
+    "lingtu::dds::InspectionTaskAck"};
 inline constexpr TopicContract kNavInspectionEvidenceRequest{
     "/nav/inspection/evidence/request", "rt/nav/inspection/evidence/request",
     "lingtu.dds.InspectionEvidenceRequest",
@@ -209,6 +216,10 @@ inline constexpr TopicContract kNavInspectionStatus{
     "/nav/inspection/status", "rt/nav/inspection/status",
     "lingtu.dds.InspectionStatus",
     "lingtu::dds::InspectionStatus"};
+inline constexpr TopicContract kNavInspectionTaskEvent{
+    "/nav/inspection/task/event", "rt/nav/inspection/task/event",
+    "lingtu.dds.InspectionTaskEvent",
+    "lingtu::dds::InspectionTaskEvent"};
 inline constexpr TopicContract kNavSemanticInstruction{
     "/nav/semantic/instruction", "rt/nav/semantic/instruction",
     "lingtu.dds.Text", "lingtu::dds::Text"};
@@ -285,8 +296,9 @@ inline constexpr TopicContract kTopicContracts[] = {
     kMapsOccupancy,
     kMapsElevation,
     kMapsEsdf,
-    kMapsTraversability,
     kMapsScene,
+    kMapsActivationRequest,
+    kMapsActivationAck,
     kCameraColor,
     kCameraDepth,
     kCameraInfo,
@@ -314,14 +326,16 @@ inline constexpr TopicContract kTopicContracts[] = {
     kNavState,
     kNavExplorationCommand,
     kNavExplorationAck,
-    kNavInspectionCommand,
-    kNavInspectionAck,
+    kNavExplorationRunEvent,
+    kNavInspectionTaskRequest,
+    kNavInspectionTaskAck,
     kNavExplorationSegmentRequest,
     kNavExplorationSegmentAck,
     kNavExplorationSegmentStatus,
     kNavInspectionEvidenceRequest,
     kNavInspectionEvidenceResult,
     kNavInspectionStatus,
+    kNavInspectionTaskEvent,
     kNavSemanticInstruction,
     kNavTraversability,
     kNavTerrainMap,

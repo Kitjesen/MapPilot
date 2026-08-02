@@ -7,8 +7,14 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from runtime.algorithm_gates import DIMOS_BENCHMARK_REQUIRED_GATES
-from sim.diagnostics.dataflow_report import RUNTIME_DATAFLOW_GATES, build_runtime_dataflow_from_summary
+from sim.diagnostics.dataflow_report import (
+    RUNTIME_DATAFLOW_GATES,
+    build_runtime_dataflow_from_summary,
+    summarize_runtime_report,
+)
 from sim.scripts import dimos_gap_report
 
 
@@ -88,14 +94,16 @@ def _native_pct_dataflow_report(
     report = {
         "schema_version": "lingtu.native_pct_mujoco_gate.v1",
         "ok": True,
-        "pct_runtime_ok": True,
+        "global_planner_source": "source_report/pct_tomogram",
+        "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+        "pct_planner_runtime_ok": True,
         "pct_path_count": 8,
         "pct_optimizer_enabled": True,
         "pct_optimizer_attempted": True,
         "pct_optimizer_accepted": False,
         "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
         "pct_optimizer_blocked_sample_count": 3,
-        "pct_planner_path_mode": "native_astar_raw_path",
+        "pct_planner_path_mode": "astar_raw_path",
         "selected_planner": "pct",
         "fallback_used": False,
         "path_count": 2,
@@ -197,6 +205,7 @@ def _pct_saved_map_dataflow_report() -> dict:
             "fallback_reason": "",
             "path_count": 3,
             "path": [[0, 0, 0], [1, 0, 0], [2, 0, 0]],
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
         },
         "source_report": "artifacts/server_sim_closure/large_terrain/report.json",
         "tomogram": "artifacts/server_sim_closure/same_source_map/tomogram.pickle",
@@ -207,14 +216,16 @@ def _pct_saved_map_dataflow_report() -> dict:
         "map_artifacts": _same_source_map_artifacts("pct_saved_map"),
         "same_source_hash_identity": _same_source_hash_identity("pct_saved_map"),
         "native_gate": {
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
             "selected_planner": "pct",
             "fallback_used": False,
             "path_count": 2,
@@ -544,7 +555,8 @@ def _large_terrain_dataflow_report(*, with_same_source: bool = True) -> dict:
         "cmd_vel_sent_to_hardware": False,
         "validation_level": "global_planning_assets",
         "selection_policy": "first_route_ok_after_primary",
-        "native_runtime": {"ok": True},
+        "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+        "pct_planner_runtime_ok": True,
         "cases": [
             {
                 "route": "terrain_long",
@@ -557,8 +569,11 @@ def _large_terrain_dataflow_report(*, with_same_source: bool = True) -> dict:
                         "selected_planner": "pct",
                         "fallback_reason": "",
                         "feasible": True,
-                        "native_backend_used": True,
-                        "native_runtime": {"ok": True},
+                        "pct_planner_runtime": {
+                            "runtime": "rust_process",
+                            "ok": True,
+                        },
+                        "pct_planner_runtime_ok": True,
                         "route_ok": True,
                         "path_safety": {"ok": True},
                         "gate_crossing": {
@@ -923,17 +938,17 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
+                    "blockers": ["PCT planner runtime unavailable"],
                     "checks": {
-                        "pct_native": {
+                        "pct_planner_runtime": {
                             "ok": False,
-                            "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                            "blocker": "PCT planner runtime unavailable",
                             "evidence": {"python_tag": "py313"},
                         }
                     },
                     "command": "run native_pct_mujoco",
                     "expected_report_path": ("artifacts/server_sim_closure/native_pct_mujoco/report.json"),
-                    "host_requirements": ["PCT native extension modules"],
+                    "host_requirements": ["selected PCT planner runtime"],
                 }
             },
         }
@@ -954,10 +969,10 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
     assert report["host_preflight"]["checked"] is True
     assert report["host_preflight"]["ok"] is False
     assert native["host_preflight"]["ok"] is False
-    assert native["host_preflight"]["failed_checks"] == ["pct_native"]
+    assert native["host_preflight"]["failed_checks"] == ["pct_planner_runtime"]
     assert native["primary_category"] == "environment_runtime"
     assert native["pipeline_trace"] == [
-        "pct_backend",
+        "pct_planner_runtime",
         "legacy_pct_to_local_autonomy",
         "mujoco_motion_executor",
     ]
@@ -965,11 +980,21 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
     assert report["host_setup_plan"]["checked"] is True
     assert report["host_setup_plan"]["ok"] is False
     assert report["host_setup_plan"]["failed_check_count"] == 1
-    assert report["host_setup_plan"]["failed_checks"][0]["check"] == "pct_native"
+    assert report["host_setup_plan"]["failed_checks"][0]["check"] == "pct_planner_runtime"
     assert report["host_setup_plan"]["failed_checks"][0]["gates"] == ["native_pct_mujoco"]
     diagnostic_commands = report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"]
     assert any("pct_runtime_preflight.py" in command for command in diagnostic_commands)
-    assert "bash scripts/deploy/setup_server_ros_pct.sh" in diagnostic_commands
+    assert "bash sim/scripts/setup_linux_validation_host.sh" not in diagnostic_commands
+    pct_setup = report["host_setup_plan"]["failed_checks"][0]
+    pct_setup_text = " ".join(
+        [
+            str(pct_setup["recommended_action"]),
+            *[str(command) for command in pct_setup["diagnostic_commands"]],
+        ]
+    )
+    assert "Linux" not in pct_setup_text
+    assert "CPython 3.10" not in pct_setup_text
+    assert "GTSAM" not in pct_setup_text
     assert report["execution_plan"]["ok_to_run_missing"] is False
     assert [phase["id"] for phase in report["execution_plan"]["phases"]] == [
         "host_preflight",
@@ -1002,15 +1027,15 @@ def test_dimos_gap_report_surfaces_host_preflight_blockers(
     assert next_step["dependency_blockers"] == []
     assert next_step["dependency_blocker_status"] == {}
     assert next_step["host_preflight_ok"] is False
-    assert next_step["host_preflight_blockers"] == ["PCT native runtime requires CPython 3.10 ABI; current py313"]
-    assert next_step["host_failed_checks"] == ["pct_native"]
+    assert next_step["host_preflight_blockers"] == ["PCT planner runtime unavailable"]
+    assert next_step["host_failed_checks"] == ["pct_planner_runtime"]
     assert next_step["runtime_dataflow_blocker"] == ""
     assert next_step["runtime_dataflow_failed_edges"] == []
     assert next_step["evidence_blockers"][0]["source"] == "host_preflight"
-    assert next_step["evidence_blockers"][0]["failed_checks"] == ["pct_native"]
+    assert next_step["evidence_blockers"][0]["failed_checks"] == ["pct_planner_runtime"]
     assert report["pipeline_trace"]["claim_boundary"].startswith("Code path trace only")
     trace_ids = [step["id"] for step in report["pipeline_trace"]["primary_chain"]]
-    assert "pct_backend" in trace_ids
+    assert "pct_planner_runtime" in trace_ids
     assert "mujoco_motion_executor" in trace_ids
 
 
@@ -1018,14 +1043,14 @@ def test_dimos_gap_report_reads_run_missing_host_blocked_summary(tmp_path: Path)
     gate_preflight = {
         "ok": False,
         "status": "blocked",
-        "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
+        "blockers": ["PCT planner runtime unavailable"],
         "checks": {
-            "pct_native": {
+            "pct_planner_runtime": {
                 "ok": False,
-                "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                "blocker": "PCT planner runtime unavailable",
                 "evidence": {"python_tag": "py313"},
-                "recommended_action": "server-native PCT setup hint",
-                "diagnostic_commands": ["server-native pct diagnostic"],
+                "recommended_action": "PCT planner runtime setup hint",
+                "diagnostic_commands": ["PCT planner runtime diagnostic"],
             }
         },
         "command": "run native_pct_mujoco",
@@ -1044,7 +1069,7 @@ def test_dimos_gap_report_reads_run_missing_host_blocked_summary(tmp_path: Path)
                     "returncode": None,
                     "executed_command": None,
                     "shell": None,
-                    "error": "PCT native runtime requires CPython 3.10 ABI; current py313",
+                    "error": "PCT planner runtime unavailable",
                     "host_preflight": gate_preflight,
                 }
             ],
@@ -1081,12 +1106,12 @@ def test_dimos_gap_report_reads_run_missing_host_blocked_summary(tmp_path: Path)
         "returncode": None,
         "executed_command": None,
         "shell": None,
-        "error": "PCT native runtime requires CPython 3.10 ABI; current py313",
+        "error": "PCT planner runtime unavailable",
     }
-    assert native["host_preflight"]["failed_checks"] == ["pct_native"]
-    assert native["host_preflight"]["blockers"] == ["PCT native runtime requires CPython 3.10 ABI; current py313"]
-    assert report["host_setup_plan"]["failed_checks"][0]["recommended_action"] == ("server-native PCT setup hint")
-    assert report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"] == ["server-native pct diagnostic"]
+    assert native["host_preflight"]["failed_checks"] == ["pct_planner_runtime"]
+    assert native["host_preflight"]["blockers"] == ["PCT planner runtime unavailable"]
+    assert report["host_setup_plan"]["failed_checks"][0]["recommended_action"] == ("PCT planner runtime setup hint")
+    assert report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"] == ["PCT planner runtime diagnostic"]
     assert report["execution_plan"]["ok_to_run_missing"] is False
     phase_ids = [phase["id"] for phase in report["execution_plan"]["phases"]]
     assert "linux_sim_closure" in phase_ids
@@ -1126,11 +1151,11 @@ def test_dimos_gap_report_reads_host_preflight_report_path(tmp_path: Path):
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
+                    "blockers": ["PCT planner runtime unavailable"],
                     "checks": {
-                        "pct_native": {
+                        "pct_planner_runtime": {
                             "ok": False,
-                            "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                            "blocker": "PCT planner runtime unavailable",
                             "evidence": {"python_tag": "py313"},
                         }
                     },
@@ -1148,10 +1173,10 @@ def test_dimos_gap_report_reads_host_preflight_report_path(tmp_path: Path):
     assert report["host_preflight"]["checked"] is True
     assert report["host_preflight"]["source"] == f"file:{preflight_path}"
     assert report["host_preflight"]["blocked_gates"] == ["native_pct_mujoco"]
-    assert native["host_preflight"]["failed_checks"] == ["pct_native"]
+    assert native["host_preflight"]["failed_checks"] == ["pct_planner_runtime"]
     assert native["recommended_action"] == "fix host preflight before running this gate"
     assert report["host_setup_plan"]["source"] == "recomputed_from_host_preflight_gates"
-    assert report["host_setup_plan"]["failed_checks"][0]["check"] == "pct_native"
+    assert report["host_setup_plan"]["failed_checks"][0]["check"] == "pct_planner_runtime"
     assert report["host_setup_plan"]["failed_checks"][0]["gates"] == ["native_pct_mujoco"]
     assert "do not use this stale command" not in report["host_setup_plan"]["failed_checks"][0]["diagnostic_commands"]
     assert report["execution_plan"]["ok_to_run_missing"] is False
@@ -1179,11 +1204,11 @@ def test_dimos_gap_report_orders_blocked_commands_by_dependency(tmp_path: Path):
             gate: {
                 "ok": False,
                 "status": "blocked",
-                "blockers": ["PCT native runtime unavailable"],
+                "blockers": ["PCT planner runtime unavailable"],
                 "checks": {
-                    "pct_native": {
+                    "pct_planner_runtime": {
                         "ok": False,
-                        "blocker": "PCT native runtime unavailable",
+                        "blocker": "PCT planner runtime unavailable",
                     }
                 },
             }
@@ -1390,7 +1415,7 @@ def test_dimos_gap_report_surfaces_gate_environment_evidence(tmp_path: Path):
         "execution_mode": "host_guard",
         "environment": {
             "accepted_host": False,
-            "blocked_reason": "pct_native_runtime_unavailable",
+            "blocked_reason": "pct_planner_runtime_unavailable",
             "claim_boundary": "environment_blocked_no_algorithm_claim",
         },
     }
@@ -1408,7 +1433,7 @@ def test_dimos_gap_report_surfaces_gate_environment_evidence(tmp_path: Path):
     }
     large_row = rows["large_terrain"]
     assert large_row["execution_mode"] == "host_guard"
-    assert large_row["environment"]["blocked_reason"] == "pct_native_runtime_unavailable"
+    assert large_row["environment"]["blocked_reason"] == "pct_planner_runtime_unavailable"
 
 
 def test_dimos_gap_report_requires_host_preflight_before_gate_commands(
@@ -1488,11 +1513,11 @@ def test_dimos_gap_report_cli_accepts_host_preflight_report(tmp_path: Path):
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": ["PCT native runtime requires CPython 3.10 ABI; current py313"],
+                    "blockers": ["PCT planner runtime unavailable"],
                     "checks": {
-                        "pct_native": {
+                        "pct_planner_runtime": {
                             "ok": False,
-                            "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                            "blocker": "PCT planner runtime unavailable",
                             "evidence": {"python_tag": "py313"},
                         }
                     },
@@ -1549,11 +1574,11 @@ def test_dimos_gap_report_markdown_includes_host_setup_blockers(
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": ["PCT native runtime requires CPython 3.10 ABI"],
+                    "blockers": ["PCT planner runtime unavailable"],
                     "checks": {
-                        "pct_native": {
+                        "pct_planner_runtime": {
                             "ok": False,
-                            "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                            "blocker": "PCT planner runtime unavailable",
                             "evidence": {"python_tag": "py311"},
                         }
                     },
@@ -1577,8 +1602,8 @@ def test_dimos_gap_report_markdown_includes_host_setup_blockers(
     assert "## Host Setup Blockers" in text
     assert "## Execution Plan" in text
     assert "## Pipeline Trace" in text
-    assert "`pct_native`" in text
-    assert "run on a Linux simulation host" in text
+    assert "`pct_planner_runtime`" in text
+    assert "build or install the selected PCT planner runtime" in text
     assert "`blocked_gate_commands`" in text
     assert "dimos_dependency_order" in text
     assert "`mujoco_motion_executor`" in text
@@ -2385,14 +2410,16 @@ def test_dimos_gap_report_attaches_native_pct_dataflow(tmp_path: Path):
         {
             "schema_version": "lingtu.native_pct_mujoco_gate.v1",
             "ok": False,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
             "selected_planner": "pct",
             "fallback_used": False,
             "path_count": 2,
@@ -2417,11 +2444,74 @@ def test_dimos_gap_report_attaches_native_pct_dataflow(tmp_path: Path):
     flow = rows["native_pct_mujoco"]["runtime_dataflow"]
     assert flow["checked"] is True
     assert flow["schema_detected"] == "native_pct_mujoco"
-    assert flow["edge_status"]["pct_backend"] is True
+    assert flow["edge_status"]["pct_planner_runtime"] is True
     assert flow["edge_status"]["pct_optimizer_mode"] is True
     assert flow["edge_status"]["global_path_to_local_planner"] is True
     assert flow["edge_status"]["path_follower_to_cmd_vel"] is False
     assert flow["primary_blocker"] == "path_follower_to_cmd_vel"
+
+
+@pytest.mark.parametrize(
+    ("contract_case", "failed_edge", "reason"),
+    [
+        (
+            "legacy_runtime_fields",
+            "pct_planner_runtime",
+            "PCT planner runtime is not selected",
+        ),
+        (
+            "legacy_path_mode",
+            "pct_optimizer_mode",
+            "unsupported PCT planner path mode",
+        ),
+        (
+            "wrong_planner_source",
+            "pct_planner_runtime",
+            "global planner source is not source_report/pct_tomogram",
+        ),
+    ],
+)
+def test_dimos_gap_report_rejects_legacy_pct_acceptance_contract(
+    tmp_path: Path,
+    contract_case: str,
+    failed_edge: str,
+    reason: str,
+):
+    payload = _native_pct_dataflow_report()
+    if contract_case == "legacy_runtime_fields":
+        payload.pop("pct_planner_runtime")
+        payload.pop("pct_planner_runtime_ok")
+        payload["pct_runtime_ok"] = True
+    elif contract_case == "legacy_path_mode":
+        payload["pct_planner_path_mode"] = "native_astar_raw_path"
+    else:
+        payload["global_planner_source"] = "native_pct_tomogram"
+
+    native = _write_json(
+        tmp_path / contract_case / "report.json",
+        payload,
+    )
+    summary = _summary(failed=[])
+    summary["gates"]["native_pct_mujoco"]["path"] = str(native)
+    summary_path = _write_json(tmp_path / f"summary_{contract_case}.json", summary)
+
+    report = dimos_gap_report.build_gap_report(
+        summary_path=summary_path,
+        include_dataflow=True,
+    )
+
+    flow = {row["gate"]: row for row in report["gap_matrix"]}["native_pct_mujoco"]["runtime_dataflow"]
+    assert flow["ok"] is False
+    assert flow["primary_blocker"] == failed_edge
+    assert flow["edge_evidence"][failed_edge]["reason"] == reason
+
+
+def test_runtime_dataflow_legacy_pct_runtime_alias_is_not_a_report_shape():
+    flow = summarize_runtime_report({"pct_runtime_ok": True}, report_path=None)
+
+    assert flow["checked"] is False
+    assert flow["ok"] is False
+    assert flow["reason"] == "unsupported_report_shape"
 
 
 def test_dimos_gap_report_native_pct_dataflow_reports_ros2_runtime_blocker(
@@ -2435,14 +2525,16 @@ def test_dimos_gap_report_native_pct_dataflow_reports_ros2_runtime_blocker(
             "native_gate_skipped": True,
             "claim_boundary": "ros2_runtime_unavailable",
             "blockers": ["ROS2 runtime unavailable for native local planner gate"],
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
             "selected_planner": "pct",
             "fallback_used": False,
             "environment": {
@@ -2464,7 +2556,7 @@ def test_dimos_gap_report_native_pct_dataflow_reports_ros2_runtime_blocker(
     rows = {row["gate"]: row for row in report["gap_matrix"]}
     flow = rows["native_pct_mujoco"]["runtime_dataflow"]
     assert flow["schema_detected"] == "native_pct_mujoco"
-    assert flow["edge_status"]["pct_backend"] is True
+    assert flow["edge_status"]["pct_planner_runtime"] is True
     assert flow["edge_status"]["pct_optimizer_mode"] is True
     assert flow["edge_status"]["ros2_runtime"] is False
     assert flow["primary_blocker"] == "ros2_runtime"
@@ -2503,13 +2595,16 @@ def test_dimos_gap_report_attaches_pct_saved_map_navigation_dataflow(
                 "selected_planner": "pct",
                 "fallback_reason": "",
                 "path_count": 8,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
                 "pct_optimizer_enabled": False,
-                "pct_planner_path_mode": "native_astar_raw_path",
+                "pct_planner_path_mode": "astar_raw_path",
             },
             "native_gate": {
                 "schema_version": "lingtu.native_pct_mujoco_gate.v1",
                 "ok": True,
-                "pct_runtime_ok": True,
+                "global_planner_source": "source_report/pct_tomogram",
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+                "pct_planner_runtime_ok": True,
                 "pct_path_count": 8,
                 "selected_planner": "pct",
                 "fallback_used": False,
@@ -2537,10 +2632,10 @@ def test_dimos_gap_report_attaches_pct_saved_map_navigation_dataflow(
     assert flow["schema_detected"] == "pct_saved_map_navigation"
     assert flow["edge_status"]["saved_map_relocalization"] is True
     assert flow["edge_status"]["pct_plan_preview"] is True
-    assert flow["edge_evidence"]["pct_plan_preview"]["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert flow["edge_evidence"]["pct_plan_preview"]["pct_planner_path_mode"] == "astar_raw_path"
     assert flow["edge_evidence"]["pct_plan_preview"]["pct_optimizer_enabled"] is False
     assert flow["edge_status"]["same_source_saved_map_artifacts"] is True
-    assert flow["edge_status"]["native_pct_backend"] is True
+    assert flow["edge_status"]["pct_planner_runtime"] is True
     assert flow["edge_status"]["native_path_follower_to_cmd_vel"] is True
     assert flow["edge_status"]["native_cmd_vel_to_mujoco_motion"] is True
     assert flow["same_source_provenance"]["ok"] is True
@@ -2568,11 +2663,14 @@ def test_dimos_gap_report_pct_saved_map_navigation_blocks_on_relocalization(
                 "selected_planner": "pct",
                 "fallback_reason": "",
                 "path_count": 8,
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
             },
             "native_gate": {
                 "schema_version": "lingtu.native_pct_mujoco_gate.v1",
                 "ok": True,
-                "pct_runtime_ok": True,
+                "global_planner_source": "source_report/pct_tomogram",
+                "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+                "pct_planner_runtime_ok": True,
                 "pct_path_count": 8,
                 "selected_planner": "pct",
                 "fallback_used": False,
@@ -2879,12 +2977,20 @@ def test_dimos_gap_report_attaches_large_terrain_dataflow(tmp_path: Path):
     assert flow["checked"] is True
     assert flow["ok"] is True
     assert flow["schema_detected"] == "large_terrain"
-    assert flow["edge_status"]["native_pct_global_planning"] is True
+    assert flow["edge_status"]["pct_planner_runtime"] is True
     assert flow["edge_status"]["same_source_large_terrain_assets"] is True
     assert flow["edge_status"]["large_terrain_route_safety"] is True
     assert flow["edge_status"]["terrain_gate_constraints"] is True
     assert flow["edge_status"]["non_motion_claim_boundary"] is True
     assert flow["same_source_provenance"]["ok"] is True
+    runtime_evidence = flow["edge_evidence"]["pct_planner_runtime"]
+    assert runtime_evidence["pct_planner_runtime_ok"] is True
+    assert runtime_evidence["pct_planner_runtime"] == {
+        "runtime": "rust_process",
+        "ok": True,
+    }
+    assert "native_runtime" not in runtime_evidence
+    assert "native_pct_plan_count" not in runtime_evidence
     assert flow["primary_blocker"] == ""
 
 
@@ -2908,7 +3014,7 @@ def test_dimos_gap_report_large_terrain_requires_same_source_assets(
     flow = rows["large_terrain"]["runtime_dataflow"]
     assert flow["checked"] is True
     assert flow["ok"] is False
-    assert flow["edge_status"]["native_pct_global_planning"] is True
+    assert flow["edge_status"]["pct_planner_runtime"] is True
     assert flow["edge_status"]["same_source_large_terrain_assets"] is False
     assert flow["primary_blocker"] == "same_source_large_terrain_assets"
 
@@ -3240,7 +3346,9 @@ def test_dimos_gap_report_shell_plan_exposes_cross_gate_boundary(tmp_path: Path)
         {
             "schema_version": "lingtu.native_pct_mujoco_gate.v1",
             "ok": True,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "selected_planner": "pct",
             "fallback_used": False,
@@ -3302,7 +3410,9 @@ def test_dimos_gap_report_cli_shell_enables_dataflow_by_default(tmp_path: Path):
         {
             "schema_version": "lingtu.native_pct_mujoco_gate.v1",
             "ok": True,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "selected_planner": "pct",
             "fallback_used": False,
@@ -3375,7 +3485,9 @@ def test_dimos_gap_report_markdown_includes_cross_gate_chains(tmp_path: Path):
         {
             "schema_version": "lingtu.native_pct_mujoco_gate.v1",
             "ok": True,
-            "pct_runtime_ok": True,
+            "global_planner_source": "source_report/pct_tomogram",
+            "pct_planner_runtime": {"runtime": "rust_process", "ok": True},
+            "pct_planner_runtime_ok": True,
             "pct_path_count": 8,
             "selected_planner": "pct",
             "fallback_used": False,
@@ -3430,11 +3542,11 @@ def test_dimos_gap_report_shell_plan_comments_blocked_gate_commands(
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": ["PCT native runtime requires CPython 3.10 ABI"],
+                    "blockers": ["PCT planner runtime unavailable"],
                     "checks": {
-                        "pct_native": {
+                        "pct_planner_runtime": {
                             "ok": False,
-                            "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                            "blocker": "PCT planner runtime unavailable",
                         }
                     },
                 }
@@ -3479,9 +3591,9 @@ def test_dimos_gap_report_shell_plan_comments_blocked_gate_commands(
     assert "# Gate: native_pct_mujoco priority=p1" in text
     assert "# Expected report: artifacts/server_sim_closure/native_pct_mujoco/report.json" in text
     assert "# Host preflight ok: false" in text
-    assert "# Host failed checks: pct_native" in text
+    assert "# Host failed checks: pct_planner_runtime" in text
     assert "# Host blocker:" in text
-    assert "PCT native runtime" in text
+    assert "PCT planner runtime unavailable" in text
     assert "# BLOCKED: run native_pct_mujoco" in text
     assert "\nrun native_pct_mujoco" not in text
 
@@ -3507,11 +3619,11 @@ def test_dimos_gap_report_shell_plan_emits_host_setup_diagnostics(
                 "native_pct_mujoco": {
                     "ok": False,
                     "status": "blocked",
-                    "blockers": ["PCT native runtime requires CPython 3.10 ABI"],
+                    "blockers": ["PCT planner runtime unavailable"],
                     "checks": {
-                        "pct_native": {
+                        "pct_planner_runtime": {
                             "ok": False,
-                            "blocker": "PCT native runtime requires CPython 3.10 ABI",
+                            "blocker": "PCT planner runtime unavailable",
                         }
                     },
                 }
@@ -3531,12 +3643,12 @@ def test_dimos_gap_report_shell_plan_emits_host_setup_diagnostics(
     text = dimos_gap_report._shell_plan(report)
 
     assert "# Phase: host_setup [blocked]" in text
-    assert "# Host setup check: pct_native" in text
+    assert "# Host setup check: pct_planner_runtime" in text
     assert "# Host setup gates: native_pct_mujoco" in text
     assert "pct_runtime_preflight.py --json-out" in text
     assert "pct_runtime_preflight.py --strict --json-out" in text
-    assert "\nbash scripts/deploy/setup_server_ros_pct.sh\n" in text
-    assert "# BLOCKED: bash scripts/deploy/setup_server_ros_pct.sh" not in text
+    assert "\nbash sim/scripts/setup_linux_validation_host.sh\n" not in text
+    assert "# BLOCKED: bash sim/scripts/setup_linux_validation_host.sh" not in text
     assert "# Phase: linux_sim_closure [target_host]" in text
     assert "# Host setup check: target_linux_sim_host" in text
     assert "server_sim_closure.py --preset dimos_benchmark --required-only --run-missing" in text

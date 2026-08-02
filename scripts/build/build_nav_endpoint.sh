@@ -70,6 +70,11 @@ case "${RUN_TESTS,,}" in
       test_explore_input \
       test_tare_policy \
       test_nav_client \
+      test_nav_input_state_projector \
+      test_rolling_segment_effect_coordinator \
+      test_inspection_command_coordinator \
+      test_control_loop_health \
+      test_control_loop_runtime_guard \
       test_teleop_safety \
       test_active_occupancy_gate \
       test_far_c_api \

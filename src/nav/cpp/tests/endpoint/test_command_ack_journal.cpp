@@ -30,6 +30,7 @@ CommandIdentity goalIdentity(const std::string &client_id, const std::string &re
   return {
       client_id,
       request_id,
+      "task-" + request_id,
       NavigationCommandKind::Goal,
       payload.canonical(),
   };
@@ -75,6 +76,7 @@ void testCommandKindNamespacesRequestIds() {
   const CommandIdentity stop{
       "gateway",
       "request-1",
+      "",
       NavigationCommandKind::Stop,
       payload.canonical(),
   };
@@ -94,30 +96,30 @@ void testExpiredEntriesDoNotReplay() {
           "expired command entries must not replay forever");
 }
 
-void testTeleopJournalCannotEvictBusinessCommands() {
+void testTaskCancelKeepsStableTaskIdentity() {
   using namespace std::chrono_literals;
-  CommandAckJournal business(8, 10min);
-  CommandAckJournal teleop(2, 5s);
+  CommandAckJournal journal(8, 10min);
   const auto now = CommandAckJournal::Clock::time_point{40s};
-  const auto goal = goalIdentity("gateway", "goal-stable", 1.0, 2.0);
-  business.remember(goal, {true, "accepted"}, now);
+  CommandPayload payload;
+  payload.reason = "operator_cancel";
+  const CommandIdentity first{
+      "gateway",
+      "cancel-attempt-1",
+      "navigation-task-1",
+      NavigationCommandKind::TaskCancel,
+      payload.canonical(),
+  };
+  journal.remember(first, {true, "cancel_requested"}, now);
 
-  for (int index = 0; index < 20; ++index) {
-    CommandPayload payload;
-    payload.frame_id = "body";
-    payload.velocity[0] = 0.01 * static_cast<double>(index);
-    teleop.remember(
-        {
-            "gateway",
-            "teleop-" + std::to_string(index),
-            NavigationCommandKind::Teleop,
-            payload.canonical(),
-        },
-        {true, "accepted"}, now + std::chrono::milliseconds(index));
-  }
+  auto retry = first;
+  retry.request_id = "cancel-attempt-2";
+  require(journal.lookup(retry, now + 1s).disposition == JournalDisposition::Replay,
+          "task cancel retry must replay by stable task identity");
 
-  require(business.lookup(goal, now + 1s).disposition == JournalDisposition::Replay,
-          "teleop churn must not evict business command ACKs");
+  auto aliased = first;
+  aliased.task_id = "navigation-task-2";
+  require(journal.lookup(aliased, now + 2s).disposition == JournalDisposition::Conflict,
+          "one task-cancel request id must not alias another task");
 }
 
 void testCanonicalPayloadNormalizesSignedZero() {
@@ -137,7 +139,7 @@ int main() {
     testClientIdentityNamespacesRequestIds();
     testCommandKindNamespacesRequestIds();
     testExpiredEntriesDoNotReplay();
-    testTeleopJournalCannotEvictBusinessCommands();
+    testTaskCancelKeepsStableTaskIdentity();
     testCanonicalPayloadNormalizesSignedZero();
     return 0;
   } catch (const std::exception &exc) {

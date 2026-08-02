@@ -5,16 +5,18 @@ files such as `config/perception.yaml`, `config/decision.yaml`,
 `config/semantic_scoring.yaml`, `config/pointlio.yaml`, and `config/dufomap.toml`
 are secondary overrides.
 
-After editing, restart only the affected service. The physical
-`thunder_field` stack normally uses the native services below:
+After editing, restart only the affected logical process through the robot-side
+operations CLI. The thin `scripts/lingtu` adapter delegates restart, readiness,
+rollback, and current `RunPlan` ownership to `ProductControl`; do not restart
+field RunPlan units with `systemctl` directly:
 
 ```bash
-sudo systemctl restart lingtu-livox-dds       # LiDAR source
-sudo systemctl restart lingtu-slam-dds        # SLAM / localization
-sudo systemctl restart lingtu-traversability-dds
-sudo systemctl restart lingtu-nav-dds         # native planner and tracker
-sudo systemctl restart lingtu-driver          # unique Brainstem speed exit
-sudo systemctl restart lingtu                 # gateway and product modules
+bash scripts/lingtu svc restart lidar           # LiDAR source
+bash scripts/lingtu svc restart slam            # SLAM / localization
+bash scripts/lingtu svc restart traversability
+bash scripts/lingtu svc restart nav             # native planner and tracker
+bash scripts/lingtu svc restart driver          # unique Brainstem speed exit
+bash scripts/lingtu svc restart host            # gateway and product modules
 ```
 
 ## 1. Robot Speed Inputs - `config/robot_config.yaml`
@@ -32,8 +34,8 @@ Module's `speed.max_speed` as its command ceiling.
 
 ## 2. Local Planner - `local_planner.*`
 
-On the physical `thunder_field` endpoint, the production local planner runs
-inside the native C++ Nav Endpoint and uses the `nav_kernel` planning cores. The
+In the physical `env=real` Product runtime, the production local planner runs
+inside the native C++ nav endpoint and uses the `nav_kernel` planning cores. The
 Python `LocalPlannerModule` remains available for simulation, development, and
 explicit compatibility profiles. Neither product path is a ROS2 node. The exact
 algorithm and runtime-lane differences are defined in
@@ -116,7 +118,7 @@ Primary backends:
 Switch with:
 
 ```bash
-python lingtu.py nav --planner pct
+python lingtu.py sim_nav --planner pct
 ```
 
 ## 5. Verification

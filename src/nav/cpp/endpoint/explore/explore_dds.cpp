@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <memory>
 #include <optional>
@@ -17,21 +18,28 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unistd.h>
 #include <utility>
 #include <vector>
 
 #include "dds/dds.h"
 #include "explore/directed_exploration_intent.hpp"
+#include "explore/exploration_run_event_outbox.hpp"
+#include "explore/exploration_run_lifecycle.hpp"
 #include "explore/exploration_segment_lifecycle.hpp"
 #include "explore/explore_control.hpp"
 #include "explore/explore_goal_lifecycle.hpp"
 #include "explore/explore_input.hpp"
+#include "explore/explore_status_contract.hpp"
+#include "explore/route.hpp"
+#include "explore/saved_coverage_grid.hpp"
 #include "lingtu_slam.h"
 #include "message/cpp/dds_qos_profiles.hpp"
 #include "message/cpp/dds_topics.hpp"
 #include "message/cpp/exploration_command.hpp"
 #include "message/cpp/navigation_command.hpp"
 #include "nav/cpp/client/client.hpp"
+#include "plan/active_occupancy_gate.hpp"
 #include "status/status_snapshot_file_writer.hpp"
 #include "tare_policy.hpp"
 
@@ -44,6 +52,7 @@ using lingtu::explore::Pose2D;
 using lingtu::nav::endpoint::DirectedExplorationIntent;
 using lingtu::nav::endpoint::ExplorationSnapshot;
 using lingtu::nav::endpoint::RigidTransform;
+using lingtu::nav::endpoint::Route;
 using lingtu::nav::endpoint::TimedMapPose;
 
 std::atomic_bool g_running{true};
@@ -126,8 +135,23 @@ std::string envString(const char *name) {
   return value == nullptr ? std::string{} : std::string(value);
 }
 
+std::string makeExploreBootId() {
+  std::ifstream input("/proc/sys/kernel/random/boot_id");
+  std::string host_boot_id;
+  std::getline(input, host_boot_id);
+  if (host_boot_id.empty()) {
+    throw std::runtime_error("explore endpoint host boot_id is unavailable");
+  }
+  const auto started_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                              std::chrono::steady_clock::now().time_since_epoch())
+                              .count();
+  return host_boot_id + ":" + std::to_string(static_cast<long long>(getpid())) + ":" +
+         std::to_string(static_cast<long long>(started_ns));
+}
+
 struct Config {
   int domain_id{0};
+  std::optional<Route> route;
   double tick_hz{2.0};
   double command_retry_s{3.0};
   double arrival_tolerance_m{0.65};
@@ -138,6 +162,8 @@ struct Config {
   double directed_target_max_ttl_s{3600.0};
   double directed_progress_weight{4.0};
   std::string status_file;
+  std::string product_session_id;
+  std::filesystem::path map_root;
   lingtu::nav::endpoint::ExploreInputGateConfig input_gate;
   lingtu::explore::TarePolicyConfig policy;
 };
@@ -148,6 +174,16 @@ Config parseArgs(int argc, char **argv) {
     config.domain_id = std::stoi(domain);
   }
   config.status_file = envString("LINGTU_EXPLORE_STATUS_FILE");
+  config.product_session_id = envString("LINGTU_PRODUCT_SESSION_ID");
+  config.map_root = envString("NAV_MAP_DIR");
+  const std::string route_env = envString("LINGTU_EXPLORE_ROUTE");
+  if (!route_env.empty()) {
+    const auto route = lingtu::nav::endpoint::parseRoute(route_env);
+    if (!route.has_value()) {
+      throw std::runtime_error("LINGTU_EXPLORE_ROUTE must be map or live");
+    }
+    config.route = *route;
+  }
 
   for (int index = 1; index < argc; ++index) {
     const std::string arg = argv[index];
@@ -159,6 +195,15 @@ Config parseArgs(int argc, char **argv) {
     };
     if (arg == "--domain") {
       config.domain_id = std::stoi(value());
+    } else if (arg == "--route") {
+      const std::string route_value = value();
+      const auto route = lingtu::nav::endpoint::parseRoute(route_value);
+      if (!route.has_value()) {
+        throw std::runtime_error("--route must be map or live");
+      }
+      config.route = *route;
+    } else if (arg == "--map-root") {
+      config.map_root = value();
     } else if (arg == "--tick-hz") {
       config.tick_hz = std::stod(value());
     } else if (arg == "--command-retry-s") {
@@ -242,13 +287,17 @@ Config parseArgs(int argc, char **argv) {
       config.policy.return_home_when_done = parseBool(value());
     } else if (arg == "--help" || arg == "-h") {
       std::printf(
-          "usage: lingtu_explore_dds [--domain N] [--tick-hz HZ] "
-          "[--status-file PATH] [--arrival-tolerance M] "
+          "usage: lingtu_explore_dds [--domain N] [--route map|live] [--tick-hz HZ] "
+          "[--map-root PATH] [--status-file PATH] [--arrival-tolerance M] "
           "[--goal-timeout SEC] [TARE policy options]\n");
       std::exit(0);
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
+  }
+
+  if (!config.route.has_value()) {
+    throw std::runtime_error("LINGTU_EXPLORE_ROUTE or --route is required");
   }
 
   auto positive = [](double value, const char *name) {
@@ -284,6 +333,12 @@ Config parseArgs(int argc, char **argv) {
   if (config.input_gate.max_grid_cells == 0U) {
     throw std::runtime_error("max_grid_cells must be positive");
   }
+  if (config.product_session_id.empty() || config.product_session_id.size() > 128U) {
+    throw std::runtime_error("LINGTU_PRODUCT_SESSION_ID is required for exploration control");
+  }
+  if (*config.route == Route::Map && config.map_root.empty()) {
+    throw std::runtime_error("NAV_MAP_DIR or --map-root is required for the map route");
+  }
   return config;
 }
 
@@ -314,6 +369,8 @@ class DdsRuntime {
                              &lingtu_dds_ExplorationCommandRequest_desc, "exploration_command");
     control_ack_writer_ = writer(lingtu::message::kNavExplorationAck,
                                  &lingtu_dds_ExplorationCommandAck_desc, "exploration_ack");
+    run_event_writer_ = writer(lingtu::message::kNavExplorationRunEvent,
+                               &lingtu_dds_ExplorationRunEvent_desc, "exploration_run_event");
     segment_request_writer_ =
         writer(lingtu::message::kNavExplorationSegmentRequest,
                &lingtu_dds_ExplorationSegmentRequest_desc, "exploration_segment_request");
@@ -377,19 +434,47 @@ class DdsRuntime {
         control_reader_, lingtu_dds_ExplorationCommandRequest_desc, std::forward<Handler>(handler));
   }
 
-  void writeControlAck(const std::string &request_id, std::int32_t kind, bool accepted,
-                       const std::string &reason, const std::string &session_id,
-                       std::uint64_t intent_revision) {
+  void writeControlAck(const std::string &request_id, const std::string &exploration_run_id,
+                       std::int32_t kind, bool accepted, bool duplicate, const std::string &reason,
+                       const std::string &session_id, std::uint64_t intent_revision) {
     lingtu_dds_ExplorationCommandAck message{};
     fillHeader(message.header, nowSeconds(), "map");
     message.request_id = const_cast<char *>(request_id.c_str());
+    message.exploration_run_id = const_cast<char *>(exploration_run_id.c_str());
     message.kind = kind;
     message.accepted = accepted;
+    message.duplicate = duplicate;
     message.reason = const_cast<char *>(reason.c_str());
     message.session_id = const_cast<char *>(session_id.c_str());
     message.intent_revision = intent_revision;
     logDdsError(dds_write(control_ack_writer_, static_cast<const void *>(&message)),
                 "dds_write(exploration_ack)");
+  }
+
+  bool
+  writeExplorationRunEvent(const lingtu::nav::endpoint::ExplorationRunEventEnvelope &envelope) {
+    const auto &event = envelope.event;
+    lingtu_dds_ExplorationRunEvent message{};
+    message.timestamp_s = event.timestamp_s;
+    message.frame_id = const_cast<char *>(event.frame_id.c_str());
+    message.boot_id = const_cast<char *>(envelope.boot_id.c_str());
+    message.event_sequence = envelope.event_sequence;
+    message.kind = static_cast<std::int32_t>(event.kind);
+    message.exploration_run_id = const_cast<char *>(event.exploration_run_id.c_str());
+    message.start_request_id = const_cast<char *>(event.start_request_id.c_str());
+    message.command_request_id = const_cast<char *>(event.command_request_id.c_str());
+    message.product_session_id = const_cast<char *>(event.product_session_id.c_str());
+    message.state = static_cast<std::int32_t>(event.state);
+    message.route = const_cast<char *>(event.route.c_str());
+    message.map_id = const_cast<char *>(event.map_id.c_str());
+    message.map_version = event.map_version;
+    message.artifact_hash = const_cast<char *>(event.artifact_hash.c_str());
+    message.reason = const_cast<char *>(event.reason.c_str());
+    message.motion_stop_confirmed = event.motion_stop_confirmed;
+    message.motion_stop_reason = const_cast<char *>(event.motion_stop_reason.c_str());
+    const dds_return_t result = dds_write(run_event_writer_, static_cast<const void *>(&message));
+    logDdsError(result, "dds_write(exploration_run_event)");
+    return result >= 0;
   }
 
   void writeExplorationSegmentRequest(
@@ -446,14 +531,23 @@ class DdsRuntime {
   dds_entity_t segment_status_reader_{0};
   dds_entity_t control_reader_{0};
   dds_entity_t control_ack_writer_{0};
+  dds_entity_t run_event_writer_{0};
   dds_entity_t segment_request_writer_{0};
 };
 
 struct PendingGoal {
   Pose2D target;
   ExploreMapIdentity map;
+  std::string task_id;
   std::string request_id;
+  std::string cancel_request_id;
   double accepted_s{0.0};
+  bool cancellation_acknowledged{false};
+};
+
+struct PendingMotionStopEvidence {
+  double timestamp_s{0.0};
+  std::string reason;
 };
 
 struct QueuedGoal {
@@ -505,7 +599,23 @@ struct Counters {
   std::uint64_t control_accepted{0U};
   std::uint64_t control_rejected{0U};
   std::uint64_t control_duplicates{0U};
+  std::uint64_t segment_requests{0U};
+  std::uint64_t segment_ack_messages{0U};
+  std::uint64_t segment_status_messages{0U};
+  std::uint64_t segment_terminals{0U};
 };
+
+const char *segmentPhaseName(PendingSegmentPhase phase) noexcept {
+  switch (phase) {
+    case PendingSegmentPhase::AwaitingExecuteAck:
+      return "awaiting_ack";
+    case PendingSegmentPhase::Executing:
+      return "executing";
+    case PendingSegmentPhase::CancelRequested:
+      return "cancelling";
+  }
+  return "unknown";
+}
 
 bool sameMapEpoch(const ExploreMapIdentity &left, const ExploreMapIdentity &right) {
   return left.sameSource(right) && left.reset_epoch == right.reset_epoch;
@@ -556,9 +666,10 @@ std::string jsonEscape(const std::string &value) {
 }
 
 std::string statusSnapshot(
-    const Config &config, const std::string &state, const std::string &reason, bool active,
-    bool paused, const std::string &session_id, const std::optional<TimedMapPose> &robot,
-    const std::optional<ExplorationSnapshot> &snapshot, const std::optional<PendingGoal> &pending,
+    const Config &config, const std::string &endpoint_boot_id, const std::string &state,
+    const std::string &reason, const lingtu::nav::endpoint::ExploreControl &control,
+    const std::optional<TimedMapPose> &robot, const std::optional<ExplorationSnapshot> &snapshot,
+    const std::optional<PendingGoal> &pending, const std::optional<PendingSegment> &pending_segment,
     const std::optional<QueuedGoal> &queued, const std::optional<std::string> &cancel_reason,
     const std::optional<DirectedExplorationIntent> &directed_target,
     const ExploreDecision &decision, const Counters &counters, double now_s) {
@@ -566,16 +677,17 @@ std::string statusSnapshot(
   const double snapshot_age_s = snapshot.has_value() ? now_s - snapshot->stamp_s : -1.0;
   std::ostringstream output;
   output << std::fixed << std::setprecision(6);
-  output << "{\n"
-         << "  \"schema_version\": \"lingtu.explore.status.v2\",\n"
-         << "  \"endpoint\": \"lingtu_explore_dds\",\n"
-         << "  \"stamp_s\": " << now_s << ",\n"
+  output << "{\n";
+  lingtu::nav::endpoint::writeExploreStatusIdentity(output, endpoint_boot_id);
+  output << "  \"stamp_s\": " << now_s << ",\n"
          << "  \"domain_id\": " << config.domain_id << ",\n"
+         << "  \"route\": \"" << lingtu::nav::endpoint::routeName(*config.route) << "\",\n"
          << "  \"state\": \"" << jsonEscape(state) << "\",\n"
          << "  \"reason\": \"" << jsonEscape(reason) << "\",\n"
-         << "  \"active\": " << (active ? "true" : "false") << ",\n"
-         << "  \"paused\": " << (paused ? "true" : "false") << ",\n"
-         << "  \"session_id\": \"" << jsonEscape(session_id) << "\",\n"
+         << "  \"active\": " << (control.active() ? "true" : "false") << ",\n"
+         << "  \"paused\": " << (control.paused() ? "true" : "false") << ",\n"
+         << "  \"exploration_run_id\": \"" << jsonEscape(control.exploration_run_id()) << "\",\n"
+         << "  \"session_id\": \"" << jsonEscape(control.session_id()) << "\",\n"
          << "  \"ready\": " << (robot.has_value() && snapshot.has_value() ? "true" : "false")
          << ",\n"
          << "  \"input\": {\"odometry_age_s\": " << odometry_age_s
@@ -593,14 +705,30 @@ std::string statusSnapshot(
   }
   if (pending.has_value()) {
     output << "  \"pending_goal\": {\"x\": " << pending->target.x
-           << ", \"y\": " << pending->target.y << ", \"request_id\": \""
-           << jsonEscape(pending->request_id) << "\""
+           << ", \"y\": " << pending->target.y << ", \"task_id\": \""
+           << jsonEscape(pending->task_id) << "\", \"request_id\": \""
+           << jsonEscape(pending->request_id) << "\", \"cancel_request_id\": \""
+           << jsonEscape(pending->cancel_request_id) << "\""
+           << ", \"cancellation_acknowledged\": "
+           << (pending->cancellation_acknowledged ? "true" : "false")
            << ", \"age_s\": " << now_s - pending->accepted_s << "},\n";
   } else if (queued.has_value()) {
     output << "  \"pending_goal\": {\"x\": " << queued->target.x << ", \"y\": " << queued->target.y
            << ", \"age_s\": -1.0},\n";
   } else {
     output << "  \"pending_goal\": null,\n";
+  }
+  if (pending_segment.has_value()) {
+    output << "  \"pending_segment\": {\"x\": " << pending_segment->target.x
+           << ", \"y\": " << pending_segment->target.y << ", \"request_id\": \""
+           << jsonEscape(pending_segment->binding.request_id) << "\", \"session_id\": \""
+           << jsonEscape(pending_segment->binding.session_id)
+           << "\", \"reset_epoch\": " << pending_segment->binding.reset_epoch
+           << ", \"minimum_generation\": " << pending_segment->binding.minimum_generation
+           << ", \"execution_generation\": " << pending_segment->execution_generation
+           << ", \"phase\": \"" << segmentPhaseName(pending_segment->phase) << "\"},\n";
+  } else {
+    output << "  \"pending_segment\": null,\n";
   }
   if (directed_target.has_value()) {
     output << "  \"directed_target\": {\"x\": " << directed_target->target.x
@@ -655,7 +783,11 @@ std::string statusSnapshot(
          << ", \"control_messages\": " << counters.control_messages
          << ", \"control_accepted\": " << counters.control_accepted
          << ", \"control_rejected\": " << counters.control_rejected
-         << ", \"control_duplicates\": " << counters.control_duplicates << "}\n"
+         << ", \"control_duplicates\": " << counters.control_duplicates
+         << ", \"segment_requests\": " << counters.segment_requests
+         << ", \"segment_ack_messages\": " << counters.segment_ack_messages
+         << ", \"segment_status_messages\": " << counters.segment_status_messages
+         << ", \"segment_terminals\": " << counters.segment_terminals << "}\n"
          << "}\n";
   return output.str();
 }
@@ -668,7 +800,25 @@ int main(int argc, char **argv) {
 
   try {
     const Config config = parseArgs(argc, argv);
+    std::unique_ptr<lingtu::nav::endpoint::ActiveOccupancyGate> saved_coverage_gate;
+    if (*config.route == Route::Map) {
+      saved_coverage_gate =
+          std::make_unique<lingtu::nav::endpoint::ActiveOccupancyGate>(config.map_root);
+      const auto prepared = saved_coverage_gate->prepareActive();
+      if (!prepared.ok()) {
+        throw std::runtime_error("saved_map_occupancy_not_ready: " + prepared.reason);
+      }
+      if (prepared.artifact->map().CellCount() > config.policy.max_grid_cells) {
+        throw std::runtime_error("saved_map_occupancy_exceeds_max_grid_cells");
+      }
+    }
     DdsRuntime dds(config.domain_id);
+    const std::string endpoint_boot_id = makeExploreBootId();
+    lingtu::nav::endpoint::ExplorationRunEventOutbox run_event_outbox(
+        endpoint_boot_id, [&dds](const lingtu::nav::endpoint::ExplorationRunEventEnvelope &event) {
+          return dds.writeExplorationRunEvent(event);
+        });
+    lingtu::nav::endpoint::ExplorationRunLifecycle run_lifecycle(run_event_outbox);
     lingtu::nav::commands::Client commands(config.domain_id);
     lingtu::explore::TarePolicy policy(config.policy);
     lingtu::nav::endpoint::StatusSnapshotFileWriter status_writer(config.status_file);
@@ -682,6 +832,7 @@ int main(int argc, char **argv) {
     std::optional<SegmentReplanBarrier> segment_replan_barrier;
     std::optional<QueuedGoal> queued;
     std::optional<std::string> cancel_reason;
+    std::optional<PendingMotionStopEvidence> pending_motion_stop_evidence;
     std::vector<Pose2D> visited;
     ExploreDecision last_decision;
     Counters counters;
@@ -693,7 +844,7 @@ int main(int argc, char **argv) {
     double last_segment_command_attempt_s{-1.0};
     double next_status_s{0.0};
     const std::string goal_request_prefix =
-        "tare-explore-" + std::to_string(static_cast<std::uint64_t>(nowSeconds() * 1000000.0));
+        "explore-" + std::to_string(static_cast<std::uint64_t>(nowSeconds() * 1000000.0));
     std::uint64_t goal_request_sequence{0U};
     const std::string segment_request_prefix = goal_request_prefix + "-segment";
     std::uint64_t segment_request_sequence{0U};
@@ -707,18 +858,42 @@ int main(int argc, char **argv) {
                                    lingtu::nav::endpoint::ExplorationSegmentCommandKind kind,
                                    const std::string &reason) {
       dds.writeExplorationSegmentRequest(segment.binding, segment.target, kind, reason);
+      ++counters.segment_requests;
+    };
+    auto beginSegment = [&](const Pose2D &target, const ExploreMapIdentity &map, double attempt_s,
+                            const std::string &reason) {
+      if (!map.valid() || !map.live) {
+        throw std::runtime_error("live_route_requires_live_map");
+      }
+      lingtu::nav::endpoint::ExplorationSegmentRequestBinding binding{
+          segment_request_prefix + "-" + std::to_string(++segment_request_sequence),
+          map.session_id,
+          map.reset_epoch,
+          map.generation,
+      };
+      pending_segment = PendingSegment{
+          target, map, std::move(binding), PendingSegmentPhase::AwaitingExecuteAck, 0U,
+      };
+      last_segment_command_attempt_s = attempt_s;
+      writeSegmentRequest(*pending_segment,
+                          lingtu::nav::endpoint::ExplorationSegmentCommandKind::kExecute, reason);
     };
     auto finishSegmentTerminal = [&](const PendingSegment &segment,
                                      std::uint64_t terminal_generation, const std::string &reason) {
       std::uint64_t observed_snapshot_generation{0U};
-      if (snapshot.has_value() && sameMapEpoch(segment.map, snapshot->identity)) {
+      const bool map_is_current =
+          snapshot.has_value() && sameMapEpoch(segment.map, snapshot->identity);
+      if (map_is_current) {
         observed_snapshot_generation = snapshot->identity.generation;
+        segment_replan_barrier = SegmentReplanBarrier{
+            segment.map,
+            lingtu::nav::endpoint::makeExplorationSegmentReplanBarrier(
+                segment.binding, terminal_generation, observed_snapshot_generation),
+        };
+      } else {
+        segment_replan_barrier.reset();
       }
-      segment_replan_barrier = SegmentReplanBarrier{
-          segment.map,
-          lingtu::nav::endpoint::makeExplorationSegmentReplanBarrier(
-              segment.binding, terminal_generation, observed_snapshot_generation),
-      };
+      ++counters.segment_terminals;
       pending_segment.reset();
       queued.reset();
       last_segment_command_attempt_s = -1.0;
@@ -737,16 +912,38 @@ int main(int argc, char **argv) {
         last_reason = "exploration_segment_replan_ready";
       }
     };
+    auto observeMotionStopped = [&](double timestamp_s, const std::string &reason) {
+      if (!run_lifecycle.stopConfirmationPending()) {
+        return;
+      }
+      const std::string evidence_reason =
+          reason.empty() ? std::string{"post_stop_terminal"} : reason;
+      if (run_lifecycle.confirmMotionStop(timestamp_s, evidence_reason)) {
+        pending_motion_stop_evidence.reset();
+      } else {
+        pending_motion_stop_evidence = PendingMotionStopEvidence{timestamp_s, evidence_reason};
+      }
+    };
 
-    std::fprintf(stderr, "lingtu_explore_dds: domain=%d tick_hz=%.2f input=%s command=%s\n",
-                 config.domain_id, config.tick_hz,
-                 lingtu::message::kNavExplorationSnapshot.topic.data(),
+    std::fprintf(stderr,
+                 "lingtu_explore_dds: domain=%d route=%s tick_hz=%.2f input=%s command=%s\n",
+                 config.domain_id, lingtu::nav::endpoint::routeName(*config.route).data(),
+                 config.tick_hz, lingtu::message::kNavExplorationSnapshot.topic.data(),
                  lingtu::message::kNavCommandRequest.topic.data());
 
     const auto period = std::chrono::duration<double>(1.0 / config.tick_hz);
     while (g_running.load(std::memory_order_relaxed)) {
       const auto loop_started = std::chrono::steady_clock::now();
       const double loop_now_s = nowSeconds();
+
+      (void)run_event_outbox.flush();
+      if (pending_motion_stop_evidence.has_value()) {
+        if (!run_lifecycle.stopConfirmationPending() ||
+            run_lifecycle.confirmMotionStop(pending_motion_stop_evidence->timestamp_s,
+                                            pending_motion_stop_evidence->reason)) {
+          pending_motion_stop_evidence.reset();
+        }
+      }
 
       auto acceptTf = [&](const lingtu_dds_TFMessage &message) {
         ++counters.tf_messages;
@@ -803,13 +1000,15 @@ int main(int argc, char **argv) {
           directed_intent.Reset();
           last_decision = ExploreDecision{};
           if (pending_segment.has_value()) {
+            pending_segment->phase = PendingSegmentPhase::CancelRequested;
+            last_segment_command_attempt_s = loop_now_s;
             writeSegmentRequest(*pending_segment,
                                 lingtu::nav::endpoint::ExplorationSegmentCommandKind::kCancel,
                                 "exploration_map_identity_changed");
+          } else {
+            segment_replan_barrier.reset();
+            last_segment_command_attempt_s = -1.0;
           }
-          pending_segment.reset();
-          segment_replan_barrier.reset();
-          last_segment_command_attempt_s = -1.0;
           if (pending.has_value()) {
             cancel_reason = "exploration_map_identity_changed";
           }
@@ -846,8 +1045,10 @@ int main(int argc, char **argv) {
         ++counters.control_messages;
         lingtu::nav::endpoint::ExplorationControlRequest request;
         request.request_id = stringValue(message.request_id);
+        request.exploration_run_id = stringValue(message.exploration_run_id);
         request.kind = message.kind;
         request.session_id = stringValue(message.session_id);
+        request.expected_session_id = config.product_session_id;
         request.reason = stringValue(message.reason);
         request.frame_id = stringValue(message.header.frame_id);
         request.stamp_s = stampSeconds(message.header.stamp);
@@ -861,12 +1062,29 @@ int main(int argc, char **argv) {
             cancel_reason.has_value() ||
             (pending_segment.has_value() &&
              pending_segment->phase == PendingSegmentPhase::CancelRequested);
+        const bool lifecycle_command =
+            request.kind ==
+                static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kStart) ||
+            request.kind ==
+                static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kPause) ||
+            request.kind ==
+                static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kResume) ||
+            request.kind ==
+                static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kStop);
+        const std::size_t required_event_slots =
+            request.kind ==
+                    static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kStart)
+                ? 2U
+                : 1U;
+        request.event_capacity_ready =
+            !lifecycle_command || run_event_outbox.canRecord(required_event_slots);
         request.has_directed_target = message.has_directed_target;
         request.directed_target_x = message.directed_target_x;
         request.directed_target_y = message.directed_target_y;
         request.directed_target_ttl_s = message.directed_target_ttl_s;
         request.max_directed_target_ttl_s = config.directed_target_max_ttl_s;
 
+        const bool motion_pending_before = pending.has_value() || pending_segment.has_value();
         auto result = exploration_control.Apply(request);
         if (!result.duplicate && result.accepted && result.set_directed_target) {
           if (!snapshot.has_value()) {
@@ -919,6 +1137,43 @@ int main(int argc, char **argv) {
             exploration_control.RecordIntentRevision(request.request_id, result.intent_revision);
           }
         }
+        if (!result.duplicate && result.accepted) {
+          const auto kind = static_cast<lingtu::message::ExplorationCommandKind>(request.kind);
+          const std::string command_reason =
+              request.reason.empty() ? result.reason : request.reason;
+          bool lifecycle_recorded = true;
+          if (kind == lingtu::message::ExplorationCommandKind::kStart) {
+            if (!snapshot.has_value()) {
+              throw std::runtime_error("accepted exploration START has no map binding");
+            }
+            lifecycle_recorded = run_lifecycle.start(
+                lingtu::nav::endpoint::ExplorationRunBinding{
+                    request.exploration_run_id,
+                    request.request_id,
+                    config.product_session_id,
+                    std::string(lingtu::nav::endpoint::routeName(*config.route)),
+                    snapshot->identity.map_id,
+                    snapshot->identity.map_version,
+                    snapshot->identity.artifact_hash,
+                },
+                loop_now_s, result.reason);
+          } else if (kind == lingtu::message::ExplorationCommandKind::kPause &&
+                     result.reason == "exploration_pause_admitted") {
+            lifecycle_recorded = run_lifecycle.pause(request.request_id, loop_now_s, command_reason,
+                                                     motion_pending_before);
+          } else if (kind == lingtu::message::ExplorationCommandKind::kResume &&
+                     result.reason == "exploration_resume_admitted") {
+            lifecycle_recorded =
+                run_lifecycle.resume(request.request_id, loop_now_s, command_reason);
+          } else if (kind == lingtu::message::ExplorationCommandKind::kStop &&
+                     result.reason == "exploration_stop_admitted") {
+            lifecycle_recorded = run_lifecycle.cancel(request.request_id, loop_now_s,
+                                                      command_reason, motion_pending_before);
+          }
+          if (!lifecycle_recorded) {
+            throw std::runtime_error("exploration lifecycle fact could not be recorded");
+          }
+        }
         if (result.clear_queue) {
           queued.reset();
         }
@@ -942,8 +1197,9 @@ int main(int argc, char **argv) {
             cancel_reason = requested_cancel_reason;
           }
         }
-        dds.writeControlAck(request.request_id, request.kind, result.accepted, result.reason,
-                            result.session_id, result.intent_revision);
+        dds.writeControlAck(request.request_id, result.exploration_run_id, request.kind,
+                            result.accepted, result.duplicate, result.reason, result.session_id,
+                            result.intent_revision);
         if (result.duplicate) {
           ++counters.control_duplicates;
         } else if (result.accepted) {
@@ -958,9 +1214,15 @@ int main(int argc, char **argv) {
         if (!lingtu::message::isKnownNavigationGoalState(message.state) || !pending.has_value()) {
           return;
         }
+        if (stringValue(message.task_id) != pending->task_id) {
+          return;
+        }
         const auto state = static_cast<lingtu::message::NavigationGoalState>(message.state);
         const std::string reason = stringValue(message.reason);
-        lingtu::nav::endpoint::PendingExploreGoalLifecycle lifecycle{pending->request_id};
+        lingtu::nav::endpoint::PendingExploreGoalLifecycle lifecycle{
+            pending->request_id,
+            pending->cancel_request_id,
+        };
         const auto reaction = lingtu::nav::endpoint::reactToNavigationGoalLifecycle(
             &lifecycle, {
                             stringValue(message.request_id),
@@ -976,34 +1238,23 @@ int main(int argc, char **argv) {
         const std::string status_reason = reaction.reason.empty()
                                               ? lingtu::message::navigationGoalStateName(state)
                                               : reaction.reason;
+        if (reaction.clear_pending) {
+          observeMotionStopped(loop_now_s, "navigation_goal_terminal_after_stop:" + status_reason);
+        }
         const bool request_segment_fallback =
             state == lingtu::message::NavigationGoalState::Failed && pending_map_is_current &&
             snapshot_fresh && exploration_control.running() && !cancel_reason.has_value() &&
             !pending_segment.has_value() &&
+            lingtu::nav::endpoint::allowsExplorationSegmentFallback(*config.route,
+                                                                    snapshot->identity.live) &&
             lingtu::nav::endpoint::isExplorationSegmentFallbackReason(reason);
         if (request_segment_fallback) {
           const PendingGoal failed_goal = *pending;
-          lingtu::nav::endpoint::ExplorationSegmentRequestBinding binding{
-              segment_request_prefix + "-" + std::to_string(++segment_request_sequence),
-              snapshot->identity.session_id,
-              snapshot->identity.reset_epoch,
-              snapshot->identity.generation,
-          };
-          pending_segment = PendingSegment{
-              failed_goal.target,
-              snapshot->identity,
-              std::move(binding),
-              PendingSegmentPhase::AwaitingExecuteAck,
-              0U,
-          };
+          beginSegment(failed_goal.target, snapshot->identity, loop_now_s, reason);
           pending.reset();
           cancel_reason.reset();
           queued.reset();
           last_command_attempt_s = -1.0;
-          last_segment_command_attempt_s = loop_now_s;
-          writeSegmentRequest(*pending_segment,
-                              lingtu::nav::endpoint::ExplorationSegmentCommandKind::kExecute,
-                              reason);
           ++counters.goal_failures;
           last_reason = "exploration_segment_requested:" + status_reason;
           return;
@@ -1031,6 +1282,7 @@ int main(int argc, char **argv) {
         }
       });
       dds.drainSegmentAck([&](const lingtu_dds_ExplorationSegmentAck &message) {
+        ++counters.segment_ack_messages;
         if (!pending_segment.has_value()) {
           return;
         }
@@ -1067,6 +1319,9 @@ int main(int argc, char **argv) {
         }
         if (reaction.terminal) {
           const PendingSegment terminal_segment = *pending_segment;
+          observeMotionStopped(loop_now_s, "exploration_segment_execute_rejected_no_motion:" +
+                                               (reaction.reason.empty() ? std::string{"unspecified"}
+                                                                        : reaction.reason));
           finishSegmentTerminal(terminal_segment, reaction.terminal_generation, reaction.reason);
           return;
         }
@@ -1075,10 +1330,15 @@ int main(int argc, char **argv) {
         }
         const std::string ack_reason =
             reaction.reason.empty() ? std::string{"unspecified"} : reaction.reason;
+        if (phase == PendingSegmentPhase::CancelRequested && !event.accepted) {
+          (void)run_lifecycle.recordStopConfirmationFailure(
+              loop_now_s, "exploration_segment_cancel_rejected:" + ack_reason);
+        }
         last_reason = event.accepted ? "exploration_segment_acknowledged:" + ack_reason
                                      : "exploration_segment_cancel_rejected:" + ack_reason;
       });
       dds.drainSegmentStatus([&](const lingtu_dds_ExplorationSegmentStatus &message) {
+        ++counters.segment_status_messages;
         if (!pending_segment.has_value()) {
           return;
         }
@@ -1099,6 +1359,9 @@ int main(int argc, char **argv) {
         }
         if (reaction.terminal) {
           const PendingSegment terminal_segment = *pending_segment;
+          observeMotionStopped(loop_now_s, "exploration_segment_terminal_after_stop:" +
+                                               (reaction.reason.empty() ? std::string{"unspecified"}
+                                                                        : reaction.reason));
           finishSegmentTerminal(terminal_segment, reaction.terminal_generation, reaction.reason);
           return;
         }
@@ -1128,17 +1391,15 @@ int main(int argc, char **argv) {
             retry_cancel ? "exploration_segment_cancel_retry" : "exploration_segment_execute_retry";
       }
 
-      if (pending.has_value() && robot_fresh && snapshot_fresh &&
+      if (pending.has_value() && !cancel_reason.has_value() && robot_fresh && snapshot_fresh &&
           sameMapEpoch(pending->map, snapshot->identity)) {
         const double distance =
             std::hypot(pending->target.x - robot->pose.x, pending->target.y - robot->pose.y);
         if (distance <= config.arrival_tolerance_m) {
-          markVisited(pending->target);
-          pending.reset();
-          cancel_reason.reset();
-          last_command_attempt_s = -1.0;
-          ++counters.goals_reached;
-          last_reason = "exploration_goal_reached";
+          // Odometry proximity is progress only. NavigationGoalStatus is
+          // published after navd's MotionStopCoordinator parking gate and is
+          // the sole authority allowed to clear this pending motion.
+          last_reason = "exploration_goal_arrival_observed_waiting_terminal";
         }
       }
 
@@ -1153,20 +1414,28 @@ int main(int argc, char **argv) {
         }
       }
 
-      if (pending.has_value() && cancel_reason.has_value() &&
+      if (pending.has_value() && cancel_reason.has_value() && !pending->cancellation_acknowledged &&
           (last_command_attempt_s < 0.0 ||
            loop_now_s - last_command_attempt_s >= config.command_retry_s)) {
         last_command_attempt_s = loop_now_s;
         try {
-          commands.navigation().cancel(*cancel_reason, config.command_timeout_ms);
-          ++counters.cancels_accepted;
-          pending.reset();
-          cancel_reason.reset();
-          last_command_attempt_s = -1.0;
-          last_reason = "exploration_cancel_accepted";
+          const auto receipt = commands.navigation().cancelTask(pending->task_id, *cancel_reason,
+                                                                config.command_timeout_ms);
+          if (!receipt.accepted) {
+            ++counters.cancels_rejected;
+            last_reason = "exploration_cancel_rejected:" + receipt.reason;
+            (void)run_lifecycle.recordStopConfirmationFailure(loop_now_s, last_reason);
+          } else {
+            ++counters.cancels_accepted;
+            pending->cancel_request_id = receipt.request_id;
+            pending->cancellation_acknowledged = true;
+            last_command_attempt_s = -1.0;
+            last_reason = "exploration_cancel_acknowledged";
+          }
         } catch (const std::exception &error) {
           ++counters.cancels_rejected;
           last_reason = std::string("exploration_cancel_rejected:") + error.what();
+          (void)run_lifecycle.recordStopConfirmationFailure(loop_now_s, last_reason);
         }
       }
 
@@ -1180,19 +1449,23 @@ int main(int argc, char **argv) {
                    loop_now_s - last_command_attempt_s >= config.command_retry_s) {
           last_command_attempt_s = loop_now_s;
           try {
+            const std::uint64_t goal_sequence = ++goal_request_sequence;
+            const std::string requested_task_id =
+                goal_request_prefix + "-task-" + std::to_string(goal_sequence);
             const std::string requested_id =
-                goal_request_prefix + "-" + std::to_string(++goal_request_sequence);
-            const std::string accepted_request_id = commands.navigation().sendGoal(
+                goal_request_prefix + "-request-" + std::to_string(goal_sequence);
+            const auto receipt = commands.navigation().startTask(
                 queued->target.x, queued->target.y, 0.0, queued->target.yaw,
-                config.command_timeout_ms, requested_id);
-            if (accepted_request_id.empty()) {
-              throw std::runtime_error("navigation goal accepted without request id");
+                config.command_timeout_ms, requested_task_id, requested_id);
+            if (!receipt.accepted) {
+              throw std::runtime_error("navigation goal rejected:" + receipt.reason);
+            }
+            if (receipt.task_id != requested_task_id || receipt.request_id.empty()) {
+              throw std::runtime_error("navigation goal accepted with invalid task identity");
             }
             pending = PendingGoal{
-                queued->target,
-                queued->map,
-                accepted_request_id,
-                loop_now_s,
+                queued->target, queued->map, receipt.task_id, receipt.request_id, {},
+                loop_now_s,     false,
             };
             queued.reset();
             ++counters.goals_accepted;
@@ -1217,42 +1490,72 @@ int main(int argc, char **argv) {
             previous.accepted_intent_revision == directed_intent.revision();
         if (!already_committed) {
           lingtu::explore::ExploreInput input;
-          input.exploration_grid = snapshot->grid;
-          input.robot_pose = robot->pose;
-          input.visited_goals = visited;
-          input.stamp_s = snapshot->stamp_s;
-          input.map_frame = "map";
-          input.map = snapshot->identity;
-          input.directed_intent_revision = directed_intent.revision();
-          if (const auto directed_target = directed_intent.current(exploration_control.session_id(),
-                                                                   snapshot->identity, loop_now_s);
-              directed_target.has_value()) {
-            input.directed_target = lingtu::explore::DirectedTarget{
-                directed_target->target.x,
-                directed_target->target.y,
-            };
-          }
           ++counters.plans;
           try {
+            if (*config.route == Route::Map) {
+              const auto prepared = saved_coverage_gate->prepareActive();
+              if (!prepared.ok()) {
+                throw std::runtime_error("saved_map_occupancy_not_ready: " + prepared.reason);
+              }
+              auto coverage = lingtu::nav::endpoint::buildSavedCoverageGrid(
+                  prepared.artifact->map(), prepared.artifact->sourceMapSha256(),
+                  snapshot->identity);
+              if (!coverage.ok()) {
+                throw std::runtime_error(coverage.reason);
+              }
+              input.exploration_grid = std::move(*coverage.grid);
+              input.live_observation_grid = snapshot->grid;
+            } else {
+              input.exploration_grid = snapshot->grid;
+            }
+            input.robot_pose = robot->pose;
+            input.visited_goals = visited;
+            input.stamp_s = snapshot->stamp_s;
+            input.map_frame = "map";
+            input.map = snapshot->identity;
+            input.directed_intent_revision = directed_intent.revision();
+            if (const auto directed_target = directed_intent.current(
+                    exploration_control.session_id(), snapshot->identity, loop_now_s);
+                directed_target.has_value()) {
+              input.directed_target = lingtu::explore::DirectedTarget{
+                  directed_target->target.x,
+                  directed_target->target.y,
+              };
+            }
             last_decision =
                 policy.plan(input, []() { return !g_running.load(std::memory_order_relaxed); });
             last_reason = last_decision.reason;
             if (!last_decision.diagnostics.state_committed) {
               ++counters.plan_rejected;
             } else if (last_decision.has_goal) {
-              queued = QueuedGoal{
-                  {
-                      last_decision.goal_x,
-                      last_decision.goal_y,
-                      0.0,
-                  },
-                  snapshot->identity,
+              const Pose2D target{
+                  last_decision.goal_x,
+                  last_decision.goal_y,
+                  last_decision.goal_yaw,
               };
+              if (lingtu::nav::endpoint::usesLiveSegment(*config.route)) {
+                beginSegment(target, snapshot->identity, loop_now_s, "live_route");
+                last_reason = "live_route_requested";
+              } else {
+                queued = QueuedGoal{target, snapshot->identity};
+              }
             }
           } catch (const std::exception &error) {
             ++counters.plan_rejected;
             last_reason = std::string("exploration_plan_exception:") + error.what();
           }
+        }
+      }
+
+      if (exploration_control.running() && last_decision.done && !pending.has_value() &&
+          !pending_segment.has_value() && !segment_replan_barrier.has_value() &&
+          !queued.has_value() && !cancel_reason.has_value()) {
+        const std::string completion_reason =
+            last_decision.reason.empty() ? "exploration_completed" : last_decision.reason;
+        if (run_lifecycle.complete(loop_now_s, completion_reason) &&
+            exploration_control.Complete()) {
+          directed_intent.Reset();
+          last_reason = completion_reason;
         }
       }
 
@@ -1296,10 +1599,10 @@ int main(int argc, char **argv) {
       if (loop_now_s >= next_status_s) {
         next_status_s = loop_now_s + config.status_period_s;
         status_writer.submit(statusSnapshot(
-            config, runtime_state, last_reason, exploration_control.active(),
-            exploration_control.paused(), exploration_control.session_id(),
+            config, run_event_outbox.bootId(), runtime_state, last_reason, exploration_control,
             robot_fresh ? robot : std::nullopt, snapshot_fresh ? snapshot : std::nullopt, pending,
-            queued, cancel_reason, active_directed_target, last_decision, counters, loop_now_s));
+            pending_segment, queued, cancel_reason, active_directed_target, last_decision, counters,
+            loop_now_s));
         std::fprintf(stderr,
                      "explore_dds: state=%s reason=%s odom=%llu snapshots=%llu "
                      "plans=%llu goals=%llu/%llu reached=%llu map_gen=%llu\n",
@@ -1314,6 +1617,8 @@ int main(int argc, char **argv) {
                          snapshot.has_value() ? snapshot->identity.generation : 0U));
       }
 
+      (void)run_event_outbox.flush();
+
       const auto elapsed = std::chrono::steady_clock::now() - loop_started;
       if (elapsed < period) {
         std::this_thread::sleep_for(period - elapsed);
@@ -1327,11 +1632,16 @@ int main(int argc, char **argv) {
     }
     if (pending.has_value()) {
       try {
-        commands.navigation().cancel("exploration_endpoint_stopped", config.command_timeout_ms);
+        const auto receipt = commands.navigation().cancelTask(
+            pending->task_id, "exploration_endpoint_stopped", config.command_timeout_ms);
+        if (!receipt.accepted) {
+          throw std::runtime_error(receipt.reason);
+        }
       } catch (const std::exception &error) {
         std::fprintf(stderr, "explore_dds: shutdown cancel rejected: %s\n", error.what());
       }
     }
+    (void)run_event_outbox.flush();
     status_writer.flush();
     return 0;
   } catch (const std::exception &error) {

@@ -25,9 +25,10 @@ Meaning:
 - `imu`: IMU stream owner.
 - `gnss`: GNSS fix/status stream owner.
 
-Do not create new long runtime role names such as `CameraBridgeModule`,
-`LidarModule`, or `DeviceManager`. Those may exist only as compatibility
-aliases while migration is in progress.
+Runtime graph identity uses only the short roles `camera`, `lidar`, and `gnss`.
+Implementation class names may remain descriptive, but they are not graph
+aliases. Hardware inventory uses `hw`/`Hw` exclusively; the former
+`DeviceManager` alias has been removed.
 
 ## 2. Backend Names
 
@@ -79,8 +80,6 @@ Additional folders used in practice:
 
 - `api/`: shared Python data contracts used by multiple sources (for example
   `real/lidar/api/` for `LivoxPointFrame` and `LidarFrameStream`).
-- `compat/`: legacy adapters and readback paths that bridge old import names
-  to the current module layout (for example `real/lidar/compat/`).
 
 ## 4. Topic Naming
 
@@ -169,19 +168,12 @@ alive
 Current backends:
 
 ```text
-real/camera/impl/orbbec     # C++ Orbbec SDK capture (product path)
-real/camera/dds_module.py   # DdsCameraModule - native DDS subscriber
-sim/camera/impl/mujoco      # MuJoCo simulated camera
+real/camera/module.py       # camera/orbbec - native Orbbec SDK capture
+real/camera/dds_module.py   # camera/dds - native SHM/DDS reader
+sim/camera/module.py        # camera/sim - MuJoCo simulated camera
 ```
 
-Compatibility:
-
-- `real/camera/native_camera_module.py` is a compatibility re-export of
-  `OrbbecNativeCameraModule` from `module.py`.
-- `OrbbecSDK_ROS2` under `deps/orbbec/` is fallback only. The long-term real
-  path is pure Orbbec SDK plus native DDS.
-
-Registry names: `camera` role with `orbbec` or `dds` backend.
+Registry names: the `camera` role with the `orbbec`, `dds`, or `sim` backend.
 
 ## 7. LiDAR Contract
 
@@ -199,7 +191,6 @@ Current backends:
 
 ```text
 real/lidar/impl/livox       # Sdk2Source - C++ Livox SDK2 stream process
-real/lidar/compat/          # Legacy Python DDS readback (Lidar, LivoxDdsAdapter)
 sim/lidar/impl/mujoco       # MuJoCo simulated LiDAR (ray casting)
 sim/lidar/mujoco_lidar/     # High-fidelity MuJoCo LiDAR cores (CPU, JAX, Warp, TI)
 ```
@@ -263,8 +254,7 @@ Current driver backends:
 
 ```text
 real/thunder/native/             # Product C++ DDS -> Brainstem driver
-real/thunder/han_dog_module.py   # Compatibility Module driver
-real/thunder/connection.py       # DEPRECATED: NovaDogConnection legacy bridge
+real/thunder/han_dog_module.py   # Local/Host Module driver
 sim/mujoco/driver.py             # MuJoCo in-process driver
 sim/endpoint.py                  # Externally owned simulation streams
 ```
@@ -349,7 +339,7 @@ Refactor one device at a time:
 During migration:
 
 - Keep compatibility aliases.
-- Keep old ports only while tests and field profiles still need them.
+- Keep old ports only while tests and field Products still need them.
 - Add tests before deleting old paths.
 - Delete compatibility only after field validation passes.
 

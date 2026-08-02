@@ -93,7 +93,9 @@ class NavLoop {
                      std::optional<double> goal_reached_m = std::nullopt,
                      std::optional<double> goal_yaw_tolerance_rad = std::nullopt);
   void clearGlobalPath();
+  [[nodiscard]] bool hasRetainedGlobalPath() const;
   void stopLinearMotion();
+  void suspendAutonomy();
 
   NavLoopOutput tick(const nav_kernel::Pose &odom_map_body, const float *obstacle_xyzh,
                      int obstacle_count, double timestamp_s,

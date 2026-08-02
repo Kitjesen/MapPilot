@@ -185,11 +185,6 @@ class Navigation(
         octoplanner3d_timeout_s: float | None = None,
         **kw,
     ):
-        if "enable_ros2_bridge" in kw:
-            raise TypeError(
-                "Navigation no longer accepts enable_ros2_bridge; "
-                "configure navigation IO adapters in the blueprint stack"
-            )
         super().__init__(**kw)
         self._allow_direct_goal_fallback = allow_direct_goal_fallback
         self._direct_goal_fallback_on_planner_failure = direct_goal_fallback_on_planner_failure
@@ -553,6 +548,25 @@ class Navigation(
                 if isinstance(item, dict) and item.get("loop"):
                     patrol_loop = True
         if parsed:
+            active_patrol_states = {
+                MissionState.PLANNING,
+                MissionState.EXECUTING,
+                MissionState.PAUSED,
+                MissionState.RECOVERING,
+                MissionState.PATROLLING,
+                MissionState.STUCK,
+            }
+            same_route = len(parsed) == len(self._patrol_goals) and all(
+                np.array_equal(candidate, current)
+                for candidate, current in zip(parsed, self._patrol_goals, strict=True)
+            )
+            if (
+                self._mission_mode == MissionMode.PATROL
+                and self._get_state() in active_patrol_states
+                and same_route
+                and patrol_loop == self._patrol_loop
+            ):
+                return
             self._patrol_goals = parsed
             self._patrol_loop = patrol_loop
             self._patrol_index = 0

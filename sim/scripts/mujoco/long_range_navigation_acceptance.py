@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_native_navigation_acceptance.json"
+DEFAULT_MANIFEST = ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_navigation_acceptance.json"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 

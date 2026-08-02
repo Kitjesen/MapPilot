@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install one verified native release and reapply the exact active Product.
+# Install one verified native release and reapply the exact current RunPlan.
 
 set -euo pipefail
 
 PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RELEASES_DIR="${LINGTU_RELEASES_DIR:-/opt/lingtu/releases}"
 CURRENT_LINK="${LINGTU_CURRENT_LINK:-/opt/lingtu/current}"
-STATE_DIR="${LINGTU_PRODUCT_STATE_DIR:-/home/sunrise/.local/state/lingtu}"
+STATE_DIR="${LINGTU_SESSION_ROOT:-/run/lingtu}"
 TEST_ROOT="${LINGTU_NATIVE_RELEASE_TEST_ROOT:-}"
 TEST_CONTROL="${LINGTU_NATIVE_RELEASE_TEST_CONTROL:-}"
 TEST_MODE=0
@@ -41,8 +41,8 @@ Usage: install_nav.sh [--dry-run] [--package-dir DIR]
                       [--state-dir DIR]
 
 The installer verifies native artifact checksums, stages a versioned release,
-and uses ProductControl with the active immutable manifest to stop and reapply
-the Product around the atomic current-link update.
+and uses ProductControl with the immutable current RunPlan to quiesce and
+reapply the Product around the atomic current-link update.
 USAGE
       exit 0
       ;;
@@ -87,49 +87,54 @@ for absolute_path in "${RELEASES_DIR}" "${CURRENT_LINK}" "${STATE_DIR}"; do
 done
 
 TARGET_DIR="${RELEASES_DIR}/${VERSION}"
-ACTIVE_RECORD="${STATE_DIR}/active-product.json"
-MANIFEST_PATH=""
-if [[ -s "${ACTIVE_RECORD}" ]]; then
-  MANIFEST_PATH="$(python3 - "${ACTIVE_RECORD}" <<'PY'
+CURRENT_RECORD="${STATE_DIR}/current.json"
+RUN_PLAN_PATH=""
+if [[ -s "${CURRENT_RECORD}" ]]; then
+  RUN_PLAN_PATH="$(python3 - "${CURRENT_RECORD}" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 record = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-manifest = Path(str(record.get("manifest_path") or ""))
-if not manifest.is_file():
-    raise SystemExit("active Product manifest is missing")
-print(manifest)
+run_plan = Path(str(record.get("run_plan_path") or ""))
+if not run_plan.is_file():
+    raise SystemExit("current RunPlan is missing")
+print(run_plan)
 PY
 )"
 fi
 
 ACTIVE_REQUIRES_MAPD=0
-if [[ -n "${MANIFEST_PATH}" ]]; then
-  ACTIVE_REQUIRES_MAPD="$(python3 - "${MANIFEST_PATH}" <<'PY'
-import json
-from pathlib import Path
+PERSISTENT_PROCESSES=()
+if [[ -n "${RUN_PLAN_PATH}" ]]; then
+  ACTIVE_PROCESS_FACTS="$(
+    PYTHONPATH="${PACKAGE_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+      python3 - "${RUN_PLAN_PATH}" <<'PY'
 import sys
 
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-switch = payload.get("product_mode_switch") if isinstance(payload, dict) else None
-if isinstance(switch, dict):
-    payload = switch.get("product")
-processes = payload.get("processes", []) if isinstance(payload, dict) else []
+from lingtu.run_plan import RunPlan
+
+plan = RunPlan.load(sys.argv[1])
 requires_mapd = any(
-    isinstance(process, dict)
-    and (
-        str(process.get("name", "")).strip().lower() in {"maps", "mapd"}
-        or "mapd" in str(process.get("target", "")).strip().lower()
-    )
-    for process in processes
+    process.name.lower() in {"maps", "mapd"} or "mapd" in process.target.lower()
+    for process in plan.processes
 )
 print("1" if requires_mapd else "0")
+for process in plan.processes:
+    if process.lifecycle == "persistent":
+        print(process.name)
 PY
-)"
+  )"
+  mapfile -t ACTIVE_PROCESS_FACT_LINES <<< "${ACTIVE_PROCESS_FACTS}"
+  ACTIVE_REQUIRES_MAPD="${ACTIVE_PROCESS_FACT_LINES[0]}"
+  if (( ${#ACTIVE_PROCESS_FACT_LINES[@]} > 1 )); then
+    PERSISTENT_PROCESSES=("${ACTIVE_PROCESS_FACT_LINES[@]:1}")
+  fi
 fi
+
 if [[ "${ACTIVE_REQUIRES_MAPD}" == "1" ]] \
     && { [[ ! -x "${PACKAGE_DIR}/build/maps/mapd" ]] \
+      || [[ ! -x "${PACKAGE_DIR}/build/maps/lingtu-mapctl" ]] \
       || [[ ! -f "${PACKAGE_DIR}/build/maps/liblingtu_maps.so" ]]; }; then
   echo \
     "Active Product requires maps/mapd, but this release lacks mapd artifacts" \
@@ -137,36 +142,12 @@ if [[ "${ACTIVE_REQUIRES_MAPD}" == "1" ]] \
   exit 1
 fi
 
-PERSISTENT_PROCESSES=()
-if [[ -n "${MANIFEST_PATH}" ]]; then
-  mapfile -t PERSISTENT_PROCESSES < <(python3 - "${MANIFEST_PATH}" <<'PY'
-import json
-from pathlib import Path
-import sys
-
-payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-switch = payload.get("product_mode_switch") if isinstance(payload, dict) else None
-if isinstance(switch, dict):
-    payload = switch.get("product")
-processes = payload.get("processes", []) if isinstance(payload, dict) else []
-for process in processes:
-    if not isinstance(process, dict):
-        continue
-    if str(process.get("lifecycle", "")).strip().lower() != "persistent":
-        continue
-    name = str(process.get("name", "")).strip()
-    if name:
-        print(name)
-PY
-  )
-fi
-
 if [[ -e "${CURRENT_LINK}" && ! -L "${CURRENT_LINK}" ]]; then
   echo "Current release path exists but is not a symlink: ${CURRENT_LINK}" >&2
   exit 1
 fi
-if [[ -L "${CURRENT_LINK}" && -z "${MANIFEST_PATH}" ]]; then
-  echo "Refusing to replace an active release without its Product manifest" >&2
+if [[ -L "${CURRENT_LINK}" && -z "${RUN_PLAN_PATH}" ]]; then
+  echo "Refusing to replace an active release without its current RunPlan" >&2
   exit 1
 fi
 if [[ -e "${TARGET_DIR}" || -L "${TARGET_DIR}" ]]; then
@@ -186,7 +167,7 @@ if [[ -n "${TEST_ROOT}" || -n "${TEST_CONTROL}" ]]; then
     "${CURRENT_LINK}" \
     "${STATE_DIR}" \
     "${TEST_CONTROL}" \
-    "${MANIFEST_PATH}" <<'PY'
+    "${RUN_PLAN_PATH}" <<'PY'
 from pathlib import Path
 import sys
 
@@ -206,7 +187,7 @@ fi
 if [[ "${DRY_RUN}" == "1" ]]; then
   echo "Native release verified: ${VERSION}"
   echo "Target: ${TARGET_DIR}"
-  echo "Active Product manifest: ${MANIFEST_PATH:-none}"
+  echo "Current RunPlan: ${RUN_PLAN_PATH:-none}"
   exit 0
 fi
 if [[ "${EUID}" -ne 0 && "${TEST_MODE}" != "1" ]]; then
@@ -249,7 +230,7 @@ product_control() {
   local process="${3:-}"
   local -a control_command
   if [[ "${TEST_MODE}" == "1" ]]; then
-    "${TEST_CONTROL}" "${repo}" "${action}" "${MANIFEST_PATH}" "${process}"
+    "${TEST_CONTROL}" "${repo}" "${action}" "${RUN_PLAN_PATH}" "${process}"
     return
   fi
   (
@@ -257,7 +238,7 @@ product_control() {
     control_command=(
       python3 -m lingtu.control
       "${action}"
-      --manifest "${MANIFEST_PATH}"
+      --state-dir "${STATE_DIR}"
       --json
     )
     if [[ -n "${process}" ]]; then
@@ -282,8 +263,8 @@ restore_previous_release() {
   fi
   if [[ "${current_target}" == "${target_real}" \
       && -n "${target_real}" \
-      && -n "${MANIFEST_PATH}" ]]; then
-    product_control "${TARGET_DIR}" stop || rollback_failed=1
+      && -n "${RUN_PLAN_PATH}" ]]; then
+    product_control "${TARGET_DIR}" quiesce || rollback_failed=1
   fi
 
   if [[ -n "${OLD_TARGET}" ]]; then
@@ -314,7 +295,7 @@ restore_previous_release() {
         product_control "${OLD_TARGET}" restart "${process}" \
           || rollback_failed=1
       done
-      product_control "${OLD_TARGET}" apply || rollback_failed=1
+      product_control "${OLD_TARGET}" reapply || rollback_failed=1
     else
       echo \
         "Rollback did not restore current to the previous release; old Product was not started" \
@@ -337,8 +318,8 @@ restore_previous_release() {
 }
 
 if [[ -n "${OLD_TARGET}" ]]; then
-  if ! product_control "${OLD_TARGET}" stop; then
-    echo "Previous Product failed to stop; restoring it" >&2
+  if ! product_control "${OLD_TARGET}" quiesce; then
+    echo "Previous Product failed to quiesce; restoring it" >&2
     if ! restore_previous_release; then
       echo "Rollback failed; operator intervention is required" >&2
     fi
@@ -383,7 +364,7 @@ if [[ "$(readlink -f "${CURRENT_LINK}" || true)" != \
   exit 1
 fi
 
-if [[ -n "${MANIFEST_PATH}" ]]; then
+if [[ -n "${RUN_PLAN_PATH}" ]]; then
   for process in "${PERSISTENT_PROCESSES[@]}"; do
     if ! product_control "${TARGET_DIR}" restart "${process}"; then
       echo \
@@ -395,8 +376,8 @@ if [[ -n "${MANIFEST_PATH}" ]]; then
       exit 1
     fi
   done
-  if ! product_control "${TARGET_DIR}" apply; then
-    echo "New release failed to apply; restoring the previous release" >&2
+  if ! product_control "${TARGET_DIR}" reapply; then
+    echo "New release failed to reapply the active Product; restoring the previous release" >&2
     if ! restore_previous_release; then
       echo "Rollback failed; operator intervention is required" >&2
     fi

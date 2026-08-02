@@ -140,6 +140,12 @@ def _ensure_native_probe() -> Path:
     binary = _native_probe_path()
     if binary.exists():
         return binary
+    allow_build = os.environ.get("LINGTU_DDS_PROBE_ALLOW_BUILD", "1").strip().lower()
+    if allow_build not in {"1", "true", "yes", "on"}:
+        raise FileNotFoundError(
+            "native DDS probe is not packaged at "
+            f"{binary}; managed releases forbid readiness-time compilation"
+        )
     build_script = ROOT / "scripts" / "build" / "build_dds_probe.sh"
     if not build_script.exists():
         raise FileNotFoundError(f"native DDS probe build script is missing: {build_script}")

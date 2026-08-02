@@ -10,7 +10,7 @@ def test_ros_imports_stay_inside_explicit_compat_boundaries() -> None:
     violations, scanned, classified = validate_ros_import_boundaries()
 
     assert scanned > 0
-    assert classified > 0
+    assert classified == 0
     assert violations == [], "\n".join(violations)
 
 

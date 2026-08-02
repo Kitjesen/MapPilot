@@ -5,8 +5,8 @@ from __future__ import annotations
 import logging
 
 from runtime.blueprint import Blueprint
-from runtime.plugin_resolution import stack_module
 from runtime.contracts import LIDAR_BACKEND_MID360, LIDAR_BACKEND_MUJOCO, LIDAR_BACKENDS
+from runtime.plugin_resolution import stack_module
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 def lidar(
     ip: str | None = None,
     enabled: bool = True,
-    start_driver: bool = False,
     backend: str = "mid360",
 ) -> Blueprint:
     """LiDAR stream stack.
@@ -22,8 +21,6 @@ def lidar(
     Args:
         ip: LiDAR IP address override (default from robot_config.yaml).
         enabled: Set to False for stub/dev profiles that don't need hardware.
-        start_driver: Compatibility-only flag for starting the legacy local
-            livox_ros_driver2 process.
         backend: Registered LiDAR backend. Use ``mid360`` for real Livox and
             ``mujoco`` for same-process simulation.
 
@@ -58,14 +55,11 @@ def lidar(
     kw = {}
     if ip:
         kw["ip"] = ip
-    if start_driver and backend == "mid360":
-        kw["start_driver"] = True
     bp.add(LidarModule, alias="lidar", **kw)
     logger.info(
-        "LiDAR stack: lidar added (backend=%s, ip=%s, start_driver=%s)",
+        "LiDAR stack: lidar added (backend=%s, ip=%s)",
         backend,
         ip or "config default",
-        start_driver,
     )
 
     return bp

@@ -16,7 +16,7 @@ def test_navigation_plan_service_entrypoints_live_under_services_plan() -> None:
 
 
 def test_planning_implementation_entrypoints_are_in_services_plan() -> None:
-    from nav.services.plan.compat.direct_path import DirectPathBackend
+    from nav.services.plan.mapless.direct_path import DirectPathBackend
     from nav.services.plan.global_planner.service import GlobalPlanner
     from nav.services.plan.global_planner.path_feasibility import evaluate_ground_path
     from nav.services.plan.global_planner.algorithm.pct.planner import PCTPlanner
@@ -33,7 +33,7 @@ def test_planning_implementation_entrypoints_are_in_services_plan() -> None:
     assert score_cmu_py_paths.__module__ == "nav.local.cmu_py"
     assert create_nanobind_backend.__module__ == "nav.local.native"
     assert setup_local_planner_backend.__module__ == "nav.local.local_planner_runtime"
-    assert DirectPathBackend.__module__ == "nav.services.plan.compat.direct_path"
+    assert DirectPathBackend.__module__ == "nav.services.plan.mapless.direct_path"
     assert evaluate_ground_path.__module__ == "nav.services.plan.global_planner.path_feasibility"
     assert PCTPlanner.__module__ == "nav.services.plan.global_planner.algorithm.pct.planner"
     assert create_planner_service.__module__ == "nav.services.plan.factory"

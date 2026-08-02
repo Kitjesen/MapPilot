@@ -6,6 +6,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 
 from gateway.routes.operations import register_operation_routes
@@ -14,16 +15,17 @@ from gateway.services.native_exploration import read_fresh_status, read_status, 
 
 
 class _Commands:
-    def __init__(self) -> None:
+    def __init__(self, ack=True) -> None:
         self.calls: list[tuple[str, str]] = []
+        self.ack = ack
 
     def start_exploration(self, *, reason: str) -> bool:
         self.calls.append(("start", reason))
-        return True
+        return self.ack
 
     def stop_exploration(self, *, reason: str) -> bool:
         self.calls.append(("stop", reason))
-        return True
+        return self.ack
 
 
 def _route_endpoint(app: FastAPI, path: str):
@@ -120,5 +122,67 @@ def test_stop_route_reports_command_timeout_without_faking_success() -> None:
     assert response.status_code == 503
     assert payload["error"] == "exploration_command_unavailable"
     assert payload["detail"] == {"source": "exploration_command_boundary"}
+    assert gateway._exploring is True
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    "ack",
+    [None, 1, "true", {}, {"accepted": 1}, {"status": "stopped"}],
+)
+def test_start_route_rejects_malformed_ack_without_switching_exploring(
+    monkeypatch,
+    ack,
+) -> None:
+    commands = _Commands(ack)
+    events: list[dict] = []
+    gateway = SimpleNamespace(
+        _frontier_explorer=None,
+        _tare_explorer=None,
+        _go2rtc_upstream="",
+        _explorer_available=lambda: True,
+        _exploration_start_readiness=lambda: {"can_start": True, "blockers": []},
+        _exploring=False,
+        push_event=events.append,
+    )
+    gateway._begin_exploration = lambda: exploration.begin_exploration(gateway)
+    monkeypatch.setattr(exploration, "_native_commands", lambda _gw: commands)
+    monkeypatch.setattr(exploration, "_native_status", lambda: {"active": False})
+    app = FastAPI()
+    register_operation_routes(app, gateway)
+
+    response = asyncio.run(_route_endpoint(app, "/api/v1/explore/start")())
+
+    assert response.status_code in {409, 503}
+    assert gateway._exploring is False
+    assert events == []
+
+
+@pytest.mark.parametrize(
+    "ack",
+    [None, 1, "true", {}, {"accepted": 1}, {"status": "started"}],
+)
+def test_stop_route_rejects_malformed_ack_without_switching_exploring(
+    monkeypatch,
+    ack,
+) -> None:
+    commands = _Commands(ack)
+    events: list[dict] = []
+    gateway = SimpleNamespace(
+        _frontier_explorer=None,
+        _tare_explorer=None,
+        _go2rtc_upstream="",
+        _explorer_stop_available=lambda: True,
+        _exploring=True,
+        push_event=events.append,
+    )
+    gateway._end_exploration = lambda: exploration.end_exploration(gateway)
+    monkeypatch.setattr(exploration, "_native_commands", lambda _gw: commands)
+    app = FastAPI()
+    register_operation_routes(app, gateway)
+
+    response = asyncio.run(_route_endpoint(app, "/api/v1/explore/stop")())
+
+    assert response.status_code in {409, 503}
     assert gateway._exploring is True
     assert events == []

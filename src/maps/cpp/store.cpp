@@ -265,6 +265,90 @@ std::string ReadSmallTextFile(const std::filesystem::path& path) {
       std::istreambuf_iterator<char>());
 }
 
+
+bool IsSafeDeclaredRelativePath(const std::filesystem::path& path) {
+  if (path.empty() || path.is_absolute() || path.has_root_name() || path.has_root_directory()) {
+    return false;
+  }
+  for (const auto& part : path) {
+    if (part == "..") {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool IsPathWithinDirectory(const std::filesystem::path& child,
+                           const std::filesystem::path& directory) {
+  auto child_it = child.begin();
+  const auto child_end = child.end();
+  auto dir_it = directory.begin();
+  const auto dir_end = directory.end();
+  for (; dir_it != dir_end; ++dir_it, ++child_it) {
+    if (child_it == child_end || *child_it != *dir_it) {
+      return false;
+    }
+  }
+  return child_it != child_end;
+}
+
+const ArtifactSpec* ArtifactSpecForType(ArtifactType type) {
+  for (const auto& spec : kArtifactSpecs) {
+    if (spec.type == type) {
+      return &spec;
+    }
+  }
+  return nullptr;
+}
+
+std::filesystem::path CheapContentPath(
+    const std::filesystem::path& map_dir,
+    std::int64_t* version) {
+  if (version != nullptr) {
+    *version = 0;
+  }
+  if (!std::filesystem::is_directory(map_dir)) {
+    return {};
+  }
+  const auto version_path = map_dir / "current_version.txt";
+  if (!std::filesystem::is_regular_file(version_path)) {
+    if (version != nullptr) {
+      *version = 1;
+    }
+    return map_dir;
+  }
+  std::ifstream file(version_path, std::ios::binary);
+  std::string text;
+  if (!file) {
+    return {};
+  }
+  std::getline(file, text);
+  text = Trim(text);
+  if (text.empty() || !std::all_of(text.begin(), text.end(), [](unsigned char ch) {
+        return std::isdigit(ch) != 0;
+      })) {
+    return {};
+  }
+  std::int64_t parsed = 0;
+  try {
+    parsed = std::stoll(text);
+  } catch (...) {
+    return {};
+  }
+  if (parsed <= 0) {
+    return {};
+  }
+  const auto content = map_dir / ".versions" / text;
+  if (!std::filesystem::is_directory(content)) {
+    return {};
+  }
+  if (version != nullptr) {
+    *version = parsed;
+  }
+  return content;
+}
+
+
 std::string MetadataFrameId(const std::filesystem::path& map_dir) {
   const auto metadata_path = map_dir / "metadata.json";
   if (!std::filesystem::is_regular_file(metadata_path)) {
@@ -507,6 +591,81 @@ MapStoreResult MapStore::RetireMap(const std::string& map_id) {
   WriteTextAtomic(dir / kLifecycleStateFilename, "RETIRED\n");
   return {true, "retired", ScanRecord(id, MapState::kRetired)};
 }
+
+DeclaredArtifactIdentityResult MapStore::ReadDeclaredArtifactIdentity(
+    const std::string& map_id,
+    ArtifactType type,
+    const std::string& expected_frame_id) const {
+  const std::string id = NormalizeMapId(map_id);
+  const auto* spec = ArtifactSpecForType(type);
+  if (spec == nullptr) {
+    return {std::nullopt, "unsupported artifact type"};
+  }
+  const auto map_dir = root_dir_ / id;
+  std::int64_t version = 0;
+  const auto content = CheapContentPath(map_dir, &version);
+  if (content.empty()) {
+    return {std::nullopt, "map content unavailable: " + id};
+  }
+  const auto metadata_path = content / "metadata.json";
+  if (!std::filesystem::is_regular_file(metadata_path)) {
+    return {std::nullopt, "metadata.json is missing"};
+  }
+  const std::string metadata = ReadSmallTextFile(metadata_path);
+  if (metadata.empty()) {
+    return {std::nullopt, "metadata.json is unreadable"};
+  }
+  const std::string frame_id = JsonStringField(metadata, "frame_id");
+  if (frame_id.empty()) {
+    return {std::nullopt, "metadata frame_id is missing"};
+  }
+  if (!expected_frame_id.empty() && frame_id != expected_frame_id) {
+    return {std::nullopt, "frame mismatch: expected " + expected_frame_id + ", got " + frame_id};
+  }
+  const std::string artifacts = JsonObjectField(metadata, "artifacts");
+  const std::string artifact = JsonObjectField(artifacts, spec->name);
+  if (artifact.empty()) {
+    return {std::nullopt, std::string(spec->name) + " metadata is missing"};
+  }
+  const std::string declared_path = JsonStringField(artifact, "path");
+  const std::string declared_sha = JsonStringField(artifact, "sha256");
+  if (declared_path.empty()) {
+    return {std::nullopt, std::string(spec->name) + " path is missing"};
+  }
+  if (declared_sha.size() != 64U) {
+    return {std::nullopt, std::string(spec->name) + " sha256 is missing"};
+  }
+  const std::filesystem::path declared_relative_path(declared_path);
+  if (!IsSafeDeclaredRelativePath(declared_relative_path)) {
+    return {std::nullopt, std::string(spec->name) + " path escapes map content"};
+  }
+  std::error_code ec;
+  const auto canonical_content = std::filesystem::canonical(content, ec);
+  if (ec) {
+    return {std::nullopt, "map content unavailable: " + id};
+  }
+  ec.clear();
+  const auto artifact_path = std::filesystem::weakly_canonical(content / declared_relative_path, ec);
+  if (ec || !IsPathWithinDirectory(artifact_path, canonical_content)) {
+    return {std::nullopt, std::string(spec->name) + " path escapes map content"};
+  }
+  if (!std::filesystem::is_regular_file(artifact_path)) {
+    return {std::nullopt, std::string(spec->name) + " artifact is missing"};
+  }
+  DeclaredArtifactIdentity identity;
+  identity.map_id = id;
+  identity.version = version;
+  identity.type = type;
+  identity.map_dir = content;
+  identity.artifact_path = artifact_path;
+  identity.artifact_sha256 = declared_sha;
+  identity.frame_id = frame_id;
+  if (!identity.valid()) {
+    return {std::nullopt, "declared artifact identity is incomplete"};
+  }
+  return {std::move(identity), {}};
+}
+
 
 ArtifactValidationResult MapStore::ValidateArtifacts(
     const std::string& map_id,

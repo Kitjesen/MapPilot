@@ -95,6 +95,35 @@ int main() {
               "active_map_unavailable_after_planning",
           "missing active map was not rejected");
 
+  auto overlay_completion = *first_result;
+  auto &requested_overlay = overlay_completion.context.request.temporary_overlay;
+  requested_overlay.revision = 17U;
+  requested_overlay.frame_epoch = 4U;
+  requested_overlay.obstacle_generation = 23U;
+  requested_overlay.traversability_generation = 29U;
+  requested_overlay.blocked_regions.push_back({{2.0, 2.0, 0.5}, 0.6, -0.2, 1.8});
+  overlay_completion.result.overlay_revision = requested_overlay.revision;
+  overlay_completion.result.overlay_frame_epoch = requested_overlay.frame_epoch;
+  overlay_completion.result.overlay_obstacle_generation = requested_overlay.obstacle_generation;
+  overlay_completion.result.overlay_traversability_generation =
+      requested_overlay.traversability_generation;
+  require(lingtu::nav::endpoint::globalPlanStaleReason(overlay_completion, 11, 4,
+                                                       overlay_completion.result.map_identity)
+              .empty(),
+          "matching temporary-overlay identity was rejected");
+  ++overlay_completion.result.overlay_obstacle_generation;
+  require(lingtu::nav::endpoint::globalPlanStaleReason(overlay_completion, 11, 4,
+                                                       overlay_completion.result.map_identity) ==
+              "temporary_overlay_identity_mismatch",
+          "mismatched temporary-overlay identity was accepted");
+
+  auto unexpected_overlay = *first_result;
+  unexpected_overlay.result.overlay_revision = 1U;
+  require(lingtu::nav::endpoint::globalPlanStaleReason(unexpected_overlay, 11, 4,
+                                                       unexpected_overlay.result.map_identity) ==
+              "unexpected_temporary_overlay_identity",
+          "planner result leaked an unrequested temporary-overlay identity");
+
   GlobalPlanContext cancelled;
   cancelled.request_id = "goal-2";
   cancelled.request = first.request;

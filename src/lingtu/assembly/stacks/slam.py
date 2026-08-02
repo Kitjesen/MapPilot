@@ -1,13 +1,12 @@
 """SLAM stack: native SlamModule or an explicit native transport adapter.
 
-This stack only creates Module graph nodes. Starting external services belongs
-to lingtu.assembly.stacks.system.external_services.
+This stack only creates Module graph nodes. ProductControl owns field process
+lifecycle through its internal SystemdRunner.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from localization.adapters.resolver import localization_adapter_module
 from runtime.blueprint import Blueprint
@@ -19,36 +18,30 @@ logger = logging.getLogger(__name__)
 def slam(
     profile: str = "fastlio2",
     enable_visual_backup: bool = True,
-    manage_services: bool = False,
     localization_adapter: str | None = None,
     endpoint_contract: str | None = None,
 ) -> Blueprint:
     """Build the SLAM/localization stack.
 
-    Native ``SlamModule`` is the managed path. Field profiles use explicit
-    native DDS/status adapters owned by the external SLAM endpoint.
+    Native ``SlamModule`` is the managed path. Real-env Product Hosts use
+    explicit native DDS/status adapters owned by the external SLAM endpoint.
     """
 
     bp = Blueprint()
     profile = normalize_slam_profile(profile)
+    adapter = str(localization_adapter or "").strip()
 
-    if not profile or profile == "none":
+    if (not profile or profile == "none") and not adapter:
         return bp
-    if profile == "bridge" and not _uses_external_adapter(localization_adapter):
+    if profile == "bridge" and not adapter:
         logger.warning("slam_profile='bridge' requires an explicit localization_adapter; skipping SLAM module")
         return bp
-    if manage_services:
-        logger.debug(
-            "slam(manage_services=True) is ignored; external service startup "
-            "is handled by lingtu.assembly.stacks.system.external_services"
-        )
-
     module_alias = "SlamModule"
     has_slam_module = False
     try:
-        if _uses_external_adapter(localization_adapter):
-            module_cls = _localization_adapter_module(localization_adapter)
-            module_alias = slam_adapter_module_name(localization_adapter)
+        if adapter:
+            module_cls = localization_adapter_module(adapter)
+            module_alias = slam_adapter_module_name(adapter)
         else:
             from localization.slam.module import SlamModule as module_cls
 
@@ -85,16 +78,6 @@ def slam_module_name(profile: str) -> str:
     return "SlamModule"
 
 
-def _localization_adapter_module(adapter_name: str | None = None) -> type[Any]:
-    """Resolve an explicit compatibility localization adapter."""
-
-    return localization_adapter_module(adapter_name)
-
-
-def _uses_external_adapter(adapter_name: str | None) -> bool:
-    adapter = str(adapter_name or "").strip().lower()
-    return bool(adapter and adapter not in {"native", "native_slam", "slam"})
-
 
 def slam_adapter_module_name(adapter_name: str | None) -> str:
     """Return the graph alias for an explicit localization adapter."""
@@ -105,24 +88,7 @@ def slam_adapter_module_name(adapter_name: str | None) -> str:
 def normalize_slam_profile(profile: str) -> str:
     """Return the canonical SLAM profile name used by stack factories."""
 
-    raw = str(profile or "").strip().lower()
-    aliases = {
-        "super-lio": "super_lio",
-        "superlio": "super_lio",
-        "super_lio_reloc": "super_lio_relocation",
-        "super-lio-reloc": "super_lio_relocation",
-        "superlio-reloc": "super_lio_relocation",
-        "super-lio-relocation": "super_lio_relocation",
-        "superlio-relocation": "super_lio_relocation",
-        "relocation": "super_lio_relocation",
-    }
-    return aliases.get(raw, raw)
-
-
-def _normalize_slam_profile(profile: str) -> str:
-    """Backward-compatible private alias for existing imports/tests."""
-
-    return normalize_slam_profile(profile)
+    return str(profile or "").strip().lower()
 
 
 def _read_gnss_fusion_kwargs() -> dict:

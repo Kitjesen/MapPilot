@@ -24,14 +24,6 @@ def register_app_routes(app, gw) -> None:
         return build_app_bootstrap(gw)
 
     @app.get(
-        "/api/v1/bootstrap",
-        response_model=AppBootstrapResponse,
-        include_in_schema=False,
-    )
-    async def app_bootstrap_legacy_alias():
-        return build_app_bootstrap(gw)
-
-    @app.get(
         "/api/v1/app/capabilities",
         summary="App/Web API capability manifest",
         response_model=AppCapabilitiesResponse,

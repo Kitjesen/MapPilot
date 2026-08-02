@@ -1,9 +1,11 @@
 # Core Concepts
 
-LingTu is a Module-First autonomous-navigation runtime. A product profile
-declares the robot behavior; a Blueprint assembles the Module graph; typed
-ports and explicit wires carry data through that graph. DDS, shared memory,
-simulators, and ROS 2 are boundary mechanisms, not the business API.
+LingTu uses a Product boundary around a scoped Python Host. ProductControl is
+fixed to `env=real` or `env=sim` and resolves a Product into one fingerprinted
+`RunPlan`; ProductControl applies its native processes. A
+`Blueprint` only assembles typed `Module` ports
+and wires inside the Host. DDS, shared memory, simulators, and ROS 2 are
+boundary mechanisms, not the business API.
 
 > **Status:** Current product architecture<br>
 > **Audience:** Developers, integration engineers, and reviewers<br>
@@ -14,12 +16,11 @@ simulators, and ROS 2 are boundary mechanisms, not the business API.
 ## The model in one picture
 
 ```text
-Product profile
-  -> resolved configuration
-  -> Blueprint (modules + wires + boundary contract)
-  -> SystemHandle
-  -> Module ports
-  -> local calls or an explicit external transport
+env + Product
+  -> Assembly
+  -> fingerprinted RunPlan
+     -> ProductControl -> native processes + Host
+     -> Host -> Blueprint -> Module ports and local calls
 
 Operator / UI / MCP intent
   -> Gateway or goal service
@@ -33,9 +34,13 @@ main way LingTu stays replaceable across a stub, simulation, and field robot.
 
 | Term | Answers | Does not answer |
 | --- | --- | --- |
-| **Profile** | What product behavior is requested? | Which process owns every I/O boundary? |
-| **Resolved configuration** | Which product, robot preset, endpoint, and overrides apply? | How individual Modules exchange a message. |
-| **Blueprint** | Which Modules exist and how their ports connect? | How a planner computes a path. |
+| **Profile** | Which local development configuration is requested? | Field Product or deployment identity. |
+| **env** | Is this runtime `real` or `sim`? | Product behavior or a communication endpoint. |
+| **Product** | Which env-independent Host graph, logical native roles, topics, and capabilities form one mode? | Concrete deployment targets or runtime side effects. |
+| **RunPlan** | What exact Host config and processes result from resolving Product + env? | User intent or side effects. |
+| **ProductControl** | How is one Product safely applied, switched, stopped, or rolled back inside a fixed env? | Env switching or domain algorithms. |
+| **Host** | Which low-rate API, Agent, semantic, and adapter capabilities share one Python process? | Native sensor, SLAM, map, navigation, or driver ownership. |
+| **Blueprint** | Which Modules exist inside one Host and how their ports connect? | Product switching or native process ownership. |
 | **Module** | Which focused runtime capability owns this behavior? | Which transport carries every message. |
 | **Port** | What typed data enters or leaves one Module? | Which other Module is allowed to consume it. |
 | **Wire** | Which output feeds which input? | Whether that connection crosses a process. |
@@ -210,9 +215,9 @@ route contract -> build.
 
 Stack factories in `src/lingtu/assembly/stacks/` add small reusable groups,
 such as maps, safety, navigation, or gateway. They do not decide a product
-mission. Product-level assembly lives in `products/`, and
-`profile_builder.py` is the profile-to-Blueprint entry point used by the CLI,
-SDK, smoke tests, and robot startup.
+mission. Product-level assembly lives in `products/`. `profile_builder.py` has
+separate local Profile and Product+env entry points; field startup consumes a
+RunPlan rather than resolving a Profile again.
 
 This split makes a change reviewable:
 
@@ -257,23 +262,21 @@ deprecated for new code. The transport package and
 [runtime bus decision](../architecture/LINGTU_RUNTIME_BUS_DECISION.md) provide
 the full policy.
 
-## Profiles, robot presets, endpoints, and sessions
+## Profiles, Product/env, endpoints, and sessions
 
 These concepts are commonly collapsed into a single word such as "mode." They
 should not be.
 
 ```text
-profile -> product intent and high-level behavior
-robot preset -> hardware-facing defaults
-runtime endpoint -> where data/commands cross a boundary
-user overrides -> explicit final changes
+local Profile -> development Host configuration
+Product -> env-independent operating mode
+env -> real or sim outer runtime implementation
+RobotConfig -> static real-env robot/device/calibration data
+endpoint -> concrete HTTP, DDS, or native-service communication boundary
 ```
 
-The resolver merges them in that order: product profile, robot preset, robot
-runtime defaults, endpoint adaptation, then user overrides. A profile alias is
-normalized before resolution; use canonical names in new documentation and
-configuration. Ask the running CLI for the current catalog instead of copying
-a stale profile list:
+Use canonical names in new documentation and configuration. Ask the running CLI
+for the current local Profile catalog instead of copying a stale profile list:
 
 ```bash
 uv run --locked python lingtu.py --list
@@ -284,19 +287,20 @@ The active runtime also has separate operator-facing state:
 
 | Field | Meaning | Example |
 | --- | --- | --- |
-| `profile` | Product behavior selected for startup. | `nav` |
-| `endpoint` | I/O boundary/data source. | `thunder_field` or a simulation endpoint |
+| `env` | Outer runtime environment. | `real` or `sim` |
+| `product` | Operator-selected operating mode. | `nav` |
+| `endpoint` | Concrete HTTP, DDS, or native-service communication address/contract. | `http://robot:5050` or `thunder_dds_v1` |
 | `session_mode` | Coarse resource session. | `mapping`, `navigating`, `exploring` |
 | `product_session` | Operator task shown in the product. | `navigation`, `inspection`, `teleop` |
 | `slam_mode` | SLAM is mapping or localizing. | `mapping`, `localization` |
 
-For a physical field navigation profile, the usual shape is a local Python
-Module graph plus a typed DDS endpoint boundary. That does not mean every
-Python Module speaks DDS. It means the native field endpoint owns the typed
-process boundary while Modules retain their normal local contracts.
+For the `nav` Product in `env=real`, the usual shape is a local Python Host
+graph plus typed DDS service boundaries. That does not mean every Python Module
+speaks DDS. Native services own cross-process communication while Modules
+retain their normal local contracts.
 
-See the [product mode runtime contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
-for profile/session rules and
+See the [field Product guide](../architecture/FIELD_PRODUCTS.md)
+for Product/session rules and
 [`src/runtime/profiles/resolver.py`](../../src/runtime/profiles/resolver.py)
 for the resolution order.
 

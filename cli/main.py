@@ -3,23 +3,25 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import os
 import signal
 import sys
 import textwrap
 import threading
 from pathlib import Path
 
+from runtime.profiles.catalog.host_defaults import HOST_PROFILE_DEFAULTS
+
 from . import term as T
 from .lifecycle import (
     daemonize,
     health_check,
-    kill_residual_ports,
     lite_runtime_lifecycle_blockers,
     needs_full_preflight,
 )
 from .logging_util import setup_logging
-from .profiles_data import PROFILES
 from .run_state import (
     _lingtu_version,
     clear_run_state,
@@ -85,10 +87,10 @@ _SPECIAL_COMMANDS = {
 }
 
 
-def _runtime_endpoint(name: str):
-    from runtime.profiles.endpoints import runtime_endpoint
+def _profile_adapter(name: str):
+    from runtime.profiles.profile_adapters import profile_adapter
 
-    return runtime_endpoint(name)
+    return profile_adapter(name)
 
 
 def _module_transport_names() -> tuple[str, ...]:
@@ -103,16 +105,30 @@ def _canonical_profile_name(profile_name: str) -> str:
     return canonical_profile_name(profile_name)
 
 
-def _is_runtime_endpoint_error(exc: Exception) -> bool:
-    from runtime.profiles.endpoints import RuntimeEndpointError
+def _is_profile_adapter_error(exc: Exception) -> bool:
+    from runtime.profiles.catalog.profile_adapters import ProfileAdapterError
 
-    return isinstance(exc, RuntimeEndpointError)
+    return isinstance(exc, ProfileAdapterError)
 
 
-def _apply_runtime_process_env(profile_name: str, cfg: dict, args: argparse.Namespace):
+def _apply_runtime_process_env(
+    profile_name: str,
+    cfg: dict,
+    args: argparse.Namespace,
+    *,
+    plan=None,
+):
     import os
 
+    if plan is not None:
+        if plan.product != profile_name:
+            raise RuntimeError("managed Host Product does not match its RunPlan")
+        if plan.host_config != cfg:
+            raise RuntimeError("managed Host config does not match its RunPlan")
+        return plan.summary()
+
     from runtime.profiles.launcher import resolve_runtime_process_context
+    from runtime.profiles.profile_adapters import _RESOLVER_OWNED_ENV_KEYS
     from runtime.runtime_switch import validate_runtime_switch
 
     context = resolve_runtime_process_context(
@@ -128,6 +144,9 @@ def _apply_runtime_process_env(profile_name: str, cfg: dict, args: argparse.Name
         for blocker in validation.blockers:
             print(f"    - {blocker}")
         sys.exit(2)
+    resolver_owned_env_keys = _RESOLVER_OWNED_ENV_KEYS
+    for key in resolver_owned_env_keys.difference(context.env):
+        os.environ.pop(key, None)
     for key, value in context.env.items():
         os.environ[key] = value
     return spec
@@ -163,6 +182,121 @@ def _preflight(profile_name: str, cfg: dict) -> None:
     preflight(profile_name, cfg)
 
 
+def _require_managed_product_entry(plan) -> None:
+    """Reject field Product startup that bypasses ProductControl."""
+
+    if plan.process_control != "systemd":
+        return
+    if str(os.environ.get("LINGTU_SYSTEMD_UNIT") or "").strip():
+        return
+    raise RuntimeError(
+        f"{plan.product} is a managed field Product; use scripts/lingtu, which "
+        "delegates the transaction to ProductControl, instead of running "
+        "lingtu.py directly"
+    )
+
+
+
+def _load_run_plan_for_host(
+    profile_name: str,
+):
+    """Load the exact Product selected by control before resolving Host config."""
+
+    plan_path = str(os.environ.get("LINGTU_RUN_PLAN") or "").strip()
+    expected_fingerprint = str(os.environ.get("LINGTU_RUN_PLAN_FINGERPRINT") or "").strip()
+    systemd_unit = str(os.environ.get("LINGTU_SYSTEMD_UNIT") or "").strip()
+    managed_systemd_host = False
+    if systemd_unit:
+        from runtime.graph import load_runtime_graph
+
+        managed_systemd_host = profile_name in load_runtime_graph().products
+    if not plan_path:
+        if expected_fingerprint:
+            raise RuntimeError("LINGTU_RUN_PLAN_FINGERPRINT is set without LINGTU_RUN_PLAN")
+        if managed_systemd_host:
+            raise RuntimeError(
+                "managed systemd Host requires LINGTU_RUN_PLAN published by "
+                "ProductControl"
+            )
+        return None
+    if not expected_fingerprint:
+        raise RuntimeError(
+            "Product Host requires LINGTU_RUN_PLAN_FINGERPRINT published with LINGTU_RUN_PLAN"
+        )
+
+    from lingtu.run_plan import RunPlan
+
+    plan = RunPlan.load(plan_path)
+    plan.assert_compatible(environment=os.environ)
+    if plan.product != profile_name:
+        raise RuntimeError(
+            f"Host Product does not match the control-plane plan: plan={plan.product} host={profile_name}"
+        )
+    expected_env = str(os.environ.get("LINGTU_ENV") or "").strip()
+    if expected_env and expected_env != plan.env:
+        raise RuntimeError(
+            "Host Env does not match the control-plane plan: "
+            f"environment={expected_env!r} plan={plan.env!r}"
+        )
+    expected_product = str(os.environ.get("LINGTU_PRODUCT") or "").strip()
+    if expected_product and expected_product != plan.product:
+        raise RuntimeError(
+            "Host Product environment does not match the control-plane plan: "
+            f"environment={expected_product!r} plan={plan.product!r}"
+        )
+    if expected_fingerprint != plan.fingerprint:
+        raise RuntimeError(
+            "systemd Product fingerprint does not match the plan: "
+            f"environment={expected_fingerprint} plan={plan.fingerprint}"
+        )
+    return plan
+
+
+def _resolve_host_startup(
+    profile_name: str,
+    args: argparse.Namespace,
+):
+    """Select plan-owned field config or resolve a local Host profile."""
+
+    plan = _load_run_plan_for_host(profile_name)
+    if plan is not None:
+        return plan, plan.host_config
+    return None, _resolve_config(profile_name, args, allow_wizard=True)
+
+
+def _build_host_system(profile_name: str, host_config: dict, *, plan=None):
+    """Build one Host graph from the published Product or local profile."""
+
+    if plan is None:
+        plan = _load_run_plan_for_host(profile_name)
+    if plan is not None:
+        try:
+            plan_config = json.dumps(
+                plan.host_config,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            host_config_json = json.dumps(
+                host_config,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Host configuration is not valid Product data") from exc
+        if plan_config != host_config_json:
+            raise RuntimeError("Host configuration does not match the control-plane plan")
+        _require_managed_product_entry(plan)
+        return plan.build()
+
+    from lingtu.assembly.profile_builder import build_system_from_resolved_profile
+
+    return build_system_from_resolved_profile(profile_name, host_config)
+
+
 def _run_external_profile_launcher(
     profile_name: str,
     cfg: dict,
@@ -196,7 +330,7 @@ def _run_external_profile_launcher(
         sys.exit(2)
 
     print(f"\n  Launching external simulation profile ({T.green(profile_name)})...", flush=True)
-    print(f"  Launcher: {spec.launcher}", flush=True)
+    print(f"  Adapter program: {spec.launcher}", flush=True)
     print(f"  Runtime:  {format_runtime_boundary(spec)}", flush=True)
     print(f"  SLAM:     {format_runtime_sources(spec)}", flush=True)
     print(f"  Frame ids: {format_runtime_frames(spec)}", flush=True)
@@ -224,66 +358,50 @@ def _run_external_profile_launcher(
 def _cmd_switch_plan(args: argparse.Namespace) -> None:
     import json
 
-    from lingtu.assembly.profile_builder import compile_product
-    from runtime.profiles.endpoints import resolve_runtime_run_spec
-    from runtime.profiles.product_mode_contracts import (
-        PRODUCT_MODE_CONTRACTS,
-        product_mode_switch_plan,
-    )
-    from runtime.runtime_switch import compare_runtime_switch, validate_runtime_switch
+    from lingtu.control import ProductControl
+    from lingtu.run_plan import validate_run_plan_snapshot
+    from lingtu.run_plan_contract import lifecycle_transition_plan
+    from runtime.profiles.native_nav_config import compile_native_nav_config
 
-    if len(args.extra) < 2:
+    if len(args.extra) != 2:
         print(
-            "  Usage: lingtu switch-plan <current-profile> <target-profile> "
-            "[--current-endpoint ENDPOINT] [--endpoint ENDPOINT]"
+            "  Usage: lingtu switch-plan <current-product> <target-product> "
+            "[--env real|sim] [--backend BACKEND]"
         )
         sys.exit(1)
-    current_profile = _canonical_profile_name(args.extra[0])
-    target_profile = _canonical_profile_name(args.extra[1])
-
-    current_args = argparse.Namespace(**vars(args))
-    current_args.endpoint = args.current_endpoint
-    target_args = argparse.Namespace(**vars(args))
-    current_cfg = _resolve_config(current_profile, current_args, allow_wizard=False)
-    target_cfg = _resolve_config(target_profile, target_args, allow_wizard=False)
-    current_spec = resolve_runtime_run_spec(current_profile, current_cfg)
-    target_spec = resolve_runtime_run_spec(target_profile, target_cfg)
-    target_product = (
-        compile_product(
-            target_profile,
-            target_cfg,
-            endpoint=target_spec.endpoint,
-        )
-        if target_profile in PRODUCT_MODE_CONTRACTS
-        else None
-    )
-    current_validation = validate_runtime_switch(current_spec)
-    target_validation = validate_runtime_switch(target_spec)
-    payload = compare_runtime_switch(current_spec, target_spec)
-    payload["product_mode_switch"] = (
-        product_mode_switch_plan(
-            current_profile,
-            target_profile,
-            runtime_plan=(
-                target_product.plan.as_dict()
-                if target_product is not None and target_product.plan is not None
-                else None
-            ),
-        )
-        if target_profile in PRODUCT_MODE_CONTRACTS
-        else None
-    )
-    payload["ok"] = current_validation.ok and target_validation.ok
-    payload["current_validation"] = {
-        "ok": current_validation.ok,
-        "blockers": list(current_validation.blockers),
-        "warnings": list(current_validation.warnings),
+    current_product_name = args.extra[0]
+    target_product_name = args.extra[1]
+    env_config = {"backend": args.backend} if args.backend else None
+    control = ProductControl(env=args.env, env_config=env_config)
+    current_plan = control.resolve(current_product_name)
+    target_plan = control.resolve(target_product_name)
+    current_validation = validate_run_plan_snapshot(current_plan)
+    target_validation = validate_run_plan_snapshot(target_plan)
+    payload = {
+        "from": current_plan.summary(),
+        "to": target_plan.summary(),
     }
-    payload["target_validation"] = {
-        "ok": target_validation.ok,
-        "blockers": list(target_validation.blockers),
-        "warnings": list(target_validation.warnings),
-    }
+    payload["changed"] = sorted(
+        key
+        for key in set(payload["from"]) | set(payload["to"])
+        if payload["from"].get(key) != payload["to"].get(key)
+    )
+    payload["product_mode_switch"] = lifecycle_transition_plan(
+        current_plan.lifecycle,
+        target_plan.lifecycle,
+    )
+    payload["run_plan"] = target_plan.as_dict()
+    payload["native_nav_config"] = compile_native_nav_config(
+        target_plan.product,
+        {
+            **target_plan.host_config,
+            "native_control_mode": target_plan.native_nav.get("control_mode"),
+            "native_nav": target_plan.native_nav,
+        },
+    ).as_dict()
+    payload["ok"] = bool(current_validation["ok"] and target_validation["ok"])
+    payload["current_validation"] = current_validation
+    payload["target_validation"] = target_validation
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
@@ -292,18 +410,21 @@ def _cmd_switch_plan(args: argparse.Namespace) -> None:
         print(text)
     elif not args.json_out:
         print(format_runtime_switch_plan(payload))
-    if not current_validation.ok or not target_validation.ok:
+    if not current_validation["ok"] or not target_validation["ok"]:
         sys.exit(2)
 
 
 def _cmd_runtime_spec(args: argparse.Namespace) -> None:
     import json
 
-    from runtime.profiles.endpoints import resolve_runtime_run_spec
+    from runtime.profiles.profile_adapters import resolve_runtime_run_spec
     from runtime.runtime_switch import runtime_spec_summary, validate_runtime_switch
 
     if len(args.extra) != 1:
-        print("  Usage: lingtu runtime-spec <profile> [--endpoint ENDPOINT]")
+        print(
+            "  Usage: lingtu runtime-spec <local-profile> "
+            "[--adapter PROFILE_ADAPTER]"
+        )
         sys.exit(1)
     profile_name = _canonical_profile_name(args.extra[0])
     cfg = _resolve_config(profile_name, args, allow_wizard=False)
@@ -693,7 +814,7 @@ def _cmd_real_runtime_evidence(args: argparse.Namespace) -> None:
     from diagnostics.field.evidence import REAL_RUNTIME_CONTRACT
 
     repo_root = Path(__file__).resolve().parent.parent
-    report_path = args.json_out or Path("artifacts/thunder_field_runtime/report.json")
+    report_path = args.json_out or Path("artifacts/real_runtime/report.json")
     cmd = [
         sys.executable,
         str(repo_root / "scripts" / "gates" / "real_runtime_evidence_collect.py"),
@@ -812,7 +933,6 @@ def _resolve_profile_name(explicit_profile: str | None, args: argparse.Namespace
     if profile_name is None:
         has_custom = any(
             [
-                args.dog_host,
                 args.detector,
                 args.encoder,
                 args.llm,
@@ -854,8 +974,6 @@ def _validate_backend_overrides(args: argparse.Namespace) -> None:
                 "fastlio2",
                 "localizer",
                 "bridge",
-                "super_lio",
-                "super_lio_relocation",
             ),
         )
 
@@ -899,9 +1017,9 @@ def _resolve_config(
     allow_wizard: bool = True,
 ) -> dict:
     profile_name = _canonical_profile_name(profile_name)
-    if profile_name not in PROFILES:
+    if profile_name not in HOST_PROFILE_DEFAULTS:
         print(f"  {T.red('Error')}: Unknown profile '{profile_name}'")
-        print(f"  Available: {', '.join(PROFILES.keys())}")
+        print(f"  Available: {', '.join(HOST_PROFILE_DEFAULTS)}")
         sys.exit(1)
 
     try:
@@ -910,10 +1028,8 @@ def _resolve_config(
         print(f"  {T.red('Error')}: {exc}")
         sys.exit(2)
 
-    endpoint_name = getattr(args, "endpoint", None)
+    adapter_name = getattr(args, "adapter", None)
     overrides = {
-        "dog_host": getattr(args, "dog_host", None),
-        "dog_port": getattr(args, "dog_port", None),
         "detector": getattr(args, "detector", None),
         "encoder": getattr(args, "encoder", None),
         "llm": getattr(args, "llm", None),
@@ -948,8 +1064,8 @@ def _resolve_config(
         overrides["enable_rerun"] = True
 
     lifecycle_check_overrides = dict(overrides)
-    if endpoint_name is not None:
-        lifecycle_check_overrides["runtime_endpoint"] = endpoint_name
+    if adapter_name is not None:
+        lifecycle_check_overrides["profile_adapter"] = adapter_name
     blockers = lite_runtime_lifecycle_blockers(profile_name, lifecycle_check_overrides)
     if blockers:
         _exit_lite_lifecycle_error(profile_name, blockers)
@@ -959,13 +1075,12 @@ def _resolve_config(
     try:
         cfg = resolve_profile_config(
             profile_name,
-            runtime_endpoint=endpoint_name,
-            robot_preset=getattr(args, "robot", None),
+            profile_adapter=adapter_name,
             overrides=overrides,
             include_profile_metadata=True,
         )
     except Exception as exc:
-        if not _is_runtime_endpoint_error(exc):
+        if not _is_profile_adapter_error(exc):
             raise
         print(f"  {T.red('Error')}: {exc}")
         sys.exit(2)
@@ -988,41 +1103,32 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(
             """\
-            product profiles:
-              lite      Lightweight local Thunder runtime without ROS/SLAM
-              map       Build a new map
-              nav       Navigation with pre-built map
-              tare_explore  TARE exploration
-              aliases   thunder-lite, thunder-map, thunder-nav, thunder-explore
+            canonical Host Profiles:
+              stub, dev, sim, sim_nav
+              use --list --all for local diagnostics and simulation Profiles
 
-            advanced profiles:
-              explore       Wavefront frontier compatibility profile
-              use --list --all for simulation, dev, and experimental profiles
+            Field Products:
+              use scripts/lingtu or python -m lingtu.control switch; they are
+              not Host Profiles and cannot be launched through lingtu.py
 
-            runtime endpoints:
-              endpoints are connection/adaptation layers; they do not replace the product task graph
-              --endpoint thunder-lite  Run lightweight local Thunder without ROS/SLAM
-              --endpoint thunder-field Run a product task against the physical Thunder robot
-              --endpoint mujoco_live  Run a product task against MuJoCo raw MID-360 + Fast-LIO
-              --endpoint replay       Run a product task against no-actuation replay logs
-              --endpoint gazebo       Run a product task against Gazebo/GZ industrial adapter
-              --endpoint cmu_unity    Run TARE bridge task against CMU Unity external runtime
+            Profile adapters:
+              local Profile driver/data-source/simulation layers; Products use --env/--backend via ProductControl
+              lite selects the canonical thunder_lite adapter automatically
+              --adapter mujoco_live   Connect MuJoCo raw MID-360 Profiles to Fast-LIO
 
-            product simulation examples:
-              python lingtu.py thunder-explore --endpoint mujoco_live
-              python lingtu.py nav --endpoint replay status
-              python lingtu.py switch-plan tare_explore tare_explore --current-endpoint mujoco_live --endpoint thunder-field
-              python lingtu.py tare_explore --endpoint cmu_unity --record
+            Host Profile examples:
+              python lingtu.py dev --llm mock
+              python lingtu.py sim_nav --planner octoplanner3d
 
             lifecycle commands:
               stop         Stop running daemon
               restart      Stop and relaunch with the same argv
               status       Show external run status (add --json for jq)
               show-config  Print resolved config (add --json for jq)
-              runtime-contract Print canonical frames/topics/data-flow manifest
+              runtime-contract Print canonical frames/topics/data-flow plan
               runtime-spec Print resolved runtime data-flow/frame contract for one profile
-              switch-plan  Print sim/replay/real runtime-boundary diff
-              runtime-audit Check runtime manifest/YAML/profile/collector contracts
+              switch-plan  Compare two Products inside one fixed env
+              runtime-audit Check runtime plan/YAML/profile/collector contracts
               dataflow    Inspect live Gateway/ModulePort flow and whitelist commands
               gateway-runtime-acceptance Check product runtime state through Gateway only
               field-check  One-screen field readiness from Gateway/evidence/map gates
@@ -1039,44 +1145,59 @@ def main() -> None:
     )
     parser.add_argument("target", nargs="?", default=None, help="Profile name or command")
     parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
-    parser.add_argument("--list", action="store_true", help="List product profiles and exit")
-    parser.add_argument("--all", action="store_true", help="Show advanced, simulation, and dev profiles with --list")
+    parser.add_argument("--list", action="store_true", help="List local Host Profiles and exit")
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Include local, simulation, and dev Host entrypoints",
+    )
     parser.add_argument("--version", action="store_true", help="Print LingTu version and exit")
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Machine-readable JSON output (status / show-config / switch-plan / runtime-spec / runtime-contract / runtime-audit / dataflow / gateway-runtime-acceptance / field-check / inspection-check / real-runtime-evidence / mujoco)",
+        help=(
+            "Machine-readable JSON output (status / show-config / switch-plan / "
+            "runtime-spec / runtime-contract / runtime-audit / dataflow / "
+            "gateway-runtime-acceptance / field-check / inspection-check / "
+            "real-runtime-evidence / mujoco)"
+        ),
     )
     parser.add_argument(
         "--json-out",
         type=Path,
         default=None,
-        help="Write JSON output for commands such as switch-plan, runtime-spec, runtime-contract, runtime-audit, dataflow, gateway-runtime-acceptance, field-check, inspection-check, real-runtime-evidence, or mujoco",
+        help=(
+            "Write JSON output for commands such as switch-plan, runtime-spec, "
+            "runtime-contract, runtime-audit, dataflow, gateway-runtime-acceptance, "
+            "field-check, inspection-check, real-runtime-evidence, or mujoco"
+        ),
     )
     parser.add_argument("--daemon", "-d", action="store_true", help="Run as background daemon (Unix)")
     parser.add_argument("--follow", "-f", action="store_true", help="Follow output for `lingtu log`")
     parser.add_argument("--lines", type=int, default=80, help="Number of lines for `lingtu log` (default: 80)")
     parser.add_argument("--force", action="store_true", help="Force action for commands like `lingtu stop`")
     parser.add_argument(
-        "--endpoint",
+        "--adapter",
         default=None,
-        metavar="ENDPOINT",
-        help="Runtime endpoint/connection layer for map/nav/explore/tare_explore",
+        metavar="PROFILE_ADAPTER",
+        help="Driver, data-source, or simulation adapter for a local Host Profile",
     )
     parser.add_argument(
-        "--current-endpoint",
+        "--env",
+        choices=("real", "sim"),
+        default=os.environ.get("LINGTU_ENV") or "real",
+        help="Outer Env for Product resolution (default: LINGTU_ENV or real)",
+    )
+    parser.add_argument(
+        "--backend",
         default=None,
-        metavar="ENDPOINT",
-        help="Current runtime endpoint for switch-plan dry-run comparisons",
+        help="Required implementation backend when --env sim",
     )
     parser.add_argument(
         "--record",
         action="store_true",
-        help="Use the endpoint's visible recording/demo action when available",
+        help="Use the Profile adapter's visible recording/demo action when available",
     )
-    parser.add_argument("--robot", default=None)
-    parser.add_argument("--dog-host", default=None, dest="dog_host")
-    parser.add_argument("--dog-port", type=int, default=None, dest="dog_port")
     parser.add_argument("--detector", default=None)
     parser.add_argument("--encoder", default=None)
     parser.add_argument("--llm", default=None)
@@ -1174,7 +1295,12 @@ def main() -> None:
         "--acceptance-mode",
         default=None,
         choices=["non_motion", "simulation", "field"],
-        help="Gateway acceptance strictness: non_motion checks product observability; simulation requires a live simulation endpoint; field requires Thunder field evidence. Defaults: gateway-runtime-acceptance=non_motion, field-check=simulation, inspection-check=simulation",
+        help=(
+            "Gateway acceptance strictness: non_motion checks product observability; "
+            "simulation requires a live simulation endpoint; field requires Thunder "
+            "field evidence. Defaults: gateway-runtime-acceptance=non_motion, "
+            "field-check=simulation, inspection-check=simulation"
+        ),
     )
     parser.add_argument(
         "--min-motion-m", type=float, default=0.05, help="Minimum odometry motion for `lingtu real-runtime-evidence`"
@@ -1246,17 +1372,23 @@ def main() -> None:
     if args.target == "doctor":
         import subprocess as _sp
 
-        _sp.run(
-            [
-                sys.executable,
-                str(_repo / "scripts" / "diagnostics" / "doctor.py"),
-                "--gateway-url",
-                args.gateway_url,
-                "--gateway-timeout-sec",
-                str(args.gateway_timeout_sec),
-                *args.extra,
-            ]
-        )
+        command = [
+            sys.executable,
+            "-m",
+            "diagnostics.field.doctor",
+            "--gateway-url",
+            args.gateway_url,
+            "--gateway-timeout-sec",
+            str(args.gateway_timeout_sec),
+            "--env",
+            args.env,
+        ]
+        if args.json:
+            command.append("--json")
+        command.extend(args.extra)
+        result = _sp.run(command)
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
         return
 
     if args.target == "rerun":
@@ -1344,22 +1476,30 @@ def main() -> None:
         return
 
     profile_name = _resolve_profile_name(args.target, args)
-    endpoint_external = False
-    if args.endpoint:
-        endpoint_external = bool(_runtime_endpoint(args.endpoint).external_launcher)
-    external_profile = bool(PROFILES.get(profile_name, {}).get("_external_launcher") or endpoint_external)
+    adapter_external = False
+    if args.adapter:
+        adapter_external = bool(_profile_adapter(args.adapter).external_launcher)
+    external_profile = bool(
+        HOST_PROFILE_DEFAULTS.get(profile_name, {}).get("_external_launcher")
+        or adapter_external
+    )
 
     if args.target not in _SPECIAL_COMMANDS and args.extra and not external_profile:
         print(f"  {T.red('Error')}: Unexpected extra positional arguments: {' '.join(args.extra)}")
         sys.exit(1)
 
-    cfg = _resolve_config(profile_name, args, allow_wizard=True)
+    run_plan, cfg = _resolve_host_startup(profile_name, args)
 
     if cfg.get("_external_launcher"):
         _run_external_profile_launcher(profile_name, cfg, args, _repo)
         return
 
-    runtime_spec = _apply_runtime_process_env(profile_name, cfg, args)
+    runtime_spec = _apply_runtime_process_env(
+        profile_name,
+        cfg,
+        args,
+        plan=run_plan,
+    )
 
     if args.daemon:
         args.no_repl = True
@@ -1378,20 +1518,33 @@ def main() -> None:
 
     _preflight(profile_name, cfg)
 
-    print(f"  Runtime:  {format_runtime_boundary(runtime_spec)}")
-    print(f"  SLAM:     {format_runtime_sources(runtime_spec)}")
-    print(f"  Frame ids: {format_runtime_frames(runtime_spec)}")
-    print(f"  Frames:   {format_frame_links(runtime_spec)}")
-    print(f"  Topic frames: {format_runtime_topic_frames(runtime_spec)}")
-    print(f"  Path:     {format_runtime_flow(runtime_spec)}")
-    print(f"  Path stages: {format_runtime_flow_stages(runtime_spec)}")
+    if run_plan is not None:
+        print(
+            "  RunPlan:  "
+            f"product={run_plan.product} env={run_plan.env} "
+            f"fingerprint={run_plan.fingerprint}"
+        )
+        print(
+            "  Host:     "
+            f"modules={len(run_plan.modules)} "
+            f"transport={run_plan.module_transport}"
+        )
+    else:
+        print(f"  Runtime:  {format_runtime_boundary(runtime_spec)}")
+        print(f"  SLAM:     {format_runtime_sources(runtime_spec)}")
+        print(f"  Frame ids: {format_runtime_frames(runtime_spec)}")
+        print(f"  Frames:   {format_frame_links(runtime_spec)}")
+        print(f"  Topic frames: {format_runtime_topic_frames(runtime_spec)}")
+        print(f"  Path:     {format_runtime_flow(runtime_spec)}")
+        print(f"  Path stages: {format_runtime_flow_stages(runtime_spec)}")
     print(f"\n  Building system ({T.green(profile_name)})...")
 
-    from lingtu.assembly.profile_builder import compile_product
-
     try:
-        product = compile_product(profile_name, blueprint_cfg)
-        system = product.build()
+        system = _build_host_system(
+            profile_name,
+            blueprint_cfg,
+            plan=run_plan,
+        )
     except Exception as e:
         logger.error("Build failed: %s", e, exc_info=True)
         print(f"\n  {T.red('Build failed')}: {e}")
@@ -1401,8 +1554,6 @@ def main() -> None:
         print(f"  {T.red('Health check failed')} - some modules did not build correctly")
         sys.exit(1)
     logger.info("Health check passed: %d modules OK", len(system.modules))
-
-    kill_residual_ports(blueprint_cfg)
 
     # In --no-repl mode, defer uvicorn startup so main thread can run it
     # (avoids GIL starvation from DDS callbacks in daemon threads).

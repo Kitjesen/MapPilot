@@ -39,6 +39,7 @@ int main() {
   initial.converged = true;
   initial.fitness = 0.1;
   initial.inliers = 100;
+  initial.evaluated_points = 100;
   initial.pos_cov_trace = 0.05;
   initial.candidate_map_odom = Pose(5.0, 1.0);
   Require(EvaluateRelocalizationGate(config, initial).accepted,
@@ -54,17 +55,20 @@ int main() {
           "initial relocalization must reject pitched map alignment");
   initial.candidate_map_odom = Pose(5.0, 1.0);
   initial.inliers = -1;
+  initial.evaluated_points = -1;
   initial.pos_cov_trace = -1.0;
   Require(EvaluateRelocalizationGate(config, initial).reason ==
-              "relocalization_degeneracy_metrics_unavailable",
-          "initial relocalization must require degeneracy metrics");
+              "relocalization_evaluated_points_unavailable",
+          "initial relocalization must require support diagnostics");
   initial.inliers = 100;
+  initial.evaluated_points = 100;
   initial.pos_cov_trace = 0.05;
 
   RelocalizationGateInput update;
   update.converged = true;
   update.fitness = 0.1;
   update.inliers = 100;
+  update.evaluated_points = 100;
   update.pos_cov_trace = 0.05;
   update.alignment_update = true;
   update.current_map_odom = Pose(0.0, 0.0);
@@ -79,19 +83,35 @@ int main() {
   update.candidate_map_odom = Pose(0.2, 0.05);
 
   update.inliers = -1;
+  update.evaluated_points = -1;
   update.pos_cov_trace = -1.0;
   Require(EvaluateRelocalizationGate(config, update).reason ==
-              "relocalization_degeneracy_metrics_unavailable",
-          "alignment update must require degeneracy metrics");
+              "relocalization_evaluated_points_unavailable",
+          "alignment update must require support diagnostics");
   update.inliers = 10;
+  update.evaluated_points = 100;
   update.pos_cov_trace = 0.05;
   Require(EvaluateRelocalizationGate(config, update).reason == "relocalization_inliers_rejected",
           "low-inlier alignment must be rejected");
   update.inliers = 100;
+  update.evaluated_points = 10;
+  Require(
+      EvaluateRelocalizationGate(config, update).reason ==
+          "relocalization_evaluated_points_rejected",
+      "low-support alignment must be rejected");
+  update.evaluated_points = 100;
   update.pos_cov_trace = 2.0;
   Require(EvaluateRelocalizationGate(config, update).reason == "relocalization_covariance_rejected",
           "high-covariance alignment must be rejected");
   update.pos_cov_trace = 0.05;
+  update.evaluated_points = -1;
+  RelocalizationGateConfig no_degeneracy_config = config;
+  no_degeneracy_config.require_alignment_degeneracy_metrics = false;
+  Require(
+      EvaluateRelocalizationGate(no_degeneracy_config, update).reason ==
+          "relocalization_evaluated_points_unavailable",
+      "required support count must not disappear when degeneracy metrics are optional");
+  update.evaluated_points = 100;
   update.candidate_map_odom = Pose(2.0, 0.0);
   Require(EvaluateRelocalizationGate(config, update).reason ==
               "relocalization_translation_jump_rejected",

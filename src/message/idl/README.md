@@ -17,7 +17,7 @@ LingTu has two DDS schema families:
 2. Native field DDS uses LingTu-owned IDL in `lingtu_slam.idl`.
 
 Current native field boundary types cover LiDAR/IMU/SLAM, camera metadata,
-GNSS, navigation command/path/final velocity, inspection command/status/evidence,
+GNSS, navigation command/path/final velocity, inspection command/status/task-event/evidence,
 and scalar control signals. Representative types include
 `lingtu.dds.LivoxFrame`, `lingtu.dds.Imu`, `lingtu.dds.Odometry`,
 `lingtu.dds.PointCloud2`, `lingtu.dds.Image`,
@@ -46,9 +46,7 @@ streams, while CameraInfo remains a typed DDS metadata stream.
 
 Python native DDS product types live in `message.dds_types`. These Python
 classes are contract/type tags; robot wire I/O still uses the generated C IDL
-types. The optional
-cyclonedds-python utility in `runtime.adapters.dds.reader` is currently bounded
-to explicit diagnostics, replay, and compatibility tools. It is not a
-navigation, SLAM, terrain, or real motor-actuation runtime boundary and it must
-not own new LingTu wire contracts. `drivers.real.lidar._dds` is the Livox/ROS2
-compatibility type shim for the LiDAR adapter.
+types. The optional cyclonedds-python utility in
+`runtime.adapters.dds.reader` is bounded to explicit diagnostics and replay
+tools. It is not a navigation, SLAM, terrain, LiDAR ownership, or real
+motor-actuation runtime boundary and it must not own new LingTu wire contracts.

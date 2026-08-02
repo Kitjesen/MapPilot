@@ -40,6 +40,7 @@ class ControlCommandService:
             "message": message,
             "command": {
                 "name": command,
+                "task_id": getattr(body, "task_id", None),
                 "request_id": getattr(body, "request_id", None),
                 "client_id": getattr(body, "client_id", "unknown"),
                 "accepted": False,
@@ -218,78 +219,67 @@ class ControlCommandService:
         body: Any,
         action: Callable[[], dict[str, Any]],
     ) -> dict[str, Any] | JSONResponse:
-        request_id = getattr(body, "request_id", None) if body is not None else None
-        client_id = getattr(body, "client_id", None) if body is not None else None
-        rejection = self.motion_safety_rejection(command, body)
-        if rejection is not None:
-            return rejection
-        replay = self._gw._command_journal.replay(command, request_id)
-        if replay is not None:
-            if hasattr(self._gw, "_publish_command_ack"):
-                self._gw._publish_command_ack(replay, status_code=200)
-            return replay
+        def _execute() -> dict[str, Any] | JSONResponse:
+            for check in (
+                self.motion_safety_rejection,
+                self._goal_readiness_rejection,
+                self._goal_map_identity_rejection,
+                self._goal_plan_preview_rejection,
+            ):
+                rejection = check(command, body)
+                if rejection is not None:
+                    return rejection
+            try:
+                return action()
+            except CommandBoundaryError as exc:
+                reason = str(exc)
+                return self.rejected_response(
+                    command,
+                    body,
+                    error="native_command_rejected",
+                    message="Native navigation endpoint rejected the command.",
+                    detail=self.command_error_detail(
+                        reason_code="native_command_rejected",
+                        reason=reason,
+                        source="native_navigation_command_ack",
+                        blockers=[reason],
+                    ),
+                )
 
-        rejection = self._goal_readiness_rejection(command, body)
-        if rejection is not None:
-            return rejection
-        rejection = self._goal_map_identity_rejection(command, body)
-        if rejection is not None:
-            return rejection
-        rejection = self._goal_plan_preview_rejection(command, body)
-        if rejection is not None:
-            return rejection
-
-        try:
-            native_response = action()
-        except CommandBoundaryError as exc:
-            reason = str(exc)
-            return self.rejected_response(
-                command,
-                body,
-                error="native_command_rejected",
-                message="Native navigation endpoint rejected the command.",
-                detail=self.command_error_detail(
-                    reason_code="native_command_rejected",
-                    reason=reason,
-                    source="native_navigation_command_ack",
-                    blockers=[reason],
-                ),
-            )
-        response = self._gw._command_journal.accept(
-            command,
-            request_id,
-            client_id,
-            native_response,
-        )
-        if hasattr(self._gw, "_publish_command_ack"):
-            self._gw._publish_command_ack(response, status_code=200)
-        return response
+        return self._gw._run_control_command(command, body, _execute)
 
     def run_motion_guarded_command(
         self,
         command: str,
         body: Any,
         action: Callable[[], dict[str, Any]],
+        *,
+        success_status_code: int = 200,
     ) -> dict[str, Any] | JSONResponse:
-        rejection = self.motion_safety_rejection(command, body)
-        if rejection is not None:
-            return rejection
-        try:
-            return self._gw._run_control_command(command, body, action)
-        except CommandBoundaryError as exc:
-            reason = str(exc)
-            return self.rejected_response(
-                command,
-                body,
-                error="native_command_rejected",
-                message="Native navigation endpoint rejected the command.",
-                detail=self.command_error_detail(
-                    reason_code="native_command_rejected",
-                    reason=reason,
-                    source="native_navigation_command_ack",
-                    blockers=[reason],
-                ),
-            )
+        def _execute() -> dict[str, Any] | JSONResponse:
+            rejection = self.motion_safety_rejection(command, body)
+            if rejection is not None:
+                return rejection
+            try:
+                return action()
+            except CommandBoundaryError as exc:
+                reason = str(exc)
+                return self.rejected_response(
+                    command,
+                    body,
+                    error="native_command_rejected",
+                    message="Native navigation endpoint rejected the command.",
+                    detail=self.command_error_detail(
+                        reason_code="native_command_rejected",
+                        reason=reason,
+                        source="native_navigation_command_ack",
+                        blockers=[reason],
+                    ),
+                )
+
+        return self._gw._run_control_command(
+            command, body, _execute, success_status_code=success_status_code
+        )
 
     def _goal_readiness_rejection(
         self,

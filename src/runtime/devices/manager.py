@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 @register("hw", "default", description="Hardware inventory/status module")
-@register("device_manager", "default", description="Compatibility alias for hw")
 class Hw(Module, layer=0):
     """Loads devices.yaml and manages all hardware lifecycle.
 
@@ -261,6 +260,3 @@ class Hw(Module, layer=0):
         info["spec_count"] = len(self._specs)
         info["opened_count"] = len(self._devices)
         return info
-
-
-DeviceManager = Hw

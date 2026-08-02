@@ -40,7 +40,7 @@ def _frontier_grid() -> np.ndarray:
 
 
 def test_traversable_frontier_module_outputs_preview_candidates_without_motion():
-    from nav.exploration.traversable_frontier_module import TraversableFrontierModule
+    from explore.traversable_frontier import TraversableFrontierModule
 
     module = TraversableFrontierModule(
         min_frontier_size=1,
@@ -99,7 +99,7 @@ def test_traversable_frontier_module_outputs_preview_candidates_without_motion()
 
 
 def test_traversable_frontier_marks_steep_or_high_cost_support_blocked():
-    from nav.exploration.traversable_frontier_module import TraversableFrontierModule
+    from explore.traversable_frontier import TraversableFrontierModule
 
     module = TraversableFrontierModule(
         min_frontier_size=1,
@@ -141,7 +141,7 @@ def test_traversable_frontier_marks_steep_or_high_cost_support_blocked():
 
 
 def test_traversable_frontier_marks_configured_high_cost_support_blocked():
-    from nav.exploration.traversable_frontier_module import TraversableFrontierModule
+    from explore.traversable_frontier import TraversableFrontierModule
 
     module = TraversableFrontierModule(
         min_frontier_size=1,
@@ -187,7 +187,7 @@ def test_traversable_frontier_marks_configured_high_cost_support_blocked():
 def test_traversable_frontier_uses_nearby_scene_graph_semantics_without_motion():
     from runtime.msgs.geometry import Vector3
     from runtime.msgs.semantic import Detection3D, SceneGraph
-    from nav.exploration.traversable_frontier_module import TraversableFrontierModule
+    from explore.traversable_frontier import TraversableFrontierModule
 
     module = TraversableFrontierModule(
         min_frontier_size=1,

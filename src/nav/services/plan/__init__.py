@@ -57,7 +57,7 @@ _EXPORTS = {
     "LOCAL_PLANNER_BACKENDS": "nav.services.plan.contracts",
     "LocalPlanRequest": "nav.services.plan.contracts",
     "LocalPlanResult": "nav.services.plan.contracts",
-    "MaplessDirectPlannerService": "nav.services.plan.compat.direct",
+    "MaplessDirectPlannerService": "nav.services.plan.mapless.direct",
     "PlanRequest": "nav.services.plan.contracts",
     "PlanResult": "nav.services.plan.contracts",
     "PlannerDiagnostics": "nav.services.plan.contracts",

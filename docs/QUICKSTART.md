@@ -14,18 +14,20 @@ mistaken for authorization to move a robot.
 LingTu's product model is:
 
 ```text
-Module ports -> explicit wires -> selected transport -> safety/mux -> command sink
+env + Product -> RunPlan -> ProductControl -> Host + native processes
 ```
 
-A profile says what LingTu should do; an endpoint says where its sensor inputs
-and command output are connected. The native field path uses typed DDS and
-native C++ services at its process boundaries. ROS 2 is available only as an
-explicit compatibility or evaluation surface.
+A local Profile starts a development Host graph. A Product is an
+env-independent operating mode. ProductControl resolves one Product inside
+`env=real` or `env=sim` into the RunPlan consumed by Host and ProductControl's internal systemd runner.
+The native field path uses typed DDS and native C++ services at its process
+boundaries. ROS 2 is available only as an explicit compatibility or evaluation
+surface.
 
-For the current physical Thunder field endpoint, `thunder_field` resolves to an
-endpoint-owned command boundary: `lingtu-nav-dds` publishes `/nav/cmd_vel`, the
-single `lingtu-driver` service consumes it, and that driver sends checked gRPC
-commands to a remote Brainstem controller from `brainstem.env`.
+For the current physical Thunder `env=real` runtime, `lingtu-nav-dds` publishes
+`/nav/cmd_vel`, the single `lingtu-driver` service consumes it, and that driver
+sends checked gRPC commands to a remote Brainstem controller from
+`brainstem.env`.
 
 The following statement is always true:
 
@@ -77,7 +79,7 @@ uv run --locked python lingtu.py runtime-audit
 | Check | Expected result | Motion boundary |
 | --- | --- | --- |
 | `uv sync --locked --extra dev` | The locked environment resolves without rewriting `uv.lock`. | None |
-| `--list --all` | Current product, simulation, development, and compatibility profiles are listed. | None |
+| `--list --all` | Current field Products plus simulation, development, and compatibility Profiles are listed. | None |
 | `show-config ... --json` | A profile resolves without starting its modules. | None |
 | `runtime-contract` | The canonical frame, stream, and command-boundary summary is printed. | None |
 | `runtime-audit` | Repository contracts are checked for drift. | None |
@@ -89,28 +91,30 @@ failure, not a profile failure.
 
 ## Select a profile deliberately
 
-Use `--list` for the normal product list and `--list --all` for the full
-catalog. The table below is a decision aid, not a replacement for the runtime
-catalog.
+Use `--list` for common local Profiles and `--list --all` for the full catalog,
+including field Products. The table below is a decision aid, not a replacement
+for the runtime catalog.
 
-| Profile or family | Primary use | Command sink | Hardware motion |
+| Selection or family | Primary use | Command sink | Hardware motion |
 | --- | --- | --- | --- |
 | `stub` | Framework and Blueprint/port/wire checks | Stub driver | No |
 | `dev` | Semantic and planning development with a mock LLM | Local/stub graph | No |
 | `sim_nav` | No-ROS navigation simulation | Simulation graph | No physical motion |
 | `sim` | In-process MuJoCo Module stack | MuJoCo driver | Simulated motion only |
 | `portable_mujoco` | Portable no-ROS MuJoCo planning/sensor path | MuJoCo driver | Simulated motion only |
-| `teleop`, `teleop_avoid`, `lite` | Field product modes with different operator/control scope | Selected field endpoint | Potentially |
-| `map` | Build a saved map | Selected field endpoint | Mapping session may involve supervised manual motion |
-| `tracking`, `nav`, `inspection` | Saved-map tracking, navigation, or inspection | Selected field endpoint | Potentially |
-| `explore`, `tare_explore` | Frontier exploration variants | Selected field endpoint | Potentially |
-| `sim_gazebo`, `sim_industrial`, `sim_mujoco_live`, `sim_mujoco_octo_live`, `sim_cmu_tare` | Advanced simulation/validation profiles | Simulator or replay endpoint | Simulated motion only |
-| `super_lio`, `super_lio_relocation` | Explicit Super-LIO evaluation profiles | Selected evaluation endpoint | Potentially, only after field gates |
+| `lite` | Local Thunder hardware diagnostic Profile | Local Blueprint/driver graph | Potentially; explicit lab use only |
+| `teleop`, `teleop_avoid` | Field Products with different operator/control scope | ProductControl-selected RunPlan | Potentially |
+| `map` | Build a saved map | ProductControl-selected RunPlan | Mapping session may involve supervised manual motion |
+| `tracking`, `nav`, `inspection` | Saved-map tracking, navigation, or inspection | ProductControl-selected RunPlan | Potentially |
+| `explore` | Live-map or saved-map autonomous exploration | ProductControl-selected RunPlan | Potentially |
+| `sim_mujoco_live`, `sim_mujoco_octo_live` | Advanced MuJoCo validation profiles | Simulator or replay endpoint | Simulated motion only |
 
-The `map`, `nav`, `explore`, and `tare_explore` names describe product
-tasks, not safe local demos. Do not launch them just to test a workstation.
-First inspect the selected endpoint and then follow the appropriate simulation
-or field gate.
+The `map`, `nav`, and `explore` names describe product tasks, not safe local
+demos. `explore` without a map builds and explores a live map; `explore` with
+a map localizes against that saved map before coverage exploration. Do not
+launch them just to test a workstation.
+First inspect the selected local Profile or Product/env and then follow the
+appropriate simulation or field gate.
 
 ## Local: prove the framework path
 
@@ -230,17 +234,15 @@ bash scripts/lingtu dataflow /nav/odometry
 bash scripts/lingtu dataflow /nav/map_cloud
 ```
 
-Healthy status is necessary but insufficient. For saved-map work, confirm map
-artifacts and route safety without sending a goal:
+Healthy status is necessary but insufficient. For saved-map work, validate the
+complete map package before considering a route:
 
 ```bash
 bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
 ```
 
-`routecheck` is explicitly non-motion and refuses to run with an active
-command source. It records the route-preview and safety result; a feasible
-preview is a prerequisite, not an authorization, for motion.
+The artifact gate is offline and does not publish a command. It validates the
+saved-map inputs; it does not evaluate a route or authorize motion.
 
 ### Mapping workflow
 
@@ -250,8 +252,8 @@ authorized operator. They do not request autonomous navigation by themselves:
 ```bash
 bash scripts/lingtu map start
 bash scripts/lingtu map save <map-name>
-bash scripts/lingtu map check <map-name> --goal <x> <y> <yaw>
 bash scripts/lingtu map end
+bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
 ```
 
 A saved map is a package. The map workflow produces and validates artifacts
@@ -262,12 +264,14 @@ navigation map.
 
 ### Navigation session preflight
 
-Prepare a localization/navigation session and then repeat the no-motion route
-preview:
+Run the integrated no-motion acceptance first, then prepare the operator-owned
+navigation session:
 
 ```bash
+bash scripts/lingtu system-acceptance \
+  --map <map-name> --goal <x> <y> <yaw> \
+  --with-relocalization --initial-pose <x> <y> <yaw>
 bash scripts/lingtu nav start <map-name> --initial-pose <x> <y> <yaw>
-bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
 bash scripts/lingtu field-check <map-directory> --acceptance-mode field
 ```
 
@@ -284,8 +288,9 @@ performed only under the controlled conditions in the
 
 ## Common safe overrides
 
-Use overrides to make an experiment explicit. Re-run `show-config` or
-`runtime-spec` after changing a boundary-affecting option.
+Use overrides to make an experiment explicit. Re-run `show-config`, a
+ProductControl dry run, or the appropriate RunPlan audit after changing
+a boundary-affecting option.
 
 | Option | Use | Boundary |
 | --- | --- | --- |
@@ -293,7 +298,7 @@ Use overrides to make an experiment explicit. Re-run `show-config` or
 | `--no-gateway` | Omit the HTTP/Gateway stack in a local framework check. | No REST, MCP, teleop, or web status surface. |
 | `--no-semantic` | Run a geometric-only graph where the profile supports it. | Does not validate semantic navigation. |
 | `--planner pct` | Select the explicit legacy/manual planner experiment. | Not the default product planner. |
-| `--endpoint <name>` | Choose a runtime connection layer for a product task. | Must be reviewed with `runtime-spec` or `switch-plan`; it can change the command sink. |
+| `--backend <name>` | Select an internal `env=sim` backend for ProductControl when simulation has more than one implementation. | Not a Product, public env, or field deployment selector. |
 | `--rerun` | Enable optional visualization. | Adds visualization only; it is not a safety or readiness check. |
 
 The product default global planner is OctoPlanner3D. PCT remains an explicit

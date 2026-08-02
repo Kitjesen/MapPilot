@@ -125,12 +125,14 @@ void writeAck(
     lingtu::message::NavigationCommandKind kind,
     bool accepted,
     const std::string& reason,
-    double endpoint_stamp_s = nowSeconds()) {
+    double endpoint_stamp_s = nowSeconds(),
+    const std::string& task_id = {}) {
   lingtu_dds_NavigationCommandAck ack{};
   ack.header.stamp.sec = static_cast<std::int32_t>(endpoint_stamp_s);
   ack.header.stamp.nanosec = static_cast<std::uint32_t>(
       (endpoint_stamp_s - static_cast<double>(ack.header.stamp.sec)) * 1e9);
   ack.header.frame_id = const_cast<char*>("map");
+  ack.task_id = const_cast<char*>(task_id.c_str());
   ack.request_id = const_cast<char*>(request_id.c_str());
   ack.kind = static_cast<std::int32_t>(kind);
   ack.accepted = accepted;
@@ -141,10 +143,12 @@ void writeAck(
 void writeExplorationAck(
     dds_entity_t writer,
     const std::string& request_id,
+    const std::string& exploration_run_id,
     lingtu::message::ExplorationCommandKind kind,
     bool accepted,
     const std::string& reason,
-    const std::string& session_id) {
+    const std::string& session_id,
+    bool duplicate = false) {
   lingtu_dds_ExplorationCommandAck ack{};
   const double stamp_s = nowSeconds();
   ack.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
@@ -152,32 +156,36 @@ void writeExplorationAck(
       (stamp_s - static_cast<double>(ack.header.stamp.sec)) * 1e9);
   ack.header.frame_id = const_cast<char*>("map");
   ack.request_id = const_cast<char*>(request_id.c_str());
+  ack.exploration_run_id = const_cast<char*>(exploration_run_id.c_str());
   ack.kind = static_cast<std::int32_t>(kind);
   ack.accepted = accepted;
+  ack.duplicate = duplicate;
   ack.reason = const_cast<char*>(reason.c_str());
   ack.session_id = const_cast<char*>(session_id.c_str());
   ack.intent_revision = 17U;
   checked(dds_write(writer, &ack), "dds_write(test_exploration_client_ack)");
 }
 
-void writeInspectionAck(
+void writeInspectionTaskAck(
     dds_entity_t writer,
+    const std::string& task_id,
     const std::string& request_id,
     lingtu::message::InspectionCommandKind kind,
     bool accepted,
     const std::string& reason) {
-  lingtu_dds_InspectionCommandAck ack{};
+  lingtu_dds_InspectionTaskAck ack{};
   const double stamp_s = nowSeconds();
   ack.header.stamp.sec = static_cast<std::int32_t>(stamp_s);
   ack.header.stamp.nanosec = static_cast<std::uint32_t>(
       (stamp_s - static_cast<double>(ack.header.stamp.sec)) * 1e9);
   ack.header.frame_id = const_cast<char*>("map");
+  ack.task_id = const_cast<char*>(task_id.c_str());
   ack.request_id = const_cast<char*>(request_id.c_str());
   ack.kind = static_cast<std::int32_t>(kind);
   ack.accepted = accepted;
   ack.reason = const_cast<char*>(reason.c_str());
   ack.run_id = const_cast<char*>("inspection-test-run");
-  checked(dds_write(writer, &ack), "dds_write(test_inspection_client_ack)");
+  checked(dds_write(writer, &ack), "dds_write(test_inspection_task_client_ack)");
 }
 
 void writeOperatorMotionAck(
@@ -212,6 +220,7 @@ void writeGoalStatus(
     dds_entity_t writer,
     const std::string& boot_id,
     std::uint64_t sequence,
+    const std::string& task_id,
     const std::string& request_id,
     lingtu::message::NavigationGoalState state,
     std::uint64_t goal_epoch,
@@ -224,6 +233,7 @@ void writeGoalStatus(
   status.header.frame_id = const_cast<char*>("map");
   status.boot_id = const_cast<char*>(boot_id.c_str());
   status.event_sequence = sequence;
+  status.task_id = const_cast<char*>(task_id.c_str());
   status.request_id = const_cast<char*>(request_id.c_str());
   status.state = static_cast<std::int32_t>(state);
   status.goal_epoch = goal_epoch;
@@ -374,9 +384,6 @@ void writeMapScene(
   MapSceneGridFixture esdf(
       "esdf", {1.0F, 2.0F},
       reset_epoch, observation_sequence, generation, stamp_s);
-  MapSceneGridFixture traversability(
-      "traversability", {10.0F, 20.0F},
-      reset_epoch, observation_sequence, generation, stamp_s);
 
   lingtu_dds_MapScene scene{};
   scene.header = live.layer.header;
@@ -393,7 +400,6 @@ void writeMapScene(
   scene.occupancy = occupancy.grid;
   scene.elevation = elevation.grid;
   scene.esdf = esdf.grid;
-  scene.traversability = traversability.grid;
   checked(dds_write(writer, &scene), "dds_write(test_map_scene)");
 }
 
@@ -449,8 +455,9 @@ void sendAndReply(
       "navigation command client id must identify the native client");
   verify(*request);
   const std::string request_id = request->request_id;
+  const std::string task_id = request->task_id == nullptr ? "" : request->task_id;
   const auto kind = static_cast<lingtu::message::NavigationCommandKind>(request->kind);
-  writeAck(ack_writer, request_id, kind, accepted, reason);
+  writeAck(ack_writer, request_id, kind, accepted, reason, nowSeconds(), task_id);
   returnLoan(request_reader, request);
   sender.join();
   if (sender_error) {
@@ -465,7 +472,10 @@ void sendExplorationAndReply(
     Send&& send,
     Verify&& verify,
     bool accepted = true,
-    const std::string& reason = "accepted") {
+    const std::string& reason = "accepted",
+    bool duplicate = false,
+    const std::string& ack_exploration_run_id = {},
+    const std::string& ack_session_id = {}) {
   std::exception_ptr sender_error;
   std::thread sender([&]() {
     try {
@@ -477,11 +487,21 @@ void sendExplorationAndReply(
   auto* request = takeOne<lingtu_dds_ExplorationCommandRequest>(request_reader);
   verify(*request);
   const std::string request_id = request->request_id;
+  const std::string exploration_run_id = request->exploration_run_id;
   const std::string session_id = request->session_id;
   const auto kind =
       static_cast<lingtu::message::ExplorationCommandKind>(request->kind);
   writeExplorationAck(
-      ack_writer, request_id, kind, accepted, reason, session_id);
+      ack_writer,
+      request_id,
+      ack_exploration_run_id.empty()
+          ? exploration_run_id
+          : ack_exploration_run_id,
+      kind,
+      accepted,
+      reason,
+      ack_session_id.empty() ? session_id : ack_session_id,
+      duplicate);
   returnLoan(request_reader, request);
   sender.join();
   if (sender_error) {
@@ -490,7 +510,7 @@ void sendExplorationAndReply(
 }
 
 template <typename Send, typename Verify>
-void sendInspectionAndReply(
+void sendInspectionTaskAndReply(
     dds_entity_t request_reader,
     dds_entity_t ack_writer,
     Send&& send,
@@ -505,12 +525,14 @@ void sendInspectionAndReply(
       sender_error = std::current_exception();
     }
   });
-  auto* request = takeOne<lingtu_dds_InspectionCommandRequest>(request_reader);
+  auto* request = takeOne<lingtu_dds_InspectionTaskRequest>(request_reader);
   verify(*request);
+  const std::string task_id = request->task_id;
   const std::string request_id = request->request_id;
   const auto kind =
       static_cast<lingtu::message::InspectionCommandKind>(request->kind);
-  writeInspectionAck(ack_writer, request_id, kind, accepted, reason);
+  writeInspectionTaskAck(
+      ack_writer, task_id, request_id, kind, accepted, reason);
   returnLoan(request_reader, request);
   sender.join();
   if (sender_error) {
@@ -520,6 +542,7 @@ void sendInspectionAndReply(
 
 void testExplorationCommands() {
   using ExplorationKind = lingtu::message::ExplorationCommandKind;
+  const std::string exploration_run_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
   const int domain_id = 205 + static_cast<int>(getpid() % 10);
   const dds_entity_t participant = checked(
       dds_create_participant(
@@ -549,7 +572,11 @@ void testExplorationCommands() {
       ack_writer,
       [&]() {
         exploration.start(
-            "session-a", "operator_start", 1000, "explore-start");
+            exploration_run_id,
+            "session-a",
+            "operator_start",
+            1000,
+            "explore-start");
       },
       [&](const lingtu_dds_ExplorationCommandRequest& request) {
         check(
@@ -559,35 +586,52 @@ void testExplorationCommands() {
               "exploration command frame mismatch");
         check(std::string(request.session_id) == "session-a",
               "exploration session id mismatch");
+        check(std::string(request.exploration_run_id) == exploration_run_id,
+              "exploration run id mismatch");
         check(std::string(request.reason) == "operator_start",
               "exploration start reason mismatch");
       });
   sendExplorationAndReply(
       request_reader,
       ack_writer,
-      [&]() { exploration.pause("operator_pause", 1000, "explore-pause"); },
+      [&]() {
+        (void)exploration.pause(
+            exploration_run_id, "session-a", "operator_pause", 1000, "explore-pause");
+      },
       [&](const lingtu_dds_ExplorationCommandRequest& request) {
         check(
             request.kind == static_cast<std::int32_t>(ExplorationKind::kPause),
             "exploration pause kind mismatch");
+        check(std::string(request.session_id) == "session-a",
+              "exploration pause must retain the active session binding");
       });
   sendExplorationAndReply(
       request_reader,
       ack_writer,
-      [&]() { exploration.resume("operator_resume", 1000, "explore-resume"); },
+      [&]() {
+        (void)exploration.resume(
+            exploration_run_id, "session-a", "operator_resume", 1000, "explore-resume");
+      },
       [&](const lingtu_dds_ExplorationCommandRequest& request) {
         check(
             request.kind == static_cast<std::int32_t>(ExplorationKind::kResume),
             "exploration resume kind mismatch");
+        check(std::string(request.session_id) == "session-a",
+              "exploration resume must retain the active session binding");
       });
   sendExplorationAndReply(
       request_reader,
       ack_writer,
-      [&]() { exploration.stop("operator_stop", 1000, "explore-stop"); },
+      [&]() {
+        (void)exploration.stop(
+            exploration_run_id, "session-a", "operator_stop", 1000, "explore-stop");
+      },
       [&](const lingtu_dds_ExplorationCommandRequest& request) {
         check(
             request.kind == static_cast<std::int32_t>(ExplorationKind::kStop),
             "exploration stop kind mismatch");
+        check(std::string(request.session_id) == "session-a",
+              "exploration stop must retain the active session binding");
         check(std::string(request.reason) == "operator_stop",
               "exploration stop reason mismatch");
       });
@@ -599,6 +643,7 @@ void testExplorationCommands() {
             12.5,
             -8.25,
             45.0,
+            exploration_run_id,
             "session-a",
             "operator_directed_explore",
             1000,
@@ -629,7 +674,11 @@ void testExplorationCommands() {
       ack_writer,
       [&]() {
         exploration.clearDirectedTarget(
-            "session-a", "operator_clear_directed_explore", 1000, "explore-directed-clear");
+            exploration_run_id,
+            "session-a",
+            "operator_clear_directed_explore",
+            1000,
+            "explore-directed-clear");
       },
       [&](const lingtu_dds_ExplorationCommandRequest& request) {
         check(
@@ -653,27 +702,246 @@ void testExplorationCommands() {
               "directed target clear reason mismatch");
       });
 
-  bool rejected = false;
+  lingtu::nav::commands::ExplorationCommandReceipt rejected_receipt;
+  sendExplorationAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        rejected_receipt = exploration.start(
+            exploration_run_id,
+            "session-b",
+            "operator_start",
+            1000,
+            "explore-reject");
+      },
+      [&](const lingtu_dds_ExplorationCommandRequest&) {},
+      false,
+      "exploration_inputs_not_ready");
+  check(
+      !rejected_receipt.accepted &&
+          rejected_receipt.request_id == "explore-reject" &&
+          rejected_receipt.exploration_run_id == exploration_run_id &&
+          rejected_receipt.reason == "exploration_inputs_not_ready" &&
+          !rejected_receipt.duplicate,
+      "exploration command rejection was not returned as a typed receipt");
+
+  lingtu::nav::commands::ExplorationCommandReceipt duplicate_receipt;
+  sendExplorationAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        duplicate_receipt = exploration.pause(
+            exploration_run_id,
+            "session-a",
+            "operator_pause",
+            1000,
+            "explore-pause-duplicate");
+      },
+      [&](const lingtu_dds_ExplorationCommandRequest&) {},
+      true,
+      "already_applied",
+      true);
+  check(
+      duplicate_receipt.accepted && duplicate_receipt.duplicate &&
+          duplicate_receipt.reason == "already_applied",
+      "exploration duplicate ACK was not preserved in the typed receipt");
+
+  bool corrupt_ack_rejected = false;
   try {
     sendExplorationAndReply(
         request_reader,
         ack_writer,
         [&]() {
-          exploration.start(
-              "session-b", "operator_start", 1000, "explore-reject");
+          (void)exploration.resume(
+              exploration_run_id,
+              "session-a",
+              "operator_resume",
+              1000,
+              "explore-corrupt-ack");
         },
         [&](const lingtu_dds_ExplorationCommandRequest&) {},
+        true,
+        "accepted",
         false,
-        "exploration_inputs_not_ready");
+        "01ARZ3NDEKTSV4RRFFQ69G5FAW");
   } catch (const std::runtime_error& exc) {
-    rejected = std::string(exc.what()).find("exploration_inputs_not_ready") !=
+    corrupt_ack_rejected =
+        std::string(exc.what()).find("exploration_ack_run_id_mismatch") !=
         std::string::npos;
   }
-  check(rejected, "exploration command rejection was not surfaced");
+  check(corrupt_ack_rejected, "exploration ACK run identity mismatch was accepted");
+
+  bool missing_identity_rejected = false;
+  try {
+    (void)exploration.stop(
+        "", "session-a", "operator_stop", 1, "missing-run-id");
+  } catch (const std::invalid_argument&) {
+    missing_identity_rejected = true;
+  }
+  check(missing_identity_rejected, "empty exploration run id crossed DDS");
+
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C exploration receipt client creation failed");
+  lingtu_nav_exploration_command_receipt_v1 c_receipt{};
+  c_receipt.abi_version = LINGTU_NAV_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_receipt.struct_size = sizeof(c_receipt);
+  sendExplorationAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_stop_exploration_with_receipt_v1(
+                c_client,
+                "c-explore-stop",
+                exploration_run_id.c_str(),
+                "session-a",
+                "operator_stop",
+                1000,
+                &c_receipt) == 0,
+            "C exploration command receipt call failed");
+      },
+      [&](const lingtu_dds_ExplorationCommandRequest&) {},
+      false,
+      "stop_not_allowed",
+      true);
+  check(
+      c_receipt.abi_version ==
+              LINGTU_NAV_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION &&
+          c_receipt.struct_size == sizeof(c_receipt) &&
+          c_receipt.accepted == 0 && c_receipt.duplicate != 0 &&
+          std::string(c_receipt.request_id) == "c-explore-stop" &&
+          std::string(c_receipt.exploration_run_id) == exploration_run_id &&
+          std::string(c_receipt.reason) == "stop_not_allowed",
+      "C exploration receipt lost business rejection fields");
+  lingtu_nav_client_destroy(c_client);
   dds_delete(participant);
 }
 
-void testInspectionCommands() {
+void testExplorationRunEventReader() {
+  using EventKind = lingtu::message::ExplorationRunEventKind;
+  using RunState = lingtu::message::ExplorationRunState;
+  const int domain_id = 195 + static_cast<int>(getpid() % 10);
+  const dds_entity_t participant = checked(
+      dds_create_participant(
+          static_cast<dds_domainid_t>(domain_id), nullptr, nullptr),
+      "dds_create_participant(test_exploration_run_event_client)");
+  const dds_entity_t publisher = checked(
+      dds_create_publisher(participant, nullptr, nullptr),
+      "dds_create_publisher(test_exploration_run_event_client)");
+  const dds_entity_t event_writer = createWriter(
+      participant,
+      publisher,
+      lingtu::message::kNavExplorationRunEvent,
+      &lingtu_dds_ExplorationRunEvent_desc);
+  lingtu::nav::commands::Client client(domain_id);
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C exploration run event client creation failed");
+
+  const std::string run_id = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+  auto publish = [&](std::uint64_t sequence,
+                     EventKind kind,
+                     RunState state,
+                     bool motion_stop_confirmed,
+                     const std::string& motion_stop_reason) {
+    lingtu_dds_ExplorationRunEvent event{};
+    event.timestamp_s = nowSeconds();
+    event.frame_id = const_cast<char*>("map");
+    event.boot_id = const_cast<char*>("explore-boot-a");
+    event.event_sequence = sequence;
+    event.kind = static_cast<std::int32_t>(kind);
+    event.exploration_run_id = const_cast<char*>(run_id.c_str());
+    event.start_request_id = const_cast<char*>("explore-start-1");
+    event.command_request_id = const_cast<char*>("explore-command-1");
+    event.product_session_id = const_cast<char*>("product-session-a");
+    event.state = static_cast<std::int32_t>(state);
+    event.route = const_cast<char*>("live");
+    event.map_id = const_cast<char*>("");
+    event.map_version = 0;
+    event.artifact_hash = const_cast<char*>("");
+    event.reason = const_cast<char*>("state_changed");
+    event.motion_stop_confirmed = motion_stop_confirmed;
+    event.motion_stop_reason = const_cast<char*>(motion_stop_reason.c_str());
+    checked(dds_write(event_writer, &event), "dds_write(test_exploration_run_event)");
+  };
+  auto take = [&](int timeout_ms) {
+    lingtu::nav::commands::ExplorationRunEventSnapshot event;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (client.takeExplorationRunEvent(&event)) {
+        return std::optional<
+            lingtu::nav::commands::ExplorationRunEventSnapshot>(std::move(event));
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return std::optional<lingtu::nav::commands::ExplorationRunEventSnapshot>{};
+  };
+
+  bool first_received = false;
+  for (int attempt = 0; attempt < 100; ++attempt) {
+    publish(1U, EventKind::kStateChanged, RunState::kRunning, false, "");
+    const auto first = take(10);
+    if (!first.has_value()) {
+      continue;
+    }
+    check(
+        first->timestamp_s > 0.0 && first->frame_id == "map" &&
+            first->boot_id == "explore-boot-a" && first->event_sequence == 1U &&
+            first->kind == static_cast<std::int32_t>(EventKind::kStateChanged) &&
+            first->exploration_run_id == run_id &&
+            first->start_request_id == "explore-start-1" &&
+            first->command_request_id == "explore-command-1" &&
+            first->product_session_id == "product-session-a" &&
+            first->state == static_cast<std::int32_t>(RunState::kRunning) &&
+            first->route == "live" && first->map_id.empty() &&
+            first->map_version == 0 && first->artifact_hash.empty() &&
+            first->reason == "state_changed" && !first->motion_stop_confirmed &&
+            first->motion_stop_reason.empty(),
+        "exploration run event snapshot lost lifecycle fields");
+    first_received = true;
+    break;
+  }
+  check(first_received, "exploration run event was not received");
+
+  publish(1U, EventKind::kStateChanged, RunState::kFailed, true, "parked");
+  publish(2U, EventKind::kStateChanged, RunState::kPaused, true, "parked");
+  const auto paused = take(1000);
+  check(
+      paused.has_value() && paused->event_sequence == 2U &&
+          paused->motion_stop_confirmed && paused->motion_stop_reason == "parked",
+      "duplicate exploration run sequence leaked or parking evidence was lost");
+
+  publish(3U, EventKind::kStateChanged, RunState::kCompleted, false, "");
+  publish(4U, EventKind::kStateChanged, RunState::kCancelling, false, "");
+  const auto cancelling = take(1000);
+  check(
+      cancelling.has_value() && cancelling->event_sequence == 4U,
+      "unparked terminal exploration event was not rejected");
+
+  publish(5U, EventKind::kStateChanged, RunState::kCancelled, true, "parked");
+  lingtu_nav_exploration_run_event_v1 c_event{};
+  c_event.abi_version = LINGTU_NAV_EXPLORATION_RUN_EVENT_ABI_VERSION;
+  c_event.struct_size = sizeof(c_event);
+  int c_result = 0;
+  for (int attempt = 0; attempt < 200 && c_result == 0; ++attempt) {
+    c_result = lingtu_nav_client_take_exploration_run_event_v1(c_client, &c_event);
+    if (c_result == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+  }
+  check(
+      c_result == 1 && c_event.abi_version ==
+              LINGTU_NAV_EXPLORATION_RUN_EVENT_ABI_VERSION &&
+          c_event.struct_size == sizeof(c_event) && c_event.event_sequence > 0U &&
+          std::string(c_event.exploration_run_id) == run_id &&
+          std::string(c_event.product_session_id) == "product-session-a",
+      "C exploration run event ABI did not return the native fact");
+
+  lingtu_nav_client_destroy(c_client);
+  dds_delete(participant);
+}
+
+void testInspectionTaskCommands() {
   using InspectionKind = lingtu::message::InspectionCommandKind;
   // CycloneDDS' default UDP port mapping overflows above domain 232.
   const int domain_id = 220 + static_cast<int>(getpid() % 10);
@@ -690,64 +958,92 @@ void testInspectionCommands() {
   const dds_entity_t request_reader = createReader(
       participant,
       subscriber,
-      lingtu::message::kNavInspectionCommand,
-      &lingtu_dds_InspectionCommandRequest_desc);
+      lingtu::message::kNavInspectionTaskRequest,
+      &lingtu_dds_InspectionTaskRequest_desc);
   const dds_entity_t ack_writer = createWriter(
       participant,
       publisher,
-      lingtu::message::kNavInspectionAck,
-      &lingtu_dds_InspectionCommandAck_desc);
+      lingtu::message::kNavInspectionTaskAck,
+      &lingtu_dds_InspectionTaskAck_desc);
 
   lingtu::nav::commands::Client session(domain_id);
   auto& inspection = session.inspection();
-  sendInspectionAndReply(
+  lingtu::nav::commands::InspectionTaskCommandReceipt start_receipt;
+  sendInspectionTaskAndReply(
       request_reader,
       ack_writer,
-      [&]() { inspection.start("route-a", 7, 1000, "inspection-start"); },
-      [&](const lingtu_dds_InspectionCommandRequest& request) {
+      [&]() {
+        start_receipt = inspection.startTask(
+            "inspection-task-1", "route-a", 7, 1000, "inspection-start");
+      },
+      [&](const lingtu_dds_InspectionTaskRequest& request) {
         check(request.kind == static_cast<std::int32_t>(InspectionKind::kStart),
               "inspection start kind mismatch");
         check(std::string(request.header.frame_id) == "map",
               "inspection frame mismatch");
+        check(std::string(request.task_id) == "inspection-task-1",
+              "inspection task id mismatch");
+        check(std::string(request.request_id) == "inspection-start",
+              "inspection request id mismatch");
         check(std::string(request.route_id) == "route-a",
               "inspection route id mismatch");
         check(request.route_revision == 7U,
               "inspection route revision mismatch");
       });
-  sendInspectionAndReply(
+  check(
+      start_receipt.accepted && start_receipt.task_id == "inspection-task-1" &&
+          start_receipt.request_id == "inspection-start" &&
+          start_receipt.run_id == "inspection-test-run",
+      "inspection task start receipt lost correlation identity");
+
+  sendInspectionTaskAndReply(
       request_reader,
       ack_writer,
-      [&]() { inspection.pause("operator_hold", 1000, "inspection-pause"); },
-      [&](const lingtu_dds_InspectionCommandRequest& request) {
+      [&]() {
+        (void)inspection.pauseTask(
+            "inspection-task-1", "operator_hold", 1000, "inspection-pause");
+      },
+      [&](const lingtu_dds_InspectionTaskRequest& request) {
         check(request.kind == static_cast<std::int32_t>(InspectionKind::kPause),
               "inspection pause kind mismatch");
         check(std::string(request.reason) == "operator_hold",
               "inspection pause reason mismatch");
+        check(std::string(request.task_id) == "inspection-task-1",
+              "inspection pause task id mismatch");
       });
-  sendInspectionAndReply(
+  sendInspectionTaskAndReply(
       request_reader,
       ack_writer,
-      [&]() { inspection.resume("operator_resume", 1000, "inspection-resume"); },
-      [&](const lingtu_dds_InspectionCommandRequest& request) {
+      [&]() {
+        (void)inspection.resumeTask(
+            "inspection-task-1", "operator_resume", 1000, "inspection-resume");
+      },
+      [&](const lingtu_dds_InspectionTaskRequest& request) {
         check(request.kind == static_cast<std::int32_t>(InspectionKind::kResume),
               "inspection resume kind mismatch");
       });
-  sendInspectionAndReply(
+  sendInspectionTaskAndReply(
       request_reader,
       ack_writer,
-      [&]() { inspection.cancel("operator_cancel", 1000, "inspection-cancel"); },
-      [&](const lingtu_dds_InspectionCommandRequest& request) {
+      [&]() {
+        (void)inspection.cancelTask(
+            "inspection-task-1", "operator_cancel", 1000, "inspection-cancel");
+      },
+      [&](const lingtu_dds_InspectionTaskRequest& request) {
         check(request.kind == static_cast<std::int32_t>(InspectionKind::kCancel),
               "inspection cancel kind mismatch");
       });
 
   bool rejected = false;
   try {
-    sendInspectionAndReply(
+    sendInspectionTaskAndReply(
         request_reader,
         ack_writer,
-        [&]() { inspection.start("route-b", 1, 1000, "inspection-reject"); },
-        [&](const lingtu_dds_InspectionCommandRequest&) {},
+        [&]() {
+          (void)inspection.startTask(
+              "inspection-task-2", "route-b", 1, 1000, "inspection-reject");
+        },
+        [&](const lingtu_dds_InspectionTaskRequest&) {},
         false,
         "inspection_route_not_found");
   } catch (const std::runtime_error& exc) {
@@ -756,6 +1052,39 @@ void testInspectionCommands() {
         std::string::npos;
   }
   check(rejected, "inspection rejection ACK was not surfaced to caller");
+
+  bool rejected_missing_task = false;
+  try {
+    (void)inspection.pauseTask("", "operator_hold", 10, "missing-task");
+  } catch (const std::invalid_argument&) {
+    rejected_missing_task = true;
+  }
+  check(rejected_missing_task,
+        "inspection task client must reject an empty task id before DDS delivery");
+
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C inspection task client creation failed");
+  sendInspectionTaskAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_start_inspection_task(
+                c_client,
+                "inspection-task-c",
+                "inspection-start-c",
+                "route-c",
+                11U,
+                1000) == 0,
+            "C inspection task start failed");
+      },
+      [&](const lingtu_dds_InspectionTaskRequest& request) {
+        check(std::string(request.task_id) == "inspection-task-c",
+              "C inspection task id mismatch");
+        check(std::string(request.request_id) == "inspection-start-c",
+              "C inspection request id mismatch");
+      });
+  lingtu_nav_client_destroy(c_client);
   dds_delete(participant);
 }
 
@@ -1173,9 +1502,21 @@ void testEstopBypassesGoalAckWait() {
   std::string goal_error;
   std::string estop_error;
   std::exception_ptr observation_error;
+  lingtu_nav_navigation_command_receipt_v1 goal_receipt{};
+  goal_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  goal_receipt.struct_size = sizeof(goal_receipt);
   std::thread goal_sender([&]() {
-    goal_result = lingtu_nav_client_send_goal_with_id(
-        client, "goal-without-ack", 1.0, 2.0, 0.0, 0.0, 500);
+    goal_result = lingtu_nav_client_start_task_with_receipt_v1(
+        client,
+        "priority-task",
+        "goal-without-ack",
+        1.0,
+        2.0,
+        0.0,
+        0.0,
+        500,
+        &goal_receipt);
     if (goal_result != 0) {
       goal_error = lingtu_nav_client_last_error(client);
     }
@@ -1264,16 +1605,17 @@ void runTest() {
       &lingtu_dds_NavigationCommandAck_desc);
 
   lingtu::nav::commands::Client client(domain_id);
-  std::string accepted_goal_request_id;
+  lingtu::nav::commands::NavigationCommandReceipt accepted_goal_receipt;
   sendAndReply(
       request_reader,
       ack_writer,
       [&]() {
-        accepted_goal_request_id =
-            client.navigation().sendGoal(1.25, -2.5, 0.4, 0.6, 1000, "goal-001");
+        accepted_goal_receipt = client.navigation().startTask(
+            1.25, -2.5, 0.4, 0.6, 1000, "", "goal-001");
       },
       [&](const lingtu_dds_NavigationCommandRequest& request) {
         check(std::string(request.request_id) == "goal-001", "goal request id mismatch");
+        check(request.task_id != nullptr && std::string(request.task_id) != "goal-001", "goal task id must differ from request id");
         check(request.kind == static_cast<std::int32_t>(CommandKind::Goal), "goal kind mismatch");
         check(std::abs(request.goal.position.x - 1.25) < 1e-9, "goal x mismatch");
         check(std::abs(request.goal.position.y + 2.5) < 1e-9, "goal y mismatch");
@@ -1281,28 +1623,210 @@ void runTest() {
         check(std::abs(request.goal.orientation.z - std::sin(0.3)) < 1e-9, "goal yaw mismatch");
       });
   check(
-      accepted_goal_request_id == "goal-001",
-      "sendGoal must return the exact accepted request id for lifecycle correlation");
-
+      accepted_goal_receipt.accepted &&
+          accepted_goal_receipt.request_id == "goal-001" &&
+          !accepted_goal_receipt.task_id.empty() &&
+          accepted_goal_receipt.task_id != accepted_goal_receipt.request_id,
+      "startTask must return distinct task/request ids for lifecycle correlation");
+  lingtu::nav::commands::NavigationCommandReceipt pause_receipt;
   sendAndReply(
       request_reader,
       ack_writer,
-      [&]() { client.navigation().cancel("operator_cancel", 1000, "cancel-001"); },
+      [&]() {
+        pause_receipt = client.navigation().pauseTask(
+            accepted_goal_receipt.task_id, "operator_pause", 1000, "pause-001");
+      },
       [&](const lingtu_dds_NavigationCommandRequest& request) {
-        check(request.kind == static_cast<std::int32_t>(CommandKind::Cancel), "cancel kind mismatch");
+        check(request.kind == static_cast<std::int32_t>(CommandKind::TaskPause),
+              "task pause kind mismatch");
+        check(std::string(request.task_id) == accepted_goal_receipt.task_id,
+              "task pause task id mismatch");
+        check(std::string(request.reason) == "operator_pause", "task pause reason mismatch");
+      },
+      true,
+      "pause_requested");
+  check(pause_receipt.accepted && pause_receipt.task_id == accepted_goal_receipt.task_id &&
+            pause_receipt.request_id == "pause-001",
+        "pauseTask must retain task identity and return its causal request id");
+
+  lingtu::nav::commands::NavigationCommandReceipt resume_receipt;
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        resume_receipt = client.navigation().resumeTask(
+            accepted_goal_receipt.task_id, "operator_resume", 1000, "resume-001");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::TaskResume),
+              "task resume kind mismatch");
+        check(std::string(request.task_id) == accepted_goal_receipt.task_id,
+              "task resume task id mismatch");
+        check(std::string(request.reason) == "operator_resume", "task resume reason mismatch");
+      },
+      true,
+      "resume_requested");
+  check(resume_receipt.accepted && resume_receipt.task_id == accepted_goal_receipt.task_id &&
+            resume_receipt.request_id == "resume-001",
+        "resumeTask must retain task identity and use a new request id");
+  lingtu::nav::commands::NavigationCommandReceipt cancel_receipt;
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        cancel_receipt = client.navigation().cancelTask(
+            accepted_goal_receipt.task_id,
+            "operator_cancel",
+            1000,
+            "cancel-001");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(request.kind == static_cast<std::int32_t>(CommandKind::TaskCancel), "task cancel kind mismatch");
+        check(std::string(request.task_id) == accepted_goal_receipt.task_id, "cancel task id mismatch");
         check(std::string(request.reason) == "operator_cancel", "cancel reason mismatch");
       });
+  check(
+      cancel_receipt.accepted &&
+          cancel_receipt.task_id == accepted_goal_receipt.task_id &&
+          cancel_receipt.request_id == "cancel-001",
+      "cancelTask must target the accepted goal task");
 
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C navigation client creation failed");
+  lingtu_nav_navigation_command_receipt_v1 c_goal_receipt{};
+  c_goal_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_goal_receipt.struct_size = sizeof(c_goal_receipt);
   sendAndReply(
       request_reader,
       ack_writer,
-      [&]() { client.navigation().sendTeleop(0.2, -0.1, 0.5, 1000, "teleop-001"); },
+      [&]() {
+        check(
+            lingtu_nav_client_start_task_with_receipt_v1(
+                c_client,
+                "",
+                "c-goal-001",
+                2.0,
+                3.0,
+                0.0,
+                0.0,
+                1000,
+                &c_goal_receipt) == 0,
+            "C start task receipt call failed");
+      },
       [&](const lingtu_dds_NavigationCommandRequest& request) {
-        check(request.kind == static_cast<std::int32_t>(CommandKind::Teleop), "teleop kind mismatch");
-        check(std::abs(request.velocity.linear.x - 0.2) < 1e-9, "teleop vx mismatch");
-        check(std::abs(request.velocity.linear.y + 0.1) < 1e-9, "teleop vy mismatch");
-        check(std::abs(request.velocity.angular.z - 0.5) < 1e-9, "teleop wz mismatch");
+        check(std::string(request.request_id) == "c-goal-001", "C goal request id mismatch");
+        check(request.task_id != nullptr && std::string(request.task_id) != "c-goal-001", "C goal task id must differ from request id");
+        check(request.kind == static_cast<std::int32_t>(CommandKind::Goal), "C goal kind mismatch");
       });
+  check(
+      c_goal_receipt.accepted != 0 &&
+          std::string(c_goal_receipt.request_id) == "c-goal-001" &&
+          std::string(c_goal_receipt.task_id) != "c-goal-001",
+      "C start task receipt did not preserve task/request identity");
+
+  lingtu_nav_navigation_command_receipt_v1 c_pause_receipt{};
+  c_pause_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_pause_receipt.struct_size = sizeof(c_pause_receipt);
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_pause_task_with_receipt_v1(
+                c_client,
+                c_goal_receipt.task_id,
+                "c-pause-001",
+                "operator_pause",
+                1000,
+                &c_pause_receipt) == 0,
+            "C pause task receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(
+            std::string(request.task_id) == c_goal_receipt.task_id,
+            "C pause task id mismatch");
+        check(
+            std::string(request.request_id) == "c-pause-001",
+            "C pause request id mismatch");
+        check(
+            request.kind == static_cast<std::int32_t>(CommandKind::TaskPause),
+            "C pause kind mismatch");
+      },
+      true,
+      "pause_requested");
+  check(
+      c_pause_receipt.accepted != 0 &&
+          std::string(c_pause_receipt.task_id) == c_goal_receipt.task_id &&
+          std::string(c_pause_receipt.request_id) == "c-pause-001",
+      "C pause task receipt did not preserve task/request identity");
+
+  lingtu_nav_navigation_command_receipt_v1 c_resume_receipt{};
+  c_resume_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_resume_receipt.struct_size = sizeof(c_resume_receipt);
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_resume_task_with_receipt_v1(
+                c_client,
+                c_goal_receipt.task_id,
+                "c-resume-001",
+                "operator_resume",
+                1000,
+                &c_resume_receipt) == 0,
+            "C resume task receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(
+            std::string(request.task_id) == c_goal_receipt.task_id,
+            "C resume task id mismatch");
+        check(
+            std::string(request.request_id) == "c-resume-001",
+            "C resume request id mismatch");
+        check(
+            request.kind == static_cast<std::int32_t>(CommandKind::TaskResume),
+            "C resume kind mismatch");
+      },
+      true,
+      "resume_requested");
+  check(
+      c_resume_receipt.accepted != 0 &&
+          std::string(c_resume_receipt.task_id) == c_goal_receipt.task_id &&
+          std::string(c_resume_receipt.request_id) == "c-resume-001",
+      "C resume task receipt did not preserve task/request identity");
+
+  lingtu_nav_navigation_command_receipt_v1 c_cancel_receipt{};
+  c_cancel_receipt.abi_version =
+      LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION;
+  c_cancel_receipt.struct_size = sizeof(c_cancel_receipt);
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        check(
+            lingtu_nav_client_cancel_task_with_receipt_v1(
+                c_client,
+                c_goal_receipt.task_id,
+                "c-cancel-001",
+                "operator_cancel",
+                1000,
+                &c_cancel_receipt) == 0,
+            "C cancel task receipt call failed");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest& request) {
+        check(std::string(request.task_id) == c_goal_receipt.task_id, "C cancel task id mismatch");
+        check(std::string(request.request_id) == "c-cancel-001", "C cancel request id mismatch");
+        check(request.kind == static_cast<std::int32_t>(CommandKind::TaskCancel), "C task cancel kind mismatch");
+      });
+  check(
+      c_cancel_receipt.accepted != 0 &&
+          std::string(c_cancel_receipt.task_id) == c_goal_receipt.task_id,
+      "C cancel task receipt did not target the original task");
+  lingtu_nav_client_destroy(c_client);
 
   sendAndReply(
       request_reader,
@@ -1346,30 +1870,28 @@ void runTest() {
             "resume autonomy reason mismatch");
       });
 
-  bool rejected = false;
-  try {
-    sendAndReply(
-        request_reader,
-        ack_writer,
-        [&]() {
-          client.navigation().sendGoal(
-              9.0, 9.0, 0.0, 0.0, 1000, "goal-reject");
-        },
-        [&](const lingtu_dds_NavigationCommandRequest&) {},
-        false,
-        "active_octomap_not_configured");
-  } catch (const std::runtime_error& exc) {
-    rejected = std::string(exc.what()).find("active_octomap_not_configured") !=
-        std::string::npos;
-  }
-  check(rejected, "rejected command ACK was not surfaced to caller");
+  lingtu::nav::commands::NavigationCommandReceipt rejected_goal;
+  sendAndReply(
+      request_reader,
+      ack_writer,
+      [&]() {
+        rejected_goal = client.navigation().startTask(
+            9.0, 9.0, 0.0, 0.0, 1000, "goal-reject-task", "goal-reject");
+      },
+      [&](const lingtu_dds_NavigationCommandRequest&) {},
+      false,
+      "active_octomap_not_configured");
+  check(
+      !rejected_goal.accepted &&
+          rejected_goal.reason == "active_octomap_not_configured",
+      "rejected command ACK was not surfaced to caller");
 
   std::string stale_rejection;
   std::exception_ptr stale_sender_error;
   std::thread stale_sender([&]() {
     try {
-      client.navigation().sendTeleop(
-          0.1, 0.0, 0.0, 1000, "teleop-reject-with-clock-diagnostics");
+      client.navigation().clearEstop(
+          "operator_reset", 1000, "clear-estop-reject-with-clock-diagnostics");
     } catch (...) {
       stale_sender_error = std::current_exception();
     }
@@ -1378,14 +1900,14 @@ void runTest() {
       takeOne<lingtu_dds_NavigationCommandRequest>(request_reader);
   check(
       std::string(first_stale->request_id) ==
-          "teleop-reject-with-clock-diagnostics",
-      "first stale teleop request id mismatch");
+          "clear-estop-reject-with-clock-diagnostics",
+      "first stale clear-estop request id mismatch");
   writeAck(
       ack_writer,
       first_stale->request_id,
-      CommandKind::Teleop,
+      CommandKind::ClearEstop,
       false,
-      "teleop_source_stamp_stale");
+      "clear_estop_source_stamp_stale");
   returnLoan(request_reader, first_stale);
 
   auto* recovery_sync =
@@ -1406,14 +1928,14 @@ void runTest() {
       takeOne<lingtu_dds_NavigationCommandRequest>(request_reader);
   check(
       std::string(retry_stale->request_id) ==
-          "teleop-reject-with-clock-diagnostics-clock-retry-1",
+          "clear-estop-reject-with-clock-diagnostics-clock-retry-1",
       "clock recovery retry must use a distinct traceable request id");
   writeAck(
       ack_writer,
       retry_stale->request_id,
-      CommandKind::Teleop,
+      CommandKind::ClearEstop,
       false,
-      "teleop_source_stamp_stale");
+      "clear_estop_source_stamp_stale");
   returnLoan(request_reader, retry_stale);
   stale_sender.join();
   if (stale_sender_error) {
@@ -1424,8 +1946,8 @@ void runTest() {
     }
   }
   check(
-      stale_rejection.find("teleop_source_stamp_stale") != std::string::npos,
-      "stale teleop rejection was not surfaced to caller");
+      stale_rejection.find("clear_estop_source_stamp_stale") != std::string::npos,
+      "stale clear-estop rejection was not surfaced to caller");
   for (const char* field : {
            "sync_rtt_ms=",
            "endpoint_stamp_s=",
@@ -1456,6 +1978,8 @@ void testNavigationGoalStatusReaderAndRetention() {
       lingtu::message::kNavGoalStatus,
       &lingtu_dds_NavigationGoalStatus_desc);
   lingtu::nav::commands::Client client(domain_id);
+  lingtu_nav_client_handle c_client = lingtu_nav_client_create(domain_id);
+  check(c_client != nullptr, "C goal status client creation failed");
 
   auto take = [&](int timeout_ms) {
     lingtu::nav::commands::NavigationGoalStatusSnapshot status;
@@ -1473,18 +1997,21 @@ void testNavigationGoalStatusReaderAndRetention() {
         lingtu::nav::commands::NavigationGoalStatusSnapshot>{};
   };
 
+  const std::string task_id = "task-lifecycle-1";
   const std::string request_id = "goal-lifecycle-1";
   for (int attempt = 0; attempt < 100; ++attempt) {
     writeGoalStatus(
         status_writer,
         "navd-boot-a",
         1U,
+        task_id,
         request_id,
         lingtu::message::NavigationGoalState::Planning,
         7U,
         "planning");
     auto first = take(10);
     if (first.has_value()) {
+      check(first->task_id == task_id, "goal status task id mismatch");
       check(first->request_id == request_id, "goal status request id mismatch");
       check(first->sequence == 1U, "goal status sequence mismatch");
       break;
@@ -1492,11 +2019,14 @@ void testNavigationGoalStatusReaderAndRetention() {
   }
   const auto retained_planning = client.navigationGoalStatus(request_id);
   check(retained_planning.has_value(), "goal status must be retained by request id");
+  const auto retained_task_planning = client.navigationTaskStatus(task_id);
+  check(retained_task_planning.has_value(), "goal status must be retained by task id");
 
   writeGoalStatus(
       status_writer,
       "navd-boot-a",
       1U,
+      task_id,
       request_id,
       lingtu::message::NavigationGoalState::Failed,
       7U,
@@ -1505,6 +2035,7 @@ void testNavigationGoalStatusReaderAndRetention() {
       status_writer,
       "navd-boot-a",
       2U,
+      task_id,
       request_id,
       lingtu::message::NavigationGoalState::Reached,
       7U,
@@ -1523,10 +2054,36 @@ void testNavigationGoalStatusReaderAndRetention() {
       retained_terminal->state == terminal->state &&
           retained_terminal->sequence == terminal->sequence,
       "retained goal status does not match the latest event");
+  const auto retained_task_terminal = client.navigationTaskStatus(task_id);
+  check(
+      retained_task_terminal.has_value() &&
+          retained_task_terminal->state == terminal->state &&
+          retained_task_terminal->request_id == request_id,
+      "retained task status does not match the latest event");
+  lingtu_nav_navigation_goal_status_v1 c_task_status{};
+  c_task_status.abi_version = LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION;
+  c_task_status.struct_size = sizeof(c_task_status);
+  bool c_task_status_found = false;
+  for (int attempt = 0; attempt < 100 && !c_task_status_found; ++attempt) {
+    const int result = lingtu_nav_client_get_navigation_task_status_v1(
+        c_client, task_id.c_str(), &c_task_status);
+    check(result >= 0, "C task status query failed");
+    c_task_status_found = result == 1;
+    if (!c_task_status_found) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  check(
+      c_task_status_found &&
+          std::string(c_task_status.task_id) == task_id &&
+          std::string(c_task_status.request_id) == request_id &&
+          c_task_status.state == terminal->state,
+      "C task status query did not return the retained terminal state");
   check(
       !take(50).has_value(),
       "duplicate goal status sequence leaked into the event queue");
 
+  lingtu_nav_client_destroy(c_client);
   dds_delete(participant);
 }
 
@@ -1670,7 +2227,6 @@ void testMapSceneTelemetryAndCapacityGate() {
   std::vector<float> occupancy(header.occupancy.cell_count);
   std::vector<float> elevation(header.elevation.cell_count);
   std::vector<float> esdf(header.esdf.cell_count);
-  std::vector<float> traversability(header.traversability.cell_count);
   lingtu_nav_map_scene_buffers_v1 buffers{};
   buffers.abi_version = LINGTU_NAV_MAP_SCENE_ABI_VERSION;
   buffers.struct_size = sizeof(buffers);
@@ -1686,14 +2242,12 @@ void testMapSceneTelemetryAndCapacityGate() {
   buffers.elevation_cell_capacity = elevation.size();
   buffers.esdf_cells = esdf.data();
   buffers.esdf_cell_capacity = esdf.size();
-  buffers.traversability_cells = traversability.data();
-  buffers.traversability_cell_capacity = traversability.size();
   result = lingtu_nav_client_take_map_scene_v1(
       client, &header, &buffers);
   check(result == 1, "C MapScene buffered copy failed");
   check(
       std::abs(accumulated[1].x - 3.0F) < 1e-6F &&
-          std::abs(traversability[1] - 20.0F) < 1e-6F,
+          std::abs(esdf[1] - 2.0F) < 1e-6F,
       "C MapScene copied the wrong point or grid payload");
 
   bool rejected = false;
@@ -1724,8 +2278,8 @@ void testSourceStampIsRefreshedAfterDiscovery() {
   std::exception_ptr sender_error;
   std::thread sender([&]() {
     try {
-      client.navigation().sendTeleop(
-          0.1, 0.0, 0.0, 2000, "teleop-delayed-discovery");
+      client.navigation().clearEstop(
+          "operator_reset", 2000, "clear-estop-delayed-discovery");
     } catch (...) {
       sender_error = std::current_exception();
     }
@@ -1756,7 +2310,7 @@ void testSourceStampIsRefreshedAfterDiscovery() {
   auto* sync = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader, 2000);
   check(
       sync->kind == static_cast<std::int32_t>(CommandKind::Stop),
-      "delayed first teleop must establish the endpoint clock");
+      "delayed first clear-estop must establish the endpoint clock");
   writeAck(
       ack_writer,
       sync->request_id,
@@ -1766,8 +2320,8 @@ void testSourceStampIsRefreshedAfterDiscovery() {
   returnLoan(request_reader, sync);
   auto* request = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader, 2000);
   check(
-      request->kind == static_cast<std::int32_t>(CommandKind::Teleop),
-      "clock synchronization must be followed by teleop");
+      request->kind == static_cast<std::int32_t>(CommandKind::ClearEstop),
+      "clock synchronization must be followed by clear-estop");
   const double publication_age_s = nowSeconds() - stampSeconds(request->header.stamp);
   check(
       publication_age_s >= 0.0 && publication_age_s < 0.25,
@@ -1775,7 +2329,7 @@ void testSourceStampIsRefreshedAfterDiscovery() {
   writeAck(
       ack_writer,
       request->request_id,
-      CommandKind::Teleop,
+      CommandKind::ClearEstop,
       true,
       "accepted");
   returnLoan(request_reader, request);
@@ -1786,7 +2340,7 @@ void testSourceStampIsRefreshedAfterDiscovery() {
   dds_delete(participant);
 }
 
-void testFirstTeleopUsesEndpointClockAnchor() {
+void testFirstClockSensitiveCommandUsesEndpointClockAnchor() {
   using CommandKind = lingtu::message::NavigationCommandKind;
   constexpr double kEndpointClockOffsetS = -1.0;
   const int domain_id = 150 + static_cast<int>(getpid() % 10);
@@ -1815,8 +2369,8 @@ void testFirstTeleopUsesEndpointClockAnchor() {
   std::exception_ptr sender_error;
   std::thread sender([&]() {
     try {
-      client.navigation().sendTeleop(
-          0.1, 0.0, 0.0, 2000, "teleop-clock-anchor");
+      client.navigation().clearEstop(
+          "operator_reset", 2000, "clear-estop-clock-anchor");
     } catch (...) {
       sender_error = std::current_exception();
     }
@@ -1826,7 +2380,7 @@ void testFirstTeleopUsesEndpointClockAnchor() {
   const bool first_was_clock_sync =
       first->kind == static_cast<std::int32_t>(CommandKind::Stop) &&
       std::string(first->reason) == "client_clock_sync";
-  lingtu_dds_NavigationCommandRequest* teleop = first;
+  lingtu_dds_NavigationCommandRequest* command = first;
   if (first_was_clock_sync) {
     const double sync_endpoint_s = nowSeconds() + kEndpointClockOffsetS;
     writeAck(
@@ -1837,22 +2391,22 @@ void testFirstTeleopUsesEndpointClockAnchor() {
         "stopped",
         sync_endpoint_s);
     returnLoan(request_reader, first);
-    teleop = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader, 2000);
+    command = takeOne<lingtu_dds_NavigationCommandRequest>(request_reader, 2000);
   }
-  const bool second_was_teleop =
-      teleop->kind == static_cast<std::int32_t>(CommandKind::Teleop);
+  const bool second_was_clear_estop =
+      command->kind == static_cast<std::int32_t>(CommandKind::ClearEstop);
   const double endpoint_receive_s = nowSeconds() + kEndpointClockOffsetS;
   const double source_age_s =
-      endpoint_receive_s - stampSeconds(teleop->header.stamp);
+      endpoint_receive_s - stampSeconds(command->header.stamp);
   const bool source_age_valid = source_age_s >= -0.05 && source_age_s < 0.25;
   writeAck(
       ack_writer,
-      teleop->request_id,
-      CommandKind::Teleop,
+      command->request_id,
+      CommandKind::ClearEstop,
       true,
       "accepted",
       endpoint_receive_s);
-  returnLoan(request_reader, teleop);
+  returnLoan(request_reader, command);
 
   sender.join();
   if (sender_error) {
@@ -1862,15 +2416,15 @@ void testFirstTeleopUsesEndpointClockAnchor() {
       first_was_clock_sync,
       "a fresh motion client must establish endpoint time with a safe stop");
   check(
-      second_was_teleop,
-      "clock synchronization must be followed by the requested teleop command");
+      second_was_clear_estop,
+      "clock synchronization must be followed by the requested clear-estop command");
   check(
       source_age_valid,
-      "first teleop source stamp must use the endpoint clock domain");
+      "first clear-estop source stamp must use the endpoint clock domain");
   dds_delete(participant);
 }
 
-void testDelayedClockAckIsResampledBeforeTeleop() {
+void testDelayedClockAckIsResampledBeforeClockSensitiveCommand() {
   using CommandKind = lingtu::message::NavigationCommandKind;
   constexpr double kEndpointClockOffsetS = -1.0;
   const int domain_id = 140 + static_cast<int>(getpid() % 10);
@@ -1899,8 +2453,8 @@ void testDelayedClockAckIsResampledBeforeTeleop() {
   std::exception_ptr sender_error;
   std::thread sender([&]() {
     try {
-      client.navigation().sendTeleop(
-          0.1, 0.0, 0.0, 2500, "teleop-delayed-clock-ack");
+      client.navigation().clearEstop(
+          "operator_reset", 2500, "clear-estop-delayed-clock-ack");
     } catch (...) {
       sender_error = std::current_exception();
     }
@@ -1929,7 +2483,7 @@ void testDelayedClockAckIsResampledBeforeTeleop() {
   const bool delayed_sample_was_resampled =
       second->kind == static_cast<std::int32_t>(CommandKind::Stop) &&
       std::string(second->reason) == "client_clock_sync";
-  lingtu_dds_NavigationCommandRequest* teleop = second;
+  lingtu_dds_NavigationCommandRequest* command = second;
   if (delayed_sample_was_resampled) {
     writeAck(
         ack_writer,
@@ -1939,23 +2493,23 @@ void testDelayedClockAckIsResampledBeforeTeleop() {
         "stopped",
         nowSeconds() + kEndpointClockOffsetS);
     returnLoan(request_reader, second);
-    teleop =
+    command =
         takeOne<lingtu_dds_NavigationCommandRequest>(request_reader, 2000);
   }
-  const bool teleop_followed_sync =
-      teleop->kind == static_cast<std::int32_t>(CommandKind::Teleop);
+  const bool clear_estop_followed_sync =
+      command->kind == static_cast<std::int32_t>(CommandKind::ClearEstop);
   const double endpoint_receive_s = nowSeconds() + kEndpointClockOffsetS;
   const double source_age_s =
-      endpoint_receive_s - stampSeconds(teleop->header.stamp);
+      endpoint_receive_s - stampSeconds(command->header.stamp);
   const bool source_age_valid = source_age_s >= -0.05 && source_age_s < 0.25;
   writeAck(
       ack_writer,
-      teleop->request_id,
-      CommandKind::Teleop,
+      command->request_id,
+      CommandKind::ClearEstop,
       true,
       "accepted",
       endpoint_receive_s);
-  returnLoan(request_reader, teleop);
+  returnLoan(request_reader, command);
 
   sender.join();
   if (sender_error) {
@@ -1963,11 +2517,13 @@ void testDelayedClockAckIsResampledBeforeTeleop() {
   }
   check(
       delayed_sample_was_resampled,
-      "a delayed clock ACK must be resampled instead of aging the first teleop");
-  check(teleop_followed_sync, "clock resampling must preserve the teleop request");
+      "a delayed clock ACK must be resampled instead of aging the command");
+  check(
+      clear_estop_followed_sync,
+      "clock resampling must preserve the clear-estop request");
   check(
       source_age_valid,
-      "teleop after clock resampling must satisfy the endpoint freshness window");
+      "clear-estop after clock resampling must satisfy the endpoint freshness window");
   dds_delete(participant);
 }
 
@@ -2002,24 +2558,24 @@ void testConcurrentClientsKeepClockAcksIsolated() {
   std::exception_ptr second_error;
   std::thread first_sender([&]() {
     try {
-      first_client.navigation().sendTeleop(
-          0.11, 0.0, 0.0, 2000, "teleop-client-a");
+      first_client.navigation().clearEstop(
+          "operator_reset_a", 2000, "clear-estop-client-a");
     } catch (...) {
       first_error = std::current_exception();
     }
   });
   std::thread second_sender([&]() {
     try {
-      second_client.navigation().sendTeleop(
-          0.22, 0.0, 0.0, 2000, "teleop-client-b");
+      second_client.navigation().clearEstop(
+          "operator_reset_b", 2000, "clear-estop-client-b");
     } catch (...) {
       second_error = std::current_exception();
     }
   });
 
   std::set<std::string> sync_ids;
-  bool first_teleop_seen = false;
-  bool second_teleop_seen = false;
+  bool first_command_seen = false;
+  bool second_command_seen = false;
   bool source_ages_valid = true;
   for (int i = 0; i < 4; ++i) {
     auto* request =
@@ -2036,21 +2592,21 @@ void testConcurrentClientsKeepClockAcksIsolated() {
           true,
           "stopped",
           nowSeconds() + kEndpointClockOffsetS);
-    } else if (kind == CommandKind::Teleop) {
+    } else if (kind == CommandKind::ClearEstop) {
       const double endpoint_receive_s = nowSeconds() + kEndpointClockOffsetS;
       const double source_age_s =
           endpoint_receive_s - stampSeconds(request->header.stamp);
       source_ages_valid = source_ages_valid &&
           source_age_s >= -0.05 && source_age_s < 0.25;
-      if (request_id == "teleop-client-a") {
-        first_teleop_seen = std::abs(request->velocity.linear.x - 0.11) < 1e-9;
-      } else if (request_id == "teleop-client-b") {
-        second_teleop_seen = std::abs(request->velocity.linear.x - 0.22) < 1e-9;
+      if (request_id == "clear-estop-client-a") {
+        first_command_seen = std::string(request->reason) == "operator_reset_a";
+      } else if (request_id == "clear-estop-client-b") {
+        second_command_seen = std::string(request->reason) == "operator_reset_b";
       }
       writeAck(
           ack_writer,
           request_id,
-          CommandKind::Teleop,
+          CommandKind::ClearEstop,
           true,
           "accepted",
           endpoint_receive_s);
@@ -2067,11 +2623,11 @@ void testConcurrentClientsKeepClockAcksIsolated() {
     std::rethrow_exception(second_error);
   }
   check(sync_ids.size() == 2, "each concurrent client must use its own clock ACK");
-  check(first_teleop_seen, "first concurrent client teleop was not delivered");
-  check(second_teleop_seen, "second concurrent client teleop was not delivered");
+  check(first_command_seen, "first concurrent clear-estop was not delivered");
+  check(second_command_seen, "second concurrent clear-estop was not delivered");
   check(
       source_ages_valid,
-      "concurrent client teleop timestamps must remain in endpoint time");
+      "concurrent clock-sensitive command timestamps must remain in endpoint time");
   dds_delete(participant);
 }
 
@@ -2138,18 +2694,31 @@ int main() {
         (lingtu_nav_client_capabilities() &
          LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT) != 0U,
         "operator motion receipt client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_NAVIGATION_COMMAND_RECEIPT) != 0U,
+        "navigation command receipt client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_NAVIGATION_TASK_STATUS) != 0U,
+        "navigation task status client capability missing");
+    check(
+        (lingtu_nav_client_capabilities() &
+         LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS) != 0U,
+        "exploration run event client capability missing");
     runTest();
     testNavigationGoalStatusReaderAndRetention();
     testNavigationPathTelemetry();
     testMapSceneTelemetryAndCapacityGate();
     testExplorationCommands();
-    testInspectionCommands();
+    testExplorationRunEventReader();
+    testInspectionTaskCommands();
     testOperatorMotionAckCorrelationUsesFullSourceIdentity();
     testOperatorMotionReceiptApis();
     testEstopBypassesGoalAckWait();
     testSourceStampIsRefreshedAfterDiscovery();
-    testFirstTeleopUsesEndpointClockAnchor();
-    testDelayedClockAckIsResampledBeforeTeleop();
+    testFirstClockSensitiveCommandUsesEndpointClockAnchor();
+    testDelayedClockAckIsResampledBeforeClockSensitiveCommand();
     testConcurrentClientsKeepClockAcksIsolated();
     testClockOffsetTracksRealtimeRollback();
     std::puts("test_nav_client: PASS");

@@ -83,8 +83,7 @@ class JsonlEndpointSource:
         else:
             self._started = False
             raise ValueError(
-                "jsonl endpoint source requires LINGTU_ENDPOINT_JSONL_PATH "
-                "or LINGTU_ENDPOINT_JSONL_COMMAND"
+                "jsonl endpoint source requires LINGTU_ENDPOINT_JSONL_PATH or LINGTU_ENDPOINT_JSONL_COMMAND"
             )
 
     def stop(self) -> None:
@@ -268,12 +267,6 @@ def message_from_record(binding: Any, record: Mapping[str, Any]) -> Any:
     raise ValueError(f"jsonl endpoint record for {binding.topic} missing payload/message")
 
 
-def _message_from_record(binding: Any, record: Mapping[str, Any]) -> Any:
-    """Backward-compatible private wrapper for older imports."""
-
-    return message_from_record(binding, record)
-
-
 def _message_from_plain_payload(schema: str, payload: Any) -> Any:
     """Convert a plain JSON payload into a core endpoint message."""
 
@@ -363,8 +356,7 @@ def _public_command(command: str | Sequence[str] | None) -> str:
     text = command if isinstance(command, str) else " ".join(str(part) for part in command)
     tokens = text.split()
     redacted = [
-        "<redacted>" if any(marker in token.lower() for marker in ("token", "secret", "key="))
-        else token
+        "<redacted>" if any(marker in token.lower() for marker in ("token", "secret", "key=")) else token
         for token in tokens
     ]
     return " ".join(redacted)

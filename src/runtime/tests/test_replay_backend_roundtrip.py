@@ -350,11 +350,11 @@ def test_replay_preset_routes_declared_topics_to_lcm_backend() -> None:
     assert spec.backend_for(TOPICS.global_path) == "local"
 
 
-def test_robot_preset_uses_dds_backend_for_the_same_topics() -> None:
+def test_driver_backend_uses_dds_for_the_same_topics() -> None:
     contract = load_route_contract(robot())
 
     assert validate_route_contract(contract) == []
-    assert contract.route.endpoint_contract == "thunder_field_dds_v1"
+    assert contract.route.endpoint_contract == "thunder_dds_v1"
     # cmd_vel/odometry are DDS on the robot but LCM on replay.
     assert contract.route_for(TOPICS.cmd_vel) == "dds"
     assert contract.route_for(TOPICS.odometry) == "dds"

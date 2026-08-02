@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[3]
 THUNDER_DEPLOY = REPO_ROOT / "scripts" / "deploy" / "thunder"
 
@@ -46,44 +45,56 @@ def _write_shell(path: Path, source: str) -> None:
     path.chmod(0o755)
 
 
-def test_field_runtime_pulls_in_all_local_native_services() -> None:
+PRODUCT_MODE_UNITS = (
+    "lingtu-livox-dds.service",
+    "lingtu-slam-dds.service",
+    "mapd.service",
+    "lingtu-traversability-dds.service",
+    "lingtu-nav-dds.service",
+    "lingtu-explore-dds.service",
+    "lingtu-camera-dds.service",
+    "lingtu.service",
+)
+
+
+def test_host_runtime_no_longer_pulls_in_product_role_units() -> None:
     text = _read("lingtu.service")
     wants = next(line for line in text.splitlines() if line.startswith("Wants="))
 
-    assert "lingtu-slam-dds.service" in wants
-    assert "lingtu-nav-dds.service" in wants
-    assert "lingtu-driver.service" in wants
+    assert wants == "Wants=network-online.target"
+    assert "lingtu-slam-dds.service" not in wants
+    assert "lingtu-nav-dds.service" not in wants
+    assert "lingtu-driver.service" not in wants
     assert "brainstem.service" not in wants
     assert "robot-brainstem.service" not in wants
     assert "slam.service" not in wants
 
 
-def test_gateway_runtime_uses_http_liveness_systemd_watchdog() -> None:
+def test_gateway_runtime_is_direct_product_control_process() -> None:
     text = _read("lingtu.service")
 
-    assert "Type=notify" in text
-    assert "NotifyAccess=all" in text
-    assert "WatchdogSec=15s" in text
-    assert "WatchdogSignal=SIGTERM" in text
-    assert "KillMode=control-group" in text
-    assert "run_http_watchdog.sh" in text
-    assert "--health-url http://127.0.0.1:5050/health" in text
+    assert "Type=simple" in text
+    assert "NotifyAccess=all" not in text
+    assert "WatchdogSec=" not in text
+    assert "WatchdogSignal=" not in text
+    assert "KillMode=control-group" not in text
+    assert "run_http_watchdog.sh" not in text
+    assert "ExecStart=/bin/bash -lc" in text
 
 
-@pytest.mark.parametrize(
-    ("unit_name", "status_variable"),
-    (
-        ("lingtu-slam-dds.service", "LINGTU_SLAM_STATUS_JSON"),
-        ("lingtu-nav-dds.service", "LINGTU_NAV_STATUS_FILE"),
-        ("lingtu-explore-dds.service", "LINGTU_EXPLORE_STATUS_FILE"),
-        ("lingtu-driver.service", "LINGTU_DRIVER_STATUS_FILE"),
-    ),
-)
-def test_native_runtime_units_use_status_heartbeat_systemd_watchdog(
-    unit_name: str,
-    status_variable: str,
-) -> None:
+@pytest.mark.parametrize("unit_name", PRODUCT_MODE_UNITS)
+def test_product_mode_units_do_not_self_manage_lifecycle(unit_name: str) -> None:
     text = _read(unit_name)
+
+    assert "WantedBy=multi-user.target" not in text
+    assert "Restart=on-failure" not in text
+    assert "run_status_file_watchdog.sh" not in text
+    assert "run_http_watchdog.sh" not in text
+    assert "KillMode=control-group" not in text
+
+
+def test_persistent_driver_keeps_motion_output_supervision() -> None:
+    text = _read("lingtu-driver.service")
 
     assert "Type=notify" in text
     assert "NotifyAccess=all" in text
@@ -91,10 +102,11 @@ def test_native_runtime_units_use_status_heartbeat_systemd_watchdog(
     assert "WatchdogSignal=SIGTERM" in text
     assert "KillMode=control-group" in text
     assert "Restart=on-failure" in text
-    assert (
-        "ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/"
-        f"run_status_file_watchdog.sh --status-file ${{{status_variable}}} "
-    ) in text
+    assert "run_status_file_watchdog.sh --status-file ${LINGTU_DRIVER_STATUS_FILE}" in text
+    assert "After=network-online.target" in text
+    assert "Wants=network-online.target" in text
+    assert "lingtu-nav-dds.service" not in text
+    assert "WantedBy=multi-user.target" in text
 
 
 def test_field_driver_requires_an_explicit_remote_brainstem_endpoint() -> None:
@@ -370,7 +382,6 @@ def test_driver_installer_canonicalizes_existing_environment_file(
 def test_status_watchdog_pings_only_when_heartbeat_advances_and_forwards_stop(
     tmp_path: Path,
 ) -> None:
-    status_file = tmp_path / "status.json"
     notify_log = tmp_path / "notify.log"
     stopped_marker = tmp_path / "child.stopped"
     fake_notify = tmp_path / "systemd-notify"
@@ -496,104 +507,4 @@ def test_status_watchdog_fails_startup_and_stops_child_without_heartbeat(
         timeout=10,
     )
 
-    assert stopped_marker.read_text(encoding="utf-8") == "stopped"
-
-
-@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is required")
-def test_http_watchdog_stops_notifying_after_health_stalls_and_forwards_stop(
-    tmp_path: Path,
-) -> None:
-    notify_log = tmp_path / "notify.log"
-    curl_count = tmp_path / "curl.count"
-    stopped_marker = tmp_path / "child.stopped"
-    fake_notify = tmp_path / "systemd-notify"
-    fake_curl = tmp_path / "curl"
-    child = tmp_path / "http-child.sh"
-    harness = tmp_path / "http-watchdog-harness.sh"
-    _write_shell(
-        fake_notify,
-        """
-        #!/usr/bin/env bash
-        set -euo pipefail
-        printf '%s\n' "$*" >> "${NOTIFY_LOG:?}"
-        """,
-    )
-    _write_shell(
-        fake_curl,
-        """
-        #!/usr/bin/env bash
-        set -euo pipefail
-        count=0
-        if [ -f "${CURL_COUNT:?}" ]; then
-            count="$(cat "${CURL_COUNT}")"
-        fi
-        count=$((count + 1))
-        printf '%s' "${count}" > "${CURL_COUNT}"
-        [ "${count}" -le 2 ]
-        """,
-    )
-    _write_shell(
-        child,
-        """
-        #!/usr/bin/env bash
-        set -euo pipefail
-        stopped_marker="$1"
-        trap 'printf stopped > "${stopped_marker}"; exit 0' TERM INT
-        while :; do sleep 1; done
-        """,
-    )
-
-    temp_dir = _bash_path(tmp_path)
-    wrapper_path = _bash_path(THUNDER_DEPLOY / "run_http_watchdog.sh")
-    _write_shell(
-        harness,
-        f"""
-        #!/usr/bin/env bash
-        set -euo pipefail
-        export LINGTU_SYSTEMD_NOTIFY_BIN={shlex.quote(f'{temp_dir}/systemd-notify')}
-        export LINGTU_HTTP_WATCHDOG_CURL_BIN={shlex.quote(f'{temp_dir}/curl')}
-        export NOTIFY_LOG={shlex.quote(f'{temp_dir}/notify.log')}
-        export CURL_COUNT={shlex.quote(f'{temp_dir}/curl.count')}
-        bash {shlex.quote(wrapper_path)} \\
-            --health-url http://127.0.0.1:5050/health \\
-            --startup-timeout-s 3 --poll-interval-s 0.02 -- \\
-            bash {shlex.quote(f'{temp_dir}/http-child.sh')} \\
-            {shlex.quote(f'{temp_dir}/child.stopped')} &
-        wrapper_pid=$!
-        observed_calls=0
-        for _ in $(seq 1 250); do
-            if [ -f {shlex.quote(f'{temp_dir}/curl.count')} ]; then
-                observed_calls=$(cat {shlex.quote(f'{temp_dir}/curl.count')})
-            fi
-            if [ "${{observed_calls}}" -ge 6 ]; then
-                break
-            fi
-            sleep 0.02
-        done
-        if [ "${{observed_calls}}" -lt 6 ]; then
-            kill -TERM "${{wrapper_pid}}" 2>/dev/null || true
-            wait "${{wrapper_pid}}" 2>/dev/null || true
-            exit 1
-        fi
-        watchdog_pings=$(grep -c 'WATCHDOG=1' {shlex.quote(f'{temp_dir}/notify.log')} 2>/dev/null || true)
-        [ "${{watchdog_pings}}" -eq 2 ]
-        kill -TERM "${{wrapper_pid}}"
-        set +e
-        wait "${{wrapper_pid}}"
-        code=$?
-        set -e
-        [ "${{code}}" -eq 143 ]
-        """,
-    )
-    subprocess.run(
-        ["bash", _bash_path(harness)],
-        check=True,
-        cwd=REPO_ROOT,
-        timeout=10,
-    )
-
-    notifications = notify_log.read_text(encoding="utf-8").splitlines()
-    watchdog_pings = [line for line in notifications if "WATCHDOG=1" in line]
-    assert len(watchdog_pings) == 2
-    assert "READY=1" in watchdog_pings[0]
     assert stopped_marker.read_text(encoding="utf-8") == "stopped"

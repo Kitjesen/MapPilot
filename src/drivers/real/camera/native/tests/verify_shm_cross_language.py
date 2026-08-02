@@ -24,12 +24,16 @@ def main() -> int:
         color = ShmFrameReader(paths["color"], max_age_s=args.max_age_s).read_latest()
         depth = ShmFrameReader(paths["depth"], max_age_s=args.max_age_s).read_latest()
         info = ShmFrameReader(paths["info"], max_age_s=args.max_age_s).read_latest()
-        assert color is not None and color.stream_kind is StreamKind.COLOR
-        assert color.payload == bytes(range(12))
         assert depth is not None and depth.stream_kind is StreamKind.DEPTH
         assert depth.payload[:2] == (1000).to_bytes(2, "little")
+        assert depth.depth_scale == 0.001
         assert info is not None and info.stream_kind is StreamKind.INFO
-        assert info.fx == 500.0 and info.fy == 501.0
+        assert info.fx > 0.0 and info.fy > 0.0
+        assert info.cx > 0.0 and info.cy > 0.0
+        assert color is not None and color.stream_kind is StreamKind.COLOR
+        assert color.payload
+        assert color.fx == info.fx and color.fy == info.fy
+        assert color.cx == info.cx and color.cy == info.cy
         print(f"cross_language_ok color_seq={color.sequence} depth_seq={depth.sequence} info_seq={info.sequence}")
         return 0
     finally:

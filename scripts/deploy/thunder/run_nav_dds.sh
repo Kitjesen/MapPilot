@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source /opt/lingtu/config/thunder-runtime-env.sh
+source /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh nav
 
 prepend_cyclonedds_libs() {
     local prefix="${LINGTU_CYCLONEDDS_PREFIX:-}"
@@ -103,13 +104,13 @@ exec "${LINGTU_NAV_DDS_BIN}" \
     --teleop-local-planner "${LINGTU_TELEOP_LOCAL_PLANNER}" \
     --teleop-planner-horizon-m "${LINGTU_TELEOP_PLANNER_HORIZON_M}" \
     --teleop-planner-max-deviation-deg "${LINGTU_TELEOP_PLANNER_MAX_DEVIATION_DEG}" \
-    --allow-legacy-motion-inputs "${LINGTU_NAV_ALLOW_LEGACY_MOTION_INPUTS}" \
     --terrain-map-max-age-s "${LINGTU_NAV_TERRAIN_MAP_MAX_AGE_S}" \
     --odom-max-age-s "${LINGTU_NAV_ODOM_MAX_AGE_S}" \
     --tf-max-age-s "${LINGTU_NAV_TF_MAX_AGE_S}" \
     --cloud-max-age-s "${LINGTU_NAV_CLOUD_MAX_AGE_S}" \
     --cloud-pose-max-gap-s "${LINGTU_NAV_CLOUD_POSE_MAX_GAP_S}" \
     --input-recovery-frames "${LINGTU_NAV_INPUT_RECOVERY_FRAMES}" \
+    --stop-confirmation-timeout-s "${LINGTU_NAV_STOP_CONFIRMATION_TIMEOUT_S}" \
     --local-planner-debug-candidates "${LINGTU_NAV_LOCAL_PLANNER_DEBUG_CANDIDATES}" \
     --local-map-debug-points "${LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS}" \
     --status-file "${LINGTU_NAV_STATUS_FILE}" \

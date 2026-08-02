@@ -4,11 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
-NotifyAccess=all
-WatchdogSec=6s
-WatchdogSignal=SIGTERM
-KillMode=control-group
+Type=simple
 StateDirectory=lingtu
 WorkingDirectory=/opt/lingtu/current
 Environment=LINGTU_REPO=/opt/lingtu/current
@@ -40,7 +36,6 @@ Environment=LINGTU_NAV_CHECK_OBSTACLE=1
 Environment=LINGTU_NAV_USE_TRAVERSABILITY_COST=1
 Environment=LINGTU_NAV_TRAVERSABILITY_MAX_AGE_S=1.5
 Environment=LINGTU_NAV_LOCALIZATION_HEALTH_MAX_AGE_S=0.5
-Environment=LINGTU_NAV_ALLOW_LEGACY_MOTION_INPUTS=0
 Environment=LINGTU_NAV_ALLOW_TELEOP_TAKEOVER=0
 Environment=LINGTU_TELEOP_LOCAL_PLANNER=0
 Environment=LINGTU_TELEOP_PLANNER_HORIZON_M=2.0
@@ -54,11 +49,12 @@ Environment=LINGTU_NAV_TF_MAX_AGE_S=0.25
 Environment=LINGTU_NAV_CLOUD_MAX_AGE_S=0.35
 Environment=LINGTU_NAV_CLOUD_POSE_MAX_GAP_S=0.10
 Environment=LINGTU_NAV_INPUT_RECOVERY_FRAMES=3
+Environment=LINGTU_NAV_STOP_CONFIRMATION_TIMEOUT_S=4.0
 Environment=LINGTU_NAV_VEHICLE_LENGTH_M=1.0
 Environment=LINGTU_NAV_VEHICLE_WIDTH_M=0.6
-Environment=LINGTU_NAV_SENSOR_OFFSET_X_M=-0.011
-Environment=LINGTU_NAV_SENSOR_OFFSET_Y_M=-0.02329
-Environment=LINGTU_NAV_SENSOR_OFFSET_Z_M=0.04412
+Environment=LINGTU_NAV_SENSOR_OFFSET_X_M=0.402876074867229
+Environment=LINGTU_NAV_SENSOR_OFFSET_Y_M=0
+Environment=LINGTU_NAV_SENSOR_OFFSET_Z_M=0.0582019450665819
 Environment=LINGTU_TELEOP_CMD_MAX_AGE_S=0.35
 Environment=LINGTU_TELEOP_MAX_SPEED_MPS=0.4
 Environment=LINGTU_TELEOP_MAX_YAW_RATE=1.0
@@ -79,11 +75,8 @@ Environment=LINGTU_NAV_LOCAL_MAP_DEBUG_POINTS=640
 Environment=LINGTU_CYCLONEDDS_PREFIX=
 EnvironmentFile=-/opt/lingtu/current/config/release-runtime.env
 EnvironmentFile=-/etc/lingtu/nav.env
-ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_status_file_watchdog.sh --status-file ${LINGTU_NAV_STATUS_FILE} --startup-timeout-s 30 --poll-interval-s 0.5 -- /bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_nav_dds.sh
-Restart=on-failure
-RestartSec=3
+EnvironmentFile=/run/lingtu/session.env
+ExecStartPre=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/require_product_session.sh nav
+ExecStart=/bin/bash /opt/lingtu/current/scripts/deploy/thunder/run_nav_dds.sh
 KillSignal=SIGINT
 TimeoutStopSec=20
-
-[Install]
-WantedBy=multi-user.target

@@ -6,13 +6,11 @@ standalone tracking service) without changing any observable runtime behavior.
 """
 
 from .detection_service import DetectionService
-from .encoding_service import EncodingService
 from .scene_graph_service import SceneGraphService
 from .tracking_service import TrackingService
 
 __all__ = [
     "DetectionService",
-    "EncodingService",
     "SceneGraphService",
     "TrackingService",
 ]

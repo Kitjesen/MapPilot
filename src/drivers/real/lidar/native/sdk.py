@@ -7,15 +7,8 @@ from typing import Any, Protocol
 
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import Imu
-from runtime.runtime_interface import TOPICS
 
-
-class LidarHealthLike(Protocol):
-    def to_dict(self) -> dict[str, Any]: ...
-
-
-class LidarStateLike(Protocol):
-    value: str
+from .model import LidarHealth, LidarState
 
 
 class LidarSource(Protocol):
@@ -28,13 +21,13 @@ class LidarSource(Protocol):
     def disconnect(self) -> None: ...
 
     @property
-    def health(self) -> LidarHealthLike: ...
+    def health(self) -> LidarHealth: ...
 
     @property
     def ip(self) -> str | None: ...
 
     @property
-    def state(self) -> LidarStateLike: ...
+    def state(self) -> LidarState: ...
 
 
 LidarSourceFactory = Callable[..., LidarSource]
@@ -43,14 +36,8 @@ LidarSourceFactory = Callable[..., LidarSource]
 def create_lidar_source(
     *,
     ip: str | None = None,
-    scan_topic: str = TOPICS.lidar_scan,
-    imu_topic: str = TOPICS.imu,
-    start_driver: bool = False,
 ) -> LidarSource:
     """Create the default Livox source."""
-    if start_driver:
-        raise ValueError("start_driver was removed; the C++ Livox DDS service owns the device lifecycle")
-
     from ..impl.livox.sdk2_stream_source import Sdk2Source
 
     return Sdk2Source(ip=ip)

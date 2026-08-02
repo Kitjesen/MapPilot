@@ -14,17 +14,13 @@ import type {
   LocationEntry,
   PlanPreviewResponse,
   MapLifecycleResponse,
-  ProductModeProfile,
   NavigationDdsSnapshotResponse,
+  ExplorationStatusResponse,
 } from '../types'
 import * as api from '../services/api'
 import {
   mapIsNavigationReady,
-  navigationRuntimeReady,
-  productProfileSessionReady,
-  productProfileTransitionDetail,
   resolveNavigationTargetMapName,
-  waitForProductProfileReady as waitForRuntimeProductProfileReady,
 } from '../services/mapReadiness'
 import { useCamera } from '../hooks/useCamera'
 import { useBinaryCloud } from '../hooks/useBinaryCloud'
@@ -45,6 +41,8 @@ interface SceneViewProps {
   sseState:  SSEState
   showToast: (msg: string, kind?: ToastKind) => void
   locale: Locale
+  motionStartAllowed: boolean
+  motionStartBlockedReason: string
 }
 
 // ── Layer flags ────────────────────────────────────────────────
@@ -243,37 +241,25 @@ function productSessionLabel(value: string | null | undefined): string {
   return labels[value ?? ''] ?? value ?? '空闲'
 }
 
-function productSessionFromRuntime(profile: string | null | undefined, mode: string | null | undefined): string {
-  const byProfile: Record<string, string> = {
+function productSessionFromProduct(product: string | null | undefined): string {
+  const byProduct: Record<string, string> = {
     teleop: 'teleop',
     teleop_avoid: 'teleop_avoid',
     map: 'mapping',
+    explore: 'exploration',
     tracking: 'tracking',
     nav: 'navigation',
     inspection: 'inspection',
-    tare_explore: 'exploration',
   }
-  if (profile && byProfile[profile]) return byProfile[profile]
-  if (mode === 'mapping') return 'mapping'
-  if (mode === 'navigating') return 'navigation'
-  if (mode === 'exploring') return 'exploration'
-  return 'teleop'
+  if (product && byProduct[product]) return byProduct[product]
+  return 'unknown'
 }
 
 function shouldShowSavedMapForSession(productSession: string | null | undefined): boolean {
-  return productSession === 'navigation' || productSession === 'tracking' || productSession === 'inspection'
-}
-
-function odomSampleKey(odom: SSEState['odometry']): string | null {
-  if (!odom) return null
-  const ts = typeof odom.ts === 'number' && Number.isFinite(odom.ts) ? odom.ts.toFixed(3) : ''
-  return [
-    odom.x.toFixed(4),
-    odom.y.toFixed(4),
-    odom.yaw.toFixed(4),
-    odom.vx.toFixed(4),
-    ts,
-  ].join('|')
+  return productSession === 'navigation'
+    || productSession === 'tracking'
+    || productSession === 'inspection'
+    || productSession === 'exploration'
 }
 
 function formatPlanPreviewFailure(
@@ -315,7 +301,13 @@ function showSceneDebugTools(): boolean {
   }
 }
 
-function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
+function SceneViewComponent({
+  sseState,
+  showToast,
+  locale,
+  motionStartAllowed,
+  motionStartBlockedReason,
+}: SceneViewProps) {
   const scene3DRef = useRef<Scene3DHandle>(null)
   const sceneDebugTools = showSceneDebugTools()
 
@@ -364,6 +356,9 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
   const [relocDirty, setRelocDirty] = useState(false)
   const [pendingGoal, setPendingGoal] = useState<{ x: number; y: number } | null>(null)
   const [pendingGoalPreview, setPendingGoalPreview] = useState<PlanPreviewResponse | null>(null)
+  const [explorationStatus, setExplorationStatus] = useState<ExplorationStatusResponse | null>(null)
+  const [explorationStatusLoading, setExplorationStatusLoading] = useState(false)
+  const [directedExplorationBusy, setDirectedExplorationBusy] = useState(false)
   const [goalMaxSpeed, setGoalMaxSpeed] = useState(0.4)
   const [goalAcceptanceRadius, setGoalAcceptanceRadius] = useState(0.45)
   const [locationName, setLocationName] = useState('')
@@ -380,9 +375,6 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
   const [workbenchZoneRadius, setWorkbenchZoneRadius] = useState('0.5')
   const [workbenchBusy, setWorkbenchBusy] = useState<string | null>(null)
   const [workbenchSummary, setWorkbenchSummary] = useState<string | null>(null)
-  const [poseResetPending, setPoseResetPending] = useState(false)
-  const restartOdomKeyRef = useRef<string | null>(null)
-
   // Map management modals
   const [mapContextMenu, setMapContextMenu] = useState<{ name: string; x: number; y: number } | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -471,18 +463,11 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
   const yaw    = saneYaw(odom?.yaw)
   const vx     = saneVel(odom?.vx)
   const odomValid = odom != null && sanePos(odom.x) === odom.x && sanePos(odom.y) === odom.y
-  const poseAvailable = odomValid && !poseResetPending
+  const poseAvailable = odomValid
   const displayRobotX = poseAvailable ? formatTelemetryValue(robotX, 2) : '--'
   const displayRobotY = poseAvailable ? formatTelemetryValue(robotY, 2) : '--'
   const displayYawDeg = poseAvailable ? `${formatTelemetryValue((yaw * 180) / Math.PI, 0)}°` : '--'
   const displaySpeed = poseAvailable ? `${formatTelemetryValue(vx, 2)} m/s` : '-- m/s'
-
-  useEffect(() => {
-    if (!poseResetPending || !odomValid || !odom) return
-    if (odomSampleKey(odom) === restartOdomKeyRef.current) return
-    setPoseResetPending(false)
-    restartOdomKeyRef.current = null
-  }, [odom, odomValid, poseResetPending])
 
   const missionState = sseState.missionStatus?.state ?? 'IDLE'
   const missionGoal  = sseState.missionStatus?.goal
@@ -512,7 +497,8 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
     false
   const productSession = session?.product_session && session.product_session !== 'idle'
     ? session.product_session
-    : productSessionFromRuntime(session?.product_profile, session?.mode)
+    : productSessionFromProduct(session?.product)
+  const isExplorationSession = productSession === 'exploration'
   const activeMapName = activeMap ?? null
   const navigationTargetMapName = resolveNavigationTargetMapName(activeMapName, relocMap)
   const showSavedMapInScene = Boolean(activeMapName && shouldShowSavedMapForSession(productSession))
@@ -520,14 +506,8 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
     && savedMapCloud?.mapName === activeMapName
     ? savedMapCloud
     : undefined
-  const isMappingSession = productSession === 'mapping' || session?.mode === 'mapping'
-  const isNavigationSession = showSavedMapInScene || session?.mode === 'navigating'
-  const restartProductProfile: ProductModeProfile =
-    productSession === 'mapping'
-      ? 'map'
-      : activeMap
-        ? 'nav'
-        : 'map'
+  const isMappingSession = productSession === 'mapping'
+  const isNavigationSession = showSavedMapInScene && !isExplorationSession
   const goalBlockers = uniqueStrings([
     ...(navigationStatus?.readiness?.blockers ?? []),
     ...(navigationStatus?.feedback?.blockers ?? []),
@@ -544,6 +524,8 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
       ? `产品模式切换失败：${productSwitchFailure}`
       : productSwitchInProgress
         ? '产品模式正在切换，等待定位和规划链路就绪'
+        : !motionStartAllowed
+          ? motionStartBlockedReason
         : canAcceptGoal && !activeCmdBlocksGoal
       ? ''
       : goalBlockerText || '导航暂未就绪'
@@ -768,6 +750,55 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
     }
   }, [canSendGoal, goalAcceptanceRadius, goalDisabledReason, goalMaxSpeed, pendingGoal, showToast])
 
+  const handleDirectedExploration = useCallback(async () => {
+    if (!pendingGoal || !isExplorationSession || directedExplorationBusy) return
+    if (!motionStartAllowed) {
+      showToast(`不能引导探索：${motionStartBlockedReason}`, 'error')
+      return
+    }
+
+    const { x, y } = pendingGoal
+    setDirectedExplorationBusy(true)
+    setExplorationStatusLoading(true)
+    try {
+      const status = await api.fetchExplorationStatus()
+      setExplorationStatus(status)
+      const nativeTareActive = status.tare?.runtime === 'native_dds'
+      if (
+        !status.available
+        || status.backend !== 'tare'
+        || !status.exploring
+        || !nativeTareActive
+      ) {
+        showToast(`不能引导探索: ${status.reason || '活动原生 TARE 探索未就绪'}`, 'error')
+        return
+      }
+
+      await api.setDirectedExplorationTarget(x, y, {
+        ttl_s: api.DIRECTED_EXPLORATION_TTL_S,
+        reason: 'web_scene_selected_point',
+      })
+      setPendingGoal(null)
+      setPendingGoalPreview(null)
+      showToast(
+        `已引导探索至 (${x.toFixed(2)}, ${y.toFixed(2)})，持续 ${api.DIRECTED_EXPLORATION_TTL_S} 秒`,
+        'success',
+      )
+    } catch (e: unknown) {
+      showToast(api.formatCommandError(e, '引导探索失败'), 'error')
+    } finally {
+      setExplorationStatusLoading(false)
+      setDirectedExplorationBusy(false)
+    }
+  }, [
+    directedExplorationBusy,
+    isExplorationSession,
+    motionStartAllowed,
+    motionStartBlockedReason,
+    pendingGoal,
+    showToast,
+  ])
+
   const handleSaveCurrentLocation = useCallback(async () => {
     if (!poseAvailable) {
       showToast('当前没有有效里程计，无法保存位置', 'error')
@@ -909,38 +940,18 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
   const handleRestartLocalization = useCallback(async () => {
     if (restartLocalizationPending) return
     setRestartLocalizationPending(true)
-    restartOdomKeyRef.current = odomSampleKey(odom)
-    setPoseResetPending(true)
-    showToast('正在重启定位...', 'info')
     try {
-      const r = await api.restartSlam({
-        currentProfile: session?.product_profile ?? null,
-        targetProfile: restartProductProfile,
-        mapName: activeMap,
-      })
-      if (!r.ok && !r.success) {
-        const message = typeof r.message === 'string' && r.message.trim()
-          ? r.message.trim()
-          : typeof r.status === 'string' && r.status.trim()
-            ? r.status.trim()
-            : '定位链路尚未就绪'
-        throw new Error(message)
+      if (!session?.env) {
+        throw new Error('Runtime Env is unknown')
       }
-      handleClearTrail()
-      try {
-        await api.resetMapCloud()
-      } catch {
-        // The service restart is the source of truth; clearing the browser cache is best-effort.
-      }
-      setRelocOpen(false)
-      scene3DRef.current?.resetCamera()
-      showToast(`${r.message || '定位链路已重启'}。等待新的定位。`, 'success')
+      const command = await api.copyProductControlRestartCommand(session.env, 'slam')
+      showToast(`已复制 ProductControl 重启命令：${command}`, 'info')
     } catch (e: unknown) {
-      showToast(`重启定位失败：${e instanceof Error ? e.message : String(e)}`, 'error')
+      showToast(`复制重启命令失败：${e instanceof Error ? e.message : String(e)}`, 'error')
     } finally {
       setRestartLocalizationPending(false)
     }
-  }, [activeMap, handleClearTrail, odom, restartLocalizationPending, restartProductProfile, session?.product_profile, showToast])
+  }, [restartLocalizationPending, session?.env, showToast])
 
   const handleSaveMap = () => setSaveModalOpen(true)
 
@@ -1122,57 +1133,23 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
     setLoadTarget(name)
   }
 
-  const waitForProductProfileReady = async (
-    targetProfile: ProductModeProfile,
-    mapName?: string | null,
-  ) => waitForRuntimeProductProfileReady(targetProfile, mapName, {
-    fetchSession: api.fetchSession,
-  })
-
-  const waitForMapNavigationReady = async (mapName: string) => {
-    const deadline = Date.now() + 60_000
-    let lastState = ''
-    while (Date.now() < deadline) {
-      try {
-        const [session, navigation] = await Promise.all([
-          api.fetchSession(),
-          api.fetchNavigationStatus(),
-        ])
-        if (
-          productProfileSessionReady(session, 'nav', mapName)
-          && navigationRuntimeReady(session, navigation, mapName)
-        ) return
-        lastState = navigation.readiness?.blockers?.join(', ')
-          || productProfileTransitionDetail(session, 'nav', mapName)
-      } catch (error) {
-        lastState = error instanceof Error ? error.message : String(error)
-      }
-      await new Promise(resolve => window.setTimeout(resolve, 1_000))
-    }
-    throw new Error(lastState || '导航切换和重定位在 60 秒内未就绪')
-  }
-
   const confirmLoadMap = async () => {
     if (!loadTarget || mapSwitchBusy) return
     const name = loadTarget
     setMapSwitchBusy(name)
-    // Clear old saved map first — don't show stale data
-    setSavedMapCloud(undefined)
     try {
       const map = maps.find(item => item.name === name)
       if (map && mapIsNavigationReady(map)) {
         const currentSession = await api.fetchSession()
-        const result = await api.switchProductSession('navigating', {
-          currentProfile: currentSession.product_profile,
+        const handoff = await api.copyProductSwitchCommand('nav', {
+          currentProduct: currentSession.product,
           mapName: name,
         })
         showToast(
-          `导航切换已受理，等待地图加载和重定位完成：${result.status}`,
+          `ProductControl 命令已复制：${handoff.command}`,
           'info',
         )
-        await waitForMapNavigationReady(name)
-        setRelocMap(name)
-        showToast(`导航已就绪：${name}`, 'success')
+        return
       } else {
         const savedMap = await api.fetchSavedMapPointCloud(name)
         setSavedMapCloud(savedMap)
@@ -1229,34 +1206,28 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
     try {
       const currentSession = await api.fetchSession()
       if (profile === 'fastlio2') {
-        const result = await api.switchProductSession('mapping', {
-          currentProfile: currentSession.product_profile,
+        const handoff = await api.copyProductSwitchCommand('map', {
+          currentProduct: currentSession.product,
         })
         showToast(
-          `建图切换已受理，等待服务重启：${result.status}`,
+          `ProductControl 命令已复制：${handoff.command}`,
           'info',
         )
-        await waitForProductProfileReady('map')
-        showToast('建图模式已就绪', 'success')
       } else {
         if (!navigationTargetMapName) throw new Error('进入巡航需要先选择一张可导航地图')
         const navigationTargetMap = maps.find(map => map.name === navigationTargetMapName)
         if (!navigationTargetMap || !mapIsNavigationReady(navigationTargetMap)) {
           throw new Error(`地图 ${navigationTargetMapName} 尚未通过 OctoPlanner3D 制品门禁`)
         }
-        const result = await api.switchProductSession('navigating', {
-          currentProfile: currentSession.product_profile,
+        const handoff = await api.copyProductSwitchCommand('nav', {
+          currentProduct: currentSession.product,
           mapName: navigationTargetMapName,
         })
         showToast(
-          `导航切换已受理，等待定位服务重启：${result.status}`,
+          `ProductControl 命令已复制：${handoff.command}`,
           'info',
         )
-        await waitForMapNavigationReady(navigationTargetMapName)
-        showToast(`导航已就绪：${navigationTargetMapName}`, 'success')
       }
-      setSavedMapCloud(undefined)
-      loadMaps()
     } catch (e: unknown) {
       const detail = e instanceof Error ? e.message : String(e)
       showToast(`产品模式切换失败：${detail}`, 'error')
@@ -1400,9 +1371,9 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
           className={styles.toolbarBtnPrimary}
           onClick={handleRestartLocalization}
           disabled={restartLocalizationPending}
-          title="重启定位链路，并清理本地可视化残留"
+          title="复制由 ProductControl 执行的定位进程重启命令"
         >
-          <RefreshCw size={12} /> {restartLocalizationPending ? '重启中...' : '重启定位'}
+          <RefreshCw size={12} /> {restartLocalizationPending ? '复制中...' : '复制重启命令'}
         </button>
         <button
           className={styles.toolbarBtn}
@@ -1742,6 +1713,21 @@ function SceneViewComponent({ sseState, showToast, locale }: SceneViewProps) {
                 >
                   <Navigation size={12} /> 发送
                 </button>
+                {isExplorationSession && (
+                  <button
+                    className={styles.goalConfirmBtn}
+                    onClick={handleDirectedExploration}
+                    disabled={directedExplorationBusy || explorationStatusLoading || !motionStartAllowed}
+                    title={!motionStartAllowed
+                      ? motionStartBlockedReason
+                      : explorationStatus?.exploring
+                      ? '当前 TARE 探索运行中；将此点作为探索偏好，持续 30 秒'
+                      : '将此点作为 TARE 探索偏好，持续 30 秒'}
+                  >
+                    <Route size={12} /> {directedExplorationBusy ? '引导中…' : '引导探索至此 (30 秒)'}
+                  </button>
+                )}
+
                 <button
                   className={styles.goalCancelBtn}
                   onClick={() => {

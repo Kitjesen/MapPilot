@@ -1,48 +1,74 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: explore
+parameter_profile: rolling_explore
 summary: Grow a map and navigate to exploration goals through the native runtime contract.
-operator_switchable: false
+operator_switchable: true
 product_mode: exploration
 product_session: exploration
 session_mode: exploring
+default_for_session_mode: true
 native_control_mode: autonomy
-slam_mode: mapping
-requires_map: false
-switch_policy: cold_restart
-online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: autonomy
-autonomy_owner: exploration_policy
+default_variant: live
+variants:
+  live:
+    contracts:
+      - lingtu.product.explore.v1
+    slam_mode: mapping
+    requires_map: false
+    switch_policy: cold_restart
+    online_hot_switch_supported: false
+    autonomy_owner: explore_endpoint
+    native_nav:
+      control_mode: autonomy
+      publish_cmd_vel: true
+      check_obstacle: true
+      use_traversability_cost: true
+      allow_teleop_takeover: false
+      teleop_local_planner: false
+  map:
+    contracts:
+      - lingtu.product.explore.map.v1
+    slam_mode: localization
+    requires_map: true
+    switch_policy: cold_restart
+    online_hot_switch_supported: false
+    autonomy_owner: explore_endpoint
+    native_nav:
+      control_mode: autonomy
+      publish_cmd_vel: true
+      check_obstacle: true
+      use_traversability_cost: true
+      allow_teleop_takeover: true
+      teleop_local_planner: true
 processes:
   - lidar
   - slam
+  - maps
   - traversability
   - nav
   - driver
-  - runtime
-required_topics:
-  - /lidar/raw_frame
-  - /imu/raw
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_cloud
-  - /slam/localization_health
-  - /nav/command/request
-  - /nav/command/ack
-  - /nav/traversability
-  - /nav/global_path
-  - /nav/local_path
-  - /nav/cmd_vel
-required_capabilities:
-  - native_slam_mapping
-  - frontier_or_tare_goal_source
-  - octoplanner3d_global_planning
-  - local_planner_collision_and_traversability_scoring
-  - final_cmd_vel_single_writer
+  - explore
+  - host
+critical_modules:
+  - host.bus
+  - nav.commands
+  - GatewayModule
 forbidden_modules:
+  - TeleopModule
+  - nav.mission
+  - nav.velocity_mux
   - SimEndpointDriverModule
+  - WavefrontFrontierExplorer
   - nav.local_planner
   - nav.path_follower
+  - OccupancyGridModule
+  - VoxelGridModule
+  - ElevationMapModule
+  - ESDFModule
+  - TraversabilityCostModule
+  - SemanticMapModule
 forbidden_claims:
   - module_sim_real_equivalence
   - ros2_bridge_required
@@ -50,3 +76,7 @@ transport_rules:
   product_bus: typed_dds
   same_process_algorithms: direct_function_calls
   lcm_allowed: false
+exploration_run_event_stream:
+  topic: /nav/exploration/run/event
+  ordering_cursor: [boot_id, event_sequence]
+  terminal_truth: native_motion_stop_confirmation_before_terminal

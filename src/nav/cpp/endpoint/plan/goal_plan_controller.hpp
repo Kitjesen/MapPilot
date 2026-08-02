@@ -8,6 +8,7 @@
 
 #include "message/cpp/navigation_command.hpp"
 #include "plan/global_plan_task.hpp"
+#include "plan/map_identity_result.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -22,6 +23,7 @@ struct GoalPlanTarget {
 };
 
 struct GoalPlanRequest {
+  std::string task_id;
   std::string request_id;
   GoalPlanOrigin origin{GoalPlanOrigin::kExternal};
   double source_stamp_s{0.0};
@@ -38,11 +40,16 @@ struct GoalPlanAdmissionContext {
   double autonomy_request_not_before_s{0.0};
   std::optional<nav_kernel::Vec3> map_position;
   bool odometry_ready{false};
+  bool input_ready{true};
+  std::string input_gate_reason;
+  bool retained_path_ready{true};
+  std::string retained_path_reason{"retained_global_path_missing"};
   bool planner_map_configured{false};
   std::string planner_map_missing_reason{"active_octomap_not_configured"};
   std::uint64_t frame_epoch{0U};
   bool rolling_segment_active{false};
   lingtu::nav::plan::GlobalPlannerOptions planner_options{};
+  lingtu::nav::plan::GlobalPlanTemporaryOverlay temporary_overlay{};
 };
 
 struct GoalPlanAdvanceContext {
@@ -52,15 +59,16 @@ struct GoalPlanAdvanceContext {
 };
 
 struct GoalPlanStatus {
+  std::string task_id;
   std::string request_id;
   std::uint64_t goal_epoch{0U};
   lingtu::message::NavigationGoalState state{lingtu::message::NavigationGoalState::Failed};
   std::string reason;
+  bool project_to_navigation_state{true};
 };
 
-struct GoalPlanMapIdentityResult {
-  std::optional<lingtu::nav::plan::MapIdentity> identity;
-  std::string reason;
+struct GoalPlanTerminalDeliveryTicket {
+  std::vector<GoalPlanStatus> statuses;
 };
 
 struct GoalPlanPathTolerance {
@@ -78,6 +86,7 @@ struct GoalPlanPathActivation {
   std::vector<nav_kernel::Vec3> path;
   std::optional<double> goal_yaw;
   std::optional<GoalPlanPathTolerance> tolerance;
+  std::optional<lingtu::nav::plan::MapIdentity> map_identity;
   double stamp_s{0.0};
 };
 
@@ -107,9 +116,26 @@ struct GoalPlanActions {
 
 using GoalPlanTerminalCommit = std::function<void()>;
 
-struct GoalPlanTerminalAfterStop {
+struct GoalPlanTerminalCommitWithTicket {
+  GoalPlanTerminalDeliveryTicket ticket;
+  GoalPlanTerminalCommit commit;
+};
+
+struct GoalPlanTaskTransition {
+  bool accepted{false};
   std::string reason;
   GoalPlanTerminalCommit commit;
+};
+
+struct GoalPlanTerminalAfterStop {
+  std::string reason;
+  GoalPlanTerminalDeliveryTicket delivery_ticket;
+  GoalPlanTerminalCommit commit;
+};
+
+struct GoalPlanActiveTerminalRequest {
+  lingtu::message::NavigationGoalState state{lingtu::message::NavigationGoalState::Cancelled};
+  std::string reason;
 };
 
 struct GoalPlanSubmitResult {
@@ -118,6 +144,7 @@ struct GoalPlanSubmitResult {
   bool counted_failure{false};
   bool count_frame_rejection{false};
   bool record_frame_error{false};
+  std::optional<GoalPlanActiveTerminalRequest> active_terminal_after_stop;
 };
 
 struct GoalPlanAdvanceResult {
@@ -133,10 +160,25 @@ struct GoalPlanAdvanceResult {
 
 struct GoalPlanSnapshot {
   std::uint64_t goal_epoch{0U};
+  std::string planning_task_id;
   std::string planning_request_id;
   std::uint64_t planning_goal_epoch{0U};
+  bool replan_in_progress{false};
+  bool replacement_plan_in_progress{false};
+  std::uint64_t replan_attempt{0U};
+  bool pending_plan_queued{false};
+  std::string pending_task_id;
+  std::string pending_request_id;
+  std::uint64_t pending_goal_epoch{0U};
+  std::string deferred_replacement_task_id;
+  std::string deferred_replacement_request_id;
+  std::uint64_t deferred_replacement_goal_epoch{0U};
+  std::string active_task_id;
   std::string active_request_id;
   std::uint64_t active_goal_epoch{0U};
+  std::optional<GoalPlanOrigin> active_origin;
+  bool active_paused{false};
+  std::optional<lingtu::nav::plan::MapIdentity> active_map_identity;
   bool busy{false};
   GoalPlanDiagnostics diagnostics;
 };
@@ -147,32 +189,102 @@ class GoalPlanController {
 
   [[nodiscard]] GoalPlanSubmitResult submit(const GoalPlanRequest &request,
                                             const GoalPlanAdmissionContext &context);
+  [[nodiscard]] GoalPlanSubmitResult replanActive(const GoalPlanAdmissionContext &context);
+  [[nodiscard]] GoalPlanSubmitResult resumePending(const GoalPlanAdmissionContext &fresh_context);
   [[nodiscard]] GoalPlanAdvanceResult advance(const GoalPlanAdvanceContext &context);
-  [[nodiscard]] GoalPlanTerminalCommit deferAbort(const std::string &reason);
+  [[nodiscard]] GoalPlanAdvanceResult
+  activateDeferredReplacement(double now_s, const GoalPlanAdmissionContext &fresh_context);
+  [[nodiscard]] GoalPlanAdvanceResult
+  failDeferredReplacement(lingtu::message::NavigationGoalState state, const std::string &reason);
+  [[nodiscard]] GoalPlanTaskTransition
+  deferPause(const std::string &task_id, const std::string &request_id, const std::string &reason);
+  [[nodiscard]] GoalPlanTaskTransition deferResume(const std::string &task_id,
+                                                   const std::string &request_id,
+                                                   const GoalPlanAdmissionContext &context);
+  [[nodiscard]] GoalPlanTaskTransition deferCancelPending(const std::string &task_id,
+                                                          const std::string &request_id,
+                                                          const std::string &reason);
+  [[nodiscard]] GoalPlanTaskTransition deferCancelReplacementPlanning(const std::string &task_id,
+                                                                      const std::string &request_id,
+                                                                      const std::string &reason);
+  [[nodiscard]] GoalPlanTerminalCommit deferAbort(const std::string &reason,
+                                                  bool project_planning_to_navigation_state = true);
   [[nodiscard]] GoalPlanTerminalCommit deferFailure(const std::string &reason);
   [[nodiscard]] GoalPlanTerminalCommit
   deferActiveTerminal(lingtu::message::NavigationGoalState state, const std::string &reason);
+  [[nodiscard]] GoalPlanTerminalCommitWithTicket
+  deferAbortWithTicket(const std::string &reason, bool project_planning_to_navigation_state = true);
+  [[nodiscard]] GoalPlanTerminalCommitWithTicket deferFailureWithTicket(const std::string &reason);
+  [[nodiscard]] GoalPlanTerminalCommitWithTicket
+  deferActiveTerminalWithTicket(lingtu::message::NavigationGoalState state,
+                                const std::string &reason);
   void invalidateForHold(const std::string &reason);
   [[nodiscard]] GoalPlanSnapshot snapshot() const;
 
  private:
+  [[nodiscard]] static GoalPlanTerminalAfterStop
+  terminalAfterStop(std::string reason, GoalPlanTerminalCommitWithTicket terminal);
   [[nodiscard]] GoalPlanSubmitResult reject(std::string reason, bool count_frame_rejection = false,
                                             bool record_frame_error = false);
-  void publishStatus(const std::string &request_id, std::uint64_t goal_epoch,
-                     lingtu::message::NavigationGoalState state, const std::string &reason);
+  void publishStatus(const std::string &task_id, const std::string &request_id,
+                     std::uint64_t goal_epoch, lingtu::message::NavigationGoalState state,
+                     const std::string &reason, bool project_to_navigation_state = true);
   [[nodiscard]] GoalPlanTerminalCommit
   terminalCommit(std::vector<GoalPlanStatus> pending_statuses) const;
-  [[nodiscard]] GoalPlanTerminalCommit deferPlanningAbort(const std::string &reason);
+  [[nodiscard]] GoalPlanTerminalCommitWithTicket
+  deferPlanningAbortWithTicket(const std::string &reason,
+                               bool project_planning_to_navigation_state = true);
+  [[nodiscard]] GoalPlanSubmitResult
+  startPlanning(const std::string &task_id, const std::string &request_id,
+                const GoalPlanTarget &target, GoalPlanOrigin origin,
+                const GoalPlanAdmissionContext &context, const std::string &planning_reason,
+                bool is_replan, std::optional<std::uint64_t> reserved_goal_epoch = std::nullopt,
+                bool project_planning_to_navigation_state = true);
+  void invalidateForHold(const std::string &reason, bool close_pending_now);
   void finishPlanning(lingtu::message::NavigationGoalState state, const std::string &reason);
   void finishActive(lingtu::message::NavigationGoalState state, const std::string &reason);
+  void publishPendingTerminal(lingtu::message::NavigationGoalState state,
+                              const std::string &reason);
+  [[nodiscard]] GoalPlanAdvanceResult
+  failDeferredReplacementLocked(lingtu::message::NavigationGoalState state,
+                                const std::string &reason);
+
+  struct DeferredPlanStart {
+    GoalPlanRequest request;
+    std::uint64_t goal_epoch{0U};
+  };
+  struct DeferredReplacementActivation {
+    std::string task_id;
+    std::string request_id;
+    std::uint64_t goal_epoch{0U};
+    GoalPlanPathActivation activation;
+    GoalPlanTarget target;
+    GoalPlanOrigin origin{GoalPlanOrigin::kExternal};
+    lingtu::nav::plan::GlobalPlannerOptions planner_options{};
+  };
+  void clearPlanningIdentity();
 
   GlobalPlanTask task_;
   GoalPlanActions actions_;
   std::uint64_t goal_epoch_{0U};
+  std::string planning_task_id_;
   std::string planning_request_id_;
   std::uint64_t planning_goal_epoch_{0U};
+  bool planning_is_replan_{false};
+  std::uint64_t planning_replan_attempt_{0U};
+  bool planning_projects_to_navigation_state_{true};
+  GoalPlanOrigin planning_origin_{GoalPlanOrigin::kExternal};
+  std::string active_task_id_;
   std::string active_request_id_;
   std::uint64_t active_goal_epoch_{0U};
+  bool active_paused_{false};
+  std::optional<lingtu::nav::plan::MapIdentity> active_map_identity_;
+  std::optional<GoalPlanTarget> active_target_;
+  GoalPlanOrigin active_origin_{GoalPlanOrigin::kExternal};
+  lingtu::nav::plan::GlobalPlannerOptions active_planner_options_{};
+  std::uint64_t replan_attempt_{0U};
+  std::optional<DeferredPlanStart> pending_plan_start_;
+  std::optional<DeferredReplacementActivation> deferred_replacement_activation_;
   GoalPlanDiagnostics diagnostics_;
 };
 

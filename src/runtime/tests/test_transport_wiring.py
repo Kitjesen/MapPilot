@@ -1,6 +1,6 @@
-"""Tests for Blueprint transport-mediated wiring — runtime decoupling.
+"""Tests for Blueprint delivery-mediated wiring — runtime decoupling.
 
-Verifies that wire(transport="dds"/"shm"/instance) routes data through
+Verifies that wire(delivery="dds"/"shm"/instance) routes data through
 a transport backend instead of direct callbacks.
 """
 
@@ -40,7 +40,7 @@ class TestDirectCallbackDefault(unittest.TestCase):
         bp = Blueprint()
         bp.add(Producer)
         bp.add(Consumer)
-        bp.wire("Producer", "data", "Consumer", "data")  # no transport
+        bp.wire("Producer", "data", "Consumer", "data")
         handle = bp.build()
         handle.start()
 
@@ -76,13 +76,13 @@ class TestDirectCallbackDefault(unittest.TestCase):
 
 
 class TestLocalTransportWiring(unittest.TestCase):
-    """wire(transport="local") routes through LocalTransport."""
+    """wire(delivery="local") routes through LocalTransport."""
 
     def test_local_transport_delivers(self):
         bp = Blueprint()
         bp.add(Producer)
         bp.add(Consumer)
-        bp.wire("Producer", "data", "Consumer", "data", transport="local")
+        bp.wire("Producer", "data", "Consumer", "data", delivery="local")
         handle = bp.build()
         handle.start()
 
@@ -110,7 +110,7 @@ class TestLocalTransportWiring(unittest.TestCase):
             "data",
             "Consumer",
             "data",
-            transport="local",
+            delivery="local",
             topic="/planner/data",
         )
         handle = bp.build()
@@ -134,7 +134,7 @@ class TestLocalTransportWiring(unittest.TestCase):
         bp = Blueprint()
         bp.add(Producer)
         bp.add(Consumer)
-        bp.wire("Producer", "data", "Consumer", "data", transport=transport)
+        bp.wire("Producer", "data", "Consumer", "data", delivery=transport)
         handle = bp.build()
         handle.start()
 
@@ -151,8 +151,8 @@ class TestLocalTransportWiring(unittest.TestCase):
         bp.add(Producer)
         bp.add(Consumer)
         bp.add(OtherConsumer)
-        bp.wire("Producer", "data", "Consumer", "data", transport="local")
-        bp.wire("Producer", "data", "OtherConsumer", "data", transport="local")
+        bp.wire("Producer", "data", "Consumer", "data", delivery="local")
+        bp.wire("Producer", "data", "OtherConsumer", "data", delivery="local")
         handle = bp.build()
         handle.start()
 
@@ -170,14 +170,14 @@ class TestLocalTransportWiring(unittest.TestCase):
 
 
 class TestSHMTransportWiring(unittest.TestCase):
-    """wire(transport="shm") routes through shared memory."""
+    """wire(delivery="shm") routes through shared memory."""
 
     def test_shm_transport_delivers(self):
         """SHM subscriber retries until publisher creates the region."""
         bp = Blueprint()
         bp.add(Producer)
         bp.add(Consumer)
-        bp.wire("Producer", "data", "Consumer", "data", transport="shm")
+        bp.wire("Producer", "data", "Consumer", "data", delivery="shm")
         handle = bp.build()
         handle.start()
 
@@ -215,7 +215,7 @@ class TestDDSTransportWiring(unittest.TestCase):
             "cmd_vel",
             "CmdConsumer",
             "cmd_vel",
-            transport="dds",
+            delivery="dds",
             topic=TOPICS.cmd_vel,
         )
 
@@ -247,7 +247,7 @@ class TestMixedTransportWiring(unittest.TestCase):
         # Safety → Driver: direct callback (fast, safety-critical)
         bp.wire("Safety", "alert", "Driver", "alert")
         # Driver → Planner: via local transport (decoupled)
-        bp.wire("Driver", "odom", "Planner", "odom", transport="local")
+        bp.wire("Driver", "odom", "Planner", "odom", delivery="local")
 
         handle = bp.build()
         handle.start()
@@ -278,7 +278,7 @@ class TestNavigationPlanTransportContract(unittest.TestCase):
         specs = navigation_execution_specs()
 
         self.assertTrue(specs)
-        self.assertTrue(all(spec.transport is None for spec in specs))
+        self.assertTrue(all(spec.delivery is None for spec in specs))
         self.assertTrue(all(spec.topic is None for spec in specs))
 
     def test_navigation_plan_wires_do_not_use_transport_delivery(self):
@@ -305,7 +305,7 @@ class TestInvalidTransport(unittest.TestCase):
         bp = Blueprint()
         bp.add(Producer)
         bp.add(Consumer)
-        bp.wire("Producer", "data", "Consumer", "data", transport="mqtt")
+        bp.wire("Producer", "data", "Consumer", "data", delivery="mqtt")
         with self.assertRaises(ValueError):
             bp.build()
 

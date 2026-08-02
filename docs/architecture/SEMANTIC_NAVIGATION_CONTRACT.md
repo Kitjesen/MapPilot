@@ -1,5 +1,7 @@
 # Semantic Navigation Contract
 
+Status: current semantic-navigation contract
+
 This document defines how natural-language destinations become executable
 navigation goals without allowing a language model to invent coordinates.
 
@@ -180,9 +182,9 @@ the real connector identity.
 The Python service is opt-in with `enable_building=True` and the short runtime
 alias `nav.building`. Its `building_mission_module` must name the deployed,
 site-verified mission owner. This does not add a native process, so
-`config/runtime_graph/products/nav.yaml` stays unchanged; add a RuntimePlan
-entry only if a real lift controller is later deployed as an independent
-process.
+`config/runtime_graph/products/nav.yaml` stays unchanged; add a Product process
+role and Endpoint mapping only if a real lift controller is later deployed as
+an independent process.
 
 ## Upstream patterns considered
 

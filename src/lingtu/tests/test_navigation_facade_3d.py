@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from lingtu import Robot
 
 
@@ -35,6 +37,15 @@ class _FakeNav:
 class _FailingMapManager:
     def save_map(self, name: str) -> str:
         return json.dumps({"success": False, "message": f"failed: {name}"})
+
+
+class _MapAckManager:
+    def __init__(self, result) -> None:
+        self.result = result
+
+    def save_map(self, name: str):
+        del name
+        return self.result
 
 
 class _FakeSemanticPlanner:
@@ -160,3 +171,39 @@ def test_robot_map_skill_honors_success_false() -> None:
     robot._system = system
 
     assert robot.save_map("bad") is False
+
+
+@pytest.mark.parametrize(
+    "result",
+    [None, 1, "queued", "{}", '{"success": "true"}', '{"ok": 1}', '{"message": "done"}'],
+)
+def test_robot_map_skill_rejects_malformed_ack(result) -> None:
+    nav = _FakeNav()
+    robot = Robot("nav")
+    system = _FakeSystem(nav)
+    system.modules["maps.service"] = _MapAckManager(result)
+    robot._system = system
+
+    assert robot.save_map("map") is False
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (True, True),
+        (False, False),
+        ({"success": True}, True),
+        ({"success": False}, False),
+        ('{"ok": true}', True),
+        ('{"ok": false}', False),
+        ('{"ok": true, "success": false}', False),
+    ],
+)
+def test_robot_map_skill_requires_explicit_consistent_boolean_ack(result, expected: bool) -> None:
+    nav = _FakeNav()
+    robot = Robot("nav")
+    system = _FakeSystem(nav)
+    system.modules["maps.service"] = _MapAckManager(result)
+    robot._system = system
+
+    assert robot.save_map("map") is expected

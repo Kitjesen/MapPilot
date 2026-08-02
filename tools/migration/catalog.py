@@ -230,7 +230,7 @@ PACKAGE_MIGRATION_TARGETS: tuple[PackageMigrationTarget, ...] = (
         phase=5,
         risk="high",
         migration_action="Port wavefront/frontier scoring after nav kernels; keep TARE as native process.",
-        keep_running_strategy="Existing explore/tare_explore profiles remain unchanged until parity.",
+        keep_running_strategy="Keep both internal explore routes operational until native parity.",
     ),
     PackageMigrationTarget(
         package="src/gateway/media",

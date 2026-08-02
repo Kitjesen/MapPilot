@@ -277,7 +277,8 @@ class TestMCPToolExecution(unittest.TestCase):
         sent = []
         self.mod.instruction._add_callback(sent.append)
         result = self._call("navigate_to_object", instruction="the red chair")
-        self.assertEqual(result["status"], "processing")
+        self.assertEqual(result["status"], "submitted")
+        self.assertFalse(result["execution_confirmed"])
         self.assertIn("the red chair", sent)
 
     # -- send_instruction --
@@ -285,7 +286,8 @@ class TestMCPToolExecution(unittest.TestCase):
         sent = []
         self.mod.instruction._add_callback(sent.append)
         result = self._call("send_instruction", text="go to the lab")
-        self.assertEqual(result["status"], "sent")
+        self.assertEqual(result["status"], "submitted")
+        self.assertFalse(result["execution_confirmed"])
         self.assertEqual(sent, ["go to the lab"])
 
     # -- get_robot_position --
@@ -346,6 +348,48 @@ class TestMCPToolExecution(unittest.TestCase):
         self.mod._system_handle = handle
         result = self._call("get_health")
         self.assertTrue(result.get("ok") or "modules" in result)
+
+    def test_get_health_prefers_runtime_status_provider(self):
+        import types
+
+        provider = types.SimpleNamespace(
+            health=lambda: {"ok": True, "phase": "ready", "source": "provider"},
+            modules={"provider.module": types.SimpleNamespace(running=True)},
+        )
+        handle = types.SimpleNamespace(
+            health=lambda: {"ok": False, "source": "legacy"},
+            modules={},
+        )
+        self.mod.set_system_handle(handle)
+        self.mod.set_runtime_status_provider(provider)
+
+        result = self._call("get_health")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["source"], "provider")
+
+    def test_list_modules_uses_runtime_status_provider_without_system_handle(self):
+        import types
+
+        module = types.SimpleNamespace(
+            layer=6,
+            running=True,
+            ports_in={"odometry": object()},
+            ports_out={"goal_pose": object()},
+        )
+        provider = types.SimpleNamespace(
+            health=lambda: {"ok": True},
+            modules={"provider.module": module},
+        )
+        self.mod.set_runtime_status_provider(provider)
+
+        result = self._call("list_modules")
+
+        self.assertIn("provider.module", result["modules"])
+        self.assertEqual(result["modules"]["provider.module"]["layer"], 6)
+        self.assertTrue(result["modules"]["provider.module"]["running"])
+        self.assertEqual(result["modules"]["provider.module"]["ports_in"], ["odometry"])
+        self.assertEqual(result["modules"]["provider.module"]["ports_out"], ["goal_pose"])
 
     # -- get_navigation_status (from Navigation) --
     def test_get_navigation_status_from_nav(self):

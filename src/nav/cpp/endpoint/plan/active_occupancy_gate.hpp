@@ -21,12 +21,15 @@ class ValidatedFarMap {
   const plan::far::FarGridMap &map() const { return map_; }
   const plan::MapIdentity &identity() const { return map_.identity; }
   std::uint64_t generation() const { return map_.generation; }
+  const std::string &sourceMapSha256() const { return source_map_sha256_; }
 
  private:
   friend class ActiveOccupancyGate;
-  explicit ValidatedFarMap(plan::far::FarGridMap map) : map_(std::move(map)) {}
+  ValidatedFarMap(plan::far::FarGridMap map, std::string source_map_sha256)
+      : map_(std::move(map)), source_map_sha256_(std::move(source_map_sha256)) {}
 
   plan::far::FarGridMap map_;
+  std::string source_map_sha256_;
 };
 
 struct ActiveOccupancyGateResult {
@@ -53,10 +56,17 @@ class ActiveOccupancyGate {
   ActiveOccupancyGate &operator=(const ActiveOccupancyGate &) = delete;
 
   ActiveOccupancyGateResult prepare(const std::filesystem::path &configured_occupancy_path) const;
+  // Resolve the active occupancy directly from MapStore. This is intended for
+  // consumers that also bind the result to an independent Product map identity.
+  ActiveOccupancyGateResult prepareActive() const;
   ActiveOccupancyIdentityResult
   currentIdentity(const std::filesystem::path &configured_occupancy_path) const;
+  ActiveOccupancyIdentityResult
+  currentDeclaredIdentity(const std::filesystem::path &configured_occupancy_path) const;
 
  private:
+  ActiveOccupancyGateResult prepareImpl(const std::filesystem::path &configured_occupancy_path,
+                                        bool require_configured_path) const;
   lingtu::maps::MapStore *resolveStore(const std::filesystem::path &configured_occupancy_path,
                                        std::string *error) const;
 

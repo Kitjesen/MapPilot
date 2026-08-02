@@ -7,6 +7,7 @@
 #include "nav/cpp/planning/global/global_planner_contract.hpp"
 #include "motion/teleop_safety.hpp"
 #include "plan/input_gate.hpp"
+#include "plan/segment_executor.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -32,6 +33,12 @@ struct CliConfig {
   double nav_max_speed_mps{0.4};
   double nav_max_accel_mps2{1.0};
   double corridor_lookahead_m{3.0};
+  double segment_max_distance_m{5.0};
+  std::size_t segment_max_waypoints{32U};
+  std::size_t segment_max_grid_cells{262'144U};
+  double segment_risk_stop{50.0};
+  double segment_risk_resume{40.0};
+  double segment_map_max_age_s{0.35};
   double waypoint_reached_m{0.6};
   double goal_reached_m{0.35};
   double path_follower_goal_tolerance_m{0.2};
@@ -39,7 +46,7 @@ struct CliConfig {
   double path_follower_max_speed_mps{0.4};
   double path_follower_min_speed_mps{0.0};
   double path_follower_max_accel_mps2{1.0};
-  std::string profile;
+  std::string product;
   std::string config_fingerprint;
   double status_s{5.0};
   double stop_confirmation_timeout_s{4.0};
@@ -91,7 +98,6 @@ struct CliConfig {
   bool use_traversability_cost{false};
   bool allow_teleop_takeover{false};
   bool teleop_local_planner{false};
-  bool allow_legacy_motion_inputs{false};
   double vehicle_length_m{1.0};
   double vehicle_width_m{0.6};
   double sensor_offset_x_m{0.0};
@@ -111,5 +117,6 @@ CliConfig parseArgs(int argc, char **argv);
 TeleopSafetyConfig teleopSafetyConfig(const CliConfig &cfg);
 CommandSafetyConfig commandSafetyConfig(const CliConfig &cfg);
 InputGateConfig inputGateConfig(const CliConfig &cfg);
+rolling::SegmentExecutorConfig rollingSegmentExecutorConfig(const CliConfig &cfg);
 
 }  // namespace lingtu::nav::endpoint

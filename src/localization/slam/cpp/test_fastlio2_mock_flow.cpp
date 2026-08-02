@@ -144,12 +144,42 @@ void checkRejectedUpdateHealthGate(const std::filesystem::path& config_path) {
   check(!one_rejection.odometry_odom_body.has_value(), "single_rejection_published_odom");
   check(!one_rejection.registered_cloud_body.has_value(), "single_rejection_published_cloud");
   check(!one_rejection.map_cloud_map.has_value(), "single_rejection_published_map_cloud");
+  check(one_rejection.fastlio_lidar_update.attempted, "single_rejection_attempt_missing");
+  check(!one_rejection.fastlio_lidar_update.accepted, "single_rejection_marked_accepted");
+  check(
+      one_rejection.fastlio_lidar_update.rejection_reason != "none",
+      "single_rejection_detail_missing");
+  check(
+      one_rejection.fastlio_lidar_update.consecutive_rejections == 1U,
+      "single_rejection_detail_streak_mismatch");
+  check(
+      one_rejection.fastlio_lidar_update.downsampled_points > 0U,
+      "single_rejection_downsampled_points_missing");
+  const std::uint64_t rejected_attempt_sequence =
+      one_rejection.fastlio_lidar_update.attempt_sequence;
+  const std::string rejected_detail_reason =
+      one_rejection.fastlio_lidar_update.rejection_reason;
 
   processScan(*backend, 0.50, 0.0F, next_imu_stamp_s);
   const auto recovered = backend->outputs();
   check(recovered.state == SlamState::Tracking, "single_rejection_did_not_recover");
   check(recovered.odometry_odom_body.has_value(), "recovery_odometry_missing");
   check(recovered.registered_cloud_body.has_value(), "recovery_cloud_missing");
+  check(recovered.fastlio_lidar_update.accepted, "recovery_update_not_marked_accepted");
+  check(
+      recovered.fastlio_lidar_update.rejection_reason == "none",
+      "recovery_retained_current_rejection_detail");
+  check(
+      recovered.fastlio_lidar_update.previous_rejection_reason ==
+          rejected_detail_reason,
+      "recovery_lost_previous_rejection_detail");
+  check(
+      recovered.fastlio_lidar_update.attempt_sequence ==
+          rejected_attempt_sequence + 1U,
+      "recovery_attempt_sequence_mismatch");
+  check(
+      recovered.fastlio_lidar_update.consecutive_rejections == 0U,
+      "recovery_did_not_clear_detail_streak");
 
   processScan(*backend, 0.60, 10.0F, next_imu_stamp_s);
   processScan(*backend, 0.70, 10.0F, next_imu_stamp_s);
@@ -162,6 +192,15 @@ void checkRejectedUpdateHealthGate(const std::filesystem::path& config_path) {
   check(!repeated_rejection.odometry_odom_body.has_value(), "repeated_rejection_published_odom");
   check(!repeated_rejection.registered_cloud_body.has_value(), "repeated_rejection_published_cloud");
   check(!repeated_rejection.map_cloud_map.has_value(), "repeated_rejection_published_map_cloud");
+  check(
+      repeated_rejection.fastlio_lidar_update.consecutive_rejections == 2U,
+      "repeated_rejection_detail_streak_mismatch");
+  check(
+      repeated_rejection.fastlio_lidar_update.rejection_reason != "none",
+      "repeated_rejection_detail_missing");
+  check(
+      repeated_rejection.fastlio_lidar_update.previous_rejection_reason != "none",
+      "repeated_rejection_previous_detail_missing");
 }
 
 void checkPositionCovarianceHealthGate(const std::filesystem::path& config_path) {

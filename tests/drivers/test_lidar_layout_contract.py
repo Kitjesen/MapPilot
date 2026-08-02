@@ -21,10 +21,9 @@ def test_real_and_sim_lidar_share_layout() -> None:
 
     assert (real / "api" / "frames.py").is_file()
     assert (real / "api" / "frame_stream.py").is_file()
-    assert (real / "compat" / "dds.py").is_file()
-    assert (real / "compat" / "dds_adapter.py").is_file()
-    assert (real / "compat" / "lidar.py").is_file()
+    assert not (real / "compat").exists()
     assert (real / "impl" / "livox" / "sdk2_stream_source.py").is_file()
+    assert (real / "native" / "model.py").is_file()
     assert (real / "native" / "sdk.py").is_file()
     assert (real / "native" / "module.hpp").is_file()
     assert (real / "native" / "dds_module.hpp").is_file()

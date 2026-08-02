@@ -17,39 +17,19 @@ from runtime.profiles.planner_backends import (
 DDS_MAP_OUTPUT_ADAPTERS = frozenset({"dds", "dds_endpoint", "dds_map_output"})
 NAV_IN_ENABLE_KEYS = ("enable_nav_in",)
 NAV_OUT_ENABLE_KEYS = ("enable_nav_out",)
-LEGACY_NAV_IN_ENABLE_KEYS = (
-    "enable_endpoint_command_bridge",
-    "enable_ros2_command_bridge",
-)
-LEGACY_NAV_OUT_ENABLE_KEYS = (
-    "enable_endpoint_path_bridge",
-    "enable_endpoint_waypoint_bridge",
-    "enable_ros2_bridge",
-)
 MAP_OUT_ENABLE_KEYS = ("enable_map_out",)
-LEGACY_MAP_OUT_ENABLE_KEYS = (
-    "enable_endpoint_grid_bridge",
-    "enable_ros2_grid_bridge",
-)
 IO_ADAPTER_ENABLE_KEYS = (
     *NAV_IN_ENABLE_KEYS,
     *NAV_OUT_ENABLE_KEYS,
-    *LEGACY_NAV_IN_ENABLE_KEYS,
-    *LEGACY_NAV_OUT_ENABLE_KEYS,
     *MAP_OUT_ENABLE_KEYS,
-    *LEGACY_MAP_OUT_ENABLE_KEYS,
 )
-ENDPOINT_ADAPTER_ENABLE_KEYS = IO_ADAPTER_ENABLE_KEYS
 ROS2_ADAPTER_NAMES = frozenset(
     {
         "ros2",
         "ros2_slam_bridge",
         "ros2_map_output",
-        "ros2_grid_bridge",
         "ros2_nav_input",
         "ros2_nav_output",
-        # Legacy selector value resolves to ros2_nav_input; do not register a module for it.
-        "ros2_navigation_command_bridge",
     }
 )
 ROS2_DRIVER_RUNTIMES = frozenset(
@@ -60,50 +40,27 @@ ROS2_DRIVER_RUNTIMES = frozenset(
         "ros2simdrivermodule",
     }
 )
-LIDAR_LEGACY_DRIVER_START_KEYS = (
-    "lidar_start_driver",
-    "start_lidar_driver",
-)
 LEGACY_SENSOR_BINDING_KEYS = (
     "use_driver_camera",
     "use_driver_lidar",
     "use_driver_imu",
-    "legacy_driver_sensor_fallback",
-    "enable_legacy_sim_lidar",
 )
-ROS2_CAMERA_BRIDGE_ENABLE_KEYS = ("enable_ros2_camera_bridge",)
 ROS2_RERUN_BRIDGE_ENABLE_KEYS = ("enable_ros2_rerun_bridge",)
 LOCALIZATION_ADAPTER_KEYS = (
     "localization_adapter",
     "_localization_adapter",
 )
 NAV_OUT_ADAPTER_KEYS = ("nav_out_adapter",)
-LEGACY_NAV_OUT_ADAPTER_KEYS = (
-    "endpoint_path_bridge",
-    "endpoint_egress_adapter",
-)
 NAV_IN_ADAPTER_KEYS = ("nav_in_adapter",)
-LEGACY_NAV_IN_ADAPTER_KEYS = (
-    "endpoint_command_bridge",
-    "endpoint_ingress_adapter",
-)
 MAP_OUT_ADAPTER_KEYS = ("map_out_adapter",)
-LEGACY_MAP_OUT_ADAPTER_KEYS = (
-    "endpoint_grid_bridge",
-    "endpoint_grid_adapter",
-)
 IO_ADAPTER_KEYS = (
     *NAV_OUT_ADAPTER_KEYS,
-    *LEGACY_NAV_OUT_ADAPTER_KEYS,
     *NAV_IN_ADAPTER_KEYS,
-    *LEGACY_NAV_IN_ADAPTER_KEYS,
     *MAP_OUT_ADAPTER_KEYS,
-    *LEGACY_MAP_OUT_ADAPTER_KEYS,
 )
-ENDPOINT_ADAPTER_KEYS = IO_ADAPTER_KEYS
 DRIVER_RUNTIME_KEYS = (
     "robot",
-    "_default_robot",
+    "_driver_backend",
     "driver",
     "driver_runtime",
     "driver_module",
@@ -189,14 +146,8 @@ def navigation_output_uses_dds(config: Mapping[str, Any]) -> bool:
 
 
 def navigation_output_uses_ros2(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *NAV_OUT_ADAPTER_KEYS,
-        *LEGACY_NAV_OUT_ADAPTER_KEYS,
-    ).lower()
-    return (
-        selected in ROS2_ADAPTER_NAMES or selected.startswith("ros2_") or bool(config.get("enable_ros2_bridge", False))
-    )
+    selected = _string_value(config, *NAV_OUT_ADAPTER_KEYS).lower()
+    return selected in ROS2_ADAPTER_NAMES or selected.startswith("ros2_")
 
 
 def navigation_input_uses_dds(config: Mapping[str, Any]) -> bool:
@@ -204,43 +155,23 @@ def navigation_input_uses_dds(config: Mapping[str, Any]) -> bool:
 
 
 def navigation_input_uses_ros2(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *NAV_IN_ADAPTER_KEYS,
-        *LEGACY_NAV_IN_ADAPTER_KEYS,
-    ).lower()
-    return (
-        selected in ROS2_ADAPTER_NAMES
-        or selected.startswith("ros2_")
-        or bool(config.get("enable_ros2_command_bridge", False))
-    )
+    selected = _string_value(config, *NAV_IN_ADAPTER_KEYS).lower()
+    return selected in ROS2_ADAPTER_NAMES or selected.startswith("ros2_")
 
 
 def map_output_uses_ros2(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *MAP_OUT_ADAPTER_KEYS,
-        *LEGACY_MAP_OUT_ADAPTER_KEYS,
-    ).lower()
-    return (
-        selected in ROS2_ADAPTER_NAMES
-        or selected.startswith("ros2_")
-        or bool(config.get("enable_ros2_grid_bridge", False))
-    )
+    selected = _string_value(config, *MAP_OUT_ADAPTER_KEYS).lower()
+    return selected in ROS2_ADAPTER_NAMES or selected.startswith("ros2_")
 
 
 def map_output_uses_dds(config: Mapping[str, Any]) -> bool:
-    selected = _string_value(
-        config,
-        *MAP_OUT_ADAPTER_KEYS,
-        *LEGACY_MAP_OUT_ADAPTER_KEYS,
-    ).lower()
+    selected = _string_value(config, *MAP_OUT_ADAPTER_KEYS).lower()
     endpoint_transport = endpoint_transport_for_config(config, default="").lower()
     return selected in DDS_MAP_OUTPUT_ADAPTERS or (not selected and endpoint_transport == "dds")
 
 
 def map_output_adapter_enabled(config: Mapping[str, Any]) -> bool:
-    return any(bool(config.get(key)) for key in (*MAP_OUT_ENABLE_KEYS, *LEGACY_MAP_OUT_ENABLE_KEYS))
+    return any(bool(config.get(key)) for key in MAP_OUT_ENABLE_KEYS)
 
 
 def autonomy_backend_selection(
@@ -364,16 +295,6 @@ def ros2_driver_runtime_violations(config: Mapping[str, Any]) -> list[str]:
     return violations
 
 
-def ros2_lidar_driver_violations(config: Mapping[str, Any]) -> list[str]:
-    """Return LiDAR acquisition settings that start legacy ROS2 driver processes."""
-
-    violations: list[str] = []
-    for key in LIDAR_LEGACY_DRIVER_START_KEYS:
-        if bool(config.get(key)):
-            violations.append(f"{key}=true starts the legacy local Livox ROS2 driver")
-    return violations
-
-
 def legacy_sensor_binding_violations(config: Mapping[str, Any]) -> list[str]:
     """Return settings that route sensor streams through legacy driver paths."""
 
@@ -381,16 +302,6 @@ def legacy_sensor_binding_violations(config: Mapping[str, Any]) -> list[str]:
     for key in LEGACY_SENSOR_BINDING_KEYS:
         if bool(config.get(key)):
             violations.append(f"{key}=true enables a legacy driver sensor path")
-    return violations
-
-
-def ros2_camera_bridge_violations(config: Mapping[str, Any]) -> list[str]:
-    """Return camera acquisition settings that select ROS2 compatibility bridges."""
-
-    violations: list[str] = []
-    for key in ROS2_CAMERA_BRIDGE_ENABLE_KEYS:
-        if bool(config.get(key)):
-            violations.append(f"{key}=true enables a ROS2 camera bridge")
     return violations
 
 
@@ -442,49 +353,31 @@ def ros2_runtime_binding_violations(
         enable_native=enable_native,
     )
     violations.extend(ros2_driver_runtime_violations(config))
-    violations.extend(ros2_lidar_driver_violations(config))
-    violations.extend(ros2_camera_bridge_violations(config))
     violations.extend(ros2_rerun_bridge_violations(config))
     violations.extend(ros2_global_planner_backend_violations(config))
     exploration_backend = exploration_backend_for_config(config)
     if exploration_backend in ROS2_EXPLORATION_BACKENDS:
         violations.append(f"exploration_backend={exploration_backend} requires ROS2 NativeModule")
-    for key in IO_ADAPTER_ENABLE_KEYS:
-        if key in LEGACY_MAP_OUT_ENABLE_KEYS:
-            continue
-        if key.startswith("enable_ros2") and bool(config.get(key)):
-            violations.append(f"{key}=true enables a ROS2 IO adapter")
     if map_output_uses_ros2(config):
         violations.append("map output adapter selects a ROS2 IO adapter")
     if (
-        any(bool(config.get(key, False)) for key in (*MAP_OUT_ENABLE_KEYS, *LEGACY_MAP_OUT_ENABLE_KEYS))
+        any(bool(config.get(key, False)) for key in MAP_OUT_ENABLE_KEYS)
         and not map_output_uses_ros2(config)
         and not map_output_uses_dds(config)
     ):
-        key = "enable_map_out" if bool(config.get("enable_map_out", False)) else "enable_endpoint_grid_bridge"
-        violations.append(f"{key}=true without explicit non-ROS map output adapter has no safe default")
-    nav_in_key = "enable_nav_in" if bool(config.get("enable_nav_in", False)) else "enable_endpoint_command_bridge"
+        violations.append("enable_map_out=true without explicit non-ROS map output adapter has no safe default")
     if (
-        bool(config.get(nav_in_key, False))
+        bool(config.get("enable_nav_in", False))
         and not navigation_input_uses_dds(config)
         and not navigation_input_uses_ros2(config)
     ):
-        violations.append(f"{nav_in_key}=true without explicit non-ROS navigation input adapter has no safe default")
-    nav_out_key = "enable_nav_out" if bool(config.get("enable_nav_out", False)) else "enable_endpoint_path_bridge"
+        violations.append("enable_nav_in=true without explicit non-ROS navigation input adapter has no safe default")
     if (
-        bool(config.get(nav_out_key, False))
+        bool(config.get("enable_nav_out", False))
         and not navigation_output_uses_dds(config)
         and not navigation_output_uses_ros2(config)
     ):
-        violations.append(f"{nav_out_key}=true without explicit non-ROS navigation output adapter has no safe default")
-    if (
-        bool(config.get("enable_endpoint_waypoint_bridge", False))
-        and not navigation_output_uses_dds(config)
-        and not navigation_output_uses_ros2(config)
-    ):
-        violations.append(
-            "enable_endpoint_waypoint_bridge=true without explicit non-ROS navigation output adapter has no safe default"
-        )
+        violations.append("enable_nav_out=true without explicit non-ROS navigation output adapter has no safe default")
 
     for key in LOCALIZATION_ADAPTER_KEYS:
         selected = _adapter_name(config.get(key))
@@ -492,7 +385,7 @@ def ros2_runtime_binding_violations(
             violations.append(f"{key}={selected} selects a ROS2 localization adapter")
 
     for key in IO_ADAPTER_KEYS:
-        if key in (*MAP_OUT_ADAPTER_KEYS, *LEGACY_MAP_OUT_ADAPTER_KEYS):
+        if key in MAP_OUT_ADAPTER_KEYS:
             continue
         selected = _adapter_name(config.get(key))
         if selected in ROS2_ADAPTER_NAMES or selected.startswith("ros2_"):

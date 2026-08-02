@@ -55,16 +55,6 @@ def test_realtime_routes_register_expected_websockets():
             assert route.endpoint.__annotations__.get("ws") is WebSocket
 
 
-def test_realtime_teleop_camera_stream_is_legacy_opt_in():
-    from gateway.routes.realtime import _camera_stream_requested
-
-    assert _camera_stream_requested({}) is False
-    assert _camera_stream_requested({"stream": "camera"}) is True
-    assert _camera_stream_requested({"stream": "video"}) is True
-    assert _camera_stream_requested({"camera": "true"}) is True
-    assert _camera_stream_requested({"frames": "1"}) is True
-
-
 def test_map_routes_register_expected_paths():
     from fastapi import FastAPI
 
@@ -86,6 +76,9 @@ def test_map_routes_register_expected_paths():
 
     paths = {getattr(route, "path", "") for route in app.routes}
     assert "/api/v1/slam/maps" in paths
+    assert "/api/v1/maps" not in paths
+    assert "/api/v1/maps/{name}" in paths
+    assert "/api/v1/maps/{name}/build_occupancy" in paths
     assert "/api/v1/maps/import_pcd" in paths
     assert "/api/v1/maps/{name}/crop" in paths
     assert "/api/v1/maps/{name}/mark_zone" in paths
@@ -103,10 +96,41 @@ def test_map_routes_register_expected_paths():
     assert "/api/v1/map/activate" in paths
     assert "/api/v1/map/rename" in paths
     assert "/api/v1/map/save" in paths
-    assert "/api/v1/maps/save-jobs" in paths
-    assert "/api/v1/maps/save-jobs/{job_id}" in paths
+    assert "/api/v1/maps/operations" in paths
+    assert "/api/v1/maps/operations/{operation_id}" in paths
+    assert "/api/v1/maps/operations/{operation_id}/cancel" in paths
+    assert "/api/v1/maps/operations/{operation_id}/retry" in paths
+    assert "/api/v1/maps/save-jobs" not in paths
+    assert "/api/v1/maps/save-jobs/{job_id}" not in paths
     assert "/api/v1/maps/{name}/versions" in paths
     assert "/api/v1/maps/{name}/versions/{version}/rollback" in paths
+
+
+def test_slam_maps_does_not_turn_native_failure_into_empty_inventory(monkeypatch):
+    from fastapi import FastAPI
+
+    import gateway.routes.maps as map_routes
+
+    monkeypatch.setattr(
+        map_routes,
+        "_map_service_command",
+        lambda _gw, _payload: {
+            "success": False,
+            "reason_code": "native_list_failed",
+            "message": "private native detail",
+        },
+    )
+    app = FastAPI()
+    map_routes.register_map_routes(app, SimpleNamespace())
+    route = next(route for route in app.routes if route.path == "/api/v1/slam/maps")
+
+    response = asyncio.run(route.endpoint())
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["ok"] is False
+    assert payload["error"] == "map_service_unavailable"
+    assert "private native detail" not in response.body.decode("utf-8")
 
 
 def test_robot_mesh_defaults_to_bundled_thunder_v4_asset(monkeypatch):
@@ -137,6 +161,8 @@ def test_map_version_routes_forward_typed_commands(monkeypatch):
                 "versions": [{"version": 2, "current": True}],
                 "count": 1,
             }
+        if payload["action"] == "get_active":
+            return {"success": True, "active": "another_map"}
         return {
             "success": True,
             "map_id": payload["name"],
@@ -159,6 +185,7 @@ def test_map_version_routes_forward_typed_commands(monkeypatch):
     assert json.loads(rolled.body)["version"] == 1
     assert commands == [
         {"action": "list_map_versions", "name": "warehouse"},
+        {"action": "get_active"},
         {"action": "rollback_map_version", "name": "warehouse", "version": 1},
     ]
 
@@ -188,9 +215,38 @@ def test_save_map_returns_accepted_while_native_job_is_running(monkeypatch):
     payload = json.loads(response.body)
     assert response.status_code == 202
     assert payload["ok"] is True
-    assert payload["success"] is False
+    assert payload["success"] is None
     assert payload["accepted"] is True
-    assert payload["job_id"] == "save_job_1"
+    assert payload["operation_id"] == "save_job_1"
+    assert "job_id" not in payload
+
+
+def test_save_map_fails_closed_when_slam_profile_is_unavailable(monkeypatch):
+    from fastapi import FastAPI
+
+    import gateway.routes.maps as map_routes
+
+    def submit_save(_gw, _payload):
+        raise AssertionError("save must not be submitted without live SLAM profile")
+
+    def read_slam_profile():
+        raise RuntimeError("telemetry unavailable")
+
+    monkeypatch.setattr(map_routes, "_map_service_command", submit_save)
+    gateway = SimpleNamespace(
+        _get_slam_profile=read_slam_profile,
+        _session_slam_profile="native_dds",
+    )
+    app = FastAPI()
+    map_routes.register_map_routes(app, gateway)
+    route = next(route for route in app.routes if route.path == "/api/v1/map/save")
+
+    response = asyncio.run(route.endpoint({"name": "warehouse"}))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert payload["ok"] is False
+    assert payload["reason_code"] == "slam_profile_unavailable"
 
 
 def test_map_viewer_serves_static_file_without_gateway_snapshot():
@@ -331,12 +387,12 @@ def test_camera_snapshot_returns_cached_gateway_jpeg(monkeypatch):
 
     from gateway.routes.camera import register_camera_routes
 
-    def fail_legacy_snapshot():
-        raise AssertionError("snapshot route should not probe ROS when JPEG is cached")
+    def fail_registered_snapshot():
+        raise AssertionError("snapshot route should not probe adapters when JPEG is cached")
 
     monkeypatch.setattr(
         "gateway.routes.camera._registered_snapshot_adapter_jpeg",
-        fail_legacy_snapshot,
+        fail_registered_snapshot,
     )
 
     app = FastAPI()
@@ -351,13 +407,13 @@ def test_camera_snapshot_returns_cached_gateway_jpeg(monkeypatch):
     assert response.body == b"\xff\xd8\xffcamera"
 
 
-def test_camera_snapshot_uses_teleop_one_shot_encoder(monkeypatch):
+def test_camera_snapshot_uses_camera_relay_one_shot_encoder(monkeypatch):
     from fastapi import FastAPI
 
     from gateway.routes.camera import register_camera_routes
 
-    def fail_legacy_snapshot():
-        raise AssertionError("snapshot route should use Teleop snapshot before ROS fallback")
+    def fail_registered_snapshot():
+        raise AssertionError("snapshot route should use the camera relay before adapter fallback")
 
     class Teleop:
         def __init__(self):
@@ -369,7 +425,7 @@ def test_camera_snapshot_uses_teleop_one_shot_encoder(monkeypatch):
 
     monkeypatch.setattr(
         "gateway.routes.camera._registered_snapshot_adapter_jpeg",
-        fail_legacy_snapshot,
+        fail_registered_snapshot,
     )
 
     teleop = Teleop()
@@ -377,7 +433,7 @@ def test_camera_snapshot_uses_teleop_one_shot_encoder(monkeypatch):
     gw = SimpleNamespace(
         _latest_jpeg=None,
         _jpeg_lock=threading.Lock(),
-        _teleop_module=teleop,
+        _camera_module=teleop,
     )
     register_camera_routes(app, gw)
 
@@ -395,12 +451,12 @@ def test_camera_snapshot_fast_fails_when_gateway_reports_no_camera(monkeypatch):
 
     from gateway.routes.camera import register_camera_routes
 
-    def fail_legacy_snapshot():
-        raise AssertionError("snapshot route should not probe ROS when camera is unavailable")
+    def fail_registered_snapshot():
+        raise AssertionError("snapshot route should not probe adapters when camera is unavailable")
 
     monkeypatch.setattr(
         "gateway.routes.camera._registered_snapshot_adapter_jpeg",
-        fail_legacy_snapshot,
+        fail_registered_snapshot,
     )
 
     app = FastAPI()
@@ -417,12 +473,13 @@ def test_camera_snapshot_fast_fails_when_gateway_reports_no_camera(monkeypatch):
     assert payload["detail"]["camera"]["reason"] == "camera_not_loaded"
 
 
-def test_camera_route_does_not_reference_ros2_compat() -> None:
+def test_camera_route_selects_snapshot_adapter_without_plugin_seeding() -> None:
     import gateway.routes.camera as camera_route
 
     source = Path(camera_route.__file__).read_text(encoding="utf-8-sig")
 
-    assert "runtime.adapters.ros2" not in source
+    assert "seed_registered_plugins" not in source
+    assert "seed_builtin_plugins" not in source
 
 
 def test_camera_snapshot_uses_registered_snapshot_adapter():
@@ -682,7 +739,7 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert validation_gates["runtime_audit"]["requires_ros"] is False
     assert validation_gates["runtime_audit"]["acceptance_step"] == 1
     assert validation_gates["runtime_audit"]["requires_prior_gates"] == []
-    assert "canonical_runtime_manifest_matches_yaml" in (validation_gates["runtime_audit"]["proves"])
+    assert "canonical_runtime_contract_matches_yaml" in (validation_gates["runtime_audit"]["proves"])
     assert validation_gates["runtime_audit"]["collector_publishes_control_topics"] is False
     assert validation_gates["runtime_audit"]["control_topics_published"] == []
     assert "runtime_contract_integrity" in validation_gates["runtime_audit"]["checks"]
@@ -707,29 +764,29 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert validation_gates["saved_map_artifact_gate"]["control_topics_published"] == []
     assert "Required artifacts" in (validation_gates["saved_map_artifact_gate"]["operator_summary_sections"])
     assert "octomap_and_occupancy_derive_from_same_map_pcd" in (validation_gates["saved_map_artifact_gate"]["proves"])
-    assert validation_gates["real_runtime_evidence"]["expected_runtime_contract"] == ("thunder_field")
+    assert validation_gates["real_runtime_evidence"]["expected_runtime_contract"] == ("real")
     assert validation_gates["real_runtime_evidence"]["command"] == (
         "python lingtu.py real-runtime-evidence "
         "--collector gateway "
         "--gateway-url http://<robot>:5050 "
         "--duration-sec 20 "
-        "--json-out artifacts/thunder_field_runtime/report.json"
+        "--json-out artifacts/real_runtime/report.json"
     )
     assert validation_gates["real_runtime_evidence"]["collector_command"] == (
         "python scripts/gates/real_runtime_evidence_collect.py "
         "--collector gateway "
         "--gateway-url http://<robot>:5050 "
         "--duration-sec 20 "
-        "--expected-contract thunder_field "
-        "--json-out artifacts/thunder_field_runtime/report.json"
+        "--expected-contract real "
+        "--json-out artifacts/real_runtime/report.json"
     )
     assert validation_gates["real_runtime_evidence"]["gate_command"] == (
         "python scripts/gates/real_runtime_evidence_gate.py "
-        "artifacts/thunder_field_runtime/report.json "
-        "--expected-contract thunder_field "
-        "--json-out artifacts/thunder_field_runtime/profiles_evidence.json"
+        "artifacts/real_runtime/report.json "
+        "--expected-contract real "
+        "--json-out artifacts/real_runtime/profiles_evidence.json"
     )
-    assert validation_gates["real_runtime_evidence"]["artifact"] == ("artifacts/thunder_field_runtime/report.json")
+    assert validation_gates["real_runtime_evidence"]["artifact"] == ("artifacts/real_runtime/report.json")
     assert validation_gates["real_runtime_evidence"]["acceptance_step"] == 3
     assert validation_gates["real_runtime_evidence"]["requires_prior_gates"] == ["runtime_audit"]
     assert "Topic frame evidence" in (validation_gates["real_runtime_evidence"]["operator_summary_sections"])
@@ -763,8 +820,8 @@ def test_diagnostic_app_web_snapshots_cover_client_startup_surfaces():
     assert "runtime_boundary" in frame_contract
     assert snapshots["runtime_contract"]["ok"] is True
     runtime_contract = snapshots["runtime_contract"]["data"]["manifest"]
-    assert runtime_contract["data_sources"]["thunder_field"]["command_sink"] == ("driver")
-    real_flow = {stage["name"]: stage for stage in runtime_contract["resolved_runtime_data_flow"]["thunder_field"]}
+    assert runtime_contract["data_sources"]["thunder"]["command_sink"] == ("driver")
+    real_flow = {stage["name"]: stage for stage in runtime_contract["resolved_runtime_data_flow"]["thunder"]}
     assert list(real_flow["command_boundary"]["outputs"]) == ["driver"]
 
 
@@ -798,7 +855,7 @@ def test_diagnostic_runtime_contract_route_exposes_canonical_manifest():
     body = response.json()
     assert body["manifest"]["schema_version"] == "lingtu.runtime_interface.v1"
     assert body["manifest"]["frame_links"]["map_to_odom"]["parent"] == "map"
-    assert body["manifest"]["data_sources"]["thunder_field"]["mapping_source"] == ("slam_map_cloud")
+    assert body["manifest"]["data_sources"]["thunder"]["mapping_source"] == ("slam_map_cloud")
 
 
 def test_runtime_contract_manifest_is_fully_typed_by_gateway_schema():
@@ -822,9 +879,8 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
     from gateway.routes.diagnostics import _frame_contract_snapshot
 
     monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "real_s100p")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "real_s100p")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real_s100p")
+    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder")
+    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "real")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
 
@@ -848,8 +904,8 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
         "received_frame": "camera_link",
     } in snapshot["mismatches"]
     runtime = snapshot["runtime_boundary"]
-    assert runtime["data_source"] == "thunder_field"
-    assert runtime["runtime_contract"] == "thunder_field"
+    assert runtime["data_source"] == "thunder"
+    assert runtime["runtime_contract"] == "real"
     assert runtime["frame_links"]["body_to_lidar"] == {
         "parent": "body",
         "child": "lidar_link",
@@ -875,7 +931,7 @@ def test_diagnostic_frame_contract_reports_navigation_mismatches(monkeypatch):
     assert flow["command_boundary"]["outputs"] == ["driver"]
 
 
-def test_frame_contract_snapshot_defaults_to_runtime_manifest(monkeypatch):
+def test_frame_contract_snapshot_defaults_to_runtime_contract(monkeypatch):
     import runtime.runtime_interface as runtime_interface
     from gateway.gateway_module import GatewayModule
     from gateway.routes import diagnostics
@@ -921,7 +977,7 @@ def test_gateway_module_builds_split_routes_once():
 
     counts = Counter(getattr(route, "path", "") for route in gateway._app.routes)
     assert counts["/api/v1/app/bootstrap"] == 1
-    assert counts["/api/v1/bootstrap"] == 1
+    assert counts["/api/v1/bootstrap"] == 0
     assert counts["/api/v1/app/capabilities"] == 1
     assert counts["/api/v1/auth/login"] == 1
     assert counts["/api/v1/auth/check"] == 1
@@ -938,8 +994,8 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/navigation/status"] == 1
     assert counts["/api/v1/runtime/dataflow"] == 1
     assert counts["/api/v1/runtime/switch-plan"] == 1
-    assert counts["/api/v1/runtime/switch"] == 1
-    assert counts["/api/v1/navigation"] == 1
+    assert counts["/api/v1/runtime/switch"] == 0
+    assert counts["/api/v1/navigation"] == 0
     assert counts["/api/v1/status"] == 0
     assert counts["/api/v1/health"] == 1
     assert counts["/health"] == 1
@@ -948,6 +1004,9 @@ def test_gateway_module_builds_split_routes_once():
     assert counts["/api/v1/session/start"] == 1
     assert counts["/api/v1/session/end"] == 1
     assert counts["/api/v1/slam/maps"] == 1
+    assert counts["/api/v1/maps"] == 0
+    assert counts["/api/v1/maps/{name}"] == 1
+    assert counts["/api/v1/maps/{name}/build_occupancy"] == 1
     assert counts["/api/v1/map/points"] == 1
     assert counts["/api/v1/map_cloud/reset"] == 1
     assert counts["/api/v1/navigation/plan"] == 1
@@ -988,7 +1047,6 @@ def test_gateway_module_keeps_client_route_inventory():
         "/api/v1/services/status",
         "/api/v1/runtime/dataflow",
         "/api/v1/runtime/switch-plan",
-        "/api/v1/runtime/switch",
         "/api/v1/devices",
         "/api/v1/health",
         "/health",
@@ -1000,7 +1058,6 @@ def test_gateway_module_keeps_client_route_inventory():
         "/api/v1/diagnostics/algorithm-benchmark/latest",
         "/api/v1/diagnostics/runtime-contract",
         "/api/v1/events",
-        "/api/v1/maps",
         "/api/v1/slam/maps",
         "/api/v1/map/points",
         "/api/v1/maps/{name}/points",
@@ -1056,8 +1113,8 @@ def test_routecheck_latest_diagnostic_reads_latest_summary(tmp_path, monkeypatch
         register_diagnostic_routes,
     )
 
-    old_dir = tmp_path / "super_lio_route_preflight_old"
-    new_dir = tmp_path / "super_lio_route_preflight_new"
+    old_dir = tmp_path / "route_preflight_old"
+    new_dir = tmp_path / "route_preflight_new"
     old_dir.mkdir()
     new_dir.mkdir()
     (old_dir / "summary.json").write_text(
@@ -1627,7 +1684,7 @@ def test_algorithm_benchmark_latest_endpoint_preserves_runtime_dataflow(
     )
 
 
-def test_algorithm_benchmark_latest_splits_product_profile_from_strict_benchmark(
+def test_algorithm_benchmark_latest_splits_inspection_variant_from_strict_benchmark(
     tmp_path,
 ):
     from gateway.routes.diagnostics import build_algorithm_benchmark_latest_summary
@@ -1661,9 +1718,9 @@ def test_algorithm_benchmark_latest_splits_product_profile_from_strict_benchmark
     payload = build_algorithm_benchmark_latest_summary(tmp_path, max_age_s=1000.0)
 
     assert payload["ok"] is False
-    assert payload["active_product_profile"] == "inspection_mvp"
-    inspection = payload["product_profiles"]["inspection_mvp"]
-    strict = payload["product_profiles"]["dimos_benchmark"]
+    assert payload["active_benchmark_variant"] == "inspection_mvp"
+    inspection = payload["benchmark_variants"]["inspection_mvp"]
+    strict = payload["benchmark_variants"]["dimos_benchmark"]
     assert inspection["ok"] is True
     assert inspection["ros2_topic_required"] is False
     assert inspection["missing_or_failed"] == []
@@ -1701,7 +1758,7 @@ def _write_real_runtime_evidence_report(
     validation = {
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": True,
-        "expected_contract": "thunder_field",
+        "expected_contract": "real",
         "checked_real_motion_evidence": {"ok": True},
         "checked_hardware_boundary_evidence": {"ok": True},
         "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
@@ -1723,7 +1780,7 @@ def _write_real_runtime_evidence_report(
         "simulation_only": False,
         "real_robot_motion": True,
         "cmd_vel_sent_to_hardware": True,
-        "runtime_contract": {"name": "thunder_field", "ok": True},
+        "runtime_contract": {"name": "real", "ok": True},
         "runtime_evidence": validation,
     }
     report_path = run_dir / "report.json"
@@ -1740,7 +1797,7 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
         register_diagnostic_routes,
     )
 
-    run_dir = tmp_path / "thunder_field_runtime"
+    run_dir = tmp_path / "real_runtime"
     report_path = _write_real_runtime_evidence_report(run_dir)
     os.utime(report_path, (100, 100))
 
@@ -1753,7 +1810,7 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
     assert payload["report_path"] == str(run_dir / "report.json")
     assert payload["report_age_s"] == 100.0
     assert payload["max_age_s"] == 1000.0
-    assert payload["runtime_contract"] == "thunder_field"
+    assert payload["runtime_contract"] == "real"
     assert payload["runtime_evidence_ok"] is True
     assert payload["simulation_only"] is False
     assert payload["real_robot_motion"] is True
@@ -1777,14 +1834,14 @@ def test_real_runtime_evidence_latest_diagnostic_reads_gate_artifact(tmp_path, m
 def test_real_runtime_evidence_latest_uses_newest_report_even_when_failing(tmp_path):
     from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
 
-    root = tmp_path / "thunder_field_runtime"
+    root = tmp_path / "real_runtime"
     old_report = _write_real_runtime_evidence_report(root / "old_pass")
     new_report = _write_real_runtime_evidence_report(
         root / "new_fail",
         runtime_evidence={
             "schema_version": "lingtu.real_runtime_evidence.validation.v1",
             "ok": False,
-            "expected_contract": "thunder_field",
+            "expected_contract": "real",
             "checked_real_motion_evidence": {"ok": False},
             "checked_hardware_boundary_evidence": {"ok": True},
             "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
@@ -1819,7 +1876,7 @@ def test_real_runtime_evidence_preflight_allows_no_motion_without_hardware_bound
     validation = {
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": False,
-        "expected_contract": "thunder_field",
+        "expected_contract": "real",
         "hardware_boundary_required": False,
         "checked_real_motion_evidence": {"ok": False},
         "checked_hardware_boundary_evidence": {"ok": False},
@@ -1840,7 +1897,7 @@ def test_real_runtime_evidence_preflight_allows_no_motion_without_hardware_bound
         "blockers": ["no motion yet"],
     }
     report_path = _write_real_runtime_evidence_report(
-        tmp_path / "thunder_field_runtime",
+        tmp_path / "real_runtime",
         runtime_evidence=validation,
     )
     report = json.loads(report_path.read_text(encoding="utf-8"))
@@ -1873,7 +1930,7 @@ def test_real_runtime_evidence_latest_diagnostic_reports_missing_artifact(tmp_pa
 def test_real_runtime_evidence_latest_diagnostic_rejects_stale_artifact(tmp_path):
     from gateway.routes.diagnostics import build_real_runtime_evidence_latest_summary
 
-    report_path = _write_real_runtime_evidence_report(tmp_path / "thunder_field_runtime")
+    report_path = _write_real_runtime_evidence_report(tmp_path / "real_runtime")
     os.utime(report_path, (100, 100))
 
     payload = build_real_runtime_evidence_latest_summary(
@@ -1895,14 +1952,14 @@ def test_real_runtime_evidence_latest_diagnostic_rejects_missing_data_flow_secti
     validation = {
         "schema_version": "lingtu.real_runtime_evidence.validation.v1",
         "ok": True,
-        "expected_contract": "thunder_field",
+        "expected_contract": "real",
         "checked_real_motion_evidence": {"ok": True},
         "checked_hardware_boundary_evidence": {"ok": True},
         "checked_live_topic_freshness": {"/slam/odometry": {"ok": True}},
         "blockers": [],
     }
     report_path = _write_real_runtime_evidence_report(
-        tmp_path / "thunder_field_runtime",
+        tmp_path / "real_runtime",
         runtime_evidence=validation,
     )
     os.utime(report_path, (100, 100))
@@ -1941,7 +1998,12 @@ def _request_schema_ref_for(
     path: str,
     method: str = "post",
 ) -> str:
-    return openapi["paths"][path][method]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    schema = openapi["paths"][path][method]["requestBody"]["content"][
+        "application/json"
+    ]["schema"]
+    if "$ref" in schema:
+        return schema["$ref"]
+    return next(item["$ref"] for item in schema.get("anyOf", []) if "$ref" in item)
 
 
 def test_openapi_exposes_client_response_models():
@@ -1996,8 +2058,6 @@ def test_openapi_exposes_client_response_models():
     assert "RuntimeDataflowResponse" in schemas
     assert "RuntimeSwitchPlanRequest" in schemas
     assert "RuntimeSwitchPlanResponse" in schemas
-    assert "RuntimeSwitchRequest" in schemas
-    assert "RuntimeSwitchResponse" in schemas
     assert "RuntimeDataflowTopicSummary" in schemas
     assert "RuntimeDataflowObservability" in schemas
     assert "RuntimeDataflowCommunication" in schemas
@@ -2006,6 +2066,7 @@ def test_openapi_exposes_client_response_models():
     assert "RuntimeAlgorithmInterfaceSummary" in schemas
     assert "RuntimeAdapterAliasSummary" in schemas
     assert "RuntimeProfileDataSourceBinding" in schemas
+    assert "RuntimeProductDataSourceBinding" in schemas
     assert "RuntimeTransform3D" in schemas
     assert "RuntimeMessageFormatSummary" in schemas
     assert "RuntimeArtifactFormatSummary" in schemas
@@ -2047,6 +2108,10 @@ def test_openapi_exposes_client_response_models():
     assert "MapNameRequest" in schemas
     assert "MapRenameRequest" in schemas
     assert "MapSaveRequest" in schemas
+    assert "MapSaveOperationResponse" in schemas
+    assert "operation_id" in schemas["MapSaveOperationResponse"]["properties"]
+    assert "operation" in schemas["MapSaveOperationResponse"]["properties"]
+    assert "job_id" not in schemas["MapSaveOperationResponse"]["properties"]
     assert "MapLifecycleResponse" in schemas
     assert "schema_version" in schemas["MapLifecycleResponse"]["properties"]
     assert "ok" in schemas["MapLifecycleResponse"]["properties"]
@@ -2074,9 +2139,9 @@ def test_openapi_exposes_client_response_models():
     assert "schema_version" in schemas["SlamOperationResponse"]["properties"]
     assert "ok" in schemas["SlamOperationResponse"]["properties"]
     assert "ts" in schemas["SlamOperationResponse"]["properties"]
-    assert "BagStartRequest" in schemas
-    assert "BagOperationResponse" in schemas
-    assert "BagStatusResponse" in schemas
+    assert "RecordingStartRequest" in schemas
+    assert "RecordingOperationResponse" in schemas
+    assert "RecordingStatusResponse" in schemas
     assert "Go2RTCStatusResponse" in schemas
     assert "TemporalSemanticRequest" in schemas
     assert schemas["AppMediaLinks"]["properties"]["camera"]["$ref"].endswith("/CameraMediaStatus")
@@ -2116,8 +2181,19 @@ def test_openapi_exposes_client_response_models():
     )
     assert _schema_ref_for(openapi, "/api/v1/runtime/switch-plan", method="post").endswith("/RuntimeSwitchPlanResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/runtime/switch-plan").endswith("/RuntimeSwitchPlanRequest")
-    assert _schema_ref_for(openapi, "/api/v1/runtime/switch", method="post").endswith("/RuntimeSwitchResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/runtime/switch").endswith("/RuntimeSwitchRequest")
+    field_products = {
+        "teleop",
+        "teleop_avoid",
+        "map",
+        "explore",
+        "nav",
+        "tracking",
+        "inspection",
+    }
+    for schema_name in ("RuntimeSwitchPlanRequest",):
+        properties = schemas[schema_name]["properties"]
+        assert {"current_product", "target_product"} <= set(properties)
+        assert set(properties["target_product"]["enum"]) == field_products
     assert schemas["RuntimeContractResponse"]["properties"]["manifest"]["$ref"].endswith("/RuntimeContractManifest")
     assert schemas["RuntimeDataflowResponse"]["properties"]["topics"]["items"]["$ref"].endswith(
         "/RuntimeDataflowTopicSummary"
@@ -2159,6 +2235,9 @@ def test_openapi_exposes_client_response_models():
     assert contract_manifest["profile_data_sources"]["additionalProperties"]["$ref"].endswith(
         "/RuntimeProfileDataSourceBinding"
     )
+    assert contract_manifest["product_data_sources"]["additionalProperties"]["$ref"].endswith(
+        "/RuntimeProductDataSourceBinding"
+    )
     assert contract_manifest["lidar_extrinsics"]["additionalProperties"]["$ref"].endswith("/RuntimeTransform3D")
     assert contract_manifest["message_formats"]["additionalProperties"]["$ref"].endswith("/RuntimeMessageFormatSummary")
     assert contract_manifest["artifact_formats"]["additionalProperties"]["$ref"].endswith(
@@ -2183,6 +2262,8 @@ def test_openapi_exposes_client_response_models():
     assert {"source", "target", "msg_format", "scope", "note"} <= set(adapter_schema)
     profile_binding_schema = schemas["RuntimeProfileDataSourceBinding"]["properties"]
     assert {"profile", "data_source", "mode", "note"} <= set(profile_binding_schema)
+    product_binding_schema = schemas["RuntimeProductDataSourceBinding"]["properties"]
+    assert {"product", "data_source", "mode", "note"} <= set(product_binding_schema)
     transform_schema = schemas["RuntimeTransform3D"]["properties"]
     assert {"parent", "child", "x", "y", "z", "roll", "pitch", "yaw"} <= set(transform_schema)
     message_format_schema = schemas["RuntimeMessageFormatSummary"]["properties"]
@@ -2232,10 +2313,12 @@ def test_openapi_exposes_client_response_models():
     assert _schema_ref_for(openapi, "/api/v1/session/start", method="post").endswith("/SessionTransitionResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/session/start").endswith("/SessionStartRequest")
     assert _schema_ref_for(openapi, "/api/v1/session/end", method="post").endswith("/SessionTransitionResponse")
-    assert _schema_ref_for(openapi, "/api/v1/maps", method="post").endswith("/MapLifecycleResponse")
-    assert _schema_ref_for(openapi, "/api/v1/maps", status="400", method="post").endswith("/GatewayErrorResponse")
-    assert _schema_ref_for(openapi, "/api/v1/maps", status="503", method="post").endswith("/GatewayErrorResponse")
     assert _schema_ref_for(openapi, "/api/v1/slam/maps").endswith("/MapListResponse")
+    assert _schema_ref_for(openapi, "/api/v1/maps/{name}", method="delete").endswith("/MapLifecycleResponse")
+    assert _schema_ref_for(openapi, "/api/v1/maps/{name}/build_occupancy", method="post").endswith(
+        "/MapLifecycleResponse"
+    )
+    assert "/api/v1/maps" not in openapi["paths"]
     assert _schema_ref_for(openapi, "/api/v1/map/points").endswith("/MapPointsResponse")
     assert _schema_ref_for(openapi, "/api/v1/maps/{name}/points").endswith("/MapPointsResponse")
     assert _schema_ref_for(openapi, "/api/v1/memory/temporal").endswith("/TemporalMemoryResponse")
@@ -2244,6 +2327,24 @@ def test_openapi_exposes_client_response_models():
     )
     assert _request_schema_ref_for(openapi, "/api/v1/memory/temporal/semantic").endswith("/TemporalSemanticRequest")
     assert _schema_ref_for(openapi, "/api/v1/explore/start", method="post").endswith("/ExplorationCommandResponse")
+    assert _request_schema_ref_for(openapi, "/api/v1/explore/start").endswith(
+        "/ExplorationStartRequest"
+    )
+    assert _schema_ref_for(
+        openapi,
+        "/api/v1/explore/runs/{exploration_run_id}",
+    ).endswith("/ExplorationRunResponse")
+    assert _schema_ref_for(openapi, "/api/v1/explore/runs").endswith(
+        "/ExplorationRunListResponse"
+    )
+    for action in ("pause", "resume", "finish"):
+        path = f"/api/v1/explore/runs/{{exploration_run_id}}/{action}"
+        assert _schema_ref_for(openapi, path, method="post").endswith(
+            "/ExplorationRunResponse"
+        )
+        assert _request_schema_ref_for(openapi, path).endswith(
+            "/ExplorationRunCommandRequest"
+        )
     assert _schema_ref_for(openapi, "/api/v1/explore/stop", method="post").endswith("/ExplorationCommandResponse")
     assert _schema_ref_for(openapi, "/api/v1/explore/status").endswith("/ExplorationStatusResponse")
     assert _schema_ref_for(openapi, "/api/v1/slam/status").endswith("/SlamStatusResponse")
@@ -2255,18 +2356,32 @@ def test_openapi_exposes_client_response_models():
     assert _request_schema_ref_for(openapi, "/api/v1/slam/relocalize").endswith("/SlamRelocalizeRequest")
     assert _schema_ref_for(openapi, "/api/v1/slam/track_against_map", method="post").endswith("/SlamOperationResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/slam/track_against_map").endswith("/SlamRelocalizeRequest")
-    assert _schema_ref_for(openapi, "/api/v1/bag/start", method="post").endswith("/BagOperationResponse")
-    assert _request_schema_ref_for(openapi, "/api/v1/bag/start").endswith("/BagStartRequest")
-    assert _schema_ref_for(openapi, "/api/v1/bag/stop", method="post").endswith("/BagOperationResponse")
-    assert _schema_ref_for(openapi, "/api/v1/bag/status").endswith("/BagStatusResponse")
+    for prefix in ("/api/v1/recordings", "/api/v1/bag"):
+        assert _schema_ref_for(openapi, f"{prefix}/start", method="post").endswith(
+            "/RecordingOperationResponse"
+        )
+        assert _request_schema_ref_for(openapi, f"{prefix}/start").endswith(
+            "/RecordingStartRequest"
+        )
+        assert _schema_ref_for(openapi, f"{prefix}/stop", method="post").endswith(
+            "/RecordingOperationResponse"
+        )
+        assert _schema_ref_for(openapi, f"{prefix}/status").endswith(
+            "/RecordingStatusResponse"
+        )
+    assert openapi["paths"]["/api/v1/bag/start"]["post"]["deprecated"] is True
     assert _schema_ref_for(openapi, "/api/v1/webrtc/go2rtc/status").endswith("/Go2RTCStatusResponse")
     assert _schema_ref_for(openapi, "/api/v1/map_cloud/reset", method="post").endswith("/MapLifecycleResponse")
     assert _schema_ref_for(openapi, "/api/v1/map/activate", method="post").endswith("/MapLifecycleResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/map/activate").endswith("/MapNameRequest")
     assert _schema_ref_for(openapi, "/api/v1/map/rename", method="post").endswith("/MapLifecycleResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/map/rename").endswith("/MapRenameRequest")
-    assert _schema_ref_for(openapi, "/api/v1/map/save", method="post").endswith("/MapLifecycleResponse")
+    assert _schema_ref_for(openapi, "/api/v1/map/save", method="post").endswith("/MapSaveOperationResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/map/save").endswith("/MapSaveRequest")
+    assert _schema_ref_for(openapi, "/api/v1/maps/operations").endswith("/MapSaveOperationResponse")
+    assert _schema_ref_for(openapi, "/api/v1/maps/operations/{operation_id}").endswith(
+        "/MapSaveOperationResponse"
+    )
     assert _schema_ref_for(openapi, "/api/v1/map/restore_predufo", method="post").endswith("/MapLifecycleResponse")
     assert _request_schema_ref_for(openapi, "/api/v1/map/restore_predufo").endswith("/MapNameRequest")
     assert _schema_ref_for(openapi, "/api/v1/app/bootstrap").endswith("/AppBootstrapResponse")
@@ -2300,6 +2415,9 @@ def test_openapi_exposes_client_response_models():
     assert schemas["NavigationStatusResponse"]["properties"]["progress"]["$ref"].endswith("/NavigationProgressSummary")
     assert schemas["NavigationStatusResponse"]["properties"]["frames"]["$ref"].endswith("/NavigationFrameSummary")
     assert schemas["ReadinessResponse"]["properties"]["runtime"]["$ref"].endswith("/ReadinessRuntimeSummary")
+    assert schemas["ReadinessResponse"]["properties"]["product_contract"]["$ref"].endswith(
+        "/ReadinessProductContract"
+    )
     readiness_runtime = schemas["ReadinessRuntimeSummary"]["properties"]
     assert readiness_runtime["localization"]["anyOf"][0]["$ref"].endswith("/ReadinessLocalizationRuntime")
     assert readiness_runtime["boundary"]["anyOf"][0]["$ref"].endswith("/ReadinessRuntimeBoundary")

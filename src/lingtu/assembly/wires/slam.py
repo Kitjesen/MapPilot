@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from runtime.contracts import GNSS_ROLE, LIDAR_ROLE
 from runtime.runtime_interface import TOPICS
 
 from .context import (
@@ -45,7 +46,13 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     if ctx.slam_module:
         if ctx.slam_module == "SlamModule":
             specs.extend(
-                WireSpec(ctx.slam_module, "map_observation", consumer, "map_observation")
+                WireSpec(
+                    ctx.slam_module,
+                    "map_observation",
+                    consumer,
+                    "map_observation",
+                    topic=TOPICS.map_observation,
+                )
                 for consumer in MAP_OBSERVATION_CONSUMERS
                 if consumer in ctx.names
             )
@@ -58,12 +65,18 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
         else:
             legacy_consumers = MAP_CLOUD_CONSUMERS
             if ctx.slam_module == "SlamAdapterModule":
+                legacy_consumers = tuple(
+                    consumer
+                    for consumer in MAP_CLOUD_CONSUMERS
+                    if consumer not in MAP_OBSERVATION_CONSUMERS
+                )
                 specs.extend(
                     WireSpec(
                         ctx.slam_module,
                         "map_observation",
                         consumer,
                         "map_observation",
+                        topic=TOPICS.map_observation,
                     )
                     for consumer in MAP_OBSERVATION_CONSUMERS
                     if consumer in ctx.names
@@ -115,36 +128,23 @@ def map_cloud_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     if ctx.slam_module != "SlamModule":
         return ()
-    source = ""
-    if "lidar" in ctx.names:
-        source = "lidar"
-    # Backward-compat fallback: prefer the short "lidar" role above; only fall
-    # back to the legacy "LidarModule" name when an old blueprint still uses it.
-    elif "LidarModule" in ctx.names:
-        source = "LidarModule"
-    elif (
-        ctx.legacy_driver_sensor_fallback
-        and ctx.driver_module == "MujocoDriverModule"
-        and "MujocoDriverModule" in ctx.names
-    ):
-        source = "MujocoDriverModule"
-    if not source:
+    if LIDAR_ROLE not in ctx.names:
         return ()
     return (
         WireSpec(
-            source,
+            LIDAR_ROLE,
             "raw_scan",
             "SlamModule",
             "lidar_raw_scan",
-            transport="dds",
+            delivery="dds",
             topic=TOPICS.raw_lidar_points,
         ),
         WireSpec(
-            source,
+            LIDAR_ROLE,
             "imu",
             "SlamModule",
             "lidar_imu",
-            transport="dds",
+            delivery="dds",
             topic=TOPICS.raw_imu,
         ),
     )
@@ -153,7 +153,7 @@ def sensor_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
 def scan_view_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     """Wire the Gateway live scan overlay to the raw LiDAR role when present.
 
-    Field profiles do not instantiate a Python LiDAR owner. In that case the
+    Real-env Product Hosts do not instantiate a Python LiDAR owner. In that case the
     native SLAM status adapter can expose the same scan as a file snapshot from
     the C++ runtime without using cyclonedds-python in the robot process.
     """
@@ -161,10 +161,8 @@ def scan_view_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
         return ()
     source = ""
     source_port = "scan"
-    if "lidar" in ctx.names:
-        source = "lidar"
-    elif "LidarModule" in ctx.names:
-        source = "LidarModule"
+    if LIDAR_ROLE in ctx.names:
+        source = LIDAR_ROLE
     elif ctx.slam_module and ctx.slam_module != "SlamModule":
         source = ctx.slam_module
         source_port = "lidar_scan"
@@ -176,7 +174,7 @@ def scan_view_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
             source_port,
             "GatewayModule",
             "lidar_scan",
-            transport="local",
+            delivery="local",
             topic=TOPICS.lidar_scan,
         ),
     )
@@ -186,10 +184,8 @@ def gnss_feed_specs(ctx: WiringContext) -> tuple[WireSpec, ...]:
     if not ctx.slam_module:
         return ()
     source = ""
-    if "gnss" in ctx.names:
-        source = "gnss"
-    elif "GnssModule" in ctx.names:
-        source = "GnssModule"
+    if GNSS_ROLE in ctx.names:
+        source = GNSS_ROLE
     if not source:
         return ()
     return (

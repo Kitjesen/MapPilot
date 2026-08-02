@@ -88,7 +88,7 @@ def test_teleop_stream_command_uses_typed_navigation_control_boundary(tmp_path: 
 
 
 def test_native_teleop_stream_watchdog_sends_zero_and_stops_session() -> None:
-    source = Path("src/nav/cpp/endpoint/nav_control.cpp").read_text(encoding="utf-8")
+    source = Path("src/nav/cpp/endpoint/motion/nav_control.cpp").read_text(encoding="utf-8")
     start = source.index("if (input_timed_out) {")
     end = source.index("if (SteadyClock::now() >= next_publish)", start)
     timeout_branch = source[start:end]

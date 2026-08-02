@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(lingtu_native_runtime_components LANGUAGES CXX)
 
-option(LINGTU_NATIVE_RUNTIME_COMPONENTS_BUILD_TESTS "Build native runtime manifest tests" ON)
+option(LINGTU_NATIVE_RUNTIME_COMPONENTS_BUILD_TESTS "Build native runtime component tests" ON)
 set(LINGTU_POSE_GRAPH_OPT_LIB "" CACHE FILEPATH "Prebuilt pose_graph_opt static library")
 
 set(POSE_GRAPH_OPT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../kernels/slam/pose_graph_opt")

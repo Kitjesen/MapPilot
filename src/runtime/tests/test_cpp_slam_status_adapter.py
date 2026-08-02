@@ -5,16 +5,20 @@ import time
 
 import pytest
 
+from cli.runtime_extra import _uses_non_ros_localization_adapter
+from lingtu.assembly.graph import graph_for_profile
+from lingtu.assembly.products import resolve_product_host_config
+from lingtu.assembly.profile_builder import blueprint_for_resolved_product
+from lingtu.assembly.stacks.slam import slam
+from localization.adapters.resolver import localization_adapter_module
 from localization.adapters.status import (
     STATUS_SNAPSHOT_HEALTH_SOURCE,
     STATUS_SNAPSHOT_SCHEMA,
     CppSlamStatusAdapterModule,
 )
-from lingtu.assembly.profile_builder import blueprint_for_resolved_profile
-from lingtu.assembly.stacks.slam import slam
 from runtime.msgs.map import MapObservationFrame
 from runtime.msgs.sensor import PointCloud2
-from runtime.profiles.resolver import resolve_profile_config
+from runtime.registry import list_plugins
 
 
 def test_cpp_slam_status_adapter_reads_cpp_status_snapshot(tmp_path) -> None:
@@ -61,6 +65,16 @@ def test_cpp_slam_status_adapter_reads_cpp_status_snapshot(tmp_path) -> None:
     assert status_seen[-1]["map_loaded"] is True
     assert status_seen[-1]["scene_mode"] == "outdoor"
     assert status_seen[-1]["map_odom_tf"]["valid"] is True
+    assert status_seen[-1]["relocalization_refine_input_points"] == 485
+    assert status_seen[-1]["relocalization_refine_evaluated_points"] == 298
+    assert status_seen[-1]["relocalization_min_inliers"] == 30
+    assert status_seen[-1]["relocalization_min_evaluated_points"] == 100
+    assert status_seen[-1]["relocalization_refine_support_ratio"] == pytest.approx(
+        298 / 485
+    )
+    assert status_seen[-1][
+        "relocalization_refine_overlap_inlier_ratio"
+    ] == pytest.approx(292 / 298)
     assert tf_seen[-1]["child_frame_id"] == "odom"
     assert tf_seen[-1]["tx"] == 0.1
     assert adapter._frame_tree.lookup("map", "odom", ts=123.0).translation.x == 0.1
@@ -305,6 +319,45 @@ def test_cpp_slam_status_adapter_marks_rewritten_but_stalled_source_stale(tmp_pa
     assert alive_seen[-1] is True
 
 
+def test_cpp_slam_status_adapter_is_the_only_status_adapter_name() -> None:
+    assert localization_adapter_module("cpp_slam_status") is CppSlamStatusAdapterModule
+    assert "native_slam_status" not in list_plugins("localization_adapter")
+    assert _uses_non_ros_localization_adapter(
+        {"localization_adapter": "cpp_slam_status"}
+    )
+
+    graph = graph_for_profile(
+        "dev",
+        slam_profile="bridge",
+        localization_adapter="cpp_slam_status",
+    )
+    assert "SlamAdapterModule" in graph.modules
+    assert "SlamModule" not in graph.modules
+
+
+@pytest.mark.parametrize(
+    "adapter_name",
+    ("native_slam_status", "native", "native_slam", "slam"),
+)
+def test_removed_localization_adapter_aliases_fail_closed(adapter_name: str) -> None:
+    with pytest.raises(ImportError, match="was removed"):
+        localization_adapter_module(adapter_name)
+
+    assert not _uses_non_ros_localization_adapter(
+        {"localization_adapter": adapter_name}
+    )
+    assert not slam(
+        "fastlio2",
+        enable_visual_backup=False,
+        localization_adapter=adapter_name,
+    )._entries
+    with pytest.raises(ImportError, match="was removed"):
+        graph_for_profile(
+            "dev",
+            slam_profile="fastlio2",
+            localization_adapter=adapter_name,
+        )
+
 def test_slam_stack_can_select_cpp_slam_status_adapter() -> None:
     bp = slam("bridge", enable_visual_backup=False, localization_adapter="cpp_slam_status")
 
@@ -312,19 +365,35 @@ def test_slam_stack_can_select_cpp_slam_status_adapter() -> None:
     assert bp._entries[0].module_cls is CppSlamStatusAdapterModule
 
 
-def test_thunder_field_product_blueprints_use_cpp_slam_status_adapter() -> None:
-    for profile in ("map", "nav", "explore", "tare_explore"):
-        config = resolve_profile_config(profile)
-        bp = blueprint_for_resolved_profile(profile, config)
-        slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
+@pytest.mark.parametrize(
+    ("product", "product_variant"),
+    (
+        ("map", None),
+        ("nav", None),
+        ("explore", "live"),
+        ("explore", "map"),
+    ),
+)
+def test_real_product_blueprints_use_cpp_slam_status_adapter(
+    product: str,
+    product_variant: str | None,
+) -> None:
+    config = resolve_product_host_config(
+        product,
+        "real",
+        product_variant=product_variant,
+    )
+    bp = blueprint_for_resolved_product(product, config)
+    slam_entry = next(entry for entry in bp._entries if entry.name == "SlamAdapterModule")
 
-        assert config["_runtime_endpoint"] == "thunder_field"
-        assert config["_endpoint_transport"] == "dds"
-        assert config["localization_adapter"] == "cpp_slam_status"
-        assert "nav_in_adapter" not in config
-        assert "nav_out_adapter" not in config
-        assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
-        assert slam_entry.module_cls is CppSlamStatusAdapterModule
+    assert config["_selection_kind"] == "product"
+    assert config["_env"] == "real"
+    assert config["_endpoint_transport"] == "dds"
+    assert config["localization_adapter"] == "cpp_slam_status"
+    assert "nav_in_adapter" not in config
+    assert "nav_out_adapter" not in config
+    assert config["native_navigation_endpoint"] == "lingtu-nav-dds"
+    assert slam_entry.module_cls is CppSlamStatusAdapterModule
 
 
 def test_cpp_slam_status_adapter_adds_map_frame_jump_delta() -> None:
@@ -376,6 +445,7 @@ def test_cpp_slam_status_adapter_resets_observation_cursor_for_new_runtime() -> 
 
     second = json.loads(json.dumps(first))
     second["runtime_instance_id"] = "slam-new-runtime"
+    second["source_epoch"] = 2
     second["observation_sequence"] = 1
     second["stamp_s"] = 200.0
     second["state_estimation_at_scan"]["stamp_s"] = 200.0
@@ -383,6 +453,7 @@ def test_cpp_slam_status_adapter_resets_observation_cursor_for_new_runtime() -> 
     adapter._publish_status_snapshot(second)
 
     assert [frame.sequence for frame in observations] == [10, 1]
+    assert [frame.reset_epoch for frame in observations] == [1, 2]
     assert adapter._last_observation_sequence == 1
     assert adapter._last_observation_runtime_id == "slam-new-runtime"
 
@@ -492,6 +563,17 @@ def _status_payload() -> dict:
         "map_frame_jump": False,
         "map_frame_jump_sequence": 0,
         "scene_mode": "outdoor",
+        "relocalization_refine_backend": "fixed_transform_seed_check",
+        "relocalization_refine_iterations": 0,
+        "relocalization_refine_inliers": 292,
+        "relocalization_refine_input_points": 485,
+        "relocalization_refine_evaluated_points": 298,
+        "relocalization_min_inliers": 30,
+        "relocalization_min_evaluated_points": 100,
+        "relocalization_refine_support_ratio": 298 / 485,
+        "relocalization_refine_overlap_inlier_ratio": 292 / 298,
+        "relocalization_refine_converged": True,
+        "relocalization_refine_pos_cov_trace": 0.01,
         "gnss_fusion_health": {
             "enabled": True,
             "alignment_locked": True,

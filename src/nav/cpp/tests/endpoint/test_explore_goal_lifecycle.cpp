@@ -56,7 +56,7 @@ ExplorationSegmentIdentity segmentIdentity(std::uint64_t generation = 11U) {
 }
 
 void testMismatchedFailureIsIgnored() {
-  const PendingExploreGoalLifecycle pending{"tare-goal-1"};
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", {}};
   const auto reaction = reactToNavigationGoalLifecycle(
       &pending, event("other-goal", NavigationGoalState::Failed, "goal_outside_map"));
   require(!reaction.matched, "a different goal must not affect TARE state");
@@ -65,7 +65,7 @@ void testMismatchedFailureIsIgnored() {
 }
 
 void testMatchingFailureRequestsReplan() {
-  const PendingExploreGoalLifecycle pending{"tare-goal-1"};
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", {}};
   const auto reaction = reactToNavigationGoalLifecycle(
       &pending, event("tare-goal-1", NavigationGoalState::Failed, "goal_outside_map"));
   require(reaction.matched, "matching failure must be consumed");
@@ -76,7 +76,7 @@ void testMatchingFailureRequestsReplan() {
 }
 
 void testTerminalStatusCannotRestoreOldMapVisitedTarget() {
-  const PendingExploreGoalLifecycle pending{"tare-goal-1"};
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", {}};
   const auto reaction = reactToNavigationGoalLifecycle(
       &pending, event("tare-goal-1", NavigationGoalState::Failed, "goal_outside_map"));
   require(shouldMarkExploreGoalVisited(reaction, true),
@@ -86,7 +86,7 @@ void testTerminalStatusCannotRestoreOldMapVisitedTarget() {
 }
 
 void testPathActiveRetainsPendingGoal() {
-  const PendingExploreGoalLifecycle pending{"tare-goal-1"};
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", {}};
   const auto reaction = reactToNavigationGoalLifecycle(
       &pending, event("tare-goal-1", NavigationGoalState::PathActive));
   require(reaction.matched, "matching active event must be observed");
@@ -96,7 +96,7 @@ void testPathActiveRetainsPendingGoal() {
 }
 
 void testMatchingReachedExcludesWithoutReplan() {
-  const PendingExploreGoalLifecycle pending{"tare-goal-1"};
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", {}};
   const auto reaction = reactToNavigationGoalLifecycle(
       &pending, event("tare-goal-1", NavigationGoalState::Reached, "goal_reached"));
   require(reaction.matched, "matching arrival must be consumed");
@@ -106,13 +106,26 @@ void testMatchingReachedExcludesWithoutReplan() {
 }
 
 void testMatchingCancelledClearsWithoutExcluding() {
-  const PendingExploreGoalLifecycle pending{"tare-goal-1"};
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", {}};
   const auto reaction = reactToNavigationGoalLifecycle(
       &pending, event("tare-goal-1", NavigationGoalState::Cancelled, "operator_stop"));
   require(reaction.matched, "matching cancellation must be consumed");
   require(reaction.clear_pending, "cancellation must clear pending state");
   require(!reaction.exclude_target, "cancellation must not poison a valid frontier");
   require(!reaction.request_replan, "cancellation must wait for a fresh policy cycle");
+}
+
+void testMatchingTaskCancelRequestClearsPendingGoal() {
+  const PendingExploreGoalLifecycle pending{"tare-goal-1", "tare-cancel-1"};
+  const auto reaction = reactToNavigationGoalLifecycle(
+      &pending, event("tare-cancel-1", NavigationGoalState::Cancelled, "operator_stop"));
+  require(reaction.matched, "task-cancel terminal identity must be consumed");
+  require(reaction.clear_pending, "task-cancel terminal identity must clear the pending goal");
+  require(!reaction.exclude_target, "task cancellation must not poison a valid frontier");
+
+  const auto mismatch = reactToNavigationGoalLifecycle(
+      &pending, event("other-cancel", NavigationGoalState::Cancelled, "operator_stop"));
+  require(!mismatch.matched, "a foreign task-cancel terminal identity must remain ignored");
 }
 
 void testTerminalEventAfterClearIsIgnored() {
@@ -318,9 +331,10 @@ int main() {
   testMatchingFailureRequestsReplan();
   testTerminalStatusCannotRestoreOldMapVisitedTarget();
   testPathActiveRetainsPendingGoal();
-  testMatchingReachedExcludesWithoutReplan();
-  testMatchingCancelledClearsWithoutExcluding();
-  testTerminalEventAfterClearIsIgnored();
+    testMatchingReachedExcludesWithoutReplan();
+    testMatchingCancelledClearsWithoutExcluding();
+    testMatchingTaskCancelRequestClearsPendingGoal();
+    testTerminalEventAfterClearIsIgnored();
   testOnlyExactStaticMapBoundaryFailureUsesSegmentFallback();
   testSegmentAckAndStatusRequireExactBinding();
   testUnboundExecuteRejectionIsTerminal();

@@ -138,10 +138,10 @@ def test_perception_stack_config_uses_independent_mujoco_camera_role() -> None:
     assert config["use_driver_camera"] is False
 
 
-def test_perception_stack_config_does_not_auto_enable_ros2_camera_bridge() -> None:
-    config = perception_stack_config({}, driver_module="ROS2SimDriverModule")
+def test_perception_stack_config_keeps_external_driver_config_minimal() -> None:
+    config = perception_stack_config({}, driver_module="ExternalDriverModule")
 
-    assert config == {"_driver_cls_name": "ROS2SimDriverModule"}
+    assert config == {"_driver_cls_name": "ExternalDriverModule"}
 
 
 def test_exploration_stack_config_keeps_only_supported_bridge_keys() -> None:
@@ -177,6 +177,6 @@ def test_native_tare_endpoint_is_the_single_exploration_owner() -> None:
 def test_needs_lidar_for_slam_only_for_managed_lidar_slam() -> None:
     assert needs_lidar_for_slam("fastlio2") is True
     assert needs_lidar_for_slam("localizer") is True
+    assert needs_lidar_for_slam("genz") is True
     assert needs_lidar_for_slam("bridge") is False
     assert needs_lidar_for_slam("none") is False
-    assert needs_lidar_for_slam("super_lio") is False

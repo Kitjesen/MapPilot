@@ -11,8 +11,8 @@ Usage:
 Starts a visible LingTu-only Gazebo industrial-yard demo:
   Gazebo scene + Thunder proxy + LiDAR bridge + LingTu nav chain + frontier map driver + RViz.
 
-LingTu profile contract: sim_industrial.
-This never starts hardware drivers and never publishes to a real robot.
+Simulation backend contract: gazebo_industrial.
+This launcher does not start a LingTu Host Profile, never starts hardware drivers, and never publishes to a real robot.
 EOF
 }
 
@@ -63,7 +63,7 @@ prepare_env() {
   export FASTDDS_BUILTIN_TRANSPORTS="${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}"
   export GZ_PARTITION="${GZ_PARTITION:-lingtu_industrial_${ROS_DOMAIN_ID}_$(date +%s)}"
   export IGN_PARTITION="${IGN_PARTITION:-$GZ_PARTITION}"
-  export LINGTU_PROFILE="${LINGTU_PROFILE:-sim_industrial}"
+  export LINGTU_SIM_BACKEND="${LINGTU_SIM_BACKEND:-gazebo_industrial}"
 }
 
 start_demo() {
@@ -96,7 +96,7 @@ start_demo() {
   [[ -x "$python_bin" ]] || python_bin="python3"
 
   echo "run_dir=$run_dir" | tee "$run_dir/status.txt"
-  echo "LINGTU_PROFILE=$LINGTU_PROFILE" | tee -a "$run_dir/status.txt"
+  echo "LINGTU_SIM_BACKEND=$LINGTU_SIM_BACKEND" | tee -a "$run_dir/status.txt"
   echo "ROS_DOMAIN_ID=$ROS_DOMAIN_ID GZ_PARTITION=$GZ_PARTITION" | tee -a "$run_dir/status.txt"
 
   ros2 launch "$root/launch/gazebo_simulation.launch.py" \
@@ -113,16 +113,13 @@ start_demo() {
 
   sleep "${LINGTU_GAZEBO_BOOT_WAIT_SEC:-8}"
 
-  "$python_bin" "$root/sim/scripts/gazebo_lingtu_stack.py" \
-    --profile "$LINGTU_PROFILE" \
-    --gateway-port "${LINGTU_GATEWAY_PORT:-5050}" \
-    --planner astar \
-    --frontier-safe-distance 0.80 \
-    --frontier-max-dist 20.0 \
-    --frontier-rate 2.0 \
-    >"$run_dir/navigation.log" 2>&1 &
-  echo $! >"$run_dir/navigation.pid"
-
+  echo "LingTu Host Profile entrypoint was removed for gazebo_industrial."
+  echo "This launcher starts the Gazebo simulator, bridge, and optional gates only."
+  {
+    echo "LingTu Host Profile entrypoint was removed for gazebo_industrial."
+    echo "No Host process was started by this launcher."
+    echo "Use ProductControl with the sim env backend when Host execution is required."
+  } >"$run_dir/navigation.log"
   sleep "${LINGTU_NAV_BOOT_WAIT_SEC:-4}"
 
   local continue_after_pass="${LINGTU_GAZEBO_DEMO_CONTINUE_AFTER_PASS_SEC:-600}"
@@ -175,7 +172,6 @@ stop_demo() {
   kill_pid_file "$run_dir/navigation.pid"
   kill_pid_file "$run_dir/gazebo.pid"
   pkill -f "gazebo_frontier_exploration_smoke.py.*lingtu_gazebo_industrial_demo" >/dev/null 2>&1 || true
-  pkill -f "gazebo_lingtu_stack.py.*sim_industrial" >/dev/null 2>&1 || true
   pkill -f "sim_navigation.launch.py.*gazebo_line_require_grid" >/dev/null 2>&1 || true
   pkill -f "gazebo_simulation.launch.py.*lingtu_gazebo_industrial_park.sdf" >/dev/null 2>&1 || true
   pkill -f "gz_sim.launch.py.*lingtu_gazebo_industrial_park" >/dev/null 2>&1 || true

@@ -20,6 +20,22 @@ globalPlanStaleReason(const GlobalPlanCompletion &completion, std::uint64_t curr
   if (!completion.error.empty() || completion.result.cancelled) {
     return {};
   }
+  const auto &overlay = completion.context.request.temporary_overlay;
+  const bool result_has_overlay_identity =
+      completion.result.overlay_revision != 0U || completion.result.overlay_frame_epoch != 0U ||
+      completion.result.overlay_obstacle_generation != 0U ||
+      completion.result.overlay_traversability_generation != 0U;
+  if (overlay.empty()) {
+    if (result_has_overlay_identity) {
+      return "unexpected_temporary_overlay_identity";
+    }
+  } else if (completion.result.overlay_revision != overlay.revision ||
+             completion.result.overlay_frame_epoch != overlay.frame_epoch ||
+             completion.result.overlay_obstacle_generation != overlay.obstacle_generation ||
+             completion.result.overlay_traversability_generation !=
+                 overlay.traversability_generation) {
+    return "temporary_overlay_identity_mismatch";
+  }
   if (!completion.result.map_identity.valid()) {
     return "planner_map_identity_missing";
   }

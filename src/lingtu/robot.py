@@ -9,34 +9,20 @@ logger = logging.getLogger(__name__)
 
 
 class Robot:
-    """Complete robot interface backed by a runtime profile.
+    """Local Python facade backed by one Host Profile.
 
-    ``mode`` selects a profile from ``cli/profiles_data.py``:
-
-    - ``nav``: saved-map navigation
-    - ``sim``: MuJoCo simulation
-    - ``explore``: frontier exploration
-    - ``map``: mapping / SLAM
-    - ``dev``: semantic pipeline on the stub driver
+    Canonical profiles are ``stub``, ``dev``, ``sim``, and ``sim_nav``.
+    Field Products are started through ProductControl, not this facade.
     """
 
-    _MODE_TO_PROFILE = {
-        "nav": "nav",
-        "sim": "sim",
-        "explore": "explore",
-        "map": "map",
-        "dev": "dev",
-    }
-
-    def __init__(self, mode: str = "nav", *, profile: str | None = None, **overrides):
-        self._mode = mode
-        self._profile = profile or self._MODE_TO_PROFILE.get(mode, mode)
+    def __init__(self, profile: str = "dev", **overrides):
+        self._profile = profile
         self._overrides = overrides
         self._system = None
         self._started = False
 
     def start(self) -> Robot:
-        """Build and start the selected runtime profile."""
+        """Build and start the selected local Host Profile."""
 
         if self._started:
             return self
@@ -74,9 +60,9 @@ class Robot:
             return None
 
     def _nav(self):
-        """Return the canonical command adapter, then the compatibility target."""
+        """Return the canonical local navigation command adapter."""
 
-        return self._mod("nav.skills") or self._mod("nav.mission")
+        return self._mod("nav.skills")
 
     def go(self, instruction: str) -> str:
         """Send a natural-language instruction to the semantic planner."""
@@ -92,7 +78,7 @@ class Robot:
     def go_to(self, x: float, y: float, yaw: float = 0.0, *, z: float | None = None) -> str:
         """Navigate to map coordinates.
 
-        ``z`` is optional for old 2D calls. If omitted, Navigation uses
+        If ``z`` is omitted, Navigation uses
         the current odometry height and then falls back to ``0.0``.
         """
 
@@ -198,14 +184,13 @@ class Robot:
             return False
         try:
             result = getattr(mm, skill)(name)
-            if isinstance(result, str):
-                payload = json.loads(result)
-                if "ok" in payload:
-                    return bool(payload["ok"])
-                if "success" in payload:
-                    return bool(payload["success"])
-                return "error" not in payload
-            return bool(result)
+            payload = json.loads(result) if isinstance(result, str) else result
+            if isinstance(payload, dict):
+                acknowledgements = [payload[key] for key in ("ok", "success") if key in payload]
+                if not acknowledgements or any(not isinstance(value, bool) for value in acknowledgements):
+                    return False
+                return all(acknowledgements)
+            return result is True
         except Exception as e:
             logger.error("%s failed: %s", skill, e)
             return False

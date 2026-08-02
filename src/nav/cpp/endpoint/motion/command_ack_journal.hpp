@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -11,6 +12,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "message/cpp/navigation_command.hpp"
 
@@ -43,18 +45,14 @@ inline void appendDouble(std::string &output, double value) {
 struct CommandPayload {
   std::string frame_id;
   std::array<double, 7> goal{};
-  std::array<double, 6> velocity{};
   std::string reason;
 
   std::string canonical() const {
     std::string output;
-    output.reserve(sizeof(std::uint64_t) * (2U + goal.size() + velocity.size()) + frame_id.size() +
+    output.reserve(sizeof(std::uint64_t) * (2U + goal.size()) + frame_id.size() +
                    reason.size());
     command_journal_detail::appendString(output, frame_id);
     for (const double value : goal) {
-      command_journal_detail::appendDouble(output, value);
-    }
-    for (const double value : velocity) {
       command_journal_detail::appendDouble(output, value);
     }
     command_journal_detail::appendString(output, reason);
@@ -65,6 +63,7 @@ struct CommandPayload {
 struct CommandIdentity {
   std::string client_id;
   std::string request_id;
+  std::string task_id;
   lingtu::message::NavigationCommandKind kind{lingtu::message::NavigationCommandKind::Goal};
   std::string canonical_payload;
 };
@@ -100,39 +99,62 @@ class CommandAckJournal {
 
   JournalLookup lookup(const CommandIdentity &identity, Clock::time_point now = Clock::now()) {
     prune(now);
-    const Key key{
-        identity.client_id,
-        identity.request_id,
-        identity.kind,
-    };
+    const Key key = keyFor(identity);
+    for (const auto &[entry_key, entry] : entries_) {
+      if (entry_key.client_id == identity.client_id && entry_key.kind == identity.kind &&
+          std::find(entry.request_ids.begin(), entry.request_ids.end(), identity.request_id) !=
+              entry.request_ids.end() &&
+          (!(entry_key == key) || entry.identity.task_id != identity.task_id ||
+           entry.identity.canonical_payload != identity.canonical_payload)) {
+        return {JournalDisposition::Conflict, std::nullopt};
+      }
+    }
     const auto found = entries_.find(key);
     if (found == entries_.end()) {
       return {};
     }
-    if (found->second.identity.canonical_payload != identity.canonical_payload) {
+    if (found->second.identity.task_id != identity.task_id ||
+        found->second.identity.canonical_payload != identity.canonical_payload) {
       return {JournalDisposition::Conflict, std::nullopt};
+    }
+    if (std::find(found->second.request_ids.begin(), found->second.request_ids.end(),
+                  identity.request_id) == found->second.request_ids.end()) {
+      found->second.request_ids.push_back(identity.request_id);
     }
     return {JournalDisposition::Replay, found->second.ack};
   }
 
   void remember(CommandIdentity identity, CommandAck ack, Clock::time_point now = Clock::now()) {
     prune(now);
-    Key key{
-        identity.client_id,
-        identity.request_id,
-        identity.kind,
-    };
+    Key key = keyFor(identity);
+    for (const auto &[entry_key, entry] : entries_) {
+      if (entry_key.client_id == identity.client_id && entry_key.kind == identity.kind &&
+          std::find(entry.request_ids.begin(), entry.request_ids.end(), identity.request_id) !=
+              entry.request_ids.end() &&
+          (!(entry_key == key) || entry.identity.task_id != identity.task_id ||
+           entry.identity.canonical_payload != identity.canonical_payload)) {
+        throw std::logic_error("cannot alias one request ID to conflicting task identity");
+      }
+    }
     const auto found = entries_.find(key);
     if (found != entries_.end()) {
-      if (found->second.identity.canonical_payload != identity.canonical_payload) {
+      if (found->second.identity.task_id != identity.task_id ||
+          found->second.identity.canonical_payload != identity.canonical_payload) {
         throw std::logic_error("cannot overwrite command ACK with a conflicting identity");
       }
       found->second.ack = std::move(ack);
+      if (std::find(found->second.request_ids.begin(), found->second.request_ids.end(),
+                    identity.request_id) == found->second.request_ids.end()) {
+        found->second.request_ids.push_back(identity.request_id);
+      }
       return;
     }
 
     order_.push_back(key);
-    entries_.emplace(std::move(key), Entry{std::move(identity), std::move(ack), now});
+    std::vector<std::string> request_ids{identity.request_id};
+    entries_.emplace(
+        std::move(key),
+        Entry{std::move(identity), std::move(ack), now, std::move(request_ids)});
     while (entries_.size() > capacity_ && !order_.empty()) {
       entries_.erase(order_.front());
       order_.pop_front();
@@ -142,18 +164,18 @@ class CommandAckJournal {
  private:
   struct Key {
     std::string client_id;
-    std::string request_id;
+    std::string logical_id;
     lingtu::message::NavigationCommandKind kind{lingtu::message::NavigationCommandKind::Goal};
 
     bool operator==(const Key &other) const noexcept {
-      return client_id == other.client_id && request_id == other.request_id && kind == other.kind;
+      return client_id == other.client_id && logical_id == other.logical_id && kind == other.kind;
     }
   };
 
   struct KeyHash {
     std::size_t operator()(const Key &key) const noexcept {
       const std::size_t client_hash = std::hash<std::string>{}(key.client_id);
-      const std::size_t request_hash = std::hash<std::string>{}(key.request_id);
+      const std::size_t request_hash = std::hash<std::string>{}(key.logical_id);
       const std::size_t request_key_hash =
           client_hash ^ (request_hash + static_cast<std::size_t>(0x9e3779b9U) +
                          (client_hash << 6U) + (client_hash >> 2U));
@@ -166,7 +188,19 @@ class CommandAckJournal {
     CommandIdentity identity;
     CommandAck ack;
     Clock::time_point recorded_at;
+    std::vector<std::string> request_ids;
   };
+
+  static Key keyFor(const CommandIdentity &identity) {
+    const bool retry_is_task_scoped =
+        identity.kind == lingtu::message::NavigationCommandKind::Goal ||
+        identity.kind == lingtu::message::NavigationCommandKind::TaskCancel;
+    return {
+        identity.client_id,
+        retry_is_task_scoped && !identity.task_id.empty() ? identity.task_id : identity.request_id,
+        identity.kind,
+    };
+  }
 
   void prune(Clock::time_point now) {
     while (!order_.empty()) {

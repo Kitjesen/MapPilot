@@ -40,7 +40,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-lite.txt pytest
+          python -m pip install -e '.[lite]' pytest
 
       - name: Run portable FastLIO2 tests
         shell: pwsh

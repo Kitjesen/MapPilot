@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lingtu::explore {
@@ -25,9 +27,7 @@ struct Grid2D {
            cells.size() == static_cast<std::size_t>(width * height);
   }
 
-  [[nodiscard]] int index(int row, int col) const {
-    return row * width + col;
-  }
+  [[nodiscard]] int index(int row, int col) const { return row * width + col; }
 
   [[nodiscard]] bool inBounds(int row, int col) const {
     return row >= 0 && row < height && col >= 0 && col < width;
@@ -47,6 +47,38 @@ struct Pose2D {
 struct DirectedTarget {
   double x = 0.0;
   double y = 0.0;
+};
+
+// Internal semantic stamp for live rolling maps. Wire adapters continue to
+// read and write session_id/reset_epoch/generation and translate them here.
+struct MapStamp {
+  std::string session_id;
+  std::uint64_t epoch{0U};
+  std::uint64_t revision{0U};
+  double timestamp{0.0};
+
+  MapStamp() = default;
+  MapStamp(std::string session, std::uint64_t map_epoch, std::uint64_t map_revision,
+           double map_timestamp)
+      : session_id(std::move(session)),
+        epoch(map_epoch),
+        revision(map_revision),
+        timestamp(map_timestamp) {}
+
+  [[nodiscard]] bool valid() const {
+    return !session_id.empty() && epoch != 0U && revision != 0U && std::isfinite(timestamp) &&
+           timestamp > 0.0;
+  }
+
+  [[nodiscard]] bool sameEpoch(const MapStamp &other) const {
+    return session_id == other.session_id && epoch == other.epoch;
+  }
+
+  [[nodiscard]] bool operator==(const MapStamp &other) const {
+    return sameEpoch(other) && revision == other.revision && timestamp == other.timestamp;
+  }
+
+  [[nodiscard]] bool operator!=(const MapStamp &other) const { return !(*this == other); }
 };
 
 struct ExploreMapIdentity {
@@ -69,15 +101,20 @@ struct ExploreMapIdentity {
     return !map_id.empty() && map_version > 0 && !artifact_hash.empty();
   }
 
-  [[nodiscard]] bool sameSource(const ExploreMapIdentity& other) const {
-    return frame_id == other.frame_id && session_id == other.session_id &&
-           map_id == other.map_id && map_version == other.map_version &&
-           artifact_hash == other.artifact_hash && live == other.live;
+  [[nodiscard]] bool sameSource(const ExploreMapIdentity &other) const {
+    return frame_id == other.frame_id && session_id == other.session_id && map_id == other.map_id &&
+           map_version == other.map_version && artifact_hash == other.artifact_hash &&
+           live == other.live;
+  }
+
+  [[nodiscard]] MapStamp stamp(double timestamp) const {
+    return MapStamp{session_id, reset_epoch, generation, timestamp};
   }
 };
 
 struct ExploreInput {
   Grid2D exploration_grid;
+  std::optional<Grid2D> live_observation_grid;
   Pose2D robot_pose;
   std::vector<Pose2D> visited_goals;
   double stamp_s = 0.0;
@@ -91,6 +128,7 @@ struct ExploreCandidate {
   double x = 0.0;
   double y = 0.0;
   double z = 0.0;
+  double yaw = 0.0;
   double score = 0.0;
   double distance_m = 0.0;
   int frontier_size = 0;
@@ -116,8 +154,11 @@ struct ExploreDiagnostics {
   std::size_t keypose_nodes{0U};
   std::size_t keypose_edges{0U};
   std::size_t covered_cells{0U};
+  std::size_t covered_reachable_cells{0U};
+  std::size_t uncovered_reachable_cells{0U};
   std::size_t route_targets{0U};
   std::size_t reset_count{0U};
+  double coverage_ratio{0.0};
   double route_length_m{0.0};
   double planning_time_ms{0.0};
   bool state_committed{false};
@@ -129,6 +170,7 @@ struct ExploreDecision {
   double goal_x = 0.0;
   double goal_y = 0.0;
   double goal_z = 0.0;
+  double goal_yaw = 0.0;
   std::string reason;
   std::vector<ExploreCandidate> candidates;
   std::vector<Pose2D> route;
@@ -141,8 +183,8 @@ class IExplorePlanner {
  public:
   virtual ~IExplorePlanner() = default;
 
-  [[nodiscard]] virtual const char* name() const = 0;
-  [[nodiscard]] virtual ExploreDecision plan(const ExploreInput& input) = 0;
+  [[nodiscard]] virtual const char *name() const = 0;
+  [[nodiscard]] virtual ExploreDecision plan(const ExploreInput &input) = 0;
 };
 
 }  // namespace lingtu::explore

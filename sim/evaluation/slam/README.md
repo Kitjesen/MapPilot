@@ -31,7 +31,7 @@ python3 scripts/datasets/public_slam_dataset.py manifest \
   --sequence outdoor_hard_01a \
   --write /data/ltu/outdoor_hard_01a.replay.json
 
-python3 scripts/datasets/ros2_bag_to_normalized_jsonl.py \
+python3 scripts/compat/ros2/datasets/ros2_bag_to_normalized_jsonl.py \
   /data/ltu/outdoor_hard_01a.replay.json \
   /data/ltu/outdoor_hard_01a.normalized.jsonl \
   --storage-id sqlite3
@@ -51,7 +51,7 @@ and does not start navigation, the driver, or any motion endpoint.
 Terminal 1:
 
 ```bash
-LINGTU_SLAM_BIN="$PWD/build/slam_core/lingtu_slam_cyclone_runtime" \
+LINGTU_SLAM_BIN="$PWD/build/slam_core/slamd" \
 LINGTU_SLAM_MODE=mapping \
 LINGTU_SLAM_CONFIG="$PWD/src/localization/fastlio2/config/mid360_s100p.yaml" \
 LINGTU_DDS_DOMAIN_ID=83 \

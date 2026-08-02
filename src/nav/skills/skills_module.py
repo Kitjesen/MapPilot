@@ -7,11 +7,13 @@ import json
 import math
 import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 from nav.model.status import MissionStatus
 from nav.services.goals import build_goal_pose
 from runtime.module import Module, skill
+from runtime.msgs.nav import NavigationGoalStatus, NavigationState
 from runtime.registry import register
 from runtime.runtime_interface import map_frame_id, normalize_frame_id
 from runtime.stream import In, Out
@@ -27,6 +29,8 @@ class NavSkills(Module, layer=6):
 
     mission_status: In[MissionStatus]
     goal_status: In[dict]
+    navigation_state: In[NavigationState]
+    navigation_goal_status: In[NavigationGoalStatus]
 
     goal_command: Out[str]
 
@@ -34,14 +38,19 @@ class NavSkills(Module, layer=6):
         super().__init__(**config)
         self._planning_frame_id = normalize_frame_id(planning_frame_id) or map_frame_id()
         self._cached_status: dict[str, Any] = {}
+        self._cached_navigation_state: dict[str, Any] = {}
         self._acks: dict[str, dict[str, Any]] = {}
         self._pending: set[str] = set()
+        self._owned_request_ids: OrderedDict[str, None] = OrderedDict()
+        self._native_goal_statuses: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._command_lock = threading.RLock()
         self._sequence = itertools.count(1)
 
     def setup(self) -> None:
         self.mission_status.subscribe(self._on_mission_status)
         self.goal_status.subscribe(self._on_goal_status)
+        self.navigation_state.subscribe(self._on_navigation_state)
+        self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
 
     def _on_mission_status(self, status: MissionStatus) -> None:
         if not isinstance(status, dict):
@@ -59,6 +68,18 @@ class NavSkills(Module, layer=6):
             with self._command_lock:
                 if request_id in self._pending:
                     self._acks[request_id] = dict(status)
+
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        self._cached_navigation_state = state.to_dict()
+
+    def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
+        with self._command_lock:
+            if status.request_id not in self._owned_request_ids:
+                return
+            self._native_goal_statuses.pop(status.request_id, None)
+            self._native_goal_statuses[status.request_id] = status.to_dict()
+            while len(self._native_goal_statuses) > 256:
+                self._native_goal_statuses.popitem(last=False)
 
     @skill
     def navigate_to(
@@ -104,6 +125,11 @@ class NavSkills(Module, layer=6):
     @skill
     def get_navigation_status(self) -> str:
         """Return the canonical navigation mission status."""
+        if self._cached_navigation_state:
+            status = dict(self._cached_navigation_state)
+            status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
+            status["source"] = "native_navigation_state"
+            return json.dumps(status)
         if not self._cached_status:
             return json.dumps(
                 {
@@ -113,6 +139,39 @@ class NavSkills(Module, layer=6):
                 }
             )
         return json.dumps(self._cached_status)
+
+    @skill
+    def get_navigation_result(self, request_id: str) -> str:
+        """Return the native lifecycle result for a request submitted by this adapter."""
+
+        normalized = str(request_id or "").strip()
+        with self._command_lock:
+            owned = normalized in self._owned_request_ids
+            status = self._native_goal_statuses.get(normalized)
+        if not normalized:
+            return json.dumps(
+                {
+                    "found": False,
+                    "request_id": "",
+                    "reason": "request_id_required",
+                }
+            )
+        if not owned:
+            return json.dumps(
+                {
+                    "found": False,
+                    "request_id": normalized,
+                    "reason": "request_not_owned_by_nav_skills",
+                }
+            )
+        return json.dumps(
+            {
+                "found": status is not None,
+                "request_id": normalized,
+                "status": status,
+                "reason": "" if status is not None else "request_status_pending",
+            }
+        )
 
     @skill
     def start_patrol(
@@ -153,7 +212,7 @@ class NavSkills(Module, layer=6):
     @skill
     def is_navigating(self) -> str:
         """Return whether a navigation mission is currently active."""
-        state = str((self._cached_status or {}).get("state", "UNKNOWN"))
+        state = self._current_state_name()
         return json.dumps(
             {
                 "state": state,
@@ -164,7 +223,7 @@ class NavSkills(Module, layer=6):
     @skill
     def get_navigation_progress(self) -> str:
         """Return a concise progress summary derived from mission status."""
-        status = self._cached_status
+        status = self._current_status()
         if not status:
             return json.dumps(
                 {
@@ -177,7 +236,11 @@ class NavSkills(Module, layer=6):
         wp_total = self._as_int(status.get("wp_total"))
         wp_index = self._as_int(status.get("wp_index"))
         remaining = self._as_int(status.get("remaining_waypoints", max(0, wp_total - wp_index)))
-        progress_pct = round(100.0 * wp_index / wp_total, 1) if wp_total > 0 else 0.0
+        native_progress = status.get("progress")
+        try:
+            progress_pct = round(100.0 * float(native_progress), 1)
+        except (TypeError, ValueError):
+            progress_pct = round(100.0 * wp_index / wp_total, 1) if wp_total > 0 else 0.0
         return json.dumps(
             {
                 "state": state,
@@ -258,6 +321,16 @@ class NavSkills(Module, layer=6):
             "recovering",
         }
 
+    def _current_status(self) -> dict[str, Any]:
+        if self._cached_navigation_state:
+            status = dict(self._cached_navigation_state)
+            status["state"] = status.get("lifecycle_state_name", "UNKNOWN")
+            return status
+        return self._cached_status
+
+    def _current_state_name(self) -> str:
+        return str(self._current_status().get("state", "UNKNOWN"))
+
     @staticmethod
     def _as_int(value: Any) -> int:
         try:
@@ -298,6 +371,11 @@ class NavSkills(Module, layer=6):
         with self._command_lock:
             self._acks.pop(request_id, None)
             self._pending.add(request_id)
+            self._owned_request_ids.pop(request_id, None)
+            self._owned_request_ids[request_id] = None
+            while len(self._owned_request_ids) > 256:
+                expired, _ = self._owned_request_ids.popitem(last=False)
+                self._native_goal_statuses.pop(expired, None)
             self.goal_command.publish(encoded)
             ack = self._acks.pop(request_id, None)
             self._pending.discard(request_id)
@@ -312,10 +390,14 @@ class NavSkills(Module, layer=6):
                 }
             )
         result = dict(ack)
-        accepted = bool(result.get("accepted", result.get("success", False)))
+        accepted = result.get("accepted") is True or result.get("success") is True
         result["accepted"] = accepted
         result["state"] = "accepted" if accepted else "rejected"
         result.setdefault("reason", str(result.get("message") or ""))
+        if not accepted:
+            with self._command_lock:
+                self._owned_request_ids.pop(request_id, None)
+                self._native_goal_statuses.pop(request_id, None)
         return json.dumps(result)
 
     def _json_rejection(self, action: str, reason: str, error: str) -> str:
@@ -330,6 +412,3 @@ class NavSkills(Module, layer=6):
                 "planning_frame_id": self._planning_frame_id,
             }
         )
-
-
-NavigationSkillsModule = NavSkills

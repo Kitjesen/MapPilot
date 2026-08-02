@@ -1,9 +1,0 @@
-# LingTu portable MuJoCo simulation dependencies.
-#
-# This target is for running `python lingtu.py portable-mujoco` on Windows or
-# Ubuntu/Linux.  It intentionally layers MuJoCo on top of the portable core
-# instead of making MuJoCo part of the baseline LingTu core package.
-
--r requirements-core-portable.txt
-mujoco>=3.1
-mujoco-lidar>=0.3.3

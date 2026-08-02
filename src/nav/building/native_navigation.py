@@ -36,21 +36,28 @@ class NativeNavigationSnapshot(Protocol):
 class NativeNavigationClientPort(Protocol):
     """Command-only view implemented by NativeNavigationClient."""
 
-    def send_goal(
+    def start_task(
         self,
         x: float,
         y: float,
         z: float,
         yaw: float,
         *,
+        task_id: str,
         request_id: str | None = None,
     ) -> None:
-        """Send one correlated native map-frame goal."""
+        """Submit one task-oriented native map-frame goal."""
 
         ...
 
-    def cancel(self, reason: str = "cancel", *, request_id: str | None = None) -> None:
-        """Cancel an active native goal."""
+    def cancel_task(
+        self,
+        task_id: str,
+        reason: str = "cancel",
+        *,
+        request_id: str | None = None,
+    ) -> None:
+        """Cancel one task-oriented native goal."""
 
         ...
 
@@ -155,6 +162,14 @@ class CorrelatedNativeNavigationPort:
         self._goal_tolerance_m = max(0.01, float(goal_tolerance_m))
         self._targets: dict[str, PoseTarget] = {}
         self._gates: dict[tuple[str, str], NativeGoalCompletionGate] = {}
+        self._request_to_task_id: dict[str, str] = {}
+
+    @staticmethod
+    def _normalize_task_id(raw: str) -> str:
+        value = str(raw or "").strip()
+        if not value:
+            raise ValueError("request_id is required for correlated building navigation")
+        return f"{value}:native-task"
 
     def autonomy_ready(self) -> tuple[bool, str]:
         """Require fresh pose/status and exclusive native autonomy ownership."""
@@ -204,10 +219,12 @@ class CorrelatedNativeNavigationPort:
         goal_id = str(request_id or "").strip()
         if not goal_id:
             raise ValueError("request_id is required for correlated building navigation")
+        task_id = self._normalize_task_id(goal_id)
         values = tuple(float(value) for value in (x, y, z, yaw))
         if not all(math.isfinite(value) for value in values):
             raise ValueError("navigation target must be finite")
-        self._client.send_goal(*values, request_id=goal_id)
+        self._request_to_task_id[goal_id] = task_id
+        self._client.start_task(*values, task_id=task_id, request_id=goal_id)
         self._targets[goal_id] = PoseTarget("map", *values)
         for key in [key for key in self._gates if key[0] == goal_id]:
             self._gates.pop(key, None)
@@ -249,7 +266,12 @@ class CorrelatedNativeNavigationPort:
     def cancel(self, reason: str = "cancel", *, request_id: str | None = None) -> None:
         """Forward cancellation to the native client."""
 
-        self._client.cancel(reason, request_id=request_id)
+        goal_id = str(request_id or "").strip()
+        if not goal_id:
+            raise ValueError("request_id is required for correlated building cancellation")
+        task_id = self._request_to_task_id.get(goal_id) or self._normalize_task_id(goal_id)
+        self._request_to_task_id[goal_id] = task_id
+        self._client.cancel_task(task_id, reason, request_id=request_id)
 
     def stop(self, reason: str = "stop", *, request_id: str | None = None) -> None:
         """Forward a non-latching stop to the native client."""

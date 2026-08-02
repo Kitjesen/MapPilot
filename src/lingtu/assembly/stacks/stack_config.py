@@ -99,6 +99,4 @@ def needs_lidar_for_slam(slam_profile: str) -> bool:
         "",
         "none",
         "bridge",
-        "super_lio",
-        "super_lio_relocation",
     )

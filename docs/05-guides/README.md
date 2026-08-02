@@ -18,7 +18,7 @@ non-motion while still changing runtime state or persistent map data.
 | Label | Meaning | Examples |
 | --- | --- | --- |
 | **Read-only** | Does not intentionally change robot, session, map, or runtime state. | Status, health, log, dataflow, and readiness queries. |
-| **No physical motion** | Does not publish a goal or velocity command to move the robot. It may still start a session, relocalize, switch a backend, or write validation artifacts. | Offline plan preview, route preview, and the default system-acceptance gate. |
+| **No physical motion** | Does not publish a goal or velocity command to move the robot. It may still start a session, relocalize, switch a backend, or write validation artifacts. | Offline saved-map validation, Gateway route preview, and the default system-acceptance gate. |
 | **State-changing** | Changes a session, SLAM mode, active map, map artifact, service, or control lease. Run only while the robot is stationary and the impact is understood. | Mapping start/save, map activation, relocalization, and service restart. |
 | **Can move hardware** | Can result in a robot velocity or an autonomous mission. Use only after the required field gate and local authorization. | Teleop, `nav goal`, semantic instructions, exploration start, and visual-servo find/follow. |
 
@@ -39,9 +39,9 @@ selecting a field target for you.
 | Explore an unknown area | [Run exploration](#6-run-exploration) | Exploration creates autonomous motion. |
 | Build a web, service, or agent integration | [Integrate an external client](#7-integrate-an-external-client) | Clients submit intent and observe state; they never own the final control path. |
 
-The [Quick Start](../QUICKSTART.md) remains the profile and CLI source of
-truth. The [product mode contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
-defines which chain owns a profile, and the [testing index](../07-testing/README.md)
+The [Quick Start](../QUICKSTART.md) remains the Profile/Product and CLI source of
+truth. The [field Product guide](../architecture/FIELD_PRODUCTS.md)
+defines which chain owns each field Product, and the [testing index](../07-testing/README.md)
 defines the validation evidence needed for a claim.
 
 ## 1. Prove an integration without a robot
@@ -121,10 +121,11 @@ Before beginning a field collection session:
    ```
 
    Save produces a durable map package and may run optimization, cleanup, and
-   artifact builds. If a save is asynchronous, keep its returned job identifier
-   and follow it through the map-save job status API rather than issuing a
+   artifact builds. If a save is asynchronous, keep its returned
+   `operation_id` and follow the map-save operation through
+   `GET /api/v1/maps/operations/{operation_id}` rather than issuing a
    duplicate request. The [Gateway map reference](../api/gateway_rest.md)
-   describes the durable save-job endpoints.
+   describes the durable map operation endpoint.
 
 4. **Read-only:** inspect the result before treating it as a navigation map.
 
@@ -139,16 +140,18 @@ Before beginning a field collection session:
    occupancy/planner artifact; the precise capability is selected by the
    active planner rather than by a hand-maintained filename list.
 
-5. **State-changing, no physical motion:** when a map needs a controlled
-   artifact and route check, use the map workflow instead of editing files:
+5. **No physical motion:** validate the completed saved-map package, then run
+   the integrated route gate instead of editing files or calling private map
+   endpoints:
 
    ```bash
-   bash scripts/lingtu map check <map-name> --goal <x> <y> <yaw>
+   bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
+   bash scripts/lingtu system-acceptance \
+     --map <map-name> --goal <x> <y> <yaw>
    ```
 
-   `map check` validates the saved map, rebuilds the OctoPlanner3D artifact
-   when needed, and performs a plan precheck. It writes map artifacts, so run
-   it only while no navigation session depends on the map.
+   The first command is offline and read-only. `system-acceptance` is stateful
+   but sends no motion unless `--allow-motion` is explicitly provided.
 
 `map restore <map-name>` is a recovery operation for a preserved pre-filter
 map. It replaces the current navigation point cloud and rebuilds downstream
@@ -162,20 +165,19 @@ answers the question.
 
 | Question | Command or API | Effect |
 | --- | --- | --- |
-| Can the local planner load the selected map product? | `plan-preview` | Offline preview: no service, Gateway, goal, or velocity output. |
+| Is the selected saved-map package complete for planning? | `saved-map-artifact-gate <map-directory> --require-occupancy` | Offline artifact validation: no service, Gateway, goal, or velocity output. |
 | Is the currently running system ready and is this route safe? | Gateway `POST /api/v1/navigation/plan` | No published goal; evaluates the running navigation path. |
 | Can the native field path, map bundle, localization, and a requested route pass together? | `system-acceptance` | No physical motion by default; it is stateful because it samples runtime readiness and may start/end a session or relocalize. |
 
-**Offline, no physical motion:**
+**Offline saved-map artifact validation:**
 
 ```bash
-bash scripts/lingtu plan-preview --internal-only --strict
+bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
 ```
 
-Use an explicit start and goal when the preview needs to test a particular
-route. Its coordinates are expressed in the planning frame. The command does
-not call Gateway or publish a goal, so it is a good artifact/planner check but
-not proof that live localization is ready.
+Use the full saved-map directory. The command validates artifact provenance and
+the required occupancy product without calling Gateway or publishing a goal.
+It does not evaluate a route or prove that live localization is ready.
 
 **Field-ready route evidence, no physical motion by default:**
 
@@ -192,10 +194,9 @@ motion smoke test unless `--allow-motion` is explicitly supplied. Treat
 `--allow-motion` as a separate field-test authorization, never as the normal
 next step after a preview.
 
-For a comparative route check between localization paths, use
-`routecheck --map <map-name> --goal <x> <y> <yaw>`. It does not publish a
-motion command, but it temporarily switches the localization baseline and
-rolls back. Run it only while the robot is idle and no client holds control.
+The operations CLI does not expose a localization-backend A/B switch. Resolve
+one Product inside one env and use `system-acceptance` for integrated evidence;
+ProductControl owns every Product transition and rollback.
 
 A successful preview means the requested path was feasible under the reported
 map, frame, planner, and safety policy. It does not guarantee a future motion
@@ -248,7 +249,7 @@ can move the robot.
    endpoint, the native navigation service owns the final `/nav/cmd_vel`
    writer, and the unique `lingtu-driver` service forwards checked commands to
    the remote Brainstem controller.
-   The [product mode contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
+   The [field Product guide](../architecture/FIELD_PRODUCTS.md)
    and [navigation compute contract](../architecture/NAVIGATION_COMPUTE_CONTRACT.md)
    describe the safety and arbitration boundary.
 
@@ -270,16 +271,16 @@ safety boundary. They are not permission to bypass the route or velocity path.
 
 ### Natural-language and agent requests
 
-In a profile that includes the semantic stack, a REPL request such as
+In a local Profile or field Product that includes the semantic stack, a REPL request such as
 `go <instruction>` or `agent <instruction>` may resolve tags, scene objects,
 vector memory, topology/frontiers, and visual servo before it submits a
 navigation goal. Therefore it is **can move hardware** once it is accepted by a
-live field profile. Use it only after the navigation gate above and keep a
+live field Product. Use it only after the navigation gate above and keep a
 supervisor able to stop the mission.
 
 For client integrations, `POST /api/v1/instruction` and MCP
 `send_instruction` are the corresponding request surfaces. Check the active
-profile's capability and the generated [MCP inventory](../api/mcp_tools.md)
+Profile/Product capability and the generated [MCP inventory](../api/mcp_tools.md)
 before relying on a method.
 
 ### Visual servo
@@ -289,27 +290,29 @@ when Safety is stopped. `stop` releases visual servo and remains available as a
 stop action. The feature hot-switches only when the active profile already
 loads `VisualServoModule`; lightweight teleop or mapping profiles do not create
 that module on demand. Use the [visual-servo API entry](../api/gateway_rest.md)
-for current request schemas and the [product mode contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
+for current request schemas and the [field Product guide](../architecture/FIELD_PRODUCTS.md)
 for its control boundary.
 
 ## 6. Run exploration
 
-Exploration is autonomous motion and needs an open, supervised area, valid live
-map inputs, and the same readiness discipline as navigation.
+Exploration is autonomous motion and needs an open, supervised area plus the
+same readiness discipline as navigation. There is one operator Product:
+`explore`.
 
-- `explore` is the Wavefront frontier compatibility/debug path.
-- `tare_explore` is the traversable/TARE exploration product path for field
-  operation.
-- Do not enable Wavefront and TARE concurrently; they are separate goal
-  sources.
+```bash
+lingtu explore start                 # live mapping, no saved map
+lingtu explore start --map yard      # saved-map localization and coverage
+lingtu explore task start            # begin motion only after readiness
+```
 
-Start an exploration profile only after a no-motion readiness check and an
-approved field plan. Then use the profile's operator surface to observe status
-and stop exploration promptly if localization, safety, or area conditions
-change. The REST endpoints `POST /api/v1/explore/start` and
+The route is selected by the presence of `--map`; TARE is an internal policy
+name, not another Product. Start the Product only after a no-motion readiness
+check and an approved field plan. Then observe status and stop exploration
+promptly if localization, safety, or area conditions change. The REST
+endpoints `POST /api/v1/explore/start` and
 `POST /api/v1/explore/stop` are motion-capable control operations, while
-`GET /api/v1/explore/status` is observation. The exact profile wiring is in
-the [product mode contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md).
+`GET /api/v1/explore/status` is observation. The exact Product/Host wiring is in
+the [field Product guide](../architecture/FIELD_PRODUCTS.md).
 
 ## 7. Integrate an external client
 

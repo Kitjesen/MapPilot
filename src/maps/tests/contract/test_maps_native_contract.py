@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ def test_maps_python_kernels_do_not_import_nav_kernel() -> None:
 
 
 def test_runtime_maps_stack_uses_maps_modules() -> None:
-    text = (REPO / "src" / "runtime" / "blueprints" / "stacks" / "maps.py").read_text(encoding="utf-8")
+    text = (REPO / "src" / "lingtu" / "assembly" / "stacks" / "maps.py").read_text(encoding="utf-8")
     assert "maps.modules.occupancy.OccupancyGridModule" in text
     assert "maps.modules.voxel_grid.VoxelGridModule" in text
     assert "nav.services" + ".map_layers" not in text
@@ -33,7 +34,7 @@ def test_legacy_nav_map_service_entry_is_removed() -> None:
     assert not (REPO / "src" / "nav" / "services" / "map").exists()
     old_service = "nav.services" + ".maps"
     files = (
-        REPO / "src" / "runtime" / "blueprints" / "stacks" / "maps.py",
+        REPO / "src" / "lingtu" / "assembly" / "stacks" / "maps.py",
         REPO / "src" / "lingtu" / "plugin_seed.py",
     )
     for path in files:
@@ -264,7 +265,17 @@ def test_gateway_map_routes_use_typed_maps_boundary() -> None:
     assert "map_service_command(" in route
     assert "MapControlRequest" not in route
     assert 'pathlib.Path(str(resp.get("map_dir")' not in route
-    assert 'artifact_path(gw, name, "source_pointcloud")' in route
+    tree = ast.parse(route)
+    pcd_handler = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "get_map_pcd"
+    )
+    pcd_source = ast.unparse(pcd_handler)
+    assert "open_artifact" in pcd_source
+    assert "StreamingResponse" in pcd_source
+    assert "_map_service_command" not in pcd_source
+    assert "artifact_path" not in pcd_source
     assert "resolve_exchange_path(" in route
     assert "map_import_root(" in route
     assert ".read_bytes()" not in route
@@ -284,7 +295,10 @@ def test_maps_root_exports_persistent_domain_api() -> None:
     import maps
 
     expected = {
+        "ArtifactHandle",
         "MapAPIService",
+        "MapClient",
+        "MapClientError",
         "MapControlService",
         "MapPipelineService",
         "MapRuntimeBridge",

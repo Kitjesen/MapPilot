@@ -21,7 +21,14 @@ dependencies = [
 lite = []
 core-portable = []
 portable = []
-sim-mujoco = ["mujoco>=3.2", "mujoco-lidar>=0.3.3"]
+# ONNX Runtime 1.24.x has no CPython 3.10 wheels, while the product still
+# supports Python 3.10 and the ThunderV4 MuJoCo policy is an ONNX model.
+sim-mujoco = [
+    "mujoco>=3.2",
+    "mujoco-lidar>=0.3.3",
+    "onnxruntime>=1.17,<1.24; python_version == '3.10'",
+    "onnxruntime>=1.24; python_version >= '3.11'",
+]
 endpoint-portable = []
 # Optional native PCL plugin marker. The runtime looks for a separately built
 # `lingtu_pcl_ops` wheel/module and falls back to NumPy when it is absent.

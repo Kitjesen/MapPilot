@@ -1,0 +1,76 @@
+[Unit]
+Description=LingTu experimental Super-LIO relocation adapter
+After=network-online.target
+Wants=network-online.target
+Conflicts=super_lio.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=sunrise
+WorkingDirectory=/home/sunrise/data/inovxio/lingtu
+Environment=HOME=/home/sunrise
+Environment=ROS_DOMAIN_ID=0
+Environment=SUPER_LIO_WS=/home/sunrise/data/inovxio/super-lio
+Environment=SUPER_LIO_ROOT=/home/sunrise/data/inovxio/super-lio/src/Super-LIO
+Environment=SUPER_LIO_LIDAR_TOPIC=/lidar/raw_frame
+Environment=SUPER_LIO_IMU_TOPIC=/imu/raw
+Environment=SUPER_LIO_RELOCATION_SOURCE_MAP_DIR=/home/sunrise/data/nova/maps/active
+Environment=SUPER_LIO_RELOCATION_EFFECTIVE_MAP_DIR=map/lingtu_active
+Environment=SUPER_LIO_RELOCATION_MAP_NAME=map.pcd
+Environment=SUPER_LIO_RELOCATION_UPDATE_MAP=false
+Environment=SUPER_LIO_RELOCATION_INIT_POSE=[0.0,0.0,0.0,0.0,0.0,0.0]
+EnvironmentFile=-/etc/lingtu/super_lio.env
+EnvironmentFile=-/run/lingtu/super_lio_relocation.env
+ExecStart=/bin/bash -c '\
+  set -eo pipefail; \
+  source /opt/lingtu/config/ros2-env.sh; \
+  if [ -f "$${SUPER_LIO_WS}/install/local_setup.bash" ]; then \
+    source "$${SUPER_LIO_WS}/install/local_setup.bash"; \
+  elif [ -f "$${SUPER_LIO_WS}/install/setup.bash" ]; then \
+    source "$${SUPER_LIO_WS}/install/setup.bash"; \
+  else \
+    echo "Super-LIO install setup not found: $${SUPER_LIO_WS}" >&2; \
+    exit 1; \
+  fi; \
+  CONFIG="$${SUPER_LIO_RELOCATION_CONFIG:-$$(ros2 pkg prefix super_lio)/share/super_lio/config/relocation.yaml}"; \
+  SOURCE_MAP_DIR="$${SUPER_LIO_RELOCATION_SOURCE_MAP_DIR:-$${SUPER_LIO_RELOCATION_MAP_DIR:-/home/sunrise/data/nova/maps/active}}"; \
+  EFFECTIVE_MAP_DIR="$${SUPER_LIO_RELOCATION_EFFECTIVE_MAP_DIR:-map/lingtu_active}"; \
+  case "$${EFFECTIVE_MAP_DIR}" in /*) echo "Super-LIO effective map dir must be relative: $${EFFECTIVE_MAP_DIR}" >&2; exit 4 ;; esac; \
+  SUPER_LIO_ROOT_ABS="$$(realpath -m "$${SUPER_LIO_ROOT}")"; \
+  SOURCE_MAP_DIR_ABS="$$(realpath -m "$${SOURCE_MAP_DIR}")"; \
+  EFFECTIVE_MAP_PATH="$${SUPER_LIO_ROOT_ABS}/$${EFFECTIVE_MAP_DIR}"; \
+  MAP_PATH="$${SOURCE_MAP_DIR_ABS}/$${SUPER_LIO_RELOCATION_MAP_NAME}"; \
+  test -f "$${CONFIG}" || { echo "Super-LIO relocation config not found: $${CONFIG}" >&2; exit 2; }; \
+  test -s "$${MAP_PATH}" || { echo "Super-LIO relocation map not found: $${MAP_PATH}" >&2; exit 3; }; \
+  test -d "$${SUPER_LIO_ROOT_ABS}" || { echo "Super-LIO root not found: $${SUPER_LIO_ROOT_ABS}" >&2; exit 5; }; \
+  mkdir -p "$$(dirname "$${EFFECTIVE_MAP_PATH}")"; \
+  ln -sfn "$${SOURCE_MAP_DIR_ABS}" "$${EFFECTIVE_MAP_PATH}"; \
+  test -s "$${EFFECTIVE_MAP_PATH}/$${SUPER_LIO_RELOCATION_MAP_NAME}" || { echo "Super-LIO effective relocation map not found: $${EFFECTIVE_MAP_PATH}/$${SUPER_LIO_RELOCATION_MAP_NAME}" >&2; exit 6; }; \
+  cd "$${SUPER_LIO_ROOT_ABS}"; \
+  exec ros2 run super_lio relocation_node \
+    --ros-args \
+    --params-file "$${CONFIG}" \
+    -p "lio.ros.lidar_topic:=$${SUPER_LIO_LIDAR_TOPIC}" \
+    -p "lio.ros.imu_topic:=$${SUPER_LIO_IMU_TOPIC}" \
+    -p "lio.map.save_map_dir:=$${EFFECTIVE_MAP_DIR}" \
+    -p "lio.map.map_name:=$${SUPER_LIO_RELOCATION_MAP_NAME}" \
+    -p "lio.relocation.update_map:=$${SUPER_LIO_RELOCATION_UPDATE_MAP}" \
+    -p "lio.relocation.init_pose:=$${SUPER_LIO_RELOCATION_INIT_POSE}" \
+    -r "/lio/odom:=/slam/odometry" \
+    -r "/lio/cloud_world:=/slam/map_cloud" \
+    -r "/lio/imu/odom:=/nav/imu_odom" \
+    -r "/lio/robo/odom:=/nav/robot_odom"'
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=3
+MemoryMax=2G
+KillMode=control-group
+KillSignal=SIGINT
+SuccessExitStatus=130 SIGINT
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lingtu-super-lio-relocation-experimental
+
+

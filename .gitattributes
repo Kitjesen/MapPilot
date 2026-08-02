@@ -1,5 +1,6 @@
 scripts/*.sh text eol=lf
 scripts/**/*.sh text eol=lf
+src/native/recording/tests/*.sh text eol=lf
 scripts/lingtu text eol=lf
 scripts/deploy/**/*.service text eol=lf
 docs/04-deployment/services/*.service text eol=lf

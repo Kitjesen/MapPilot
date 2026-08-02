@@ -132,6 +132,36 @@ struct GnssFusionHealth {
   int relock_count = 0;
 };
 
+struct FastLioLidarUpdateDiagnostics {
+  bool attempted = false;
+  bool accepted = false;
+  std::uint64_t attempt_sequence = 0U;
+  std::string rejection_reason = "none";
+  std::string previous_rejection_reason = "none";
+  std::uint64_t consecutive_rejections = 0U;
+  std::uint64_t downsampled_points = 0U;
+  std::uint64_t effective_points = 0U;
+
+  double candidate_translation_m = 0.0;
+  double candidate_rotation_rad = 0.0;
+  double candidate_velocity_mps = 0.0;
+  double candidate_velocity_delta_mps = 0.0;
+  double max_update_translation_m = 0.0;
+  double max_update_rotation_rad = 0.0;
+  double max_update_velocity_mps = 0.0;
+  double max_update_velocity_delta_mps = 0.0;
+
+  bool information_ldlt_evaluated = false;
+  bool information_ldlt_decomposition_success = false;
+  bool information_ldlt_positive = false;
+  bool candidate_covariance_evaluated = false;
+  bool candidate_covariance_finite = false;
+  bool candidate_covariance_positive_diagonal = false;
+  bool posterior_covariance_evaluated = false;
+  bool posterior_covariance_finite = false;
+  bool posterior_covariance_positive_diagonal = false;
+};
+
 struct SlamOutputs {
   SlamState state = SlamState::Unconfigured;
   double stamp_s = 0.0;
@@ -161,6 +191,12 @@ struct SlamOutputs {
   std::string relocalization_refine_backend;
   int relocalization_refine_iterations = -1;
   int relocalization_refine_inliers = -1;
+  int relocalization_min_inliers = 0;
+  int relocalization_min_evaluated_points = 0;
+  int relocalization_refine_input_points = 0;
+  int relocalization_refine_evaluated_points = 0;
+  double relocalization_refine_support_ratio = -1.0;
+  double relocalization_refine_overlap_inlier_ratio = -1.0;
   bool relocalization_refine_converged = false;
   double relocalization_refine_pos_cov_trace = -1.0;
 
@@ -217,6 +253,7 @@ struct SlamOutputs {
   double fastlio_pos_cov_trace = 0.0;
   int fastlio_iter_num = 0;
   bool fastlio_converged = true;
+  FastLioLidarUpdateDiagnostics fastlio_lidar_update;
 };
 
 class ISlamBackend {
@@ -255,6 +292,7 @@ std::string toString(SlamState state);
 SlamMode modeFromString(const std::string& value);
 std::string toString(SlamMode mode);
 
+std::uint64_t newSourceEpoch() noexcept;
 std::unique_ptr<ISlamBackend> makeContractBackend(std::string backend_name);
 std::unique_ptr<ISlamBackend> makeFastLioBackend();
 std::unique_ptr<ISlamBackend> makePointLioBackend();

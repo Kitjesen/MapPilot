@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = [pytest.mark.sim]
-
 from sim.scripts import server_sim_closure
 from sim.scripts.mujoco.native_pct_gate import (
     PctRoute,
@@ -30,6 +28,8 @@ from sim.scripts.mujoco.native_pct_gate import (
     _trajectory_correctness,
     run_gate,
 )
+
+pytestmark = [pytest.mark.sim]
 
 
 def _mid360_lidar_source() -> dict:
@@ -57,16 +57,19 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
         "primary_planner": "pct",
         "selected_planner": "pct",
         "fallback_used": False,
-        "global_planner_source": "source_report/native_pct_tomogram",
-        "pct_native_runtime_used": True,
-        "pct_runtime_ok": True,
+        "global_planner_source": "source_report/pct_tomogram",
+        "pct_planner_runtime": {
+            "runtime": "rust_process",
+            "ok": True,
+        },
+        "pct_planner_runtime_ok": True,
         "pct_path_count": 8,
         "pct_optimizer_enabled": True,
         "pct_optimizer_attempted": True,
         "pct_optimizer_accepted": False,
         "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
         "pct_optimizer_blocked_sample_count": 3,
-        "pct_planner_path_mode": "native_astar_raw_path",
+        "pct_planner_path_mode": "astar_raw_path",
         "moved_m": 10.0,
         "frames": {"goal": "map", "cmd_vel": "base_link"},
         "planning_chain": {
@@ -79,7 +82,11 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
             "selected_planner": "pct",
             "fallback_used": False,
             "path_safety_ok": True,
-            "native_runtime_used": True,
+            "pct_planner_runtime": {
+                "runtime": "rust_process",
+                "ok": True,
+            },
+            "pct_planner_runtime_ok": True,
             "tomogram_exists": True,
             "tomogram_sha256": "abc123",
             "pct_optimizer_enabled": True,
@@ -87,7 +94,7 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
             "pct_optimizer_accepted": False,
             "pct_optimizer_reject_reason": "optimized_trajectory_hard_obstacle",
             "pct_optimizer_blocked_sample_count": 3,
-            "pct_planner_path_mode": "native_astar_raw_path",
+            "pct_planner_path_mode": "astar_raw_path",
         },
         "deliverable_contract": {
             "checks": {"same_source_map_artifact": True},
@@ -138,14 +145,14 @@ def _complete_dimos_native_pct_mujoco_report() -> dict:
 def _write_source_report(
     tmp_path: Path,
     *,
-    native_runtime_used: bool = True,
-    native_runtime_ok: bool = True,
+    pct_planner_runtime: str = "rust_process",
+    pct_planner_runtime_ok: bool = True,
     pct_optimizer_enabled: bool | None = False,
     pct_optimizer_attempted: bool | None = None,
     pct_optimizer_accepted: bool | None = None,
     pct_optimizer_reject_reason: str = "",
     pct_optimizer_blocked_sample_count: int = 0,
-    pct_planner_path_mode: str = "native_astar_raw_path",
+    pct_planner_path_mode: str = "astar_raw_path",
 ) -> Path:
     scene_xml = tmp_path / "scene.xml"
     scene_xml.write_text("<mujoco><worldbody/></mujoco>\n", encoding="utf-8")
@@ -200,12 +207,20 @@ def _write_source_report(
                     "start": [-0.4, -2.1, 0.0],
                     "goal": [1.9, -1.25, 0.0],
                 },
+                "selection": {
+                    "primary_planner": "pct",
+                    "selected_planner": "pct",
+                    "fallback_used": False,
+                    "selected_route_ok": True,
+                },
                 "planning": [
                     {
                         "planner": "pct",
                         "planner_class": "PCTPlanner",
-                        "native_runtime_used": native_runtime_used,
-                        "native_runtime": {"ok": native_runtime_ok},
+                        "pct_planner_runtime": {
+                            "runtime": pct_planner_runtime,
+                            "ok": pct_planner_runtime_ok,
+                        },
                         "pct_optimizer_enabled": pct_optimizer_enabled,
                         "pct_optimizer_attempted": pct_optimizer_attempted,
                         "pct_optimizer_accepted": pct_optimizer_accepted,
@@ -229,17 +244,27 @@ def _write_source_report(
     return source
 
 
-def test_load_pct_route_requires_native_runtime(tmp_path: Path) -> None:
-    source = _write_source_report(tmp_path, native_runtime_used=False)
+def test_load_pct_route_requires_selected_pct_planner_runtime(tmp_path: Path) -> None:
+    source = _write_source_report(tmp_path, pct_planner_runtime="")
 
-    with pytest.raises(ValueError, match="native runtime"):
+    with pytest.raises(ValueError, match="PCT planner runtime is not selected"):
         _load_pct_route(source, route="same_floor")
 
 
-def test_load_pct_route_requires_healthy_native_runtime(tmp_path: Path) -> None:
-    source = _write_source_report(tmp_path, native_runtime_ok=False)
+def test_load_pct_route_requires_healthy_pct_planner_runtime(tmp_path: Path) -> None:
+    source = _write_source_report(tmp_path, pct_planner_runtime_ok=False)
 
-    with pytest.raises(ValueError, match="native runtime"):
+    with pytest.raises(ValueError, match="PCT planner runtime is not healthy"):
+        _load_pct_route(source, route="same_floor")
+
+
+def test_load_pct_route_requires_explicit_no_fallback(tmp_path: Path) -> None:
+    source = _write_source_report(tmp_path)
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["cases"][0]["selection"].pop("fallback_used")
+    source.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="fallback_used is not false"):
         _load_pct_route(source, route="same_floor")
 
 
@@ -247,6 +272,27 @@ def test_load_pct_route_requires_pct_path_mode_evidence(tmp_path: Path) -> None:
     source = _write_source_report(tmp_path, pct_optimizer_enabled=None, pct_planner_path_mode="")
 
     with pytest.raises(ValueError, match="optimizer enabled/disabled mode"):
+        _load_pct_route(source, route="same_floor")
+
+
+@pytest.mark.parametrize(
+    "path_mode",
+    [
+        "native_astar_raw_path",
+        "rust_astar_raw_path",
+        "future_runtime_path_mode",
+    ],
+)
+def test_load_pct_route_rejects_noncanonical_pct_path_mode(
+    tmp_path: Path,
+    path_mode: str,
+) -> None:
+    source = _write_source_report(
+        tmp_path,
+        pct_planner_path_mode=path_mode,
+    )
+
+    with pytest.raises(ValueError, match="supported path mode"):
         _load_pct_route(source, route="same_floor")
 
 
@@ -267,7 +313,7 @@ def test_load_pct_route_rejects_mismatched_optimizer_path_mode(tmp_path: Path) -
     source = _write_source_report(
         tmp_path,
         pct_optimizer_enabled=True,
-        pct_planner_path_mode="native_astar_raw_path",
+        pct_planner_path_mode="astar_raw_path",
     )
 
     with pytest.raises(ValueError, match="recorded optimizer rejection"):
@@ -282,7 +328,7 @@ def test_load_pct_route_accepts_raw_path_after_optimizer_rejection(tmp_path: Pat
         pct_optimizer_accepted=False,
         pct_optimizer_reject_reason="optimized_trajectory_hard_obstacle",
         pct_optimizer_blocked_sample_count=3,
-        pct_planner_path_mode="native_astar_raw_path",
+        pct_planner_path_mode="astar_raw_path",
     )
 
     route = _load_pct_route(source, route="same_floor")
@@ -291,7 +337,7 @@ def test_load_pct_route_accepts_raw_path_after_optimizer_rejection(tmp_path: Pat
     assert route.plan["pct_optimizer_attempted"] is True
     assert route.plan["pct_optimizer_accepted"] is False
     assert route.plan["pct_optimizer_reject_reason"] == "optimized_trajectory_hard_obstacle"
-    assert route.plan["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert route.plan["pct_planner_path_mode"] == "astar_raw_path"
 
 
 def test_native_pct_mujoco_report_satisfies_dimos_closure_evaluator() -> None:
@@ -302,7 +348,10 @@ def test_native_pct_mujoco_report_satisfies_dimos_closure_evaluator() -> None:
     assert ok is True
     assert blockers == []
     assert evidence["planner"] == "pct"
-    assert evidence["source_planning_contract"]["native_runtime_used"] is True
+    assert evidence["source_planning_contract"]["pct_planner_runtime"] == {
+        "runtime": "rust_process",
+        "ok": True,
+    }
     assert evidence["source_planning_contract"]["tomogram_sha256"] == "abc123"
     assert evidence["same_source_artifacts"]["ok"] is True
     assert evidence["clearance_checked"] is True
@@ -432,16 +481,21 @@ def test_native_pct_mujoco_contract_only_validates_source_report(
     assert report["claim_boundary"] == "contract_only_no_ros_mujoco_motion"
     assert report["real_robot_motion"] is False
     assert report["cmd_vel_sent_to_hardware"] is False
-    assert report["pct_native_runtime_used"] is True
-    assert report["pct_runtime_ok"] is True
+    assert report["pct_planner_runtime"] == {
+        "runtime": "rust_process",
+        "ok": True,
+    }
+    assert report["pct_planner_runtime_ok"] is True
     assert report["pct_path_count"] == 3
     assert report["pct_optimizer_enabled"] is False
-    assert report["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert report["pct_planner_path_mode"] == "astar_raw_path"
+    assert "pct_native_runtime_used" not in report
+    assert "pct_runtime_ok" not in report
     assert report["contract_checks"] == {
         "source_report_loads": True,
         "planner_no_fallback": True,
-        "pct_native_runtime_used": True,
-        "pct_native_runtime_ok": True,
+        "pct_planner_runtime_selected": True,
+        "pct_planner_runtime_ok": True,
         "pct_optimizer_mode_recorded": True,
         "pct_path_mode_supported": True,
         "pct_path_mode_matches_optimizer": True,
@@ -526,7 +580,7 @@ def test_native_pct_mujoco_contract_only_accepts_optimizer_rejected_raw_source(
         pct_optimizer_accepted=False,
         pct_optimizer_reject_reason="optimized_trajectory_hard_obstacle",
         pct_optimizer_blocked_sample_count=3,
-        pct_planner_path_mode="native_astar_raw_path",
+        pct_planner_path_mode="astar_raw_path",
     )
     args = argparse.Namespace(
         source_report=source,
@@ -542,7 +596,7 @@ def test_native_pct_mujoco_contract_only_accepts_optimizer_rejected_raw_source(
 
     assert report["ok"] is True
     assert report["pct_optimizer_enabled"] is True
-    assert report["pct_planner_path_mode"] == "native_astar_raw_path"
+    assert report["pct_planner_path_mode"] == "astar_raw_path"
     checks = report["contract_checks"]
     assert checks["pct_path_mode_matches_optimizer"] is True
     assert checks["pct_optimizer_rejection_recorded"] is True
@@ -555,7 +609,7 @@ def test_native_pct_mujoco_contract_only_accepts_optimizer_rejected_raw_source(
 def test_native_pct_mujoco_contract_only_reports_source_blocker(
     tmp_path: Path,
 ) -> None:
-    source = _write_source_report(tmp_path, native_runtime_used=False)
+    source = _write_source_report(tmp_path, pct_planner_runtime="")
     args = argparse.Namespace(
         source_report=source,
         generate_source_report=False,
@@ -571,7 +625,7 @@ def test_native_pct_mujoco_contract_only_reports_source_blocker(
     assert report["ok"] is False
     assert report["execution_mode"] == "contract_only"
     assert report["validation_only"] is True
-    assert "native runtime" in report["blockers"][0]
+    assert "planner runtime is not selected" in report["blockers"][0]
     assert report["contract_checks"]["source_report_loads"] is False
 
 
@@ -579,7 +633,7 @@ def test_native_pct_mujoco_full_run_rejects_missing_source_artifacts_before_ros(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sim.scripts import native_pct_mujoco_gate as mod
+    from sim.scripts.mujoco import native_pct_gate as mod
 
     source = _write_source_report(tmp_path)
     data = json.loads(source.read_text(encoding="utf-8"))
@@ -618,7 +672,7 @@ def test_native_pct_mujoco_full_run_rejects_truncated_waypoint_goal_before_ros(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sim.scripts import native_pct_mujoco_gate as mod
+    from sim.scripts.mujoco import native_pct_gate as mod
 
     source = _write_source_report(tmp_path)
     data = json.loads(source.read_text(encoding="utf-8"))
@@ -676,7 +730,7 @@ def test_native_pct_mujoco_full_run_writes_blocked_report_when_ros2_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from sim.scripts import native_pct_mujoco_gate as mod
+    from sim.scripts.mujoco import native_pct_gate as mod
 
     source = _write_source_report(tmp_path)
 
@@ -748,8 +802,10 @@ def test_native_node_commands_launch_only_local_planner_stack(tmp_path: Path) ->
     assert "driver" not in joined.lower()
 
 
-def test_default_local_planner_path_folder_supports_merge_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from sim.scripts import native_pct_mujoco_gate as mod
+def test_default_local_planner_path_folder_supports_merge_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sim.scripts.mujoco import native_pct_gate as mod
 
     merge_paths = tmp_path / "install/share/local_planner/paths"
     merge_paths.mkdir(parents=True)

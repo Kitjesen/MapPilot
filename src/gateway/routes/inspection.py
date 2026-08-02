@@ -9,6 +9,7 @@ import math
 import os
 import stat
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -20,15 +21,25 @@ from gateway.schemas import (
     InspectionRouteListResponse,
     InspectionRouteRequest,
     InspectionRouteResponse,
-    InspectionRunControlRequest,
-    InspectionStartRequest,
     InspectionStatusResponse,
+    InspectionTaskCommandResponse,
+    InspectionTaskControlRequest,
+    InspectionTaskListResponse,
+    InspectionTaskReportResponse,
+    InspectionTaskStartRequest,
+    InspectionTaskStatusResponse,
 )
-from gateway.services.map_service import map_service_query
 from gateway.services.inspection_boundary import (
     InspectionBoundaryError,
+    InspectionCommandRejected,
     invoke_inspection,
 )
+from gateway.services.inspection_report import build_inspection_task_report
+from gateway.services.inspection_task_lifecycle import (
+    InspectionTaskJournalUnavailable,
+    ensure_inspection_task_timeline,
+)
+from gateway.services.map_service import map_service_query
 from maps.paths import active_map_name, nav_map_root
 from runtime.contracts.inspection_evidence import (
     EvidenceIntegrityError,
@@ -78,6 +89,28 @@ def _native_error(exc: Exception) -> JSONResponse:
     if "invalid" in lowered or "must" in lowered or "route point" in lowered:
         return _error(400, "inspection_route_invalid", message)
     return _error(503, "inspection_native_unavailable", message)
+
+
+def _task_command_rejected(
+    exc: Exception,
+    *,
+    action: str,
+    task_id: str,
+    request_id: str,
+) -> JSONResponse:
+    """Return a retry-safe conflict when the live endpoint declines a task command."""
+
+    return _error(
+        409,
+        "inspection_task_rejected",
+        "native inspection endpoint rejected the task command",
+        detail={
+            "action": action,
+            "task_id": task_id,
+            "request_id": request_id,
+            "native_reason": str(exc) or "inspection_task_rejected",
+        },
+    )
 
 
 def _resolve_map_id(value: str | None) -> str | JSONResponse:
@@ -205,6 +238,43 @@ def _evidence_summary(result: InspectionEvidenceResult) -> dict[str, Any]:
         },
         "artifacts": _public_artifacts(result),
     }
+
+
+def _report_evidence_by_id(task: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Verify every evidence ID referenced by retained native task facts."""
+
+    evidence: dict[str, dict[str, Any]] = {}
+    timeline = task.get("timeline")
+    if not isinstance(timeline, list):
+        return evidence
+    for event in timeline:
+        if not isinstance(event, dict) or int(event.get("kind", 0) or 0) != 5:
+            continue
+        evidence_id = str(event.get("evidence_id") or "").strip()
+        if not evidence_id or evidence_id in evidence:
+            continue
+        result = _evidence_result(evidence_id)
+        if isinstance(result, InspectionEvidenceResult):
+            evidence[evidence_id] = {
+                "status": "VERIFIED",
+                "summary": _evidence_summary(result),
+            }
+        elif result.status_code == 409:
+            evidence[evidence_id] = {
+                "status": "INVALID",
+                "reason": "evidence_integrity_failed",
+            }
+        elif result.status_code == 503:
+            evidence[evidence_id] = {
+                "status": "UNAVAILABLE",
+                "reason": "evidence_store_unavailable",
+            }
+        else:
+            evidence[evidence_id] = {
+                "status": "MISSING",
+                "reason": "evidence_not_found",
+            }
+    return evidence
 
 
 def _read_evidence_artifact(
@@ -398,15 +468,49 @@ def _routes_from_native(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _run_native_command(gw: Any, method: str, *args, **kwargs) -> None:
-    parameters = dict(kwargs)
+def _new_task_request_id(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    if normalized:
+        return normalized
+    return f"inspection-request-{uuid.uuid4().hex}"
+
+
+def _task_id_for_request(request_id: str) -> str:
+    """Derive a stable product task id from an idempotent start request."""
+
+    return f"inspection-task-{uuid.uuid5(uuid.NAMESPACE_URL, f'lingtu-inspection:{request_id}').hex}"
+
+
+def _run_native_task_command(
+    gw: Any,
+    method: str,
+    task_id: str,
+    *,
+    route_id: str | None = None,
+    revision: int = 0,
+    reason: str | None = None,
+    request_id: str,
+) -> None:
     if method == "start":
-        parameters.update(route_id=args[0])
-        operation = "start_route"
+        operation = "start_task"
+        parameters = {
+            "task_id": task_id,
+            "route_id": str(route_id or ""),
+            "revision": revision,
+            "request_id": request_id,
+        }
     else:
-        parameters.update(reason=args[0])
-        operation = method
-    invoke_inspection(gw, operation, **parameters)
+        operation = f"{method}_task"
+        parameters = {
+            "task_id": task_id,
+            "reason": str(reason or f"operator_{method}"),
+            "request_id": request_id,
+        }
+    accepted = invoke_inspection(gw, operation, **parameters)
+    if accepted is not True:
+        raise InspectionBoundaryError(
+            f"inspection service returned an invalid acknowledgement for {operation}"
+        )
 
 
 def _evidence_status_file() -> Path:
@@ -747,23 +851,53 @@ def register_inspection_routes(app, gw) -> None:
             map_id=resolved,
         )
 
-    @app.post(
-        "/api/v1/inspection/routes/{route_id}/start",
-        summary="Start native C++ inspection execution",
-        response_model=InspectionCommandResponse,
-        responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
+    @app.get(
+        "/api/v1/inspection/tasks",
+        summary="List retained inspection task projections",
+        response_model=InspectionTaskListResponse,
     )
-    async def start_inspection_route(route_id: str, body: InspectionStartRequest | None = None):
-        request = body or InspectionStartRequest()
+    async def list_inspection_tasks(
+        map_id: str | None = None,
+        route_id: str | None = None,
+        include_terminal: bool = False,
+        limit: int = 20,
+    ):
+        try:
+            return ensure_inspection_task_timeline(gw).list_tasks(
+                map_id=map_id,
+                route_id=route_id,
+                include_terminal=include_terminal,
+                limit=limit,
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(503, "inspection_task_journal_unavailable", str(exc))
+
+    @app.post(
+        "/api/v1/inspection/tasks",
+        status_code=202,
+        summary="Submit a task-addressed native inspection route",
+        response_model=InspectionTaskCommandResponse,
+        responses={
+            400: {"model": GatewayErrorResponse},
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
+    )
+    async def start_inspection_task(body: InspectionTaskStartRequest):
+        task_timeline = ensure_inspection_task_timeline(gw)
+        try:
+            task_timeline.require_available()
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(503, "inspection_task_journal_unavailable", str(exc))
         resolved = _resolve_map_id(None)
         if isinstance(resolved, JSONResponse):
             return resolved
-        if request.map_id and request.map_id != resolved:
+        if body.map_id and body.map_id != resolved:
             return _error(
                 409,
                 "inspection_active_map_mismatch",
                 "inspection can only start on the active map",
-                detail={"requested": request.map_id, "active": resolved},
+                detail={"requested": body.map_id, "active": resolved},
             )
         try:
             route = await asyncio.to_thread(
@@ -771,7 +905,7 @@ def register_inspection_routes(app, gw) -> None:
                 gw,
                 "get",
                 resolved,
-                route_id,
+                body.route_id,
             )
         except InspectionBoundaryError as exc:
             return _native_error(exc)
@@ -783,119 +917,352 @@ def register_inspection_routes(app, gw) -> None:
                 "inspection_route_revision_unavailable",
                 "stored inspection route has no valid revision",
             )
-        if request.revision not in (0, current_revision):
+        if body.revision not in (0, current_revision):
             return _error(
                 409,
                 "inspection_route_revision_mismatch",
                 "inspection start revision does not match the stored route",
                 detail={
-                    "requested": request.revision,
+                    "requested": body.revision,
                     "current": current_revision,
-                    "route_id": route_id,
+                    "route_id": body.route_id,
                 },
             )
+        try:
+            route_snapshot = task_timeline.prepare_route_snapshot(route)
+        except (TypeError, ValueError) as exc:
+            return _error(
+                503,
+                "inspection_route_snapshot_unavailable",
+                "stored inspection route cannot be preserved for task reporting",
+                detail={"reason": str(exc), "route_id": body.route_id},
+            )
+        request_id = _new_task_request_id(body.request_id)
+        task_id = _task_id_for_request(request_id)
+        try:
+            task_timeline.require_route_snapshot_compatible(
+                task_id,
+                route_snapshot,
+            )
+        except ValueError as exc:
+            return _error(
+                409,
+                "inspection_task_route_snapshot_mismatch",
+                "this start request already identifies a different route revision",
+                detail={
+                    "task_id": task_id,
+                    "request_id": request_id,
+                    "reason": str(exc),
+                },
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(503, "inspection_task_journal_unavailable", str(exc))
         evidence_error = _validate_route_evidence_worker(route)
         if evidence_error is not None:
             return evidence_error
         try:
+            task_timeline.reserve_submission(
+                task_id=task_id,
+                action="start",
+                request_id=request_id,
+                route_snapshot=route_snapshot,
+            )
+        except ValueError as exc:
+            return _error(
+                409,
+                "inspection_request_id_conflict",
+                "this request_id already identifies a different inspection command",
+                detail={
+                    "task_id": task_id,
+                    "request_id": request_id,
+                    "reason": str(exc),
+                },
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(503, "inspection_task_journal_unavailable", str(exc))
+        try:
             await asyncio.to_thread(
-                _run_native_command,
+                _run_native_task_command,
                 gw,
                 "start",
-                route_id,
+                task_id,
+                route_id=body.route_id,
                 revision=current_revision,
-                request_id=request.request_id,
+                request_id=request_id,
+            )
+        except InspectionCommandRejected as exc:
+            return _task_command_rejected(
+                exc,
+                action="start",
+                task_id=task_id,
+                request_id=request_id,
             )
         except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
-        return InspectionCommandResponse(
+        try:
+            task_timeline.record_submission(
+                task_id=task_id,
+                action="start",
+                request_id=request_id,
+                route_id=body.route_id,
+                map_id=resolved,
+                map_version=int(route.get("map_version", 0) or 0),
+                route_revision=current_revision,
+                route_snapshot=route_snapshot,
+            )
+        except ValueError as exc:
+            return _error(
+                409,
+                "inspection_task_route_snapshot_mismatch",
+                "the accepted native command conflicts with the retained task identity",
+                detail={
+                    "task_id": task_id,
+                    "request_id": request_id,
+                    "reason": str(exc),
+                    "native_command_accepted": True,
+                    "retry_safe": False,
+                },
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(
+                503,
+                "inspection_task_journal_commit_failed",
+                str(exc),
+                detail={
+                    "task_id": task_id,
+                    "request_id": request_id,
+                    "native_command_accepted": True,
+                    "retry_safe": False,
+                },
+            )
+        # This is a business ACK only. Execution and terminal truth arrive on
+        # the native task-event stream, so the receipt must never say RUNNING.
+        return InspectionTaskCommandResponse(
             action="start",
-            route_id=route_id,
+            task_id=task_id,
+            request_id=request_id,
+            route_id=body.route_id,
             map_id=resolved,
             revision=current_revision,
-            request_id=request.request_id,
         )
 
-    @app.post(
-        "/api/v1/inspection/run/pause",
-        summary="Pause native C++ inspection execution",
-        response_model=InspectionCommandResponse,
-        responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
-    )
-    async def pause_inspection_run(body: InspectionRunControlRequest | None = None):
-        request = body or InspectionRunControlRequest(reason="operator_pause")
-        resolved = _resolve_map_id(None)
-        if isinstance(resolved, JSONResponse):
-            return resolved
+    async def _control_inspection_task(
+        task_id: str,
+        body: InspectionTaskControlRequest | None,
+        *,
+        action: str,
+    ) -> InspectionTaskCommandResponse | JSONResponse:
+        normalized_task_id = str(task_id or "").strip()
+        if not normalized_task_id:
+            return _error(400, "inspection_task_id_required", "inspection task_id is required")
+        task_timeline = ensure_inspection_task_timeline(gw)
+        try:
+            task_timeline.require_available()
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(503, "inspection_task_journal_unavailable", str(exc))
+        request = body or InspectionTaskControlRequest(reason=f"operator_{action}")
+        request_id = _new_task_request_id(request.request_id)
+        default_reason = f"operator_{action}"
+        reason = str(request.reason or default_reason).strip() or default_reason
+        try:
+            task_timeline.reserve_submission(
+                task_id=normalized_task_id,
+                action=action,
+                request_id=request_id,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return _error(
+                409,
+                "inspection_request_id_conflict",
+                "this request_id already identifies a different inspection command",
+                detail={
+                    "task_id": normalized_task_id,
+                    "request_id": request_id,
+                    "action": action,
+                    "reason": str(exc),
+                },
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(503, "inspection_task_journal_unavailable", str(exc))
         try:
             await asyncio.to_thread(
-                _run_native_command,
+                _run_native_task_command,
                 gw,
-                "pause",
-                request.reason,
-                request_id=request.request_id,
+                action,
+                normalized_task_id,
+                reason=reason,
+                request_id=request_id,
+            )
+        except InspectionCommandRejected as exc:
+            return _task_command_rejected(
+                exc,
+                action=action,
+                task_id=normalized_task_id,
+                request_id=request_id,
             )
         except InspectionBoundaryError as exc:
             return _error(503, "inspection_native_unavailable", str(exc))
-        return InspectionCommandResponse(
-            action="pause",
-            map_id=resolved,
-            request_id=request.request_id,
+        try:
+            task_timeline.record_submission(
+                task_id=normalized_task_id,
+                action=action,
+                request_id=request_id,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return _error(
+                409,
+                "inspection_request_id_conflict",
+                "the accepted native command conflicts with its reserved request_id",
+                detail={
+                    "task_id": normalized_task_id,
+                    "request_id": request_id,
+                    "action": action,
+                    "reason": str(exc),
+                    "native_command_accepted": True,
+                    "retry_safe": False,
+                },
+            )
+        except InspectionTaskJournalUnavailable as exc:
+            return _error(
+                503,
+                "inspection_task_journal_commit_failed",
+                str(exc),
+                detail={
+                    "task_id": normalized_task_id,
+                    "request_id": request_id,
+                    "native_command_accepted": True,
+                    "retry_safe": False,
+                },
+            )
+        return InspectionTaskCommandResponse(
+            action=action,
+            task_id=normalized_task_id,
+            request_id=request_id,
         )
 
     @app.post(
-        "/api/v1/inspection/run/resume",
-        summary="Resume native C++ inspection execution",
-        response_model=InspectionCommandResponse,
-        responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
+        "/api/v1/inspection/tasks/{task_id}/pause",
+        status_code=202,
+        summary="Request pause for one native inspection task",
+        response_model=InspectionTaskCommandResponse,
+        responses={
+            400: {"model": GatewayErrorResponse},
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
     )
-    async def resume_inspection_run(body: InspectionRunControlRequest | None = None):
-        request = body or InspectionRunControlRequest(reason="operator_resume")
-        resolved = _resolve_map_id(None)
-        if isinstance(resolved, JSONResponse):
-            return resolved
-        try:
-            await asyncio.to_thread(
-                _run_native_command,
-                gw,
-                "resume",
-                request.reason,
-                request_id=request.request_id,
-            )
-        except InspectionBoundaryError as exc:
-            return _error(503, "inspection_native_unavailable", str(exc))
-        return InspectionCommandResponse(
-            action="resume",
-            map_id=resolved,
-            request_id=request.request_id,
-        )
+    async def pause_inspection_task(
+        task_id: str,
+        body: InspectionTaskControlRequest | None = None,
+    ):
+        return await _control_inspection_task(task_id, body, action="pause")
 
     @app.post(
-        "/api/v1/inspection/run/cancel",
-        summary="Cancel native C++ inspection execution",
-        response_model=InspectionCommandResponse,
-        responses={400: {"model": GatewayErrorResponse}, 503: {"model": GatewayErrorResponse}},
+        "/api/v1/inspection/tasks/{task_id}/resume",
+        status_code=202,
+        summary="Request resume for one native inspection task",
+        response_model=InspectionTaskCommandResponse,
+        responses={
+            400: {"model": GatewayErrorResponse},
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
     )
-    async def cancel_inspection_run(body: InspectionRunControlRequest | None = None):
-        request = body or InspectionRunControlRequest(reason="operator_cancel")
-        resolved = _resolve_map_id(None)
-        if isinstance(resolved, JSONResponse):
-            return resolved
-        try:
-            await asyncio.to_thread(
-                _run_native_command,
-                gw,
-                "cancel",
-                request.reason,
-                request_id=request.request_id,
+    async def resume_inspection_task(
+        task_id: str,
+        body: InspectionTaskControlRequest | None = None,
+    ):
+        return await _control_inspection_task(task_id, body, action="resume")
+
+    @app.post(
+        "/api/v1/inspection/tasks/{task_id}/cancel",
+        status_code=202,
+        summary="Request cancellation for one native inspection task",
+        response_model=InspectionTaskCommandResponse,
+        responses={
+            400: {"model": GatewayErrorResponse},
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
+    )
+    async def cancel_inspection_task(
+        task_id: str,
+        body: InspectionTaskControlRequest | None = None,
+    ):
+        return await _control_inspection_task(task_id, body, action="cancel")
+
+    @app.get(
+        "/api/v1/inspection/tasks/{task_id}/report",
+        summary="Read the business result of one inspection task",
+        response_model=InspectionTaskReportResponse,
+        responses={
+            404: {"model": GatewayErrorResponse},
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
+    )
+    async def get_inspection_task_report(task_id: str):
+        task = ensure_inspection_task_timeline(gw).query(task_id)
+        if task.get("found") is not True:
+            reason = str(task.get("reason") or "task_status_unknown")
+            if reason in {"task_journal_corrupt", "task_journal_write_failed"}:
+                return _error(503, "inspection_task_journal_unavailable", reason)
+            return _error(
+                404,
+                "inspection_task_not_found",
+                "inspection task was not found",
+                detail={"task_id": task_id},
             )
-        except InspectionBoundaryError as exc:
-            return _error(503, "inspection_native_unavailable", str(exc))
-        return InspectionCommandResponse(
-            action="cancel",
-            map_id=resolved,
-            request_id=request.request_id,
-        )
+        identity = task.get("identity")
+        if not isinstance(identity, dict):
+            identity = {}
+        map_id = str(identity.get("map_id") or "")
+        route_id = str(identity.get("route_id") or "")
+        if not map_id or not route_id:
+            return _error(
+                409,
+                "inspection_task_identity_incomplete",
+                "inspection task has no immutable route identity",
+                detail={"task_id": task_id},
+            )
+        route = task.get("route_snapshot")
+        if not isinstance(route, dict):
+            return _error(
+                409,
+                "inspection_task_route_snapshot_unavailable",
+                "inspection task has no immutable route requirements snapshot",
+                detail={
+                    "task_id": task_id,
+                    "route_id": route_id,
+                    "route_revision": int(identity.get("route_revision") or 0),
+                },
+            )
+        expected_revision = int(identity.get("route_revision") or 0)
+        actual_revision = int(route.get("revision") or 0)
+        if expected_revision <= 0 or actual_revision != expected_revision:
+            return _error(
+                409,
+                "inspection_task_route_revision_unavailable",
+                "the immutable route revision used by this task is unavailable",
+                detail={
+                    "task_id": task_id,
+                    "route_id": route_id,
+                    "expected_revision": expected_revision,
+                    "available_revision": actual_revision,
+                },
+            )
+        evidence = await asyncio.to_thread(_report_evidence_by_id, task)
+        return build_inspection_task_report(task, route, evidence)
+
+    @app.get(
+        "/api/v1/inspection/tasks/{task_id}",
+        summary="Read the fact-backed state of one inspection task",
+        response_model=InspectionTaskStatusResponse,
+    )
+    async def get_inspection_task(task_id: str):
+        return ensure_inspection_task_timeline(gw).query(task_id)
 
     @app.get(
         "/api/v1/inspection/status",

@@ -45,7 +45,6 @@ const requiredLinks = [
   'runtime_dataflow_topic',
   'runtime_dataflow_subscribe',
   'runtime_switch_plan',
-  'runtime_switch',
   'field_check',
   'inspection_acceptance',
 ]
@@ -317,8 +316,8 @@ try {
   const switchPlan = await request(switchPlanPath, {
     method: 'POST',
     body: {
-      current_profile: 'sim_mujoco_live',
-      target_profile: 'explore',
+      current_product: null,
+      target_product: 'explore',
     },
   })
   ensure(switchPlan.status === 200, failures, `POST ${switchPlanPath} expected 200, got ${switchPlan.status}`)
@@ -331,50 +330,34 @@ try {
   ensure(switchPlan.body?.read_only === true, failures, 'runtime_switch_plan should be read-only')
   ensure(switchPlan.body?.motion === false, failures, 'runtime_switch_plan must not imply motion')
   ensure(Array.isArray(switchPlan.body?.publishes) && switchPlan.body.publishes.length === 0, failures, 'runtime_switch_plan must not publish')
-  ensure(switchPlan.body?.from?.runtime_contract === 'mujoco_fastlio2_live', failures, 'runtime_switch_plan from contract mismatch')
-  ensure(switchPlan.body?.to?.runtime_contract === 'real_s100p', failures, 'runtime_switch_plan to contract mismatch')
   ensure(
-    switchPlan.body?.changed?.includes('command_sink'),
+    switchPlan.body?.from?.env === 'real' || switchPlan.body?.from?.env === 'sim',
     failures,
-    'runtime_switch_plan should expose command_sink change',
+    'runtime_switch_plan must expose the fixed Env',
   )
   ensure(
-    switchPlan.body?.from?.command_sink !== 'driver',
+    switchPlan.body?.to?.env === switchPlan.body?.from?.env,
     failures,
-    'runtime_switch_plan sim side should not use hardware command sink',
+    'runtime_switch_plan must not switch Env',
   )
   ensure(
-    switchPlan.body?.to?.command_sink === 'driver',
+    switchPlan.body?.to?.product === 'explore',
     failures,
-    'runtime_switch_plan real side should use hardware command sink',
+    'runtime_switch_plan target Product mismatch',
   )
-  const switchStages = new Set([
-    ...(switchPlan.body?.from?.resolved_runtime_data_flow || []).map(stage => stage?.name),
-    ...(switchPlan.body?.to?.resolved_runtime_data_flow || []).map(stage => stage?.name),
-  ])
-  ensure(switchStages.has('dynamic_obstacle_gate'), failures, 'runtime_switch_plan missing dynamic_obstacle_gate')
-  ensure(switchStages.has('command_boundary'), failures, 'runtime_switch_plan missing command_boundary')
-
-  const runtimeSwitchPath = links.runtime_switch || '/api/v1/runtime/switch'
-  const runtimeSwitch = await request(runtimeSwitchPath, {
-    method: 'POST',
-    body: {
-      current_profile: 'nav',
-      target_profile: 'nav',
-      map_name: 'smoke',
-      allow_restart: false,
-    },
-  })
-  ensure(runtimeSwitch.status === 200, failures, `POST ${runtimeSwitchPath} expected 200, got ${runtimeSwitch.status}`)
   ensure(
-    runtimeSwitch.body?.schema_version === 'lingtu.runtime_switch.v1',
+    switchPlan.body?.run_plan?.identity?.env === switchPlan.body?.to?.env
+      && switchPlan.body?.run_plan?.identity?.product === 'explore',
     failures,
-    'runtime_switch missing canonical schema version',
+    'runtime_switch_plan must expose the resolved target RunPlan',
   )
-  ensure(runtimeSwitch.body?.accepted === false, failures, 'runtime_switch smoke must not execute a restart')
-  ensure(runtimeSwitch.body?.read_only === true, failures, 'runtime_switch smoke should be read-only')
-  ensure(runtimeSwitch.body?.dry_run === true, failures, 'runtime_switch smoke should be dry-run')
-  ensure(runtimeSwitch.body?.motion === false, failures, 'runtime_switch must not imply motion')
+  ensure(
+    !('endpoint' in (switchPlan.body?.inputs || {}))
+      && !('current_endpoint' in (switchPlan.body?.inputs || {}))
+      && !('target_endpoint' in (switchPlan.body?.inputs || {})),
+    failures,
+    'runtime_switch_plan inputs must not contain deployment endpoint selectors',
+  )
 
   const fieldCheckPath = links.field_check || '/api/v1/diagnostics/field-check'
   const fieldCheck = await request(fieldCheckPath, {

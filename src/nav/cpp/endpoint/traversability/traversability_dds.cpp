@@ -36,6 +36,7 @@
 #include "nav_kernel/terrain_core.hpp"
 #include "plan/dds_drain_policy.hpp"
 #include "plan/input_gate.hpp"
+#include "traversability/exploration_snapshot_identity.hpp"
 #include "traversability/grid_inflation.hpp"
 #include "traversability/observed_free_cache.hpp"
 #include "traversability/observed_safety_grid.hpp"
@@ -77,13 +78,6 @@ std::int64_t stampNanoseconds(double stamp_s) {
   return static_cast<std::int64_t>(std::llround(std::max(0.0, stamp_s) * 1e9));
 }
 
-std::string explorationSessionId() {
-  if (const char *configured = std::getenv("LINGTU_EXPLORATION_SESSION_ID");
-      configured != nullptr && configured[0] != 0) {
-    return configured;
-  }
-  return "live-" + std::to_string(stampNanoseconds(nowSeconds()));
-}
 double elapsedMs(SteadyClock::time_point start, SteadyClock::time_point end = SteadyClock::now()) {
   return std::chrono::duration<double, std::milli>(end - start).count();
 }
@@ -1056,7 +1050,8 @@ OccupancyMessage toExplorationMessage(const map_layers::Grid2D &grid,
 
 ExplorationGridMessage
 toExplorationSnapshotMessage(const map_layers::ExplorationGridSnapshot &snapshot,
-                             const std::string &session_id, std::uint64_t reset_epoch) {
+                             const nav_endpoint::ExplorationSnapshotIdentity &identity,
+                             std::uint64_t reset_epoch) {
   snapshot.Validate();
   OccupancyMessage occupancy = toExplorationMessage(snapshot.grid, snapshot.observed,
                                                     static_cast<double>(snapshot.stamp_ns) * 1e-9);
@@ -1069,16 +1064,16 @@ toExplorationSnapshotMessage(const map_layers::ExplorationGridSnapshot &snapshot
   out.msg.data._length = static_cast<std::uint32_t>(out.data.size());
   out.msg.data._buffer = out.data.data();
   out.msg.data._release = false;
-  out.session_id = session_id;
-  out.map_id.clear();
-  out.artifact_hash.clear();
+  out.session_id = identity.session_id;
+  out.map_id = identity.map_id;
+  out.artifact_hash = identity.artifact_hash;
   out.msg.session_id = const_cast<char *>(out.session_id.c_str());
   out.msg.map_id = const_cast<char *>(out.map_id.c_str());
-  out.msg.map_version = 0;
+  out.msg.map_version = identity.map_version;
   out.msg.artifact_hash = const_cast<char *>(out.artifact_hash.c_str());
   out.msg.reset_epoch = reset_epoch;
   out.msg.generation = snapshot.generation;
-  out.msg.live = true;
+  out.msg.live = identity.live;
   return out;
 }
 
@@ -1463,8 +1458,9 @@ class DdsRuntime {
   }
 
   void writeExplorationSnapshot(const map_layers::ExplorationGridSnapshot &snapshot,
-                                const std::string &session_id, std::uint64_t reset_epoch) {
-    ExplorationGridMessage msg = toExplorationSnapshotMessage(snapshot, session_id, reset_epoch);
+                                const nav_endpoint::ExplorationSnapshotIdentity &identity,
+                                std::uint64_t reset_epoch) {
+    ExplorationGridMessage msg = toExplorationSnapshotMessage(snapshot, identity, reset_epoch);
     logDdsError(dds_write(exploration_snapshot_writer_, &msg.msg),
                 "dds_write(exploration_snapshot)");
   }
@@ -1544,6 +1540,14 @@ int main(int argc, char **argv) {
     std::signal(SIGTERM, stopSignal);
 
     const CliConfig cfg = parseArgs(argc, argv);
+    const nav_endpoint::ExplorationSnapshotIdentity exploration_identity =
+        nav_endpoint::resolveExplorationSnapshotIdentity({
+            envOrEmpty("LINGTU_EXPLORE_ROUTE"),
+            envOrEmpty("LINGTU_PRODUCT_SESSION_ID"),
+            envOrEmpty("LINGTU_MAP_ID"),
+            envOrEmpty("LINGTU_MAP_VERSION"),
+            envOrEmpty("LINGTU_MAP_POINTCLOUD_SHA256"),
+        });
     DdsRuntime dds(cfg.domain_id);
 
     std::optional<nav_endpoint::RigidTransform> odom_body;
@@ -1594,7 +1598,7 @@ int main(int argc, char **argv) {
     nav_kernel::DynamicClearCore dynamic_clear(dynamicClearParamsFromConfig(cfg));
     nav_endpoint::ObservedFreeCache observed_free(cfg.resolution);
     nav_endpoint::RollingExplorationMap rolling_exploration(rollingExplorationConfig(cfg));
-    const std::string exploration_session_id = explorationSessionId();
+    const std::string &exploration_session_id = exploration_identity.session_id;
     std::uint64_t exploration_reset_epoch = 1U;
     std::uint64_t exploration_snapshot_count = 0U;
     std::size_t exploration_free_cells = 0U;
@@ -1766,7 +1770,7 @@ int main(int argc, char **argv) {
           return;
         }
         if (cloud_stamp_decision == nav_endpoint::SourceStampDecision::kClockRebase) {
-          ++clock_rebase_count;
+          clear_source_epoch();
           last_frame_error = "source_clock_rebase";
         }
         last_cloud_stamp_s = cloud_stamp_s;
@@ -1850,7 +1854,7 @@ int main(int argc, char **argv) {
               }
               const auto exploration_write_start = SteadyClock::now();
               dds.writeExplorationGrid(exploration.grid, exploration.observed, cloud_stamp_s);
-              dds.writeExplorationSnapshot(exploration, exploration_session_id,
+              dds.writeExplorationSnapshot(exploration, exploration_identity,
                                            exploration_reset_epoch);
               timing.dds_write_ms += elapsedMs(exploration_write_start);
               exploration_free_cells = exploration.free_cells;

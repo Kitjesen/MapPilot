@@ -27,7 +27,7 @@ Replay/debug/legacy compatibility
 
 Normal modules speak LingTu channels and `runtime.msgs` types. ROS 2 topics, LCM
 channels, simulator feeds, replay files, and shared-memory paths are adapter
-aliases only when the selected endpoint explicitly enables them.
+aliases only when the resolved Product/env contract explicitly enables them.
 
 ## Communication Plan And Status
 
@@ -42,7 +42,7 @@ algorithm chains stay in-process.
 | Gateway to native navigation | Process-wide C++ CycloneDDS command client loaded through a small C ABI | Goal, cancel, teleop, safety, and inspection commands use typed request/ACK envelopes through one reused `liblingtu_nav_client.so` session. Gateway does not fork a command subprocess and Python owns no field DDS writer. | Validate the ABI and endpoint binary on S100P as part of every deployment gate. |
 | Map to planner | MapService capability bundle | Native occupancy, ESDF, traversability and optional embedded OctoMap builders publish versioned bundles; external OctoMap conversion is an explicit build mode. | Remove the remaining planner-side legacy filesystem reader and validate on S100P. |
 | Global plan output | `GlobalPlanResult.to_wire()` JSON | Yes for Gateway/UI/replay payloads. | No binary planner protocol needed now. |
-| Endpoint/replay bridge | typed DDS for product, local/LCM only for replay or smoke | Partly: LCM adapters and JSONL validators still exist for replay/debug. | LCM must not be selected by field product profiles. |
+| Endpoint/replay bridge | typed DDS for product, local/LCM only for replay or smoke | Partly: LCM adapters and JSONL validators still exist for replay/debug. | LCM must not be selected by field Products. |
 | DDS | Typed DDS for all field service boundaries | Livox, Fast-LIO2, traversability, native nav, exploration, camera metadata/status, and teleop request/final-command ownership are C++ CycloneDDS paths. | GNSS and some compatibility readers still need retirement evidence. |
 | SHM | High-volume same-host IPC | Camera color/depth payloads use the native POSIX SHM data plane with typed DDS/status metadata; point-cloud/status snapshots also exist. | Continue field readiness checks for SHM sequence freshness and consumer coverage. |
 | Native SLAM hot path | C++ Fast-LIO2 with typed DDS ingress/egress | Live field runtime and scan/odometry/cloud contracts exist. | Continue hardware regression and map/localization acceptance; do not reintroduce Python DDS into SLAM. |
@@ -56,12 +56,12 @@ algorithm chains stay in-process.
 - Same-process C++ endpoint internals must not introduce LCM. OctoPlanner3D,
   LocalPlanner, PathFollower, and command arbitration call each other directly
   when they live inside one endpoint process.
-- Cross-process or cross-language product traffic must use typed DDS. Thunder
-  field production endpoint (`thunder_field`) uses typed CycloneDDS
-  (`thunder_field_dds_v1`).
+- Cross-process or cross-language Product traffic must use typed DDS. The
+  Thunder `env=real` Product runtime uses the `thunder_dds_v1` typed
+  CycloneDDS contract.
 - LCM is limited to replay, debug, legacy adapters, or external benchmark
   shims. It must not be required by `nav`, `teleop_avoid`, `map`, `tracking`,
-  `inspection`, or `tare_explore` field profiles.
+  `inspection`, or `explore` Products.
 - ROS 2 remains a compatibility adapter only. It belongs outside the product
   source tree or in explicitly quarantined legacy launch/simulator bridges.
 - `runtime.msgs` is the canonical in-process message model.
@@ -104,17 +104,17 @@ Legacy ROS names remain adapter aliases only:
 | `/nav/state_estimation_at_scan` | `localization.scan_synced_odometry` | Canonical ROS adapter alias. |
 | `/cloud_registered` | `perception.registered_cloud` or `mapping.map_cloud` | Adapter must declare frame semantics. |
 | `/registered_scan` | `mapping.map_cloud` | TARE/CMU adapter alias. |
-| `/sensor_scan` | `perception.sensor_frame_scan` | Legacy optional output; not part of Thunder Lite. |
+| `/sensor_scan` | `perception.sensor_frame_scan` | Legacy optional output; not part of the `lite` Profile. |
 | `/terrain_map_ext` | `mapping.terrain_map_ext` | Adapter alias only. |
 | `/cmd_vel` | `control.cmd_vel` | Adapter alias; hardware safety must stay explicit. |
 
-`/sensor_scan` is not a core Thunder Lite dependency. If the transform logic is
+`/sensor_scan` is not a core `lite` Profile dependency. If the transform logic is
 still needed, extract it as a pure kernel and keep ROS publication in an
 adapter.
 
 ## Transport Direction
 
-Thunder Lite:
+`lite` Profile:
 
 - In-process only by default.
 - Uses `ModulePort + LocalTransport`.
@@ -123,7 +123,7 @@ Thunder Lite:
 Thunder Endpoint/Nav:
 
 - Keeps the module graph local where possible.
-- Uses the native typed DDS endpoint contract (`thunder_field_dds_v1`) and
+- Uses the native typed DDS endpoint contract (`thunder_dds_v1`) and
   `cpp_slam_status` localization adapter for the production field boundary
   (native Livox SDK2 ingest + C++ CycloneDDS SLAM/status).
 - Uses LCM endpoint adapters for smoke/replay bridges and optional
@@ -131,9 +131,10 @@ Thunder Endpoint/Nav:
 - Uses ROS 2 only when integrating legacy SLAM, simulator, TARE, or existing
   external services.
 - Resolves a `route_contract` in addition to `module_transport` and
-  `endpoint_transport`. For `thunder_field`, the expected shape is
+  `endpoint_transport`. For the Thunder `env=real` RunPlan, the
+  expected shape is
   `module_transport=local`, `endpoint_transport=dds`,
-  `endpoint_contract=thunder_field_dds_v1`, and `route_contract=robot`.
+  `endpoint_contract=thunder_dds_v1`, and `route_contract=robot`.
   The route contract validates canonical topic ownership and DDS schema
   bindings; it does not by itself make ordinary Modules import or speak DDS.
   Use `Blueprint.route_contract(...)` for metadata-only contracts and reserve

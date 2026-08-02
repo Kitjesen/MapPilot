@@ -189,7 +189,7 @@ def _real_runtime_evidence_snapshot(
         "runtime_evidence_ok": ok,
         "report_age_s": age_s,
         "max_age_s": 3600.0,
-        "runtime_contract": "thunder_field",
+        "runtime_contract": "real",
         "simulation_only": False,
         "real_robot_motion": True,
         "cmd_vel_sent_to_hardware": True,
@@ -211,7 +211,7 @@ def _snapshots(
     from diagnostics.field.gateway_acceptance import PRODUCT_OBSERVABLE_TOPICS
 
     simulation = mode == "simulation"
-    runtime_contract = "mujoco_fastlio2_live" if simulation else "thunder_field"
+    runtime_contract = "mujoco_fastlio2_live" if simulation else "real"
 
     return {
         "capabilities": {
@@ -248,7 +248,7 @@ def _snapshots(
             "_http_status": 200,
             "runtime_contract": runtime_contract,
             "runtime_boundary": {
-                "endpoint": "mujoco_live" if simulation else "thunder_field",
+                "env": "sim" if simulation else "real",
                 "data_source": runtime_contract,
                 "runtime_contract": runtime_contract,
                 "simulation_only": simulation,
@@ -256,9 +256,25 @@ def _snapshots(
             },
             "ros2_topic_required": False,
             "transport_layers": {
-                "module_port_bus": {"primary": True},
+                "native_dds": {"primary": not simulation},
+                "module_port_bus": {"primary": simulation},
                 "ros2_adapter": {"primary": False},
             },
+            "motion_path": (
+                {
+                    "kind": "host_or_simulation",
+                    "motion_owner": "configured_host_or_simulation_driver",
+                    "stages": [],
+                }
+                if simulation
+                else {
+                    "kind": "native_field",
+                    "motion_owner": "nav",
+                    "final_velocity_writer": "nav",
+                    "actuator_owner": "driver",
+                    "stages": [{"name": name} for name in ("command", "localization", "risk", "motion", "actuation")],
+                }
+            ),
             "control_boundary": {
                 "arbitrary_publish_supported": False,
                 "command_interfaces": [
@@ -314,11 +330,11 @@ def test_gateway_runtime_acceptance_passes_non_motion_without_ros2_topic():
     payload = evaluate_gateway_runtime_acceptance(_snapshots(), mode="non_motion")
 
     assert payload["ok"] is True
-    assert payload["runtime_contract"] == "thunder_field"
+    assert payload["runtime_contract"] == "real"
     assert payload["ros2_topic_required"] is False
-    assert payload["checks"]["module_first_dataflow"]["module_port_bus_primary"] is True
-    assert payload["checks"]["module_first_dataflow"]["endpoint_adapter_primary"] is False
-    assert payload["checks"]["module_first_dataflow"]["missing_live_topics"]
+    assert payload["checks"]["gateway_observability"]["missing_live_topics"]
+    assert payload["checks"]["motion"]["motion_owner"] == "nav"
+    assert payload["checks"]["motion"]["stage_count"] == 5
     assert payload["checks"]["stage_evidence"]["ok"] is True
     assert payload["checks"]["stage_evidence"]["stage_count"] == 8
     assert payload["checks"]["stage_evidence"]["not_live_stages"] == []
@@ -491,7 +507,7 @@ def test_gateway_runtime_acceptance_field_rejects_partially_live_stage_tokens():
             "outputs": [],
         }
     }
-    assert "field acceptance requires live dataflow stages" in "\n".join(payload["blockers"])
+    assert "field acceptance requires live observed stages" in "\n".join(payload["blockers"])
 
 
 def test_gateway_runtime_acceptance_format_includes_stage_evidence():
@@ -537,7 +553,7 @@ def test_gateway_runtime_acceptance_simulation_rejects_real_runtime_boundary():
     )
 
     assert payload["ok"] is False
-    assert "simulation acceptance must not run against thunder_field runtime" in payload["blockers"]
+    assert "simulation acceptance must not run against real runtime" in payload["blockers"]
     assert "simulation acceptance requires simulation_only=true" in payload["blockers"]
 
 
@@ -668,7 +684,7 @@ def test_gateway_runtime_acceptance_field_rejects_smoke_shape_without_real_evide
     evidence.update(
         {
             "_http_status": 200,
-            "runtime_contract": "thunder_field",
+            "runtime_contract": "real",
             "simulation_only": False,
             "real_robot_motion": False,
             "cmd_vel_sent_to_hardware": False,
@@ -705,23 +721,32 @@ def test_gateway_runtime_acceptance_field_rejects_stale_real_runtime_evidence():
     assert "real-runtime-evidence is stale" in "\n".join(payload["blockers"])
 
 
-def test_gateway_runtime_acceptance_rejects_ros2_as_primary_boundary():
+def test_gateway_runtime_acceptance_rejects_endpoint_inspection_and_arbitrary_publish():
     from diagnostics.field.gateway_acceptance import evaluate_gateway_runtime_acceptance
 
     snapshots = _snapshots(live=True)
     dataflow = snapshots["runtime_dataflow"]
     dataflow["ros2_topic_required"] = True
-    dataflow["transport_layers"]["module_port_bus"]["primary"] = False
-    dataflow["transport_layers"]["ros2_adapter"]["primary"] = True
     dataflow["control_boundary"]["arbitrary_publish_supported"] = True
 
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
     assert payload["ok"] is False
     assert "Gateway acceptance must not require endpoint topic inspection" in payload["blockers"]
-    assert "module_port_bus must be the primary dataflow boundary" in payload["blockers"]
-    assert "endpoint_adapter must not be the primary acceptance boundary" in payload["blockers"]
     assert "Gateway must not expose arbitrary publish as product control" in payload["blockers"]
+
+
+def test_gateway_runtime_acceptance_rejects_wrong_native_motion_owner():
+    from diagnostics.field.gateway_acceptance import evaluate_gateway_runtime_acceptance
+
+    snapshots = _snapshots(live=True)
+    snapshots["runtime_dataflow"]["motion_path"]["motion_owner"] = "host"
+
+    payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
+
+    assert payload["ok"] is False
+    assert payload["checks"]["motion"]["motion_owner"] == "host"
+    assert "native motion path mismatch" in "\n".join(payload["blockers"])
 
 
 def test_gateway_runtime_acceptance_requires_gateway_sse_for_product_streams():
@@ -735,8 +760,8 @@ def test_gateway_runtime_acceptance_requires_gateway_sse_for_product_streams():
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
     assert payload["ok"] is False
-    assert payload["checks"]["module_first_dataflow"]["missing_stream_interfaces"] == [odom_topic["topic"]]
-    assert "runtime dataflow topics missing Gateway SSE subscription" in "\n".join(payload["blockers"])
+    assert payload["checks"]["gateway_observability"]["missing_stream_interfaces"] == [odom_topic["topic"]]
+    assert "product topics missing Gateway SSE subscription" in "\n".join(payload["blockers"])
 
 
 def test_gateway_runtime_acceptance_rejects_not_started_readiness_even_if_http_200():
@@ -785,7 +810,7 @@ def test_gateway_runtime_acceptance_field_rejects_live_flag_without_module_sampl
     assert payload["ok"] is False
     assert (
         snapshots["runtime_dataflow"]["topics"][0]["topic"]
-        in payload["checks"]["module_first_dataflow"]["missing_live_topics"]
+        in payload["checks"]["gateway_observability"]["missing_live_topics"]
     )
     assert "field acceptance missing live Module samples" in "\n".join(payload["blockers"])
 
@@ -807,7 +832,7 @@ def test_gateway_runtime_acceptance_field_rejects_gateway_only_live_sample():
     assert payload["ok"] is False
     assert (
         snapshots["runtime_dataflow"]["topics"][0]["topic"]
-        in payload["checks"]["module_first_dataflow"]["missing_live_topics"]
+        in payload["checks"]["gateway_observability"]["missing_live_topics"]
     )
 
 
@@ -826,7 +851,7 @@ def test_gateway_runtime_acceptance_field_rejects_stale_module_sample():
     assert payload["ok"] is False
     assert (
         snapshots["runtime_dataflow"]["topics"][0]["topic"]
-        in payload["checks"]["module_first_dataflow"]["missing_live_topics"]
+        in payload["checks"]["gateway_observability"]["missing_live_topics"]
     )
 
 
@@ -840,7 +865,7 @@ def test_gateway_runtime_acceptance_rejects_incomplete_command_whitelist():
 
     assert payload["ok"] is False
     assert "Gateway command whitelist missing required interfaces" in "\n".join(payload["blockers"])
-    assert payload["checks"]["module_first_dataflow"]["command_interface_count"] == 1
+    assert payload["checks"]["gateway_observability"]["command_interface_count"] == 1
 
 
 def test_gateway_runtime_acceptance_rejects_unexpected_command_interfaces():
@@ -853,7 +878,9 @@ def test_gateway_runtime_acceptance_rejects_unexpected_command_interfaces():
 
     assert payload["ok"] is False
     assert "Gateway command whitelist includes unexpected interfaces" in "\n".join(payload["blockers"])
-    assert payload["checks"]["module_first_dataflow"]["unexpected_command_interfaces"] == ["/api/v1/debug/publish"]
+    assert payload["checks"]["gateway_observability"]["unexpected_command_interfaces"] == [
+        "/api/v1/debug/publish"
+    ]
 
 
 def test_gateway_runtime_acceptance_rejects_missing_stage_evidence():
@@ -865,7 +892,7 @@ def test_gateway_runtime_acceptance_rejects_missing_stage_evidence():
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="non_motion")
 
     assert payload["ok"] is False
-    assert "runtime dataflow missing stage_evidence" in payload["blockers"]
+    assert "Gateway observability is missing stage evidence" in payload["blockers"]
     assert payload["checks"]["stage_evidence"]["stage_count"] == 0
     assert payload["checks"]["stage_evidence"]["available"] is False
 
@@ -881,7 +908,7 @@ def test_gateway_runtime_acceptance_rejects_missing_required_stage():
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="non_motion")
 
     assert payload["ok"] is False
-    assert "runtime dataflow missing required stages: global_planning" in payload["blockers"]
+    assert "Gateway observability missing required stages: global_planning" in payload["blockers"]
     assert payload["checks"]["stage_evidence"]["missing_stages"] == ["global_planning"]
 
 
@@ -977,7 +1004,7 @@ def test_gateway_runtime_acceptance_field_rejects_non_live_required_stage():
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
     assert payload["ok"] is False
-    assert "field acceptance requires live dataflow stages: global_planning" in (payload["blockers"])
+    assert "field acceptance requires live observed stages: global_planning" in payload["blockers"]
     assert payload["checks"]["stage_evidence"]["not_live_stages"] == ["global_planning"]
 
 
@@ -997,10 +1024,10 @@ def test_gateway_runtime_acceptance_field_requires_live_traversable_frontier_pre
 
     payload = evaluate_gateway_runtime_acceptance(snapshots, mode="field")
 
-    assert ("runtime dataflow missing product topics: /nav/traversable_frontiers, /nav/frontier_candidate") in payload[
+    assert ("Gateway observability missing product topics: /nav/traversable_frontiers, /nav/frontier_candidate") in payload[
         "blockers"
     ]
-    assert "runtime dataflow missing required stages: traversable_frontier_preview" in payload["blockers"]
+    assert "Gateway observability missing required stages: traversable_frontier_preview" in payload["blockers"]
     assert "field acceptance requires live traversable frontier preview" in payload["blockers"]
     assert payload["checks"]["frontier_preview"]["ok"] is False
     assert payload["checks"]["frontier_preview"]["missing_topics"] == [
@@ -1031,16 +1058,16 @@ def test_gateway_runtime_acceptance_cli_writes_json(monkeypatch, tmp_path, capsy
 
     def _fake_collect(*, gateway_url: str, timeout_sec: float, mode: str):
         return {
-            "schema_version": "lingtu.gateway_runtime_acceptance.v1",
+            "schema_version": "lingtu.gateway_runtime_acceptance.v3",
             "ok": True,
             "mode": mode,
             "gateway_url": gateway_url,
             "timeout_sec": timeout_sec,
-            "runtime_contract": "thunder_field",
+            "runtime_contract": "real",
             "ros2_topic_required": False,
             "blockers": [],
             "advisories": [],
-            "checks": {"module_first_dataflow": {"ok": True}},
+            "checks": {"gateway_observability": {"ok": True}, "motion": {"ok": True}},
         }
 
     monkeypatch.setattr(acceptance_mod, "collect_gateway_runtime_acceptance", _fake_collect)
@@ -1077,7 +1104,7 @@ def test_gateway_runtime_acceptance_cli_exits_nonzero_on_blockers(monkeypatch, c
 
     def _fake_collect(*, gateway_url: str, timeout_sec: float, mode: str):
         return {
-            "schema_version": "lingtu.gateway_runtime_acceptance.v1",
+            "schema_version": "lingtu.gateway_runtime_acceptance.v3",
             "ok": False,
             "mode": mode,
             "runtime_contract": None,

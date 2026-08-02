@@ -26,7 +26,7 @@ from typing import Any
 from runtime.module import Module
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import TOPICS, real_lidar_frame_id
+from runtime.runtime_interface import real_lidar_frame_id
 from runtime.stream import Out
 
 from .native.sdk import LidarSource, LidarSourceFactory, create_lidar_source
@@ -66,9 +66,6 @@ class LidarModule(Module, layer=1):
     def __init__(
         self,
         ip: str | None = None,
-        scan_topic: str = TOPICS.lidar_scan,
-        imu_topic: str = TOPICS.imu,
-        start_driver: bool = False,
         source: LidarSource | None = None,
         source_factory: LidarSourceFactory | None = None,
         **kw,
@@ -77,13 +74,7 @@ class LidarModule(Module, layer=1):
         if source is not None and source_factory is not None:
             raise ValueError("Pass either source or source_factory, not both")
         factory = source_factory or create_lidar_source
-        source_kwargs = {
-            "ip": ip,
-            "scan_topic": scan_topic,
-            "imu_topic": imu_topic,
-        }
-        if start_driver:
-            source_kwargs["start_driver"] = True
+        source_kwargs = {"ip": ip}
         self._lidar = source or factory(**source_kwargs)
 
     def setup(self) -> None:

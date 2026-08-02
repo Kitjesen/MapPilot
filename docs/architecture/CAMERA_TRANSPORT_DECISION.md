@@ -11,6 +11,12 @@ JPEG-over-WebSocket as the fallback. The Gateway bootstrap advertises WHEP
 support; live sidecar health is queried separately through
 `GET /api/v1/webrtc/go2rtc/status`.
 
+go2rtc is an optional machine-level external media sidecar. It is provisioned
+on the robot host, outside ProductControl, and is not part of any Product,
+RunPlan, or Product readiness gate. Its installer owns provisioning and
+restarting its systemd unit; this neither creates a second Product lifecycle
+nor affects Product switching, staging, or readiness.
+
 This decision is browser transport only. The robot-side camera data plane is a
 native camera service with POSIX SHM for image payloads and typed DDS/status
 metadata such as `rt/camera/info`; readiness checks reject field claims when

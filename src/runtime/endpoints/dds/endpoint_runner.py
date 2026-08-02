@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from runtime.endpoints.dds.contracts import THUNDER_FIELD_DDS_CONTRACT_NAME
+from runtime.endpoints.dds.contracts import THUNDER_DDS_CONTRACT_NAME
 from runtime.endpoints.dds.endpoint_service import DDSEndpointEvent, DDSEndpointService
 
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--contract",
-        default=THUNDER_FIELD_DDS_CONTRACT_NAME,
+        default=THUNDER_DDS_CONTRACT_NAME,
         help="Typed DDS endpoint contract name.",
     )
     parser.add_argument(
@@ -31,7 +31,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default="",
         help=(
             "Optional source plugin. Use 'smoke', 'jsonl', 'thunder_brainstem', "
-            "'thunder_field', or module:factory. Multiple sources may be "
+            "'thunder', or module:factory. Multiple sources may be "
             "comma-separated."
         ),
     )
@@ -188,7 +188,7 @@ def _expand_source_specs(spec: str | list[str]) -> list[str]:
     for item in (part.strip() for part in items):
         if not item:
             continue
-        if item in {"field", "thunder_field", "builtin:thunder_field"}:
+        if item in {"thunder", "builtin:thunder"}:
             expanded.append("thunder_brainstem")
             if _jsonl_source_configured():
                 expanded.append("jsonl")
@@ -224,7 +224,7 @@ def _load_source(spec: str) -> Any:
     target = builtins.get(spec, spec)
     module_name, sep, factory_name = target.partition(":")
     if not sep:
-        raise ValueError("--source must be smoke, jsonl, thunder_field, thunder_brainstem, or module:factory")
+        raise ValueError("--source must be smoke, jsonl, thunder, thunder_brainstem, or module:factory")
     factory = getattr(importlib.import_module(module_name), factory_name)
     return factory()
 

@@ -1,38 +1,12 @@
 #pragma once
 //
-// ⚠️  DEPRECATED — pending replacement with PRBonn/MapClosures (MIT).
-//
-// This file was written in commit 850b75d as a stop-gap when N1 first
-// landed. The team review (R3 audit, post-Sprint 1) flagged two issues:
-//
-//   1. **Hand-written algorithm.** The audit's standing rule is "use
-//      mature upstream libraries, do not re-implement loop closure
-//      math." The 250-line implementation here is correct vs the Kim
-//      2018 paper but has zero real-data validation.
-//
-//   2. **License of the obvious upstream port** (aserbremen/scancontext_ros2)
-//      turned out to be **CC-BY-NC-SA 4.0** — non-commercial, unusable
-//      for LingTu. So a like-for-like upstream swap is not available.
-//
-// **Replacement target: PRBonn/MapClosures (MIT, ICRA 2024).**
-//   - License: MIT (https://github.com/PRBonn/MapClosures/blob/main/LICENSE)
-//   - Active maintenance (commit within last month at time of writing)
-//   - Algorithm: BEV occupancy projection + ORB descriptors. The audit
-//     argues this is *better* than Scan Context for sparse 4-line LiDAR
-//     (Mid-360) because BEV occupancy is robust to ring count, whereas
-//     ring-sector descriptors degrade as you drop scan lines.
-//
-// Migration plan tracked in docs/REVIEW_2026Q2.md. Rough scope (~2-3
-// weeks, separate sprint):
-//   - Add MapClosures via FetchContent in src/localization/pgo/CMakeLists.txt
-//   - New wrapper map_closures_loop_detector.h exposing add(cloud) +
-//     query(idx) -> {idx, yaw} matching the call sites in simple_pgo.cpp
-//   - Delete this file
-//   - pgo.yaml: enable_scan_context → loop_detector: scan_context|map_closures
-//
-// Until that migration lands, this file is the production loop detector
-// for indoor scenarios. Do NOT edit the algorithm here — any tuning
-// should go into the MapClosures wrapper instead.
+// This is the production indoor loop-candidate pre-filter when
+// enable_scan_context is true. It is a local implementation of the Scan
+// Context descriptor and has not yet passed a current MID-360 field benchmark.
+// Treat replacement as an evidence-driven product change: verify license,
+// replay accuracy, CPU/memory use, and failure behavior before selecting an
+// upstream implementation. Do not change the algorithm without focused replay
+// and loop-closure regression evidence.
 //
 // ──────────────────────────────────────────────────────────────────────
 // scan_context.h — minimal Scan Context (Kim & Kim, IROS 2018) descriptor

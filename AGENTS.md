@@ -8,19 +8,44 @@ LingTu (灵途) is an autonomous navigation system for quadruped robots in
 outdoor/off-road environments.
 
 - **Platform**: S100P (RDK X5, Nash BPU 128 TOPS, aarch64), native CycloneDDS, Ubuntu Linux
-- **Languages**: Python for the module framework and semantic stack; C++ for SLAM, terrain, and planning hot paths
-- **Architecture**: LingTu Assembly compiles Product declarations; Blueprint materializes one application graph; RuntimePlan describes native processes; the external Launcher applies it
+- **Languages**: Python for the Host framework and semantic/API stack; C++ for field LiDAR, SLAM, maps, terrain, navigation, and driver hot paths
+- **Architecture**: Assembly resolves one Product inside one fixed `env` (`real` or `sim`) into a fingerprinted RunPlan; ProductControl owns switching and systemd effects; Blueprint materializes only the Python Host graph
 - **Canonical architecture guide**: `docs/architecture/README.md`
 
 ## Working Rules
 
-- Keep orchestration scopes separate. `lingtu.assembly` owns product compilation, Module selection, and wires. Blueprint owns one application graph and optional Python workers. RuntimePlan is immutable endpoint process data; `lingtu.launcher` is its only executor. Product source is ROS-free: use native typed DDS at process boundaries and direct calls inside a C++ endpoint.
+- Keep orchestration scopes separate. `lingtu.assembly` resolves Product + env without side effects. `lingtu.control.ProductControl` is constructed for one fixed env, publishes one immutable RunPlan, stages the transient session, owns product-level operations, and invokes the internal `lingtu.systemd.SystemdRunner`. Blueprint owns the Python Host graph and optional Python workers. Product source is ROS-free: use native typed DDS at process boundaries and direct calls inside a C++ service.
+- Field mode changes must call `python -m lingtu.control switch` directly or through the thin `scripts/lingtu` adapter. Do not add product-switch policy, systemd ordering, map activation, or readiness loops back to Bash or Gateway.
 - Prefer existing factories, registries, modules, and utilities before adding new abstractions.
 - Keep diffs small, reversible, and behavior-preserving unless the task explicitly requests a behavior change.
 - No new dependencies without an explicit request.
 - Python comments in new code should be English. Chinese comments exist in legacy code and may remain.
 - Preserve user or teammate changes already present in the worktree.
 - Verify before claiming completion. Run the narrowest useful tests for the touched surface.
+
+## Fixed Runtime Vocabulary
+
+Use these terms with exactly one meaning:
+
+| Term | Owns | Does not own |
+| --- | --- | --- |
+| `env` | The outer runtime environment. Public values are exactly `real` and `sim`; a simulation backend is internal env configuration. | Product behavior or a communication endpoint. |
+| `Product` | Immutable, env-independent declaration of one operating mode: Host graph, logical native roles, topics, and capabilities. | Deployment targets or runtime side effects. |
+| `RunPlan` | Fingerprinted resolution of one Product inside one env, including concrete processes and Host configuration. | User-authored mode selection, mutable runtime state, or side effects. |
+| `ProductControl` | The complete switch/quiesce/restart/stop transaction, transient session, readiness, rollback, and current RunPlan commit inside its fixed env. | Env switching or domain algorithms. |
+| `Host` | The managed Python application process containing Gateway, Agent, adapters, and selected Python Modules. | Native LiDAR/SLAM/navigation process ownership. |
+| `Blueprint` | Constructing and wiring Modules inside one Host process. | Product switching, systemd, native endpoints, or DDS topology ownership. |
+| `Module` | One typed in-process Host runtime unit. | Cross-process lifecycle management. |
+| `DDS` | Native typed cross-process data plane. | Product policy or process lifecycle. |
+| `RobotConfig` | Static physical robot, device, and calibration data referenced internally by the real env. | Runtime mode selection. |
+| `Endpoint` | A concrete HTTP, DDS, or native-service communication access point. | A deployment environment or Product identity. |
+
+Reject changes that resolve the same Product independently in CLI, systemd,
+and Host. ProductControl publishes one fingerprinted RunPlan; its internal
+systemd runner and Host consume that exact artifact. Do not describe Blueprint as unused: it
+is active inside every Python Host, but it is not the product process
+orchestrator. Do not add Product-specific Host lifecycle implementations beside
+Blueprint.
 
 ## Quick Start
 
@@ -35,10 +60,9 @@ python lingtu.py stub            # framework testing only
 python lingtu.py dev             # semantic pipeline on stub driver
 python lingtu.py sim             # MuJoCo simulation
 python lingtu.py sim_nav         # pure-Python navigation sim
-python lingtu.py map             # mapping mode
-python lingtu.py nav             # navigation with saved map
-python lingtu.py explore         # wavefront frontier exploration
-python lingtu.py tare_explore    # CMU TARE hierarchical exploration
+# Field products are operator-managed through scripts/lingtu, not lingtu.py:
+bash scripts/lingtu map start
+bash scripts/lingtu nav start <map>
 
 # Lifecycle commands
 python lingtu.py status
@@ -46,27 +70,29 @@ python lingtu.py health
 python lingtu.py log -f
 python lingtu.py stop
 
-# Common overrides
-python lingtu.py nav --llm mock
-python lingtu.py nav --endpoint thunder_field
-python lingtu.py nav --daemon
+# Local development overrides
+python lingtu.py dev --llm mock
+python lingtu.py sim_nav --planner octoplanner3d
 ```
 
-## Composable Blueprint API
+## Local/Host Blueprint API
+
+This API builds one Python Host graph for local development or for the Host
+portion of a compiled Product. It does not launch field-native processes.
 
 ```python
 from runtime.blueprint import autoconnect
 from lingtu.assembly.stacks import *
 
 system = autoconnect(
-    driver("thunder"),                              # L1 robot connection; field host comes from deployment config
+    driver(driver_backend="thunder"),               # local-only driver selection; real Product uses Env RobotConfig
     lidar(enabled=True),                            # Livox MID-360 hardware adapter
     slam("localizer"),                              # managed SLAM/localization
-    maps(),                                         # occupancy, voxel, ESDF, elevation, traversability, map manager
+    maps(),                                         # dev/sim map layers + low-rate Host map adapter
     perception("bpu", "mobileclip"),                # detector, encoder, reconstruction
     memory(),                                       # semantic, episodic, tagged, vector, temporal memory
     planner("kimi"),                                # semantic planner, LLM, visual servo
-    navigation("octoplanner3d"),                    # global planner + autonomy chain
+    navigation("octoplanner3d"),                    # dev/sim autonomy; field Products use native navd
     exploration("none"),                            # "none" or TARE; wavefront lives in navigation(enable_frontier=True)
     safety(),                                       # safety ring, geofence, cmd_vel mux
     gateway(5050),                                  # REST, SSE, WS teleop/camera, MCP, WHEP proxy
@@ -107,21 +133,24 @@ gateway/   must not import nav/, semantic/, drivers/
 Use `runtime.registry.get(...)` and `@register(...)` for pluggable backends. Avoid
 direct backend imports in business logic.
 
-## Stack Factories
+## Host And Development Stack Factories
+
+These factories assemble the Python Host or local/simulation graphs. They do
+not declare or launch field-native processes; ProductControl owns those.
 
 Factories live under `src/lingtu/assembly/stacks/`.
 
 | Factory | Purpose |
 | --- | --- |
-| `driver(robot)` | Driver connection |
+| `driver(driver_backend=...)` | Local Profile driver connection |
 | `lidar(enabled=True)` | Livox LiDAR hardware adapter |
 | `sim_lidar(scene_xml=...)` | Simulated point-cloud provider |
 | `slam(profile)` | Managed SlamModule or native endpoint adapter |
-| `maps()` | OccupancyGrid, VoxelGrid, ESDF, ElevationMap, TraversabilityCost, MapManager |
+| `maps()` | Development/simulation map layers plus the low-rate Host map adapter |
 | `perception(det, enc)` | Detector, Encoder, Reconstruction |
 | `memory(save_dir)` | SemanticMapper, Episodic, Tagged, Vector, Temporal, MissionLogger |
 | `planner(llm)` | LLMModule, SemanticPlanner, VisualServo |
-| `navigation(planner)` | NavigationModule, optional native/Python autonomy, optional wavefront frontier |
+| `navigation(planner)` | Development/simulation navigation Modules; field Products use native `navd` |
 | `exploration(backend)` | `none` or `tare`; wavefront was removed from this stack |
 | `safety()` | SafetyRing, Geofence, CmdVelMux |
 | `gateway(port)` | GatewayModule, MCPServerModule, TeleopModule, WHEP proxy, optional Rerun |
@@ -139,26 +168,36 @@ Factories live under `src/lingtu/assembly/stacks/`.
 | PathFollower | `nav_kernel`, `pid` |
 | Exploration | `none`, `tare` |
 
-## Profiles
+## Runtime Selection Inputs
 
-Current profile and endpoint definitions live under
-`src/runtime/profiles/catalog/`. `src/runtime/runtime_profiles.py` and
-`cli/profiles_data.py` are compatibility exports.
+Local Profile and Host defaults live under `src/runtime/profiles/catalog/`.
+Product declarations live only under `config/runtime_graph/products/`; env
+implementations live only under `config/runtime_graph/envs/`.
 
-| Profile | Default Robot | SLAM | LLM | Planner | Semantic | Notes |
+Profile is a configuration-resolver input; it is not a runtime ownership
+category. Do not infer architecture from an arbitrary sample of profile names.
+Keep local/development profiles separate from operator-managed field Products.
+
+### Local And Development Profiles
+
+| Profile | Driver backend | SLAM | LLM | Planner | Semantic | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 | `stub` | `stub` | `none` | `mock` | `octoplanner3d` | no | framework tests |
 | `dev` | `stub` | `none` | `mock` | `octoplanner3d` | yes | semantic pipeline dev |
+| `lite` | `thunder` | `none` | `mock` | `direct` | no | local Thunder hardware diagnostics; no independent systemd lifecycle |
 | `sim` | `sim_mujoco` | `bridge` | `mock` | `octoplanner3d` | yes | MuJoCo + native stack |
 | `sim_nav` | `stub` | `none` | `mock` | `octoplanner3d` | no | pure-Python nav sim |
-| `map` | `s100p` | `fastlio2` | `mock` | `octoplanner3d` | no | build/save maps |
-| `nav` | `s100p` | `bridge` | `qwen` | `octoplanner3d` | yes | saved-map navigation; external SLAM services |
-| `explore` | `s100p` | `fastlio2` | `qwen` | `octoplanner3d` | yes | wavefront frontier via `navigation(enable_frontier=True)` |
-| `tare_explore` | `s100p` | `fastlio2` | `qwen` | `octoplanner3d` | yes | CMU TARE stack; requires TARE binary |
 
-Robot presets include `stub`, `sim`, `sim_endpoint`, `s100p`, `navigate`, and
-`thunder`. `s100p` is a robot preset, while `nav` is the real navigation
-profile.
+### Field Products
+
+The operator-managed Product set is `teleop`, `teleop_avoid`, `map`,
+`explore`, `nav`, `tracking`, and `inspection`.
+Their authoritative declarations are
+`config/runtime_graph/products/*.yaml`. ProductControl resolves one of them
+inside its fixed `real` or `sim` env into a RunPlan. `sim` requires an
+explicit internal backend when more than one implementation is available.
+Physical robot data comes from `config/robot_config.yaml`; it is not a public
+selector and does not participate in runtime identity.
 
 ## Source Map
 
@@ -177,7 +216,6 @@ profile.
 | `src/nav/services/plan/` | Planner service boundary, OctoPlanner3D backend, and explicit PCT legacy backend |
 | `src/localization/` | Fast-LIO2, Point-LIO, PGO, localizer, GNSS bridge, NTRIP client |
 | `src/explore/` | Canonical wavefront/TARE exploration algorithms and supervisor |
-| `src/nav/exploration/` | Compatibility imports for older exploration callers |
 | `calibration/` | camera, IMU, LiDAR-IMU, camera-LiDAR calibration tools |
 | `config/` | robot/device/DDS/DUFOMap/semantic configuration |
 | `launch/` | algorithm bridge launch files only |
@@ -189,11 +227,15 @@ profile.
 
 | File | Purpose |
 | --- | --- |
-| `lingtu.py` | primary CLI entry; `main_nav.py` is a compatibility alias |
-| `src/runtime/profiles/catalog/` | profile, robot-preset, endpoint, and runtime-path source of truth |
-| `cli/profiles_data.py` | compatibility export for older CLI imports |
+| `lingtu.py` | primary local Host/Profile CLI entry |
+| `src/runtime/profiles/catalog/` | local Profile and Host-default source of truth |
+| `config/runtime_graph/envs/` | `real` and `sim` implementation mapping source of truth |
+| `config/robot_config.yaml` | physical `RobotConfig` referenced by the real env |
+| `src/runtime/profiles/catalog/host_defaults.py` | unified, explicitly classified Host Blueprint defaults |
 | `src/lingtu/assembly/profile_builder.py` | profile-to-Blueprint assembly |
-| `src/lingtu/launcher.py` | strict external RuntimePlan execution, readiness, and rollback |
+| `src/lingtu/run_plan.py` | immutable, fingerprinted Product resolution consumed by systemd and Host |
+| `src/lingtu/control.py` | Product switch, quiesce, restart, stop, rollback, and current-plan commit |
+| `src/lingtu/systemd.py` | internal process execution and readiness implementation used only by ProductControl |
 | `src/lingtu/assembly/full_stack_wiring.py` | critical explicit full-stack wires |
 | `src/lingtu/assembly/stacks/` | composable stack factories |
 | `src/runtime/module.py` | Module base class |
@@ -296,14 +338,18 @@ self.detections.set_policy("buffer", size=10)     # batch of 10
 
 ```python
 bp.wire("SafetyRingModule", "stop_cmd", "Driver", "stop_signal")
-bp.wire("PerceptionModule", "scene_graph", "SemanticPlannerModule", "scene_graph", transport="dds")
-bp.wire("SLAMModule", "map_cloud", "TerrainModule", "map_cloud", transport="shm")
+bp.wire("PerceptionModule", "scene_graph", "SemanticPlannerModule", "scene_graph", delivery="dds")
+bp.wire("SLAMModule", "map_cloud", "TerrainModule", "map_cloud", delivery="shm")
 ```
 
 Use explicit wires for critical fan-in/fan-out or ambiguous port names. See
 `src/lingtu/assembly/full_stack_wiring.py`.
 
-## Explicit Full-Stack Wires
+## Explicit Host/Simulation Wires
+
+The wires below describe Blueprint-owned graphs. Field-native LiDAR, SLAM,
+mapd, traversability, navd, and driver edges are declared by Product topics and
+are not duplicate Blueprint wires.
 
 Important explicit wires include:
 
@@ -371,21 +417,21 @@ Use `mock` for offline and deterministic framework work.
 | --- | --- | --- | --- |
 | Mapping | `fastlio2` | SLAMModule -> Fast-LIO2 | first visit and map build |
 | Localization | `localizer` | SLAMModule -> Fast-LIO2 + ICP localizer | navigate against a saved map |
-| Field navigation (real default) | `bridge` + `localization_adapter="cpp_slam_status"` | `CppSlamStatusAdapterModule` | the real `nav` profile's default against the physical `thunder_field` endpoint; ingests C++ SLAM status/localization over the native endpoint, no ROS 2 dependency |
-| None | `none` | no SLAM module | stub/dev/sim_nav |
+| Field navigation (`env=real`) | `bridge` + `localization_adapter="cpp_slam_status"` | `CppSlamStatusAdapterModule` | the `nav` Product's real-env Host adapter; ingests C++ SLAM status/localization through the native DDS contract, with no ROS 2 dependency |
+| None | `none` | no SLAM module | stub/dev/sim_nav/lite |
 
-The real `nav` profile uses the native `cpp_slam_status` adapter because
+The `nav` Product's real-env Host uses the native `cpp_slam_status` adapter because
 robot-side SLAM services own the Livox device and publish status/localization
 over the field DDS endpoint. Do not switch it to managed localizer mode unless
 the process ownership and sensor lifecycle are intentionally changed.
 
 ## Exploration
 
-- `explore` uses `WavefrontFrontierExplorer` through the navigation stack
-  (`enable_frontier=True`, `exploration_backend="none"`).
-- `tare_explore` uses the TARE exploration stack
-  (`exploration_backend="tare"`, `enable_frontier=False`) and requires the
-  TARE binary/submodule build.
+- `explore` is the only field exploration Product.
+- `lingtu explore start` selects the live-mapping route.
+- `lingtu explore start --map MAP` selects the saved-map localization route.
+- TARE remains an internal/native exploration policy name and local
+  compatibility backend, not another operator Product.
 - The `exploration()` factory only supports `none` and `tare`; `wavefront` was
   intentionally removed from that factory.
 
@@ -434,8 +480,8 @@ Teleop joystick payload:
 ## Python CmdVelMux Priority
 
 Python Module, simulation, and explicit compatibility velocity sources use
-`CmdVelMux`. The physical `thunder_field` path performs final motion ownership
-inside the native Nav Endpoint and publishes logical `/nav/cmd_vel` on DDS wire
+`CmdVelMux`. The `real` env performs final motion ownership inside the native
+Nav service and publishes logical `/nav/cmd_vel` on DDS wire
 topic `rt/nav/cmd_vel`; only `lingtu-driver` may forward it to Brainstem.
 
 | Source | Priority | Timeout |
@@ -476,16 +522,24 @@ alias lingwatch='ssh -t sunrise@${LINGTU_HOST} "bash ~/data/SLAM/navigation/scri
 | `lingtu watch` | continuous status watch |
 | `lingtu map start|save <name>|end|list|restore <name>` | mapping lifecycle |
 | `lingtu nav start <map>|stop|goal X Y [YAW]` | navigation lifecycle and goals |
-| `lingtu svc status|restart [slam|lingtu|all]` | systemd wrapper |
+| `lingtu svc status|restart <logical-process>|reapply` | read-only RunPlan process status and thin ProductControl recovery adapter |
 | `lingtu log drift|dufomap|error|tail|all` | journal filters |
 | `lingtu health` | raw Gateway health dump |
 
 ## Dynamic Obstacle Removal
 
-Mapping uses two filtering phases:
+The field runtime uses three distinct layers:
 
-- Phase 1 live view: voxel hit-count voting in `GatewayModule._on_map_cloud`.
-- Phase 2 save-time cleanup: DUFOMap after PGO and before tomogram/occupancy output.
+- `mapd` consumes scan-time `MapObservation` and owns live voxel column
+  carving, decay, bounded accumulation, and `/maps/scene`.
+- standalone native traversability owns the rolling control-risk layer and is
+  the only `/nav/traversability` writer.
+- save-time native pruning cleans the persistent map transaction before
+  derived artifacts are committed.
+
+`GatewayModule._on_map_cloud` and Python map layers are development/simulation
+fallbacks only; they are not field map ownership and must not compete with
+`mapd`.
 
 DUFOMap reads `<map>/patches/*.pcd` plus `poses.txt`, writes a cleaned
 `map.pcd`, and backs up the original as `map.pcd.predufo`.

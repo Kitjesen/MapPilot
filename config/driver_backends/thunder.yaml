@@ -1,0 +1,45 @@
+schema_version: lingtu.driver_catalog.v1
+
+backends:
+  thunder:
+    robot: thunder
+    dog_host: "127.0.0.1"
+    dog_port: 13145
+    auto_enable: false
+    auto_standup: false
+  thunder_remote:
+    robot: thunder
+    dog_host: "192.168.66.13"
+    dog_port: 13145
+    auto_enable: false
+    auto_standup: false
+
+protocols:
+  thunder:
+    protocol: grpc_brainstem
+    params:
+      dog_host: "127.0.0.1"
+      dog_port: 13145
+      auto_enable: false
+      auto_standup: false
+  thunder_remote:
+    protocol: grpc_brainstem
+    params:
+      dog_host: "192.168.66.13"
+      dog_port: 13145
+      auto_enable: false
+      auto_standup: false
+
+modules:
+  thunder: ThunderDriver
+  thunder_remote: ThunderDriver
+
+runtime_defaults:
+  thunder:
+    slam_profile: localizer
+    detector: bpu
+    encoder: mobileclip
+  thunder_remote:
+    slam_profile: localizer
+    detector: bpu
+    encoder: mobileclip

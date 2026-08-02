@@ -179,6 +179,34 @@ TEST(NavLoop, PlansLocalPathAndCmdVelFromGlobalPath) {
   EXPECT_GT(next.cmd_vel.vx, 0.0);
 }
 
+TEST(NavLoop, SuspendAutonomyRetainsGoalAndResetsStallTiming) {
+  auto loop = makeLoop();
+  loop.setGlobalPath(
+      {
+          {0.0, 0.0, 0.0},
+          {1.0, 0.0, 0.0},
+          {2.0, 0.0, 0.0},
+          {3.0, 0.0, 0.0},
+      },
+      0.75);
+
+  const auto moving =
+      loop.tick(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 1.0);
+  ASSERT_TRUE(moving.active);
+  ASSERT_TRUE(moving.path_found);
+
+  loop.suspendAutonomy();
+
+  EXPECT_TRUE(loop.hasRetainedGlobalPath());
+  const auto resumed =
+      loop.tick(pose(0.0, 0.0, 0.0, 0.0), nullptr, 0, 100.0);
+  EXPECT_TRUE(resumed.active);
+  EXPECT_TRUE(resumed.path_found);
+  EXPECT_EQ(resumed.recovery_state, 0)
+      << "a pause must not carry stale stall/recovery timing into resume";
+  EXPECT_FALSE(resumed.recovery_exhausted);
+}
+
 TEST(NavLoop, StopsWhenGoalReached) {
   auto loop = makeLoop();
   loop.setGlobalPath({

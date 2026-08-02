@@ -28,6 +28,7 @@ def build_state_snapshot(gw: Any) -> dict[str, Any]:
         odometry = gw._odom
         safety = gw._safety
         mission = gw._mission
+        navigation_state = getattr(gw, "_navigation_state", None)
         eval_state = gw._eval
         dialogue = gw._dialogue
         mode = gw._mode
@@ -57,6 +58,7 @@ def build_state_snapshot(gw: Any) -> dict[str, Any]:
         "odometry": odometry,
         "safety": safety,
         "mission": mission,
+        "navigation_state": navigation_state,
         "eval": eval_state,
         "dialogue": dialogue,
         "mode": mode,

@@ -7,7 +7,6 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from maps.adapters.python.pcd import NativePcdWriter
 from maps.map_save import (
     MapSaveError,
     save_slam_map_with_adapter,
@@ -18,10 +17,6 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.sensor import PointCloud2
 
 logger = logging.getLogger(__name__)
-
-
-class LiveMapCloudSnapshotSaved(Exception):
-    """Internal marker for Super-LIO live snapshot saves."""
 
 
 class MapSaveAdapterFailed(Exception):
@@ -65,11 +60,10 @@ class MapRuntimeBridge:
         )
 
     def on_map_cloud_frame(self, frame: MapCloudFrame | dict[str, Any]) -> None:
-        """Ingest a typed map-cloud frame for live snapshot saves.
+        """Ingest a typed map-cloud frame for runtime map consumers.
 
-        FULL replaces the live map snapshot. KEYFRAME and INCREMENTAL append to
-        the live snapshot, which preserves map-save semantics for producers that
-        publish map data in pieces.
+        FULL replaces the stored map view. KEYFRAME and INCREMENTAL append to
+        it so consumers can observe producers that publish map data in pieces.
         """
         try:
             map_frame = MapCloudFrame.from_dict(frame) if isinstance(frame, dict) else frame
@@ -123,26 +117,6 @@ class MapRuntimeBridge:
             return False, str(status.get("message") or f"SLAM state is {state}")
         return True, str(status.get("message") or state or "SLAM health accepted")
 
-    def save_live_map_cloud_snapshot(self, pcd_path: Path) -> dict[str, Any]:
-        """Persist the latest map_cloud snapshot as binary XYZ PCD."""
-        with self.map_cloud_lock:
-            pts = None if self.latest_map_points is None else self.latest_map_points.copy()
-        if pts is None or pts.size == 0:
-            return {
-                "success": False,
-                "message": ("No live map_cloud snapshot is available for Super-LIO map save"),
-            }
-        try:
-            point_count = self.write_binary_xyz_pcd(pcd_path, pts)
-        except Exception as exc:
-            return {"success": False, "message": f"Failed to write PCD: {exc}"}
-        if point_count <= 0:
-            return {
-                "success": False,
-                "message": "Live map_cloud snapshot had no finite XYZ points",
-            }
-        return {"success": True, "point_count": point_count}
-
     def resolve_slam_profile(self, slam_profile: str | None = None) -> str:
         """Resolve the backend used for a map save response."""
         profile = str(slam_profile or self.slam_profile or "").strip().lower()
@@ -171,34 +145,12 @@ class MapRuntimeBridge:
         except MapSaveError as exc:
             raise MapSaveAdapterFailed(str(exc)) from exc
 
-        return result if isinstance(result, dict) else {"success": True}
-
-    @staticmethod
-    def write_binary_xyz_pcd(path: Path, points: np.ndarray) -> int:
-        return NativePcdWriter().write_xyz(path, points, max_abs_m=500.0)
+        return result
 
     @staticmethod
     def map_save_capability_fields(slam_profile: str | None) -> dict[str, Any]:
         """Return the map-save capability contract shared by Gateway/MCP users."""
         profile = MapRuntimeBridge.normalize_slam_profile(slam_profile)
-        if profile == "super_lio":
-            return {
-                "map_save_supported": True,
-                "map_save_source": "live_map_cloud_snapshot",
-                "relocalization_supported": False,
-                "saved_map_relocalization_supported": False,
-                "restart_recovery_supported": True,
-                "recovery_method": "restart_super_lio",
-            }
-        if profile == "super_lio_relocation":
-            return {
-                "map_save_supported": False,
-                "map_save_source": "active_map",
-                "relocalization_supported": False,
-                "saved_map_relocalization_supported": False,
-                "restart_recovery_supported": True,
-                "recovery_method": "restart_super_lio_relocation",
-            }
         if profile == "localizer":
             return {
                 "map_save_supported": True,
@@ -238,13 +190,4 @@ class MapRuntimeBridge:
     @staticmethod
     def normalize_slam_profile(slam_profile: str | None) -> str:
         profile = str(slam_profile or "").strip().lower()
-        return {
-            "super-lio": "super_lio",
-            "superlio": "super_lio",
-            "super_lio_reloc": "super_lio_relocation",
-            "super-lio-reloc": "super_lio_relocation",
-            "superlio-reloc": "super_lio_relocation",
-            "super-lio-relocation": "super_lio_relocation",
-            "superlio-relocation": "super_lio_relocation",
-            "relocation": "super_lio_relocation",
-        }.get(profile, profile)
+        return profile

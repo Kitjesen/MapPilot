@@ -11,6 +11,7 @@ namespace lingtu::nav::endpoint {
 // rules can be exercised without a middleware runtime.
 struct PendingExploreGoalLifecycle {
   std::string request_id;
+  std::string cancel_request_id;
 };
 
 struct NavigationGoalLifecycleEvent {

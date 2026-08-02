@@ -229,7 +229,7 @@ copyExplorationSegmentRequest(const lingtu_dds_ExplorationSegmentRequest &messag
   return view;
 }
 
-DdsRuntime::DdsRuntime(int domain_id, bool allow_legacy_motion_inputs)
+DdsRuntime::DdsRuntime(int domain_id)
     : host_boot_id_(readHostBootId()),
       producer_boot_id_(makeProducerBootId(host_boot_id_, boottimeNanoseconds())) {
   participant_ =
@@ -243,20 +243,12 @@ DdsRuntime::DdsRuntime(int domain_id, bool allow_legacy_motion_inputs)
   odom_reader_ =
       reader(lingtu::message::kSlamOdometry.dds_topic.data(), &lingtu_dds_Odometry_desc, "odom");
   tf_reader_ = reader(lingtu::message::kTf.dds_topic.data(), &lingtu_dds_TFMessage_desc, "tf");
-  if (allow_legacy_motion_inputs) {
-    legacy_goal_reader_ = reader(lingtu::message::kNavGoalPose.dds_topic.data(),
-                                 &lingtu_dds_PoseStamped_desc, "goal_pose");
-  }
   cloud_reader_ = reader(lingtu::message::kSlamRegisteredCloud.dds_topic.data(),
                          &lingtu_dds_PointCloud2_desc, "registered_cloud");
   terrain_map_reader_ = reader(lingtu::message::kNavTerrainMap.dds_topic.data(),
                                &lingtu_dds_PointCloud2_desc, "terrain_map");
   terrain_map_ext_reader_ = reader(lingtu::message::kNavTerrainMapExt.dds_topic.data(),
                                    &lingtu_dds_PointCloud2_desc, "terrain_map_ext");
-  if (allow_legacy_motion_inputs) {
-    legacy_global_path_reader_ = reader(lingtu::message::kNavGlobalPath.dds_topic.data(),
-                                        &lingtu_dds_Path_desc, "global_path");
-  }
   traversability_reader_ = reader(lingtu::message::kNavTraversability.dds_topic.data(),
                                   &lingtu_dds_OccupancyGrid_desc, "traversability");
   localization_health_reader_ = reader(lingtu::message::kSlamLocalizationHealth.dds_topic.data(),
@@ -265,15 +257,9 @@ DdsRuntime::DdsRuntime(int domain_id, bool allow_legacy_motion_inputs)
       reader(lingtu::message::kDriverControlState.dds_topic.data(),
              &lingtu_dds_DriverControlState_desc, "driver_control_state");
   map_clearing_reader_ = reader(lingtu::message::kNavMapClearing.dds_topic.data(),
-                                &lingtu_dds_Bool_desc, "map_clearing");
+                               &lingtu_dds_Bool_desc, "map_clearing");
   cloud_clearing_reader_ = reader(lingtu::message::kNavCloudClearing.dds_topic.data(),
-                                  &lingtu_dds_Bool_desc, "cloud_clearing");
-  if (allow_legacy_motion_inputs) {
-    legacy_cancel_reader_ =
-        reader(lingtu::message::kNavCancel.dds_topic.data(), &lingtu_dds_Text_desc, "cancel");
-    legacy_teleop_cmd_reader_ = reader(lingtu::message::kNavTeleopCmdVel.dds_topic.data(),
-                                       &lingtu_dds_TwistStamped_desc, "teleop_cmd_vel");
-  }
+                                 &lingtu_dds_Bool_desc, "cloud_clearing");
   command_request_reader_ =
       reader(lingtu::message::kNavCommandRequest.dds_topic.data(),
              &lingtu_dds_NavigationCommandRequest_desc, "nav_command_request");
@@ -290,9 +276,9 @@ DdsRuntime::DdsRuntime(int domain_id, bool allow_legacy_motion_inputs)
       reader(lingtu::message::kNavExplorationSegmentRequest.dds_topic.data(),
              &lingtu_dds_ExplorationSegmentRequest_desc, "exploration_segment_request");
 
-  inspection_command_reader_ =
-      reader(lingtu::message::kNavInspectionCommand.dds_topic.data(),
-             &lingtu_dds_InspectionCommandRequest_desc, "inspection_command");
+  inspection_task_request_reader_ =
+      reader(lingtu::message::kNavInspectionTaskRequest.dds_topic.data(),
+             &lingtu_dds_InspectionTaskRequest_desc, "inspection_task_request");
   inspection_evidence_result_reader_ =
       reader(lingtu::message::kNavInspectionEvidenceResult.dds_topic.data(),
              &lingtu_dds_InspectionEvidenceResult_desc, "inspection_evidence_result");
@@ -322,10 +308,13 @@ DdsRuntime::DdsRuntime(int domain_id, bool allow_legacy_motion_inputs)
       writer(lingtu::message::kNavExplorationSegmentStatus.dds_topic.data(),
              &lingtu_dds_ExplorationSegmentStatus_desc, "exploration_segment_status");
 
-  inspection_ack_writer_ = writer(lingtu::message::kNavInspectionAck.dds_topic.data(),
-                                  &lingtu_dds_InspectionCommandAck_desc, "inspection_ack");
+  inspection_task_ack_writer_ = writer(lingtu::message::kNavInspectionTaskAck.dds_topic.data(),
+                                       &lingtu_dds_InspectionTaskAck_desc, "inspection_task_ack");
   inspection_status_writer_ = writer(lingtu::message::kNavInspectionStatus.dds_topic.data(),
                                      &lingtu_dds_InspectionStatus_desc, "inspection_status");
+  inspection_task_event_writer_ =
+      writer(lingtu::message::kNavInspectionTaskEvent.dds_topic.data(),
+             &lingtu_dds_InspectionTaskEvent_desc, "inspection_task_event");
   inspection_evidence_request_writer_ =
       writer(lingtu::message::kNavInspectionEvidenceRequest.dds_topic.data(),
              &lingtu_dds_InspectionEvidenceRequest_desc, "inspection_evidence_request");
@@ -422,11 +411,12 @@ bool DdsRuntime::writeOperatorMotionStatus(const OperatorMotionStatusSample &sta
   return result >= 0;
 }
 
-bool DdsRuntime::writeCommandAck(const char *request_id,
+bool DdsRuntime::writeCommandAck(const char *task_id, const char *request_id,
                                  lingtu::message::NavigationCommandKind kind, bool accepted,
                                  const char *reason) {
   lingtu_dds_NavigationCommandAck msg{};
   fillHeader(msg.header, nowSeconds(), "map");
+  msg.task_id = const_cast<char *>(task_id == nullptr ? "" : task_id);
   msg.request_id = const_cast<char *>(request_id == nullptr ? "" : request_id);
   msg.kind = static_cast<std::int32_t>(kind);
   msg.accepted = accepted;
@@ -436,17 +426,18 @@ bool DdsRuntime::writeCommandAck(const char *request_id,
   return result >= 0;
 }
 
-void DdsRuntime::writeNavigationGoalStatus(const char *request_id,
+bool DdsRuntime::writeNavigationGoalStatus(const char *task_id, const char *request_id,
                                            lingtu::message::NavigationGoalState state,
                                            std::uint64_t goal_epoch, const char *reason) {
-  if (goal_status_writer_ <= 0 || request_id == nullptr || *request_id == '\0' ||
-      goal_status_seq_ == std::numeric_limits<std::uint64_t>::max()) {
-    return;
+  if (goal_status_writer_ <= 0 || task_id == nullptr || *task_id == '\0' || request_id == nullptr ||
+      *request_id == '\0' || goal_status_seq_ == std::numeric_limits<std::uint64_t>::max()) {
+    return false;
   }
   lingtu_dds_NavigationGoalStatus msg{};
   fillHeader(msg.header, nowSeconds(), "map");
   msg.boot_id = const_cast<char *>(producer_boot_id_.c_str());
   msg.event_sequence = goal_status_seq_ + 1U;
+  msg.task_id = const_cast<char *>(task_id);
   msg.request_id = const_cast<char *>(request_id);
   msg.state = static_cast<std::int32_t>(state);
   msg.goal_epoch = goal_epoch;
@@ -455,7 +446,9 @@ void DdsRuntime::writeNavigationGoalStatus(const char *request_id,
   logDdsError(result, "dds_write(nav_goal_status)");
   if (result >= 0) {
     goal_status_seq_ = msg.event_sequence;
+    return true;
   }
+  return false;
 }
 
 bool DdsRuntime::writeNavigationState(const NavigationStateSample &state) {
@@ -469,6 +462,7 @@ bool DdsRuntime::writeNavigationState(const NavigationStateSample &state) {
   message.state_sequence = navigation_state_seq_ + 1U;
   message.control_mode = state.control_mode;
   message.lifecycle_state = state.lifecycle_state;
+  message.active_task_id = const_cast<char *>(state.active_task_id.c_str());
   message.active_request_id = const_cast<char *>(state.active_request_id.c_str());
   message.goal_epoch = state.goal_epoch;
   message.map_id = const_cast<char *>(state.map_id.c_str());
@@ -529,18 +523,19 @@ bool DdsRuntime::writeExplorationSegmentStatus(const ExplorationSegmentStatus &s
   return result >= 0;
 }
 
-bool DdsRuntime::writeInspectionAck(const char *request_id,
-                                    lingtu::nav::inspection::CommandKind kind, bool accepted,
-                                    const char *reason, const char *run_id) {
-  lingtu_dds_InspectionCommandAck msg{};
+bool DdsRuntime::writeInspectionTaskAck(const char *task_id, const char *request_id,
+                                        lingtu::nav::inspection::CommandKind kind, bool accepted,
+                                        const char *reason, const char *run_id) {
+  lingtu_dds_InspectionTaskAck msg{};
   fillHeader(msg.header, nowSeconds(), "map");
+  msg.task_id = const_cast<char *>(task_id == nullptr ? "" : task_id);
   msg.request_id = const_cast<char *>(request_id == nullptr ? "" : request_id);
   msg.kind = static_cast<std::int32_t>(kind);
   msg.accepted = accepted;
   msg.reason = const_cast<char *>(reason == nullptr ? "" : reason);
   msg.run_id = const_cast<char *>(run_id == nullptr ? "" : run_id);
-  const dds_return_t result = dds_write(inspection_ack_writer_, &msg);
-  logDdsError(result, "dds_write(inspection_ack)");
+  const dds_return_t result = dds_write(inspection_task_ack_writer_, &msg);
+  logDdsError(result, "dds_write(inspection_task_ack)");
   return result >= 0;
 }
 
@@ -564,6 +559,39 @@ void DdsRuntime::writeInspectionStatus(const lingtu::nav::inspection::RunStatus 
   msg.deadline = status.deadline_s;
   msg.reason = const_cast<char *>(status.reason.c_str());
   logDdsError(dds_write(inspection_status_writer_, &msg), "dds_write(inspection_status)");
+}
+
+bool DdsRuntime::writeInspectionTaskEvent(const InspectionTaskEventEnvelope &envelope) {
+  if (inspection_task_event_writer_ <= 0 || envelope.boot_id.empty() || envelope.sequence == 0U) {
+    return false;
+  }
+  const auto &event = envelope.event;
+  const auto &status = event.status;
+  lingtu_dds_InspectionTaskEvent msg{};
+  fillHeader(msg.header, event.timestamp_s, "map");
+  msg.boot_id = const_cast<char *>(envelope.boot_id.c_str());
+  msg.event_sequence = envelope.sequence;
+  msg.kind = static_cast<std::int32_t>(event.kind);
+  msg.task_id = const_cast<char *>(status.task_id.c_str());
+  msg.request_id = const_cast<char *>(event.request_id.c_str());
+  msg.command_request_id = const_cast<char *>(status.request_id.c_str());
+  msg.state = static_cast<std::int32_t>(status.state);
+  msg.map_id = const_cast<char *>(status.map_id.c_str());
+  msg.map_version = status.map_version;
+  msg.route_id = const_cast<char *>(status.route_id.c_str());
+  msg.route_revision = status.route_revision;
+  msg.point_index = static_cast<std::uint32_t>(status.point_index);
+  msg.point_count = static_cast<std::uint32_t>(status.point_count);
+  msg.loop_index = status.loop_index;
+  msg.retry_count = status.retry_count;
+  msg.point_id = const_cast<char *>(status.point_id.c_str());
+  msg.action = const_cast<char *>(status.action.c_str());
+  msg.action_request_id = const_cast<char *>(status.action_request_id.c_str());
+  msg.evidence_id = const_cast<char *>(status.evidence_id.c_str());
+  msg.reason = const_cast<char *>(status.reason.c_str());
+  const dds_return_t result = dds_write(inspection_task_event_writer_, &msg);
+  logDdsError(result, "dds_write(inspection_task_event)");
+  return result >= 0;
 }
 
 bool DdsRuntime::inspectionEvidenceWorkerMatched() const noexcept {

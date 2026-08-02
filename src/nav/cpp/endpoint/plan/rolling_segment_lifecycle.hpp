@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "plan/exploration_segment_contract.hpp"
-#include "plan/rolling_map_segment_executor.hpp"
+#include "plan/segment_executor.hpp"
 
 namespace lingtu::nav::endpoint {
 
@@ -92,6 +92,12 @@ struct RollingSegmentCommandEvent {
   RollingSegmentRuntimeContext context;
 };
 
+struct RollingSegmentIngressRejected {
+  RollingSegmentCommand command;
+  RollingSegmentRuntimeContext context;
+  std::string reason;
+};
+
 struct RollingSegmentRevalidate {
   RollingSegmentRuntimeContext context;
 };
@@ -121,8 +127,9 @@ struct RollingSegmentEffectFeedback {
 using RollingSegmentEvent =
     std::variant<RollingSegmentBeginTick, RollingSegmentObserveExecutionGrid,
                  RollingSegmentObserveInvalidInput, RollingSegmentCommandEvent,
-                 RollingSegmentRevalidate, RollingSegmentGenericPreempt,
-                 RollingSegmentMotionOutcome, RollingSegmentShutdown, RollingSegmentEffectFeedback>;
+                 RollingSegmentIngressRejected, RollingSegmentRevalidate,
+                 RollingSegmentGenericPreempt, RollingSegmentMotionOutcome, RollingSegmentShutdown,
+                 RollingSegmentEffectFeedback>;
 
 struct RollingSegmentAck {
   // The transport adapter stamps the wire envelope when this effect is
@@ -217,7 +224,7 @@ struct RollingSegmentStepResult {
 
 class RollingSegmentLifecycle {
  public:
-  explicit RollingSegmentLifecycle(RollingMapSegmentExecutorConfig executor_config = {});
+  explicit RollingSegmentLifecycle(rolling::SegmentExecutorConfig executor_config = {});
 
   [[nodiscard]] RollingSegmentStepResult step(const RollingSegmentEvent &event);
   [[nodiscard]] RollingSegmentLifecycleSnapshot snapshot() const;
@@ -239,6 +246,9 @@ class RollingSegmentLifecycle {
     ExplorationSegmentState state{ExplorationSegmentState::kFailed};
     std::string reason;
     bool status_delivered{false};
+    // The stored outcome is only an intent until stop-authority has run and
+    // clear-motion has positively acknowledged the fail-closed barrier.
+    bool motion_cleared{false};
   };
 
   struct TerminalKey {
@@ -246,6 +256,15 @@ class RollingSegmentLifecycle {
     std::string session_id;
     std::uint64_t reset_epoch{0U};
     std::uint64_t minimum_generation{0U};
+  };
+
+  struct RejectedIngressReceipt {
+    std::string request_id;
+    std::int32_t kind{0};
+    std::string session_id;
+    std::uint64_t reset_epoch{0U};
+    std::uint64_t minimum_generation{0U};
+    RollingSegmentAck ack;
   };
 
   enum class PendingCriticalEffectKind {
@@ -258,26 +277,39 @@ class RollingSegmentLifecycle {
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentObserveExecutionGrid &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentObserveInvalidInput &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentCommandEvent &event);
+  [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentIngressRejected &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentRevalidate &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentGenericPreempt &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentMotionOutcome &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentShutdown &event);
   [[nodiscard]] RollingSegmentStepResult handle(const RollingSegmentEffectFeedback &event);
+  [[nodiscard]] RollingSegmentStepResult handleCommand(const RollingSegmentCommand &command,
+                                                       const RollingSegmentRuntimeContext &context,
+                                                       const std::string *ingress_rejection_reason);
 
   [[nodiscard]] TerminalSegment *findTerminal(const RollingSegmentCommand &command);
   [[nodiscard]] TerminalSegment *findTerminal(const TerminalKey &key);
   TerminalSegment &rememberTerminal(TerminalSegment terminal);
+  [[nodiscard]] const RejectedIngressReceipt *
+  findRejectedIngress(const RollingSegmentCommand &command) const;
+  RejectedIngressReceipt &rememberRejectedIngress(const RollingSegmentCommand &command,
+                                                  RollingSegmentAck ack);
   [[nodiscard]] RollingSegmentStatusEffect makeTerminalStatusEffect(TerminalSegment &terminal);
+  [[nodiscard]] RollingSegmentStepResult makeSafeStopEffects(TerminalSegment &terminal);
+  [[nodiscard]] bool motionClearPending() const noexcept;
   [[nodiscard]] RollingSegmentStepResult terminateActive(ExplorationSegmentState state,
                                                          std::string reason);
   [[nodiscard]] std::uint64_t nextEffectId() noexcept;
 
-  RollingMapSegmentExecutor executor_;
-  std::optional<RollingMapSegmentInput> latest_input_;
+  rolling::MapInputPolicy map_input_policy_;
+  rolling::SegmentExecutor executor_;
+  std::optional<rolling::SegmentInput> latest_input_;
   std::string input_error_{"execution_grid_missing"};
   bool input_invalidated_this_tick_{false};
   std::optional<ActiveSegment> active_;
   std::deque<TerminalSegment> terminal_cache_;
+  std::deque<RejectedIngressReceipt> rejected_ingress_cache_;
+  std::unordered_map<std::uint64_t, TerminalKey> pending_motion_clears_;
   std::unordered_map<std::uint64_t, TerminalKey> pending_terminal_statuses_;
   std::unordered_map<std::uint64_t, PendingCriticalEffectKind> pending_critical_effects_;
   std::uint64_t next_effect_id_{1U};

@@ -112,9 +112,9 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
   target_include_directories(lingtu_slam_contract PRIVATE
     "${FASTLIO2_DIR}/src"
     "${FASTLIO2_DIR}/src/map_builder"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include")
+  target_include_directories(lingtu_slam_contract PUBLIC
     "${LOCALIZER_DIR}/src/localizers"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../../maps/include"
-    ${SMALL_GICP_INCLUDE_DIR}
     ${PCL_INCLUDE_DIRS})
   target_link_libraries(lingtu_slam_contract PUBLIC
     Eigen3::Eigen
@@ -130,7 +130,11 @@ if(LINGTU_SLAM_FASTLIO2_BACKEND)
     target_link_libraries(lingtu_slam_contract PUBLIC ${CPU_BBS3D_LIBRARY})
   endif()
   if(SMALL_GICP_INCLUDE_DIR)
-    target_compile_definitions(lingtu_slam_contract PRIVATE LINGTU_ENABLE_SMALL_GICP=1)
+    # icp_localizer.h selects the concrete backend in the class layout.
+    # Consumers must compile that header with the same definition and include
+    # path as the library or the C++ ABI is inconsistent.
+    target_compile_definitions(lingtu_slam_contract PUBLIC LINGTU_ENABLE_SMALL_GICP=1)
+    target_include_directories(lingtu_slam_contract PUBLIC ${SMALL_GICP_INCLUDE_DIR})
   endif()
   if(OpenMP_CXX_FOUND)
     target_compile_definitions(lingtu_slam_contract PRIVATE MP_EN MP_PROC_NUM=4)
@@ -145,21 +149,41 @@ else()
 endif()
 
 if(LINGTU_SLAM_BUILD_TESTS)
+  enable_testing()
   add_executable(test_slam_contract test_slam.cpp)
   target_link_libraries(test_slam_contract PRIVATE lingtu_slam_contract)
   add_executable(test_relocalization_gate test_relocalization_gate.cpp)
   target_link_libraries(test_relocalization_gate PRIVATE lingtu_slam_contract)
+  add_test(
+    NAME lingtu_slam_relocalization_gate
+    COMMAND test_relocalization_gate)
   add_executable(test_map_tracking_health test_map_tracking_health.cpp)
   target_link_libraries(test_map_tracking_health PRIVATE lingtu_slam_contract)
   if(LINGTU_SLAM_FASTLIO2_BACKEND)
+    add_executable(test_ieskf_initialization test_ieskf_initialization.cpp)
+    target_include_directories(test_ieskf_initialization PRIVATE
+      "${FASTLIO2_DIR}/src"
+      "${FASTLIO2_DIR}/src/map_builder")
+    target_link_libraries(test_ieskf_initialization PRIVATE lingtu_slam_contract)
+    add_test(NAME lingtu_slam_ieskf_initialization COMMAND test_ieskf_initialization)
+    add_executable(test_ieskf_update_diagnostics test_ieskf_update_diagnostics.cpp)
+    target_include_directories(test_ieskf_update_diagnostics PRIVATE
+      "${FASTLIO2_DIR}/src"
+      "${FASTLIO2_DIR}/src/map_builder")
+    target_link_libraries(test_ieskf_update_diagnostics PRIVATE lingtu_slam_contract)
+    add_test(
+      NAME lingtu_slam_ieskf_update_diagnostics
+      COMMAND test_ieskf_update_diagnostics)
     add_executable(test_fastlio2_mock_flow test_fastlio2_mock_flow.cpp)
     target_link_libraries(test_fastlio2_mock_flow PRIVATE lingtu_slam_contract)
+    add_test(NAME lingtu_slam_fastlio2_mock_flow COMMAND test_fastlio2_mock_flow)
     add_executable(test_initial_body_origin test_initial_body_origin.cpp)
     target_link_libraries(test_initial_body_origin PRIVATE lingtu_slam_contract)
     add_executable(test_icp_diagnostics test_icp_diagnostics.cpp)
     target_include_directories(test_icp_diagnostics PRIVATE
       "${CMAKE_CURRENT_SOURCE_DIR}/../../localizer/src/localizers")
     target_link_libraries(test_icp_diagnostics PRIVATE lingtu_slam_contract)
+    add_test(NAME lingtu_slam_icp_diagnostics COMMAND test_icp_diagnostics)
     add_executable(test_imu_acceleration_scale
       test_imu_acceleration_scale.cpp
       "${FASTLIO2_DIR}/src/map_builder/commons.cpp"
@@ -246,24 +270,21 @@ if(LINGTU_SLAM_BUILD_DDS_RUNTIME)
   target_link_libraries(lingtu_slam_cyclone_idl PUBLIC CycloneDDS::ddsc)
   add_dependencies(lingtu_slam_cyclone_idl lingtu_slam_cyclone_idl_generate)
 
-  add_executable(lingtu_slam_dds_runtime cyclone_runtime.cpp)
-  target_compile_features(lingtu_slam_dds_runtime PRIVATE cxx_std_17)
-  set_target_properties(lingtu_slam_dds_runtime PROPERTIES
-    OUTPUT_NAME lingtu_slam_cyclone_runtime)
-  target_include_directories(lingtu_slam_dds_runtime PRIVATE
+  add_executable(slamd cyclone_runtime.cpp)
+  target_compile_features(slamd PRIVATE cxx_std_17)
+  target_include_directories(slamd PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
-  target_link_libraries(lingtu_slam_dds_runtime
+  target_link_libraries(slamd
     lingtu_slam_contract
     lingtu_slam_cyclone_idl
     lingtu_dds_qos_profiles
     CycloneDDS::ddsc)
-  add_executable(lingtu_slam_cyclone_runtime ALIAS lingtu_slam_dds_runtime)
 
-  add_executable(lingtu_slam_control slam_control.cpp)
-  target_compile_features(lingtu_slam_control PRIVATE cxx_std_17)
-  target_include_directories(lingtu_slam_control PRIVATE
+  add_executable(slamctl slam_control.cpp)
+  target_compile_features(slamctl PRIVATE cxx_std_17)
+  target_include_directories(slamctl PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../..")
-  target_link_libraries(lingtu_slam_control
+  target_link_libraries(slamctl
     lingtu_slam_cyclone_idl
     lingtu_dds_qos_profiles
     CycloneDDS::ddsc)

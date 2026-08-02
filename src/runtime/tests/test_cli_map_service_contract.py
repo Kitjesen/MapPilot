@@ -151,9 +151,9 @@ def test_repl_refuses_map_mutation_when_maps_service_is_unavailable(
     victim.mkdir(parents=True)
     (victim / "map.pcd").write_text("pcd", encoding="utf-8")
 
-    import cli.profiles_data as profiles_data
+    import cli.runtime_extra as runtime_extra
 
-    monkeypatch.setattr(profiles_data, "_default_map_dir", lambda: str(map_dir))
+    monkeypatch.setattr(runtime_extra, "_default_map_dir", lambda: str(map_dir))
     repl = LingTuREPL(EmptySystem(), {})
 
     repl._map_cmd({"action": "delete", "name": "keep_me"})

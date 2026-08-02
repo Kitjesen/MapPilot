@@ -35,7 +35,7 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
         """setup() must fail fast instead of silently selecting cmu_py/simple."""
         from nav.local import local_planner_runtime as runtime
         from nav.local import local_planner as mod
-        from nav.local.local_planner_backend import (
+        from nav.local.models import (
             LocalPlannerGridConfig,
             NanobindLocalPlannerBackend,
         )
@@ -72,7 +72,7 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
     def test_failed_nanobind_setup_health_does_not_report_degraded_cmu_py(self):
         from nav.local import local_planner_runtime as runtime
         from nav.local import local_planner as mod
-        from nav.local.local_planner_backend import (
+        from nav.local.models import (
             LocalPlannerGridConfig,
             NanobindLocalPlannerBackend,
         )
@@ -113,7 +113,7 @@ class TestW1LocalPlannerNoFallback(unittest.TestCase):
     def test_nanobind_missing_nav_kernel_does_not_try_cmu_py_paths(self):
         from nav.local import local_planner_runtime as runtime
         from nav.local import local_planner as mod
-        from nav.local.local_planner_backend import (
+        from nav.local.models import (
             LocalPlannerGridConfig,
             NanobindLocalPlannerBackend,
         )

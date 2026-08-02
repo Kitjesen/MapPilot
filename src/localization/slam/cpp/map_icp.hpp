@@ -14,6 +14,10 @@ struct MapIcpDiagnostics {
   std::string refine_backend;
   int refine_iterations = -1;
   int refine_inliers = -1;
+  int input_points = 0;
+  int evaluated_points = 0;
+  double support_ratio = -1.0;
+  double overlap_inlier_ratio = -1.0;
   bool refine_converged = false;
   double refine_pos_cov_trace = -1.0;
 };

@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
 from gateway.schemas import (
+    GatewayErrorResponse,
     SafetyEstopRequest,
     SafetyEstopResponse,
     VoiceTurnRequest,
@@ -97,6 +98,7 @@ def register_voice_routes(app, gw) -> None:
         "/api/v1/voice/turns",
         summary="Submit an AskMe voice turn",
         response_model=VoiceTurnResponse,
+        responses={409: {"model": GatewayErrorResponse}},
     )
     def post_voice_turn(
         body: VoiceTurnRequest,
@@ -138,28 +140,30 @@ def register_voice_routes(app, gw) -> None:
             if command_body.submit:
                 gw.instruction.publish(command_body.text)
             return {
+                "accepted": True,
                 "status": "submitted" if command_body.submit else "preview",
+                "stage": "submitted" if command_body.submit else "preview",
+                "execution_confirmed": False,
                 "instruction": command_body.text,
                 "submitted": command_body.submit,
             }
 
-        replay_result = gw._command_journal.replay("instruction", request_id)
-        if replay_result is not None:
-            if hasattr(gw, "_publish_command_ack"):
-                gw._publish_command_ack(replay_result, status_code=200)
-            result = replay_result
-        else:
-            result = command_service.run_motion_guarded_command(
-                "instruction",
-                command_body,
-                _apply,
-            )
+        result = command_service.run_motion_guarded_command(
+            "instruction",
+            command_body,
+            _apply,
+        )
         payload = _response_payload(result)
+        if (
+            isinstance(result, JSONResponse)
+            and payload.get("error") == "idempotency_conflict"
+        ):
+            return result
         command = payload.get("command")
         command = command if isinstance(command, dict) else {}
-        accepted = bool(payload.get("ok", False))
+        accepted = payload.get("ok") is True
         replay = bool(command.get("replay", False))
-        submitted = bool(payload.get("submitted", False)) if accepted else False
+        submitted = payload.get("submitted") is True if accepted else False
         status = str(payload.get("status") or ("rejected" if not accepted else "submitted"))
         return {
             "handled": True,
@@ -249,7 +253,7 @@ def register_voice_routes(app, gw) -> None:
             )
             endpoint_only = bool(getattr(gw, "_teleop_dds_enabled", False))
             if not wrote_native:
-                endpoint_only = endpoint_only or native_control.endpoint_only_enabled()
+                endpoint_only = endpoint_only or native_control.endpoint_only_enabled(gw)
                 if endpoint_only:
                     raise CommandBoundaryError("native emergency-stop command boundary is unavailable")
                 gw.stop_cmd.publish(2)
@@ -263,6 +267,7 @@ def register_voice_routes(app, gw) -> None:
                 "enabled": True,
                 "timestamp": timestamp,
                 "accepted": True,
+                "stage": "native_acknowledged" if wrote_native else "local_published",
                 "control_boundary": "native_estop" if wrote_native else "local_compat",
                 "message": "Emergency stop activated.",
             }
@@ -285,6 +290,8 @@ def register_voice_routes(app, gw) -> None:
                     "message": str(exc),
                 },
             )
+        if isinstance(payload, JSONResponse):
+            return payload
         command = payload.get("command")
         command = command if isinstance(command, dict) else {}
         return {

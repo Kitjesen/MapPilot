@@ -9,7 +9,6 @@ _EXPORTS = {
     "compose_full_stack_modules": ("lingtu.assembly.stacks.composition", "compose_full_stack_modules"),
     "driver": ("lingtu.assembly.stacks.driver", "driver"),
     "exploration": ("lingtu.assembly.stacks.exploration", "exploration"),
-    "external_services": ("lingtu.assembly.stacks.system", "external_services"),
     "gateway": ("lingtu.assembly.stacks.gateway", "gateway"),
     "gnss": ("lingtu.assembly.stacks.system", "gnss"),
     "hw": ("lingtu.assembly.stacks.system", "hw"),

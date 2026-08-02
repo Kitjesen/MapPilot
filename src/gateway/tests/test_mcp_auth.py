@@ -16,6 +16,7 @@ async def _request(
     *,
     headers=None,
     path="/mcp",
+    method="GET",
     client=("127.0.0.1", 5050),
 ):
     sent = []
@@ -30,6 +31,7 @@ async def _request(
         {
             "type": "http",
             "path": path,
+            "method": method,
             "headers": headers or [],
             "query_string": b"",
             "client": client,
@@ -98,6 +100,21 @@ async def test_required_gateway_keeps_loopback_health_available(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_required_gateway_keeps_loopback_ready_available(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(_ok_app, api_key=None, require_key=True)
+
+    sent = await _request(
+        app,
+        path="/ready",
+        client=("127.0.0.1", 5050),
+    )
+
+    assert sent[0]["status"] == 200
+
+
+@pytest.mark.asyncio
 async def test_required_gateway_protects_remote_health(monkeypatch):
     monkeypatch.delenv("LINGTU_API_KEY", raising=False)
     monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
@@ -112,19 +129,134 @@ async def test_required_gateway_protects_remote_health(monkeypatch):
     assert sent[0]["status"] == 401
 
 
-def test_thunder_field_gateway_requires_api_key(monkeypatch):
+@pytest.mark.asyncio
+async def test_required_gateway_protects_remote_ready(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(_ok_app, api_key=None, require_key=True)
+
+    sent = await _request(
+        app,
+        path="/ready",
+        client=("192.168.114.50", 5050),
+    )
+
+    assert sent[0]["status"] == 401
+
+
+@pytest.mark.asyncio
+async def test_required_gateway_keeps_loopback_api_protected(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(_ok_app, api_key=None, require_key=True)
+
+    sent = await _request(
+        app,
+        path="/api/v1/state",
+        client=("127.0.0.1", 5050),
+    )
+
+    assert sent[0]["status"] == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (
+        ("POST", "/api/v1/explore/start"),
+        ("GET", "/api/v1/explore/status"),
+    ),
+)
+async def test_loopback_explore_operator_accepts_current_product_session(
+    monkeypatch,
+    method,
+    path,
+):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(
+        _ok_app,
+        api_key=None,
+        require_key=True,
+        product_session_id="session-token-1234",
+    )
+
+    sent = await _request(
+        app,
+        method=method,
+        path=path,
+        headers=[(b"x-lingtu-product-session", b"session-token-1234")],
+    )
+
+    assert sent[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_product_session_is_rejected_for_remote_explore_request(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(
+        _ok_app,
+        api_key=None,
+        require_key=True,
+        product_session_id="session-token-1234",
+    )
+
+    sent = await _request(
+        app,
+        method="POST",
+        path="/api/v1/explore/start",
+        client=("192.168.66.42", 5050),
+        headers=[(b"x-lingtu-product-session", b"session-token-1234")],
+    )
+
+    assert sent[0]["status"] == 403
+
+
+@pytest.mark.asyncio
+async def test_product_session_cannot_authorize_other_loopback_api(monkeypatch):
+    monkeypatch.delenv("LINGTU_API_KEY", raising=False)
+    monkeypatch.setattr("gateway.auth._get_configured_key", lambda: None)
+    app = APIKeyMiddleware(
+        _ok_app,
+        api_key=None,
+        require_key=True,
+        product_session_id="session-token-1234",
+    )
+
+    sent = await _request(
+        app,
+        method="POST",
+        path="/api/v1/goal",
+        headers=[(b"x-lingtu-product-session", b"session-token-1234")],
+    )
+
+    assert sent[0]["status"] == 403
+
+
+def test_real_env_gateway_requires_api_key(monkeypatch):
     from gateway.auth import gateway_api_key_required
 
-    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
+    monkeypatch.setenv("LINGTU_ENV", "real")
     monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
 
     assert gateway_api_key_required() is True
 
 
-def test_dev_gateway_keeps_auth_optional_by_default(monkeypatch):
+def test_legacy_field_endpoint_does_not_select_real_env(monkeypatch):
     from gateway.auth import gateway_api_key_required
 
-    monkeypatch.setenv("LINGTU_ENDPOINT", "stub")
+    monkeypatch.setenv("LINGTU_ENV", "sim")
+    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder-field")
+    monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
+
+    assert gateway_api_key_required() is False
+
+
+def test_sim_env_gateway_keeps_auth_optional_by_default(monkeypatch):
+    from gateway.auth import gateway_api_key_required
+
+    monkeypatch.setenv("LINGTU_ENV", "sim")
     monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
 
     assert gateway_api_key_required() is False
@@ -133,7 +265,7 @@ def test_dev_gateway_keeps_auth_optional_by_default(monkeypatch):
 def test_explicit_gateway_auth_requirement_is_honored(monkeypatch):
     from gateway.auth import gateway_api_key_required
 
-    monkeypatch.setenv("LINGTU_ENDPOINT", "stub")
+    monkeypatch.setenv("LINGTU_ENV", "sim")
     monkeypatch.setenv("LINGTU_GATEWAY_REQUIRE_API_KEY", "1")
 
     assert gateway_api_key_required() is True

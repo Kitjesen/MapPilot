@@ -87,7 +87,7 @@ def test_architecture_layer_manifest_uses_most_specific_path_owner() -> None:
 
 
 def test_lite_manifest_does_not_carry_retired_ros2_adapter_paths() -> None:
-    lite_manifest = yaml.safe_load((ROOT / "config" / "thunder_lite_package.yaml").read_text(encoding="utf-8-sig"))
+    lite_manifest = yaml.safe_load((ROOT / "config" / "lite_package.yaml").read_text(encoding="utf-8-sig"))
     lite_excludes = set(lite_manifest["package"]["exclude_paths"])
     lite_omits = set(lite_manifest["package"]["omit_paths"])
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from drivers.real.camera.dds_module import DdsCameraModule
 from drivers.real.camera.shm import StreamKind
-from runtime.contracts import CAMERA_BACKEND_DDS, CAMERA_ROLE
+from runtime.contracts import CAMERA_BACKEND_DDS, CAMERA_BACKEND_ORBBEC, CAMERA_ROLE
 from runtime.registry import clear, get, register, restore, snapshot
 from tests.drivers.test_camera_shm import write_committed_frame
 
@@ -191,12 +191,12 @@ def test_camera_gateway_does_not_fallback_to_orbbec_for_missing_dds(monkeypatch)
     try:
         clear()
 
-        @register("camera_bridge", "default")
-        class LegacyCameraBridge:
+        @register(CAMERA_ROLE, CAMERA_BACKEND_ORBBEC)
+        class NativeCamera:
             pass
 
         monkeypatch.setattr(gateway, "seed_registered_plugins", lambda *a, **kw: None)
-        monkeypatch.setattr(gateway, "_reload_camera_candidates", lambda: None)
+        monkeypatch.setattr(gateway, "_load_camera_candidates", lambda: None)
         assert gateway.camera_module(backend=CAMERA_BACKEND_DDS) is None
     finally:
         restore(state)

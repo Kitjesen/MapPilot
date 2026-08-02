@@ -2,21 +2,40 @@
 
 from __future__ import annotations
 
-import heapq
 import logging
 import os
 import traceback
 
+from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
 from runtime.msgs.numpy_compat import np
 from runtime.registry import register
-from nav.services.plan.contracts import GlobalPlanRequest, GlobalPlanResult
-from .runtime.api import load_pct_planner_runtime
+
+from .runtime.api import PCT_DEFAULT_PLANNER_RUNTIME, load_pct_planner_runtime
 
 logger = logging.getLogger(__name__)
 
 _PCT_HEIGHT_SNAP_TOLERANCE_M = 0.25
 _PCT_START_XY_SNAP_TOLERANCE_M = 0.5
 _PCT_GOAL_XY_TOLERANCE_M = 0.35
+_PCT_PLANNER_PATH_MODES = {
+    "astar_raw_path": "astar_raw_path",
+    "native_astar_raw_path": "astar_raw_path",
+    "rust_astar_raw_path": "astar_raw_path",
+    "optimized_trajectory": "optimized_trajectory",
+    "native_optimized_trajectory": "optimized_trajectory",
+    "rust_optimized_trajectory": "optimized_trajectory",
+}
+
+
+def _canonical_pct_planner_path_mode(value: object) -> str:
+    raw_mode = str(value or "").strip()
+    try:
+        return _PCT_PLANNER_PATH_MODES[raw_mode]
+    except KeyError as exc:
+        raise ValueError(
+            f"unsupported PCT planner path mode: {raw_mode!r}"
+        ) from exc
+
 
 # ---------------------------------------------------------------------------
 # PCT planner: native terrain-aware planner
@@ -46,7 +65,7 @@ class PCTPlanner:
         self._last_plan_diagnostics: dict[str, object] = {}
         self._last_plan_reached_goal: bool = False
         self._last_plan_path_mode: str = ""
-        self._planner_runtime_name: str = "native"
+        self._planner_runtime_name: str = PCT_DEFAULT_PLANNER_RUNTIME
 
         # 2D ground-floor grid for _find_safe_goal BFS (extracted from tomogram)
         self._grid: np.ndarray | None = None
@@ -269,7 +288,17 @@ class PCTPlanner:
         self._last_plan_diagnostics = {
             "planner": "pct",
             "tomogram": getattr(self, "_tomogram_path", ""),
-            "pct_runtime": getattr(self, "_planner_runtime_name", "native"),
+            "pct_planner_runtime": {
+                "runtime": getattr(
+                    self,
+                    "_planner_runtime_name",
+                    PCT_DEFAULT_PLANNER_RUNTIME,
+                ),
+                "ok": bool(
+                    getattr(self, "_available", False)
+                    and getattr(self, "_planner", None) is not None
+                ),
+            },
             "reload_on_native_exception": self._env_truthy(
                 "LINGTU_PCT_RELOAD_ON_EXCEPTION",
                 True,
@@ -568,8 +597,10 @@ class PCTPlanner:
 
         path_mode = str(getattr(planner, "last_path_mode", "") or "")
         if path_mode:
-            self._last_plan_path_mode = path_mode
-            self._last_plan_diagnostics["pct_planner_path_mode"] = path_mode
+            canonical_path_mode = _canonical_pct_planner_path_mode(path_mode)
+            self._last_plan_path_mode = canonical_path_mode
+            self._last_plan_diagnostics["last_path_mode"] = path_mode
+            self._last_plan_diagnostics["pct_planner_path_mode"] = canonical_path_mode
 
         if hasattr(planner, "last_optimizer_enabled") or hasattr(planner, "optimize_trajectory"):
             self._last_plan_diagnostics["pct_optimizer_enabled"] = bool(

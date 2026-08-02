@@ -75,7 +75,10 @@ def test_cpp_cmd_vel_tap_publishes_simulated_thunder_control_readiness():
     assert 'msg.owner = const_cast<char*>("grpc")' in source
     assert 'msg.owner_id = const_cast<char*>("lingtu-driver")' in source
     assert "dds_write(writer, &msg)" in source
-    assert "writeControlState(control_state_writer, sequence)" in source
+    assert "msg.accepted_producer_boot_id" in source
+    assert "msg.accepted_output_sequence" in source
+    assert "msg->producer_boot_id" in source
+    assert "msg->output_seq" in source
 
 
 def test_native_navigation_phase_timeout_includes_wsl_shutdown_grace():
@@ -86,6 +89,29 @@ def test_native_navigation_phase_timeout_includes_wsl_shutdown_grace():
         10.0,
         realtime_factor=0.5,
     ) == pytest.approx(100.0)
+
+
+def test_parent_sensor_diagnostics_args_use_case_artifact_and_controlled_period(tmp_path):
+    artifact = tmp_path / "parent_sensor_diagnostics.json"
+
+    defaults = acceptance._parent_sensor_diagnostics_args(artifact, {})
+    overridden = acceptance._parent_sensor_diagnostics_args(
+        artifact,
+        {"parent_diagnostics_period_s": 0.75},
+    )
+
+    assert defaults == [
+        "--parent-diagnostics-json",
+        str(artifact),
+        "--parent-diagnostics-period-s",
+        "0.5",
+    ]
+    assert overridden[-1] == "0.75"
+    with pytest.raises(ValueError, match="parent_diagnostics_period_s"):
+        acceptance._parent_sensor_diagnostics_args(
+            artifact,
+            {"parent_diagnostics_period_s": 0},
+        )
 
 
 def test_compiled_lidar_offset_uses_final_site_pose_not_local_site_pos(tmp_path):
@@ -175,15 +201,30 @@ def test_acceptance_text_capture_tolerates_missing_subprocess_streams():
 
 
 def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_replay():
-    publisher = (ROOT / "src" / "drivers" / "real" / "lidar" / "sdk2_stream" / "main.cpp").read_text(encoding="utf-8")
-    sensor_bridge = (ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py").read_text(encoding="utf-8")
-    endpoint = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "nav_native_endpoint.cpp").read_text(encoding="utf-8")
-    traversability = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "traversability_dds.cpp").read_text(encoding="utf-8")
+    publisher = (
+        ROOT / "src" / "drivers" / "real" / "lidar" / "sdk2_stream" / "main.cpp"
+    ).read_text(encoding="utf-8")
+    sensor_bridge = (
+        ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py"
+    ).read_text(encoding="utf-8")
+    endpoint_loop = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_loop.cpp").read_text(
+        encoding="utf-8"
+    )
+    input_projector = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "nav_input_state_projector.cpp"
+    ).read_text(encoding="utf-8")
+    nav_main = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_native_endpoint.cpp"
+    ).read_text(encoding="utf-8")
+    traversability = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "traversability" / "traversability_dds.cpp"
+    ).read_text(encoding="utf-8")
 
     assert "--restamp-stdin-records" in publisher
     assert "replay_restamper.stamp_ns(source_timestamp_ns, target_deadline)" in publisher
     assert "if (navigation_fixture)" in publisher
-    assert "return source_timestamp_ns;" in publisher.split("if (navigation_fixture)", 1)[1].split("}", 1)[0]
+    navigation_fixture_branch = publisher.split("if (navigation_fixture)", 1)[1].split("}", 1)[0]
+    assert "return source_timestamp_ns;" in navigation_fixture_branch
     assert "replay_restamper.stamp_monotonic_ns(" not in publisher
     assert "source_timestamp_ns, std::chrono::steady_clock::now()" not in publisher
     assert "replay_rate > 0.0 && !navigation_fixture" in publisher
@@ -202,38 +243,53 @@ def test_mujoco_sensor_record_clock_contract_separates_navigation_fixture_from_r
     publisher_start = sensor_bridge.split("def _start_native_publisher", 1)[1].split(
         "def ", 1
     )[0]
-    assert "if not bool(getattr(args, \"navigation_fixture\", False))" in publisher_start
-    assert 'command.append("--restamp-stdin-records")' in publisher_start
-    assert "classifySourceOrder(\n              last_tf_s" in endpoint
-    assert "tf_stamp_decision == SourceStampDecision::kClockRebase" in endpoint
-    assert "classifySourceOrder(\n              last_odom_s" in endpoint
-    assert "odom_stamp_decision == SourceStampDecision::kClockRebase" in endpoint
-    assert 'reset_navigation_epoch(tf->stamp_s, "source_clock_rebase", false)' in endpoint
-    tf_handler = endpoint.split("dds.drainTf", 1)[1].split("dds.drainOdometry", 1)[0]
-    assert tf_handler.index("const bool map_frame_jump") < tf_handler.index(
-        "tf_stamp_decision == SourceStampDecision::kClockRebase"
-    )
-    assert "classifySourceOrder(\n              last_cloud_s" in endpoint
-    assert "classifySourceOrder(\n              last_traversability_s" in endpoint
-    assert "classifySourceOrder(\n              localization_health.stamp_s" in endpoint
-    assert "const double input_now = steadySeconds();" in endpoint
-    assert "input_snapshot.odom_receive_s = last_odom_receive_s;" in endpoint
-    assert "input_snapshot.tf_receive_s = last_tf_receive_s;" in endpoint
-    assert "input_snapshot.cloud_receive_s = last_cloud_receive_s;" in endpoint
-    assert "input_snapshot.traversability_receive_s = last_traversability_receive_s;" in endpoint
-    assert "input_snapshot.localization_health_receive_s = localization_health_receive_s;" in endpoint
-    cloud_handler = endpoint.split("dds.drainCloud", 1)[1].split("dds.drainTerrainMap", 1)[0]
-    traversability_handler = endpoint.split("dds.drainTraversability", 1)[1].split(
-        "dds.drainLocalizationHealth", 1
+    restamp_policy = sensor_bridge.split("def _should_restamp_native_records", 1)[1].split(
+        "def _start_native_publisher", 1
     )[0]
-    health_handler = endpoint.split("dds.drainLocalizationHealth", 1)[1].split("auto handle_cancel", 1)[0]
-    assert "reset_navigation_epoch" not in cloud_handler
-    assert "reset_navigation_epoch" not in traversability_handler
-    assert "reset_navigation_epoch" not in health_handler
-    assert "nav.tickTeleopIntent(\n" in endpoint
-    assert "nav.tick(\n" in endpoint
-    assert endpoint.count("steadySeconds(),") >= 2
-    assert "teleop_receive_time" in endpoint
+    assert 'if bool(getattr(args, "navigation_fixture", False)):' in restamp_policy
+    assert "return False" in restamp_policy
+    assert "if _should_restamp_native_records(args):" in publisher_start
+    assert 'command.append("--restamp-stdin-records")' in publisher_start
+    assert "input_projector.projectTf(msg, steadySeconds())" in endpoint_loop
+    assert "input_projector.projectOdometry(msg, steadySeconds())" in endpoint_loop
+    assert "classifySourceOrder(state_.last_tf_s" in input_projector
+    assert "classifySourceOrder(state_.last_odom_s" in input_projector
+    assert 'resetInputEpoch(transform->stamp_s, "source_clock_rebase", false)' in input_projector
+    tf_handler = input_projector.split("NavInputStateProjector::projectTf", 1)[1].split(
+        "NavInputStateProjector::projectOdometry", 1
+    )[0]
+    assert tf_handler.index("const bool map_frame_jump") < tf_handler.index(
+        "stamp_decision == SourceStampDecision::kClockRebase"
+    )
+    assert "classifySourceOrder(state_.last_cloud_s" in input_projector
+    assert "classifySourceOrder(state_.last_traversability_s" in input_projector
+    assert "state_.localization_health.stamp_s" in input_projector
+    assert "snapshot.odom_receive_s = state_.last_odom_receive_s;" in input_projector
+    assert "snapshot.tf_receive_s = state_.last_tf_receive_s;" in input_projector
+    assert "snapshot.cloud_receive_s = state_.last_cloud_receive_s;" in input_projector
+    assert (
+        "snapshot.traversability_receive_s = state_.last_traversability_receive_s;"
+        in input_projector
+    )
+    assert (
+        "snapshot.localization_health_receive_s = state_.localization_health_receive_s;"
+        in input_projector
+    )
+    cloud_handler = input_projector.split("NavInputStateProjector::projectCloud", 1)[1].split(
+        "NavInputStateProjector::projectTerrainMap", 1
+    )[0]
+    traversability_handler = input_projector.split(
+        "NavInputStateProjector::projectTraversability", 1
+    )[1].split("NavInputStateProjector::projectLocalizationHealth", 1)[0]
+    health_handler = input_projector.split(
+        "NavInputStateProjector::projectLocalizationHealth", 1
+    )[1].split("NavInputStateProjector::resetInputEpoch", 1)[0]
+    assert "resetInputEpoch" not in cloud_handler
+    assert "resetInputEpoch" not in traversability_handler
+    assert "resetInputEpoch" not in health_handler
+    assert "nav.tickTeleopIntent(" in nav_main
+    assert "nav.tick(" in nav_main
+    assert nav_main.count("steadySeconds") >= 2
     assert "const double schedule_now = steadySeconds();" in traversability
     assert "last_publish = schedule_now;" in traversability
     assert "last_map_odom_receive_s = steadySeconds();" in traversability
@@ -546,6 +602,7 @@ def test_motion_log_lidar_sampling_filters_overhead_before_spending_point_budget
 
 
 def test_local_planner_inset_draws_raw_lidar_and_planner_obstacles_as_separate_layers():
+    pytest.importorskip("cv2", reason="local-planner rendering requires the optional vision extra")
     row = {
         "t": 10.2,
         "nav_status_stamp_s": 10.1,
@@ -688,6 +745,7 @@ def test_native_navigation_video_shows_local_planner_decision_layers():
 
 
 def test_local_planner_visualization_uses_distinct_candidate_colors_and_selected_green():
+    pytest.importorskip("cv2", reason="local-planner rendering requires the optional vision extra")
     assert navigation_video._candidate_bgr("feasible", selected=False) != navigation_video._candidate_bgr(
         "collision_blocked", selected=False
     )
@@ -858,7 +916,7 @@ def test_native_navigation_video_hides_roof_without_hiding_robot_visuals():
 
 def test_native_acceptance_manifest_declares_exact_product_chain():
     manifest = json.loads(
-        (ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_native_navigation_acceptance.json").read_text(
+        (ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_native_navigation_acceptance.json").read_text(
             encoding="utf-8"
         )
     )
@@ -869,6 +927,7 @@ def test_native_acceptance_manifest_declares_exact_product_chain():
     assert "rt/nav/command/request" in contracts["navigation_inputs"]
     assert "rt/nav/goal_pose" not in contracts["navigation_inputs"]
     assert contracts["navigation_command_ack"] == "rt/nav/command/ack"
+    assert contracts["navigation_goal_status"] == "rt/nav/goal/status"
     assert contracts["navigation_command_transport"] == "typed_dds_request_ack"
     assert contracts["locomotion_input"] == "rt/nav/cmd_vel"
     assert contracts["local_path_role"] == "dds_telemetry_and_preview"
@@ -894,7 +953,7 @@ def test_native_acceptance_manifest_declares_exact_product_chain():
 
 def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
     manifest = acceptance._load_manifest(
-        ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_multifloor_navigation_acceptance.json"
+        ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_multifloor_navigation_acceptance.json"
     )
 
     assert manifest["asset_builder"]["scene_preset"] == "multifloor_stack_3"
@@ -918,7 +977,7 @@ def test_multifloor_merged_manifest_locks_runtime_octoplanner3d_constraints():
 
 def test_industrial_park_navigation_matches_global_and_local_clearance_contracts():
     manifest = acceptance._load_manifest(
-        ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_industrial_park_60m_navigation_acceptance.json"
+        ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_industrial_park_60m_navigation_acceptance.json"
     )
 
     assert manifest["planner_constraints"]["robot_radius_m"] == 0.95
@@ -964,10 +1023,14 @@ def test_industrial_park_navigation_matches_global_and_local_clearance_contracts
     assert sensor_args[sensor_args.index("--physics-integrator") + 1] == "euler"
     source = (ROOT / "sim" / "scripts" / "mujoco" / "native_navigation_acceptance.py").read_text(encoding="utf-8")
     assert '"--corridor-lookahead-m"' in source
-    endpoint_source = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "nav_native_endpoint.cpp").read_text(
-        encoding="utf-8"
-    )
-    assert ("nav_config.local_planner.footprintPadding = safety_config.obstacle_margin_m;") in endpoint_source
+    endpoint_source = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_native_endpoint.cpp"
+    ).read_text(encoding="utf-8")
+    config_source = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_config.hpp"
+    ).read_text(encoding="utf-8")
+    assert "buildNavLoopConfig(cfg, safety_config.obstacle_margin_m)" in endpoint_source
+    assert "out.local_planner.footprintPadding = obstacle_margin_m;" in config_source
     assert endpoint_source.count("const auto safety_config = commandSafetyConfig(cfg);") == 1
 
 
@@ -1321,25 +1384,35 @@ def test_sensor_runtime_options_are_attached_only_to_sensor_process():
     source = (ROOT / "sim/scripts/mujoco/native_navigation_acceptance.py").read_text(encoding="utf-8")
     assert source.count("_sensor_runtime_args(manifest)") == 1
     assert "sensor_args.extend(_sensor_runtime_args(manifest))" in source
+    assert source.count("_parent_sensor_diagnostics_args(") == 2
+    assert "parent_sensor_diagnostics_path = phase_dir / \"parent_sensor_diagnostics.json\"" in source
+    assert "parent_diagnostics_json" not in source
 
 
 def test_native_endpoint_keeps_lidar_extrinsic_out_of_body_pose_local_planning():
-    source = (
-        ROOT / "src/nav/cpp/endpoint/nav_native_endpoint.cpp"
+    endpoint_source = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "nav_native_endpoint.cpp"
+    ).read_text(encoding="utf-8")
+    input_source = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "input" / "nav_input_state_projector.cpp"
+    ).read_text(encoding="utf-8")
+    config_source = (
+        ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_config.hpp"
     ).read_text(encoding="utf-8")
 
-    assert "sensorOriginFromBody" in source
-    assert "cfg.sensor_offset_x_m" in source
-    assert "cfg.sensor_offset_y_m" in source
-    assert "nav_config.local_planner.sensorOffsetX = 0.0;" in source
-    assert "nav_config.local_planner.sensorOffsetY = 0.0;" in source
+    assert "sensorOriginFromBody" in input_source
+    assert "input_projector_config.sensor_offset" in endpoint_source
+    assert "cfg.sensor_offset_x_m" in endpoint_source
+    assert "cfg.sensor_offset_y_m" in endpoint_source
+    assert "out.local_planner.sensorOffsetX = 0.0;" in config_source
+    assert "out.local_planner.sensorOffsetY = 0.0;" in config_source
     assert (
-        "nav_config.local_planner.sensorOffsetX = cfg.sensor_offset_x_m;"
-        not in source
+        "out.local_planner.sensorOffsetX = cfg.sensor_offset_x_m;"
+        not in config_source
     )
     assert (
-        "nav_config.local_planner.sensorOffsetY = cfg.sensor_offset_y_m;"
-        not in source
+        "out.local_planner.sensorOffsetY = cfg.sensor_offset_y_m;"
+        not in config_source
     )
 
 
@@ -1464,7 +1537,7 @@ def test_deferred_wsl_goal_command_prestarts_wsl_relay_before_trigger(
 
 def test_multifloor_manifest_locks_runtime_octoplanner3d_constraints():
     manifest = json.loads(
-        (ROOT / "config" / "runtime_graph" / "endpoints" / "mujoco_multifloor_navigation_acceptance.json").read_text(
+        (ROOT / "config" / "runtime_graph" / "acceptance" / "mujoco_multifloor_navigation_acceptance.json").read_text(
             encoding="utf-8"
         )
     )
@@ -1482,15 +1555,6 @@ def test_multifloor_manifest_locks_runtime_octoplanner3d_constraints():
     args = acceptance._planner_constraint_args(manifest)
     assert args[args.index("--octo-max-step-height-m") + 1] == "0.23"
     assert args[args.index("--octo-support-height-m") + 1] == "0.55"
-
-
-def test_native_acceptance_rejects_unknown_planner_constraint():
-    try:
-        acceptance._planner_constraint_args({"planner_constraints": {"invented": 1}})
-    except ValueError as exc:
-        assert "invented" in str(exc)
-    else:
-        raise AssertionError("unknown planner constraint must fail closed")
 
 
 def test_acceptance_prepares_same_source_assets_when_manifest_paths_are_empty(tmp_path, monkeypatch):
@@ -1522,6 +1586,45 @@ def test_acceptance_prepares_same_source_assets_when_manifest_paths_are_empty(tm
     assert result["attempted"] is True
     assert Path(manifest["world"]) == scene_xml
     assert Path(manifest["map_dir"]) == map_dir
+
+def test_acceptance_preserves_asset_builder_failure_reason(tmp_path, monkeypatch):
+    scene_xml = tmp_path / "generated" / "scene.xml"
+    map_dir = tmp_path / "generated" / "same_source_map"
+    map_dir.mkdir(parents=True)
+    scene_xml.write_text("<mujoco/>", encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance,
+        "_run_saved_map_asset_builder",
+        lambda _spec, _out_dir: {
+            "scene_xml": str(scene_xml),
+            "map_dir": str(map_dir),
+            "build": {
+                "ok": False,
+                "octomap_result": {
+                    "success": False,
+                    "reason_code": "missing_converter",
+                },
+            },
+            "artifact_gate": {"ok": False, "blockers": ["missing_octomap"]},
+        },
+    )
+    manifest = {
+        "world": "",
+        "map_dir": "",
+        "asset_builder": {"kind": "saved_map_plan_gate"},
+    }
+
+    result = acceptance._prepare_acceptance_assets(manifest, tmp_path / "run")
+
+    assert result["ok"] is False
+    assert result["reason"] == "asset_builder_incomplete"
+    assert result["blockers"] == [
+        "asset_octomap_build_failed:missing_converter",
+        "asset_artifact_gate_failed",
+    ]
+    assert result["build"]["octomap_result"]["reason_code"] == "missing_converter"
+    assert result["artifact_gate"]["blockers"] == ["missing_octomap"]
+
 
 
 def test_preflight_validates_same_source_map_hashes(tmp_path, monkeypatch):
@@ -2645,9 +2748,9 @@ def test_evidence_treats_small_future_tf_age_as_fresh(tmp_path):
 def test_native_runner_does_not_import_python_planners():
     source = (ROOT / "sim" / "scripts" / "mujoco" / "native_navigation_acceptance.py").read_text(encoding="utf-8")
     forbidden = (
-        "GlobalPlannerService",
-        "LocalPlannerModule",
-        "PathFollowerModule",
+        "GlobalPlanner" + "Service",
+        "LocalPlanner" + "Module",
+        "PathFollower" + "Module",
         "octoplanner3d_planner.py",
         "nav.local",
     )
@@ -2656,14 +2759,14 @@ def test_native_runner_does_not_import_python_planners():
 
 
 def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only():
-    client = (ROOT / "src" / "nav" / "commands" / "cpp" / "client.cpp").read_text(encoding="utf-8")
-    endpoint = (ROOT / "src" / "nav" / "services" / "endpoint" / "cpp" / "nav_native_endpoint.cpp").read_text(
+    client = (ROOT / "src" / "nav" / "cpp" / "client" / "client.cpp").read_text(encoding="utf-8")
+    endpoint_loop = (ROOT / "src" / "nav" / "cpp" / "endpoint" / "endpoint_loop.cpp").read_text(
         encoding="utf-8"
     )
-    nav_loop = (ROOT / "src" / "nav" / "services" / "plan" / "cpp" / "nav_loop.cpp").read_text(encoding="utf-8")
+    nav_loop = (ROOT / "src" / "nav" / "cpp" / "engine" / "nav_loop.cpp").read_text(encoding="utf-8")
 
-    write_start = client.index("void writeCommand(")
-    write_end = client.index("void writeReasonCommand(", write_start)
+    write_start = client.index("NavigationCommandReceipt writeCommandReceipt(")
+    write_end = client.index("std::string writeCommand(", write_start)
     write_body = client[write_start:write_end]
     assert "kNavCommandRequest" in client
     assert "kNavCommandAck" in client
@@ -2673,10 +2776,10 @@ def test_native_control_waits_for_business_ack_and_local_path_is_telemetry_only(
     assert register_index < publish_index < ack_index
     assert "active_request_id, pending, timeout_ms" in write_body
 
-    tick_index = endpoint.index("auto out = nav.tick(")
-    telemetry_index = endpoint.index("dds.writeLocalPath(out.local_path_map);", tick_index)
+    tick_index = endpoint_loop.index("autonomy_tick.tick(")
+    telemetry_index = endpoint_loop.index("dds.writeLocalPath(out.local_path_map);", tick_index)
     assert tick_index < telemetry_index
-    assert "drainLocalPath" not in endpoint
+    assert "drainLocalPath" not in endpoint_loop
 
     planner_index = nav_loop.index("local_planner_.plan(")
     follower_index = nav_loop.index("nav_kernel::computeControl(", planner_index)

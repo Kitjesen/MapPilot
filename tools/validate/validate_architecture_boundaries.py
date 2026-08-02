@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Validate LingTu package import boundaries.
 
-This is a lightweight CI/manual guard for Module-First cleanliness. It scans
+This is a lightweight CI/manual guard for Product, Host, domain, and adapter
+ownership. It scans
 all production Python imports, including lazy imports inside functions, while
 skipping tests/examples, explicit composition layers, and TYPE_CHECKING-only
 imports.
@@ -55,6 +56,13 @@ ROS_SCAN_EXCLUDED_PREFIXES: tuple[str, ...] = (
     "drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2/",
     "nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/",
     "sim/diagnostics/gap_report.py",
+)
+
+# This read-only doctor invokes ``ros2`` only after the operator passes
+# ``--ros2``. Keep the exception narrower than the general ROS import scan so
+# product code cannot gain ROS imports through this diagnostic boundary.
+ROS_CLI_COMPATIBILITY_ALLOWLIST: frozenset[str] = frozenset(
+    {"diagnostics/field/doctor.py"}
 )
 
 
@@ -519,7 +527,8 @@ ROS_SETUP_MARKERS: tuple[str, ...] = (
 
 
 def _is_ros_coupling_allowlisted(path: Path) -> bool:
-    return _is_ros_scan_excluded(path)
+    rel = path.relative_to(SRC_DIR).as_posix()
+    return _is_ros_scan_excluded(path) or rel in ROS_CLI_COMPATIBILITY_ALLOWLIST
 
 
 def validate_ros_coupling_touchpoints() -> tuple[list[str], int]:
@@ -581,7 +590,7 @@ def validate(verbose: bool = False) -> tuple[list[str], int]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate LingTu Module-First package boundaries")
+    parser = argparse.ArgumentParser(description="Validate LingTu architecture package boundaries")
     parser.add_argument("--verbose", action="store_true", help="Print scanned file count")
     args = parser.parse_args()
 

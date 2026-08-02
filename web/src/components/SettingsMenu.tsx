@@ -333,10 +333,10 @@ function SystemSection({ locale, onBack, onOpenModal }: {
             resetAllLayouts()
           }} />
         <ActionRow icon={<Power size={14} />} title={text(locale, 'Restart LingTu', '重启 LingTu')} dangerous
-          hint={text(locale, 'Gracefully stop and restart all modules', '优雅停止后重新启动所有模块')}
+          hint={text(locale, 'Reapply the active Product through ProductControl', '通过 ProductControl 重新应用当前产品')}
           onClick={() => {
             if (confirm(text(locale, 'Restart LingTu? Current tasks will be interrupted.', '确认重启 LingTu？所有当前任务将被中断。'))) {
-              alert(text(locale, 'Restart API is not wired yet. Use SSH: sudo systemctl restart lingtu', '重启 API 待接入：目前请 SSH sudo systemctl restart lingtu'))
+              alert(text(locale, 'Use SSH: python -m lingtu.control reapply --env real', '请通过 SSH 执行：python -m lingtu.control reapply --env real'))
             }
           }} />
       </div>
@@ -551,7 +551,8 @@ function OtaModal({ locale, onClose }: { locale: Locale; onClose: () => void }) 
         <strong>{text(locale, 'Backend contract', '后端对接')}</strong>:
         {text(locale, 'Production OTA polls the release server, deploys into', '生产路径会轮询服务器，检测到新版本后推送到')}
         {' '}<code>/opt/lingtu/nav</code>{' '}
-        {text(locale, 'and triggers', '并触发')} <code>systemctl restart lingtu</code>.
+        {text(locale, 'and then reapplies the active Product with', '然后使用以下命令重新应用当前产品：')}{' '}
+        <code>python -m lingtu.control reapply --env real</code>.
       </div>
     </ModalShell>
   )

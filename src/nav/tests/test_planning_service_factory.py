@@ -10,7 +10,7 @@ import pytest
 from runtime.msgs.numpy_compat import np
 from nav.services.plan.contracts import PlannerService
 from nav.services.plan.factory import create_planner_service
-from nav.services.plan.compat.direct import MaplessDirectPlannerService
+from nav.services.plan.mapless.direct import MaplessDirectPlannerService
 from nav.services.plan.global_planner.service import GlobalPlanner
 
 SRC_DIR = Path(__file__).resolve().parents[2]

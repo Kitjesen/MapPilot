@@ -6,6 +6,7 @@ import json
 import math
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -59,8 +60,8 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "thunder_field",
-                "data_source": "thunder_field",
+                "source_profile": "thunder",
+                "data_source": "thunder",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -70,8 +71,8 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -80,8 +81,8 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
                         "path": "octomap.ot",
                         "sha256": octomap_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "frame_id": "map",
                         "resolution": 0.2,
                     },
@@ -161,7 +162,7 @@ class _FakePlanPreviewNav:
         self.plan_safety_policy = plan_safety_policy
         self.path_safety = path_safety
 
-    def preview_plan(self, x: float, y: float, z: float) -> dict:
+    def preview_plan(self, x: float, y: float, z: float, **_options) -> dict:
         self.calls.append((x, y, z))
         ts = time.time()
         if not self.feasible:
@@ -294,7 +295,6 @@ def test_server_sim_acceptance_chain_reads_algorithm_artifact_without_motion_pub
     monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_ROOT", str(artifact_root))
     monkeypatch.setenv("LINGTU_ALGORITHM_BENCHMARK_MAX_AGE_SEC", "1000")
     monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "mujoco_fastlio2_live")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "mujoco_live")
     monkeypatch.setenv("LINGTU_DATA_SOURCE", "mujoco_fastlio2_live")
     monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "1")
     monkeypatch.setenv("LINGTU_COMMAND_SINK", "mujoco_velocity_adapter")
@@ -795,304 +795,34 @@ def test_product_field_check_endpoint_is_read_only_and_typed(mode: str):
     assert gateway.instruction.msg_count == 0
 
 
-def test_runtime_switch_plan_endpoint_is_read_only_and_typed():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
 
-    gateway = GatewayModule()
-    gateway.setup()
-    post_switch_plan = _endpoint(gateway, "/api/v1/runtime/switch-plan")
 
-    result = asyncio.run(
-        post_switch_plan(
-            RuntimeSwitchPlanRequest(
-                current_profile="sim_mujoco_live",
-                target_profile="explore",
-            )
+
+
+
+
+
+
+def test_runtime_switch_plan_rejects_configuration_profile_as_product() -> None:
+    from gateway.schemas import RuntimeSwitchPlanRequest
+
+    with pytest.raises(ValidationError):
+        RuntimeSwitchPlanRequest(
+            current_product="sim_mujoco_live",
+            target_product="explore",
         )
-    )
-    model = RuntimeSwitchPlanResponse.model_validate(result)
-
-    assert model.schema_version == "lingtu.runtime_switch_plan.v1"
-    assert model.ok is True
-    assert model.read_only is True
-    assert model.motion is False
-    assert model.publishes == []
-    assert model.from_["runtime_contract"] == "mujoco_fastlio2_live"
-    assert model.to["runtime_contract"] == "thunder_field"
-    assert model.from_["command_sink"] == "mujoco_velocity_adapter"
-    assert model.to["command_sink"] == "driver"
-    assert "command_sink" in model.changed
-    assert "simulation_only" in model.changed
-    assert "resolved_runtime_data_flow" in model.changed
-    assert model.current_validation.ok is True
-    assert model.target_validation.ok is True
-    assert {
-        "dynamic_obstacle_gate",
-        "command_boundary",
-    } <= {str(stage.get("name")) for stage in model.from_["resolved_runtime_data_flow"]}
-    assert {
-        "dynamic_obstacle_gate",
-        "command_boundary",
-    } <= {str(stage.get("name")) for stage in model.to["resolved_runtime_data_flow"]}
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
-    assert gateway.instruction.msg_count == 0
 
 
-def test_runtime_switch_plan_exposes_resolved_endpoint_processes():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_switch_plan = _endpoint(gateway, "/api/v1/runtime/switch-plan")
-
-    result = asyncio.run(
-        post_switch_plan(
-            RuntimeSwitchPlanRequest(
-                current_profile="teleop",
-                target_profile="nav",
-                target_endpoint="thunder_field",
-            )
-        )
-    )
-    model = RuntimeSwitchPlanResponse.model_validate(result)
-
-    assert model.ok is True
-    assert model.product_mode_switch is not None
-    runtime_plan = model.product_mode_switch["runtime_plan"]
-    assert runtime_plan["endpoint"] == "thunder_field"
-    assert [process["name"] for process in runtime_plan["processes"]] == [
-        "lidar",
-        "slam",
-        "traversability",
-        "nav",
-        "driver",
-        "runtime",
-    ]
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
 
 
-def test_runtime_switch_plan_inherits_current_env_endpoint_when_profile_matches(
-    monkeypatch,
-):
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
-
-    monkeypatch.setenv("LINGTU_PROFILE", "nav")
-    monkeypatch.setenv("LINGTU_ENDPOINT", "thunder_field")
-    monkeypatch.setenv("LINGTU_DATA_SOURCE", "thunder_field")
-    monkeypatch.setenv("LINGTU_RUNTIME_CONTRACT", "thunder_field")
-    monkeypatch.setenv("LINGTU_COMMAND_SINK", "driver")
-    monkeypatch.setenv("LINGTU_SIMULATION_ONLY", "0")
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_switch_plan = _endpoint(gateway, "/api/v1/runtime/switch-plan")
-
-    result = asyncio.run(
-        post_switch_plan(
-            RuntimeSwitchPlanRequest(
-                current_profile="nav",
-                target_profile="explore",
-            )
-        )
-    )
-    model = RuntimeSwitchPlanResponse.model_validate(result)
-
-    assert model.ok is True
-    assert model.read_only is True
-    assert model.motion is False
-    assert model.publishes == []
-    assert model.inputs["current_endpoint_source"] == "env"
-    assert model.from_["profile"] == "nav"
-    assert model.from_["endpoint"] == "thunder_field"
-    assert model.from_["data_source"] == "thunder_field"
-    assert model.from_["command_sink"] == "driver"
-    assert model.to["endpoint"] == "thunder_field"
-    assert model.to["command_sink"] == "driver"
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
-    assert gateway.instruction.msg_count == 0
 
 
-def test_runtime_switch_plan_endpoint_reports_invalid_current_boundary(monkeypatch):
-    import gateway.services.runtime_switch_plan as switch_plan_mod
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchPlanRequest, RuntimeSwitchPlanResponse
-    from runtime.runtime_switch import RuntimeSwitchValidation
-
-    original_validate = switch_plan_mod.validate_runtime_switch
-
-    def fake_validate(spec):
-        if spec.profile == "sim_mujoco_live":
-            return RuntimeSwitchValidation(
-                ok=False,
-                blockers=("forced current blocker",),
-            )
-        return original_validate(spec)
-
-    monkeypatch.setattr(switch_plan_mod, "validate_runtime_switch", fake_validate)
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_switch_plan = _endpoint(gateway, "/api/v1/runtime/switch-plan")
-
-    result = asyncio.run(
-        post_switch_plan(
-            RuntimeSwitchPlanRequest(
-                current_profile="sim_mujoco_live",
-                target_profile="explore",
-            )
-        )
-    )
-    model = RuntimeSwitchPlanResponse.model_validate(result)
-
-    assert model.ok is False
-    assert model.current_validation.ok is False
-    assert "current runtime boundary: forced current blocker" in model.blockers
-    assert model.from_["runtime_contract"] == "mujoco_fastlio2_live"
-    assert model.to["runtime_contract"] == "thunder_field"
-    assert model.changed
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
-    assert gateway.instruction.msg_count == 0
 
 
-def test_runtime_switch_endpoint_defaults_to_plan_only_for_app_clients():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
-
-    result = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="inspection",
-                map_name="field_map",
-            )
-        )
-    )
-    model = RuntimeSwitchResponse.model_validate(result)
-
-    assert model.schema_version == "lingtu.runtime_switch.v1"
-    assert model.ok is True
-    assert model.accepted is False
-    assert model.read_only is True
-    assert model.dry_run is True
-    assert model.motion is False
-    assert model.status == "planned"
-    assert model.lifecycle == "cold_restart"
-    assert model.strategy == "auto"
-    assert model.product_mode_switch is not None
-    assert model.product_mode_switch["required_lifecycle"] == "cold_restart"
-    assert model.effects == []
-    assert model.target_profile == "inspection"
-    assert model.command[:3] == ["bash", model.command[1], "mode"]
-    assert model.command[3:5] == ["switch", "inspection"]
-    assert "--map" in model.command
-    assert "/api/v1/mode" not in " ".join(model.command)
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
-    assert gateway.instruction.msg_count == 0
 
 
-def test_runtime_switch_endpoint_rejects_hot_when_graph_requires_restart():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    gateway = GatewayModule()
-    gateway.setup()
-    gateway._session_mode = "navigating"
-    gateway._session_map = "field_map"
-    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
-
-    result = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="map",
-                execute=True,
-                strategy="hot",
-            )
-        )
-    )
-    model = RuntimeSwitchResponse.model_validate(result)
-
-    assert model.ok is False
-    assert model.accepted is False
-    assert model.status == "rejected"
-    assert model.lifecycle == "cold_restart"
-    assert model.command
-    assert gateway.cancel.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
 
 
-def test_runtime_switch_allows_map_free_teleop_avoid_plan():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
-
-    result = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="teleop_avoid",
-            )
-        )
-    )
-    model = RuntimeSwitchResponse.model_validate(result)
-
-    assert model.ok is True
-    assert model.status == "planned"
-    assert model.map_name is None
-    assert model.lifecycle == "cold_restart"
-
-
-def test_runtime_switch_endpoint_accepts_tare_explore_product_mode():
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
-
-    result = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="tare_explore",
-                request_id="tare-explore-switch-test",
-            )
-        )
-    )
-    model = RuntimeSwitchResponse.model_validate(result)
-
-    assert model.ok is True
-    assert model.accepted is False
-    assert model.status == "planned"
-    assert model.lifecycle == "cold_restart"
-    assert model.product_mode_switch is not None
-    assert model.product_mode_switch["target"]["profile"] == "tare_explore"
-    assert model.command[:3] == ["bash", model.command[1], "mode"]
-    assert model.command[3:5] == ["switch", "tare_explore"]
-    assert "--map" not in model.command
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
 
 
 def test_navigation_plan_preview_runs_outside_the_event_loop_thread():
@@ -1122,95 +852,9 @@ def test_navigation_plan_preview_runs_outside_the_event_loop_thread():
     assert gateway.stop_cmd.msg_count == 0
 
 
-def test_runtime_switch_endpoint_can_launch_robot_side_mode_switch(
-    monkeypatch,
-    tmp_path,
-):
-    import gateway.services.runtime_switch_execute as switch_execute
-    from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
 
-    calls = []
 
-    class FakePopen:
-        pid = 4321
 
-        def __init__(self, command, **kwargs):
-            calls.append((command, kwargs))
-
-    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
-    monkeypatch.setattr(switch_execute, "_requires_transient_unit", lambda: False)
-    monkeypatch.setattr(
-        switch_execute,
-        "build_runtime_switch_plan",
-        lambda raw: {
-            "ok": True,
-            "blockers": [],
-            "inputs": {"current_profile": raw.get("current_profile")},
-            "product_mode_switch": {"required_lifecycle": "cold_restart"},
-        },
-    )
-    monkeypatch.setattr(switch_execute.subprocess, "Popen", FakePopen)
-
-    gateway = GatewayModule()
-    gateway.setup()
-    post_runtime_switch = _endpoint(gateway, "/api/v1/runtime/switch")
-
-    result = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="nav",
-                map_name="field_map",
-                allow_restart=True,
-                request_id="switch-test",
-            )
-        )
-    )
-    model = RuntimeSwitchResponse.model_validate(result)
-
-    assert model.ok is True
-    assert model.accepted is True
-    assert model.read_only is False
-    assert model.dry_run is False
-    assert model.status == "accepted"
-    assert model.pid == 4321
-    assert model.command_id == "switch-test"
-    assert calls
-    command = calls[0][0]
-    assert command[0] == "bash"
-    assert command[2:5] == ["mode", "switch", "nav"]
-    assert "--map" in command
-    assert "field_map" in command
-    assert "--relocalize" in command
-    assert calls[0][1]["stdin"] is switch_execute.subprocess.DEVNULL
-    assert calls[0][1]["close_fds"] is (switch_execute.os.name != "nt")
-    if switch_execute.os.name != "nt":
-        assert calls[0][1]["start_new_session"] is True
-    assert gateway.goal_pose.msg_count == 0
-    assert gateway.cancel.msg_count == 1
-    assert gateway.cmd_vel.msg_count == 1
-    assert gateway.stop_cmd.msg_count == 1
-    assert gateway.instruction.msg_count == 0
-    assert gateway._runtime_switch_pending is not None
-
-    duplicate = asyncio.run(
-        post_runtime_switch(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="nav",
-                map_name="other_field_map",
-                allow_restart=True,
-                request_id="switch-test-duplicate",
-            )
-        )
-    )
-    duplicate_model = RuntimeSwitchResponse.model_validate(duplicate)
-
-    assert duplicate_model.ok is False
-    assert duplicate_model.status == "rejected"
-    assert duplicate_model.blockers == ["runtime switch already in progress: switch-test"]
-    assert len(calls) == 1
 
 
 def test_navigation_goal_requests_are_map_frame_only():
@@ -1348,186 +992,348 @@ def test_command_journal_replays_duplicate_request_id_without_republish():
     assert model.goal == [1.0, 2.0, 0.0]
     assert model.command.name == "goal"
     assert model.command.request_id == "goal-001"
+    assert model.command.task_id
+    assert model.command.task_id != model.command.request_id
     assert model.command.client_id == "web"
     assert first["command"]["accepted"] is True
     assert first["command"]["replay"] is False
     assert second["command"]["replay"] is True
     assert second["goal"] == [1.0, 2.0, 0.0]
     assert second["command"]["request_id"] == "goal-001"
+    assert second["command"]["task_id"] == first["command"]["task_id"]
 
 
-def test_runtime_switch_cold_restart_uses_independent_systemd_unit(
-    monkeypatch,
-    tmp_path,
-):
-    import gateway.services.runtime_switch_execute as switch_execute
+def test_command_journal_does_not_replay_another_clients_request_id():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    calls = []
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return type(
-            "Result",
-            (),
-            {"returncode": 0, "stdout": "", "stderr": ""},
-        )()
-
-    def fail_popen(*_args, **_kwargs):
-        raise AssertionError("cold switch must escape lingtu.service cgroup")
-
-    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        switch_execute,
-        "_requires_transient_unit",
-        lambda: True,
-        raising=False,
-    )
-    monkeypatch.setattr(
-        switch_execute,
-        "build_runtime_switch_plan",
-        lambda raw: {
-            "ok": True,
-            "blockers": [],
-            "inputs": {"current_profile": raw.get("current_profile")},
-            "product_mode_switch": {"required_lifecycle": "cold_restart"},
-        },
-    )
-    monkeypatch.setattr(switch_execute.subprocess, "run", fake_run)
-    monkeypatch.setattr(switch_execute.subprocess, "Popen", fail_popen)
-
-    stale_log = tmp_path / "systemd-switch-test.log"
-    stale_log.write_text("stale", encoding="utf-8")
+    from gateway.schemas import GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
-    result = asyncio.run(
-        _endpoint(gateway, "/api/v1/runtime/switch")(
-            RuntimeSwitchRequest(
-                current_profile="map",
-                target_profile="nav",
-                map_name="field_map",
-                allow_restart=True,
-                request_id="systemd-switch-test",
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    first = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                request_id="shared-request-id",
+                client_id="operator-a",
             )
         )
     )
-    model = RuntimeSwitchResponse.model_validate(result)
+    second = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=3.0,
+                y=4.0,
+                request_id="shared-request-id",
+                client_id="operator-b",
+            )
+        )
+    )
 
-    assert model.ok is True
-    assert model.accepted is True
-    assert len(calls) == 2
-    assert calls[0][0] == ["sudo", "-n", "true"]
-    launch = calls[1][0]
-    assert launch[:3] == ["sudo", "-n", "systemd-run"]
-    assert "--collect" in launch
-    assert "--no-block" in launch
-    assert "--unit=lingtu-runtime-switch-systemd-switch-test" in launch
-    assert "bash" in launch
-    assert "mode" in launch
-    assert "switch" in launch
-    assert "nav" in launch
-    assert "HOME=/home/sunrise" in launch
-    assert "USER=sunrise" in launch
-    assert "LOGNAME=sunrise" in launch
-    assert not stale_log.exists()
+    assert first["command"]["replay"] is False
+    assert second["command"]["replay"] is False
+    assert second["command"]["client_id"] == "operator-b"
+    assert second["goal"] == [3.0, 4.0, 0.0]
+    assert gateway.goal_pose.msg_count == 2
 
 
-def test_runtime_switch_linux_dev_process_does_not_require_transient_unit(
-    monkeypatch,
-):
-    import gateway.services.runtime_switch_execute as switch_execute
-
-    monkeypatch.setattr(switch_execute.os, "name", "posix")
-    monkeypatch.delenv("INVOCATION_ID", raising=False)
-    monkeypatch.delenv("SYSTEMD_EXEC_PID", raising=False)
-    monkeypatch.delenv("JOURNAL_STREAM", raising=False)
-
-    assert switch_execute._requires_transient_unit() is False
-
-
-def test_runtime_switch_linux_systemd_process_requires_transient_unit(
-    monkeypatch,
-):
-    import gateway.services.runtime_switch_execute as switch_execute
-
-    monkeypatch.setattr(switch_execute.os, "name", "posix")
-    monkeypatch.setenv("INVOCATION_ID", "systemd-invocation")
-    monkeypatch.delenv("SYSTEMD_EXEC_PID", raising=False)
-
-    assert switch_execute._requires_transient_unit() is True
-
-
-def test_runtime_switch_log_path_cannot_escape_configured_directory(
-    monkeypatch,
-    tmp_path,
-):
-    import gateway.services.runtime_switch_execute as switch_execute
-
-    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
-
-    log_path = switch_execute._log_path("../../outside/runtime-switch")
-
-    assert log_path.parent == tmp_path
-    assert log_path.name == "outside-runtime-switch.log"
-
-
-def test_runtime_switch_transient_unit_name_is_unique_and_sanitized():
-    import gateway.services.runtime_switch_execute as switch_execute
-
-    first = switch_execute._transient_unit_name("switch/one")
-    second = switch_execute._transient_unit_name("switch two")
-
-    assert first == "lingtu-runtime-switch-switch-one"
-    assert second == "lingtu-runtime-switch-switch-two"
-    assert first != second
-
-
-def test_runtime_switch_requires_native_stop_ack_and_clears_pending_on_failure(
-    monkeypatch,
-    tmp_path,
-):
-    import gateway.services.native_control as native_control
-    import gateway.services.runtime_switch_execute as switch_execute
+def test_anonymous_clients_do_not_share_an_idempotency_scope():
     from gateway.gateway_module import GatewayModule
-    from gateway.schemas import RuntimeSwitchRequest, RuntimeSwitchResponse
-
-    monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
-    monkeypatch.setenv("LINGTU_RUNTIME_SWITCH_LOG_DIR", str(tmp_path))
-    monkeypatch.setattr(
-        native_control,
-        "stop",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("native stop ack timeout")),
-    )
-    monkeypatch.setattr(
-        switch_execute.subprocess,
-        "Popen",
-        lambda *_args, **_kwargs: pytest.fail("switch must not launch without stop ack"),
-    )
+    from gateway.schemas import GoalRequest
 
     gateway = GatewayModule()
     gateway.setup()
-    result = asyncio.run(
-        _endpoint(gateway, "/api/v1/runtime/switch")(
-            RuntimeSwitchRequest(
-                current_profile="nav",
-                target_profile="nav",
-                map_name="field_map",
-                allow_restart=True,
-                request_id="stop-ack-failure",
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    first = asyncio.run(
+        post_goal(GoalRequest(x=1.0, y=2.0, request_id="anonymous-request"))
+    )
+    second = asyncio.run(
+        post_goal(GoalRequest(x=3.0, y=4.0, request_id="anonymous-request"))
+    )
+
+    assert first["command"]["client_id"] == "unknown"
+    assert second["command"]["client_id"] == "unknown"
+    assert first["command"]["replay"] is False
+    assert second["command"]["replay"] is False
+    assert first["goal"] == [1.0, 2.0, 0.0]
+    assert second["goal"] == [3.0, 4.0, 0.0]
+    assert gateway.goal_pose.msg_count == 2
+    assert gateway._command_journal.snapshot()["stored_requests"] == 0
+
+
+def test_command_journal_rejects_changed_payload_for_the_same_request_identity():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse, GoalRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    nav = _FakePlanPreviewNav()
+    gateway.on_system_modules({"nav.mission": nav})
+    _mark_navigation_ready(gateway)
+    post_goal = _endpoint(gateway, "/api/v1/goal")
+
+    first = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=1.0,
+                y=2.0,
+                request_id="changed-payload",
+                client_id="operator-a",
             )
         )
     )
-    model = RuntimeSwitchResponse.model_validate(result)
+    second_response = asyncio.run(
+        post_goal(
+            GoalRequest(
+                x=5.0,
+                y=6.0,
+                request_id="changed-payload",
+                client_id="operator-a",
+            )
+        )
+    )
+    second = _payload(second_response)
+    model = GatewayErrorResponse.model_validate(second)
 
-    assert model.ok is False
-    assert model.status == "error"
-    assert "native stop ack timeout" in (model.error or "")
-    assert getattr(gateway, "_runtime_switch_pending", None) is None
-    assert gateway.cancel.msg_count == 0
-    assert gateway.cmd_vel.msg_count == 0
-    assert gateway.stop_cmd.msg_count == 0
+    assert first["command"]["replay"] is False
+    assert second_response.status_code == 409
+    assert model.error == "idempotency_conflict"
+    assert model.command is not None
+    assert model.command.accepted is False
+    assert model.command.replay is False
+    assert model.command.client_id == "operator-a"
+    assert model.command.request_id == "changed-payload"
+    assert model.detail["reason_code"] == "idempotency_conflict"
+    assert gateway.goal_pose.msg_count == 1
+    assert nav.calls == [(1.0, 2.0, 0.0)]
+    assert gateway._command_journal.snapshot()["conflicting_commands"] == 1
+
+
+def test_concurrent_exact_command_retries_execute_once_then_replay():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CmdVelRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_cmd_vel = _endpoint(gateway, "/api/v1/cmd_vel")
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str | None] = []
+
+    def blocking_publish(_twist, *, request_id=None):
+        calls.append(request_id)
+        entered.set()
+        assert release.wait(timeout=3.0)
+        return False
+
+    gateway.publish_remote_velocity_request = blocking_publish
+    body = CmdVelRequest(
+        vx=0.2,
+        vy=0.0,
+        wz=0.1,
+        request_id="concurrent-command",
+        client_id="web",
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first_future = pool.submit(lambda: asyncio.run(post_cmd_vel(body)))
+        assert entered.wait(timeout=2.0)
+        second_future = pool.submit(lambda: asyncio.run(post_cmd_vel(body)))
+        try:
+            time.sleep(0.1)
+            assert calls == ["concurrent-command"]
+            assert second_future.done() is False
+        finally:
+            release.set()
+        results = [first_future.result(timeout=3.0), second_future.result(timeout=3.0)]
+
+    assert sorted(result["command"]["replay"] for result in results) == [False, True]
+    assert calls == ["concurrent-command"]
+    stats = gateway._command_journal.snapshot()
+    assert stats["accepted_commands"] == 1
+    assert stats["replayed_commands"] == 1
+    assert stats["pending_requests"] == 0
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        pytest.param(False, id="false"),
+        pytest.param(True, id="true"),
+        pytest.param(None, id="none"),
+        pytest.param(object(), id="arbitrary-object"),
+        pytest.param(
+            {"status": "rejected", "ok": False, "error": "policy_denied"},
+            id="ok-false",
+        ),
+        pytest.param(
+            {"status": "rejected", "success": False},
+            id="success-false",
+        ),
+        pytest.param(
+            {"status": "rejected", "accepted": False},
+            id="accepted-false",
+        ),
+        pytest.param(
+            {"status": "rejected", "ok": True, "accepted": False},
+            id="explicit-false-wins",
+        ),
+        pytest.param({}, id="empty-mapping"),
+        pytest.param({"status": "queued"}, id="queued-without-acceptance"),
+        pytest.param(
+            {"status": "submitted", "stage": "submitted"},
+            id="submitted-without-acceptance",
+        ),
+    ],
+)
+def test_explicit_action_rejection_is_not_accepted_or_cached(rejection):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import GatewayErrorResponse, StopRequest
+
+    gateway = GatewayModule()
+    body = StopRequest(request_id="rejected-action", client_id="web")
+    calls = 0
+
+    def action():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return rejection
+        return {"accepted": True, "status": "accepted_on_retry"}
+
+    first_response = gateway._run_control_command("test_command", body, action)
+    first = GatewayErrorResponse.model_validate(_payload(first_response))
+    second = gateway._run_control_command("test_command", body, action)
+    third = gateway._run_control_command("test_command", body, action)
+
+    assert first_response.status_code == 409
+    assert first.ok is False
+    assert first.command is not None
+    assert first.command.accepted is False
+    assert first.command.replay is False
+    if not isinstance(rejection, dict) or not rejection:
+        assert first.error == "invalid_command_response"
+    if isinstance(rejection, dict) and rejection.get("status") in {"queued", "submitted"}:
+        assert first.error == "invalid_command_response"
+    assert second["status"] == "accepted_on_retry"
+    assert second["command"]["accepted"] is True
+    assert second["command"]["replay"] is False
+    assert third["command"]["replay"] is True
+    assert calls == 2
+    stats = gateway._command_journal.snapshot()
+    assert stats["accepted_commands"] == 1
+    assert stats["stored_requests"] == 1
+
+
+@pytest.mark.parametrize(
+    "accepted_response",
+    [
+        pytest.param({"ok": True, "status": "ok"}, id="ok-true"),
+        pytest.param(
+            {"accepted": True, "status": "submitted", "stage": "submitted"},
+            id="accepted-true",
+        ),
+        pytest.param(
+            {"success": True, "status": "completed"},
+            id="success-true",
+        ),
+        pytest.param(
+            {"command": {"accepted": True}, "status": "acknowledged"},
+            id="nested-command-accepted",
+        ),
+    ],
+)
+def test_explicit_positive_action_signal_is_accepted_and_replayable(accepted_response):
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import StopRequest
+
+    gateway = GatewayModule()
+    body = StopRequest(request_id="positive-action", client_id="web")
+    calls = 0
+
+    def action():
+        nonlocal calls
+        calls += 1
+        return accepted_response
+
+    first = gateway._run_control_command("test_command", body, action)
+    second = gateway._run_control_command("test_command", body, action)
+
+    assert first["command"]["accepted"] is True
+    assert first["command"]["replay"] is False
+    if first.get("stage") == "submitted":
+        assert "success" not in first
+    assert second["command"]["accepted"] is True
+    assert second["command"]["replay"] is True
+    assert calls == 1
+
+
+def test_malformed_truthy_command_receipt_cannot_claim_ack_or_audit_success():
+    from gateway.services.commands import publish_command_ack, run_control_command
+
+    events: list[dict] = []
+    audit_records: list[dict] = []
+
+    class MalformedJournal:
+        def execute(self, *_args, **_kwargs):
+            return {
+                "ok": "false",
+                "command": {
+                    "accepted": "false",
+                    "replay": "false",
+                },
+            }
+
+    class AuditJournal:
+        def record(self, command, **kwargs):
+            audit_records.append({"command": command, **kwargs})
+
+    gateway = SimpleNamespace(
+        _command_journal=MalformedJournal(),
+        _audit_journal=AuditJournal(),
+        push_event=events.append,
+    )
+    body = SimpleNamespace(request_id="malformed-receipt", client_id="web")
+
+    direct_payload = {
+        "ok": "false",
+        "command": {"accepted": "false", "replay": "false"},
+    }
+    publish_command_ack(gateway, direct_payload, status_code=409)
+    response = run_control_command(gateway, "test_command", body, lambda: {"accepted": True})
+
+    assert events[0]["data"]["ok"] is False
+    assert events[0]["data"]["accepted"] is False
+    assert events[0]["data"]["replay"] is False
+    assert response.status_code == 409
+    assert _payload(response)["command"]["accepted"] == "false"
+    assert audit_records == [
+        {
+            "command": "test_command",
+            "client_id": "web",
+            "ok": False,
+            "error": None,
+        }
+    ]
+
+
+
+
+
+
+
+
+
+
 
 
 def test_control_commands_publish_command_ack_events():
@@ -1562,7 +1368,11 @@ def test_control_commands_publish_command_ack_events():
     assert second["command"]["replay"] is True
     assert first_event["type"] == "command_ack"
     assert first_event["data"]["ok"] is True
+    assert first_event["data"]["accepted"] is True
     assert first_event["data"]["status"] == "ok"
+    assert first_event["data"]["stage"] == "submitted"
+    assert first_event["data"]["success"] is None
+    assert first_event["data"]["execution_confirmed"] is False
     assert first_event["data"]["status_code"] == 200
     assert first_event["data"]["command"]["name"] == "goal"
     assert first_event["data"]["command"]["request_id"] == "goal-ack-001"
@@ -1621,17 +1431,36 @@ def test_goal_route_uses_persistent_native_client_when_configured(monkeypatch):
         def __init__(self) -> None:
             self.goals = []
 
-        def send_goal(self, x, y, z, yaw, *, request_id=None) -> bool:
-            self.goals.append((x, y, z, yaw, request_id))
+        def send_goal(self, x, y, z, yaw, *, task_id=None, request_id=None):
+            self.goals.append((x, y, z, yaw, task_id, request_id))
             return True
 
     class FakeGoals:
         def __init__(self, commands) -> None:
             self.commands = commands
 
-        def submit_goal(self, goal, *, request_id=None, action="goal"):
-            self.commands.send_goal(goal.x, goal.y, goal.z, goal.yaw, request_id=request_id)
-            return {"accepted": True, "success": True, "action": action}
+        def submit_goal(
+            self,
+            goal,
+            *,
+            task_id=None,
+            request_id=None,
+            action="goal",
+        ):
+            self.commands.send_goal(
+                goal.x,
+                goal.y,
+                goal.z,
+                goal.yaw,
+                task_id=task_id,
+                request_id=request_id,
+            )
+            return {
+                "accepted": True,
+                "action": action,
+                "task_id": task_id,
+                "request_id": request_id,
+            }
 
     client = FakeClient()
 
@@ -1667,14 +1496,143 @@ def test_goal_route_uses_persistent_native_client_when_configured(monkeypatch):
     assert gateway.goal_pose.msg_count == 0
     assert gateway.instruction.msg_count == 0
     assert len(client.goals) == 1
-    x, y, z, yaw, request_id = client.goals[0]
+    x, y, z, yaw, task_id, request_id = client.goals[0]
     assert (x, y, z, request_id) == (1.0, 2.0, 0.3, "native-goal")
+    assert task_id == model.command.task_id
+    assert task_id != request_id
     assert yaw == pytest.approx(math.pi / 2)
+    assert result["execution_confirmed"] is False
+
+
+def test_navigation_task_cancel_targets_task_and_only_acknowledges_request():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CancelRequest, ControlCommandResponse
+
+    class FakeGoals:
+        def __init__(self) -> None:
+            self.cancels = []
+
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            self.cancels.append((task_id, request_id, reason))
+            return {
+                "accepted": True,
+                "state": "cancel_requested",
+                "task_id": task_id,
+                "request_id": request_id,
+                "reason": reason,
+            }
+
+    goals = FakeGoals()
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": goals})
+    post_cancel = _endpoint(
+        gateway,
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+    )
+
+    result = asyncio.run(
+        post_cancel(
+            "navigation-task-1",
+            CancelRequest(
+                reason="operator_cancel",
+                request_id="cancel-attempt-1",
+                client_id="web",
+            ),
+        )
+    )
+    model = ControlCommandResponse.model_validate(result)
+
+    assert goals.cancels == [
+        ("navigation-task-1", "cancel-attempt-1", "operator_cancel")
+    ]
+    assert model.command.task_id == "navigation-task-1"
+    assert model.command.request_id == "cancel-attempt-1"
+    assert result["status"] == "cancel_requested"
+    assert result["execution_confirmed"] is False
+    assert "cancelled" not in str(result).lower()
+    assert gateway.cancel.msg_count == 0
+    assert gateway.stop_cmd.msg_count == 0
+    assert gateway.cmd_vel.msg_count == 0
+
+
+def test_navigation_task_cancel_rejects_blank_route_task_identity():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CancelRequest
+
+    class FakeGoals:
+        def submit_cancel(self, *_args, **_kwargs):
+            raise AssertionError("blank task identity must not reach GoalService")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": FakeGoals()})
+    post_cancel = _endpoint(
+        gateway,
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+    )
+
+    response = asyncio.run(
+        post_cancel(
+            "   ",
+            CancelRequest(
+                reason="operator_cancel",
+                request_id="cancel-attempt-blank-task",
+                client_id="web",
+            ),
+        )
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["error"] == "task_identity_invalid"
+    assert payload["command"]["accepted"] is False
+
+
+def test_navigation_task_cancel_rejection_preserves_target_task_identity():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CancelRequest
+
+    class RejectingGoals:
+        def submit_cancel(self, reason, *, task_id=None, request_id=None):
+            del reason, request_id
+            return {
+                "accepted": False,
+                "task_id": task_id,
+                "message": "task_not_active",
+            }
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway.on_system_modules({"nav.goals": RejectingGoals()})
+    post_cancel = _endpoint(
+        gateway,
+        "/api/v1/navigation/tasks/{task_id}/cancel",
+    )
+
+    response = asyncio.run(
+        post_cancel(
+            "navigation-task-missing",
+            CancelRequest(
+                reason="operator_cancel",
+                request_id="cancel-attempt-missing-task",
+                client_id="web",
+            ),
+        )
+    )
+    payload = _payload(response)
+
+    assert response.status_code == 409
+    assert payload["error"] == "native_command_rejected"
+    assert payload["command"]["task_id"] == "navigation-task-missing"
+    assert payload["command"]["accepted"] is False
+    assert "cancelled" not in str(payload).lower()
 
 
 def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypatch, tmp_path):
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import GatewayErrorResponse, GoalRequest
+    from gateway.services import runtime_status
 
     status_file = tmp_path / "nav_endpoint_status.json"
     status_file.write_text(
@@ -1682,8 +1640,22 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
             {
                 "stamp_s": time.time(),
                 "control_mode": "autonomy",
+                "control_loop_health": {
+                    "ready": True,
+                    "healthy": True,
+                    "reason": "healthy",
+                },
                 "input_gate": {"ready": True},
                 "publish_cmd_vel": True,
+                "control_authority": {
+                    "owner": "native_endpoint",
+                    "estop_latched": False,
+                    "operator_takeover_latched": False,
+                    "resume_required": False,
+                },
+                "active_cmd_source": "autonomy",
+                "global_planner": "octoplanner3d",
+                "planner_map": "test_map",
             }
         ),
         encoding="utf-8",
@@ -1691,10 +1663,19 @@ def test_endpoint_only_goal_fails_closed_when_native_client_is_missing(monkeypat
     monkeypatch.setenv("LINGTU_COMMAND_OUTPUT_MODE", "endpoint_only")
     monkeypatch.setenv("LINGTU_NAV_STATUS_FILE", str(status_file))
     monkeypatch.setenv("LINGTU_NAV_STATUS_MAX_AGE_S", "60")
+    monkeypatch.setattr(
+        runtime_status,
+        "build_navigation_status",
+        lambda _gateway: {
+            "can_accept_goal": True,
+            "has_odometry": True,
+            "readiness": {"blockers": [], "advisories": []},
+        },
+    )
 
     class MissingGoals:
-        def submit_goal(self, goal, *, request_id=None, action="goal"):
-            del goal, request_id, action
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
+            del goal, task_id, request_id, action
             return {
                 "accepted": False,
                 "success": False,
@@ -1733,8 +1714,8 @@ def test_goal_route_surfaces_native_business_rejection(monkeypatch):
     from gateway.schemas import GoalRequest
 
     class RejectingGoals:
-        def submit_goal(self, goal, *, request_id=None, action="goal"):
-            del goal, request_id, action
+        def submit_goal(self, goal, *, task_id=None, request_id=None, action="goal"):
+            del goal, task_id, request_id, action
             return {
                 "accepted": False,
                 "success": False,
@@ -2387,6 +2368,13 @@ def test_cmd_vel_replays_duplicate_request_id_without_republish():
     assert first_model.ok is True
     assert first_model.command.name == "cmd_vel"
     assert first_model.command.replay is False
+    assert first["accepted"] is True
+    assert first["stage"] == "source_request_accepted"
+    assert first["source_request_accepted"] is True
+    assert first["final_output_confirmed"] is False
+    assert first["execution_confirmed"] is False
+    assert first["final_output_confirmed"] is False
+    assert "success" not in first
     assert second_model.command.replay is True
     assert gateway.cmd_vel.msg_count == 1
 
@@ -2415,7 +2403,39 @@ def test_field_cmd_vel_rejects_missing_native_boundary_without_local_fallback():
 
     assert response.status_code == 409
     assert model.error == "native_command_rejected"
-    assert "command capability is unavailable" in model.detail["reason"]
+    assert "native operator motion capability is unavailable" in model.detail["reason"]
+    assert gateway.cmd_vel.msg_count == 0
+
+
+def test_field_cmd_vel_rejects_stateless_native_motion_even_when_publisher_exists():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import CmdVelRequest, GatewayErrorResponse
+
+    class Publisher:
+        def submit(self, *_args, **_kwargs):
+            raise AssertionError("stateless REST must not enqueue a native sample")
+
+    gateway = GatewayModule()
+    gateway.setup()
+    gateway._teleop_dds_enabled = True
+    gateway._teleop_native_publisher = Publisher()
+    post_cmd_vel = _endpoint(gateway, "/api/v1/cmd_vel")
+
+    response = asyncio.run(
+        post_cmd_vel(
+            CmdVelRequest(
+                vx=0.2,
+                wz=0.1,
+                request_id="stateless-native-motion",
+                client_id="web",
+            )
+        )
+    )
+    model = GatewayErrorResponse.model_validate(_payload(response))
+
+    assert response.status_code == 409
+    assert model.error == "native_command_rejected"
+    assert "explicit claimed source session" in model.detail["reason"]
     assert gateway.cmd_vel.msg_count == 0
 
 
@@ -2463,7 +2483,13 @@ def test_native_cmd_vel_ack_does_not_block_gateway_event_loop():
     assert heartbeat_delay < 0.15
     assert len(ack_threads) == 1
     assert ack_threads[0] != loop_thread
-    assert response["teleop_cmd_vel_dds"] is True
+    assert response["stage"] == "source_request_accepted"
+    assert response["source_request_accepted"] is True
+    assert response["adapter_reported_write"] is True
+    assert response["endpoint_submission_confirmed"] is False
+    assert response["execution_confirmed"] is False
+    assert response["final_output_confirmed"] is False
+    assert response["teleop_cmd_vel_dds"] is False
 
 
 def test_cmd_vel_rejects_non_finite_vy():
@@ -2669,7 +2695,7 @@ def test_navigation_cancel_publishes_cancel_without_motion_outputs():
     model = ControlCommandResponse.model_validate(result)
 
     assert model.ok is True
-    assert model.status == "cancelled"
+    assert model.status == "cancel_requested"
     assert model.reason == "operator_cancel"
     assert model.command.name == "navigation_cancel"
     assert model.command.request_id == "cancel-001"
@@ -2913,6 +2939,45 @@ def test_lease_conflict_emits_rejected_ack_and_lease_event():
     assert ack_events[-1]["data"]["detail"]["reason_code"] == "lease_conflict"
 
 
+def test_non_holder_cannot_release_another_clients_control_lease():
+    from gateway.gateway_module import GatewayModule
+    from gateway.schemas import LeaseRequest
+
+    gateway = GatewayModule()
+    gateway.setup()
+    post_lease = _endpoint(gateway, "/api/v1/lease")
+
+    acquired = asyncio.run(
+        post_lease(
+            LeaseRequest(
+                action="acquire",
+                client_id="operator-a",
+                ttl=30.0,
+                request_id="lease-owner",
+            )
+        )
+    )
+    rejected = asyncio.run(
+        post_lease(
+            LeaseRequest(
+                action="release",
+                client_id="operator-b",
+                ttl=30.0,
+                request_id="lease-intruder",
+            )
+        )
+    )
+    payload = _payload(rejected)
+
+    assert acquired["status"] == "acquired"
+    assert rejected.status_code == 403
+    assert payload["ok"] is False
+    assert payload["error"] == "not_lease_holder"
+    assert payload["detail"]["lease"]["holder"] == "operator-a"
+    assert gateway._lease.to_dict()["holder"] == "operator-a"
+    assert gateway._lease.to_dict()["active"] is True
+
+
 def test_bootstrap_and_health_expose_command_policy():
     from gateway.gateway_module import GatewayModule
     from gateway.services.app_bootstrap import build_app_bootstrap
@@ -2926,5 +2991,8 @@ def test_bootstrap_and_health_expose_command_policy():
     assert policy["idempotency_supported"] is True
     assert policy["request_id_field"] == "request_id"
     assert policy["client_id_field"] == "client_id"
+    assert policy["acceptance_signal_policy"] == "explicit_positive_required"
+    assert policy["rate_policy_hz"]["cmd_vel"] == 20.0
+    assert health["gateway"]["commands"]["rate_policy_enforcement"] == "advisory"
     assert policy["rate_policy_hz"]["cmd_vel"] == 20.0
     assert health["gateway"]["commands"]["rate_policy_enforcement"] == "advisory"

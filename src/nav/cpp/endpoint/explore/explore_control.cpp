@@ -43,9 +43,12 @@ ExplorationControlResult ExploreControl::Finish(const ExplorationControlRequest 
                                                 ExplorationControlResult actions) {
   actions.accepted = accepted;
   actions.reason = std::move(reason);
-  actions.session_id = session_id_;
+  actions.exploration_run_id = request.exploration_run_id;
+  actions.session_id = request.session_id;
   Remember(request.request_id, AckRecord{
                                    request.kind,
+                                   request.exploration_run_id,
+                                   request.session_id,
                                    actions.accepted,
                                    actions.reason,
                                    actions.session_id,
@@ -54,23 +57,87 @@ ExplorationControlResult ExploreControl::Finish(const ExplorationControlRequest 
   return actions;
 }
 
+bool ExploreControl::Complete() {
+  if (!active_) {
+    return false;
+  }
+  active_ = false;
+  paused_ = false;
+  return true;
+}
+
 ExplorationControlResult ExploreControl::Apply(const ExplorationControlRequest &request) {
   if (request.request_id.empty()) {
     return Finish(request, false, "exploration_request_id_empty");
   }
 
+  const auto start_session_rejection = [&request]() -> const char * {
+    if (request.session_id.empty()) {
+      return "exploration_session_id_empty";
+    }
+    if (request.expected_session_id.empty()) {
+      return "exploration_session_unverified";
+    }
+    if (request.session_id != request.expected_session_id) {
+      return "exploration_product_session_mismatch";
+    }
+    return nullptr;
+  };
+
   const auto cached = ack_cache_.find(request.request_id);
   if (cached != ack_cache_.end()) {
     ExplorationControlResult duplicate;
     duplicate.duplicate = true;
-    duplicate.session_id = cached->second.session_id;
+    duplicate.exploration_run_id = request.exploration_run_id;
+    duplicate.session_id = request.session_id;
     duplicate.intent_revision = cached->second.intent_revision;
     if (cached->second.kind != request.kind) {
       duplicate.accepted = false;
       duplicate.reason = "duplicate_request_id_kind_mismatch";
+    } else if (request.exploration_run_id != cached->second.request_exploration_run_id) {
+      duplicate.accepted = false;
+      duplicate.reason = "duplicate_request_id_run_mismatch";
+    } else if (request.kind ==
+               static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kStart)) {
+      if (const char *binding_rejection = start_session_rejection(); binding_rejection != nullptr) {
+        duplicate.accepted = false;
+        duplicate.reason = binding_rejection;
+      } else if (request.session_id != cached->second.request_session_id) {
+        duplicate.accepted = false;
+        duplicate.reason = "duplicate_request_id_session_mismatch";
+      } else {
+        duplicate.accepted = cached->second.accepted;
+        duplicate.reason = cached->second.reason;
+      }
+    } else if (request.session_id != cached->second.request_session_id) {
+      duplicate.accepted = false;
+      duplicate.reason = "duplicate_request_id_session_mismatch";
     } else {
       duplicate.accepted = cached->second.accepted;
       duplicate.reason = cached->second.reason;
+    }
+    return duplicate;
+  }
+
+  if (request.kind ==
+          static_cast<std::int32_t>(lingtu::message::ExplorationCommandKind::kStart) &&
+      !last_start_request_id_.empty() && request.request_id == last_start_request_id_) {
+    ExplorationControlResult duplicate;
+    duplicate.duplicate = true;
+    duplicate.exploration_run_id = request.exploration_run_id;
+    duplicate.session_id = request.session_id;
+    if (const char *binding_rejection = start_session_rejection(); binding_rejection != nullptr) {
+      duplicate.accepted = false;
+      duplicate.reason = binding_rejection;
+    } else if (request.exploration_run_id != last_start_exploration_run_id_) {
+      duplicate.accepted = false;
+      duplicate.reason = "duplicate_request_id_run_mismatch";
+    } else if (request.session_id != last_start_session_id_) {
+      duplicate.accepted = false;
+      duplicate.reason = "duplicate_request_id_session_mismatch";
+    } else {
+      duplicate.accepted = true;
+      duplicate.reason = "exploration_start_admitted";
     }
     return duplicate;
   }
@@ -88,19 +155,48 @@ ExplorationControlResult ExploreControl::Apply(const ExplorationControlRequest &
       request.stamp_s - request.now_s > request.future_tolerance_s) {
     return Finish(request, false, "exploration_command_stamp_stale");
   }
+  if (!lingtu::message::isValidExplorationRunId(request.exploration_run_id)) {
+    return Finish(request, false, "exploration_run_id_invalid");
+  }
   if (request.request_id.size() > 128U || request.session_id.size() > 128U ||
-      request.reason.size() > 256U) {
+      request.expected_session_id.size() > 128U || request.reason.size() > 256U) {
     return Finish(request, false, "exploration_command_field_too_long");
   }
 
   const auto kind = static_cast<lingtu::message::ExplorationCommandKind>(request.kind);
+  if (!request.event_capacity_ready &&
+      (kind == lingtu::message::ExplorationCommandKind::kStart ||
+       kind == lingtu::message::ExplorationCommandKind::kPause ||
+       kind == lingtu::message::ExplorationCommandKind::kResume ||
+       kind == lingtu::message::ExplorationCommandKind::kStop)) {
+    return Finish(request, false, "exploration_event_outbox_backpressure");
+  }
+  const auto active_session_rejection = [this, &request]() -> const char * {
+    if (request.exploration_run_id != exploration_run_id_) {
+      return "exploration_run_mismatch";
+    }
+    if (request.session_id.empty()) {
+      return "exploration_session_id_empty";
+    }
+    if (request.session_id != session_id_) {
+      return "exploration_session_mismatch";
+    }
+    return nullptr;
+  };
   switch (kind) {
     case lingtu::message::ExplorationCommandKind::kStart: {
+      if (const char *binding_rejection = start_session_rejection(); binding_rejection != nullptr) {
+        return Finish(request, false, binding_rejection);
+      }
       if (active_) {
-        if (!request.session_id.empty() && request.session_id != session_id_) {
+        if (request.session_id != session_id_) {
           return Finish(request, false, "exploration_session_conflict");
         }
-        return Finish(request, true, "exploration_already_active");
+        return Finish(request, false, "exploration_start_conflict");
+      }
+      if (used_exploration_run_ids_.find(request.exploration_run_id) !=
+          used_exploration_run_ids_.end()) {
+        return Finish(request, false, "exploration_run_id_reuse");
       }
       if (request.goal_pending || request.cancellation_pending) {
         return Finish(request, false, "exploration_stop_in_progress");
@@ -110,17 +206,26 @@ ExplorationControlResult ExploreControl::Apply(const ExplorationControlRequest &
       }
       active_ = true;
       paused_ = false;
-      session_id_ = request.session_id.empty() ? request.request_id : request.session_id;
+      session_id_ = request.session_id;
+      exploration_run_id_ = request.exploration_run_id;
+      last_start_request_id_ = request.request_id;
+      last_start_session_id_ = request.session_id;
+      last_start_exploration_run_id_ = request.exploration_run_id;
+      used_exploration_run_ids_.insert(request.exploration_run_id);
       ExplorationControlResult actions;
       actions.reset_planner = true;
       actions.clear_queue = true;
       actions.clear_history = true;
       actions.clear_directed_target = true;
-      return Finish(request, true, "exploration_started", std::move(actions));
+      return Finish(request, true, "exploration_start_admitted", std::move(actions));
     }
     case lingtu::message::ExplorationCommandKind::kPause: {
       if (!active_) {
         return Finish(request, false, "exploration_not_active");
+      }
+      if (const char *binding_rejection = active_session_rejection();
+          binding_rejection != nullptr) {
+        return Finish(request, false, binding_rejection);
       }
       if (paused_) {
         return Finish(request, true, "exploration_already_paused");
@@ -130,21 +235,37 @@ ExplorationControlResult ExploreControl::Apply(const ExplorationControlRequest &
       actions.clear_queue = true;
       actions.request_cancel = request.goal_pending;
       actions.cancel_reason = "exploration_paused";
-      return Finish(request, true, "exploration_paused", std::move(actions));
+      return Finish(request, true, "exploration_pause_admitted", std::move(actions));
     }
     case lingtu::message::ExplorationCommandKind::kResume:
       if (!active_) {
         return Finish(request, false, "exploration_not_active");
       }
+      if (const char *binding_rejection = active_session_rejection();
+          binding_rejection != nullptr) {
+        return Finish(request, false, binding_rejection);
+      }
       if (!paused_) {
         return Finish(request, true, "exploration_already_running");
+      }
+      if (request.goal_pending || request.cancellation_pending) {
+        return Finish(request, false, "exploration_pause_in_progress");
       }
       if (!request.inputs_ready) {
         return Finish(request, false, "exploration_inputs_not_ready");
       }
       paused_ = false;
-      return Finish(request, true, "exploration_resumed");
+      return Finish(request, true, "exploration_resume_admitted");
     case lingtu::message::ExplorationCommandKind::kStop: {
+      if (active_ || request.goal_pending || request.cancellation_pending || !session_id_.empty()) {
+        if (const char *binding_rejection = active_session_rejection();
+            binding_rejection != nullptr) {
+          return Finish(request, false, binding_rejection);
+        }
+      }
+      if (!active_ && (request.goal_pending || request.cancellation_pending)) {
+        return Finish(request, true, "exploration_stop_in_progress");
+      }
       if (!active_ && !paused_ && !request.goal_pending && !request.cancellation_pending) {
         return Finish(request, true, "exploration_already_stopped");
       }
@@ -157,14 +278,14 @@ ExplorationControlResult ExploreControl::Apply(const ExplorationControlRequest &
       actions.clear_directed_target = true;
       actions.request_cancel = request.goal_pending;
       actions.cancel_reason = request.reason.empty() ? "exploration_stopped" : request.reason;
-      const std::string reason = request.goal_pending || request.cancellation_pending
-                                     ? "exploration_stop_in_progress"
-                                     : "exploration_stopped";
-      return Finish(request, true, reason, std::move(actions));
+      return Finish(request, true, "exploration_stop_admitted", std::move(actions));
     }
     case lingtu::message::ExplorationCommandKind::kSetDirectedTarget: {
       if (!active_) {
         return Finish(request, false, "exploration_not_active");
+      }
+      if (request.exploration_run_id != exploration_run_id_) {
+        return Finish(request, false, "directed_target_run_mismatch");
       }
       if (request.session_id.empty() || request.session_id != session_id_) {
         return Finish(request, false, "directed_target_session_mismatch");
@@ -192,6 +313,9 @@ ExplorationControlResult ExploreControl::Apply(const ExplorationControlRequest &
     case lingtu::message::ExplorationCommandKind::kClearDirectedTarget: {
       if (!active_) {
         return Finish(request, false, "exploration_not_active");
+      }
+      if (request.exploration_run_id != exploration_run_id_) {
+        return Finish(request, false, "directed_target_run_mismatch");
       }
       if (request.session_id.empty() || request.session_id != session_id_) {
         return Finish(request, false, "directed_target_session_mismatch");

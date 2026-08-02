@@ -81,10 +81,10 @@ Sibling endpoints have narrower ownership:
 `lingtu_nav_control teleop-stream` is the terminal/simulation diagnostic ingress.
 It keeps one native command client alive, accepts latest `VX VY WZ` lines on
 stdin, and drains queued input to the newest state. A 350 ms input-heartbeat
-timeout sends typed zero plus stop and ends the stream; a fresh process is
-required before motion can resume. `quit`, EOF, and error cleanup use the same
-fail-closed zero-plus-stop boundary. It remains an intent client; it never
-publishes final `/nav/cmd_vel` directly.
+timeout sends an `OperatorMotion` zero, releases its motion authority, sends a
+global `Stop`, and ends the stream; a fresh process is required before motion
+can resume. `quit`, EOF, and error cleanup use the same fail-closed boundary.
+It remains an intent client; it never publishes final `/nav/cmd_vel` directly.
 
 The heavy planning/following logic should stay outside this endpoint shell.
 Current split:
@@ -128,7 +128,8 @@ The deployed endpoint persists its software E-stop under `/var/lib/lingtu`.
 ClearEstop is accepted only with a fresh typed request and only after a zero
 command is published successfully; restarting the process never clears it.
 
-`/nav/cmd_vel` publication is final command output. Python `CmdVelMux` and
+`/nav/cmd_vel` publication is final command output. Python in-process velocity
+arbitration and
 legacy global-path publishers must not run as competing writers in the product
 field endpoint.
 
@@ -177,8 +178,8 @@ Completed split:
   live in `motion/command_ingress_controller.*`.
 - ordered fail-closed motion clearing, E-stop transitions, authority loss, and
   shutdown-zero confirmation now live in `motion/motion_stop_coordinator.*`.
-- legacy and typed teleop commands now share the transport-free freshness,
-  takeover, and fail-closed admission policy in
+- `OperatorMotion` claim/sample/release requests use the transport-free
+  freshness, takeover, and fail-closed admission policy in
   `motion/teleop_admission_controller.*`; non-zero output still comes only from
   the later `NavLoop` safety-arbitration tick.
 - direct/assisted teleop and autonomy `NavLoop` computation now live in separate

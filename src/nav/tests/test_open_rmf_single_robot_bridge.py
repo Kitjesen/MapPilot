@@ -4,7 +4,8 @@ from urllib.error import HTTPError
 
 import pytest
 
-from external_adapters.open_rmf import (
+import nav.adapters.open_rmf.single_robot as single_robot
+from nav.adapters.open_rmf import (
     ActiveFloor,
     BuildingMissionRequest,
     FloorBinding,
@@ -117,6 +118,34 @@ def test_open_rmf_destination_submits_floor_aware_building_mission() -> None:
     assert (request.target.x, request.target.y, request.target.yaw) == (12.5, -3.0, 1.2)
 
 
+@pytest.mark.parametrize("malformed_ack", ["true", 1])
+def test_open_rmf_bridge_rejects_truthy_non_boolean_mission_ack(malformed_ack) -> None:
+    class MalformedMissionPort:
+        def submit(self, request):
+            return malformed_ack, "malformed"
+
+    bridge = SingleRobotRmfBridge(
+        fleet_name="lingtu",
+        robot_name="thunder-01",
+        mission_port=MalformedMissionPort(),
+        floor_bindings={
+            "L1": FloorBinding(
+                building_id="factory-a",
+                floor_id="floor-1",
+                map_id="factory-a-floor-1",
+            ),
+        },
+    )
+
+    result = bridge.navigate(
+        RmfDestination(map_name="L1", x=1.0, y=2.0, yaw=0.0),
+        request_id="rmf-malformed-mission-ack",
+    )
+
+    assert result.accepted is False
+    assert result.reason == "malformed"
+
+
 def test_single_robot_same_floor_mission_uses_native_navigation_goal() -> None:
     navigation_client = RecordingNavigationClient()
     port = NativeSingleFloorMissionPort(
@@ -143,6 +172,37 @@ def test_single_robot_same_floor_mission_uses_native_navigation_goal() -> None:
     assert accepted is True
     assert reason == "native_navigation_goal_accepted"
     assert navigation_client.goals == [(5.0, 6.0, 0.2, -0.5, "rmf-task-43")]
+
+
+def test_single_robot_mission_uses_canonical_map_frame_contract(monkeypatch) -> None:
+    monkeypatch.setattr(single_robot, "map_frame_id", lambda: "contract-map")
+    navigation_client = RecordingNavigationClient()
+    port = NativeSingleFloorMissionPort(
+        navigation_client=navigation_client,
+        active_floor=ActiveFloor(
+            building_id="factory-a",
+            floor_id="floor-2",
+            map_id="factory-a-floor-2",
+        ),
+    )
+    request = BuildingMissionRequest(
+        request_id="rmf-canonical-frame",
+        source="open_rmf",
+        fleet_name="lingtu",
+        robot_name="thunder-01",
+        building_id="factory-a",
+        floor_id="floor-2",
+        map_id="factory-a-floor-2",
+        target=PoseTarget(
+            frame_id="contract-map",
+            x=5.0,
+            y=6.0,
+            z=0.2,
+            yaw=-0.5,
+        ),
+    )
+
+    assert port.submit(request) == (True, "native_navigation_goal_accepted")
 
 
 def test_single_robot_cross_floor_mission_fails_closed() -> None:
@@ -204,6 +264,38 @@ def test_single_robot_mission_requires_exclusive_native_autonomy(readiness) -> N
     )
 
     assert port.submit(request) == (False, f"autonomy_not_ready:{readiness[1]}")
+    assert navigation_client.goals == []
+
+
+@pytest.mark.parametrize("malformed_ready", ["true", 1])
+def test_single_robot_mission_rejects_truthy_non_boolean_autonomy_readiness(
+    malformed_ready,
+) -> None:
+    navigation_client = RecordingNavigationClient()
+    navigation_client.ready = (malformed_ready, "malformed_readiness")
+    port = NativeSingleFloorMissionPort(
+        navigation_client=navigation_client,
+        active_floor=ActiveFloor(
+            building_id="factory-a",
+            floor_id="floor-1",
+            map_id="factory-a-floor-1",
+        ),
+    )
+    request = BuildingMissionRequest(
+        request_id="rmf-malformed-readiness",
+        source="open_rmf",
+        fleet_name="lingtu",
+        robot_name="thunder-01",
+        building_id="factory-a",
+        floor_id="floor-1",
+        map_id="factory-a-floor-1",
+        target=PoseTarget(frame_id="map", x=5.0, y=6.0, z=0.0, yaw=0.0),
+    )
+
+    assert port.submit(request) == (
+        False,
+        "autonomy_not_ready:malformed_readiness",
+    )
     assert navigation_client.goals == []
 
 
@@ -492,6 +584,98 @@ def test_gateway_mission_port_acquires_lease_and_submits_same_map_goal() -> None
     }
 
 
+@pytest.mark.parametrize("malformed_ack", ["true", 1])
+def test_gateway_mission_port_rejects_truthy_non_boolean_lease_ack(
+    malformed_ack,
+) -> None:
+    transport = ScriptedGatewayTransport(
+        [
+            {"mode": "navigating", "active_map": "factory-a-floor-1"},
+            {
+                "ok": malformed_ack,
+                "status": "acquired",
+                "holder": "rmf:lingtu:thunder-01",
+                "active": True,
+            },
+        ]
+    )
+    port = GatewayMissionPort(
+        config=GatewayClientConfig(
+            base_url="http://robot:5050",
+            api_key="secret",
+            client_id="rmf:lingtu:thunder-01",
+            commands_enabled=True,
+        ),
+        transport=transport,
+    )
+    request = BuildingMissionRequest(
+        request_id="rmf-malformed-lease-ack",
+        source="open_rmf",
+        fleet_name="lingtu",
+        robot_name="thunder-01",
+        building_id="factory-a",
+        floor_id="floor-1",
+        map_id="factory-a-floor-1",
+        target=PoseTarget(frame_id="map", x=7.0, y=9.0, z=0.0, yaw=0.4),
+    )
+
+    accepted, _reason = port.submit(request)
+
+    assert accepted is False
+    assert [(method, path) for method, path, _, _ in transport.calls] == [
+        ("GET", "/api/v1/session"),
+        ("POST", "/api/v1/lease"),
+    ]
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1])
+def test_gateway_mission_port_rejects_truthy_non_boolean_goal_ack(
+    malformed_ack,
+) -> None:
+    transport = ScriptedGatewayTransport(
+        [
+            {"mode": "navigating", "active_map": "factory-a-floor-1"},
+            {
+                "ok": True,
+                "status": "acquired",
+                "holder": "rmf:lingtu:thunder-01",
+                "active": True,
+            },
+            {"ok": malformed_ack, "status": "submitted"},
+            {"ok": True, "status": "released", "holder": None, "active": False},
+        ]
+    )
+    port = GatewayMissionPort(
+        config=GatewayClientConfig(
+            base_url="http://robot:5050",
+            api_key="secret",
+            client_id="rmf:lingtu:thunder-01",
+            commands_enabled=True,
+        ),
+        transport=transport,
+    )
+    request = BuildingMissionRequest(
+        request_id="rmf-malformed-goal-ack",
+        source="open_rmf",
+        fleet_name="lingtu",
+        robot_name="thunder-01",
+        building_id="factory-a",
+        floor_id="floor-1",
+        map_id="factory-a-floor-1",
+        target=PoseTarget(frame_id="map", x=7.0, y=9.0, z=0.0, yaw=0.4),
+    )
+
+    accepted, _reason = port.submit(request)
+
+    assert accepted is False
+    assert [(method, path) for method, path, _, _ in transport.calls] == [
+        ("GET", "/api/v1/session"),
+        ("POST", "/api/v1/lease"),
+        ("POST", "/api/v1/goal"),
+        ("POST", "/api/v1/lease"),
+    ]
+
+
 def test_gateway_mission_port_rejects_cross_floor_before_lease() -> None:
     transport = ScriptedGatewayTransport(
         [
@@ -758,6 +942,31 @@ def test_gateway_mission_port_cancel_then_releases_lease() -> None:
     }
 
 
+@pytest.mark.parametrize("malformed_ack", ["true", 1])
+def test_gateway_mission_port_rejects_truthy_non_boolean_cancel_ack(
+    malformed_ack,
+) -> None:
+    transport = ScriptedGatewayTransport(
+        [{"ok": malformed_ack, "status": "cancelled"}]
+    )
+    port = GatewayMissionPort(
+        config=GatewayClientConfig(
+            base_url="http://robot:5050",
+            api_key="secret",
+            client_id="rmf:lingtu:thunder-01",
+            commands_enabled=True,
+        ),
+        transport=transport,
+    )
+
+    cancelled, _reason = port.cancel("rmf-malformed-cancel-ack")
+
+    assert cancelled is False
+    assert [(method, path) for method, path, _, _ in transport.calls] == [
+        ("POST", "/api/v1/navigation/cancel"),
+    ]
+
+
 def test_gateway_mission_port_cancel_requires_confirmed_lease_release() -> None:
     transport = ScriptedGatewayTransport(
         [
@@ -820,6 +1029,36 @@ def test_gateway_mission_port_renews_with_unique_request_ids() -> None:
     assert port.renew_lease("rmf-live", renewal_sequence=2)[0] is True
     assert transport.calls[0][2]["request_id"] == "rmf-live:lease-renew:1"
     assert transport.calls[1][2]["request_id"] == "rmf-live:lease-renew:2"
+
+
+@pytest.mark.parametrize("malformed_active", ["true", 1])
+def test_gateway_mission_port_rejects_non_boolean_lease_state(
+    malformed_active,
+) -> None:
+    transport = ScriptedGatewayTransport(
+        [
+            {
+                "ok": True,
+                "status": "renewed",
+                "holder": "rmf:lingtu:thunder-01",
+                "active": malformed_active,
+            },
+        ]
+    )
+    port = GatewayMissionPort(
+        config=GatewayClientConfig(
+            base_url="http://robot:5050",
+            api_key="secret",
+            client_id="rmf:lingtu:thunder-01",
+            commands_enabled=True,
+        ),
+        transport=transport,
+    )
+
+    assert port.renew_lease("rmf-live", renewal_sequence=1) == (
+        False,
+        "gateway_lease_state_invalid",
+    )
 
 
 def test_gateway_state_source_uses_active_map_binding_for_floor_identity() -> None:
@@ -914,6 +1153,73 @@ def test_gateway_state_source_uses_active_map_binding_for_floor_identity() -> No
         native_plan_goal=(3.0, 4.0, 3.5),
         native_goal_reached=True,
     )
+
+
+@pytest.mark.parametrize("malformed_evidence", ["true", 1])
+def test_gateway_state_source_does_not_coerce_truthy_non_boolean_success_evidence(
+    malformed_evidence,
+) -> None:
+    transport = ScriptedGatewayTransport(
+        [
+            {"active_map": "factory-a-floor-1"},
+            {
+                "nav_endpoint": {
+                    "stamp_s": 100.0,
+                    "control_mode": "autonomy",
+                    "command_boundary": {
+                        "last_request_id": "rmf-malformed-evidence",
+                        "last_kind": "goal",
+                        "last_accepted": malformed_evidence,
+                    },
+                    "last_plan": {
+                        "seen": malformed_evidence,
+                        "accepted": malformed_evidence,
+                        "reason": "path_found",
+                        "goal": {"x": 1.0, "y": 2.0, "z": 0.0},
+                    },
+                    "last_local": {
+                        "active": False,
+                        "goal_reached": malformed_evidence,
+                    },
+                },
+                "global_path": {
+                    "robot": {
+                        "x": 1.0,
+                        "y": 2.0,
+                        "z": 0.0,
+                        "yaw": 0.0,
+                        "frame_id": "map",
+                        "ts": 100.0,
+                    },
+                },
+            },
+            {"state": "EXECUTING"},
+            {"active_map": "factory-a-floor-1"},
+        ]
+    )
+    source = GatewayRobotStateSource(
+        config=GatewayClientConfig(
+            base_url="http://robot:5050",
+            api_key="secret",
+            client_id="rmf:lingtu:thunder-01",
+        ),
+        transport=transport,
+        floor_bindings={
+            "L1": FloorBinding(
+                building_id="factory-a",
+                floor_id="floor-1",
+                map_id="factory-a-floor-1",
+            ),
+        },
+        clock=lambda: 100.0,
+    )
+
+    snapshot = source.snapshot()
+
+    assert snapshot.native_command_accepted is False
+    assert snapshot.native_plan_seen is False
+    assert snapshot.native_plan_accepted is False
+    assert snapshot.native_goal_reached is False
 
 
 @pytest.mark.parametrize(

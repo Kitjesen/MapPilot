@@ -6,9 +6,11 @@
 #include <string>
 #include <vector>
 
+#include "motion/autonomy_tick_outcome.hpp"
 #include "motion/teleop_safety.hpp"
 #include "nav_loop.hpp"
 #include "plan/input_gate.hpp"
+#include "plan/map_identity_result.hpp"
 #include "status/nav_status_writer.hpp"
 
 namespace lingtu::nav::endpoint {
@@ -24,6 +26,7 @@ struct AutonomyTickPlannerInputs {
 struct AutonomyTickActions {
   std::function<double()> steady_now_s;
   std::function<AutonomyTickPlannerInputs(TimingDiagnostics &)> compute_planner_inputs;
+  std::function<GoalPlanMapIdentityResult()> current_map_identity;
   std::function<lingtu::nav::plan::NavLoopOutput(const nav_kernel::Pose &, const float *, int,
                                                  double, lingtu::nav::plan::TraversabilityGridView)>
       tick_autonomy;
@@ -44,12 +47,15 @@ struct AutonomyTickInput {
   const std::optional<nav_kernel::Pose> &map_body;
   const InputGateState &input_gate;
   bool path_active{false};
+  std::optional<lingtu::nav::plan::MapIdentity> active_path_map_identity;
   bool motion_allowed{false};
   bool rolling_segment_active{false};
   bool publish_cmd_vel{false};
   const TraversabilityGrid &traversability;
   const LocalDiagnostics &previous_local;
   TimingDiagnostics &timing;
+  std::optional<GoalReplanIdentity> active_goal_identity;
+  std::optional<GoalReplanTrigger> precomputed_replan_trigger;
 };
 
 struct AutonomyTickCounterDelta {
@@ -67,21 +73,6 @@ struct AutonomyTickPublishIntents {
   bool waypoint{false};
   bool cmd_vel{false};
   nav_kernel::Twist command{};
-};
-
-enum class AutonomyTickOutcomeKind {
-  kNone,
-  kRollingFinalSafetyStopped,
-  kRollingRecoveryExhausted,
-  kRollingReached,
-  kGoalFailed,
-  kGoalReached,
-};
-
-struct AutonomyTickOutcome {
-  AutonomyTickOutcomeKind kind{AutonomyTickOutcomeKind::kNone};
-  std::string reason;
-  bool inspection_arrival_intent{false};
 };
 
 struct AutonomyTickResult {

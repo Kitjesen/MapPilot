@@ -36,6 +36,7 @@ struct RuntimeConfig {
   double max_sensor_time_jump_s = 5.0;
   double relocalization_max_fitness = 0.5;
   int relocalization_min_inliers = 30;
+  int relocalization_min_evaluated_points = 30;
   double relocalization_max_pos_cov_trace = 1.0;
   // A 100 m^2 position-covariance trace means aggregate 1-sigma uncertainty
   // has reached 10 m. At that point local odometry is not safe to publish or
@@ -195,6 +196,10 @@ Status loadYamlConfig(
   readIfPresent(config, "max_sensor_time_jump_s", runtime_config.max_sensor_time_jump_s);
   readIfPresent(config, "relocalization_max_fitness", runtime_config.relocalization_max_fitness);
   readIfPresent(config, "relocalization_min_inliers", runtime_config.relocalization_min_inliers);
+  readIfPresent(
+      config,
+      "relocalization_min_evaluated_points",
+      runtime_config.relocalization_min_evaluated_points);
   readIfPresent(
       config,
       "relocalization_max_pos_cov_trace",
@@ -1634,6 +1639,18 @@ class FastLioBackend final : public ISlamBackend {
     out.relocalization_refine_backend = relocalization_refine_backend_;
     out.relocalization_refine_iterations = relocalization_refine_iterations_;
     out.relocalization_refine_inliers = relocalization_refine_inliers_;
+    out.relocalization_min_inliers =
+        runtime_config_.relocalization_min_inliers;
+    out.relocalization_min_evaluated_points =
+        runtime_config_.relocalization_min_evaluated_points;
+    out.relocalization_refine_input_points =
+        relocalization_refine_input_points_;
+    out.relocalization_refine_evaluated_points =
+        relocalization_refine_evaluated_points_;
+    out.relocalization_refine_support_ratio =
+        relocalization_refine_support_ratio_;
+    out.relocalization_refine_overlap_inlier_ratio =
+        relocalization_refine_overlap_inlier_ratio_;
     out.relocalization_refine_converged = relocalization_refine_converged_;
     out.relocalization_refine_pos_cov_trace = relocalization_refine_pos_cov_trace_;
     out.localization_quality = localization_quality_;
@@ -1688,6 +1705,57 @@ class FastLioBackend final : public ISlamBackend {
       out.fastlio_iter_num = degeneracy.iter_num;
       out.fastlio_converged = degeneracy.converged;
     }
+    if (builder_) {
+      const auto& diagnostics = builder_->lastLidarUpdateDiagnostics();
+      out.fastlio_lidar_update.attempted = diagnostics.attempted;
+      out.fastlio_lidar_update.accepted = diagnostics.accepted;
+      out.fastlio_lidar_update.attempt_sequence = diagnostics.attempt_sequence;
+      out.fastlio_lidar_update.rejection_reason =
+          lidarUpdateRejectionReasonName(diagnostics.rejection_reason);
+      out.fastlio_lidar_update.previous_rejection_reason =
+          lidarUpdateRejectionReasonName(
+              diagnostics.previous_rejection_reason);
+      out.fastlio_lidar_update.consecutive_rejections =
+          static_cast<std::uint64_t>(diagnostics.consecutive_rejections);
+      out.fastlio_lidar_update.downsampled_points =
+          static_cast<std::uint64_t>(diagnostics.downsampled_points);
+      out.fastlio_lidar_update.effective_points =
+          static_cast<std::uint64_t>(diagnostics.effective_points);
+      out.fastlio_lidar_update.candidate_translation_m =
+          diagnostics.candidate_translation_m;
+      out.fastlio_lidar_update.candidate_rotation_rad =
+          diagnostics.candidate_rotation_rad;
+      out.fastlio_lidar_update.candidate_velocity_mps =
+          diagnostics.candidate_velocity_mps;
+      out.fastlio_lidar_update.candidate_velocity_delta_mps =
+          diagnostics.candidate_velocity_delta_mps;
+      out.fastlio_lidar_update.max_update_translation_m =
+          diagnostics.max_update_translation_m;
+      out.fastlio_lidar_update.max_update_rotation_rad =
+          diagnostics.max_update_rotation_rad;
+      out.fastlio_lidar_update.max_update_velocity_mps =
+          diagnostics.max_update_velocity_mps;
+      out.fastlio_lidar_update.max_update_velocity_delta_mps =
+          diagnostics.max_update_velocity_delta_mps;
+      out.fastlio_lidar_update.information_ldlt_evaluated =
+          diagnostics.information_ldlt_evaluated;
+      out.fastlio_lidar_update.information_ldlt_decomposition_success =
+          diagnostics.information_ldlt_decomposition_success;
+      out.fastlio_lidar_update.information_ldlt_positive =
+          diagnostics.information_ldlt_positive;
+      out.fastlio_lidar_update.candidate_covariance_evaluated =
+          diagnostics.candidate_covariance_evaluated;
+      out.fastlio_lidar_update.candidate_covariance_finite =
+          diagnostics.candidate_covariance_finite;
+      out.fastlio_lidar_update.candidate_covariance_positive_diagonal =
+          diagnostics.candidate_covariance_positive_diagonal;
+      out.fastlio_lidar_update.posterior_covariance_evaluated =
+          diagnostics.posterior_covariance_evaluated;
+      out.fastlio_lidar_update.posterior_covariance_finite =
+          diagnostics.posterior_covariance_finite;
+      out.fastlio_lidar_update.posterior_covariance_positive_diagonal =
+          diagnostics.posterior_covariance_positive_diagonal;
+    }
     return out;
   }
 
@@ -1712,6 +1780,10 @@ class FastLioBackend final : public ISlamBackend {
     relocalization_refine_backend_.clear();
     relocalization_refine_iterations_ = -1;
     relocalization_refine_inliers_ = -1;
+    relocalization_refine_input_points_ = 0;
+    relocalization_refine_evaluated_points_ = 0;
+    relocalization_refine_support_ratio_ = -1.0;
+    relocalization_refine_overlap_inlier_ratio_ = -1.0;
     relocalization_refine_converged_ = false;
     relocalization_refine_pos_cov_trace_ = -1.0;
     relocalization_state_ = "idle";
@@ -1774,6 +1846,11 @@ class FastLioBackend final : public ISlamBackend {
     relocalization_refine_backend_ = result.refine_backend;
     relocalization_refine_iterations_ = result.refine_iterations;
     relocalization_refine_inliers_ = result.refine_inliers;
+    relocalization_refine_input_points_ = result.input_points;
+    relocalization_refine_evaluated_points_ = result.evaluated_points;
+    relocalization_refine_support_ratio_ = result.support_ratio;
+    relocalization_refine_overlap_inlier_ratio_ =
+        result.overlap_inlier_ratio;
     relocalization_refine_converged_ = result.refine_converged;
     relocalization_refine_pos_cov_trace_ = result.refine_pos_cov_trace;
     if (!result.success) {
@@ -1794,6 +1871,8 @@ class FastLioBackend final : public ISlamBackend {
     RelocalizationGateConfig gate_config;
     gate_config.max_fitness = runtime_config_.relocalization_max_fitness;
     gate_config.min_inliers = runtime_config_.relocalization_min_inliers;
+    gate_config.min_evaluated_points =
+        runtime_config_.relocalization_min_evaluated_points;
     gate_config.max_pos_cov_trace = runtime_config_.relocalization_max_pos_cov_trace;
     gate_config.max_alignment_translation_m =
         runtime_config_.track_against_map_max_translation_m;
@@ -1807,6 +1886,7 @@ class FastLioBackend final : public ISlamBackend {
     gate_input.converged = result.refine_converged;
     gate_input.fitness = result.quality;
     gate_input.inliers = result.refine_inliers;
+    gate_input.evaluated_points = result.evaluated_points;
     gate_input.pos_cov_trace = result.refine_pos_cov_trace;
     gate_input.alignment_update = map_alignment_update;
     gate_input.current_map_odom = map_odom_pose_;
@@ -2405,6 +2485,10 @@ class FastLioBackend final : public ISlamBackend {
   std::string relocalization_refine_backend_;
   int relocalization_refine_iterations_ = -1;
   int relocalization_refine_inliers_ = -1;
+  int relocalization_refine_input_points_ = 0;
+  int relocalization_refine_evaluated_points_ = 0;
+  double relocalization_refine_support_ratio_ = -1.0;
+  double relocalization_refine_overlap_inlier_ratio_ = -1.0;
   bool relocalization_refine_converged_ = false;
   double relocalization_refine_pos_cov_trace_ = -1.0;
   std::string relocalization_state_ = "idle";
@@ -2419,7 +2503,7 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<Pose3d> state_estimation_at_scan_;
   std::optional<Cloud> registered_cloud_body_;
   std::uint64_t observation_sequence_ = 0U;
-  std::uint64_t source_epoch_ = 0U;
+  std::uint64_t source_epoch_ = newSourceEpoch() - 1U;
   std::optional<Cloud> map_cloud_map_;
   std::optional<Cloud> saved_map_cloud_map_;
   int saved_map_points_ = 0;

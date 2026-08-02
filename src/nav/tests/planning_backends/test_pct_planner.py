@@ -53,7 +53,11 @@ class TestPCTBackend:
         path = pct_backend.plan(np.array([0.0, 0.0, 0.0]), np.array([1.0, 1.0, 0.0]))
         assert path == []
         assert pct_backend._last_plan_error == "pct planner unavailable"
-        assert pct_backend._last_plan_diagnostics["pct_runtime"] == "native"
+        assert pct_backend._last_plan_diagnostics["pct_planner_runtime"] == {
+            "runtime": "rust_process",
+            "ok": False,
+        }
+        assert "pct_runtime" not in pct_backend._last_plan_diagnostics
 
     def test_update_map_without_tomogram(self, pct_backend):
         """update_map() does not crash when no grid/tomogram is loaded."""
@@ -270,7 +274,7 @@ class TestPCTBackend:
                 return 0.0
 
             def plan(self, start_pos, goal_pos, start_h, goal_h):
-                self.last_path_mode = "native_astar_raw_path"
+                self.last_path_mode = "rust_astar_raw_path"
                 self.last_optimizer_attempted = True
                 self.last_optimizer_accepted = False
                 self.last_optimizer_reject_reason = "optimized_trajectory_hard_obstacle"
@@ -320,7 +324,8 @@ class TestPCTBackend:
         assert diagnostics["pct_optimizer_reject_reason"] == "optimized_trajectory_hard_obstacle"
         assert diagnostics["pct_optimizer_blocked_sample_count"] == 3
         assert diagnostics["pct_optimizer_raw_blocked_sample_count"] == 0
-        assert diagnostics["pct_planner_path_mode"] == "native_astar_raw_path"
+        assert diagnostics["last_path_mode"] == "rust_astar_raw_path"
+        assert diagnostics["pct_planner_path_mode"] == "astar_raw_path"
 
     def test_native_pct_adapter_discards_result_when_all_candidates_are_blocked(self):
         """A wrapper result with known hard-obstacle collisions must fail closed."""

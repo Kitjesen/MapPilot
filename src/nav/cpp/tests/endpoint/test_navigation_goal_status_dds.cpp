@@ -107,16 +107,20 @@ void testRuntimePublishesCorrelatedGoalLifecycle() {
 
   lingtu_dds_NavigationGoalStatus observed{};
   for (int attempt = 0; attempt < 100; ++attempt) {
-    runtime.writeNavigationGoalStatus(
-        "tare-explore-1", lingtu::message::NavigationGoalState::Failed, 42U, "goal_outside_map");
+    const bool written = runtime.writeNavigationGoalStatus(
+        "navigation-task-1", "goal-attempt-1", lingtu::message::NavigationGoalState::Failed, 42U,
+        "goal_outside_map");
+    require(written, "valid goal lifecycle write must report success");
     std::this_thread::sleep_for(10ms);
     if (peer.take(&observed)) {
       break;
     }
   }
 
-  require(observed.request_id != nullptr, "goal lifecycle sample must arrive");
-  require(std::string(observed.request_id) == "tare-explore-1",
+  require(observed.task_id != nullptr, "goal lifecycle sample must arrive");
+  require(std::string(observed.task_id) == "navigation-task-1",
+          "goal lifecycle task id must be preserved");
+  require(observed.request_id != nullptr && std::string(observed.request_id) == "goal-attempt-1",
           "goal lifecycle request id must be preserved");
   require(observed.boot_id != nullptr && std::strlen(observed.boot_id) > 0U,
           "goal lifecycle producer boot id must be present");
@@ -130,8 +134,30 @@ void testRuntimePublishesCorrelatedGoalLifecycle() {
           "goal lifecycle header must be map framed");
   dds_free(observed.header.frame_id);
   dds_free(observed.boot_id);
+  dds_free(observed.task_id);
   dds_free(observed.request_id);
   dds_free(observed.reason);
+}
+
+void testRuntimeRejectsInvalidGoalLifecycleIdentity() {
+  constexpr int kDomain = 122;
+  lingtu::nav::endpoint::DdsRuntime runtime(kDomain);
+  require(!runtime.writeNavigationGoalStatus("", "goal-attempt-1",
+                                             lingtu::message::NavigationGoalState::Failed, 42U,
+                                             "goal_outside_map"),
+          "empty task id must fail goal lifecycle write");
+  require(!runtime.writeNavigationGoalStatus("navigation-task-1", "",
+                                             lingtu::message::NavigationGoalState::Failed, 42U,
+                                             "goal_outside_map"),
+          "empty request id must fail goal lifecycle write");
+  require(!runtime.writeNavigationGoalStatus(nullptr, "goal-attempt-1",
+                                             lingtu::message::NavigationGoalState::Failed, 42U,
+                                             "goal_outside_map"),
+          "null task id must fail goal lifecycle write");
+  require(!runtime.writeNavigationGoalStatus("navigation-task-1", nullptr,
+                                             lingtu::message::NavigationGoalState::Failed, 42U,
+                                             "goal_outside_map"),
+          "null request id must fail goal lifecycle write");
 }
 
 }  // namespace
@@ -140,6 +166,7 @@ int main() {
   try {
     testGoalStatusQosIsReliableAndRetained();
     testRuntimePublishesCorrelatedGoalLifecycle();
+    testRuntimeRejectsInvalidGoalLifecycleIdentity();
     return 0;
   } catch (const std::exception &exc) {
     std::fprintf(stderr, "test_navigation_goal_status_dds: FAIL: %s\n", exc.what());

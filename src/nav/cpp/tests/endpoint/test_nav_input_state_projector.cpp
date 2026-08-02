@@ -133,6 +133,7 @@ struct TraversabilityFixture {
 
 void testTfProjectionPreservesCountersGenerationsAndReceiveClock() {
   EndpointState state;
+  require(state.frame_epoch == 1, "the initial live map frame must have a non-zero epoch identity");
   InputGate input_gate;
   TransformBuffer pose_buffer;
   TransformBuffer map_odom_buffer;
@@ -164,7 +165,7 @@ void testTfProjectionPreservesCountersGenerationsAndReceiveClock() {
   projector.projectTf(rebased, 102.0);
   require(state.tf_count == 4, "TF clock rebase must still increment the receive counter");
   require(state.tf_generation == 2, "TF clock rebase must accept the triggering sample");
-  require(state.frame_epoch == 1, "TF clock rebase must start a new input epoch");
+  require(state.frame_epoch == 2, "TF clock rebase must start a new input epoch");
   require(state.frames.clock_rebases == 1, "TF clock rebase must increment diagnostics");
   require(state.map_odom_epoch_start_s == 9.0,
           "TF clock rebase must seed the new epoch with the triggering source clock");
@@ -184,7 +185,7 @@ void testEpochResetClearsInputsBeforeSynchronousEffectsAndAcceptsTriggeringTf() 
     callback_clear_motion = clear_motion;
     require(std::abs(epoch_start_s - 11.0) < 1e-9, "epoch callback must carry source stamp");
     require(reason == "map_frame_jump", "epoch callback must preserve reset reason");
-    require(state.frame_epoch == 1, "input epoch must increment before external effects");
+    require(state.frame_epoch == 2, "input epoch must increment before external effects");
     require(state.tf_generation == 1, "triggering TF generation must advance after effects");
     require(!state.map_odom_tf, "old map transform must clear before external effects");
     require(!state.odom_body, "old odometry must clear before external effects");

@@ -44,7 +44,7 @@ def test_blueprint_exports_portable_module_graph_without_building_modules():
             "frames",
             "SinkModule",
             "frames_in",
-            transport="dds",
+            delivery="dds",
             topic="/source/frames",
         )
         .auto_wire()
@@ -99,7 +99,7 @@ def test_module_graph_exposes_declared_ports_from_module_annotations():
 
 def test_module_graph_manifest_is_json_ready_for_object_transport():
     bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
-    bp.wire("Source", "frames", "SinkModule", "frames_in", transport=ObjectTransport())
+    bp.wire("Source", "frames", "SinkModule", "frames_in", delivery=ObjectTransport())
 
     manifest = bp.export_graph().to_manifest()
 
@@ -107,7 +107,7 @@ def test_module_graph_manifest_is_json_ready_for_object_transport():
     json.dumps(manifest)
 
 
-def test_blueprint_wire_accepts_delivery_alias_for_transport():
+def test_blueprint_wire_records_delivery_mode():
     bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
     bp.wire(
         "Source",
@@ -124,31 +124,13 @@ def test_blueprint_wire_accepts_delivery_alias_for_transport():
     assert manifest["explicit_wires"][0]["transport"] == "local"
 
 
-def test_blueprint_wire_rejects_conflicting_delivery_and_transport():
-    bp = Blueprint().add(SourceModule, alias="Source").add(SinkModule)
-
-    try:
-        bp.wire(
-            "Source",
-            "frames",
-            "SinkModule",
-            "frames_in",
-            transport="dds",
-            delivery="shm",
-        )
-    except ValueError as exc:
-        assert "conflicting delivery and transport" in str(exc)
-    else:
-        raise AssertionError("conflicting delivery/transport should fail")
-
-
-def test_profile_wire_edge_preserves_string_transport_name():
+def test_profile_wire_edge_preserves_string_delivery_name():
     spec = WireSpec(
         "Source",
         "frames",
         "SinkModule",
         "frames_in",
-        transport="local",
+        delivery="local",
         topic="/source/frames",
     )
 

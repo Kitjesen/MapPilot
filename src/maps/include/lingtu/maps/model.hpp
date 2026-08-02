@@ -74,4 +74,32 @@ struct Poi {
   std::unordered_map<std::string, std::string> tags;
 };
 
+inline std::optional<ArtifactType> ArtifactTypeForCapability(const std::string& capability) {
+  if (capability == "source_pointcloud" || capability == "visualization") {
+    return ArtifactType::kPointCloud;
+  }
+  if (capability == "path_planning_2d" || capability == "path_planning" ||
+      capability == "global_2d_planning") {
+    return ArtifactType::kOccupancy2D;
+  }
+  if (capability == "terrain_reasoning" || capability == "global_planning_2_5d") {
+    return ArtifactType::kTraversability;
+  }
+  if (capability == "navigation_safety_3d" || capability == "global_planning_3d" ||
+      capability == "collision_3d") {
+    return ArtifactType::kOctomap3D;
+  }
+  if (capability == "trajectory_optimization" || capability == "esdf") {
+    return ArtifactType::kEsdf;
+  }
+  if (capability == "traversability" || capability == "navigation_cost" ||
+      capability == "local_planning_cost") {
+    return ArtifactType::kTraversability;
+  }
+  if (capability == "semantic_query" || capability == "semantic") {
+    return ArtifactType::kSemantic;
+  }
+  return std::nullopt;
+}
+
 }  // namespace lingtu::maps

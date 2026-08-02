@@ -14,7 +14,7 @@ from message.dds_codec import (
     to_dds_message,
 )
 from runtime.endpoints.dds.contracts import (
-    THUNDER_FIELD_DDS_CONTRACT_NAME,
+    THUNDER_DDS_CONTRACT_NAME,
     DDSEndpointBinding,
     DDSEndpointContract,
     endpoint_contract,
@@ -39,7 +39,7 @@ class DDSEndpointService:
 
     def __init__(
         self,
-        endpoint_contract_name: str = THUNDER_FIELD_DDS_CONTRACT_NAME,
+        endpoint_contract_name: str = THUNDER_DDS_CONTRACT_NAME,
         *,
         transport: Any | None = None,
         transport_factory: Callable[[], Any] | None = None,
@@ -49,7 +49,7 @@ class DDSEndpointService:
         reliable: bool = True,
         transport_strategy: str | None = None,
     ) -> None:
-        self._contract = endpoint_contract(str(endpoint_contract_name or THUNDER_FIELD_DDS_CONTRACT_NAME))
+        self._contract = endpoint_contract(str(endpoint_contract_name or THUNDER_DDS_CONTRACT_NAME))
         self._transport = transport
         self._transport_factory = transport_factory
         self._transport_strategy = str(transport_strategy or "dds")

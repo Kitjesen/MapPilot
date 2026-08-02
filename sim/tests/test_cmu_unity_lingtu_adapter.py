@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-import os
 import sys
 import types
 
 import pytest
+
 from runtime.tests.numpy_guard import import_numpy_or_skip
 
 pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from runtime.runtime_interface import TOPICS
-from sim.engine.bridge import cmu_unity_lingtu_adapter as adapter
+from runtime.runtime_interface import TOPICS  # noqa: E402
+from sim.engine.bridge import cmu_unity_lingtu_adapter as adapter  # noqa: E402
 
 
 def _relay_map(relay_cmd_vel_to_sim: bool = True) -> dict[str, str]:

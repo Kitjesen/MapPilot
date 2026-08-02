@@ -50,8 +50,8 @@ SCHEMA_VERSION = "lingtu.mujoco_continuous_mapping_quality_gate.v1"
 # Keep isolated MuJoCo gates on 200-232; production robot uses domain 0.
 MAX_CYCLONEDDS_DOMAIN_ID = 232
 DEFAULT_SLAM_CONFIG = SRC / "localization" / "fastlio2" / "config" / "mid360_mujoco_native_dds.yaml"
-DEFAULT_SLAM_RUNTIME_BIN = ROOT / "build" / "slam_core" / "lingtu_slam_cyclone_runtime"
-DEFAULT_SLAM_CONTROL_BIN = ROOT / "build" / "slam_core" / "lingtu_slam_control"
+DEFAULT_SLAM_RUNTIME_BIN = ROOT / "build" / "slam_core" / "slamd"
+DEFAULT_SLAM_CONTROL_BIN = ROOT / "build" / "slam_core" / "slamctl"
 BRIDGE_SCRIPT = ROOT / "sim" / "scripts" / "mujoco" / "native_dds_sensors.py"
 
 

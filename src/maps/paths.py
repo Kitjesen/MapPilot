@@ -100,10 +100,6 @@ def resolve_exchange_path(
     return resolved
 
 
-def active_map_link(root: Path | None = None) -> Path:
-    return (root or nav_map_root()) / "active"
-
-
 def active_map_state_file(root: Path | None = None) -> Path:
     return (root or nav_map_root()) / "active_map.txt"
 
@@ -133,32 +129,13 @@ def native_active_map_name(root: Path | None = None) -> str | None:
 
 
 def active_map_name(root: Path | None = None) -> str | None:
-    """Return the active map name from native state, then legacy symlink."""
-    map_root = _normal_path(root) if root is not None else nav_map_root()
-    native_name = native_active_map_name(map_root)
-    if native_name:
-        return native_name
-    link = active_map_link(map_root)
-    if not link.is_symlink():
-        return None
-    try:
-        raw_target = os.readlink(link)
-    except OSError:
-        return None
+    """Return the active map name from the canonical state file."""
 
-    target_path = Path(raw_target)
-    resolved = _normal_path(target_path if target_path.is_absolute() else map_root / target_path)
-    try:
-        rel = resolved.relative_to(map_root)
-    except ValueError:
-        return None
-    if len(rel.parts) != 1:
-        return None
-    return rel.parts[0]
+    return native_active_map_name(root)
 
 
 def active_map_dir(root: Path | None = None) -> Path | None:
-    """Resolve the active map package selected by native or legacy state."""
+    """Resolve the active map package selected by canonical state."""
     map_root = _normal_path(root) if root is not None else nav_map_root()
     name = active_map_name(map_root)
     if name:
@@ -166,11 +143,6 @@ def active_map_dir(root: Path | None = None) -> Path | None:
         if selected.is_dir():
             return _normal_path(selected)
 
-    active = active_map_link(map_root)
-    if active.is_symlink():
-        return None
-    if active.is_dir():
-        return _normal_path(active)
     return None
 
 

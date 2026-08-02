@@ -28,6 +28,17 @@ def test_product_source_tree_has_no_owned_ros2_adapter_packages() -> None:
     assert leftovers == []
 
 
+def test_retired_remote_tare_verifiers_and_ros2_adapter_stay_removed() -> None:
+    retired_paths = (
+        "scripts/remote/verify_remote.sh",
+        "scripts/remote/remote_verify.ps1",
+        "src/nav/adapters/ros2/tare_bridge.py",
+    )
+
+    leftovers = [path for path in retired_paths if (ROOT / path).exists()]
+    assert leftovers == []
+
+
 def test_product_plugin_catalog_has_no_ros2_compat_loader() -> None:
     source = (ROOT / "src/lingtu/plugin_seed.py").read_text(encoding="utf-8")
 
@@ -48,8 +59,6 @@ def test_python_dds_reader_dependencies_are_explicit_and_bounded() -> None:
 
     expected = {
         "src/drivers/real/imu/dds_module.py",
-        "src/drivers/real/lidar/compat/dds.py",
-        "src/drivers/real/lidar/compat/dds_adapter.py",
         "src/localization/gnss_module.py",
         "src/nav/adapters/dds/tare_bridge.py",
     }

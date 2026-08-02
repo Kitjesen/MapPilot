@@ -396,30 +396,33 @@ def test_unrelated_instruction_still_uses_existing_scene_graph_path() -> None:
     assert statuses[0] == "PROCESSING"
 
 
-@pytest.mark.parametrize(
-    ("text", "expected"),
-    [
-        ("开始展厅导览A", {"action": "inspection", "route_id": "展厅导览A"}),
-        ("暂停导览", {"action": "inspection_pause", "reason": "semantic_pause"}),
-        ("继续", {"action": "inspection_resume", "reason": "semantic_resume"}),
-        ("取消导览", {"action": "inspection_cancel", "reason": "semantic_cancel"}),
-    ],
-)
-def test_tour_command_dispatches_symbolic_native_inspection_command(
-    text: str,
-    expected: dict[str, str],
-) -> None:
+def test_start_tour_dispatches_a_task_submission_request() -> None:
     module = _planner_with_maps(_FakeMapsModule(pois={"map-a": {}}), nav_goals=True)
     goals = _collect(module.goal_pose)
+    commands = _collect(module.nav_command)
+    statuses = _collect(module.planner_status)
+
+    module._on_instruction("开始展厅导览A")
+
+    time.sleep(0.01)
+    assert not goals
+    assert [json.loads(command) for command in commands] == [
+        {"action": "inspection", "route_id": "展厅导览A"}
+    ]
+    assert statuses[-1] == "TOUR_SUBMISSION_REQUESTED"
+
+
+@pytest.mark.parametrize("text", ["暂停导览", "继续", "取消导览"])
+def test_tour_lifecycle_requires_an_explicit_selected_task(text: str) -> None:
+    module = _planner_with_maps(_FakeMapsModule(pois={"map-a": {}}), nav_goals=True)
     commands = _collect(module.nav_command)
     statuses = _collect(module.planner_status)
 
     module._on_instruction(text)
 
     time.sleep(0.01)
-    assert not goals
-    assert [json.loads(command) for command in commands] == [expected]
-    assert statuses[-1] == "TOUR_COMMAND_DISPATCHED"
+    assert commands == []
+    assert statuses[-1] == "TOUR_TASK_SELECTION_REQUIRED"
 
 
 def test_tour_command_fails_closed_without_goal_service() -> None:

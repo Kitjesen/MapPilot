@@ -27,7 +27,7 @@ def _grid_payload() -> dict:
 
 @requires_explore_kernel
 def test_portable_tare_policy_selects_reachable_frontier_viewpoint() -> None:
-    from nav.exploration.tare.policy import PortableTAREPolicy
+    from explore.tare.policy import PortableTAREPolicy
 
     decision = PortableTAREPolicy().select(
         grid_payload=_grid_payload(),
@@ -43,7 +43,7 @@ def test_portable_tare_policy_selects_reachable_frontier_viewpoint() -> None:
 
 @requires_explore_kernel
 def test_tare_module_in_process_emits_goal_from_exploration_grid() -> None:
-    from nav.exploration.tare.module import TAREExplorerModule
+    from explore.tare.module import TAREExplorerModule
 
     mod = TAREExplorerModule(
         auto_start=False,

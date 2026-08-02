@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "dds/dds.h"
+#include "inspection/inspection_task_event_outbox.hpp"
 #include "lingtu_slam.h"
 #include "message/cpp/navigation_command.hpp"
 #include "message/cpp/operator_motion.hpp"
@@ -149,7 +150,7 @@ copyExplorationSegmentRequest(const lingtu_dds_ExplorationSegmentRequest &messag
 
 class DdsRuntime {
  public:
-  explicit DdsRuntime(int domain_id, bool allow_legacy_motion_inputs = false);
+  explicit DdsRuntime(int domain_id);
   ~DdsRuntime();
 
   DdsRuntime(const DdsRuntime &) = delete;
@@ -165,14 +166,6 @@ class DdsRuntime {
   void drainTf(Handler &&handler) {
     drainReader<lingtu_dds_TFMessage>(tf_reader_, lingtu_dds_TFMessage_desc,
                                       std::forward<Handler>(handler), DdsDrainProfile::kTransform);
-  }
-
-  // Explicit compatibility adapter. These readers are not created unless
-  // --allow-legacy-motion-inputs=true; product control uses command requests.
-  template <typename Handler>
-  void drainLegacyGoals(Handler &&handler) {
-    drainReader<lingtu_dds_PoseStamped>(legacy_goal_reader_, lingtu_dds_PoseStamped_desc,
-                                        std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -191,12 +184,6 @@ class DdsRuntime {
   void drainTerrainMapExt(Handler &&handler) {
     drainReader<lingtu_dds_PointCloud2>(terrain_map_ext_reader_, lingtu_dds_PointCloud2_desc,
                                         std::forward<Handler>(handler));
-  }
-
-  template <typename Handler>
-  void drainLegacyGlobalPath(Handler &&handler) {
-    drainReader<lingtu_dds_Path>(legacy_global_path_reader_, lingtu_dds_Path_desc,
-                                 std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -228,18 +215,6 @@ class DdsRuntime {
   void drainCloudClearing(Handler &&handler) {
     drainReader<lingtu_dds_Bool>(cloud_clearing_reader_, lingtu_dds_Bool_desc,
                                  std::forward<Handler>(handler));
-  }
-
-  template <typename Handler>
-  void drainLegacyCancel(Handler &&handler) {
-    drainReader<lingtu_dds_Text>(legacy_cancel_reader_, lingtu_dds_Text_desc,
-                                 std::forward<Handler>(handler));
-  }
-
-  template <typename Handler>
-  void drainLegacyTeleopCmdVel(Handler &&handler) {
-    drainReader<lingtu_dds_TwistStamped>(legacy_teleop_cmd_reader_, lingtu_dds_TwistStamped_desc,
-                                         std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -284,10 +259,10 @@ class DdsRuntime {
   }
 
   template <typename Handler>
-  void drainInspectionCommands(Handler &&handler) {
-    drainReader<lingtu_dds_InspectionCommandRequest>(inspection_command_reader_,
-                                                     lingtu_dds_InspectionCommandRequest_desc,
-                                                     std::forward<Handler>(handler));
+  void drainInspectionTaskRequests(Handler &&handler) {
+    drainReader<lingtu_dds_InspectionTaskRequest>(inspection_task_request_reader_,
+                                                  lingtu_dds_InspectionTaskRequest_desc,
+                                                  std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -307,18 +282,21 @@ class DdsRuntime {
   const nav_kernel::Twist &lastOutputCommand() const noexcept { return last_output_command_; }
   bool writeOperatorMotionAck(const OperatorMotionAckSample &ack);
   bool writeOperatorMotionStatus(const OperatorMotionStatusSample &status);
-  bool writeCommandAck(const char *request_id, lingtu::message::NavigationCommandKind kind,
-                       bool accepted, const char *reason);
-  void writeNavigationGoalStatus(const char *request_id, lingtu::message::NavigationGoalState state,
+  bool writeCommandAck(const char *task_id, const char *request_id,
+                       lingtu::message::NavigationCommandKind kind, bool accepted,
+                       const char *reason);
+  bool writeNavigationGoalStatus(const char *task_id, const char *request_id,
+                                 lingtu::message::NavigationGoalState state,
                                  std::uint64_t goal_epoch, const char *reason);
   bool writeNavigationState(const NavigationStateSample &state);
   bool writeExplorationSegmentAck(const ExplorationSegmentAck &ack);
   bool writeExplorationSegmentStatus(const ExplorationSegmentStatus &status);
 
-  [[nodiscard]] bool writeInspectionAck(const char *request_id,
-                                        lingtu::nav::inspection::CommandKind kind, bool accepted,
-                                        const char *reason, const char *run_id);
+  [[nodiscard]] bool writeInspectionTaskAck(const char *task_id, const char *request_id,
+                                            lingtu::nav::inspection::CommandKind kind,
+                                            bool accepted, const char *reason, const char *run_id);
   void writeInspectionStatus(const lingtu::nav::inspection::RunStatus &status);
+  [[nodiscard]] bool writeInspectionTaskEvent(const InspectionTaskEventEnvelope &event);
   bool inspectionEvidenceWorkerMatched() const noexcept;
   bool writeInspectionEvidenceRequest(const lingtu::nav::inspection::ActionRequest &request,
                                       const std::string &map_id, std::int64_t map_version,
@@ -370,25 +348,21 @@ class DdsRuntime {
   dds_entity_t publisher_{0};
   dds_entity_t odom_reader_{0};
   dds_entity_t tf_reader_{0};
-  dds_entity_t legacy_goal_reader_{0};
   dds_entity_t cloud_reader_{0};
   dds_entity_t terrain_map_reader_{0};
   dds_entity_t terrain_map_ext_reader_{0};
-  dds_entity_t legacy_global_path_reader_{0};
   dds_entity_t traversability_reader_{0};
   dds_entity_t localization_health_reader_{0};
   dds_entity_t driver_control_state_reader_{0};
   dds_entity_t map_clearing_reader_{0};
   dds_entity_t cloud_clearing_reader_{0};
-  dds_entity_t legacy_cancel_reader_{0};
-  dds_entity_t legacy_teleop_cmd_reader_{0};
   dds_entity_t command_request_reader_{0};
   dds_entity_t operator_motion_control_reader_{0};
   dds_entity_t operator_motion_sample_reader_{0};
   dds_entity_t exploration_execution_grid_reader_{0};
   dds_entity_t exploration_segment_request_reader_{0};
 
-  dds_entity_t inspection_command_reader_{0};
+  dds_entity_t inspection_task_request_reader_{0};
   dds_entity_t inspection_evidence_result_reader_{0};
   dds_entity_t global_path_writer_{0};
   dds_entity_t local_path_writer_{0};
@@ -402,8 +376,9 @@ class DdsRuntime {
   dds_entity_t exploration_segment_ack_writer_{0};
   dds_entity_t exploration_segment_status_writer_{0};
 
-  dds_entity_t inspection_ack_writer_{0};
+  dds_entity_t inspection_task_ack_writer_{0};
   dds_entity_t inspection_status_writer_{0};
+  dds_entity_t inspection_task_event_writer_{0};
   dds_entity_t inspection_evidence_request_writer_{0};
   std::string host_boot_id_;
   std::string producer_boot_id_;

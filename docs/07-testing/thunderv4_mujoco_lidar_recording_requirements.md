@@ -1,5 +1,7 @@
 # ThunderV4 MuJoCo MID-360 Recording Requirements
 
+Status: current recording acceptance requirements
+
 This is the default acceptance format for ThunderV4 MID-360 LiDAR simulation
 recordings in MuJoCo.
 
@@ -305,7 +307,7 @@ smooth kinematic motion. The current gate keeps this failure mode covered.
 
 ```powershell
 $env:PYTHONPATH='D:\inovxio\brain\lingtu\src;D:\inovxio\brain\lingtu'
-python sim\scripts\record_thunderv4_mid360_policy.py
+python sim\scripts\mujoco\record_thunderv4_mid360_policy.py
 ```
 
 Default output:

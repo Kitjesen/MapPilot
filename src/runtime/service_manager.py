@@ -1,6 +1,8 @@
-"""ServiceManager - start/stop robot systemd services on demand.
+"""Local Profile service inspection and compatibility lifecycle helpers.
 
-Industrial pattern: only run what you need, release when done.
+Product processes are owned by ProductControl and its internal SystemdRunner.
+ServiceManager may inspect those processes, but it must not mutate them from a
+managed Host or another Product process.
 
 Usage:
     svc = ServiceManager()
@@ -17,6 +19,7 @@ import os
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from runtime.service_catalogs.thunder import (
@@ -42,10 +45,35 @@ SERVICE_METADATA: dict[str, dict[str, object]] = thunder_service_metadata()
 
 
 class ServiceManager:
-    """Manage systemd services using stable logical robot service names."""
+    """Inspect services and mutate them only outside managed Product sessions."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self._environment = environment if environment is not None else os.environ
         self._started: list[str] = []  # concrete units we started
+
+    def assert_local_mutation(self, operation: str) -> None:
+        """Reject direct lifecycle effects inside a managed Product session."""
+
+        managed_fields = {
+            name: str(self._environment.get(name) or "").strip()
+            for name in (
+                "LINGTU_PRODUCT",
+                "LINGTU_PRODUCT_SESSION_ID",
+                "LINGTU_RUN_PLAN",
+                "LINGTU_RUN_PLAN_FINGERPRINT",
+                "LINGTU_SYSTEMD_UNIT",
+            )
+        }
+        if any(managed_fields.values()):
+            product = managed_fields["LINGTU_PRODUCT"] or "unknown"
+            raise RuntimeError(
+                f"ServiceManager cannot {operation} inside managed Product "
+                f"{product!r}; use ProductControl"
+            )
 
     def _candidate_units(self, service: str) -> tuple[str, ...]:
         return SERVICE_ALIASES.get(service, (service,))
@@ -130,6 +158,7 @@ class ServiceManager:
 
     def start(self, *services: str, track_started: bool = True) -> list[str]:
         """Start services. Returns list of actually started logical services."""
+        self.assert_local_mutation("start services")
         started = []
         for service in services:
             if self.is_running(service):
@@ -161,6 +190,7 @@ class ServiceManager:
         old and new robot units together so profile switching cannot leave a
         legacy service racing the current robot-* service.
         """
+        self.assert_local_mutation("stop services")
         for service in services:
             for unit in self._candidate_units(service):
                 try:
@@ -465,6 +495,10 @@ class ServiceManager:
             "true",
             "yes",
         }
+        url = os.environ.get(
+            "LINGTU_SERVICE_HTTP_URL",
+            "http://127.0.0.1:5050/api/v1/readiness",
+        )
         if enabled_override is False:
             return {
                 "ok": True,
@@ -472,7 +506,7 @@ class ServiceManager:
                 "enabled": False,
                 "deferred": True,
                 "reason": "set http_check=1 to probe HTTP readiness",
-                "url": os.environ.get("LINGTU_SERVICE_HTTP_URL", "http://127.0.0.1:5050/health"),
+                "url": url,
                 "blockers": [],
             }
         if enabled_override is not True and not enabled_by_env:
@@ -481,28 +515,75 @@ class ServiceManager:
                 "checked": False,
                 "enabled": False,
                 "reason": "set LINGTU_SERVICE_HTTP_CHECK=1 to probe HTTP readiness",
-                "url": os.environ.get("LINGTU_SERVICE_HTTP_URL", "http://127.0.0.1:5050/health"),
+                "url": url,
                 "blockers": ["http_unchecked"],
             }
 
         import urllib.error
+        import urllib.parse
         import urllib.request
 
-        url = os.environ.get("LINGTU_SERVICE_HTTP_URL", "http://127.0.0.1:5050/health")
         timeout_s = float(os.environ.get("LINGTU_SERVICE_HTTP_CHECK_TIMEOUT", "1.0") or 1.0)
         blockers: list[str] = []
         status_code: int | None = None
-        try:
-            with urllib.request.urlopen(url, timeout=max(0.1, timeout_s)) as response:
-                status_code = int(getattr(response, "status", 0) or 0)
-        except urllib.error.HTTPError as exc:
-            status_code = int(exc.code)
-            blockers.append(f"http_status:{exc.code}")
-        except Exception as exc:
-            blockers.append(f"http_check_error:{type(exc).__name__}")
+        payload: dict[str, object] | None = None
+        response_body: bytes | str = b""
+        scheme = urllib.parse.urlparse(url).scheme.lower()
+        if scheme not in {"http", "https"}:
+            blockers.append(f"http_url_invalid_scheme:{scheme or 'missing'}")
+        if not blockers:
+            try:
+                # The URL scheme is restricted immediately above.
+                with urllib.request.urlopen(url, timeout=max(0.1, timeout_s)) as response:  # noqa: S310
+                    status_code = int(getattr(response, "status", 0) or 0)
+                    response_body = response.read()
+            except urllib.error.HTTPError as exc:
+                status_code = int(exc.code)
+                blockers.append(f"http_status:{exc.code}")
+            except Exception as exc:
+                blockers.append(f"http_check_error:{type(exc).__name__}")
 
         if status_code is not None and not (200 <= status_code < 300) and f"http_status:{status_code}" not in blockers:
             blockers.append(f"http_status:{status_code}")
+        if not blockers:
+            try:
+                decoded = json.loads(response_body)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                blockers.append("http_invalid_json")
+            else:
+                if not isinstance(decoded, dict):
+                    blockers.append("http_payload_invalid_type:root")
+                else:
+                    payload = decoded
+
+        if payload is not None:
+            for field in ("data_ready", "non_motion_safe"):
+                if field not in payload:
+                    blockers.append(f"http_payload_missing:{field}")
+                elif type(payload[field]) is not bool:
+                    blockers.append(f"http_payload_invalid_type:{field}")
+            if payload.get("data_ready") is False:
+                blockers.append("http_data_not_ready")
+            if payload.get("non_motion_safe") is False:
+                blockers.append("http_non_motion_safe_false")
+
+            for field in ("failed_modules", "critical_failed_modules"):
+                if field not in payload:
+                    blockers.append(f"http_payload_missing:{field}")
+                    continue
+                value = payload[field]
+                if not isinstance(value, list) or any(
+                    not isinstance(item, str) for item in value
+                ):
+                    blockers.append(f"http_payload_invalid_type:{field}")
+                    continue
+                if value:
+                    prefix = (
+                        "http_failed_modules"
+                        if field == "failed_modules"
+                        else "http_critical_failed_modules"
+                    )
+                    blockers.append(f"{prefix}:{','.join(value)}")
         return {
             "ok": not blockers,
             "checked": True,
@@ -510,6 +591,7 @@ class ServiceManager:
             "service": service,
             "url": url,
             "status_code": status_code,
+            "payload": payload,
             "blockers": blockers,
         }
 
@@ -525,7 +607,6 @@ class ServiceManager:
             logger.warning("Services not ready after %.0fs: %s", timeout, pending)
             return False
         return True
-
 
 # Singleton
 _manager = ServiceManager()
@@ -543,8 +624,6 @@ SERVICES_SLAM_NAV = ["slam"]
 SERVICES_TRAVERSABILITY = ["traversability"]
 SERVICES_NAV = ["nav"]
 SERVICES_EXPLORE = ["explore"]
-SERVICES_SUPER_LIO = ["lidar", "super_lio"]
-SERVICES_SUPER_LIO_RELOCATION = ["lidar", "super_lio_relocation"]
 SERVICES_CAMERA = ["camera"]
 SERVICES_GATEWAY = ["gateway"]
 SERVICES_LINGTU = ["lingtu"]

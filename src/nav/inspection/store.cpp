@@ -352,7 +352,11 @@ std::string RunStatusToJson(const RunStatus& status) {
   std::ostringstream out;
   out << std::setprecision(17)
       << "{\"schema_version\":\"nav.inspection.status.v1\","
+      << "\"task_id\":\"" << EscapeJson(status.task_id) << "\","
       << "\"run_id\":\"" << EscapeJson(status.run_id) << "\","
+      << "\"request_id\":\"" << EscapeJson(status.request_id) << "\","
+      << "\"map_id\":\"" << EscapeJson(status.map_id) << "\","
+      << "\"map_version\":" << status.map_version << ','
       << "\"route_id\":\"" << EscapeJson(status.route_id) << "\","
       << "\"route_revision\":" << status.route_revision << ','
       << "\"state\":\"" << RunStateName(status.state) << "\","
@@ -368,6 +372,35 @@ std::string RunStatusToJson(const RunStatus& status) {
       << "\"phase_started_at\":" << status.phase_started_at_s << ','
       << "\"stable_since\":" << status.stable_since_s << ','
       << "\"deadline\":" << status.deadline_s << ','
+      << "\"reason\":\"" << EscapeJson(status.reason) << "\"}";
+  return out.str();
+}
+
+std::string TaskEventToJson(const TaskEvent& event) {
+  const RunStatus& status = event.status;
+  std::ostringstream out;
+  out << std::setprecision(17)
+      << "{\"schema_version\":\"nav.inspection.task-event.v1\","
+      << "\"sequence\":" << event.sequence << ','
+      << "\"timestamp\":" << event.timestamp_s << ','
+      << "\"kind\":\"" << TaskEventKindName(event.kind) << "\","
+      << "\"task_id\":\"" << EscapeJson(status.task_id) << "\","
+      << "\"request_id\":\"" << EscapeJson(event.request_id) << "\","
+      << "\"command_request_id\":\"" << EscapeJson(status.request_id) << "\","
+      << "\"map_id\":\"" << EscapeJson(status.map_id) << "\","
+      << "\"map_version\":" << status.map_version << ','
+      << "\"route_id\":\"" << EscapeJson(status.route_id) << "\","
+      << "\"route_revision\":" << status.route_revision << ','
+      << "\"state\":\"" << RunStateName(status.state) << "\","
+      << "\"state_code\":" << static_cast<std::int32_t>(status.state) << ','
+      << "\"point_index\":" << status.point_index << ','
+      << "\"point_count\":" << status.point_count << ','
+      << "\"loop_index\":" << status.loop_index << ','
+      << "\"retry_count\":" << status.retry_count << ','
+      << "\"point_id\":\"" << EscapeJson(status.point_id) << "\","
+      << "\"action\":\"" << EscapeJson(status.action) << "\","
+      << "\"action_request_id\":\"" << EscapeJson(status.action_request_id) << "\","
+      << "\"evidence_id\":\"" << EscapeJson(status.evidence_id) << "\","
       << "\"reason\":\"" << EscapeJson(status.reason) << "\"}";
   return out.str();
 }

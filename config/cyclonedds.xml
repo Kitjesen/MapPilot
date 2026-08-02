@@ -20,7 +20,7 @@
       <!-- 允许组播 (同一子网内发现) -->
       <AllowMulticast>default</AllowMulticast>
 
-      <!-- 最大消息大小: PointCloud2 单帧可达 ~1MB -->
+      <!-- RTPS datagram budget. Larger map scenes are fragmented by CycloneDDS. -->
       <MaxMessageSize>65500B</MaxMessageSize>
       <FragmentSize>4096B</FragmentSize>
     </General>
@@ -39,8 +39,8 @@
       <!-- 写缓冲区: PointCloud2 大消息需要足够空间 -->
       <WriterLingerDuration>1s</WriterLingerDuration>
 
-      <!-- 接收端缓冲: 适配 LiDAR 10Hz 大数据 -->
-      <SocketReceiveBufferSize min="1MB" />
+      <!-- Covers concurrent LiDAR fragments plus one bounded map scene. -->
+      <SocketReceiveBufferSize min="8MB" />
 
       <!-- 发现协议收敛加速 -->
       <BuiltinEndpointSet>writers</BuiltinEndpointSet>
@@ -56,7 +56,12 @@
       <!-- <OutputFile>/tmp/cyclonedds.log</OutputFile> -->
     </Tracing>
 
-    <!-- ═══ 共享内存 (同主机零拷贝, 需 iceoryx) ═══ -->
+    <!--
+      MapScene and PointCloud2 contain variable-length strings/sequences, so
+      they are serialized even when an iceoryx-enabled CycloneDDS is used.
+      Keep their rates and payload caps enforced in mapd.
+    -->
+    <!-- ═══ 共享内存 (同主机固定布局类型可用, 需 iceoryx) ═══ -->
     <!--
     <SharedMemory>
       <Enable>true</Enable>

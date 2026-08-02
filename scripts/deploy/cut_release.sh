@@ -2,22 +2,21 @@
 # Cut a new LingTu Thunder release on the field robot.
 #
 # Snapshot the current development checkout into /opt/lingtu/releases/<version>/,
-# atomically swap /opt/lingtu/current, and restart release-mode services.
+# atomically swap /opt/lingtu/current, then reapply the committed Product
+# RunPlan through ProductControl.
 #
 # Default release gates are native-first:
 #   - The tested native navigation endpoint package must be built and installed.
 #   - The selected global planner is immutable release metadata.
 #   - OctoPlanner3D tools are required only for an OctoPlanner3D release.
 #   - The nanobind Python kernel is optional and never substitutes for navd.
-#   - ROS 2 compatibility install packages are checked only when
-#     LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1.
 #
 # Usage on the robot:
 #   bash scripts/deploy/cut_release.sh v2.1.1
 #
 # Rollback:
-#   sudo ln -sfn /opt/lingtu/releases/v2.1.0 /opt/lingtu/current
-#   sudo systemctl restart lingtu-thunder-dds-endpoint
+#   restore the previous activation files and /opt/lingtu/current, then run:
+#   bash /opt/lingtu/current/scripts/lingtu --env real svc reapply
 
 set -euo pipefail
 
@@ -32,15 +31,120 @@ if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 fi
 
 DEV_DIR="${LINGTU_DEV_DIR:-$HOME/data/SLAM/navigation}"
+PYTHON_BIN="${LINGTU_PYTHON:-python3}"
 RELEASES_DIR="${LINGTU_RELEASES_DIR:-/opt/lingtu/releases}"
 TARGET_DIR="$RELEASES_DIR/$VERSION"
 CURRENT_LINK="${LINGTU_CURRENT_LINK:-/opt/lingtu/current}"
+
+load_committed_run_plan() {
+    local fields=()
+
+    mapfile -d '' -t fields < <(
+        PYTHONPATH="${DEV_DIR}/src${PYTHONPATH:+:${PYTHONPATH}}" \
+            "$PYTHON_BIN" - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+from lingtu.product_lock import resolve_current_run_path
+from lingtu.run_plan import CURRENT_RUN_SCHEMA, RunPlan
+
+current_path = resolve_current_run_path(environment=os.environ)
+try:
+    current = json.loads(current_path.read_text(encoding="utf-8"))
+except FileNotFoundError as exc:
+    raise RuntimeError(f"current ProductControl state is missing: {current_path}") from exc
+except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    raise RuntimeError(f"current ProductControl state is unreadable: {current_path}: {exc}") from exc
+if not isinstance(current, dict):
+    raise RuntimeError("current ProductControl state must be a JSON object")
+if current.get("schema_version") != CURRENT_RUN_SCHEMA:
+    raise RuntimeError("current ProductControl state has unsupported schema")
+
+run_plan_value = current.get("run_plan_path")
+if not isinstance(run_plan_value, str) or not run_plan_value.strip():
+    raise RuntimeError("current ProductControl state requires run_plan_path")
+run_plan_path = Path(run_plan_value).expanduser()
+if not run_plan_path.is_absolute():
+    raise RuntimeError("current RunPlan path must be absolute")
+run_plan_path = run_plan_path.resolve()
+plan = RunPlan.load(run_plan_path)
+if current.get("fingerprint") != plan.fingerprint:
+    raise RuntimeError("current RunPlan fingerprint does not match its record")
+if current.get("product") != plan.product:
+    raise RuntimeError("current Product does not match RunPlan")
+if current.get("env") != plan.env:
+    raise RuntimeError("current Env does not match RunPlan")
+if plan.process_control != "systemd":
+    raise RuntimeError("release activation requires a systemd-controlled RunPlan")
+
+native_environment = plan.native_process_environment
+if native_environment.get("LINGTU_PRODUCT") != plan.product:
+    raise RuntimeError("RunPlan native Product does not match its identity")
+control_mode = str(native_environment.get("LINGTU_NAV_CONTROL_MODE") or "").strip()
+if not control_mode:
+    raise RuntimeError("RunPlan does not declare its native control mode")
+
+def selected_process(name: str):
+    return next((process for process in plan.processes if process.name == name), None)
+
+driver = selected_process("driver")
+if driver is None or driver.manager != "systemd" or driver.lifecycle != "persistent":
+    raise RuntimeError("current RunPlan requires one persistent systemd driver process")
+maps = selected_process("maps")
+if maps is not None and maps.manager != "systemd":
+    raise RuntimeError("current RunPlan maps process must be systemd-controlled")
+
+values = (
+    str(run_plan_path),
+    plan.product,
+    plan.env,
+    plan.fingerprint,
+    control_mode,
+    driver.target,
+    maps.target if maps is not None else "",
+)
+sys.stdout.write("\0".join(values) + "\0")
+PY
+    )
+    if [ "${#fields[@]}" -ne 7 ]; then
+        echo "ERROR: failed to load the committed ProductControl RunPlan" >&2
+        exit 1
+    fi
+
+    CURRENT_RUN_PLAN_PATH="${fields[0]}"
+    CURRENT_PRODUCT="${fields[1]}"
+    CURRENT_ENV="${fields[2]}"
+    CURRENT_RUN_PLAN_FINGERPRINT="${fields[3]}"
+    CURRENT_CONTROL_MODE="${fields[4]}"
+    CURRENT_DRIVER_UNIT="${fields[5]}"
+    CURRENT_MAPD_UNIT="${fields[6]}"
+}
+
+load_committed_run_plan
+RELEASE_ENV="$CURRENT_ENV"
 LINGTU_CONFIG_DIR="${LINGTU_CONFIG_DIR:-/opt/lingtu/config}"
 LINGTU_SYSTEMD_DIR="${LINGTU_SYSTEMD_DIR:-/etc/systemd/system}"
 GATEWAY_URL="${LINGTU_GATEWAY_URL:-http://localhost:5050}"
 NAV_ENDPOINT_BUILD_DIR="${LINGTU_NAV_ENDPOINT_BUILD_DIR:-$DEV_DIR/build/nav_endpoint}"
 NAV_STATUS_FILE="${LINGTU_NAV_STATUS_FILE:-/dev/shm/lingtu/nav_endpoint_status.json}"
+LIVOX_BUILD_DIR="${LINGTU_LIVOX_SDK2_STREAM_BUILD_DIR:-$DEV_DIR/build/livox_sdk2_stream}"
+SLAM_BUILD_DIR="${LINGTU_SLAM_CORE_BUILD_DIR:-$DEV_DIR/build/slam_core}"
+MAPS_BUILD_DIR="${LINGTU_MAPD_BUILD_DIR:-$DEV_DIR/build/maps}"
+DDS_PROBE_BUILD_DIR="${LINGTU_DDS_PROBE_BUILD_DIR:-$DEV_DIR/build/dds_probe}"
+DRIVER_BUILD_DIR="${LINGTU_DRIVER_BUILD_DIR:-$DEV_DIR/build/driver}"
+RECORDING_BUILD_DIR="${LINGTU_NATIVE_RECORDING_BUILD_DIR:-$DEV_DIR/build/native-recording}"
+LIVOX_RUNTIME_SOURCE="$LIVOX_BUILD_DIR/livox_sdk2_stream"
+SLAM_RUNTIME_SOURCE="$SLAM_BUILD_DIR/slamd"
+SLAM_CONTROL_SOURCE="$SLAM_BUILD_DIR/slamctl"
+MAPD_RUNTIME_SOURCE="$MAPS_BUILD_DIR/mapd"
+MAPCTL_RUNTIME_SOURCE="$MAPS_BUILD_DIR/lingtu-mapctl"
+MAPS_LIBRARY_SOURCE="$MAPS_BUILD_DIR/liblingtu_maps.so"
+DDS_PROBE_RUNTIME_SOURCE="$DDS_PROBE_BUILD_DIR/lingtu_dds_probe"
+DRIVER_RUNTIME_SOURCE="$DRIVER_BUILD_DIR/lingtu_driver"
 SELECTED_GLOBAL_PLANNER="${LINGTU_RELEASE_GLOBAL_PLANNER:-${LINGTU_NAV_GLOBAL_PLANNER:-octoplanner3d}}"
+REUSE_VERIFIED_NATIVE_BUILD="${LINGTU_RELEASE_REUSE_VERIFIED_NATIVE_BUILD:-0}"
 SELECTED_GLOBAL_PLANNER="${SELECTED_GLOBAL_PLANNER,,}"
 case "$SELECTED_GLOBAL_PLANNER" in
     octo|octplanner|octoplanner3d)
@@ -60,24 +164,19 @@ REQUIRE_OCTOPLANNER3D="${LINGTU_RELEASE_REQUIRE_OCTOPLANNER3D:-$DEFAULT_REQUIRE_
 REQUIRE_OCTOMAP_CONVERTER="${LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER:-$REQUIRE_OCTOPLANNER3D}"
 REQUIRE_PYTHON_NAV_KERNEL="${LINGTU_RELEASE_REQUIRE_PYTHON_NAV_KERNEL:-0}"
 REQUIRE_NAV_STATUS="${LINGTU_RELEASE_REQUIRE_NAV_STATUS:-1}"
-REQUIRE_ROS2_COMPAT="${LINGTU_RELEASE_REQUIRE_ROS2_COMPAT:-0}"
-RESTART_ROS2_COMPAT="${LINGTU_RELEASE_RESTART_ROS2_COMPAT:-$REQUIRE_ROS2_COMPAT}"
 
 for release_flag in \
     REQUIRE_OCTOPLANNER3D \
     REQUIRE_OCTOMAP_CONVERTER \
     REQUIRE_PYTHON_NAV_KERNEL \
     REQUIRE_NAV_STATUS \
-    REQUIRE_ROS2_COMPAT \
-    RESTART_ROS2_COMPAT; do
+    REUSE_VERIFIED_NATIVE_BUILD; do
     value="${!release_flag}"
     if [ "$value" != "0" ] && [ "$value" != "1" ]; then
         echo "ERROR: $release_flag must be 0 or 1 (got: $value)" >&2
         exit 1
     fi
 done
-
-ROS2_COMPAT_PKGS="fastlio2 genz_icp hba interface livox_ros_driver2 localizer nav_services pgo pointlio perception decision wtrtk980_reader"
 
 NAV_ENDPOINT_RUNTIME_FILES=(
     navd
@@ -89,6 +188,59 @@ NAV_ENDPOINT_RUNTIME_FILES=(
     liblingtu_inspection_evidence_bridge.so
     inspection/liblingtu_inspection.so
 )
+RECORDING_RUNTIME_FILES=(
+    lingtu_recorder
+    lingtu_dds_recorder
+    lingtu_dds_player
+    lingtu_camera_recorder
+    lingtu_camera_player
+)
+RELEASE_NATIVE_RUNTIME_FILES=(
+    build/livox_sdk2_stream/livox_sdk2_stream
+    build/slam_core/slamd
+    build/slam_core/slamctl
+    build/maps/mapd
+    build/maps/lingtu-mapctl
+    build/dds_probe/lingtu_dds_probe
+    build/nav_endpoint/navd
+    build/nav_endpoint/lingtu_traversability_dds
+    build/driver/lingtu_driver
+    build/native-recording/lingtu_recorder
+    build/native-recording/lingtu_dds_recorder
+    build/native-recording/lingtu_dds_player
+    build/native-recording/lingtu_camera_recorder
+    build/native-recording/lingtu_camera_player
+)
+RELEASE_NATIVE_LIBRARY_FILES=(
+    build/maps/liblingtu_maps.so
+)
+
+
+require_reusable_artifact_fresh() {
+    local artifact="$1"
+    local label="$2"
+    shift 2
+    local source_root
+    local stale_source
+
+    if [ ! -e "$artifact" ]; then
+        echo "ERROR: verified native build reuse requested, but $label is missing: $artifact" >&2
+        exit 1
+    fi
+    for source_root in "$@"; do
+        if [ ! -e "$source_root" ]; then
+            echo "ERROR: cannot verify reused $label; source path is missing: $source_root" >&2
+            exit 1
+        fi
+        stale_source="$(find -L "$source_root" -type f -newer "$artifact" -print -quit)"
+        if [ -n "$stale_source" ]; then
+            echo "ERROR: refusing stale reused $label: $artifact" >&2
+            echo "  newer source: $stale_source" >&2
+            echo "Rebuild normally or remove LINGTU_RELEASE_REUSE_VERIFIED_NATIVE_BUILD=1." >&2
+            exit 1
+        fi
+    done
+}
 
 nav_endpoint_artifacts_ready() {
     local relative
@@ -101,7 +253,7 @@ nav_endpoint_artifacts_ready() {
 }
 
 ensure_nav_endpoint_artifacts() {
-    if ! nav_endpoint_artifacts_ready; then
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
         echo ">>> Building and testing the native navigation endpoint package..."
         LINGTU_NAV_ENDPOINT_BUILD_DIR="$NAV_ENDPOINT_BUILD_DIR" \
             bash "$DEV_DIR/scripts/build/build_nav_endpoint.sh"
@@ -115,6 +267,163 @@ ensure_nav_endpoint_artifacts() {
             fi
         done
         exit 1
+    fi
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "1" ]; then
+        local relative
+        for relative in "${NAV_ENDPOINT_RUNTIME_FILES[@]}"; do
+            require_reusable_artifact_fresh \
+                "$NAV_ENDPOINT_BUILD_DIR/$relative" "native nav endpoint $relative" \
+                "$DEV_DIR/src/nav/cpp" \
+                "$DEV_DIR/src/nav/inspection" \
+                "$DEV_DIR/src/message/cpp" \
+                "$DEV_DIR/src/message/idl" \
+                "$DEV_DIR/scripts/build/build_nav_endpoint.sh"
+        done
+    fi
+}
+
+ensure_native_recording_artifacts() {
+    local relative
+
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
+        echo ">>> Building and testing the native recording package..."
+        LINGTU_NATIVE_RECORDING_BUILD_DIR="$RECORDING_BUILD_DIR" \
+            LINGTU_RECORDING_BUILD_DDS=ON \
+            bash "$DEV_DIR/scripts/build/build_native_recording.sh"
+    fi
+    for relative in "${RECORDING_RUNTIME_FILES[@]}"; do
+        if [ ! -x "$RECORDING_BUILD_DIR/$relative" ]; then
+            echo "ERROR: native recording executable is missing: $RECORDING_BUILD_DIR/$relative" >&2
+            exit 1
+        fi
+    done
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "1" ]; then
+        for relative in "${RECORDING_RUNTIME_FILES[@]}"; do
+            require_reusable_artifact_fresh \
+                "$RECORDING_BUILD_DIR/$relative" "native recording $relative" \
+                "$DEV_DIR/src/native/recording" \
+                "$DEV_DIR/src/message/cpp" \
+                "$DEV_DIR/src/message/idl" \
+                "$DEV_DIR/scripts/build/build_native_recording.sh"
+        done
+    fi
+}
+
+ensure_field_native_artifacts() {
+    ensure_nav_endpoint_artifacts
+    ensure_native_recording_artifacts
+
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
+        echo ">>> Building native Livox DDS runtime..."
+        LINGTU_LIVOX_SDK2_STREAM_BUILD_DIR="$LIVOX_BUILD_DIR" \
+            LINGTU_LIVOX_SDK2_STREAM_BUILD_DDS=ON \
+            bash "$DEV_DIR/scripts/build/build_livox_sdk2_stream.sh"
+    fi
+    if [ ! -x "$LIVOX_RUNTIME_SOURCE" ]; then
+        echo "ERROR: native Livox DDS runtime is missing or not executable: $LIVOX_RUNTIME_SOURCE" >&2
+        exit 1
+    fi
+
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
+        echo ">>> Building native SLAM DDS runtime..."
+        LINGTU_SLAM_CORE_BUILD_DIR="$SLAM_BUILD_DIR" \
+            LINGTU_SLAM_BUILD_DDS_RUNTIME=ON \
+            LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF \
+            bash "$DEV_DIR/scripts/build/build_slam_core.sh"
+    fi
+    if [ ! -x "$SLAM_RUNTIME_SOURCE" ]; then
+        echo "ERROR: native SLAM DDS runtime is missing or not executable: $SLAM_RUNTIME_SOURCE" >&2
+        exit 1
+    fi
+    if [ ! -x "$SLAM_CONTROL_SOURCE" ]; then
+        echo "ERROR: native SLAM control tool is missing or not executable: $SLAM_CONTROL_SOURCE" >&2
+        exit 1
+    fi
+
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
+        echo ">>> Building native maps runtime..."
+        LINGTU_MAPD_BUILD_DIR="$MAPS_BUILD_DIR" \
+            bash "$DEV_DIR/scripts/build/build_mapd.sh"
+    fi
+    if [ ! -x "$MAPD_RUNTIME_SOURCE" ]; then
+        echo "ERROR: native maps runtime is missing or not executable: $MAPD_RUNTIME_SOURCE" >&2
+        exit 1
+    fi
+    if [ ! -x "$MAPCTL_RUNTIME_SOURCE" ]; then
+        echo "ERROR: native map control CLI is missing or not executable: $MAPCTL_RUNTIME_SOURCE" >&2
+        exit 1
+    fi
+    if [ ! -f "$MAPS_LIBRARY_SOURCE" ]; then
+        echo "ERROR: native maps service library is missing: $MAPS_LIBRARY_SOURCE" >&2
+        exit 1
+    fi
+
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
+        echo ">>> Building native DDS readiness probe..."
+        LINGTU_DDS_PROBE_BUILD_DIR="$DDS_PROBE_BUILD_DIR" \
+            bash "$DEV_DIR/scripts/build/build_dds_probe.sh"
+    fi
+    if [ ! -x "$DDS_PROBE_RUNTIME_SOURCE" ]; then
+        echo "ERROR: native DDS readiness probe is missing or not executable: $DDS_PROBE_RUNTIME_SOURCE" >&2
+        exit 1
+    fi
+
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "0" ]; then
+        echo ">>> Building native Thunder driver..."
+        LINGTU_DRIVER_BUILD_DIR="$DRIVER_BUILD_DIR" \
+            bash "$DEV_DIR/scripts/build/build_driver.sh"
+    fi
+    if [ ! -x "$DRIVER_RUNTIME_SOURCE" ]; then
+        echo "ERROR: native Thunder driver is missing or not executable: $DRIVER_RUNTIME_SOURCE" >&2
+        exit 1
+    fi
+    if [ "$REUSE_VERIFIED_NATIVE_BUILD" = "1" ]; then
+        require_reusable_artifact_fresh \
+            "$LIVOX_RUNTIME_SOURCE" "native Livox DDS runtime" \
+            "$DEV_DIR/src/drivers/real/lidar/sdk2_stream" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_livox_sdk2_stream.sh"
+        require_reusable_artifact_fresh \
+            "$SLAM_RUNTIME_SOURCE" "native SLAM DDS runtime" \
+            "$DEV_DIR/src/localization/slam/cpp" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_slam_core.sh"
+        require_reusable_artifact_fresh \
+            "$SLAM_CONTROL_SOURCE" "native SLAM control tool" \
+            "$DEV_DIR/src/localization/slam/cpp" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_slam_core.sh"
+        require_reusable_artifact_fresh \
+            "$MAPD_RUNTIME_SOURCE" "native maps runtime" \
+            "$DEV_DIR/src/maps" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_mapd.sh"
+        require_reusable_artifact_fresh \
+            "$MAPCTL_RUNTIME_SOURCE" "native map control CLI" \
+            "$DEV_DIR/src/maps" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_mapd.sh"
+        require_reusable_artifact_fresh \
+            "$MAPS_LIBRARY_SOURCE" "native maps service library" \
+            "$DEV_DIR/src/maps" \
+            "$DEV_DIR/scripts/build/build_mapd.sh"
+        require_reusable_artifact_fresh \
+            "$DDS_PROBE_RUNTIME_SOURCE" "native DDS readiness probe" \
+            "$DEV_DIR/scripts/diagnostics/native" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_dds_probe.sh"
+        require_reusable_artifact_fresh \
+            "$DRIVER_RUNTIME_SOURCE" "native Thunder driver" \
+            "$DEV_DIR/src/drivers/real/thunder/native" \
+            "$DEV_DIR/src/message/cpp" \
+            "$DEV_DIR/src/message/idl" \
+            "$DEV_DIR/scripts/build/build_driver.sh"
     fi
 }
 
@@ -199,7 +508,7 @@ find_octomap_converter_executable() {
 }
 
 require_native_artifacts() {
-    ensure_nav_endpoint_artifacts
+    ensure_field_native_artifacts
 
     NAV_KERNEL_ARTIFACT=""
     if [ "$REQUIRE_PYTHON_NAV_KERNEL" = "1" ]; then
@@ -234,26 +543,6 @@ require_native_artifacts() {
         echo "Or set LINGTU_RELEASE_REQUIRE_OCTOMAP_CONVERTER=0 for an explicit no-converter release."
         exit 1
     fi
-}
-
-require_ros2_compat_install() {
-    if [ "$REQUIRE_ROS2_COMPAT" != "1" ]; then
-        echo ">>> ROS 2 compatibility package gate skipped (set LINGTU_RELEASE_REQUIRE_ROS2_COMPAT=1 to enable)."
-        return 0
-    fi
-
-    if [ ! -d "$DEV_DIR/install" ]; then
-        echo "ERROR: $DEV_DIR/install not found, but ROS 2 compatibility was requested."
-        echo "Build compatibility packages first: cd $DEV_DIR && bash scripts/build/build_ros_workspace.sh"
-        exit 1
-    fi
-
-    for pkg in $ROS2_COMPAT_PKGS; do
-        if [ ! -d "$DEV_DIR/install/$pkg" ]; then
-            echo "ERROR: install/$pkg missing in dev checkout; refusing to cut ROS 2 compatibility release."
-            exit 1
-        fi
-    done
 }
 
 copy_octoplanner3d_executable() {
@@ -335,6 +624,133 @@ install_nav_endpoint_package() {
     echo ">>> Installed tested native endpoint package: $install_dir"
 }
 
+install_native_recording_package() {
+    local install_dir="$TARGET_DIR/build/native-recording"
+    local relative
+
+    cmake --install "$RECORDING_BUILD_DIR" --prefix "$install_dir"
+    for relative in "${RECORDING_RUNTIME_FILES[@]}"; do
+        if [ ! -x "$install_dir/$relative" ]; then
+            echo "ERROR: native recording install manifest omitted: $relative" >&2
+            exit 1
+        fi
+        chmod 0755 "$install_dir/$relative"
+    done
+    echo ">>> Installed tested native recording package: $install_dir"
+}
+
+copy_field_native_runtime_files() {
+    local sources=(
+        "$LIVOX_RUNTIME_SOURCE"
+        "$SLAM_RUNTIME_SOURCE"
+        "$SLAM_CONTROL_SOURCE"
+        "$MAPD_RUNTIME_SOURCE"
+        "$MAPCTL_RUNTIME_SOURCE"
+        "$MAPS_LIBRARY_SOURCE"
+        "$DDS_PROBE_RUNTIME_SOURCE"
+        "$DRIVER_RUNTIME_SOURCE"
+    )
+    local relatives=(
+        build/livox_sdk2_stream/livox_sdk2_stream
+        build/slam_core/slamd
+        build/slam_core/slamctl
+        build/maps/mapd
+        build/maps/lingtu-mapctl
+        build/maps/liblingtu_maps.so
+        build/dds_probe/lingtu_dds_probe
+        build/driver/lingtu_driver
+    )
+    local modes=(
+        0755
+        0755
+        0755
+        0755
+        0755
+        0644
+        0755
+        0755
+    )
+    local index
+    local destination
+
+    for index in "${!sources[@]}"; do
+        destination="$TARGET_DIR/${relatives[$index]}"
+        mkdir -p "$(dirname "$destination")"
+        cp -L "${sources[$index]}" "$destination"
+        chmod "${modes[$index]}" "$destination"
+        echo ">>> Copied native runtime: $destination"
+    done
+}
+
+verify_release_native_runtime_files() {
+    local root="${1:-$TARGET_DIR}"
+    local relative
+    local expected
+    local observed
+
+    for relative in "${RELEASE_NATIVE_RUNTIME_FILES[@]}"; do
+        if [ ! -x "$root/$relative" ]; then
+            echo "ERROR: release native runtime is missing or not executable: $root/$relative" >&2
+            return 1
+        fi
+        expected="$(readlink -f "$TARGET_DIR/$relative")"
+        observed="$(readlink -f "$root/$relative")"
+        if [ -z "$expected" ] || [ "$observed" != "$expected" ]; then
+            echo "ERROR: release runtime does not resolve to the activated target: $root/$relative" >&2
+            echo "  expected: ${expected:-missing}" >&2
+            echo "  observed: ${observed:-missing}" >&2
+            return 1
+        fi
+    done
+    for relative in "${RELEASE_NATIVE_LIBRARY_FILES[@]}"; do
+        if [ ! -f "$root/$relative" ]; then
+            echo "ERROR: release native library is missing: $root/$relative" >&2
+            return 1
+        fi
+        expected="$(readlink -f "$TARGET_DIR/$relative")"
+        observed="$(readlink -f "$root/$relative")"
+        if [ -z "$expected" ] || [ "$observed" != "$expected" ]; then
+            echo "ERROR: release library does not resolve to the activated target: $root/$relative" >&2
+            echo "  expected: ${expected:-missing}" >&2
+            echo "  observed: ${observed:-missing}" >&2
+            return 1
+        fi
+    done
+}
+
+write_release_native_sha256_manifest() {
+    local manifest="$TARGET_DIR/config/release-native-sha256.txt"
+
+    verify_release_native_runtime_files "$TARGET_DIR"
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        echo "ERROR: sha256sum is required to cut a native field release" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$manifest")"
+    (
+        cd "$TARGET_DIR"
+        sha256sum \
+            "${RELEASE_NATIVE_RUNTIME_FILES[@]}" \
+            "${RELEASE_NATIVE_LIBRARY_FILES[@]}"
+    ) >"$manifest"
+    chmod 0644 "$manifest"
+    echo ">>> Wrote native runtime SHA-256 manifest: $manifest"
+}
+
+verify_release_native_sha256_manifest() {
+    local root="${1:-$TARGET_DIR}"
+    local manifest="$root/config/release-native-sha256.txt"
+
+    if [ ! -s "$manifest" ]; then
+        echo "ERROR: release native SHA-256 manifest is missing: $manifest" >&2
+        return 1
+    fi
+    (
+        cd "$root"
+        sha256sum -c config/release-native-sha256.txt
+    )
+}
+
 write_release_runtime_contract() {
     local contract="$TARGET_DIR/config/release-runtime.env"
     mkdir -p "$(dirname "$contract")"
@@ -342,6 +758,8 @@ write_release_runtime_contract() {
         printf '# Generated by scripts/deploy/cut_release.sh for %s\n' "$VERSION"
         printf 'LINGTU_RELEASE_VERSION=%s\n' "$VERSION"
         printf 'LINGTU_NAV_GLOBAL_PLANNER=%s\n' "$SELECTED_GLOBAL_PLANNER"
+        printf '# Product identity and native control settings come only from the committed RunPlan.\n'
+        printf '# release-native-sha256.txt verifies packaged bytes and is bound into RunPlan compatibility.\n'
     } >"$contract"
     chmod 0644 "$contract"
 }
@@ -350,30 +768,78 @@ nav_status_matches_release() {
     if [ "$REQUIRE_NAV_STATUS" != "1" ]; then
         return 0
     fi
-    python3 - "$NAV_STATUS_FILE" "$SELECTED_GLOBAL_PLANNER" <<'PY'
+    python3 - \
+        "$NAV_STATUS_FILE" \
+        "$SELECTED_GLOBAL_PLANNER" \
+        "$CURRENT_PRODUCT" \
+        "$CURRENT_CONTROL_MODE" <<'PY'
 import json
 import os
 import sys
 import time
 
-path, expected = sys.argv[1:3]
+path, expected_planner, expected_product, expected_mode = sys.argv[1:5]
 try:
     stat = os.stat(path)
     if time.time() - stat.st_mtime > 15.0:
         raise RuntimeError("status snapshot is stale")
     with open(path, "r", encoding="utf-8") as handle:
         payload = json.load(handle)
+
+    schema = str(payload.get("schema_version") or "").strip()
+    endpoint = str(payload.get("endpoint") or "").strip()
+    control_mode = str(payload.get("control_mode") or "").strip().lower()
+    native_product = payload.get("native_product") or {}
+    reported_product = str(native_product.get("product") or "").strip().lower()
+    if schema != "lingtu.nav.endpoint.status.v1":
+        raise RuntimeError(f"status schema mismatch: {schema or 'missing'}")
+    if endpoint != "navd":
+        raise RuntimeError(f"endpoint mismatch: {endpoint or 'missing'}")
+    if expected_mode and control_mode != expected_mode:
+        raise RuntimeError(
+            f"control_mode mismatch: expected={expected_mode} observed={control_mode or 'missing'}"
+        )
+    if expected_product and reported_product != expected_product:
+        raise RuntimeError(
+            f"Product mismatch: expected={expected_product} observed={reported_product or 'missing'}"
+        )
+
     planner = str(payload.get("global_planner") or "").strip().lower()
-    planner_map = str(payload.get("planner_map") or "").strip()
-    if planner != expected:
-        raise RuntimeError(f"planner mismatch: expected={expected} observed={planner or 'missing'}")
-    if not planner_map:
-        raise RuntimeError("planner_map is missing")
-    basename = os.path.basename(planner_map)
-    if expected == "far" and basename != "occupancy.npz":
-        raise RuntimeError(f"FAR requires occupancy.npz, observed={planner_map}")
-    if expected == "octoplanner3d" and not basename.endswith((".ot", ".bt")):
-        raise RuntimeError(f"OctoPlanner3D requires an OctoMap artifact, observed={planner_map}")
+    if planner != expected_planner:
+        raise RuntimeError(
+            f"planner mismatch: expected={expected_planner} observed={planner or 'missing'}"
+        )
+
+    if control_mode in {"teleop", "teleop_avoid"}:
+        operator_motion = payload.get("operator_motion") or {}
+        if operator_motion.get("interface_enabled") is not True:
+            raise RuntimeError("typed operator-motion interface is not enabled")
+        if payload.get("publish_cmd_vel") is not True:
+            raise RuntimeError("teleop output publication is disabled")
+        if control_mode == "teleop_avoid":
+            required = {
+                "check_obstacle": True,
+                "use_traversability_cost": True,
+                "teleop_local_planner": True,
+            }
+            mismatched = [key for key, value in required.items() if payload.get(key) is not value]
+            if mismatched:
+                raise RuntimeError(
+                    "teleop_avoid safety configuration mismatch: " + ",".join(mismatched)
+                )
+    elif control_mode == "autonomy":
+        planner_map = str(payload.get("planner_map") or "").strip()
+        if not planner_map:
+            raise RuntimeError("planner_map is missing for autonomy")
+        basename = os.path.basename(planner_map)
+        if expected_planner == "far" and basename != "occupancy.npz":
+            raise RuntimeError(f"FAR requires occupancy.npz, observed={planner_map}")
+        if expected_planner == "octoplanner3d" and not basename.endswith((".ot", ".bt")):
+            raise RuntimeError(
+                f"OctoPlanner3D requires an OctoMap artifact, observed={planner_map}"
+            )
+    else:
+        raise RuntimeError(f"unsupported control_mode: {control_mode or 'missing'}")
 except Exception as exc:
     print(f"native nav status rejected: {exc}", file=sys.stderr)
     raise SystemExit(1)
@@ -385,66 +851,116 @@ unit_exists() {
     systemctl list-unit-files "$unit" --no-legend 2>/dev/null | grep -q "$unit"
 }
 
-unit_active_or_enabled() {
-    local unit="$1"
-    systemctl is-active --quiet "$unit" 2>/dev/null \
-        || systemctl is-enabled --quiet "$unit" 2>/dev/null
+require_persistent_driver_service() {
+    if ! unit_exists "$CURRENT_DRIVER_UNIT"; then
+        echo "ERROR: RunPlan driver unit is not installed: $CURRENT_DRIVER_UNIT" >&2
+        exit 1
+    fi
+    if ! systemctl is-enabled --quiet "$CURRENT_DRIVER_UNIT"; then
+        echo "ERROR: RunPlan driver unit must be enabled before cutting a field release: $CURRENT_DRIVER_UNIT" >&2
+        exit 1
+    fi
+    if [ ! -s "$LINGTU_CONFIG_DIR/brainstem.env" ]; then
+        echo "ERROR: persistent driver configuration is missing: $LINGTU_CONFIG_DIR/brainstem.env" >&2
+        exit 1
+    fi
 }
 
-emit_release_services() {
-    local primary="$1"
-    printf '%s\n' "$primary"
-}
-
-resolve_release_services() {
-    if [ -n "${LINGTU_RELEASE_SERVICES:-}" ]; then
-        printf '%s\n' "$LINGTU_RELEASE_SERVICES"
+product_control_adapter() {
+    if [ -f "$CURRENT_LINK/scripts/lingtu" ]; then
+        printf '%s\n' "$CURRENT_LINK/scripts/lingtu"
         return 0
     fi
+    if [ -f "$DEV_DIR/scripts/lingtu" ]; then
+        printf '%s\n' "$DEV_DIR/scripts/lingtu"
+        return 0
+    fi
+    echo "ERROR: cannot find scripts/lingtu adapter for ProductControl reapply" >&2
+    return 1
+}
 
-    local services=()
-    local candidate
-    for candidate in \
-        lingtu-livox-dds.service \
-        lingtu-slam-dds.service \
-        lingtu-traversability-dds.service \
-        lingtu-nav-dds.service; do
-        if unit_exists "$candidate"; then
-            services+=("$candidate")
-        fi
-    done
+reapply_committed_run_plan() {
+    local phase="$1"
+    local adapter
 
-    if unit_exists "lingtu-explore-dds.service" \
-        && unit_active_or_enabled "lingtu-explore-dds.service"; then
-        services+=("lingtu-explore-dds.service")
+    if ! adapter="$(product_control_adapter)"; then
+        return 1
+    fi
+    echo ">>> $phase: reapplying committed Product RunPlan via ProductControl..."
+    LINGTU_ENV="$RELEASE_ENV" GW="$GATEWAY_URL" \
+        bash "$adapter" --env "$RELEASE_ENV" svc reapply
+}
+
+verify_service_uses_current_release() {
+    local service="$1"
+    local relative="$2"
+    local label="$3"
+    local expected
+    local control_group
+    local cgroup_procs
+    local pid
+    local observed
+    local matched=0
+
+    verify_release_native_runtime_files "$CURRENT_LINK"
+    expected="$(readlink -f "$CURRENT_LINK/$relative")"
+    if [ -z "$expected" ]; then
+        echo "ERROR: activated $label binary cannot be resolved through $CURRENT_LINK" >&2
+        return 1
+    fi
+    if ! systemctl is-active --quiet "$service"; then
+        echo "ERROR: persistent $service is not active after release activation" >&2
+        return 1
     fi
 
-    for candidate in \
-        lingtu-thunder-dds-endpoint.service \
-        lingtu-thunder-lite.service \
-        lingtu.service; do
-        if unit_exists "$candidate"; then
-            services+=("$candidate")
+    control_group="$(systemctl show "$service" --property=ControlGroup --value)"
+    case "$control_group" in
+        /*) ;;
+        *)
+            echo "ERROR: $service has no usable systemd control group" >&2
+            return 1
+            ;;
+    esac
+    cgroup_procs="/sys/fs/cgroup${control_group}/cgroup.procs"
+    if [ ! -r "$cgroup_procs" ]; then
+        echo "ERROR: cannot inspect $service processes: $cgroup_procs" >&2
+        return 1
+    fi
+
+    while IFS= read -r pid; do
+        if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+            continue
+        fi
+        if observed="$(readlink -f "/proc/$pid/exe" 2>/dev/null)" \
+            && [ "$observed" = "$expected" ]; then
+            matched=1
             break
         fi
-    done
+    done <"$cgroup_procs"
 
-    if [ "${#services[@]}" -eq 0 ]; then
-        emit_release_services "lingtu-thunder-dds-endpoint.service"
-        return 0
+    if [ "$matched" != "1" ]; then
+        echo "ERROR: $service is active but no process executes the activated $label: $expected" >&2
+        return 1
     fi
-
-    printf '%s\n' "${services[*]}"
+    echo ">>> Confirmed $service executes: $expected"
 }
 
-restart_service_list() {
-    local services="$1"
-    local svc
-    for svc in $services; do
-        echo "  restart: $svc"
-        sudo systemctl restart "$svc"
-        sleep 2
-    done
+verify_driver_uses_current_release() {
+    verify_service_uses_current_release \
+        "$CURRENT_DRIVER_UNIT" \
+        "build/driver/lingtu_driver" \
+        "driver"
+}
+
+verify_mapd_uses_current_release() {
+    if [ -z "$CURRENT_MAPD_UNIT" ]; then
+        echo ">>> Current RunPlan does not select maps/mapd; runtime binary check skipped."
+        return 0
+    fi
+    verify_service_uses_current_release \
+        "$CURRENT_MAPD_UNIT" \
+        "build/maps/mapd" \
+        "mapd"
 }
 
 validate_current_link() {
@@ -505,9 +1021,13 @@ harden_release_ownership() {
 activation_destinations() {
     printf '%s\n' \
         "$LINGTU_CONFIG_DIR/thunder-runtime-env.sh" \
+        "$LINGTU_SYSTEMD_DIR/lingtu-livox-dds.service" \
+        "$LINGTU_SYSTEMD_DIR/lingtu-slam-dds.service" \
+        "$LINGTU_SYSTEMD_DIR/mapd.service" \
         "$LINGTU_SYSTEMD_DIR/lingtu-traversability-dds.service" \
         "$LINGTU_SYSTEMD_DIR/lingtu-nav-dds.service" \
-        "$LINGTU_SYSTEMD_DIR/lingtu-explore-dds.service"
+        "$LINGTU_SYSTEMD_DIR/lingtu-explore-dds.service" \
+        "$LINGTU_SYSTEMD_DIR/lingtu-driver.service"
 }
 
 release_source_for_destination() {
@@ -516,7 +1036,7 @@ release_source_for_destination() {
         thunder-runtime-env.sh)
             printf '%s\n' "$TARGET_DIR/scripts/deploy/thunder/runtime-env.sh"
             ;;
-        lingtu-traversability-dds.service|lingtu-nav-dds.service|lingtu-explore-dds.service)
+        lingtu-livox-dds.service|lingtu-slam-dds.service|mapd.service|lingtu-traversability-dds.service|lingtu-nav-dds.service|lingtu-explore-dds.service|lingtu-driver.service)
             printf '%s\n' "$TARGET_DIR/scripts/deploy/thunder/$(basename "$dest")"
             ;;
         *)
@@ -612,9 +1132,13 @@ verify_activation_files() {
     done
 
     sudo systemd-analyze verify \
+        "$LINGTU_SYSTEMD_DIR/lingtu-livox-dds.service" \
+        "$LINGTU_SYSTEMD_DIR/lingtu-slam-dds.service" \
+        "$LINGTU_SYSTEMD_DIR/mapd.service" \
         "$LINGTU_SYSTEMD_DIR/lingtu-traversability-dds.service" \
         "$LINGTU_SYSTEMD_DIR/lingtu-nav-dds.service" \
-        "$LINGTU_SYSTEMD_DIR/lingtu-explore-dds.service"
+        "$LINGTU_SYSTEMD_DIR/lingtu-explore-dds.service" \
+        "$LINGTU_SYSTEMD_DIR/lingtu-driver.service"
 }
 
 cleanup_activation_backup() {
@@ -664,8 +1188,9 @@ restore_activation_state() {
     fi
 
     sudo systemctl daemon-reload
-    if [ -n "${ROLLBACK_SERVICES:-}" ]; then
-        restart_service_list "$ROLLBACK_SERVICES"
+    if ! reapply_committed_run_plan "rollback"; then
+        echo "ERROR: rollback ProductControl reapply failed; leaving activation restored but not marked live" >&2
+        return 1
     fi
 }
 
@@ -694,14 +1219,17 @@ if [ -e "$TARGET_DIR" ]; then
     exit 1
 fi
 
+require_persistent_driver_service
 require_native_artifacts
-require_ros2_compat_install
 
 echo "========================================"
 echo "  Cutting LingTu Thunder release: $VERSION"
 echo "  From: $DEV_DIR"
 echo "  To:   $TARGET_DIR"
 echo "  Native navigation endpoint: $NAV_ENDPOINT_BUILD_DIR/navd"
+echo "  Native maps runtime: $MAPD_RUNTIME_SOURCE"
+echo "  Native map control: $MAPCTL_RUNTIME_SOURCE"
+echo "  Native DDS readiness probe: $DDS_PROBE_RUNTIME_SOURCE"
 echo "  Global planner: $SELECTED_GLOBAL_PLANNER"
 if [ -n "${NAV_KERNEL_ARTIFACT:-}" ]; then
     echo "  Optional Python navigation kernel: $NAV_KERNEL_ARTIFACT"
@@ -737,27 +1265,28 @@ rsync -aL \
     --exclude=research \
     "$DEV_DIR/" "$TARGET_DIR/"
 install_nav_endpoint_package
+install_native_recording_package
+copy_field_native_runtime_files
 copy_octoplanner3d_executable
 copy_octomap_editor_executable
 copy_octomap_converter_executable
 write_release_runtime_contract
+verify_release_native_runtime_files "$TARGET_DIR"
+write_release_native_sha256_manifest
+verify_release_native_sha256_manifest "$TARGET_DIR"
 harden_release_ownership
 
 REL_SIZE="$(du -sh "$TARGET_DIR" | awk '{print $1}')"
 echo ">>> [1/5] Done; release size: $REL_SIZE"
 
 PREV_TARGET="$(readlink "$CURRENT_LINK" 2>/dev/null || echo none)"
-ROLLBACK_SERVICES="$(resolve_release_services)"
-if [ "$RESTART_ROS2_COMPAT" = "1" ]; then
-    ROLLBACK_SERVICES="robot-fastlio2.service robot-localizer.service $ROLLBACK_SERVICES"
-fi
 BACKUP_DIR=""
 ACTIVATION_STARTED=0
 ACTIVATION_COMMITTED=0
 trap 'release_rollback_trap "$?"' EXIT
 
 echo ">>> [2/5] Previous current: $PREV_TARGET"
-echo ">>> [2/5] Rollback services: $ROLLBACK_SERVICES"
+echo ">>> [2/5] Committed Product: $CURRENT_PRODUCT ($CURRENT_RUN_PLAN_FINGERPRINT)"
 
 echo ">>> [3/5] Installing release activation files and swapping $CURRENT_LINK -> $TARGET_DIR ..."
 preflight_activation_destinations
@@ -765,55 +1294,38 @@ backup_activation_state
 ACTIVATION_STARTED=1
 install_activation_files
 sudo ln -sfn -- "$TARGET_DIR" "$CURRENT_LINK"
+verify_release_native_runtime_files "$CURRENT_LINK"
+verify_release_native_sha256_manifest "$CURRENT_LINK"
 sudo systemctl daemon-reload
 verify_activation_files
-RELEASE_SERVICES="$(resolve_release_services)"
-echo ">>> [3/5] Release services: $RELEASE_SERVICES"
 echo ">>> [3/5] Done."
 
-echo ">>> [4/5] Restarting services..."
+echo ">>> [4/5] Reapplying the committed Product RunPlan..."
 if [ "$REQUIRE_NAV_STATUS" = "1" ]; then
     sudo rm -f -- "$NAV_STATUS_FILE"
 fi
-if [ "$RESTART_ROS2_COMPAT" = "1" ]; then
-    restart_service_list "robot-fastlio2.service robot-localizer.service"
-fi
-restart_service_list "$RELEASE_SERVICES"
+reapply_committed_run_plan "activation"
+verify_driver_uses_current_release
+verify_mapd_uses_current_release
 echo ">>> [4/5] Done."
 
-echo ">>> [5/5] Waiting for /api/v1/health to report a clean module set..."
-DEADLINE=$((SECONDS + 60))
-while [ $SECONDS -lt $DEADLINE ]; do
-    HEALTH="$(curl -sf --max-time 2 "$GATEWAY_URL/api/v1/health" 2>/dev/null || true)"
-    if echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); fails=int(d.get("modules_fail", 0) or 0); ok=int(d.get("modules_ok", 0) or 0); status=str(d.get("status", d.get("ready", ""))).lower(); sys.exit(0 if fails == 0 and (ok > 0 or status in {"ok", "healthy", "ready", "true"}) else 1)' 2>/dev/null \
-        && nav_status_matches_release; then
-        OK="$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("modules_ok", "?"))')"
-        FSM="$(echo "$HEALTH" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d.get("brainstem") or {}).get("fsm", d.get("status", "?")))')"
-        echo ">>> [5/5] Healthy: modules=$OK/0, FSM=$FSM"
-        echo ""
-        echo "Release $VERSION is live."
-        echo "Host runtime env and DDS unit base files were updated from the release; /etc/lingtu env and drop-in overrides were left untouched."
-        echo "Manual rollback note: symlink-only rollback is incomplete because host runtime env and base DDS units remain from this activation."
-        echo "Re-activate the previous release host files, run sudo systemctl daemon-reload, then restart services."
-        echo "Symlink step for manual rollback:"
-        if [ "$PREV_TARGET" = "none" ]; then
-            echo "  sudo rm -f -- $CURRENT_LINK"
-        else
-            echo "  sudo ln -sfn $PREV_TARGET $CURRENT_LINK"
-        fi
-        echo "  sudo systemctl restart $RELEASE_SERVICES"
-        ACTIVATION_COMMITTED=1
-        trap - EXIT
-        cleanup_activation_backup
-        exit 0
-    fi
-    sleep 3
-done
-
-echo ">>> [5/5] FAIL: health endpoint did not report a clean module set within 60s."
-if [ "$REQUIRE_NAV_STATUS" = "1" ]; then
-    echo "    Native nav status must be fresh and match planner=$SELECTED_GLOBAL_PLANNER: $NAV_STATUS_FILE"
+echo ">>> [5/5] Committing activation after ProductControl reapply and release artifact checks..."
+echo ""
+echo "Release $VERSION is live."
+echo "Host runtime env and DDS unit base files were updated from the release; /etc/lingtu env and drop-in overrides were left untouched."
+echo "Manual rollback note: symlink-only rollback is incomplete because host runtime env and base DDS units remain from this activation."
+echo "Re-activate the previous release host files, run sudo systemctl daemon-reload, then reapply the committed RunPlan through ProductControl."
+echo "Symlink step for manual rollback:"
+if [ "$PREV_TARGET" = "none" ]; then
+    echo "  sudo rm -f -- $CURRENT_LINK"
+else
+    echo "  sudo ln -sfn $PREV_TARGET $CURRENT_LINK"
 fi
-echo "    Inspect: journalctl -u $RELEASE_SERVICES -n 100"
-echo "    Rollback is running automatically via the EXIT trap."
-exit 1
+echo "  bash $CURRENT_LINK/scripts/lingtu --env $RELEASE_ENV svc reapply"
+echo "Optional one-shot post-release gate:"
+echo "  bash $CURRENT_LINK/scripts/lingtu --env $RELEASE_ENV field-check <map-directory> --acceptance-mode field"
+ACTIVATION_COMMITTED=1
+echo ">>> [5/5] Done."
+trap - EXIT
+cleanup_activation_backup
+exit 0

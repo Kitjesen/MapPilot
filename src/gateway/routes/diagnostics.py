@@ -54,7 +54,7 @@ def clear_diagnostics_cache() -> None:
 
 ALGORITHM_BENCHMARK_SCHEMA_VERSION = "lingtu.algorithm_benchmark_latest.v1"
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[3]
-ALGORITHM_PRODUCT_PROFILES: dict[str, dict[str, Any]] = {
+ALGORITHM_BENCHMARK_VARIANTS: dict[str, dict[str, Any]] = {
     "inspection_mvp": {
         "label": "Inspection MVP",
         "claim": "routine_inspection_simulation_readiness",
@@ -390,9 +390,9 @@ def _real_runtime_evidence_artifacts_root(
         return pathlib.Path(env_root).expanduser()
     env_artifacts = os.environ.get("LINGTU_ARTIFACT_ROOT")
     if env_artifacts:
-        return pathlib.Path(env_artifacts).expanduser() / "thunder_field_runtime"
+        return pathlib.Path(env_artifacts).expanduser() / "real_runtime"
     repo_root = pathlib.Path(__file__).resolve().parents[3]
-    return repo_root / "artifacts" / "thunder_field_runtime"
+    return repo_root / "artifacts" / "real_runtime"
 
 
 def _real_runtime_evidence_max_age_s(explicit: float | None = None) -> float:
@@ -478,25 +478,25 @@ def _algorithm_benchmark_candidates(
     return sorted(candidates, key=lambda item: item[0], reverse=True)
 
 
-def _algorithm_profile_unavailable(reason: str) -> dict[str, dict[str, Any]]:
-    profiles: dict[str, dict[str, Any]] = {}
-    for name, profile in ALGORITHM_PRODUCT_PROFILES.items():
-        profiles[name] = {
+def _benchmark_variants_unavailable(reason: str) -> dict[str, dict[str, Any]]:
+    variants: dict[str, dict[str, Any]] = {}
+    for name, variant in ALGORITHM_BENCHMARK_VARIANTS.items():
+        variants[name] = {
             "name": name,
-            "label": profile["label"],
-            "claim": profile["claim"],
-            "purpose": profile["purpose"],
+            "label": variant["label"],
+            "claim": variant["claim"],
+            "purpose": variant["purpose"],
             "ok": False,
             "status": "FAIL",
             "read_only": True,
             "ros2_topic_required": False,
             "publishes": [],
             "claim_allowed": False,
-            "required_gate_sequence": list(profile["required_gate_sequence"]),
-            "missing_or_failed": list(profile["required_gate_sequence"]),
+            "required_gate_sequence": list(variant["required_gate_sequence"]),
+            "missing_or_failed": list(variant["required_gate_sequence"]),
             "blockers": [reason],
         }
-    return profiles
+    return variants
 
 
 def _missing_algorithm_benchmark_summary(reason: str) -> dict[str, Any]:
@@ -533,9 +533,9 @@ def _algorithm_gate_failing(gate: Mapping[str, Any]) -> bool:
     }
 
 
-def _algorithm_product_profile_status(
+def _algorithm_benchmark_variant_status(
     name: str,
-    profile: Mapping[str, Any],
+    variant: Mapping[str, Any],
     *,
     latest: Mapping[str, Any],
     missing_or_failed: list[str],
@@ -544,11 +544,11 @@ def _algorithm_product_profile_status(
     freshness: float,
     claim_boundary_ok: bool,
 ) -> dict[str, Any]:
-    required = [str(item) for item in profile.get("required_gate_sequence") or () if item]
+    required = [str(item) for item in variant.get("required_gate_sequence") or () if item]
     required_set = set(required_sequence)
     missing_set = set(missing_or_failed)
     gates = _mapping(latest.get("gates"))
-    profile_missing: list[str] = []
+    variant_missing: list[str] = []
     blockers: list[str] = []
 
     if report_age_s > freshness:
@@ -560,23 +560,23 @@ def _algorithm_product_profile_status(
         gate_payload = _mapping(gates.get(gate))
         gate_failed = bool(gate_payload) and _algorithm_gate_failing(gate_payload)
         if gate not in required_set:
-            profile_missing.append(gate)
-            blockers.append(f"profile required gate missing from summary: {gate}")
+            variant_missing.append(gate)
+            blockers.append(f"benchmark variant required gate missing from summary: {gate}")
         elif gate in missing_set or gate_failed:
-            profile_missing.append(gate)
-            blockers.append(f"profile required gate is not passing: {gate}")
+            variant_missing.append(gate)
+            blockers.append(f"benchmark variant required gate is not passing: {gate}")
 
     if name == "dimos_benchmark" and latest.get("ok") is not True:
         blockers.append("strict benchmark summary is not passing")
 
-    profile_missing = list(dict.fromkeys(profile_missing))
+    variant_missing = list(dict.fromkeys(variant_missing))
     blockers = list(dict.fromkeys(blockers))
-    ok = not blockers and not profile_missing
+    ok = not blockers and not variant_missing
     return {
         "name": name,
-        "label": profile.get("label") or name,
-        "claim": profile.get("claim") or name,
-        "purpose": profile.get("purpose") or "",
+        "label": variant.get("label") or name,
+        "claim": variant.get("claim") or name,
+        "purpose": variant.get("purpose") or "",
         "ok": ok,
         "status": "PASS" if ok else "FAIL",
         "read_only": True,
@@ -584,7 +584,7 @@ def _algorithm_product_profile_status(
         "publishes": [],
         "claim_allowed": ok,
         "required_gate_sequence": required,
-        "missing_or_failed": profile_missing,
+        "missing_or_failed": variant_missing,
         "blockers": blockers,
     }
 
@@ -612,15 +612,17 @@ def build_algorithm_benchmark_latest_summary(
         "max_age_s": freshness,
         "preset": "dimos_benchmark",
         "source": "server_sim_closure",
-        "active_product_profile": "inspection_mvp",
-        "strict_benchmark_profile": "dimos_benchmark",
+        "active_benchmark_variant": "inspection_mvp",
+        "strict_benchmark_variant": "dimos_benchmark",
         "summary_schema_version": None,
         "claim_allowed": False,
         "missing_or_failed": [],
         "required_gate_sequence": list(DIMOS_BENCHMARK_REQUIRED_GATES),
         "validation_flow": [],
         "claim_boundary": {},
-        "product_profiles": _algorithm_profile_unavailable("algorithm benchmark summary not found"),
+        "benchmark_variants": _benchmark_variants_unavailable(
+            "algorithm benchmark summary not found"
+        ),
         "dimos_gap": build_dimos_gap_report(
             _missing_algorithm_benchmark_summary("algorithm benchmark summary not found"),
             source="algorithm_benchmark_report_not_found",
@@ -687,10 +689,10 @@ def build_algorithm_benchmark_latest_summary(
         runtime_dataflow=runtime_dataflow,
         include_summary=False,
     )
-    product_profiles = {
-        name: _algorithm_product_profile_status(
+    benchmark_variants = {
+        name: _algorithm_benchmark_variant_status(
             name,
-            profile,
+            variant,
             latest=latest,
             missing_or_failed=missing_or_failed,
             required_sequence=required_sequence,
@@ -698,7 +700,7 @@ def build_algorithm_benchmark_latest_summary(
             freshness=freshness,
             claim_boundary_ok=claim_boundary_ok,
         )
-        for name, profile in ALGORITHM_PRODUCT_PROFILES.items()
+        for name, variant in ALGORITHM_BENCHMARK_VARIANTS.items()
     }
     reason = None
     if blockers:
@@ -716,7 +718,7 @@ def build_algorithm_benchmark_latest_summary(
         "required_gate_sequence": required_sequence,
         "validation_flow": list(validation.get("validation_flow") or []),
         "claim_boundary": claim_boundary,
-        "product_profiles": product_profiles,
+        "benchmark_variants": benchmark_variants,
         "dimos_gap": dimos_gap,
         "blocking_categories": _mapping(validation.get("blocking_categories")),
         "blockers": blockers,

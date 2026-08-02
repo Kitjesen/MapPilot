@@ -97,9 +97,9 @@ def test_simulation_contract_documents_switch_dataflow_and_frame_boundary():
     doc = _read("docs/architecture/SIMULATION_INTEGRATION_CONTRACT.md")
 
     assert "`endpoint`" in doc
-    assert "`robot_preset`" in doc
+    assert "RobotConfig selector" in doc
     assert "runtime-contract --json" in doc
-    assert "runtime-spec explore --endpoint mujoco_live" in doc
+    assert "runtime-spec explore --adapter mujoco_live" in doc
     assert "/api/v1/navigation/status" in doc
     assert "`runtime.blockers`" in doc
     assert "`launcher` and `launcher_args`" in doc
@@ -214,7 +214,8 @@ def test_runtime_interface_is_single_source_for_frames_topics_formats_and_algori
     )
     assert ARTIFACT_FORMATS["map_pcd"].path == "map.pcd"
     assert ARTIFACT_FORMATS["tomogram"].required_metadata
-    assert profile_data_source("sim_industrial").data_source == "gazebo_industrial"
+    with pytest.raises(KeyError):
+        profile_data_source("sim_industrial")
     assert profile_data_source("map").data_source == "real_s100p"
     real_lidar = LIDAR_EXTRINSICS["real_mid360"]
     cfg_lidar = LidarConfig()
@@ -276,7 +277,7 @@ def test_runtime_contract_manifest_exports_topics_formats_algorithms_sources_and
     assert TOPICS.lidar_scan in manifest["data_sources"]["real_s100p"]["normalized_outputs"]
     assert manifest["artifact_formats"]["tomogram"]["path"] == "tomogram.pickle"
     assert manifest["profile_data_sources"]["sim_mujoco_live"]["data_source"] == "mujoco_fastlio2_live"
-    assert manifest["profile_data_sources"]["sim_cmu_tare"]["data_source"] == "cmu_unity_external"
+    assert "sim_cmu_tare" not in manifest["profile_data_sources"]
     fastlio_aliases = {item["source"]: item["target"] for item in manifest["adapter_aliases"]["fastlio2"]}
     assert fastlio_aliases["/cloud_registered"] == TOPICS.registered_cloud
     assert fastlio_aliases["/cloud_map"] == TOPICS.map_cloud
@@ -443,11 +444,11 @@ def test_runtime_stream_contract_language_is_not_ros2_topic_only():
     assert "native streams or topics" in sim_contract
 
 
-def test_travexplorer_adoption_doc_preserves_module_first_boundary():
-    doc = _read("docs/architecture/TRAVEXPLORER_LINGTU_ADOPTION.md")
+def test_travexplorer_adoption_doc_preserves_product_runtime_boundary():
+    doc = _read("docs/research/travexplorer_adoption.md")
 
     assert "not a directly integrable ROS2 package" in doc
-    assert "Module-first" in doc
+    assert "Product-defined runtime boundary" in doc
     assert "TravExplorerBridgeModule" in doc
     assert "nav.velocity_mux" in doc
     assert "nav.safety" in doc
@@ -696,18 +697,6 @@ def test_path_follower_uses_runtime_default_frame_helpers():
     assert "map_frame_id" in source
     assert "self._odom_frame_id = map_frame_id()" in source
     assert 'self._odom_frame_id = "map"' not in source
-
-
-def test_legacy_sim_launch_keeps_map_cloud_out_of_registered_scan_path():
-    launch = _read("sim/launch/sim.launch.py")
-
-    assert launch.isascii()
-    assert "from runtime.runtime_interface import FRAMES, TOPICS" in launch
-    assert '("/cloud_map", TOPICS.map_cloud)' in launch
-    assert '("/cloud_map", TOPICS.registered_cloud)' not in launch
-    assert '"/nav/registered_cloud"' not in launch
-    assert "FRAMES.map" in launch
-    assert "FRAMES.odom" in launch
 
 
 def test_src_mujoco_bridges_use_runtime_contract_frames():
@@ -1230,11 +1219,12 @@ def test_gazebo_nav_loop_gate_publishes_only_goal_and_checks_motion():
     assert "gazebo_lidar_derived" in frontier_smoke
 
 
-def test_gazebo_industrial_demo_uses_lingtu_module_stack_navigation():
+def test_gazebo_industrial_demo_does_not_restore_retired_host_profile_stack():
     demo = _read("sim/scripts/launch_lingtu_gazebo_industrial_demo.sh")
 
-    assert "gazebo_lingtu_stack.py" in demo
-    assert '--profile "$LINGTU_PROFILE"' in demo
+    assert not (REPO_ROOT / "sim/scripts/gazebo_lingtu_stack.py").exists()
+    assert "gazebo_lingtu_stack.py" not in demo
+    assert '--profile "$LINGTU_PROFILE"' not in demo
     assert (
         "sim_navigation.launch.py"
         not in demo.split("start_demo() {", 1)[1].split(
@@ -1302,16 +1292,13 @@ def test_gazebo_industrial_demo_uses_lingtu_module_stack_navigation():
     assert "--require-room-forward-exploration" in gate
     assert "--require-trajectory-quality" in gate
     assert "--require-terrain-map-topics" in gate
-    assert "--check-explored-map-pct" in gate
     assert "--frontier-pcd-out" in gate
     assert "--frontier-tomogram-out" in gate
     assert "explored_map.pcd" in gate
     assert "tomogram.pickle" in gate
-    assert 'scripts" / "planning" / "plan_preview.py' in gate
-    assert '"pct"' in gate
-    assert '"--internal-only"' in gate
-    assert '"--strict"' in gate
-    assert "explored_map_pct" in gate
+    assert "--check-explored-map-pct" not in gate
+    assert "plan_preview.py" not in gate
+    assert "explored_map_pct" not in gate
     assert "trajectory_quality" in gate
     assert "cmu_style_terrain_topics" in gate
     assert "frontier_gate_requested" in gate

@@ -14,6 +14,12 @@ struct MotionStopResult {
   std::string reason;
 };
 
+struct MotionStopTerminalBarrierResult {
+  bool accepted{false};
+  std::string reason;
+  bool terminal_committed{false};
+};
+
 struct ResumeAutonomyRequest {
   std::string precondition_error;
   bool operator_takeover_latched{false};
@@ -34,6 +40,7 @@ struct MotionStopActions {
   std::function<bool()> rolling_segment_active;
   std::function<bool(const std::string &)> preempt_rolling_segment;
   std::function<bool(const std::string &)> clear_motion_outputs;
+  std::function<bool(const std::string &)> suspend_motion_outputs;
 
   std::function<void()> cancel_control;
   std::function<void()> stop_control;
@@ -62,15 +69,33 @@ class MotionStopCoordinator {
   bool clearEndpointMotion(const std::string &reason) const;
 
   MotionStopResult cancel() const;
+  // commit_terminal must be non-empty and copy-safe/idempotent across retries.
+  MotionStopTerminalBarrierResult
+  cancelPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const;
+  MotionStopResult pauseTask(MotionStopTerminalCommit commit_paused) const;
+  MotionStopResult confirmGoalReplanStop(const std::string &reason) const;
   MotionStopResult commitGoalTerminalAfterStop(const std::string &reason,
                                                MotionStopTerminalCommit commit_terminal) const;
   MotionStopResult stop() const;
+  MotionStopResult stopWithoutTerminalCommit() const;
+  // commit_terminal must be non-empty and copy-safe/idempotent across retries.
+  MotionStopTerminalBarrierResult
+  stopPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const;
   MotionStopResult estop(const std::string &reason) const;
+  MotionStopResult estopWithoutTerminalCommit(const std::string &reason) const;
+  // commit_terminal must be non-empty and copy-safe/idempotent across retries.
+  MotionStopTerminalBarrierResult
+  estopPreservingGoalTerminal(const std::string &estop_reason,
+                              MotionStopTerminalCommit commit_terminal) const;
   MotionStopResult clearEstop(const std::string &precondition_error) const;
   MotionStopResult resumeAutonomy(const ResumeAutonomyRequest &request) const;
 
   bool driverAuthorityLost(const std::string &blocker) const;
   bool keepZeroFresh() const;
+  FinalShutdownResult finalShutdownWithoutTerminalCommit() const;
+  FinalShutdownResult
+  finalShutdownPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const;
+  // Compatibility alias. Production shutdown uses the ticketed transaction.
   FinalShutdownResult finalShutdown() const;
 
  private:
@@ -83,6 +108,14 @@ class MotionStopCoordinator {
                                             bool fail_closed) const;
   MotionStopResult confirmLastZero(const std::string &confirmed_reason,
                                    const std::string &failure_suffix) const;
+  MotionStopTerminalBarrierResult
+  runStopPipeline(std::optional<MotionStopTerminalCommit> commit_terminal) const;
+  MotionStopTerminalBarrierResult
+  runEstopPipeline(const std::string &estop_reason,
+                   std::optional<MotionStopTerminalCommit> commit_terminal,
+                   bool defer_goal_terminal) const;
+  FinalShutdownResult
+  runFinalShutdownPipeline(std::optional<MotionStopTerminalCommit> commit_terminal) const;
 
   bool publish_cmd_vel_{false};
   MotionStopActions actions_;

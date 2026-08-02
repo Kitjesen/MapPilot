@@ -8,7 +8,7 @@ Architecture
          |
     rt/gnss/fix, rt/gnss/status, optional rt/gnss/odom
          |
-    DDS/replay/compat adapters, or this Python module in non-product profiles
+    DDS/replay/compat adapters, or this Python module in local/development Profiles
          |
     SLAM backend (fastlio2_gnss) uses gnss_odom as global PGO factor
 

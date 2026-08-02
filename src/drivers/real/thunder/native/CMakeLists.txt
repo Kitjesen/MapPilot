@@ -7,17 +7,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(CTest)
 
+if(MSVC)
+  set(_LINGTU_DRIVER_WARNINGS /W4)
+else()
+  set(_LINGTU_DRIVER_WARNINGS -Wall -Wextra -Wpedantic)
+endif()
+
 add_library(lingtu_driver_core STATIC
+  cmd_vel_writer_gate.cpp
   command_freshness_gate.cpp
   core.cpp
   config.cpp)
 target_include_directories(lingtu_driver_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_compile_options(lingtu_driver_core PRIVATE -Wall -Wextra -Wpedantic)
+target_compile_options(lingtu_driver_core PRIVATE ${_LINGTU_DRIVER_WARNINGS})
 
 if(BUILD_TESTING)
   add_executable(test_driver_core test_core.cpp)
   target_link_libraries(test_driver_core PRIVATE lingtu_driver_core)
-  target_compile_options(test_driver_core PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(test_driver_core PRIVATE ${_LINGTU_DRIVER_WARNINGS})
   add_test(NAME test_driver_core COMMAND test_driver_core)
 endif()
 
@@ -35,7 +42,12 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
 
   find_package(CycloneDDS REQUIRED)
   find_package(Protobuf REQUIRED)
-  find_package(gRPC CONFIG REQUIRED)
+  find_package(gRPC CONFIG QUIET)
+  if(NOT TARGET gRPC::grpc++)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GRPCPP REQUIRED IMPORTED_TARGET GLOBAL grpc++)
+    add_library(gRPC::grpc++ ALIAS PkgConfig::GRPCPP)
+  endif()
   find_program(CYCLONEDDS_IDLC_EXECUTABLE NAMES idlc REQUIRED)
 
   get_filename_component(_LINGTU_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLUTE)
@@ -105,14 +117,14 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
     CycloneDDS::ddsc
     gRPC::grpc++
     protobuf::libprotobuf)
-  target_compile_options(lingtu_driver_io PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(lingtu_driver_io PRIVATE ${_LINGTU_DRIVER_WARNINGS})
 
   add_executable(lingtu_driver main.cpp status.cpp)
   target_link_libraries(lingtu_driver PRIVATE
     lingtu_driver_core
     lingtu_driver_io
     pthread)
-  target_compile_options(lingtu_driver PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(lingtu_driver PRIVATE ${_LINGTU_DRIVER_WARNINGS})
 
   if(BUILD_TESTING)
     add_executable(test_driver_io test_io.cpp status.cpp)
@@ -120,7 +132,7 @@ if(LINGTU_DRIVER_BUILD_RUNTIME)
       lingtu_driver_core
       lingtu_driver_io
       pthread)
-    target_compile_options(test_driver_io PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(test_driver_io PRIVATE ${_LINGTU_DRIVER_WARNINGS})
     add_test(NAME test_driver_io COMMAND test_driver_io)
   endif()
 endif()

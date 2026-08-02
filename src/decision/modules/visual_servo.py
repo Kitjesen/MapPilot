@@ -573,7 +573,7 @@ class VisualServoModule(Module, layer=4):
             ),
             "converged": False,
             "requires": [
-                "motion authority through CmdVelMux or an explicit calibration mode",
+                "motion authority through the configured velocity arbiter or an explicit calibration mode",
                 "fresh odometry sampled while relay excitation is applied",
                 "safety interlock and rollback before persisting tuned gains",
             ],

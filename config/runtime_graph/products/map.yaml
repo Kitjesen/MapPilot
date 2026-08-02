@@ -1,5 +1,7 @@
 schema_version: lingtu.runtime_graph.product.v1
 name: map
+contracts:
+  - lingtu.product.map.v1
 summary: Build live map artifacts from native LiDAR-inertial SLAM output.
 operator_switchable: true
 product_mode: mapping
@@ -14,42 +16,41 @@ online_hot_switch_supported: false
 data_plane: typed_dds
 control_owner: operator
 autonomy_owner: none
+native_nav:
+  control_mode: teleop
+  publish_cmd_vel: true
+  check_obstacle: false
+  use_traversability_cost: false
+  allow_teleop_takeover: false
+  teleop_local_planner: false
 processes:
   - lidar
   - slam
+  - maps
   - nav
   - driver
-  - runtime
-required_topics:
-  - /lidar/raw_frame
-  - /imu/raw
-  - /slam/odometry
-  - /slam/registered_cloud
-  - /slam/map_cloud
-  - /slam/saved_map_cloud
-  - /slam/localization_health
-  - /nav/command/request
-  - /nav/command/ack
-  - /nav/cmd_vel
-required_capabilities:
-  - native_slam_mapping
-  - map_artifact_save
-  - map_pcd_to_octomap_artifact
-  - teleop
-  - command_staleness_gate
-  - velocity_limit
-  - final_cmd_vel_single_writer
+  - camera
+  - host
+critical_modules:
+  - host.bus
+  - maps.service
+  - camera
+  - nav.commands
+  - GatewayModule
 forbidden_modules:
+  - TeleopModule
+  - nav.velocity_mux
   - SimEndpointDriverModule
   - nav.mission
   - nav.local_planner
   - nav.path_follower
+  - OccupancyGridModule
+  - VoxelGridModule
+  - ElevationMapModule
+  - ESDFModule
+  - TraversabilityCostModule
+  - SemanticMapModule
 forbidden_claims:
   - module_sim_real_equivalence
   - ros2_bridge_required
   - autonomous_navigation
-target_chain:
-  - Livox DDS publishes /lidar/raw_frame and /imu/raw.
-  - Fast-LIO2 native SLAM publishes /slam/odometry, /slam/registered_cloud, and /slam/map_cloud.
-  - Native command endpoint accepts gated operator velocity requests while mapping and remains the sole writer of /nav/cmd_vel.
-  - Gateway/MapService saves map.pcd and builds metadata plus octomap.ot for later navigation.

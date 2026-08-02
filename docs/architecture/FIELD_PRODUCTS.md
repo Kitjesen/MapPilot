@@ -1,0 +1,191 @@
+# LingTu Field Products
+
+Status: current field Product guide
+Audience: Product, Host, native endpoint, Gateway, and deployment maintainers
+Replaced by: not replaced
+
+This document defines runtime ownership for top-level field Products. The
+machine-readable source of truth is `config/runtime_graph/products/*.yaml`.
+Documentation must not invent a second process list, topic list, or fallback
+policy.
+
+## Two Runtime Scopes
+
+| Scope | Owner | Contains | Does not own |
+| --- | --- | --- | --- |
+| Product | Assembly output applied by ProductControl | Native process roles, one Host process, topics, capabilities, switch policy | Domain algorithms or Module wires |
+| Host | Blueprint | Gateway, Agent, MCP, semantic logic, low-rate adapters, selected development Modules | systemd, native endpoints, field hot paths |
+
+`Module` and `Blueprint` remain valid inside the Host. They are not the field
+process orchestrator. Field Products use native typed DDS between processes;
+algorithms inside one C++ endpoint call each other directly.
+Every field Product that declares `host` follows this same Host scope; native
+`mapd`, `navd`, or `slamd` ownership does not create a Blueprint bypass.
+
+## Field Ownership
+
+```text
+LiDAR / IMU
+  -> native sensor process
+  -> slamd
+  -> odometry + registered cloud + MapObservation
+  -> mapd + standalone traversability
+  -> navd
+  -> /nav/cmd_vel
+  -> driver
+  -> Brainstem
+
+HostBus <-> Gateway / Agent / MCP
+```
+
+The following ownership rules are mandatory:
+
+- `navd` is the only field navigation state authority and final
+  `/nav/cmd_vel` writer.
+- standalone native traversability is the only `/nav/traversability` writer.
+  A mapd visualization or artifact layer must never replace that control input.
+- `mapd` owns realtime `MapObservation` ingestion, live map layers, bounded
+  accumulation, and `/maps/scene`.
+- native map-store/build services own persistent map records and artifacts.
+- the driver is the only Brainstem hardware writer.
+- HostBus projects typed native state into Host messages. Gateway must not
+  infer a second navigation or map state machine.
+- a missing or stale required native component blocks readiness; field
+  Products have no Python algorithm fallback.
+
+## Product Matrix
+
+| Product | SLAM mode | Saved map | Control owner | Native purpose |
+| --- | --- | ---: | --- | --- |
+| `teleop` | none | no | operator | Typed operator authority and direct velocity intent through native limits and final output gates. |
+| `teleop_avoid` | mapping | no | operator | Live odometry/cloud/traversability feed native local detour planning; no global planner or saved map. |
+| `map` | mapping | no | operator | Build a live map and transactionally save persistent map products. |
+| `explore` | mapping without a map; localization with a map | optional | exploration endpoint | Use the live route to grow a map, or the map route to cover a validated saved map. |
+| `nav` | localization | yes | native navigation | Saved-map global planning, local avoidance, tracking, and final command output. |
+| `tracking` | localization | yes | native navigation | Follow explicit map-frame goals without semantic target selection. |
+| `inspection` | localization | yes | native navigation | Execute a persisted, task-addressed multi-point inspection route. |
+
+`lingtu explore start` selects live mapping. `lingtu explore start --map MAP`
+selects saved-map localization. These are two cold-restart variants of one
+Product, not separate operator modes. Product activation leaves the exploration
+task idle; `lingtu explore task start` is the explicit motion-capable step.
+
+Every current field Product uses `switch_policy: cold_restart`. A future hot
+switch requires an explicit Product contract and acceptance evidence; sharing
+similar processes is not sufficient.
+
+## Command Contracts
+
+### Teleop
+
+```text
+operator client
+  -> /nav/operator_motion/control  (claim / hold / release)
+  -> /nav/operator_motion/sample   (fresh body-frame intent)
+  -> navd final gates
+  -> /nav/cmd_vel
+  -> driver
+```
+
+An ACK proves command admission only. Native operator-motion status proves the
+logical endpoint state; driver ACK and actuator evidence are separate.
+
+### Teleop With Avoidance
+
+```text
+operator sample
+  + /slam/odometry
+  + /slam/registered_cloud
+  + /nav/traversability
+  -> native LocalPlanner
+  -> native PathFollower
+  -> final collision/staleness/authority gates
+  -> /nav/cmd_vel
+```
+
+`teleop_avoid` runs SLAM in mapping mode and has `requires_map: false`. It must
+not receive localization-map arguments, planner-map arguments, or a promoted
+temporary `map.pcd`. No local path means zero output, not blind direct motion.
+
+### Autonomous Navigation
+
+```text
+typed goal command
+  -> navd goal lifecycle
+  -> validated active map identity
+  -> native global planner
+  -> native LocalPlanner
+  -> native PathFollower
+  -> final gates
+  -> /nav/cmd_vel
+```
+
+`NavigationCommandAck`, `NavigationGoalStatus`, and `NavigationState` have
+different meanings. Clients correlate terminal task results by `request_id`;
+they do not infer completion from the current state snapshot.
+
+### Mapping And Save
+
+```text
+MapObservation
+  -> mapd realtime layers and /maps/scene
+
+SaveMap
+  -> freeze session/epoch/sequence
+  -> request complete SLAM snapshot
+  -> stage source and derived artifacts
+  -> validate frame/hash/health
+  -> atomically publish MapRecord
+```
+
+Realtime observations are for live layers and visualization. They are not the
+sole persistent-map truth because DDS may intentionally drop old frames.
+
+## Host Boundary
+
+The field Host may contain `host.bus`, Gateway, command adapters, semantic
+logic, and a low-rate maps adapter. It must not contain any module listed in a
+Product's `forbidden_modules`, including `nav.mission`, Python local planner,
+Python path follower, or Python velocity mux in field modes.
+
+Current field Product declarations still list `maps.service` as a low-rate Host adapter.
+That adapter is useful during migration, but it is not map ownership: it must
+not compute realtime layers or publish a competing control map. Remaining
+direct map-file operations are a tracked gap until Gateway uses only typed
+native map control/query contracts.
+
+## Development And Simulation Compatibility
+
+Local development and `sim_nav` may use the Python chain:
+
+```text
+Navigation -> LocalPlanner -> PathFollower -> velocity arbiter -> local driver
+```
+
+They may also use Python occupancy, voxel, elevation, ESDF, semantic, and
+traversability Modules. These implementations remain useful for unit tests and
+portable simulation, but they do not prove field equivalence and must never be
+silently selected when a required native field process is unavailable.
+
+## Readiness And Validation
+
+A field Product is ready only when its declared process, topic, freshness,
+single-writer, and control-owner gates pass. At minimum verify:
+
+- selected RunPlan fingerprint and env, plus each required communication endpoint contract;
+- required native binaries and source-closure freshness;
+- unique `/nav/cmd_vel` and `/nav/traversability` writers;
+- fresh SLAM, mapd scene/state, navigation state, and driver ACK where required;
+- map identity for saved-map Products;
+- zero output after stop, cancel, stale input, authority loss, or cleanup.
+
+Useful checks:
+
+```bash
+uv run --locked python lingtu.py runtime-audit
+uv run --locked python -m pytest tests/contracts/test_runtime_architecture_boundaries.py -q
+uv run --locked python -m pytest src/runtime/tests/test_profile_graph_snapshots.py -q
+```
+
+MuJoCo, replay, no-motion target checks, and supervised field motion are
+different evidence classes. Record only the claim proved by the selected gate.

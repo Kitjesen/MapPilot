@@ -30,7 +30,11 @@
 - 首次部署后验证的负责操作员；以及
 - 本地紧急、恢复和日志采集流程。
 
-LingTu 采用 Module-First。Python 负责编排 Module 图和产品行为；高频现场路径通过显式的原生 typed-DDS 边界传递。不要为了让临时工作站命令成功，而把原生现场 profile 改成依赖 ROS 的运行时。
+LingTu 的现场外层由不可变 `Product` 定义，`ProductControl`
+负责切换及进程监督；`Blueprint` 只装配 Python Host 内的 Gateway、Agent、
+MCP 和低频适配器。LiDAR、SLAM、实时地图、导航和驱动通过原生 typed-DDS
+边界运行。不要为了让临时工作站命令成功，而把现场 profile 改成依赖 ROS
+或 Python 高频处理的运行时。
 
 对于真实导航现场 profile，机器人侧 SLAM 服务拥有传感器生命周期，并通过原生端点适配器发布状态和定位。除非有意改变并重新验证传感器/进程设计，否则不要用本地托管的 localizer 替代这一归属模型。
 
@@ -51,7 +55,7 @@ LingTu 采用 Module-First。Python 负责编排 Module 图和产品行为；高
 
 使用目标的常规部署流程安装获批准的构件，并保持以下隔离：
 
-- LingTu 与机器人侧原生服务可被独立观测和重启。
+- LingTu Host 与机器人侧原生服务可按各自角色独立观测；重启范围、顺序和就绪检查由当前 RunPlan 与 ProductControl 统一拥有。
 - 地图包必须保持完整；不要把单个点云或规划器构件复制到其他目录后称为已恢复地图。
 - 活动现场端点必须保持显式。任务 profile 本身并不代表一个安全或获授权的物理连接。
 - 使用 ROS 2 时，应将其限制在显式的兼容性/评估工作流中，而不是让它成为隐式产品依赖。
@@ -65,7 +69,6 @@ LingTu 采用 Module-First。Python 负责编排 Module 图和产品行为；高
     bash scripts/lingtu status
     bash scripts/lingtu health
     bash scripts/lingtu doctor --non-motion --json --strict
-    bash scripts/lingtu plan-preview --internal-only --strict
 
 **预期结果：** 每个命令都会标识选定运行边界，并报告受限的健康状态或具体阻塞项。请将输出随部署记录保存。
 
@@ -76,9 +79,9 @@ LingTu 采用 Module-First。Python 负责编排 Module 图和产品行为；高
 对于基于已保存地图的导航，请在不下发运动命令的情况下检查地图溯源，并评估精确路线：
 
     bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
-    bash scripts/lingtu routecheck --map <map-name> --goal <x> <y> <yaw>
+    bash scripts/lingtu system-acceptance --map <map-name> --goal <x> <y> <yaw>
 
-Routecheck 是无运动的规划门槛。其成功仅表明所选地图、位姿、规划器与目标足够兼容，可以评估路线；它不授权导航目标。应修复地图、定位或配置边界，而不是用原始速度绕过规划器。
+`system-acceptance` 默认不下发运动命令，并由 ProductControl 管理所需的 Product 切换与清理。其成功仅表明所选地图、位姿、规划器与目标足够兼容；它不授权导航目标。应修复地图、定位或配置边界，而不是用原始速度绕过规划器。
 
 ## 6. 交接给受监督操作
 

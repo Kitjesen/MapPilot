@@ -1,81 +1,75 @@
-# LingTu Docs Triage
+# Documentation Policy And Cleanup Ledger
 
-Status: current cleanup decision
-Date: 2026-07-18
+Status: current documentation policy
+Updated: 2026-07-28
 
-This document decides how the docs tree should be read and cleaned. It is a
-triage map, not another architecture contract.
+This file defines where documentation belongs and records destructive cleanup.
+It is not an architecture or runtime contract.
 
-## 1. Rules
+## Information Architecture
 
-- Current behavior lives in `README.md`, `CURRENT.md`, `architecture/*CONTRACT.md`,
-  `QUICKSTART.md`, `REPO_LAYOUT.md`, and package-local READMEs.
-- Plans live in `plans/`. A plan is not current behavior.
-- Evidence lives in `07-testing/`. Evidence is date-bound.
-- Historical or branch-specific material lives in `archive/`.
-- Hidden tool-owned trees such as `.qoder/`, `.hermes/`, `.codex/`, and `.omx/`
-  are generated workspace memory, not maintained product documentation. Refresh
-  them with their owning tool instead of copying their claims into `docs/`.
-- If a document has mojibake, branch names, old robot names, or old ROS-first
-  assumptions, it is not authoritative until rewritten.
-
-## 2. Root Docs
-
-| File | Decision | Reason |
+| Location | Owns | Must not contain |
 | --- | --- | --- |
-| `README.md` | keep current | Main entrypoint. |
-| `CURRENT.md` | keep current | One-page authority map. |
-| `QUICKSTART.md` | keep current | Current staged local/sim/field entrypoint. |
-| `REPO_LAYOUT.md` | keep current | Placement rule source. |
-| `TUNING.md` | keep current | Current tuning summary. |
-| `known_gaps.md` | keep current | Current product gaps. |
-| `engineering_boundaries_phase1.md` | demote to plan/archive candidate | Phase-1 migration note, mostly superseded by current contracts. |
-| `REVIEW_2026Q2.md` | archive candidate | Historical branch review, contains mojibake and branch-specific claims. |
+| `docs/README.md` | Public documentation entry and reading order. | Detailed contracts, plans, or dated evidence. |
+| `docs/CURRENT.md` | Authority map for current behavior. | Implementation history. |
+| `docs/01-*` through `docs/10-*` | Task-oriented guides and operator procedures. | Competing architecture definitions. |
+| `docs/architecture/` | Current contracts and accepted architecture decisions. | Research notes, abandoned proposals, dated run results. |
+| `docs/api/` | Generated API inventories and generation instructions. | Hand-maintained API snapshots. |
+| `docs/plans/` | The single active roadmap. | Completed plans or historical PRDs. |
+| `docs/research/` | Upstream reviews, algorithm investigations, and migration studies. | Product claims or acceptance evidence. |
+| `docs/07-testing/` | Executable acceptance definitions and reusable checklists. | One-off design proposals. |
+| `docs/07-testing/field-runs/` | Immutable, date-prefixed run evidence. | Current backlog or architecture truth. |
 
-## 3. Architecture Docs
+Package-local `README.md` files explain only that package's public boundary,
+build, and focused tests. They link to central contracts instead of copying
+system architecture.
 
-| File | Decision | Reason |
-| --- | --- | --- |
-| `README.md` | keep current | Architecture directory index. |
-| `SYSTEM_DESIGN.md` | keep current | Paper-style current architecture. |
-| `GLOBAL_PLANNING_CONTRACT.md` | keep current | Global planner boundary and UI/transport payload. |
-| `NAVIGATION_COMPUTE_CONTRACT.md` | keep current | Navigation compute chain. |
-| `local_planner_io_contract.md` | keep current | Local planner I/O and known gap. |
-| `LINGTU_RUNTIME_BUS_DECISION.md` | keep current | Port/Wire/Transport decision. |
-| `ros_frame_contract.md` | keep current | Frame contract. |
-| `semantic_layer_contract.md` | keep current, review later | Small contract; still useful. |
-| `SIMULATION_INTEGRATION_CONTRACT.md` | keep current, review later | Current sim boundary, but long and likely needs condensation. |
-| `ROS_ROLE_REPLACEMENT_MAP.md` | migration reference | Useful during ROS replacement, not core architecture entry. |
-| `DART_RUST_PACKAGE_MIGRATION.md` | plan/proposal | Future UI/package direction. |
-| `PORTABLE_LEAN_PACKAGE_MATRIX.md` | plan/proposal | Packaging decision support, not runtime contract. |
-| `POSE_GRAPH_OPT_GTSAM_COVERAGE.md` | evidence/reference | Large coverage note, not architecture entry. |
-| `THUNDER_RUNTIME_REFACTOR_PLAN.md` | plan/proposal | Refactor plan. |
-| `TRAVEXPLORER_LINGTU_ADOPTION.md` | plan/reference | Adoption note, not current core contract. |
+## Authority Rules
 
-## 4. Plans
+1. Running configuration and typed schemas outrank prose when they conflict.
+2. `docs/architecture/` describes accepted current behavior only.
+3. A plan, research note, unit test, or source file does not prove a Product
+   capability. Use the evidence levels in
+   [`NAVIGATION_CAPABILITY_MATRIX.md`](architecture/NAVIGATION_CAPABILITY_MATRIX.md).
+4. Field claims require a dated record and exact Product/binary provenance.
+5. Historical context belongs in git history. Do not recreate `docs/archive/`
+   or tool-generated `docs/superpowers/` trees.
+6. Hidden tool state such as `.qoder/`, `.hermes/`, `.codex/`, and `.omx/` is
+   not maintained product documentation.
 
-`docs/plans/` now keeps only active forward-looking work. Retired PRDs and
-historical plans were removed; use git history when old context is needed.
+## Cleanup Performed On 2026-07-28
 
-| File | Decision |
-| --- | --- |
-| `current-roadmap.md` | current product/runtime roadmap and remaining validation gates |
+Deleted because a current contract or git history already preserves the useful
+information:
 
-## 5. Testing Docs
+- dated `docs/superpowers/` implementation plans;
+- Q2 and phase-one architecture reviews;
+- retired Thunder and Python navigation transport plans;
+- duplicate simulation closure audits, delivery backlogs, and scene-selection
+  notes;
+- generated progress-report Markdown, PDF, DOCX, and its one-off generator;
+- the dated hand-maintained Gateway API snapshot;
+- superseded naming and Dart/Rust migration proposals.
 
-| Area | Decision |
-| --- | --- |
-| `07-testing/README.md` | current validation entrypoint |
-| `07-testing/*AUDIT*.md` | evidence snapshot, date-bound |
-| `07-testing/*GATE*.md` | gate definitions or evidence, verify before citing |
-| `07-testing/p0_*.sh` | runnable/manual checks |
-| `07-testing/SIMULATION_*` | simulation planning/reference, not field readiness |
-| `07-testing/field-runs/` | field evidence, date-bound |
+Moved without changing their conclusions:
 
-## 6. Next Cleanup Order
+- upstream and algorithm investigations into `docs/research/`;
+- reusable semantic-memory validation into `docs/07-testing/`;
+- dated MuJoCo policy evidence into `docs/07-testing/field-runs/`.
 
-1. Move or clearly mark `REVIEW_2026Q2.md` as historical.
-2. Condense `SIMULATION_INTEGRATION_CONTRACT.md` into a short current contract,
-   leave evidence details in `07-testing/`.
-3. Split oversized PRDs only after their implementation boundaries stabilize.
-4. Recheck dated field-evidence links after each Sunrise deployment sweep.
+## Placement Checklist
+
+Before adding a document, answer these questions:
+
+1. Is this current behavior, intended work, research, a reusable gate, or dated
+   evidence?
+2. Which existing index will link to it?
+3. What code/config/schema is the source of truth?
+4. What status and date make its authority unambiguous?
+5. Can an existing document be updated instead of creating another file?
+
+Run the repository documentation guard before review:
+
+```bash
+python tools/validate/validate_docs.py
+```

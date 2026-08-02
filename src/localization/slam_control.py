@@ -17,14 +17,14 @@ def slam_control_binary() -> str:
 
     repo_root = Path(__file__).resolve().parents[2]
     candidates = (
-        repo_root / "build" / "slam_core" / "lingtu_slam_control",
-        Path("/opt/lingtu/current/build/slam_core/lingtu_slam_control"),
+        repo_root / "build" / "slam_core" / "slamctl",
+        Path("/opt/lingtu/current/build/slam_core/slamctl"),
     )
     for candidate in candidates:
         if candidate.exists():
             return str(candidate)
 
-    resolved = shutil.which("lingtu_slam_control")
+    resolved = shutil.which("slamctl")
     if resolved:
         return resolved
     raise FileNotFoundError(

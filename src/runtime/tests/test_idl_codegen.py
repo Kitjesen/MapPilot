@@ -4,7 +4,7 @@ import types as py_types
 import unittest
 from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import List, get_type_hints
+from typing import get_type_hints
 
 # Load the code generator as a standalone module; it lives outside src/.
 _CODEGEN_PATH = Path(__file__).resolve().parents[3] / "scripts" / "codegen" / "idl_to_python.py"
@@ -228,6 +228,21 @@ class TestCodeGenerator(unittest.TestCase):
         # All generated source must compile.
         compile(generated["types.py"], "<types.py>", "exec")
         compile(generated["__init__.py"], "<__init__.py>", "exec")
+
+    def test_real_idl_declares_final_extensibility_for_every_struct(self):
+        """CycloneDDS upgrades must not change the wire layout implicitly."""
+        idl_path = Path(__file__).resolve().parents[3] / "src" / "message" / "idl" / "lingtu_slam.idl"
+        lines = idl_path.read_text(encoding="utf-8").splitlines()
+        struct_lines = [
+            index
+            for index, line in enumerate(lines)
+            if line.startswith("struct ")
+        ]
+
+        self.assertTrue(struct_lines)
+        for index in struct_lines:
+            self.assertGreater(index, 0)
+            self.assertEqual(lines[index - 1].strip(), "@final", lines[index])
 
 
 if __name__ == "__main__":

@@ -1034,8 +1034,16 @@ int main() {
   RequireContains(map_types, "\"record_schema_version\":\"map.record\"");
   RequireContains(map_types, "\"path_planning_2d\":\"OCCUPANCY_2D\"");
   RequireContains(map_types, "\"builders\":{");
-  RequireContains(map_types, "\"algorithm_embedded\":false");
-  RequireContains(map_types, "\"supported_build_modes\":[\"external_pcl_converter\"]");
+  if (map_types.find("\"algorithm_embedded\":true") != std::string::npos) {
+    RequireContains(
+        map_types,
+        "\"supported_build_modes\":[\"native_octomap\",\"external_pcl_converter\"]");
+  } else {
+    RequireContains(map_types, "\"algorithm_embedded\":false");
+    RequireContains(
+        map_types,
+        "\"supported_build_modes\":[\"external_pcl_converter\"]");
+  }
 
   const auto failed_active = ReadSetActiveJson(service, "map_1", true);
   RequireContains(failed_active, "\"success\":false");

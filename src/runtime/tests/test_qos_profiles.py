@@ -91,8 +91,27 @@ class TestRawConfigAndMapping:
         assert mapping["/camera/color/image_raw"] == "camera_stream"
         assert mapping["/camera/depth/image_raw"] == "camera_stream"
         assert mapping["/camera/color/camera_info"] == "camera_info"
+        assert mapping["/lidar/raw_frame"] == "raw_lidar_stream"
+        assert mapping["rt/lidar/raw_frame"] == "raw_lidar_stream"
+        assert mapping["/lidar/raw_packet"] == "raw_lidar_stream"
+        assert mapping["rt/lidar/raw_packet"] == "raw_lidar_stream"
+        assert mapping["/imu/raw"] == "sensor_stream"
+        assert mapping["rt/imu/raw"] == "sensor_stream"
         assert mapping["/slam/odom_prior"] == "sensor_stream"
+        assert mapping["rt/slam/odom_prior"] == "sensor_stream"
         assert mapping["/nav/traversability"] == "map_grid"
+
+    def test_operator_motion_topics_have_explicit_qos_profiles(self):
+        mapping = qos_mod._topic_to_profile()
+
+        assert mapping["/nav/operator_motion/control"] == "operator_motion_control"
+        assert mapping["rt/nav/operator_motion/control"] == "operator_motion_control"
+        assert mapping["/nav/operator_motion/ack"] == "operator_motion_ack"
+        assert mapping["rt/nav/operator_motion/ack"] == "operator_motion_ack"
+        assert mapping["/nav/operator_motion/sample"] == "operator_motion_sample"
+        assert mapping["rt/nav/operator_motion/sample"] == "operator_motion_sample"
+        assert mapping["/nav/operator_motion/status"] == "operator_motion_status"
+        assert mapping["rt/nav/operator_motion/status"] == "operator_motion_status"
 
         stale_topics = {
             "/camera/color",
@@ -121,6 +140,34 @@ class TestRawConfigAndMapping:
             "rt/nav/semantic/resolved_goal",
         ):
             assert f'"{topic}"' not in header
+
+    def test_native_raw_lidar_qos_is_bounded_latest_stream(self):
+        header = (REPO_ROOT / "src/message/cpp/dds_qos_profiles.hpp").read_text(
+            encoding="utf-8"
+        )
+
+        raw_profile = header.split("case QosProfile::RawLidarStream:", 1)[1].split(
+            "case QosProfile::HighFreqState:", 1
+        )[0]
+        assert "dds_qset_reliability(qos, DDS_RELIABILITY_BEST_EFFORT" in raw_profile
+        assert "dds_qset_durability(qos, DDS_DURABILITY_VOLATILE)" in raw_profile
+        assert "dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 2)" in raw_profile
+        assert "dds_qset_lifespan(qos, DDS_MSECS(350))" in raw_profile
+        assert "dds_qset_resource_limits(qos, 2, 1, 2)" in raw_profile
+
+        sensor_profile = header.split("case QosProfile::SensorStream:", 1)[1].split(
+            "case QosProfile::RawLidarStream:", 1
+        )[0]
+        assert "dds_qset_history(qos, DDS_HISTORY_KEEP_LAST, 256)" in sensor_profile
+
+        lookup = header.split('dds_topic == "rt/lidar/raw_frame"', 1)[1].split(
+            "// Camera", 1
+        )[0]
+        assert 'dds_topic == "rt/lidar/raw_packet"' in lookup
+        assert "return QosProfile::RawLidarStream;" in lookup
+        assert 'dds_topic == "rt/imu/raw"' in lookup
+        assert 'dds_topic == "rt/slam/odom_prior"' in lookup
+        assert "return QosProfile::SensorStream;" in lookup
 
     def test_missing_config_degrades_to_empty(self, monkeypatch, tmp_path):
         monkeypatch.setattr(qos_mod, "_QOS_CONFIG_PATH", tmp_path / "nope.yaml")
@@ -226,6 +273,14 @@ class TestTranslation:
         assert _FakePolicy.Durability.Volatile in q.policies
         # lifespan 200ms present
         assert ("Lifespan", {"nanoseconds": 200_000_000}) in q.policies
+
+    def test_raw_lidar_profile_is_shallow_and_expiring(self, fake_cyclone):
+        q = qos_mod.qos_for_topic("rt/lidar/raw_frame")
+        assert isinstance(q, _FakeQos)
+        assert _FakePolicy.Reliability.BestEffort in q.policies
+        assert _FakePolicy.Durability.Volatile in q.policies
+        assert ("KeepLast", 2) in q.policies
+        assert ("Lifespan", {"nanoseconds": 350_000_000}) in q.policies
 
     def test_reliable_transient_local_profile(self, fake_cyclone):
         q = qos_mod.qos_for_profile("global_path")

@@ -55,13 +55,26 @@ LocalDiagnostics activeDiagnostics(const lingtu::nav::plan::NavLoopOutput &outpu
   return local;
 }
 
+std::string activeMapIdentityBlocker(const std::optional<lingtu::nav::plan::MapIdentity> &expected,
+                                     const GoalPlanMapIdentityResult &current) {
+  if (!expected || !expected->valid()) {
+    return "active_path_map_identity_missing";
+  }
+  if (!current.identity || !current.identity->valid()) {
+    return "active_map_unavailable_during_navigation";
+  }
+  if (!lingtu::nav::plan::sameMapIdentity(*expected, *current.identity)) {
+    return "active_map_changed_during_navigation";
+  }
+  return {};
+}
 }  // namespace
 
 AutonomyTickController::AutonomyTickController(AutonomyTickActions actions)
     : actions_(std::move(actions)) {
-  if (!actions_.steady_now_s || !actions_.compute_planner_inputs || !actions_.tick_autonomy ||
-      !actions_.evaluate_path_safety || !actions_.evaluate_command_safety ||
-      !actions_.stop_linear_motion) {
+  if (!actions_.steady_now_s || !actions_.compute_planner_inputs ||
+      !actions_.current_map_identity || !actions_.tick_autonomy || !actions_.evaluate_path_safety ||
+      !actions_.evaluate_command_safety || !actions_.stop_linear_motion) {
     throw std::invalid_argument("autonomy tick actions must all be configured");
   }
 }
@@ -71,6 +84,66 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
 
   if (input.map_body && input.path_active && input.input_gate.ready && input.motion_allowed) {
     result.handled = true;
+    const auto current_map = actions_.current_map_identity();
+    const std::string map_blocker =
+        activeMapIdentityBlocker(input.active_path_map_identity, current_map);
+    if (!map_blocker.empty()) {
+      result.clear_local_path = true;
+      result.clear_local_planner_debug = true;
+      auto local = input.previous_local;
+      local.seen = true;
+      local.active = false;
+      local.path_found = false;
+      local.near_field_stop = true;
+      local.reason = map_blocker;
+      local.final_safety_applied = false;
+      local.final_safety_stopped = true;
+      local.final_safety_slowed = false;
+      local.final_safety_limited = false;
+      local.final_safety_reason = map_blocker;
+      local.final_safety_obstacle_distance_m = -1.0;
+      local.final_safety_traversability_cost = -1.0;
+      local.path_follower_cmd_vel = {};
+      local.cmd_vel = {};
+      result.local = std::move(local);
+      result.publish.cmd_vel = input.publish_cmd_vel;
+      result.publish.command = {};
+      result.delta.cmd_vel_count = input.publish_cmd_vel ? 1U : 0U;
+      result.outcome.kind = AutonomyTickOutcomeKind::kGoalFailed;
+      result.outcome.reason = map_blocker;
+      return result;
+    }
+    if (input.precomputed_replan_trigger) {
+      const GoalReplanTrigger &trigger = *input.precomputed_replan_trigger;
+      const std::string reason =
+          trigger.reason.empty() ? "persistent_path_obstruction" : trigger.reason;
+      actions_.stop_linear_motion();
+      result.clear_local_path = true;
+      result.clear_local_planner_debug = true;
+      auto local = input.previous_local;
+      local.seen = true;
+      local.active = false;
+      local.path_found = false;
+      local.near_field_stop = true;
+      local.reason = reason;
+      local.final_safety_applied = false;
+      local.final_safety_stopped = true;
+      local.final_safety_slowed = false;
+      local.final_safety_limited = false;
+      local.final_safety_reason = reason;
+      local.final_safety_obstacle_distance_m = -1.0;
+      local.final_safety_traversability_cost = -1.0;
+      local.path_follower_cmd_vel = {};
+      local.cmd_vel = {};
+      result.local = std::move(local);
+      result.publish.cmd_vel = input.publish_cmd_vel;
+      result.publish.command = {};
+      result.delta.cmd_vel_count = input.publish_cmd_vel ? 1U : 0U;
+      result.outcome.kind = AutonomyTickOutcomeKind::kGoalFailed;
+      result.outcome.reason = reason;
+      result.outcome.replan_trigger = trigger;
+      return result;
+    }
     const auto planner_inputs = actions_.compute_planner_inputs(input.timing);
     const bool has_obstacles =
         planner_inputs.planner_obstacles != nullptr && !planner_inputs.planner_obstacles->empty();
@@ -137,6 +210,15 @@ AutonomyTickResult AutonomyTickController::tick(const AutonomyTickInput &input) 
       result.outcome.kind = input.rolling_segment_active
                                 ? AutonomyTickOutcomeKind::kRollingRecoveryExhausted
                                 : AutonomyTickOutcomeKind::kGoalFailed;
+      if (!input.rolling_segment_active) {
+        GoalReplanTrigger trigger;
+        trigger.kind = GoalReplanTriggerKind::kLocalRecoveryExhausted;
+        trigger.reason = result.outcome.reason;
+        if (input.active_goal_identity) {
+          trigger.goal = *input.active_goal_identity;
+        }
+        result.outcome.replan_trigger = std::move(trigger);
+      }
     } else if (output.goal_reached) {
       if (input.rolling_segment_active) {
         result.outcome.kind = AutonomyTickOutcomeKind::kRollingReached;

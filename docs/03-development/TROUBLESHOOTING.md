@@ -17,7 +17,7 @@ This page distinguishes three kinds of actions:
 | Label | Meaning | Examples |
 | --- | --- | --- |
 | **Read-only** | Observes state without changing the session, goal, or command output. | `status`, `health`, `doctor --non-motion`, `dataflow`, logs, artifact gates, plan preview. |
-| **Recovery** | Changes process/session state but is not itself a motion command. | Restarting the native localization service, relocalizing a saved map, starting a navigation session. |
+| **Recovery** | Changes process/session state but is not itself a motion command. | Restarting one RunPlan logical process, relocalizing a saved map, starting a navigation session. |
 | **Motion-capable** | May send a goal or allow a velocity-producing chain. | Submitting a navigation goal, teleoperation, explicit motion smoke tests. |
 
 Run read-only checks first. Do not restart a field service, start a session,
@@ -73,7 +73,7 @@ Use this order before changing state. It makes the result useful to the next
 person who reads the incident.
 
 ```text
-1. Identify the expected profile/endpoint contract.
+1. Identify the expected local Profile or Product/env contract.
 2. Observe session, health, native services, and data flow.
 3. Isolate the first missing or stale boundary.
 4. Validate map/localization/planner readiness without motion.
@@ -109,20 +109,20 @@ authorization.
 
 ### Confirm the expected contract before changing anything
 
-If the observed system does not match the intended product/profile/endpoint,
+If the observed system does not match the intended local Profile or Product/env,
 diagnose configuration first. Do not fix a profile mismatch by starting
 unrelated services.
 
 ```bash
-# Replace nav and thunder_field with the profile/endpoint under investigation.
-bash scripts/lingtu runtime-spec nav --endpoint thunder_field
+# Replace MAP_NAME with the saved map under investigation.
+python -m lingtu.control switch nav --env real --map MAP_NAME --dry-run --json
 bash scripts/lingtu runtime-contract --json
 bash scripts/lingtu runtime-audit --json
 ```
 
-The runtime specification answers which data source, frame contract, endpoint,
-and ownership model the profile resolved to. The audit checks that the source
-and documentation contracts agree. For a local developer catalog, use:
+The ProductControl dry run answers which RunPlan, env, process roles,
+map staging, and ownership model would be applied. The audit checks that the
+source and documentation contracts agree. For a local developer catalog, use:
 
 ```bash
 uv run --locked python lingtu.py --list
@@ -161,16 +161,17 @@ Read the first failing boundary rather than the last visible symptom. Examples:
 
 ### Recover deliberately
 
-If service restart is authorized and the fault is confined to localization,
-prefer the narrow recovery:
+If service restart is authorized and the fault is confined to the logical SLAM
+process, prefer the narrow recovery:
 
 ```bash
-bash scripts/lingtu svc restart localization
+bash scripts/lingtu svc restart slam
 ```
 
-Use `svc restart all` only after evidence shows that the broader native chain
-needs a cold restart. Re-run `status`, `doctor --non-motion`, and a bounded
-`soak` afterward. A restarted process is not automatically navigation-ready.
+Use `svc reapply` (equivalently, `svc restart all`) only after evidence shows
+that the exact committed Product must be reapplied. Re-run `status`,
+`doctor --non-motion`, and a bounded `soak` afterward. A restarted process is
+not automatically navigation-ready.
 
 ## Symptom: LiDAR, IMU, or map-cloud data is missing
 
@@ -220,10 +221,10 @@ localization blocker even if SLAM is still publishing a heartbeat.
 
 | Operation | What it proves | When to use it |
 | --- | --- | --- |
-| `svc restart localization` | The native SLAM/localization service can restart and publish status. | The process/dataflow is stale or failed. |
+| `svc restart slam` | The single logical SLAM process can restart and publish status. | That process or its dataflow is stale or failed. |
 | `nav relocalize <map> X Y YAW` | A saved map accepts an operator-provided initial pose. | A known approximate pose is available. |
 | `nav global-relocalize <map>` | The backend can seek a saved-map alignment without a provided seed. | The relevant saved-map workflow authorizes it. |
-| `slamcompare --map <map>` | Stationary behavior meets the configured comparison/drift gate. | A no-motion localization acceptance check is required. |
+| `doctor --non-motion --strict` | The active RunPlan and declared services pass stationary readiness checks. | A no-motion runtime acceptance check is required. |
 
 Relocalization and session start change runtime state. Use them only under the
 correct field procedure; after either one, re-check status and readiness before
@@ -231,7 +232,7 @@ sending a goal.
 
 ```bash
 # Recovery actions; do not run these merely to inspect state.
-bash scripts/lingtu svc restart localization
+bash scripts/lingtu svc restart slam
 bash scripts/lingtu nav relocalize <map> <x> <y> <yaw>
 bash scripts/lingtu nav global-relocalize <map>
 ```
@@ -246,17 +247,14 @@ A saved map is a package, not just `map.pcd`. The exact artifact set depends on
 the selected planner, but map provenance and matching planner artifacts are
 part of the contract.
 
-### Read-only artifact and plan checks
+### Artifact and integrated field checks
 
 ```bash
 # Use the full saved-map directory, not only the point-cloud file.
 bash scripts/lingtu saved-map-artifact-gate <map-dir> --require-occupancy --json
 
-# No goal, stop, or velocity command is published by this preview.
-bash scripts/lingtu plan-preview --internal-only --strict
-
-# No-motion route preflight against a selected map and candidate goal.
-bash scripts/lingtu routecheck --map <map> --goal <x> <y> <yaw>
+# Integrated field evidence; no motion unless --allow-motion is supplied.
+bash scripts/lingtu system-acceptance --map <map> --goal <x> <y> <yaw>
 ```
 
 For OctoPlanner3D navigation, expect a valid map package with `map.pcd`,
@@ -283,14 +281,14 @@ evidence that one of the required readiness gates is working.
 ```bash
 bash scripts/lingtu status
 bash scripts/lingtu health
-bash scripts/lingtu plan-preview --internal-only --strict
-bash scripts/lingtu routecheck --map <map> --goal <x> <y> <yaw>
+bash scripts/lingtu doctor --non-motion --strict
+bash scripts/lingtu system-acceptance --map <map> --goal <x> <y> <yaw>
 bash scripts/lingtu log error
 ```
 
 Work through this order:
 
-1. Confirm the intended profile/endpoint and active map.
+1. Confirm the intended Product/env and active map.
 2. Confirm fresh localization and a valid map-frame relationship.
 3. Pass the saved-map artifact gate.
 4. Pass a no-motion plan preview/route preflight.
@@ -327,7 +325,7 @@ Check these conditions:
 | Is safety blocking motion? | A safety stop, stale localization/map, or obstacle gate should result in zero command. Diagnose the blocker before changing policy. |
 | Is there one final field writer? | The selected native endpoint owns final field command output. A duplicate writer is a fault, not redundancy. |
 | Is the active source valid? | Teleop, visual servo, recovery, and path following use a priority/timeout arbitration path in Module-owned profiles. |
-| Is operator takeover configured? | Assisted teleop and autonomy handoff are profile/endpoint features; they are not a general bypass of safety. |
+| Is operator takeover configured? | Assisted teleop and autonomy handoff are Product features; they are not a general bypass of safety. |
 
 `teleop` is not the same as `teleop_avoid`. The assisted mode has its own
 native local-planning/safety branch, and a blocked scene should still command
@@ -335,7 +333,7 @@ zero. Releasing a deadman/teleop lease should not be "fixed" by reusing an old
 goal or command.
 
 For command ownership and priority details, read the
-[product mode runtime contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
+[field Product guide](../architecture/FIELD_PRODUCTS.md)
 and [navigation compute contract](../architecture/NAVIGATION_COMPUTE_CONTRACT.md).
 
 ## Symptom: Gateway, REST, WebSocket, or MCP is unreachable
@@ -360,14 +358,15 @@ ss -tnlp | grep -E '5050|8090'
 See [API reference](../08-reference/README.md) for interface inventory. A
 network listener being alive does not imply that navigation is ready.
 
-## Symptom: profile, endpoint, frame, or transport mismatch
+## Symptom: Profile, Product/env, frame, or transport mismatch
 
 Symptoms include a correct-looking process graph paired with the wrong map
-frame, an incompatible runtime endpoint, unexpected local-vs-DDS behavior, or
-a simulation adapter active in a field profile.
+frame, an incompatible RunPlan, unexpected local-vs-DDS behavior, or
+a simulation adapter active in `env=real`.
 
 ```bash
-bash scripts/lingtu runtime-spec <profile> --endpoint <endpoint>
+python -m lingtu.control switch <product> --env real --dry-run --json
+python -m lingtu.control switch <product> --env sim --backend <backend> --dry-run --json
 bash scripts/lingtu runtime-contract --json
 bash scripts/lingtu runtime-audit --json
 bash scripts/lingtu dataflow <topic-or-channel>
@@ -375,11 +374,12 @@ bash scripts/lingtu dataflow <topic-or-channel>
 
 Fix the source of truth in this order:
 
-1. canonical product profile;
-2. robot preset and runtime defaults;
-3. selected endpoint and its explicit adapter configuration;
-4. explicit user override;
-5. product Blueprint/wire or native endpoint contract.
+1. local Profile, if this is a local development run;
+2. Product declaration in `config/runtime_graph/products/`;
+3. env implementation in `config/runtime_graph/envs/`;
+4. `RobotConfig`, only as internal static `env=real` robot data;
+5. explicit user override;
+6. Product Blueprint/wire or native endpoint contract.
 
 Do not work around a mismatch by putting a transport-specific conditional into
 navigation, perception, decision, or gateway business logic. Route contracts
@@ -424,7 +424,6 @@ diagnostic branch for the normal native field product runtime.
 ```bash
 # Explicit compatibility inspection only.
 bash scripts/lingtu doctor --ros2
-bash scripts/lingtu svc status-legacy
 ```
 
 Rules:
@@ -459,7 +458,7 @@ bash scripts/lingtu log all
 
 Include in an incident report:
 
-- selected profile, endpoint, product session, and active map name;
+- selected local Profile or Product/env, product session, and active map name;
 - exact command and timestamp of the first failure;
 - the first blocker/error, not only the last cascading error;
 - native service state and relevant bounded journal excerpt;

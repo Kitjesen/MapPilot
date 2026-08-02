@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace lingtu::maps {
 namespace {
@@ -183,6 +188,32 @@ std::string Sha256File(const std::filesystem::path& path) {
     }
   }
   return hasher.FinalHex();
+}
+
+std::string Sha256FileDescriptor(int fd) {
+#if defined(_WIN32)
+  (void)fd;
+  throw std::runtime_error("file descriptor hashing is not supported on this platform");
+#else
+  Sha256 hasher;
+  std::array<unsigned char, 64 * 1024> buffer{};
+  off_t offset = 0;
+  for (;;) {
+    const ssize_t count = ::pread(fd, buffer.data(), buffer.size(), offset);
+    if (count < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      throw std::runtime_error("failed to hash file descriptor");
+    }
+    if (count == 0) {
+      break;
+    }
+    hasher.Update(buffer.data(), static_cast<std::size_t>(count));
+    offset += count;
+  }
+  return hasher.FinalHex();
+#endif
 }
 
 std::string Sha256Text(const std::string& value) {

@@ -65,6 +65,22 @@ CloudType::Ptr transformedCloud(const CloudType::Ptr &source, const M4F &transfo
     return cloud;
 }
 
+CloudType::Ptr cloudWithOutsideMapPoints(const CloudType::Ptr &source)
+{
+    auto cloud = std::make_shared<CloudType>(*source);
+    for (int i = 0; i < 400; ++i) {
+        PointType point;
+        point.x = 10.0F + static_cast<float>(i % 20) * 0.05F;
+        point.y = 10.0F + static_cast<float>((i / 20) % 10) * 0.05F;
+        point.z = 5.0F + static_cast<float>(i / 200) * 0.05F;
+        cloud->push_back(point);
+    }
+    cloud->width = static_cast<std::uint32_t>(cloud->size());
+    cloud->height = 1U;
+    cloud->is_dense = true;
+    return cloud;
+}
+
 }  // namespace
 
 int main()
@@ -81,12 +97,25 @@ int main()
     localizer.setInput(cloud);
     M4F pose = M4F::Identity();
     require(localizer.evaluate(pose, 0.3), "identity seed should verify");
+    require(localizer.getLastInputPoints() == static_cast<int>(cloud->size()),
+            "seed verification must retain the finite input count");
     require(localizer.getLastEvaluatedPoints() == static_cast<int>(cloud->size()),
             "seed verification must score the full finite input");
     require(localizer.getLastInliers() == static_cast<int>(cloud->size()),
             "identity seed must retain all points as inliers");
     require(localizer.getLastFitnessScore() < 1e-8,
             "identity seed fitness must be near zero");
+
+    const CloudType::Ptr boundary_scan = cloudWithOutsideMapPoints(cloud);
+    localizer.setInput(boundary_scan);
+    require(localizer.evaluate(pose, 0.3),
+            "finite-map overlap should ignore scan points outside map support");
+    require(localizer.getLastInputPoints() == static_cast<int>(boundary_scan->size()),
+            "finite-map diagnostics must retain the full input count");
+    require(localizer.getLastEvaluatedPoints() == static_cast<int>(cloud->size()),
+            "only points inside the finite map support must enter the overlap denominator");
+    require(localizer.getLastInliers() == static_cast<int>(cloud->size()),
+            "supported identity points must remain inliers");
 
     M4F true_pose = M4F::Identity();
     const float true_yaw = 0.006F;
@@ -109,6 +138,12 @@ int main()
 
     localizer.setInput(cloud);
     pose = M4F::Identity();
+    require(localizer.getLastInputPoints() == static_cast<int>(cloud->size()),
+            "registration input must retain every finite point");
+    require(localizer.refineMap()->size() == cloud->size(),
+            "refine target must remain immutable across scan updates");
+    require(localizer.roughMap()->size() == cloud->size(),
+            "rough target must remain immutable across scan updates");
     require(localizer.align(pose), "identity registration should converge");
     require(localizer.getLastConverged(), "registration must report convergence");
     require(localizer.getLastInliers() >= 30, "registration must report inliers");
@@ -123,6 +158,14 @@ int main()
     pose = M4F::Identity();
     require(localizer.align(pose), "non-finite scan points must be filtered");
 
+    require(localizer.setMap(cloud_with_nan),
+            "a resized map snapshot must replace cached target search structures");
+    localizer.setInput(cloud_with_nan);
+    pose = M4F::Identity();
+    require(localizer.align(pose),
+            "registration must survive a repeated map update with a changed point count");
+
+    require(localizer.setMap(cloud), "the original map snapshot should be restorable");
     localizer.setInput(makeSmallCloud(cloud));
     pose = M4F::Identity();
     require(!localizer.align(pose), "undersized GICP scans must be rejected");

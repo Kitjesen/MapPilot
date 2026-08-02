@@ -22,6 +22,10 @@ const topbarSource = readFileSync(
   new URL('../src/components/Topbar.tsx', import.meta.url),
   'utf8',
 )
+const sseSource = readFileSync(
+  new URL('../src/hooks/useSSE.ts', import.meta.url),
+  'utf8',
+)
 
 test('inspection tab uses the product workbench as the run entry', () => {
   assert.match(appSource, /InspectionWorkbench/)
@@ -29,17 +33,34 @@ test('inspection tab uses the product workbench as the run entry', () => {
   assert.match(topbarSource, /key: 'inspection', en: 'Inspect'/)
 })
 
-test('inspection API surface exposes route store and native run controls', () => {
+test('dashboard emergency stop always reports command acceptance or failure', () => {
+  assert.match(appSource, /const response = await api\.sendStop\(\)/)
+  assert.match(appSource, /api\.formatCommandAck\(response, '紧急停止'\)/)
+  assert.match(appSource, /api\.formatCommandError\(error/)
+  assert.doesNotMatch(appSource, /best-effort/)
+})
+
+test('inspection API surface exposes one task-addressed lifecycle', () => {
   assert.match(apiSource, /fetchInspectionRoutes/)
   assert.match(apiSource, /fetchInspectionRoute/)
   assert.match(apiSource, /saveInspectionRoute/)
-  assert.match(apiSource, /startInspectionRoute/)
-  assert.match(apiSource, /pauseInspectionRun/)
-  assert.match(apiSource, /resumeInspectionRun/)
-  assert.match(apiSource, /cancelInspectionRun/)
+  assert.match(apiSource, /fetchInspectionTasks/)
+  assert.match(apiSource, /fetchInspectionTask/)
+  assert.match(apiSource, /startInspectionTask/)
+  assert.match(apiSource, /pauseInspectionTask/)
+  assert.match(apiSource, /resumeInspectionTask/)
+  assert.match(apiSource, /cancelInspectionTask/)
+  assert.match(apiSource, /inspectionTaskActionPath/)
+  assert.match(apiSource, /inspection_task_pause/)
+  assert.match(apiSource, /inspection_task_resume/)
+  assert.match(apiSource, /inspection_task_cancel/)
   assert.match(apiSource, /fetchInspectionStatus/)
   assert.match(apiSource, /fetchInspectionEvidence/)
   assert.match(apiSource, /inspectionEvidenceArtifactUrl/)
+  assert.doesNotMatch(apiSource, /startInspectionRoute/)
+  assert.doesNotMatch(apiSource, /pauseInspectionRun/)
+  assert.doesNotMatch(apiSource, /resumeInspectionRun/)
+  assert.doesNotMatch(apiSource, /cancelInspectionRun/)
 })
 
 test('workbench builds routes from saved locations and avoids acceptance runner', () => {
@@ -48,10 +69,16 @@ test('workbench builds routes from saved locations and avoids acceptance runner'
   assert.match(workbenchSource, /movePoint/)
   assert.match(workbenchSource, /failurePolicy/)
   assert.match(workbenchSource, /maxRetries/)
-  assert.match(workbenchSource, /api\.startInspectionRoute/)
-  assert.match(workbenchSource, /api\.pauseInspectionRun/)
-  assert.match(workbenchSource, /api\.resumeInspectionRun/)
-  assert.match(workbenchSource, /api\.cancelInspectionRun/)
+  assert.match(workbenchSource, /activeTaskId/)
+  assert.match(workbenchSource, /taskStatus/)
+  assert.match(workbenchSource, /api\.startInspectionTask/)
+  assert.match(workbenchSource, /api\.pauseInspectionTask/)
+  assert.match(workbenchSource, /api\.resumeInspectionTask/)
+  assert.match(workbenchSource, /api\.cancelInspectionTask/)
+  assert.doesNotMatch(workbenchSource, /api\.startInspectionRoute/)
+  assert.doesNotMatch(workbenchSource, /api\.pauseInspectionRun/)
+  assert.doesNotMatch(workbenchSource, /api\.resumeInspectionRun/)
+  assert.doesNotMatch(workbenchSource, /api\.cancelInspectionRun/)
   assert.doesNotMatch(workbenchSource, /runInspectionAcceptance/)
 })
 
@@ -60,21 +87,72 @@ test('workbench loads route detail and starts the persisted revision', () => {
   assert.match(workbenchSource, /savedRevision/)
   assert.match(
     workbenchSource,
-    /api\.startInspectionRoute\(selectedRouteId,[\s\S]*?revision: savedRevision/,
+    /api\.startInspectionTask\(selectedRouteId,[\s\S]*?revision: savedRevision/,
   )
   assert.doesNotMatch(workbenchSource, /action: 'inspect'/)
 })
 
-test('workbench exposes native phase evidence and safely releases operator takeover', () => {
-  assert.match(workbenchSource, /status\.reason/)
-  assert.match(workbenchSource, /status\.evidence_id/)
-  assert.match(workbenchSource, /status\.action/)
+test('workbench exposes native phase evidence and keeps manual release separate from task resume', () => {
+  assert.match(workbenchSource, /taskStatus\?\.reason/)
+  assert.match(workbenchSource, /taskProgress\?\.evidence_id/)
+  assert.match(workbenchSource, /taskProgress\?\.action/)
   assert.match(workbenchSource, /status\.evidence_worker/)
-  assert.match(workbenchSource, /Evidence worker/)
+  assert.match(workbenchSource, /Capture readiness/)
+  assert.match(workbenchSource, /releaseManualTakeover/)
+  assert.match(workbenchSource, /Release manual control/)
+  assert.match(workbenchSource, /manualTakeoverReleaseRequired/)
+  assert.doesNotMatch(
+    workbenchSource,
+    /if \(pauseReason\.includes\('operator_takeover'\)\) \{\s*await api\.resumeNavigation\(\)\s*\}\s*return api\.resumeInspectionTask/,
+  )
+})
+
+test('workbench follows native task events but reads task truth from the task API', () => {
+  assert.match(typesSource, /InspectionTaskEvent/)
+  assert.match(typesSource, /inspectionTaskEvent/)
+  assert.match(sseSource, /case 'inspection_task_event'/)
+  assert.match(sseSource, /inspectionTaskEvent/)
+  assert.match(workbenchSource, /sseState\.inspectionTaskEvent/)
+  assert.match(workbenchSource, /api\.fetchInspectionTask\(activeTaskId\)/)
+})
+
+test('workbench lets an operator select a retained task and inspect native event history', () => {
   assert.match(
     workbenchSource,
-    /operator_takeover[\s\S]*?api\.resumeNavigation\(\)[\s\S]*?api\.resumeInspectionRun/,
+    /api\.fetchInspectionTasks\(\{ mapId: mapId \|\| null, includeTerminal: true, limit: 12 \}\)/,
   )
+  assert.match(workbenchSource, /Recent tasks/)
+  assert.match(workbenchSource, /Native task events/)
+  assert.match(workbenchSource, /taskStatus\?\.timeline/)
+  assert.match(workbenchSource, /selectInspectionTask/)
+  assert.match(workbenchSource, /inspectionTasks\.some\(task => !task\.terminal\)/)
+  assert.doesNotMatch(workbenchSource, /const currentTask = taskResult\.value\.tasks\[0\] \?\? null/)
+})
+
+test('workbench presents execution, inspection result, and acceptance as separate facts', () => {
+  assert.match(typesSource, /InspectionTaskReportResponse/)
+  assert.match(apiSource, /inspection_task_report/)
+  assert.match(apiSource, /fetchInspectionTaskReport/)
+  assert.match(workbenchSource, /api\.fetchInspectionTaskReport\(selectedTaskId\)/)
+  assert.match(workbenchSource, /Inspection result/)
+  assert.match(workbenchSource, /巡检结果/)
+  assert.match(workbenchSource, /Acceptance/)
+  assert.match(workbenchSource, /验收结论/)
+  assert.match(workbenchSource, /Verified evidence/)
+  assert.match(workbenchSource, /已验证证据/)
+  assert.match(workbenchSource, /task_history_incomplete/)
+  assert.match(workbenchSource, /taskReport\.points\.map/)
+  assert.match(workbenchSource, /Point results/)
+  assert.match(workbenchSource, /点位结果/)
+  assert.match(workbenchSource, /native_event_identity_conflict/)
+  assert.match(workbenchSource, /The terminal result was rejected/)
+  assert.match(workbenchSource, /inspection_task_route_snapshot_unavailable/)
+  assert.match(workbenchSource, /this historical task cannot be accepted/)
+  assert.match(
+    workbenchSource,
+    /\.catch\(err => \{[\s\S]*?setTaskReport\(null\)[\s\S]*?setTaskReportError/,
+  )
+  assert.doesNotMatch(workbenchSource, /recording.*acceptance|acceptance.*recording/is)
 })
 
 test('workbench only admits locations bound to the selected map revision', () => {
@@ -119,6 +197,15 @@ test('workbench shows recent verified evidence without exposing storage paths', 
   assert.match(workbenchSource, /最近证据/)
   assert.match(workbenchSource, /evidenceItems\.map/)
   assert.doesNotMatch(workbenchSource, /manifest_path|evidence_dir/)
+})
+
+test('workbench copy presents repeatable inspection and review instead of native internals', () => {
+  assert.match(workbenchSource, /Repeatable Routes and Evidence/)
+  assert.match(workbenchSource, /可复现路线与证据闭环/)
+  assert.match(workbenchSource, /review and reinspection/)
+  assert.match(workbenchSource, /inspectionVerdictLabel/)
+  assert.match(workbenchSource, /Needs review/)
+  assert.match(workbenchSource, /需复核/)
 })
 
 test('public evidence worker status type does not expose robot filesystem paths', () => {

@@ -5,8 +5,9 @@ manager. It materializes a Module graph from classes and wiring rules. The
 default graph runs in one process; optional worker subprocesses are an internal
 execution detail owned by the same Blueprint and SystemHandle.
 
-Product recipes belong in :mod:`lingtu.assembly`. Native service lifecycle
-belongs to :class:`runtime.graph.plan.RuntimePlan`.
+Product declarations are compiled by :mod:`lingtu.assembly.profile_builder`
+into a RunPlan; ProductControl and its internal SystemdRunner own their
+lifecycle.
 
 Typical usage::
 
@@ -33,7 +34,6 @@ autoconnect() merges multiple blueprints and enables auto_wire in one call::
 from __future__ import annotations
 
 import logging
-import warnings
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -60,6 +60,10 @@ if TYPE_CHECKING:
 
 ConnectionKey = tuple[str, str, str, str]
 ConnectionMetadata = dict[ConnectionKey, dict[str, Any]]
+
+
+class SystemStartupError(RuntimeError):
+    """Raised when a critical Module cannot complete startup."""
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +123,7 @@ class Blueprint:
         self._route_spec: Any | None = None
         self._routed_delivery_enabled: bool = False
         self._build_checks: list[Callable[[], None]] = []
+        self._required_modules: list[str] = []
         # Per-module worker deployment descriptors (populated via worker()).
         from .worker_config import WorkerDeploymentRegistry
 
@@ -129,6 +134,23 @@ class Blueprint:
         """Return declared Module aliases without instantiating the graph."""
 
         return tuple(entry.name for entry in self._entries)
+
+    @property
+    def required_module_names(self) -> tuple[str, ...]:
+        """Return aliases that must participate in fail-closed startup."""
+
+        return tuple(self._required_modules)
+
+    def require_modules(self, *module_aliases: str) -> Blueprint:
+        """Declare Module aliases that are critical to product startup."""
+
+        for alias in module_aliases:
+            value = str(alias).strip()
+            if not value:
+                raise ValueError("required module alias must not be empty")
+            if value not in self._required_modules:
+                self._required_modules.append(value)
+        return self
 
     def before_build(self, check: Callable[[], None]) -> Blueprint:
         """Register a side-effecting startup check deferred until ``build()``."""
@@ -184,7 +206,6 @@ class Blueprint:
         out_port: str,
         in_module: str,
         in_port: str,
-        transport: Any = None,
         delivery: Any = None,
         topic: str | None = None,
     ) -> Blueprint:
@@ -195,7 +216,6 @@ class Blueprint:
             out_port:   Source port name.
             in_module:  Destination module name.
             in_port:    Destination port name.
-            transport:  Backward-compatible alias for delivery.
             delivery:   Per-wire delivery mode (None/callback, local, dds, shm,
                         or a Transport instance).
             topic:      Optional stable transport topic contract.
@@ -209,9 +229,8 @@ class Blueprint:
                 out_port,
                 in_module,
                 in_port,
-                transport=transport,
-                topic=topic,
                 delivery=delivery,
+                topic=topic,
             )
         )
         return self
@@ -266,7 +285,7 @@ class Blueprint:
 
         Args:
             n_workers: Blueprint-owned Python worker count. 0 keeps all Modules
-                in the host process. This is unrelated to RuntimePlan services.
+                in the host process. This is unrelated to Product deployment processes.
         """
         self._global_cfg = {"n_workers": n_workers, **kwargs}
         return self
@@ -298,21 +317,6 @@ class Blueprint:
         self.route_contract(name)
         self._routed_delivery_enabled = True
         return self
-
-    def route(self, name: Any) -> Blueprint:
-        """Deprecated alias for ``routed_delivery``.
-
-        Older tests and tools used ``route`` to mean "make matching wire topics
-        use the route backend". New code should call ``route_contract`` for
-        metadata-only contracts or ``routed_delivery`` for actual transport.
-        """
-        warnings.warn(
-            "Blueprint.route() is deprecated. Use route_contract() for metadata-only "
-            "contracts, or routed_delivery() for transport-backed wires.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.routed_delivery(name)
 
     def auto_wire(self) -> Blueprint:
         """Enable automatic port matching by (port_name, msg_type).
@@ -358,12 +362,12 @@ class Blueprint:
                 w.out_port,
                 pfx + w.in_module,
                 w.in_port,
-                transport=w.transport,
-                topic=w.topic,
                 delivery=w.delivery,
+                topic=w.topic,
             )
             for w in self._wires
         ]
+        self._required_modules = [pfx + name for name in self._required_modules]
         if self._swap_config is not None:
             self._swap_config = {k: (pfx + v if isinstance(v, str) else v) for k, v in self._swap_config.items()}
         return self
@@ -388,6 +392,10 @@ class Blueprint:
             self._route_spec = other._route_spec
         self._routed_delivery_enabled = self._routed_delivery_enabled or other._routed_delivery_enabled
         self._build_checks.extend(other._build_checks)
+        for name in other._required_modules:
+            if name not in self._required_modules:
+                self._required_modules.append(name)
+
         return self
 
     # -- build --------------------------------------------------------------
@@ -411,6 +419,10 @@ class Blueprint:
             ValueError: Unknown module or port in an explicit wire().
             TypeError:  Type mismatch in an explicit wire().
         """
+        missing_required = [name for name in self._required_modules if name not in self.module_names]
+        if missing_required:
+            raise ValueError(f"Blueprint required modules are missing: {missing_required}")
+
         for check in self._build_checks:
             check()
 
@@ -422,6 +434,10 @@ class Blueprint:
             import os as _os
 
             n_workers = int(_os.environ.get("LINGTU_WORKERS", "0"))
+        if n_workers > 0 and self._required_modules:
+            raise SystemStartupError(
+                "critical modules are not supported by Blueprint worker mode"
+            )
         if n_workers > 0:
             return self._build_worker_mode(n_workers)
 
@@ -489,7 +505,12 @@ class Blueprint:
             connections=connections,
             connection_metadata=connection_metadata,
             startup_order=startup_order,
+            critical_modules=tuple(self._required_modules),
         )
+        for mod in instances.values():
+            setter = getattr(mod, "set_system_handle", None)
+            if callable(setter):
+                setter(handle)
 
         # 8. Post-build swap setup (opt-in, set by product blueprints)
         if self._swap_config:
@@ -726,11 +747,6 @@ def _coerce_route_spec(route: Any, route_name: str) -> Any | None:
         return None
 
 
-def _resolve_transport(spec: Any) -> Transport | None:
-    """Compatibility wrapper for wire delivery resolution."""
-    return resolve_wire_delivery(spec)
-
-
 def _transport_cache_key(spec: Any) -> tuple[str, str]:
     """Return a stable per-build key for a delivery specification."""
     return wire_delivery_cache_key(spec)
@@ -744,11 +760,11 @@ def _resolve_transport_cached(
     if spec is None:
         return None
     if cache is None:
-        return _resolve_transport(spec)
+        return resolve_wire_delivery(spec)
     key = _transport_cache_key(spec)
     transport = cache.get(key)
     if transport is None:
-        transport = _resolve_transport(spec)
+        transport = resolve_wire_delivery(spec)
         if transport is not None:
             cache[key] = transport
     return transport
@@ -1099,6 +1115,7 @@ class SystemHandle:
         connections: list[ConnectionKey],
         connection_metadata: ConnectionMetadata | None,
         startup_order: list[str],
+        critical_modules: tuple[str, ...] = (),
     ) -> None:
         self._modules = modules
         self._transport = transport
@@ -1109,7 +1126,12 @@ class SystemHandle:
         self._failed_modules: dict[str, str] = {}
         self.swap_manager: Any = None  # set by enable_swap()
 
+        self._critical_modules = tuple(critical_modules)
+        self._critical_failures: dict[str, str] = {}
+        self._startup_state = "built"
+        self._transport_closed = False
     # -- swap manager --------------------------------------------------------
+
 
     def enable_swap(
         self,
@@ -1144,102 +1166,203 @@ class SystemHandle:
 
     # -- lifecycle ----------------------------------------------------------
 
-    def start(self) -> None:
-        """setup() then start() all modules in topological order.
+    def start(
+        self,
+        *,
+        startup_timeout_s: float = 30.0,
+        readiness_poll_interval_s: float = 0.05,
+    ) -> None:
+        """Start the graph, failing closed when a critical Module is not ready."""
 
-        Module-level error isolation: if a module's setup() or start()
-        fails, the module is marked as failed and skipped. Other modules
-        continue starting. This prevents one broken module from taking
-        down the entire system.
-        """
-        if self._started:
-            logger.warning("SystemHandle.start() called but system is already running")
+        if self._startup_state == "ready":
+            logger.warning("SystemHandle.start() called but system is already ready")
             return
-        failed: dict = {}
-        # Phase 0: preflight checks
+        if self._startup_state != "built":
+            raise SystemStartupError(
+                f"cannot start SystemHandle from {self._startup_state} state"
+            )
+        if startup_timeout_s < 0:
+            raise ValueError("startup_timeout_s must be non-negative")
+        if readiness_poll_interval_s <= 0:
+            raise ValueError("readiness_poll_interval_s must be positive")
+
+        import time as _time
+
+        self._startup_state = "starting"
+        failed: dict[str, str] = {}
+        touched: set[str] = set()
+
+        def _module_failure(name: str, phase: str, detail: object) -> None:
+            message = f"{phase}: {detail}"
+            failed[name] = message
+            logger.error("Module %s %s FAILED: %s", name, phase, detail)
+            if name in self._critical_modules:
+                self._failed_modules = dict(failed)
+                self._critical_failures[name] = message
+                self._rollback_startup(touched)
+                self._started = False
+                self._startup_state = "failed"
+                raise SystemStartupError(
+                    f"critical module {name!r} failed during {phase}: {detail}"
+                )
+            self._stop_modules([name], timeout_per_module=5.0)
+            touched.discard(name)
+
         for name in self._startup_order:
             try:
                 reason = self._modules[name].preflight()
-                if reason:
-                    logger.error("Module %s preflight FAILED: %s", name, reason)
-                    failed[name] = f"preflight: {reason}"
-            except Exception as e:
-                logger.error("Module %s preflight FAILED: %s", name, e, exc_info=True)
-                failed[name] = f"preflight: {e}"
-        # Phase 1: setup
+            except Exception as exc:
+                logger.exception("Module %s preflight() raised", name)
+                _module_failure(name, "preflight", exc)
+                continue
+            if reason:
+                _module_failure(name, "preflight", reason)
+
         for name in self._startup_order:
             if name in failed:
                 continue
+            touched.add(name)
             try:
                 self._modules[name].setup()
-            except Exception as e:
-                logger.error("Module %s setup() FAILED: %s", name, e, exc_info=True)
-                failed[name] = f"setup: {e}"
+            except Exception as exc:
+                logger.exception("Module %s setup() raised", name)
+                _module_failure(name, "setup", exc)
+
         for name in self._startup_order:
             if name in failed:
                 continue
             try:
                 self._modules[name].start()
-            except Exception as e:
-                logger.error("Module %s start() FAILED: %s", name, e, exc_info=True)
-                failed[name] = f"start: {e}"
+            except Exception as exc:
+                logger.exception("Module %s start() raised", name)
+                _module_failure(name, "start", exc)
+
+        deadline = _time.monotonic() + startup_timeout_s
+        while self._critical_modules:
+            pending: dict[str, str] = {}
+            for name in self._critical_modules:
+                try:
+                    reason = self._modules[name].startup_readiness()
+                except Exception as exc:
+                    logger.exception("Module %s startup_readiness() raised", name)
+                    _module_failure(name, "startup_readiness", exc)
+                    continue
+                if reason:
+                    pending[name] = str(reason)
+
+            if not pending:
+                break
+            if _time.monotonic() >= deadline:
+                for name, reason in pending.items():
+                    message = f"startup_readiness: timeout ({reason})"
+                    failed[name] = message
+                    self._critical_failures[name] = message
+                self._failed_modules = dict(failed)
+                self._rollback_startup(touched)
+                self._started = False
+                self._startup_state = "failed"
+                detail = ", ".join(
+                    f"{name}={reason}" for name, reason in pending.items()
+                )
+                raise SystemStartupError(
+                    f"critical module startup readiness timed out: {detail}"
+                )
+            remaining = max(0.0, deadline - _time.monotonic())
+            _time.sleep(min(readiness_poll_interval_s, remaining))
+
+        self._failed_modules = dict(failed)
+        self._critical_failures = {}
         self._started = True
-        self._failed_modules = failed
+        self._startup_state = "ready"
         if failed:
             logger.warning(
-                "System started with %d/%d modules failed: %s",
+                "System started with %d/%d optional modules failed: %s",
                 len(failed),
                 len(self._modules),
-                list(failed.keys()),
+                list(failed),
             )
         logger.info(
-            "System started: %d modules (%d failed), %d connections",
+            "System ready: %d modules (%d optional failures), %d connections",
             len(self._modules),
             len(failed),
             len(self._connections),
         )
 
-    def stop(self, timeout_per_module: float = 5.0) -> None:
-        """stop() all modules in reverse topological order, then close transport.
+    def _rollback_startup(self, touched: set[str]) -> None:
+        names = [name for name in reversed(self._startup_order) if name in touched]
+        self._stop_modules(names, timeout_per_module=5.0)
+        self._close_transport()
 
-        Each module gets *timeout_per_module* seconds to stop gracefully.
-        If a module hangs, it is skipped with a warning and shutdown continues.
-        """
-        if not self._started:
-            return
-        import threading as _th
+    def _stop_modules(
+        self,
+        names: list[str],
+        *,
+        timeout_per_module: float,
+    ) -> list[str]:
+        import threading as _threading
 
         hung_modules: list[str] = []
-        stop_errors: dict[str, str] = {}
-
-        def _safe_stop(mod_ref, mod_name):
-            try:
-                mod_ref.stop()
-            except Exception as exc:
-                stop_errors[mod_name] = str(exc)
-                logger.exception("Error stopping module %s", mod_name)
-
-        for name in reversed(self._startup_order):
-            mod = self._modules.get(name)
-            if mod is None:
+        for name in names:
+            module = self._modules.get(name)
+            if module is None:
                 continue
-            t = _th.Thread(target=_safe_stop, args=(mod, name), daemon=True, name=f"stop-{name}")
-            t.start()
-            t.join(timeout=timeout_per_module)
-            if t.is_alive():
+
+            def _safe_stop(mod_ref: Module = module, mod_name: str = name) -> None:
+                try:
+                    mod_ref.stop()
+                except Exception:
+                    logger.exception("Error stopping module %s", mod_name)
+
+            thread = _threading.Thread(
+                target=_safe_stop,
+                daemon=True,
+                name=f"stop-{name}",
+            )
+            thread.start()
+            thread.join(timeout=timeout_per_module)
+            if thread.is_alive():
                 hung_modules.append(name)
-                logger.warning("Module %s did not stop within %.1fs -skipping", name, timeout_per_module)
-        if hasattr(self._transport, "close"):
+                logger.warning(
+                    "Module %s did not stop within %.1fs - skipping",
+                    name,
+                    timeout_per_module,
+                )
+        return hung_modules
+
+    def _close_transport(self) -> None:
+        if self._transport_closed:
+            return
+        self._transport_closed = True
+        close = getattr(self._transport, "close", None)
+        if callable(close):
             try:
-                self._transport.close()
+                close()
             except Exception:
                 logger.exception("Error closing transport")
+
+    def stop(self, timeout_per_module: float = 5.0) -> None:
+        """Stop Modules in reverse topology and permanently close this handle."""
+
+        if timeout_per_module <= 0:
+            raise ValueError("timeout_per_module must be positive")
+        if self._startup_state in {"stopped", "stopping", "failed"}:
+            return
+        if self._startup_state == "starting":
+            raise SystemStartupError("cannot stop SystemHandle while startup is in progress")
+
+        self._startup_state = "stopping"
+        hung_modules = self._stop_modules(
+            list(reversed(self._startup_order)),
+            timeout_per_module=timeout_per_module,
+        )
+        self._close_transport()
         if hung_modules:
             logger.warning("Hung modules during shutdown: %s", hung_modules)
         self._modules.clear()
         self._connections.clear()
         self._connection_metadata.clear()
         self._started = False
+        self._startup_state = "stopped"
         logger.info("System stopped")
 
     # -- access -------------------------------------------------------------
@@ -1270,7 +1393,31 @@ class SystemHandle:
         """True if the system has been started."""
         return self._started
 
+    @property
+    def startup_state(self) -> str:
+        """Return the current startup lifecycle state."""
+
+        return self._startup_state
+
+    @property
+    def failed_modules(self) -> dict[str, str]:
+        """Return all optional and critical startup failures."""
+
+        return dict(self._failed_modules)
+
+    @property
+    def critical_failures(self) -> dict[str, str]:
+        """Return failures that tripped the critical startup barrier."""
+
+        return dict(self._critical_failures)
+
     # -- health -------------------------------------------------------------
+
+    @property
+    def critical_modules(self) -> tuple[str, ...]:
+        """Return Module aliases governed by the startup barrier."""
+
+        return self._critical_modules
 
     def health(self) -> dict[str, Any]:
         """Return a health summary dict."""
@@ -1278,6 +1425,9 @@ class SystemHandle:
         total_out = sum(p.msg_count for m in self._modules.values() for p in m.ports_out.values())
         return {
             "started": self._started,
+            "startup_state": self._startup_state,
+            "critical_modules": list(self._critical_modules),
+            "critical_failures": dict(self._critical_failures),
             "module_count": len(self._modules),
             "connection_count": len(self._connections),
             "startup_order": self._startup_order,

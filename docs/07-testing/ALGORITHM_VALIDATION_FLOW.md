@@ -6,7 +6,7 @@ This is the minimum evidence chain before claiming that the LingTu navigation
 algorithm surface is healthy in simulation. It does not claim readiness on any
 real hardware target.
 
-## Product Profile vs Strict Benchmark
+## Product Acceptance vs Strict Benchmark
 
 Do not treat ROS2 topics as the product acceptance API. LingTu's product-facing
 inspection acceptance is Gateway + ModulePorts + server-side artifacts. ROS2
@@ -27,9 +27,9 @@ Use these documents as the evidence entry points:
 
 | Evidence | Meaning |
 | --- | --- |
-| `docs/07-testing/field-runs/` | Dated field and simulation evidence. Current entries must name the active product profile, services, map artifact, planner, and blocker. |
+| `docs/07-testing/field-runs/` | Dated field and simulation evidence. Current entries must name the active Product and RunPlan fingerprint, services, map artifact, planner, and blocker. |
 | `artifacts/server_sim_closure/...` | Archived server reports and videos produced by the server closure gates. |
-| `python lingtu.py real-runtime-evidence --duration-sec 20 --json-out artifacts/thunder_field_runtime/report.json` | Endpoint communication probe for Gateway/runtime dataflow; read-only collector, no goal or velocity publishing. |
+| `python lingtu.py real-runtime-evidence --duration-sec 20 --json-out artifacts/real_runtime/report.json` | Runtime evidence probe for Gateway/runtime dataflow; read-only collector, no goal or velocity publishing. |
 | Gateway `:5050` and MCP `:8090` checks | Control-plane communication evidence only; they do not prove planner or SLAM correctness unless paired with stage evidence. |
 
 The product-facing preset is `inspection_mvp`:
@@ -428,7 +428,7 @@ and validate one report through the unified CLI entry:
 ```bash
 python lingtu.py real-runtime-evidence \
   --duration-sec 20 \
-  --json-out artifacts/thunder_field_runtime/report.json
+  --json-out artifacts/real_runtime/report.json
 ```
 
 This command wraps the read-only collector and embedded gate. The collector
@@ -455,11 +455,11 @@ list, checks, and coverage map so UI and operations tooling do not need to infer
 the validation sequence from ad hoc text.
 The gate uses
 `diagnostics.field.evidence.validate_real_runtime_evidence` and requires
-`runtime_contract.name=thunder_field`, the configured command boundary,
+`runtime_contract.name=real`, the configured command boundary,
 `map->odom->body->lidar_link` frame
-evidence, concrete `resolved_runtime_data_flow.thunder_field` stage evidence, and
-positive global path, local path, and `/nav/cmd_vel` observations. For endpoint
-evidence, `/nav/map_cloud` and `/nav/global_path` must report `frame_id` as
+evidence, concrete `resolved_runtime_data_flow.thunder` stage evidence, and
+positive global path, local path, and `/nav/cmd_vel` observations. For
+data-source evidence, `/nav/map_cloud` and `/nav/global_path` must report `frame_id` as
 `map`; the looser simulation/replay tolerance for `odom` is not sufficient to
 prove the saved-map/global-planning boundary.
 

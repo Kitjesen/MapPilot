@@ -4,34 +4,29 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import sys
 from collections.abc import Mapping
 from pathlib import Path
 
-from . import term as T
 from runtime.profiles.binding_policy import (
-    LEGACY_NAV_IN_ENABLE_KEYS,
-    LEGACY_NAV_OUT_ENABLE_KEYS,
-    LEGACY_MAP_OUT_ENABLE_KEYS,
     MAP_OUT_ENABLE_KEYS,
     NAV_IN_ENABLE_KEYS,
     NAV_OUT_ENABLE_KEYS,
     nav_kernel_backend_required,
 )
 
+from . import term as T
+
 FULL_PREFLIGHT_SLAM_PROFILES = frozenset(
     {
         "fastlio2",
         "pointlio",
         "localizer",
-        "super_lio",
-        "super_lio_relocation",
     }
 )
 
-LITE_PROFILE_NAMES = frozenset({"lite", "thunder-lite", "thunder-basic"})
-LITE_RUNTIME_ENDPOINTS = frozenset({"thunder_lite"})
+LITE_PROFILE_NAMES = frozenset({"lite"})
+LITE_PROFILE_ADAPTERS = frozenset({"thunder_lite"})
 
 _LITE_FALSE_FLAGS = (
     "enable_native",
@@ -40,15 +35,11 @@ _LITE_FALSE_FLAGS = (
     "enable_teleop",
     "enable_map_modules",
     "enable_rerun",
-    "manage_external_services",
     "run_startup_checks",
     "enable_gnss",
     *NAV_IN_ENABLE_KEYS,
     *NAV_OUT_ENABLE_KEYS,
-    *LEGACY_NAV_IN_ENABLE_KEYS,
-    *LEGACY_NAV_OUT_ENABLE_KEYS,
     *MAP_OUT_ENABLE_KEYS,
-    *LEGACY_MAP_OUT_ENABLE_KEYS,
     "enable_ros2_camera_bridge",
     "enable_ros2_rerun_bridge",
 )
@@ -66,7 +57,7 @@ def _normalized(value: object, default: str = "") -> str:
     return str(value).strip().lower()
 
 
-def _normalized_endpoint(value: object) -> str:
+def _normalized_adapter(value: object) -> str:
     return _normalized(value).replace("-", "_")
 
 
@@ -88,13 +79,13 @@ def needs_full_preflight(cfg: Mapping[str, object]) -> bool:
 def is_lite_runtime_config(profile_name: str, cfg: Mapping[str, object]) -> bool:
     profile = _normalized(profile_name)
     runtime_mode = _normalized(cfg.get("runtime_mode"))
-    endpoint = _normalized_endpoint(
-        cfg.get("_runtime_endpoint", cfg.get("runtime_endpoint"))
+    adapter = _normalized_adapter(
+        cfg.get("_profile_adapter", cfg.get("profile_adapter"))
     )
     return (
         profile in LITE_PROFILE_NAMES
         or runtime_mode == "lite"
-        or endpoint in LITE_RUNTIME_ENDPOINTS
+        or adapter in LITE_PROFILE_ADAPTERS
     )
 
 
@@ -106,11 +97,11 @@ def lite_runtime_lifecycle_blockers(
         return ()
 
     blockers: list[str] = []
-    endpoint = _normalized_endpoint(
-        cfg.get("_runtime_endpoint", cfg.get("runtime_endpoint"))
+    adapter = _normalized_adapter(
+        cfg.get("_profile_adapter", cfg.get("profile_adapter"))
     )
-    if endpoint and endpoint not in LITE_RUNTIME_ENDPOINTS:
-        blockers.append("runtime_endpoint must be thunder_lite")
+    if adapter and adapter not in LITE_PROFILE_ADAPTERS:
+        blockers.append("profile_adapter must be thunder_lite")
 
     module_transport = _normalized(cfg.get("module_transport"), "local")
     if module_transport not in {"", "local"}:
@@ -137,24 +128,6 @@ def lite_runtime_lifecycle_blockers(
 
     return tuple(blockers)
 
-
-def kill_residual_ports(cfg: dict) -> None:
-    import platform
-
-    if platform.system() != "Linux":
-        return
-    ports = [cfg.get("gateway_port", 5050), 8090]
-    for port in ports:
-        try:
-            result = subprocess.run(
-                ["fuser", "-k", "%d/tcp" % port],
-                capture_output=True,
-                timeout=3,
-            )
-            if result.returncode == 0:
-                logging.getLogger(__name__).info("Killed residual process on port %d", port)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
 
 
 def health_check(system) -> bool:

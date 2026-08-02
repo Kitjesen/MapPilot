@@ -1,48 +1,56 @@
 # LingTu Runtime Graph
 
-Status: current runtime graph contract as of 2026-07-18.
+Status: current runtime graph contract as of 2026-07-29.
 
-Runtime Graph is the readable contract layer for product and endpoint wiring.
+Runtime Graph is the readable contract layer for Product and Env resolution.
 It is not the runtime data plane.
 
 ## Runtime Control Model
 
-The control plane has four separate objects. They must not be collapsed into
-one class or one configuration file:
+The control plane has Product and Env declarations, one resolved plan, one
+ProductControl owner, and one Host-local graph:
 
 | Object | Owns | Must not own |
 | --- | --- | --- |
-| Product | Required capabilities, topics, and logical process names. | systemd units, executable paths, startup commands. |
-| Endpoint | Declares transport/topic availability and which lifecycle owner controls the endpoint. RuntimePlan-managed endpoints also map logical processes to deployment targets. | Product policy or navigation algorithms. |
-| RuntimePlan | The resolved, ordered process plan for one Product on one Endpoint. | Business logic or Module wiring. |
+| Product | One immutable operating mode: required capabilities, topics, Blueprint, and logical process roles. | Env selection, runtime side effects, or domain algorithms. |
+| Env | The outer `real` or `sim` implementation of hardware, process roles, and transports. | Product policy or domain algorithms. |
+| RunPlan | The immutable resolved record of one Product in one Env and the sole Host/systemd execution identity. | Re-resolving Product or Env policy at execution time. |
+| Endpoint | A genuine communication access contract nested under an Env implementation. | Selecting a Product, Env, or simulation backend. |
 | Blueprint | In-process Python Module construction and port wiring. | Native process startup or systemd ownership. |
+| ProductControl | Publishes the fingerprinted RunPlan, stages the transient session, applies systemd processes, checks readiness, and owns Product operations. | Domain algorithms or Module wiring. |
 
 The machine path is:
 
 ```text
-products/<product>.yaml + endpoints/<endpoint>.yaml
-  -> runtime.graph.build_runtime_plan()
-  -> lingtu.py switch-plan
-  -> scripts/lingtu executes the ordered plan
-  -> systemd or the endpoint-specific process manager
+products/<product>.yaml + envs/<real-or-sim>.yaml + explicit sim backend
+  -> resolve one fingerprinted RunPlan
+  -> RunPlan(identity, launch, host, checks)
+  -> ProductControl publishes that immutable artifact and session.env
+  -> ProductControl.switch() -> internal SystemdRunner.apply(plan)
+  -> the Env implementation's declared process owner
 ```
 
-Products declare `processes` using stable logical names such as `lidar`,
-`slam`, `nav`, and `runtime`. RuntimePlan-managed endpoint files declare
-`process_manager` and map those names to deployment `target` values. Topic
-names are validation evidence; they are never used to infer which process
-should start.
+`scripts/lingtu` and Gateway both invoke this same ProductControl operation.
+Neither one recompiles the Product or owns process ordering.
 
-Only endpoints with `process_control: runtime_plan` expose an operator process
-plan. Acceptance harnesses such as `mujoco_native_dds` declare
-`process_control: acceptance_runner`; their runner owns child-process setup,
-teardown, evidence capture, and timeout handling as one test transaction. The
-control plane must not fabricate a partial RuntimePlan for such an endpoint.
+Products declare `processes` using stable logical roles such as `lidar`,
+`slam`, `nav`, and `host`. The ProductControl-managed `real` Env maps those roles to
+deployment `target` values. Topic names validate the selected Env
+implementation; they are never used to infer which process should start.
 
-The field endpoint is fail closed: every selected process target must be
+Only an Env implementation with `process_control: systemd` exposes Product
+processes to ProductControl. The `sim` Env has no implicit backend: callers must
+select one of `mujoco_native`, `mujoco_host`, or `gazebo` through
+`env_config.backend`. Acceptance-runner and external-runner backends own
+their child-process setup, teardown, evidence capture, and timeouts as one
+transaction. The control plane must not fabricate partial Product processes
+for them.
+
+The `real` Env is fail closed: every selected process target must be
 installed, become active within its declared timeout, and pass its role-specific
-readiness check. The plan also carries all mode-owned and conflicting targets,
-so switching products removes stale process ownership before startup.
+readiness check. The RunPlan also carries all mode-owned and
+conflicting targets, so switching Products removes stale process ownership
+before startup.
 
 ## Naming
 
@@ -52,13 +60,13 @@ Names reflect scope instead of repeating implementation details:
 logical process id: nav
 executable:         navd
 systemd unit:       lingtu-nav-dds.service
-field endpoint id:  thunder_field
+Env:                real
 ```
 
 The executable is short because its package and directory already establish
 the product and domain. The systemd unit remains globally namespaced because
 unit names share a host-wide namespace. `dds` is allowed in the deployment
-target, but Product and RuntimePlan logic depend only on the logical `nav` id.
+target, but ProductControl logic depends only on the logical `nav` id.
 
 Runtime Graph plus `runtime.route_contract` is the migration bridge between
 the in-process Blueprint graph and the field DDS boundary:
@@ -79,11 +87,11 @@ Python code must get canonical runtime topics from
 boundary exceptions.
 
 Runtime resolver now exposes the selected contract as `route_contract`.
-For the field endpoint this should read:
+For the `real` Env this should read:
 
 ```text
-runtime_contract=thunder_field
-endpoint_contract=thunder_field_dds_v1
+env=real
+endpoint_contract=thunder_dds_v1
 route_contract=robot
 ```
 
@@ -101,7 +109,7 @@ Blueprint into routed DDS/SHM delivery for matching explicit topics.
   bridge to Brainstem.
 - Python Module wiring remains for mock runs, CI harnesses, Gateway/status,
   semantic modules, visualization, and compatibility adapters.
-- Runtime Graph YAML declares what a product or endpoint must expose before a
+- Runtime Graph YAML declares what a Product or Env implementation must expose before a
   report can claim real-equivalent behavior.
 
 ## Files
@@ -110,13 +118,15 @@ Blueprint into routed DDS/SHM delivery for matching explicit topics.
   `port_bindings` that identify the endpoint or Module port touching the topic.
 - `products/*.yaml`: product modes such as `map`, `nav`, `explore`, and
   `teleop_avoid`.
-- `endpoints/*.yaml`: endpoint contracts such as `thunder_field`,
-  `mujoco_native_dds`, and `sim_mujoco_live`.
+- `envs/real.yaml`: the physical implementation, its RobotConfig reference,
+  ProductControl process-role ownership, and genuine endpoint contract.
+- `envs/sim.yaml`: the explicit simulation backend catalog and each backend's
+  process owner, Host configuration, and genuine endpoint contract.
 
 ## Real-Equivalent Rule
 
-`thunder_field` and `mujoco_native_dds` must share the native field contract
-topics that cross the process boundary:
+The `real` Env and the `sim` Env's `mujoco_native` backend must share the native
+contract topics that cross the process boundary:
 
 ```text
 /tf
@@ -131,9 +141,10 @@ topics that cross the process boundary:
 /slam/localization_quality
 /nav/command/request
 /nav/command/ack
-/nav/inspection/command
-/nav/inspection/ack
+/nav/inspection/task/request
+/nav/inspection/task/ack
 /nav/inspection/status
+/nav/inspection/task/event
 /nav/inspection/evidence/request
 /nav/inspection/evidence/result
 /nav/traversability
@@ -148,20 +159,24 @@ channel. Only its resolved goal enters native typed `/nav/command/request`;
 `/nav/command/ack` confirms business acceptance or rejection.
 
 Inspection route lifecycle has its own typed interface: the persistent C++
-client publishes start/pause/resume/cancel requests on
-`/nav/inspection/command`, waits for the matching business ACK on
-`/nav/inspection/ack`, and the native endpoint publishes current route/point
-progress on `/nav/inspection/status`. Direct goals and operator velocity
-requests remain on `/nav/command/request`.
+client publishes task-addressed start/pause/resume/cancel requests on
+`/nav/inspection/task/request`, waits for the matching business ACK on
+`/nav/inspection/task/ack`, and the native endpoint publishes current
+route/point progress on `/nav/inspection/status` plus ordered task facts on
+`/nav/inspection/task/event`. Direct task goals remain on
+`/nav/command/request`; operator velocity owns the separate
+`/nav/operator_motion/control`, `/nav/operator_motion/sample`, and
+`/nav/operator_motion/ack` contract.
 
 Inspection evidence has a separate worker bridge:
 `/nav/inspection/evidence/request` carries frame/evidence work requests and
 `/nav/inspection/evidence/result` carries the analysis result. These topics are
 inspection evidence exchange, not motion or route-control topics.
 
-`sim_mujoco_live` is intentionally marked as `module_sim_harness` and
-`real_equivalent: false`. It can validate downstream Python Module graph
-behavior, but it must not be used as evidence for native field-runtime closure.
+The `mujoco_host` and `gazebo` backends are intentionally marked
+as `host_simulation` and `real_equivalent: false`. They can validate their
+declared downstream Python Module graph behavior, but they must not be used as
+evidence for native field-runtime closure.
 
 ## Validation
 

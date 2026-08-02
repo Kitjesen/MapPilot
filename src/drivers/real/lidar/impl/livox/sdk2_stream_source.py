@@ -22,7 +22,7 @@ from runtime.utils.livox_config import ensure_mid360_config_file
 
 from ...api.frame_stream import LidarFrameStream
 from ...api.frames import POINT_DTYPE, LivoxPointFrame
-from ...compat.lidar import LidarHealth, LidarState
+from ...native.model import LidarHealth, LidarState
 
 logger = logging.getLogger(__name__)
 

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 LIDAR_ROLE = "lidar"
 LIDAR_ALIAS = LIDAR_ROLE
-LIDAR_COMPAT_ALIAS = "LidarModule"
 LIDAR_CONFIG_ENABLE = "enable_lidar"
 LIDAR_CONFIG_BACKEND = "lidar_backend"
 
@@ -38,9 +37,7 @@ LIDAR_HEALTH_FIELDS = (
 class LidarContract:
     role: str = LIDAR_ROLE
     alias: str = LIDAR_ALIAS
-    compat_aliases: tuple[str, ...] = (LIDAR_COMPAT_ALIAS,)
     config_keys: tuple[str, ...] = (LIDAR_CONFIG_ENABLE, LIDAR_CONFIG_BACKEND)
-    compat_config_keys: tuple[str, ...] = ()
     backends: tuple[str, ...] = LIDAR_BACKENDS
     ports: tuple[str, ...] = LIDAR_PORTS
     stream_ports: tuple[str, ...] = LIDAR_STREAM_PORTS
@@ -50,9 +47,7 @@ class LidarContract:
         return {
             "role": self.role,
             "alias": self.alias,
-            "compat_aliases": list(self.compat_aliases),
             "config_keys": list(self.config_keys),
-            "compat_config_keys": list(self.compat_config_keys),
             "backends": list(self.backends),
             "ports": list(self.ports),
             "stream_ports": list(self.stream_ports),

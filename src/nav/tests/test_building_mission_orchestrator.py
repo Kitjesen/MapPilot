@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from nav.building import (
     ActiveFloor,
     BuildingMissionOrchestrator,
@@ -37,12 +39,13 @@ class FakeNavigationPort:
 class FakeTransitionPort:
     def __init__(self) -> None:
         self.starts = []
+        self.start_result = (True, "lift_transition_started")
         self.progress = ("executing", "riding_to_target_floor")
         self.cancels: list[str] = []
 
     def start(self, request, *, source_floor):
         self.starts.append((request, source_floor))
-        return True, "lift_transition_started"
+        return self.start_result
 
     def tick(self):
         return self.progress
@@ -218,6 +221,76 @@ def test_building_mission_rejects_when_native_autonomy_is_not_ready() -> None:
     assert reason == "autonomy_not_ready:native_control_mode_teleop_avoid"
     assert navigation.goals == []
     assert orchestrator.status().phase is BuildingMissionPhase.FAILED
+
+
+@pytest.mark.parametrize("malformed_ready", ["true", 1, None])
+def test_building_mission_rejects_malformed_autonomy_readiness(
+    malformed_ready,
+) -> None:
+    navigation = FakeNavigationPort()
+    navigation.ready = (malformed_ready, "malformed_autonomy_readiness")
+    orchestrator = BuildingMissionOrchestrator(
+        navigation=navigation,
+        active_floor=_active_floor,
+    )
+
+    accepted, reason = orchestrator.submit(_mission())
+
+    assert accepted is False
+    assert reason == "autonomy_not_ready:malformed_autonomy_readiness"
+    assert navigation.goals == []
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_cross_floor_mission_rejects_malformed_transition_ack(
+    malformed_ack,
+) -> None:
+    navigation = FakeNavigationPort()
+    transition = FakeTransitionPort()
+    transition.start_result = (malformed_ack, "malformed_transition_ack")
+    orchestrator = BuildingMissionOrchestrator(
+        navigation=navigation,
+        active_floor=_active_floor,
+        transition_executor=transition,
+    )
+
+    accepted, reason = orchestrator.submit(
+        _mission(floor_id="floor-2", map_id="factory-a-floor-2")
+    )
+
+    assert accepted is False
+    assert reason == "malformed_transition_ack"
+    assert orchestrator.status().phase is BuildingMissionPhase.FAILED
+    assert navigation.goals == []
+
+
+@pytest.mark.parametrize("malformed_ack", ["true", 1, None])
+def test_building_mission_rejects_malformed_target_binding_ack(
+    malformed_ack,
+) -> None:
+    navigation = FakeNavigationPort()
+    request = BuildingMissionRequest(
+        **{
+            **_mission().__dict__,
+            "map_version": 1,
+            "version_id": "factory-a-floor-1:v1",
+            "map_pcd_sha256": "sha-floor-1",
+        }
+    )
+    orchestrator = BuildingMissionOrchestrator(
+        navigation=navigation,
+        active_floor=_active_floor,
+        target_binding_validator=lambda _request: (
+            malformed_ack,
+            "malformed_target_binding_ack",
+        ),
+    )
+
+    accepted, reason = orchestrator.submit(request)
+
+    assert accepted is False
+    assert reason == "malformed_target_binding_ack"
+    assert navigation.goals == []
 
 
 def test_active_building_mission_aborts_on_control_authority_loss() -> None:

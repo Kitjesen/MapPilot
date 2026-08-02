@@ -1,7 +1,7 @@
 # Gateway REST API
 
 > Auto-generated from route registrations in `src/gateway/routes/`.
-> Generated: 2026-07-18 14:31:17
+> Deterministic generated inventory; run `python scripts/docs/extract_api_docs.py --check` to verify freshness.
 
 The GatewayModule serves these endpoints via FastAPI on port 5050.
 
@@ -9,17 +9,16 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 
 ## Summary
 
-- **src\gateway\routes\app.py**:
+- **src/gateway/routes/app.py**:
   - `GET /api/v1/app/bootstrap` — App/Web bootstrap snapshot
   - `GET /api/v1/app/capabilities` — App/Web API capability manifest
   - `GET /api/v1/app/traffic` — App/Web realtime traffic and client polling policy
-  - `GET /api/v1/bootstrap`
-- **src\gateway\routes\auth.py**:
+- **src/gateway/routes/auth.py**:
   - `GET /api/v1/auth/check` — Check if auth is required
   - `POST /api/v1/auth/login` — Login with API key
-- **src\gateway\routes\camera.py**:
+- **src/gateway/routes/camera.py**:
   - `GET /api/v1/camera/snapshot` — Camera JPEG snapshot
-- **src\gateway\routes\commands.py**:
+- **src/gateway/routes/commands.py**:
   - `POST /api/v1/cmd_vel` — Direct velocity command
   - `POST /api/v1/estop/reset` — Explicitly release the native software emergency-stop latch
   - `POST /api/v1/goal` — Send navigation goal
@@ -27,13 +26,16 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `POST /api/v1/lease` — Acquire/release/renew control lease
   - `POST /api/v1/mode` — Switch operating mode
   - `POST /api/v1/navigate/click` — Navigate to map-viewer click point
-  - `POST /api/v1/navigation/cancel` — Gracefully cancel current navigation mission
+  - `POST /api/v1/navigation/cancel` — Compatibility cancel for the current navigation mission
   - `POST /api/v1/navigation/goal_candidate` — Construct and optionally preview a navigation goal without publishing it
   - `POST /api/v1/navigation/plan` — Preview navigation plan without publishing a goal
   - `POST /api/v1/navigation/resume` — Release manual takeover and require a fresh navigation goal/path
+  - `POST /api/v1/navigation/tasks/{task_id}/cancel` — Request cancellation of one navigation task
+  - `POST /api/v1/navigation/tasks/{task_id}/pause` — Request a stop-confirmed pause of one navigation task
+  - `POST /api/v1/navigation/tasks/{task_id}/resume` — Request continuation of the same paused navigation task
   - `POST /api/v1/stop` — Emergency stop
   - `POST /api/v1/visual_servo` — Hot-switch visual servo target
-- **src\gateway\routes\diagnostics.py**:
+- **src/gateway/routes/diagnostics.py**:
   - `GET /api/v1/diagnostic_pack` — Export diagnostic tarball
   - `GET /api/v1/diagnostics/algorithm-benchmark/latest` — Read latest read-only algorithm benchmark summary
   - `POST /api/v1/diagnostics/field-check` — Run read-only product field readiness check
@@ -42,31 +44,36 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `GET /api/v1/diagnostics/routecheck/latest` — Read latest non-motion routecheck summary
   - `GET /api/v1/diagnostics/runtime-contract` — Read canonical runtime interface contract
   - `POST /api/v1/inspection/acceptance` — Run read-only inspection acceptance without publishing motion commands
-- **src\gateway\routes\inspection.py**:
+- **src/gateway/routes/inspection.py**:
   - `GET /api/v1/inspection/evidence` — List recent verified inspection evidence
   - `GET /api/v1/inspection/evidence/{evidence_id}` — Read one verified inspection evidence manifest
   - `GET /api/v1/inspection/evidence/{evidence_id}/artifacts/{kind}` — Read one verified inspection evidence artifact
   - `GET /api/v1/inspection/routes` — List native inspection routes for a map
   - `POST /api/v1/inspection/routes` — Create or update a native inspection route
-  - `GET /api/v1/inspection/routes/{route_id}` — Read one native inspection route
   - `DELETE /api/v1/inspection/routes/{route_id}` — Delete one native inspection route
-  - `POST /api/v1/inspection/routes/{route_id}/start` — Start native C++ inspection execution
-  - `POST /api/v1/inspection/run/cancel` — Cancel native C++ inspection execution
-  - `POST /api/v1/inspection/run/pause` — Pause native C++ inspection execution
-  - `POST /api/v1/inspection/run/resume` — Resume native C++ inspection execution
+  - `GET /api/v1/inspection/routes/{route_id}` — Read one native inspection route
   - `GET /api/v1/inspection/status` — Read native inspection store/status snapshot
-- **src\gateway\routes\maps.py**:
-  - `POST /api/v1/map/activate` — Set active map (symlink)
+  - `GET /api/v1/inspection/tasks` — List retained inspection task projections
+  - `POST /api/v1/inspection/tasks` — Submit a task-addressed native inspection route
+  - `GET /api/v1/inspection/tasks/{task_id}` — Read the fact-backed state of one inspection task
+  - `POST /api/v1/inspection/tasks/{task_id}/cancel` — Request cancellation for one native inspection task
+  - `POST /api/v1/inspection/tasks/{task_id}/pause` — Request pause for one native inspection task
+  - `GET /api/v1/inspection/tasks/{task_id}/report` — Read the business result of one inspection task
+  - `POST /api/v1/inspection/tasks/{task_id}/resume` — Request resume for one native inspection task
+- **src/gateway/routes/maps.py**:
+  - `POST /api/v1/map/activate` — Activate a saved map in a module-controlled runtime
   - `GET /api/v1/map/points` — Map point cloud as JSON (from ikd-tree snapshot)
   - `POST /api/v1/map/rename` — Rename a saved map
   - `POST /api/v1/map/restore_predufo` — Restore map.pcd from pre-clean backup
   - `POST /api/v1/map/save` — Save current SLAM map
   - `POST /api/v1/map_cloud/reset` — Clear accumulated map cloud (viz only, SLAM ikd-tree untouched)
   - `POST /api/v1/maps/import_pcd` — Import a PCD file into a LingTu map package
-  - `GET /api/v1/maps/save-jobs` — List durable SaveMap jobs
-  - `GET /api/v1/maps/save-jobs/{job_id}` — Get durable SaveMap job status
-  - `POST /api/v1/maps/save-jobs/{job_id}/cancel` — Cancel a durable SaveMap job
-  - `POST /api/v1/maps/save-jobs/{job_id}/retry` — Retry a failed durable SaveMap job
+  - `GET /api/v1/maps/operations` — List durable map-save operations
+  - `GET /api/v1/maps/operations/{operation_id}` — Get a durable map-save operation
+  - `POST /api/v1/maps/operations/{operation_id}/cancel` — Cancel a durable map-save operation
+  - `POST /api/v1/maps/operations/{operation_id}/retry` — Retry a failed durable map-save operation
+  - `DELETE /api/v1/maps/{name}` — Delete a saved map
+  - `POST /api/v1/maps/{name}/build_occupancy` — Build a 2D occupancy artifact from a saved map
   - `POST /api/v1/maps/{name}/build_octomap` — Build OctoPlanner3D octomap.ot from saved map.pcd
   - `POST /api/v1/maps/{name}/crop` — Crop a saved map point cloud and invalidate derived artifacts
   - `POST /api/v1/maps/{name}/mark_zone` — Mark occupied/free/preblocked/traversable zones in the saved OctoMap
@@ -80,56 +87,69 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
   - `GET /api/v1/slam/maps` — List maps through the native maps service
   - `GET /map/viewer` — Interactive 3D map viewer
   - `GET /robot/meshes/{filename}` — Serve robot STL mesh files
-- **src\gateway\routes\operations.py**:
-  - `POST /api/v1/bag/start` — Start rosbag recording
-  - `GET /api/v1/bag/status` — rosbag recording status
-  - `POST /api/v1/bag/stop` — Stop rosbag recording
+- **src/gateway/routes/operations.py**:
+  - `POST /api/v1/bag/start` — Start native MCAP recording (deprecated path)
+  - `GET /api/v1/bag/status` — Native MCAP recording status (deprecated path)
+  - `POST /api/v1/bag/stop` — Stop native MCAP recording (deprecated path)
+  - `POST /api/v1/explore/directed` — Set an explicit native TARE exploration direction intent
+  - `POST /api/v1/explore/directed/clear` — Clear the explicit native TARE exploration direction intent
   - `POST /api/v1/explore/start` — Start autonomous frontier exploration
   - `GET /api/v1/explore/status` — Exploration status
   - `POST /api/v1/explore/stop` — Stop autonomous frontier exploration
   - `GET /api/v1/memory/temporal` — Query temporal entity observations
   - `POST /api/v1/memory/temporal/semantic` — Semantic similarity search over temporal observations
+  - `POST /api/v1/recordings/start` — Start native MCAP recording
+  - `GET /api/v1/recordings/status` — Native MCAP recording status
+  - `POST /api/v1/recordings/stop` — Stop native MCAP recording
   - `GET /api/v1/services/status` — Product service status
   - `POST /api/v1/slam/auto_relocalize` — Global relocalize via 3D-BBS (no guess required)
   - `POST /api/v1/slam/relocalize` — Relocalize against a saved map
-  - `POST /api/v1/slam/restart` — Force-restart native SLAM localization service
+  - `POST /api/v1/slam/restart` — Return the operator command for restarting native SLAM
   - `GET /api/v1/slam/status` — SLAM service status
   - `POST /api/v1/slam/switch` — Hot-switch SLAM profile
   - `POST /api/v1/slam/track_against_map` — Start continuous saved-map tracking
   - `GET /api/v1/webrtc/go2rtc/status` — Probe the go2rtc sidecar (image transmission fast path)
   - `POST /api/v1/webrtc/whep` — WHEP signalling proxy to go2rtc (image transmission path)
-- **src\gateway\routes\session.py**:
+- **src/gateway/routes/places.py**:
+  - `GET /api/v1/places` — List canonical semantic places
+  - `POST /api/v1/places` — Create or update a canonical semantic place on a native map
+  - `GET /api/v1/places/resolve` — Resolve a canonical semantic place by name or alias
+- **src/gateway/routes/session.py**:
   - `GET /api/v1/session` — Current session state + capabilities
-  - `POST /api/v1/session/end` — Exit current mode and return to idle
-  - `POST /api/v1/session/start` — Enter a low-level mapping, navigating, or exploring session
-- **src\gateway\routes\status.py**:
+  - `POST /api/v1/session/end` — End a local session or accept ProductControl-authorized field shutdown
+  - `POST /api/v1/session/start` — Start a local session or verify the active field Product session
+- **src/gateway/routes/status.py**:
   - `GET /api/v1/devices` — Hardware device registry status
   - `GET /api/v1/events` — SSE event stream
   - `GET /api/v1/health` — System health overview
   - `GET /api/v1/localization/status` — Localization status for app and web clients
   - `GET /api/v1/locations` — List tagged navigation locations
   - `POST /api/v1/locations` — Create or update a tagged navigation location
-  - `PUT /api/v1/locations/{name}` — Update a tagged navigation location
   - `DELETE /api/v1/locations/{name}` — Delete a tagged navigation location
+  - `PUT /api/v1/locations/{name}` — Update a tagged navigation location
   - `GET /api/v1/metrics` — Operator-facing runtime metrics snapshot
-  - `GET /api/v1/navigation`
   - `GET /api/v1/navigation/dds_snapshot` — Latest navigation data for the native DDS endpoint
+  - `GET /api/v1/navigation/goals/{request_id}` — Request-correlated native navigation lifecycle status
   - `GET /api/v1/navigation/status` — Navigation mission and control status
+  - `GET /api/v1/navigation/tasks/{task_id}` — Stable native navigation task lifecycle status
   - `GET /api/v1/path` — Latest planned path
   - `GET /api/v1/readiness` — Client readiness snapshot
-  - `GET /api/v1/runtime/dataflow` — Runtime dataflow and Module port observability
-  - `POST /api/v1/runtime/dataflow/subscribe` — Create a read-only runtime dataflow SSE subscription plan
-  - `GET /api/v1/runtime/dataflow/topic` — Inspect one runtime dataflow topic
-  - `POST /api/v1/runtime/switch` — Validate and optionally execute a product mode switch
-  - `POST /api/v1/runtime/switch-plan` — Dry-run runtime endpoint switch plan
+  - `GET /api/v1/runtime/dataflow` — Read-only Product motion and Gateway observability
+  - `POST /api/v1/runtime/dataflow/subscribe` — Create a read-only Gateway SSE subscription plan
+  - `GET /api/v1/runtime/dataflow/topic` — Inspect one Gateway-observable Product topic
+  - `POST /api/v1/runtime/switch-plan` — Dry-run Product switch plan in the current Env
   - `GET /api/v1/scene_graph` — Current scene graph
   - `GET /api/v1/state` — Full robot state snapshot
   - `GET /health` — Liveness probe
   - `GET /ready` — Readiness probe
+- **src/gateway/routes/voice.py**:
+  - `GET /api/v1/safety/modes/estop` — Read AskMe-compatible emergency-stop state
+  - `POST /api/v1/safety/modes/estop` — Activate the emergency stop through the AskMe compatibility route
+  - `POST /api/v1/voice/turns` — Submit an AskMe voice turn
 
 ---
 
-## src\gateway\routes\app.py
+## src/gateway/routes/app.py
 
 ### `GET /api/v1/app/bootstrap`
 **Summary:** App/Web bootstrap snapshot
@@ -146,11 +166,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `AppTrafficResponse`
 **Handler:** `app_traffic`
 
-### `GET /api/v1/bootstrap`
-**Response model:** `AppBootstrapResponse`
-**Handler:** `app_bootstrap_legacy_alias`
-
-## src\gateway\routes\auth.py
+## src/gateway/routes/auth.py
 
 ### `GET /api/v1/auth/check`
 **Summary:** Check if auth is required
@@ -162,13 +178,13 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `AuthLoginResponse`
 **Handler:** `auth_login`
 
-## src\gateway\routes\camera.py
+## src/gateway/routes/camera.py
 
 ### `GET /api/v1/camera/snapshot`
 **Summary:** Camera JPEG snapshot
 **Handler:** `camera_snapshot`
 
-## src\gateway\routes\commands.py
+## src/gateway/routes/commands.py
 
 ### `POST /api/v1/cmd_vel`
 **Summary:** Direct velocity command
@@ -206,7 +222,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `post_navigate_click`
 
 ### `POST /api/v1/navigation/cancel`
-**Summary:** Gracefully cancel current navigation mission
+**Summary:** Compatibility cancel for the current navigation mission
 **Response model:** `ControlCommandResponse`
 **Handler:** `post_navigation_cancel`
 
@@ -225,6 +241,21 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `ControlCommandResponse`
 **Handler:** `post_navigation_resume`
 
+### `POST /api/v1/navigation/tasks/{task_id}/cancel`
+**Summary:** Request cancellation of one navigation task
+**Response model:** `ControlCommandResponse`
+**Handler:** `post_navigation_task_cancel`
+
+### `POST /api/v1/navigation/tasks/{task_id}/pause`
+**Summary:** Request a stop-confirmed pause of one navigation task
+**Response model:** `ControlCommandResponse`
+**Handler:** `post_navigation_task_pause`
+
+### `POST /api/v1/navigation/tasks/{task_id}/resume`
+**Summary:** Request continuation of the same paused navigation task
+**Response model:** `ControlCommandResponse`
+**Handler:** `post_navigation_task_resume`
+
 ### `POST /api/v1/stop`
 **Summary:** Emergency stop
 **Response model:** `ControlCommandResponse`
@@ -235,7 +266,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `ControlCommandResponse`
 **Handler:** `post_visual_servo`
 
-## src\gateway\routes\diagnostics.py
+## src/gateway/routes/diagnostics.py
 
 ### `GET /api/v1/diagnostic_pack`
 **Summary:** Export diagnostic tarball
@@ -275,7 +306,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `InspectionAcceptanceResponse`
 **Handler:** `inspection_acceptance`
 
-## src\gateway\routes\inspection.py
+## src/gateway/routes/inspection.py
 
 ### `GET /api/v1/inspection/evidence`
 **Summary:** List recent verified inspection evidence
@@ -299,45 +330,60 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `InspectionRouteResponse`
 **Handler:** `put_inspection_route`
 
-### `GET /api/v1/inspection/routes/{route_id}`
-**Summary:** Read one native inspection route
-**Response model:** `InspectionRouteResponse`
-**Handler:** `get_inspection_route`
-
 ### `DELETE /api/v1/inspection/routes/{route_id}`
 **Summary:** Delete one native inspection route
 **Response model:** `InspectionCommandResponse`
 **Handler:** `delete_inspection_route`
 
-### `POST /api/v1/inspection/routes/{route_id}/start`
-**Summary:** Start native C++ inspection execution
-**Response model:** `InspectionCommandResponse`
-**Handler:** `start_inspection_route`
-
-### `POST /api/v1/inspection/run/cancel`
-**Summary:** Cancel native C++ inspection execution
-**Response model:** `InspectionCommandResponse`
-**Handler:** `cancel_inspection_run`
-
-### `POST /api/v1/inspection/run/pause`
-**Summary:** Pause native C++ inspection execution
-**Response model:** `InspectionCommandResponse`
-**Handler:** `pause_inspection_run`
-
-### `POST /api/v1/inspection/run/resume`
-**Summary:** Resume native C++ inspection execution
-**Response model:** `InspectionCommandResponse`
-**Handler:** `resume_inspection_run`
+### `GET /api/v1/inspection/routes/{route_id}`
+**Summary:** Read one native inspection route
+**Response model:** `InspectionRouteResponse`
+**Handler:** `get_inspection_route`
 
 ### `GET /api/v1/inspection/status`
 **Summary:** Read native inspection store/status snapshot
 **Response model:** `InspectionStatusResponse`
 **Handler:** `inspection_status`
 
-## src\gateway\routes\maps.py
+### `GET /api/v1/inspection/tasks`
+**Summary:** List retained inspection task projections
+**Response model:** `InspectionTaskListResponse`
+**Handler:** `list_inspection_tasks`
+
+### `POST /api/v1/inspection/tasks`
+**Summary:** Submit a task-addressed native inspection route
+**Response model:** `InspectionTaskCommandResponse`
+**Handler:** `start_inspection_task`
+
+### `GET /api/v1/inspection/tasks/{task_id}`
+**Summary:** Read the fact-backed state of one inspection task
+**Response model:** `InspectionTaskStatusResponse`
+**Handler:** `get_inspection_task`
+
+### `POST /api/v1/inspection/tasks/{task_id}/cancel`
+**Summary:** Request cancellation for one native inspection task
+**Response model:** `InspectionTaskCommandResponse`
+**Handler:** `cancel_inspection_task`
+
+### `POST /api/v1/inspection/tasks/{task_id}/pause`
+**Summary:** Request pause for one native inspection task
+**Response model:** `InspectionTaskCommandResponse`
+**Handler:** `pause_inspection_task`
+
+### `GET /api/v1/inspection/tasks/{task_id}/report`
+**Summary:** Read the business result of one inspection task
+**Response model:** `InspectionTaskReportResponse`
+**Handler:** `get_inspection_task_report`
+
+### `POST /api/v1/inspection/tasks/{task_id}/resume`
+**Summary:** Request resume for one native inspection task
+**Response model:** `InspectionTaskCommandResponse`
+**Handler:** `resume_inspection_task`
+
+## src/gateway/routes/maps.py
 
 ### `POST /api/v1/map/activate`
-**Summary:** Set active map (symlink)
+**Summary:** Activate a saved map in a module-controlled runtime
 **Response model:** `MapLifecycleResponse`
 **Handler:** `activate_map`
 
@@ -358,7 +404,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 
 ### `POST /api/v1/map/save`
 **Summary:** Save current SLAM map
-**Response model:** `MapLifecycleResponse`
+**Response model:** `MapSaveOperationResponse`
 **Handler:** `save_map_now`
 
 ### `POST /api/v1/map_cloud/reset`
@@ -371,25 +417,35 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `MapLifecycleResponse`
 **Handler:** `import_pcd_map`
 
-### `GET /api/v1/maps/save-jobs`
-**Summary:** List durable SaveMap jobs
-**Response model:** `MapLifecycleResponse`
-**Handler:** `list_save_map_jobs`
+### `GET /api/v1/maps/operations`
+**Summary:** List durable map-save operations
+**Response model:** `MapSaveOperationResponse`
+**Handler:** `list_map_operations`
 
-### `GET /api/v1/maps/save-jobs/{job_id}`
-**Summary:** Get durable SaveMap job status
-**Response model:** `MapLifecycleResponse`
-**Handler:** `get_save_map_job`
+### `GET /api/v1/maps/operations/{operation_id}`
+**Summary:** Get a durable map-save operation
+**Response model:** `MapSaveOperationResponse`
+**Handler:** `get_map_operation`
 
-### `POST /api/v1/maps/save-jobs/{job_id}/cancel`
-**Summary:** Cancel a durable SaveMap job
-**Response model:** `MapLifecycleResponse`
-**Handler:** `cancel_save_map_job`
+### `POST /api/v1/maps/operations/{operation_id}/cancel`
+**Summary:** Cancel a durable map-save operation
+**Response model:** `MapSaveOperationResponse`
+**Handler:** `cancel_map_operation`
 
-### `POST /api/v1/maps/save-jobs/{job_id}/retry`
-**Summary:** Retry a failed durable SaveMap job
+### `POST /api/v1/maps/operations/{operation_id}/retry`
+**Summary:** Retry a failed durable map-save operation
+**Response model:** `MapSaveOperationResponse`
+**Handler:** `retry_map_operation`
+
+### `DELETE /api/v1/maps/{name}`
+**Summary:** Delete a saved map
 **Response model:** `MapLifecycleResponse`
-**Handler:** `retry_save_map_job`
+**Handler:** `delete_saved_map`
+
+### `POST /api/v1/maps/{name}/build_occupancy`
+**Summary:** Build a 2D occupancy artifact from a saved map
+**Response model:** `MapLifecycleResponse`
+**Handler:** `build_saved_map_occupancy`
 
 ### `POST /api/v1/maps/{name}/build_octomap`
 **Summary:** Build OctoPlanner3D octomap.ot from saved map.pcd
@@ -451,22 +507,32 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Serve robot STL mesh files
 **Handler:** `serve_robot_mesh`
 
-## src\gateway\routes\operations.py
+## src/gateway/routes/operations.py
 
 ### `POST /api/v1/bag/start`
-**Summary:** Start rosbag recording
-**Response model:** `BagOperationResponse`
-**Handler:** `bag_start`
+**Summary:** Start native MCAP recording (deprecated path)
+**Response model:** `RecordingOperationResponse`
+**Handler:** `recording_start`
 
 ### `GET /api/v1/bag/status`
-**Summary:** rosbag recording status
-**Response model:** `BagStatusResponse`
-**Handler:** `bag_status`
+**Summary:** Native MCAP recording status (deprecated path)
+**Response model:** `RecordingStatusResponse`
+**Handler:** `recording_status`
 
 ### `POST /api/v1/bag/stop`
-**Summary:** Stop rosbag recording
-**Response model:** `BagOperationResponse`
-**Handler:** `bag_stop`
+**Summary:** Stop native MCAP recording (deprecated path)
+**Response model:** `RecordingOperationResponse`
+**Handler:** `recording_stop`
+
+### `POST /api/v1/explore/directed`
+**Summary:** Set an explicit native TARE exploration direction intent
+**Response model:** `DirectedExplorationResponse`
+**Handler:** `explore_directed`
+
+### `POST /api/v1/explore/directed/clear`
+**Summary:** Clear the explicit native TARE exploration direction intent
+**Response model:** `DirectedExplorationResponse`
+**Handler:** `clear_explore_directed`
 
 ### `POST /api/v1/explore/start`
 **Summary:** Start autonomous frontier exploration
@@ -493,6 +559,21 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `TemporalMemoryResponse`
 **Handler:** `post_temporal_semantic`
 
+### `POST /api/v1/recordings/start`
+**Summary:** Start native MCAP recording
+**Response model:** `RecordingOperationResponse`
+**Handler:** `recording_start`
+
+### `GET /api/v1/recordings/status`
+**Summary:** Native MCAP recording status
+**Response model:** `RecordingStatusResponse`
+**Handler:** `recording_status`
+
+### `POST /api/v1/recordings/stop`
+**Summary:** Stop native MCAP recording
+**Response model:** `RecordingOperationResponse`
+**Handler:** `recording_stop`
+
 ### `GET /api/v1/services/status`
 **Summary:** Product service status
 **Response model:** `ServiceStatusResponse`
@@ -509,7 +590,7 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `slam_relocalize`
 
 ### `POST /api/v1/slam/restart`
-**Summary:** Force-restart native SLAM localization service
+**Summary:** Return the operator command for restarting native SLAM
 **Response model:** `SlamOperationResponse`
 **Handler:** `slam_restart`
 
@@ -537,7 +618,24 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** WHEP signalling proxy to go2rtc (image transmission path)
 **Handler:** `post_webrtc_whep`
 
-## src\gateway\routes\session.py
+## src/gateway/routes/places.py
+
+### `GET /api/v1/places`
+**Summary:** List canonical semantic places
+**Response model:** `PlaceListResponse`
+**Handler:** `get_places`
+
+### `POST /api/v1/places`
+**Summary:** Create or update a canonical semantic place on a native map
+**Response model:** `PlaceUpsertResponse`
+**Handler:** `post_place`
+
+### `GET /api/v1/places/resolve`
+**Summary:** Resolve a canonical semantic place by name or alias
+**Response model:** `PlaceResolveResponse`
+**Handler:** `resolve_place`
+
+## src/gateway/routes/session.py
 
 ### `GET /api/v1/session`
 **Summary:** Current session state + capabilities
@@ -545,16 +643,16 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `session_get`
 
 ### `POST /api/v1/session/end`
-**Summary:** Exit current mode and return to idle
+**Summary:** End a local session or accept ProductControl-authorized field shutdown
 **Response model:** `SessionTransitionResponse`
 **Handler:** `session_end`
 
 ### `POST /api/v1/session/start`
-**Summary:** Enter a low-level mapping, navigating, or exploring session
+**Summary:** Start a local session or verify the active field Product session
 **Response model:** `SessionTransitionResponse`
 **Handler:** `session_start`
 
-## src\gateway\routes\status.py
+## src/gateway/routes/status.py
 
 ### `GET /api/v1/devices`
 **Summary:** Hardware device registry status
@@ -585,33 +683,39 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Response model:** `LocationOperationResponse`
 **Handler:** `post_location`
 
-### `PUT /api/v1/locations/{name}`
-**Summary:** Update a tagged navigation location
-**Response model:** `LocationOperationResponse`
-**Handler:** `put_location`
-
 ### `DELETE /api/v1/locations/{name}`
 **Summary:** Delete a tagged navigation location
 **Response model:** `LocationOperationResponse`
 **Handler:** `delete_location`
 
+### `PUT /api/v1/locations/{name}`
+**Summary:** Update a tagged navigation location
+**Response model:** `LocationOperationResponse`
+**Handler:** `put_location`
+
 ### `GET /api/v1/metrics`
 **Summary:** Operator-facing runtime metrics snapshot
 **Handler:** `get_metrics`
-
-### `GET /api/v1/navigation`
-**Response model:** `NavigationStatusResponse`
-**Handler:** `get_navigation_status_legacy_alias`
 
 ### `GET /api/v1/navigation/dds_snapshot`
 **Summary:** Latest navigation data for the native DDS endpoint
 **Response model:** `NavigationDdsSnapshotResponse`
 **Handler:** `get_navigation_dds_snapshot`
 
+### `GET /api/v1/navigation/goals/{request_id}`
+**Summary:** Request-correlated native navigation lifecycle status
+**Response model:** `NavigationGoalStatusQueryResponse`
+**Handler:** `get_navigation_goal_status`
+
 ### `GET /api/v1/navigation/status`
 **Summary:** Navigation mission and control status
 **Response model:** `NavigationStatusResponse`
 **Handler:** `get_navigation_status`
+
+### `GET /api/v1/navigation/tasks/{task_id}`
+**Summary:** Stable native navigation task lifecycle status
+**Response model:** `NavigationTaskStatusQueryResponse`
+**Handler:** `get_navigation_task_status`
 
 ### `GET /api/v1/path`
 **Summary:** Latest planned path
@@ -624,27 +728,22 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Handler:** `api_readiness`
 
 ### `GET /api/v1/runtime/dataflow`
-**Summary:** Runtime dataflow and Module port observability
+**Summary:** Read-only Product motion and Gateway observability
 **Response model:** `RuntimeDataflowResponse`
 **Handler:** `get_runtime_dataflow`
 
 ### `POST /api/v1/runtime/dataflow/subscribe`
-**Summary:** Create a read-only runtime dataflow SSE subscription plan
+**Summary:** Create a read-only Gateway SSE subscription plan
 **Response model:** `RuntimeDataflowSubscribeResponse`
 **Handler:** `post_runtime_dataflow_subscribe`
 
 ### `GET /api/v1/runtime/dataflow/topic`
-**Summary:** Inspect one runtime dataflow topic
+**Summary:** Inspect one Gateway-observable Product topic
 **Response model:** `RuntimeDataflowTopicDetailResponse`
 **Handler:** `get_runtime_dataflow_topic`
 
-### `POST /api/v1/runtime/switch`
-**Summary:** Validate and optionally execute a product mode switch
-**Response model:** `RuntimeSwitchResponse`
-**Handler:** `post_runtime_switch`
-
 ### `POST /api/v1/runtime/switch-plan`
-**Summary:** Dry-run runtime endpoint switch plan
+**Summary:** Dry-run Product switch plan in the current Env
 **Response model:** `RuntimeSwitchPlanResponse`
 **Handler:** `post_runtime_switch_plan`
 
@@ -667,3 +766,20 @@ The GatewayModule serves these endpoints via FastAPI on port 5050.
 **Summary:** Readiness probe
 **Response model:** `ReadinessResponse`
 **Handler:** `readiness_ready`
+
+## src/gateway/routes/voice.py
+
+### `GET /api/v1/safety/modes/estop`
+**Summary:** Read AskMe-compatible emergency-stop state
+**Response model:** `SafetyEstopResponse`
+**Handler:** `get_safety_estop`
+
+### `POST /api/v1/safety/modes/estop`
+**Summary:** Activate the emergency stop through the AskMe compatibility route
+**Response model:** `SafetyEstopResponse`
+**Handler:** `post_safety_estop`
+
+### `POST /api/v1/voice/turns`
+**Summary:** Submit an AskMe voice turn
+**Response model:** `VoiceTurnResponse`
+**Handler:** `post_voice_turn`

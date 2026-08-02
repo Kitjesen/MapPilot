@@ -62,6 +62,8 @@ class ActiveOctomapGate {
   ActiveOctomapGateResult prepare(const std::filesystem::path &configured_octomap_path) const;
   ActiveOctomapIdentityResult
   currentIdentity(const std::filesystem::path &configured_octomap_path) const;
+  ActiveOctomapIdentityResult
+  currentDeclaredIdentity(const std::filesystem::path &configured_octomap_path) const;
 
  private:
   lingtu::maps::MapStore *resolveStore(const std::filesystem::path &configured_octomap_path,

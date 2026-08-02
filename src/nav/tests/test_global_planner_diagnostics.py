@@ -54,8 +54,12 @@ class _SuccessfulRustPctBackend:
         self._last_plan_diagnostics = {
             "planner": "pct",
             "stage": "native_plan_success",
-            "pct_runtime": "rust_process",
-            "pct_planner_path_mode": "rust_optimized_trajectory",
+            "pct_planner_runtime": {
+                "runtime": "rust_process",
+                "ok": True,
+            },
+            "last_path_mode": "rust_optimized_trajectory",
+            "pct_planner_path_mode": "optimized_trajectory",
             "pct_optimizer_enabled": True,
             "pct_optimizer_attempted": True,
             "pct_optimizer_accepted": True,
@@ -180,8 +184,12 @@ def test_global_planner_preserves_rust_pct_optimizer_diagnostics():
     assert report["primary_planner"] == "pct"
     assert report["selected_planner"] == "pct"
     assert report["fallback_reason"] == ""
-    assert diagnostics["pct_runtime"] == "rust_process"
-    assert diagnostics["pct_planner_path_mode"] == "rust_optimized_trajectory"
+    assert diagnostics["pct_planner_runtime"] == {
+        "runtime": "rust_process",
+        "ok": True,
+    }
+    assert diagnostics["last_path_mode"] == "rust_optimized_trajectory"
+    assert diagnostics["pct_planner_path_mode"] == "optimized_trajectory"
     assert diagnostics["pct_optimizer_enabled"] is True
     assert diagnostics["pct_optimizer_attempted"] is True
     assert diagnostics["pct_optimizer_accepted"] is True

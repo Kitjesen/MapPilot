@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import re
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -52,7 +50,7 @@ def test_robot_route_validates_against_typed_dds_contract() -> None:
     contract = load_route_contract(robot())
 
     assert validate_route_contract(contract) == []
-    assert contract.route.endpoint_contract == "thunder_field_dds_v1"
+    assert contract.route.endpoint_contract == "thunder_dds_v1"
     assert contract.route_for(TOPICS.lidar_scan) == "dds"
     assert contract.route_for(TOPICS.goal_pose) == "dds"
     assert contract.route_for(TOPICS.cancel) == "dds"
@@ -62,13 +60,29 @@ def test_robot_route_validates_against_typed_dds_contract() -> None:
     assert contract.binding_for(TOPICS.cmd_vel)["qos"] == "command"
 
 
-def test_robot_route_matches_thunder_field_dds_endpoint_topics() -> None:
-    from runtime.endpoints.dds.contracts import THUNDER_FIELD_DDS_CONTRACT
+def test_robot_route_matches_thunder_dds_endpoint_topics() -> None:
+    from runtime.endpoints.dds.contracts import THUNDER_DDS_CONTRACT
 
     contract = load_route_contract(robot())
 
-    assert set(contract.route.routes) == set(THUNDER_FIELD_DDS_CONTRACT.topics)
+    assert set(contract.route.routes) == set(THUNDER_DDS_CONTRACT.topics)
     assert validate_route_contract(contract) == []
+
+
+def test_robot_route_includes_native_exploration_dds_boundaries() -> None:
+    contract = load_route_contract(robot())
+    expected_qos = {
+        TOPICS.exploration_grid: "state",
+        TOPICS.exploration_snapshot: "state",
+        TOPICS.exploration_execution_snapshot: "state",
+        TOPICS.exploration_segment_request: "command",
+        TOPICS.exploration_segment_ack: "event",
+        TOPICS.exploration_segment_status: "event",
+    }
+
+    for topic, qos in expected_qos.items():
+        assert contract.route_for(topic) == "dds"
+        assert contract.binding_for(topic)["qos"] == qos
 
 
 def test_robot_route_exposes_module_and_endpoint_port_bindings() -> None:
@@ -144,6 +158,55 @@ def test_route_rejects_dds_topic_without_port_bindings() -> None:
     issues = validate_route_contract(broken)
 
     assert any(issue.code == "dds_port_bindings_missing" for issue in issues)
+
+
+def test_route_allows_explicit_external_status_without_in_repo_consumer() -> None:
+    contract = load_route_contract(robot())
+    status = contract.topic(TOPICS.operator_motion_status)
+
+    assert status.consumers == ()
+    assert status.external_diagnostics_subscribable is True
+    assert not any(
+        issue.code == "topic_consumers_missing" and issue.scope == TOPICS.operator_motion_status
+        for issue in validate_route_contract(contract)
+    )
+
+
+def test_route_registers_host_bus_as_the_task_event_consumer() -> None:
+    contract = load_route_contract(robot())
+    event = contract.topic(TOPICS.inspection_task_event)
+
+    assert event.consumers == ("host_bus",)
+    assert event.external_diagnostics_subscribable is True
+    assert not any(
+        issue.code == "topic_consumers_missing" and issue.scope == TOPICS.inspection_task_event
+        for issue in validate_route_contract(contract)
+    )
+
+
+def test_external_diagnostics_flag_cannot_hide_consumerless_control_topic() -> None:
+    contract = load_route_contract(robot())
+    control = contract.topic(TOPICS.operator_motion_control)
+    broken = RouteContract(
+        name=contract.name,
+        topics={
+            **dict(contract.topics),
+            TOPICS.operator_motion_control: replace(
+                control,
+                consumers=(),
+                external_diagnostics_subscribable=True,
+            ),
+        },
+        route=contract.route,
+        native_contract_topics=contract.native_contract_topics,
+    )
+
+    issues = validate_route_contract(broken)
+
+    assert any(
+        issue.code == "topic_consumers_missing" and issue.scope == TOPICS.operator_motion_control
+        for issue in issues
+    )
 
 
 def test_route_mermaid_renders_topic_ownership_and_route() -> None:
@@ -273,39 +336,8 @@ def test_blueprint_merge_rejects_route_mismatch() -> None:
         raise AssertionError("route mismatch should fail")
 
 
-def test_route_name_compatibility_still_loads_builtin_preset() -> None:
+def test_route_name_loads_builtin_preset() -> None:
     contract = load_route_contract("robot")
 
     assert validate_route_contract(contract) == []
     assert contract.route.name == "robot"
-
-
-def test_blueprint_route_legacy_alias_still_enables_routed_delivery() -> None:
-    with pytest.warns(DeprecationWarning, match="Blueprint.route"):
-        graph = Blueprint("nav").add(RouteModule).route(robot()).export_graph(profile="unit")
-    manifest = graph.to_manifest()
-
-    assert manifest["route_contract"] == "robot"
-    assert manifest["routed_delivery"] is True
-
-
-def test_product_builders_do_not_call_legacy_blueprint_route() -> None:
-    root = Path(__file__).resolve().parents[3]
-    legacy_call = re.compile(r"\.route\s*\(")
-    checked_dirs = (
-        root / "cli",
-        root / "src" / "lingtu",
-        root / "src" / "runtime" / "blueprints",
-        root / "src" / "runtime" / "profiles",
-    )
-    offenders: list[str] = []
-    for base in checked_dirs:
-        if not base.exists():
-            continue
-        for path in base.rglob("*.py"):
-            text = path.read_text(encoding="utf-8")
-            for line_no, line in enumerate(text.splitlines(), start=1):
-                if legacy_call.search(line):
-                    offenders.append(f"{path.relative_to(root)}:{line_no}")
-
-    assert offenders == []

@@ -22,6 +22,7 @@ void bind_path_follower(nb::module_& m) {
     .def_rw("stop_yaw_rate_gain", &PathFollowerParams::stopYawRateGain)
     .def_rw("max_yaw_rate", &PathFollowerParams::maxYawRate)
     .def_rw("max_speed", &PathFollowerParams::maxSpeed)
+    .def_rw("min_speed", &PathFollowerParams::minSpeed)
     .def_rw("max_accel", &PathFollowerParams::maxAccel)
     .def_rw("turn_speed_yaw_rate_start", &PathFollowerParams::turnSpeedYawRateStart)
     .def_rw("turn_speed_min_scale", &PathFollowerParams::turnSpeedMinScale)

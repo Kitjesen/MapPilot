@@ -1,0 +1,109 @@
+{
+  "schema_version": "lingtu.mujoco.explore_native_acceptance.v1",
+  "name": "mujoco_explore_native",
+  "description": "Map-free MuJoCo acceptance for native live exploration segments.",
+  "product_contract": {
+    "product": "explore",
+    "source": "config/runtime_graph/products/explore.yaml",
+    "native_control_mode": "autonomy",
+    "slam_mode": "mapping",
+    "requires_map": false,
+    "route": "live"
+  },
+  "domain_id": 236,
+  "world": "",
+  "start": [0.0, 0.0, 0.48, 0.0],
+  "asset_builder": {
+    "kind": "scene_only",
+    "scene_preset": "corridor",
+    "length": 8.0,
+    "width": 3.0
+  },
+  "slam_runtime": {
+    "provider": "fastlio2",
+    "mode": "mapping"
+  },
+  "sensor_runtime": {
+    "publish_hz": 10.0,
+    "imu_hz": 200.0,
+    "mid360_samples_per_frame": 15000,
+    "scan_time_profile": "physical_rolling",
+    "physical_rolling_sample_mode": "subscan",
+    "publish_odom_prior": false
+  },
+  "paths": {
+    "slam_config": "src/localization/fastlio2/config/mid360_mujoco_native_dds.yaml",
+    "path_library": "src/nav/local/paths",
+    "sensor_runner": "sim/scripts/mujoco/native_dds_sensors.py"
+  },
+  "binaries": {
+    "sensor_publisher": {
+      "env": "LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN",
+      "candidates": [
+        "build/mujoco_native_livox/livox_sdk2_stream",
+        "build/livox_sdk2_stream/livox_sdk2_stream"
+      ]
+    },
+    "slam": {
+      "env": "LINGTU_MUJOCO_SLAM_BIN",
+      "candidates": ["build/mujoco_native_slam/slamd", "build/slam_core/slamd"]
+    },
+    "mapd": {
+      "env": "LINGTU_MUJOCO_MAPD_BIN",
+      "candidates": ["build/maps/mapd", "build/mujoco_native_maps/mapd"]
+    },
+    "traversability": {
+      "env": "LINGTU_MUJOCO_TRAVERSABILITY_BIN",
+      "candidates": [
+        "build/mujoco_native_nav/lingtu_traversability_dds",
+        "build/nav_endpoint/lingtu_traversability_dds"
+      ]
+    },
+    "navigation": {
+      "env": "LINGTU_MUJOCO_NAV_BIN",
+      "candidates": ["build/mujoco_native_nav/navd", "build/nav_endpoint/navd"]
+    },
+    "explore": {
+      "env": "LINGTU_MUJOCO_EXPLORE_BIN",
+      "candidates": [
+        "build/mujoco_native_nav/lingtu_explore_dds",
+        "build/nav_endpoint/lingtu_explore_dds"
+      ]
+    },
+    "navigation_control": {
+      "env": "LINGTU_MUJOCO_NAV_CONTROL_BIN",
+      "candidates": [
+        "build/mujoco_native_nav/lingtu_nav_control",
+        "build/nav_endpoint/lingtu_nav_control"
+      ]
+    },
+    "cmd_vel_tap": {
+      "env": "LINGTU_MUJOCO_CMD_VEL_TAP_BIN",
+      "candidates": ["build/mujoco_native_dds/lingtu_mujoco_cmd_vel_tap"]
+    }
+  },
+  "runtime_tolerances": {
+    "sim_hardware_realtime_factor": 1.0,
+    "sim_hardware_catch_up_yield_steps": 40,
+    "input_future_tolerance_s": 0.05,
+    "sensor_publisher_write_mode": "async_fifo",
+    "sensor_publisher_async_max_bytes": 1048576,
+    "sensor_publisher_async_max_records": 512,
+    "sensor_publisher_async_max_batches": 256,
+    "sensor_publisher_async_oldest_s": 0.5,
+    "sensor_publisher_async_shutdown_s": 2.0
+  },
+  "contracts": {
+    "route": "live",
+    "forbidden_arguments": ["--map", "--map-root", "--planner-map", "--track-against-map"],
+    "required_flow": [
+      "rt/nav/exploration_snapshot",
+      "rt/nav/exploration_segment/request",
+      "rt/nav/exploration_segment/ack",
+      "rt/nav/exploration_segment/status",
+      "rt/nav/local_path",
+      "rt/nav/cmd_vel"
+    ],
+    "forbidden_compute": ["global planner", "saved-map localization", "Python navigation"]
+  }
+}

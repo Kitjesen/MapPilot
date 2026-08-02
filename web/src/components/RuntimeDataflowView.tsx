@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Radio, RotateCcw } from 'lucide-react'
 import type {
+  ProductName,
   ProductFieldCheckResponse,
   RuntimeDataflowResponse,
   RuntimeDataflowStageEvidence,
@@ -87,16 +88,29 @@ function commandPolicyText(dataflow: RuntimeDataflowResponse | null): string {
 
 function isRealRuntimeBoundary(dataflow: RuntimeDataflowResponse): boolean {
   const boundary = asRecord(dataflow.runtime_boundary)
-  return (
-    boundary.simulation_only === false
-    || boundary.runtime_contract === 'real_s100p'
-    || boundary.data_source === 'real_s100p'
-  )
+  return boundary.env === 'real'
 }
 
-function runtimeProfile(dataflow: RuntimeDataflowResponse, fallback: string): string {
-  const profile = asRecord(dataflow.runtime_boundary).profile
-  return typeof profile === 'string' && profile.length > 0 ? profile : fallback
+const FIELD_PRODUCTS = new Set<ProductName>([
+  'teleop',
+  'teleop_avoid',
+  'map',
+  'explore',
+  'nav',
+  'tracking',
+  'inspection',
+])
+
+function runtimeProduct(
+  dataflow: RuntimeDataflowResponse,
+  sessionProduct?: ProductName | null,
+): ProductName | null {
+  if (sessionProduct && FIELD_PRODUCTS.has(sessionProduct)) return sessionProduct
+  const boundary = asRecord(dataflow.runtime_boundary)
+  const candidate = boundary.product
+  return typeof candidate === 'string' && FIELD_PRODUCTS.has(candidate as ProductName)
+    ? candidate as ProductName
+    : null
 }
 
 export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
@@ -121,21 +135,15 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
       const next = await api.fetchRuntimeDataflow()
       const realRuntime = isRealRuntimeBoundary(next)
       const fieldCheckMode = realRuntime ? 'field' : 'simulation'
-      const runtimeBoundary = asRecord(next.runtime_boundary)
-      const currentProfile = runtimeProfile(next, realRuntime ? 'explore' : 'sim_mujoco_live')
-      const currentEndpoint = typeof runtimeBoundary.endpoint === 'string'
-        ? runtimeBoundary.endpoint
-        : undefined
-      const targetProfile = realRuntime ? 'sim_mujoco_live' : 'explore'
-      const targetEndpoint = realRuntime ? 'mujoco_live' : 'real_s100p'
+      const currentProduct = runtimeProduct(next, sseState.session?.product)
       const [fieldCheckResult, switchPlanResult] = await Promise.allSettled([
         api.runProductFieldCheck({ mode: fieldCheckMode }),
-        api.runRuntimeSwitchPlan({
-          current_profile: currentProfile,
-          current_endpoint: currentEndpoint,
-          target_profile: targetProfile,
-          target_endpoint: targetEndpoint,
-        }),
+        currentProduct
+          ? api.runRuntimeSwitchPlan({
+              current_product: currentProduct,
+              target_product: currentProduct,
+            })
+          : Promise.reject(new Error('runtime_product_unknown')),
       ])
       setDataflow(next)
       setError(null)
@@ -161,7 +169,7 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [sseState.session?.product])
 
   const loadDetail = useCallback(async (topic: string | null) => {
     if (!topic) {
@@ -283,7 +291,7 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
   const switchPlanReady = switchPlan?.ok === true
   const switchFrom = asRecord(switchPlan?.from)
   const switchTo = asRecord(switchPlan?.to)
-  const switchBoundary = `${stringValue(switchFrom.endpoint)} -> ${stringValue(switchTo.endpoint)}`
+  const switchBoundary = `${stringValue(switchFrom.product)} -> ${stringValue(switchTo.product)}`
   const topBlocker = fieldError ?? fieldCheck?.blockers?.[0] ?? (
     fieldReady ? 'Gateway product evidence is passing' : 'Product check unavailable'
   )

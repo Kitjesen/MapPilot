@@ -2,9 +2,9 @@
 """Gateway-backed Rerun live viewer for LingTu.
 
 This viewer does not subscribe to ROS2 topics. It polls read-only Gateway
-endpoints and logs the available Module-first runtime state to Rerun.
-Use ``scripts/visualization/rerun_live.py`` only for explicit ROS2
-compatibility overlays.
+endpoints and logs the available Product runtime state to Rerun.
+Use ``scripts/visualization/rerun_live.py`` for the native CycloneDDS viewer;
+neither viewer requires ROS2.
 """
 
 from __future__ import annotations

@@ -25,7 +25,7 @@ struct TraversabilityGrid;
 struct StatusWriterConfig {
   std::string control_mode{"autonomy"};
   std::string global_planner{"octoplanner3d"};
-  std::string profile;
+  std::string product;
   std::string config_fingerprint;
   int domain_id{0};
   double tick_hz{0.0};
@@ -48,7 +48,6 @@ struct StatusWriterConfig {
   bool operator_takeover_latched{false};
   bool resume_required{false};
   std::string active_cmd_source{"none"};
-  bool allow_legacy_motion_inputs{false};
   std::string path_library_dir;
   std::string map_path;
   std::string status_file;

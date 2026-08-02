@@ -12,17 +12,25 @@ import json
 import logging
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from gateway.schemas import (
-    BagOperationResponse,
-    BagStartRequest,
-    BagStatusResponse,
+    DirectedExplorationClearRequest,
+    DirectedExplorationResponse,
+    DirectedExplorationTargetRequest,
     ExplorationCommandResponse,
+    ExplorationRunCommandRequest,
+    ExplorationRunListResponse,
+    ExplorationRunResponse,
+    ExplorationStartRequest,
     ExplorationStatusResponse,
     GatewayErrorResponse,
     Go2RTCStatusResponse,
+    RecordingOperationResponse,
+    RecordingStartRequest,
+    RecordingStatusResponse,
     ServiceStatusResponse,
     SlamOperationResponse,
     SlamRelocalizeRequest,
@@ -31,33 +39,44 @@ from gateway.schemas import (
     TemporalMemoryResponse,
     TemporalSemanticRequest,
 )
+from gateway.services.exploration import (
+    DirectedExplorationError,
+    ExplorationRunError,
+    clear_directed_exploration_target,
+    command_exploration_run,
+    directed_exploration_target,
+    product_control_owns_explore,
+    start_exploration_run,
+)
+from gateway.services.explore_runs import ensure_explore_runs
 from gateway.services.map_service import ensure_maps_service
+from gateway.services.recording import NativeRecordingError
 from maps.services.storage import safe_map_name
 from runtime.runtime_policy import (
     is_supported_slam_profile,
     normalize_slam_profile,
-    slam_switch_plan,
 )
 from runtime.service_catalogs.thunder import (
-    thunder_field_readiness_services,
+    thunder_runtime_services,
     thunder_service_groups,
     thunder_service_metadata,
+    thunder_service_spec,
     thunder_slam_status_services,
 )
 
 logger = logging.getLogger(__name__)
 
 _ACTIVE_SERVICE_STATES = {"running", "active"}
-_SERVICE_STATUS_DEFAULTS = tuple(dict.fromkeys((*thunder_field_readiness_services(), "gateway")))
+_SERVICE_STATUS_DEFAULTS = tuple(dict.fromkeys((*thunder_runtime_services(), "gateway")))
 _FIELD_SERVICE_READINESS_DEFAULT_PATH = "/tmp/lingtu_service_readiness.json"
 _SLAM_STATUS_SERVICES = thunder_slam_status_services()
 _SLAM_SERVICE_GROUPS = thunder_service_groups()
 _SLAM_SERVICE_METADATA = thunder_service_metadata()
 _EXPLORER_UNAVAILABLE_DETAIL = {
     "reason": "explorer_backend_not_running",
-    "required_profile": "explore_or_tare_explore",
-    "supported_profiles": ["explore", "tare_explore"],
-    "action": ("restart LingTu with the explore or tare_explore profile before starting exploration"),
+    "required_product": "explore",
+    "supported_products": ["explore"],
+    "action": "switch LingTu to the explore Product before starting exploration",
 }
 
 try:
@@ -235,6 +254,7 @@ def _load_field_service_readiness(now: float | None = None) -> dict[str, Any]:
         return evidence
 
     summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
+    evidence["_report"] = payload if isinstance(payload, dict) else {}
     evidence["checked"] = True
     evidence["schema"] = payload.get("schema") if isinstance(payload, dict) else None
     evidence["stamp_s"] = payload.get("stamp_s") if isinstance(payload, dict) else None
@@ -247,6 +267,134 @@ def _load_field_service_readiness(now: float | None = None) -> dict[str, Any]:
     evidence["blockers"] = blockers
     evidence["ok"] = not blockers
     return evidence
+
+
+def _run_plan_process(gw: Any, service_name: str) -> Any | None:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    logical_name = "host" if service_name in {"gateway", "lingtu"} else service_name
+    for process in tuple(getattr(plan, "processes", ()) or ()):
+        if str(getattr(process, "name", "") or "") == logical_name:
+            return process
+    return None
+
+
+def _field_status_for_service(
+    service_name: str,
+    *,
+    process: Any | None,
+    report: Mapping[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    systemd = report.get("systemd")
+    systemd = systemd if isinstance(systemd, Mapping) else {}
+    if process is not None:
+        units = (str(getattr(process, "target", "") or ""),)
+    else:
+        spec = thunder_service_spec(service_name)
+        units = tuple(spec.units) if spec is not None else ()
+    unit_evidence = {unit: dict(systemd[unit]) for unit in units if unit and isinstance(systemd.get(unit), Mapping)}
+    if unit_evidence:
+        active = any(
+            str(item.get("active_state") or "").lower() == "active"
+            or str(item.get("sub_state") or "").lower() == "running"
+            for item in unit_evidence.values()
+        )
+        known = any(str(item.get("active_state") or "").strip() for item in unit_evidence.values())
+        status = "running" if active else ("stopped" if known else "unknown")
+        return status, {"source": "field_readiness", "systemd": unit_evidence}
+
+    dds = report.get("dds")
+    dds = dds if isinstance(dds, Mapping) else {}
+    dds_services = dds.get("services")
+    dds_services = dds_services if isinstance(dds_services, Mapping) else {}
+    dds_evidence = dds_services.get(service_name)
+    if dds.get("checked") is True and isinstance(dds_evidence, Mapping):
+        return (
+            "active" if dds_evidence.get("ok") is True else "unknown",
+            {"source": "field_readiness", "dds": dict(dds_evidence)},
+        )
+    return None, {}
+
+
+def _service_status_snapshot(
+    gw: Any,
+    selected: tuple[str, ...],
+    field_readiness: dict[str, Any],
+) -> tuple[dict[str, str], dict[str, dict[str, Any]]]:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    report = field_readiness.pop("_report", {})
+    report = report if field_readiness.get("fresh") and isinstance(report, Mapping) else {}
+    live_slam_profile = (
+        str(gw._slam_profile_from_status(getattr(gw, "_localization_status", None)) or "").strip().lower()
+    )
+    backend_service = {
+        "native_dds": "slam",
+        "fastlio2": "slam",
+        "localizer": "localizer",
+        "genz": "genz_icp",
+    }.get(live_slam_profile)
+    session_mode = str(getattr(gw, "_session_mode", "idle") or "idle").strip().lower()
+    exploring = bool(getattr(gw, "_exploring", False))
+
+    services: dict[str, str] = {}
+    details: dict[str, dict[str, Any]] = {}
+    for name in selected:
+        process = _run_plan_process(gw, name)
+        declared = process is not None
+        status = "declared" if declared else ("not_declared" if plan is not None else "unknown")
+        observed: dict[str, Any] = {}
+        if plan is not None:
+            observed["run_plan"] = {
+                "declared": declared,
+                "product": str(getattr(plan, "product", "") or ""),
+                "fingerprint": str(getattr(plan, "fingerprint", "") or ""),
+                "target": str(getattr(process, "target", "") or "") if process is not None else None,
+            }
+
+        field_status, field_observed = _field_status_for_service(
+            name,
+            process=process,
+            report=report,
+        )
+        if field_status is not None:
+            status = field_status
+            observed["field_readiness"] = field_observed
+
+        if backend_service == name:
+            status = "running"
+            observed["native_telemetry"] = {
+                "backend": live_slam_profile,
+                "source": "localization_status",
+            }
+
+        if name == "explore" and exploring:
+            status = "running"
+        observed["session_cache"] = {
+            "mode": session_mode,
+            "exploring": exploring,
+        }
+
+        if name in {"gateway", "lingtu"}:
+            status = "running"
+
+        ready = status in _ACTIVE_SERVICE_STATES
+        metadata = _SLAM_SERVICE_METADATA.get(name, {})
+        details[name] = {
+            "status": status,
+            "ready": ready,
+            "blockers": [] if ready else [f"status_{status}"],
+            "observed": observed,
+            "contract": {
+                "checks": list(metadata.get("checks") or []),
+                "topics": list(metadata.get("topics") or []),
+                "dds_topics": list(metadata.get("dds_topics") or []),
+                "files": list(metadata.get("files") or []),
+                "binaries": list(metadata.get("binaries") or []),
+            },
+        }
+        services[name] = status
+
+    _mark_gateway_http_observed(details)
+    return services, details
 
 
 def _body_mapping(body: Any) -> dict[str, Any]:
@@ -315,7 +463,7 @@ def _unsupported_saved_map_relocalization_response(gw) -> Any | None:
         "saved_map_relocalization_supported",
         status.get("saved_map_relocalization_supported"),
     )
-    if backend_name not in {"genz", "super_lio", "super_lio_relocation"} or saved_map_supported is not False:
+    if backend_name != "genz" or saved_map_supported is not False:
         return None
 
     recovery_method = status.get("recovery_method") or raw.get("recovery_method")
@@ -502,7 +650,7 @@ def register_operation_routes(app, gw) -> None:
             503: {"model": GatewayErrorResponse},
         },
     )
-    async def explore_start():
+    async def explore_start(body: ExplorationStartRequest | None = None):
         if not gw._explorer_available():
             return JSONResponse(
                 status_code=503,
@@ -514,6 +662,41 @@ def register_operation_routes(app, gw) -> None:
                     "detail": dict(_EXPLORER_UNAVAILABLE_DETAIL),
                 },
             )
+        if product_control_owns_explore(gw):
+            loop = asyncio.get_event_loop()
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: start_exploration_run(
+                        gw,
+                        request_id=(body.request_id if body is not None else None),
+                    ),
+                )
+            except ExplorationRunError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={
+                        "schema_version": 1,
+                        "ok": False,
+                        "error": exc.code,
+                        "message": str(exc),
+                        "detail": exc.detail,
+                    },
+                )
+            if result.get("accepted") is not True:
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "schema_version": 1,
+                        "ok": False,
+                        "error": "exploration_command_rejected",
+                        "message": str(result.get("reason") or "Native Explore start was rejected."),
+                        "detail": result,
+                    },
+                )
+            gw.push_event({"type": "exploration_run_admitted", "data": result})
+            return result
+
         readiness = gw._exploration_start_readiness()
         if not readiness.get("can_start", False):
             blockers = readiness.get("blockers") or ["navigation_not_ready"]
@@ -550,13 +733,123 @@ def register_operation_routes(app, gw) -> None:
         gw.push_event({"type": "exploring", "active": True})
         return {"status": result}
 
+    @app.get(
+        "/api/v1/explore/runs/{exploration_run_id}",
+        summary="Query one durable native Explore execution",
+        response_model=ExplorationRunResponse,
+        responses={404: {"model": GatewayErrorResponse}},
+    )
+    async def explore_run_get(exploration_run_id: str):
+        try:
+            result = ensure_explore_runs(gw).query(exploration_run_id)
+        except ValueError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": "exploration_run_id_invalid",
+                    "message": str(exc),
+                    "detail": {},
+                },
+            )
+        if not result.get("found"):
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": "exploration_run_not_found",
+                    "message": "The requested Explore run is not retained on this robot.",
+                    "detail": result,
+                },
+            )
+        return result
+
+    @app.get(
+        "/api/v1/explore/runs",
+        summary="List recent durable native Explore executions",
+        response_model=ExplorationRunListResponse,
+    )
+    async def explore_runs_list(limit: int = 20):
+        runs = ensure_explore_runs(gw)
+        return {
+            "schema_version": "lingtu.explore.run.list.v1",
+            "runs": runs.list_recent(limit=limit),
+            "health": runs.health(),
+        }
+
+    def _register_explore_run_command(path_action: str) -> None:
+        async def command(
+            exploration_run_id: str,
+            body: ExplorationRunCommandRequest | None = None,
+        ):
+            loop = asyncio.get_event_loop()
+            try:
+                return await loop.run_in_executor(
+                    None,
+                    lambda: command_exploration_run(
+                        gw,
+                        exploration_run_id,
+                        action=path_action,
+                        request_id=(body.request_id if body is not None else None),
+                        reason=(body.reason if body is not None else None),
+                    ),
+                )
+            except ExplorationRunError as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={
+                        "schema_version": 1,
+                        "ok": False,
+                        "error": exc.code,
+                        "message": str(exc),
+                        "detail": exc.detail,
+                    },
+                )
+
+        command.__name__ = f"explore_run_{path_action}"
+        app.post(
+            f"/api/v1/explore/runs/{{exploration_run_id}}/{path_action}",
+            summary=f"{path_action.title()} one native Explore execution",
+            response_model=ExplorationRunResponse,
+            responses={
+                404: {"model": GatewayErrorResponse},
+                409: {"model": GatewayErrorResponse},
+                503: {"model": GatewayErrorResponse},
+            },
+        )(command)
+
+    for _explore_run_action in ("pause", "resume", "finish"):
+        _register_explore_run_command(_explore_run_action)
+
     @app.post(
         "/api/v1/explore/stop",
         summary="Stop autonomous frontier exploration",
         response_model=ExplorationCommandResponse,
-        responses={503: {"model": GatewayErrorResponse}},
+        responses={
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
     )
     async def explore_stop():
+        if product_control_owns_explore(gw):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": "product_control_stop_required",
+                    "message": (
+                        "Field exploration stop must use ProductControl so the "
+                        "robot is not reported stopped before parking evidence."
+                    ),
+                    "detail": {
+                        "reason": "parking_evidence_required",
+                        "operator_command": "scripts/lingtu explore stop",
+                    },
+                },
+            )
         if not gw._explorer_stop_available():
             return JSONResponse(
                 status_code=503,
@@ -588,6 +881,83 @@ def register_operation_routes(app, gw) -> None:
         gw.push_event({"type": "exploring", "active": False})
         return {"status": result}
 
+    @app.post(
+        "/api/v1/explore/directed",
+        summary="Set an explicit native TARE exploration direction intent",
+        response_model=DirectedExplorationResponse,
+        responses={
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
+    )
+    async def explore_directed(body: DirectedExplorationTargetRequest):
+        """Set a TARE preference without converting a click into a nav goal."""
+
+        try:
+            result = await asyncio.to_thread(
+                directed_exploration_target,
+                gw,
+                x=body.x,
+                y=body.y,
+                ttl_s=body.ttl_s,
+                reason=body.reason,
+                request_id=body.request_id,
+            )
+        except DirectedExplorationError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": exc.code,
+                    "message": str(exc),
+                    "detail": exc.detail,
+                },
+            )
+        return {
+            "schema_version": 1,
+            "ok": True,
+            "accepted": True,
+            "status": "accepted",
+            **result,
+        }
+
+    @app.post(
+        "/api/v1/explore/directed/clear",
+        summary="Clear the explicit native TARE exploration direction intent",
+        response_model=DirectedExplorationResponse,
+        responses={
+            409: {"model": GatewayErrorResponse},
+            503: {"model": GatewayErrorResponse},
+        },
+    )
+    async def clear_explore_directed(body: DirectedExplorationClearRequest):
+        try:
+            result = await asyncio.to_thread(
+                clear_directed_exploration_target,
+                gw,
+                reason=body.reason,
+                request_id=body.request_id,
+            )
+        except DirectedExplorationError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "schema_version": 1,
+                    "ok": False,
+                    "error": exc.code,
+                    "message": str(exc),
+                    "detail": exc.detail,
+                },
+            )
+        return {
+            "schema_version": 1,
+            "ok": True,
+            "accepted": True,
+            "status": "cleared",
+            **result,
+        }
+
     @app.get(
         "/api/v1/explore/status",
         summary="Exploration status",
@@ -603,18 +973,12 @@ def register_operation_routes(app, gw) -> None:
     )
     async def service_status(names: str | None = None, dds_check: bool = False):
         selected = _parse_service_names(names)
-        service_details: dict[str, Any] = {}
-        try:
-            from lingtu.control import ProductControl
-
-            services, service_details = ProductControl().status(
-                tuple(selected),
-                dds_check=dds_check,
-            )
-            _mark_gateway_http_observed(service_details)
-        except Exception:
-            services = {name: "unknown" for name in selected}
         field_readiness = _load_field_service_readiness()
+        services, service_details = _service_status_snapshot(
+            gw,
+            selected,
+            field_readiness,
+        )
         return {
             "schema_version": 1,
             "services": services,
@@ -638,27 +1002,12 @@ def register_operation_routes(app, gw) -> None:
         response_model=SlamStatusResponse,
     )
     async def slam_status():
-        service_details: dict[str, Any] = {}
-        try:
-            from lingtu.control import ProductControl
-
-            services, service_details = ProductControl().status(
-                tuple(_SLAM_STATUS_SERVICES),
-            )
-        except Exception:
-            services = {
-                "lidar": "unknown",
-                "slam": "unknown",
-                "traversability": "unknown",
-                "nav": "unknown",
-                "explore": "unknown",
-                "slam_pgo": "unknown",
-                "localizer": "unknown",
-                "genz_icp": "unknown",
-                "hba": "unknown",
-                "super_lio": "unknown",
-                "super_lio_relocation": "unknown",
-            }
+        field_readiness = _load_field_service_readiness()
+        services, service_details = _service_status_snapshot(
+            gw,
+            _SLAM_STATUS_SERVICES,
+            field_readiness,
+        )
 
         live_mode = ""
         native_mode = None
@@ -670,36 +1019,25 @@ def register_operation_routes(app, gw) -> None:
         except Exception:
             live_mode = ""
 
-        slam_detail = service_details.get("slam") if isinstance(service_details, dict) else {}
-        slam_active_units = slam_detail.get("active_units", []) if isinstance(slam_detail, dict) else []
-        native_slam_active = "lingtu-slam-dds.service" in slam_active_units
-
         if live_mode in {
             "native_dds",
             "fastlio2",
             "genz",
             "localizer",
-            "super_lio",
-            "super_lio_relocation",
             "none",
         }:
             mode = live_mode
-        elif services.get("super_lio_relocation") in _ACTIVE_SERVICE_STATES:
-            mode = "super_lio_relocation"
-        elif services.get("super_lio") in _ACTIVE_SERVICE_STATES:
-            mode = "super_lio"
         elif services.get("genz_icp") in _ACTIVE_SERVICE_STATES:
             mode = "genz"
-        elif native_slam_active:
-            mode = "native_dds"
         elif services.get("slam_pgo") in _ACTIVE_SERVICE_STATES:
             mode = "fastlio2"
         elif services.get("localizer") in _ACTIVE_SERVICE_STATES:
             mode = "localizer"
         elif services.get("slam") in _ACTIVE_SERVICE_STATES:
-            mode = "fastlio2"
+            mode = "native_dds"
         else:
-            mode = "stopped"
+            cached_mode = str(gw._get_slam_profile() or "").strip().lower()
+            mode = cached_mode if cached_mode not in {"", "none"} else "stopped"
         return {
             "mode": mode,
             "native_mode": native_mode,
@@ -733,77 +1071,78 @@ def register_operation_routes(app, gw) -> None:
                 message=f"Unknown profile: {requested_profile}",
                 status_code=400,
             )
-        if not gw._manage_session_services:
+        plan = getattr(gw, "_compiled_run_plan", None)
+        field_owned = plan is not None and str(getattr(plan, "process_control", "") or "").strip() == "systemd"
+        try:
+            from gateway.services.native_control import endpoint_only_enabled
+
+            field_owned = field_owned or endpoint_only_enabled(gw)
+        except ValueError:
+            field_owned = True
+        if field_owned:
             return _slam_operation_response(
                 False,
                 message=(
-                    "SLAM is owned by the active Profile/Endpoint; switch the "
-                    "product instead of hot-switching Gateway services"
+                    "SLAM is owned by the active Product. Preview the required "
+                    "Product change with POST /api/v1/runtime/switch-plan, then run "
+                    "the resulting ProductControl command outside the Host"
                 ),
+                details={
+                    "reason_code": "operator_product_control_required",
+                    "switch_plan": "/api/v1/runtime/switch-plan",
+                },
                 status_code=409,
             )
         try:
-            from lingtu.control import ProductControl
-
-            plan = slam_switch_plan(profile)
-            ok = ProductControl().legacy_transition(plan, timeout_s=10.0)
+            result = gw.reconfigure_backend("slam", profile)
+            ok = isinstance(result, Mapping) and result.get("ok") is True
             if ok:
                 gw._cached_slam_profile = "stopped" if profile == "stop" else profile
                 gw._slam_profile_ts = time.time()
-            return slam_operation_payload(
-                ok,
+                return slam_operation_payload(
+                    True,
+                    profile=profile,
+                    message=f"Reconfigured in-process SLAM backend to {profile}",
+                    details=dict(result),
+                )
+            return _slam_operation_response(
+                False,
                 profile=profile,
-                message=(f"Switched to {profile}" if ok else "Services not ready after 10s"),
+                message=("SLAM backend is not reconfigurable in this Host; switch the Product to change native SLAM"),
+                details=dict(result) if isinstance(result, Mapping) else None,
+                status_code=409,
             )
         except Exception as e:
             return _slam_operation_response(False, message=str(e), status_code=500)
 
     @app.post(
         "/api/v1/slam/restart",
-        summary="Force-restart native SLAM localization service",
+        summary="Return the operator command for restarting native SLAM",
         response_model=SlamOperationResponse,
-        responses={
-            500: {"model": SlamOperationResponse},
-            504: {"model": SlamOperationResponse},
-        },
+        responses={409: {"model": SlamOperationResponse}},
     )
     async def slam_restart():
-        if not gw._manage_session_services:
-            try:
-                from lingtu.control import ProductControl
-
-                report = ProductControl().restart("slam")
-                clear_cache = getattr(gw, "clear_localization_runtime_cache", None)
-                if callable(clear_cache):
-                    clear_cache(reason="manual_localization_restart")
-                gw._cached_slam_profile = "native_dds"
-                gw._slam_profile_ts = time.time()
-                return slam_operation_payload(
-                    report.ok,
-                    profile="native_dds",
-                    message="Native SLAM restarted",
-                    details=report.as_dict(),
-                )
-            except Exception as e:
-                return _slam_operation_response(False, message=str(e), status_code=500)
-        try:
-            from lingtu.control import ProductControl
-
-            control = ProductControl()
-            clear_cache = getattr(gw, "clear_localization_runtime_cache", None)
-            if callable(clear_cache):
-                clear_cache(reason="manual_localization_restart")
-            ok = control.legacy_restart("slam", timeout_s=20.0)
-            if ok:
-                gw._cached_slam_profile = "native_dds"
-                gw._slam_profile_ts = time.time()
-            return slam_operation_payload(
-                ok,
-                profile="native_dds",
-                message=("Native SLAM restarted" if ok else "SLAM service not ready after restart"),
+        plan = getattr(gw, "_compiled_run_plan", None)
+        if plan is None:
+            return _slam_operation_response(
+                False,
+                message=("SLAM restart requires the exact RunPlan; Gateway will not recompile or restart a Product"),
+                status_code=409,
             )
-        except Exception as e:
-            return _slam_operation_response(False, message=str(e), status_code=500)
+        env = str(getattr(plan, "env", "") or "").strip()
+        command = "python -m lingtu.control restart --process slam"
+        if env in {"real", "sim"}:
+            command += f" --env {env}"
+        return _slam_operation_response(
+            False,
+            profile="native_dds",
+            message=(f"Native SLAM restart is owned by ProductControl outside the Host: {command}"),
+            details={
+                "reason_code": "operator_product_control_required",
+                "operator_command": command,
+            },
+            status_code=409,
+        )
 
     @app.post(
         "/api/v1/slam/auto_relocalize",
@@ -1002,137 +1341,96 @@ def register_operation_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/bag/start",
-        summary="Start rosbag recording",
-        response_model=BagOperationResponse,
+        summary="Start native MCAP recording (deprecated path)",
+        response_model=RecordingOperationResponse,
         responses={
-            409: {"model": BagOperationResponse},
-            500: {"model": BagOperationResponse},
+            409: {"model": RecordingOperationResponse},
+            503: {"model": RecordingOperationResponse},
+        },
+        deprecated=True,
+    )
+    @app.post(
+        "/api/v1/recordings/start",
+        summary="Start native MCAP recording",
+        response_model=RecordingOperationResponse,
+        responses={
+            409: {"model": RecordingOperationResponse},
+            503: {"model": RecordingOperationResponse},
         },
     )
-    async def bag_start(body: BagStartRequest = BagStartRequest()):
-        import os
-        import pathlib
-        import subprocess
-
+    async def recording_start(body: RecordingStartRequest = RecordingStartRequest()):
         payload = _body_mapping(body)
         duration = int(payload.get("duration", 600))
-        prefix = str(payload.get("prefix", "web"))[:40]
-        prefix = "".join(c for c in prefix if c.isalnum() or c in "-_") or "web"
-
-        with gw._bag_lock:
-            if gw._bag_proc is not None and gw._bag_proc.poll() is None:
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "error": "recording_in_progress",
-                        "path": gw._bag_path,
-                        "pid": gw._bag_proc.pid,
-                    },
-                )
-
-            repo_root = pathlib.Path(__file__).resolve().parents[3]
-            script = repo_root / "scripts" / "hardware" / "record_bag.sh"
-            if not script.exists():
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": "script_not_found", "path": str(script)},
-                )
-
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            bag_dir = os.path.expanduser(f"~/data/bags/{prefix}_{stamp}")
-            try:
-                proc = subprocess.Popen(
-                    ["bash", str(script), str(duration), prefix],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-            except FileNotFoundError as e:
-                return JSONResponse(
-                    status_code=500,
-                    content={"error": "bash_not_found", "detail": str(e)},
-                )
-
-            gw._bag_proc = proc
-            gw._bag_path = bag_dir
-            gw._bag_started_ts = time.time()
-            return {
-                "status": "started",
-                "path": bag_dir,
-                "pid": proc.pid,
-                "duration": duration,
-                "prefix": prefix,
-            }
+        prefix = str(payload.get("name") or payload.get("prefix", "web"))
+        try:
+            snapshot = await asyncio.to_thread(
+                gw._recording.start,
+                duration=duration,
+                prefix=prefix,
+            )
+        except NativeRecordingError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": exc.code, "detail": exc.detail or str(exc)},
+            )
+        return {
+            "status": "started",
+            "state": snapshot.state,
+            "backend": "native_mcap",
+            "session_id": snapshot.session_id,
+            "path": snapshot.path,
+            "pid": snapshot.pid,
+            "duration": duration,
+            "prefix": prefix,
+        }
 
     @app.post(
         "/api/v1/bag/stop",
-        summary="Stop rosbag recording",
-        response_model=BagOperationResponse,
-        responses={404: {"model": BagOperationResponse}},
+        summary="Stop native MCAP recording (deprecated path)",
+        response_model=RecordingOperationResponse,
+        responses={404: {"model": RecordingOperationResponse}},
+        deprecated=True,
     )
-    async def bag_stop():
-        import os
-        import signal
-
-        with gw._bag_lock:
-            proc = gw._bag_proc
-            if proc is None or proc.poll() is not None:
-                return JSONResponse(
-                    status_code=404,
-                    content={"error": "not_recording"},
-                )
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except (ProcessLookupError, PermissionError, AttributeError):
-                try:
-                    proc.terminate()
-                except OSError:
-                    pass
-            return {"status": "stopping", "path": gw._bag_path, "pid": proc.pid}
+    @app.post(
+        "/api/v1/recordings/stop",
+        summary="Stop native MCAP recording",
+        response_model=RecordingOperationResponse,
+        responses={404: {"model": RecordingOperationResponse}},
+    )
+    async def recording_stop():
+        try:
+            snapshot = await asyncio.to_thread(gw._recording.stop)
+        except NativeRecordingError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": exc.code, "detail": exc.detail or str(exc)},
+            )
+        return {
+            "status": snapshot.state,
+            "state": snapshot.state,
+            "backend": "native_mcap",
+            "session_id": snapshot.session_id,
+            "path": snapshot.path,
+            "pid": snapshot.pid,
+        }
 
     @app.get(
         "/api/v1/bag/status",
-        summary="rosbag recording status",
-        response_model=BagStatusResponse,
+        summary="Native MCAP recording status (deprecated path)",
+        response_model=RecordingStatusResponse,
+        deprecated=True,
     )
-    async def bag_status():
-        import os
-        import shutil
-
-        with gw._bag_lock:
-            proc = gw._bag_proc
-            path = gw._bag_path
-            started_ts = gw._bag_started_ts
-
-        recording = proc is not None and proc.poll() is None
-        size_bytes = 0
-        if path and os.path.isdir(path):
-            try:
-                for root, _dirs, files in os.walk(path):
-                    for filename in files:
-                        fp = os.path.join(root, filename)
-                        try:
-                            size_bytes += os.path.getsize(fp)
-                        except OSError:
-                            pass
-            except OSError:
-                pass
-
-        bag_disk = os.path.expanduser("~/data")
-        if not os.path.isdir(bag_disk):
-            bag_disk = os.path.expanduser("~")
+    @app.get(
+        "/api/v1/recordings/status",
+        summary="Native MCAP recording status",
+        response_model=RecordingStatusResponse,
+    )
+    async def recording_status():
         try:
-            du = shutil.disk_usage(bag_disk)
-            disk_free, disk_total = du.free, du.total
-        except OSError:
-            disk_free, disk_total = 0, 0
-        return {
-            "recording": recording,
-            "path": path,
-            "duration_s": (time.time() - started_ts) if started_ts else 0.0,
-            "size_bytes": size_bytes,
-            "pid": proc.pid if proc else None,
-            "exit_code": (proc.returncode if proc and proc.poll() is not None else None),
-            "disk_free": disk_free,
-            "disk_total": disk_total,
-        }
+            snapshot = await asyncio.to_thread(gw._recording.status)
+        except NativeRecordingError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"error": exc.code, "detail": exc.detail or str(exc)},
+            )
+        return snapshot.as_payload()

@@ -1,7 +1,8 @@
 # LingTu Documentation
 
-LingTu is a Module-First autonomous navigation system for quadruped robots in
-outdoor and off-road environments. This documentation is organized around the
+LingTu is a Product-defined autonomous navigation system with a native field
+runtime and a composable Python Host for quadruped robots in outdoor and
+off-road environments. This documentation is organized around the
 job you want to complete first; deeper contracts and dated validation evidence
 remain available when you need them.
 
@@ -27,8 +28,11 @@ runtime. Its primary design rule is **scoped orchestration**:
 - `lingtu.assembly` declares the product Module graph.
 - `Blueprint` materializes one application graph; optional Python workers stay
   under the same Blueprint lifecycle.
-- `RuntimePlan` only resolves and controls managed native product processes.
-- Typed ports and explicit wires are the product data boundary.
+- Compiled `Product` owns the Host Blueprint declaration and the
+  endpoint-resolved process declaration; `ProductControl` owns product
+  operations and invokes one internal systemd runner for process effects.
+- Typed ports and explicit wires are the Host-internal boundary. Native typed
+  DDS is the field cross-process data boundary.
 - DDS, shared memory, simulators, and ROS 2 compatibility components are
   transports or adapters, not the business API.
 
@@ -57,11 +61,11 @@ flowchart LR
     gateway --> planning
 ```
 
-For the physical robot, high-rate sensor, SLAM, and final navigation paths use
-native C++ services and typed DDS at explicit process boundaries. Python owns
-the Module graph, mission coordination, semantic behavior, API surfaces, and
-product contracts. The current Thunder command chain is
-`lingtu-nav-dds -> /nav/cmd_vel -> lingtu-driver -> remote Brainstem gRPC`.
+For the physical robot, high-rate sensor, SLAM, realtime maps, navigation, and
+final command paths use native C++ processes and typed DDS at explicit process
+boundaries. The Python Host owns Gateway, Agent, MCP, semantic behavior, and
+selected low-rate adapters; Blueprint only materializes that Host graph. The
+current command chain is `navd -> rt/nav/cmd_vel -> driver -> Brainstem`.
 Read [System design](./architecture/SYSTEM_DESIGN.md) for the complete layer
 and ownership model.
 
@@ -69,8 +73,9 @@ and ownership model.
 
 | I want to... | Start here |
 | --- | --- |
+| Understand the inspection product and operator acceptance model | [Product definition](./product/README.md) |
 | Run LingTu locally or choose a profile | [Get started](./01-getting-started/README.md) |
-| Learn the Module-First model and runtime vocabulary | [Core concepts](./02-concepts/README.md) |
+| Learn the Product, Host, Blueprint, Module, and DDS vocabulary | [Core concepts](./02-concepts/README.md) |
 | Understand control ownership, stop/recovery, and motion boundaries | [Safety and control boundaries](./10-safety/README.md) |
 | Change or extend the codebase | [Develop LingTu](./03-development/README.md) |
 | Build a REST, SDK, MCP, SSE, or teleoperation client | [Integrations](./09-integrations/README.md) |
@@ -84,11 +89,13 @@ and ownership model.
 
 | Documentation kind | Purpose | Where it belongs |
 | --- | --- | --- |
+| Product definition | Defines users, operating outcomes, evidence, and acceptance semantics without claiming implementation completion. | `product/` |
 | Task guide | Helps a reader reach an outcome with prerequisites, checks, and safe next steps. | `01-getting-started/`, `03-development/`, `05-guides/`, `06-operations/`, `09-integrations/`, `10-safety/` |
 | Contract | Defines a current architecture or runtime boundary precisely. | `architecture/` |
 | Reference | Lists stable commands, schemas, APIs, configuration, or generated inventories. | `08-reference/`, `api/`, package READMEs |
 | Validation evidence | Records what a named test, simulation gate, or field run demonstrated. | `07-testing/` and `07-testing/field-runs/` |
-| Plan or historical record | Describes intended work or retained context; it is not shipped behavior. | `plans/`, `superpowers/`, `archive/` |
+| Active plan | Describes intended work, not shipped behavior. | `plans/current-roadmap.md` |
+| Research note | Records an upstream evaluation or algorithm investigation; it is not acceptance evidence. | `research/` |
 
 Every current task page identifies its audience and environment. A command or
 claim that only applies to simulation must say so. A procedure that can create
@@ -107,7 +114,7 @@ separate from the final motion action.
 ### Build a LingTu system
 
 1. Read the [core concepts](./02-concepts/README.md).
-2. Follow the [Module-First runtime bus contract](./architecture/LINGTU_RUNTIME_BUS_DECISION.md).
+2. Follow the [runtime bus contract](./architecture/LINGTU_RUNTIME_BUS_DECISION.md).
 3. Use [Blueprint-DDS integration](./architecture/blueprint_dds_integration.md)
    and [module/service boundaries](./architecture/MODULE_SERVICE_BOUNDARY.md)
    as implementation references.
@@ -129,8 +136,10 @@ truth for a specific subject. [Architecture contracts](./architecture/README.md)
 define shipped boundaries; [plans](./plans/README.md) are forward-looking; and
 dated test reports or field runs are evidence rather than product behavior.
 
-`archive/` is currently a placeholder, not an alternate source of truth. For
-cleanup decisions and archive candidates, see [`DOCS_TRIAGE.md`](./DOCS_TRIAGE.md).
+Retired plans and duplicate snapshots are deleted rather than kept beside
+current contracts; Git history is the archive. Cleanup decisions and the
+deletion ledger live in [`DOCS_TRIAGE.md`](./DOCS_TRIAGE.md), while external
+algorithm notes live in the [research index](./research/README.md).
 
 ## Safety and claim boundaries
 

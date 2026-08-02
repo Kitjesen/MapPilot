@@ -24,7 +24,7 @@ def _install_lingtu_source_path() -> Path:
     candidates.append(Path(__file__).resolve().parents[6])
     for root in candidates:
         source = root / "src"
-        if (source / "external_adapters" / "open_rmf").is_dir():
+        if (source / "nav" / "adapters" / "open_rmf").is_dir():
             source_text = str(source)
             if source_text not in sys.path:
                 sys.path.insert(0, source_text)
@@ -34,7 +34,7 @@ def _install_lingtu_source_path() -> Path:
 
 _LINGTU_ROOT = _install_lingtu_source_path()
 
-from external_adapters.open_rmf import (
+from nav.adapters.open_rmf import (
     FloorBinding,
     GatewayClientConfig,
     GatewayHttpTransport,

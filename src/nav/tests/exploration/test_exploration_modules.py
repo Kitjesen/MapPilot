@@ -26,7 +26,7 @@ class TestTAREExplorerModule:
 
     def test_instantiation(self):
         """Creating a TAREExplorerModule with default params should succeed."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule()
         # configured_backend is stored inside _backend_status, not as a separate attr
@@ -34,7 +34,7 @@ class TestTAREExplorerModule:
 
     def test_instantiation_with_custom_params(self):
         """Custom constructor parameters must be reflected in module state."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(
             configured_backend="custom_tare",
@@ -50,7 +50,7 @@ class TestTAREExplorerModule:
 
     def test_ports(self):
         """All In/Out ports declared on the class must be registered."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
         from runtime.msgs.geometry import PoseStamped
         from runtime.msgs.nav import Odometry
 
@@ -90,7 +90,7 @@ class TestTAREExplorerModule:
 
     def test_preflight_returns_error_without_dds(self):
         """Without cyclonedds, preflight() must return an error string."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(transport_mode="dds")
         result = mod.preflight()
@@ -99,7 +99,7 @@ class TestTAREExplorerModule:
 
     def test_lifecycle(self):
         """setup() -> start() -> stop() transitions without error."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         assert not mod._running
@@ -117,7 +117,7 @@ class TestTAREExplorerModule:
 
     def test_alive_publishes_on_start(self):
         """alive Out[bool] must publish on start()."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule(auto_start=False)
         mod.setup()
@@ -131,7 +131,7 @@ class TestTAREExplorerModule:
 
     def test_skill_methods_registered(self):
         """TAREExplorerModule must expose @skill methods."""
-        from nav.exploration.tare.module import TAREExplorerModule
+        from explore.tare.module import TAREExplorerModule
 
         mod = TAREExplorerModule()
         skill_names = set(mod.skills.keys())
@@ -150,7 +150,7 @@ class TestExplorationSupervisorModule:
 
     def test_instantiation(self):
         """Creating an ExplorationSupervisorModule with default params should succeed."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_UNINIT,
             ExplorationSupervisorModule,
         )
@@ -164,7 +164,7 @@ class TestExplorationSupervisorModule:
 
     def test_instantiation_with_custom_timeouts(self):
         """Custom timeout values must be reflected in module state."""
-        from nav.exploration.tare.supervisor import ExplorationSupervisorModule
+        from explore.tare.supervisor import ExplorationSupervisorModule
 
         mod = ExplorationSupervisorModule(warn_timeout_s=10.0, fallback_timeout_s=30.0, poll_hz=2.0)
         assert mod._warn_timeout_s == 10.0
@@ -173,7 +173,7 @@ class TestExplorationSupervisorModule:
 
     def test_ports(self):
         """All In/Out ports declared on the class must be registered."""
-        from nav.exploration.tare.supervisor import ExplorationSupervisorModule
+        from explore.tare.supervisor import ExplorationSupervisorModule
 
         mod = ExplorationSupervisorModule()
 
@@ -198,7 +198,7 @@ class TestExplorationSupervisorModule:
 
     def test_lifecycle(self):
         """setup() -> start() -> stop() transitions without error."""
-        from nav.exploration.tare.supervisor import ExplorationSupervisorModule
+        from explore.tare.supervisor import ExplorationSupervisorModule
 
         mod = ExplorationSupervisorModule()
         assert not mod._running
@@ -216,7 +216,7 @@ class TestExplorationSupervisorModule:
 
     def test_initial_mode_uninit(self):
         """Before receiving any tare_stats, mode must be 'uninit'."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_UNINIT,
             ExplorationSupervisorModule,
         )
@@ -227,7 +227,7 @@ class TestExplorationSupervisorModule:
 
     def test_evaluate_no_stats(self):
         """_evaluate returns (uninit, ...) when no stats have been received."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_UNINIT,
             ExplorationSupervisorModule,
         )
@@ -240,7 +240,7 @@ class TestExplorationSupervisorModule:
 
     def test_evaluate_finished(self):
         """_evaluate returns (finished, ...) when tare_stats says finished."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_FINISHED,
             ExplorationSupervisorModule,
         )
@@ -253,7 +253,7 @@ class TestExplorationSupervisorModule:
 
     def test_evaluate_degraded_triggers_after_warn_timeout(self):
         """When waypoint_age_s exceeds warn_timeout_s, mode becomes 'degraded'."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_DEGRADED,
             ExplorationSupervisorModule,
         )
@@ -271,7 +271,7 @@ class TestExplorationSupervisorModule:
 
     def test_evaluate_fallback_triggers_after_fallback_timeout(self):
         """When waypoint_age_s exceeds fallback_timeout_s, mode becomes 'fallback'."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_FALLBACK,
             ExplorationSupervisorModule,
         )
@@ -288,7 +288,7 @@ class TestExplorationSupervisorModule:
 
     def test_evaluate_healthy(self):
         """When stats are fresh and healthy, mode must be 'healthy'."""
-        from nav.exploration.tare.supervisor import (
+        from explore.tare.supervisor import (
             MODE_HEALTHY,
             ExplorationSupervisorModule,
         )
@@ -307,7 +307,7 @@ class TestExplorationSupervisorModule:
 
     def test_ready_fired_once(self):
         """exploration_ready Out[bool] must fire exactly once."""
-        from nav.exploration.tare.supervisor import ExplorationSupervisorModule
+        from explore.tare.supervisor import ExplorationSupervisorModule
 
         mod = ExplorationSupervisorModule()
         mod.setup()
@@ -326,7 +326,7 @@ class TestExplorationSupervisorModule:
 
     def test_skill_methods_registered(self):
         """ExplorationSupervisorModule must expose @skill methods."""
-        from nav.exploration.tare.supervisor import ExplorationSupervisorModule
+        from explore.tare.supervisor import ExplorationSupervisorModule
 
         mod = ExplorationSupervisorModule()
         skill_names = set(mod.skills.keys())
@@ -341,7 +341,7 @@ class TestExplorationSupervisorModule:
 
 def test_all_exploration_modules_have_alive_port():
     """Every exploration module must expose an alive Out[bool] port."""
-    from nav.exploration.tare.module import TAREExplorerModule
+    from explore.tare.module import TAREExplorerModule
 
     mod = TAREExplorerModule()
     assert "alive" in mod._ports_out
@@ -355,8 +355,8 @@ def test_supervisor_tare_explorer_wiring():
     shared exploration ports (tare_stats, supervisor_state) are declared
     for wiring.
     """
-    from nav.exploration.tare.module import TAREExplorerModule
-    from nav.exploration.tare.supervisor import ExplorationSupervisorModule
+    from explore.tare.module import TAREExplorerModule
+    from explore.tare.supervisor import ExplorationSupervisorModule
     from runtime.blueprint import Blueprint
 
     bp = Blueprint()

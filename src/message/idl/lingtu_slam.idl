@@ -178,6 +178,55 @@ struct MapObservation {
   string pose_reason;
 };
 
+enum MapActivationOperation {
+  MAP_ACTIVATION_STAGE,
+  MAP_ACTIVATION_RESTORE,
+  MAP_ACTIVATION_VERIFY
+};
+
+@final
+struct MapArtifactIdentity {
+  string type;
+  string uri;
+  string sha256;
+};
+
+@final
+struct MapIdentity {
+  boolean present;
+  string map_id;
+  string version_id;
+  string frame_id;
+  string map_dir;
+  sequence<MapArtifactIdentity> artifacts;
+};
+
+// Exact saved-map activation transaction. STAGE compares previous with the
+// currently active identity before changing it. RESTORE compares target with
+// the currently active identity and therefore rejects a stale rollback.
+@final
+struct MapActivationRequest {
+  string request_id;
+  MapActivationOperation operation;
+  MapIdentity target;
+  MapIdentity previous;
+  string caller;
+  string reason;
+};
+
+@final
+struct MapActivationAck {
+  string request_id;
+  MapActivationOperation operation;
+  boolean accepted;
+  string message;
+  boolean changed;
+  MapIdentity target;
+  MapIdentity previous;
+  MapIdentity active;
+  string producer_boot_id;
+};
+
 @final
 struct Image {
   Header header;
@@ -268,19 +317,21 @@ struct Text {
 struct NavigationCommandRequest {
   Header header;
   string client_id;
+  string task_id;
   string request_id;
   long kind;
   Pose goal;
-  Twist velocity;
   string reason;
 };
 
 @final
 struct NavigationCommandAck {
   Header header;
+  string task_id;
   string request_id;
   long kind;
   boolean accepted;
+  boolean duplicate;
   string reason;
 };
 
@@ -345,6 +396,7 @@ struct NavigationGoalStatus {
   Header header;
   string boot_id;
   unsigned long long event_sequence;
+  string task_id;
   string request_id;
   long state;
   unsigned long long goal_epoch;
@@ -361,6 +413,7 @@ struct NavigationState {
   unsigned long long state_sequence;
   long control_mode;
   long lifecycle_state;
+  string active_task_id;
   string active_request_id;
   unsigned long long goal_epoch;
   string map_id;
@@ -379,6 +432,7 @@ struct NavigationState {
 struct ExplorationCommandRequest {
   Header header;
   string request_id;
+  string exploration_run_id;
   long kind;
   string session_id;
   boolean has_directed_target;
@@ -392,11 +446,37 @@ struct ExplorationCommandRequest {
 struct ExplorationCommandAck {
   Header header;
   string request_id;
+  string exploration_run_id;
   long kind;
   boolean accepted;
+  boolean duplicate;
   string reason;
   string session_id;
   unsigned long long intent_revision;
+};
+
+// Immutable ordered facts for one finite exploration execution. Admission
+// ACKs are deliberately separate: only terminal run events carrying parking
+// evidence are authoritative completion/cancellation/failure facts.
+@final
+struct ExplorationRunEvent {
+  double timestamp_s;
+  string frame_id;
+  string boot_id;
+  unsigned long long event_sequence;
+  long kind;
+  string exploration_run_id;
+  string start_request_id;
+  string command_request_id;
+  string product_session_id;
+  long state;
+  string route;
+  string map_id;
+  long long map_version;
+  string artifact_hash;
+  string reason;
+  boolean motion_stop_confirmed;
+  string motion_stop_reason;
 };
 
 // P3 rolling-map motion is deliberately separate from a generic Navigation
@@ -440,9 +520,12 @@ struct ExplorationSegmentStatus {
   string reason;
 };
 
+// Product task ingress. task_id identifies one durable user-visible lifecycle;
+// request_id identifies one retryable call.
 @final
-struct InspectionCommandRequest {
+struct InspectionTaskRequest {
   Header header;
+  string task_id;
   string request_id;
   long kind;
   string route_id;
@@ -451,8 +534,9 @@ struct InspectionCommandRequest {
 };
 
 @final
-struct InspectionCommandAck {
+struct InspectionTaskAck {
   Header header;
+  string task_id;
   string request_id;
   long kind;
   boolean accepted;
@@ -503,6 +587,32 @@ struct InspectionStatus {
   double phase_started_at;
   double stable_since;
   double deadline;
+  string reason;
+};
+
+// Immutable task-fact stream emitted alongside the live InspectionStatus view.
+@final
+struct InspectionTaskEvent {
+  Header header;
+  string boot_id;
+  unsigned long long event_sequence;
+  long kind;
+  string task_id;
+  string request_id;
+  string command_request_id;
+  long state;
+  string map_id;
+  long long map_version;
+  string route_id;
+  unsigned long long route_revision;
+  unsigned long point_index;
+  unsigned long point_count;
+  unsigned long loop_index;
+  unsigned long retry_count;
+  string point_id;
+  string action;
+  string action_request_id;
+  string evidence_id;
   string reason;
 };
 
@@ -611,6 +721,7 @@ struct MapGrid {
 struct MapRuntimeState {
   Header header;
   string producer_boot_id;
+  MapIdentity active_map;
   boolean running;
   boolean live;
   unsigned long long reset_epoch;
@@ -672,7 +783,6 @@ struct MapScene {
   MapGrid occupancy;
   MapGrid elevation;
   MapGrid esdf;
-  MapGrid traversability;
 };
 
 @final

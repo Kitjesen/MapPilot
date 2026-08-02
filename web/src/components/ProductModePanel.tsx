@@ -10,7 +10,7 @@ import {
   Eye,
   LocateFixed,
   Map as MapIcon,
-  Play,
+  Copy,
   Radio,
   RefreshCw,
   Route,
@@ -18,12 +18,12 @@ import {
   Target,
 } from 'lucide-react'
 import * as api from '../services/api'
-import { mapIsNavigationReady, waitForProductProfileReady } from '../services/mapReadiness'
+import { mapIsNavigationReady } from '../services/mapReadiness'
 import type {
   MapInfo,
-  ProductModeProfile,
-  RuntimeSwitchRequest,
-  RuntimeSwitchResponse,
+  ProductName,
+  RuntimeSwitchPlanRequest,
+  RuntimeSwitchPlanResponse,
   SSEState,
   ToastKind,
 } from '../types'
@@ -37,13 +37,12 @@ interface ProductModePanelProps {
 }
 
 interface ProductModeOption {
-  profile: ProductModeProfile
+  product: ProductName
   session: string
   labelEn: string
   labelZh: string
   summaryEn: string
   summaryZh: string
-  policy: 'hot_candidate' | 'cold_restart'
   requiresSavedMap: boolean
   requiresLiveMap: boolean
   icon: ReactNode
@@ -51,119 +50,96 @@ interface ProductModeOption {
 
 const PRODUCT_MODES: ProductModeOption[] = [
   {
-    profile: 'teleop',
+    product: 'teleop',
     session: 'teleop',
     labelEn: 'Teleop',
     labelZh: '手动',
     summaryEn: 'Manual velocity control with safety retained.',
     summaryZh: '人工速度控制，保留安全链路。',
-    policy: 'cold_restart',
     requiresSavedMap: false,
     requiresLiveMap: false,
     icon: <Radio size={16} />,
   },
   {
-    profile: 'teleop_avoid',
+    product: 'teleop_avoid',
     session: 'teleop_avoid',
     labelEn: 'Teleop Avoid',
     labelZh: '手动避障',
     summaryEn: 'Manual control with live localization guard.',
     summaryZh: '人工控制叠加实时定位保护。',
-    policy: 'cold_restart',
     requiresSavedMap: false,
     requiresLiveMap: true,
     icon: <ShieldCheck size={16} />,
   },
   {
-    profile: 'map',
+    product: 'map',
     session: 'mapping',
     labelEn: 'Mapping',
     labelZh: '建图',
     summaryEn: 'Builds a live map from the current scan stream.',
     summaryZh: '使用当前扫描流生成实时地图。',
-    policy: 'cold_restart',
     requiresSavedMap: false,
     requiresLiveMap: true,
     icon: <MapIcon size={16} />,
   },
   {
-    profile: 'tracking',
-    session: 'tracking',
-    labelEn: 'Tracking',
-    labelZh: '跟踪',
-    summaryEn: 'Runs target tracking on top of localization.',
-    summaryZh: '在定位链路上执行目标跟踪。',
-    policy: 'hot_candidate',
-    requiresSavedMap: true,
+    product: 'explore',
+    session: 'exploration',
+    labelEn: 'Explore',
+    labelZh: '前沿探索',
+    summaryEn: 'Explores reachable frontiers with the navigation stack.',
+    summaryZh: '通过导航栈探索可达前沿。',
+    requiresSavedMap: false,
     requiresLiveMap: true,
-    icon: <Target size={16} />,
+    icon: <Compass size={16} />,
   },
   {
-    profile: 'nav',
+    product: 'nav',
     session: 'navigation',
     labelEn: 'Navigation',
     labelZh: '导航',
     summaryEn: 'Navigates against a saved map.',
     summaryZh: '基于保存地图执行导航。',
-    policy: 'hot_candidate',
     requiresSavedMap: true,
     requiresLiveMap: true,
     icon: <Route size={16} />,
   },
   {
-    profile: 'inspection',
+    product: 'tracking',
+    session: 'tracking',
+    labelEn: 'Tracking',
+    labelZh: '跟踪',
+    summaryEn: 'Runs target tracking on top of localization.',
+    summaryZh: '在定位链路上执行目标跟踪。',
+    requiresSavedMap: true,
+    requiresLiveMap: true,
+    icon: <Target size={16} />,
+  },
+  {
+    product: 'inspection',
     session: 'inspection',
     labelEn: 'Inspection',
     labelZh: '巡检',
-    summaryEn: 'Runs scheduled semantic inspection.',
-    summaryZh: '按计划执行语义巡检。',
-    policy: 'hot_candidate',
+    summaryEn: 'Repeats fixed routes and points, then archives verified evidence.',
+    summaryZh: '按固定路线与点位复拍，归档可验证证据。',
     requiresSavedMap: true,
     requiresLiveMap: true,
     icon: <Eye size={16} />,
   },
-  {
-    profile: 'tare_explore',
-    session: 'exploration',
-    labelEn: 'Explore',
-    labelZh: '探索',
-    summaryEn: 'Generates exploration targets for navigation.',
-    summaryZh: '生成探索目标并接入导航。',
-    policy: 'cold_restart',
-    requiresSavedMap: false,
-    requiresLiveMap: true,
-    icon: <Compass size={16} />,
-  },
 ]
 
-const STRATEGIES: Array<NonNullable<RuntimeSwitchRequest['strategy']>> = ['auto', 'hot', 'cold']
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function sessionFallbackProfile(mode?: string | null): ProductModeProfile {
-  if (mode === 'mapping') return 'map'
-  if (mode === 'exploring') return 'tare_explore'
-  if (mode === 'navigating') return 'nav'
-  return 'teleop'
-}
-
-function sessionProductProfile(session?: SSEState['session']): ProductModeProfile {
-  const profile = session?.product_profile
-  if (PRODUCT_MODES.some(item => item.profile === profile)) {
-    return profile as ProductModeProfile
+function sessionProduct(session?: SSEState['session']): ProductName | null {
+  const product = session?.product
+  if (PRODUCT_MODES.some(item => item.product === product)) {
+    return product as ProductName
   }
-  return sessionFallbackProfile(session?.mode)
+  return null
 }
 
-function productSessionForProfile(profile: string, fallbackMode?: string | null): string {
-  const option = PRODUCT_MODES.find(item => item.profile === profile)
+function productSessionForProduct(product: ProductName): string {
+  const option = PRODUCT_MODES.find(item => item.product === product)
   if (option) return option.session
-  if (fallbackMode === 'mapping') return 'mapping'
-  if (fallbackMode === 'exploring') return 'exploration'
-  if (fallbackMode === 'navigating') return 'navigation'
-  return 'teleop'
+  return 'unknown'
 }
 
 function labelForOption(option: ProductModeOption, locale: Locale): string {
@@ -174,22 +150,9 @@ function summaryForOption(option: ProductModeOption, locale: Locale): string {
   return text(locale, option.summaryEn, option.summaryZh)
 }
 
-function productLabelFor(profileOrSession: string, locale: Locale): string {
-  const option = PRODUCT_MODES.find(item => item.profile === profileOrSession || item.session === profileOrSession)
-  return option ? labelForOption(option, locale) : profileOrSession
-}
-
-function policyLabel(policy: ProductModeOption['policy'], locale: Locale): string {
-  return policy === 'hot_candidate'
-    ? text(locale, 'Hot', '热切换')
-    : text(locale, 'Restart', '重启')
-}
-
-function strategyLabel(strategy: RuntimeSwitchRequest['strategy'], locale: Locale): string {
-  if (strategy === 'hot') return text(locale, 'Hot switch', '热切换')
-  if (strategy === 'cold') return text(locale, 'Restart services', '重启服务')
-  if (strategy === 'warm') return text(locale, 'Warm switch', '温切换')
-  return text(locale, 'Auto', '自动')
+function productLabelFor(productOrSession: string, locale: Locale): string {
+  const option = PRODUCT_MODES.find(item => item.product === productOrSession || item.session === productOrSession)
+  return option ? labelForOption(option, locale) : productOrSession
 }
 
 function compactNumber(value: number | undefined | null): string {
@@ -199,25 +162,13 @@ function compactNumber(value: number | undefined | null): string {
   return Math.round(value).toLocaleString()
 }
 
-function lifecycleFrom(response: RuntimeSwitchResponse | null): string {
-  if (!response) return '--'
-  const switchPlan = isRecord(response.product_mode_switch)
-    ? response.product_mode_switch
-    : isRecord(response.plan?.product_mode_switch)
-      ? response.plan.product_mode_switch
-      : {}
-  return typeof switchPlan.required_lifecycle === 'string'
-    ? switchPlan.required_lifecycle
-    : response.lifecycle
-}
-
 function shortBlockers(blockers: string[] | undefined, locale: Locale): string {
   if (!blockers || blockers.length === 0) return text(locale, 'No blockers', '无阻断项')
   const visible = blockers.slice(0, 2).join('; ')
   return blockers.length > 2 ? `${visible}; +${blockers.length - 2}` : visible
 }
 
-function responseTone(response: RuntimeSwitchResponse | null): 'ok' | 'warn' | 'dim' {
+function responseTone(response: RuntimeSwitchPlanResponse | null): 'ok' | 'warn' | 'dim' {
   if (!response) return 'dim'
   return response.ok ? 'ok' : 'warn'
 }
@@ -237,9 +188,9 @@ function diagText(data: Record<string, unknown>, key: string): string | undefine
 }
 
 interface ModePickerProps {
-  value: ProductModeProfile
+  value: ProductName | null
   locale: Locale
-  onChange: (profile: ProductModeProfile) => void
+  onChange: (product: ProductName) => void
 }
 
 interface FloatingPickerConfig {
@@ -341,8 +292,9 @@ function useFloatingPicker({ itemCount, selectedIndex, minWidth, rowHeight }: Fl
 }
 
 function ModePicker({ value, locale, onChange }: ModePickerProps) {
-  const selectedIndex = Math.max(0, PRODUCT_MODES.findIndex(item => item.profile === value))
-  const selected = PRODUCT_MODES[selectedIndex] ?? PRODUCT_MODES[0]
+  const selectedIndex = PRODUCT_MODES.findIndex(item => item.product === value)
+  const activeIndex = selectedIndex >= 0 ? selectedIndex : 0
+  const selected = selectedIndex >= 0 ? PRODUCT_MODES[selectedIndex] : null
   const {
     open,
     setOpen,
@@ -356,23 +308,23 @@ function ModePicker({ value, locale, onChange }: ModePickerProps) {
     moveHighlight,
   } = useFloatingPicker({
     itemCount: PRODUCT_MODES.length,
-    selectedIndex,
+    selectedIndex: activeIndex,
     minWidth: 360,
     rowHeight: 58,
   })
 
-  const chooseMode = (profile: ProductModeProfile) => {
-    onChange(profile)
+  const chooseMode = (product: ProductName) => {
+    onChange(product)
     closeMenu()
   }
 
   const handleTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      openMenu((selectedIndex + 1) % PRODUCT_MODES.length)
+      openMenu((activeIndex + 1) % PRODUCT_MODES.length)
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      openMenu((selectedIndex - 1 + PRODUCT_MODES.length) % PRODUCT_MODES.length)
+      openMenu((activeIndex - 1 + PRODUCT_MODES.length) % PRODUCT_MODES.length)
     }
   }
 
@@ -391,7 +343,7 @@ function ModePicker({ value, locale, onChange }: ModePickerProps) {
       setHighlightedIndex(PRODUCT_MODES.length - 1)
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
-      chooseMode(PRODUCT_MODES[highlightedIndex].profile)
+      chooseMode(PRODUCT_MODES[highlightedIndex].product)
     } else if (event.key === 'Escape') {
       event.preventDefault()
       closeMenu()
@@ -413,15 +365,20 @@ function ModePicker({ value, locale, onChange }: ModePickerProps) {
         onClick={() => (open ? closeMenu() : openMenu())}
         onKeyDown={handleTriggerKeyDown}
       >
-        <span className={styles.modePickerIcon}>{selected.icon}</span>
+        <span className={styles.modePickerIcon}>
+          {selected ? selected.icon : <AlertTriangle size={16} />}
+        </span>
         <span className={styles.modePickerText}>
-          <strong>{labelForOption(selected, locale)}</strong>
-          <small>{summaryForOption(selected, locale)}</small>
+          <strong>
+            {selected ? labelForOption(selected, locale) : text(locale, 'Choose Product', '选择 Product')}
+          </strong>
+          <small>
+            {selected
+              ? summaryForOption(selected, locale)
+              : text(locale, 'Runtime Product is unknown.', '运行时 Product 未知。')}
+          </small>
         </span>
         <span className={styles.modePickerMeta}>
-          <span className={selected.policy === 'hot_candidate' ? styles.hotBadge : styles.coldBadge}>
-            {policyLabel(selected.policy, locale)}
-          </span>
           <ChevronDown className={open ? styles.modePickerChevronOpen : styles.modePickerChevron} size={16} />
         </span>
       </button>
@@ -437,12 +394,12 @@ function ModePicker({ value, locale, onChange }: ModePickerProps) {
           onKeyDown={handleMenuKeyDown}
         >
           {PRODUCT_MODES.map((item, index) => {
-            const isSelected = item.profile === value
+            const isSelected = item.product === value
             const isHighlighted = index === highlightedIndex
             return (
               <button
                 type="button"
-                key={item.profile}
+                key={item.product}
                 role="option"
                 aria-selected={isSelected}
                 className={[
@@ -451,7 +408,7 @@ function ModePicker({ value, locale, onChange }: ModePickerProps) {
                   isHighlighted ? styles.modeMenuOptionHighlighted : '',
                 ].filter(Boolean).join(' ')}
                 onMouseEnter={() => setHighlightedIndex(index)}
-                onClick={() => chooseMode(item.profile)}
+                onClick={() => chooseMode(item.product)}
               >
                 <span className={styles.modeMenuIcon}>{item.icon}</span>
                 <span className={styles.modeMenuText}>
@@ -459,9 +416,6 @@ function ModePicker({ value, locale, onChange }: ModePickerProps) {
                   <small>{summaryForOption(item, locale)}</small>
                 </span>
                 <span className={styles.modeMenuAside}>
-                  <span className={item.policy === 'hot_candidate' ? styles.hotBadge : styles.coldBadge}>
-                    {policyLabel(item.policy, locale)}
-                  </span>
                   <Check className={isSelected ? styles.modeMenuCheckVisible : styles.modeMenuCheck} size={15} />
                 </span>
               </button>
@@ -620,26 +574,24 @@ export function ProductModePanel({
 }: ProductModePanelProps) {
   const [session, setSession] = useState(sseState.session)
   const [maps, setMaps] = useState<MapInfo[]>([])
-  const [selectedProfile, setSelectedProfile] = useState<ProductModeProfile>('teleop')
-  const endpoint = 'thunder_field'
-  const [strategy, setStrategy] = useState<NonNullable<RuntimeSwitchRequest['strategy']>>('auto')
+  const [selectedProduct, setSelectedProduct] = useState<ProductName | null>(null)
   const [selectedMap, setSelectedMap] = useState('')
   const [relocalize, setRelocalize] = useState(true)
-  const [allowRestart, setAllowRestart] = useState(false)
   const [loadingRuntime, setLoadingRuntime] = useState(false)
   const [switchBusy, setSwitchBusy] = useState(false)
-  const [switchWaiting, setSwitchWaiting] = useState(false)
-  const [switchResult, setSwitchResult] = useState<RuntimeSwitchResponse | null>(null)
+  const [switchResult, setSwitchResult] = useState<RuntimeSwitchPlanResponse | null>(null)
   const [recoveryBusy, setRecoveryBusy] = useState(false)
-  const profileSelectionTouched = useRef(false)
+  const productSelectionTouched = useRef(false)
 
   useEffect(() => {
     if (sseState.session) setSession(sseState.session)
   }, [sseState.session])
 
   useEffect(() => {
-    if (session && !profileSelectionTouched.current) {
-      setSelectedProfile(sessionProductProfile(session))
+    if (session && !productSelectionTouched.current) {
+      const product = sessionProduct(session)
+      setSelectedProduct(product)
+      if (product === 'explore') setSelectedMap(session.active_map ?? '')
     }
   }, [session])
 
@@ -669,34 +621,46 @@ export function ProductModePanel({
   }, [refreshRuntime])
 
   const navigableMaps = useMemo(() => maps.filter(mapIsNavigationReady), [maps])
-  const selectedOption = PRODUCT_MODES.find(item => item.profile === selectedProfile) ?? PRODUCT_MODES[0]
-  const strategyOptions = useMemo(
-    () => STRATEGIES.map(item => ({ value: item, label: strategyLabel(item, locale) })),
-    [locale],
-  )
+  const selectedOption = PRODUCT_MODES.find(item => item.product === selectedProduct)
+  const targetProductKnown = selectedProduct !== null && selectedOption !== undefined
+  const requiresSavedMap = selectedOption?.requiresSavedMap === true
+  const allowsSavedMap = requiresSavedMap || selectedProduct === 'explore'
+  const usesSavedMap = allowsSavedMap && Boolean(selectedMap)
+  const requiresLiveMap = selectedOption?.requiresLiveMap === true
   const mapOptions = useMemo(
     () => [
       {
         value: '',
-        label: selectedOption.requiresSavedMap
-          ? text(locale, 'Choose map', '选择地图')
-          : text(locale, 'Not required', '不需要'),
+        label: !selectedOption
+          ? text(locale, 'Choose Product first', '请先选择 Product')
+          : requiresSavedMap
+            ? text(locale, 'Choose map', '选择地图')
+            : selectedProduct === 'explore'
+              ? text(locale, 'No saved map (live exploration)', '不使用保存地图（实时探索）')
+              : text(locale, 'Not required', '不需要'),
       },
       ...navigableMaps.map(map => ({ value: map.name, label: map.name })),
     ],
-    [locale, navigableMaps, selectedOption.requiresSavedMap],
+    [locale, navigableMaps, requiresSavedMap, selectedOption, selectedProduct],
   )
-  const currentProfile = (session?.product_profile || sessionFallbackProfile(session?.mode)) as string
-  const currentProductSession = session?.product_session && session.product_session !== 'idle'
-    ? session.product_session
-    : productSessionForProfile(currentProfile, session?.mode)
-  const currentProductLabel = productLabelFor(currentProductSession || currentProfile, locale)
-  const switchPending = switchWaiting
+  const currentProduct = sessionProduct(session)
+  const currentProductSession = currentProduct
+    ? session?.product_session && session.product_session !== 'idle'
+      ? session.product_session
+      : productSessionForProduct(currentProduct)
+    : 'unknown'
+  const currentProductLabel = currentProduct
+    ? productLabelFor(currentProductSession || currentProduct, locale)
+    : text(locale, 'Unknown Product', 'Product 未知')
   const activeMap = session?.active_map ?? ''
   const activeMapInfo = maps.find(map => map.name === activeMap)
   const selectedMapInfo = maps.find(map => map.name === selectedMap)
   const activeMapReady = activeMapInfo ? mapIsNavigationReady(activeMapInfo) : Boolean(session?.map_has_pcd)
-  const selectedMapReady = selectedMapInfo ? mapIsNavigationReady(selectedMapInfo) : !selectedOption.requiresSavedMap
+  const selectedMapReady = targetProductKnown && (
+    selectedMap
+      ? Boolean(selectedMapInfo && mapIsNavigationReady(selectedMapInfo))
+      : !requiresSavedMap
+  )
   const mapPoints = sseState.mapCloud?.count
   const savedPoints = sseState.savedMap?.count
   const slamDiag = sseState.slamDiag?.data ?? {}
@@ -706,91 +670,94 @@ export function ProductModePanel({
     session?.saved_map_relocalization_supported ??
     session?.relocalization_supported ??
     false
-  const savedMapAligned =
-    !selectedOption.requiresSavedMap ||
+  const savedMapAligned = targetProductKnown && (
+    !usesSavedMap ||
     (Boolean(activeMap) && activeMap === selectedMap && activeMapReady && selectedMapReady)
-  const liveMapReady = !selectedOption.requiresLiveMap || Boolean(mapPoints && mapPoints > 0)
+  )
+  const liveMapReady = targetProductKnown && (
+    !requiresLiveMap || Boolean(mapPoints && mapPoints > 0)
+  )
   const mapChainOk = savedMapAligned && liveMapReady
-  const mapUsageLabel = selectedOption.requiresSavedMap
-    ? selectedMap || text(locale, 'Choose a saved map', '选择保存地图')
-    : selectedOption.requiresLiveMap
+  const mapUsageLabel = !selectedOption
+    ? text(locale, 'Choose Product first', '请先选择 Product')
+    : usesSavedMap
+      ? selectedMap
+      : selectedProduct === 'explore'
+        ? text(locale, 'Live exploration', '实时探索')
+        : requiresSavedMap
+          ? text(locale, 'Choose a saved map', '选择保存地图')
+      : requiresLiveMap
       ? text(locale, 'Live map stream', '实时地图流')
       : text(locale, 'No map required', '不需要地图')
   const activeMapLabel = activeMap || (
-    selectedOption.requiresSavedMap
+    usesSavedMap
       ? text(locale, 'Not loaded', '未加载')
-      : text(locale, 'Not required', '不需要')
+      : selectedProduct === 'explore'
+        ? text(locale, 'Live exploration', '实时探索')
+        : text(locale, 'Not required', '不需要')
   )
-  const mapChainStatus = selectedOption.requiresSavedMap
-    ? (savedMapAligned ? text(locale, 'Saved map aligned', '保存地图已对齐') : text(locale, 'Saved map mismatch', '保存地图不一致'))
-    : selectedOption.requiresLiveMap
+  const mapChainStatus = !selectedOption
+    ? text(locale, 'Product selection required', '需要选择 Product')
+    : usesSavedMap
+      ? (savedMapAligned ? text(locale, 'Saved map aligned', '保存地图已对齐') : text(locale, 'Saved map mismatch', '保存地图不一致'))
+      : requiresLiveMap
       ? (liveMapReady ? text(locale, 'Live map ready', '实时地图就绪') : text(locale, 'Waiting for live map', '等待实时地图'))
       : text(locale, 'No map required', '不需要地图')
-  const missingMap = selectedOption.requiresSavedMap && !selectedMap
-  const plannedLifecycle = lifecycleFrom(switchResult)
-  const restartAckRequired = plannedLifecycle === 'cold_restart'
-    || (!switchResult && selectedOption.policy === 'cold_restart')
-  const executeDisabled = switchBusy
-    || switchPending
+  const missingMap = requiresSavedMap && !selectedMap
+  const selectedSavedMapUnavailable = usesSavedMap && !selectedMapReady
+  const commandDisabled = switchBusy
+    || !targetProductKnown
     || missingMap
-    || (restartAckRequired && !allowRestart)
-  const executeTitle = missingMap
+    || selectedSavedMapUnavailable
+  const commandTitle = !targetProductKnown
+    ? text(locale, 'Choose a Product first', '请先选择 Product')
+    : missingMap
     ? text(locale, 'Choose a navigation-ready map first', '请先选择可导航地图')
-    : switchPending
-      ? text(locale, 'Waiting for restarted runtime readiness', '等待重启后的运行时就绪')
-    : restartAckRequired && !allowRestart
-      ? text(locale, 'Enable service restart first', '请先允许重启服务')
-      : text(locale, 'Switch product mode', '切换产品模式')
+    : selectedSavedMapUnavailable
+      ? text(locale, 'The selected map is not navigation-ready', '所选地图尚未达到可导航状态')
+    : text(locale, 'Copy ProductControl command', '复制 ProductControl 命令')
   const switchResultText = switchResult
-    ? (switchResult.accepted
-        ? switchPending
-          ? text(locale, 'Accepted; waiting for runtime', '已受理；等待运行时')
-          : text(locale, 'Runtime ready', '运行时已就绪')
-        : switchResult.ok
-          ? text(locale, 'Preflight passed', '预检通过')
-          : text(locale, 'Blocked', '受阻'))
-    : plannedLifecycle
+    ? (switchResult.ok ? text(locale, 'Preflight passed', '预检通过') : text(locale, 'Blocked', '受阻'))
+    : '--'
 
   useEffect(() => {
-    if (selectedMap) return
+    if (selectedMap || !requiresSavedMap) return
     if (activeMap) {
       setSelectedMap(activeMap)
       return
     }
     const first = navigableMaps[0]?.name
     if (first) setSelectedMap(first)
-  }, [activeMap, navigableMaps, selectedMap])
+  }, [activeMap, navigableMaps, requiresSavedMap, selectedMap])
 
-  const buildSwitchRequest = useCallback((execute: boolean): RuntimeSwitchRequest => ({
-    current_profile: currentProfile,
-    target_profile: selectedProfile,
-    target_endpoint: endpoint,
-    endpoint,
-    map_name: selectedOption.requiresSavedMap ? selectedMap : null,
-    relocalize,
-    initial_pose: null,
-    strategy,
-    execute,
-    allow_restart: execute ? allowRestart : false,
-  }), [
-    allowRestart,
-    currentProfile,
-    endpoint,
+  const buildSwitchRequest = useCallback((): RuntimeSwitchPlanRequest => {
+    if (!selectedProduct || !selectedOption) {
+      throw new Error('Product selection required')
+    }
+    return {
+      current_product: currentProduct,
+      target_product: selectedProduct,
+      map_name: usesSavedMap ? selectedMap : null,
+      relocalize: usesSavedMap && relocalize,
+      initial_pose: null,
+    }
+  }, [
+    currentProduct,
     relocalize,
     selectedMap,
-    selectedOption.requiresSavedMap,
-    selectedProfile,
-    strategy,
+    usesSavedMap,
+    selectedOption,
+    selectedProduct,
   ])
 
   const runPreflight = useCallback(async () => {
     setSwitchBusy(true)
     try {
-      const result = await api.runRuntimeSwitch(buildSwitchRequest(false))
+      const result = await api.runRuntimeSwitchPlan(buildSwitchRequest())
       setSwitchResult(result)
       showToast(
         result.ok
-          ? `${text(locale, 'Preflight passed', '预检通过')}: ${lifecycleFrom(result)}`
+          ? text(locale, 'Preflight passed', '预检通过')
           : `${text(locale, 'Preflight blocked', '预检受阻')}: ${shortBlockers(result.blockers, locale)}`,
         result.ok ? 'success' : 'error',
       )
@@ -801,40 +768,28 @@ export function ProductModePanel({
     }
   }, [buildSwitchRequest, locale, showToast])
 
-  const executeSwitch = useCallback(async () => {
+  const copySwitchCommand = useCallback(async () => {
     setSwitchBusy(true)
-    setSwitchWaiting(false)
     try {
-      const targetProfile = selectedProfile
-      const targetMap = selectedOption.requiresSavedMap ? selectedMap : null
-      const result = await api.runRuntimeSwitch(buildSwitchRequest(true))
-      setSwitchResult(result)
-      showToast(
-        result.ok
-          ? `${text(locale, result.accepted ? 'Switch accepted' : 'Switch planned', result.accepted ? '切换已接受' : '切换计划已生成')}: ${result.status}`
-          : `${text(locale, 'Switch rejected', '切换被拒绝')}: ${shortBlockers(result.blockers, locale)}`,
-        result.accepted ? 'info' : result.ok ? 'success' : 'error',
-      )
-      if (result.accepted) {
-        setSwitchWaiting(true)
-        const readySession = await waitForProductProfileReady(targetProfile, targetMap, {
-          fetchSession: api.fetchSession,
-          fetchNavigation: api.fetchNavigationStatus,
-        })
-        setSession(readySession)
-        showToast(
-          `${text(locale, 'Product mode ready', '产品模式已就绪')}: ${productLabelFor(targetProfile, locale)}`,
-          'success',
-        )
+      if (!selectedProduct || !selectedOption) {
+        throw new Error('Product selection required')
       }
-      await refreshRuntime(false)
+      const handoff = await api.copyProductSwitchCommand(selectedProduct, {
+        currentProduct,
+        mapName: usesSavedMap ? selectedMap : null,
+        relocalize: usesSavedMap && relocalize,
+      })
+      setSwitchResult(handoff.plan)
+      showToast(
+        `${text(locale, 'ProductControl command copied', 'ProductControl 命令已复制')}: ${handoff.command}`,
+        'info',
+      )
     } catch (error) {
-      showToast(`${text(locale, 'Product mode switch failed', '产品模式切换失败')}: ${error instanceof Error ? error.message : String(error)}`, 'error')
+      showToast(`${text(locale, 'Command handoff failed', '命令交接失败')}: ${error instanceof Error ? error.message : String(error)}`, 'error')
     } finally {
-      setSwitchWaiting(false)
       setSwitchBusy(false)
     }
-  }, [buildSwitchRequest, locale, refreshRuntime, selectedMap, selectedOption.requiresSavedMap, selectedProfile, showToast])
+  }, [currentProduct, locale, relocalize, selectedMap, selectedOption, selectedProduct, showToast, usesSavedMap])
 
   const runAutoRelocalize = useCallback(async () => {
     setRecoveryBusy(true)
@@ -859,11 +814,12 @@ export function ProductModePanel({
 
   const modeSelect = (
     <ModePicker
-      value={selectedProfile}
+      value={selectedProduct}
       locale={locale}
-      onChange={profile => {
-        profileSelectionTouched.current = true
-        setSelectedProfile(profile)
+      onChange={product => {
+        productSelectionTouched.current = true
+        setSelectedProduct(product)
+        if (product === 'explore' && selectedProduct !== 'explore') setSelectedMap('')
         setSwitchResult(null)
       }}
     />
@@ -876,7 +832,7 @@ export function ProductModePanel({
       value={selectedMap}
       options={mapOptions}
       onChange={setSelectedMap}
-      disabled={navigableMaps.length === 0 || !selectedOption.requiresSavedMap}
+      disabled={!targetProductKnown || navigableMaps.length === 0 || !allowsSavedMap}
     />
   )
 
@@ -889,7 +845,11 @@ export function ProductModePanel({
         </div>
         <div>
           <span>{text(locale, 'Target', '目标')}</span>
-          <strong title={selectedOption.session}>{labelForOption(selectedOption, locale)}</strong>
+          <strong title={selectedOption?.session ?? 'unknown'}>
+            {selectedOption
+              ? labelForOption(selectedOption, locale)
+              : text(locale, 'Unknown Product', 'Product 未知')}
+          </strong>
         </div>
         <div>
           <span>{text(locale, 'Result', '结果')}</span>
@@ -899,16 +859,7 @@ export function ProductModePanel({
 
       {modeSelect}
 
-      <div className={styles.compactSplit}>
-        <SimplePicker
-          label={text(locale, 'Strategy', '策略')}
-          ariaLabel={text(locale, 'Choose switch strategy', '选择切换策略')}
-          value={strategy}
-          options={strategyOptions}
-          onChange={setStrategy}
-        />
-        {mapSelect}
-      </div>
+      <div className={styles.compactSplit}>{mapSelect}</div>
 
       <div className={styles.compactToggles}>
         <label>
@@ -916,17 +867,9 @@ export function ProductModePanel({
             type="checkbox"
             checked={relocalize}
             onChange={event => setRelocalize(event.target.checked)}
-            disabled={!selectedOption.requiresSavedMap}
+            disabled={!usesSavedMap}
           />
           <span>{text(locale, 'Relocalize', '重定位')}</span>
-        </label>
-        <label>
-          <input
-            type="checkbox"
-            checked={allowRestart}
-            onChange={event => setAllowRestart(event.target.checked)}
-          />
-          <span>{text(locale, 'Allow restart', '允许重启')}</span>
         </label>
       </div>
 
@@ -961,14 +904,20 @@ export function ProductModePanel({
           <span>{text(locale, 'This mode needs a navigation-ready saved map.', '这个模式需要可导航的保存地图。')}</span>
         </div>
       )}
+      {selectedSavedMapUnavailable && (
+        <div className={styles.inlineWarn}>
+          <AlertTriangle size={14} />
+          <span>{text(locale, 'The selected saved map is not navigation-ready.', '所选保存地图尚未达到可导航状态。')}</span>
+        </div>
+      )}
       <div className={styles.compactActions}>
-        <button className={styles.secondaryButton} onClick={runPreflight} disabled={switchBusy || switchPending || missingMap}>
+        <button className={styles.secondaryButton} onClick={runPreflight} disabled={commandDisabled}>
           <CheckCircle2 size={15} />
           {text(locale, 'Check', '预检')}
         </button>
-        <button className={styles.primaryButton} onClick={executeSwitch} disabled={executeDisabled} title={executeTitle}>
-          <Play size={15} />
-          {text(locale, 'Switch', '切换')}
+        <button className={styles.primaryButton} onClick={copySwitchCommand} disabled={commandDisabled} title={commandTitle}>
+          <Copy size={15} />
+          {text(locale, 'Copy command', '复制命令')}
         </button>
         <button
           className={styles.secondaryButton}

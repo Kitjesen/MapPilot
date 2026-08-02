@@ -43,6 +43,7 @@ build:
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_dds_probe.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_nav_endpoint.sh
 	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" bash scripts/build/build_driver.sh
+	@CMAKE_BUILD_TYPE="$(BUILD_TYPE)" LINGTU_RECORDING_BUILD_DDS=ON bash scripts/build/build_native_recording.sh
 	@echo "Native field Product build complete."
 
 build-debug:

@@ -246,6 +246,9 @@ bool LidarProcessor::process(SyncPackage &package)
     trimCloudMap();
     m_last_update_attempted = true;
     m_last_update_accepted = m_kf->update();
+    m_last_update_diagnostics = m_kf->lastLidarUpdateDiagnostics();
+    m_last_update_diagnostics.downsampled_points =
+        m_cloud_down_lidar->size();
     if (m_last_update_accepted)
     {
         m_consecutive_update_rejections = 0;
@@ -255,6 +258,8 @@ bool LidarProcessor::process(SyncPackage &package)
     {
         ++m_consecutive_update_rejections;
     }
+    m_last_update_diagnostics.consecutive_rejections =
+        m_consecutive_update_rejections;
     return m_last_update_accepted;
 }
 
@@ -311,6 +316,7 @@ void LidarProcessor::updateLossFunc(State &state, SharedState &share_data)
         m_effect_norm_vec->points[effect_feat_num] = m_norm_vec->points[i];
         effect_feat_num++;
     }
+    share_data.effective_points = static_cast<std::size_t>(effect_feat_num);
     if (effect_feat_num < 1)
     {
         share_data.valid = false;

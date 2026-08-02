@@ -64,8 +64,6 @@ void writeOperatorMotionDiagnosticsJson(std::ostream &out, const StatusWriterCon
       << "\"authority_owner\": \"native_endpoint\", "
       << "\"control_mode\": \"" << jsonEscape(cfg.control_mode) << "\", "
       << "\"allow_teleop_takeover\": " << (cfg.allow_teleop_takeover ? "true" : "false") << ", "
-      << "\"legacy_inputs_enabled\": " << (cfg.allow_legacy_motion_inputs ? "true" : "false")
-      << ", "
       << "\"control_ack_scope\": \"claim_hold_release\", "
       << "\"sample_evidence\": \"status_sequences\", "
       << "\"ack_sent\": " << transport.ack_sent << ", "
@@ -366,10 +364,8 @@ void writeStatusSnapshot(
       << "  \"schema_version\": \"lingtu.nav.endpoint.status.v1\",\n"
       << "  \"endpoint\": \"navd\",\n"
       << "  \"control_mode\": \"" << jsonEscape(cfg.control_mode) << "\",\n"
-      << "  \"native_profile\": {\"profile\": \"" << jsonEscape(cfg.profile)
+      << "  \"native_product\": {\"product\": \"" << jsonEscape(cfg.product)
       << "\", \"config_fingerprint\": \"" << jsonEscape(cfg.config_fingerprint) << "\"},\n"
-      << "  \"legacy_motion_inputs_enabled\": "
-      << (cfg.allow_legacy_motion_inputs ? "true" : "false") << ",\n"
       << "  \"operator_motion\": ";
   writeOperatorMotionDiagnosticsJson(out, cfg, operator_motion_enabled, operator_motion_transport);
   out << ",\n"

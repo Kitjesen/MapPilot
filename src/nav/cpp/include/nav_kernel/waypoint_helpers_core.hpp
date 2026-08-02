@@ -109,13 +109,19 @@ public:
       }
     }
 
+    const bool useOdom = !waypointsInOdom.empty();
+    // Clamp all indexing to the shorter of the two arrays to prevent OOB
+    const size_t effectiveEnd = useOdom
+        ? std::min(path_.size(), waypointsInOdom.size())
+        : path_.size();
+
     {
-      size_t searchEnd = std::min(currentIdx_ + p_.searchWindow, path_.size());
+      size_t searchEnd = std::min(currentIdx_ + p_.searchWindow, effectiveEnd);
       size_t bestIdx = currentIdx_;
       double bestDist = std::numeric_limits<double>::max();
       for (size_t i = currentIdx_; i < searchEnd; ++i) {
-        const Vec3& wp = waypointsInOdom.empty() ? path_[i].position
-                                                  : waypointsInOdom[i];
+        const Vec3& wp = useOdom ? waypointsInOdom[i]
+                                 : path_[i].position;
         double d = distance2D(robotPos, wp);
         if (d < bestDist) {
           bestDist = d;
@@ -128,9 +134,13 @@ public:
       }
     }
 
-    const Vec3& target = waypointsInOdom.empty()
-                       ? path_[currentIdx_].position
-                       : waypointsInOdom[currentIdx_];
+    // Clamp currentIdx_ to effectiveEnd for safe indexing
+    if (currentIdx_ >= effectiveEnd) {
+      currentIdx_ = effectiveEnd - 1;
+    }
+
+    const Vec3& target = useOdom ? waypointsInOdom[currentIdx_]
+                                 : path_[currentIdx_].position;
     double distToTarget = distance2D(robotPos, target);
 
     if (distToTarget < p_.arrivalThreshold) {
@@ -149,7 +159,7 @@ public:
 
     r.currentIndex = currentIdx_;
     r.hasTarget = true;
-    r.targetPoint = path_[currentIdx_].position;
+    r.targetPoint = target;
     return r;
   }
 

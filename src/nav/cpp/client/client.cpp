@@ -56,6 +56,8 @@ using SteadyClock = std::chrono::steady_clock;
 constexpr double kMaximumClockSampleRoundTripS = 0.10;
 constexpr std::size_t kGoalStatusEventCapacity = 256U;
 constexpr std::size_t kGoalStatusRetentionCapacity = 256U;
+constexpr std::size_t kInspectionTaskEventCapacity = 512U;
+constexpr std::size_t kExplorationRunEventCapacity = 512U;
 constexpr std::size_t kMaximumPathPointCount = 1'000'000U;
 constexpr std::size_t kMaximumMapScenePointsPerLayer =
     LINGTU_NAV_MAP_SCENE_MAX_POINTS_PER_LAYER;
@@ -135,6 +137,18 @@ void requireDirectedTarget(double x, double y, double ttl_s) {
 void requireDirectedTargetSessionId(const std::string& session_id) {
   if (session_id.empty()) {
     throw std::invalid_argument("directed exploration session_id is required");
+  }
+}
+
+void requireExplorationIdentity(
+    const std::string& exploration_run_id,
+    const std::string& session_id) {
+  if (!lingtu::message::isValidExplorationRunId(exploration_run_id)) {
+    throw std::invalid_argument(
+        "exploration_run_id must be a canonical uppercase 26-character ULID");
+  }
+  if (session_id.empty()) {
+    throw std::invalid_argument("exploration session_id is required");
   }
 }
 
@@ -549,14 +563,10 @@ SceneDecodeResult decodeMapScene(
            std::tuple<
                const lingtu_dds_MapGrid*,
                const char*,
-               MapSceneGridSnapshot*>{
+           MapSceneGridSnapshot*>{
                &message.occupancy, "occupancy", &scene->occupancy},
            {&message.elevation, "elevation", &scene->elevation},
            {&message.esdf, "esdf", &scene->esdf},
-           {
-               &message.traversability,
-               "traversability",
-               &scene->traversability},
        }) {
     const auto result = decodeSceneGrid(
         *std::get<0>(item),
@@ -686,6 +696,15 @@ std::string makeRequestId(CommandKind kind) {
       std::to_string(ticks) + "-" + std::to_string(++sequence);
 }
 
+std::string makeTaskId(CommandKind kind) {
+  static std::atomic<std::uint64_t> sequence{0};
+  const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  return "nav-task-" + std::to_string(static_cast<std::int32_t>(kind)) + "-" +
+      std::to_string(static_cast<long long>(getpid())) + "-" +
+      std::to_string(ticks) + "-" + std::to_string(++sequence);
+}
+
 std::string makeClientId() {
   const auto ticks = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -739,10 +758,6 @@ std::uint64_t sourceStampNs(double stamp_s) {
 }
 
 bool isRecoverableClockRejection(CommandKind kind, const std::string& reason) {
-  if (kind == CommandKind::Teleop) {
-    return reason == "teleop_source_stamp_stale" ||
-        reason == "teleop_source_stamp_future";
-  }
   if (kind == CommandKind::ClearEstop) {
     return reason == "clear_estop_source_stamp_stale" ||
         reason == "clear_estop_source_stamp_future";
@@ -752,6 +767,22 @@ bool isRecoverableClockRejection(CommandKind kind, const std::string& reason) {
         reason == "resume_autonomy_source_stamp_future";
   }
   return false;
+}
+
+void requireAcceptedNavigationReceipt(
+    const NavigationCommandReceipt& receipt) {
+  if (receipt.accepted) {
+    return;
+  }
+  throw std::runtime_error(
+      "navigation command rejected: " +
+      (!receipt.diagnostic.empty()
+           ? receipt.diagnostic
+           : (receipt.reason.empty() ? std::string("unspecified") :
+              receipt.reason) +
+               " [task_id=" + receipt.task_id + " request_id=" +
+               receipt.request_id + " kind=" + navigationCommandKindName(
+                   static_cast<CommandKind>(receipt.kind)) + "]"));
 }
 
 void requireAcceptedOperatorMotionReceipt(
@@ -771,27 +802,37 @@ void requireAcceptedOperatorMotionReceipt(
 struct Client::Impl {
   struct AckObservation {
     bool accepted{false};
+    std::string task_id;
+    std::string request_id;
+    std::int32_t kind{0};
     std::string reason;
     double endpoint_stamp_s{0.0};
     double local_receive_wall_s{0.0};
     SteadyClock::time_point received_steady{};
     double round_trip_s{0.0};
+    std::string run_id;
+    bool duplicate{false};
+    bool correlation_valid{true};
   };
 
   struct PendingNavigationAck {
     CommandKind kind;
+    std::string task_id;
     SteadyClock::time_point sent_steady;
     std::optional<AckObservation> observation;
   };
 
   struct PendingExplorationAck {
     ExplorationKind kind;
+    std::string exploration_run_id;
+    std::string session_id;
     SteadyClock::time_point sent_steady;
     std::optional<AckObservation> observation;
   };
 
   struct PendingInspectionAck {
     lingtu::message::InspectionCommandKind kind;
+    std::string task_id;
     SteadyClock::time_point sent_steady;
     std::optional<AckObservation> observation;
   };
@@ -833,14 +874,22 @@ struct Client::Impl {
           lingtu::message::kNavExplorationAck,
           &lingtu_dds_ExplorationCommandAck_desc,
           "exploration_ack");
-      inspection_writer = createWriter(
-          lingtu::message::kNavInspectionCommand,
-          &lingtu_dds_InspectionCommandRequest_desc,
-          "inspection_command");
-      inspection_ack_reader = createReader(
-          lingtu::message::kNavInspectionAck,
-          &lingtu_dds_InspectionCommandAck_desc,
-          "inspection_ack");
+      exploration_run_event_reader = createReader(
+          lingtu::message::kNavExplorationRunEvent,
+          &lingtu_dds_ExplorationRunEvent_desc,
+          "exploration_run_event");
+      inspection_task_writer = createWriter(
+          lingtu::message::kNavInspectionTaskRequest,
+          &lingtu_dds_InspectionTaskRequest_desc,
+          "inspection_task_request");
+      inspection_task_ack_reader = createReader(
+          lingtu::message::kNavInspectionTaskAck,
+          &lingtu_dds_InspectionTaskAck_desc,
+          "inspection_task_ack");
+      inspection_task_event_reader = createReader(
+          lingtu::message::kNavInspectionTaskEvent,
+          &lingtu_dds_InspectionTaskEvent_desc,
+          "inspection_task_event");
       operator_motion_control_writer = createWriter(
           lingtu::message::kOperatorMotionControl,
           &lingtu_dds_OperatorMotionControl_desc,
@@ -1069,10 +1118,11 @@ struct Client::Impl {
 
   NavigationPending registerNavigationAck(
       const std::string& request_id,
+      const std::string& task_id,
       CommandKind kind,
       SteadyClock::time_point sent_steady) const {
     auto pending = std::make_shared<PendingNavigationAck>(
-        PendingNavigationAck{kind, sent_steady, std::nullopt});
+        PendingNavigationAck{kind, task_id, sent_steady, std::nullopt});
     std::lock_guard<std::mutex> lock(ack_mutex);
     if (!ack_receiver_error.empty()) {
       throw std::runtime_error(ack_receiver_error);
@@ -1087,9 +1137,16 @@ struct Client::Impl {
   ExplorationPending registerExplorationAck(
       const std::string& request_id,
       ExplorationKind kind,
+      const std::string& exploration_run_id,
+      const std::string& session_id,
       SteadyClock::time_point sent_steady) const {
     auto pending = std::make_shared<PendingExplorationAck>(
-        PendingExplorationAck{kind, sent_steady, std::nullopt});
+        PendingExplorationAck{
+            kind,
+            exploration_run_id,
+            session_id,
+            sent_steady,
+            std::nullopt});
     std::lock_guard<std::mutex> lock(ack_mutex);
     if (!ack_receiver_error.empty()) {
       throw std::runtime_error(ack_receiver_error);
@@ -1104,9 +1161,10 @@ struct Client::Impl {
   InspectionPending registerInspectionAck(
       const std::string& request_id,
       lingtu::message::InspectionCommandKind kind,
-      SteadyClock::time_point sent_steady) const {
+      SteadyClock::time_point sent_steady,
+      const std::string& task_id) const {
     auto pending = std::make_shared<PendingInspectionAck>(
-        PendingInspectionAck{kind, sent_steady, std::nullopt});
+        PendingInspectionAck{kind, task_id, sent_steady, std::nullopt});
     std::lock_guard<std::mutex> lock(ack_mutex);
     if (!ack_receiver_error.empty()) {
       throw std::runtime_error(ack_receiver_error);
@@ -1308,16 +1366,24 @@ struct Client::Impl {
         auto& pending = *it->second;
         AckObservation observation{
             ack.accepted,
+            text(ack.task_id),
+            text(ack.request_id),
+            ack.kind,
             text(ack.reason),
             stampSeconds(ack.header.stamp),
             local_receive_wall_s,
             received_steady,
             std::chrono::duration<double>(
                 received_steady - pending.sent_steady).count(),
+            "",
         };
         if (ack.kind != static_cast<std::int32_t>(pending.kind)) {
           observation.accepted = false;
           observation.reason = "command_ack_kind_mismatch";
+        }
+        if (text(ack.task_id) != pending.task_id) {
+          observation.accepted = false;
+          observation.reason = "command_ack_task_id_mismatch";
         }
         pending.observation = std::move(observation);
         matched = true;
@@ -1362,16 +1428,32 @@ struct Client::Impl {
         auto& pending = *it->second;
         AckObservation observation{
             ack.accepted,
+            "",
+            text(ack.request_id),
+            ack.kind,
             text(ack.reason),
             stampSeconds(ack.header.stamp),
             local_receive_wall_s,
             received_steady,
             std::chrono::duration<double>(
                 received_steady - pending.sent_steady).count(),
+            text(ack.exploration_run_id),
         };
+        observation.duplicate = ack.duplicate;
         if (ack.kind != static_cast<std::int32_t>(pending.kind)) {
           observation.accepted = false;
           observation.reason = "exploration_ack_kind_mismatch";
+          observation.correlation_valid = false;
+        }
+        if (text(ack.exploration_run_id) != pending.exploration_run_id) {
+          observation.accepted = false;
+          observation.reason = "exploration_ack_run_id_mismatch";
+          observation.correlation_valid = false;
+        }
+        if (text(ack.session_id) != pending.session_id) {
+          observation.accepted = false;
+          observation.reason = "exploration_ack_session_mismatch";
+          observation.correlation_valid = false;
         }
         pending.observation = std::move(observation);
         matched = true;
@@ -1388,15 +1470,15 @@ struct Client::Impl {
     return count > 0;
   }
 
-  bool takeInspectionAcks() {
+  bool takeInspectionTaskAcks() {
     constexpr std::size_t kMaxSamples = 16;
     void* samples[kMaxSamples]{};
     dds_sample_info_t infos[kMaxSamples]{};
     const dds_return_t count = dds_take(
-        inspection_ack_reader, samples, infos, kMaxSamples, kMaxSamples);
+        inspection_task_ack_reader, samples, infos, kMaxSamples, kMaxSamples);
     if (count < 0) {
       throw std::runtime_error(
-          std::string("dds_take(inspection_ack): ") + dds_strretcode(-count));
+          std::string("dds_take(inspection_task_ack): ") + dds_strretcode(-count));
     }
     bool matched = false;
     const auto received_steady = SteadyClock::now();
@@ -1407,8 +1489,7 @@ struct Client::Impl {
         if (!infos[i].valid_data) {
           continue;
         }
-        const auto& ack =
-            *static_cast<lingtu_dds_InspectionCommandAck*>(samples[i]);
+        const auto& ack = *static_cast<lingtu_dds_InspectionTaskAck*>(samples[i]);
         const auto it = pending_inspection_acks.find(text(ack.request_id));
         if (it == pending_inspection_acks.end() || it->second->observation) {
           continue;
@@ -1416,16 +1497,24 @@ struct Client::Impl {
         auto& pending = *it->second;
         AckObservation observation{
             ack.accepted,
+            text(ack.task_id),
+            text(ack.request_id),
+            ack.kind,
             text(ack.reason),
             stampSeconds(ack.header.stamp),
             local_receive_wall_s,
             received_steady,
             std::chrono::duration<double>(
                 received_steady - pending.sent_steady).count(),
+            text(ack.run_id),
         };
         if (ack.kind != static_cast<std::int32_t>(pending.kind)) {
           observation.accepted = false;
-          observation.reason = "inspection_ack_kind_mismatch";
+          observation.reason = "inspection_task_ack_kind_mismatch";
+        }
+        if (text(ack.task_id) != pending.task_id) {
+          observation.accepted = false;
+          observation.reason = "inspection_task_ack_task_id_mismatch";
         }
         pending.observation = std::move(observation);
         matched = true;
@@ -1433,8 +1522,8 @@ struct Client::Impl {
     }
     if (count > 0) {
       checked(
-          dds_return_loan(inspection_ack_reader, samples, count),
-          "dds_return_loan(inspection_ack)");
+          dds_return_loan(inspection_task_ack_reader, samples, count),
+          "dds_return_loan(inspection_task_ack)");
     }
     if (matched) {
       ack_cv.notify_all();
@@ -1539,6 +1628,7 @@ struct Client::Impl {
             state.state_sequence,
             state.control_mode,
             state.lifecycle_state,
+            text(state.active_task_id),
             text(state.active_request_id),
             state.goal_epoch,
             text(state.map_id),
@@ -1586,8 +1676,9 @@ struct Client::Impl {
         const auto& status =
             *static_cast<lingtu_dds_NavigationGoalStatus*>(samples[i]);
         const std::string boot_id = text(status.boot_id);
+        const std::string task_id = text(status.task_id);
         const std::string request_id = text(status.request_id);
-        if (boot_id.empty() || request_id.empty() ||
+        if (boot_id.empty() || task_id.empty() || request_id.empty() ||
             status.event_sequence == 0U ||
             !lingtu::message::isKnownNavigationGoalState(status.state)) {
           continue;
@@ -1603,6 +1694,7 @@ struct Client::Impl {
             text(status.header.frame_id),
             boot_id,
             status.event_sequence,
+            task_id,
             request_id,
             status.state,
             status.goal_epoch,
@@ -1613,11 +1705,22 @@ struct Client::Impl {
           retained_goal_status_order.push_back(request_id);
         }
         retained_goal_statuses[request_id] = snapshot;
+        if (retained_task_goal_statuses.find(task_id) ==
+            retained_task_goal_statuses.end()) {
+          retained_task_goal_status_order.push_back(task_id);
+        }
+        retained_task_goal_statuses[task_id] = snapshot;
         while (retained_goal_status_order.size() >
                kGoalStatusRetentionCapacity) {
           const std::string expired = retained_goal_status_order.front();
           retained_goal_status_order.pop_front();
           retained_goal_statuses.erase(expired);
+        }
+        while (retained_task_goal_status_order.size() >
+               kGoalStatusRetentionCapacity) {
+          const std::string expired = retained_task_goal_status_order.front();
+          retained_task_goal_status_order.pop_front();
+          retained_task_goal_statuses.erase(expired);
         }
         if (pending_goal_status_events.size() >= kGoalStatusEventCapacity) {
           pending_goal_status_events.pop_front();
@@ -1629,6 +1732,219 @@ struct Client::Impl {
       checked(
           dds_return_loan(navigation_goal_status_reader, samples, count),
           "dds_return_loan(navigation_goal_status)");
+    }
+    return count > 0;
+  }
+
+  bool takeInspectionTaskEvents() {
+    constexpr std::size_t kMaxSamples = 64U;
+    std::size_t capacity = 0U;
+    {
+      std::lock_guard<std::mutex> lock(inspection_task_event_mutex);
+      if (pending_inspection_task_events.size() >=
+          kInspectionTaskEventCapacity) {
+        // Leave samples in the DDS reader rather than silently dropping a
+        // lifecycle fact. A later DDS retention overrun becomes a visible
+        // sequence gap at the Host projection.
+        return false;
+      }
+      capacity = kInspectionTaskEventCapacity -
+          pending_inspection_task_events.size();
+    }
+    const std::size_t max_samples = std::min(kMaxSamples, capacity);
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        inspection_task_event_reader,
+        samples,
+        infos,
+        max_samples,
+        max_samples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(inspection_task_event): ") +
+          dds_strretcode(-count));
+    }
+    {
+      std::lock_guard<std::mutex> lock(inspection_task_event_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& event =
+            *static_cast<lingtu_dds_InspectionTaskEvent*>(samples[i]);
+        const std::string boot_id = text(event.boot_id);
+        const std::string task_id = text(event.task_id);
+        const std::string request_id = text(event.request_id);
+        const std::string command_request_id = text(event.command_request_id);
+        const std::string map_id = text(event.map_id);
+        const std::string route_id = text(event.route_id);
+        const bool known_kind = event.kind >= 1 && event.kind <= 5;
+        const bool known_state = event.state >= 0 && event.state <= 13;
+        if (boot_id.empty() || task_id.empty() || request_id.empty() ||
+            command_request_id.empty() || map_id.empty() || route_id.empty() ||
+            event.event_sequence == 0U || event.route_revision == 0U ||
+            event.map_version < 0 || !known_kind || !known_state) {
+          continue;
+        }
+        auto& last_sequence = inspection_task_event_sequences_by_boot[boot_id];
+        if (event.event_sequence <= last_sequence) {
+          continue;
+        }
+        last_sequence = event.event_sequence;
+        pending_inspection_task_events.push_back(InspectionTaskEventSnapshot{
+            stampSeconds(event.header.stamp),
+            text(event.header.frame_id),
+            boot_id,
+            event.event_sequence,
+            event.kind,
+            task_id,
+            request_id,
+            command_request_id,
+            event.state,
+            map_id,
+            event.map_version,
+            route_id,
+            event.route_revision,
+            event.point_index,
+            event.point_count,
+            event.loop_index,
+            event.retry_count,
+            text(event.point_id),
+            text(event.action),
+            text(event.action_request_id),
+            text(event.evidence_id),
+            text(event.reason),
+        });
+      }
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(inspection_task_event_reader, samples, count),
+          "dds_return_loan(inspection_task_event)");
+    }
+    return count > 0;
+  }
+
+  bool takeExplorationRunEvents() {
+    constexpr std::size_t kMaxSamples = 64U;
+    std::size_t capacity = 0U;
+    {
+      std::lock_guard<std::mutex> lock(exploration_run_event_mutex);
+      if (pending_exploration_run_events.size() >=
+          kExplorationRunEventCapacity) {
+        return false;
+      }
+      capacity = kExplorationRunEventCapacity -
+          pending_exploration_run_events.size();
+    }
+    const std::size_t max_samples = std::min(kMaxSamples, capacity);
+    void* samples[kMaxSamples]{};
+    dds_sample_info_t infos[kMaxSamples]{};
+    const dds_return_t count = dds_take(
+        exploration_run_event_reader,
+        samples,
+        infos,
+        max_samples,
+        max_samples);
+    if (count < 0) {
+      throw std::runtime_error(
+          std::string("dds_take(exploration_run_event): ") +
+          dds_strretcode(-count));
+    }
+    {
+      std::lock_guard<std::mutex> lock(exploration_run_event_mutex);
+      for (dds_return_t i = 0; i < count; ++i) {
+        if (!infos[i].valid_data) {
+          continue;
+        }
+        const auto& event =
+            *static_cast<lingtu_dds_ExplorationRunEvent*>(samples[i]);
+        const std::string frame_id = text(event.frame_id);
+        const std::string boot_id = text(event.boot_id);
+        const std::string exploration_run_id = text(event.exploration_run_id);
+        const std::string start_request_id = text(event.start_request_id);
+        const std::string command_request_id = text(event.command_request_id);
+        const std::string product_session_id = text(event.product_session_id);
+        const std::string route = text(event.route);
+        const std::string map_id = text(event.map_id);
+        const std::string artifact_hash = text(event.artifact_hash);
+        const std::string reason = text(event.reason);
+        const std::string motion_stop_reason = text(event.motion_stop_reason);
+        const bool known_kind =
+            lingtu::message::isKnownExplorationRunEventKind(event.kind);
+        const bool known_state =
+            lingtu::message::isKnownExplorationRunState(event.state);
+        const bool route_valid =
+            (route == "live" && map_id.empty() && event.map_version == 0 &&
+             artifact_hash.empty()) ||
+            (route == "map" && !map_id.empty() && event.map_version > 0 &&
+             !artifact_hash.empty());
+        if (!std::isfinite(event.timestamp_s) || event.timestamp_s <= 0.0 ||
+            frame_id != "map" || boot_id.empty() || event.event_sequence == 0U ||
+            !known_kind || !known_state ||
+            !lingtu::message::isValidExplorationRunId(exploration_run_id) ||
+            start_request_id.empty() || command_request_id.empty() ||
+            product_session_id.empty() || reason.empty() || !route_valid ||
+            exploration_run_id == start_request_id ||
+            exploration_run_id == command_request_id) {
+          continue;
+        }
+        const auto kind = static_cast<lingtu::message::ExplorationRunEventKind>(
+            event.kind);
+        const auto state = static_cast<lingtu::message::ExplorationRunState>(
+            event.state);
+        const bool admitted_kind =
+            kind == lingtu::message::ExplorationRunEventKind::kAdmitted;
+        const bool admitted_state =
+            state == lingtu::message::ExplorationRunState::kAdmitted;
+        const bool stopped_state_parked =
+            !lingtu::message::explorationRunStateRequiresMotionStop(state) ||
+            (event.motion_stop_confirmed && !motion_stop_reason.empty());
+        const bool transition_not_prematurely_parked =
+            ((state != lingtu::message::ExplorationRunState::kPausing &&
+              state != lingtu::message::ExplorationRunState::kCancelling) ||
+             !event.motion_stop_confirmed);
+        const bool stop_failure_valid =
+            kind != lingtu::message::ExplorationRunEventKind::kStopConfirmationFailed ||
+            ((state == lingtu::message::ExplorationRunState::kPausing ||
+              state == lingtu::message::ExplorationRunState::kCancelling) &&
+             !event.motion_stop_confirmed && !motion_stop_reason.empty());
+        if (admitted_kind != admitted_state || !stopped_state_parked ||
+            !transition_not_prematurely_parked ||
+            !stop_failure_valid) {
+          continue;
+        }
+        auto& last_sequence = exploration_run_event_sequences_by_boot[boot_id];
+        if (event.event_sequence <= last_sequence) {
+          continue;
+        }
+        last_sequence = event.event_sequence;
+        pending_exploration_run_events.push_back(ExplorationRunEventSnapshot{
+            event.timestamp_s,
+            frame_id,
+            boot_id,
+            event.event_sequence,
+            event.kind,
+            exploration_run_id,
+            start_request_id,
+            command_request_id,
+            product_session_id,
+            event.state,
+            route,
+            map_id,
+            event.map_version,
+            artifact_hash,
+            reason,
+            event.motion_stop_confirmed,
+            motion_stop_reason,
+        });
+      }
+    }
+    if (count > 0) {
+      checked(
+          dds_return_loan(exploration_run_event_reader, samples, count),
+          "dds_return_loan(exploration_run_event)");
     }
     return count > 0;
   }
@@ -1874,8 +2190,11 @@ struct Client::Impl {
       try {
         const bool received =
             takeNavigationAcks() | takeExplorationAcks() |
-            takeInspectionAcks() | takeOperatorMotionAcks() |
-            takeNavigationGoalStatuses() | takeNavigationStates() |
+            takeInspectionTaskAcks() |
+            takeOperatorMotionAcks() |
+            takeNavigationGoalStatuses() | takeInspectionTaskEvents() |
+            takeExplorationRunEvents() |
+            takeNavigationStates() |
             takePathSamples(
                 global_path_reader,
                 global_path_mutex,
@@ -1902,8 +2221,9 @@ struct Client::Impl {
     }
   }
 
-  void writeExplorationCommand(
+  ExplorationCommandReceipt writeExplorationCommand(
       ExplorationKind kind,
+      const std::string& exploration_run_id,
       const std::string& session_id,
       const std::string& requested_reason,
       int timeout_ms,
@@ -1912,6 +2232,7 @@ struct Client::Impl {
       double directed_target_x = 0.0,
       double directed_target_y = 0.0,
       double directed_target_ttl_s = 0.0) const {
+    requireExplorationIdentity(exploration_run_id, session_id);
     const std::string request_id = requested_id.empty()
         ? makeExplorationRequestId(kind)
         : requested_id;
@@ -1923,6 +2244,7 @@ struct Client::Impl {
     lingtu_dds_ExplorationCommandRequest message{};
     fillHeader(message.header, nowSeconds(), "map");
     message.request_id = const_cast<char*>(request_id.c_str());
+    message.exploration_run_id = const_cast<char*>(exploration_run_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.session_id = const_cast<char*>(session_id.c_str());
     message.has_directed_target = has_directed_target;
@@ -1931,7 +2253,8 @@ struct Client::Impl {
     message.directed_target_ttl_s = directed_target_ttl_s;
     message.reason = const_cast<char*>(reason.c_str());
     const auto sent = SteadyClock::now();
-    const auto pending = registerExplorationAck(request_id, kind, sent);
+    const auto pending = registerExplorationAck(
+        request_id, kind, exploration_run_id, session_id, sent);
     try {
       checked(
           dds_write(exploration_writer, static_cast<const void*>(&message)),
@@ -1942,52 +2265,76 @@ struct Client::Impl {
     }
     const auto observation = waitForExplorationAck(
         request_id, pending, timeout_ms);
-    if (!observation.accepted) {
+    if (!observation.correlation_valid) {
       throw std::runtime_error(
-          "exploration command rejected: " +
+          "exploration command ACK correlation failed: " +
           (observation.reason.empty() ? std::string("unspecified") : observation.reason) +
           " [request_id=" + request_id +
           " kind=" + explorationCommandKindName(kind) + "]");
     }
+    return ExplorationCommandReceipt{
+        observation.accepted,
+        observation.request_id,
+        observation.run_id,
+        observation.reason,
+        observation.duplicate,
+    };
   }
 
-  void writeInspectionCommand(
+  InspectionTaskCommandReceipt writeInspectionTaskCommand(
       lingtu::message::InspectionCommandKind kind,
+      const std::string& task_id,
       const std::string& route_id,
       std::uint64_t route_revision,
       const std::string& reason,
       int timeout_ms,
       const std::string& requested_id) const {
+    if (task_id.empty()) {
+      throw std::invalid_argument("inspection task id is required");
+    }
     const std::string request_id = requested_id.empty()
         ? makeInspectionRequestId(kind)
         : requested_id;
-    waitForReader(inspection_writer, "inspection_command", timeout_ms);
-    waitForWriter(inspection_ack_reader, "inspection_ack", timeout_ms);
-    lingtu_dds_InspectionCommandRequest message{};
+    waitForReader(inspection_task_writer, "inspection_task_request", timeout_ms);
+    waitForWriter(inspection_task_ack_reader, "inspection_task_ack", timeout_ms);
+    lingtu_dds_InspectionTaskRequest message{};
     fillHeader(message.header, nowSeconds(), "map");
+    message.task_id = const_cast<char*>(task_id.c_str());
     message.request_id = const_cast<char*>(request_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.route_id = const_cast<char*>(route_id.c_str());
     message.route_revision = route_revision;
     message.reason = const_cast<char*>(reason.c_str());
     const auto sent = SteadyClock::now();
-    const auto pending = registerInspectionAck(request_id, kind, sent);
+    const auto pending = registerInspectionAck(request_id, kind, sent, task_id);
     try {
       checked(
-          dds_write(inspection_writer, static_cast<const void*>(&message)),
-          "dds_write(inspection_command)");
+          dds_write(inspection_task_writer, static_cast<const void*>(&message)),
+          "dds_write(inspection_task_request)");
     } catch (...) {
       unregisterInspectionAck(request_id, pending);
       throw;
     }
     const auto observation = waitForInspectionAck(request_id, pending, timeout_ms);
+    InspectionTaskCommandReceipt receipt{
+        observation.task_id,
+        observation.request_id,
+        observation.accepted,
+        observation.kind,
+        observation.reason,
+        observation.run_id,
+        observation.endpoint_stamp_s,
+        "",
+    };
     if (!observation.accepted) {
       throw std::runtime_error(
-          "inspection command rejected: " +
+          "inspection task command rejected: " +
           (observation.reason.empty() ? std::string("unspecified") : observation.reason) +
-          " [request_id=" + request_id +
+          " [task_id=" + task_id +
+          " request_id=" + request_id +
           " kind=" + lingtu::message::inspectionCommandKindName(kind) + "]");
     }
+    return receipt;
   }
 
   void requireOperatorSource(
@@ -2101,7 +2448,7 @@ struct Client::Impl {
   }
 
   static bool requiresEndpointClock(CommandKind kind) {
-    return kind == CommandKind::Teleop || kind == CommandKind::ClearEstop ||
+    return kind == CommandKind::ClearEstop ||
         kind == CommandKind::ResumeAutonomy;
   }
 
@@ -2119,7 +2466,7 @@ struct Client::Impl {
       sync.reason = const_cast<char*>("client_clock_sync");
       const auto sent_steady = SteadyClock::now();
       const auto pending = registerNavigationAck(
-          request_id, CommandKind::Stop, sent_steady);
+          request_id, "", CommandKind::Stop, sent_steady);
       try {
         checked(
             dds_write(command_writer, static_cast<const void*>(&sync)),
@@ -2166,8 +2513,9 @@ struct Client::Impl {
         std::to_string(last_round_trip_s * 1000.0));
   }
 
-  std::string writeCommand(
+  NavigationCommandReceipt writeCommandReceipt(
       lingtu_dds_NavigationCommandRequest message,
+      const std::string& task_id,
       const std::string& request_id,
       CommandKind kind,
       int timeout_ms) const {
@@ -2189,6 +2537,7 @@ struct Client::Impl {
     }
     std::string active_request_id = request_id;
     message.client_id = const_cast<char*>(client_id.c_str());
+    message.task_id = const_cast<char*>(task_id.c_str());
     for (int attempt = 0; attempt < 2; ++attempt) {
       if (attempt > 0) {
         active_request_id = request_id + "-clock-retry-1";
@@ -2211,7 +2560,7 @@ struct Client::Impl {
           send_source_stamp_s);
       const auto sent_steady = SteadyClock::now();
       const auto pending = registerNavigationAck(
-          active_request_id, kind, sent_steady);
+          active_request_id, task_id, kind, sent_steady);
       try {
         checked(
             dds_write(command_writer, static_cast<const void*>(&message)),
@@ -2228,8 +2577,19 @@ struct Client::Impl {
       const auto observation = waitForAck(
           active_request_id, pending, timeout_ms);
       (void)updateEndpointClock(observation);
+      NavigationCommandReceipt receipt{
+          task_id,
+          active_request_id,
+          observation.accepted,
+          static_cast<std::int32_t>(kind),
+          observation.reason,
+          observation.endpoint_stamp_s,
+          observation.accepted
+              ? std::string{}
+              : rejectionMessage(active_request_id, kind, observation),
+      };
       if (observation.accepted) {
-        return active_request_id;
+        return receipt;
       }
       logClockEvent(
           "command_rejected",
@@ -2252,12 +2612,22 @@ struct Client::Impl {
         synchronizeEndpointClock(timeout_ms);
         continue;
       }
-      throw std::runtime_error(
-          rejectionMessage(active_request_id, kind, observation));
+      return receipt;
     }
     throw std::logic_error("navigation command retry loop exhausted");
   }
 
+  std::string writeCommand(
+      lingtu_dds_NavigationCommandRequest message,
+      const std::string& task_id,
+      const std::string& request_id,
+      CommandKind kind,
+      int timeout_ms) const {
+    const auto receipt = writeCommandReceipt(
+        message, task_id, request_id, kind, timeout_ms);
+    requireAcceptedNavigationReceipt(receipt);
+    return receipt.request_id;
+  }
   void writeReasonCommand(
       CommandKind kind,
       const std::string& requested_reason,
@@ -2273,7 +2643,7 @@ struct Client::Impl {
     message.request_id = const_cast<char*>(request_id.c_str());
     message.kind = static_cast<std::int32_t>(kind);
     message.reason = const_cast<char*>(reason.c_str());
-    writeCommand(message, request_id, kind, timeout_ms);
+    writeCommand(message, "", request_id, kind, timeout_ms);
   }
 
   mutable std::mutex ack_mutex;
@@ -2294,8 +2664,19 @@ struct Client::Impl {
   std::unordered_map<std::string, NavigationGoalStatusSnapshot>
       retained_goal_statuses;
   std::deque<std::string> retained_goal_status_order;
+  std::unordered_map<std::string, NavigationGoalStatusSnapshot>
+      retained_task_goal_statuses;
+  std::deque<std::string> retained_task_goal_status_order;
   std::unordered_map<std::string, std::uint64_t>
       goal_status_sequences_by_boot;
+  mutable std::mutex inspection_task_event_mutex;
+  std::deque<InspectionTaskEventSnapshot> pending_inspection_task_events;
+  std::unordered_map<std::string, std::uint64_t>
+      inspection_task_event_sequences_by_boot;
+  mutable std::mutex exploration_run_event_mutex;
+  std::deque<ExplorationRunEventSnapshot> pending_exploration_run_events;
+  std::unordered_map<std::string, std::uint64_t>
+      exploration_run_event_sequences_by_boot;
   mutable std::mutex global_path_mutex;
   std::optional<PathSnapshot> pending_global_path;
   std::uint64_t global_path_receive_sequence{0U};
@@ -2321,8 +2702,10 @@ struct Client::Impl {
   dds_entity_t ack_reader{0};
   dds_entity_t exploration_writer{0};
   dds_entity_t exploration_ack_reader{0};
-  dds_entity_t inspection_writer{0};
-  dds_entity_t inspection_ack_reader{0};
+  dds_entity_t exploration_run_event_reader{0};
+  dds_entity_t inspection_task_writer{0};
+  dds_entity_t inspection_task_ack_reader{0};
+  dds_entity_t inspection_task_event_reader{0};
   dds_entity_t operator_motion_control_writer{0};
   dds_entity_t operator_motion_sample_writer{0};
   dds_entity_t operator_motion_ack_reader{0};
@@ -2370,6 +2753,32 @@ bool Client::takeNavigationGoalStatus(NavigationGoalStatusSnapshot* status) {
   return true;
 }
 
+bool Client::takeInspectionTaskEvent(InspectionTaskEventSnapshot* event) {
+  if (event == nullptr) {
+    throw std::invalid_argument("inspection task event output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->inspection_task_event_mutex);
+  if (impl_->pending_inspection_task_events.empty()) {
+    return false;
+  }
+  *event = std::move(impl_->pending_inspection_task_events.front());
+  impl_->pending_inspection_task_events.pop_front();
+  return true;
+}
+
+bool Client::takeExplorationRunEvent(ExplorationRunEventSnapshot* event) {
+  if (event == nullptr) {
+    throw std::invalid_argument("exploration run event output is null");
+  }
+  std::lock_guard<std::mutex> lock(impl_->exploration_run_event_mutex);
+  if (impl_->pending_exploration_run_events.empty()) {
+    return false;
+  }
+  *event = std::move(impl_->pending_exploration_run_events.front());
+  impl_->pending_exploration_run_events.pop_front();
+  return true;
+}
+
 std::optional<NavigationGoalStatusSnapshot> Client::navigationGoalStatus(
     const std::string& request_id) const {
   if (request_id.empty()) {
@@ -2378,6 +2787,19 @@ std::optional<NavigationGoalStatusSnapshot> Client::navigationGoalStatus(
   std::lock_guard<std::mutex> lock(impl_->navigation_goal_status_mutex);
   const auto found = impl_->retained_goal_statuses.find(request_id);
   if (found == impl_->retained_goal_statuses.end()) {
+    return std::nullopt;
+  }
+  return found->second;
+}
+
+std::optional<NavigationGoalStatusSnapshot> Client::navigationTaskStatus(
+    const std::string& task_id) const {
+  if (task_id.empty()) {
+    return std::nullopt;
+  }
+  std::lock_guard<std::mutex> lock(impl_->navigation_goal_status_mutex);
+  const auto found = impl_->retained_task_goal_statuses.find(task_id);
+  if (found == impl_->retained_task_goal_statuses.end()) {
     return std::nullopt;
   }
   return found->second;
@@ -2429,21 +2851,26 @@ MapSceneHealthSnapshot Client::mapSceneHealth() const {
   return health;
 }
 
-std::string Client::NavigationCommands::sendGoal(
+NavigationCommandReceipt Client::NavigationCommands::startTask(
     double x,
     double y,
     double z,
     double yaw,
     int timeout_ms,
+    const std::string& requested_task_id,
     const std::string& requested_id) {
   requireFinite(x, "goal x");
   requireFinite(y, "goal y");
   requireFinite(z, "goal z");
   requireFinite(yaw, "goal yaw");
+  const std::string task_id = requested_task_id.empty()
+      ? makeTaskId(CommandKind::Goal)
+      : requested_task_id;
   const std::string request_id =
       requested_id.empty() ? makeRequestId(CommandKind::Goal) : requested_id;
   lingtu_dds_NavigationCommandRequest message{};
   fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
   message.request_id = const_cast<char*>(request_id.c_str());
   message.kind = static_cast<std::int32_t>(CommandKind::Goal);
   message.goal.position.x = x;
@@ -2451,44 +2878,73 @@ std::string Client::NavigationCommands::sendGoal(
   message.goal.position.z = z;
   message.goal.orientation = quaternionFromYaw(yaw);
   message.reason = const_cast<char*>("");
-  return owner_.impl_->writeCommand(message, request_id, CommandKind::Goal, timeout_ms);
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::Goal, timeout_ms);
 }
 
-void Client::NavigationCommands::cancel(
+NavigationCommandReceipt Client::NavigationCommands::cancelTask(
+    const std::string& task_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& requested_id) {
+  if (task_id.empty()) {
+    throw std::invalid_argument("navigation cancel task_id is required");
+  }
   const std::string text = reason.empty() ? "cancel" : reason;
   const std::string request_id =
-      requested_id.empty() ? makeRequestId(CommandKind::Cancel) : requested_id;
+      requested_id.empty() ? makeRequestId(CommandKind::TaskCancel) : requested_id;
   lingtu_dds_NavigationCommandRequest message{};
   fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
   message.request_id = const_cast<char*>(request_id.c_str());
-  message.kind = static_cast<std::int32_t>(CommandKind::Cancel);
+  message.kind = static_cast<std::int32_t>(CommandKind::TaskCancel);
   message.reason = const_cast<char*>(text.c_str());
-  owner_.impl_->writeCommand(message, request_id, CommandKind::Cancel, timeout_ms);
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::TaskCancel, timeout_ms);
 }
 
-void Client::NavigationCommands::sendTeleop(
-    double vx,
-    double vy,
-    double wz,
+NavigationCommandReceipt Client::NavigationCommands::pauseTask(
+    const std::string& task_id,
+    const std::string& reason,
     int timeout_ms,
     const std::string& requested_id) {
-  requireFinite(vx, "teleop vx");
-  requireFinite(vy, "teleop vy");
-  requireFinite(wz, "teleop wz");
-  const std::string request_id =
-      requested_id.empty() ? makeRequestId(CommandKind::Teleop) : requested_id;
+  if (task_id.empty()) {
+    throw std::invalid_argument("navigation pause task_id is required");
+  }
+  const std::string text = reason.empty() ? "operator_pause" : reason;
+  const std::string request_id = requested_id.empty()
+      ? makeRequestId(CommandKind::TaskPause)
+      : requested_id;
   lingtu_dds_NavigationCommandRequest message{};
-  fillHeader(message.header, nowSeconds(), "body");
+  fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
   message.request_id = const_cast<char*>(request_id.c_str());
-  message.kind = static_cast<std::int32_t>(CommandKind::Teleop);
-  message.velocity.linear.x = vx;
-  message.velocity.linear.y = vy;
-  message.velocity.angular.z = wz;
-  message.reason = const_cast<char*>("");
-  owner_.impl_->writeCommand(message, request_id, CommandKind::Teleop, timeout_ms);
+  message.kind = static_cast<std::int32_t>(CommandKind::TaskPause);
+  message.reason = const_cast<char*>(text.c_str());
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::TaskPause, timeout_ms);
+}
+
+NavigationCommandReceipt Client::NavigationCommands::resumeTask(
+    const std::string& task_id,
+    const std::string& reason,
+    int timeout_ms,
+    const std::string& requested_id) {
+  if (task_id.empty()) {
+    throw std::invalid_argument("navigation resume task_id is required");
+  }
+  const std::string text = reason.empty() ? "operator_resume" : reason;
+  const std::string request_id = requested_id.empty()
+      ? makeRequestId(CommandKind::TaskResume)
+      : requested_id;
+  lingtu_dds_NavigationCommandRequest message{};
+  fillHeader(message.header, nowSeconds(), "map");
+  message.task_id = const_cast<char*>(task_id.c_str());
+  message.request_id = const_cast<char*>(request_id.c_str());
+  message.kind = static_cast<std::int32_t>(CommandKind::TaskResume);
+  message.reason = const_cast<char*>(text.c_str());
+  return owner_.impl_->writeCommandReceipt(
+      message, task_id, request_id, CommandKind::TaskResume, timeout_ms);
 }
 
 void Client::NavigationCommands::stop(
@@ -2531,66 +2987,79 @@ void Client::NavigationCommands::resumeAutonomy(
       requested_id);
 }
 
-void Client::ExplorationCommands::start(
+ExplorationCommandReceipt Client::ExplorationCommands::start(
+    const std::string& exploration_run_id,
     const std::string& session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeExplorationCommand(
+  return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kStart,
+      exploration_run_id,
       session_id,
       reason.empty() ? "operator_start" : reason,
       timeout_ms,
       request_id);
 }
 
-void Client::ExplorationCommands::pause(
+ExplorationCommandReceipt Client::ExplorationCommands::pause(
+    const std::string& exploration_run_id,
+    const std::string& session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeExplorationCommand(
+  return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kPause,
-      "",
+      exploration_run_id,
+      session_id,
       reason.empty() ? "operator_pause" : reason,
       timeout_ms,
       request_id);
 }
 
-void Client::ExplorationCommands::resume(
+ExplorationCommandReceipt Client::ExplorationCommands::resume(
+    const std::string& exploration_run_id,
+    const std::string& session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeExplorationCommand(
+  return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kResume,
-      "",
+      exploration_run_id,
+      session_id,
       reason.empty() ? "operator_resume" : reason,
       timeout_ms,
       request_id);
 }
 
-void Client::ExplorationCommands::stop(
+ExplorationCommandReceipt Client::ExplorationCommands::stop(
+    const std::string& exploration_run_id,
+    const std::string& session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeExplorationCommand(
+  return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kStop,
-      "",
+      exploration_run_id,
+      session_id,
       reason.empty() ? "operator_stop" : reason,
       timeout_ms,
       request_id);
 }
 
-void Client::ExplorationCommands::setDirectedTarget(
+ExplorationCommandReceipt Client::ExplorationCommands::setDirectedTarget(
     double x,
     double y,
     double ttl_s,
+    const std::string& exploration_run_id,
     const std::string& session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   requireDirectedTarget(x, y, ttl_s);
-  owner_.impl_->writeExplorationCommand(
+  return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kSetDirectedTarget,
+      exploration_run_id,
       session_id,
       reason.empty() ? "operator_directed_explore" : reason,
       timeout_ms,
@@ -2601,28 +3070,32 @@ void Client::ExplorationCommands::setDirectedTarget(
       ttl_s);
 }
 
-void Client::ExplorationCommands::clearDirectedTarget(
+ExplorationCommandReceipt Client::ExplorationCommands::clearDirectedTarget(
+    const std::string& exploration_run_id,
     const std::string& session_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
   requireDirectedTargetSessionId(session_id);
-  owner_.impl_->writeExplorationCommand(
+  return owner_.impl_->writeExplorationCommand(
       ExplorationKind::kClearDirectedTarget,
+      exploration_run_id,
       session_id,
       reason.empty() ? "operator_clear_directed_explore" : reason,
       timeout_ms,
       request_id);
 }
 
-void Client::InspectionCommands::start(
+InspectionTaskCommandReceipt Client::InspectionCommands::startTask(
+    const std::string& task_id,
     const std::string& route_id,
     std::uint64_t route_revision,
     int timeout_ms,
     const std::string& request_id) {
   if (route_id.empty()) throw std::invalid_argument("inspection route id is required");
-  owner_.impl_->writeInspectionCommand(
+  return owner_.impl_->writeInspectionTaskCommand(
       lingtu::message::InspectionCommandKind::kStart,
+      task_id,
       route_id,
       route_revision,
       "",
@@ -2630,12 +3103,14 @@ void Client::InspectionCommands::start(
       request_id);
 }
 
-void Client::InspectionCommands::pause(
+InspectionTaskCommandReceipt Client::InspectionCommands::pauseTask(
+    const std::string& task_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeInspectionCommand(
+  return owner_.impl_->writeInspectionTaskCommand(
       lingtu::message::InspectionCommandKind::kPause,
+      task_id,
       "",
       0U,
       reason.empty() ? "operator_pause" : reason,
@@ -2643,12 +3118,14 @@ void Client::InspectionCommands::pause(
       request_id);
 }
 
-void Client::InspectionCommands::resume(
+InspectionTaskCommandReceipt Client::InspectionCommands::resumeTask(
+    const std::string& task_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeInspectionCommand(
+  return owner_.impl_->writeInspectionTaskCommand(
       lingtu::message::InspectionCommandKind::kResume,
+      task_id,
       "",
       0U,
       reason.empty() ? "operator_resume" : reason,
@@ -2656,12 +3133,14 @@ void Client::InspectionCommands::resume(
       request_id);
 }
 
-void Client::InspectionCommands::cancel(
+InspectionTaskCommandReceipt Client::InspectionCommands::cancelTask(
+    const std::string& task_id,
     const std::string& reason,
     int timeout_ms,
     const std::string& request_id) {
-  owner_.impl_->writeInspectionCommand(
+  return owner_.impl_->writeInspectionTaskCommand(
       lingtu::message::InspectionCommandKind::kCancel,
+      task_id,
       "",
       0U,
       reason.empty() ? "operator_cancel" : reason,

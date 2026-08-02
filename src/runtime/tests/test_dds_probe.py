@@ -86,3 +86,12 @@ def test_dds_probe_rejects_legacy_dog_odometry_topic(monkeypatch, tmp_path) -> N
 
     with pytest.raises(ValueError, match="rt/driver/odometry"):
         dds_probe.probe(("rt/nav/dog_odometry",), seconds=1.0, domain_id=0)
+
+
+def test_managed_release_probe_never_builds_during_readiness(monkeypatch, tmp_path) -> None:
+    missing = tmp_path / "release" / "lingtu_dds_probe"
+    monkeypatch.setenv("LINGTU_DDS_PROBE_BIN", str(missing))
+    monkeypatch.setenv("LINGTU_DDS_PROBE_ALLOW_BUILD", "0")
+
+    with pytest.raises(FileNotFoundError, match="forbid readiness-time compilation"):
+        dds_probe._ensure_native_probe()

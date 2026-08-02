@@ -8,6 +8,10 @@ NavigationStateTracker::NavigationStateTracker(NavigationControlState control_mo
 }
 
 void NavigationStateTracker::observe(const GoalPlanStatus &status) {
+  if (!status.project_to_navigation_state) {
+    return;
+  }
+  state_.active_task_id = status.task_id;
   state_.active_request_id = status.request_id;
   state_.goal_epoch = status.goal_epoch;
   state_.hold_reason.clear();
@@ -27,6 +31,15 @@ void NavigationStateTracker::observe(const GoalPlanStatus &status) {
       state_.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kFollowing);
       state_.recovery_state = static_cast<std::int32_t>(NavigationRecoveryState::kIdle);
       state_.progress = -1.0F;
+      state_.failure_code.clear();
+      break;
+    case lingtu::message::NavigationGoalState::Paused:
+      state_.lifecycle_state = static_cast<std::int32_t>(NavigationLifecycleState::kPaused);
+      state_.planning_state = static_cast<std::int32_t>(NavigationPlanningState::kReady);
+      state_.execution_state = static_cast<std::int32_t>(NavigationExecutionState::kBlocked);
+      state_.recovery_state = static_cast<std::int32_t>(NavigationRecoveryState::kIdle);
+      state_.progress = -1.0F;
+      state_.hold_reason = status.reason.empty() ? "task_paused" : status.reason;
       state_.failure_code.clear();
       break;
     case lingtu::message::NavigationGoalState::Failed:

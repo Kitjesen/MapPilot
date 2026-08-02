@@ -112,6 +112,31 @@ void TestColumnCarvingReplacesObservedColumns() {
   assert(stats.total_voxels == 2U);
 }
 
+void TestColumnCarvingPreservesOtherHeightBands() {
+  VoxelLayerConfig config;
+  config.voxel_size_m = 1.0F;
+  config.max_range_m = 0.0F;
+  config.min_z_m = -10.0F;
+  config.max_z_m = 10.0F;
+  config.column_carving = true;
+
+  VoxelLayerCore layer(config);
+  auto first_frame = InterleavedFrame({
+      0.2F, 0.2F, 0.2F,
+      0.2F, 0.2F, 4.2F,
+  });
+  layer.Update(first_frame.frame);
+
+  auto second_frame = InterleavedFrame({0.3F, 0.3F, 0.3F});
+  second_frame.frame.column_carving_z_range_enabled = true;
+  second_frame.frame.column_carving_min_z_m = -1.0F;
+  second_frame.frame.column_carving_max_z_m = 2.0F;
+  layer.Update(second_frame.frame);
+  assert(layer.Contains(0.3F, 0.3F, 0.3F));
+  assert(layer.Contains(0.2F, 0.2F, 4.2F));
+  assert(layer.VoxelCount() == 2U);
+}
+
 void TestSoAInputAndSnapshotCloud() {
   VoxelLayerConfig config;
   config.voxel_size_m = 0.5F;
@@ -161,6 +186,7 @@ void TestDecayPrunesWeakVoxels() {
 int main() {
   TestFilterAndVoxelDedupe();
   TestColumnCarvingReplacesObservedColumns();
+  TestColumnCarvingPreservesOtherHeightBands();
   TestSoAInputAndSnapshotCloud();
   TestDecayPrunesWeakVoxels();
   return 0;

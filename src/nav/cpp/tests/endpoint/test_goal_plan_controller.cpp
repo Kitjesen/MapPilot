@@ -1,5 +1,6 @@
 #include <chrono>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -23,6 +24,10 @@ planImmediately(const lingtu::nav::plan::GlobalPlanRequest &request,
   result.ok = true;
   result.reached_goal = true;
   result.map_identity = {"field", 7, "sha256-a", "map"};
+  result.overlay_revision = request.temporary_overlay.revision;
+  result.overlay_frame_epoch = request.temporary_overlay.frame_epoch;
+  result.overlay_obstacle_generation = request.temporary_overlay.obstacle_generation;
+  result.overlay_traversability_generation = request.temporary_overlay.traversability_generation;
   result.path = {request.start, request.goal};
   return result;
 }
@@ -67,6 +72,7 @@ int main() {
   context.frame_epoch = 4;
 
   GoalPlanRequest request;
+  request.task_id = "navigation-task-1";
   request.request_id = "goal-1";
   request.origin = GoalPlanOrigin::kExternal;
   request.source_stamp_s = 10.0;
@@ -82,8 +88,11 @@ int main() {
 
   const auto snapshot = controller.snapshot();
   require(snapshot.goal_epoch == 1U, "first goal did not allocate epoch one");
+  require(snapshot.planning_task_id == "navigation-task-1",
+          "planning task identity was not retained");
   require(snapshot.planning_request_id == "goal-1", "planning identity was not retained");
   require(snapshot.active_request_id.empty(), "new goal became active before a path existed");
+  require(!snapshot.active_origin.has_value(), "planning-only goal exposed an active origin");
   require(snapshot.busy, "accepted goal did not start the planner task");
   require(snapshot.diagnostics.seen, "goal diagnostics were not initialized");
   require(snapshot.diagnostics.reason == "planning", "planning diagnostics reason changed");
@@ -91,6 +100,7 @@ int main() {
   require(snapshot.diagnostics.goal.x == 4.0, "planning goal was not captured");
 
   require(statuses.size() == 1U, "planning emitted an unexpected status count");
+  require(statuses.front().task_id == "navigation-task-1", "planning status lost task identity");
   require(statuses.front().request_id == "goal-1", "planning status lost request identity");
   require(statuses.front().goal_epoch == 1U, "planning status lost goal epoch");
   require(statuses.front().state == NavigationGoalState::Planning,
@@ -286,9 +296,15 @@ int main() {
   std::vector<GoalPlanStatus> success_statuses;
   std::vector<GoalPlanPathActivation> success_activations;
   bool success_preempted = false;
+  std::optional<lingtu::nav::plan::MapIdentity> success_current_map =
+      lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"};
   auto success_actions = make_admission_actions(&success_statuses, &success_preempted, true);
   success_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
     success_activations.push_back(activation);
+  };
+  success_actions.current_map_identity = [&] {
+    return GoalPlanMapIdentityResult{success_current_map,
+                                     success_current_map ? "" : "active_map_unavailable"};
   };
   GoalPlanController success_controller(planImmediately, std::move(success_actions));
   require(success_controller.submit(request, context).accepted,
@@ -311,6 +327,11 @@ int main() {
   require(!completion.counted_failure, "valid planner result counted a failure");
   require(success_activations.size() == 1U, "path activation count changed");
   require(success_activations.front().path.size() == 2U, "activated path lost planner waypoints");
+  require(success_activations.front().map_identity.has_value() &&
+              lingtu::nav::plan::sameMapIdentity(
+                  *success_activations.front().map_identity,
+                  lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"}),
+          "path activation lost the planner map identity");
   require(success_activations.front().goal_yaw.has_value() &&
               *success_activations.front().goal_yaw == 0.25,
           "activated path lost goal yaw");
@@ -324,9 +345,175 @@ int main() {
           "planning identity remained after path activation");
   require(active_snapshot.active_request_id == request.request_id,
           "active goal identity was not transferred");
+  require(active_snapshot.active_origin == GoalPlanOrigin::kExternal,
+          "active external origin was not projected into snapshot");
   require(active_snapshot.diagnostics.accepted, "accepted plan diagnostics were false");
   require(active_snapshot.diagnostics.reason == "accepted",
           "accepted plan diagnostics reason changed");
+
+  const auto premature_resume =
+      success_controller.deferResume(request.task_id, "resume-too-early", context);
+  require(!premature_resume.accepted && premature_resume.reason == "task_not_paused",
+          "an executing task resumed without a confirmed pause");
+
+  const auto wrong_pause =
+      success_controller.deferPause("another-task", "pause-wrong", "operator_pause");
+  require(!wrong_pause.accepted && wrong_pause.reason == "task_not_active",
+          "task pause accepted the wrong active task");
+
+  auto deferred_pause = success_controller.deferPause(request.task_id, "pause-1", "operator_pause");
+  require(deferred_pause.accepted && deferred_pause.reason == "pause_ready",
+          "active task pause was not prepared");
+  require(success_statuses.size() == 2U, "pause published state before stop evidence");
+  deferred_pause.commit();
+  require(success_statuses.size() == 3U, "confirmed pause did not publish state");
+  require(success_statuses.back().state == NavigationGoalState::Paused,
+          "confirmed pause used the wrong lifecycle state");
+  require(success_statuses.back().task_id == request.task_id &&
+              success_statuses.back().request_id == "pause-1",
+          "pause status lost task or causal request identity");
+  require(success_controller.snapshot().active_paused,
+          "confirmed pause did not retain a resumable task");
+
+  const auto wrong_resume = success_controller.deferResume("another-task", "resume-wrong", context);
+  require(!wrong_resume.accepted && wrong_resume.reason == "task_not_active",
+          "task resume accepted the wrong paused task");
+
+  const auto expect_resume_rejection = [&](GoalPlanAdmissionContext candidate_context,
+                                           const std::string &expected_reason) {
+    const auto result =
+        success_controller.deferResume(request.task_id, "resume-blocked", candidate_context);
+    require(!result.accepted && result.reason == expected_reason,
+            "task resume admission returned the wrong rejection");
+    require(success_controller.snapshot().active_paused,
+            "a rejected resume changed the paused task state");
+  };
+
+  auto blocked_resume_context = context;
+  blocked_resume_context.motion_allowed = false;
+  expect_resume_rejection(blocked_resume_context, "estop_latched");
+
+  blocked_resume_context = context;
+  blocked_resume_context.operator_takeover_latched = true;
+  expect_resume_rejection(blocked_resume_context, "operator_takeover_resume_required");
+
+  blocked_resume_context = context;
+  blocked_resume_context.autonomy_mode = false;
+  blocked_resume_context.control_mode_name = "teleop";
+  expect_resume_rejection(blocked_resume_context, "resume_not_allowed_in_teleop");
+
+  blocked_resume_context = context;
+  blocked_resume_context.driver_control_blocker = "driver_control_stale";
+  expect_resume_rejection(blocked_resume_context, "driver_control_stale");
+
+  blocked_resume_context = context;
+  blocked_resume_context.input_ready = false;
+  blocked_resume_context.input_gate_reason = "localization_stale";
+  expect_resume_rejection(blocked_resume_context, "input_gate_localization_stale");
+
+  blocked_resume_context = context;
+  blocked_resume_context.retained_path_ready = false;
+  blocked_resume_context.retained_path_reason = "retained_global_path_missing";
+  expect_resume_rejection(blocked_resume_context, "retained_global_path_missing");
+
+  blocked_resume_context = context;
+  blocked_resume_context.map_position.reset();
+  expect_resume_rejection(blocked_resume_context, "map_odom_tf_not_ready");
+
+  blocked_resume_context.odometry_ready = false;
+  expect_resume_rejection(blocked_resume_context, "odometry_not_ready");
+
+  blocked_resume_context = context;
+  blocked_resume_context.planner_map_configured = false;
+  blocked_resume_context.planner_map_missing_reason = "active_octomap_not_configured";
+  expect_resume_rejection(blocked_resume_context, "active_octomap_not_configured");
+
+  success_current_map.reset();
+  expect_resume_rejection(context, "active_map_unavailable_before_resume");
+  success_current_map = lingtu::nav::plan::MapIdentity{"field", 8, "sha256-b", "map"};
+  expect_resume_rejection(context, "active_map_changed_before_resume");
+  success_current_map = lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"};
+
+  auto deferred_resume = success_controller.deferResume(request.task_id, "resume-1", context);
+  require(deferred_resume.accepted && deferred_resume.reason == "resume_ready",
+          "paused task was not resumable");
+  deferred_resume.commit();
+  require(success_statuses.size() == 4U &&
+              success_statuses.back().state == NavigationGoalState::PathActive,
+          "confirmed resume did not republish PathActive");
+  require(success_statuses.back().request_id == "resume-1",
+          "resumed task did not carry the new request identity");
+  require(!success_controller.snapshot().active_paused, "resumed task remained paused");
+
+  {
+    std::vector<lingtu::nav::plan::GlobalPlanRequest> observed_requests;
+    std::vector<GoalPlanPathActivation> overlay_activations;
+    GoalPlanActions overlay_actions;
+    overlay_actions.preempt_rolling = [](const std::string &) { return true; };
+    overlay_actions.clear_external_inspection = [] {};
+    overlay_actions.current_map_identity = [] {
+      return GoalPlanMapIdentityResult{
+          lingtu::nav::plan::MapIdentity{"field", 7, "sha256-a", "map"}, {}};
+    };
+    overlay_actions.publish_status = [](const GoalPlanStatus &) {};
+    overlay_actions.inspection_active = [] { return false; };
+    overlay_actions.inspection_leg_failed = [](const std::string &, double) {};
+    overlay_actions.inspection_pause = [](const std::string &) {};
+    overlay_actions.inspection_plan_ready = [](double) { return GoalPlanInspectionDecision{}; };
+    overlay_actions.activate_path = [&](const GoalPlanPathActivation &activation) {
+      overlay_activations.push_back(activation);
+    };
+
+    GoalPlanController overlay_controller(
+        [&](const lingtu::nav::plan::GlobalPlanRequest &plan_request,
+            const lingtu::nav::plan::GlobalPlanCancelCheck &) {
+          observed_requests.push_back(plan_request);
+          auto result = planImmediately(plan_request, {});
+          return result;
+        },
+        std::move(overlay_actions));
+    GoalPlanAdmissionContext overlay_context = context;
+    overlay_context.temporary_overlay.revision = 9U;
+    overlay_context.temporary_overlay.frame_epoch = context.frame_epoch;
+    overlay_context.temporary_overlay.obstacle_generation = 21U;
+    overlay_context.temporary_overlay.traversability_generation = 13U;
+    overlay_context.temporary_overlay.blocked_regions.push_back({{2.0, 3.0, 0.5}, 0.7, -0.2, 1.8});
+    require(overlay_controller.submit(request, overlay_context).accepted,
+            "overlay fixture initial goal was rejected");
+    lingtu::nav::endpoint::GoalPlanAdvanceResult overlay_completion;
+    for (int i = 0; i < 1000 && !overlay_completion.path_activated; ++i) {
+      overlay_completion = overlay_controller.advance(
+          lingtu::nav::endpoint::GoalPlanAdvanceContext{context.frame_epoch, false, 30.0});
+      if (!overlay_completion.completion_consumed) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    require(overlay_completion.path_activated && observed_requests.size() == 1U &&
+                observed_requests.front().temporary_overlay.empty(),
+            "ordinary planning unexpectedly carried a temporary overlay");
+
+    require(overlay_controller.replanActive(overlay_context).accepted,
+            "overlay replan was rejected");
+    overlay_completion = {};
+    for (int i = 0; i < 1000 && !overlay_completion.path_activated; ++i) {
+      overlay_completion = overlay_controller.advance(
+          lingtu::nav::endpoint::GoalPlanAdvanceContext{context.frame_epoch, false, 31.0});
+      if (!overlay_completion.completion_consumed) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    }
+    require(overlay_completion.path_activated && observed_requests.size() == 2U,
+            "overlay replan did not atomically activate one replacement path");
+    const auto &observed_overlay = observed_requests.back().temporary_overlay;
+    require(observed_overlay.revision == 9U &&
+                observed_overlay.frame_epoch == context.frame_epoch &&
+                observed_overlay.obstacle_generation == 21U &&
+                observed_overlay.traversability_generation == 13U &&
+                observed_overlay.blocked_regions.size() == 1U &&
+                observed_overlay.blocked_regions.front().radius_xy_m == 0.7,
+            "GoalPlan did not preserve the request-scoped overlay across replan admission");
+    require(overlay_activations.size() == 2U, "overlay replan activated a path more than once");
+  }
 
   return 0;
 }

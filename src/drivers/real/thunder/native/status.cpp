@@ -49,6 +49,7 @@ void recordFreshnessDecision(
     ++stats.freshness_accepted;
     return;
   }
+  invalidateCurrentOutputAck(stats);
   ++stats.freshness_rejected;
   switch (decision.reason) {
     case CommandFreshnessReason::Accepted:
@@ -98,6 +99,7 @@ void writeStatus(
   }
   const auto& counts = core.counters();
   const auto& walk = core.lastWalk();
+  const auto output_ack = currentOutputAck(stats);
   out << "{\n"
       << "  \"schema_version\": \"lingtu.driver.status.v1\",\n"
       << "  \"role\": \"driver\",\n"
@@ -108,7 +110,13 @@ void writeStatus(
       << "  \"stamp_s\": " << stamp_s << ",\n"
       << "  \"dds\": {\"topic\": \"" << lingtu::message::kNavCmdVel.topic
       << "\", \"wire_topic\": \"" << lingtu::message::kNavCmdVel.dds_topic
-      << "\", \"domain_id\": " << config.domain_id << "},\n"
+      << "\", \"domain_id\": " << config.domain_id
+      << ", \"matched_cmd_vel_writers\": "
+      << stats.matched_cmd_vel_writers
+      << ", \"cmd_vel_writer_ready\": "
+      << (stats.cmd_vel_writer_ready ? "true" : "false")
+      << ", \"cmd_vel_writer_reason\": \""
+      << jsonEscape(stats.cmd_vel_writer_reason) << "\"},\n"
       << "  \"brainstem\": {\"target\": \"" << jsonEscape(target)
       << "\", \"rpc_timeout_ms\": " << config.rpc_timeout.count()
       << ", \"fsm\": \"" << jsonEscape(stats.control.fsm)
@@ -137,6 +145,11 @@ void writeStatus(
       << "  \"last_error\": \"" << jsonEscape(stats.last_error) << "\",\n"
       << "  \"last_receive_s\": " << stats.last_receive_s << ",\n"
       << "  \"last_send_s\": " << stats.last_send_s << ",\n"
+      << "  \"output_ack\": {\"producer_boot_id\": \""
+      << jsonEscape(output_ack.producer_boot_id)
+      << "\", \"output_sequence\": " << output_ack.output_sequence
+      << ", \"accepted\": "
+      << (output_ack.accepted ? "true" : "false") << "},\n"
       << "  \"counters\": {\n"
       << "    \"dds_samples\": " << stats.dds_samples << ",\n"
       << "    \"received\": " << counts.received << ",\n"
@@ -153,7 +166,9 @@ void writeStatus(
       << "    \"command_rejections\": " << stats.command_rejections << ",\n"
       << "    \"lease_refreshes\": " << stats.lease_refreshes << ",\n"
       << "    \"lease_rejections\": " << stats.lease_rejections << ",\n"
-      << "    \"safety_cancels\": " << stats.safety_cancels << ",\n"
+      << "    \"safety_stops\": " << stats.safety_stops << ",\n"
+      << "    \"cmd_vel_writer_faults\": "
+      << stats.cmd_vel_writer_faults << ",\n"
       << "    \"freshness_accepted\": " << stats.freshness_accepted << ",\n"
       << "    \"freshness_rejected\": " << stats.freshness_rejected << ",\n"
       << "    \"freshness_boot_mismatch\": "

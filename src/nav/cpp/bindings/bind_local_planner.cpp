@@ -97,7 +97,22 @@ void bind_local_planner(nb::module_& m) {
     .def_rw("slow_down", &LocalPlanResult::slowDown)
     .def_rw("path_found", &LocalPlanResult::pathFound)
     .def_rw("near_field_stop", &LocalPlanResult::nearFieldStop)
-    .def_rw("recovery_state", &LocalPlanResult::recoveryState);
+    .def_rw("recovery_state", &LocalPlanResult::recoveryState)
+    .def_rw("recovery_exhausted", &LocalPlanResult::recoveryExhausted)
+    .def_rw("recovery_active", &LocalPlanResult::recoveryActive)
+    .def_rw("recovery_verified", &LocalPlanResult::recoveryVerified)
+    .def_rw(
+        "recovery_observation_refresh_required",
+        &LocalPlanResult::recoveryObservationRefreshRequired)
+    .def_rw("recovery_direct_command", &LocalPlanResult::recoveryDirectCommand)
+    .def_prop_ro("recovery_action", [](const LocalPlanResult& result) {
+      return static_cast<int>(result.recoveryAction);
+    })
+    .def_rw("recovery_reason", &LocalPlanResult::recoveryReason)
+    .def_rw("recovery_progress", &LocalPlanResult::recoveryProgress)
+    .def_rw("recovery_attempt", &LocalPlanResult::recoveryAttempt)
+    .def_rw("recovery_candidate_count", &LocalPlanResult::recoveryCandidateCount)
+    .def_rw("recovery_rotation_direction", &LocalPlanResult::recoveryRotationDirection);
 
   nb::class_<LocalPlannerCore>(m, "LocalPlanner")
     .def(nb::init<const LocalPlannerParams&>(),

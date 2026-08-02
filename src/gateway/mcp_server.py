@@ -23,16 +23,24 @@ import inspect
 import json
 import logging
 import threading
+import uuid
 from typing import Any
 
+from fastapi.responses import JSONResponse
+
+from gateway.schemas import InstructionRequest
+from gateway.services.command_boundary import CommandBoundaryError
+from gateway.services.control_commands import ControlCommandService
 from gateway.services.module_refs import backend_reconfigure_targets
+from gateway.services.module_refs import navigation_state as _navigation_state
+from gateway.services.native_control import endpoint_only_enabled
 from gateway.services.native_control import estop as native_estop
-from gateway.services.native_control import stop as native_stop
 from runtime.module import Module, skill
 from runtime.msgs.geometry import PoseStamped, Twist
-from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import NavigationGoalStatus, NavigationState, Odometry
 from runtime.msgs.semantic import SafetyState, SceneGraph
 from runtime.registry import register
+from runtime.status_provider import RuntimeStatusProvider
 from runtime.stream import In, Out
 
 logger = logging.getLogger(__name__)
@@ -47,26 +55,6 @@ _MOTION_BACKEND_CATEGORIES = {
 }
 _BACKEND_RECONFIGURE_TARGETS = backend_reconfigure_targets()
 _BUILTIN_FALLBACK_TOOLS = frozenset({"emergency_stop", "send_instruction"})
-
-
-def _navigation_state(nav: Any) -> str:
-    if nav is None:
-        return ""
-    health: dict[str, Any] = {}
-    if hasattr(nav, "health"):
-        try:
-            raw_health = nav.health() or {}
-            if isinstance(raw_health, dict):
-                health = raw_health
-        except Exception:
-            return "UNKNOWN"
-    state = health.get("state")
-    nested = health.get("navigation")
-    if state is None and isinstance(nested, dict):
-        state = nested.get("state")
-    if hasattr(state, "value"):
-        state = state.value
-    return str(state or "").upper()
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +100,8 @@ class MCPServerModule(Module, layer=6):
     odometry: In[Odometry]
     scene_graph: In[SceneGraph]
     safety_state: In[SafetyState]
+    navigation_state: In[NavigationState]
+    navigation_goal_status: In[NavigationGoalStatus]
     mission_status: In[dict]
 
     # -- outgoing commands --------------------------------------------------
@@ -144,9 +134,12 @@ class MCPServerModule(Module, layer=6):
         self._sg_json: str = "{}"
         self._safety: dict | None = None
         self._mission: dict | None = None
+        self._navigation_state: dict | None = None
+        self._navigation_goal_status_by_request: dict[str, dict[str, Any]] = {}
 
         # Injected after system.start() by cli/main.py
         self._system_handle = None
+        self._runtime_status_provider: RuntimeStatusProvider | None = None
 
         # Populated by on_system_modules() -all @skill across all modules
         self._tool_registry: dict[str, Any] = {}  # func_name ->bound method
@@ -166,6 +159,10 @@ class MCPServerModule(Module, layer=6):
     def set_system_handle(self, handle: Any) -> None:
         """Inject SystemHandle so get_health / list_modules work."""
         self._system_handle = handle
+
+    def set_runtime_status_provider(self, provider: RuntimeStatusProvider) -> None:
+        """Inject read-only runtime diagnostics without SystemHandle ownership."""
+        self._runtime_status_provider = provider
 
     def on_system_modules(self, modules: dict[str, Any]) -> None:
         """Auto-discover every @skill method from every running module.
@@ -242,7 +239,6 @@ class MCPServerModule(Module, layer=6):
 
         self._tool_registry = tool_registry
         self._tool_list = tool_list
-        self._install_legacy_tool_aliases()
 
         logger.info(
             "MCP: %d tools from %d modules",
@@ -250,34 +246,12 @@ class MCPServerModule(Module, layer=6):
             len(modules),
         )
 
-    def _install_legacy_tool_aliases(self) -> None:
-        """Keep old MCP clients working with a non-latching motion stop."""
-
-        if "stop" in self._tool_registry:
-            return
-        if "emergency_stop" not in self._tool_registry:
-            return
-
-        self._tool_registry["stop"] = self._legacy_stop_tool
-        source = next(
-            (tool for tool in self._tool_list if tool["name"] == "emergency_stop"),
-            None,
-        )
-        input_schema = (
-            dict(source.get("inputSchema", {})) if source else {"type": "object", "properties": {}, "required": []}
-        )
-        self._tool_list.append(
-            {
-                "name": "stop",
-                "description": "[MCPServerModule] Stop motion without latching estop.",
-                "inputSchema": input_schema,
-            }
-        )
-
     def setup(self) -> None:
         self.odometry.subscribe(self._on_odom)
         self.scene_graph.subscribe(self._on_sg)
         self.safety_state.subscribe(self._on_safety)
+        self.navigation_state.subscribe(self._on_navigation_state)
+        self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
         self.mission_status.subscribe(self._on_mission)
 
     def start(self) -> None:
@@ -366,11 +340,22 @@ class MCPServerModule(Module, layer=6):
     def _on_mission(self, status: dict) -> None:
         self._mission = status
 
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        self._navigation_state = state.to_dict()
+
+    def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
+        self._navigation_goal_status_by_request[status.request_id] = status.to_dict()
+        if len(self._navigation_goal_status_by_request) > 256:
+            oldest = next(iter(self._navigation_goal_status_by_request))
+            self._navigation_goal_status_by_request.pop(oldest, None)
+
     # -- built-in @skill tools (system + perception read) ------------------
 
     @skill
     def get_health(self) -> str:
         """Return full system health: modules, connections, message counts."""
+        if self._runtime_status_provider is not None:
+            return json.dumps(self._runtime_status_provider.health(), default=str)
         if self._system_handle is None:
             return json.dumps({"error": "system handle not yet injected"})
         return json.dumps(self._system_handle.health(), default=str)
@@ -378,15 +363,19 @@ class MCPServerModule(Module, layer=6):
     @skill
     def list_modules(self) -> str:
         """List all deployed modules with layer, port counts, and running state."""
-        if self._system_handle is None:
+        if self._runtime_status_provider is not None:
+            module_items = self._runtime_status_provider.modules.items()
+        elif self._system_handle is not None:
+            module_items = self._system_handle.modules.items()
+        else:
             return json.dumps({"error": "system handle not yet injected"})
         modules = {}
-        for n, m in self._system_handle.modules.items():
+        for n, m in module_items:
             modules[n] = {
-                "layer": m.layer,
-                "running": m.running,
-                "ports_in": list(m.ports_in.keys()),
-                "ports_out": list(m.ports_out.keys()),
+                "layer": getattr(m, "layer", getattr(type(m), "_layer", None)),
+                "running": bool(getattr(m, "running", False)),
+                "ports_in": list(getattr(m, "ports_in", {}).keys()),
+                "ports_out": list(getattr(m, "ports_out", {}).keys()),
             }
         return json.dumps({"modules": modules})
 
@@ -538,42 +527,138 @@ class MCPServerModule(Module, layer=6):
     @skill
     def navigate_to_object(self, instruction: str) -> str:
         """Navigate to a described object or place using semantic understanding."""
-        self.instruction.publish(instruction)
-        return json.dumps({"status": "processing", "instruction": instruction})
+        return self._submit_instruction_tool("navigate_to_object", instruction)
 
     @skill
     def send_instruction(self, text: str) -> str:
         """Send a natural language instruction to the semantic planner."""
-        self.instruction.publish(text)
-        return json.dumps({"status": "sent", "instruction": text})
+        return self._submit_instruction_tool("send_instruction", text)
+
+    def _submit_instruction_tool(self, tool_name: str, text: str) -> str:
+        instruction = str(text or "").strip()
+        if not instruction:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "accepted": False,
+                    "error": "invalid_instruction",
+                    "message": "instruction text must not be blank",
+                    "execution_confirmed": False,
+                    "motor_confirmed": False,
+                }
+            )
+
+        request_id = f"mcp-{tool_name}-{uuid.uuid4().hex}"
+        body = InstructionRequest(
+            text=instruction,
+            request_id=request_id,
+            client_id="mcp",
+        )
+        gateway = (self._all_modules or {}).get("GatewayModule")
+
+        if gateway is None:
+            if self._native_motion_required():
+                return json.dumps(
+                    {
+                        "ok": False,
+                        "accepted": False,
+                        "error": "gateway_unavailable",
+                        "message": "MCP instruction requires GatewayModule in field/native mode.",
+                        "tool": tool_name,
+                        "request_id": request_id,
+                        "client_id": "mcp",
+                        "execution_confirmed": False,
+                        "motor_confirmed": False,
+                    }
+                )
+            self.instruction.publish(instruction)
+            return json.dumps(
+                {
+                    "ok": True,
+                    "accepted": True,
+                    "status": "submitted",
+                    "stage": "local_compat_submitted",
+                    "tool": tool_name,
+                    "request_id": request_id,
+                    "client_id": "mcp",
+                    "instruction": instruction,
+                    "local_compat_submitted": True,
+                    "execution_confirmed": False,
+                    "motor_confirmed": False,
+                }
+            )
+
+        command_service = ControlCommandService(gateway)
+
+        def _submit() -> dict[str, Any]:
+            gateway.instruction.publish(instruction)
+            return {
+                "ok": True,
+                "accepted": True,
+                "status": "submitted",
+                "stage": "submitted",
+                "tool": tool_name,
+                "instruction": instruction,
+                "execution_confirmed": False,
+                "motor_confirmed": False,
+            }
+
+        result = command_service.run_motion_guarded_command(
+            "instruction",
+            body,
+            _submit,
+        )
+        if isinstance(result, JSONResponse):
+            payload = json.loads(result.body.decode("utf-8"))
+            payload.setdefault("execution_confirmed", False)
+            payload.setdefault("motor_confirmed", False)
+            payload.setdefault("tool", tool_name)
+            return json.dumps(payload)
+        receipt = dict(result)
+        command = receipt.get("command")
+        command_accepted = isinstance(command, dict) and command.get("accepted") is True
+        accepted = receipt.get("ok") is True and command_accepted
+        receipt["ok"] = accepted
+        receipt["accepted"] = accepted
+        if not accepted:
+            receipt.setdefault("error", "invalid_command_ack")
+            receipt.setdefault("message", "Gateway returned an invalid instruction acknowledgement.")
+            receipt["status"] = "rejected"
+        receipt.setdefault("execution_confirmed", False)
+        receipt.setdefault("motor_confirmed", False)
+        if accepted:
+            receipt.setdefault("status", "submitted")
+        return json.dumps(receipt)
 
     @skill
     def emergency_stop(self) -> str:
         """Emergency stop -immediately halts all robot motion."""
         return self._publish_estop("emergency_stopped")
 
-    def _legacy_stop_tool(self) -> str:
-        wrote_native = native_stop(self, "mcp_stop")
-        if not wrote_native:
-            self.stop_cmd.publish(2)
-            self.cmd_vel.publish(Twist())
-        return json.dumps(
-            {
-                "status": "stopped",
-                "control_boundary": "native_stop" if wrote_native else "local_compat",
-            }
-        )
-
     def _publish_estop(self, status: str) -> str:
         wrote_native = native_estop(self, "mcp_emergency_stop")
         if not wrote_native:
+            if self._native_motion_required():
+                raise CommandBoundaryError("native emergency-stop boundary is unavailable")
             self.stop_cmd.publish(2)
             self.cmd_vel.publish(Twist())
         return json.dumps(
             {
+                "ok": True,
+                "accepted": True,
                 "status": status,
                 "control_boundary": "native_estop" if wrote_native else "local_compat",
+                "stage": "native_command_ack" if wrote_native else "local_compat_published",
+                "motor_confirmed": False,
             }
+        )
+
+    def _native_motion_required(self) -> bool:
+        if endpoint_only_enabled(self):
+            return True
+        return any(
+            bool(getattr(module, "_teleop_dds_enabled", False))
+            for module in self._all_modules.values()
         )
 
     @skill
@@ -581,13 +666,26 @@ class MCPServerModule(Module, layer=6):
         """Set robot operating mode: manual | autonomous | estop."""
         if mode not in ("manual", "autonomous", "estop"):
             return json.dumps({"error": f"invalid mode: {mode!r}"})
-        self.mode_cmd.publish(mode)
+        stage = "local_mode_published"
         if mode == "estop":
             wrote_native = native_estop(self, "mcp_mode_estop")
             if not wrote_native:
+                if self._native_motion_required():
+                    raise CommandBoundaryError("native emergency-stop boundary is unavailable")
                 self.stop_cmd.publish(2)
                 self.cmd_vel.publish(Twist())
-        return json.dumps({"mode": mode})
+            else:
+                stage = "native_command_ack"
+        self.mode_cmd.publish(mode)
+        return json.dumps(
+            {
+                "ok": True,
+                "accepted": True,
+                "mode": mode,
+                "stage": stage,
+                "motor_confirmed": False,
+            }
+        )
 
     @skill
     def switch_backend(self, category: str, backend: str, config_json: str = "{}") -> str:
@@ -736,8 +834,18 @@ class MCPServerModule(Module, layer=6):
                         )
                     )
                 try:
-                    result = fn(**args)
+                    import asyncio as _aio
+
+                    # Run tool in thread with timeout to prevent blocking
+                    tool_timeout_s = float(os.environ.get("LINGTU_MCP_TOOL_TIMEOUT_S", "10"))
+                    result = await _aio.wait_for(
+                        _aio.get_running_loop().run_in_executor(None, lambda: fn(**args)),
+                        timeout=tool_timeout_s,
+                    )
                     return JSONResponse(_text(req_id, result if result is not None else "Done."))
+                except _aio.TimeoutError:
+                    logger.warning("MCP tool timeout: %s (exceeded %ss)", name, tool_timeout_s)
+                    return JSONResponse(_tool_error(req_id, f"Tool {name!r} timed out after {tool_timeout_s}s."))
                 except Exception:
                     logger.exception("MCP tool error: %s", name)
                     return JSONResponse(_tool_error(req_id, f"Tool {name!r} failed."))
@@ -751,6 +859,27 @@ class MCPServerModule(Module, layer=6):
                 "tools": len(mcp._tool_list),
                 "port": mcp._port,
                 "has_handle": mcp._system_handle is not None,
+            }
+
+        @app.get("/capabilities")
+        async def capabilities():
+            """Capability negotiation endpoint for AI agents.
+
+            Returns available tools grouped by category, along with
+            system state that affects tool availability.
+            """
+            nav_state = _navigation_state(mcp._navigation)
+            tool_names = [t["name"] for t in mcp._tool_list]
+            return {
+                "schema_version": 1,
+                "server": "lingtu-mcp",
+                "protocol_version": MCP_PROTOCOL_VERSION,
+                "tools_available": len(tool_names),
+                "tool_names": sorted(tool_names),
+                "navigation_state": nav_state or "UNKNOWN",
+                "motion_tools_blocked": nav_state != "IDLE" and nav_state != "",
+                "has_system_handle": mcp._system_handle is not None,
+                "tool_timeout_s": float(os.environ.get("LINGTU_MCP_TOOL_TIMEOUT_S", "10")),
             }
 
         try:

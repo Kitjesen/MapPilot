@@ -20,6 +20,7 @@ struct InspectionActiveMap {
 // Owning command representation. DDS samples must be copied into this request
 // before their loan is returned.
 struct InspectionCommandRequest {
+  std::string task_id;
   std::string request_id;
   std::int32_t raw_kind{0};
   std::string route_id;
@@ -28,6 +29,7 @@ struct InspectionCommandRequest {
 };
 
 struct InspectionCommandAck {
+  std::string task_id;
   std::string request_id;
   lingtu::nav::inspection::CommandKind kind{lingtu::nav::inspection::CommandKind::kStart};
   bool accepted{false};
@@ -42,6 +44,13 @@ struct InspectionCommandResult {
   bool status_requested{false};
 };
 
+using InspectionCommandCommit = std::function<bool()>;
+
+struct InspectionStopBarrierResult {
+  bool confirmed{false};
+  std::string reason;
+};
+
 struct InspectionCommandActions {
   std::function<bool()> route_source_available;
   std::function<std::optional<InspectionActiveMap>()> active_map;
@@ -49,7 +58,11 @@ struct InspectionCommandActions {
                                                               const std::string &route_id)>
       load_route;
   std::function<bool()> operator_takeover_latched;
-  std::function<bool(const std::string &reason)> clear_motion;
+  // The native adapter must clear route motion, confirm final zero output,
+  // and only then invoke commit. It is the task-control physical-stop seam.
+  std::function<InspectionStopBarrierResult(const std::string &reason,
+                                            InspectionCommandCommit commit)>
+      stop_and_commit;
   std::function<bool(const InspectionCommandAck &ack)> publish_ack;
   std::function<void()> request_status;
   std::function<double()> now_s;
@@ -69,17 +82,26 @@ class InspectionCommandCoordinator final {
   InspectionCommandCoordinator &operator=(const InspectionCommandCoordinator &) = delete;
 
   [[nodiscard]] InspectionCommandResult handle(const InspectionCommandRequest &request);
+  [[nodiscard]] InspectionCommandResult reject(const InspectionCommandRequest &request,
+                                               const std::string &reason);
 
  private:
   struct AckRecord {
     lingtu::nav::inspection::CommandKind kind{lingtu::nav::inspection::CommandKind::kStart};
+    std::string request_task_id;
+    std::string task_id;
+    std::string route_id;
+    std::uint64_t route_revision{0U};
+    std::string reason_input;
     bool accepted{false};
     std::string reason;
     std::string run_id;
   };
 
+  [[nodiscard]] std::optional<InspectionCommandResult>
+  validateOrReplay(const InspectionCommandRequest &request);
   [[nodiscard]] InspectionCommandResult publishOnly(InspectionCommandAck ack, bool replayed);
-  void remember(const InspectionCommandAck &ack);
+  void remember(const InspectionCommandRequest &request, const InspectionCommandAck &ack);
   void validateConfiguration() const;
 
   lingtu::nav::inspection::Executor &executor_;

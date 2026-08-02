@@ -21,7 +21,6 @@ namespace {
 using lingtu::maps::ArtifactValidationOptions;
 using lingtu::maps::ArtifactValidationResult;
 using lingtu::maps::MapStore;
-using lingtu::maps::MapStoreConfig;
 using lingtu::maps::Sha256File;
 
 std::filesystem::path canonicalPath(const std::filesystem::path &path, std::string *error) {
@@ -34,33 +33,6 @@ std::filesystem::path canonicalPath(const std::filesystem::path &path, std::stri
     return {};
   }
   return canonical;
-}
-
-std::filesystem::path inferMapRoot(const std::filesystem::path &configured_path,
-                                   std::string *error) {
-  std::error_code ec;
-  auto current = std::filesystem::absolute(configured_path, ec).parent_path();
-  if (ec) {
-    if (error != nullptr) {
-      *error = "cannot make configured map path absolute: " + ec.message();
-    }
-    return {};
-  }
-  while (!current.empty()) {
-    if (std::filesystem::is_regular_file(current / "active_map.txt", ec) && !ec) {
-      return current;
-    }
-    ec.clear();
-    const auto parent = current.parent_path();
-    if (parent == current) {
-      break;
-    }
-    current = parent;
-  }
-  if (error != nullptr) {
-    *error = "cannot infer map root containing active_map.txt from " + configured_path.string();
-  }
-  return {};
 }
 
 std::string validationFailure(const ArtifactValidationResult &validation) {
@@ -90,7 +62,8 @@ struct ActiveSourceResult {
 
 ActiveSourceResult validateActiveSource(MapStore &store,
                                         const std::filesystem::path &configured_occupancy_path,
-                                        const std::string &expected_frame_id) {
+                                        const std::string &expected_frame_id,
+                                        bool require_configured_path = true) {
   const std::string active_map = store.ActiveMapId();
   if (active_map.empty()) {
     return {std::nullopt, "native Maps store has no active map"};
@@ -117,16 +90,18 @@ ActiveSourceResult validateActiveSource(MapStore &store,
   if (active_occupancy.parent_path() != content) {
     return {std::nullopt, "active occupancy resolves outside active map content"};
   }
-  const auto configured = canonicalPath(configured_occupancy_path, &error);
-  if (configured.empty()) {
-    return {std::nullopt, error};
-  }
-  if (configured != active_occupancy) {
-    return {
-        std::nullopt,
-        "configured occupancy is not the native active map artifact: configured=" +
-            configured.string() + ", active=" + active_occupancy.string(),
-    };
+  if (require_configured_path) {
+    const auto configured = canonicalPath(configured_occupancy_path, &error);
+    if (configured.empty()) {
+      return {std::nullopt, error};
+    }
+    if (configured != active_occupancy) {
+      return {
+          std::nullopt,
+          "configured occupancy is not the native active map artifact: configured=" +
+              configured.string() + ", active=" + active_occupancy.string(),
+      };
+    }
   }
 
   plan::MapIdentity identity;
@@ -202,28 +177,6 @@ plan::far::FarGridMap toFarMap(const lingtu::maps::OccupancyArtifactData &occupa
 
 }  // namespace
 
-ActiveOccupancyGate::ActiveOccupancyGate(std::filesystem::path map_root,
-                                         std::string expected_frame_id)
-    : map_root_(std::move(map_root)), expected_frame_id_(std::move(expected_frame_id)) {}
-
-ActiveOccupancyGate::~ActiveOccupancyGate() = default;
-
-MapStore *ActiveOccupancyGate::resolveStore(const std::filesystem::path &configured_occupancy_path,
-                                            std::string *error) const {
-  const auto root = map_root_.empty() ? inferMapRoot(configured_occupancy_path, error)
-                                      : canonicalPath(map_root_, error);
-  if (root.empty()) {
-    return nullptr;
-  }
-  if (!map_store_ || resolved_map_root_ != root) {
-    map_store_ = std::make_unique<MapStore>(MapStoreConfig{root});
-    resolved_map_root_ = root;
-    cached_artifact_.reset();
-    next_generation_ = 1U;
-  }
-  return map_store_.get();
-}
-
 ActiveOccupancyIdentityResult
 ActiveOccupancyGate::currentIdentity(const std::filesystem::path &configured_occupancy_path) const {
   if (configured_occupancy_path.empty()) {
@@ -247,18 +200,33 @@ ActiveOccupancyGate::prepare(const std::filesystem::path &configured_occupancy_p
   if (configured_occupancy_path.empty()) {
     return {nullptr, "configured occupancy path is empty"};
   }
+  return prepareImpl(configured_occupancy_path, true);
+}
+
+ActiveOccupancyGateResult ActiveOccupancyGate::prepareActive() const {
+  if (map_root_.empty()) {
+    return {nullptr, "map root is required when resolving the active occupancy"};
+  }
+  return prepareImpl({}, false);
+}
+
+ActiveOccupancyGateResult
+ActiveOccupancyGate::prepareImpl(const std::filesystem::path &configured_occupancy_path,
+                                 bool require_configured_path) const {
   std::lock_guard<std::mutex> lock(mutex_);
   std::string error;
   auto *store = resolveStore(configured_occupancy_path, &error);
   if (store == nullptr) {
     return {nullptr, error};
   }
-  auto first = validateActiveSource(*store, configured_occupancy_path, expected_frame_id_);
+  auto first = validateActiveSource(*store, configured_occupancy_path, expected_frame_id_,
+                                    require_configured_path);
   if (!first.ok()) {
     return {nullptr, std::move(first.reason)};
   }
   if (cached_artifact_ &&
-      plan::sameMapIdentity(cached_artifact_->identity(), first.source->identity)) {
+      plan::sameMapIdentity(cached_artifact_->identity(), first.source->identity) &&
+      cached_artifact_->sourceMapSha256() == first.source->source_map_sha256) {
     return {cached_artifact_, ""};
   }
 
@@ -281,7 +249,8 @@ ActiveOccupancyGate::prepare(const std::filesystem::path &configured_occupancy_p
     return {nullptr, "failed to load private occupancy snapshot: " + std::string(exc.what())};
   }
 
-  auto second = validateActiveSource(*store, configured_occupancy_path, expected_frame_id_);
+  auto second = validateActiveSource(*store, configured_occupancy_path, expected_frame_id_,
+                                     require_configured_path);
   const bool stable = second.ok() && first.source->content_path == second.source->content_path &&
                       first.source->artifact_path == second.source->artifact_path &&
                       plan::sameMapIdentity(first.source->identity, second.source->identity) &&
@@ -301,8 +270,8 @@ ActiveOccupancyGate::prepare(const std::filesystem::path &configured_occupancy_p
   }
   auto far_map = toFarMap(occupancy, second.source->identity, next_generation_++);
   cleanup();
-  cached_artifact_ =
-      std::shared_ptr<const ValidatedFarMap>(new ValidatedFarMap(std::move(far_map)));
+  cached_artifact_ = std::shared_ptr<const ValidatedFarMap>(
+      new ValidatedFarMap(std::move(far_map), second.source->source_map_sha256));
   return {cached_artifact_, ""};
 }
 

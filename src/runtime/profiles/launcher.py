@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from runtime.profiles.catalog.endpoints import RuntimeEndpointError, RuntimeRunSpec
-from runtime.profiles.endpoints import resolve_runtime_run_spec
+from runtime.profiles.catalog.profile_adapters import ProfileAdapterError, RuntimeRunSpec
+from runtime.profiles.profile_adapters import resolve_runtime_run_spec
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,7 @@ def build_external_launch_context(
     )
     spec = process.spec
     if not spec.launcher:
-        raise RuntimeEndpointError("external profile missing _external_launcher")
+        raise ProfileAdapterError("external Profile adapter missing _external_launcher")
     return RuntimeLaunchContext(
         spec=spec,
         env=process.env,

@@ -23,6 +23,7 @@
 #include "lingtu_slam.h"
 #include "message/cpp/dds_qos_profiles.hpp"
 #include "message/cpp/dds_topics.hpp"
+#include "message/cpp/exploration_command.hpp"
 #include "nav/cpp/client/client.hpp"
 
 namespace {
@@ -75,7 +76,8 @@ void waitForMatchedReader(dds_entity_t writer, const char *label, double timeout
 }
 
 constexpr const char *kUsage =
-    "usage: lingtu_nav_control goal X Y [Z YAW] [--domain-id N] [--timeout-ms N] | "
+    "usage: lingtu_nav_control goal X Y [Z YAW] [--task-id ID] [--request-id ID] "
+    "[--domain-id N] [--timeout-ms N] | "
     "teleop VX VY WZ [--duration-s S] [--rate-hz HZ] [--domain-id N] | "
     "operator-motion VX VY WZ [--duration-s S] [--rate-hz HZ] [--domain-id N] "
     "[--source-id ID] [--source-epoch N] [--lease-ttl-ms N] "
@@ -84,17 +86,20 @@ constexpr const char *kUsage =
     "[--ready-file PATH] | cloud X Y Z [HEIGHT] [--domain-id N] | "
     "trav COST [--domain-id N] | "
     "path X1 Y1 Z1 X2 Y2 Z2 [X Y Z ...] [--domain-id N] | "
-    "clear <map|cloud|all> [--domain-id N] | cancel [REASON] [--domain-id N] | "
+    "clear <map|cloud|all> [--domain-id N] | cancel TASK_ID [REASON] "
+    "[--request-id ID] [--domain-id N] | "
     "stop [REASON] [--domain-id N] | estop [REASON] [--domain-id N] | "
     "clear-estop [REASON] [--domain-id N] | resume [REASON] [--domain-id N] | "
-    "explore start SESSION_ID [REASON] [--request-id ID] [--domain-id N] | "
-    "explore <pause|resume|stop> [REASON] [--request-id ID] [--domain-id N] | "
+    "explore <start|pause|resume|stop> RUN_ID SESSION_ID [REASON] "
+    "[--request-id ID] [--domain-id N] | "
     "instruction TEXT [--domain-id N]";
 
 struct CliConfig {
   std::string command;
   std::string text;
+  std::string task_id;
   std::string request_id;
+  std::string exploration_run_id;
   std::string session_id;
   std::vector<lingtu_dds_Point> path;
   double x = 0.0;
@@ -179,22 +184,25 @@ CliConfig parseArgs(int argc, char **argv) {
       throw std::runtime_error("trav requires COST");
     }
     cfg.cost = std::stod(argv[i++]);
-  } else if (cfg.command == "explore-start") {
+  } else if (cfg.command == "explore-start" || cfg.command == "explore-pause" ||
+             cfg.command == "explore-resume" || cfg.command == "explore-stop") {
     if (i >= argc || std::string(argv[i]).rfind("--", 0) == 0) {
-      throw std::runtime_error("explore start requires SESSION_ID");
+      throw std::runtime_error("explore command requires RUN_ID");
+    }
+    cfg.exploration_run_id = argv[i++];
+    if (i >= argc || std::string(argv[i]).rfind("--", 0) == 0) {
+      throw std::runtime_error("explore command requires SESSION_ID");
     }
     cfg.session_id = argv[i++];
-    cfg.text = "operator_start";
-    if (i < argc && std::string(argv[i]).rfind("--", 0) != 0) {
-      cfg.text = argv[i++];
-    }
-  } else if (cfg.command == "explore-pause" || cfg.command == "explore-resume" ||
-             cfg.command == "explore-stop") {
     cfg.text = "operator_" + cfg.command.substr(std::string("explore-").size());
     if (i < argc && std::string(argv[i]).rfind("--", 0) != 0) {
       cfg.text = argv[i++];
     }
   } else if (cfg.command == "cancel") {
+    if (i >= argc || std::string(argv[i]).rfind("--", 0) == 0) {
+      throw std::runtime_error("cancel requires TASK_ID");
+    }
+    cfg.task_id = argv[i++];
     cfg.text = "dds_cancel";
     if (i < argc && std::string(argv[i]).rfind("--", 0) != 0) {
       cfg.text = argv[i++];
@@ -300,6 +308,11 @@ CliConfig parseArgs(int argc, char **argv) {
         throw std::runtime_error("missing value for --request-id");
       }
       cfg.request_id = argv[i++];
+    } else if (arg == "--task-id") {
+      if (i >= argc) {
+        throw std::runtime_error("missing value for --task-id");
+      }
+      cfg.task_id = argv[i++];
     } else {
       throw std::runtime_error("unknown argument: " + arg);
     }
@@ -309,30 +322,48 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.timeout_ms = std::max(1, cfg.timeout_ms);
   cfg.input_timeout_ms = std::max(50, cfg.input_timeout_ms);
   cfg.cleanup_settle_ms = std::max(0, cfg.cleanup_settle_ms);
-  if (cfg.command == "operator-motion") {
+  if (cfg.command == "operator-motion" || cfg.command == "teleop" ||
+      cfg.command == "teleop-stream") {
     if (cfg.source_id.empty() || cfg.source_id.size() > 128U ||
         cfg.source_id.find_first_of(" \t\r\n") != std::string::npos) {
       throw std::runtime_error(
-          "operator-motion source ID must be a non-empty token up to 128 bytes");
+          "operator motion source ID must be a non-empty token up to 128 bytes");
     }
     if (cfg.lease_ttl_ms == 0U || cfg.lease_ttl_ms > 2000U) {
-      throw std::runtime_error("operator-motion lease TTL must be within 1..2000 ms");
+      throw std::runtime_error("operator motion lease TTL must be within 1..2000 ms");
     }
     if (cfg.freshness_budget_ms == 0U) {
-      throw std::runtime_error("operator-motion freshness budget is required");
+      throw std::runtime_error("operator motion freshness budget is required");
     }
   }
   const bool exploration_command = cfg.command == "explore-start" ||
                                    cfg.command == "explore-pause" ||
                                    cfg.command == "explore-resume" || cfg.command == "explore-stop";
-  if (!cfg.request_id.empty() && !exploration_command) {
-    throw std::runtime_error("--request-id is only supported for explore commands");
+  const bool navigation_task_command =
+      cfg.command == "goal" || cfg.command == "cancel";
+  if (!cfg.request_id.empty() && !exploration_command && !navigation_task_command) {
+    throw std::runtime_error(
+        "--request-id is only supported for navigation task or explore commands");
   }
   if (cfg.request_id.size() > 128U) {
-    throw std::runtime_error("exploration request ID exceeds 128 bytes");
+    throw std::runtime_error("request ID exceeds 128 bytes");
   }
-  if (cfg.session_id.size() > 128U) {
-    throw std::runtime_error("exploration session ID exceeds 128 bytes");
+  if (cfg.task_id.size() > 128U ||
+      cfg.task_id.find_first_of(" \t\r\n") != std::string::npos) {
+    throw std::runtime_error("navigation task ID must be a token up to 128 bytes");
+  }
+  if (cfg.command == "cancel" && cfg.task_id.empty()) {
+    throw std::runtime_error("cancel requires TASK_ID");
+  }
+  if (exploration_command &&
+      !lingtu::message::isValidExplorationRunId(cfg.exploration_run_id)) {
+    throw std::runtime_error("exploration RUN_ID must be a canonical uppercase ULID");
+  }
+  if (exploration_command &&
+      (cfg.session_id.empty() || cfg.session_id.size() > 128U ||
+       cfg.session_id.find_first_of(" \t\r\n") != std::string::npos)) {
+    throw std::runtime_error(
+        "exploration SESSION_ID must be a non-empty token up to 128 bytes");
   }
   if (exploration_command && cfg.text.size() > 256U) {
     throw std::runtime_error("exploration reason exceeds 256 bytes");
@@ -416,11 +447,17 @@ TeleopStreamLine parseTeleopStreamLine(const std::string &line) {
   return update;
 }
 
+std::uint64_t generatedSourceEpoch();
+
 int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg) {
   using SteadyClock = std::chrono::steady_clock;
   const auto period = std::chrono::duration_cast<SteadyClock::duration>(
       std::chrono::duration<double>(1.0 / cfg.rate_hz));
   const auto input_timeout = std::chrono::milliseconds(cfg.input_timeout_ms);
+  const auto settle = std::chrono::milliseconds(cfg.cleanup_settle_ms);
+  const std::uint64_t source_epoch =
+      cfg.source_epoch == 0U ? generatedSourceEpoch() : cfg.source_epoch;
+  std::uint64_t sequence = 1U;
   double vx = 0.0;
   double vy = 0.0;
   double wz = 0.0;
@@ -429,6 +466,7 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
   std::uint64_t superseded_updates = 0;
   std::string stop_reason{"teleop_stream_eof"};
   bool stop_sent = false;
+  bool claimed = false;
   std::string input_buffer;
 
   const auto removeReadyFile = [&cfg]() {
@@ -437,17 +475,45 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
       std::filesystem::remove(cfg.ready_file, ec);
     }
   };
+  const auto finishAuthority = [&](const std::string &reason, bool best_effort) {
+    std::exception_ptr cleanup_failure;
+    if (!claimed) {
+      return;
+    }
+    try {
+      client.operatorMotion().hold(
+          cfg.source_id, source_epoch, ++sequence, reason, cfg.timeout_ms);
+    } catch (...) {
+      cleanup_failure = std::current_exception();
+      std::fprintf(stderr, "teleop-stream cleanup hold failed\n");
+    }
+    if (settle.count() > 0) {
+      std::this_thread::sleep_for(settle);
+    }
+    try {
+      client.operatorMotion().release(
+          cfg.source_id, source_epoch, ++sequence, reason, cfg.timeout_ms);
+      claimed = false;
+    } catch (...) {
+      if (cleanup_failure == nullptr) {
+        cleanup_failure = std::current_exception();
+      }
+      std::fprintf(stderr, "teleop-stream cleanup release failed\n");
+    }
+    if (!best_effort && cleanup_failure != nullptr) {
+      std::rethrow_exception(cleanup_failure);
+    }
+  };
   const auto bestEffortErrorStop = [&]() {
-    bool zero_ok = false;
+    bool authority_ok = false;
     bool stop_ok = false;
     try {
-      client.navigation().sendTeleop(0.0, 0.0, 0.0, cfg.timeout_ms);
-      ++count;
-      zero_ok = true;
+      finishAuthority("teleop_stream_error", true);
+      authority_ok = !claimed;
     } catch (const std::exception &exc) {
-      std::fprintf(stderr, "teleop-stream error cleanup zero failed: %s\n", exc.what());
+      std::fprintf(stderr, "teleop-stream error cleanup authority failed: %s\n", exc.what());
     } catch (...) {
-      std::fprintf(stderr, "teleop-stream error cleanup zero failed\n");
+      std::fprintf(stderr, "teleop-stream error cleanup authority failed\n");
     }
     try {
       client.navigation().stop("teleop_stream_error", cfg.timeout_ms);
@@ -457,8 +523,8 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
     } catch (...) {
       std::fprintf(stderr, "teleop-stream error cleanup stop failed\n");
     }
-    std::fprintf(stderr, "LT_TELEOP_STREAM_ERROR_CLEANUP_V1 zero=%s stop=%s\n",
-                 zero_ok ? "ok" : "failed", stop_ok ? "ok" : "failed");
+    std::fprintf(stderr, "LT_TELEOP_STREAM_ERROR_CLEANUP_V1 authority=%s stop=%s\n",
+                 authority_ok ? "ok" : "failed", stop_ok ? "ok" : "failed");
     std::fflush(stderr);
   };
 
@@ -468,7 +534,12 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
       throw std::runtime_error("teleop-stream failed to configure nonblocking stdin");
     }
 
-    client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+    client.operatorMotion().claim(
+        cfg.source_id, source_epoch, sequence, cfg.lease_ttl_ms, cfg.timeout_ms);
+    claimed = true;
+    client.operatorMotion().sample(
+        cfg.source_id, source_epoch, ++sequence, vx, vy, wz, true,
+        cfg.freshness_budget_ms, cfg.timeout_ms);
     ++count;
     writeReadyFile(cfg.ready_file);
     std::printf("LT_TELEOP_STREAM_READY_V1\n");
@@ -561,7 +632,9 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
         vy = latest_update.vy;
         wz = latest_update.wz;
         last_input = SteadyClock::now();
-        client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+        client.operatorMotion().sample(
+            cfg.source_id, source_epoch, ++sequence, vx, vy, wz, true,
+            cfg.freshness_budget_ms, cfg.timeout_ms);
         ++count;
         next_publish = SteadyClock::now() + period;
       }
@@ -578,8 +651,7 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
         vy = 0.0;
         wz = 0.0;
         stop_reason = "teleop_stream_input_timeout";
-        client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
-        ++count;
+        finishAuthority(stop_reason, false);
         client.navigation().stop(stop_reason, cfg.timeout_ms);
         stop_sent = true;
         std::printf(
@@ -589,15 +661,16 @@ int runTeleopStream(lingtu::nav::commands::Client &client, const CliConfig &cfg)
         break;
       }
       if (SteadyClock::now() >= next_publish) {
-        client.navigation().sendTeleop(vx, vy, wz, cfg.timeout_ms);
+        client.operatorMotion().sample(
+            cfg.source_id, source_epoch, ++sequence, vx, vy, wz, true,
+            cfg.freshness_budget_ms, cfg.timeout_ms);
         ++count;
         next_publish = SteadyClock::now() + period;
       }
     }
 
     if (!stop_sent) {
-      client.navigation().sendTeleop(0.0, 0.0, 0.0, cfg.timeout_ms);
-      ++count;
+      finishAuthority(stop_reason, false);
       client.navigation().stop(stop_reason, cfg.timeout_ms);
     }
     removeReadyFile();
@@ -750,25 +823,24 @@ int main(int argc, char **argv) {
         cfg.command == "explore-stop") {
       lingtu::nav::commands::Client client(cfg.domain_id);
       if (cfg.command == "goal") {
-        client.navigation().sendGoal(cfg.x, cfg.y, cfg.z, cfg.yaw, cfg.timeout_ms);
-        std::printf("accepted goal %.3f %.3f %.3f yaw=%.3f\n", cfg.x, cfg.y, cfg.z, cfg.yaw);
+        const auto receipt = client.navigation().startTask(
+            cfg.x, cfg.y, cfg.z, cfg.yaw, cfg.timeout_ms, cfg.task_id, cfg.request_id);
+        if (!receipt.accepted) {
+          throw std::runtime_error("goal rejected: " + receipt.reason);
+        }
+        std::printf(
+            "accepted goal %.3f %.3f %.3f yaw=%.3f task_id=%s request_id=%s\n",
+            cfg.x, cfg.y, cfg.z, cfg.yaw, receipt.task_id.c_str(), receipt.request_id.c_str());
       } else if (cfg.command == "cancel") {
-        client.navigation().cancel(cfg.text, cfg.timeout_ms);
-        std::printf("accepted cancel: %s\n", cfg.text.c_str());
+        const auto receipt = client.navigation().cancelTask(
+            cfg.task_id, cfg.text, cfg.timeout_ms, cfg.request_id);
+        if (!receipt.accepted) {
+          throw std::runtime_error("task cancel rejected: " + receipt.reason);
+        }
+        std::printf("accepted task cancel task_id=%s request_id=%s reason=%s\n",
+                    receipt.task_id.c_str(), receipt.request_id.c_str(), cfg.text.c_str());
       } else if (cfg.command == "teleop") {
-        const double deadline = nowSeconds() + cfg.duration_s;
-        std::uint64_t count = 0;
-        do {
-          client.navigation().sendTeleop(cfg.x, cfg.y, cfg.yaw, cfg.timeout_ms);
-          ++count;
-          if (cfg.duration_s <= 0.0) {
-            break;
-          }
-          std::this_thread::sleep_for(
-              std::chrono::milliseconds(static_cast<int>(1000.0 / cfg.rate_hz)));
-        } while (nowSeconds() < deadline);
-        std::printf("accepted teleop vx=%.3f vy=%.3f wz=%.3f samples=%llu\n", cfg.x, cfg.y, cfg.yaw,
-                    static_cast<unsigned long long>(count));
+        return runOperatorMotion(client, cfg);
       } else if (cfg.command == "operator-motion") {
         return runOperatorMotion(client, cfg);
       } else if (cfg.command == "teleop-stream") {
@@ -786,18 +858,41 @@ int main(int argc, char **argv) {
         client.navigation().resumeAutonomy(cfg.text, cfg.timeout_ms);
         std::printf("accepted resume: %s\n", cfg.text.c_str());
       } else if (cfg.command == "explore-start") {
-        client.exploration().start(cfg.session_id, cfg.text, cfg.timeout_ms, cfg.request_id);
-        std::printf("accepted explore start session=%s request_id=%s\n", cfg.session_id.c_str(),
-                    cfg.request_id.empty() ? "<generated>" : cfg.request_id.c_str());
+        const auto receipt = client.exploration().start(
+            cfg.exploration_run_id, cfg.session_id, cfg.text, cfg.timeout_ms, cfg.request_id);
+        if (!receipt.accepted) {
+          throw std::runtime_error("explore start rejected: " + receipt.reason);
+        }
+        std::printf("accepted explore start run_id=%s session=%s request_id=%s duplicate=%s\n",
+                    receipt.exploration_run_id.c_str(), cfg.session_id.c_str(),
+                    receipt.request_id.c_str(), receipt.duplicate ? "true" : "false");
       } else if (cfg.command == "explore-pause") {
-        client.exploration().pause(cfg.text, cfg.timeout_ms, cfg.request_id);
-        std::printf("accepted explore pause: %s\n", cfg.text.c_str());
+        const auto receipt = client.exploration().pause(
+            cfg.exploration_run_id, cfg.session_id, cfg.text, cfg.timeout_ms, cfg.request_id);
+        if (!receipt.accepted) {
+          throw std::runtime_error("explore pause rejected: " + receipt.reason);
+        }
+        std::printf("accepted explore pause run_id=%s request_id=%s duplicate=%s\n",
+                    receipt.exploration_run_id.c_str(), receipt.request_id.c_str(),
+                    receipt.duplicate ? "true" : "false");
       } else if (cfg.command == "explore-resume") {
-        client.exploration().resume(cfg.text, cfg.timeout_ms, cfg.request_id);
-        std::printf("accepted explore resume: %s\n", cfg.text.c_str());
+        const auto receipt = client.exploration().resume(
+            cfg.exploration_run_id, cfg.session_id, cfg.text, cfg.timeout_ms, cfg.request_id);
+        if (!receipt.accepted) {
+          throw std::runtime_error("explore resume rejected: " + receipt.reason);
+        }
+        std::printf("accepted explore resume run_id=%s request_id=%s duplicate=%s\n",
+                    receipt.exploration_run_id.c_str(), receipt.request_id.c_str(),
+                    receipt.duplicate ? "true" : "false");
       } else {
-        client.exploration().stop(cfg.text, cfg.timeout_ms, cfg.request_id);
-        std::printf("accepted explore stop: %s\n", cfg.text.c_str());
+        const auto receipt = client.exploration().stop(
+            cfg.exploration_run_id, cfg.session_id, cfg.text, cfg.timeout_ms, cfg.request_id);
+        if (!receipt.accepted) {
+          throw std::runtime_error("explore stop rejected: " + receipt.reason);
+        }
+        std::printf("accepted explore stop run_id=%s request_id=%s duplicate=%s\n",
+                    receipt.exploration_run_id.c_str(), receipt.request_id.c_str(),
+                    receipt.duplicate ? "true" : "false");
       }
       return 0;
     }
@@ -897,9 +992,8 @@ int main(int argc, char **argv) {
       std::printf("published traversability cost=%.1f cells=%ux%u\n", cfg.cost, cfg.width,
                   cfg.height);
     } else if (cfg.command == "path") {
-      std::fprintf(stderr,
-                   "nav_control: legacy path injection requires endpoint "
-                   "--allow-legacy-motion-inputs true; product control uses typed Goal\n");
+    std::fprintf(stderr,
+                    "nav_control: legacy path injection is unsupported; use typed Goal endpoint API\n");
       const dds_entity_t topic = checked(
           dds_create_topic(participant, &lingtu_dds_Path_desc,
                            lingtu::message::kNavGlobalPath.dds_topic.data(), nullptr, nullptr),

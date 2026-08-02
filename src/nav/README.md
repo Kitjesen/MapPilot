@@ -11,7 +11,7 @@ For a file-by-file purpose index, start with `FILES.md`.
 
 ## Runtime chains
 
-The default physical `thunder_field` product path is a native endpoint chain:
+The default `env=real` Product path is a native service chain:
 
 ```text
 MCP/Agent/CLI
@@ -79,7 +79,7 @@ Main implementation locations:
 - Navigation start pose comes from localization/odometry. Frontend clients
   provide destination goals only, except for explicit simulation or diagnostic
   tooling.
-- Normal navigation modules stay Module-First and ROS-free. ROS 2 code belongs
+- Development and simulation navigation Modules stay Host-scoped and ROS-free. ROS 2 code belongs
   under `*/adapters/ros2/`; `nav/` keeps no ROS runtime implementation.
 - OctoPlanner3D is the default map-backed global planner for 3D saved maps.
   Native FAR is an explicit 2D occupancy option; it never activates as a
@@ -91,7 +91,7 @@ Main implementation locations:
 - Service entry: `services/plan/factory.py:create_planner_service(...)`
   returns a `PlannerService` for `Navigation`.
 - Map-backed runtime: `services/plan/global_planner/service.py:GlobalPlanner`.
-  Thunder Lite/mapless runtime uses `services/plan/compat/direct.py`.
+  The `lite` Profile mapless runtime uses `services/plan/mapless/direct.py`.
 - Backend registry key: `planner_backend`. Backend classes are constructed as
   `BackendCls(map_path, obstacle_thr)`.
 - Backend function names are mandatory: `plan(start, goal)` and
@@ -134,7 +134,7 @@ nav.services.goals / nav.services.patrol / gateway
 | Inspection | `inspection/` | Inspection route execution facade (`service.py`) plus the native C++ core built into the nav endpoint. |
 | Localization monitor | `localization_monitor/` | Localization quality watch and pause/stop signaling. |
 | Global planning dispatch | `services/plan/global_planner/service.py`, `cpp/planning/global/` | Select OctoPlanner3D by default, admit explicit native FAR, validate maps/paths, and keep PCT manual-only. |
-| Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/compat/direct_path.py` owns the Thunder Lite direct planner. |
+| Planner service boundary | `services/plan/` | `Navigation`'s planner boundary. `services/plan/factory.py` chooses map-backed `GlobalPlanner` or mapless `MaplessDirectPlannerService`; `services/plan/mapless/direct_path.py` owns the `lite` Profile direct planner. |
 | Maps | `../maps/modules/`, `../maps/services/` | L2 realtime map layers plus the saved-map lifecycle service used by navigation, safety, gateway preview, and local autonomy. |
 | Safety | `services/safety/`, `services/geofence.py` | Safety reflexes, geofence, plan checks, priority velocity mux. |
 | Frontier exploration | `exploration/` | Wavefront frontier goals and traversability-enriched frontier previews. |
@@ -168,18 +168,19 @@ them just to make the tree look tidier.
 
 | Concept | Location | Used by | What it does | What it is not |
 | --- | --- | --- | --- | --- |
-| Wavefront frontier exploration | `nav/exploration/frontier_explorer_module.py` | `explore` profile through `navigation(enable_frontier=True)` | Finds free/unknown boundaries on the occupancy grid and publishes `exploration_goal` into `Navigation.goal_pose`. | Not selected by `exploration()` and not a semantic planner component. |
-| Traversable frontier preview | `nav/exploration/traversable_frontier_module.py` | Optional navigation stack preview/inspection | Enriches wavefront candidates with traversability and optional semantic evidence, publishes ranked candidate dictionaries. | Not the TARE planner. |
+| Wavefront frontier exploration | `../explore/frontier.py` | Local development/simulation compatibility graph | Finds free/unknown boundaries on the occupancy grid and publishes exploration goals. | Not the field `explore` Product endpoint. |
+| Traversable frontier preview | `../explore/traversable_frontier.py` | Optional navigation-stack preview/inspection | Enriches wavefront candidates with traversability and optional semantic evidence, publishes ranked candidate dictionaries. | Not the TARE planner. |
 | Semantic frontier scoring | `decision/frontier_scorer.py` | `SemanticPlanner` and goal-resolution logic | Scores frontier candidates using language, grounding, uncertainty, and semantic context. | Not a Module that drives navigation goals by itself. |
-| TARE exploration | `nav/exploration/tare/` | `tare_explore` profile through the navigation exploration stack | Runs CMU TARE hierarchical exploration via native/adapter integration. | Not the wavefront explorer and not enabled in the `explore` profile. |
+| TARE policy | `../explore/tare/` and `../explore/cpp/` | Native field `explore` endpoint and local compatibility graphs | Selects exploration targets through the native/adapter integration. | An internal algorithm name, not another Product. |
 | Global planning | `nav/cpp/planning/global/`, plus Python Module/sim dispatch under `nav/services/plan/global_planner/` | `navd` or `Navigation` | Native OctoPlanner3D default, explicit FAR option, and Python simulation adapters; PCT is legacy/manual only. | Not an exploration policy. |
 
-Profile split:
+Product/local graph split:
 
-| Profile | Exploration source | Stack settings |
+| Selection | Exploration source | Stack settings |
 | --- | --- | --- |
-| `explore` | Wavefront frontier in `nav/` | `navigation(enable_frontier=True)`, `exploration_backend="none"`. |
-| `tare_explore` | TARE in `nav/exploration/tare/` | `navigation(enable_frontier=False)`, `exploration_backend="tare"`. |
+| `lingtu explore start` | Native TARE policy, `Live` route | Mapping plus identity-bound rolling segments; no saved-map GlobalPlanner goal. |
+| `lingtu explore start --map MAP` | Native TARE policy, `Map` route | Localization against the exact saved map, then normal global/local navigation. |
+| Local compatibility Profile | Wavefront or TARE adapter | Explicit Blueprint development selection; never a field Product fallback. |
 | `nav` | User/app/semantic goals | No autonomous exploration source by default. |
 
 ## Velocity ownership

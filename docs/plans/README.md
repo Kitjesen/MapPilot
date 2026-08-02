@@ -1,5 +1,7 @@
 # LingTu Current Plans
 
+Status: current plan index
+
 This directory contains only active forward-looking plans. Shipped behavior
 lives in `docs/architecture/`, operator procedures live in `docs/04-deployment/`,
 and old snapshots live in git history.

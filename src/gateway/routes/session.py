@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hmac
 import logging
 import os
 import time
 from collections.abc import Mapping
 from typing import Any
 
+from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from gateway.schemas import (
@@ -16,7 +18,17 @@ from gateway.schemas import (
     SessionTransitionResponse,
 )
 from gateway.services.control_commands import ControlCommandService
-from gateway.services.map_service import ensure_maps_service, map_service_command, map_service_query
+from gateway.services.exploration import (
+    ExplorationRunError,
+    product_control_owns_explore,
+    start_exploration_run,
+)
+from gateway.services.map_service import (
+    ensure_maps_service,
+    map_runtime_lock,
+    map_service_command,
+    map_service_query,
+)
 from gateway.services.native_control import (
     endpoint_only_enabled,
 )
@@ -26,15 +38,17 @@ from gateway.services.native_control import (
 from gateway.services.native_control import (
     status_is_fresh as native_control_status_is_fresh,
 )
+from gateway.services.runtime_switch_plan import build_operator_command
 from maps.services.storage import safe_map_name
-from runtime.profiles.product_mode_contracts import PRODUCT_MODE_CONTRACTS
-from runtime.profiles.resolver import canonical_profile_name
+from runtime.contracts.product_runtime import (
+    PRODUCT_CONTROL_SESSION_HEADER,
+    PRODUCT_SESSION_ID_ENV,
+)
+from runtime.profiles.product_lifecycle import product_name
 from runtime.runtime_policy import (
     default_slam_profile_for_mode,
     is_supported_slam_profile,
     normalize_slam_profile,
-    session_transition_plan,
-    slam_switch_plan,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,26 +128,40 @@ def _normalize_slam_profile(profile: str) -> str:
     return normalize_slam_profile(profile)
 
 
+def _prospective_lifecycle_catalog() -> dict[str, Mapping[str, Any]]:
+    """Return current Product declarations for requests without a RunPlan."""
+
+    from runtime.graph import load_runtime_graph
+
+    return {
+        name: spec for name, spec in load_runtime_graph().products.items() if spec.get("operator_switchable") is True
+    }
+
+
+_PROSPECTIVE_PRODUCT_LIFECYCLES = _prospective_lifecycle_catalog()
 _DEFAULT_PRODUCT_IDENTITY_BY_MODE = {
     "idle": (None, "idle"),
     **{
-        contract.session_mode: (profile, contract.product_session)
-        for profile, contract in PRODUCT_MODE_CONTRACTS.items()
-        if contract.default_for_session_mode
+        str(lifecycle.get("session_mode") or ""): (
+            product,
+            str(lifecycle.get("product_session") or ""),
+        )
+        for product, lifecycle in _PROSPECTIVE_PRODUCT_LIFECYCLES.items()
+        if lifecycle.get("default_for_session_mode") is True
     },
 }
 
-_REQUIRED_PRODUCT_PROFILES_BY_SESSION_MODE = {
+_REQUIRED_PRODUCTS_BY_SESSION_MODE = {
     mode: tuple(
-        profile
-        for profile, contract in PRODUCT_MODE_CONTRACTS.items()
-        if contract.session_mode == mode
+        product
+        for product, lifecycle in _PROSPECTIVE_PRODUCT_LIFECYCLES.items()
+        if lifecycle.get("session_mode") == mode
     )
     for mode in sorted(
         {
-            contract.session_mode
-            for contract in PRODUCT_MODE_CONTRACTS.values()
-            if contract.session_mode != "none"
+            str(lifecycle.get("session_mode") or "")
+            for lifecycle in _PROSPECTIVE_PRODUCT_LIFECYCLES.values()
+            if lifecycle.get("session_mode") != "none"
         }
     )
 }
@@ -147,25 +175,49 @@ def _default_product_identity_for_mode(mode: str) -> tuple[str | None, str]:
 
 
 def _normalize_product_identity(
+    gw: Any,
     payload: dict[str, Any],
     mode: str,
 ) -> tuple[str | None, str]:
-    raw_profile = payload.get("product_profile") or payload.get("profile") or ""
-    product_profile = canonical_profile_name(str(raw_profile).strip()) if str(raw_profile or "").strip() else None
+    raw_product = str(payload.get("product") or payload.get("profile") or "").strip()
+    product = product_name(raw_product) if raw_product else None
     explicit_session = str(payload.get("product_session") or "").strip().lower()
-    default_profile, mode_default_session = _default_product_identity_for_mode(mode)
+    default_product, mode_default_session = _default_product_identity_for_mode(mode)
 
-    if product_profile in PRODUCT_MODE_CONTRACTS:
-        contract_session = (
-            str(getattr(PRODUCT_MODE_CONTRACTS[product_profile], "product_session", "") or "").strip().lower()
-        )
-        default_session = contract_session or mode_default_session
+    lifecycle = _lifecycle_for_product(gw, product)
+    if lifecycle is not None:
+        default_session = str(lifecycle.get("product_session") or "").strip()
     else:
         default_session = mode_default_session
-        if product_profile is None:
-            product_profile = default_profile
+        if product is None:
+            product = default_product
 
-    return product_profile, explicit_session or default_session
+    return product, explicit_session or default_session
+
+
+def _runtime_lifecycle(gw: Any) -> Mapping[str, Any] | None:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    if plan is None:
+        return None
+    lifecycle = getattr(plan, "lifecycle", None)
+    if not isinstance(lifecycle, Mapping):
+        raise RuntimeError("compiled RunPlan is missing lifecycle")
+    product = str(getattr(plan, "product", "") or "").strip()
+    if str(lifecycle.get("product") or "").strip() != product:
+        raise RuntimeError("compiled RunPlan lifecycle Product mismatch")
+    return lifecycle
+
+
+def _lifecycle_for_product(
+    gw: Any,
+    product: str | None,
+) -> Mapping[str, Any] | None:
+    runtime_lifecycle = _runtime_lifecycle(gw)
+    if runtime_lifecycle is not None:
+        runtime_product = str(runtime_lifecycle.get("product") or "").strip()
+        if product is None or product == runtime_product:
+            return runtime_lifecycle
+    return _PROSPECTIVE_PRODUCT_LIFECYCLES.get(product or "")
 
 
 def _gateway_maps_service(gw: Any) -> Any | None:
@@ -187,54 +239,126 @@ def _maps_get_bundle(manager: Any, map_name: str, capability: str) -> dict[str, 
     )
 
 
-def _current_runtime_product_profile(gw: Any) -> str | None:
-    raw_profile = os.environ.get("LINGTU_PROFILE") or getattr(gw, "_runtime_product_profile", None) or ""
-    profile = canonical_profile_name(str(raw_profile).strip())
-    return profile if profile in PRODUCT_MODE_CONTRACTS else None
-
-
-def _externally_owned_product_profile(gw: Any) -> str | None:
-    if bool(getattr(gw, "_manage_session_services", True)):
+def _current_runtime_product(gw: Any) -> str | None:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    raw_product = (getattr(plan, "product", None) if plan is not None else getattr(gw, "_session_product", None)) or ""
+    product = str(raw_product).strip()
+    if not product:
         return None
     try:
-        uses_native_endpoint = endpoint_only_enabled()
+        return product_name(product)
+    except ValueError:
+        return None
+
+
+def _externally_owned_product(gw: Any) -> str | None:
+    plan = getattr(gw, "_compiled_run_plan", None)
+    if plan is not None:
+        if str(getattr(plan, "process_control", "") or "").strip() != "systemd":
+            return None
+        return _current_runtime_product(gw) or ""
+    try:
+        uses_native_endpoint = endpoint_only_enabled(gw)
     except ValueError:
         uses_native_endpoint = True
     if not uses_native_endpoint:
         return None
-    return _current_runtime_product_profile(gw) or ""
+    return _current_runtime_product(gw) or ""
+
+
+def _session_end_control_blocker(
+    gw: Any,
+    request: Request | None,
+) -> dict[str, Any] | None:
+    """Require the boot-scoped ProductControl credential for field sessions."""
+
+    current_product = _externally_owned_product(gw)
+    if current_product is None or request is None:
+        return None
+    expected = str(os.environ.get(PRODUCT_SESSION_ID_ENV) or "").strip()
+    provided = str(request.headers.get(PRODUCT_CONTROL_SESSION_HEADER) or "").strip()
+    env = str(getattr(getattr(gw, "_compiled_run_plan", None), "env", "") or "real")
+    detail = {
+        "reason_code": "operator_product_control_required",
+        "current_product": current_product or None,
+        "operator_command": f"python -m lingtu.control stop-session --env {env}",
+    }
+    if not expected:
+        detail["control_session"] = "unavailable"
+        return detail
+    if not provided or not hmac.compare_digest(provided, expected):
+        detail["control_session"] = "unauthorized"
+        return detail
+    return None
+
+
+def _switch_guidance(
+    gw: Any,
+    *,
+    target_product: str | None,
+    current_product: str | None = None,
+    map_name: str | None = None,
+) -> dict[str, Any]:
+    """Return the read-only preview link and exact ProductControl command."""
+
+    detail: dict[str, Any] = {
+        "switch_plan": "/api/v1/runtime/switch-plan",
+    }
+    if target_product is None:
+        return detail
+    env = str(getattr(getattr(gw, "_compiled_run_plan", None), "env", "") or "real")
+    request: dict[str, Any] = {
+        "target_product": target_product,
+        "relocalize": True,
+    }
+    if current_product:
+        request["current_product"] = current_product
+    if map_name:
+        request["map_name"] = map_name
+    detail["operator_command"] = build_operator_command(request, env=env)
+    return detail
 
 
 def _external_product_mode_guard(
     gw: Any,
     mode: str,
     *,
-    requested_profile: str | None,
+    requested_product: str | None,
 ) -> dict[str, Any] | None:
     """Reject low-level sessions that would cross an externally-owned product graph."""
 
-    current_profile = _externally_owned_product_profile(gw)
-    if current_profile is None:
+    current_product = _externally_owned_product(gw)
+    if current_product is None:
         return None
-    if requested_profile is not None and requested_profile != current_profile:
+    if requested_product is not None and requested_product != current_product:
         return {
-            "reason_code": "product_profile_mismatch",
-            "current_profile": current_profile,
-            "requested_profile": requested_profile,
-            "runtime_switch": "/api/v1/runtime/switch",
+            "reason_code": "product_mismatch",
+            "current_product": current_product,
+            "requested_product": requested_product,
+            **_switch_guidance(
+                gw,
+                target_product=requested_product,
+                current_product=current_product,
+            ),
         }
 
-    required_profiles = _REQUIRED_PRODUCT_PROFILES_BY_SESSION_MODE.get(mode, ())
-    if current_profile not in required_profiles:
+    lifecycle = _lifecycle_for_product(gw, current_product)
+    runtime_session_mode = str((lifecycle or {}).get("session_mode") or "").strip()
+    required_products = _REQUIRED_PRODUCTS_BY_SESSION_MODE.get(mode, ())
+    if runtime_session_mode != mode:
+        target_product = required_products[0] if len(required_products) == 1 else requested_product
         return {
             "reason_code": "product_mode_switch_required",
-            "current_profile": current_profile or None,
-            "required_profiles": list(required_profiles),
-            "runtime_switch": "/api/v1/runtime/switch",
+            "current_product": current_product or None,
+            "required_products": list(required_products),
+            **_switch_guidance(
+                gw,
+                target_product=target_product,
+                current_product=current_product or None,
+            ),
         }
 
-    contract = PRODUCT_MODE_CONTRACTS.get(current_profile)
-    expected_control_mode = contract.native_control_mode if contract is not None else ""
+    expected_control_mode = str((lifecycle or {}).get("native_control_mode") or "").strip()
     status = read_native_control_status()
     actual_control_mode = str(status.get("control_mode") or "").strip().lower() if isinstance(status, dict) else ""
     if expected_control_mode and (
@@ -242,30 +366,60 @@ def _external_product_mode_guard(
     ):
         return {
             "reason_code": "native_control_mode_not_ready",
-            "current_profile": current_profile,
+            "current_product": current_product,
             "expected_control_mode": expected_control_mode,
             "actual_control_mode": actual_control_mode or None,
             "control_status_fresh": native_control_status_is_fresh(status),
-            "runtime_switch": "/api/v1/runtime/switch",
+            "operator_command": (
+                "python -m lingtu.control reapply "
+                f"--env {str(getattr(getattr(gw, '_compiled_run_plan', None), 'env', '') or 'real')}"
+            ),
         }
     return None
+
+
+def _external_product_map_guard(
+    gw: Any,
+    *,
+    current_product: str,
+    requested_map: str,
+) -> tuple[str, dict[str, Any] | None]:
+    """Validate a field map from read-only active-map evidence."""
+
+    manager = _gateway_maps_service(gw)
+    active_map = _maps_active_name(manager) if manager is not None else ""
+    resolved_map = active_map if requested_map == "active" else requested_map
+    if resolved_map and active_map == resolved_map:
+        return resolved_map, None
+    return resolved_map, {
+        "reason_code": "product_map_switch_required",
+        "current_product": current_product,
+        "current_map": active_map or None,
+        "requested_map": resolved_map or requested_map or None,
+        **_switch_guidance(
+            gw,
+            target_product=current_product,
+            current_product=current_product,
+            map_name=resolved_map or requested_map or None,
+        ),
+    }
 
 
 def _external_same_session_active(
     gw: Any,
     *,
     mode: str,
-    product_profile: str | None,
+    product: str | None,
     product_session: str,
     map_name: str,
 ) -> bool:
     """Return whether an externally-owned runtime is already in this session."""
 
-    if not _externally_owned_product_profile(gw):
+    if not _externally_owned_product(gw):
         return False
     if gw._session_mode != mode:
         return False
-    if (gw._session_product_profile or None) != (product_profile or None):
+    if (gw._session_product or None) != (product or None):
         return False
     if str(gw._session_product_session or "").strip().lower() != product_session:
         return False
@@ -391,9 +545,9 @@ def register_session_routes(app, gw) -> None:
     async def session_get():
         inferred_mode, inferred_map = gw._session_detect_current_mode()
         if inferred_mode != gw._session_mode:
-            product_profile, product_session = _default_product_identity_for_mode(inferred_mode)
+            product, product_session = _default_product_identity_for_mode(inferred_mode)
             gw._session_mode = inferred_mode
-            gw._session_product_profile = product_profile
+            gw._session_product = product
             gw._session_product_session = product_session
             gw._session_map = inferred_map
             gw._session_since = time.time()
@@ -401,7 +555,7 @@ def register_session_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/session/start",
-        summary="Enter a low-level mapping, navigating, or exploring session",
+        summary="Start a local session or verify the active field Product session",
         response_model=SessionTransitionResponse,
         responses={
             400: {"model": SessionTransitionResponse},
@@ -413,6 +567,7 @@ def register_session_routes(app, gw) -> None:
     async def session_start(body: SessionStartRequest):
         payload = _body_mapping(body)
         mode = (payload.get("mode") or "").strip().lower()
+        start_task = bool(payload.get("start_task", True))
         map_name = payload.get("map_name") or payload.get("map") or ""
         slam_profile = (payload.get("slam_profile") or payload.get("slam_backend") or "").strip().lower()
         slam_profile = _normalize_slam_profile(slam_profile)
@@ -422,12 +577,12 @@ def register_session_routes(app, gw) -> None:
                 status_code=400,
                 message=(f"Unknown mode: {mode!r}. Use 'mapping' | 'navigating' | 'exploring'."),
             )
-        raw_requested_profile = str(payload.get("product_profile") or payload.get("profile") or "").strip()
-        requested_profile = canonical_profile_name(raw_requested_profile) if raw_requested_profile else None
+        raw_requested_product = str(payload.get("product") or payload.get("profile") or "").strip()
+        requested_product = product_name(raw_requested_product) if raw_requested_product else None
         product_mode_blocker = _external_product_mode_guard(
             gw,
             mode,
-            requested_profile=requested_profile,
+            requested_product=requested_product,
         )
         if product_mode_blocker is not None:
             return _transition_response(
@@ -435,50 +590,82 @@ def register_session_routes(app, gw) -> None:
                 status_code=409,
                 message=(
                     "Low-level session start cannot switch the externally-owned "
-                    "product runtime. Use /api/v1/runtime/switch."
+                    "Product. Preview the change with /api/v1/runtime/switch-plan, "
+                    "then run the ProductControl command returned in detail."
                 ),
                 detail=product_mode_blocker,
             )
-        external_profile = _externally_owned_product_profile(gw)
-        if external_profile and requested_profile is None:
-            payload["product_profile"] = external_profile
-        product_profile, product_session = _normalize_product_identity(
+        external_product = _externally_owned_product(gw)
+        if external_product and requested_product is None:
+            payload["product"] = external_product
+        product, product_session = _normalize_product_identity(
+            gw,
             payload,
             mode,
         )
-        if _external_same_session_active(
-            gw,
-            mode=mode,
-            product_profile=product_profile,
-            product_session=product_session,
-            map_name=str(map_name or ""),
-        ):
-            return _transition_payload(True, session=gw._session_snapshot())
         if slam_profile and not is_supported_slam_profile(slam_profile):
             return _transition_response(
                 False,
                 status_code=400,
                 message=(
                     f"Unknown slam_profile: {slam_profile!r}. "
-                    "Use 'none' | 'fastlio2' | 'genz' | 'localizer' | "
-                    "'super_lio' | 'super_lio_relocation'."
+                    "Use 'none' | 'native_dds' | 'fastlio2' | 'genz' | 'localizer'."
                 ),
             )
         if map_name:
             err = safe_map_name(map_name)
             if err is not None:
                 return _transition_response(False, status_code=400, message=err)
-        if slam_profile == "super_lio_relocation" and mode != "navigating":
-            return _transition_response(
-                False,
-                status_code=400,
-                message="super_lio_relocation requires navigating with map_name",
+        lifecycle = _lifecycle_for_product(gw, product)
+        if external_product and mode == "navigating" and (lifecycle is None or lifecycle.get("requires_map") is True):
+            map_name, product_map_blocker = _external_product_map_guard(
+                gw,
+                current_product=external_product,
+                requested_map=str(map_name or ""),
             )
-        if mode == "exploring" and not gw._explorer_available():
+            if product_map_blocker is not None:
+                return _transition_response(
+                    False,
+                    status_code=409,
+                    message=(
+                        "The active Product is bound to a different map. Preview "
+                        "the change with /api/v1/runtime/switch-plan, then run the "
+                        "ProductControl command returned in detail."
+                    ),
+                    detail=product_map_blocker,
+                )
+        if _external_same_session_active(
+            gw,
+            mode=mode,
+            product=product,
+            product_session=product_session,
+            map_name=str(map_name or ""),
+        ):
+            if mode == "exploring" and start_task and product_control_owns_explore(gw):
+                try:
+                    run = start_exploration_run(
+                        gw,
+                        request_id=str(payload.get("request_id") or "") or None,
+                    )
+                except ExplorationRunError as exc:
+                    return _transition_response(
+                        False,
+                        status_code=exc.status_code,
+                        session=gw._session_snapshot(),
+                        message=str(exc),
+                        detail={"error": exc.code, **exc.detail},
+                    )
+                return _transition_payload(
+                    True,
+                    session=gw._session_snapshot(),
+                    detail={"exploration_run": run},
+                )
+            return _transition_payload(True, session=gw._session_snapshot())
+        if mode == "exploring" and start_task and not gw._explorer_available():
             return _transition_response(
                 False,
                 status_code=503,
-                message=("Exploration backend not running - start lingtu with 'explore' or 'tare_explore' profile."),
+                message=("Exploration backend not running - switch to the 'explore' Product."),
             )
         if gw._session_mode != "idle":
             return _transition_response(
@@ -492,7 +679,7 @@ def register_session_routes(app, gw) -> None:
                 status_code=409,
                 message="Another transition in progress",
             )
-        if mode == "exploring":
+        if mode == "exploring" and start_task:
             readiness = gw._exploration_start_readiness()
             if not readiness.get("can_start", False):
                 blockers = readiness.get("blockers") or ["navigation_not_ready"]
@@ -506,128 +693,146 @@ def register_session_routes(app, gw) -> None:
                     detail=readiness,
                 )
 
-        if mode == "navigating":
-            contract = PRODUCT_MODE_CONTRACTS.get(product_profile or "")
-            requires_map = contract.requires_map if contract is not None else True
-            if requires_map and not map_name:
+        with map_runtime_lock():
+            if gw._session_mode != "idle":
                 return _transition_response(
                     False,
-                    status_code=400,
-                    message="map_name is required for navigating",
+                    status_code=409,
+                    message=f"Already in {gw._session_mode}. Call /session/end first.",
                 )
-
-            map_err = safe_map_name(map_name) if map_name else None
-            if map_err is not None:
-                return _transition_response(False, status_code=400, message=map_err)
-            if map_name == "active":
-                manager = _gateway_maps_service(gw)
-                map_name = _maps_active_name(manager) if manager is not None else ""
-                if not map_name:
-                    return _transition_response(
-                        False,
-                        status_code=409,
-                        message="no active map is selected",
-                    )
-            if map_name:
-                (
-                    map_ready,
-                    activation_message,
-                    activation_detail,
-                    map_path,
-                ) = _activate_session_map_via_maps_service(gw, map_name)
-                if map_ready is not True:
-                    status_code = 400
-                    missing_capability = (
-                        isinstance(activation_detail, dict)
-                        and activation_detail.get("reason_code") == "missing_capability"
-                    )
-                    if missing_capability:
-                        status_code = 409
-                    elif "artifact gate failed" in activation_message:
-                        status_code = 409
-                    return _transition_response(
-                        False,
-                        status_code=status_code,
-                        message=activation_message or "map activation failed",
-                        detail={"map_activation": activation_detail},
-                    )
-                reload_planner_map = command_service.reload_navigation_map
-                try:
-                    planner_reload = reload_planner_map(map_path)
-                except Exception as exc:
-                    logger.warning(
-                        "planner map reload after session map activation failed: %s",
-                        exc,
-                    )
-                    _rollback_session_map_activation(
-                        gw,
-                        activation_detail,
-                        reload_planner_map,
-                    )
-                    return _transition_response(
-                        False,
-                        status_code=409,
-                        message=f"planner map reload failed: {exc}",
-                        detail={"map_activation": activation_detail},
-                    )
-                if not isinstance(planner_reload, Mapping) or planner_reload.get("ok") is not True:
-                    _rollback_session_map_activation(
-                        gw,
-                        activation_detail,
-                        reload_planner_map,
-                    )
-                    return _transition_response(
-                        False,
-                        status_code=409,
-                        message="planner map reload failed; navigation session was not started",
-                        detail={
-                            "map_activation": activation_detail,
-                            "planner_reload": planner_reload,
-                        },
-                    )
-                _clear_gateway_map_cloud(gw, "session_map_activation")
-
-        gw._session_pending = True
+            if gw._session_pending:
+                return _transition_response(
+                    False,
+                    status_code=409,
+                    message="Another transition in progress",
+                )
+            gw._session_pending = True
         gw._session_error = ""
         try:
-            manages_services = bool(getattr(gw, "_manage_session_services", True))
-            backend = slam_profile or (
-                default_slam_profile_for_mode(mode)
-                if manages_services
-                else str(gw._get_slam_profile() or "").strip().lower()
-            )
-            if not backend:
-                backend = default_slam_profile_for_mode(mode)
-
-            if manages_services:
-                from lingtu.control import ProductControl
-
-                plan = session_transition_plan(mode, backend)
-                ok = ProductControl().legacy_transition(plan, timeout_s=10.0)
-                if plan.clear_live_map:
-                    _clear_gateway_map_cloud(gw, "session_transition")
-                if not ok:
-                    gw._session_error = "Services not ready after 10s"
+            if mode == "navigating":
+                requires_map = lifecycle.get("requires_map") is True if lifecycle is not None else True
+                if requires_map and not map_name:
                     return _transition_response(
                         False,
-                        status_code=500,
-                        message=gw._session_error,
+                        status_code=400,
+                        message="map_name is required for navigating",
                     )
-            elif mode in {"mapping", "exploring"}:
+
+                map_err = safe_map_name(map_name) if map_name else None
+                if map_err is not None:
+                    return _transition_response(False, status_code=400, message=map_err)
+                if map_name == "active":
+                    manager = _gateway_maps_service(gw)
+                    map_name = _maps_active_name(manager) if manager is not None else ""
+                    if not map_name:
+                        return _transition_response(
+                            False,
+                            status_code=409,
+                            message="no active map is selected",
+                        )
+                with map_runtime_lock():
+                    if map_name:
+                        if external_product:
+                            map_name, product_map_blocker = _external_product_map_guard(
+                                gw,
+                                current_product=external_product,
+                                requested_map=map_name,
+                            )
+                            if product_map_blocker is not None:
+                                return _transition_response(
+                                    False,
+                                    status_code=409,
+                                    message=(
+                                        "The active Product is bound to a different map. "
+                                        "Preview the change with /api/v1/runtime/switch-plan, "
+                                        "then run the ProductControl command returned in detail."
+                                    ),
+                                    detail=product_map_blocker,
+                                )
+                        else:
+                            (
+                                map_ready,
+                                activation_message,
+                                activation_detail,
+                                map_path,
+                            ) = _activate_session_map_via_maps_service(gw, map_name)
+                            if map_ready is not True:
+                                status_code = 400
+                                missing_capability = (
+                                    isinstance(activation_detail, dict)
+                                    and activation_detail.get("reason_code") == "missing_capability"
+                                )
+                                if missing_capability:
+                                    status_code = 409
+                                elif "artifact gate failed" in activation_message:
+                                    status_code = 409
+                                return _transition_response(
+                                    False,
+                                    status_code=status_code,
+                                    message=activation_message or "map activation failed",
+                                    detail={"map_activation": activation_detail},
+                                )
+                            reload_planner_map = command_service.reload_navigation_map
+                            try:
+                                planner_reload = reload_planner_map(map_path)
+                            except Exception as exc:
+                                logger.warning(
+                                    "planner map reload after session map activation failed: %s",
+                                    exc,
+                                )
+                                _rollback_session_map_activation(
+                                    gw,
+                                    activation_detail,
+                                    reload_planner_map,
+                                )
+                                return _transition_response(
+                                    False,
+                                    status_code=409,
+                                    message=f"planner map reload failed: {exc}",
+                                    detail={"map_activation": activation_detail},
+                                )
+                            if not isinstance(planner_reload, Mapping) or planner_reload.get("ok") is not True:
+                                _rollback_session_map_activation(
+                                    gw,
+                                    activation_detail,
+                                    reload_planner_map,
+                                )
+                                return _transition_response(
+                                    False,
+                                    status_code=409,
+                                    message="planner map reload failed; navigation session was not started",
+                                    detail={
+                                        "map_activation": activation_detail,
+                                        "planner_reload": planner_reload,
+                                    },
+                                )
+                            _clear_gateway_map_cloud(gw, "session_map_activation")
+
+            backend = normalize_slam_profile(slam_profile or str(gw._get_slam_profile() or "").strip().lower())
+            if not is_supported_slam_profile(backend):
+                backend = default_slam_profile_for_mode(mode)
+            if mode in {"mapping", "exploring"}:
                 _clear_gateway_map_cloud(gw, "session_transition")
 
-            if (
-                manages_services
-                and mode == "navigating"
-                and map_name
-                and backend not in {"super_lio", "super_lio_relocation"}
-            ):
-                gw._spawn_auto_relocalize(map_name)
-
-            if mode == "exploring":
+            if mode == "exploring" and start_task:
                 try:
-                    gw._begin_exploration()
+                    if product_control_owns_explore(gw):
+                        exploration_run = start_exploration_run(
+                            gw,
+                            request_id=str(payload.get("request_id") or "") or None,
+                        )
+                    else:
+                        gw._begin_exploration()
+                        exploration_run = None
                     gw._exploring = True
+                except ExplorationRunError as e:
+                    gw._session_error = f"Explorer start failed: {e}"
+                    return _transition_response(
+                        False,
+                        status_code=e.status_code,
+                        message=gw._session_error,
+                        detail={"error": e.code, **e.detail},
+                    )
                 except Exception as e:
                     gw._session_error = f"Explorer start failed: {e}"
                     return _transition_response(
@@ -637,15 +842,24 @@ def register_session_routes(app, gw) -> None:
                     )
 
             gw._session_mode = mode
-            gw._session_product_profile = product_profile
+            gw._session_product = product
             gw._session_product_session = product_session
-            gw._session_map = map_name if mode == "navigating" else None
+            gw._session_map = map_name if mode in {"navigating", "exploring"} else None
             gw._session_slam_profile = backend
             gw._cached_slam_profile = backend
             gw._slam_profile_ts = time.time()
             gw._session_since = time.time()
             gw.push_event({"type": "session", "data": gw._session_snapshot()})
-            return _transition_payload(True, session=gw._session_snapshot())
+            transition_detail = (
+                {"exploration_run": exploration_run}
+                if mode == "exploring" and start_task and exploration_run is not None
+                else None
+            )
+            return _transition_payload(
+                True,
+                session=gw._session_snapshot(),
+                detail=transition_detail,
+            )
         except Exception as e:
             gw._session_error = str(e)
             return _transition_response(
@@ -658,14 +872,22 @@ def register_session_routes(app, gw) -> None:
 
     @app.post(
         "/api/v1/session/end",
-        summary="Exit current mode and return to idle",
+        summary="End a local session or accept ProductControl-authorized field shutdown",
         response_model=SessionTransitionResponse,
         responses={
             409: {"model": SessionTransitionResponse},
             500: {"model": SessionTransitionResponse},
         },
     )
-    async def session_end():
+    async def session_end(request: Request = None):
+        control_blocker = _session_end_control_blocker(gw, request)
+        if control_blocker is not None:
+            return _transition_response(
+                False,
+                status_code=409,
+                message=("Field session shutdown is owned by ProductControl; use the operator command in detail."),
+                detail=control_blocker,
+            )
         if gw._session_mode == "idle":
             return _transition_payload(True, session=gw._session_snapshot())
         if gw._session_pending:
@@ -683,15 +905,8 @@ def register_session_routes(app, gw) -> None:
                     logger.warning("session/end: end_exploration failed: %s", e)
                 gw._exploring = False
                 gw.push_event({"type": "exploring", "active": False})
-            if bool(getattr(gw, "_manage_session_services", True)):
-                from lingtu.control import ProductControl
-
-                ProductControl().legacy_transition(
-                    slam_switch_plan("stop"),
-                    timeout_s=10.0,
-                )
             gw._session_mode = "idle"
-            gw._session_product_profile = _current_runtime_product_profile(gw)
+            gw._session_product = _current_runtime_product(gw)
             gw._session_product_session = "idle"
             gw._session_map = None
             gw._session_slam_profile = "stopped"

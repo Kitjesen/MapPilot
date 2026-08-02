@@ -106,7 +106,9 @@ struct EndpointState {
   std::uint64_t odom_generation{0};
   std::uint64_t tf_count{0};
   std::uint64_t tf_generation{0};
-  std::uint64_t frame_epoch{0};
+  // Epoch identities are externally echoed by request-scoped planner overlays;
+  // zero is reserved for "missing", so the first live frame starts at one.
+  std::uint64_t frame_epoch{1};
   std::uint64_t goal_count{0};
   std::uint64_t cancel_count{0};
   std::uint64_t map_clearing_count{0};

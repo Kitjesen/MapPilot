@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from lingtu.product_lock import ProductControlBusy, ProductControlLock
 from maps.services.opt import MapOpt
 from maps.services.runtime_bridge import (
     MapRuntimeBridge,
@@ -323,42 +324,52 @@ class MapPipelineService:
         opt_options = self.map_opt.source_options(map_opt)
         frame_id = topic_default_frame_id(TOPICS.saved_map_cloud)
         native = self.storage.native_service
-        begin = native.begin_save_map(
-            request_id,
-            name,
-            requirements={
-                "occupancy": True,
-                "octomap": self.build_octomap_on_save,
-                "esdf": self.build_octomap_on_save,
-                "traversability": self.build_octomap_on_save,
-                "semantic": semantic_snapshot is not None,
-            },
-            source={
-                "voxel_size": 0.0,
-                "dynamic_filter_enabled": dynamic_filter_enabled,
-                "dynamic_filter_required": dynamic_filter_required,
-                "dynamic_filter_command": command_template(self.map_prune_command),
-                "optimizer_strategy": opt_options["strategy"],
-                "optimizer_required": opt_options["required"],
-                "optimizer_command": command_template(opt_options["command"]),
-                "optimizer_timeout_sec": opt_options["timeout_sec"],
-            },
-            octomap={
-                "converter_command": command_template(self.map_artifact_converter_command),
-                "build_mode": self.octomap_build_mode,
-                "resolution": self.octomap_resolution,
-                "support_dilation_cells": 1,
-                "free_layers_above": self.octomap_free_layers_above,
-                "free_dilation_cells": self.octomap_free_dilation_cells,
-                "frame_id": frame_id,
-                "source_profile": self.source_profile,
-                "data_source": self.runtime_data_source,
-                "slam_source": resolved_slam_profile,
-                "localization_source": resolved_slam_profile,
-                "mapping_source": "save_map_product_chain",
-                "timeout_sec": self.octomap_build_timeout_sec,
-            },
-        )
+        try:
+            with ProductControlLock(environment=os.environ, timeout_s=0.0):
+                begin = native.begin_save_map(
+                    request_id,
+                    name,
+                    requirements={
+                        "occupancy": True,
+                        "octomap": self.build_octomap_on_save,
+                        "esdf": self.build_octomap_on_save,
+                        "traversability": self.build_octomap_on_save,
+                        "semantic": semantic_snapshot is not None,
+                    },
+                    source={
+                        "voxel_size": 0.0,
+                        "dynamic_filter_enabled": dynamic_filter_enabled,
+                        "dynamic_filter_required": dynamic_filter_required,
+                        "dynamic_filter_command": command_template(self.map_prune_command),
+                        "optimizer_strategy": opt_options["strategy"],
+                        "optimizer_required": opt_options["required"],
+                        "optimizer_command": command_template(opt_options["command"]),
+                        "optimizer_timeout_sec": opt_options["timeout_sec"],
+                    },
+                    octomap={
+                        "converter_command": command_template(self.map_artifact_converter_command),
+                        "build_mode": self.octomap_build_mode,
+                        "resolution": self.octomap_resolution,
+                        "support_dilation_cells": 1,
+                        "free_layers_above": self.octomap_free_layers_above,
+                        "free_dilation_cells": self.octomap_free_dilation_cells,
+                        "frame_id": frame_id,
+                        "source_profile": self.source_profile,
+                        "data_source": self.runtime_data_source,
+                        "slam_source": resolved_slam_profile,
+                        "localization_source": resolved_slam_profile,
+                        "mapping_source": "save_map_product_chain",
+                        "timeout_sec": self.octomap_build_timeout_sec,
+                    },
+                )
+        except ProductControlBusy:
+            return {
+                "action": "save",
+                "success": False,
+                "reason_code": "product_transition_in_progress",
+                "message": "map save cannot start during a Product transition",
+                "request_id": request_id,
+            }
         if begin.get("accepted") is not True:
             return {
                 "action": "save",
@@ -392,12 +403,13 @@ class MapPipelineService:
             if replay_state in {"QUEUED", "RUNNING"}:
                 return {
                     "action": "save",
-                    "success": False,
+                    "success": None,
                     "accepted": True,
                     "status": "running",
                     "reason_code": "save_job_in_progress",
                     "message": "the idempotent SaveMap job is already running",
                     "job_id": request_id,
+                    "request_id": request_id,
                     "job": begin_status,
                     "replayed": True,
                 }
@@ -415,10 +427,7 @@ class MapPipelineService:
         capture_pcd = capture_dir / "map.pcd"
 
         try:
-            if resolved_slam_profile == "super_lio":
-                snapshot_result = self.runtime_bridge.save_live_map_cloud_snapshot(capture_pcd)
-            else:
-                snapshot_result = self.runtime_bridge.save_map_with_adapter(capture_pcd)
+            snapshot_result = self.runtime_bridge.save_map_with_adapter(capture_pcd)
         except MapSaveAdapterFailed as exc:
             native.cancel_save_map(request_id)
             return {
@@ -479,52 +488,17 @@ class MapPipelineService:
                 "job": provided,
             }
 
-        wait_budget = max(
-            30.0,
-            float(self.runtime_bridge.map_save_timeout_sec)
-            + float(self.map_opt.timeout_sec)
-            + float(self.octomap_build_timeout_sec)
-            + 30.0,
-        )
-        deadline = time.monotonic() + wait_budget
-        job_status: dict[str, Any] = {}
-        while time.monotonic() < deadline:
-            status_response = native.get_save_map_status(request_id)
-            job_status = _as_dict(status_response.get("status"))
-            if job_status.get("state") in {"SUCCEEDED", "FAILED", "CANCELLED"}:
-                break
-            time.sleep(0.05)
-
-        state = str(job_status.get("state") or "RUNNING")
-        if state == "RUNNING" or state == "QUEUED":
-            return {
-                "action": "save",
-                "success": False,
-                "status": "running",
-                "reason_code": "save_job_timeout",
-                "message": "SaveMap is still running; query by job_id",
-                "job_id": request_id,
-                "job": job_status,
-            }
-        if state != "SUCCEEDED":
-            return {
-                "action": "save",
-                "success": False,
-                "status": state.lower(),
-                "reason_code": str(job_status.get("reason_code") or "save_map_failed"),
-                "message": str(job_status.get("message") or "SaveMap failed"),
-                "job_id": request_id,
-                "job": job_status,
-                "semantic": semantic_result,
-            }
-
-        return self._save_success_response(
-            name,
-            job_status=job_status,
-            resolved_slam_profile=resolved_slam_profile,
-            capability_fields=capability_fields,
-            semantic_result=semantic_result,
-        )
+        return {
+            "action": "save",
+            "success": None,
+            "accepted": True,
+            "status": "running",
+            "reason_code": "save_job_in_progress",
+            "message": "SaveMap snapshot accepted; query by job_id",
+            "job_id": request_id,
+            "request_id": request_id,
+            "job": _as_dict(provided.get("status")),
+        }
 
     def build_navigation_package(
         self,

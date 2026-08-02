@@ -8,11 +8,11 @@ Generates:
 
 from __future__ import annotations
 
+import argparse
 import ast
-import os
-import re
 import sys
 from pathlib import Path
+
 
 def find_repo_root(start: Path) -> Path:
     for path in (start, *start.parents):
@@ -113,7 +113,7 @@ def extract_skills() -> list[dict]:
                 module_doc = _module_docstring(py_file)
 
                 skills.append({
-                    "file": str(rel_path),
+                    "file": rel_path.as_posix(),
                     "module_doc": module_doc,
                     "class_name": node.name,
                     "method_name": item.name,
@@ -150,7 +150,8 @@ def generate_mcp_tools_md(skills: list[dict]) -> str:
         "# MCP Tools (Auto-Discovered @skill Methods)",
         "",
         "> Auto-generated from `@skill` decorators across all Module files.",
-        f"> Generated: {_now_iso()}",
+        "> Deterministic generated inventory; run "
+        "`python scripts/docs/extract_api_docs.py --check` to verify freshness.",
         "",
         "These tools are auto-discovered by `MCPServerModule` and exposed via JSON-RPC",
         "at `http://<robot>:8090/mcp`. They are also available in the AgentLoop for",
@@ -203,96 +204,79 @@ def generate_mcp_tools_md(skills: list[dict]) -> str:
 
 # ── TASK 2: Extract Gateway REST routes → gateway_rest.md ───────────────
 
-def extract_gateway_routes() -> list[dict]:
-    """Extract REST route registrations from gateway/routes/ files.
+_HTTP_ROUTE_METHODS = frozenset({"get", "post", "put", "delete", "patch"})
 
-    Returns list of dicts with: file, method, path, summary, response_model, action
-    """
+
+def _route_keyword(call: ast.Call, name: str) -> ast.AST | None:
+    for keyword in call.keywords:
+        if keyword.arg == name:
+            return keyword.value
+    return None
+
+
+def _routes_from_file(py_file: Path) -> list[dict]:
+    try:
+        tree = ast.parse(py_file.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError, OSError):
+        return []
+
     routes: list[dict] = []
+    rel_path = py_file.relative_to(REPO_ROOT).as_posix()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                not isinstance(decorator, ast.Call)
+                or not isinstance(decorator.func, ast.Attribute)
+                or not isinstance(decorator.func.value, ast.Name)
+                or decorator.func.value.id != "app"
+                or decorator.func.attr not in _HTTP_ROUTE_METHODS
+                or not decorator.args
+                or not isinstance(decorator.args[0], ast.Constant)
+                or not isinstance(decorator.args[0].value, str)
+            ):
+                continue
+            summary_node = _route_keyword(decorator, "summary")
+            summary = (
+                summary_node.value
+                if isinstance(summary_node, ast.Constant)
+                and isinstance(summary_node.value, str)
+                else ""
+            )
+            response_node = _route_keyword(decorator, "response_model")
+            routes.append(
+                {
+                    "file": rel_path,
+                    "method": decorator.func.attr.upper(),
+                    "path": decorator.args[0].value,
+                    "summary": summary,
+                    "response_model": (
+                        _ast_to_str(response_node) if response_node is not None else ""
+                    ),
+                    "function": node.name,
+                }
+            )
+    return routes
+
+
+def extract_gateway_routes() -> list[dict]:
+    """Extract every static FastAPI route decorator, including stacked aliases."""
+
     routes_dir = GATEWAY / "routes"
     if not routes_dir.is_dir():
-        return routes
+        return []
+    files = [
+        path
+        for path in sorted(routes_dir.rglob("*.py"))
+        if path.name != "__init__.py"
+    ]
+    gateway_module = GATEWAY / "gateway_module.py"
+    if gateway_module.is_file():
+        files.append(gateway_module)
 
-    for py_file in sorted(routes_dir.rglob("*.py")):
-        if py_file.name == "__init__.py":
-            continue
-        try:
-            text = py_file.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-
-        # Pattern: @app.get("/path", ...)  or @app.post("/path", ...)
-        pattern = re.compile(
-            r'@app\.(get|post|put|delete|patch)\s*\(\s*'
-            r'"([^"]+)"'                                           # path string
-            r'([\s\S]*?)(?=\n\s*(?:async\s+)?def\s+\w+\s*\()',    # up to def
-            re.MULTILINE,
-        )
-        for match in pattern.finditer(text):
-            http_method = match.group(1)
-            path = match.group(2)
-            decorator_body = match.group(3)
-
-            # Extract summary
-            summary_m = re.search(r'summary\s*=\s*"([^"]*)"', decorator_body)
-            summary = summary_m.group(1) if summary_m else ""
-
-            # Extract response model
-            resp_m = re.search(r'response_model\s*=\s*(\w+(?:\[\w+\])?)', decorator_body)
-            response_model = resp_m.group(1) if resp_m else ""
-
-            # Find the function name after the decorator
-            # Use a second pass to find the actual def
-            def_match = re.search(
-                rf'(?:async\s+)?def\s+(\w+)\s*\(',
-                text[match.end():],
-            )
-            func_name = def_match.group(1) if def_match else ""
-
-            rel_path = py_file.relative_to(REPO_ROOT)
-            routes.append({
-                "file": str(rel_path),
-                "method": http_method.upper(),
-                "path": path,
-                "summary": summary,
-                "response_model": response_model,
-                "function": func_name,
-            })
-
-    # Also check gateway_module.py itself for inline routes
-    gw_module = GATEWAY / "gateway_module.py"
-    if gw_module.is_file():
-        text = gw_module.read_text(encoding="utf-8")
-        pattern = re.compile(
-            r'@app\.(get|post|put|delete|patch)\s*\(\s*'
-            r'"([^"]+)"'
-            r'([\s\S]*?)(?=\n\s*(?:async\s+)?def\s+\w+\s*\()',
-            re.MULTILINE,
-        )
-        for match in pattern.finditer(text):
-            http_method = match.group(1)
-            path = match.group(2)
-            decorator_body = match.group(3)
-            summary_m = re.search(r'summary\s*=\s*"([^"]*)"', decorator_body)
-            summary = summary_m.group(1) if summary_m else ""
-            resp_m = re.search(r'response_model\s*=\s*(\w+(?:\[\w+\])?)', decorator_body)
-            response_model = resp_m.group(1) if resp_m else ""
-            def_match = re.search(
-                rf'(?:async\s+)?def\s+(\w+)\s*\(',
-                text[match.end():],
-            )
-            func_name = def_match.group(1) if def_match else ""
-            routes.append({
-                "file": str(gw_module.relative_to(REPO_ROOT)),
-                "method": http_method.upper(),
-                "path": path,
-                "summary": summary,
-                "response_model": response_model,
-                "function": func_name,
-            })
-
-    # Sort by path
-    routes.sort(key=lambda r: r["path"])
+    routes = [route for py_file in files for route in _routes_from_file(py_file)]
+    routes.sort(key=lambda route: (route["path"], route["method"], route["file"]))
     return routes
 
 
@@ -302,7 +286,8 @@ def generate_gateway_rest_md(routes: list[dict]) -> str:
         "# Gateway REST API",
         "",
         "> Auto-generated from route registrations in `src/gateway/routes/`.",
-        f"> Generated: {_now_iso()}",
+        "> Deterministic generated inventory; run "
+        "`python scripts/docs/extract_api_docs.py --check` to verify freshness.",
         "",
         "The GatewayModule serves these endpoints via FastAPI on port 5050.",
         "",
@@ -344,17 +329,28 @@ def generate_gateway_rest_md(routes: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# ── helpers ──────────────────────────────────────────────────────────────
-
-def _now_iso() -> str:
-    from datetime import datetime
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
 # ── main ─────────────────────────────────────────────────────────────────
 
-def main():
+def _publish(path: Path, content: str, *, check: bool) -> bool:
+    """Write one generated document or report whether it is current."""
+
+    expected = content.rstrip() + "\n"
+    if check:
+        return path.is_file() and path.read_text(encoding="utf-8") == expected
+    path.write_text(expected, encoding="utf-8")
+    return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail without writing when generated API documentation is stale",
+    )
+    args = parser.parse_args(argv)
     DOCS_API.mkdir(parents=True, exist_ok=True)
+    stale: list[Path] = []
 
     # Task 1: MCP tools
     print("Extracting @skill methods...")
@@ -363,8 +359,9 @@ def main():
 
     mcp_doc = generate_mcp_tools_md(skills)
     mcp_path = DOCS_API / "mcp_tools.md"
-    mcp_path.write_text(mcp_doc, encoding="utf-8")
-    print(f"  → {mcp_path}")
+    if not _publish(mcp_path, mcp_doc, check=args.check):
+        stale.append(mcp_path)
+    print(f"  -> {mcp_path}")
 
     # Task 2: Gateway REST
     print("Extracting Gateway REST routes...")
@@ -373,12 +370,12 @@ def main():
 
     rest_doc = generate_gateway_rest_md(routes)
     rest_path = DOCS_API / "gateway_rest.md"
-    rest_path.write_text(rest_doc, encoding="utf-8")
-    print(f"  → {rest_path}")
+    if not _publish(rest_path, rest_doc, check=args.check):
+        stale.append(rest_path)
+    print(f"  -> {rest_path}")
 
     # Task 3: Output summary for ROADMAP update
     # (to be consumed by the caller)
-    import sys
     sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[union-attr]
 
     print(f"\nSKILL_FILES={len(set(s['file'] for s in skills))}")
@@ -394,6 +391,15 @@ def main():
     for r in routes:
         print(f"  {r['method']} {r['path']}: {r['summary']}")
 
+    if stale:
+        print("\nGenerated API documentation is stale:")
+        for path in stale:
+            print(f"  - {path.relative_to(REPO_ROOT).as_posix()}")
+        return 1
+    if args.check:
+        print("\nGenerated API documentation is current.")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

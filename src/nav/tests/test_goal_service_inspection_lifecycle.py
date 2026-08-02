@@ -11,18 +11,36 @@ from nav.services.goals import GoalService
 
 class FakeInspectionCommands:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, str | None]] = []
+        self.calls: list[tuple[str, str, str, str | None]] = []
 
-    def pause_inspection(self, *, reason: str, request_id: str | None = None) -> bool:
-        self.calls.append(("pause_inspection", reason, request_id))
+    def pause_inspection_task(
+        self,
+        *,
+        task_id: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> bool:
+        self.calls.append(("pause_inspection_task", task_id, reason, request_id))
         return True
 
-    def resume_inspection(self, *, reason: str, request_id: str | None = None) -> bool:
-        self.calls.append(("resume_inspection", reason, request_id))
+    def resume_inspection_task(
+        self,
+        *,
+        task_id: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> bool:
+        self.calls.append(("resume_inspection_task", task_id, reason, request_id))
         return True
 
-    def cancel_inspection(self, *, reason: str, request_id: str | None = None) -> bool:
-        self.calls.append(("cancel_inspection", reason, request_id))
+    def cancel_inspection_task(
+        self,
+        *,
+        task_id: str,
+        reason: str,
+        request_id: str | None = None,
+    ) -> bool:
+        self.calls.append(("cancel_inspection_task", task_id, reason, request_id))
         return True
 
 
@@ -43,12 +61,9 @@ def _send(service: GoalService, command: dict) -> None:
 @pytest.mark.parametrize(
     ("action", "method", "default_reason"),
     [
-        ("inspection_pause", "pause_inspection", "operator_pause"),
-        ("pause_inspection", "pause_inspection", "operator_pause"),
-        ("inspection_resume", "resume_inspection", "operator_resume"),
-        ("resume_inspection", "resume_inspection", "operator_resume"),
-        ("inspection_cancel", "cancel_inspection", "operator_cancel"),
-        ("cancel_inspection", "cancel_inspection", "operator_cancel"),
+        ("inspection_pause", "pause_inspection_task", "operator_pause"),
+        ("inspection_resume", "resume_inspection_task", "operator_resume"),
+        ("inspection_cancel", "cancel_inspection_task", "operator_cancel"),
     ],
 )
 def test_inspection_lifecycle_dispatches_native_method_with_reason_and_request_id(
@@ -59,11 +74,19 @@ def test_inspection_lifecycle_dispatches_native_method_with_reason_and_request_i
     commands = FakeInspectionCommands()
     service, statuses = _native_goal_service(commands)
 
-    _send(service, {"action": action, "request_id": "semantic-7"})
+    _send(
+        service,
+        {
+            "action": action,
+            "task_id": "inspection-task-7",
+            "request_id": "semantic-7",
+        },
+    )
 
-    assert commands.calls == [(method, default_reason, "semantic-7")]
+    assert commands.calls == [(method, "inspection-task-7", default_reason, "semantic-7")]
     assert statuses[-1]["success"] is True
     assert statuses[-1]["action"] == action
+    assert statuses[-1]["task_id"] == "inspection-task-7"
     assert statuses[-1]["reason"] == default_reason
     assert statuses[-1]["request_id"] == "semantic-7"
     assert statuses[-1]["sink"] == "native_dds"
@@ -77,13 +100,29 @@ def test_inspection_lifecycle_preserves_explicit_reason() -> None:
         service,
         {
             "action": "inspection_pause",
+            "task_id": "inspection-task-voice",
             "reason": "voice_pause",
             "request_id": "voice-1",
         },
     )
 
-    assert commands.calls == [("pause_inspection", "voice_pause", "voice-1")]
+    assert commands.calls == [
+        ("pause_inspection_task", "inspection-task-voice", "voice_pause", "voice-1")
+    ]
     assert statuses[-1]["reason"] == "voice_pause"
+
+
+def test_inspection_lifecycle_rejects_missing_task_id_without_guessing_current_task() -> None:
+    commands = FakeInspectionCommands()
+    service, statuses = _native_goal_service(commands)
+
+    _send(service, {"action": "inspection_pause", "request_id": "semantic-no-task"})
+
+    assert commands.calls == []
+    assert statuses[-1]["success"] is False
+    assert statuses[-1]["accepted"] is False
+    assert statuses[-1]["request_id"] == "semantic-no-task"
+    assert "task_id is required" in statuses[-1]["message"]
 
 
 def test_inspection_lifecycle_rejects_when_command_module_not_configured() -> None:
@@ -92,7 +131,14 @@ def test_inspection_lifecycle_rejects_when_command_module_not_configured() -> No
     statuses: list[dict] = []
     service.goal_status.subscribe(statuses.append)
 
-    _send(service, {"action": "inspection_pause", "request_id": "semantic-8"})
+    _send(
+        service,
+        {
+            "action": "inspection_pause",
+            "task_id": "inspection-task-unconfigured",
+            "request_id": "semantic-8",
+        },
+    )
 
     assert statuses[-1]["success"] is False
     assert statuses[-1]["accepted"] is False
@@ -104,7 +150,14 @@ def test_inspection_lifecycle_rejects_when_command_module_not_configured() -> No
 def test_inspection_lifecycle_rejects_when_command_module_unavailable() -> None:
     service, statuses = _native_goal_service()
 
-    _send(service, {"action": "inspection_resume", "request_id": "semantic-9"})
+    _send(
+        service,
+        {
+            "action": "inspection_resume",
+            "task_id": "inspection-task-unavailable",
+            "request_id": "semantic-9",
+        },
+    )
 
     assert statuses[-1]["success"] is False
     assert statuses[-1]["request_id"] == "semantic-9"
@@ -114,8 +167,37 @@ def test_inspection_lifecycle_rejects_when_command_module_unavailable() -> None:
 def test_inspection_lifecycle_rejects_missing_native_method() -> None:
     service, statuses = _native_goal_service(object())
 
-    _send(service, {"action": "inspection_cancel", "request_id": "semantic-10"})
+    _send(
+        service,
+        {
+            "action": "inspection_cancel",
+            "task_id": "inspection-task-missing-method",
+            "request_id": "semantic-10",
+        },
+    )
 
     assert statuses[-1]["success"] is False
     assert statuses[-1]["request_id"] == "semantic-10"
-    assert "does not implement cancel_inspection" in statuses[-1]["message"]
+    assert "does not implement cancel_inspection_task" in statuses[-1]["message"]
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["pause_inspection", "resume_inspection", "cancel_inspection"],
+)
+def test_taskless_inspection_action_aliases_are_retired(action: str) -> None:
+    commands = FakeInspectionCommands()
+    service, statuses = _native_goal_service(commands)
+
+    _send(
+        service,
+        {
+            "action": action,
+            "task_id": "inspection-task-old-alias",
+            "request_id": "semantic-old-alias",
+        },
+    )
+
+    assert commands.calls == []
+    assert statuses[-1]["success"] is False
+    assert statuses[-1]["message"] == f"unknown action: {action}"

@@ -2,7 +2,7 @@ import importlib
 import sys
 from pathlib import Path
 
-from external_adapters.open_rmf import (
+from nav.adapters.open_rmf import (
     FloorBinding,
     GatewayClientConfig,
     RobotSnapshot,

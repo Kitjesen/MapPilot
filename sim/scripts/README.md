@@ -3,9 +3,8 @@
 Status: current script index as of 2026-07-18. This is a live contract/index;
 dated reports and old closure notes remain evidence only.
 
-This directory is a stable script contract, not a package boundary. New MuJoCo
-implementations live under `sim/scripts/mujoco/`; old top-level names stay as
-compatibility wrappers when profiles, tests, or field notes already call them.
+This directory is a stable script contract, not a package boundary. The current
+MuJoCo command and test interface lives only under `sim/scripts/mujoco/`.
 
 ## Canonical MuJoCo Entrypoints
 
@@ -30,10 +29,9 @@ Use these paths for new commands, docs, and tests:
 | `mujoco/record_thunderv4_mid360_policy.py` | Thunderv4 MID-360 policy-scene recording helper |
 | `mujoco/record_thunderv4_stair_showcase.py` | Thunderv4 stair showcase recorder |
 
-## Public Entrypoints And Wrappers
+## Other Public Entrypoints
 
-These root-level paths are still part of the compatibility contract. Do not
-delete them until every caller has moved to the canonical path above:
+These non-MuJoCo root-level paths remain current public entrypoints:
 
 | Entrypoint | Role |
 | --- | --- |
@@ -45,7 +43,6 @@ delete them until every caller has moved to the canonical path above:
 | `policy_nav_smoke.py` | OctoPlanner + nanobind/nav_kernel policy-mode navigation smoke test |
 | `run_dimos_linux_closure.sh` | Target-host DimOS closure runner |
 | `launch_lingtu_gazebo_industrial_demo.sh` | Gazebo industrial simulation launcher |
-| `launch_cmu_unity_lingtu_runtime.sh` | CMU Unity LingTu runtime launcher |
 
 ## Safety Classes
 
@@ -65,7 +62,8 @@ Use the safety class before running a script:
 - `dimos_host_preflight_guard.py` - Read-only guard used by the Linux closure runner. It exits 0 only when a host preflight report is green; red reports exit 3 and print `host_setup_plan` failed checks plus diagnostic commands.
 - `run_dimos_linux_closure.sh` - Target-host DimOS closure runner for the current benchmark sequence. Default is `--dry-run`; `--execute` is required before it sources ROS 2 or launches missing gates. It refuses non-Linux `--execute`, enforces an isolated ROS domain, runs host preflight before `--run-missing`, and always stops on red preflight. If `/opt/ros/humble/setup.bash` is missing, it still writes the preflight diagnostic report and then refuses runtime gates through the guard. Red preflight refusal prints the `host_setup_plan` failed checks and diagnostic commands. When runtime gates write a red summary, the runner still regenerates the DimOS gap report before returning a nonzero status.
 - `dimos_gap_report.py` - DimOS-style gap matrix over the `dimos_benchmark` gate sequence; reads an existing closure summary or current reports, embedded `run_missing_host_preflight` evidence, `--host-preflight` read-only host suitability evidence, `--host-preflight-report <json>` evidence produced earlier by `server_sim_closure.py --host-preflight`, and `--include-dataflow` runtime-report dataflow blockers; `--format shell` exports a command checklist without launching gates and auto-enables the same read-only dataflow inspection if the flag was omitted. Host setup diagnostics are emitted as executable commands, while blocked gate commands stay commented as `# BLOCKED:`.
-- `pct_runtime_preflight.py` - Read-only PCT native runtime diagnostic. It checks host platform, CPython ABI, PCT extension modules, and shared libraries, then writes `artifacts/server_sim_closure/pct_runtime_preflight/report.json`. Use non-strict mode before setup to capture blockers; use `--strict` after `scripts/deploy/setup_server_ros_pct.sh` to prove PCT-backed gates are runnable.
+- `setup_linux_validation_host.sh` - Canonical ROS-free Linux validation-host setup for PCT, MuJoCo, nav-kernel, MID-360 asset, multi-floor, and routecheck gates. The optional Fast-LIO2 compatibility setup is quarantined at `scripts/compat/ros2/setup_fastlio2_validation_host.sh`.
+- `pct_runtime_preflight.py` - Read-only PCT planner-runtime diagnostic. It inspects the selected runtime (default `rust_process`) and writes canonical `pct_planner_runtime` plus `pct_planner_runtime_ok` evidence to `artifacts/server_sim_closure/pct_runtime_preflight/report.json`. Use non-strict mode to capture blockers and `--strict` to require the selected runtime. Explicit `native` selection is parity-only and reports its own legacy host/ABI requirements; those requirements are not default readiness checks.
 - `routecheck_preflight_gate.py` - Gateway route preflight with no goal or cmd_vel publication.
 - `blocked_route_replan_gate.py` - Gateway blocked-route replanning preflight with a synthetic route obstruction and no goal or cmd_vel publication.
 - `navigation_replay_deviation_gate.py` - Offline replay/deviation check for routecheck-derived, JSON trace, or recorded topic JSONL global path, local path, cmd_vel, and odometry traces without hardware output.
@@ -84,18 +82,18 @@ Use the safety class before running a script:
 - `gazebo_runtime_gate.py` - Gazebo runtime simulation gate; requires ROS2 isolated simulation and records frontier post-pass no-gain/stall observation evidence.
 - `pct_saved_map_navigation_gate.py` - Saved-map PCT navigation gate. `--contract-only --source-report <json>` checks relocalization/source-report/map/tomogram binding, including same-source hash identity, without running PCT preview or MuJoCo motion; it is a saved-map wiring check, not full navigation evidence.
 - `saved_map_relocalize_contract_gate.py` / `saved_map_relocalize_runtime_gate.py` - Saved-map relocalization gates. `saved_map_relocalize_runtime_gate.py --preflight-only` checks saved-map assets, localizer config, host markers, and ROS 2 Python importability without launching MuJoCo/Fast-LIO/localizer processes.
-- `cmu_unity_runtime_gate.py` / `cmu_unity_sim_gate.py` - CMU Unity runtime and contract gates, including strict late-window frontier/no-gain stall evidence and TARE strategy-quality stats.
 
 ## Validation And Diagnosis
 
 - `multifloor_nav_validation.py` - Multi-floor navigation validation. Default safe mode is local non-motion; `--bridge-loop` changes it to simulated motion only.
 - `large_terrain_nav_validation.py` - Large-terrain global-planning asset validation. It does not exercise local planner or path follower backends and reports those algorithm surfaces as `not_exercised`.
-- The current 2026-06-08 target-host large-terrain report is green only for
-  native PCT discrete planning. The gate disables the unstable GPMP optimizer
-  with `LINGTU_PCT_OPTIMIZE_TRAJECTORY=0` inside the isolated child process and
-  records `pct_optimizer_enabled=false` plus
-  `pct_planner_path_mode=native_astar_raw_path`. This is not an A* fallback and
-  not a MuJoCo motion-loop pass.
+- PCT cases record the selected `pct_planner_runtime` and the summary
+  `pct_planner_runtime_ok`. The isolated child disables trajectory optimization
+  by default with `LINGTU_PCT_OPTIMIZE_TRAJECTORY=0`, reporting
+  `pct_optimizer_enabled=false` and `pct_planner_path_mode=astar_raw_path`.
+  The other canonical path mode is `optimized_trajectory`; neither value means
+  that the service fell back to a different planner, and this gate is not a
+  MuJoCo motion-loop pass.
 - The 2026-06-08 target-host preflight checks both the ROS2 `local_planner`
   package and the official MID-360 scan-pattern asset before closed-loop
   MuJoCo/PCT gates. If `ros2 pkg executables local_planner` does not list
@@ -110,7 +108,7 @@ Use the safety class before running a script:
   pass on the target host; the saved-map PCT report records
   `selected_planner=pct`,
   `pct_optimizer_enabled=false`, and
-  `pct_planner_path_mode=native_astar_raw_path`. The overall DimOS closure
+  `pct_planner_path_mode=astar_raw_path`. The overall DimOS closure
   remains red at 12/13 required gates because `large_loop_closure` still fails.
   The latest large-loop live run ended without writing a child report before
   the launcher fallback was installed; future no-report exits are recorded as
@@ -120,8 +118,6 @@ Use the safety class before running a script:
 - `large_loop_diagnosis_matrix.py` - Large-loop diagnosis matrix.
 - `render_slam_validation_screenshots.py` - SLAM validation screenshot renderer.
 - `run_slam_dataset_test_v2.py` - SLAM dataset test runner.
-- `cmu_unity_tomogram_capture.py` - CMU Unity tomogram capture helper.
-- `run_global_planner.py` - Legacy ROS launch compatibility wrapper for `sim/launch/sim.launch.py`. It requires an isolated nonzero `ROS_DOMAIN_ID` and must not be used as the current G4 planner evidence source.
 
 ## Demo And Runtime Entrypoints
 
@@ -130,17 +126,16 @@ Use the safety class before running a script:
 - `run_semantic_full_stack.py` - Semantic full-stack simulation launcher.
 - `demo_search.py` - Search demo.
 - `policy_nav_smoke.py` - OctoPlanner + nanobind/nav_kernel policy-mode navigation smoke test; simulated motion only.
-- `cmu_unity_lingtu_stack.py` - CMU Unity LingTu stack helper for controlled simulation experiments; not the default product runtime.
 - `nav_overlay.py` - Navigation overlay visualization.
 - `view_scene.py` - Scene viewer.
 - `benchmark_following.py` - Person-following benchmark.
-- `record_policy_nav_video.py` / `render_gazebo_frontier_video.py` - Video recording/rendering helpers.
+- `mujoco/record_policy_nav_video.py` / `render_gazebo_frontier_video.py` - Video recording/rendering helpers.
 - `go1_indoor_nav.py` / `go1_nav_full.py` - legacy Go1 demos; require optional `sim/robots/go1_playground/` assets and are not part of current G4 closure.
 
 ## Shell Launchers And Legacy Helpers
 
-- `launch_mujoco_fastlio2_live.sh` - compatibility wrapper for `mujoco/launch_fastlio2_live.sh`. Use ROS2 isolated simulation.
-- `launch_cmu_unity_lingtu_runtime.sh` / `launch_cmu_unity_baseline.sh` - CMU Unity runtime and baseline launchers.
+
+- `launch_cmu_unity_baseline.sh` - external upstream benchmark launcher only. It does not invoke ProductControl or produce a RunPlan. Manual relay experiments may use `sim/engine/bridge/cmu_unity_lingtu_adapter.py`; they are adapter evidence, not a LingTu Product runtime.
 - `launch_lingtu_gazebo_industrial_demo.sh` - Gazebo industrial simulation demo launcher.
 - `_run_legkilo_test.sh` / `run_legkilo_test.sh` - legacy/manual dataset helper scripts. They may source ROS/install spaces, start SLAM dataset processes, or clean up external processes; do not include them in the G4 server closure.
 - `test_*.sh` - integration smoke helpers. Treat as legacy manual unless a gate documents a stricter contract.

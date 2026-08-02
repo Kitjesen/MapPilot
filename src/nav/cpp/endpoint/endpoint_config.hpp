@@ -15,7 +15,7 @@ inline StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
                                                   const InputGateConfig &gate_cfg) {
   StatusWriterConfig out;
   out.control_mode = controlModeName(cfg.control_mode);
-  out.profile = cfg.profile;
+  out.product = cfg.product;
   out.config_fingerprint = cfg.config_fingerprint;
   out.domain_id = cfg.domain_id;
   out.tick_hz = cfg.tick_hz;
@@ -35,7 +35,6 @@ inline StatusWriterConfig buildStatusWriterConfig(const CliConfig &cfg,
   out.teleop_local_planner = cfg.teleop_local_planner;
   out.teleop_planner_horizon_m = cfg.teleop_planner_horizon_m;
   out.teleop_planner_max_deviation_deg = cfg.teleop_planner_max_deviation_deg;
-  out.allow_legacy_motion_inputs = cfg.allow_legacy_motion_inputs;
   out.path_library_dir = cfg.path_library_dir;
   out.map_path = cfg.map_path;
   out.global_planner = globalPlannerBackendName(cfg.global_planner);

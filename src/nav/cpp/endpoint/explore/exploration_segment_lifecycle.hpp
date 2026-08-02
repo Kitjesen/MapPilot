@@ -15,9 +15,9 @@ inline constexpr std::string_view kGoalOutsideStaticMapReason{"goal_outside_stat
   return reason == kGoalOutsideStaticMapReason;
 }
 
-// DDS-free correlation and release rules for TARE's rolling-map segment
-// fallback. The full map identity remains owned by the caller; this seam uses
-// the fields carried by the segment wire protocol.
+// DDS-free correlation and release rules for a live rolling-map segment.
+// The full map identity remains owned by the caller; this seam uses the fields
+// carried by the segment wire protocol.
 struct ExplorationSegmentRequestBinding {
   std::string request_id;
   std::string session_id;

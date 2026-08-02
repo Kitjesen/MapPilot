@@ -11,17 +11,16 @@ import logging
 
 from runtime.adapters.perception_gateway import camera_module
 from runtime.blueprint import Blueprint
+from runtime.contracts import (
+    CAMERA_BACKEND_ORBBEC,
+    CAMERA_BACKEND_SIM,
+    CAMERA_CONFIG_FORCE,
+    CAMERA_ROLE,
+)
 from runtime.plugin_resolution import (
     optional_fallback_module,
     optional_stack_module,
     stack_module,
-)
-from runtime.contracts import (
-    CAMERA_BACKEND_ORBBEC,
-    CAMERA_BACKEND_SIM,
-    CAMERA_COMPAT_CONFIG_FORCE,
-    CAMERA_CONFIG_FORCE,
-    CAMERA_ROLE,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,17 +31,14 @@ def camera(**config) -> Blueprint:
     bp = Blueprint()
     drv_name = config.get("_driver_cls_name", "")
     camera_enabled = bool(config.get("enable_camera", True))
-    force_camera = bool(config.get(CAMERA_CONFIG_FORCE, config.get(CAMERA_COMPAT_CONFIG_FORCE)))
+    force_camera = bool(config.get(CAMERA_CONFIG_FORCE))
     use_driver_camera = bool(config.get("use_driver_camera", False))
     needs_camera = camera_enabled and (force_camera or not use_driver_camera)
 
     if needs_camera:
         try:
             default_backend = CAMERA_BACKEND_SIM if drv_name == "MujocoDriverModule" else CAMERA_BACKEND_ORBBEC
-            CameraModule = camera_module(
-                enable_ros2=bool(config.get("enable_ros2_camera_bridge", False)),
-                backend=str(config.get("camera_backend", default_backend)),
-            )
+            CameraModule = camera_module(backend=str(config.get("camera_backend", default_backend)))
             if CameraModule is None:
                 raise ImportError("no registered camera adapter")
             # Read camera rotation from robot_config.yaml
@@ -64,11 +60,6 @@ def camera(**config) -> Blueprint:
 def perception(detector: str = "yoloe", encoder: str = "mobileclip", **config) -> Blueprint:
     """RGB-D scene perception plus optional reconstruction and standalone tools."""
     bp = camera(**config)
-    if config.get("manage_services", True):
-        logger.debug(
-            "perception(manage_services=True) is ignored; external camera "
-            "startup is handled by lingtu.assembly.stacks.system.external_services"
-        )
 
     try:
         PerceptionModule = stack_module(

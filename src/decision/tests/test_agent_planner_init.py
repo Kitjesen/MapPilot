@@ -15,7 +15,13 @@ for _p in [_repo, _src]:
 from decision.modules.agent_planner import AgentPlannerModule
 from runtime.module import Module, skill
 from runtime.msgs.geometry import Vector3
-from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import (
+    NavigationGoalState,
+    NavigationGoalStatus,
+    NavigationLifecycle,
+    NavigationState,
+    Odometry,
+)
 from runtime.msgs.semantic import Detection3D, SceneGraph
 from runtime.stream import In, Out
 
@@ -57,6 +63,8 @@ class TestAgentPlannerInit:
         assert isinstance(mod.agent_instruction, In)
         assert isinstance(mod.scene_graph, In)
         assert isinstance(mod.odometry, In)
+        assert isinstance(mod.navigation_state, In)
+        assert isinstance(mod.navigation_goal_status, In)
         assert isinstance(mod.mission_status, In)
 
     def test_out_ports(self):
@@ -127,6 +135,38 @@ class TestAgentPlannerStateUpdate:
         self.mod._on_mission_status({"state": "RECOVERING"})
         # RECOVERING is a terminal state, should not update _last_nav_state
         assert self.mod._last_nav_state == "NAVIGATING"
+
+    def test_native_navigation_state_is_authoritative(self):
+        self.mod._on_mission_status({"state": "EXECUTING"})
+        self.mod._on_navigation_state(
+            NavigationState(
+                ts=42.0,
+                frame_id="map",
+                boot_id="navd-boot",
+                sequence=1,
+                lifecycle_state=int(NavigationLifecycle.PLANNING),
+            )
+        )
+
+        assert self.mod._last_nav_state == "PLANNING"
+
+    def test_native_goal_status_is_retained_by_request(self):
+        self.mod._on_navigation_goal_status(
+            NavigationGoalStatus(
+                ts=43.0,
+                frame_id="map",
+                boot_id="navd-boot",
+                sequence=2,
+                task_id="navigation-task-agent-goal-1",
+                request_id="agent-goal-1",
+                state=int(NavigationGoalState.REACHED),
+                goal_epoch=1,
+            )
+        )
+
+        status = self.mod._navigation_goal_status_by_request["agent-goal-1"]
+        assert status["state_name"] == "REACHED"
+        assert status["terminal"] is True
 
 
 # ---------------------------------------------------------------------------

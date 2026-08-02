@@ -3,91 +3,64 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from lingtu.assembly.stacks.driver import RobotProfile
-from runtime.contracts import HW_COMPAT_CONFIG_BRIDGE, HW_COMPAT_CONFIG_ENABLE
+import pytest
+
+import runtime.profiles.catalog as runtime_catalog
+from lingtu.assembly.products import resolve_product_host_runtime
+from lingtu.assembly.products.host_defaults import (
+    FIELD_PRODUCT_HOST_DEFAULTS,
+    FIELD_PRODUCT_NAMES,
+    FIELD_PRODUCT_VARIANT_HOST_DEFAULTS,
+)
+from lingtu.assembly.stacks.driver import DriverBackend
+from runtime.graph.loader import load_runtime_graph
 from runtime.profiles.binding_policy import (
     LEGACY_SENSOR_BINDING_KEYS,
-    LIDAR_LEGACY_DRIVER_START_KEYS,
-    ROS2_CAMERA_BRIDGE_ENABLE_KEYS,
     ROS2_RERUN_BRIDGE_ENABLE_KEYS,
     resolved_autonomy_backend_selection,
     ros2_autonomy_backend_violations,
     ros2_runtime_binding_violations,
 )
-from runtime.profiles.catalog.endpoint_adapter_configs import (
-    CMU_UNITY_CONFIG,
-    GAZEBO_CONFIG,
+from runtime.profiles.catalog.driver_backends import (
+    CANONICAL_DRIVER_BACKENDS,
+    CANONICAL_DRIVER_PROTOCOLS,
+    DRIVER_BACKENDS,
+    DRIVER_PROTOCOLS,
+    driver_backend_defaults,
+    driver_backend_module_name,
+    driver_backend_names,
+    driver_backend_protocol,
+)
+from runtime.profiles.catalog.driver_catalog import (
+    DRIVER_CATALOG_SCHEMA_VERSION,
+    driver_catalog,
+    driver_catalog_backends,
+    driver_catalog_modules,
+    driver_catalog_path,
+    driver_catalog_protocols,
+    driver_catalog_runtime_defaults,
+)
+from runtime.profiles.catalog.driver_runtime_defaults import (
+    CANONICAL_DRIVER_RUNTIME_DEFAULTS,
+    DRIVER_RUNTIME_DEFAULTS,
+    driver_runtime_defaults,
+)
+from runtime.profiles.catalog.host_defaults import (
+    HOST_PROFILE_DEFAULTS,
+    HOST_PROFILE_SNAPSHOT_NAMES,
+)
+from runtime.profiles.catalog.local_host_defaults import (
+    LOCAL_HOST_DEFAULTS,
+    LOCAL_PROFILE_NAMES,
+)
+from runtime.profiles.catalog.profile_adapter_configs import (
     MUJOCO_LIVE_CONFIG,
 )
-from runtime.profiles.catalog.endpoints import (
-    COMPAT_RUNTIME_ENDPOINT_ALIASES as CATALOG_COMPAT_ENDPOINT_ALIASES,
+from runtime.profiles.catalog.profile_adapters import PROFILE_ADAPTERS as CATALOG_ADAPTERS
+from runtime.profiles.catalog.profile_adapters import (
+    PROFILE_ADAPTERS as RUNTIME_CATALOG_ADAPTERS,
 )
-from runtime.profiles.catalog.endpoints import (
-    PRODUCT_PROFILE_ENDPOINTS,
-)
-from runtime.profiles.catalog.endpoints import (
-    PRODUCT_RUNTIME_ENDPOINT_ALIASES as CATALOG_PRODUCT_ENDPOINT_ALIASES,
-)
-from runtime.profiles.catalog.endpoints import (
-    RUNTIME_ENDPOINT_ALIASES as CATALOG_ENDPOINT_ALIASES,
-)
-from runtime.profiles.catalog.endpoints import RUNTIME_ENDPOINTS as CATALOG_ENDPOINTS
-from runtime.profiles.catalog.endpoints import (
-    RUNTIME_ENDPOINTS as RUNTIME_CATALOG_ENDPOINTS,
-)
-from runtime.profiles.catalog.products import (
-    LIGHTWEIGHT_PRODUCT_PROFILES,
-    OPTIONAL_NATIVE_PRODUCT_PROFILES,
-    PRODUCT_INTENT_PROFILES,
-    PRODUCT_PROFILES,
-    PROFILE_NAME_OVERLAP,
-    PROFILE_SNAPSHOT_TARGETS,
-    SIMULATION_ENTRYPOINT_PROFILES,
-    SIMULATION_PROFILES,
-    is_product_profile,
-    is_simulation_profile,
-    product_profile,
-)
-from runtime.profiles.catalog.products import (
-    PROFILES as CATALOG_PROFILES,
-)
-from runtime.profiles.catalog.products import (
-    PROFILES as RUNTIME_CATALOG_PROFILES,
-)
-from runtime.profiles.catalog.robot_archives import (
-    ROBOT_ARCHIVE_SCHEMA_VERSION,
-    robot_archive,
-    robot_archive_canonical_driver_modules,
-    robot_archive_canonical_driver_profiles,
-    robot_archive_canonical_presets,
-    robot_archive_canonical_runtime_defaults,
-    robot_archive_compat_driver_modules,
-    robot_archive_compat_driver_profiles,
-    robot_archive_compat_presets,
-    robot_archive_compat_runtime_defaults,
-    robot_archive_path,
-)
-from runtime.profiles.catalog.robot_runtime_defaults import (
-    CANONICAL_ROBOT_RUNTIME_DEFAULTS,
-    COMPAT_ROBOT_RUNTIME_DEFAULTS,
-    ROBOT_RUNTIME_DEFAULTS,
-)
-from runtime.profiles.catalog.robots import (
-    CANONICAL_ROBOT_DRIVER_PROFILES,
-    CANONICAL_ROBOT_PRESETS,
-    ROBOT_DRIVER_PROFILES,
-    ROBOT_PRESETS,
-    robot_driver_module_name,
-    robot_driver_profile_names,
-    robot_preset_names,
-)
-from runtime.profiles.catalog.robots import (
-    COMPAT_ROBOT_DRIVER_PROFILES as CATALOG_COMPAT_ROBOT_DRIVER_PROFILES,
-)
-from runtime.profiles.catalog.robots import (
-    COMPAT_ROBOT_PRESETS as CATALOG_COMPAT_ROBOT_PRESETS,
-)
-from runtime.profiles.catalog.robots import ROBOT_PRESETS as RUNTIME_ROBOT_PRESETS
+from runtime.profiles.catalog.profile_adapters import profile_adapter_names_for_profile
 from runtime.profiles.catalog.runtime_paths import (
     DEFAULT_GATEWAY_PORT,
     DEFAULT_PLANNING_FRAME_ID,
@@ -96,246 +69,241 @@ from runtime.profiles.catalog.runtime_paths import (
     RUNTIME_ODOM_FRAME_ID,
     _resolve_octoplanner3d_map,
 )
-from runtime.profiles.endpoint_config import endpoint_config_for_profile
-from runtime.profiles.endpoints import (
-    RUNTIME_ENDPOINTS as COMPAT_ENDPOINTS,
+from runtime.profiles.catalog.simulation_profiles import (
+    SIMULATION_ENTRYPOINT_PROFILES,
+    SIMULATION_PROFILES,
 )
-from runtime.profiles.endpoints import (
-    RUNTIME_ENDPOINTS as RUNTIME_ENDPOINTS_RUNTIME,
+from runtime.profiles.profile_adapters import (
+    PROFILE_ADAPTERS as COMPAT_ADAPTERS,
 )
-from runtime.profiles.endpoints import (
+from runtime.profiles.profile_adapters import (
+    PROFILE_ADAPTERS as PROFILE_ADAPTERS_RUNTIME,
+)
+from runtime.profiles.profile_adapters import profile_adapter_names
+from runtime.profiles.profile_adapters import (
     resolve_runtime_run_spec as resolve_runtime_run_spec_compat,
 )
-from runtime.profiles.endpoints import (
+from runtime.profiles.profile_adapters import (
     resolve_runtime_run_spec as resolve_runtime_run_spec_runtime,
 )
-from runtime.profiles.endpoints import runtime_endpoint_names
 from runtime.profiles.resolver import resolve_runtime_config
-from runtime.runtime_profiles import PROFILES as COMPAT_PROFILES
-from runtime.runtime_profiles import ROBOT_PRESETS as RUNTIME_PROFILES_ROBOT_PRESETS
 
 ROOT = Path(__file__).resolve().parents[3]
 SRC = ROOT / "src"
+ALL_NAMED_HOST_DEFAULTS = {
+    **HOST_PROFILE_DEFAULTS,
+    **FIELD_PRODUCT_HOST_DEFAULTS,
+}
 
 
-def test_runtime_profiles_reexports_robot_catalog() -> None:
-    assert COMPAT_PROFILES is CATALOG_PROFILES
-    assert RUNTIME_PROFILES_ROBOT_PRESETS is ROBOT_PRESETS
+def _resolve_named_runtime(name: str):
+    if name in FIELD_PRODUCT_HOST_DEFAULTS:
+        return resolve_product_host_runtime(name, "real")
+    return resolve_runtime_config(name)
 
 
-def test_runtime_profile_catalog_is_single_source() -> None:
-    assert CATALOG_ENDPOINTS is RUNTIME_CATALOG_ENDPOINTS
-    assert CATALOG_PROFILES is RUNTIME_CATALOG_PROFILES
-    assert ROBOT_PRESETS is RUNTIME_ROBOT_PRESETS
+def test_product_names_and_host_defaults_follow_runtime_graph() -> None:
+    expected = tuple(load_runtime_graph().products)
+
+    assert FIELD_PRODUCT_NAMES == expected
+    assert tuple(FIELD_PRODUCT_HOST_DEFAULTS) == expected
+    assert "lite" not in FIELD_PRODUCT_NAMES
+    assert "super_lio" not in FIELD_PRODUCT_NAMES
+    assert "super_lio_relocation" not in FIELD_PRODUCT_NAMES
 
 
-def test_runtime_endpoint_resolver_reexports_endpoint_catalog() -> None:
-    assert COMPAT_ENDPOINTS is CATALOG_ENDPOINTS
-    assert COMPAT_ENDPOINTS is RUNTIME_ENDPOINTS_RUNTIME
-    assert resolve_runtime_run_spec_compat is resolve_runtime_run_spec_runtime
-    assert PRODUCT_PROFILE_ENDPOINTS["nav"] == ("thunder_field",)
-    assert CATALOG_ENDPOINTS["thunder_lite"].robot_preset == "thunder"
-    assert CATALOG_ENDPOINTS["thunder_lite"].data_source == "thunder_lite_local"
-    assert CATALOG_ENDPOINTS["thunder_lite"].config_overrides == {
-        "enable_hw": False,
-    }
-    assert CATALOG_ENDPOINTS["thunder_field"].robot_preset == "thunder"
-    assert CATALOG_ENDPOINTS["thunder_field"].data_source == "thunder_field"
-    assert CATALOG_ENDPOINTS["thunder_field"].module_transport == "local"
-    assert CATALOG_ENDPOINTS["thunder_field"].endpoint_transport == "dds"
-    assert CATALOG_ENDPOINTS["thunder_field"].endpoint_contract == "thunder_field_dds_v1"
-    assert CATALOG_ENDPOINTS["thunder_field"].config_overrides == {
-        "enable_hw": False,
-        "enable_robot_driver": False,
-        "enable_lidar": False,
-        "enable_imu": False,
-        "command_output_mode": "endpoint_only",
-        "hardware_control_boundary": "driver",
-        "localization_adapter": "cpp_slam_status",
-        "native_navigation_endpoint": "lingtu-nav-dds",
-        "manage_session_services": False,
-        "enable_map_out": False,
-        "enable_camera": True,
-        "camera_backend": "dds",
-    }
-    assert CATALOG_PRODUCT_ENDPOINT_ALIASES["field"] == "thunder_field"
-    assert CATALOG_PRODUCT_ENDPOINT_ALIASES["thunder-field"] == "thunder_field"
-    assert CATALOG_PRODUCT_ENDPOINT_ALIASES["thunder"] == "thunder_field"
-    assert CATALOG_PRODUCT_ENDPOINT_ALIASES["thunder-lite"] == "thunder_lite"
-    assert CATALOG_ENDPOINT_ALIASES["thunder-field"] == "thunder_field"
-    assert "portable_fastlio2" not in CATALOG_ENDPOINTS
-    assert "portable-lio" not in CATALOG_PRODUCT_ENDPOINT_ALIASES
-    assert "windows-fastlio2" not in CATALOG_PRODUCT_ENDPOINT_ALIASES
-
-
-def test_legacy_board_endpoint_names_are_compatibility_only() -> None:
-    assert CATALOG_COMPAT_ENDPOINT_ALIASES["real_s100p"] == "thunder_field"
-    assert CATALOG_COMPAT_ENDPOINT_ALIASES["s100p"] == "thunder_field"
-    assert CATALOG_ENDPOINT_ALIASES["real_s100p"] == "thunder_field"
-
-
-def test_runtime_endpoint_names_hide_compat_aliases_by_default() -> None:
-    product_names = runtime_endpoint_names(include_aliases=True)
-    compat_names = runtime_endpoint_names(
-        include_aliases=True,
-        include_compat_aliases=True,
+def test_host_default_categories_are_explicit_and_disjoint() -> None:
+    groups = (
+        set(FIELD_PRODUCT_HOST_DEFAULTS),
+        set(LOCAL_HOST_DEFAULTS),
+        set(SIMULATION_ENTRYPOINT_PROFILES),
     )
 
-    assert "thunder-field" in product_names
-    assert "field" in product_names
-    assert "real_s100p" not in product_names
-    assert "s100p" not in product_names
-    assert "real_s100p" in compat_names
-    assert "s100p" in compat_names
+    for index, group in enumerate(groups):
+        for other in groups[index + 1 :]:
+            assert group.isdisjoint(other)
+
+    assert LOCAL_PROFILE_NAMES == ("lite",)
+    assert set(HOST_PROFILE_DEFAULTS) == set().union(*groups[1:])
+    assert set(FIELD_PRODUCT_HOST_DEFAULTS).isdisjoint(HOST_PROFILE_DEFAULTS)
 
 
-def test_robot_driver_profiles_share_robot_catalog_names() -> None:
-    assert set(ROBOT_DRIVER_PROFILES) == set(ROBOT_PRESETS)
-    assert set(RobotProfile.known_presets()) == set(ROBOT_PRESETS)
-    assert set(ROBOT_RUNTIME_DEFAULTS) == set(ROBOT_PRESETS)
+@pytest.mark.parametrize(
+    "profile",
+    ("super_lio", "super_lio_relocation", "relocation"),
+)
+def test_super_lio_implementation_names_are_not_host_profiles(profile: str) -> None:
+    assert profile not in HOST_PROFILE_DEFAULTS
+    with pytest.raises(KeyError, match=f"unknown profile: {profile}"):
+        resolve_runtime_config(profile)
 
 
-def test_robot_catalog_hides_legacy_board_names_from_canonical_presets() -> None:
-    assert "thunder" in CANONICAL_ROBOT_PRESETS
-    assert "thunder" in CANONICAL_ROBOT_DRIVER_PROFILES
-    assert "s100p" not in CANONICAL_ROBOT_PRESETS
-    assert "navigate" not in CANONICAL_ROBOT_PRESETS
-    assert CATALOG_COMPAT_ROBOT_PRESETS["s100p"] == CANONICAL_ROBOT_PRESETS["thunder"]
-    assert CATALOG_COMPAT_ROBOT_DRIVER_PROFILES["s100p"] == CANONICAL_ROBOT_DRIVER_PROFILES["thunder"]
-    assert "s100p" not in robot_preset_names(include_compat=False)
-    assert "s100p" not in robot_driver_profile_names(include_compat=False)
-    assert "s100p" in robot_preset_names(include_compat=True)
-    assert "s100p" in robot_driver_profile_names(include_compat=True)
-    assert "s100p" not in RobotProfile.known_presets(include_compat=False)
-    assert robot_driver_module_name("thunder") == "ThunderDriver"
-    assert robot_driver_module_name("s100p") == "ThunderDriver"
-    assert COMPAT_ROBOT_RUNTIME_DEFAULTS["s100p"] == CANONICAL_ROBOT_RUNTIME_DEFAULTS["thunder"]
+
+@pytest.mark.parametrize("profile", ("sim_gazebo", "sim_industrial", "sim_cmu_tare"))
+def test_removed_broken_sim_profiles_fail_closed(profile: str) -> None:
+    assert profile not in HOST_PROFILE_DEFAULTS
+    assert profile not in SIMULATION_ENTRYPOINT_PROFILES
+    assert profile not in SIMULATION_PROFILES
+    assert profile_adapter_names_for_profile(profile) == ()
+    with pytest.raises(KeyError, match=f"unknown profile: {profile}"):
+        resolve_runtime_config(profile)
+
+def test_runtime_profile_catalog_is_single_source() -> None:
+    assert CATALOG_ADAPTERS is RUNTIME_CATALOG_ADAPTERS
+    assert runtime_catalog.DRIVER_BACKENDS is DRIVER_BACKENDS
+    assert runtime_catalog.DRIVER_PROTOCOLS is DRIVER_PROTOCOLS
 
 
-def test_thunder_is_canonical_product_robot_name() -> None:
-    assert ROBOT_PRESETS["thunder"]["robot"] == "thunder"
-    assert ROBOT_PRESETS["thunder"]["dog_host"] == "127.0.0.1"
-    assert ROBOT_PRESETS["thunder_remote"]["dog_host"] == "192.168.66.13"
-    assert ROBOT_PRESETS["s100p"]["robot"] == "thunder"
-    assert ROBOT_PRESETS["navigate"]["robot"] == "thunder"
-
-
-def test_thunder_robot_catalog_is_sourced_from_robot_archive() -> None:
-    archive = robot_archive("thunder")
-
-    assert robot_archive_path("thunder").name == "thunder.yaml"
-    assert archive["schema_version"] == ROBOT_ARCHIVE_SCHEMA_VERSION
-    assert archive["robot"] == "thunder"
-    assert robot_archive_canonical_presets("thunder") == {
-        "thunder": CANONICAL_ROBOT_PRESETS["thunder"],
-        "thunder_remote": CANONICAL_ROBOT_PRESETS["thunder_remote"],
+def test_profile_adapter_resolver_reexports_adapter_catalog() -> None:
+    assert COMPAT_ADAPTERS is CATALOG_ADAPTERS
+    assert COMPAT_ADAPTERS is PROFILE_ADAPTERS_RUNTIME
+    assert resolve_runtime_run_spec_compat is resolve_runtime_run_spec_runtime
+    assert profile_adapter_names_for_profile("nav") == ()
+    assert CATALOG_ADAPTERS["thunder_lite"].driver_backend == "thunder"
+    assert CATALOG_ADAPTERS["thunder_lite"].data_source == "thunder_lite_local"
+    assert CATALOG_ADAPTERS["thunder_lite"].config_overrides == {
+        "enable_hw": False,
     }
-    assert robot_archive_compat_presets("thunder") == CATALOG_COMPAT_ROBOT_PRESETS
-    assert robot_archive_canonical_driver_profiles("thunder") == {
-        "thunder": CANONICAL_ROBOT_DRIVER_PROFILES["thunder"],
-        "thunder_remote": CANONICAL_ROBOT_DRIVER_PROFILES["thunder_remote"],
+    assert "thunder_dds" not in CATALOG_ADAPTERS
+    assert "portable_fastlio2" not in CATALOG_ADAPTERS
+
+
+def test_profile_adapter_names_expose_only_canonical_names() -> None:
+    adapter_names = profile_adapter_names()
+
+    assert adapter_names == tuple(CATALOG_ADAPTERS)
+    assert "thunder-lite" not in adapter_names
+    assert "thunder-basic" not in adapter_names
+
+
+def test_driver_protocols_share_internal_driver_backend_names() -> None:
+    assert set(DRIVER_PROTOCOLS) == set(DRIVER_BACKENDS)
+    assert set(DriverBackend.known_backends()) == set(DRIVER_BACKENDS)
+    assert set(DRIVER_RUNTIME_DEFAULTS) == set(DRIVER_BACKENDS)
+
+
+def test_driver_catalog_exposes_only_canonical_backends() -> None:
+    expected = {
+        "stub",
+        "sim",
+        "sim_endpoint",
+
+        "thunder",
+        "thunder_remote",
     }
-    assert robot_archive_compat_driver_profiles("thunder") == (CATALOG_COMPAT_ROBOT_DRIVER_PROFILES)
-    assert robot_archive_canonical_driver_modules("thunder") == {
+
+    assert set(CANONICAL_DRIVER_BACKENDS) == expected
+    assert set(CANONICAL_DRIVER_PROTOCOLS) == expected
+    assert set(CANONICAL_DRIVER_RUNTIME_DEFAULTS) == expected
+    assert set(DRIVER_BACKENDS) == expected
+    assert set(DRIVER_PROTOCOLS) == expected
+    assert set(DRIVER_RUNTIME_DEFAULTS) == expected
+    assert set(driver_backend_names()) == expected
+    assert set(DriverBackend.known_backends()) == expected
+    assert driver_backend_module_name("thunder") == "ThunderDriver"
+
+
+@pytest.mark.parametrize("name", ["s100p", "navigate", "sim_gazebo"])
+def test_removed_driver_backend_aliases_fail_closed(name: str) -> None:
+    with pytest.raises(KeyError):
+        driver_backend_defaults(name)
+    with pytest.raises(KeyError):
+        driver_backend_protocol(name)
+    with pytest.raises(KeyError):
+        driver_backend_module_name(name)
+    with pytest.raises(KeyError):
+        driver_runtime_defaults(name)
+    with pytest.raises(KeyError):
+        DriverBackend(name)
+
+
+def test_thunder_driver_defaults_remain_canonical() -> None:
+    assert DRIVER_BACKENDS["thunder"]["robot"] == "thunder"
+    assert DRIVER_BACKENDS["thunder"]["dog_host"] == "127.0.0.1"
+    assert DRIVER_BACKENDS["thunder_remote"]["dog_host"] == "192.168.66.13"
+
+
+def test_thunder_driver_backends_are_sourced_from_driver_catalog() -> None:
+    catalog = driver_catalog("thunder")
+
+    assert driver_catalog_path("thunder").name == "thunder.yaml"
+    assert catalog["schema_version"] == DRIVER_CATALOG_SCHEMA_VERSION
+    assert "compat_aliases" not in catalog
+    assert driver_catalog_backends("thunder") == {
+        "thunder": CANONICAL_DRIVER_BACKENDS["thunder"],
+        "thunder_remote": CANONICAL_DRIVER_BACKENDS["thunder_remote"],
+    }
+    assert driver_catalog_protocols("thunder") == {
+        "thunder": CANONICAL_DRIVER_PROTOCOLS["thunder"],
+        "thunder_remote": CANONICAL_DRIVER_PROTOCOLS["thunder_remote"],
+    }
+    assert driver_catalog_modules("thunder") == {
         "thunder": "ThunderDriver",
         "thunder_remote": "ThunderDriver",
     }
-    assert robot_archive_compat_driver_modules("thunder") == {
-        "s100p": "ThunderDriver",
-        "navigate": "ThunderDriver",
+    assert driver_catalog_runtime_defaults("thunder") == {
+        "thunder": CANONICAL_DRIVER_RUNTIME_DEFAULTS["thunder"],
+        "thunder_remote": CANONICAL_DRIVER_RUNTIME_DEFAULTS["thunder_remote"],
     }
-    assert robot_archive_canonical_runtime_defaults("thunder") == {
-        "thunder": CANONICAL_ROBOT_RUNTIME_DEFAULTS["thunder"],
-        "thunder_remote": CANONICAL_ROBOT_RUNTIME_DEFAULTS["thunder_remote"],
-    }
-    assert robot_archive_compat_runtime_defaults("thunder") == (COMPAT_ROBOT_RUNTIME_DEFAULTS)
 
 
-def test_robot_presets_do_not_own_upper_stack_defaults() -> None:
+def test_driver_defaults_do_not_own_upper_stack_defaults() -> None:
     upper_stack_fields = {"slam_profile", "detector", "encoder"}
 
-    for preset, config in ROBOT_PRESETS.items():
-        assert upper_stack_fields.isdisjoint(config), preset
+    for backend, config in DRIVER_BACKENDS.items():
+        assert upper_stack_fields.isdisjoint(config), backend
 
-    assert ROBOT_RUNTIME_DEFAULTS["thunder"]["slam_profile"] == "localizer"
-    assert ROBOT_RUNTIME_DEFAULTS["thunder"]["detector"] == "bpu"
-    assert ROBOT_RUNTIME_DEFAULTS["stub"]["slam_profile"] == "none"
-    assert ROBOT_RUNTIME_DEFAULTS["stub"]["detector"] == "yoloe"
-
-
-def test_product_catalog_groups_cover_known_profiles() -> None:
-    grouped = set(PRODUCT_PROFILES) | set(SIMULATION_PROFILES)
-
-    assert grouped <= set(CATALOG_PROFILES)
-    assert set(PROFILE_SNAPSHOT_TARGETS) <= grouped
-    assert not set(PRODUCT_PROFILES) & set(SIMULATION_PROFILES)
-    assert PROFILE_NAME_OVERLAP == frozenset()
-    assert LIGHTWEIGHT_PRODUCT_PROFILES == ("lite",)
-    assert "lite" in PRODUCT_PROFILES
-    assert "lite" not in PROFILE_SNAPSHOT_TARGETS
-    assert product_profile("nav") == CATALOG_PROFILES["nav"]
+    assert DRIVER_RUNTIME_DEFAULTS["thunder"]["slam_profile"] == "localizer"
+    assert DRIVER_RUNTIME_DEFAULTS["thunder"]["detector"] == "bpu"
+    assert DRIVER_RUNTIME_DEFAULTS["stub"]["slam_profile"] == "none"
+    assert DRIVER_RUNTIME_DEFAULTS["stub"]["detector"] == "yoloe"
 
 
-def test_profile_catalog_exposes_explicit_product_and_simulation_views() -> None:
-    assert PRODUCT_INTENT_PROFILES is not SIMULATION_ENTRYPOINT_PROFILES
-    assert set(PRODUCT_INTENT_PROFILES) == set(PRODUCT_PROFILES)
+def test_host_default_categories_are_unambiguous() -> None:
+    assert set(HOST_PROFILE_SNAPSHOT_NAMES) <= set(HOST_PROFILE_DEFAULTS)
     assert set(SIMULATION_ENTRYPOINT_PROFILES) == set(SIMULATION_PROFILES)
-    assert set(PRODUCT_INTENT_PROFILES).isdisjoint(SIMULATION_ENTRYPOINT_PROFILES)
 
-    assert is_product_profile("lite") is True
-    assert is_product_profile("nav") is True
-    assert is_product_profile("sim") is False
-    assert is_simulation_profile("sim") is True
-    assert is_simulation_profile("dev") is True
-    assert is_simulation_profile("lite") is False
+    assert "nav" in FIELD_PRODUCT_NAMES
+    assert "lite" in LOCAL_PROFILE_NAMES
+    assert "sim" in SIMULATION_PROFILES
 
 
-def test_product_intents_do_not_own_robot_defaults() -> None:
-    for profile, config in PRODUCT_INTENT_PROFILES.items():
-        assert "_default_robot" not in config, profile
-        assert "dog_host" not in config, profile
-        assert "dog_port" not in config, profile
-        assert "auto_enable" not in config, profile
-        assert "auto_standup" not in config, profile
+def test_physical_host_defaults_do_not_own_driver_backend_defaults() -> None:
+    groups = (
+        FIELD_PRODUCT_HOST_DEFAULTS,
+        LOCAL_HOST_DEFAULTS,
+    )
+    for defaults in groups:
+        for profile, config in defaults.items():
+            assert "_driver_backend" not in config, profile
+            assert "dog_host" not in config, profile
+            assert "dog_port" not in config, profile
+            assert "auto_enable" not in config, profile
+            assert "auto_standup" not in config, profile
 
 
-def test_endpoint_config_helper_owns_endpoint_layer_composition() -> None:
-    endpoint = CATALOG_ENDPOINTS["thunder_field"]
-    endpoint_config = endpoint_config_for_profile(endpoint, "nav")
+def test_product_support_lives_only_in_env_catalog() -> None:
+    graph = load_runtime_graph()
 
-    assert endpoint.config_for_profile("nav") == endpoint_config
-    assert endpoint_config["_runtime_endpoint"] == "thunder_field"
-    assert endpoint_config["_endpoint_data_source"] == "thunder_field"
-    assert endpoint_config["_endpoint_transport"] == "dds"
-    assert "slam_profile" not in endpoint_config
-    assert endpoint_config["enable_lidar"] is False
-    assert endpoint_config["command_output_mode"] == "endpoint_only"
-
-
-def test_product_endpoint_matrix_matches_endpoint_catalog() -> None:
-    assert set(PRODUCT_PROFILE_ENDPOINTS) == set(PRODUCT_PROFILES)
-    for profile, expected_endpoints in PRODUCT_PROFILE_ENDPOINTS.items():
-        actual_endpoints = tuple(
-            endpoint_name
-            for endpoint_name, endpoint in CATALOG_ENDPOINTS.items()
-            if profile in endpoint.supported_profiles
-        )
-        assert actual_endpoints == expected_endpoints
+    assert profile_adapter_names_for_profile("nav") == ()
+    assert profile_adapter_names_for_profile("lite") == ("thunder_lite",)
+    assert profile_adapter_names_for_profile("super_lio") == ()
+    assert set(graph.envs["real"]["supported_products"]) == set(FIELD_PRODUCT_NAMES)
+    assert set(graph.envs["sim"]["supported_products"]) < set(FIELD_PRODUCT_NAMES)
+    for adapter in CATALOG_ADAPTERS.values():
+        assert set(adapter.supported_profiles) <= set(HOST_PROFILE_DEFAULTS)
+        assert not hasattr(adapter, "supported_products")
+        assert not hasattr(adapter, "product_overrides")
 
 
-def test_product_endpoint_layers_do_not_write_legacy_planner_backend() -> None:
-    for profile in PRODUCT_PROFILES:
-        assert "planner_backend" not in CATALOG_PROFILES[profile], profile
+def test_field_product_layers_do_not_write_legacy_planner_backend() -> None:
+    for profile in FIELD_PRODUCT_NAMES:
+        assert "planner_backend" not in FIELD_PRODUCT_HOST_DEFAULTS[profile], profile
 
-    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
-        supports_product = bool(set(endpoint.supported_profiles) & set(PRODUCT_PROFILES))
-        if supports_product:
-            assert "planner_backend" not in endpoint.config_overrides, endpoint_name
-        for profile in set(endpoint.profile_overrides) & set(PRODUCT_PROFILES):
-            assert "planner_backend" not in endpoint.profile_overrides[profile], (
-                endpoint_name,
-                profile,
-            )
+    graph = load_runtime_graph()
+    assert "planner_backend" not in graph.envs["real"]["host_config"]
+    for backend, implementation in graph.envs["sim"]["backends"].items():
+        assert "planner_backend" not in implementation["host_config"], backend
 
 
 def test_runtime_paths_own_shared_runtime_defaults() -> None:
@@ -350,81 +318,73 @@ def test_runtime_paths_own_shared_runtime_defaults() -> None:
 
 
 def test_catalog_profiles_consume_shared_runtime_defaults() -> None:
-    assert CATALOG_PROFILES["lite"]["gateway_port"] == DEFAULT_GATEWAY_PORT
-    assert CATALOG_PROFILES["lite"]["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
-    assert CATALOG_PROFILES["nav"]["gateway_port"] == DEFAULT_GATEWAY_PORT
-    assert CATALOG_PROFILES["sim"]["map_path"] == _resolve_octoplanner3d_map()
+    assert HOST_PROFILE_DEFAULTS["lite"]["gateway_port"] == DEFAULT_GATEWAY_PORT
+    assert HOST_PROFILE_DEFAULTS["lite"]["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
+    assert FIELD_PRODUCT_HOST_DEFAULTS["nav"]["gateway_port"] == DEFAULT_GATEWAY_PORT
+    assert HOST_PROFILE_DEFAULTS["sim"]["map_path"] == _resolve_octoplanner3d_map()
     assert MUJOCO_LIVE_CONFIG["gateway_port"] == DEFAULT_GATEWAY_PORT
     assert MUJOCO_LIVE_CONFIG["planning_frame_id"] == DEFAULT_PLANNING_FRAME_ID
     assert MUJOCO_LIVE_CONFIG["enable_map_out"] is False
     assert "enable_nav_out" not in MUJOCO_LIVE_CONFIG
-    assert GAZEBO_CONFIG["map_path"] == _resolve_octoplanner3d_map()
-    assert CMU_UNITY_CONFIG["python_autonomy_backend"] == "nanobind"
-    assert CMU_UNITY_CONFIG["python_path_follower_backend"] == "nav_kernel"
 
     assert (
-        CATALOG_ENDPOINTS["mujoco_live"].profile_overrides["tare_explore"]["planning_frame_id"] == RUNTIME_ODOM_FRAME_ID
-    )
-    assert (
-        CATALOG_ENDPOINTS["mujoco_live"].profile_overrides["sim_mujoco_octo_live"]["map_path"]
+        CATALOG_ADAPTERS["mujoco_live"].profile_overrides["sim_mujoco_octo_live"]["map_path"]
         == _resolve_octoplanner3d_map()
     )
 
 
 def test_nav_product_does_not_own_field_bridge_policy() -> None:
-    assert "slam_profile" not in CATALOG_PROFILES["nav"]
-    assert "endpoint_transport" not in CATALOG_PROFILES["nav"]
-    assert "nav" not in CATALOG_ENDPOINTS["thunder_field"].profile_overrides
+    assert "slam_profile" not in FIELD_PRODUCT_HOST_DEFAULTS["nav"]
+    assert "endpoint_transport" not in FIELD_PRODUCT_HOST_DEFAULTS["nav"]
+    assert profile_adapter_names_for_profile("nav") == ()
 
 
 def _ros_bridge_keys(config: dict) -> list[str]:
     return [key for key in config if key.startswith("enable_ros2")]
 
 
-def test_catalog_profiles_do_not_own_ros_bridge_switches() -> None:
-    for profile in CATALOG_PROFILES:
-        assert _ros_bridge_keys(CATALOG_PROFILES[profile]) == [], profile
+def test_host_defaults_do_not_own_ros_bridge_switches() -> None:
+    for profile, defaults in HOST_PROFILE_DEFAULTS.items():
+        assert _ros_bridge_keys(defaults) == [], profile
 
 
-def test_catalog_profiles_do_not_start_legacy_lidar_driver() -> None:
-    for profile, config in CATALOG_PROFILES.items():
-        for key in LIDAR_LEGACY_DRIVER_START_KEYS:
-            assert key not in config, profile
-
-
-def test_catalog_profiles_do_not_use_device_manager_compat_keys() -> None:
-    compat_keys = {HW_COMPAT_CONFIG_ENABLE, HW_COMPAT_CONFIG_BRIDGE}
-    for profile, config in CATALOG_PROFILES.items():
+def test_host_defaults_do_not_use_retired_hw_config_keys() -> None:
+    compat_keys = {"enable_device_manager", "device_manager_bridge"}
+    for profile, config in HOST_PROFILE_DEFAULTS.items():
         assert compat_keys.isdisjoint(config), profile
 
 
-def test_catalog_profiles_do_not_enable_ros2_camera_bridge() -> None:
-    for profile, config in CATALOG_PROFILES.items():
-        for key in ROS2_CAMERA_BRIDGE_ENABLE_KEYS:
-            assert key not in config, profile
-
-
-def test_catalog_profiles_do_not_enable_ros2_rerun_bridge() -> None:
-    for profile, config in CATALOG_PROFILES.items():
+def test_host_defaults_do_not_enable_ros2_rerun_bridge() -> None:
+    for profile, config in HOST_PROFILE_DEFAULTS.items():
         for key in ROS2_RERUN_BRIDGE_ENABLE_KEYS:
             assert key not in config, profile
 
 
-def test_catalog_profiles_do_not_default_to_ros2_autonomy_backends() -> None:
-    for profile, config in CATALOG_PROFILES.items():
+def test_host_defaults_do_not_default_to_ros2_autonomy_backends() -> None:
+    for profile, config in HOST_PROFILE_DEFAULTS.items():
         enable_native = bool(config.get("enable_native", False))
         assert ros2_autonomy_backend_violations(config, enable_native=enable_native) == [], profile
 
 
-def test_default_product_runtime_configs_do_not_select_ros2_bindings() -> None:
-    for profile in PRODUCT_PROFILES:
-        resolved = resolve_runtime_config(profile)
+def test_default_field_runtime_configs_do_not_select_ros2_bindings() -> None:
+    for profile in FIELD_PRODUCT_NAMES:
+        resolved = resolve_product_host_runtime(profile, "real")
         config = resolved.config
         enable_native = bool(config.get("enable_native", False))
         assert ros2_runtime_binding_violations(config, enable_native=enable_native) == [], profile
 
+    mapped_explore = resolve_product_host_runtime(
+        "explore",
+        "real",
+        product_variant="map",
+    )
+    assert ros2_runtime_binding_violations(
+        mapped_explore.config,
+        enable_native=bool(mapped_explore.config.get("enable_native", False)),
+    ) == []
 
-def test_product_runtime_configs_use_ros_free_autonomy_backends() -> None:
+
+def test_physical_host_configs_use_ros_free_autonomy_backends() -> None:
     expected = {
         "teleop": {
             "terrain_backend": "nanobind",
@@ -466,37 +426,40 @@ def test_product_runtime_configs_use_ros_free_autonomy_backends() -> None:
             "local_planner_backend": "nanobind",
             "path_follower_backend": "nav_kernel",
         },
-        "tare_explore": {
-            "terrain_backend": "nanobind",
-            "local_planner_backend": "nanobind",
-            "path_follower_backend": "nav_kernel",
-        },
-        "super_lio": {
-            "terrain_backend": "nanobind",
-            "local_planner_backend": "nanobind",
-            "path_follower_backend": "nav_kernel",
-        },
-        "super_lio_relocation": {
-            "terrain_backend": "nanobind",
-            "local_planner_backend": "nanobind",
-            "path_follower_backend": "nav_kernel",
-        },
     }
 
-    assert set(expected) == set(PRODUCT_PROFILES)
+    physical_profiles = (
+        set(FIELD_PRODUCT_NAMES)
+        | set(LOCAL_PROFILE_NAMES)
+    )
+    assert set(expected) == physical_profiles
 
-    for profile in PRODUCT_PROFILES:
-        resolved = resolve_runtime_config(profile)
+    for profile in expected:
+        resolved = _resolve_named_runtime(profile)
         config = resolved.config
         enable_native = bool(config.get("enable_native", False))
 
         assert resolved_autonomy_backend_selection(config, enable_native=enable_native) == expected[profile]
 
+    mapped_explore = resolve_product_host_runtime(
+        "explore",
+        "real",
+        product_variant="map",
+    )
+    assert resolved_autonomy_backend_selection(
+        mapped_explore.config,
+        enable_native=bool(mapped_explore.config.get("enable_native", False)),
+    ) == expected["explore"]
+
 
 def test_mapped_teleop_profiles_enable_cmd_vel_collision_monitor() -> None:
     enabled_profiles = set()
-    for profile in PRODUCT_PROFILES:
-        resolved = resolve_runtime_config(profile)
+    physical_profiles = (
+        *FIELD_PRODUCT_NAMES,
+        *LOCAL_PROFILE_NAMES,
+    )
+    for profile in physical_profiles:
+        resolved = _resolve_named_runtime(profile)
         if bool(resolved.config.get("cmd_vel_mux_collision_monitor", False)):
             enabled_profiles.add(profile)
 
@@ -504,27 +467,25 @@ def test_mapped_teleop_profiles_enable_cmd_vel_collision_monitor() -> None:
         "teleop_avoid",
         "map",
         "nav",
-        "super_lio",
-        "super_lio_relocation",
         "explore",
-        "tare_explore",
     }
 
-
-def test_no_product_profiles_are_optional_native_runtime_configs() -> None:
-    assert OPTIONAL_NATIVE_PRODUCT_PROFILES == ()
-
-
-def test_octoplanner3d_product_profiles_use_supported_map_formats() -> None:
-    for profile in (
-        "tracking",
-        "nav",
+    mapped_explore = resolve_product_host_runtime(
         "explore",
-        "tare_explore",
-        "super_lio",
-        "super_lio_relocation",
-    ):
-        config = CATALOG_PROFILES[profile]
+        "real",
+        product_variant="map",
+    )
+    assert mapped_explore.config["cmd_vel_mux_collision_monitor"] is True
+
+
+def test_octoplanner3d_products_use_supported_map_formats() -> None:
+    configs = (
+        ALL_NAMED_HOST_DEFAULTS["tracking"],
+        ALL_NAMED_HOST_DEFAULTS["nav"],
+        ALL_NAMED_HOST_DEFAULTS["explore"],
+        FIELD_PRODUCT_VARIANT_HOST_DEFAULTS["explore"]["map"],
+    )
+    for config in configs:
         assert config["planner"] == "octoplanner3d"
         assert config.get("fallback_planner_name", "") == ""
         assert Path(config["map_path"]).suffix.lower() in {
@@ -535,76 +496,54 @@ def test_octoplanner3d_product_profiles_use_supported_map_formats() -> None:
         }
 
 
-def test_runtime_endpoints_do_not_own_ros_bridge_switches() -> None:
-    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
-        assert _ros_bridge_keys(dict(endpoint.config_overrides)) == [], endpoint_name
-        for profile, overrides in endpoint.profile_overrides.items():
-            assert _ros_bridge_keys(dict(overrides)) == [], (endpoint_name, profile)
+def test_profile_adapters_do_not_own_ros_bridge_switches() -> None:
+    for adapter_name, adapter in CATALOG_ADAPTERS.items():
+        assert _ros_bridge_keys(dict(adapter.config_overrides)) == [], adapter_name
+        for profile, overrides in adapter.profile_overrides.items():
+            assert _ros_bridge_keys(dict(overrides)) == [], (adapter_name, profile)
 
 
-def test_runtime_endpoints_do_not_start_legacy_lidar_driver() -> None:
-    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
-        endpoint_config = dict(endpoint.config_overrides)
-        for key in LIDAR_LEGACY_DRIVER_START_KEYS:
-            assert key not in endpoint_config, endpoint_name
-        for profile, overrides in endpoint.profile_overrides.items():
-            profile_config = dict(overrides)
-            for key in LIDAR_LEGACY_DRIVER_START_KEYS:
-                assert key not in profile_config, (endpoint_name, profile)
-
-
-def test_real_runtime_endpoints_do_not_select_legacy_driver_sensor_paths() -> None:
-    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
-        if endpoint.simulation_only:
+def test_real_profile_adapters_do_not_select_legacy_driver_sensor_paths() -> None:
+    for adapter_name, adapter in CATALOG_ADAPTERS.items():
+        if adapter.simulation_only:
             continue
-        endpoint_config = dict(endpoint.config_overrides)
+        adapter_config = dict(adapter.config_overrides)
         for key in LEGACY_SENSOR_BINDING_KEYS:
-            assert key not in endpoint_config, endpoint_name
-        for profile, overrides in endpoint.profile_overrides.items():
+            assert key not in adapter_config, adapter_name
+        for profile, overrides in adapter.profile_overrides.items():
             profile_config = dict(overrides)
             for key in LEGACY_SENSOR_BINDING_KEYS:
-                assert key not in profile_config, (endpoint_name, profile)
+                assert key not in profile_config, (adapter_name, profile)
 
 
-def test_real_product_profiles_do_not_select_legacy_driver_sensor_paths() -> None:
-    field_profiles = {
+def test_real_products_do_not_select_legacy_driver_sensor_paths() -> None:
+    field_products = {
         "map",
         "nav",
         "explore",
-        "tare_explore",
-        "super_lio",
-        "super_lio_relocation",
     }
-    for profile in field_profiles:
-        config = dict(CATALOG_PROFILES[profile])
+    for product in field_products:
+        config = dict(ALL_NAMED_HOST_DEFAULTS[product])
         for key in LEGACY_SENSOR_BINDING_KEYS:
-            assert key not in config, profile
+            assert key not in config, product
+
+    for key in LEGACY_SENSOR_BINDING_KEYS:
+        assert key not in FIELD_PRODUCT_VARIANT_HOST_DEFAULTS["explore"]["map"]
 
 
-def test_runtime_endpoints_do_not_enable_ros2_camera_bridge() -> None:
-    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
-        endpoint_config = dict(endpoint.config_overrides)
-        for key in ROS2_CAMERA_BRIDGE_ENABLE_KEYS:
-            assert key not in endpoint_config, endpoint_name
-        for profile, overrides in endpoint.profile_overrides.items():
-            profile_config = dict(overrides)
-            for key in ROS2_CAMERA_BRIDGE_ENABLE_KEYS:
-                assert key not in profile_config, (endpoint_name, profile)
-
-
-def test_runtime_endpoints_do_not_enable_ros2_rerun_bridge() -> None:
-    for endpoint_name, endpoint in CATALOG_ENDPOINTS.items():
-        endpoint_config = dict(endpoint.config_overrides)
+def test_profile_adapters_do_not_enable_ros2_rerun_bridge() -> None:
+    for adapter_name, adapter in CATALOG_ADAPTERS.items():
+        adapter_config = dict(adapter.config_overrides)
         for key in ROS2_RERUN_BRIDGE_ENABLE_KEYS:
-            assert key not in endpoint_config, endpoint_name
-        for profile, overrides in endpoint.profile_overrides.items():
+            assert key not in adapter_config, adapter_name
+        for profile, overrides in adapter.profile_overrides.items():
             profile_config = dict(overrides)
             for key in ROS2_RERUN_BRIDGE_ENABLE_KEYS:
-                assert key not in profile_config, (endpoint_name, profile)
+                assert key not in profile_config, (adapter_name, profile)
 
 
-def test_product_blueprints_do_not_import_compat_runtime_profiles() -> None:
-    path = SRC / "runtime" / "blueprints" / "products" / "thunder.py"
+def test_product_blueprints_import_host_defaults_from_their_direct_owner() -> None:
+    path = SRC / "lingtu" / "assembly" / "products" / "thunder.py"
     tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
 
     modules: list[str] = []
@@ -614,25 +553,28 @@ def test_product_blueprints_do_not_import_compat_runtime_profiles() -> None:
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.append(node.module)
 
-    assert "runtime.runtime_profiles" not in modules
+    assert not any(module.startswith("cli.") for module in modules)
     assert "runtime.profiles.catalog.runtime_paths" in modules
     assert "lingtu.assembly.catalog.runtime_paths" not in modules
 
 
-def test_profile_graph_does_not_hardcode_legacy_robot_driver_aliases() -> None:
-    source = (SRC / "runtime" / "introspection" / "profile_graph.py").read_text(encoding="utf-8-sig")
+def test_profile_graph_does_not_hardcode_removed_driver_backend_aliases() -> None:
+    source = (SRC / "lingtu" / "assembly" / "graph.py").read_text(
+        encoding="utf-8-sig"
+    )
 
     assert '"s100p": "ThunderDriver"' not in source
     assert '"navigate": "ThunderDriver"' not in source
-    assert "robot_driver_module_name" in source
+    assert "driver_backend_module_name" in source
 
 
 def test_catalog_octoplanner3d_map_prefers_active_saved_map(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("LINGTU_OCTOPLANNER3D_MAP", raising=False)
     monkeypatch.delenv("NAV_OCTOMAP", raising=False)
     monkeypatch.setenv("NAV_MAP_DIR", str(tmp_path))
-    active = tmp_path / "active"
+    active = tmp_path / "warehouse"
     active.mkdir()
+    (tmp_path / "active_map.txt").write_text("warehouse\n", encoding="utf-8")
     active_map = active / "octomap.ot"
     active_map.write_bytes(b"# OctoMap OcTree file\n")
 
@@ -640,8 +582,9 @@ def test_catalog_octoplanner3d_map_prefers_active_saved_map(monkeypatch, tmp_pat
 
 
 def test_catalog_octoplanner3d_map_env_override_wins(monkeypatch, tmp_path) -> None:
-    active = tmp_path / "active"
+    active = tmp_path / "warehouse"
     active.mkdir()
+    (tmp_path / "active_map.txt").write_text("warehouse\n", encoding="utf-8")
     (active / "octomap.ot").write_bytes(b"# OctoMap OcTree file\n")
     override = tmp_path / "override.bt"
     override.write_bytes(b"# OctoMap OcTree binary file\n")

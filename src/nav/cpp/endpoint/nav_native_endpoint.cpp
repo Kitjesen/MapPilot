@@ -21,6 +21,7 @@
 #include "input/nav_input_state_projector.hpp"
 #include "inspection/inspection_command_coordinator.hpp"
 #include "inspection/inspection_runtime_controller.hpp"
+#include "inspection/inspection_task_event_outbox.hpp"
 #include "lingtu/maps/store.hpp"
 #include "lingtu_slam.h"
 #include "motion/autonomy_tick_controller.hpp"
@@ -44,7 +45,9 @@
 #include "nav_loop.hpp"
 #include "plan/active_occupancy_gate.hpp"
 #include "plan/active_octomap_gate.hpp"
+#include "plan/active_path_blockage_policy.hpp"
 #include "plan/goal_plan_controller.hpp"
+#include "plan/goal_replan_runtime_coordinator.hpp"
 #include "plan/input_gate.hpp"
 #include "plan/live_obstacle_layer.hpp"
 #include "plan/planner_inputs.hpp"
@@ -52,9 +55,11 @@
 #include "plan/rolling_segment_lifecycle.hpp"
 #include "status/active_inspection_map_cache.hpp"
 #include "status/control_loop_health.hpp"
+#include "status/goal_terminal_status_delivery.hpp"
 #include "status/inspection_status_file_writer.hpp"
 #include "status/nav_status_endpoint_adapter.hpp"
 #include "status/nav_status_publisher.hpp"
+#include "status/navigation_goal_status_outbox.hpp"
 #include "status/navigation_state.hpp"
 #include "traversability/transform_buffer.hpp"
 
@@ -65,6 +70,8 @@ using lingtu::nav::endpoint::ActiveInspectionMapCache;
 using lingtu::nav::endpoint::ActiveInspectionMapIdentity;
 using lingtu::nav::endpoint::ActiveOccupancyGate;
 using lingtu::nav::endpoint::ActiveOctomapGate;
+using lingtu::nav::endpoint::ActivePathBlockagePolicy;
+using lingtu::nav::endpoint::ActivePathBlockagePolicyConfig;
 using lingtu::nav::endpoint::AutonomyTickActions;
 using lingtu::nav::endpoint::AutonomyTickController;
 using lingtu::nav::endpoint::AutonomyTickPlannerInputs;
@@ -89,6 +96,9 @@ using lingtu::nav::endpoint::GoalPlanMapIdentityResult;
 using lingtu::nav::endpoint::GoalPlanPathActivation;
 using lingtu::nav::endpoint::GoalPlanPathTolerance;
 using lingtu::nav::endpoint::GoalPlanStatus;
+using lingtu::nav::endpoint::GoalReplanRuntimeCoordinator;
+using lingtu::nav::endpoint::GoalReplanRuntimeInterruption;
+using lingtu::nav::endpoint::GoalTerminalStatusDelivery;
 using lingtu::nav::endpoint::headerFrameId;
 using lingtu::nav::endpoint::headerStampSeconds;
 using lingtu::nav::endpoint::InputGate;
@@ -97,15 +107,19 @@ using lingtu::nav::endpoint::inputGateConfig;
 using lingtu::nav::endpoint::InspectionActiveMap;
 using lingtu::nav::endpoint::InspectionCommandAck;
 using lingtu::nav::endpoint::InspectionCommandActions;
+using lingtu::nav::endpoint::InspectionCommandCommit;
 using lingtu::nav::endpoint::InspectionCommandCoordinator;
 using lingtu::nav::endpoint::InspectionRuntimeController;
 using lingtu::nav::endpoint::InspectionStatusFileWriter;
+using lingtu::nav::endpoint::InspectionStopBarrierResult;
+using lingtu::nav::endpoint::InspectionTaskEventOutbox;
 using lingtu::nav::endpoint::LiveObstacleLayer;
 using lingtu::nav::endpoint::LiveObstacleLayerConfig;
 using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::MotionStopActions;
 using lingtu::nav::endpoint::MotionStopCoordinator;
 using lingtu::nav::endpoint::NavigationControlState;
+using lingtu::nav::endpoint::NavigationGoalStatusOutbox;
 using lingtu::nav::endpoint::NavigationStateTracker;
 using lingtu::nav::endpoint::NavInputStateProjector;
 using lingtu::nav::endpoint::NavInputStateProjectorActions;
@@ -274,7 +288,12 @@ int main(int argc, char **argv) {
     const double source_transform_max_gap_s =
         cfg.tf_max_age_s > 0.0 ? std::min(cfg.cloud_pose_max_gap_s, cfg.tf_max_age_s)
                                : cfg.cloud_pose_max_gap_s;
-    DdsRuntime dds(cfg.domain_id, cfg.allow_legacy_motion_inputs);
+    DdsRuntime dds(cfg.domain_id);
+    InspectionTaskEventOutbox inspection_task_event_outbox(
+        dds.producerBootId(),
+        [&dds](const lingtu::nav::endpoint::InspectionTaskEventEnvelope &event) {
+          return dds.writeInspectionTaskEvent(event);
+        });
     NavigationStateTracker navigation_state(navigationControlState(cfg.control_mode));
 
     const auto safety_config = commandSafetyConfig(cfg);
@@ -318,7 +337,6 @@ int main(int argc, char **argv) {
     auto &last_terrain_map_receive_s = state.last_terrain_map_receive_s;
     auto &last_terrain_ext_receive_s = state.last_terrain_ext_receive_s;
     auto &last_traversability_receive_s = state.last_traversability_receive_s;
-    auto &last_odom_s = state.last_odom_s;
     auto &teleop_receive_time = state.teleop_receive_time;
     auto &teleop_received = state.teleop_received;
     auto &last_plan = state.last_plan;
@@ -333,7 +351,6 @@ int main(int argc, char **argv) {
     auto &operator_resume_required = state.operator_resume_required;
     auto &path_echo = state.path_echo;
     auto &odom_generation = state.odom_generation;
-    auto &frame_epoch = state.frame_epoch;
     auto &path_count = state.path_count;
     auto &cmd_vel_count = state.cmd_vel_count;
     auto &autonomy_request_not_before_s = state.autonomy_request_not_before_s;
@@ -360,7 +377,7 @@ int main(int argc, char **argv) {
     const bool operator_motion_interface_enabled =
         cfg.control_mode == ControlMode::Teleop || cfg.control_mode == ControlMode::TeleopAvoid ||
         (cfg.control_mode == ControlMode::Autonomy && cfg.allow_teleop_takeover);
-    RollingSegmentLifecycle rolling_segment;
+    RollingSegmentLifecycle rolling_segment(rollingSegmentExecutorConfig(cfg));
     InspectionRuntimeController inspection_runtime(inspection_executor);
 
     ControlLoopHealthConfig control_loop_health_config;
@@ -509,6 +526,28 @@ int main(int argc, char **argv) {
       nav_status.requestImmediate();
       return zero_published;
     };
+    auto suspend_motion_outputs = [&](const std::string &reason) -> bool {
+      nav.suspendAutonomy();
+      last_local_path.clear();
+      last_local_planner_debug = {};
+      last_local = LocalDiagnostics{};
+      last_local.seen = true;
+      last_local.active = false;
+      last_local.near_field_stop = true;
+      last_local.reason = reason;
+      last_local.final_safety_stopped = true;
+      last_local.final_safety_reason = reason;
+      last_teleop.fresh = false;
+      last_teleop.published = false;
+      last_teleop.stopped = true;
+      last_teleop.slowed = false;
+      last_teleop.output = {};
+      last_teleop.reason = reason;
+      const bool zero_published = publish_zero_command();
+      last_teleop.published = cfg.publish_cmd_vel && zero_published;
+      nav_status.requestImmediate();
+      return zero_published;
+    };
 
     RollingSegmentEffectActions rolling_segment_effect_actions;
     rolling_segment_effect_actions.activate_authority = [&]() {
@@ -584,6 +623,28 @@ int main(int argc, char **argv) {
       return result;
     };
 
+    auto cheap_current_map_identity = [&]() {
+      GoalPlanMapIdentityResult result;
+      if (cfg.global_planner == GlobalPlannerBackend::Far) {
+        auto identity = active_occupancy_gate->currentDeclaredIdentity(cfg.map_path);
+        result.identity = std::move(identity.identity);
+        result.reason = std::move(identity.reason);
+      } else {
+        auto identity = active_octomap_gate->currentDeclaredIdentity(cfg.map_path);
+        result.identity = std::move(identity.identity);
+        result.reason = std::move(identity.reason);
+      }
+      return result;
+    };
+
+    NavigationGoalStatusOutbox goal_status_outbox(
+        [&](const GoalPlanStatus &status) { navigation_state.observe(status); },
+        [&](const GoalPlanStatus &status) {
+          return dds.writeNavigationGoalStatus(status.task_id.c_str(), status.request_id.c_str(),
+                                               status.state, status.goal_epoch,
+                                               status.reason.c_str());
+        });
+
     GoalPlanActions goal_plan_actions;
     goal_plan_actions.preempt_rolling = [&](const std::string &reason) {
       if (!rolling_segment.snapshot().active) {
@@ -595,9 +656,7 @@ int main(int argc, char **argv) {
     goal_plan_actions.clear_external_inspection = [&]() { inspection_runtime.clearActivePoint(); };
     goal_plan_actions.current_map_identity = current_map_identity;
     goal_plan_actions.publish_status = [&](const GoalPlanStatus &status) {
-      navigation_state.observe(status);
-      dds.writeNavigationGoalStatus(status.request_id.c_str(), status.state, status.goal_epoch,
-                                    status.reason.c_str());
+      (void)goal_status_outbox.record(status);
     };
     goal_plan_actions.inspection_active = [&]() { return inspection_executor.active(); };
     goal_plan_actions.inspection_leg_failed = [&](const std::string &reason, double now_s) {
@@ -639,6 +698,7 @@ int main(int argc, char **argv) {
       last_local = LocalDiagnostics{};
     };
     GoalPlanController goal_plan(std::move(global_planner), std::move(goal_plan_actions));
+    GoalReplanRuntimeCoordinator *goal_replan_runtime_ptr = nullptr;
     auto sync_goal_plan_diagnostics = [&]() {
       const auto snapshot = goal_plan.snapshot();
       const auto &diagnostics = snapshot.diagnostics;
@@ -668,7 +728,10 @@ int main(int argc, char **argv) {
         (void)inspection_executor.Pause(reason);
         control_authority.holdOperatorTakeover();
         operator_resume_required = true;
-        goal_plan.invalidateForHold(reason);
+        if (goal_replan_runtime_ptr != nullptr) {
+          (void)goal_replan_runtime_ptr->interrupt(GoalReplanRuntimeInterruption::kControlHold,
+                                                   steadySeconds());
+        }
         sync_goal_plan_diagnostics();
       }
       if (rolling_segment_was_active) {
@@ -760,6 +823,9 @@ int main(int argc, char **argv) {
     };
 
     MotionStopActions motion_stop_actions;
+    // Ordinary operator safety transitions remain owned by MotionStopCoordinator.
+    // Inspection task pause/cancel uses the ticketed coordinator path below so
+    // a GoalPlan terminal cannot bypass exact status delivery.
     motion_stop_actions.defer_goal_abort = [&](const std::string &reason) {
       return goal_plan.deferAbort(reason);
     };
@@ -773,6 +839,7 @@ int main(int argc, char **argv) {
           rolling_segment.step(RollingSegmentGenericPreempt{reason}));
     };
     motion_stop_actions.clear_motion_outputs = clear_motion_outputs;
+    motion_stop_actions.suspend_motion_outputs = suspend_motion_outputs;
     motion_stop_actions.cancel_control = [&]() { control_authority.cancel(); };
     motion_stop_actions.stop_control = [&]() { control_authority.stop(); };
     motion_stop_actions.latch_estop = [&](const std::string &reason) {
@@ -803,6 +870,16 @@ int main(int argc, char **argv) {
     };
     motion_stop_actions.clear_global_path = [&]() { nav.clearGlobalPath(); };
     MotionStopCoordinator motion_stop(cfg.publish_cmd_vel, std::move(motion_stop_actions));
+    GoalReplanRuntimeCoordinator goal_replan_runtime(goal_plan, motion_stop);
+    ActivePathBlockagePolicyConfig blockage_config;
+    blockage_config.lookahead_m = cfg.corridor_lookahead_m;
+    blockage_config.corridor_radius_m =
+        std::max(0.1, cfg.vehicle_width_m * 0.5 + cfg.teleop_obstacle_margin_m);
+    blockage_config.overlay_radius_m =
+        std::max(0.1, cfg.obstacle_voxel_size_m + cfg.live_obstacle_inflation_radius_m);
+    ActivePathBlockagePolicy active_path_blockage_policy(blockage_config);
+    goal_replan_runtime_ptr = &goal_replan_runtime;
+    GoalTerminalStatusDelivery goal_terminal_delivery(goal_status_outbox);
     InspectionCommandActions inspection_command_actions;
     inspection_command_actions.route_source_available = [&]() {
       return inspection_store != nullptr;
@@ -825,12 +902,65 @@ int main(int argc, char **argv) {
     inspection_command_actions.operator_takeover_latched = [&]() {
       return control_authority.operatorTakeoverLatched() || control_loop_guard_latched();
     };
-    inspection_command_actions.clear_motion = [&](const std::string &reason) {
-      return motion_stop.clearEndpointMotion(reason);
+    inspection_command_actions.stop_and_commit = [&](const std::string &reason,
+                                                     InspectionCommandCommit commit) {
+      const auto interruption = reason == "inspection_cancel_requested"
+                                    ? GoalReplanRuntimeInterruption::kInspectionCancel
+                                    : GoalReplanRuntimeInterruption::kInspectionPause;
+      const auto terminal = goal_replan_runtime.interrupt(interruption, steadySeconds());
+      if (!terminal.terminal_after_stop || terminal.terminal_intent_id == 0U) {
+        bool inspection_committed = false;
+        const auto result = motion_stop.commitGoalTerminalAfterStop(
+            reason, [commit = std::move(commit), &inspection_committed]() mutable {
+              inspection_committed = commit();
+            });
+        if (result.accepted && !inspection_committed) {
+          return InspectionStopBarrierResult{false, "inspection_state_commit_failed"};
+        }
+        return InspectionStopBarrierResult{result.accepted, result.reason};
+      }
+
+      const auto &pending = *terminal.terminal_after_stop;
+      const auto stage =
+          goal_terminal_delivery.stage(terminal.terminal_intent_id, pending.delivery_ticket);
+      if (stage != GoalTerminalStatusDelivery::StageResult::kStaged &&
+          stage != GoalTerminalStatusDelivery::StageResult::kReplay) {
+        return InspectionStopBarrierResult{
+            false,
+            stage == GoalTerminalStatusDelivery::StageResult::kConflict
+                ? "goal_terminal_delivery_ticket_conflict"
+                : "goal_terminal_delivery_ticket_invalid",
+        };
+      }
+      if (goal_terminal_delivery.isCommitted(terminal.terminal_intent_id)) {
+        return InspectionStopBarrierResult{true, "inspection_goal_terminal_committed"};
+      }
+
+      bool inspection_committed = false;
+      const auto result = motion_stop.commitGoalTerminalAfterStop(
+          reason, [goal_terminal_commit = pending.commit, commit = std::move(commit),
+                   &inspection_committed]() mutable {
+            goal_terminal_commit();
+            inspection_committed = commit();
+          });
+      if (!result.accepted) {
+        return InspectionStopBarrierResult{false, result.reason};
+      }
+      if (!inspection_committed) {
+        return InspectionStopBarrierResult{false, "inspection_state_commit_failed"};
+      }
+      if (!goal_terminal_delivery.markCommitted(terminal.terminal_intent_id)) {
+        return InspectionStopBarrierResult{
+            false,
+            "goal_terminal_delivery_commit_identity_rejected",
+        };
+      }
+      sync_goal_plan_diagnostics();
+      return InspectionStopBarrierResult{true, result.reason};
     };
     inspection_command_actions.publish_ack = [&](const InspectionCommandAck &ack) {
-      return dds.writeInspectionAck(ack.request_id.c_str(), ack.kind, ack.accepted,
-                                    ack.reason.c_str(), ack.run_id.c_str());
+      return dds.writeInspectionTaskAck(ack.task_id.c_str(), ack.request_id.c_str(), ack.kind,
+                                        ack.accepted, ack.reason.c_str(), ack.run_id.c_str());
     };
     inspection_command_actions.request_status = [&]() { inspection_runtime.requestStatus(); };
     inspection_command_actions.now_s = nowSeconds;
@@ -883,6 +1013,7 @@ int main(int argc, char **argv) {
 
     AutonomyTickActions autonomy_tick_actions;
     autonomy_tick_actions.steady_now_s = steadySeconds;
+    autonomy_tick_actions.current_map_identity = cheap_current_map_identity;
     autonomy_tick_actions.compute_planner_inputs = [&](TimingDiagnostics &tick_timing) {
       const auto inputs = computePlannerInputs(
           cfg, obstacle_merge_config, traversability_grid, last_traversability_receive_s,
@@ -917,9 +1048,14 @@ int main(int argc, char **argv) {
         state,
         nav,
         inspection_status_writer,
+        inspection_task_event_outbox,
         input_projector,
         goal_plan,
+        goal_replan_runtime,
+        active_path_blockage_policy,
         motion_stop,
+        goal_status_outbox,
+        goal_terminal_delivery,
         inspection_runtime,
         inspection_command_coordinator,
         teleop_admission,
@@ -938,6 +1074,10 @@ int main(int argc, char **argv) {
         sync_goal_plan_diagnostics,
         control_loop_guard_latched,
         current_timing,
+        0U,
+        0U,
+        std::nullopt,
+        0.0,
     };
     return runEndpointLoop(loop_ctx, g_running);
   } catch (const std::exception &exc) {

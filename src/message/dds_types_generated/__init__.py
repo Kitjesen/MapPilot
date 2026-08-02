@@ -1,7 +1,7 @@
 r"""Auto-generated DDS type package.
 
-Source IDL: src\message\idl\lingtu_slam.idl
-Generated:  2026-07-25T23:35:53Z
+Source IDL: src/message/idl/lingtu_slam.idl
+Generated:  2026-08-02T05:11:02Z
 
 DO NOT EDIT BY HAND -- run ``make codegen-idl`` to regenerate.
 """
@@ -31,6 +31,10 @@ from .types import (  # noqa: F401
     PointField,
     PointCloud2,
     MapObservation,
+    MapArtifactIdentity,
+    MapIdentity,
+    MapActivationRequest,
+    MapActivationAck,
     Image,
     CameraInfo,
     GnssFix,
@@ -49,14 +53,16 @@ from .types import (  # noqa: F401
     NavigationState,
     ExplorationCommandRequest,
     ExplorationCommandAck,
+    ExplorationRunEvent,
     ExplorationSegmentRequest,
     ExplorationSegmentAck,
     ExplorationSegmentStatus,
-    InspectionCommandRequest,
-    InspectionCommandAck,
+    InspectionTaskRequest,
+    InspectionTaskAck,
     InspectionEvidenceRequest,
     InspectionEvidenceResult,
     InspectionStatus,
+    InspectionTaskEvent,
     RelocalizationRequest,
     RelocalizationResponse,
     Path,
@@ -93,6 +99,10 @@ __all__ = [
     "PointField",
     "PointCloud2",
     "MapObservation",
+    "MapArtifactIdentity",
+    "MapIdentity",
+    "MapActivationRequest",
+    "MapActivationAck",
     "Image",
     "CameraInfo",
     "GnssFix",
@@ -111,14 +121,16 @@ __all__ = [
     "NavigationState",
     "ExplorationCommandRequest",
     "ExplorationCommandAck",
+    "ExplorationRunEvent",
     "ExplorationSegmentRequest",
     "ExplorationSegmentAck",
     "ExplorationSegmentStatus",
-    "InspectionCommandRequest",
-    "InspectionCommandAck",
+    "InspectionTaskRequest",
+    "InspectionTaskAck",
     "InspectionEvidenceRequest",
     "InspectionEvidenceResult",
     "InspectionStatus",
+    "InspectionTaskEvent",
     "RelocalizationRequest",
     "RelocalizationResponse",
     "Path",

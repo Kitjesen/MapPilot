@@ -19,4 +19,4 @@ python tests/scripts/smoke/mcp_full.py
 ```
 
 The script names are kept stable for compatibility. New product-facing docs
-should use Thunder naming and the CLI/product profile entry points.
+should use Thunder naming and the Product/ProductControl entry points.

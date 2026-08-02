@@ -130,7 +130,8 @@ goals call OctoPlanner3D in-process, then the C++ navigation loop publishes
 `rt/nav/global_path`, `rt/nav/local_path`, and `rt/nav/cmd_vel`. The older
 Gateway-polling `lingtu_nav_cyclone_endpoint` target was removed; use `navd`
 for robot-side navigation. Product startup resolves the logical `nav` process
-through RuntimePlan; operators should not launch this binary directly.
+through one RunPlan and ProductControl's internal SystemdRunner; operators
+should not launch this binary directly.
 
 Build the native Thunder motion driver:
 

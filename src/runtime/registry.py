@@ -5,7 +5,7 @@ Zero if/else, zero hardcoded imports.
 
 Usage:
     # Register (in the driver module file)
-    @register("driver", "nova_dog")
+    @register("driver", "thunder")
     class HanDogModule(Module, layer=1):
         ...
 
@@ -14,11 +14,11 @@ Usage:
         ...
 
     # Look up (in blueprint)
-    DriverCls = get("driver", "nova_dog")
+    DriverCls = get("driver", "thunder")
     handle = autoconnect(DriverCls.blueprint(), ...).build()
 
     # List available
-    list_plugins("driver")  # ["nova_dog", "unitree_go2", "sim", "stub"]
+    list_plugins("driver")  # ["thunder", "sim_mujoco", "stub"]
 
     # Auto-select by platform
     best = auto_select("driver", platform="aarch64")
@@ -47,7 +47,7 @@ def register(
 
     Args:
         category: "driver", "detector", "encoder", "planner", "llm", ...
-        name: "nova_dog", "yolo_world", "kimi", ...
+        name: "thunder", "yolo_world", "kimi", ...
         priority: higher = preferred in auto_select
         platforms: {"x86_64", "aarch64"} or empty = all
         description: human-readable label

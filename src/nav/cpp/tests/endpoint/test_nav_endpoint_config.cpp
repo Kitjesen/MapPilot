@@ -13,6 +13,7 @@ using lingtu::nav::endpoint::ControlMode;
 using lingtu::nav::endpoint::GlobalPlannerBackend;
 using lingtu::nav::endpoint::inputGateConfig;
 using lingtu::nav::endpoint::parseArgs;
+using lingtu::nav::endpoint::rollingSegmentExecutorConfig;
 
 void require(bool condition, const char *message) {
   if (!condition) {
@@ -55,7 +56,7 @@ void testCompiledProductMotionContractParses() {
       "navd",
       "--path-library",
       "fixture-paths",
-      "--profile",
+      "--product",
       "nav",
       "--config-fingerprint",
       "0123456789abcdef",
@@ -74,8 +75,8 @@ void testCompiledProductMotionContractParses() {
       "--path-follower-max-accel-mps2",
       "1.0",
   });
-  require(cfg.profile == "nav", "compiled profile identity must parse");
-  require(cfg.config_fingerprint == "0123456789abcdef", "compiled profile fingerprint must parse");
+  require(cfg.product == "nav", "compiled product identity must parse");
+  require(cfg.config_fingerprint == "0123456789abcdef", "compiled product fingerprint must parse");
   require(std::abs(cfg.waypoint_reached_m - 0.20) < 1e-12, "waypoint threshold must parse");
   require(std::abs(cfg.goal_reached_m - 0.10) < 1e-12, "goal threshold must parse");
   require(std::abs(cfg.path_follower_goal_tolerance_m - 0.05) < 1e-12,
@@ -90,6 +91,15 @@ void testCompiledProductMotionContractParses() {
           "path follower acceleration must parse");
 }
 
+void testLegacyNativeProfileSelectorIsRejected() {
+  bool rejected = false;
+  try {
+    (void)parse({"navd", "--path-library", "fixture-paths", "--profile", "nav"});
+  } catch (const std::runtime_error &) {
+    rejected = true;
+  }
+  require(rejected, "legacy --profile selector must be rejected");
+}
 void testCompiledProductMotionContractRejectsMinimumAboveMaximum() {
   bool rejected = false;
   try {
@@ -542,25 +552,6 @@ void testPureTeleopDoesNotRequirePlannerAssets() {
   require(autonomy_rejected, "autonomy must still require planner assets");
 }
 
-void testLegacyMotionInputsAreExplicitCompatibilityOnly() {
-  const auto production = parse({
-      "navd",
-      "--path-library",
-      "fixture-paths",
-  });
-  require(!production.allow_legacy_motion_inputs,
-          "typed command request must be the production motion boundary");
-  const auto compatibility = parse({
-      "navd",
-      "--path-library",
-      "fixture-paths",
-      "--allow-legacy-motion-inputs",
-      "true",
-  });
-  require(compatibility.allow_legacy_motion_inputs,
-          "legacy motion readers must require an explicit compatibility flag");
-}
-
 void testLocalPlannerVisualizationIsExplicitAndBounded() {
   const auto defaults = parse({
       "navd",
@@ -689,12 +680,65 @@ void testDriverControlFreshnessCannotBeDisabled() {
   }
 }
 
+void testRollingSegmentPoliciesAreConfigurableAndBounded() {
+  const auto cfg = parse({
+      "navd",
+      "--path-library",
+      "fixture-paths",
+      "--segment-max-distance-m",
+      "6.5",
+      "--segment-max-waypoints",
+      "48",
+      "--segment-max-grid-cells",
+      "524288",
+      "--segment-risk-stop",
+      "60",
+      "--segment-risk-resume",
+      "45",
+      "--segment-map-max-age-s",
+      "0.8",
+  });
+  const auto policy = rollingSegmentExecutorConfig(cfg);
+  require(std::abs(policy.segment.max_distance_m - 6.5) < 1e-12,
+          "segment maximum distance must parse");
+  require(policy.segment.max_waypoints == 48U, "segment waypoint limit must parse");
+  require(policy.map_input.max_grid_cells == 524288U, "segment grid limit must parse");
+  require(std::abs(policy.risk.stop_threshold - 60.0F) < 1e-6F,
+          "segment risk stop threshold must parse");
+  require(std::abs(policy.risk.resume_threshold - 45.0F) < 1e-6F,
+          "segment risk resume threshold must parse");
+  require(std::abs(policy.map_input.max_age_s - 0.8) < 1e-12,
+          "segment map maximum age must parse");
+
+  for (const std::vector<std::string> &args : {
+           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
+                                    "--segment-risk-stop", "39", "--segment-risk-resume", "40"},
+           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
+                                    "--segment-max-distance-m", "0"},
+           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
+                                    "--segment-max-waypoints", "1"},
+           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
+                                    "--segment-max-grid-cells", "1048577"},
+           std::vector<std::string>{"navd", "--path-library", "fixture-paths",
+                                    "--segment-map-max-age-s", "10.1"},
+       }) {
+    bool rejected = false;
+    try {
+      (void)parse(args);
+    } catch (const std::runtime_error &) {
+      rejected = true;
+    }
+    require(rejected, "invalid rolling segment policy must fail closed");
+  }
+}
+
 }  // namespace
 
 int main() {
   try {
     testNavigationRateAndAcceleration();
     testCompiledProductMotionContractParses();
+    testLegacyNativeProfileSelectorIsRejected();
     testCompiledProductMotionContractRejectsMinimumAboveMaximum();
     testUnsafeNegativeValuesClampToZero();
     testSafetyThresholdOrderingFailsClosed();
@@ -707,12 +751,12 @@ int main() {
     testNonFiniteMotionLimitsFailClosed();
     testControlModesLockTheirSafetyContract();
     testPureTeleopDoesNotRequirePlannerAssets();
-    testLegacyMotionInputsAreExplicitCompatibilityOnly();
     testLocalPlannerVisualizationIsExplicitAndBounded();
     testLocalPlannerScoringThreadsAreExplicitAndBounded();
     testStopConfirmationTimeoutIsExplicitAndFailClosed();
     testLocalPlannerOverheadHeightLimitIsConfigurable();
     testDriverControlFreshnessCannotBeDisabled();
+    testRollingSegmentPoliciesAreConfigurableAndBounded();
     std::puts("test_nav_endpoint_config: PASS");
     return 0;
   } catch (const std::exception &exc) {

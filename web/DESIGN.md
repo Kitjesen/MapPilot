@@ -1,11 +1,38 @@
 # Design System — LingTu Robot Control Dashboard
 
-> Based on Linear's dark-mode-first design language, adapted for robotics cockpit UI.
-> AI agents: read this file to understand how LingTu's UI should look and feel.
+> Based on Linear's dark-mode-first design language, adapted for field inspection operations.
+> AI agents: read PRODUCT.md first, then use this file for LingTu interaction and visual decisions.
+
+## 0. Product and Operational Context
+
+LingTu Web is the mission HMI for an inspection-first quadruped system, not a generic robot cockpit or a DDS/ROS topic browser. Its primary user is a trained field operator supervising one robot in substations, distribution rooms, cable tunnels, utility corridors, and similar power or energy facilities. Supervisors and equipment specialists review completion, evidence, and anomalies; integrators use separate advanced diagnostics.
+
+The product promise is a repeatable inspection loop:
+
+1. Plan a route and fixed inspection points.
+2. Reach each point at a reproducible pose.
+3. Capture evidence with visible quality and freshness.
+4. Flag anomalies without hiding uncertainty.
+5. Support human review, repair, and reinspection.
+
+Every primary operational surface must answer four questions within a glance:
+
+- What is the robot doing now?
+- Is the robot and its environment safe?
+- Who or what currently owns motion control?
+- What does the operator need to do next?
+
+Connectivity, safety, control ownership, and mission or motion state are independent dimensions. Do not collapse them into one “online” or “running” badge. An accepted command is not the same as a physically confirmed outcome; pending, accepted, rejected, latched, and recovered states need distinct language.
+
+The default information hierarchy is task → route → point → evidence → review or reinspection. Transport names, topics, process health, and tuning belong in advanced diagnostics. Continuous manual driving should prefer a physical controller; the Web surface is for preflight, supervision, deliberate takeover, release, and recovery.
+
+Current capability must remain visually honest. The verified inspection baseline is route, point, action, timestamp, RGB, pose, and detections. Thermal, gas, acoustic or partial-discharge sensing, trend analysis, automatic reports, and work-order integration are target capabilities until their runtime contracts and field evidence exist.
+
+Design for strong sunlight, low light, gloves, weak or offline connectivity, dust, rain, cold, GPS denial, sensor drift, and robot operation outside direct sight. Critical field controls need large targets, explicit labels, non-color state cues, timestamps, and actionable recovery guidance.
 
 ## 1. Visual Theme & Atmosphere
 
-LingTu's dashboard is a cockpit-grade dark interface for controlling quadruped robots. The canvas is deep navy (`#0a0e17`) — not pure black, but a blue-shifted darkness that feels technical and alive. Content emerges through precisely calibrated luminance steps: surfaces at `#0f1520`, borders at `#1e2a3a`, and text at `#e2e8f0`. Every pixel that isn't data is negative space.
+LingTu's dashboard is a field-inspection mission interface for supervising a quadruped robot and its evidence loop. The canvas is deep navy (`#0a0e17`) — not pure black, but a blue-shifted darkness that remains legible in operational settings. Content emerges through precisely calibrated luminance steps: surfaces at `#0f1520`, borders at `#1e2a3a`, and text at `#e2e8f0`. Every element must support task comprehension, safety, control ownership, or evidence review.
 
 The signature color is **Navigational Green** (`#00ff88`) — a high-energy accent used for "alive" states, active indicators, and primary actions. It carries a soft glow (`0 0 8px rgba(0,255,136,0.4)`) on active elements, creating a bioluminescent quality. Red (`#ef4444`) is reserved exclusively for stop/emergency/error states. Amber (`#f59e0b`) signals caution or transitional states (SLAM mapping mode, degraded conditions).
 
@@ -17,7 +44,7 @@ Typography uses a dual-family system: **Noto Sans SC** for all UI text (optimize
 - Semantic red (`#ef4444`) only for stop/error, amber (`#f59e0b`) for caution
 - Dual typography: Noto Sans SC (UI) + JetBrains Mono (data)
 - Semi-transparent borders (`rgba(255,255,255,0.06)` to `rgba(255,255,255,0.10)`)
-- Information-dense cockpit layout — no decorative whitespace
+- Task-dense field layout that prioritizes mission state, safety, ownership, and evidence
 - Pulsing green dot (1.5s ease-in-out) for live/active indicators
 - Step-blink animation (0.6s) for E-STOP/emergency states
 
@@ -94,10 +121,10 @@ Typography uses a dual-family system: **Noto Sans SC** for all UI text (optimize
 | Status Bar | Mono | 11px | 400 | 1.0 | Bottom bar values |
 
 ### Principles
-- **Chinese-first**: All UI labels in Chinese. Noto Sans SC handles CJK characters cleanly at small sizes.
+- **Chinese-first and bilingual**: Operational labels default to clear Chinese and include complete English equivalents. Noto Sans SC handles CJK characters cleanly.
 - **Mono for data**: Anything that is a number, coordinate, measurement, or machine value uses JetBrains Mono. This creates an instant visual distinction between "UI chrome" and "instrument data."
 - **No bold above 600**: Maximum weight is 600 (semibold) for section titles. The system avoids typographic drama.
-- **Compact sizing**: Base font is 12px — this is an information-dense cockpit, not a marketing page.
+- **Field-legible density**: Desktop supervision can remain compact, but critical field actions use at least 44px targets, explicit labels, and type that remains legible in strong light.
 
 ## 4. Component Stylings
 
@@ -257,7 +284,7 @@ No drop shadows. No gradients. Depth = luminance step.
 | Spinner | 0.7s | linear | SLAM mode switching pending |
 | Toast slide-in | 0.18s | ease-out | Notification appearance |
 
-No layout animations. No page transitions. Cockpit UIs should not distract.
+No layout animations. No page transitions. Operational HMIs should not distract.
 
 ## 8. Do's and Don'ts
 
@@ -267,7 +294,7 @@ No layout animations. No page transitions. Cockpit UIs should not distract.
 - Use `#00ff88` exclusively for positive/active states — never decoratively
 - Use JetBrains Mono for ALL numbers, coordinates, and metrics
 - Use Noto Sans SC for ALL UI labels and text
-- Write ALL user-facing strings in Chinese
+- Route every user-facing string through the locale helper with clear Chinese and complete English
 - Keep buttons nearly transparent (ghost style) except for primary CTAs
 - Use luminance stepping for elevation (darker = deeper, lighter = elevated)
 - Use semi-transparent borders on dark surfaces
@@ -278,7 +305,7 @@ No layout animations. No page transitions. Cockpit UIs should not distract.
 - Don't use shadows for depth — use background luminance steps
 - Don't use font weight above 600 — no bold in this system
 - Don't add decorative elements, gradients, or patterns
-- Don't use English for user-facing labels (code/technical terms are OK)
+- Don't ship a user-facing label in only one language when the surface supports locale switching
 - Don't make the camera feed smaller than the chat panel
 - Don't animate layout changes — instant tab switches, no slide transitions
 - Don't use more than 3 colors in any single view (bg + accent + one semantic)

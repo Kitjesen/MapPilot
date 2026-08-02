@@ -442,6 +442,7 @@ def classify_path(path: Path | str, root: Path = ROOT_DIR) -> str:
         "tools/validate/validate_pct_gpmp_migration_contract.py",
         "tools/validate/validate_camera_lidar_calibration_migration_contract.py",
         "tools/validate/validate_kernel_migration_status.py",
+        "tools/validate/validate_portable_lean_package.py",
         "tools/validate/validate_pose_graph_opt_coverage.py",
         "src/runtime/tests/test_kernel_migration_status.py",
         "src/runtime/tests/test_pct_gpmp_migration_contract.py",
@@ -484,7 +485,7 @@ def classify_path(path: Path | str, root: Path = ROOT_DIR) -> str:
     if rel in {
         ".github/workflows/slam-aarch64-build.yml",
         "scripts/build/build_ros_workspace.sh",
-        "scripts/deploy/setup_server_ros_pct.sh",
+        "sim/scripts/setup_linux_validation_host.sh",
     }:
         return "remaining_dependency_support"
     if "/tests/" in rel or rel.startswith("tests/") or Path(rel).name.startswith("test_"):

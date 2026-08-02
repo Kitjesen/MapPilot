@@ -15,7 +15,7 @@ enum {
   // Field Products atomically package this library with its Host bindings.
   // Mixed global ABI versions fail closed; append-only feature discovery
   // within one version uses the capability bits below.
-  LINGTU_NAV_CLIENT_ABI_VERSION = 4,
+  LINGTU_NAV_CLIENT_ABI_VERSION = 7,
 };
 
 enum {
@@ -29,6 +29,10 @@ enum {
   LINGTU_NAV_CLIENT_CAP_PATH_TELEMETRY = 1ULL << 7,
   LINGTU_NAV_CLIENT_CAP_MAP_SCENE = 1ULL << 8,
   LINGTU_NAV_CLIENT_CAP_OPERATOR_MOTION_RECEIPT = 1ULL << 9,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_COMMAND_RECEIPT = 1ULL << 10,
+  LINGTU_NAV_CLIENT_CAP_NAVIGATION_TASK_STATUS = 1ULL << 11,
+  LINGTU_NAV_CLIENT_CAP_INSPECTION_TASK_EVENTS = 1ULL << 12,
+  LINGTU_NAV_CLIENT_CAP_EXPLORATION_RUN_EVENTS = 1ULL << 13,
 };
 
 enum {
@@ -42,6 +46,11 @@ enum {
 
 enum {
   LINGTU_NAV_OPERATOR_MOTION_RECEIPT_ABI_VERSION = 1,
+  LINGTU_NAV_NAVIGATION_COMMAND_RECEIPT_ABI_VERSION = 1,
+  LINGTU_NAV_NAVIGATION_GOAL_STATUS_ABI_VERSION = 1,
+  LINGTU_NAV_INSPECTION_TASK_EVENT_ABI_VERSION = 1,
+  LINGTU_NAV_EXPLORATION_COMMAND_RECEIPT_ABI_VERSION = 1,
+  LINGTU_NAV_EXPLORATION_RUN_EVENT_ABI_VERSION = 1,
 };
 
 typedef struct lingtu_nav_navigation_state {
@@ -51,6 +60,7 @@ typedef struct lingtu_nav_navigation_state {
   unsigned long long sequence;
   int32_t control_mode;
   int32_t lifecycle_state;
+  char active_task_id[128];
   char active_request_id[128];
   unsigned long long goal_epoch;
   char map_id[128];
@@ -70,11 +80,99 @@ typedef struct lingtu_nav_navigation_goal_status {
   char frame_id[32];
   char boot_id[128];
   unsigned long long sequence;
+  char task_id[128];
   char request_id[128];
   int32_t state;
   unsigned long long goal_epoch;
   char reason[256];
 } lingtu_nav_navigation_goal_status;
+
+typedef struct lingtu_nav_navigation_command_receipt_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  char task_id[128];
+  char request_id[128];
+  int32_t accepted;
+  int32_t kind;
+  char reason[256];
+  double endpoint_timestamp_s;
+} lingtu_nav_navigation_command_receipt_v1;
+
+typedef struct lingtu_nav_navigation_goal_status_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long sequence;
+  char task_id[128];
+  char request_id[128];
+  int32_t state;
+  unsigned long long goal_epoch;
+  char reason[256];
+} lingtu_nav_navigation_goal_status_v1;
+
+// One immutable inspection task fact. This is intentionally separate from
+// the legacy InspectionStatus snapshot and remains append-only under its own
+// feature capability.
+typedef struct lingtu_nav_inspection_task_event_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long event_sequence;
+  int32_t kind;
+  char task_id[128];
+  char request_id[128];
+  char command_request_id[128];
+  int32_t state;
+  char map_id[128];
+  int64_t map_version;
+  char route_id[128];
+  unsigned long long route_revision;
+  uint32_t point_index;
+  uint32_t point_count;
+  uint32_t loop_index;
+  uint32_t retry_count;
+  char point_id[128];
+  char action[128];
+  char action_request_id[128];
+  char evidence_id[128];
+  char reason[256];
+} lingtu_nav_inspection_task_event_v1;
+
+typedef struct lingtu_nav_exploration_command_receipt_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  int32_t accepted;
+  char request_id[128];
+  char exploration_run_id[128];
+  char reason[256];
+  int32_t duplicate;
+} lingtu_nav_exploration_command_receipt_v1;
+
+typedef struct lingtu_nav_exploration_run_event_v1 {
+  uint32_t abi_version;
+  uint32_t struct_size;
+  double timestamp_s;
+  char frame_id[32];
+  char boot_id[128];
+  unsigned long long event_sequence;
+  int32_t kind;
+  char exploration_run_id[128];
+  char start_request_id[128];
+  char command_request_id[128];
+  char product_session_id[128];
+  int32_t state;
+  char route[32];
+  char map_id[128];
+  int64_t map_version;
+  char artifact_hash[128];
+  char reason[256];
+  int32_t motion_stop_confirmed;
+  char motion_stop_reason[256];
+} lingtu_nav_exploration_run_event_v1;
 
 typedef struct lingtu_nav_path_point {
   double x;
@@ -150,7 +248,6 @@ typedef struct lingtu_nav_map_scene_header_v1 {
   lingtu_nav_map_scene_grid_header_v1 occupancy;
   lingtu_nav_map_scene_grid_header_v1 elevation;
   lingtu_nav_map_scene_grid_header_v1 esdf;
-  lingtu_nav_map_scene_grid_header_v1 traversability;
 } lingtu_nav_map_scene_header_v1;
 
 typedef struct lingtu_nav_map_scene_buffers_v1 {
@@ -168,8 +265,6 @@ typedef struct lingtu_nav_map_scene_buffers_v1 {
   unsigned long long elevation_cell_capacity;
   float* esdf_cells;
   unsigned long long esdf_cell_capacity;
-  float* traversability_cells;
-  unsigned long long traversability_cell_capacity;
 } lingtu_nav_map_scene_buffers_v1;
 
 typedef struct lingtu_nav_map_scene_health_v1 {
@@ -212,48 +307,46 @@ uint64_t lingtu_nav_client_capabilities(void);
 lingtu_nav_client_handle lingtu_nav_client_create(int domain_id);
 void lingtu_nav_client_destroy(lingtu_nav_client_handle handle);
 
-int lingtu_nav_client_send_goal(
+// Returns 0 after receiving a correlated ACK, including accepted=false.
+// Transport, timeout, and argument errors return -1.
+int lingtu_nav_client_start_task_with_receipt_v1(
     lingtu_nav_client_handle handle,
-    double x,
-    double y,
-    double z,
-    double yaw,
-    int timeout_ms);
-
-int lingtu_nav_client_send_goal_with_id(
-    lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
     double x,
     double y,
     double z,
     double yaw,
-    int timeout_ms);
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
 
-int lingtu_nav_client_cancel(
+// Cancels the task identified by task_id. Returns 0 after a correlated ACK,
+// including accepted=false. Transport, timeout, and argument errors return -1.
+int lingtu_nav_client_cancel_task_with_receipt_v1(
     lingtu_nav_client_handle handle,
-    const char* reason,
-    int timeout_ms);
-
-int lingtu_nav_client_cancel_with_id(
-    lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
     const char* reason,
-    int timeout_ms);
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
 
-int lingtu_nav_client_send_teleop(
+// Pauses/resumes only the task identified by task_id. A successful call means
+// that a correlated endpoint ACK was received; inspect receipt->accepted.
+int lingtu_nav_client_pause_task_with_receipt_v1(
     lingtu_nav_client_handle handle,
-    double vx,
-    double vy,
-    double wz,
-    int timeout_ms);
-
-int lingtu_nav_client_send_teleop_with_id(
-    lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
-    double vx,
-    double vy,
-    double wz,
-    int timeout_ms);
+    const char* reason,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
+
+int lingtu_nav_client_resume_task_with_receipt_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    const char* request_id,
+    const char* reason,
+    int timeout_ms,
+    lingtu_nav_navigation_command_receipt_v1* receipt);
 
 int lingtu_nav_client_stop(
     lingtu_nav_client_handle handle,
@@ -299,61 +392,82 @@ int lingtu_nav_client_resume_autonomy_with_id(
     const char* reason,
     int timeout_ms);
 
-int lingtu_nav_client_start_exploration(
+int lingtu_nav_client_start_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
+    const char* exploration_run_id,
     const char* session_id,
     const char* reason,
-    int timeout_ms);
-int lingtu_nav_client_pause_exploration(
+    int timeout_ms,
+    lingtu_nav_exploration_command_receipt_v1* receipt);
+int lingtu_nav_client_pause_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
+    const char* exploration_run_id,
+    const char* session_id,
     const char* reason,
-    int timeout_ms);
-int lingtu_nav_client_resume_exploration(
+    int timeout_ms,
+    lingtu_nav_exploration_command_receipt_v1* receipt);
+int lingtu_nav_client_resume_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
+    const char* exploration_run_id,
+    const char* session_id,
     const char* reason,
-    int timeout_ms);
-int lingtu_nav_client_stop_exploration(
+    int timeout_ms,
+    lingtu_nav_exploration_command_receipt_v1* receipt);
+int lingtu_nav_client_stop_exploration_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
+    const char* exploration_run_id,
+    const char* session_id,
     const char* reason,
-    int timeout_ms);
-int lingtu_nav_client_set_directed_exploration_target(
+    int timeout_ms,
+    lingtu_nav_exploration_command_receipt_v1* receipt);
+int lingtu_nav_client_set_directed_exploration_target_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
+    const char* exploration_run_id,
     double x,
     double y,
     double ttl_s,
     const char* session_id,
     const char* reason,
-    int timeout_ms);
-int lingtu_nav_client_clear_directed_exploration_target(
+    int timeout_ms,
+    lingtu_nav_exploration_command_receipt_v1* receipt);
+int lingtu_nav_client_clear_directed_exploration_target_with_receipt_v1(
     lingtu_nav_client_handle handle,
     const char* request_id,
+    const char* exploration_run_id,
     const char* session_id,
     const char* reason,
-    int timeout_ms);
+    int timeout_ms,
+    lingtu_nav_exploration_command_receipt_v1* receipt);
 
-int lingtu_nav_client_start_inspection(
+/* Product task ingress: task_id identifies the lifecycle; request_id identifies
+ * this retryable command. */
+int lingtu_nav_client_start_inspection_task(
     lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
     const char* route_id,
     unsigned long long route_revision,
     int timeout_ms);
-int lingtu_nav_client_pause_inspection(
+int lingtu_nav_client_pause_inspection_task(
     lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
     const char* reason,
     int timeout_ms);
-int lingtu_nav_client_resume_inspection(
+int lingtu_nav_client_resume_inspection_task(
     lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
     const char* reason,
     int timeout_ms);
-int lingtu_nav_client_cancel_inspection(
+int lingtu_nav_client_cancel_inspection_task(
     lingtu_nav_client_handle handle,
+    const char* task_id,
     const char* request_id,
     const char* reason,
     int timeout_ms);
@@ -439,12 +553,32 @@ int lingtu_nav_client_take_navigation_goal_status(
     lingtu_nav_client_handle handle,
     lingtu_nav_navigation_goal_status* status);
 
+// Pops one ordered native inspection task fact. The C++ client does not
+// synthesize facts from command ACKs. Returns 1 when available, 0 when empty,
+// and -1 on error.
+int lingtu_nav_client_take_inspection_task_event_v1(
+    lingtu_nav_client_handle handle,
+    lingtu_nav_inspection_task_event_v1* event);
+
+// Pops one validated, per-boot ordered native exploration-run fact.
+// Returns 1 when available, 0 when empty, and -1 on error.
+int lingtu_nav_client_take_exploration_run_event_v1(
+    lingtu_nav_client_handle handle,
+    lingtu_nav_exploration_run_event_v1* event);
+
 // Reads the retained latest lifecycle state for request_id without consuming
 // the event queue. Returns 1 when found, 0 when unknown, and -1 on error.
 int lingtu_nav_client_get_navigation_goal_status(
     lingtu_nav_client_handle handle,
     const char* request_id,
     lingtu_nav_navigation_goal_status* status);
+
+// Reads the retained latest lifecycle state for task_id without consuming the
+// event queue. Returns 1 when found, 0 when unknown, and -1 on error.
+int lingtu_nav_client_get_navigation_task_status_v1(
+    lingtu_nav_client_handle handle,
+    const char* task_id,
+    lingtu_nav_navigation_goal_status_v1* status);
 
 // Copies one latest-only path sample. If point_capacity is too small, returns
 // 2, stores the required point_count in header, and retains the sample for a

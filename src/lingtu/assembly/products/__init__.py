@@ -6,41 +6,48 @@ from typing import Any, Mapping
 
 from runtime.blueprint import Blueprint
 
-from .thunder import (
-    thunder_basic_blueprint,
-    thunder_basic_config,
-    thunder_blueprint,
-    thunder_explore_blueprint,
-    thunder_explore_config,
-    thunder_lite_blueprint,
-    thunder_lite_config,
-    thunder_map_blueprint,
-    thunder_map_config,
-    thunder_nav_blueprint,
-    thunder_nav_config,
+from .configuration import (
+    ResolvedProductHostConfig,
+    resolve_product_host_config,
+    resolve_product_host_runtime,
 )
+from .host_defaults import FIELD_PRODUCT_HOST_DEFAULTS, FIELD_PRODUCT_NAMES
+from .thunder import thunder_blueprint
 
 
-def product_blueprint_for_profile(
-    _profile: str,
+def host_blueprint_for_profile(
+    profile: str,
     config: Mapping[str, Any],
 ) -> Blueprint:
-    """Return the standard product blueprint for any resolved profile."""
+    """Build the Host graph for an already resolved local Profile."""
 
+    if profile in FIELD_PRODUCT_NAMES:
+        raise ValueError(
+            f"{profile!r} is a Product; use host_blueprint_for_product(...)"
+        )
+    return thunder_blueprint(config)
+
+
+def host_blueprint_for_product(
+    product: str,
+    config: Mapping[str, Any],
+) -> Blueprint:
+    """Build the Host graph for an already resolved field Product."""
+
+    if product not in FIELD_PRODUCT_NAMES:
+        raise ValueError(
+            f"{product!r} is not a Product; use host_blueprint_for_profile(...)"
+        )
     return thunder_blueprint(config)
 
 
 __all__ = [
-    "product_blueprint_for_profile",
-    "thunder_basic_blueprint",
-    "thunder_basic_config",
+    "FIELD_PRODUCT_HOST_DEFAULTS",
+    "FIELD_PRODUCT_NAMES",
+    "ResolvedProductHostConfig",
+    "host_blueprint_for_product",
+    "host_blueprint_for_profile",
+    "resolve_product_host_config",
+    "resolve_product_host_runtime",
     "thunder_blueprint",
-    "thunder_explore_blueprint",
-    "thunder_explore_config",
-    "thunder_lite_blueprint",
-    "thunder_lite_config",
-    "thunder_map_blueprint",
-    "thunder_map_config",
-    "thunder_nav_blueprint",
-    "thunder_nav_config",
 ]

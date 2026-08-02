@@ -322,7 +322,7 @@ def test_navigation_status_uses_public_planner_service_contract() -> None:
 
     try:
         preview = nav.preview_plan(1.0, 0.0)
-        # NOTE: get_navigation_status moved to NavigationSkillsModule
+        # NOTE: get_navigation_status is owned by NavSkills
         health = nav.health()
     finally:
         nav.stop()

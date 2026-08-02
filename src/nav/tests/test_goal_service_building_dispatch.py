@@ -11,12 +11,16 @@ from nav.services.goals import GoalService
 
 class FakeBuildingModule:
     def __init__(self, result: dict | None = None) -> None:
-        self.result = result or {
-            "accepted": True,
-            "success": True,
-            "reason": "mission_accepted",
-            "message": "building mission accepted",
-        }
+        self.result = (
+            {
+                "accepted": True,
+                "success": True,
+                "reason": "mission_accepted",
+                "message": "building mission accepted",
+            }
+            if result is None
+            else result
+        )
         self.calls: list[dict] = []
 
     def submit(self, command: dict) -> dict:
@@ -118,6 +122,29 @@ def test_building_command_publishes_rejection_from_building_module() -> None:
     assert statuses[-1]["accepted"] is False
     assert statuses[-1]["reason"] == "connector_unavailable"
     assert statuses[-1]["message"] == "requested elevator is unavailable"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"accepted": "false", "success": "false"},
+        {"accepted": 1, "success": True},
+        {"success": "true"},
+        {},
+    ],
+)
+def test_building_command_rejects_malformed_acknowledgement(result: dict) -> None:
+    building = FakeBuildingModule(result)
+    service, statuses, goals = _service(building)
+
+    service.goal_command._deliver(
+        json.dumps({"action": "building_navigate", "request_id": "voice-malformed"})
+    )
+
+    assert goals == []
+    assert statuses[-1]["success"] is False
+    assert statuses[-1]["accepted"] is False
+    assert statuses[-1]["reason"] == "invalid_building_ack"
 
 
 def test_building_command_fails_closed_when_submit_raises() -> None:

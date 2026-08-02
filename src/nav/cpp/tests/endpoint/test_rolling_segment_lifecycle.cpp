@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -22,6 +23,7 @@ using lingtu::nav::endpoint::RollingSegmentEffectFailurePolicy;
 using lingtu::nav::endpoint::RollingSegmentEffectFeedback;
 using lingtu::nav::endpoint::RollingSegmentExecutionGrid;
 using lingtu::nav::endpoint::RollingSegmentGenericPreempt;
+using lingtu::nav::endpoint::RollingSegmentIngressRejected;
 using lingtu::nav::endpoint::RollingSegmentInstallPathEffect;
 using lingtu::nav::endpoint::RollingSegmentLifecycle;
 using lingtu::nav::endpoint::RollingSegmentMotionOutcome;
@@ -86,6 +88,32 @@ RollingSegmentCommand executeCommand(double stamp_s = 10.0) {
   command.target.y = 1.5;
   command.target.qw = 1.0;
   return command;
+}
+
+RollingSegmentStatusEffect
+confirmSafeStop(RollingSegmentLifecycle &lifecycle,
+                const lingtu::nav::endpoint::RollingSegmentStepResult &result) {
+  std::optional<std::size_t> stop_index;
+  std::optional<std::size_t> clear_index;
+  for (std::size_t index = 0U; index < result.effects.size(); ++index) {
+    require(!std::holds_alternative<RollingSegmentStatusEffect>(result.effects[index]),
+            "terminal status must not be present before successful motion clear feedback");
+    if (std::holds_alternative<RollingSegmentStopAuthorityEffect>(result.effects[index])) {
+      stop_index = index;
+    }
+    if (std::holds_alternative<RollingSegmentClearMotionEffect>(result.effects[index])) {
+      clear_index = index;
+    }
+  }
+  require(stop_index.has_value() && clear_index.has_value() && *stop_index < *clear_index,
+          "safe-stop effects must revoke authority before clearing motion");
+  const auto clear_id =
+      std::get<RollingSegmentClearMotionEffect>(result.effects[*clear_index]).effect_id;
+  const auto terminal = lifecycle.step(RollingSegmentEffectFeedback{clear_id, true});
+  require(terminal.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentStatusEffect>(terminal.effects.front()),
+          "successful motion clear must release exactly one terminal status");
+  return std::get<RollingSegmentStatusEffect>(terminal.effects.front());
 }
 
 void testFreshExecuteFromCurrentMapProducesOrderedAdmissionEffects() {
@@ -158,6 +186,245 @@ void testTerminalPrebindRejectionIsReplayableAfterRequestExpires() {
           "cached terminal rejection must replay despite delayed delivery");
 }
 
+void testTerminalBarrierRejectsFreshExecuteWithoutMotionEffects() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+
+  const auto result = lifecycle.step(RollingSegmentIngressRejected{
+      executeCommand(),
+      readyContext(),
+      "goal_terminal_pending",
+  });
+
+  require(result.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentAckEffect>(result.effects.front()),
+          "terminal barrier must only emit a negative rolling ACK");
+  const auto &ack = std::get<RollingSegmentAckEffect>(result.effects.front()).ack;
+  require(!ack.accepted && ack.reason == "goal_terminal_pending" && ack.request_id == "segment-1" &&
+              ack.session_id == "rolling-session" && ack.reset_epoch == 7U &&
+              ack.generation == 2U && !ack.live,
+          "terminal barrier execute ACK must retain the requested immutable binding");
+  const auto state = lifecycle.snapshot();
+  require(!state.active && state.has_execution_grid && !state.terminal_delivery_pending,
+          "terminal barrier must not acquire authority, execute, or create terminal status");
+  require(lifecycle.step(RollingSegmentBeginTick{10.1}).effects.empty(),
+          "terminal barrier rejection must not schedule deferred rolling status");
+}
+
+void testTerminalBarrierExecuteReceiptSurvivesAckFailureAndExpiry() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+
+  const auto rejected = lifecycle.step(RollingSegmentIngressRejected{
+      executeCommand(),
+      readyContext(),
+      "goal_terminal_pending",
+  });
+  const auto &first_effect = std::get<RollingSegmentAckEffect>(rejected.effects.front());
+  require(lifecycle
+              .step(RollingSegmentEffectFeedback{
+                  first_effect.effect_id,
+                  false,
+              })
+              .effects.empty(),
+          "failed barrier ACK feedback must not create terminal compensation");
+
+  const auto replay =
+      lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext(30.0)});
+  require(replay.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentAckEffect>(replay.effects.front()),
+          "expired barrier receipt must replay only its negative ACK");
+  const auto &ack = std::get<RollingSegmentAckEffect>(replay.effects.front()).ack;
+  require(!ack.accepted && ack.reason == "goal_terminal_pending" &&
+              ack.request_id == first_effect.ack.request_id &&
+              ack.session_id == first_effect.ack.session_id &&
+              ack.reset_epoch == first_effect.ack.reset_epoch &&
+              ack.generation == first_effect.ack.generation && ack.live == first_effect.ack.live,
+          "barrier retry must preserve the exact first negative ACK");
+  require(!lifecycle.snapshot().active && !lifecycle.snapshot().terminal_delivery_pending,
+          "barrier retry must not plan, activate, or create rolling terminal state");
+}
+
+void testTerminalBarrierRejectsExactActiveCancelWithPinnedBinding() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+
+  auto cancel = executeCommand();
+  cancel.kind = static_cast<std::int32_t>(ExplorationSegmentCommandKind::kCancel);
+  const auto rejected = lifecycle.step(RollingSegmentIngressRejected{
+      cancel,
+      readyContext(),
+      "goal_terminal_pending",
+  });
+  require(rejected.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentAckEffect>(rejected.effects.front()),
+          "terminal barrier exact cancel must only emit a negative ACK");
+  const auto &first_effect = std::get<RollingSegmentAckEffect>(rejected.effects.front());
+  require(!first_effect.ack.accepted && first_effect.ack.reason == "goal_terminal_pending" &&
+              first_effect.ack.session_id == "rolling-session" &&
+              first_effect.ack.reset_epoch == 7U && first_effect.ack.generation == 3U &&
+              first_effect.ack.live,
+          "terminal barrier cancel ACK must expose the real active execution binding");
+  require(lifecycle.snapshot().active,
+          "terminal barrier cancel must preserve the active rolling segment");
+
+  (void)lifecycle.step(RollingSegmentEffectFeedback{first_effect.effect_id, false});
+  const auto replay = lifecycle.step(RollingSegmentCommandEvent{cancel, readyContext(30.0)});
+  require(replay.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentAckEffect>(replay.effects.front()),
+          "exact cancel retry must only replay its barrier receipt");
+  const auto &ack = std::get<RollingSegmentAckEffect>(replay.effects.front()).ack;
+  require(!ack.accepted && ack.reason == first_effect.ack.reason &&
+              ack.generation == first_effect.ack.generation && ack.live == first_effect.ack.live,
+          "exact cancel retry must preserve the original negative ACK");
+  require(lifecycle.snapshot().active &&
+              lifecycle.step(RollingSegmentBeginTick{30.1}).effects.empty(),
+          "barrier-cached cancel must not terminate or schedule terminal status");
+}
+
+void testTerminalBarrierReceiptCannotMaskCancelBindingMismatch() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+
+  auto exact_cancel = executeCommand();
+  exact_cancel.kind = static_cast<std::int32_t>(ExplorationSegmentCommandKind::kCancel);
+  (void)lifecycle.step(RollingSegmentIngressRejected{
+      exact_cancel,
+      readyContext(),
+      "goal_terminal_pending",
+  });
+
+  auto mismatch = exact_cancel;
+  mismatch.minimum_generation = 3U;
+  const auto rejected = lifecycle.step(RollingSegmentIngressRejected{
+      mismatch,
+      readyContext(10.1),
+      "goal_terminal_pending",
+  });
+  require(rejected.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentAckEffect>(rejected.effects.front()),
+          "mismatched cancel must only emit its normal rejection ACK");
+  const auto &ack = std::get<RollingSegmentAckEffect>(rejected.effects.front()).ack;
+  require(!ack.accepted && ack.reason == "segment_cancel_binding_mismatch",
+          "cancel binding mismatch must take priority over the terminal barrier receipt");
+  require(lifecycle.snapshot().active,
+          "mismatched cancel under the terminal barrier must preserve the active segment");
+}
+
+void testRollingTerminalReplayTakesPriorityOverGoalTerminalBarrier() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+  const auto stop = lifecycle.step(RollingSegmentMotionOutcome{
+      RollingSegmentMotionOutcomeKind::kReached,
+      "segment_reached_for_replay",
+  });
+  const auto delivered_after_stop = confirmSafeStop(lifecycle, stop);
+  (void)lifecycle.step(RollingSegmentEffectFeedback{delivered_after_stop.effect_id, true});
+
+  const auto replay = lifecycle.step(RollingSegmentIngressRejected{
+      executeCommand(),
+      readyContext(30.0),
+      "goal_terminal_pending",
+  });
+  require(replay.effects.size() == 2U &&
+              std::holds_alternative<RollingSegmentAckEffect>(replay.effects[0]) &&
+              std::holds_alternative<RollingSegmentStatusEffect>(replay.effects[1]),
+          "rolling terminal replay must retain its ACK and status effects");
+  const auto &ack = std::get<RollingSegmentAckEffect>(replay.effects[0]).ack;
+  const auto &status = std::get<RollingSegmentStatusEffect>(replay.effects[1]).status;
+  require(!ack.accepted && ack.reason == "segment_terminal_replayed" &&
+              status.state == ExplorationSegmentState::kReached &&
+              status.reason == "segment_reached_for_replay",
+          "real rolling terminal must take priority over the generic goal terminal barrier");
+}
+
+void testGoalTerminalBarrierPreservesRollingValidationPriority() {
+  struct Case {
+    RollingSegmentCommand command;
+    RollingSegmentRuntimeContext context;
+    std::string expected_reason;
+  };
+
+  std::vector<Case> cases;
+  auto command = executeCommand();
+  command.request_id.clear();
+  cases.push_back({command, readyContext(), "segment_request_id_empty"});
+
+  command = executeCommand();
+  command.kind = 99;
+  cases.push_back({command, readyContext(), "unknown_segment_command_kind"});
+
+  command = executeCommand();
+  command.frame_id = "odom";
+  cases.push_back({command, readyContext(), "segment_request_binding_invalid"});
+
+  command = executeCommand();
+  cases.push_back({command, readyContext(30.0), "segment_request_stale_or_invalid"});
+
+  command = executeCommand();
+  command.target.qx = 0.25;
+  cases.push_back({command, readyContext(), "segment_target_orientation_invalid"});
+
+  command = executeCommand();
+  command.session_id = "different-session";
+  cases.push_back({command, readyContext(), "segment_request_binding_mismatch"});
+
+  for (const auto &test_case : cases) {
+    RollingSegmentLifecycle lifecycle;
+    (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+    (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+    const auto result = lifecycle.step(RollingSegmentIngressRejected{
+        test_case.command,
+        test_case.context,
+        "goal_terminal_pending",
+    });
+    require(result.effects.size() == 1U &&
+                std::holds_alternative<RollingSegmentAckEffect>(result.effects.front()),
+            "barrier validation rejection must only emit an ACK");
+    const auto &ack = std::get<RollingSegmentAckEffect>(result.effects.front()).ack;
+    require(!ack.accepted && ack.reason == test_case.expected_reason,
+            "rolling validation must take priority over the goal terminal barrier");
+    require(!lifecycle.snapshot().active,
+            "barrier validation rejection must not activate a rolling segment");
+  }
+}
+
+void testGoalTerminalBarrierEmptyReasonFailsClosedAndReplays() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+
+  const auto rejected = lifecycle.step(RollingSegmentIngressRejected{
+      executeCommand(),
+      readyContext(),
+      {},
+  });
+  require(rejected.effects.size() == 1U,
+          "empty barrier reason must still produce one negative ACK");
+  const auto &first = std::get<RollingSegmentAckEffect>(rejected.effects.front()).ack;
+  require(!first.accepted && first.reason == "goal_terminal_pending",
+          "empty barrier reason must use the stable fail-closed fallback");
+
+  const auto replay =
+      lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext(10.1)});
+  require(replay.effects.size() == 1U,
+          "fallback barrier receipt must replay without rolling admission effects");
+  const auto &second = std::get<RollingSegmentAckEffect>(replay.effects.front()).ack;
+  require(!second.accepted && second.reason == first.reason &&
+              second.request_id == first.request_id && second.generation == first.generation,
+          "fallback barrier receipt must remain exact across normal retries");
+  require(!lifecycle.snapshot().active,
+          "fallback barrier receipt must prevent later execution of the same binding");
+}
+
 void testDuplicateActiveExecuteIsIdempotent() {
   RollingSegmentLifecycle lifecycle;
   (void)lifecycle.step(RollingSegmentBeginTick{10.0});
@@ -196,13 +463,14 @@ void testStaleExactBindingRemainsIdempotentAndCancellable() {
   delayed_cancel.kind = static_cast<std::int32_t>(ExplorationSegmentCommandKind::kCancel);
   const auto cancelled =
       lifecycle.step(RollingSegmentCommandEvent{delayed_cancel, readyContext(30.0)});
-  require(cancelled.effects.size() == 4U,
+  require(cancelled.effects.size() == 3U,
           "an exact active cancel must remain fail-safe after expiry");
   require(std::holds_alternative<RollingSegmentStopAuthorityEffect>(cancelled.effects[1]) &&
-              std::holds_alternative<RollingSegmentStatusEffect>(cancelled.effects[2]) &&
-              std::holds_alternative<RollingSegmentClearMotionEffect>(cancelled.effects[3]) &&
+              std::holds_alternative<RollingSegmentClearMotionEffect>(cancelled.effects[2]) &&
               !lifecycle.snapshot().active,
-          "a delayed exact cancel must stop, terminalize, and clear motion");
+          "a delayed exact cancel must stop and clear before terminalizing");
+  require(confirmSafeStop(lifecycle, cancelled).status.state == ExplorationSegmentState::kCancelled,
+          "a delayed exact cancel must terminalize only after motion clear succeeds");
 }
 
 void testCancelRequiresExactActiveBinding() {
@@ -224,18 +492,16 @@ void testCancelRequiresExactActiveBinding() {
   auto cancel = executeCommand();
   cancel.kind = static_cast<std::int32_t>(ExplorationSegmentCommandKind::kCancel);
   const auto accepted = lifecycle.step(RollingSegmentCommandEvent{cancel, readyContext()});
-  require(accepted.effects.size() == 4U, "accepted cancel must ACK, stop, terminalize, and clear");
+  require(accepted.effects.size() == 3U, "accepted cancel must ACK, stop, then clear");
   require(std::holds_alternative<RollingSegmentAckEffect>(accepted.effects[0]) &&
               std::get<RollingSegmentAckEffect>(accepted.effects[0]).ack.accepted,
           "matching cancel must ACK before changing motion state");
   require(std::holds_alternative<RollingSegmentStopAuthorityEffect>(accepted.effects[1]),
           "matching cancel must stop path authority");
-  require(std::holds_alternative<RollingSegmentStatusEffect>(accepted.effects[2]) &&
-              std::get<RollingSegmentStatusEffect>(accepted.effects[2]).status.state ==
-                  ExplorationSegmentState::kCancelled,
-          "matching cancel must publish a cancelled terminal status");
-  require(std::holds_alternative<RollingSegmentClearMotionEffect>(accepted.effects[3]),
-          "matching cancel must finish with the fail-closed motion clear");
+  require(std::holds_alternative<RollingSegmentClearMotionEffect>(accepted.effects[2]),
+          "matching cancel must clear motion after stopping authority");
+  require(confirmSafeStop(lifecycle, accepted).status.state == ExplorationSegmentState::kCancelled,
+          "matching cancel must publish its terminal only after motion clear succeeds");
   require(!lifecycle.snapshot().active, "matching cancel must release ownership");
 }
 
@@ -248,13 +514,12 @@ void testInvalidExecutionGridFailsClosedForActiveSegment() {
   auto invalid = freeGrid(4U, 10.1);
   invalid.payload_complete = false;
   const auto result = lifecycle.step(RollingSegmentObserveExecutionGrid{std::move(invalid)});
-  require(result.effects.size() == 3U,
-          "invalid grid must stop, terminalize, and clear an active segment");
+  require(result.effects.size() == 2U,
+          "invalid grid must stop and clear an active segment before terminalizing");
   require(std::holds_alternative<RollingSegmentStopAuthorityEffect>(result.effects[0]) &&
-              std::holds_alternative<RollingSegmentStatusEffect>(result.effects[1]) &&
-              std::holds_alternative<RollingSegmentClearMotionEffect>(result.effects[2]),
+              std::holds_alternative<RollingSegmentClearMotionEffect>(result.effects[1]),
           "invalid-grid fail-closed effect order changed");
-  const auto &status = std::get<RollingSegmentStatusEffect>(result.effects[1]).status;
+  const auto status = confirmSafeStop(lifecycle, result).status;
   require(status.state == ExplorationSegmentState::kStaleBinding &&
               status.reason == "execution_grid_payload_incomplete",
           "invalid grid must report a stale execution binding");
@@ -324,13 +589,69 @@ void testUnsafeForwardSuffixFailsBeforeMotionTick() {
 
   auto context = readyContext(10.1);
   const auto result = lifecycle.step(RollingSegmentRevalidate{context});
-  require(result.effects.size() == 3U,
-          "unsafe forward suffix must stop, fail, and clear before NavLoop");
-  const auto &status = std::get<RollingSegmentStatusEffect>(result.effects[1]).status;
+  require(result.effects.size() == 2U, "unsafe forward suffix must stop and clear before NavLoop");
+  const auto status = confirmSafeStop(lifecycle, result).status;
   require(status.state == ExplorationSegmentState::kFailed &&
               status.reason == "segment_path_no_longer_safe",
           "unsafe forward suffix must be a failed segment, not stale binding");
   require(!lifecycle.snapshot().active, "unsafe segment must not reach NavLoop");
+}
+
+void testNewerSameEpochRevisionRevalidatesActiveBinding() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+
+  const auto observed = lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid(4U, 10.1)});
+  require(observed.effects.empty() && lifecycle.snapshot().active,
+          "newer same-epoch map must await corridor revalidation without invalidation");
+  const auto revalidated = lifecycle.step(RollingSegmentRevalidate{readyContext(10.1)});
+  require(revalidated.effects.empty() && lifecycle.snapshot().active,
+          "safe corridor must remain active on a newer same-epoch revision");
+
+  const auto replay =
+      lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext(10.2)});
+  const auto &ack = std::get<RollingSegmentAckEffect>(replay.effects[0]).ack;
+  const auto &status = std::get<RollingSegmentStatusEffect>(replay.effects[1]).status;
+  require(ack.generation == 4U && status.generation == 4U,
+          "successful revalidation must advance the active execution revision");
+}
+
+void testEqualStampDifferentPayloadRevokesActiveBinding() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+
+  auto conflict = freeGrid();
+  conflict.occupancy[0U] = 255U;
+  const auto result = lifecycle.step(RollingSegmentObserveExecutionGrid{std::move(conflict)});
+  require(result.effects.size() == 2U,
+          "equal stamp with conflicting payload must stop and clear before terminalizing");
+  const auto terminal = confirmSafeStop(lifecycle, result).status;
+  require(terminal.state == ExplorationSegmentState::kStaleBinding &&
+              terminal.reason == "execution_grid_stamp_payload_conflict" &&
+              !lifecycle.snapshot().active && !lifecycle.snapshot().has_execution_grid,
+          "conflicting duplicate map stamp must invalidate the cached binding");
+}
+
+void testEpochMismatchImmediatelyRevokesActiveBinding() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+
+  auto next_epoch = freeGrid(1U, 10.1);
+  next_epoch.reset_epoch = 8U;
+  const auto result = lifecycle.step(RollingSegmentObserveExecutionGrid{std::move(next_epoch)});
+  require(result.effects.size() == 2U,
+          "map epoch mismatch must immediately stop and clear before terminalizing");
+  const auto terminal = confirmSafeStop(lifecycle, result).status;
+  require(terminal.state == ExplorationSegmentState::kStaleBinding &&
+              terminal.reason == "segment_map_epoch_changed" && !lifecycle.snapshot().active &&
+              lifecycle.snapshot().has_execution_grid,
+          "new epoch must replace cached input while revoking the old active binding");
 }
 
 void testGenericNavigationPreemptionProducesReplayableCancellation() {
@@ -340,9 +661,9 @@ void testGenericNavigationPreemptionProducesReplayableCancellation() {
   (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
 
   const auto preempted = lifecycle.step(RollingSegmentGenericPreempt{"superseded_by_generic_goal"});
-  require(preempted.effects.size() == 3U,
-          "generic navigation must stop, terminalize, and clear the segment");
-  const auto &terminal = std::get<RollingSegmentStatusEffect>(preempted.effects[1]).status;
+  require(preempted.effects.size() == 2U,
+          "generic navigation must stop and clear the segment before terminalizing");
+  const auto terminal = confirmSafeStop(lifecycle, preempted).status;
   require(terminal.state == ExplorationSegmentState::kCancelled &&
               terminal.reason == "superseded_by_generic_goal",
           "generic goal must retain the segment cancellation reason");
@@ -369,8 +690,8 @@ void testReachedMotionOutcomeTerminatesSegment() {
       RollingSegmentMotionOutcomeKind::kReached,
       {},
   });
-  require(reached.effects.size() == 3U, "reached segment must stop, terminalize, and clear");
-  const auto &status = std::get<RollingSegmentStatusEffect>(reached.effects[1]).status;
+  require(reached.effects.size() == 2U, "reached segment must stop and clear before terminalizing");
+  const auto status = confirmSafeStop(lifecycle, reached).status;
   require(status.state == ExplorationSegmentState::kReached && status.reason == "segment_reached",
           "reached motion outcome must use the product terminal contract");
 }
@@ -385,11 +706,10 @@ void testFailureMotionOutcomesTerminateSegment() {
       RollingSegmentMotionOutcomeKind::kRecoveryExhausted,
       "oscillation",
   });
-  require(recovery.effects.size() == 3U &&
-              std::get<RollingSegmentStatusEffect>(recovery.effects[1]).status.state ==
-                  ExplorationSegmentState::kFailed &&
-              std::get<RollingSegmentStatusEffect>(recovery.effects[1]).status.reason ==
-                  "segment_local_recovery_exhausted:oscillation" &&
+  const auto recovery_terminal = confirmSafeStop(recovery_lifecycle, recovery).status;
+  require(recovery.effects.size() == 2U &&
+              recovery_terminal.state == ExplorationSegmentState::kFailed &&
+              recovery_terminal.reason == "segment_local_recovery_exhausted:oscillation" &&
               !recovery_lifecycle.snapshot().active,
           "recovery exhaustion must fail and release the active segment");
 
@@ -401,11 +721,10 @@ void testFailureMotionOutcomesTerminateSegment() {
       RollingSegmentMotionOutcomeKind::kFinalSafetyStopped,
       {},
   });
-  require(safety.effects.size() == 3U &&
-              std::get<RollingSegmentStatusEffect>(safety.effects[1]).status.state ==
-                  ExplorationSegmentState::kFailed &&
-              std::get<RollingSegmentStatusEffect>(safety.effects[1]).status.reason ==
-                  "segment_final_safety_stopped" &&
+  const auto safety_terminal = confirmSafeStop(safety_lifecycle, safety).status;
+  require(safety.effects.size() == 2U &&
+              safety_terminal.state == ExplorationSegmentState::kFailed &&
+              safety_terminal.reason == "segment_final_safety_stopped" &&
               !safety_lifecycle.snapshot().active,
           "final-safety stop must fail and release the active segment");
 }
@@ -417,14 +736,15 @@ void testShutdownCancellationRetriesTerminalStatusUntilDelivered() {
   (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
 
   const auto shutdown = lifecycle.step(RollingSegmentShutdown{});
-  require(shutdown.effects.size() == 3U,
-          "shutdown must terminalize before the endpoint final-zero barrier");
-  const auto &terminal = std::get<RollingSegmentStatusEffect>(shutdown.effects[1]);
+  require(shutdown.effects.size() == 2U,
+          "shutdown must stop and clear before publishing its terminal");
+  require(std::get<RollingSegmentClearMotionEffect>(shutdown.effects[1]).failure_policy ==
+              RollingSegmentEffectFailurePolicy::kAbortBatch,
+          "shutdown clear failure must abort terminal delivery");
+  const auto terminal = confirmSafeStop(lifecycle, shutdown);
   require(terminal.status.state == ExplorationSegmentState::kCancelled &&
               terminal.status.reason == "navd_shutdown" &&
-              terminal.failure_policy == RollingSegmentEffectFailurePolicy::kRetryTerminalStatus &&
-              std::get<RollingSegmentClearMotionEffect>(shutdown.effects[2]).failure_policy ==
-                  RollingSegmentEffectFailurePolicy::kAbortBatch,
+              terminal.failure_policy == RollingSegmentEffectFailurePolicy::kRetryTerminalStatus,
           "shutdown must publish the product cancellation outcome");
 
   (void)lifecycle.step(RollingSegmentEffectFeedback{
@@ -445,6 +765,66 @@ void testShutdownCancellationRetriesTerminalStatusUntilDelivered() {
           "delivered terminal status must not be published again");
 }
 
+void testClearFailureRetriesSafeStopBeforeTerminalDelivery() {
+  RollingSegmentLifecycle lifecycle;
+  (void)lifecycle.step(RollingSegmentBeginTick{10.0});
+  (void)lifecycle.step(RollingSegmentObserveExecutionGrid{freeGrid()});
+  (void)lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext()});
+
+  const auto terminal_intent = lifecycle.step(RollingSegmentMotionOutcome{
+      RollingSegmentMotionOutcomeKind::kReached,
+      "segment_reached_after_retry",
+  });
+  require(
+      terminal_intent.effects.size() == 2U &&
+          std::holds_alternative<RollingSegmentStopAuthorityEffect>(terminal_intent.effects[0]) &&
+          std::holds_alternative<RollingSegmentClearMotionEffect>(terminal_intent.effects[1]),
+      "terminal intent must contain only stop and clear effects");
+  const auto first_clear_id =
+      std::get<RollingSegmentClearMotionEffect>(terminal_intent.effects[1]).effect_id;
+  require(lifecycle.step(RollingSegmentEffectFeedback{first_clear_id, false}).effects.empty(),
+          "failed motion clear must not release a terminal status");
+
+  const auto exact_retry =
+      lifecycle.step(RollingSegmentCommandEvent{executeCommand(), readyContext(30.0)});
+  require(exact_retry.effects.size() == 3U &&
+              std::holds_alternative<RollingSegmentAckEffect>(exact_retry.effects[0]) &&
+              std::get<RollingSegmentAckEffect>(exact_retry.effects[0]).ack.reason ==
+                  "segment_terminal_stop_pending" &&
+              std::holds_alternative<RollingSegmentStopAuthorityEffect>(exact_retry.effects[1]) &&
+              std::holds_alternative<RollingSegmentClearMotionEffect>(exact_retry.effects[2]),
+          "exact retries must report stop pending and retry safe-stop effects, not fake terminal");
+
+  auto next = executeCommand(10.1);
+  next.request_id = "segment-2";
+  const auto blocked = lifecycle.step(RollingSegmentCommandEvent{next, readyContext(10.1)});
+  require(blocked.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentAckEffect>(blocked.effects.front()) &&
+              std::get<RollingSegmentAckEffect>(blocked.effects.front()).ack.reason ==
+                  "segment_motion_clear_pending",
+          "a failed clear must block new segment motion ownership");
+
+  const auto retry = lifecycle.step(RollingSegmentBeginTick{10.2});
+  require(retry.effects.size() == 2U &&
+              std::holds_alternative<RollingSegmentStopAuthorityEffect>(retry.effects[0]) &&
+              std::holds_alternative<RollingSegmentClearMotionEffect>(retry.effects[1]),
+          "the next tick must retry authority stop and motion clear without a terminal status");
+  const auto retry_clear_id = std::get<RollingSegmentClearMotionEffect>(retry.effects[1]).effect_id;
+  const auto terminal = lifecycle.step(RollingSegmentEffectFeedback{retry_clear_id, true});
+  require(terminal.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentStatusEffect>(terminal.effects.front()) &&
+              std::get<RollingSegmentStatusEffect>(terminal.effects.front()).status.state ==
+                  ExplorationSegmentState::kReached,
+          "only successful retry clear may release the retained terminal outcome");
+
+  const auto terminal_id = std::get<RollingSegmentStatusEffect>(terminal.effects.front()).effect_id;
+  (void)lifecycle.step(RollingSegmentEffectFeedback{terminal_id, false});
+  const auto dds_retry = lifecycle.step(RollingSegmentBeginTick{10.3});
+  require(dds_retry.effects.size() == 1U &&
+              std::holds_alternative<RollingSegmentStatusEffect>(dds_retry.effects.front()),
+          "terminal DDS failure must retry status without repeating the successful safe stop");
+}
+
 void testAcceptedAckFailureFailsClosed() {
   RollingSegmentLifecycle lifecycle;
   (void)lifecycle.step(RollingSegmentBeginTick{10.0});
@@ -454,9 +834,9 @@ void testAcceptedAckFailureFailsClosed() {
   const auto ack_id = std::get<RollingSegmentAckEffect>(admission.effects[3]).effect_id;
 
   const auto compensation = lifecycle.step(RollingSegmentEffectFeedback{ack_id, false});
-  require(compensation.effects.size() == 3U,
-          "failed accepted ACK must stop, terminalize, and clear");
-  const auto &terminal = std::get<RollingSegmentStatusEffect>(compensation.effects[1]).status;
+  require(compensation.effects.size() == 2U,
+          "failed accepted ACK must stop and clear before terminalizing");
+  const auto terminal = confirmSafeStop(lifecycle, compensation).status;
   require(terminal.state == ExplorationSegmentState::kFailed &&
               terminal.reason == "segment_ack_publish_failed",
           "ACK publication failure must become a correlated failed terminal");
@@ -487,8 +867,8 @@ void testExternalMapInvalidationRevokesActiveBinding() {
       "execution_grid_epoch_reset:tf_jump",
       {},
   });
-  require(result.effects.size() == 3U, "map epoch invalidation must revoke active segment motion");
-  const auto &terminal = std::get<RollingSegmentStatusEffect>(result.effects[1]).status;
+  require(result.effects.size() == 2U, "map epoch invalidation must revoke active segment motion");
+  const auto terminal = confirmSafeStop(lifecycle, result).status;
   require(terminal.state == ExplorationSegmentState::kStaleBinding &&
               terminal.reason == "execution_grid_epoch_reset:tf_jump",
           "map epoch invalidation must preserve its stale-binding evidence");
@@ -525,9 +905,9 @@ void testAdmissionStatusFailureFailsClosed() {
       std::get<RollingSegmentStatusEffect>(admission.effects[4]).effect_id;
 
   const auto compensation = lifecycle.step(RollingSegmentEffectFeedback{accepted_status_id, false});
-  require(compensation.effects.size() == 3U,
-          "failed admission status must stop, terminalize, and clear");
-  const auto &terminal = std::get<RollingSegmentStatusEffect>(compensation.effects[1]).status;
+  require(compensation.effects.size() == 2U,
+          "failed admission status must stop and clear before terminalizing");
+  const auto terminal = confirmSafeStop(lifecycle, compensation).status;
   require(terminal.state == ExplorationSegmentState::kFailed &&
               terminal.reason == "segment_status_publish_failed",
           "admission status failure must become a failed terminal");
@@ -538,16 +918,27 @@ void testAdmissionStatusFailureFailsClosed() {
 int main() {
   testFreshExecuteFromCurrentMapProducesOrderedAdmissionEffects();
   testTerminalPrebindRejectionIsReplayableAfterRequestExpires();
+  testTerminalBarrierRejectsFreshExecuteWithoutMotionEffects();
+  testTerminalBarrierExecuteReceiptSurvivesAckFailureAndExpiry();
+  testTerminalBarrierRejectsExactActiveCancelWithPinnedBinding();
+  testTerminalBarrierReceiptCannotMaskCancelBindingMismatch();
+  testRollingTerminalReplayTakesPriorityOverGoalTerminalBarrier();
+  testGoalTerminalBarrierPreservesRollingValidationPriority();
+  testGoalTerminalBarrierEmptyReasonFailsClosedAndReplays();
   testDuplicateActiveExecuteIsIdempotent();
   testStaleExactBindingRemainsIdempotentAndCancellable();
   testCancelRequiresExactActiveBinding();
   testInvalidExecutionGridFailsClosedForActiveSegment();
   testExecutionGridDecoderRejectsInvalidBoundaryValues();
   testUnsafeForwardSuffixFailsBeforeMotionTick();
+  testNewerSameEpochRevisionRevalidatesActiveBinding();
+  testEqualStampDifferentPayloadRevokesActiveBinding();
+  testEpochMismatchImmediatelyRevokesActiveBinding();
   testGenericNavigationPreemptionProducesReplayableCancellation();
   testReachedMotionOutcomeTerminatesSegment();
   testFailureMotionOutcomesTerminateSegment();
   testShutdownCancellationRetriesTerminalStatusUntilDelivered();
+  testClearFailureRetriesSafeStopBeforeTerminalDelivery();
   testAcceptedAckFailureFailsClosed();
   testExecutionGridProvenanceCannotRegress();
   testExternalMapInvalidationRevokesActiveBinding();

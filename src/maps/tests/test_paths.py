@@ -27,11 +27,11 @@ def test_active_map_dir_resolves_native_state_file(tmp_path: Path) -> None:
     assert active_map_dir(tmp_path) == selected.resolve()
 
 
-def test_active_map_dir_accepts_materialized_active_package(tmp_path: Path) -> None:
+def test_active_map_dir_ignores_legacy_materialized_active_package(tmp_path: Path) -> None:
     active = tmp_path / "active"
     active.mkdir()
 
-    assert active_map_dir(tmp_path) == active.resolve()
+    assert active_map_dir(tmp_path) is None
 
 
 def test_active_map_dir_rejects_missing_native_selection(tmp_path: Path) -> None:

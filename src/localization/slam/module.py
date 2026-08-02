@@ -179,6 +179,7 @@ class SlamModule(Module, layer=1):
         self._last_gnss_health = _default_gnss_health()
         self._last_scene_mode = "unknown"
         self._last_observation_sequence = 0
+        self._last_observation_epoch = 0
 
     def setup(self) -> None:
         self.visual_odom.set_policy("latest")
@@ -482,8 +483,15 @@ class SlamModule(Module, layer=1):
             backend_profile=self._backend_profile,
             quality=quality,
         )
-        if observation is not None and observation.sequence > self._last_observation_sequence:
+        if observation is not None and (
+            observation.reset_epoch > self._last_observation_epoch
+            or (
+                observation.reset_epoch == self._last_observation_epoch
+                and observation.sequence > self._last_observation_sequence
+            )
+        ):
             self.map_observation.publish(observation)
+            self._last_observation_epoch = observation.reset_epoch
             self._last_observation_sequence = observation.sequence
         map_cloud = _cloud_from_output(
             outputs.get("map_cloud_map"),
@@ -848,7 +856,7 @@ def _load_native_slam_binding() -> Any | None:
 def _mode_from_profile(profile: str, explicit: str | None) -> str:
     if explicit:
         return _normalize_mode(explicit)
-    if profile in {"localizer", "genz", "super_lio_relocation", "relocation"}:
+    if profile in {"localizer", "genz"}:
         return "localization"
     return "mapping"
 
@@ -1078,6 +1086,9 @@ def _map_observation_from_outputs(
     sequence = _observation_sequence(outputs, registered_raw)
     if sequence <= 0:
         return None
+    reset_epoch = int(outputs.get("source_epoch", 1) or 1)
+    if reset_epoch <= 0:
+        return None
     map_sensor = _map_sensor_transform(outputs.get("map_odom_tf"), scan_odom, registered)
     if map_sensor is None:
         return None
@@ -1085,6 +1096,7 @@ def _map_observation_from_outputs(
         return MapObservationFrame(
             points=registered.points,
             sequence=sequence,
+            reset_epoch=reset_epoch,
             ts=float(getattr(registered, "ts", 0.0) or scan_odom.ts),
             frame_id=map_sensor.frame_id,
             sensor_frame_id=map_sensor.child_frame_id,

@@ -8,7 +8,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from nav.building.model import BuildingMissionRequest, PoseTarget
+from nav.building.model import (
+    BuildingMissionPhase,
+    BuildingMissionRequest,
+    BuildingMissionStatus,
+    PoseTarget,
+)
 from runtime import In, Module, Out, rpc
 from runtime.registry import register
 
@@ -629,11 +634,19 @@ class BuildingService(Module, layer=5):
     def _optional_mission_result(result: Any) -> tuple[bool, str]:
         if isinstance(result, tuple):
             return BuildingService._mission_result(result)
+        if isinstance(result, BuildingMissionStatus):
+            return (
+                result.phase is BuildingMissionPhase.CANCELLED,
+                str(result.reason or "").strip(),
+            )
         if isinstance(result, Mapping):
             accepted = result.get("accepted", result.get("success"))
             if isinstance(accepted, bool):
                 return accepted, str(result.get("reason") or result.get("message") or "").strip()
-        return True, str(getattr(result, "reason", "") or "").strip()
+        raise _AdmissionError(
+            "mission_response_invalid",
+            "building mission cancel must return an explicit boolean acknowledgement",
+        )
 
     @staticmethod
     def _request_id(command: Any) -> str:

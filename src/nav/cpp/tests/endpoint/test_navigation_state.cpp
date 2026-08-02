@@ -25,6 +25,7 @@ void require(bool condition, const char *message) {
 void testLifecycleAndTransientHold() {
   NavigationStateTracker tracker(NavigationControlState::kAutonomy);
   tracker.observe(GoalPlanStatus{
+      "navigation-task-7",
       "goal-7",
       7U,
       NavigationGoalState::Planning,
@@ -35,6 +36,8 @@ void testLifecycleAndTransientHold() {
   context.map = NavigationMapIdentity{"factory", 12, "sha256-map"};
   context.authority = "autonomy";
   auto state = tracker.sample(context);
+  require(state.active_task_id == "navigation-task-7", "planning task identity missing");
+  require(state.active_request_id == "goal-7", "planning request identity missing");
   require(state.lifecycle_state == static_cast<int>(NavigationLifecycleState::kPlanning),
           "planning lifecycle missing");
   require(state.planning_state == static_cast<int>(NavigationPlanningState::kPlanning),
@@ -58,6 +61,7 @@ void testLifecycleAndTransientHold() {
 void testExecutionRecoveryAndTerminalState() {
   NavigationStateTracker tracker(NavigationControlState::kAutonomy);
   tracker.observe(GoalPlanStatus{
+      "navigation-task-9",
       "goal-9",
       9U,
       NavigationGoalState::PathActive,
@@ -81,6 +85,7 @@ void testExecutionRecoveryAndTerminalState() {
           "recovery state missing");
 
   tracker.observe(GoalPlanStatus{
+      "navigation-task-9",
       "goal-9",
       9U,
       NavigationGoalState::Reached,
@@ -100,6 +105,7 @@ void testExecutionRecoveryAndTerminalState() {
 void testFailureCarriesStableCode() {
   NavigationStateTracker tracker(NavigationControlState::kTeleopAvoid);
   tracker.observe(GoalPlanStatus{
+      "navigation-task-11",
       "goal-11",
       11U,
       NavigationGoalState::Failed,
@@ -115,6 +121,7 @@ void testFailureCarriesStableCode() {
           "local recovery exhaustion must remain a recovery failure");
 
   tracker.observe(GoalPlanStatus{
+      "navigation-task-12",
       "goal-12",
       12U,
       NavigationGoalState::Failed,
@@ -126,12 +133,69 @@ void testFailureCarriesStableCode() {
   require(ordinary_failure.recovery_state == static_cast<int>(NavigationRecoveryState::kIdle),
           "ordinary goal failure must not invent a recovery terminal state");
 }
+void testExplicitTaskPausePersistsUntilPathResumes() {
+  NavigationStateTracker tracker(NavigationControlState::kAutonomy);
+  tracker.observe(GoalPlanStatus{
+      "navigation-task-pause",
+      "pause-request-1",
+      21U,
+      NavigationGoalState::Paused,
+      "operator_pause",
+  });
 
+  const auto paused = tracker.sample({});
+  require(paused.lifecycle_state == static_cast<int>(NavigationLifecycleState::kPaused),
+          "explicit task pause did not project to PAUSED lifecycle");
+  require(paused.active_task_id == "navigation-task-pause" &&
+              paused.active_request_id == "pause-request-1",
+          "explicit task pause lost task or request identity");
+  require(paused.hold_reason == "operator_pause", "explicit task pause reason missing");
+
+  tracker.observe(GoalPlanStatus{
+      "navigation-task-pause", "resume-request-1", 21U,
+      NavigationGoalState::PathActive, "path_resumed"});
+  const auto resumed = tracker.sample({});
+  require(resumed.lifecycle_state == static_cast<int>(NavigationLifecycleState::kExecuting),
+          "task resume did not restore executing lifecycle");
+  require(resumed.hold_reason.empty(), "task resume retained the pause reason");
+}
+
+void testPendingTaskStatusesDoNotReplaceActiveRuntimeProjection() {
+  NavigationStateTracker tracker(NavigationControlState::kAutonomy);
+  tracker.observe(GoalPlanStatus{"navigation-task-active", "goal-active", 31U,
+                                 NavigationGoalState::PathActive, "path_active"});
+
+  GoalPlanStatus queued{"navigation-task-pending", "goal-pending", 32U,
+                        NavigationGoalState::Planning, "planning_queued"};
+  queued.project_to_navigation_state = false;
+  tracker.observe(queued);
+
+  const auto after_queued = tracker.sample({});
+  require(after_queued.active_task_id == "navigation-task-active" &&
+              after_queued.active_request_id == "goal-active" &&
+              after_queued.lifecycle_state ==
+                  static_cast<int>(NavigationLifecycleState::kExecuting),
+          "queued task replaced the active runtime projection");
+
+  GoalPlanStatus pending_cancelled{"navigation-task-pending", "cancel-pending", 32U,
+                                   NavigationGoalState::Cancelled, "operator_cancel"};
+  pending_cancelled.project_to_navigation_state = false;
+  tracker.observe(pending_cancelled);
+
+  const auto after_cancelled = tracker.sample({});
+  require(after_cancelled.active_task_id == "navigation-task-active" &&
+              after_cancelled.active_request_id == "goal-active" &&
+              after_cancelled.lifecycle_state ==
+                  static_cast<int>(NavigationLifecycleState::kExecuting),
+          "pending cancellation replaced the active runtime projection");
+}
 }  // namespace
 
 int main() {
   testLifecycleAndTransientHold();
   testExecutionRecoveryAndTerminalState();
   testFailureCarriesStableCode();
+  testExplicitTaskPausePersistsUntilPathResumes();
+  testPendingTaskStatusesDoNotReplaceActiveRuntimeProjection();
   return 0;
 }

@@ -9,7 +9,7 @@ Host: `sunrise@192.168.66.13`
 The field navigation product has one native C++ owner for local planning and
 path following. `LocalPlannerCore` and `PathFollowerCore` execute in the same
 `lingtu_nav_native_endpoint` tick. Python does not duplicate this chain in the
-`thunder_field` profile.
+`env=real` Product runtime.
 
 ## Static And Unit Evidence
 

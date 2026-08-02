@@ -1,6 +1,8 @@
 #include "core.hpp"
 #include "command_freshness_gate.hpp"
+#include "cmd_vel_writer_gate.hpp"
 #include "config.hpp"
+#include "status.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -18,8 +20,10 @@ using lingtu::driver::Clock;
 using lingtu::driver::CommandFreshnessGate;
 using lingtu::driver::CommandFreshnessInput;
 using lingtu::driver::CommandFreshnessReason;
+using lingtu::driver::CmdVelWriterGate;
 using lingtu::driver::Core;
 using lingtu::driver::Limits;
+using lingtu::driver::RuntimeStats;
 
 void setEnvironment(const char* name, const char* value) {
 #ifdef _WIN32
@@ -300,6 +304,130 @@ void testLoopbackBrainstemMayUseInsecureTestTransport() {
   check(!config.brainstem_tls.enabled(), "loopback test transport may remain insecure");
 }
 
+void testCmdVelWriterGateRequiresExactlyOneWriter() {
+  CmdVelWriterGate gate;
+
+  auto decision = gate.update(0);
+  check(!decision.ready, "missing cmd_vel writer must not be ready");
+  check(!decision.requires_stop, "initial missing writer must not require duplicate stop");
+  check(
+      decision.reason == "missing_cmd_vel_writer",
+      "missing cmd_vel writer reason");
+
+  decision = gate.update(1);
+  check(decision.ready, "exactly one cmd_vel writer must be ready");
+  check(!decision.requires_stop, "single writer recovery must not force stop");
+  check(
+      decision.reason == "single_cmd_vel_writer",
+      "single cmd_vel writer reason");
+
+  decision = gate.update(2);
+  check(!decision.ready, "multiple cmd_vel writers must fail closed");
+  check(decision.requires_stop, "single-to-multiple transition must request stop");
+  check(
+      decision.reason == "ambiguous_cmd_vel_writers",
+      "ambiguous cmd_vel writer reason");
+
+  decision = gate.update(1);
+  check(decision.ready, "exactly one writer must recover readiness");
+  check(!decision.requires_stop, "ambiguous-to-single recovery must not force stop");
+
+  decision = gate.update(0);
+  check(!decision.ready, "writer loss must fail closed");
+  check(decision.requires_stop, "single-to-zero transition must request stop");
+}
+
+void testRejectedOutputAckCannotExposeAcceptedIdentity() {
+  RuntimeStats stats;
+  stats.last_command_accepted = true;
+  stats.current_output_evidence_valid = true;
+  stats.accepted_producer_boot_id = "producer-a";
+  stats.accepted_output_sequence = 42;
+
+  auto ack = lingtu::driver::currentOutputAck(stats);
+  check(ack.accepted, "accepted output ACK must remain visible");
+  check(
+      ack.producer_boot_id == "producer-a",
+      "accepted output ACK must preserve producer identity");
+  check(
+      ack.output_sequence == 42,
+      "accepted output ACK must preserve output sequence");
+
+  stats.last_command_accepted = false;
+  ack = lingtu::driver::currentOutputAck(stats);
+  check(!ack.accepted, "rejected output ACK must not remain accepted");
+  check(
+      ack.producer_boot_id.empty(),
+      "rejected output ACK must not expose stale producer identity");
+  check(
+      ack.output_sequence == 0,
+      "rejected output ACK must not expose stale output sequence");
+
+  stats.last_command_accepted = true;
+  lingtu::driver::invalidateCurrentOutputAck(stats);
+  check(
+      !stats.last_command_accepted,
+      "invalidating output ACK must clear the accepted flag");
+  check(
+      stats.accepted_producer_boot_id.empty(),
+      "invalidating output ACK must clear stored producer identity");
+  check(
+      stats.accepted_output_sequence == 0,
+      "invalidating output ACK must clear stored output sequence");
+}
+
+void testMatchingOutputRejectionHasBoundedIdentity() {
+  RuntimeStats stats;
+  const auto now = Clock::now();
+
+  lingtu::driver::recordCurrentOutputResult(
+      stats, "producer-rejected", 73, false, now);
+  auto evidence = lingtu::driver::currentOutputAck(
+      stats,
+      now + lingtu::driver::kRejectedOutputEvidenceLifetime - 1ms);
+  check(
+      !evidence.accepted,
+      "matching output rejection must remain explicitly rejected");
+  check(
+      evidence.producer_boot_id == "producer-rejected",
+      "matching output rejection must preserve producer identity");
+  check(
+      evidence.output_sequence == 73,
+      "matching output rejection must preserve output sequence");
+
+  evidence = lingtu::driver::currentOutputAck(
+      stats,
+      now + lingtu::driver::kRejectedOutputEvidenceLifetime);
+  check(
+      evidence.producer_boot_id.empty(),
+      "expired rejection must not expose stale producer identity");
+  check(
+      evidence.output_sequence == 0,
+      "expired rejection must not expose stale output sequence");
+
+  lingtu::driver::expireCurrentOutputEvidence(
+      stats,
+      now + lingtu::driver::kRejectedOutputEvidenceLifetime);
+  check(
+      !stats.current_output_evidence_valid,
+      "expiry must invalidate current output evidence");
+  check(
+      stats.accepted_producer_boot_id.empty(),
+      "expiry must clear stored producer identity");
+  check(
+      stats.accepted_output_sequence == 0,
+      "expiry must clear stored output sequence");
+
+  lingtu::driver::recordCurrentOutputResult(
+      stats, "producer-accepted", 74, true, now);
+  evidence = lingtu::driver::currentOutputAck(stats, now + 10s);
+  check(
+      evidence.accepted &&
+          evidence.producer_boot_id == "producer-accepted" &&
+          evidence.output_sequence == 74,
+      "accepted output evidence must remain until an explicit invalidation");
+}
+
 }  // namespace
 
 int main() {
@@ -316,6 +444,9 @@ int main() {
     testFaultStopIsExplicit();
     testRemoteBrainstemRequiresCompleteTlsConfiguration();
     testLoopbackBrainstemMayUseInsecureTestTransport();
+    testCmdVelWriterGateRequiresExactlyOneWriter();
+    testRejectedOutputAckCannotExposeAcceptedIdentity();
+    testMatchingOutputRejectionHasBoundedIdentity();
     std::cout << "test_driver_core: PASS\n";
     return 0;
   } catch (const std::exception& exc) {

@@ -30,7 +30,7 @@ binary payload plus a versioned header/schema over protobuf `repeated` points.
 
 | Backend | Scope | Notes |
 | --- | --- | --- |
-| `local` | Same process | Default for lightweight product profiles and tests. |
+| `local` | Same process | Default for local/development Profiles and tests. |
 | `shm` | Same host | High-bandwidth image/point-cloud IPC. |
 | `dds` | Same host / LAN | CycloneDDS backend. Use typed adapters for product streams; generic transport is compatibility/testing only and rejects registered product topics. |
 
@@ -38,8 +38,7 @@ binary payload plus a versioned header/schema over protobuf `repeated` points.
 
 `Blueprint.wire(..., delivery=...)` selects how one Module `Out` port reaches
 one Module `In` port. This is a local graph delivery choice, not the system bus
-architecture. Existing `transport=` arguments are accepted as a compatibility
-alias for framework-level tests and explicit adapter experiments.
+architecture.
 
 Supported delivery values:
 
@@ -57,7 +56,7 @@ boundaries.
 
 Product Thunder field communication uses the typed DDS contract in
 `src/runtime/endpoints/dds/contracts.py`. The default contract is
-`thunder_field_dds_v1`, backed by the topic/type registry in
+`thunder_dds_v1`, backed by the topic/type registry in
 `src/message/dds.py` and the native IDL under `src/message/idl/`. Registered
 product topics bind to LingTu-owned DDS types for LiDAR, IMU, odometry,
 point-cloud, path, final velocity, inspection command/status/evidence, and
@@ -77,10 +76,11 @@ The default field graph uses:
   `rt/nav/cmd_vel`, holds the Brainstem `lingtu-driver` lease, and calls
   `WalkChecked`.
 
-The Python endpoint runner in `src/runtime/endpoints/dds/endpoint_service.py`
+The Python endpoint runner in `src/runtime/endpoints/dds/endpoint_runner.py`
 remains a replay/diagnostic/smoke surface. It is not the product Brainstem
 command sink and must not be used to create a second `/nav/cmd_vel` writer in a
-field deployment.
+field deployment. Its field systemd unit, installer, and deployment wrapper are
+physically removed; no Product RunPlan can start it.
 
 For replay or endpoint-smoke diagnostics, the Python runner can publish
 contract-bound JSONL sensor/localization records. Do not run this as the field
@@ -88,13 +88,13 @@ motor command sink:
 
 ```bash
 LINGTU_ENDPOINT_JSONL_PATH=/data/thunder/localization.jsonl \
-  python scripts/deploy/thunder/run_dds_endpoint_service.py --source jsonl --once
+  PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner --source jsonl --once
 ```
 
 Validate the Thunder field deployment boundary:
 
 ```bash
-python tools/validate/validate_thunder_field_deployment.py
+python tools/validate/validate_real_deployment.py
 ```
 
 ## Endpoint JSON Replay Payloads
@@ -106,7 +106,7 @@ replay adapters and tests, and carries:
 - `type`: the Python `runtime.msgs.*` type name when available
 - `payload`: the message `to_dict()` payload, or a plain JSON value
 
-For `thunder_field`, the command output mode is `endpoint_only`: LingTu does
+For `env=real`, the command output mode is `endpoint_only`: LingTu does
 not include an in-process `ThunderDriver` in the default field graph. Real
 motor actuation is the native C++ `lingtu_driver` process, not a Python DDS
 command sink. If a replay endpoint or diagnostic source uses Python DDS, missing
@@ -120,7 +120,7 @@ external process stdout, then publishes them as contract-bound endpoint
 messages. The built-in smoke source provides a data-flow check:
 
 ```bash
-python scripts/deploy/thunder/run_dds_endpoint_service.py --transport local --source smoke --once --json
+PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner --transport local --source smoke --once --json
 ```
 
 ## Boundary Rule

@@ -1115,7 +1115,7 @@ class TestOccupancyGridModule(unittest.TestCase):
         self.assertTrue(np.any(grid == 100), "Expected occupied cells in costmap")
         self.assertEqual(costmap["frame_id"], topic_default_frame_id(TOPICS.exploration_grid))
 
-    def test_projected_mode_accepts_default_robot_xy_before_odometry(self):
+    def test_projected_mode_accepts_initial_xy_before_odometry(self):
         """Point-cloud updates may arrive before the first odometry sample."""
         m = self._make_module()
         pts = np.array(
@@ -1283,7 +1283,7 @@ class TestOccupancyGridModule(unittest.TestCase):
         self.assertEqual(emap["semantic"], "frontier_input_grid")
         self.assertEqual(costmaps[0]["unknown_as_obstacle"], True)
 
-    def test_raycast_mode_accepts_default_robot_xy_before_odometry(self):
+    def test_raycast_mode_accepts_initial_xy_before_odometry(self):
         """Raycast mode should also tolerate point clouds before odometry."""
         m = self._make_module(
             resolution=0.5,

@@ -1,4 +1,4 @@
-"""Runtime path defaults shared by product and compatibility profile catalogs."""
+"""Runtime path defaults shared by Products and local Profile catalogs."""
 
 from __future__ import annotations
 

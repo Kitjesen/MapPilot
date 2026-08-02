@@ -4,6 +4,9 @@
 # Why a sidecar?
 #   go2rtc is a single Go binary that handles the media hot path natively
 #   and exposes the WHEP endpoint used by the dashboard.
+#   It is an optional machine-level external media sidecar. It stays outside
+#   ProductControl, is not part of any Product or RunPlan, and does not
+#   participate in Product readiness. Unavailable WHEP falls back to Gateway JPEG.
 #
 # Usage:
 #   sudo bash scripts/webrtc/install_go2rtc.sh           # systemd mode
@@ -114,6 +117,8 @@ SupplementaryGroups=video render
 [Install]
 WantedBy=multi-user.target
 EOF
+    # Machine-level provisioning is intentionally outside ProductControl, so
+    # the installer owns daemon-reload/enable/restart for this optional sidecar.
     sudo systemctl daemon-reload
     sudo systemctl enable --now go2rtc
     sleep 1
@@ -131,6 +136,9 @@ fi
 cat <<'POST'
 
 Next steps:
+  This optional external media sidecar stays outside ProductControl.
+  Installing, restarting, or losing it does not change the active Product,
+  RunPlan, or Product readiness; unavailable WHEP falls back to Gateway JPEG.
   1. Edit ${CONFIG_PATH} and point it at your camera device
      (default: /dev/video0 鈥?Orbbec Gemini RGB UVC node).
      Run `v4l2-ctl --list-devices` to discover the right path.

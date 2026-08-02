@@ -1,7 +1,7 @@
 # MCP Tools (Auto-Discovered @skill Methods)
 
 > Auto-generated from `@skill` decorators across all Module files.
-> Generated: 2026-07-18 14:31:17
+> Deterministic generated inventory; run `python scripts/docs/extract_api_docs.py --check` to verify freshness.
 
 These tools are auto-discovered by `MCPServerModule` and exposed via JSON-RPC
 at `http://<robot>:8090/mcp`. They are also available in the AgentLoop for
@@ -9,7 +9,7 @@ multi-turn LLM tool calling.
 
 ---
 
-## src\decision\modules\semantic_planner.py
+## src/decision/modules/semantic_planner.py
 _SemanticPlannerModule - unified semantic planning in one Module._
 
 ### `send_instruction`
@@ -42,7 +42,7 @@ _SemanticPlannerModule - unified semantic planning in one Module._
 |-----------|------|
 | `instruction` | `str` |
 
-## src\decision\modules\visual_servo.py
+## src/decision/modules/visual_servo.py
 _Visual servo Module._
 
 ### `find_object`
@@ -84,7 +84,7 @@ _Visual servo Module._
 |-----------|------|
 | `duration` | `float` |
 
-## src\decision\modules\vla.py
+## src/decision/modules/vla.py
 _VLA navigation module._
 
 ### `vla_navigate`
@@ -102,7 +102,7 @@ _VLA navigation module._
 **Return type:** `dict`
 **Parameters:** None
 
-## src\drivers\real\teleop_module.py
+## src/drivers/real/teleop_module.py
 _TeleopModule — joystick remote control with live camera stream._
 
 ### `get_teleop_status`
@@ -117,7 +117,7 @@ _TeleopModule — joystick remote control with live camera stream._
 **Return type:** `str`
 **Parameters:** None
 
-## src\explore\frontier.py
+## src/explore/frontier.py
 _WavefrontFrontierExplorer — autonomous frontier-based exploration planner._
 
 ### `begin_exploration`
@@ -144,7 +144,7 @@ _WavefrontFrontierExplorer — autonomous frontier-based exploration planner._
 **Return type:** `str`
 **Parameters:** None
 
-## src\explore\tare\module.py
+## src/explore/tare/module.py
 _TAREExplorerModule - connects TARE exploration to LingTu navigation._
 
 ### `start_tare_exploration`
@@ -165,7 +165,7 @@ _TAREExplorerModule - connects TARE exploration to LingTu navigation._
 **Return type:** `str`
 **Parameters:** None
 
-## src\explore\tare\supervisor.py
+## src/explore/tare/supervisor.py
 _ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
 
 ### `get_exploration_supervisor`
@@ -180,7 +180,7 @@ _ExplorationSupervisorModule — cross-process watchdog for TARE exploration._
 **Return type:** `str`
 **Parameters:** None
 
-## src\explore\traversable_frontier.py
+## src/explore/traversable_frontier.py
 _Traversable frontier candidate generation for inspection/exploration preview._
 
 ### `get_traversable_frontiers`
@@ -195,7 +195,7 @@ _Traversable frontier candidate generation for inspection/exploration preview._
 **Return type:** `str`
 **Parameters:** None
 
-## src\gateway\mcp_server.py
+## src/gateway/mcp_server.py
 _LingTu MCP Server -Model Context Protocol for AI agent control._
 
 ### `get_health`
@@ -305,7 +305,7 @@ _LingTu MCP Server -Model Context Protocol for AI agent control._
 | `backend` | `str` |
 | `config_json` | `str` |
 
-## src\gateway\visualization\rerun_bridge.py
+## src/gateway/visualization/rerun_bridge.py
 _RerunBridgeModule — on-demand Rerun visualization as a Module._
 
 ### `start_rerun`
@@ -326,7 +326,7 @@ _RerunBridgeModule — on-demand Rerun visualization as a Module._
 **Return type:** `str`
 **Parameters:** None
 
-## src\localization\ntrip_client_module.py
+## src/localization/ntrip_client_module.py
 _NtripClientModule — pull RTCM differential corrections from a NTRIP caster_
 
 ### `get_ntrip_status`
@@ -335,7 +335,7 @@ _NtripClientModule — pull RTCM differential corrections from a NTRIP caster_
 **Return type:** `str`
 **Parameters:** None
 
-## src\localization\slam\module.py
+## src/localization/slam/module.py
 _Native SLAM Module contract._
 
 ### `relocalize`
@@ -350,7 +350,7 @@ _Native SLAM Module contract._
 | `z` | `float` |
 | `yaw` | `float` |
 
-## src\maps\modules\voxel_grid.py
+## src/maps/modules/voxel_grid.py
 _VoxelGridModule - native C++ 3D voxel layer from LiDAR point clouds._
 
 ### `get_voxel_stats`
@@ -382,8 +382,8 @@ _VoxelGridModule - native C++ 3D voxel layer from LiDAR point clouds._
 | `y` | `float` |
 | `z` | `float` |
 
-## src\maps\services\facade.py
-_Maps Module compatibility helpers, public skills, and health._
+## src/maps/services/facade.py
+_Maps Module public skills and health facade._
 
 ### `list_maps`
 **Module:** `MapsFacadeMixin`
@@ -407,16 +407,7 @@ _Maps Module compatibility helpers, public skills, and health._
 | `name` | `str` |
 | `slam_profile` | `str | None` |
 
-### `use_map`
-**Module:** `MapsFacadeMixin`
-**Description:** Activate *name* as the current map.
-**Return type:** `str`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `name` | `str` |
-
-## src\memory\modules\episodic_module.py
+## src/memory/modules/episodic_module.py
 _EpisodicMemoryModule — 时空情节记忆模块 (Module 模式封装)。_
 
 ### `get_recent_observations`
@@ -428,7 +419,7 @@ _EpisodicMemoryModule — 时空情节记忆模块 (Module 模式封装)。_
 |-----------|------|
 | `count` | `int` |
 
-## src\memory\modules\mission_logger_module.py
+## src/memory/modules/mission_logger_module.py
 _MissionLoggerModule — mission history recorder as a Module._
 
 ### `list_missions`
@@ -446,7 +437,7 @@ _MissionLoggerModule — mission history recorder as a Module._
 **Return type:** `str`
 **Parameters:** None
 
-## src\memory\modules\semantic_mapper_module.py
+## src/memory/modules/semantic_mapper_module.py
 _SemanticMapperModule -drives RoomObjectKG + TopologySemGraph from live SceneGraph._
 
 ### `get_room_summary`
@@ -479,7 +470,7 @@ _SemanticMapperModule -drives RoomObjectKG + TopologySemGraph from live SceneGra
 **Return type:** `dict`
 **Parameters:** None
 
-## src\memory\modules\tagged_locations_module.py
+## src/memory/modules/tagged_locations_module.py
 _TaggedLocationsModule — 标签地点记忆模块 (Module 模式封装)。_
 
 ### `list_tags`
@@ -497,7 +488,7 @@ _TaggedLocationsModule — 标签地点记忆模块 (Module 模式封装)。_
 |-----------|------|
 | `name` | `str` |
 
-## src\memory\modules\temporal_memory_module.py
+## src/memory/modules/temporal_memory_module.py
 _TemporalMemoryModule — Time-indexed scene memory for temporal queries._
 
 ### `query_temporal`
@@ -518,7 +509,7 @@ _TemporalMemoryModule — Time-indexed scene memory for temporal queries._
 |-----------|------|
 | `label` | `str` |
 
-## src\memory\modules\vector_memory_module.py
+## src/memory/modules/vector_memory_module.py
 _VectorMemoryModule — CLIP embedding + ChromaDB vector search for fuzzy spatial queries._
 
 ### `query_location`
@@ -536,7 +527,7 @@ _VectorMemoryModule — CLIP embedding + ChromaDB vector search for fuzzy spatia
 **Return type:** `str`
 **Parameters:** None
 
-## src\nav\services\safety\safety_ring.py
+## src/nav/services/safety/safety_ring.py
 _SafetyRing -unified safety + evaluation + dialogue in one Module._
 
 ### `get_safety_status`
@@ -551,7 +542,13 @@ _SafetyRing -unified safety + evaluation + dialogue in one Module._
 **Return type:** `str`
 **Parameters:** None
 
-## src\nav\skills\skills_module.py
+### `reset_emergency_stop`
+**Module:** `SafetyRing`
+**Description:** Clear a latched emergency stop only when base safety checks allow it.
+**Return type:** `str`
+**Parameters:** None
+
+## src/nav/skills/skills_module.py
 
 ### `navigate_to`
 **Module:** `NavSkills`
@@ -585,6 +582,15 @@ _SafetyRing -unified safety + evaluation + dialogue in one Module._
 **Description:** Return the canonical navigation mission status.
 **Return type:** `str`
 **Parameters:** None
+
+### `get_navigation_result`
+**Module:** `NavSkills`
+**Description:** Return the native lifecycle result for a request submitted by this adapter.
+**Return type:** `str`
+**Parameters:**
+| Parameter | Type |
+|-----------|------|
+| `request_id` | `str` |
 
 ### `start_patrol`
 **Module:** `NavSkills`

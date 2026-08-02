@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from runtime.blueprint import Blueprint, autoconnect
-from runtime.contracts import HW_COMPAT_CONFIG_ENABLE, HW_CONFIG_ENABLE
+from runtime.contracts import HW_CONFIG_ENABLE
 from runtime.profiles.binding_policy import (
     endpoint_contract_for_config,
     localization_adapter_for_config,
@@ -33,7 +32,7 @@ from .stack_config import (
     needs_lidar_for_slam,
     perception_stack_config,
 )
-from .system import external_services, gnss, hw
+from .system import gnss, hw
 
 
 def compose_full_stack_modules(
@@ -47,7 +46,6 @@ def compose_full_stack_modules(
     planner_backend: str,
     map_path: str = "",
     gateway_port: int,
-    tomogram: str | None = None,
     teleop_port: int = 5050,
     enable_native: bool = False,
     enable_semantic: bool = True,
@@ -57,22 +55,17 @@ def compose_full_stack_modules(
     enable_navigation: bool = True,
     enable_rerun: bool = False,
     scene_xml: str = "",
-    manage_external_services: bool = True,
     semantic_save_dir: str = DEFAULT_SEMANTIC_DIR,
     config: dict[str, Any] | None = None,
 ) -> Blueprint:
     """Compose the standard LingTu/Thunder module graph before explicit wires.
 
-    This helper keeps stack selection separate from the legacy full_stack entry
-    point. It is intentionally side-effect free at Blueprint construction time;
-    external services are represented by ExternalServiceManagerModule and run
-    during system startup.
+    This helper is side-effect free. It constructs only the Python Host graph;
+    ProductControl owns field process lifecycle through its internal
+    SystemdRunner.
     """
 
     config = dict(config or {})
-    # One compatibility round for callers not yet migrated to map_path.
-    if not map_path and tomogram:
-        map_path = str(tomogram)
     enable_robot_driver = bool(config.get("enable_robot_driver", True))
     driver_config = driver_stack_config(
         config,
@@ -83,7 +76,7 @@ def compose_full_stack_modules(
     perception_config = perception_stack_config(config, driver_module=driver_module)
     exploration_config = exploration_stack_config(config)
     enable_gnss = _optional_bool(config.get("enable_gnss"))
-    enable_hw = bool(config.get(HW_CONFIG_ENABLE, config.get(HW_COMPAT_CONFIG_ENABLE, True)))
+    enable_hw = bool(config.get(HW_CONFIG_ENABLE, True))
     enable_lidar = _optional_bool(config.get("enable_lidar"))
     if enable_lidar is None:
         enable_lidar = needs_lidar_for_slam(slam_profile)
@@ -93,7 +86,6 @@ def compose_full_stack_modules(
             "mujoco" if driver_module == "MujocoDriverModule" else "mid360",
         )
     )
-    lidar_start_driver = bool(config.get("lidar_start_driver", False))
     enable_imu = bool(config.get("enable_imu", False))
     imu_backend = str(
         config.get(
@@ -106,34 +98,19 @@ def compose_full_stack_modules(
     enable_patrol_routes = bool(services_config.pop("enable_patrol_routes", False))
     enable_scheduler = bool(services_config.pop("enable_scheduler", False))
     endpoint_only = str(config.get("command_output_mode", "")).strip().lower() == "endpoint_only"
-    manage_session_services = _optional_bool(config.get("manage_session_services"))
-    if manage_session_services is None:
-        manage_session_services = _optional_bool(os.environ.get("LINGTU_MANAGE_SESSION_SERVICES"))
-    if manage_session_services is None:
-        manage_session_services = True
-
     return autoconnect(
-        external_services(
-            enabled=manage_external_services and enable_robot_driver,
-            driver_module=driver_module,
-            slam_profile=slam_profile,
-            enable_semantic=enable_semantic,
-            config=config,
-        ),
         hw() if enable_hw else Blueprint(),
         driver(robot, **driver_config) if enable_robot_driver else Blueprint(),
         lidar(
             ip=config.get("lidar_ip"),
             enabled=enable_lidar,
-            start_driver=lidar_start_driver,
             backend=lidar_backend,
         ),
         imu(enabled=enable_imu, backend=imu_backend),
-        sim_lidar(scene_xml=scene_xml) if bool(config.get("enable_legacy_sim_lidar", False)) else Blueprint(),
+        sim_lidar(scene_xml=scene_xml) if bool(config.get("enable_sim_lidar", False)) else Blueprint(),
         slam(
             slam_profile,
             enable_visual_backup=bool(config.get("enable_visual_backup", True)),
-            manage_services=False,
             localization_adapter=localization_adapter_for_config(config) or None,
             endpoint_contract=endpoint_contract_for_config(config) or None,
         ),
@@ -145,7 +122,6 @@ def compose_full_stack_modules(
         perception(
             detector,
             encoder,
-            manage_services=False,
             **perception_config,
         )
         if enable_semantic
@@ -181,7 +157,11 @@ def compose_full_stack_modules(
             enable_teleop=enable_teleop,
             enable_rerun=enable_rerun,
             enable_ros2_rerun_bridge=bool(config.get("enable_ros2_rerun_bridge", False)),
-            manage_session_services=manage_session_services,
+            command_output_mode=config.get("command_output_mode"),
+            hardware_control_boundary=config.get("hardware_control_boundary"),
+            product=config.get("_product"),
+            run_plan_fingerprint=config.get("_run_plan_fingerprint"),
+            run_plan=config.get("_run_plan"),
         )
         if enable_gateway
         else Blueprint(),

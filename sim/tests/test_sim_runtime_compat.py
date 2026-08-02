@@ -2,7 +2,6 @@ import importlib.util
 import json
 import math
 import os
-import struct
 import subprocess
 import sys
 import time
@@ -13,24 +12,18 @@ from pathlib import Path
 
 import pytest
 
+from drivers.sim.mujoco.driver import MujocoDriverModule
+from lingtu.assembly.products.thunder import thunder_blueprint
+from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
+from runtime.msgs.nav import Odometry
 from runtime.tests.numpy_guard import import_numpy_or_skip
+from sim.engine.core.robot import RobotConfig
 
 pytestmark = [pytest.mark.sim]
 
 np = import_numpy_or_skip()
 
-try:
-    import rclpy
-
-    _ROS2_AVAILABLE = True
-except ImportError:
-    _ROS2_AVAILABLE = False
-
-from drivers.sim.mujoco.driver import MujocoDriverModule
-from lingtu.assembly.products.thunder import thunder_blueprint
-from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Twist, Vector3
-from runtime.msgs.nav import Odometry
-from sim.engine.core.robot import RobotConfig
+_ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
 
 
 def test_default_nova_dog_resolves_real_robot_model():
@@ -234,7 +227,7 @@ def test_mujoco_native_dds_sensor_bridge_lidar_imu_timebase_contract():
     from drivers.sim.mujoco.driver import _xyzi_to_livox_frame
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     lidar_ts_ns = 2_000_000_000
     scan_duration_ns = 100_000_000
@@ -264,7 +257,7 @@ def test_mujoco_native_dds_sensor_bridge_lidar_imu_timebase_contract():
 
 
 def test_mujoco_native_dds_sensor_bridge_defaults_to_fastlio_only():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     args = bridge._build_parser().parse_args([])
 
@@ -277,7 +270,7 @@ def test_mujoco_native_dds_sensor_bridge_defaults_to_fastlio_only():
 def test_mujoco_native_dds_sensor_bridge_writes_odom_prior_record():
     import io
 
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     state = types.SimpleNamespace(
         position=np.array([1.0, 2.0, 0.3], dtype=np.float64),
@@ -304,7 +297,7 @@ def test_mujoco_native_dds_sensor_bridge_writes_odom_prior_record():
 def test_mujoco_native_dds_sensor_bridge_writes_body_registered_cloud_record():
     import io
 
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     points = np.array(
         [[1.0, 2.0, 0.3, 11.0], [-0.5, 0.25, 1.2, 42.0]],
@@ -335,7 +328,7 @@ def test_mujoco_native_dds_sensor_bridge_writes_body_registered_cloud_record():
 
 
 def test_mujoco_navigation_fixture_cloud_uses_current_body_frame():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     yaw = math.pi / 2.0
     state = types.SimpleNamespace(
@@ -350,7 +343,7 @@ def test_mujoco_navigation_fixture_cloud_uses_current_body_frame():
 
 
 def test_mujoco_native_dds_odom_prior_velocity_uses_pose_window_not_qvel_impulse():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     estimator = bridge.OdomPriorVelocityEstimator(window_s=0.10)
     velocity = None
@@ -365,7 +358,7 @@ def test_mujoco_native_dds_odom_prior_velocity_uses_pose_window_not_qvel_impulse
 
 
 def test_mujoco_native_dds_odom_prior_velocity_rejects_single_pose_solver_bounce():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     estimator = bridge.OdomPriorVelocityEstimator(window_s=0.10)
     bounce_velocity = None
@@ -383,7 +376,7 @@ def test_mujoco_native_dds_odom_prior_velocity_rejects_single_pose_solver_bounce
 
 
 def test_mujoco_native_dds_odom_prior_velocity_preserves_real_pose_jump():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     estimator = bridge.OdomPriorVelocityEstimator(window_s=0.10)
     estimator.update(np.array([0.0, 0.0, 0.4]), 0.0)
@@ -394,7 +387,7 @@ def test_mujoco_native_dds_odom_prior_velocity_preserves_real_pose_jump():
 
 
 def test_mujoco_native_dds_runtime_stage_profiler_keeps_ranked_slow_evidence():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     profiler = bridge.RuntimeStageProfiler(slow_threshold_s=0.05, max_slow_events=2)
     profiler.record("physics", 0.01, 1.0)
@@ -432,7 +425,7 @@ def test_mujoco_native_dds_odom_prior_contract_is_wired():
 
 
 def test_mujoco_native_dds_sensor_bridge_flags_slam_motion_mismatch():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -451,7 +444,7 @@ def test_mujoco_native_dds_sensor_bridge_flags_slam_motion_mismatch():
 
 
 def test_mujoco_native_dds_sensor_bridge_accepts_slam_motion_ratio():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -471,7 +464,7 @@ def test_mujoco_native_dds_sensor_bridge_accepts_slam_motion_ratio():
 
 
 def test_mujoco_native_dds_motion_report_uses_delta_for_odom_prior():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = bridge._motion_report(
         sim_start_position=np.array([3.0, 4.0, 0.5]),
@@ -506,7 +499,7 @@ def test_mujoco_native_dds_motion_report_uses_delta_for_odom_prior():
 
 
 def test_mujoco_native_dds_sensor_bridge_flags_slam_motion_overshoot():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -525,7 +518,7 @@ def test_mujoco_native_dds_sensor_bridge_flags_slam_motion_overshoot():
 
 
 def test_mujoco_native_dds_sensor_bridge_uses_map_pose_when_tracking_is_valid():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -552,7 +545,7 @@ def test_mujoco_native_dds_sensor_bridge_uses_map_pose_when_tracking_is_valid():
 
 
 def test_mujoco_native_dds_sensor_bridge_rejects_inaccurate_map_pose():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -576,7 +569,7 @@ def test_mujoco_native_dds_sensor_bridge_rejects_inaccurate_map_pose():
 
 
 def test_mujoco_native_dds_sensor_bridge_rejects_inaccurate_map_yaw():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -602,7 +595,7 @@ def test_mujoco_native_dds_sensor_bridge_rejects_inaccurate_map_yaw():
 
 
 def test_mujoco_native_dds_sensor_bridge_flags_slam_yaw_mismatch():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     motion = {
         "available": True,
@@ -626,7 +619,7 @@ def test_mujoco_native_dds_sensor_bridge_flags_slam_yaw_mismatch():
 
 
 def test_mujoco_native_dds_sensor_bridge_defaults_to_physical_rolling_scan_time():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     args = bridge._build_parser().parse_args([])
 
@@ -657,7 +650,7 @@ def test_mujoco_native_dds_sensor_bridge_defaults_to_physical_rolling_scan_time(
 
 
 def test_mujoco_native_dds_sensor_bridge_drive_profiles_are_reproducible():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     assert bridge._drive_command_for_profile(
         "arc",
@@ -683,7 +676,7 @@ def test_mujoco_native_dds_sensor_bridge_drive_profiles_are_reproducible():
 
 
 def test_mujoco_native_dds_sensor_bridge_policy_default_prefers_onnx():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     policy_path = bridge._resolve_policy_path_for_drive("policy", "")
 
@@ -693,7 +686,7 @@ def test_mujoco_native_dds_sensor_bridge_policy_default_prefers_onnx():
 
 
 def test_mujoco_native_dds_sensor_bridge_accepts_split_timestamp_clocks():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     args = bridge._build_parser().parse_args(
         [
@@ -712,7 +705,7 @@ def test_mujoco_native_dds_sensor_bridge_accepts_split_timestamp_clocks():
 
 
 def test_mujoco_native_dds_sensor_bridge_uses_unified_sim_hardware_clock():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     clock = bridge.SimulatedHardwareClock(
         sim_start_s=10.0,
@@ -744,8 +737,355 @@ def test_mujoco_native_dds_sensor_bridge_uses_unified_sim_hardware_clock():
     )
 
 
+def test_mujoco_native_dds_clock_alignment_selects_lowest_rtt_sample():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    second = 1_000_000_000
+    result = bridge._select_native_wall_clock_alignment(
+        [
+            (100 * second, 105 * second + 40_000_000, 100 * second + 80_000_000),
+            (200 * second, 205 * second + 2_000_000, 200 * second + 4_000_000),
+            (300 * second, 305 * second + 10_000_000, 300 * second + 20_000_000),
+        ]
+    )
+
+    assert result["sample_count"] == 3
+    assert result["rtt_ms"] == pytest.approx(4.0)
+    assert result["uncertainty_ms"] == pytest.approx(2.0)
+    assert result["native_minus_local_s"] == pytest.approx(5.0)
+
+
+def test_mujoco_native_dds_clock_alignment_rejects_high_uncertainty():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    with pytest.raises(RuntimeError, match="uncertainty too high"):
+        bridge._select_native_wall_clock_alignment(
+            [(1_000_000_000, 2_000_000_000, 1_250_000_000)]
+        )
+
+
+def test_mujoco_native_dds_clock_handshake_excludes_wsl_startup(monkeypatch):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    native_offset_ns = 5_000_000_000
+    local_times = iter(
+        value
+        for sample in range(bridge.DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES)
+        for value in (1_000_000_000 + sample * 10_000, 1_000_001_000 + sample * 10_000)
+    )
+    native_samples = [
+        1_000_000_500 + sample * 10_000 + native_offset_ns
+        for sample in range(bridge.DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES)
+    ]
+    stdout = types.SimpleNamespace()
+    response_lines = iter(
+        [b"LINGTU_CLOCK_READY\n", *[f"{value}\n".encode("ascii") for value in native_samples]]
+    )
+    stdout.readline = lambda: next(response_lines, b"")
+    stdout.close = lambda: None
+    stdin = types.SimpleNamespace(writes=[])
+    stdin.write = lambda value: stdin.writes.append(value)
+    stdin.flush = lambda: None
+    process = types.SimpleNamespace(stdin=stdin, stdout=stdout)
+    monkeypatch.setattr(bridge.time, "time_ns", lambda: next(local_times))
+
+    alignment = bridge._synchronize_managed_native_clock(process)
+
+    assert alignment["source"] == "managed_native_process_handshake"
+    assert alignment["sample_count"] == bridge.DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES
+    assert alignment["rtt_ms"] == pytest.approx(0.001)
+    assert alignment["native_minus_local_s"] == pytest.approx(5.0)
+    assert stdin.writes == [
+        *[b"LINGTU_CLOCK_SAMPLE\n"] * bridge.DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES,
+        b"LINGTU_CLOCK_START\n",
+    ]
+
+
+def test_mujoco_native_dds_managed_wsl_clock_handshake_is_opt_in(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    command = ["wsl.exe", "-e", "/tmp/livox_sdk2_stream", "--dds"]
+    plain = bridge._managed_wsl_command(command, tmp_path / "plain.pid")
+    synchronized = bridge._managed_wsl_command(
+        command,
+        tmp_path / "synchronized.pid",
+        clock_handshake=True,
+    )
+
+    assert "LINGTU_CLOCK_READY" not in plain[4]
+    assert "LINGTU_CLOCK_READY" in synchronized[4]
+    assert "LINGTU_CLOCK_SAMPLE" in synchronized[4]
+    assert "LINGTU_CLOCK_START" in synchronized[4]
+
+
+def test_mujoco_native_dds_publisher_preserves_unified_sim_hardware_clock():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    unified = bridge._build_parser().parse_args([])
+    wall = bridge._build_parser().parse_args(["--timestamp-clock", "wall"])
+    split = bridge._build_parser().parse_args(
+        ["--imu-timestamp-clock", "wall"]
+    )
+    fixture = bridge._build_parser().parse_args(
+        ["--navigation-fixture", "--timestamp-clock", "wall"]
+    )
+
+    assert bridge._should_restamp_native_records(unified) is False
+    assert bridge._should_restamp_native_records(wall) is True
+    assert bridge._should_restamp_native_records(split) is True
+    assert bridge._should_restamp_native_records(fixture) is False
+
+
+def test_mujoco_native_dds_external_arm_cli_contract(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    arm_file = tmp_path / "sensor_arm.json"
+    status_file = tmp_path / "sensor_arm_status.json"
+    args = bridge._build_parser().parse_args(
+        [
+            "--domain-id",
+            "83",
+            "--external-arm-file",
+            str(arm_file),
+            "--external-arm-token",
+            "run-token",
+            "--external-arm-scenario",
+            "free",
+            "--external-arm-timeout-s",
+            "12.5",
+            "--external-arm-status-json",
+            str(status_file),
+        ]
+    )
+
+    config = bridge._external_arm_config_from_args(args)
+
+    assert config is not None
+    assert config["arm_file"] == arm_file.resolve()
+    assert config["status_json"] == status_file.resolve()
+    assert config["token"] == "run-token"
+    assert config["domain_id"] == 83
+    assert config["scenario"] == "free"
+    assert config["timeout_s"] == pytest.approx(12.5)
+    sibling = tmp_path / "unrelated.json"
+    arm_file.write_text('{"stale":true}', encoding="utf-8")
+    status_file.write_text('{"state":"armed"}', encoding="utf-8")
+    sibling.write_text("keep", encoding="utf-8")
+    bridge._prepare_external_arm_files(config)
+    assert not arm_file.exists()
+    assert not status_file.exists()
+    assert sibling.read_text(encoding="utf-8") == "keep"
+
+    assert bridge._external_arm_config_from_args(bridge._build_parser().parse_args([])) is None
+
+    missing_token = bridge._build_parser().parse_args(
+        ["--external-arm-file", str(arm_file), "--external-arm-scenario", "free"]
+    )
+    with pytest.raises(ValueError, match="external-arm-token"):
+        bridge._external_arm_config_from_args(missing_token)
+
+
+def test_mujoco_native_dds_atomic_status_write_retries_windows_sharing_violation(
+    tmp_path,
+    monkeypatch,
+):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    target = tmp_path / "status.json"
+    real_replace = bridge.os.replace
+    attempts = 0
+
+    def replace(source, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            error = PermissionError("sharing violation")
+            error.winerror = 32
+            raise error
+        real_replace(source, destination)
+
+    monkeypatch.setattr(bridge.os, "replace", replace)
+    monkeypatch.setattr(bridge.time, "sleep", lambda _seconds: None)
+
+    bridge._write_atomic_json_object(target, {"state": "armed"})
+
+    assert attempts == 2
+    assert json.loads(target.read_text(encoding="utf-8")) == {"state": "armed"}
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_mujoco_native_dds_external_arm_rejects_contract_mismatches():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    valid = {
+        "schema": bridge.EXTERNAL_ARM_SCHEMA,
+        "arm": True,
+        "token": "run-token",
+        "domain_id": 83,
+        "scenario": "free",
+    }
+    assert bridge._validate_external_arm_payload(
+        valid,
+        expected_token="run-token",
+        expected_domain_id=83,
+        expected_scenario="free",
+    ) == ""
+
+    cases = []
+    for field, value, error in (
+        ("schema", "old", "external_arm_schema_invalid"),
+        ("arm", False, "external_arm_value_invalid"),
+        ("token", "wrong", "external_arm_token_mismatch"),
+        ("domain_id", 84, "external_arm_domain_mismatch"),
+        ("domain_id", True, "external_arm_domain_mismatch"),
+        ("scenario", "obstacle_stop", "external_arm_scenario_mismatch"),
+    ):
+        payload = dict(valid)
+        payload[field] = value
+        cases.append((payload, error))
+    payload_with_extra_key = dict(valid)
+    payload_with_extra_key["unexpected"] = True
+    cases.append((payload_with_extra_key, "external_arm_keys_invalid"))
+
+    for payload, expected_error in cases:
+        assert bridge._validate_external_arm_payload(
+            payload,
+            expected_token="run-token",
+            expected_domain_id=83,
+            expected_scenario="free",
+        ) == expected_error
+
+
+def test_mujoco_native_dds_external_arm_uses_strict_bounded_json():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    with pytest.raises(ValueError, match="duplicate_key"):
+        bridge._strict_json_object(b'{"schema":"a","schema":"b"}')
+    with pytest.raises(ValueError, match="constant_invalid"):
+        bridge._strict_json_object(b'{"value":NaN}')
+    with pytest.raises(ValueError, match="object_required"):
+        bridge._strict_json_object(b"[]")
+    with pytest.raises(ValueError, match="size_invalid"):
+        bridge._strict_json_object(b"x" * (bridge._EXTERNAL_ARM_MAX_BYTES + 1))
+
+
+def test_mujoco_native_dds_external_arm_ack_starts_sim_duration_and_releases_anchor(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    arm_file = tmp_path / "sensor_arm.json"
+    status_file = tmp_path / "sensor_arm_status.json"
+    gate = bridge.ExternalArmGate(
+        arm_file=arm_file,
+        token="run-token",
+        domain_id=83,
+        scenario="free",
+        timeout_s=10.0,
+        status_json=status_file,
+        started_wall_s=100.0,
+    )
+
+    initial_status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert initial_status["state"] == "waiting"
+    assert initial_status["acknowledged"] is False
+    assert bridge._sensor_anchor_active(
+        "off",
+        motion_started=False,
+        external_arm_gate=gate,
+    ) is True
+    assert gate.poll(sim_time_s=11.0, monotonic_now_s=100.1) == "waiting"
+    assert bridge._external_arm_drive_elapsed_s(gate, sim_time_s=50.0) == 0.0
+
+    bridge._write_atomic_json_object(
+        arm_file,
+        {
+            "schema": bridge.EXTERNAL_ARM_SCHEMA,
+            "arm": True,
+            "token": "run-token",
+            "domain_id": 83,
+            "scenario": "free",
+        },
+    )
+    assert gate.poll(sim_time_s=12.5, monotonic_now_s=100.2) == "armed"
+
+    armed_status = json.loads(status_file.read_text(encoding="utf-8"))
+    assert armed_status["schema"] == bridge.EXTERNAL_ARM_STATUS_SCHEMA
+    assert armed_status["state"] == "armed"
+    assert armed_status["acknowledged"] is True
+    assert armed_status["domain_id"] == 83
+    assert armed_status["scenario"] == "free"
+    assert armed_status["duration_clock"] == "sim"
+    assert armed_status["arm_observed_sim_time_s"] == pytest.approx(12.5)
+    assert "run-token" not in status_file.read_text(encoding="utf-8")
+    assert "run-token" not in json.dumps(gate.snapshot(), sort_keys=True)
+    assert bridge._external_arm_drive_elapsed_s(gate, sim_time_s=12.5) == 0.0
+    assert bridge._external_arm_drive_elapsed_s(gate, sim_time_s=13.75) == pytest.approx(1.25)
+    assert bridge._sensor_anchor_active(
+        "off",
+        motion_started=False,
+        external_arm_gate=gate,
+    ) is False
+    assert not list(tmp_path.glob(".*.tmp"))
+
+    # The gate is immutable after acknowledgement; replacing the file cannot revoke it.
+    arm_file.write_text("{}", encoding="utf-8")
+    assert gate.poll(sim_time_s=14.0, monotonic_now_s=100.3) == "armed"
+
+
+def test_mujoco_native_dds_external_arm_is_fail_closed_on_invalid_or_late_file(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    invalid_file = tmp_path / "invalid_arm.json"
+    invalid_file.write_text(
+        json.dumps(
+            {
+                "schema": bridge.EXTERNAL_ARM_SCHEMA,
+                "arm": True,
+                "token": "wrong-token",
+                "domain_id": 83,
+                "scenario": "free",
+            }
+        ),
+        encoding="utf-8",
+    )
+    invalid_gate = bridge.ExternalArmGate(
+        arm_file=invalid_file,
+        token="run-token",
+        domain_id=83,
+        scenario="free",
+        timeout_s=10.0,
+        started_wall_s=10.0,
+    )
+    assert invalid_gate.poll(sim_time_s=3.0, monotonic_now_s=10.1) == "invalid"
+    assert invalid_gate.failure_gap == "external_arm_token_mismatch"
+    assert invalid_gate.acknowledged is False
+
+    late_file = tmp_path / "late_arm.json"
+    timeout_gate = bridge.ExternalArmGate(
+        arm_file=late_file,
+        token="run-token",
+        domain_id=83,
+        scenario="free",
+        timeout_s=1.0,
+        started_wall_s=20.0,
+    )
+    assert timeout_gate.poll(sim_time_s=4.0, monotonic_now_s=21.0) == "timed_out"
+    assert timeout_gate.failure_gap == "external_arm_timeout"
+    bridge._write_atomic_json_object(
+        late_file,
+        {
+            "schema": bridge.EXTERNAL_ARM_SCHEMA,
+            "arm": True,
+            "token": "run-token",
+            "domain_id": 83,
+            "scenario": "free",
+        },
+    )
+    assert timeout_gate.poll(sim_time_s=5.0, monotonic_now_s=21.1) == "timed_out"
+    assert timeout_gate.acknowledged is False
+
+
 def test_mujoco_native_dds_sensor_bridge_catches_up_by_dropping_observations(monkeypatch):
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     clock = bridge.SimulatedHardwareClock(
         sim_start_s=10.0,
@@ -785,7 +1125,7 @@ def test_mujoco_native_dds_sensor_bridge_catches_up_by_dropping_observations(mon
 
 
 def test_mujoco_native_dds_sensor_bridge_accounts_for_skipped_lidar_deadlines():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     next_due_s, dropped = bridge._advance_skipped_lidar_deadlines(
         next_lidar_sim_s=10.0,
@@ -798,7 +1138,7 @@ def test_mujoco_native_dds_sensor_bridge_accounts_for_skipped_lidar_deadlines():
 
 
 def test_mujoco_native_dds_sensor_bridge_exposes_bounded_catch_up_defaults():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     args = bridge._build_parser().parse_args([])
 
@@ -806,8 +1146,171 @@ def test_mujoco_native_dds_sensor_bridge_exposes_bounded_catch_up_defaults():
     assert args.sim_hardware_catch_up_yield_steps == 40
 
 
+def test_mujoco_native_dds_parent_diagnostics_are_opt_in():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    args = bridge._build_parser().parse_args([])
+
+    assert args.parent_diagnostics_json == ""
+    assert args.parent_diagnostics_period_s == pytest.approx(0.5)
+
+
+def test_mujoco_native_dds_async_publisher_defaults_to_sync_with_bounded_limits():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    args = bridge._build_parser().parse_args([])
+
+    assert args.publisher_write_mode == "sync"
+    assert args.async_publisher_max_bytes == 1_048_576
+    assert args.async_publisher_max_records == 512
+    assert args.async_publisher_max_batches == 256
+    assert args.async_publisher_oldest_s == pytest.approx(0.5)
+    assert args.async_publisher_shutdown_s == pytest.approx(2.0)
+
+
+def test_mujoco_native_dds_parent_diagnostics_write_atomic_rolling_counters(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    output = tmp_path / "parent_sensor_diagnostics.json"
+    diagnostics = bridge.ParentSensorDiagnostics(output, period_s=0.5)
+
+    startup = json.loads(output.read_text(encoding="utf-8"))
+    assert startup["schema_version"] == "lingtu.mujoco.parent_sensor_diagnostics.v1"
+    assert startup["reason"] == "startup"
+    assert set(startup["record_types"]) == {
+        "cloud",
+        "imu",
+        "odom_prior",
+        "registered_cloud",
+    }
+    assert startup["record_types"]["imu"]["scheduled"] == 0
+    assert startup["scheduler"]["pacing"] == {
+        "catch_up_events": 0,
+        "catch_up_yields": 0,
+        "final_lag_s": 0.0,
+        "max_consecutive_steps": 0,
+        "max_lag_observed_s": 0.0,
+    }
+
+    diagnostics.record_scheduled("imu", 3)
+    diagnostics.record_catchup_drop("imu", 2)
+    diagnostics.record_generated("imu")
+    diagnostics.record_deadline_skip("cloud", 4)
+    assert diagnostics.force_publish("test") is True
+
+    snapshot = json.loads(output.read_text(encoding="utf-8"))
+    assert snapshot["reason"] == "test"
+    assert snapshot["record_types"]["imu"]["scheduled"] == 3
+    assert snapshot["record_types"]["imu"]["catchup_dropped_before_generation"] == 2
+    assert snapshot["record_types"]["imu"]["generated"] == 1
+    assert snapshot["scheduler"]["deadline_skip"]["cloud"] == 4
+    assert snapshot["record_types"]["imu"]["pipe_write_duration_us"]["bounds_us"]
+    assert not list(tmp_path.glob(".*.tmp"))
+
+
+def test_mujoco_native_dds_parent_diagnostics_publish_scheduler_pacing(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    diagnostics.update_scheduler_pacing(
+        {
+            "final_lag_s": 0.012,
+            "max_lag_observed_s": 0.25,
+            "max_consecutive_steps": 8,
+            "catch_up_events": 3,
+            "catch_up_yields": 2,
+        }
+    )
+    diagnostics._next_publish_monotonic_ns = 0
+
+    assert diagnostics.maybe_publish() is True
+
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    assert snapshot["reason"] == "periodic"
+    assert snapshot["scheduler"]["pacing"] == {
+        "catch_up_events": 3,
+        "catch_up_yields": 2,
+        "final_lag_s": 0.012,
+        "max_consecutive_steps": 8,
+        "max_lag_observed_s": 0.25,
+    }
+
+
+def test_mujoco_native_dds_parent_diagnostics_signal_handler_only_sets_stop_flag(tmp_path):
+    import signal
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    startup_bytes = diagnostics.path.read_bytes()
+
+    diagnostics.handle_stop_signal(signal.SIGTERM, None)
+
+    assert diagnostics.stop_requested is True
+    assert diagnostics.final_reason == "signal:SIGTERM"
+    assert diagnostics.path.read_bytes() == startup_bytes
+    diagnostics.force_publish(diagnostics.final_reason)
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    assert snapshot["reason"] == "signal:SIGTERM"
+
+
+def test_mujoco_native_dds_main_writes_final_parent_diagnostics_and_restores_signals(
+    tmp_path,
+    monkeypatch,
+):
+    import signal
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    output = tmp_path / "parent_sensor_diagnostics.json"
+    previous_term_handler = signal.getsignal(signal.SIGTERM)
+    previous_int_handler = signal.getsignal(signal.SIGINT)
+    monkeypatch.setattr(bridge, "run", lambda _args: {"ok": True})
+
+    result = bridge.main(
+        [
+            "--parent-diagnostics-json",
+            str(output),
+            "--parent-diagnostics-period-s",
+            "0.25",
+        ]
+    )
+
+    assert result == 0
+    snapshot = json.loads(output.read_text(encoding="utf-8"))
+    assert snapshot["reason"] == "final"
+    assert snapshot["period_s"] == pytest.approx(0.25)
+    assert signal.getsignal(signal.SIGTERM) == previous_term_handler
+    assert signal.getsignal(signal.SIGINT) == previous_int_handler
+
+
+def test_mujoco_native_dds_main_without_parent_diagnostics_does_not_touch_signals(
+    monkeypatch,
+):
+    import signal
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    monkeypatch.setattr(bridge, "run", lambda _args: {"ok": True})
+    monkeypatch.setattr(
+        signal,
+        "signal",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("signal handlers must remain untouched")
+        ),
+    )
+
+    assert bridge.main([]) == 0
+
+
 def test_mujoco_native_dds_sensor_bridge_writes_motion_complete_marker(tmp_path):
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     marker = tmp_path / "motion_complete.json"
     bridge._write_motion_complete_marker(
@@ -825,7 +1328,7 @@ def test_mujoco_native_dds_sensor_bridge_writes_motion_complete_marker(tmp_path)
 
 
 def test_mujoco_native_dds_sensor_bridge_timestamps_instantaneous_scan_at_sample_time():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     assert bridge._scan_stamp_sim_time_s(
         scan_time_profile="instantaneous",
@@ -845,7 +1348,7 @@ def test_mujoco_native_dds_sensor_bridge_timestamps_instantaneous_scan_at_sample
 
 
 def test_mujoco_native_dds_sensor_bridge_uses_one_timebase_for_sim_clock():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     assert bridge._sensor_timestamp_s(
         clock="sim",
@@ -862,7 +1365,7 @@ def test_mujoco_native_dds_sensor_bridge_uses_one_timebase_for_sim_clock():
 
 
 def test_mujoco_native_dds_sensor_bridge_keeps_wall_clock_diagnostic_mode():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     assert bridge._sensor_timestamp_s(
         clock="wall",
@@ -881,7 +1384,7 @@ def test_mujoco_native_dds_sensor_bridge_keeps_wall_clock_diagnostic_mode():
 def test_mujoco_native_dds_sensor_bridge_auto_scales_sim_hardware_kinematic_imu_acceleration():
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     scale, source = bridge._resolve_imu_acc_axis_scale(
         "auto",
@@ -906,7 +1409,7 @@ def test_mujoco_native_dds_sensor_bridge_auto_scales_sim_hardware_kinematic_imu_
 
 
 def test_mujoco_native_dds_sensor_bridge_sensor_imu_adds_missing_gravity_for_kinematic():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     class State:
         orientation = np.array([0.0, 0.0, 0.0, 1.0])
@@ -929,7 +1432,7 @@ def test_mujoco_native_dds_sensor_bridge_sensor_imu_adds_missing_gravity_for_kin
 
 
 def test_mujoco_native_dds_sensor_bridge_sensor_imu_preserves_physical_accelerometer():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     class State:
         orientation = np.array([0.0, 0.0, 0.0, 1.0])
@@ -952,7 +1455,7 @@ def test_mujoco_native_dds_sensor_bridge_sensor_imu_preserves_physical_accelerom
 
 
 def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_fastlio():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     class State:
         orientation = np.array([0.0, 0.0, 0.0, 1.0])
@@ -983,7 +1486,7 @@ def test_mujoco_native_dds_sensor_bridge_conditions_contact_impulses_before_fast
 
 def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_fastlio_acceptance_by_default():
     from runtime.runtime_interface import TOPICS
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     sensor_counts = Counter({TOPICS.lidar_scan: 3, TOPICS.imu: 40, TOPICS.odom_prior: 40})
     slam_counts = Counter({topic: 1 for topic in bridge.REQUIRED_SLAM_OUTPUT_TOPICS})
@@ -1007,7 +1510,7 @@ def test_mujoco_native_dds_sensor_bridge_rejects_kinematic_fastlio_acceptance_by
 
 
 def test_mujoco_native_dds_sensor_bridge_physical_rolling_uses_subscan_budget():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     assert (
         bridge._rolling_subscan_sample_count(
@@ -1028,7 +1531,7 @@ def test_mujoco_native_dds_sensor_bridge_physical_rolling_uses_subscan_budget():
 
 
 def test_mujoco_native_dds_sensor_bridge_steps_engine_at_sensor_tick():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     class Engine:
         def __init__(self):
@@ -1099,7 +1602,7 @@ def test_mujoco_lidar_pattern_cursor_supports_subscan_sample_count():
 
 
 def test_mujoco_native_dds_sensor_bridge_auto_keeps_legacy_split_acceleration_scale():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     scale, source = bridge._resolve_imu_acc_axis_scale(
         "auto",
@@ -1115,7 +1618,7 @@ def test_mujoco_native_dds_sensor_bridge_auto_keeps_legacy_split_acceleration_sc
 def test_mujoco_native_dds_sensor_bridge_scales_gyro_when_requested():
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     imu = Imu(
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -1133,7 +1636,7 @@ def test_mujoco_native_dds_sensor_bridge_scales_gyro_when_requested():
 
 
 def test_mujoco_native_dds_sensor_bridge_auto_keeps_policy_imu_identity():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     scale, source = bridge._resolve_imu_acc_axis_scale(
         "auto",
@@ -1287,9 +1790,7 @@ def test_semantic_namespace_wrappers_expose_runtime_import_paths():
     from perception.tracking.instance_tracker import InstanceTracker
     from perception.tracking.tracked_objects import TrackedObject
     from runtime.msgs import scene as scene_msgs
-    from runtime.utils.robustness import retry
     from runtime.utils.sanitize import sanitize_position
-    from runtime.utils.validation import validate_bgr
 
     assert callable(sanitize_position)
     assert InstanceTracker is not None
@@ -1496,7 +1997,7 @@ def test_mujoco_fastlio2_live_gate_exposes_wall_timeout_guard():
     assert "gate wall timeout" in status["fault"]
 
 
-def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
+def test_mujoco_launcher_passes_wall_timeout_guard():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--max-wall-time-s" in text
@@ -1504,13 +2005,13 @@ def test_launch_mujoco_fastlio2_live_passes_wall_timeout_guard():
     assert '"--partial-json-out" "$run_dir/report.partial.json"' in text
 
 
-def test_launch_mujoco_fastlio2_live_exposes_native_dds_sensor_gate():
+def test_mujoco_launcher_exposes_native_dds_sensor_gate():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'cd "$script_dir/../../.." && pwd' in text
     assert "native-dds-sensors" in text
     assert "native-dds-gate" in text
-    assert "mujoco_native_dds_sensors.py" in text
+    assert "mujoco/native_dds_sensors.py" in text
     assert "--imu-hz" in text
     assert "--imu-acc-mode" in text
     assert "--imu-acc-axis-scale" in text
@@ -1579,7 +2080,7 @@ def test_navigation_runtime_dataflow_documents_no_python_slam_rule():
 def test_mujoco_native_dds_sensor_bridge_declares_no_python_slam_contract():
     from collections import Counter
 
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     source = Path(bridge.__file__).read_text(encoding="utf-8")
     report = bridge._make_report(
@@ -1596,7 +2097,7 @@ def test_mujoco_native_dds_sensor_bridge_declares_no_python_slam_contract():
     assert "localization.slam._native" not in source
     assert "DDSTransport" not in source
     assert "runtime.transport.dds" not in source
-    assert bridge.NATIVE_SLAM_RUNTIME == "lingtu_slam_cyclone_runtime"
+    assert bridge.NATIVE_SLAM_RUNTIME == "slamd"
     assert bridge.NATIVE_SENSOR_PUBLISHER == "livox_sdk2_stream --stdin-records --dds"
     assert bridge.REQUIRED_SLAM_OUTPUT_TOPICS == (
         bridge.TOPICS.odometry,
@@ -1606,12 +2107,12 @@ def test_mujoco_native_dds_sensor_bridge_declares_no_python_slam_contract():
     assert report["no_python_slam"] is True
     assert report["native_sensor_publisher"] == ""
     assert report["python_role"] == "mujoco_sensor_dds_adapter_only"
-    assert report["localization_runtime_expected"] == "lingtu_slam_cyclone_runtime"
+    assert report["localization_runtime_expected"] == "slamd"
     assert report["sensor_topics"][bridge.TOPICS.lidar_scan]["dds_topic"] == "rt/lidar/raw_frame"
 
 
 def test_mujoco_native_dds_sensor_bridge_accepts_policy_path_override():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     args = bridge._build_parser().parse_args(
         [
@@ -1629,7 +2130,7 @@ def test_mujoco_native_dds_sensor_bridge_accepts_policy_path_override():
 
 
 def test_mujoco_native_dds_sensor_bridge_reads_native_slam_status(tmp_path):
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     status_path = tmp_path / "status.json"
     status_path.write_text(
@@ -1658,7 +2159,7 @@ def test_mujoco_native_dds_sensor_bridge_reads_native_slam_status(tmp_path):
 def test_mujoco_native_dds_sensor_bridge_writes_livox_binary_record():
     import io
 
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     stream = io.BytesIO()
     bridge._write_record(stream, bridge._RECORD_IMU, 123, 4, b"abcdef", 1)
@@ -1674,12 +2175,844 @@ def test_mujoco_native_dds_sensor_bridge_writes_livox_binary_record():
     assert raw[bridge._HEADER.size :] == b"abcdef"
 
 
+def test_mujoco_native_dds_async_publisher_preserves_mixed_record_order_and_batch_flushes():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class RecordingStream:
+        def __init__(self):
+            self.events = []
+
+        def write(self, value):
+            self.events.append(("write", bytes(value)))
+            return len(value)
+
+        def flush(self):
+            self.events.append(("flush", b""))
+
+        def close(self):
+            self.events.append(("close", b""))
+
+    stream = RecordingStream()
+    publisher = bridge.AsyncFifoPublisher(stream)
+    first = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"imu-1",
+        1,
+        async_batch=first,
+        diagnostic_record_type="imu",
+    )
+    bridge._write_record(
+        None,
+        bridge._RECORD_CLOUD,
+        101,
+        2,
+        b"cloud-1",
+        1,
+        async_batch=first,
+        diagnostic_record_type="cloud",
+    )
+    second = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_ODOM_PRIOR,
+        102,
+        3,
+        b"odom-1",
+        1,
+        async_batch=second,
+        diagnostic_record_type="odom_prior",
+    )
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        103,
+        4,
+        b"imu-2",
+        1,
+        async_batch=second,
+        diagnostic_record_type="imu",
+    )
+
+    publisher.enqueue(first)
+    publisher.enqueue(second)
+    publisher.request_stop("test_complete")
+    assert publisher.join(timeout_s=1.0) is True
+    publisher.raise_if_failed()
+
+    record_types = [
+        bridge._HEADER.unpack(value)[1]
+        for event, value in stream.events
+        if event == "write" and len(value) == bridge._HEADER.size
+    ]
+    assert record_types == [
+        bridge._RECORD_IMU,
+        bridge._RECORD_CLOUD,
+        bridge._RECORD_ODOM_PRIOR,
+        bridge._RECORD_IMU,
+    ]
+    assert [event for event, _value in stream.events] == [
+        "write",
+        "write",
+        "write",
+        "write",
+        "flush",
+        "write",
+        "write",
+        "write",
+        "write",
+        "flush",
+        "close",
+    ]
+    assert publisher.stats()["enqueued_batch_sequence"] == 2
+    assert publisher.stats()["enqueued_record_sequence"] == 4
+    assert publisher.stats()["written_batch_sequence"] == 2
+    assert publisher.stats()["written_record_sequence"] == 4
+
+
+def test_mujoco_native_dds_async_publisher_coalesces_backlog_without_reordering():
+    import threading
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class BackloggedStream:
+        def __init__(self):
+            self.first_write = threading.Event()
+            self.release = threading.Event()
+            self.payloads = []
+            self.flushes = 0
+
+        def write(self, value):
+            self.first_write.set()
+            assert self.release.wait(timeout=1.0)
+            self.payloads.append(bytes(value))
+            return len(value)
+
+        def flush(self):
+            self.flushes += 1
+
+        def close(self):
+            return None
+
+    def one_record(sequence):
+        batch = bridge.AsyncPublisherBatch()
+        bridge._write_record(
+            None,
+            bridge._RECORD_IMU,
+            100 + sequence,
+            sequence,
+            bytes([sequence]),
+            1,
+            async_batch=batch,
+            diagnostic_record_type="imu",
+        )
+        return batch
+
+    stream = BackloggedStream()
+    publisher = bridge.AsyncFifoPublisher(stream)
+    publisher.enqueue(one_record(1))
+    assert stream.first_write.wait(timeout=1.0)
+    for sequence in range(2, 18):
+        publisher.enqueue(one_record(sequence))
+    stream.release.set()
+    publisher.request_stop("test_complete")
+    assert publisher.join(timeout_s=1.0) is True
+    publisher.raise_if_failed()
+
+    payloads = [
+        value[0]
+        for index, value in enumerate(stream.payloads)
+        if index % 2 == 1
+    ]
+    assert payloads == list(range(1, 18))
+    assert stream.flushes == 2
+    assert publisher.stats()["written_batch_sequence"] == 17
+    assert publisher.stats()["written_record_sequence"] == 17
+
+
+@pytest.mark.parametrize(
+    ("limits", "expected_limit"),
+    [
+        ({"max_bytes": 1, "max_records": 10, "max_batches": 10}, "bytes"),
+        ({"max_bytes": 10_000, "max_records": 1, "max_batches": 10}, "records"),
+        ({"max_bytes": 10_000, "max_records": 10, "max_batches": 1}, "batches"),
+    ],
+)
+def test_mujoco_native_dds_async_publisher_capacity_is_atomic_and_fatal(
+    limits,
+    expected_limit,
+):
+    import threading
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class BlockingStream:
+        def __init__(self):
+            self.entered = threading.Event()
+            self.release = threading.Event()
+            self.closed = 0
+
+        def write(self, value):
+            self.entered.set()
+            assert self.release.wait(timeout=1.0)
+            return len(value)
+
+        def flush(self):
+            return None
+
+        def close(self):
+            self.closed += 1
+
+    def one_record(payload):
+        batch = bridge.AsyncPublisherBatch()
+        bridge._write_record(
+            None,
+            bridge._RECORD_IMU,
+            100,
+            1,
+            payload,
+            1,
+            async_batch=batch,
+            diagnostic_record_type="imu",
+        )
+        return batch
+
+    if expected_limit == "bytes":
+        limits["max_bytes"] = bridge._HEADER.size + 1
+    stream = BlockingStream()
+    publisher = bridge.AsyncFifoPublisher(stream, **limits)
+    publisher.enqueue(one_record(b"a"))
+    assert stream.entered.wait(timeout=1.0)
+
+    with pytest.raises(bridge.AsyncPublisherError, match=f"queue_full:{expected_limit}"):
+        publisher.enqueue(one_record(b"b"))
+    with pytest.raises(bridge.AsyncPublisherError, match=f"queue_full:{expected_limit}"):
+        publisher.raise_if_failed()
+
+    stats = publisher.stats()
+    assert stats["enqueued_batch_sequence"] == 1
+    assert stats["enqueued_record_sequence"] == 1
+    assert stats["undrained_batches"] == 1
+    assert stats["undrained_records"] == 1
+    stream.release.set()
+    assert publisher.join(timeout_s=1.0) is True
+    assert stream.closed == 1
+
+
+def test_mujoco_native_dds_async_publisher_oldest_age_is_fatal():
+    import threading
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class FakeClock:
+        now_ns = 0
+
+        def __call__(self):
+            return self.now_ns
+
+    class BlockingStream:
+        def __init__(self):
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def write(self, value):
+            self.entered.set()
+            assert self.release.wait(timeout=1.0)
+            return len(value)
+
+        def flush(self):
+            return None
+
+        def close(self):
+            return None
+
+    clock = FakeClock()
+    stream = BlockingStream()
+    publisher = bridge.AsyncFifoPublisher(
+        stream,
+        oldest_s=0.5,
+        monotonic_ns=clock,
+    )
+    batch = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"a",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="imu",
+    )
+    publisher.enqueue(batch)
+    assert stream.entered.wait(timeout=1.0)
+
+    clock.now_ns = 500_000_001
+    with pytest.raises(bridge.AsyncPublisherError, match="queue_oldest_age"):
+        publisher.raise_if_failed()
+
+    assert publisher.stats()["oldest_age_s"] == pytest.approx(0.500000001)
+    stream.release.set()
+    assert publisher.join(timeout_s=1.0) is True
+
+
+def test_mujoco_native_dds_async_publisher_reports_enqueue_queue_and_writer_io(tmp_path):
+    import io
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    publisher = bridge.AsyncFifoPublisher(
+        io.BytesIO(),
+        parent_diagnostics=diagnostics,
+    )
+    batch = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"imu",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="imu",
+    )
+    bridge._write_record(
+        None,
+        bridge._RECORD_CLOUD,
+        101,
+        2,
+        b"cloud",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="cloud",
+    )
+
+    publisher.enqueue(batch)
+    publisher.request_stop("test_complete")
+    assert publisher.join(timeout_s=1.0) is True
+    publisher.raise_if_failed()
+    diagnostics.force_publish("test")
+
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    for name, wire_bytes in (
+        ("imu", bridge._HEADER.size + 3),
+        ("cloud", bridge._HEADER.size + 5),
+    ):
+        record = snapshot["record_types"][name]
+        assert record["enqueue_attempt"] == 1
+        assert record["enqueue_success"] == 1
+        assert record["enqueue_error"] == 0
+        assert record["enqueue_full"] == 0
+        assert record["enqueue_bytes"] == wire_bytes
+        assert record["enqueue_duration_us"]["count"] == 1
+        assert record["pipe_write_attempt"] == 1
+        assert record["pipe_write_success"] == 1
+    queue = snapshot["async_queue"]
+    assert queue["enabled"] is True
+    assert queue["current_batches"] == 0
+    assert queue["max_batches"] == 1
+    assert queue["enqueued_batch_sequence"] == 1
+    assert queue["enqueued_record_sequence"] == 2
+    assert queue["written_batch_sequence"] == 1
+    assert queue["written_record_sequence"] == 2
+    assert queue["batch_sequence_lag"] == 0
+    assert queue["record_sequence_lag"] == 0
+    assert queue["undrained_batches"] == 0
+    assert queue["writer_alive"] is False
+    assert queue["cleanup_reason"] == "test_complete"
+    assert queue["fatal_reason"] == ""
+    assert snapshot["flush"]["attempt"] == 1
+    assert snapshot["flush"]["success"] == 1
+
+
+@pytest.mark.parametrize("failure_point", ["write", "flush"])
+def test_mujoco_native_dds_async_publisher_propagates_first_writer_error(
+    tmp_path,
+    failure_point,
+):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class FailingStream:
+        def __init__(self):
+            self.closed = 0
+
+        def write(self, value):
+            if failure_point == "write":
+                raise OSError("write failed")
+            return len(value)
+
+        def flush(self):
+            if failure_point == "flush":
+                raise OSError("flush failed")
+
+        def close(self):
+            self.closed += 1
+            raise OSError("later close failed")
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / f"{failure_point}.json",
+        period_s=0.5,
+    )
+    stream = FailingStream()
+    publisher = bridge.AsyncFifoPublisher(
+        stream,
+        parent_diagnostics=diagnostics,
+    )
+    batch = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"imu",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="imu",
+    )
+    publisher.enqueue(batch)
+    assert publisher.join(timeout_s=1.0) is True
+
+    with pytest.raises(bridge.AsyncPublisherError, match=f"{failure_point} failed") as failure:
+        publisher.raise_if_failed()
+    assert isinstance(failure.value.__cause__, OSError)
+    assert str(failure.value.__cause__) == f"{failure_point} failed"
+
+    rejected = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_CLOUD,
+        101,
+        2,
+        b"cloud",
+        1,
+        async_batch=rejected,
+        diagnostic_record_type="cloud",
+    )
+    with pytest.raises(bridge.AsyncPublisherError, match=f"{failure_point} failed"):
+        publisher.enqueue(rejected)
+
+    diagnostics.force_publish("test")
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    assert snapshot["async_queue"]["fatal_reason"] == "writer_error"
+    assert snapshot["async_queue"]["undrained_batches"] == 1
+    assert snapshot["record_types"]["cloud"]["enqueue_error"] == 1
+    assert stream.closed == 1
+    if failure_point == "write":
+        assert snapshot["record_types"]["imu"]["pipe_write_error"] == 1
+        assert snapshot["flush"]["attempt"] == 0
+    else:
+        assert snapshot["record_types"]["imu"]["pipe_write_success"] == 1
+        assert snapshot["flush"]["error"] == 1
+
+
+def test_mujoco_native_dds_async_publisher_term_and_finally_stop_are_idempotent(
+    monkeypatch,
+):
+    import threading
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class RecordingStream:
+        def __init__(self):
+            self.events = []
+
+        def write(self, value):
+            self.events.append(("write", threading.current_thread().name, bytes(value)))
+            return len(value)
+
+        def flush(self):
+            self.events.append(("flush", threading.current_thread().name, b""))
+
+        def close(self):
+            self.events.append(("close", threading.current_thread().name, b""))
+
+    stream = RecordingStream()
+    publisher = bridge.AsyncFifoPublisher(stream)
+    batch = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"imu",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="imu",
+    )
+    publisher.enqueue(batch)
+
+    publisher.request_stop("signal:SIGTERM")
+    publisher.request_stop("finally")
+    monkeypatch.setattr(
+        bridge,
+        "_terminate_wsl_pid",
+        lambda _pid: pytest.fail("normal drain must not terminate the child"),
+    )
+    process = types.SimpleNamespace(_lingtu_linux_pid=4321, stdin=stream)
+    cleanup = bridge._shutdown_async_native_publisher(
+        publisher,
+        process,
+        timeout_s=1.0,
+    )
+    assert cleanup["timed_out"] is False
+    assert cleanup["termination"] is None
+    publisher.request_stop("finally_again")
+    publisher.raise_if_failed()
+
+    assert publisher.stats()["cleanup_reason"] == "signal:SIGTERM"
+    assert [event for event, _thread, _value in stream.events].count("flush") == 1
+    close_events = [event for event in stream.events if event[0] == "close"]
+    assert len(close_events) == 1
+    assert close_events[0][1] == "mujoco-native-dds-writer"
+
+
+@pytest.mark.parametrize("release_on_terminate", [True, False])
+def test_mujoco_native_dds_async_publisher_timeout_terminates_child_before_second_join(
+    monkeypatch,
+    release_on_terminate,
+):
+    import threading
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class BlockingStream:
+        def __init__(self):
+            self.entered = threading.Event()
+            self.release = threading.Event()
+            self.close_threads = []
+
+        def write(self, value):
+            self.entered.set()
+            self.release.wait()
+            return len(value)
+
+        def flush(self):
+            return None
+
+        def close(self):
+            self.close_threads.append(threading.current_thread().name)
+
+    class Process:
+        _lingtu_linux_pid = 4321
+
+        def __init__(self, stream):
+            self.stdin = stream
+
+    stream = BlockingStream()
+    process = Process(stream)
+    publisher = bridge.AsyncFifoPublisher(stream)
+    batch = bridge.AsyncPublisherBatch()
+    bridge._write_record(
+        None,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"imu",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="imu",
+    )
+    publisher.enqueue(batch)
+    assert stream.entered.wait(timeout=1.0)
+    terminated = []
+
+    def terminate_child(pid):
+        terminated.append(pid)
+        if release_on_terminate:
+            stream.release.set()
+        return {"linux_pid": pid, "clean": True, "errors": []}
+
+    monkeypatch.setattr(bridge, "_terminate_wsl_pid", terminate_child)
+
+    cleanup = bridge._shutdown_async_native_publisher(
+        publisher,
+        process,
+        timeout_s=0.01,
+    )
+
+    assert cleanup["timed_out"] is True
+    assert cleanup["joined_after_terminate"] is release_on_terminate
+    assert cleanup["timeout_stats"]["writer_alive"] is True
+    assert cleanup["timeout_stats"]["undrained_batches"] == 1
+    assert cleanup["queue"]["cleanup_reason"] == "shutdown_timeout"
+    assert cleanup["queue"]["fatal_reason"] == "shutdown_timeout"
+    assert cleanup["queue"]["undrained_batches"] == 1
+    assert terminated == [4321]
+    if release_on_terminate:
+        assert cleanup["queue"]["writer_alive"] is False
+        assert stream.close_threads == ["mujoco-native-dds-writer"]
+    else:
+        assert cleanup["queue"]["writer_alive"] is True
+        assert cleanup["queue"]["fatal_reason"] == "shutdown_timeout"
+        stream.release.set()
+        assert publisher.join(timeout_s=1.0) is True
+        assert stream.close_threads == ["mujoco-native-dds-writer"]
+
+
+def test_mujoco_native_dds_publish_loop_boundary_keeps_sync_write_then_flush_order():
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class RecordingStream:
+        def __init__(self):
+            self.events = []
+
+        def write(self, value):
+            self.events.append(("write", bytes(value)))
+            return len(value)
+
+        def flush(self):
+            self.events.append(("flush", b""))
+
+    stream = RecordingStream()
+    batch = bridge._begin_native_publisher_batch(None)
+    bridge._write_record(
+        stream,
+        bridge._RECORD_IMU,
+        100,
+        1,
+        b"imu",
+        1,
+        async_batch=batch,
+        diagnostic_record_type="imu",
+    )
+    bridge._commit_native_publisher_batch(
+        stream,
+        batch,
+        async_publisher=None,
+    )
+
+    assert [event for event, _value in stream.events] == ["write", "write", "flush"]
+
+
+@pytest.mark.parametrize(
+    ("fail_on_check", "expected_enqueue_calls"),
+    [(1, 0), (2, 0), (3, 1)],
+)
+def test_mujoco_native_dds_publish_loop_checks_fatal_at_top_before_and_after_enqueue(
+    fail_on_check,
+    expected_enqueue_calls,
+):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class Publisher:
+        def __init__(self):
+            self.checks = 0
+            self.enqueue_calls = 0
+
+        def raise_if_failed(self):
+            self.checks += 1
+            if self.checks == fail_on_check:
+                raise bridge.AsyncPublisherError(f"failed_check:{self.checks}")
+
+        def enqueue(self, _batch):
+            self.enqueue_calls += 1
+
+    publisher = Publisher()
+    if fail_on_check == 1:
+        with pytest.raises(bridge.AsyncPublisherError, match="failed_check:1"):
+            bridge._begin_native_publisher_batch(publisher)
+    else:
+        batch = bridge._begin_native_publisher_batch(publisher)
+        bridge._write_record(
+            None,
+            bridge._RECORD_IMU,
+            100,
+            1,
+            b"imu",
+            1,
+            async_batch=batch,
+            diagnostic_record_type="imu",
+        )
+        with pytest.raises(
+            bridge.AsyncPublisherError,
+            match=f"failed_check:{fail_on_check}",
+        ):
+            bridge._commit_native_publisher_batch(
+                None,
+                batch,
+                async_publisher=publisher,
+            )
+    assert publisher.enqueue_calls == expected_enqueue_calls
+
+
+def test_mujoco_native_dds_parent_diagnostics_measure_pipe_record_writes(tmp_path):
+    import io
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    stream = io.BytesIO()
+
+    bridge._write_record(
+        stream,
+        bridge._RECORD_IMU,
+        123,
+        4,
+        b"abcdef",
+        1,
+        parent_diagnostics=diagnostics,
+        diagnostic_record_type="imu",
+    )
+    diagnostics.force_publish("test")
+
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    imu = snapshot["record_types"]["imu"]
+    assert imu["pipe_write_attempt"] == 1
+    assert imu["pipe_write_success"] == 1
+    assert imu["pipe_write_error"] == 0
+    assert imu["payload_bytes"] == 6
+    assert imu["pipe_bytes"] == bridge._HEADER.size + 6
+    assert imu["pipe_write_duration_us"]["count"] == 1
+
+
+def test_mujoco_native_dds_parent_diagnostics_count_pipe_write_errors(tmp_path):
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class BrokenStream:
+        def write(self, _value):
+            raise OSError("pipe closed")
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+
+    with pytest.raises(OSError, match="pipe closed"):
+        bridge._write_record(
+            BrokenStream(),
+            bridge._RECORD_IMU,
+            123,
+            4,
+            b"abcdef",
+            1,
+            parent_diagnostics=diagnostics,
+            diagnostic_record_type="imu",
+        )
+
+    diagnostics.force_publish("test")
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    imu = snapshot["record_types"]["imu"]
+    assert imu["pipe_write_attempt"] == 1
+    assert imu["pipe_write_success"] == 0
+    assert imu["pipe_write_error"] == 1
+    assert imu["pipe_write_duration_us"]["count"] == 1
+
+
+def test_mujoco_native_dds_parent_diagnostics_measure_flush_by_record_type(tmp_path):
+    import io
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    stream = io.BytesIO()
+    bridge._write_record(
+        stream,
+        bridge._RECORD_IMU,
+        123,
+        4,
+        b"abcdef",
+        1,
+        parent_diagnostics=diagnostics,
+        diagnostic_record_type="imu",
+    )
+    bridge._write_record(
+        stream,
+        bridge._RECORD_CLOUD,
+        124,
+        5,
+        b"xyz",
+        1,
+        parent_diagnostics=diagnostics,
+        diagnostic_record_type="cloud",
+    )
+
+    diagnostics.force_publish("pending")
+    pending_snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    assert pending_snapshot["flush"]["records_since_flush"]["current"] == 2
+    assert pending_snapshot["flush"]["record_types"]["imu"]["bytes_since_flush"][
+        "current"
+    ] == bridge._HEADER.size + 6
+
+    bridge._flush_native_publisher(stream, parent_diagnostics=diagnostics)
+    diagnostics.force_publish("test")
+
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    flush = snapshot["flush"]
+    assert flush["attempt"] == 1
+    assert flush["success"] == 1
+    assert flush["error"] == 0
+    assert flush["duration_us"]["count"] == 1
+    assert flush["records_since_flush"]["last"] == 2
+    assert flush["bytes_since_flush"]["last"] == 2 * bridge._HEADER.size + 9
+    assert flush["record_types"]["imu"]["records_since_flush"]["last"] == 1
+    assert flush["record_types"]["imu"]["duration_us"]["count"] == 1
+    assert flush["record_types"]["cloud"]["records_since_flush"]["last"] == 1
+    assert flush["record_types"]["cloud"]["duration_us"]["count"] == 1
+    assert flush["record_types"]["odom_prior"]["duration_us"]["count"] == 0
+    assert flush["records_since_flush"]["current"] == 0
+
+
+def test_mujoco_native_dds_parent_diagnostics_retain_pending_records_on_flush_error(
+    tmp_path,
+):
+    import io
+
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    class BrokenFlush(io.BytesIO):
+        def flush(self):
+            raise OSError("flush failed")
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    stream = BrokenFlush()
+    bridge._write_record(
+        stream,
+        bridge._RECORD_IMU,
+        123,
+        4,
+        b"abcdef",
+        1,
+        parent_diagnostics=diagnostics,
+        diagnostic_record_type="imu",
+    )
+
+    with pytest.raises(OSError, match="flush failed"):
+        bridge._flush_native_publisher(stream, parent_diagnostics=diagnostics)
+
+    diagnostics.force_publish("test")
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    flush = snapshot["flush"]
+    assert flush["attempt"] == 1
+    assert flush["success"] == 0
+    assert flush["error"] == 1
+    assert flush["records_since_flush"]["current"] == 1
+    assert flush["records_since_flush"]["total"] == 0
+    assert flush["record_types"]["imu"]["error"] == 1
+    assert flush["record_types"]["imu"]["duration_us"]["count"] == 1
+
+
 def test_mujoco_native_dds_sensor_bridge_writes_mid360_imu_acceleration_in_g_units():
     import io
 
     from runtime.msgs.geometry import Quaternion, Vector3
     from runtime.msgs.sensor import Imu
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     imu = Imu(
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -1702,8 +3035,40 @@ def test_mujoco_native_dds_sensor_bridge_writes_mid360_imu_acceleration_in_g_uni
     assert acc_z == pytest.approx(1.0)
 
 
+def test_mujoco_native_dds_typed_writer_attributes_diagnostics_to_imu(tmp_path):
+    import io
+
+    from runtime.msgs.geometry import Quaternion, Vector3
+    from runtime.msgs.sensor import Imu
+    from sim.scripts.mujoco import native_dds_sensors as bridge
+
+    diagnostics = bridge.ParentSensorDiagnostics(
+        tmp_path / "parent_sensor_diagnostics.json",
+        period_s=0.5,
+    )
+    imu = Imu(
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        angular_velocity=Vector3(0.1, 0.2, 0.3),
+        linear_acceleration=Vector3(0.0, 0.0, bridge._MID360_ACCEL_MPS2_PER_G),
+        ts=1.0,
+        frame_id=bridge.IMU_FRAME_ID,
+    )
+
+    bridge._write_native_imu(
+        io.BytesIO(),
+        imu,
+        sequence=5,
+        parent_diagnostics=diagnostics,
+    )
+    diagnostics.force_publish("test")
+
+    snapshot = json.loads(diagnostics.path.read_text(encoding="utf-8"))
+    assert snapshot["record_types"]["imu"]["pipe_write_success"] == 1
+    assert snapshot["record_types"]["cloud"]["pipe_write_success"] == 0
+
+
 def test_mujoco_native_dds_sensor_bridge_uses_specific_force_for_raw_imu():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     class State:
         orientation = np.array([0.0, 0.0, 0.0, 1.0])
@@ -1720,7 +3085,7 @@ def test_mujoco_native_dds_sensor_bridge_uses_specific_force_for_raw_imu():
 
 
 def test_mujoco_native_dds_sensor_bridge_flags_unhealthy_native_slam_status():
-    from sim.scripts import mujoco_native_dds_sensors as bridge
+    from sim.scripts.mujoco import native_dds_sensors as bridge
 
     gaps = bridge._slam_health_gaps(
         {
@@ -1755,7 +3120,7 @@ def test_mujoco_fastlio2_live_gate_writes_json_before_stdout_print():
     assert "except BrokenPipeError:" in text
 
 
-def test_launch_mujoco_fastlio2_live_defaults_mid360_lidar_to_rolling_scan_time():
+def test_mujoco_launcher_defaults_mid360_lidar_to_rolling_scan_time():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--scan-time-profile" in text
@@ -1763,7 +3128,7 @@ def test_launch_mujoco_fastlio2_live_defaults_mid360_lidar_to_rolling_scan_time(
     assert "${LINGTU_MUJOCO_LIVE_MID360_SAMPLES_PER_FRAME:-20000}" in text
 
 
-def test_launch_mujoco_fastlio2_live_uses_sim_clock_inspection_timeout_default():
+def test_mujoco_launcher_uses_sim_clock_inspection_timeout_default():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'inspection_default_goal_timeout="${LINGTU_MUJOCO_LIVE_INSPECTION_GOAL_TIMEOUT:-900}"' in text
@@ -1771,7 +3136,7 @@ def test_launch_mujoco_fastlio2_live_uses_sim_clock_inspection_timeout_default()
     assert '"--inspection-goal-timeout" "$inspection_default_goal_timeout"' in text
 
 
-def test_launch_mujoco_fastlio2_live_disables_pct_optimizer_by_default():
+def test_mujoco_launcher_disables_pct_optimizer_by_default():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert 'LINGTU_PCT_OPTIMIZE_TRAJECTORY="${LINGTU_PCT_OPTIMIZE_TRAJECTORY:-0}"' in text
@@ -1805,7 +3170,7 @@ def test_mujoco_fastlio2_live_gate_samples_video_on_duration_clock():
     ) == pytest.approx(90.0)
 
 
-def test_launch_mujoco_fastlio2_live_cleans_stale_fastlio_processes():
+def test_mujoco_launcher_cleans_stale_fastlio_processes():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "cleanup_stale_fastlio2" in text
@@ -1930,7 +3295,7 @@ def test_mujoco_fastlio2_live_gate_accepts_inspection_tracking_args():
     assert args.inspection_path_dir_diff_thre == pytest.approx(1.8)
 
 
-def test_launch_mujoco_fastlio2_live_passes_fastlio_time_diff_control():
+def test_mujoco_launcher_passes_fastlio_time_diff_control():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--fastlio-time-diff-lidar-to-imu" in text
@@ -1939,7 +3304,7 @@ def test_launch_mujoco_fastlio2_live_passes_fastlio_time_diff_control():
     assert "LINGTU_MUJOCO_LIVE_FASTLIO_VERTICAL_VELOCITY_CONSTRAINT" in text
 
 
-def test_launch_mujoco_fastlio2_live_passes_turn_speed_coupling_controls():
+def test_mujoco_launcher_passes_turn_speed_coupling_controls():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--nav-turn-speed-yaw-rate-start" in text
@@ -1948,7 +3313,7 @@ def test_launch_mujoco_fastlio2_live_passes_turn_speed_coupling_controls():
     assert "LINGTU_MUJOCO_LIVE_NAV_TURN_SPEED_MIN_SCALE" in text
 
 
-def test_launch_mujoco_fastlio2_live_passes_inspection_tracking_controls():
+def test_mujoco_launcher_passes_inspection_tracking_controls():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--inspection-waypoint-threshold" in text
@@ -2356,7 +3721,11 @@ def test_native_slam_status_adapter_feeds_module_ports_directly(tmp_path):
     cloud_dir = tmp_path / "clouds"
     cloud_dir.mkdir()
     (cloud_dir / "registered_cloud.bin").write_bytes(
-        PointCloud2(points=[[1.0, 2.0, 3.0, 0.5]], ts=12.34, frame_id=topic_default_frame_id(TOPICS.registered_cloud)).encode()
+        PointCloud2(
+            points=[[1.0, 2.0, 3.0, 0.5]],
+            ts=12.34,
+            frame_id=topic_default_frame_id(TOPICS.registered_cloud),
+        ).encode()
     )
     (cloud_dir / "map_cloud.bin").write_bytes(
         PointCloud2(points=[[4.0, 5.0, 6.0, 0.7]], ts=12.35, frame_id=topic_default_frame_id(TOPICS.map_cloud)).encode()
@@ -2840,7 +4209,7 @@ def test_mujoco_fastlio2_live_gate_summarizes_dynamic_obstacle_sweep_quality():
     assert report["covered_speed_count"] == 3
 
 
-def test_launch_mujoco_fastlio2_live_exposes_cmd_vel_timeout_override():
+def test_mujoco_launcher_exposes_cmd_vel_timeout_override():
     text = Path("sim/scripts/mujoco/launch_fastlio2_live.sh").read_text(encoding="utf-8")
 
     assert "--cmd-vel-timeout" in text
@@ -2936,8 +4305,6 @@ def test_mujoco_fastlio2_live_gate_robot_crossing_obstacles_scale_density_and_sp
 
 
 def test_mujoco_world_registry_includes_industrial_demo_scene():
-    from pathlib import Path
-
     from drivers.sim.mujoco.driver import _WORLDS_DIR, WORLDS
 
     world_file = WORLDS["industrial_demo"]
@@ -3219,42 +4586,6 @@ def test_mujoco_driver_defaults_to_thunderv4_policy():
     assert driver_mod._EXPLICIT_POLICY_CANDIDATES[0].name == "policy_251119.onnx"
 
 
-def test_legacy_nova_nav_bridge_uses_current_robot_paths():
-    bridge = Path(__file__).resolve().parents[2] / "src" / "adapters" / "ros2" / "nova_nav_bridge.py"
-    source = bridge.read_text(encoding="utf-8")
-
-    assert 'SIM_DIR / "robot"' not in source
-    assert 'SIM_DIR / "robots" / "nova_dog" / "robot_with_camera.xml"' in source
-    assert 'SIM_DIR / "robots" / "nova_dog" / "policy.onnx"' in source
-    assert '<include file="robot_with_camera.xml"/>' in source
-
-
-def test_legacy_sim_launch_global_planner_entrypoint_exists_and_is_guarded():
-    repo_root = Path(__file__).resolve().parents[2]
-    launch = (repo_root / "sim" / "launch" / "sim.launch.py").read_text(encoding="utf-8")
-    wrapper = repo_root / "sim" / "scripts" / "run_global_planner.py"
-
-    assert 'sim_dir / "scripts" / "run_global_planner.py"' in launch
-    assert wrapper.exists()
-    source = wrapper.read_text(encoding="utf-8")
-    assert "ROS_DOMAIN_ID" in source
-    assert "isolated simulation domain" in source
-    assert "/nav/global_path" in source
-    assert "cmd_vel" not in source
-
-
-def test_legacy_manual_nova_scripts_default_to_current_robot_asset_paths():
-    repo_root = Path(__file__).resolve().parents[2]
-
-    for script_name in ("test_factory_nova.sh", "test_semantic_nav.sh"):
-        source = (repo_root / "sim" / "scripts" / script_name).read_text(encoding="utf-8")
-        assert "/tmp/nova_sim" not in source
-        assert "/robot/factory_nova_scene.xml" not in source
-        assert "robots/nova_dog/robot_with_camera.xml" in source
-        assert "LINGTU_NOVA_SCENE_XML" in source
-        assert "LINGTU_SIM_DIR" in source
-
-
 def test_optional_go1_asset_contract_has_placeholder_readme():
     repo_root = Path(__file__).resolve().parents[2]
     indoor_office = (repo_root / "sim" / "worlds" / "mujoco" / "indoor_office.xml").read_text(encoding="utf-8")
@@ -3267,126 +4598,58 @@ def test_optional_go1_asset_contract_has_placeholder_readme():
     assert "not part of the G4 server closure" in text
 
 
-def test_root_operation_scripts_do_not_point_at_deleted_navigation_launches():
+def test_root_operation_entrypoint_is_unique_and_uses_current_release_paths():
     repo_root = Path(__file__).resolve().parents[2]
-    shell_entry = (repo_root / "scripts" / "lingtu.sh").read_text(encoding="utf-8")
-    ota_start = (repo_root / "scripts" / "ota" / "start_nav.sh").read_text(encoding="utf-8")
-    ota_install = (repo_root / "scripts" / "ota" / "install_nav.sh").read_text(encoding="utf-8")
+    canonical_entry = repo_root / "scripts" / "lingtu"
+    retired_entry = repo_root / "scripts" / ("lingtu" + ".sh")
+    installer = (repo_root / "scripts" / "deploy" / "install_native_release.sh").read_text(
+        encoding="utf-8"
+    )
     scripts_index = (repo_root / "scripts" / "README.md").read_text(encoding="utf-8")
+    release_guide = (repo_root / "docs" / "04-deployment" / "OTA_GUIDE.md").read_text(
+        encoding="utf-8"
+    )
 
-    for source in (shell_entry, ota_start, ota_install):
-        assert "navigation_run.launch.py" not in source
-        assert "navigation_bringup.launch.py" not in source
-        assert "launch/subsystems/planning.launch.py" not in source
+    assert canonical_entry.is_file()
+    assert not retired_entry.exists()
+    assert not (repo_root / "scripts" / "ota").exists()
+    assert "navigation_run.launch.py" not in installer
+    assert "navigation_bringup.launch.py" not in installer
+    assert "launch/subsystems/planning.launch.py" not in installer
 
-    assert 'WORKSPACE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"' in shell_entry
-    assert 'LINGTU_CLI="$WORKSPACE_DIR/lingtu.py"' in shell_entry
-    assert "_run_lingtu map" in shell_entry
-    assert "_run_lingtu nav" in shell_entry
-    assert "_run_lingtu status" in shell_entry
-    assert '"$NAV_DIR/lingtu.py" nav' in ota_start
-    assert "python3 \\$NAV_DIR/lingtu.py nav" in ota_install
-    assert "LingTu Operations Entrypoints" in scripts_index
-    assert "`scripts/lingtu health`" in scripts_index
-
+    assert "Sole canonical field thin adapter" in scripts_index
+    assert "scripts/ota/" not in scripts_index
+    assert "scripts/deploy/package_native_release.sh" in release_guide
+    assert "ProductControl" in installer
 
 def test_sim_boundary_indexes_document_stable_contracts():
     repo_root = Path(__file__).resolve().parents[2]
-    readme_text = (repo_root / "sim" / "README.md").read_text(encoding="utf-8")
-    repo_layout = (repo_root / "docs" / "REPO_LAYOUT.md").read_text(encoding="utf-8")
-    plan_text = (
-        repo_root / "docs" / "superpowers" / "plans" / "2026-05-31-sim-folder-modularization-goals.md"
-    ).read_text(encoding="utf-8")
-    scripts_index = (repo_root / "sim" / "scripts" / "README.md").read_text(encoding="utf-8")
-    launch_index = (repo_root / "sim" / "launch" / "README.md").read_text(encoding="utf-8")
-    engine_index = (repo_root / "sim" / "engine" / "README.md").read_text(encoding="utf-8")
-    closure_index = (repo_root / "artifacts" / "server_sim_closure" / "README.md").read_text(encoding="utf-8")
-    sim_root = Path(__file__).resolve().parents[2] / "sim"
-    expected = {
-        "bridge": [
-            "thin entrypoints",
-            "do not re-add",
-            "sim/robot/",
-        ],
-        "datasets": [
-            "offline replay inputs",
-            "artifacts/",
-            "not `sim/datasets/`",
-        ],
-        "sensors": [
-            "hardware-free",
-            "sim/assets/livox/",
-            "Do not add ROS 2 or robot service startup side effects",
-        ],
+    indexes = {
+        "simulation": repo_root / "sim" / "README.md",
+        "scripts": repo_root / "sim" / "scripts" / "README.md",
+        "engine": repo_root / "sim" / "engine" / "README.md",
+        "repository": repo_root / "docs" / "REPO_LAYOUT.md",
     }
+    texts = {name: path.read_text(encoding="utf-8") for name, path in indexes.items()}
 
-    for folder, markers in expected.items():
-        readme = sim_root / folder / "README.md"
-        assert readme.exists()
-        text = readme.read_text(encoding="utf-8")
-        for marker in markers:
-            assert marker in text
+    assert "Stable Root Contract" in texts["simulation"]
+    assert "sim/scripts/mujoco/*" in texts["simulation"]
+    assert "MuJoCo Native DDS Gate" in texts["simulation"]
+    assert "Simulation cannot prove" in texts["simulation"]
+    assert "Canonical MuJoCo Entrypoints" in texts["scripts"]
+    assert "Safety Classes" in texts["scripts"]
+    assert "canonical simulation runtime" in texts["engine"]
+    assert "real_robot_motion=false" in texts["engine"]
+    assert "| `sim/` | Simulation engines" in texts["repository"]
 
-    for directory in (
-        "validation/",
-        "evaluation/",
-        "external_scenes/",
-        "meshes/",
-    ):
-        assert f"`{directory}`" in readme_text
-    assert "assets, scenes, scripts" not in repo_layout
-    assert "worlds, assets, robots, scripts, validation/evaluation" in repo_layout
-    assert "sim/README.md" in repo_layout
-    assert "bridge/sensors/datasets" in repo_layout
-    assert "artifacts/server_sim_closure/" in repo_layout
-    assert "launch/gazebo_simulation.launch.py" in repo_layout
-    assert "legacy Go1 demos" in scripts_index
-    assert "sim/robots/go1_playground/" in scripts_index
-    assert "Add boundary README later" not in plan_text
-    assert "Boundary README added" in plan_text
-    assert "default product runtime" in readme_text
-    assert "enable_native=False" in readme_text
-    assert "nav.local_planner" in readme_text
-    assert "nav.path_follower" in readme_text
-    assert "nav.velocity_mux" in readme_text
-    assert "native gate/legacy experiment" in readme_text
-    assert "`maps/` | Reserved empty placeholder" in readme_text
-    assert "`configs/` | Reserved empty placeholder" in readme_text
-    assert "artifacts/server_sim_closure_summary_g4_current.json" in readme_text
-    assert "aggregator does not launch missing gates" in readme_text
-    assert "full_sim_validation.py" in scripts_index
-    assert "cmu_unity_lingtu_stack.py" in scripts_index
-    assert "run_global_planner.py" in scripts_index
-    assert "isolated nonzero `ROS_DOMAIN_ID`" in scripts_index
-    assert "not be used as the current G4 planner evidence source" in scripts_index
-    assert "_run_legkilo_test.sh" in scripts_index
-    assert "legacy/manual dataset helper" in scripts_index
-    assert "Safety class" in scripts_index
-    assert "summary-only unless --run-missing" in scripts_index
-    assert "local non-motion" in scripts_index
-    assert "simulated motion only" in scripts_index
-    assert "ROS2 isolated simulation" in scripts_index
-    assert "legacy manual" in scripts_index
-    assert "canonical simulation runtime core" in engine_index
-    assert "lingtu.py sim" in engine_index
-    assert "real_robot_motion=false" in engine_index
-    assert "generated evidence root" in closure_index
-    assert "24h freshness" in closure_index
-    assert "artifacts/server_sim_closure_summary_g4_current.json" in closure_index
-    assert "host_requirements" in closure_index
-    assert "Linux/ROS 2/MuJoCo/PCT-native checks" in closure_index
-    assert "cmd_vel_sent_to_hardware=false" in closure_index
-    assert "expected_report_path" in closure_index
-    assert "accepted_patterns" in closure_index
-    assert "Legacy ROS launch / smoke contract" in readme_text
-    assert "Simulation endpoint required" in readme_text
-    assert "Do not treat bare `nav`, `map`, or `explore` as simulation" in readme_text
-    assert "isolated `ROS_DOMAIN_ID`" in readme_text
-    assert "no hardware subscriber" in readme_text
-    assert "Legacy ROS launch / smoke contract" in launch_index
-    assert "isolated ROS_DOMAIN_ID" in launch_index
-    assert "Do not run on a robot ROS domain" in launch_index
-    assert "must not have hardware cmd_vel subscribers" in launch_index
+    boundary_markers = {
+        "bridge": ("Legacy ROS2 redirect entrypoints were removed", "src/drivers/sim/"),
+        "datasets": ("offline replay inputs", "generated validation evidence", "artifacts/"),
+        "sensors": ("hardware-free", "sim/assets/livox/", "startup side effects"),
+    }
+    for folder, markers in boundary_markers.items():
+        text = (repo_root / "sim" / folder / "README.md").read_text(encoding="utf-8")
+        assert all(marker in text for marker in markers)
 
 
 def test_mujoco_driver_resolves_explicit_policy_and_repo_relative_paths(monkeypatch, tmp_path):
@@ -3978,7 +5241,7 @@ def test_mujoco_camera_preserves_metric_depth_output():
     assert np.allclose(depth, np.array([[0.4, 2.5, 10.0]], dtype=np.float32))
 
 
-def test_mujoco_driver_default_robot_emits_lidar_points():
+def test_mujoco_driver_default_pose_emits_lidar_points():
     pytest.importorskip("mujoco")
 
     driver = MujocoDriverModule(
@@ -4537,9 +5800,9 @@ def test_sim_mujoco_full_stack_routes_autonomy_cmds_through_mux():
 
 
 def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
+    from lingtu.assembly.full_stack_wiring import apply_full_stack_wires
     from nav.safety.velocity_mux import VelocityMux
     from runtime.blueprint import Blueprint
-    from lingtu.assembly.full_stack_wiring import apply_full_stack_wires
     from runtime.module import Module
     from runtime.stream import In, Out
 
@@ -4599,8 +5862,8 @@ def test_full_stack_mux_wiring_tolerates_legacy_nav_without_recovery_cmd():
 
 
 def test_full_stack_required_safety_stop_wire_reports_missing_contract():
-    from runtime.blueprint import Blueprint
     from lingtu.assembly.full_stack_wiring import apply_full_stack_wires
+    from runtime.blueprint import Blueprint
     from runtime.module import Module
     from runtime.stream import In, Out
 

@@ -44,11 +44,7 @@ SOURCE_RESET_REASONS = {
     "cpp_slam_status",
     description="Read LingTu C++ SLAM status snapshots into Module ports",
 )
-@register(
-    "localization_adapter",
-    "native_slam_status",
-    description="Alias for cpp_slam_status",
-)
+
 class CppSlamStatusAdapterModule(Module, layer=1):
     """Bridge the C++ SLAM runtime status snapshot into LingTu ports."""
 
@@ -136,6 +132,8 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self._latest_observation_status: dict[str, Any] | None = None
         self._latest_registered_cloud: PointCloud2 | None = None
         self._last_observation_sequence = 0
+        self._last_published_observation_epoch = 0
+        self._last_published_observation_sequence = 0
         self._last_observation_runtime_id = ""
         self._last_observation_source_epoch: int | None = None
         self._source_progress_runtime_id: str | None = None
@@ -281,6 +279,12 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         if source_stalled:
             reported_fastlio_velocity = None
         fastlio_degeneracy = _fastlio_degeneracy(payload.get("fastlio_degeneracy"))
+        fastlio_lidar_update = payload.get("fastlio_lidar_update")
+        reported_fastlio_lidar_update = (
+            dict(fastlio_lidar_update)
+            if isinstance(fastlio_lidar_update, Mapping)
+            else None
+        )
         status = {
             "runtime_instance_id": str(payload.get("runtime_instance_id") or ""),
             "source_epoch": _int(payload.get("source_epoch")),
@@ -302,6 +306,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "fastlio_velocity": reported_fastlio_velocity,
             "fastlio_speed_mps": None if source_stalled else fastlio_speed_mps,
             "fastlio_degeneracy": fastlio_degeneracy,
+            "fastlio_lidar_update": reported_fastlio_lidar_update,
             "max_reasonable_speed_mps": self._max_reasonable_speed_mps,
             "status_target_hz": _float(payload.get("status_target_hz"), 0.0),
             "imu_input_hz": 0.0 if source_stalled else _float(payload.get("imu_input_hz"), 0.0),
@@ -345,6 +350,24 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "relocalization_refine_backend": str(payload.get("relocalization_refine_backend") or ""),
             "relocalization_refine_iterations": _int(payload.get("relocalization_refine_iterations")),
             "relocalization_refine_inliers": _int(payload.get("relocalization_refine_inliers")),
+            "relocalization_refine_input_points": _int(
+                payload.get("relocalization_refine_input_points")
+            ),
+            "relocalization_refine_evaluated_points": _int(
+                payload.get("relocalization_refine_evaluated_points")
+            ),
+            "relocalization_min_inliers": _int(
+                payload.get("relocalization_min_inliers")
+            ),
+            "relocalization_min_evaluated_points": _int(
+                payload.get("relocalization_min_evaluated_points")
+            ),
+            "relocalization_refine_support_ratio": _float(
+                payload.get("relocalization_refine_support_ratio"), -1.0
+            ),
+            "relocalization_refine_overlap_inlier_ratio": _float(
+                payload.get("relocalization_refine_overlap_inlier_ratio"), -1.0
+            ),
             "relocalization_refine_converged": bool(payload.get("relocalization_refine_converged", False)),
             "relocalization_refine_pos_cov_trace": _float(payload.get("relocalization_refine_pos_cov_trace"), -1.0),
             "restart_recovery_supported": False,
@@ -570,7 +593,16 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         if not isinstance(status, Mapping) or cloud is None:
             return
         sequence = _int(status.get("observation_sequence"))
-        if sequence <= self._last_observation_sequence:
+        source_epoch = _int(status.get("source_epoch"))
+        if source_epoch <= 0 or sequence <= 0:
+            return
+        if not (
+            source_epoch > self._last_published_observation_epoch
+            or (
+                source_epoch == self._last_published_observation_epoch
+                and sequence > self._last_published_observation_sequence
+            )
+        ):
             return
         scan_state = status.get("state_estimation_at_scan")
         map_odom_raw = status.get("map_odom_tf")
@@ -626,6 +658,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             observation = MapObservationFrame(
                 points=cloud.points,
                 sequence=sequence,
+                reset_epoch=source_epoch,
                 ts=scan_stamp,
                 frame_id=map_frame,
                 sensor_frame_id=sensor_frame,
@@ -644,6 +677,8 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             self._record_decode_error("map_observation")
             return
         self.map_observation.publish(observation)
+        self._last_published_observation_epoch = source_epoch
+        self._last_published_observation_sequence = sequence
         self._last_observation_sequence = sequence
 
     def _publish_stale_if_needed(self) -> None:

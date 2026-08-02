@@ -8,17 +8,13 @@ from importlib import import_module, reload
 from runtime.plugin_seed import seed_registered_plugins
 from runtime.registry import get
 
-
-_LEGACY_DRIVER_KEYS = frozenset({"nova_dog"})
-_SIM_DRIVER_KEYS = frozenset({"sim", "sim_mujoco", "mujoco_inproc", "sim_endpoint", "sim_gazebo"})
+_SIM_DRIVER_KEYS = frozenset({"sim", "sim_mujoco", "mujoco_inproc", "sim_endpoint"})
 _DRIVER_KEY_ALIASES = {
     "thunder_remote": "thunder",
-    "s100p": "thunder",
-    "navigate": "thunder",
     "grpc_brainstem": "thunder",
     "sim": "sim_mujoco",
     "mujoco_inproc": "sim_mujoco",
-    "sim_gazebo": "sim_endpoint",
+
 }
 
 _DRIVER_FALLBACK_MODULES: dict[str, tuple[str, ...]] = {
@@ -30,23 +26,14 @@ _DRIVER_FALLBACK_MODULES: dict[str, tuple[str, ...]] = {
     "thunder_remote": (
         "drivers.real.thunder.han_dog_module",
     ),
-    "s100p": (
-        "drivers.real.thunder.han_dog_module",
-    ),
-    "navigate": (
-        "drivers.real.thunder.han_dog_module",
-    ),
     "grpc_brainstem": (
         "drivers.real.thunder.han_dog_module",
-    ),
-    "nova_dog": (
-        "drivers.real.thunder.connection",
     ),
     "sim": ("drivers.sim.mujoco.driver",),
     "sim_mujoco": ("drivers.sim.mujoco.driver",),
     "mujoco_inproc": ("drivers.sim.mujoco.driver",),
     "sim_endpoint": ("drivers.sim.endpoint",),
-    "sim_gazebo": ("drivers.sim.endpoint",),
+
 }
 
 
@@ -58,8 +45,6 @@ def seed_driver_plugins_for_runtime(
     """Seed driver plugin groups needed by a runtime key or protocol."""
 
     groups = ["driver"]
-    if key in _LEGACY_DRIVER_KEYS:
-        groups.append("driver_legacy")
     if key in _SIM_DRIVER_KEYS:
         groups.append("driver_sim")
     seed_registered_plugins(groups=tuple(groups), reload_loaded=reload_loaded)

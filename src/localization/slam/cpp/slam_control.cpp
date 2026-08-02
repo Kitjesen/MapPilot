@@ -146,14 +146,14 @@ CliConfig parseArgs(int argc, char** argv) {
   CliConfig cfg;
   if (argc < 2 || std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h") {
     throw std::runtime_error(
-        "usage: lingtu_slam_control save-map PATH [--domain-id N] [--timeout-s SECONDS]\n"
-        "       lingtu_slam_control load-map PATH [--domain-id N] [--timeout-s SECONDS]\n"
-        "       lingtu_slam_control relocalize [PATH] --x X --y Y [--z Z] [--yaw YAW] "
+        "usage: slamctl save-map PATH [--domain-id N] [--timeout-s SECONDS]\n"
+        "       slamctl load-map PATH [--domain-id N] [--timeout-s SECONDS]\n"
+        "       slamctl relocalize [PATH] --x X --y Y [--z Z] [--yaw YAW] "
         "[--domain-id N] [--timeout-s SECONDS]\n"
-        "       lingtu_slam_control global-relocalize [PATH] [--domain-id N] "
+        "       slamctl global-relocalize [PATH] [--domain-id N] "
         "[--timeout-s SECONDS]\n"
-        "       lingtu_slam_control status [--domain-id N] [--timeout-s SECONDS]\n"
-        "       lingtu_slam_control track-against-map [PATH] [--domain-id N] "
+        "       slamctl status [--domain-id N] [--timeout-s SECONDS]\n"
+        "       slamctl track-against-map [PATH] [--domain-id N] "
         "[--timeout-s SECONDS]");
   }
   cfg.command = normalizedCommand(argv[1]);
@@ -262,6 +262,14 @@ std::string relocalizationResponseJson(
       "\"relocalization_refine_backend\":\"" + jsonEscape(refine_backend) + "\"," +
       "\"relocalization_refine_iterations\":" + std::to_string(response.refine_iterations) + "," +
       "\"relocalization_refine_inliers\":" + std::to_string(response.refine_inliers) + "," +
+      "\"relocalization_refine_input_points\":" +
+      std::to_string(response.refine_input_points) + "," +
+      "\"relocalization_refine_evaluated_points\":" +
+      std::to_string(response.refine_evaluated_points) + "," +
+      "\"relocalization_refine_support_ratio\":" +
+      std::to_string(response.refine_support_ratio) + "," +
+      "\"relocalization_refine_overlap_inlier_ratio\":" +
+      std::to_string(response.refine_overlap_inlier_ratio) + "," +
       "\"relocalization_refine_converged\":" +
       (response.refine_converged ? "true" : "false") + "," +
       "\"relocalization_refine_pos_cov_trace\":" +

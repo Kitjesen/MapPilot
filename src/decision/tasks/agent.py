@@ -72,7 +72,7 @@ _BUILTIN_TOOLS = [
     },
 ]
 
-_LEGACY_HANDLER_TOOLS = [
+_PLANNER_HANDLER_TOOLS = [
     {
         "type": "function",
         "function": {
@@ -169,8 +169,8 @@ _LEGACY_HANDLER_TOOLS = [
     },
 ]
 
-# Backward-compatible public constant used by legacy tests.
-AGENT_TOOLS = _BUILTIN_TOOLS + _LEGACY_HANDLER_TOOLS
+# Public descriptor collection for the built-in planner tools.
+AGENT_TOOLS = _BUILTIN_TOOLS + _PLANNER_HANDLER_TOOLS
 
 
 def _dedupe_tools(tools: list[dict]) -> list[dict]:
@@ -258,14 +258,20 @@ class AgentLoop:
         """Init."""
         self._llm = llm_client
         discovered_tools = skills_to_openai_tools(tool_list)
-        legacy_tools = [tool for tool in _LEGACY_HANDLER_TOOLS if tool["function"]["name"] in (tool_handlers or {})]
+        planner_tools = [
+            tool
+            for tool in _PLANNER_HANDLER_TOOLS
+            if tool["function"]["name"] in (tool_handlers or {})
+        ]
 
-        # Merge legacy handlers + auto-discovered handlers; discovered handlers win.
+        # Merge planner handlers + auto-discovered handlers; discovered handlers win.
         self._handlers = dict(tool_handlers or {})
         self._handlers.update(tool_registry)
 
-        # Build OpenAI-format tools: builtins + discovered + legacy compatibility tools.
-        self._tools = _dedupe_tools(_BUILTIN_TOOLS + discovered_tools + legacy_tools)
+        # Build OpenAI-format tools from builtins, discovered skills, and planner handlers.
+        self._tools = _dedupe_tools(
+            _BUILTIN_TOOLS + discovered_tools + planner_tools
+        )
         self._context_fn = context_fn
         self._max_steps = max_steps
         self._timeout = timeout
@@ -276,19 +282,19 @@ class AgentLoop:
         # records one audit entry with result_summary (either the short tool
         # output or `VALIDATION_ERROR: ...`).
         self._tool_call_audit: list[dict[str, Any]] = []
-        # Auto-generated from _BUILTIN_TOOLS + _LEGACY_HANDLER_TOOLS to keep
+        # Auto-generated from built-in and planner-handler definitions to keep
         # required-field schemas in sync with tool definitions (P0.3/P2.2).
         self._tool_schemas: dict[str, dict[str, Any]] = {}
-        for _tool in _BUILTIN_TOOLS + _LEGACY_HANDLER_TOOLS:
+        for _tool in _BUILTIN_TOOLS + _PLANNER_HANDLER_TOOLS:
             _fn = _tool["function"]
             _params = _fn.get("parameters", {})
             self._tool_schemas[_fn["name"]] = {"required": _params.get("required", [])}
         self._known_tool_names: set[str] = {t["function"]["name"] for t in self._tools} | set(self._handlers.keys())
         logger.info(
-            "AgentLoop: %d tools (%d discovered + %d legacy + %d builtin)",
+            "AgentLoop: %d tools (%d discovered + %d planner + %d builtin)",
             len(self._tools),
             len(tool_list),
-            len(legacy_tools),
+            len(planner_tools),
             len(_BUILTIN_TOOLS),
         )
 

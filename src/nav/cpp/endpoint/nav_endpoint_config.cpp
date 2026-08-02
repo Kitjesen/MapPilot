@@ -164,6 +164,17 @@ InputGateConfig inputGateConfig(const CliConfig &cfg) {
   return out;
 }
 
+rolling::SegmentExecutorConfig rollingSegmentExecutorConfig(const CliConfig &cfg) {
+  rolling::SegmentExecutorConfig out;
+  out.segment.max_distance_m = cfg.segment_max_distance_m;
+  out.segment.max_waypoints = cfg.segment_max_waypoints;
+  out.map_input.max_grid_cells = cfg.segment_max_grid_cells;
+  out.map_input.max_age_s = cfg.segment_map_max_age_s;
+  out.risk.stop_threshold = static_cast<float>(cfg.segment_risk_stop);
+  out.risk.resume_threshold = static_cast<float>(cfg.segment_risk_resume);
+  return out;
+}
+
 CliConfig parseArgs(int argc, char **argv) {
   CliConfig cfg;
   const std::string control_mode = envOrEmpty("LINGTU_NAV_CONTROL_MODE");
@@ -179,12 +190,21 @@ CliConfig parseArgs(int argc, char **argv) {
   cfg.map_path = envOrEmpty("LINGTU_ACTIVE_PLANNER_MAP");
   cfg.status_file = envOrEmpty("LINGTU_NAV_STATUS_FILE");
   cfg.estop_latch_file = envOrEmpty("LINGTU_NAV_ESTOP_LATCH_FILE");
-  cfg.profile = envOrEmpty("LINGTU_NAV_PROFILE");
+  if (!envOrEmpty("LINGTU_NAV_PROFILE").empty()) {
+    throw std::runtime_error("LINGTU_NAV_PROFILE is removed; use LINGTU_PRODUCT");
+  }
+  cfg.product = envOrEmpty("LINGTU_PRODUCT");
   cfg.config_fingerprint = envOrEmpty("LINGTU_NAV_CONFIG_FINGERPRINT");
   applyEnvDouble(cfg.nav_max_speed_mps, "LINGTU_NAV_MAX_SPEED_MPS");
   applyEnvDouble(cfg.nav_max_accel_mps2, "LINGTU_NAV_MAX_ACCEL_MPS2");
   applyEnvDouble(cfg.stop_confirmation_timeout_s, "LINGTU_NAV_STOP_CONFIRMATION_TIMEOUT_S");
   applyEnvDouble(cfg.corridor_lookahead_m, "LINGTU_NAV_CORRIDOR_LOOKAHEAD_M");
+  applyEnvDouble(cfg.segment_max_distance_m, "LINGTU_NAV_SEGMENT_MAX_DISTANCE_M");
+  applyEnvSize(cfg.segment_max_waypoints, "LINGTU_NAV_SEGMENT_MAX_WAYPOINTS");
+  applyEnvSize(cfg.segment_max_grid_cells, "LINGTU_NAV_SEGMENT_MAX_GRID_CELLS");
+  applyEnvDouble(cfg.segment_risk_stop, "LINGTU_NAV_SEGMENT_RISK_STOP");
+  applyEnvDouble(cfg.segment_risk_resume, "LINGTU_NAV_SEGMENT_RISK_RESUME");
+  applyEnvDouble(cfg.segment_map_max_age_s, "LINGTU_NAV_SEGMENT_MAP_MAX_AGE_S");
   cfg.path_follower_max_speed_mps = cfg.nav_max_speed_mps;
   cfg.path_follower_max_accel_mps2 = cfg.nav_max_accel_mps2;
   applyEnvDouble(cfg.waypoint_reached_m, "LINGTU_NAV_WAYPOINT_REACHED_M");
@@ -241,7 +261,6 @@ CliConfig parseArgs(int argc, char **argv) {
   applyEnvSize(cfg.live_obstacle_max_clearing_rays, "LINGTU_NAV_LIVE_OBSTACLE_MAX_CLEARING_RAYS");
   applyEnvInt(cfg.live_obstacle_min_hits, "LINGTU_NAV_LIVE_OBSTACLE_MIN_HITS");
   applyEnvBool(cfg.live_obstacle_ray_clearing, "LINGTU_NAV_LIVE_OBSTACLE_RAY_CLEARING");
-  applyEnvBool(cfg.allow_legacy_motion_inputs, "LINGTU_NAV_ALLOW_LEGACY_MOTION_INPUTS");
   applyEnvBool(cfg.allow_teleop_takeover, "LINGTU_NAV_ALLOW_TELEOP_TAKEOVER");
   applyEnvBool(cfg.teleop_local_planner, "LINGTU_TELEOP_LOCAL_PLANNER");
   applyEnvDouble(cfg.teleop_cmd_max_age_s, "LINGTU_TELEOP_CMD_MAX_AGE_S");
@@ -351,8 +370,22 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.path_follower_max_accel_mps2 = cfg.nav_max_accel_mps2;
     } else if (arg == "--corridor-lookahead-m") {
       cfg.corridor_lookahead_m = std::stod(next());
+    } else if (arg == "--segment-max-distance-m") {
+      cfg.segment_max_distance_m = std::stod(next());
+    } else if (arg == "--segment-max-waypoints") {
+      cfg.segment_max_waypoints = static_cast<std::size_t>(std::stoull(next()));
+    } else if (arg == "--segment-max-grid-cells") {
+      cfg.segment_max_grid_cells = static_cast<std::size_t>(std::stoull(next()));
+    } else if (arg == "--segment-risk-stop") {
+      cfg.segment_risk_stop = std::stod(next());
+    } else if (arg == "--segment-risk-resume") {
+      cfg.segment_risk_resume = std::stod(next());
+    } else if (arg == "--segment-map-max-age-s") {
+      cfg.segment_map_max_age_s = std::stod(next());
     } else if (arg == "--profile") {
-      cfg.profile = next();
+      throw std::runtime_error("--profile is removed for native field identity; use --product");
+    } else if (arg == "--product") {
+      cfg.product = next();
     } else if (arg == "--config-fingerprint") {
       cfg.config_fingerprint = next();
     } else if (arg == "--waypoint-reached-m") {
@@ -415,8 +448,6 @@ CliConfig parseArgs(int argc, char **argv) {
       cfg.check_obstacle = parseBool(next(), "--check-obstacle");
     } else if (arg == "--use-traversability-cost") {
       cfg.use_traversability_cost = parseBool(next(), "--use-traversability-cost");
-    } else if (arg == "--allow-legacy-motion-inputs") {
-      cfg.allow_legacy_motion_inputs = parseBool(next(), "--allow-legacy-motion-inputs");
     } else if (arg == "--allow-teleop-takeover") {
       cfg.allow_teleop_takeover = parseBool(next(), "--allow-teleop-takeover");
     } else if (arg == "--teleop-local-planner") {
@@ -564,13 +595,16 @@ CliConfig parseArgs(int argc, char **argv) {
       throw std::runtime_error(
           "usage: navd --path-library DIR "
           "[--control-mode autonomy|teleop|teleop_avoid] "
+          "[--product PRODUCT] "
           "[--global-planner octoplanner3d|far] "
           "[--allow-teleop-takeover true|false] "
           "[--teleop-local-planner true|false] "
-          "[--allow-legacy-motion-inputs true|false] "
           "[--map-root DIR] [--map PLANNER_ARTIFACT] [--domain-id N] [--tick-hz HZ] "
           "[--max-speed-mps MPS] [--max-accel-mps2 MPS2] "
           "[--corridor-lookahead-m M] "
+          "[--segment-max-distance-m M] [--segment-max-waypoints N] "
+          "[--segment-max-grid-cells N] [--segment-risk-stop C] "
+          "[--segment-risk-resume C] [--segment-map-max-age-s S] "
           "[--max-obstacle-points N] [--publish-cmd-vel true|false] "
           "[--local-planner-debug-candidates N] [--local-map-debug-points N] "
           "[--obstacle-voxel-size-m M] [--live-obstacle-decay-s S] "
@@ -631,6 +665,12 @@ CliConfig parseArgs(int argc, char **argv) {
     throw std::runtime_error(
         "tick_hz, motion limits, corridor_lookahead_m, local planner obstacle height, driver "
         "control max age, and teleop planner limits must be finite");
+  }
+  if (!rollingSegmentExecutorConfig(cfg).valid()) {
+    throw std::runtime_error(
+        "rolling segment policy is invalid: distance must be within [0.1, 100] m, waypoints "
+        "within [2, 4096], grid cells within [1, 1048576], map age within [0.01, 10] s, "
+        "and risk thresholds within [0, 100] with stop >= resume");
   }
   if (cfg.driver_control_max_age_s <= 0.0) {
     throw std::runtime_error("driver_control_max_age_s must be strictly positive");

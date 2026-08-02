@@ -15,6 +15,7 @@ struct NavigationStateSnapshot {
   std::uint64_t sequence{0U};
   std::int32_t control_mode{0};
   std::int32_t lifecycle_state{0};
+  std::string active_task_id;
   std::string active_request_id;
   std::uint64_t goal_epoch{0U};
   std::string map_id;
@@ -34,10 +35,88 @@ struct NavigationGoalStatusSnapshot {
   std::string frame_id;
   std::string boot_id;
   std::uint64_t sequence{0U};
+  std::string task_id;
   std::string request_id;
   std::int32_t state{0};
   std::uint64_t goal_epoch{0U};
   std::string reason;
+};
+
+struct NavigationCommandReceipt {
+  std::string task_id;
+  std::string request_id;
+  bool accepted{false};
+  std::int32_t kind{0};
+  std::string reason;
+  double endpoint_timestamp_s{0.0};
+  std::string diagnostic;
+};
+
+struct InspectionTaskCommandReceipt {
+  std::string task_id;
+  std::string request_id;
+  bool accepted{false};
+  std::int32_t kind{0};
+  std::string reason;
+  std::string run_id;
+  double endpoint_timestamp_s{0.0};
+  std::string diagnostic;
+};
+
+struct ExplorationCommandReceipt {
+  bool accepted{false};
+  std::string request_id;
+  std::string exploration_run_id;
+  std::string reason;
+  bool duplicate{false};
+};
+
+// Immutable native inspection task fact. This carries the endpoint replay
+// cursor so the Host can surface a delivery gap instead of inferring progress
+// from command ACKs or snapshots.
+struct InspectionTaskEventSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string boot_id;
+  std::uint64_t event_sequence{0U};
+  std::int32_t kind{0};
+  std::string task_id;
+  std::string request_id;
+  std::string command_request_id;
+  std::int32_t state{0};
+  std::string map_id;
+  std::int64_t map_version{0};
+  std::string route_id;
+  std::uint64_t route_revision{0U};
+  std::uint32_t point_index{0U};
+  std::uint32_t point_count{0U};
+  std::uint32_t loop_index{0U};
+  std::uint32_t retry_count{0U};
+  std::string point_id;
+  std::string action;
+  std::string action_request_id;
+  std::string evidence_id;
+  std::string reason;
+};
+
+struct ExplorationRunEventSnapshot {
+  double timestamp_s{0.0};
+  std::string frame_id;
+  std::string boot_id;
+  std::uint64_t event_sequence{0U};
+  std::int32_t kind{0};
+  std::string exploration_run_id;
+  std::string start_request_id;
+  std::string command_request_id;
+  std::string product_session_id;
+  std::int32_t state{0};
+  std::string route;
+  std::string map_id;
+  std::int64_t map_version{0};
+  std::string artifact_hash;
+  std::string reason;
+  bool motion_stop_confirmed{false};
+  std::string motion_stop_reason;
 };
 
 struct OperatorMotionCommandReceipt {
@@ -110,7 +189,6 @@ struct MapSceneSnapshot {
   MapSceneGridSnapshot occupancy;
   MapSceneGridSnapshot elevation;
   MapSceneGridSnapshot esdf;
-  MapSceneGridSnapshot traversability;
 };
 
 struct MapSceneHealthSnapshot {
@@ -148,21 +226,27 @@ class Client {
  public:
   class NavigationCommands {
    public:
-    std::string sendGoal(
+    [[nodiscard]] NavigationCommandReceipt startTask(
         double x,
         double y,
         double z,
         double yaw,
         int timeout_ms = 1000,
+        const std::string& task_id = {},
         const std::string& request_id = {});
-    void cancel(
+    [[nodiscard]] NavigationCommandReceipt cancelTask(
+        const std::string& task_id,
         const std::string& reason,
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void sendTeleop(
-        double vx,
-        double vy,
-        double wz,
+    [[nodiscard]] NavigationCommandReceipt pauseTask(
+        const std::string& task_id,
+        const std::string& reason,
+        int timeout_ms = 1000,
+        const std::string& request_id = {});
+    [[nodiscard]] NavigationCommandReceipt resumeTask(
+        const std::string& task_id,
+        const std::string& reason,
         int timeout_ms = 1000,
         const std::string& request_id = {});
     void stop(
@@ -190,33 +274,42 @@ class Client {
 
   class ExplorationCommands {
    public:
-    void start(
-        const std::string& session_id = {},
+    ExplorationCommandReceipt start(
+        const std::string& exploration_run_id,
+        const std::string& session_id,
         const std::string& reason = "operator_start",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void pause(
-        const std::string& reason,
+    ExplorationCommandReceipt pause(
+        const std::string& exploration_run_id,
+        const std::string& session_id,
+        const std::string& reason = "operator_pause",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void resume(
-        const std::string& reason,
+    ExplorationCommandReceipt resume(
+        const std::string& exploration_run_id,
+        const std::string& session_id,
+        const std::string& reason = "operator_resume",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void stop(
-        const std::string& reason,
+    ExplorationCommandReceipt stop(
+        const std::string& exploration_run_id,
+        const std::string& session_id,
+        const std::string& reason = "operator_stop",
         int timeout_ms = 1000,
         const std::string& request_id = {});
 
-    void setDirectedTarget(
+    ExplorationCommandReceipt setDirectedTarget(
         double x,
         double y,
         double ttl_s,
-        const std::string& session_id = {},
+        const std::string& exploration_run_id,
+        const std::string& session_id,
         const std::string& reason = "operator_directed_explore",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void clearDirectedTarget(
+    ExplorationCommandReceipt clearDirectedTarget(
+        const std::string& exploration_run_id,
         const std::string& session_id,
         const std::string& reason = "operator_clear_directed_explore",
         int timeout_ms = 1000,
@@ -230,24 +323,27 @@ class Client {
 
   class InspectionCommands {
    public:
-    void start(
+    [[nodiscard]] InspectionTaskCommandReceipt startTask(
+        const std::string& task_id,
         const std::string& route_id,
         std::uint64_t route_revision = 0,
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void pause(
-        const std::string& reason,
+    [[nodiscard]] InspectionTaskCommandReceipt pauseTask(
+        const std::string& task_id,
+        const std::string& reason = "operator_pause",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void resume(
-        const std::string& reason,
+    [[nodiscard]] InspectionTaskCommandReceipt resumeTask(
+        const std::string& task_id,
+        const std::string& reason = "operator_resume",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-    void cancel(
-        const std::string& reason,
+    [[nodiscard]] InspectionTaskCommandReceipt cancelTask(
+        const std::string& task_id,
+        const std::string& reason = "operator_cancel",
         int timeout_ms = 1000,
         const std::string& request_id = {});
-
    private:
     friend class Client;
     explicit InspectionCommands(Client& owner) : owner_(owner) {}
@@ -332,8 +428,14 @@ class Client {
   latestNavigationState() const;
   [[nodiscard]] bool takeNavigationGoalStatus(
       NavigationGoalStatusSnapshot* status);
+  [[nodiscard]] bool takeInspectionTaskEvent(
+      InspectionTaskEventSnapshot* event);
+  [[nodiscard]] bool takeExplorationRunEvent(
+      ExplorationRunEventSnapshot* event);
   [[nodiscard]] std::optional<NavigationGoalStatusSnapshot>
   navigationGoalStatus(const std::string& request_id) const;
+  [[nodiscard]] std::optional<NavigationGoalStatusSnapshot>
+  navigationTaskStatus(const std::string& task_id) const;
   [[nodiscard]] bool takeGlobalPath(PathSnapshot* path);
   [[nodiscard]] bool takeLocalPath(PathSnapshot* path);
   [[nodiscard]] bool takeMapScene(MapSceneSnapshot* scene);

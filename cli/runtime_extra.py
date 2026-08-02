@@ -1,4 +1,4 @@
-"""Pre-flight checks, port cleanup, health, daemon."""
+"""Local Profile pre-flight and map-selection helpers."""
 
 from __future__ import annotations
 
@@ -13,9 +13,9 @@ from maps.adapters.python.service import (
 )
 from nav.kernel import nav_kernel_available, nav_kernel_build_hint
 from runtime.profiles.binding_policy import nav_kernel_backend_required
+from runtime.profiles.catalog.runtime_paths import _default_map_dir
 
 from . import term as T
-from .profiles_data import _default_map_dir
 
 
 def _close_maps_service(service: object | None) -> None:
@@ -213,7 +213,7 @@ def _uses_non_ros_localization_adapter(cfg: dict) -> bool:
     """Return True when localization is provided by an endpoint adapter."""
 
     adapter = str(cfg.get("localization_adapter") or cfg.get("_localization_adapter") or "").lower()
-    if adapter in {"dds_endpoint", "cpp_slam_status", "native_slam_status"}:
+    if adapter in {"dds_endpoint", "cpp_slam_status"}:
         return True
 
     endpoint_transport = str(cfg.get("endpoint_transport") or cfg.get("_endpoint_transport") or "").lower()
@@ -233,8 +233,6 @@ def preflight(profile_name: str, cfg: dict) -> None:
         in (
             "fastlio2",
             "pointlio",
-            "super_lio",
-            "super_lio_relocation",
         )
         and os.name != "nt"
         and not _uses_non_ros_localization_adapter(cfg)
@@ -252,8 +250,6 @@ def preflight(profile_name: str, cfg: dict) -> None:
         in (
             "fastlio2",
             "pointlio",
-            "super_lio",
-            "super_lio_relocation",
         )
         and os.name == "nt"
     ):
@@ -311,7 +307,7 @@ def preflight(profile_name: str, cfg: dict) -> None:
                 pass
 
     # For saved-map localization profiles, offer interactive map selection.
-    if slam in ("localizer", "super_lio_relocation"):
+    if slam == "localizer":
         map_dir = _default_map_dir()
         _select_map_interactive(cfg, map_dir)
 
@@ -320,65 +316,3 @@ def preflight(profile_name: str, cfg: dict) -> None:
         if not planner_map or not os.path.isfile(planner_map):
             print(f"  {T.yellow('!')}: Planner map not found: {planner_map or '(none)'}")
             print("        Navigation will start but map-backed global planning may be unavailable.")
-
-
-def kill_residual_ports(cfg: dict) -> None:
-    import platform
-
-    if platform.system() != "Linux":
-        return
-    ports = [cfg.get("gateway_port", 5050), 8090]
-    for port in ports:
-        try:
-            result = subprocess.run(
-                ["fuser", "-k", "%d/tcp" % port],
-                capture_output=True,
-                timeout=3,
-            )
-            if result.returncode == 0:
-                logging.getLogger(__name__).info("Killed residual process on port %d", port)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-
-
-def health_check(system) -> bool:
-    ok = True
-    for name, mod in system.modules.items():
-        if mod is None:
-            logging.getLogger("lingtu").error("Health check: module %s is None", name)
-            ok = False
-            continue
-        if not hasattr(mod, "ports_in") or not hasattr(mod, "ports_out"):
-            logging.getLogger("lingtu").error("Health check: %s missing ports", name)
-            ok = False
-    return ok
-
-
-def daemonize(log_file: str) -> bool:
-    """Unix: fork and detach. Windows: warn and stay foreground."""
-    if os.name == "nt":
-        print(f"  {T.yellow('Daemon mode not supported on Windows. Running in foreground.')}")
-        return False
-
-    pid = os.fork()
-    if pid > 0:
-        print(f"  Daemon started (PID {pid})")
-        print(f"  Logs: {log_file}")
-        print("  Stop: lingtu stop")
-        sys.exit(0)
-
-    os.setsid()
-
-    pid = os.fork()
-    if pid > 0:
-        sys.exit(0)
-
-    sys.stdout.flush()
-    sys.stderr.flush()
-    devnull = open(os.devnull)
-    os.dup2(devnull.fileno(), sys.stdin.fileno())
-    log_f = open(log_file, "a")
-    os.dup2(log_f.fileno(), sys.stdout.fileno())
-    os.dup2(log_f.fileno(), sys.stderr.fileno())
-
-    return True

@@ -128,6 +128,8 @@ void testValidActiveOccupancyLoadsThroughNativeMapsContract() {
   require(result.artifact->identity().map_id == "field", "wrong active map id");
   require(result.artifact->identity().version == 1, "wrong active map version");
   require(result.artifact->identity().frame_id == "map", "wrong planning frame");
+  require(result.artifact->sourceMapSha256() == Sha256File(root.path() / "field" / "map.pcd"),
+          "validated occupancy lost its source map hash");
   require(result.artifact->generation() == 1U, "first map generation must be one");
   require(result.artifact->map().width > 20, "occupancy geometry was not loaded");
   require(result.artifact->map().cells.size() == result.artifact->map().CellCount(),
@@ -164,6 +166,19 @@ void testConfiguredPathMustBeTheNativeActiveArtifact() {
   const auto result = gate.prepare(other);
 
   require(!result.ok(), "non-active occupancy unexpectedly passed the gate");
+}
+
+void testActiveArtifactResolvesFromMapStoreWithoutLegacySymlink() {
+  TempMapRoot root;
+  (void)writeValidActiveMap(root.path(), "field");
+  ActiveOccupancyGate gate(root.path());
+
+  const auto result = gate.prepareActive();
+
+  require(result.ok(), "MapStore active occupancy was rejected: " + result.reason);
+  require(result.artifact->identity().map_id == "field", "resolved the wrong active map");
+  require(!std::filesystem::exists(root.path() / "active"),
+          "test fixture unexpectedly depends on a legacy active symlink");
 }
 
 void testMapSwitchAdvancesGenerationAndInvalidatesCache() {
@@ -207,6 +222,7 @@ int main() {
     testValidActiveOccupancyLoadsThroughNativeMapsContract();
     testTamperedOccupancyIsRejectedBeforePlanner();
     testConfiguredPathMustBeTheNativeActiveArtifact();
+    testActiveArtifactResolvesFromMapStoreWithoutLegacySymlink();
     testMapSwitchAdvancesGenerationAndInvalidatesCache();
     testGuardedFarPlanCarriesValidatedIdentity();
     std::cout << "test_active_occupancy_gate: PASS\n";

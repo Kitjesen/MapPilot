@@ -12,6 +12,7 @@ from pathlib import Path
 def _write_active_same_source_octomap(map_root: Path) -> Path:
     active_dir = map_root / "active"
     active_dir.mkdir(parents=True)
+    (map_root / "active_map.txt").write_text("active\n", encoding="utf-8")
     map_path = active_dir / "map.pcd"
     octomap_path = active_dir / "octomap.ot"
     map_path.write_text(
@@ -41,8 +42,8 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
         json.dumps(
             {
                 "schema_version": "lingtu.saved_map_artifacts.v1",
-                "source_profile": "thunder_field",
-                "data_source": "thunder_field",
+                "source_profile": "thunder",
+                "data_source": "thunder",
                 "slam_source": "fastlio2",
                 "localization_source": "fastlio2",
                 "mapping_source": "fastlio2",
@@ -52,8 +53,8 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
                     "map_pcd": {
                         "path": "map.pcd",
                         "sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "slam_source": "fastlio2",
                         "frame_id": "map",
                         "point_count": 1,
@@ -62,8 +63,8 @@ def _write_active_same_source_octomap(map_root: Path) -> Path:
                         "path": "octomap.ot",
                         "sha256": octomap_sha,
                         "source_map_sha256": map_sha,
-                        "source_profile": "thunder_field",
-                        "data_source": "thunder_field",
+                        "source_profile": "thunder",
+                        "data_source": "thunder",
                         "frame_id": "map",
                         "resolution": 0.2,
                     },
@@ -89,7 +90,7 @@ def _gateway_acceptance(*, ok: bool = True, mode: str = "field") -> dict:
                 "ok": True,
                 "command_sink": "driver",
             },
-            "module_first_dataflow": {
+            "gateway_observability": {
                 "ok": True,
                 "arbitrary_publish_supported": False,
                 "missing_command_interfaces": [],
@@ -148,7 +149,7 @@ def _gateway_acceptance(*, ok: bool = True, mode: str = "field") -> dict:
                 "data_flow_ok": True,
                 "cmd_vel_sent_to_hardware": True,
                 "report_age_s": 12.0,
-                "runtime_contract": "thunder_field",
+                "runtime_contract": "real",
             },
         },
     }
@@ -158,7 +159,7 @@ def _algorithm_gate(
     *,
     ok: bool = True,
     missing_or_failed: list[str] | None = None,
-    product_profiles: dict | None = None,
+    benchmark_variants: dict | None = None,
 ) -> dict:
     missing = missing_or_failed or []
     blockers = [] if ok and not missing else ["algorithm validation claim_allowed is not true"]
@@ -178,9 +179,9 @@ def _algorithm_gate(
         "blocking_categories": {},
         "source": "server_sim_closure",
         "preset": "dimos_benchmark",
-        "active_product_profile": "inspection_mvp",
-        "strict_benchmark_profile": "dimos_benchmark",
-        "product_profiles": product_profiles or {},
+        "active_benchmark_variant": "inspection_mvp",
+        "strict_benchmark_variant": "dimos_benchmark",
+        "benchmark_variants": benchmark_variants or {},
     }
 
 
@@ -193,18 +194,18 @@ def _runtime_switch_plan(*, ok: bool = True, dry_run: bool = True) -> dict:
         "publishes": [],
         "lifecycle": "dry_run_preflight",
         "from": {
-            "profile": "sim_mujoco_live",
-            "endpoint": "mujoco_live",
+            "product": "explore",
+            "env": "sim",
             "data_source": "mujoco_fastlio2_live",
             "runtime_contract": "mujoco_fastlio2_live",
             "command_sink": "mujoco_velocity_adapter",
             "simulation_only": True,
         },
         "to": {
-            "profile": "explore",
-            "endpoint": "thunder_field",
-            "data_source": "thunder_field",
-            "runtime_contract": "thunder_field",
+            "product": "explore",
+            "env": "real",
+            "data_source": "thunder",
+            "runtime_contract": "real",
             "command_sink": "driver",
             "simulation_only": False,
         },
@@ -261,18 +262,18 @@ def test_product_field_check_passes_with_gateway_and_map_evidence():
         "cmd_vel": 0,
         "stop_cmd": 0,
     }
-    assert payload["evidence"]["thunder_field"] == "PASS"
+    assert payload["evidence"]["field_runtime"] == "PASS"
     assert payload["algorithm"]["strict_benchmark"]["status"] == "PASS"
     assert payload["algorithm"]["strict_benchmark"]["ros2_topic_required"] is False
     assert payload["algorithm"]["strict_benchmark"]["publishes"] == []
-    assert payload["algorithm"]["active_product_profile"] == "inspection_mvp"
+    assert payload["algorithm"]["active_benchmark_variant"] == "inspection_mvp"
     assert payload["runtime_switch"]["status"] == "PASS"
     assert payload["runtime_switch"]["read_only"] is True
     assert payload["runtime_switch"]["dry_run"] is True
     assert payload["runtime_switch"]["motion"] is False
     assert payload["runtime_switch"]["publishes"] == []
-    assert payload["runtime_switch"]["from"]["endpoint"] == "mujoco_live"
-    assert payload["runtime_switch"]["to"]["endpoint"] == "thunder_field"
+    assert payload["runtime_switch"]["from"]["env"] == "sim"
+    assert payload["runtime_switch"]["to"]["env"] == "real"
     assert payload["runtime_graph"]["ok"] is True
     assert payload["runtime_graph"]["issues"] == []
 
@@ -325,6 +326,50 @@ def test_collect_product_field_check_defaults_to_active_map_provenance(
     assert "map provenance not checked" not in "\n".join(payload["advisories"])
 
 
+@pytest.mark.parametrize(
+    ("mode", "expected_request"),
+    [
+        (
+            "field",
+            {"target_product": "explore"},
+        ),
+        (
+            "non_motion",
+            {"target_product": "explore"},
+        ),
+    ],
+)
+def test_collect_product_field_check_lets_gateway_fix_the_env(
+    monkeypatch,
+    mode,
+    expected_request,
+):
+    import diagnostics.field.field_check as field_check_mod
+    import diagnostics.field.gateway_acceptance as acceptance_mod
+    import gateway.services.runtime_switch_plan as switch_plan_mod
+
+    requests = []
+    monkeypatch.setattr(
+        acceptance_mod,
+        "collect_gateway_runtime_acceptance",
+        lambda **_: _gateway_acceptance(mode=mode),
+    )
+    monkeypatch.setattr(field_check_mod, "_active_map_artifact_dir", lambda: None)
+    monkeypatch.setattr(
+        switch_plan_mod,
+        "build_runtime_switch_plan",
+        lambda request: requests.append(request) or _runtime_switch_plan(),
+    )
+
+    field_check_mod.collect_product_field_check(
+        gateway_url="http://robot:5050",
+        timeout_sec=1.0,
+        mode=mode,
+    )
+
+    assert requests == [expected_request]
+
+
 def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
     from diagnostics.field.field_check import build_product_field_check
 
@@ -337,7 +382,7 @@ def test_product_field_check_fails_field_mode_without_route_or_real_evidence():
     assert payload["ok"] is False
     assert payload["summary"] == "FAIL"
     assert "route preview is not passing or unavailable" in payload["blockers"]
-    assert "Thunder field evidence is not passing" in payload["blockers"]
+    assert "Real runtime evidence is not passing" in payload["blockers"]
     assert payload["map"]["provenance"] == "UNCHECKED"
     assert "map provenance not checked" in "\n".join(payload["advisories"])
 
@@ -383,10 +428,11 @@ def test_product_field_check_formats_one_screen_summary():
     ) in output
     assert "Frontier preview: status=PASS source=traversable_frontier command_published=false" in output
     assert (
-        "Runtime switch: status=PASS dry_run=true motion=false publishes=none from=mujoco_live to=thunder_field"
+        "Runtime switch: status=PASS dry_run=true motion=false publishes=none "
+        "from=product=explore env=sim to=product=explore env=real"
     ) in output
     assert "Navigation: can_send_goal=PASS route_preview=PASS" in output
-    assert "Evidence: thunder_field=PASS age=12.0s mode=field" in output
+    assert "Evidence: field_runtime=PASS age=12.0s mode=field" in output
     assert "Algorithm: strict_benchmark=PASS claim_allowed=true missing=none" in output
 
 
@@ -415,7 +461,7 @@ def test_product_field_check_field_mode_requires_algorithm_benchmark():
     assert "algorithm strict benchmark is not passing" in payload["blockers"]
 
 
-def test_product_field_check_preserves_product_algorithm_profile():
+def test_product_field_check_preserves_benchmark_variant():
     from diagnostics.field.field_check import build_product_field_check
 
     payload = build_product_field_check(
@@ -423,7 +469,7 @@ def test_product_field_check_preserves_product_algorithm_profile():
         algorithm_gate=_algorithm_gate(
             ok=False,
             missing_or_failed=["large_loop_closure"],
-            product_profiles={
+            benchmark_variants={
                 "inspection_mvp": {
                     "ok": True,
                     "status": "PASS",
@@ -438,8 +484,8 @@ def test_product_field_check_preserves_product_algorithm_profile():
         ),
     )
 
-    assert payload["algorithm"]["active_product_profile"] == "inspection_mvp"
-    assert payload["algorithm"]["product_profiles"]["inspection_mvp"]["ok"] is True
+    assert payload["algorithm"]["active_benchmark_variant"] == "inspection_mvp"
+    assert payload["algorithm"]["benchmark_variants"]["inspection_mvp"]["ok"] is True
     assert payload["algorithm"]["strict_benchmark"]["status"] == "FAIL"
 
 

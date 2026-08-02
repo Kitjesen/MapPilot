@@ -10,18 +10,27 @@ independently from SLAM accuracy and rolling-scan performance.
 from __future__ import annotations
 
 import argparse
+import errno
+import hashlib
+import hmac
 import json
 import math
 import os
+import queue
+import signal
 import shutil
 import struct
 import subprocess
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Sequence
+
+if TYPE_CHECKING:
+    from sim.engine.core.engine import VelocityCommand
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -60,7 +69,7 @@ from runtime.msgs.sensor import Imu
 from runtime.runtime_interface import TOPICS, topic_default_frame_id
 from message.livox_frame import POINT_DTYPE
 
-NATIVE_SLAM_RUNTIME = "lingtu_slam_cyclone_runtime"
+NATIVE_SLAM_RUNTIME = "slamd"
 NATIVE_SENSOR_PUBLISHER = "livox_sdk2_stream --stdin-records --dds"
 LIDAR_FRAME_ID = topic_default_frame_id(TOPICS.lidar_scan)
 IMU_FRAME_ID = topic_default_frame_id(TOPICS.imu)
@@ -95,7 +104,709 @@ DEFAULT_IMU_ACC_MAX_DYNAMIC_MPS2 = 1.5
 DEFAULT_IMU_ACC_MAX_SLEW_MPS3 = 30.0
 DEFAULT_SIM_HARDWARE_MAX_LAG_S = 0.05
 DEFAULT_SIM_HARDWARE_CATCH_UP_YIELD_STEPS = 40
+DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES = 5
+MAX_NATIVE_CLOCK_SYNC_RTT_S = 0.10
 DEFAULT_ODOM_PRIOR_VELOCITY_WINDOW_S = 0.10
+DEFAULT_PARENT_DIAGNOSTICS_PERIOD_S = 0.5
+DEFAULT_PUBLISHER_WRITE_MODE = "sync"
+DEFAULT_ASYNC_PUBLISHER_MAX_BYTES = 1_048_576
+DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS = 512
+DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES = 256
+DEFAULT_ASYNC_PUBLISHER_OLDEST_S = 0.5
+DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S = 2.0
+PARENT_DIAGNOSTICS_SCHEMA = "lingtu.mujoco.parent_sensor_diagnostics.v1"
+_PARENT_DIAGNOSTIC_RECORD_TYPES = (
+    "cloud",
+    "imu",
+    "odom_prior",
+    "registered_cloud",
+)
+_PARENT_DIAGNOSTIC_HISTOGRAM_BOUNDS_US = (
+    10,
+    25,
+    50,
+    100,
+    250,
+    500,
+    1_000,
+    2_500,
+    5_000,
+    10_000,
+    25_000,
+    50_000,
+    100_000,
+    250_000,
+    500_000,
+    1_000_000,
+)
+EXTERNAL_ARM_SCHEMA = "lingtu.mujoco.external_arm.v1"
+EXTERNAL_ARM_STATUS_SCHEMA = "lingtu.mujoco.external_arm_status.v1"
+DEFAULT_EXTERNAL_ARM_TIMEOUT_S = 60.0
+_EXTERNAL_ARM_MAX_BYTES = 4096
+_EXTERNAL_ARM_STATUS_PERIOD_S = 0.25
+
+
+def _write_atomic_json_object(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.monotonic_ns()}.tmp"
+    )
+    try:
+        temporary.write_text(
+            json.dumps(payload, allow_nan=False, ensure_ascii=True, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        for attempt in range(5):
+            try:
+                os.replace(temporary, path)
+                break
+            except OSError as exc:
+                transient = (
+                    isinstance(exc, PermissionError)
+                    or exc.errno in {errno.EACCES, errno.EBUSY, errno.EPERM}
+                    or getattr(exc, "winerror", None) in {5, 32, 33}
+                )
+                if not transient or attempt == 4:
+                    raise
+                time.sleep(0.005 * (attempt + 1))
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+class _FixedMicrosecondHistogram:
+    def __init__(self) -> None:
+        self._counts = [0] * (len(_PARENT_DIAGNOSTIC_HISTOGRAM_BOUNDS_US) + 1)
+        self._count = 0
+        self._total_us = 0.0
+        self._max_us = 0.0
+
+    def observe(self, duration_us: float) -> None:
+        value = max(0.0, float(duration_us))
+        bucket = len(_PARENT_DIAGNOSTIC_HISTOGRAM_BOUNDS_US)
+        for index, upper_bound in enumerate(_PARENT_DIAGNOSTIC_HISTOGRAM_BOUNDS_US):
+            if value <= upper_bound:
+                bucket = index
+                break
+        self._counts[bucket] += 1
+        self._count += 1
+        self._total_us += value
+        self._max_us = max(self._max_us, value)
+
+    def snapshot(self) -> dict[str, Any]:
+        return {
+            "bounds_us": list(_PARENT_DIAGNOSTIC_HISTOGRAM_BOUNDS_US),
+            "counts": list(self._counts),
+            "count": self._count,
+            "total_us": self._total_us,
+            "max_us": self._max_us,
+        }
+
+
+class ParentSensorDiagnostics:
+    """Bounded, opt-in parent-side sensor scheduling diagnostics."""
+
+    def __init__(self, path: Path, *, period_s: float = DEFAULT_PARENT_DIAGNOSTICS_PERIOD_S) -> None:
+        period = float(period_s)
+        if not math.isfinite(period) or period <= 0.0:
+            raise ValueError("--parent-diagnostics-period-s must be positive and finite")
+        self.path = Path(path).expanduser().resolve()
+        self.period_s = period
+        self._lock = threading.RLock()
+        self.started_wall_time_ns = time.time_ns()
+        self.started_monotonic_ns = time.monotonic_ns()
+        self._next_publish_monotonic_ns = self.started_monotonic_ns + int(period * 1_000_000_000)
+        self._sequence = 0
+        self._diagnostic_write_failures = 0
+        self.last_published_reason = ""
+        self.stop_requested = False
+        self.final_reason = "final"
+        self._previous_signal_handlers: dict[int, Any] = {}
+        self._record_types: dict[str, dict[str, Any]] = {
+            name: {
+                "scheduled": 0,
+                "catchup_dropped_before_generation": 0,
+                "generated": 0,
+                "enqueue_attempt": 0,
+                "enqueue_success": 0,
+                "enqueue_error": 0,
+                "enqueue_full": 0,
+                "enqueue_bytes": 0,
+                "enqueue_duration_us": _FixedMicrosecondHistogram(),
+                "pipe_write_attempt": 0,
+                "pipe_write_success": 0,
+                "pipe_write_error": 0,
+                "payload_bytes": 0,
+                "pipe_bytes": 0,
+                "pipe_write_duration_us": _FixedMicrosecondHistogram(),
+            }
+            for name in _PARENT_DIAGNOSTIC_RECORD_TYPES
+        }
+        self._pending_flush = {
+            name: {"records": 0, "bytes": 0}
+            for name in _PARENT_DIAGNOSTIC_RECORD_TYPES
+        }
+        self._flush = {
+            "attempt": 0,
+            "success": 0,
+            "error": 0,
+            "duration_us": _FixedMicrosecondHistogram(),
+            "records_since_flush": {"last": 0, "total": 0, "max": 0},
+            "bytes_since_flush": {"last": 0, "total": 0, "max": 0},
+            "record_types": {
+                name: {
+                    "attempt": 0,
+                    "success": 0,
+                    "error": 0,
+                    "duration_us": _FixedMicrosecondHistogram(),
+                    "records_since_flush": {"last": 0, "total": 0, "max": 0},
+                    "bytes_since_flush": {"last": 0, "total": 0, "max": 0},
+                }
+                for name in _PARENT_DIAGNOSTIC_RECORD_TYPES
+            },
+        }
+        self._deadline_skip = {name: 0 for name in _PARENT_DIAGNOSTIC_RECORD_TYPES}
+        self._scheduler_pacing: dict[str, Any] = {
+            "final_lag_s": 0.0,
+            "max_lag_observed_s": 0.0,
+            "max_consecutive_steps": 0,
+            "catch_up_events": 0,
+            "catch_up_yields": 0,
+        }
+        self._async_queue: dict[str, Any] = {
+            "enabled": False,
+            "limit_bytes": 0,
+            "limit_records": 0,
+            "limit_batches": 0,
+            "oldest_limit_s": 0.0,
+            "current_bytes": 0,
+            "current_records": 0,
+            "current_batches": 0,
+            "max_bytes": 0,
+            "max_records": 0,
+            "max_batches": 0,
+            "oldest_age_s": 0.0,
+            "enqueued_batch_sequence": 0,
+            "enqueued_record_sequence": 0,
+            "written_batch_sequence": 0,
+            "written_record_sequence": 0,
+            "batch_sequence_lag": 0,
+            "record_sequence_lag": 0,
+            "undrained_bytes": 0,
+            "undrained_records": 0,
+            "undrained_batches": 0,
+            "writer_alive": False,
+            "cleanup_reason": "sync",
+            "fatal_reason": "",
+        }
+        self.force_publish("startup")
+
+    def handle_stop_signal(self, signum: int, _frame: Any) -> None:
+        self.stop_requested = True
+        if signum == signal.SIGTERM:
+            self.final_reason = "signal:SIGTERM"
+        elif signum == signal.SIGINT:
+            self.final_reason = "signal:SIGINT"
+        else:
+            self.final_reason = "signal:unknown"
+
+    def install_signal_handlers(self) -> None:
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            self._previous_signal_handlers[int(signum)] = signal.getsignal(signum)
+            signal.signal(signum, self.handle_stop_signal)
+
+    def restore_signal_handlers(self) -> None:
+        for signum, handler in self._previous_signal_handlers.items():
+            signal.signal(signum, handler)
+        self._previous_signal_handlers.clear()
+
+    def _record(self, record_type: str) -> dict[str, Any]:
+        try:
+            return self._record_types[str(record_type)]
+        except KeyError as exc:
+            raise ValueError(f"unknown parent diagnostic record type: {record_type}") from exc
+
+    def record_scheduled(self, record_type: str, count: int = 1) -> None:
+        with self._lock:
+            self._record(record_type)["scheduled"] += max(0, int(count))
+
+    def record_catchup_drop(self, record_type: str, count: int = 1) -> None:
+        with self._lock:
+            self._record(record_type)["catchup_dropped_before_generation"] += max(0, int(count))
+
+    def record_generated(self, record_type: str, count: int = 1) -> None:
+        with self._lock:
+            self._record(record_type)["generated"] += max(0, int(count))
+
+    def record_enqueue_result(
+        self,
+        records: tuple[_SerializedPublisherRecord, ...],
+        *,
+        success: bool,
+        full: bool,
+        duration_us: float,
+        queue_stats: dict[str, Any] | None = None,
+    ) -> None:
+        with self._lock:
+            for record in records:
+                counters = self._record(record.diagnostic_record_type)
+                counters["enqueue_attempt"] += 1
+                counters["enqueue_success" if success else "enqueue_error"] += 1
+                if full:
+                    counters["enqueue_full"] += 1
+                if success:
+                    counters["enqueue_bytes"] += record.wire_bytes
+                counters["enqueue_duration_us"].observe(duration_us)
+            if queue_stats is not None:
+                for key in self._async_queue:
+                    if key in queue_stats:
+                        self._async_queue[key] = queue_stats[key]
+
+    def configure_async_queue(
+        self,
+        *,
+        max_bytes: int,
+        max_records: int,
+        max_batches: int,
+        oldest_s: float,
+    ) -> None:
+        with self._lock:
+            self._async_queue.update(
+                {
+                    "enabled": True,
+                    "limit_bytes": int(max_bytes),
+                    "limit_records": int(max_records),
+                    "limit_batches": int(max_batches),
+                    "oldest_limit_s": float(oldest_s),
+                    "cleanup_reason": "running",
+                }
+            )
+
+    def update_async_queue(self, stats: dict[str, Any]) -> None:
+        with self._lock:
+            for key in self._async_queue:
+                if key in stats:
+                    self._async_queue[key] = stats[key]
+
+    def record_pipe_write_attempt(self, record_type: str) -> None:
+        with self._lock:
+            self._record(record_type)["pipe_write_attempt"] += 1
+
+    def record_pipe_write_success(
+        self,
+        record_type: str,
+        *,
+        payload_bytes: int,
+        pipe_bytes: int,
+        duration_us: float,
+    ) -> None:
+        with self._lock:
+            counters = self._record(record_type)
+            counters["pipe_write_success"] += 1
+            counters["payload_bytes"] += max(0, int(payload_bytes))
+            counters["pipe_bytes"] += max(0, int(pipe_bytes))
+            counters["pipe_write_duration_us"].observe(duration_us)
+            pending = self._pending_flush[record_type]
+            pending["records"] += 1
+            pending["bytes"] += max(0, int(pipe_bytes))
+
+    def record_pipe_write_error(self, record_type: str, *, duration_us: float) -> None:
+        with self._lock:
+            counters = self._record(record_type)
+            counters["pipe_write_error"] += 1
+            counters["pipe_write_duration_us"].observe(duration_us)
+
+    def record_deadline_skip(self, record_type: str, count: int = 1) -> None:
+        with self._lock:
+            self._record(record_type)
+            self._deadline_skip[record_type] += max(0, int(count))
+
+    def update_scheduler_pacing(self, pacing: dict[str, Any]) -> None:
+        with self._lock:
+            self._scheduler_pacing = {
+                "final_lag_s": float(pacing.get("final_lag_s") or 0.0),
+                "max_lag_observed_s": float(pacing.get("max_lag_observed_s") or 0.0),
+                "max_consecutive_steps": int(pacing.get("max_consecutive_steps") or 0),
+                "catch_up_events": int(pacing.get("catch_up_events") or 0),
+                "catch_up_yields": int(pacing.get("catch_up_yields") or 0),
+            }
+
+    @staticmethod
+    def _update_since_flush_metric(metric: dict[str, int], value: int, *, committed: bool) -> None:
+        amount = max(0, int(value))
+        metric["last"] = amount
+        metric["max"] = max(metric["max"], amount)
+        if committed:
+            metric["total"] += amount
+
+    def record_flush(self, *, success: bool, duration_us: float) -> None:
+        with self._lock:
+            records = sum(item["records"] for item in self._pending_flush.values())
+            pipe_bytes = sum(item["bytes"] for item in self._pending_flush.values())
+            self._flush["attempt"] += 1
+            self._flush["success" if success else "error"] += 1
+            self._flush["duration_us"].observe(duration_us)
+            self._update_since_flush_metric(
+                self._flush["records_since_flush"],
+                records,
+                committed=success,
+            )
+            self._update_since_flush_metric(
+                self._flush["bytes_since_flush"],
+                pipe_bytes,
+                committed=success,
+            )
+            for name, pending in self._pending_flush.items():
+                if pending["records"] <= 0:
+                    continue
+                counters = self._flush["record_types"][name]
+                counters["attempt"] += 1
+                counters["success" if success else "error"] += 1
+                counters["duration_us"].observe(duration_us)
+                self._update_since_flush_metric(
+                    counters["records_since_flush"],
+                    pending["records"],
+                    committed=success,
+                )
+                self._update_since_flush_metric(
+                    counters["bytes_since_flush"],
+                    pending["bytes"],
+                    committed=success,
+                )
+            if success:
+                for pending in self._pending_flush.values():
+                    pending["records"] = 0
+                    pending["bytes"] = 0
+
+    def snapshot(self, reason: str) -> dict[str, Any]:
+        with self._lock:
+            return self._snapshot_unlocked(reason)
+
+    def _snapshot_unlocked(self, reason: str) -> dict[str, Any]:
+        pending_records = sum(item["records"] for item in self._pending_flush.values())
+        pending_bytes = sum(item["bytes"] for item in self._pending_flush.values())
+        return {
+            "schema_version": PARENT_DIAGNOSTICS_SCHEMA,
+            "sequence": self._sequence + 1,
+            "reason": str(reason),
+            "period_s": self.period_s,
+            "started_wall_time_ns": self.started_wall_time_ns,
+            "updated_wall_time_ns": time.time_ns(),
+            "diagnostic_write_failures": self._diagnostic_write_failures,
+            "record_types": {
+                name: {
+                    **{
+                        key: value
+                        for key, value in counters.items()
+                        if key not in {"enqueue_duration_us", "pipe_write_duration_us"}
+                    },
+                    "enqueue_duration_us": counters["enqueue_duration_us"].snapshot(),
+                    "pipe_write_duration_us": counters["pipe_write_duration_us"].snapshot(),
+                }
+                for name, counters in self._record_types.items()
+            },
+            "flush": {
+                "attempt": self._flush["attempt"],
+                "success": self._flush["success"],
+                "error": self._flush["error"],
+                "duration_us": self._flush["duration_us"].snapshot(),
+                "records_since_flush": {
+                    **self._flush["records_since_flush"],
+                    "current": pending_records,
+                },
+                "bytes_since_flush": {
+                    **self._flush["bytes_since_flush"],
+                    "current": pending_bytes,
+                },
+                "record_types": {
+                    name: {
+                        "attempt": counters["attempt"],
+                        "success": counters["success"],
+                        "error": counters["error"],
+                        "duration_us": counters["duration_us"].snapshot(),
+                        "records_since_flush": {
+                            **counters["records_since_flush"],
+                            "current": self._pending_flush[name]["records"],
+                        },
+                        "bytes_since_flush": {
+                            **counters["bytes_since_flush"],
+                            "current": self._pending_flush[name]["bytes"],
+                        },
+                    }
+                    for name, counters in self._flush["record_types"].items()
+                },
+            },
+            "scheduler": {
+                "deadline_skip": dict(self._deadline_skip),
+                "pacing": dict(self._scheduler_pacing),
+            },
+            "async_queue": dict(self._async_queue),
+        }
+
+    def maybe_publish(self) -> bool:
+        with self._lock:
+            if time.monotonic_ns() < self._next_publish_monotonic_ns:
+                return False
+            return self.force_publish("periodic")
+
+    def publish_due(self) -> bool:
+        with self._lock:
+            return time.monotonic_ns() >= self._next_publish_monotonic_ns
+
+    def force_publish(self, reason: str) -> bool:
+        with self._lock:
+            try:
+                _write_atomic_json_object(self.path, self._snapshot_unlocked(reason))
+            except (OSError, TypeError, ValueError):
+                self._diagnostic_write_failures += 1
+                return False
+            self._sequence += 1
+            self.last_published_reason = str(reason)
+            self._next_publish_monotonic_ns = time.monotonic_ns() + int(self.period_s * 1_000_000_000)
+            return True
+
+
+def _strict_json_object(raw: bytes) -> dict[str, Any]:
+    if not raw or len(raw) > _EXTERNAL_ARM_MAX_BYTES:
+        raise ValueError("external_arm_json_size_invalid")
+
+    def reject_constant(_: str) -> None:
+        raise ValueError("external_arm_json_constant_invalid")
+
+    def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("external_arm_json_duplicate_key")
+            value[key] = item
+        return value
+
+    try:
+        value = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=reject_duplicate_keys,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("external_arm_json_invalid") from exc
+    if not isinstance(value, dict):
+        raise ValueError("external_arm_json_object_required")
+    return value
+
+
+def _validate_external_arm_payload(
+    payload: dict[str, Any],
+    *,
+    expected_token: str,
+    expected_domain_id: int,
+    expected_scenario: str,
+) -> str:
+    expected_keys = {"schema", "arm", "token", "domain_id", "scenario"}
+    if set(payload) != expected_keys:
+        return "external_arm_keys_invalid"
+    if payload.get("schema") != EXTERNAL_ARM_SCHEMA:
+        return "external_arm_schema_invalid"
+    if payload.get("arm") is not True:
+        return "external_arm_value_invalid"
+    token = payload.get("token")
+    if not isinstance(token, str) or not hmac.compare_digest(token, expected_token):
+        return "external_arm_token_mismatch"
+    domain_id = payload.get("domain_id")
+    if type(domain_id) is not int or domain_id != expected_domain_id:
+        return "external_arm_domain_mismatch"
+    scenario = payload.get("scenario")
+    if not isinstance(scenario, str) or scenario != expected_scenario:
+        return "external_arm_scenario_mismatch"
+    return ""
+
+
+def _external_arm_config_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
+    arm_file_value = str(getattr(args, "external_arm_file", "") or "").strip()
+    token = str(getattr(args, "external_arm_token", "") or "")
+    scenario = str(getattr(args, "external_arm_scenario", "") or "").strip()
+    status_value = str(getattr(args, "external_arm_status_json", "") or "").strip()
+    if not arm_file_value:
+        if token or scenario or status_value:
+            raise ValueError("--external-arm-file is required when external-arm options are set")
+        return None
+    if not token or len(token) > 256:
+        raise ValueError("--external-arm-token must contain 1..256 characters")
+    if not scenario or len(scenario) > 128:
+        raise ValueError("--external-arm-scenario must contain 1..128 characters")
+    timeout_s = float(getattr(args, "external_arm_timeout_s", DEFAULT_EXTERNAL_ARM_TIMEOUT_S))
+    if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+        raise ValueError("--external-arm-timeout-s must be finite and positive")
+    arm_file = Path(arm_file_value).expanduser().resolve()
+    domain_id = int(args.domain_id)
+    if not 0 <= domain_id <= 232:
+        raise ValueError("external-arm DDS domain must be in [0, 232]")
+    status_json = Path(status_value).expanduser().resolve() if status_value else None
+    if status_json == arm_file:
+        raise ValueError("external arm and status paths must be distinct")
+    return {
+        "arm_file": arm_file,
+        "token": token,
+        "domain_id": domain_id,
+        "scenario": scenario,
+        "timeout_s": timeout_s,
+        "status_json": status_json,
+    }
+
+def _prepare_external_arm_files(config: dict[str, Any]) -> None:
+    """Remove only the two exact per-run rendezvous artifacts before startup."""
+
+    for key in ("arm_file", "status_json"):
+        path = config.get(key)
+        if path is not None:
+            Path(path).unlink(missing_ok=True)
+
+
+class ExternalArmGate:
+    """Fail-closed, single-transition rendezvous for externally started motion."""
+
+    def __init__(
+        self,
+        *,
+        arm_file: Path,
+        token: str,
+        domain_id: int,
+        scenario: str,
+        timeout_s: float,
+        status_json: Path | None = None,
+        started_wall_s: float | None = None,
+    ) -> None:
+        self.arm_file = arm_file.resolve()
+        self.expected_token = token
+        self.domain_id = int(domain_id)
+        self.scenario = scenario
+        self.timeout_s = float(timeout_s)
+        self.status_json = status_json.resolve() if status_json is not None else None
+        self.started_wall_s = time.monotonic() if started_wall_s is None else float(started_wall_s)
+        self.state = "waiting"
+        self.last_error = ""
+        self.arm_observed_sim_time_s: float | None = None
+        self._wait_elapsed_wall_s = 0.0
+        self._observations = 0
+        self._next_status_write_wall_s = self.started_wall_s
+        self._publish_status(self.started_wall_s, force=True)
+
+    @property
+    def acknowledged(self) -> bool:
+        return self.state == "armed"
+
+    @property
+    def failed(self) -> bool:
+        return self.state in {"invalid", "timed_out"}
+
+    @property
+    def failure_gap(self) -> str:
+        if self.state == "timed_out":
+            return "external_arm_timeout"
+        if self.state == "invalid":
+            return self.last_error or "external_arm_invalid"
+        return ""
+
+    def _elapsed(self, monotonic_now_s: float) -> float:
+        if self.state == "waiting":
+            return max(0.0, float(monotonic_now_s) - self.started_wall_s)
+        return self._wait_elapsed_wall_s
+
+    def snapshot(self, *, monotonic_now_s: float | None = None) -> dict[str, Any]:
+        now = time.monotonic() if monotonic_now_s is None else float(monotonic_now_s)
+        return {
+            "schema": EXTERNAL_ARM_STATUS_SCHEMA,
+            "enabled": True,
+            "state": self.state,
+            "acknowledged": self.acknowledged,
+            "domain_id": self.domain_id,
+            "duration_clock": "sim",
+            "anchored_before_arm": True,
+            "sensor_publication_before_arm": True,
+            "scenario": self.scenario,
+            "timeout_s": self.timeout_s,
+            "wait_elapsed_wall_s": min(self.timeout_s, self._elapsed(now)),
+            "arm_observed_sim_time_s": self.arm_observed_sim_time_s,
+            "observations": self._observations,
+            "last_error": self.last_error[:160],
+            "token_sha256_12": hashlib.sha256(self.expected_token.encode("utf-8")).hexdigest()[:12],
+        }
+
+    def _publish_status(self, monotonic_now_s: float, *, force: bool = False) -> None:
+        if self.status_json is None:
+            return
+        if not force and monotonic_now_s + 1e-9 < self._next_status_write_wall_s:
+            return
+        try:
+            _write_atomic_json_object(
+                self.status_json,
+                self.snapshot(monotonic_now_s=monotonic_now_s),
+            )
+        except (OSError, ValueError):
+            self.state = "invalid"
+            self.last_error = "external_arm_status_write_failed"
+            self._wait_elapsed_wall_s = max(0.0, monotonic_now_s - self.started_wall_s)
+            return
+        self._next_status_write_wall_s = monotonic_now_s + _EXTERNAL_ARM_STATUS_PERIOD_S
+
+    def _transition(
+        self,
+        state: str,
+        *,
+        monotonic_now_s: float,
+        sim_time_s: float | None = None,
+        error: str = "",
+    ) -> None:
+        self.state = state
+        self.last_error = error
+        self._wait_elapsed_wall_s = max(0.0, monotonic_now_s - self.started_wall_s)
+        if state == "armed":
+            self.arm_observed_sim_time_s = float(sim_time_s) if sim_time_s is not None else None
+        self._publish_status(monotonic_now_s, force=True)
+
+    def poll(self, *, sim_time_s: float, monotonic_now_s: float | None = None) -> str:
+        now = time.monotonic() if monotonic_now_s is None else float(monotonic_now_s)
+        if self.state != "waiting":
+            return self.state
+        self._observations += 1
+        if now - self.started_wall_s >= self.timeout_s:
+            self._transition(
+                "timed_out",
+                monotonic_now_s=now,
+                error="external_arm_timeout",
+            )
+            return self.state
+        if not self.arm_file.is_file():
+            self._publish_status(now)
+            return self.state
+        try:
+            payload = _strict_json_object(self.arm_file.read_bytes())
+        except (OSError, ValueError) as exc:
+            error = str(exc) if isinstance(exc, ValueError) else "external_arm_read_failed"
+            self._transition("invalid", monotonic_now_s=now, error=error)
+            return self.state
+        error = _validate_external_arm_payload(
+            payload,
+            expected_token=self.expected_token,
+            expected_domain_id=self.domain_id,
+            expected_scenario=self.scenario,
+        )
+        if error:
+            self._transition("invalid", monotonic_now_s=now, error=error)
+            return self.state
+        self._transition(
+            "armed",
+            monotonic_now_s=now,
+            sim_time_s=sim_time_s,
+        )
+        return self.state
+
+
+def _external_arm_disabled_report() -> dict[str, Any]:
+    return {
+        "schema": EXTERNAL_ARM_STATUS_SCHEMA,
+        "enabled": False,
+        "state": "disabled",
+        "acknowledged": False,
+    }
 
 
 def _write_motion_complete_marker(
@@ -339,9 +1050,128 @@ class SimImuSignalConditioner:
         }
 
 
+def _parse_xyz_triplet(value: str, label: str) -> tuple[float, float, float]:
+    parts = [part.strip() for part in str(value).split(",")]
+    if len(parts) != 3:
+        raise ValueError(f"{label} must contain exactly three comma-separated values")
+    parsed = tuple(float(part) for part in parts)
+    if not all(math.isfinite(item) for item in parsed):
+        raise ValueError(f"{label} values must be finite")
+    return parsed
+
+
+@dataclass
+class LinearMocapMotion:
+    """Deterministic test-only motion for one MuJoCo mocap body."""
+
+    mocap_id: int
+    body_name: str
+    start_xyz: tuple[float, float, float]
+    end_xyz: tuple[float, float, float]
+    start_s: float
+    duration_s: float
+    updates: int = 0
+    motion_start_wall_s: float | None = None
+    motion_complete_wall_s: float | None = None
+    last_elapsed_s: float = 0.0
+    last_alpha: float = 0.0
+    last_xyz: tuple[float, float, float] | None = None
+
+    def __post_init__(self) -> None:
+        if self.mocap_id < 0:
+            raise ValueError("mocap_id must be non-negative")
+        if not self.body_name:
+            raise ValueError("mocap body name is required")
+        if not math.isfinite(self.start_s) or self.start_s < 0.0:
+            raise ValueError("mocap motion start must be finite and non-negative")
+        if not math.isfinite(self.duration_s) or self.duration_s <= 0.0:
+            raise ValueError("mocap motion duration must be positive and finite")
+        if not all(
+            math.isfinite(value)
+            for value in (*self.start_xyz, *self.end_xyz)
+        ):
+            raise ValueError("mocap motion positions must be finite")
+
+    @classmethod
+    def attach(
+        cls,
+        model: Any,
+        *,
+        body_name: str,
+        start_xyz: tuple[float, float, float],
+        end_xyz: tuple[float, float, float],
+        start_s: float,
+        duration_s: float,
+    ) -> "LinearMocapMotion":
+        import mujoco
+
+        body_id = int(
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
+        )
+        if body_id < 0:
+            raise ValueError(f"MuJoCo mocap body not found: {body_name}")
+        mocap_id = int(model.body_mocapid[body_id])
+        if mocap_id < 0:
+            raise ValueError(f"MuJoCo body is not mocap-controlled: {body_name}")
+        return cls(
+            mocap_id=mocap_id,
+            body_name=body_name,
+            start_xyz=start_xyz,
+            end_xyz=end_xyz,
+            start_s=float(start_s),
+            duration_s=float(duration_s),
+        )
+
+    def update(self, data: Any, elapsed_s: float, *, wall_s: float | None = None) -> None:
+        elapsed = max(0.0, float(elapsed_s))
+        alpha = min(1.0, max(0.0, (elapsed - self.start_s) / self.duration_s))
+        position = tuple(
+            start + (end - start) * alpha
+            for start, end in zip(self.start_xyz, self.end_xyz, strict=True)
+        )
+        data.mocap_pos[self.mocap_id] = position
+        data.mocap_quat[self.mocap_id] = (1.0, 0.0, 0.0, 0.0)
+        now = time.time() if wall_s is None else float(wall_s)
+        if alpha > 0.0 and self.motion_start_wall_s is None:
+            self.motion_start_wall_s = now
+        if alpha >= 1.0 and self.motion_complete_wall_s is None:
+            self.motion_complete_wall_s = now
+        self.updates += 1
+        self.last_elapsed_s = elapsed
+        self.last_alpha = alpha
+        self.last_xyz = position
+
+    def stats(self) -> dict[str, Any]:
+        return {
+            "enabled": True,
+            "body_name": self.body_name,
+            "start_xyz": list(self.start_xyz),
+            "end_xyz": list(self.end_xyz),
+            "start_s": self.start_s,
+            "duration_s": self.duration_s,
+            "updates": self.updates,
+            "motion_started": self.motion_start_wall_s is not None,
+            "motion_completed": self.motion_complete_wall_s is not None,
+            "motion_start_wall_s": self.motion_start_wall_s,
+            "motion_complete_wall_s": self.motion_complete_wall_s,
+            "last_elapsed_s": self.last_elapsed_s,
+            "last_alpha": self.last_alpha,
+            "last_xyz": list(self.last_xyz) if self.last_xyz is not None else None,
+        }
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--world", default="industrial_park")
+    parser.add_argument(
+        "--mocap-motion-body",
+        default="",
+        help="Optional test-only mocap body moved on a deterministic linear trajectory.",
+    )
+    parser.add_argument("--mocap-motion-start", default="0,0,0")
+    parser.add_argument("--mocap-motion-end", default="0,0,0")
+    parser.add_argument("--mocap-motion-start-s", type=float, default=0.0)
+    parser.add_argument("--mocap-motion-duration-s", type=float, default=1.0)
     parser.add_argument("--start", default="", help="Optional start pose x,y,z")
     parser.add_argument(
         "--start-anchor",
@@ -518,6 +1348,48 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--parent-diagnostics-json",
+        default="",
+        help="Optional rolling atomic JSON snapshot of parent-side sensor scheduling diagnostics.",
+    )
+    parser.add_argument(
+        "--parent-diagnostics-period-s",
+        type=float,
+        default=DEFAULT_PARENT_DIAGNOSTICS_PERIOD_S,
+        help="Rolling parent-side diagnostics snapshot period when --parent-diagnostics-json is set.",
+    )
+    parser.add_argument(
+        "--publisher-write-mode",
+        choices=["sync", "async_fifo"],
+        default=DEFAULT_PUBLISHER_WRITE_MODE,
+        help="Native publisher stdin mode; sync preserves the default blocking write path.",
+    )
+    parser.add_argument(
+        "--async-publisher-max-bytes",
+        type=int,
+        default=DEFAULT_ASYNC_PUBLISHER_MAX_BYTES,
+    )
+    parser.add_argument(
+        "--async-publisher-max-records",
+        type=int,
+        default=DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS,
+    )
+    parser.add_argument(
+        "--async-publisher-max-batches",
+        type=int,
+        default=DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES,
+    )
+    parser.add_argument(
+        "--async-publisher-oldest-s",
+        type=float,
+        default=DEFAULT_ASYNC_PUBLISHER_OLDEST_S,
+    )
+    parser.add_argument(
+        "--async-publisher-shutdown-s",
+        type=float,
+        default=DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S,
+    )
+    parser.add_argument(
         "--imu-timestamp-clock",
         choices=["", SIM_HARDWARE_CLOCK, "sim", "wall"],
         default="",
@@ -569,6 +1441,38 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum absolute SLAM odom yaw error relative to MuJoCo yaw delta.",
     )
     parser.add_argument("--domain-id", type=int, default=0)
+    parser.add_argument(
+        "--external-arm-file",
+        default="",
+        help=(
+            "Optional atomic JSON rendezvous. While enabled, the bridge keeps "
+            "the base anchored and publishes stationary sensors until a valid arm is observed."
+        ),
+    )
+    parser.add_argument(
+        "--external-arm-token",
+        default="",
+        help="Opaque per-run token required by --external-arm-file.",
+    )
+    parser.add_argument(
+        "--external-arm-scenario",
+        default="",
+        help="Exact acceptance scenario expected in the external arm document.",
+    )
+    parser.add_argument(
+        "--external-arm-timeout-s",
+        type=float,
+        default=DEFAULT_EXTERNAL_ARM_TIMEOUT_S,
+        help="Wall-clock deadline for a valid external arm document.",
+    )
+    parser.add_argument(
+        "--external-arm-status-json",
+        default="",
+        help=(
+            "Optional atomic status snapshot for the external-arm handshake. "
+            "The opaque token is never written to this file."
+        ),
+    )
     parser.add_argument("--publisher-bin", default=os.environ.get("LINGTU_MUJOCO_NATIVE_DDS_PUBLISHER_BIN", ""))
     parser.add_argument("--slam-status-json", default=os.environ.get("LINGTU_SLAM_STATUS_JSON", ""))
     parser.add_argument("--drive-mode", choices=["kinematic", "policy"], default="policy")
@@ -855,6 +1759,37 @@ class SimulatedHardwareClock:
             time.sleep(sleep_s)
 
 
+def _select_native_wall_clock_alignment(
+    samples: Sequence[tuple[int, int, int]],
+    *,
+    max_rtt_s: float = MAX_NATIVE_CLOCK_SYNC_RTT_S,
+) -> dict[str, Any]:
+    """Select the lowest-uncertainty native wall-clock sample."""
+
+    valid: list[tuple[int, int]] = []
+    for local_before_ns, native_wall_ns, local_after_ns in samples:
+        if local_before_ns <= 0 or native_wall_ns <= 0 or local_after_ns < local_before_ns:
+            continue
+        rtt_ns = local_after_ns - local_before_ns
+        midpoint_ns = local_before_ns + rtt_ns // 2
+        valid.append((rtt_ns, native_wall_ns - midpoint_ns))
+    if not valid:
+        raise RuntimeError("native wall-clock synchronization returned no valid samples")
+    rtt_ns, offset_ns = min(valid, key=lambda value: value[0])
+    if rtt_ns > int(float(max_rtt_s) * 1_000_000_000):
+        raise RuntimeError(
+            "native wall-clock synchronization uncertainty too high: "
+            f"rtt_ms={rtt_ns / 1_000_000.0:.3f}"
+        )
+    return {
+        "source": "native_wall_midpoint_lowest_rtt",
+        "sample_count": len(valid),
+        "rtt_ms": rtt_ns / 1_000_000.0,
+        "uncertainty_ms": rtt_ns / 2_000_000.0,
+        "native_minus_local_s": offset_ns / 1_000_000_000.0,
+    }
+
+
 class SimHardwareCatchUpController:
     """Drop only sensor observations while advancing every MuJoCo physics tick.
 
@@ -1112,6 +2047,26 @@ def _start_anchor_active(mode: str, *, motion_started: bool) -> bool:
     return mode == "run" or (mode == "warmup" and not motion_started)
 
 
+def _external_arm_drive_elapsed_s(
+    gate: ExternalArmGate | None,
+    *,
+    sim_time_s: float,
+) -> float:
+    if gate is None or not gate.acknowledged or gate.arm_observed_sim_time_s is None:
+        return 0.0
+    return max(0.0, float(sim_time_s) - gate.arm_observed_sim_time_s)
+
+
+def _sensor_anchor_active(
+    mode: str,
+    *,
+    motion_started: bool,
+    external_arm_gate: ExternalArmGate | None,
+) -> bool:
+    waiting_for_external_arm = external_arm_gate is not None and not external_arm_gate.acknowledged
+    return waiting_for_external_arm or _start_anchor_active(mode, motion_started=motion_started)
+
+
 def _resolve_policy_path_for_drive(drive_mode: str, value: str) -> Path | None:
     text = str(value or "").strip()
     if text:
@@ -1147,14 +2102,32 @@ def _linux_binary_command(binary: Path, *args: str) -> list[str]:
     return [wsl, "-e", _wsl_path(binary), *args]
 
 
-def _managed_wsl_command(command: list[str], pid_file: Path) -> list[str]:
+def _managed_wsl_command(
+    command: list[str],
+    pid_file: Path,
+    *,
+    clock_handshake: bool = False,
+) -> list[str]:
     """Wrap a WSL launch so the Linux exec PID is externally owned."""
 
     if os.name != "nt" or len(command) < 3 or command[1] != "-e":
         return command
     pid_file.parent.mkdir(parents=True, exist_ok=True)
     pid_file.unlink(missing_ok=True)
-    script = 'pid_file="$1"; shift; echo "$$" > "$pid_file"; exec "$@"'
+    if clock_handshake:
+        script = (
+            'pid_file="$1"; shift; echo "$$" > "$pid_file"; '
+            'printf "LINGTU_CLOCK_READY\\n"; '
+            f'i=0; while [ "$i" -lt {DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES} ]; do '
+            'IFS= read -r request || exit 71; '
+            '[ "$request" = "LINGTU_CLOCK_SAMPLE" ] || exit 72; '
+            'date +%s%N; i=$((i + 1)); done; '
+            'IFS= read -r request || exit 73; '
+            '[ "$request" = "LINGTU_CLOCK_START" ] || exit 74; '
+            'exec "$@" >/dev/null'
+        )
+    else:
+        script = 'pid_file="$1"; shift; echo "$$" > "$pid_file"; exec "$@"'
     return [
         command[0],
         "-e",
@@ -1165,6 +2138,76 @@ def _managed_wsl_command(command: list[str], pid_file: Path) -> list[str]:
         _wsl_path(pid_file),
         *command[2:],
     ]
+
+
+def _read_process_line(
+    stream: Any,
+    *,
+    timeout_s: float,
+    label: str,
+) -> bytes:
+    """Read one child-process line without allowing a failed handshake to hang."""
+
+    results: queue.Queue[bytes | BaseException] = queue.Queue(maxsize=1)
+
+    def read_line() -> None:
+        try:
+            results.put(stream.readline())
+        except BaseException as exc:  # pragma: no cover - platform pipe failure
+            results.put(exc)
+
+    threading.Thread(target=read_line, daemon=True).start()
+    try:
+        value = results.get(timeout=max(0.01, float(timeout_s)))
+    except queue.Empty as exc:
+        raise RuntimeError(f"{label} timed out") from exc
+    if isinstance(value, BaseException):
+        raise RuntimeError(f"{label} failed: {value}") from value
+    if not value:
+        raise RuntimeError(f"{label} closed before response")
+    return value
+
+
+def _synchronize_managed_native_clock(
+    process: subprocess.Popen[bytes],
+) -> dict[str, Any]:
+    """Synchronize after WSL startup and before binary sensor records begin."""
+
+    if process.stdin is None or process.stdout is None:
+        raise RuntimeError("native clock handshake pipes unavailable")
+    ready = _read_process_line(
+        process.stdout,
+        timeout_s=10.0,
+        label="native clock ready handshake",
+    ).strip()
+    if ready != b"LINGTU_CLOCK_READY":
+        raise RuntimeError(f"invalid native clock ready handshake: {ready!r}")
+
+    samples: list[tuple[int, int, int]] = []
+    for _ in range(DEFAULT_NATIVE_CLOCK_SYNC_SAMPLES):
+        local_before_ns = time.time_ns()
+        process.stdin.write(b"LINGTU_CLOCK_SAMPLE\n")
+        process.stdin.flush()
+        response = _read_process_line(
+            process.stdout,
+            timeout_s=2.0,
+            label="native clock sample handshake",
+        ).strip()
+        local_after_ns = time.time_ns()
+        try:
+            native_wall_ns = int(response)
+        except ValueError as exc:
+            raise RuntimeError(f"invalid native clock sample: {response!r}") from exc
+        samples.append((local_before_ns, native_wall_ns, local_after_ns))
+
+    alignment = _select_native_wall_clock_alignment(samples)
+    process.stdin.write(b"LINGTU_CLOCK_START\n")
+    process.stdin.flush()
+    process.stdout.close()
+    return {
+        **alignment,
+        "source": "managed_native_process_handshake",
+    }
 
 
 def _read_linux_pid(pid_file: Path, timeout_s: float = 2.0) -> int | None:
@@ -1907,8 +2950,22 @@ def _resolve_publisher_bin(value: str) -> Path:
     )
 
 
+def _should_restamp_native_records(args: argparse.Namespace) -> bool:
+    if bool(getattr(args, "navigation_fixture", False)):
+        return False
+    timestamp_clock = str(getattr(args, "timestamp_clock", "") or "")
+    imu_clock = str(getattr(args, "imu_timestamp_clock", "") or timestamp_clock)
+    lidar_clock = str(getattr(args, "lidar_timestamp_clock", "") or timestamp_clock)
+    return not _uses_unified_sim_hardware_clock(
+        timestamp_clock=timestamp_clock,
+        imu_clock=imu_clock,
+        lidar_clock=lidar_clock,
+    )
+
+
 def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]:
     publisher = _resolve_publisher_bin(str(args.publisher_bin or ""))
+    clock_handshake = os.name == "nt" and publisher.suffix.lower() != ".exe"
     command = _linux_binary_command(
         publisher,
         "--stdin-records",
@@ -1922,7 +2979,7 @@ def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]
     )
     if bool(getattr(args, "navigation_fixture", False)):
         command.append("--navigation-fixture")
-    if not bool(getattr(args, "navigation_fixture", False)):
+    if _should_restamp_native_records(args):
         command.append("--restamp-stdin-records")
     pid_file_value = str(getattr(args, "publisher_pid_file", "") or "")
     if pid_file_value:
@@ -1932,26 +2989,45 @@ def _start_native_publisher(args: argparse.Namespace) -> subprocess.Popen[bytes]
         base = report_path.parent if str(report_path) else ROOT / "artifacts"
         pid_file = (base / f"mujoco_sensor_publisher_{os.getpid()}.pid").resolve()
     process = subprocess.Popen(
-        _managed_wsl_command(command, pid_file),
+        _managed_wsl_command(command, pid_file, clock_handshake=clock_handshake),
         stdin=subprocess.PIPE,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if clock_handshake else subprocess.DEVNULL,
     )
     linux_pid = _read_linux_pid(pid_file, timeout_s=10.0)
     if linux_pid is None:
         relay_errors = _stop_relay(process)
         detail = ";".join(relay_errors) if relay_errors else "pid_file_not_written"
         raise RuntimeError(f"sensor publisher Linux PID handshake failed: {detail}")
+    if clock_handshake:
+        try:
+            process._lingtu_native_clock_alignment = _synchronize_managed_native_clock(process)
+        except BaseException:
+            _stop_relay(process)
+            raise
+    else:
+        process._lingtu_native_clock_alignment = {
+            "source": "shared_local_wall_clock",
+            "sample_count": 1,
+            "rtt_ms": 0.0,
+            "uncertainty_ms": 0.0,
+            "native_minus_local_s": 0.0,
+        }
     process._lingtu_linux_pid_file = pid_file
     process._lingtu_linux_pid = linux_pid
     return process
 
 
-def _finish_native_publisher(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+def _finish_native_publisher(
+    process: subprocess.Popen[bytes],
+    *,
+    close_stdin: bool = True,
+    termination_cleanup: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     pid = getattr(process, "_lingtu_linux_pid", None)
     pid_file = getattr(process, "_lingtu_linux_pid_file", None)
     errors: list[str] = []
     try:
-        if process.stdin is not None and not process.stdin.closed:
+        if close_stdin and process.stdin is not None and not process.stdin.closed:
             process.stdin.close()
     except OSError as exc:
         errors.append(f"publisher_stdin_close_failed:{type(exc).__name__}:{exc}")
@@ -1962,7 +3038,11 @@ def _finish_native_publisher(process: subprocess.Popen[bytes]) -> dict[str, Any]
     except OSError as exc:
         errors.append(f"publisher_wait_failed:{type(exc).__name__}:{exc}")
 
-    cleanup = _terminate_wsl_pid(pid)
+    cleanup = (
+        dict(termination_cleanup)
+        if termination_cleanup is not None
+        else _terminate_wsl_pid(pid)
+    )
     relay_errors = _stop_relay(process)
     if relay_errors:
         errors.extend(relay_errors)
@@ -1978,12 +3058,580 @@ def _finish_native_publisher(process: subprocess.Popen[bytes]) -> dict[str, Any]
     return cleanup
 
 
-def _write_record(stream: Any, record_type: int, timestamp_ns: int, sequence: int, payload: bytes, count: int) -> None:
-    stream.write(_HEADER.pack(_MAGIC, int(record_type), int(timestamp_ns), int(sequence), int(count), len(payload)))
-    stream.write(payload)
+class AsyncPublisherError(RuntimeError):
+    """Fail-closed async native publisher error surfaced on the main thread."""
 
 
-def _write_native_scan(stream: Any, scan: Any) -> None:
+@dataclass(frozen=True)
+class _SerializedPublisherRecord:
+    diagnostic_record_type: str
+    header: bytes
+    payload: bytes
+
+    @property
+    def wire_bytes(self) -> int:
+        return len(self.header) + len(self.payload)
+
+
+class AsyncPublisherBatch:
+    """One main-loop record group kept adjacent in the writer FIFO."""
+
+    def __init__(self) -> None:
+        self._records: list[_SerializedPublisherRecord] = []
+        self._sealed = False
+
+    def append(
+        self,
+        *,
+        diagnostic_record_type: str,
+        header: bytes,
+        payload: bytes,
+    ) -> None:
+        if self._sealed:
+            raise RuntimeError("async publisher batch is already enqueued")
+        self._records.append(
+            _SerializedPublisherRecord(
+                diagnostic_record_type=str(diagnostic_record_type),
+                header=bytes(header),
+                payload=bytes(payload),
+            )
+        )
+
+    def _seal(self) -> tuple[_SerializedPublisherRecord, ...]:
+        if self._sealed:
+            raise RuntimeError("async publisher batch is already enqueued")
+        if not self._records:
+            raise ValueError("async publisher batch must contain at least one record")
+        self._sealed = True
+        return tuple(self._records)
+
+
+@dataclass(frozen=True)
+class _QueuedPublisherBatch:
+    sequence: int
+    first_record_sequence: int
+    last_record_sequence: int
+    enqueued_monotonic_ns: int
+    records: tuple[_SerializedPublisherRecord, ...]
+    wire_bytes: int
+
+
+class AsyncFifoPublisher:
+    """One bounded FIFO whose sole writer thread owns stream I/O and close."""
+
+    _DRAIN_GROUP_MIN_BATCHES = 8
+    _DRAIN_GROUP_MAX_BATCHES = 64
+    _DRAIN_GROUP_MAX_BYTES = 512 * 1024
+
+    def __init__(
+        self,
+        stream: Any,
+        *,
+        parent_diagnostics: ParentSensorDiagnostics | None = None,
+        max_bytes: int = DEFAULT_ASYNC_PUBLISHER_MAX_BYTES,
+        max_records: int = DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS,
+        max_batches: int = DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES,
+        oldest_s: float = DEFAULT_ASYNC_PUBLISHER_OLDEST_S,
+        monotonic_ns: Any = time.monotonic_ns,
+    ) -> None:
+        if int(max_bytes) <= 0 or int(max_records) <= 0 or int(max_batches) <= 0:
+            raise ValueError("async publisher queue limits must be positive")
+        if not math.isfinite(float(oldest_s)) or float(oldest_s) <= 0.0:
+            raise ValueError("async publisher oldest age must be positive and finite")
+        self._stream = stream
+        self._parent_diagnostics = parent_diagnostics
+        self._max_bytes = int(max_bytes)
+        self._max_records = int(max_records)
+        self._max_batches = int(max_batches)
+        self._oldest_ns = int(float(oldest_s) * 1_000_000_000)
+        self._monotonic_ns = monotonic_ns
+        self._condition = threading.Condition()
+        self._queue: deque[_QueuedPublisherBatch] = deque()
+        self._inflight_batch: _QueuedPublisherBatch | None = None
+        self._current_bytes = 0
+        self._current_records = 0
+        self._current_batches = 0
+        self._max_observed_bytes = 0
+        self._max_observed_records = 0
+        self._max_observed_batches = 0
+        self._stop_requested = False
+        self._cleanup_reason = "running"
+        self._failure: BaseException | None = None
+        self._failure_context = ""
+        self._failure_undrained_bytes: int | None = None
+        self._failure_undrained_records: int | None = None
+        self._failure_undrained_batches: int | None = None
+        self._stream_closed = False
+        self._enqueued_batch_sequence = 0
+        self._enqueued_record_sequence = 0
+        self._written_batch_sequence = 0
+        self._written_record_sequence = 0
+        self._writer_finished = False
+        if self._parent_diagnostics is not None:
+            self._parent_diagnostics.configure_async_queue(
+                max_bytes=self._max_bytes,
+                max_records=self._max_records,
+                max_batches=self._max_batches,
+                oldest_s=self._oldest_ns / 1_000_000_000.0,
+            )
+        self._thread = threading.Thread(
+            target=self._writer_main,
+            name="mujoco-native-dds-writer",
+            daemon=True,
+        )
+        self._thread.start()
+        self._update_queue_diagnostics()
+
+    def _raise_failure_locked(self) -> None:
+        if self._failure is None:
+            return
+        context = self._failure_context or "writer_failed"
+        error = AsyncPublisherError(
+            f"async native publisher {context}: {type(self._failure).__name__}: {self._failure}"
+        )
+        raise error from self._failure
+
+    def _set_failure_locked(self, context: str, error: BaseException) -> None:
+        if self._failure is None:
+            self._failure = error
+            self._failure_context = str(context)
+            self._cleanup_reason = str(context)
+            self._failure_undrained_bytes = self._current_bytes
+            self._failure_undrained_records = self._current_records
+            self._failure_undrained_batches = self._current_batches
+        self._stop_requested = True
+        self._condition.notify_all()
+
+    def _oldest_age_s_locked(self, now_ns: int) -> float:
+        oldest_ns: int | None = None
+        if self._inflight_batch is not None:
+            oldest_ns = self._inflight_batch.enqueued_monotonic_ns
+        if self._queue:
+            queued_ns = self._queue[0].enqueued_monotonic_ns
+            oldest_ns = queued_ns if oldest_ns is None else min(oldest_ns, queued_ns)
+        if oldest_ns is None:
+            return 0.0
+        return max(0, int(now_ns) - oldest_ns) / 1_000_000_000.0
+
+    def _check_oldest_locked(self, now_ns: int) -> None:
+        oldest_age_s = self._oldest_age_s_locked(now_ns)
+        if oldest_age_s <= self._oldest_ns / 1_000_000_000.0:
+            return
+        self._set_failure_locked(
+            "queue_oldest_age",
+            AsyncPublisherError(
+                f"queue_oldest_age:{oldest_age_s:.9f}s>{self._oldest_ns / 1_000_000_000.0:.9f}s"
+            ),
+        )
+
+    def _fail_queue_full_locked(self, limit: str) -> None:
+        error = AsyncPublisherError(f"queue_full:{limit}")
+        self._set_failure_locked(f"queue_full:{limit}", error)
+        self._raise_failure_locked()
+
+    def enqueue(self, batch: AsyncPublisherBatch) -> None:
+        records = batch._seal()
+        wire_bytes = sum(record.wire_bytes for record in records)
+        now_ns = int(self._monotonic_ns())
+        enqueue_started_ns = time.monotonic_ns()
+        try:
+            with self._condition:
+                self._raise_failure_locked()
+                self._check_oldest_locked(now_ns)
+                self._raise_failure_locked()
+                if self._stop_requested:
+                    raise AsyncPublisherError("async native publisher is stopping")
+                if self._current_bytes + wire_bytes > self._max_bytes:
+                    self._fail_queue_full_locked("bytes")
+                if self._current_records + len(records) > self._max_records:
+                    self._fail_queue_full_locked("records")
+                if self._current_batches + 1 > self._max_batches:
+                    self._fail_queue_full_locked("batches")
+                sequence = self._enqueued_batch_sequence + 1
+                first_record_sequence = self._enqueued_record_sequence + 1
+                last_record_sequence = self._enqueued_record_sequence + len(records)
+                self._queue.append(
+                    _QueuedPublisherBatch(
+                        sequence=sequence,
+                        first_record_sequence=first_record_sequence,
+                        last_record_sequence=last_record_sequence,
+                        enqueued_monotonic_ns=now_ns,
+                        records=records,
+                        wire_bytes=wire_bytes,
+                    )
+                )
+                self._current_bytes += wire_bytes
+                self._current_records += len(records)
+                self._current_batches += 1
+                self._max_observed_bytes = max(self._max_observed_bytes, self._current_bytes)
+                self._max_observed_records = max(self._max_observed_records, self._current_records)
+                self._max_observed_batches = max(self._max_observed_batches, self._current_batches)
+                self._enqueued_batch_sequence = sequence
+                self._enqueued_record_sequence = last_record_sequence
+                self._check_oldest_locked(int(self._monotonic_ns()))
+                self._raise_failure_locked()
+                self._condition.notify()
+        except BaseException:
+            if self._parent_diagnostics is not None:
+                stats = self.stats()
+                self._parent_diagnostics.record_enqueue_result(
+                    records,
+                    success=False,
+                    full=str(stats["fatal_reason"]).startswith("queue_full:"),
+                    duration_us=(time.monotonic_ns() - enqueue_started_ns) / 1_000.0,
+                    queue_stats=stats,
+                )
+            raise
+        if self._parent_diagnostics is not None:
+            self._parent_diagnostics.record_enqueue_result(
+                records,
+                success=True,
+                full=False,
+                duration_us=(time.monotonic_ns() - enqueue_started_ns) / 1_000.0,
+                queue_stats=self.stats(),
+            )
+
+    def raise_if_failed(self) -> None:
+        try:
+            with self._condition:
+                self._check_oldest_locked(int(self._monotonic_ns()))
+                self._raise_failure_locked()
+        except BaseException:
+            self._update_queue_diagnostics()
+            raise
+
+    def request_stop(self, reason: str = "requested") -> None:
+        with self._condition:
+            if not self._stop_requested:
+                self._cleanup_reason = str(reason)
+            self._stop_requested = True
+            self._condition.notify_all()
+        self._update_queue_diagnostics()
+
+    def mark_shutdown_timeout(self) -> None:
+        with self._condition:
+            self._set_failure_locked(
+                "shutdown_timeout",
+                AsyncPublisherError("shutdown_timeout"),
+            )
+        self._update_queue_diagnostics()
+
+    def join(self, *, timeout_s: float | None = None) -> bool:
+        self._thread.join(timeout=None if timeout_s is None else max(0.0, float(timeout_s)))
+        return not self._thread.is_alive()
+
+    @property
+    def writer_alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def stats(self) -> dict[str, Any]:
+        with self._condition:
+            return self._stats_locked()
+
+    def _stats_locked(self) -> dict[str, Any]:
+        oldest_age_s = self._oldest_age_s_locked(int(self._monotonic_ns()))
+        return {
+            "enqueued_batch_sequence": self._enqueued_batch_sequence,
+            "enqueued_record_sequence": self._enqueued_record_sequence,
+            "written_batch_sequence": self._written_batch_sequence,
+            "written_record_sequence": self._written_record_sequence,
+            "batch_sequence_lag": self._enqueued_batch_sequence - self._written_batch_sequence,
+            "record_sequence_lag": self._enqueued_record_sequence - self._written_record_sequence,
+            "current_batches": self._current_batches,
+            "current_records": self._current_records,
+            "current_bytes": self._current_bytes,
+            "max_batches": self._max_observed_batches,
+            "max_records": self._max_observed_records,
+            "max_bytes": self._max_observed_bytes,
+            "oldest_age_s": oldest_age_s,
+            "undrained_batches": (
+                self._current_batches
+                if self._failure_undrained_batches is None
+                else self._failure_undrained_batches
+            ),
+            "undrained_records": (
+                self._current_records
+                if self._failure_undrained_records is None
+                else self._failure_undrained_records
+            ),
+            "undrained_bytes": (
+                self._current_bytes
+                if self._failure_undrained_bytes is None
+                else self._failure_undrained_bytes
+            ),
+            "writer_alive": not self._writer_finished and self._thread.is_alive(),
+            "cleanup_reason": self._cleanup_reason,
+            "fatal_reason": self._failure_context,
+        }
+
+    def _update_queue_diagnostics(self) -> None:
+        if self._parent_diagnostics is not None:
+            self._parent_diagnostics.update_async_queue(self.stats())
+
+    def _set_failure(self, context: str, error: BaseException) -> None:
+        with self._condition:
+            self._set_failure_locked(context, error)
+        self._update_queue_diagnostics()
+
+    def _take_next_batches(self) -> tuple[_QueuedPublisherBatch, ...] | None:
+        with self._condition:
+            while not self._queue and not self._stop_requested:
+                self._condition.wait()
+            if self._failure is not None or not self._queue:
+                return None
+            batches = [self._queue.popleft()]
+            group_bytes = batches[0].wire_bytes
+            if len(self._queue) + 1 >= self._DRAIN_GROUP_MIN_BATCHES:
+                while self._queue and len(batches) < self._DRAIN_GROUP_MAX_BATCHES:
+                    next_batch = self._queue[0]
+                    if group_bytes + next_batch.wire_bytes > self._DRAIN_GROUP_MAX_BYTES:
+                        break
+                    batches.append(self._queue.popleft())
+                    group_bytes += next_batch.wire_bytes
+            self._inflight_batch = batches[0]
+            return tuple(batches)
+
+    def _complete_batches(self, batches: tuple[_QueuedPublisherBatch, ...]) -> None:
+        if not batches:
+            raise ValueError("completed publisher group must not be empty")
+        with self._condition:
+            if self._inflight_batch is batches[0]:
+                self._inflight_batch = None
+            self._current_bytes -= sum(batch.wire_bytes for batch in batches)
+            self._current_records -= sum(len(batch.records) for batch in batches)
+            self._current_batches -= len(batches)
+            self._written_batch_sequence = batches[-1].sequence
+            self._written_record_sequence = batches[-1].last_record_sequence
+            self._condition.notify_all()
+        self._update_queue_diagnostics()
+
+    def _close_stream_once(self) -> None:
+        if self._stream_closed:
+            return
+        self._stream_closed = True
+        self._stream.close()
+
+    def _writer_main(self) -> None:
+        try:
+            while True:
+                batches = self._take_next_batches()
+                if batches is None:
+                    break
+                for batch in batches:
+                    for record in batch.records:
+                        _write_serialized_record(
+                            self._stream,
+                            record,
+                            parent_diagnostics=self._parent_diagnostics,
+                        )
+                _flush_native_publisher(
+                    self._stream,
+                    parent_diagnostics=self._parent_diagnostics,
+                )
+                self._complete_batches(batches)
+        except BaseException as exc:
+            self._set_failure("writer_error", exc)
+        finally:
+            try:
+                self._close_stream_once()
+            except BaseException as exc:
+                self._set_failure("writer_close_error", exc)
+            with self._condition:
+                self._writer_finished = True
+                if self._cleanup_reason == "running":
+                    self._cleanup_reason = "writer_stopped"
+            self._update_queue_diagnostics()
+
+
+def _shutdown_async_native_publisher(
+    publisher: AsyncFifoPublisher,
+    process: subprocess.Popen[bytes],
+    *,
+    timeout_s: float = DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S,
+) -> dict[str, Any]:
+    timeout = float(timeout_s)
+    if not math.isfinite(timeout) or timeout <= 0.0:
+        raise ValueError("async publisher shutdown timeout must be positive and finite")
+    publisher.request_stop("shutdown")
+    if publisher.join(timeout_s=timeout):
+        return {
+            "timed_out": False,
+            "joined_after_terminate": False,
+            "timeout_stats": None,
+            "termination": None,
+            "queue": publisher.stats(),
+        }
+
+    publisher.mark_shutdown_timeout()
+    timeout_stats = publisher.stats()
+    termination = _terminate_wsl_pid(getattr(process, "_lingtu_linux_pid", None))
+    joined_after_terminate = publisher.join(timeout_s=timeout)
+    return {
+        "timed_out": True,
+        "joined_after_terminate": joined_after_terminate,
+        "timeout_stats": timeout_stats,
+        "termination": termination,
+        "queue": publisher.stats(),
+    }
+
+
+def _cleanup_native_publisher(
+    process: subprocess.Popen[bytes],
+    *,
+    async_publisher: AsyncFifoPublisher | None,
+    async_shutdown_s: float = DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S,
+) -> dict[str, Any]:
+    if async_publisher is None:
+        return _finish_native_publisher(process)
+
+    async_cleanup = _shutdown_async_native_publisher(
+        async_publisher,
+        process,
+        timeout_s=async_shutdown_s,
+    )
+    cleanup = _finish_native_publisher(
+        process,
+        close_stdin=False,
+        termination_cleanup=async_cleanup.get("termination"),
+    )
+    cleanup["async_writer"] = async_cleanup
+    async_errors: list[str] = []
+    if bool(async_cleanup.get("timed_out")):
+        async_errors.append("async_writer_shutdown_timeout")
+    if bool(async_cleanup.get("timed_out")) and not bool(
+        async_cleanup.get("joined_after_terminate")
+    ):
+        async_errors.append("async_writer_still_alive_after_terminate")
+    fatal_reason = str((async_cleanup.get("queue") or {}).get("fatal_reason") or "")
+    if fatal_reason:
+        async_errors.append(f"async_writer_fatal:{fatal_reason}")
+    if async_errors:
+        cleanup.setdefault("errors", []).extend(async_errors)
+        cleanup["clean"] = False
+    return cleanup
+
+
+def _write_serialized_record(
+    stream: Any,
+    record: _SerializedPublisherRecord,
+    *,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+) -> None:
+    if parent_diagnostics is None:
+        stream.write(record.header)
+        stream.write(record.payload)
+        return
+    parent_diagnostics.record_pipe_write_attempt(record.diagnostic_record_type)
+    started_ns = time.monotonic_ns()
+    try:
+        stream.write(record.header)
+        stream.write(record.payload)
+    except Exception:
+        parent_diagnostics.record_pipe_write_error(
+            record.diagnostic_record_type,
+            duration_us=(time.monotonic_ns() - started_ns) / 1_000.0,
+        )
+        raise
+    parent_diagnostics.record_pipe_write_success(
+        record.diagnostic_record_type,
+        payload_bytes=len(record.payload),
+        pipe_bytes=record.wire_bytes,
+        duration_us=(time.monotonic_ns() - started_ns) / 1_000.0,
+    )
+
+
+def _write_record(
+    stream: Any,
+    record_type: int,
+    timestamp_ns: int,
+    sequence: int,
+    payload: bytes,
+    count: int,
+    *,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+    diagnostic_record_type: str = "",
+    async_batch: AsyncPublisherBatch | None = None,
+) -> None:
+    record = _SerializedPublisherRecord(
+        diagnostic_record_type=str(diagnostic_record_type),
+        header=_HEADER.pack(_MAGIC, int(record_type), int(timestamp_ns), int(sequence), int(count), len(payload)),
+        payload=bytes(payload),
+    )
+    if async_batch is not None:
+        async_batch.append(
+            diagnostic_record_type=record.diagnostic_record_type,
+            header=record.header,
+            payload=record.payload,
+        )
+        return
+    _write_serialized_record(
+        stream,
+        record,
+        parent_diagnostics=parent_diagnostics,
+    )
+
+
+def _flush_native_publisher(
+    stream: Any,
+    *,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+) -> None:
+    if parent_diagnostics is None:
+        stream.flush()
+        return
+    started_ns = time.monotonic_ns()
+    try:
+        stream.flush()
+    except Exception:
+        parent_diagnostics.record_flush(
+            success=False,
+            duration_us=(time.monotonic_ns() - started_ns) / 1_000.0,
+        )
+        raise
+    parent_diagnostics.record_flush(
+        success=True,
+        duration_us=(time.monotonic_ns() - started_ns) / 1_000.0,
+    )
+
+
+def _begin_native_publisher_batch(
+    async_publisher: AsyncFifoPublisher | None,
+) -> AsyncPublisherBatch | None:
+    if async_publisher is None:
+        return None
+    async_publisher.raise_if_failed()
+    return AsyncPublisherBatch()
+
+
+def _commit_native_publisher_batch(
+    stream: Any,
+    batch: AsyncPublisherBatch | None,
+    *,
+    async_publisher: AsyncFifoPublisher | None,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+) -> None:
+    if async_publisher is None:
+        if batch is not None:
+            raise RuntimeError("sync publisher received an async batch")
+        _flush_native_publisher(
+            stream,
+            parent_diagnostics=parent_diagnostics,
+        )
+        return
+    if batch is None:
+        raise RuntimeError("async publisher batch is missing")
+    async_publisher.raise_if_failed()
+    async_publisher.enqueue(batch)
+    async_publisher.raise_if_failed()
+
+
+def _write_native_scan(
+    stream: Any,
+    scan: Any,
+    *,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+    async_batch: AsyncPublisherBatch | None = None,
+) -> None:
     payload = np.asarray(scan.points).tobytes()
     _write_record(
         stream,
@@ -1992,10 +3640,20 @@ def _write_native_scan(stream: Any, scan: Any) -> None:
         int(scan.sequence),
         payload,
         int(scan.point_count),
+        parent_diagnostics=parent_diagnostics,
+        diagnostic_record_type="cloud",
+        async_batch=async_batch,
     )
 
 
-def _write_native_imu(stream: Any, imu: Imu, sequence: int) -> None:
+def _write_native_imu(
+    stream: Any,
+    imu: Imu,
+    sequence: int,
+    *,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+    async_batch: AsyncPublisherBatch | None = None,
+) -> None:
     acc_scale = _MID360_ACCEL_MPS2_PER_G
     payload = _IMU_PAYLOAD.pack(
         float(imu.angular_velocity.x),
@@ -2005,7 +3663,17 @@ def _write_native_imu(stream: Any, imu: Imu, sequence: int) -> None:
         float(imu.linear_acceleration.y) / acc_scale,
         float(imu.linear_acceleration.z) / acc_scale,
     )
-    _write_record(stream, _RECORD_IMU, int(float(imu.ts) * 1_000_000_000), sequence, payload, 1)
+    _write_record(
+        stream,
+        _RECORD_IMU,
+        int(float(imu.ts) * 1_000_000_000),
+        sequence,
+        payload,
+        1,
+        parent_diagnostics=parent_diagnostics,
+        diagnostic_record_type="imu",
+        async_batch=async_batch,
+    )
 
 
 def _write_native_odom_prior(
@@ -2016,6 +3684,8 @@ def _write_native_odom_prior(
     *,
     velocity: Any | None = None,
     has_velocity: bool = True,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+    async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
     position = np.asarray(getattr(state, "position", (0.0, 0.0, 0.0)), dtype=np.float64)
     orientation = np.asarray(getattr(state, "orientation", (0.0, 0.0, 0.0, 1.0)), dtype=np.float64)
@@ -2048,6 +3718,9 @@ def _write_native_odom_prior(
         sequence,
         payload,
         1,
+        parent_diagnostics=parent_diagnostics,
+        diagnostic_record_type="odom_prior",
+        async_batch=async_batch,
     )
 
 
@@ -2057,6 +3730,8 @@ def _write_native_registered_cloud(
     *,
     timestamp_ns: int,
     sequence: int,
+    parent_diagnostics: ParentSensorDiagnostics | None = None,
+    async_batch: AsyncPublisherBatch | None = None,
 ) -> None:
     points = np.asarray(points_xyzi_body, dtype=np.float32)
     if points.ndim != 2 or points.shape[1] < 3:
@@ -2076,6 +3751,9 @@ def _write_native_registered_cloud(
         int(sequence),
         payload,
         int(frame.point_count),
+        parent_diagnostics=parent_diagnostics,
+        diagnostic_record_type="registered_cloud",
+        async_batch=async_batch,
     )
 
 
@@ -2158,6 +3836,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     imu_period_s = 1.0 / imu_hz
     scan_duration_ns = int(1_000_000_000 * lidar_period_s)
     navigation_fixture = bool(getattr(args, "navigation_fixture", False))
+    external_arm_config = _external_arm_config_from_args(args)
+    if external_arm_config is not None:
+        _prepare_external_arm_files(external_arm_config)
+    external_arm_gate: ExternalArmGate | None = None
+    external_arm_failure_gap = ""
+    motion_interval_completed = False
     motion_complete_marker_value = str(getattr(args, "motion_complete_marker", "") or "")
     motion_complete_marker = (
         Path(motion_complete_marker_value).expanduser().resolve()
@@ -2183,9 +3867,29 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         )
     sensor_counts: Counter[str] = Counter()
     slam_counts: Counter[str] = Counter()
+    parent_diagnostics: ParentSensorDiagnostics | None = getattr(
+        args,
+        "_parent_diagnostics",
+        None,
+    )
     publisher_path = _resolve_publisher_bin(str(args.publisher_bin or ""))
     publisher = _start_native_publisher(args)
+    publisher_write_mode = str(
+        getattr(args, "publisher_write_mode", DEFAULT_PUBLISHER_WRITE_MODE)
+        or DEFAULT_PUBLISHER_WRITE_MODE
+    )
+    if publisher_write_mode not in {"sync", "async_fifo"}:
+        _finish_native_publisher(publisher)
+        raise ValueError(f"unsupported publisher write mode: {publisher_write_mode}")
+    async_publisher: AsyncFifoPublisher | None = None
+    async_publisher_shutdown_s = float(
+        getattr(args, "async_publisher_shutdown_s", DEFAULT_ASYNC_PUBLISHER_SHUTDOWN_S)
+    )
+    if not math.isfinite(async_publisher_shutdown_s) or async_publisher_shutdown_s <= 0.0:
+        _finish_native_publisher(publisher)
+        raise ValueError("--async-publisher-shutdown-s must be positive and finite")
     publisher_cleanup: dict[str, Any] = {}
+    native_clock_alignment: dict[str, Any] = {}
     cleanup_errors: list[str] = []
     cmd_vel_source: NativeCmdVelSource | None = None
     cmd_vel_stats: dict[str, Any] = {
@@ -2194,6 +3898,25 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "nonzero_samples": 0,
     }
     try:
+        if publisher_write_mode == "async_fifo":
+            if publisher.stdin is None:
+                raise RuntimeError("native publisher stdin closed")
+            async_publisher = AsyncFifoPublisher(
+                publisher.stdin,
+                parent_diagnostics=parent_diagnostics,
+                max_bytes=int(
+                    getattr(args, "async_publisher_max_bytes", DEFAULT_ASYNC_PUBLISHER_MAX_BYTES)
+                ),
+                max_records=int(
+                    getattr(args, "async_publisher_max_records", DEFAULT_ASYNC_PUBLISHER_MAX_RECORDS)
+                ),
+                max_batches=int(
+                    getattr(args, "async_publisher_max_batches", DEFAULT_ASYNC_PUBLISHER_MAX_BATCHES)
+                ),
+                oldest_s=float(
+                    getattr(args, "async_publisher_oldest_s", DEFAULT_ASYNC_PUBLISHER_OLDEST_S)
+                ),
+            )
         if str(args.command_source) == "dds":
             cmd_vel_source = NativeCmdVelSource(
                 binary=_resolve_cmd_vel_tap_bin(str(args.cmd_vel_tap_bin or "")),
@@ -2206,7 +3929,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 ),
             )
     except Exception:
-        _finish_native_publisher(publisher)
+        _cleanup_native_publisher(
+            publisher,
+            async_publisher=async_publisher,
+            async_shutdown_s=async_publisher_shutdown_s,
+        )
         raise
 
     motion_log_path = str(getattr(args, "motion_log", "") or "")
@@ -2269,6 +3996,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     physics_integrator_active = "unloaded"
     physics_timestep_s = 0.0
     runtime_stage_profiler = RuntimeStageProfiler()
+    mocap_motion: LinearMocapMotion | None = None
     try:
         policy_path = _resolve_policy_path_for_drive(str(args.drive_mode), str(args.policy_path or ""))
         engine = build_engine(
@@ -2289,6 +4017,23 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             viewer = launch_presentation_viewer(engine.model, engine.data)
         if physics_integrator_requested != "model":
             engine.set_physics_integrator(physics_integrator_requested)
+        mocap_body = str(getattr(args, "mocap_motion_body", "") or "").strip()
+        if mocap_body:
+            mocap_motion = LinearMocapMotion.attach(
+                engine.model,
+                body_name=mocap_body,
+                start_xyz=_parse_xyz_triplet(
+                    str(args.mocap_motion_start),
+                    "--mocap-motion-start",
+                ),
+                end_xyz=_parse_xyz_triplet(
+                    str(args.mocap_motion_end),
+                    "--mocap-motion-end",
+                ),
+                start_s=float(args.mocap_motion_start_s),
+                duration_s=float(args.mocap_motion_duration_s),
+            )
+            mocap_motion.update(engine.data, 0.0)
         physics_integrator_active = str(engine.physics_integrator)
         physics_timestep_s = float(engine.dt)
         lidar_backend_report = engine.get_lidar_backend_report()
@@ -2314,6 +4059,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if settle_s > 0.0:
             settle_end_s = float(getattr(engine, "sim_time", 0.0)) + settle_s
             while float(getattr(engine, "sim_time", 0.0)) + 1e-9 < settle_end_s:
+                if parent_diagnostics is not None:
+                    if parent_diagnostics.stop_requested:
+                        break
+                    parent_diagnostics.maybe_publish()
                 if _start_anchor_active(start_anchor, motion_started=motion_started):
                     _step_static_engine_for_sensor_tick(engine, imu_period_s)
                 else:
@@ -2323,9 +4072,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         imu_timestamp_clock = str(args.imu_timestamp_clock or timestamp_clock)
         lidar_timestamp_clock = str(args.lidar_timestamp_clock or timestamp_clock)
         sim_start_s = float(getattr(engine, "sim_time", 0.0))
+        native_clock_alignment = dict(publisher._lingtu_native_clock_alignment)
         hardware_clock = SimulatedHardwareClock(
             sim_start_s=sim_start_s,
-            wall_epoch_s=time.time(),
+            wall_epoch_s=(
+                time.time()
+                + float(native_clock_alignment["native_minus_local_s"])
+            ),
             monotonic_start_s=time.monotonic(),
             realtime_factor=float(args.sim_hardware_realtime_factor),
         )
@@ -2355,6 +4108,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         run_start_s = time.monotonic()
         drive_start_s = run_start_s + warmup_s
         deadline = drive_start_s + duration_s
+        if external_arm_config is not None:
+            external_arm_gate = ExternalArmGate(
+                **external_arm_config,
+                started_wall_s=run_start_s,
+            )
         sequence = 0
         imu_sequence = 0
         odom_prior_sequence = 0
@@ -2387,6 +4145,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         next_viewer_sim_s = sim_start_s
         previous_loop_end_wall_s: float | None = None
         while True:
+            publisher_batch = _begin_native_publisher_batch(async_publisher)
+            if parent_diagnostics is not None:
+                if parent_diagnostics.stop_requested:
+                    break
+                if parent_diagnostics.publish_due():
+                    if pacing_controller is not None:
+                        parent_diagnostics.update_scheduler_pacing(
+                            pacing_controller.stats(
+                                last_sim_time_s,
+                                monotonic_now_s=time.monotonic(),
+                            )
+                        )
+                    parent_diagnostics.maybe_publish()
             loop_start = time.monotonic()
             if previous_loop_end_wall_s is not None:
                 runtime_stage_profiler.record(
@@ -2396,9 +4167,35 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 )
             command_stage_start = time.monotonic()
             drop_sensor_tick = False
-            if unified_sim_hardware_clock:
+            sim_time_before_step_s = float(getattr(engine, "sim_time", 0.0))
+            if external_arm_gate is not None:
+                external_arm_gate.poll(
+                    sim_time_s=sim_time_before_step_s,
+                    monotonic_now_s=loop_start,
+                )
+                if external_arm_gate.failed:
+                    external_arm_failure_gap = external_arm_gate.failure_gap
+                    break
+                driving = external_arm_gate.acknowledged
+                drive_elapsed_s = _external_arm_drive_elapsed_s(
+                    external_arm_gate,
+                    sim_time_s=sim_time_before_step_s,
+                )
+                if driving and drive_elapsed_s >= duration_s:
+                    motion_interval_completed = True
+                    break
+                if unified_sim_hardware_clock:
+                    drop_sensor_tick = bool(
+                        pacing_controller
+                        and pacing_controller.should_drop_sensor_tick(
+                            sim_time_before_step_s,
+                            monotonic_now_s=loop_start,
+                        )
+                    )
+            if external_arm_gate is None and unified_sim_hardware_clock:
                 sim_elapsed_before_step_s = max(0.0, float(getattr(engine, "sim_time", 0.0)) - sim_start_s)
                 if sim_elapsed_before_step_s >= warmup_s + duration_s:
+                    motion_interval_completed = True
                     break
                 driving = sim_elapsed_before_step_s >= warmup_s
                 drive_elapsed_s = max(0.0, sim_elapsed_before_step_s - warmup_s)
@@ -2409,8 +4206,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         monotonic_now_s=loop_start,
                     )
                 )
-            else:
+            elif external_arm_gate is None:
                 if loop_start >= deadline:
+                    motion_interval_completed = True
                     break
                 driving = loop_start >= drive_start_s
                 drive_elapsed_s = max(0.0, loop_start - drive_start_s) if driving else 0.0
@@ -2440,9 +4238,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             command_norm = math.sqrt(float(cmd.linear_x) ** 2 + float(cmd.linear_y) ** 2 + float(cmd.angular_z) ** 2)
             if driving and (cmd_vel_source is None or command_norm > 1e-4):
                 motion_started = True
-            anchor_active = _start_anchor_active(
+            anchor_active = _sensor_anchor_active(
                 start_anchor,
                 motion_started=motion_started,
+                external_arm_gate=external_arm_gate,
             )
             runtime_stage_profiler.record(
                 "command_input",
@@ -2450,6 +4249,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 float(getattr(engine, "sim_time", 0.0)),
             )
             physics_stage_start = time.monotonic()
+            if mocap_motion is not None:
+                mocap_motion.update(
+                    engine.data,
+                    drive_elapsed_s if driving else 0.0,
+                    wall_s=time.time(),
+                )
             fast_static_clock = anchor_active and drop_sensor_tick
             if fast_static_clock:
                 sim_time_s = _advance_static_engine_clock_for_dropped_tick(
@@ -2500,6 +4305,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 prev_drive_yaw = float(yaw)
                 sim_end_position = position.copy()
                 sim_end_yaw = float(yaw)
+            if parent_diagnostics is not None:
+                parent_diagnostics.record_scheduled("imu")
+                if bool(args.publish_odom_prior):
+                    parent_diagnostics.record_scheduled("odom_prior")
             if drop_sensor_tick:
                 catch_up_stage_start = time.monotonic()
                 if pacing_controller is not None:
@@ -2517,6 +4326,27 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     sim_time_s=sim_time_s,
                 )
                 sequence += dropped_lidar_frames
+                if parent_diagnostics is not None:
+                    parent_diagnostics.record_catchup_drop("imu")
+                    if bool(args.publish_odom_prior):
+                        parent_diagnostics.record_catchup_drop("odom_prior")
+                    if dropped_lidar_frames > 0:
+                        parent_diagnostics.record_scheduled("cloud", dropped_lidar_frames)
+                        parent_diagnostics.record_catchup_drop("cloud", dropped_lidar_frames)
+                        parent_diagnostics.record_deadline_skip("cloud", dropped_lidar_frames)
+                        if navigation_fixture:
+                            parent_diagnostics.record_scheduled(
+                                "registered_cloud",
+                                dropped_lidar_frames,
+                            )
+                            parent_diagnostics.record_catchup_drop(
+                                "registered_cloud",
+                                dropped_lidar_frames,
+                            )
+                            parent_diagnostics.record_deadline_skip(
+                                "registered_cloud",
+                                dropped_lidar_frames,
+                            )
                 if pacing_controller is not None:
                     pacing_controller.record_lidar_frame_drops(dropped_lidar_frames)
                     pacing_controller.yield_if_due()
@@ -2550,9 +4380,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             _apply_imu_acc_axis_scale(imu, imu_acc_axis_scale)
             _apply_imu_gyro_axis_scale(imu, imu_gyro_axis_scale)
+            if parent_diagnostics is not None:
+                parent_diagnostics.record_generated("imu")
             if publisher.stdin is None:
                 raise RuntimeError("native publisher stdin closed")
-            _write_native_imu(publisher.stdin, imu, imu_sequence)
+            _write_native_imu(
+                publisher.stdin,
+                imu,
+                imu_sequence,
+                parent_diagnostics=parent_diagnostics,
+                async_batch=publisher_batch,
+            )
             sensor_counts[TOPICS.imu] += 1
             imu_sequence += 1
             if bool(args.publish_odom_prior):
@@ -2560,6 +4398,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     state.position,
                     sensor_ts_s,
                 )
+                if parent_diagnostics is not None:
+                    parent_diagnostics.record_generated("odom_prior")
                 _write_native_odom_prior(
                     publisher.stdin,
                     state,
@@ -2567,6 +4407,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     odom_prior_sequence,
                     velocity=odom_prior_velocity,
                     has_velocity=odom_prior_velocity_valid,
+                    parent_diagnostics=parent_diagnostics,
+                    async_batch=publisher_batch,
                 )
                 sensor_counts[TOPICS.odom_prior] += 1
                 odom_prior_sequence += 1
@@ -2596,6 +4438,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 sim_time_s + 1e-9 >= next_lidar_sim_s if unified_sim_hardware_clock else loop_start >= next_lidar_s
             )
             if lidar_due:
+                if parent_diagnostics is not None:
+                    parent_diagnostics.record_scheduled("cloud")
+                    if navigation_fixture:
+                        parent_diagnostics.record_scheduled("registered_cloud")
                 lidar_frame_stage_start = time.monotonic()
                 scan_start_sim_s = max(0.0, sim_time_s - lidar_period_s)
                 scan_start_wall_s = wall_ts_s - min(lidar_period_s, max(0.0, sim_time_s - scan_start_sim_s))
@@ -2645,7 +4491,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     scan_duration_ns=scan_duration_ns,
                     offset_time_ns=(relative_times_s * 1_000_000_000).astype(np.uint64),
                 )
-                _write_native_scan(publisher.stdin, scan)
+                if parent_diagnostics is not None:
+                    parent_diagnostics.record_generated("cloud")
+                _write_native_scan(
+                    publisher.stdin,
+                    scan,
+                    parent_diagnostics=parent_diagnostics,
+                    async_batch=publisher_batch,
+                )
                 sensor_counts[TOPICS.lidar_scan] += 1
                 sequence += 1
                 if navigation_fixture:
@@ -2653,18 +4506,36 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         _world_xyzi_to_body_xyzi(world_points, state),
                         navigation_fixture_cloud_points,
                     )
+                    if parent_diagnostics is not None:
+                        parent_diagnostics.record_generated("registered_cloud")
                     _write_native_registered_cloud(
                         publisher.stdin,
                         body_points,
                         timestamp_ns=int(scan_start_timestamp_s * 1_000_000_000),
                         sequence=registered_cloud_sequence,
+                        parent_diagnostics=parent_diagnostics,
+                        async_batch=publisher_batch,
                     )
                     sensor_counts[TOPICS.registered_cloud] += 1
                     registered_cloud_sequence += 1
                 if unified_sim_hardware_clock:
                     next_lidar_sim_s += lidar_period_s
+                    skipped_lidar_deadlines = 0
                     while next_lidar_sim_s <= sim_time_s - 1e-9:
                         next_lidar_sim_s += lidar_period_s
+                        skipped_lidar_deadlines += 1
+                    if parent_diagnostics is not None and skipped_lidar_deadlines > 0:
+                        parent_diagnostics.record_scheduled("cloud", skipped_lidar_deadlines)
+                        parent_diagnostics.record_deadline_skip("cloud", skipped_lidar_deadlines)
+                        if navigation_fixture:
+                            parent_diagnostics.record_scheduled(
+                                "registered_cloud",
+                                skipped_lidar_deadlines,
+                            )
+                            parent_diagnostics.record_deadline_skip(
+                                "registered_cloud",
+                                skipped_lidar_deadlines,
+                            )
                 else:
                     next_lidar_s = loop_start + lidar_period_s
                 runtime_stage_profiler.record(
@@ -2769,13 +4640,35 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     sim_time_s,
                 )
             if goal_reached_this_tick:
+                if async_publisher is not None:
+                    publisher_flush_stage_start = time.monotonic()
+                    _commit_native_publisher_batch(
+                        publisher.stdin,
+                        publisher_batch,
+                        async_publisher=async_publisher,
+                        parent_diagnostics=parent_diagnostics,
+                    )
+                    if publisher.poll() is not None:
+                        raise RuntimeError(
+                            f"native DDS sensor publisher exited: {publisher.returncode}"
+                        )
+                    runtime_stage_profiler.record(
+                        "publisher_flush",
+                        time.monotonic() - publisher_flush_stage_start,
+                        sim_time_s,
+                    )
                 goal_reached_early = True
                 loop_end = time.monotonic()
                 runtime_stage_profiler.record("loop_total", loop_end - loop_start, sim_time_s)
                 previous_loop_end_wall_s = loop_end
                 break
             publisher_flush_stage_start = time.monotonic()
-            publisher.stdin.flush()
+            _commit_native_publisher_batch(
+                publisher.stdin,
+                publisher_batch,
+                async_publisher=async_publisher,
+                parent_diagnostics=parent_diagnostics,
+            )
             if publisher.poll() is not None:
                 raise RuntimeError(f"native DDS sensor publisher exited: {publisher.returncode}")
             runtime_stage_profiler.record(
@@ -2796,7 +4689,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             runtime_stage_profiler.record("loop_total", loop_end - loop_start, sim_time_s)
             previous_loop_end_wall_s = loop_end
-        if motion_complete_marker is not None:
+        if motion_complete_marker is not None and (
+            external_arm_gate is None or motion_interval_completed or goal_reached_early
+        ):
             _write_motion_complete_marker(
                 motion_complete_marker,
                 sim_time_s=last_sim_time_s,
@@ -2808,6 +4703,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 last_sim_time_s,
                 monotonic_now_s=time.monotonic(),
             )
+        if parent_diagnostics is not None:
+            parent_diagnostics.update_scheduler_pacing(pacing_stats)
         if cmd_vel_source is not None:
             try:
                 cmd_vel_source.close()
@@ -2828,7 +4725,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 planner_debug_writer_diagnostics = planner_debug_writer.diagnostics()
                 cleanup_errors.append(f"planner_debug_log_cleanup_failed:{type(exc).__name__}:{exc}")
         try:
-            publisher_cleanup = _finish_native_publisher(publisher)
+            publisher_cleanup = _cleanup_native_publisher(
+                publisher,
+                async_publisher=async_publisher,
+                async_shutdown_s=async_publisher_shutdown_s,
+            )
         except Exception as exc:
             cleanup_errors.append(f"publisher_cleanup_failed:{type(exc).__name__}:{exc}")
             publisher_cleanup = {
@@ -2836,6 +4737,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "clean": False,
                 "errors": [cleanup_errors[-1]],
             }
+        if parent_diagnostics is not None:
+            parent_diagnostics.force_publish(parent_diagnostics.final_reason)
         if viewer is not None:
             try:
                 viewer.close()
@@ -2871,6 +4774,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         drive_mode=str(args.drive_mode),
         allow_kinematic_fastlio_acceptance=bool(args.allow_kinematic_fastlio_acceptance),
     )
+    if external_arm_gate is not None:
+        external_gap = external_arm_failure_gap or external_arm_gate.failure_gap
+        if external_gap:
+            gaps.append(external_gap)
+        elif not external_arm_gate.acknowledged:
+            gaps.append("external_arm_acknowledgement_missing")
+        elif not (motion_interval_completed or goal_reached_early):
+            gaps.append("external_arm_motion_interval_incomplete")
     if str(args.command_source) == "dds":
         if bool(cmd_vel_stats.get("failed_before_close")):
             gaps.append("native_cmd_vel_tap_failed")
@@ -2918,6 +4829,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         timestamp_clock=str(args.timestamp_clock),
     )
     report["warmup_s"] = warmup_s
+    report["external_arm"] = (
+        external_arm_gate.snapshot()
+        if external_arm_gate is not None
+        else _external_arm_disabled_report()
+    )
+    report["motion_interval_completed"] = motion_interval_completed
     report["start_anchor"] = start_anchor
     report["start_anchor_xyz"] = [float(value) for value in anchor_position[:3]]
     report["settle_s"] = settle_s
@@ -2958,6 +4875,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["publish_odom_prior"] = bool(args.publish_odom_prior)
     report["navigation_fixture"] = navigation_fixture
     report["navigation_fixture_cloud_points"] = navigation_fixture_cloud_points
+    report["mocap_motion"] = (
+        mocap_motion.stats()
+        if mocap_motion is not None
+        else {"enabled": False}
+    )
     report["odom_prior_velocity_source"] = "robust_pose_window"
     report["odom_prior_velocity_window_s"] = float(args.odom_prior_velocity_window_s)
     report["odom_prior_velocity"] = odom_prior_velocity_estimator.stats()
@@ -2969,6 +4891,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     report["lidar_timestamp_clock"] = str(args.lidar_timestamp_clock or args.timestamp_clock)
     report["clock_profile"] = "sim_hardware" if unified_sim_hardware_clock else "legacy_split_or_wall"
     report["sim_hardware_realtime_factor"] = float(args.sim_hardware_realtime_factor)
+    report["native_clock_alignment"] = native_clock_alignment
     report["sim_hardware_pacing"] = pacing_stats
     report["sim_elapsed_s"] = max(0.0, float(last_sim_time_s) - float(sim_start_s))
     report["effective_publish_hz"] = {
@@ -2998,7 +4921,16 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    parent_diagnostics: ParentSensorDiagnostics | None = None
     try:
+        parent_diagnostics_path = str(getattr(args, "parent_diagnostics_json", "") or "")
+        if parent_diagnostics_path:
+            parent_diagnostics = ParentSensorDiagnostics(
+                Path(parent_diagnostics_path),
+                period_s=float(args.parent_diagnostics_period_s),
+            )
+            setattr(args, "_parent_diagnostics", parent_diagnostics)
+            parent_diagnostics.install_signal_handlers()
         report = run(args)
     except Exception as exc:
         report = _make_report(
@@ -3014,6 +4946,11 @@ def main(argv: list[str] | None = None) -> int:
             timestamp_clock=str(getattr(args, "timestamp_clock", "") or ""),
             error=str(exc),
         )
+    finally:
+        if parent_diagnostics is not None:
+            if parent_diagnostics.last_published_reason != parent_diagnostics.final_reason:
+                parent_diagnostics.force_publish(parent_diagnostics.final_reason)
+            parent_diagnostics.restore_signal_handlers()
     text = json.dumps(report, ensure_ascii=True, indent=2, sort_keys=True)
     if args.json_out:
         out = Path(args.json_out)

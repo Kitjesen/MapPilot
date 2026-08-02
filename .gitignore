@@ -36,6 +36,8 @@ venv/
 env/
 .venv/
 .pytest_cache/
+.pytest-*/
+.pytest_tmp*/
 .ruff_cache/
 .pytest-tmp-map/
 .tmp_pytest/
@@ -73,17 +75,20 @@ src/maps/build*/
 src/localization/slam/cpp/build*/
 src/nav/services/plan/**/build/
 src/nav/services/plan/**/CMakeFiles/
-/src/nav/inspection/build_review/
 
 # Accidental root-level CMake/configure output and local diagnostics.
 / -DCMAKE_BUILD_TYPE=Release/
 /CMakeFiles/
+/Testing/
 /C*Users99563/
 /qos_smoke.txt
 /qos_test_out.txt
 /.codex/visualizations/
 /.codex/
 /.codex_tmp/
+/.codex-*/
+/tmp/
+/tmp-review-*/
 
 # Third-party calibration sample datasets and rendered paper assets. Keep the
 # calibration source/build files, but do not vendor hundreds of MiB of media.
@@ -207,7 +212,6 @@ sim/datasets/legkilo_all/
 
 # 鈹€鈹€ Research reference repos (clone manually, see research/README.md) 鈹€鈹€
 research/semantic_map_refs/
-research/core_planner/
 !research/README.md
 
 # Local outputs from the vehicle parking research package. Keep the package

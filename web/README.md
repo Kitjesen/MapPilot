@@ -1,10 +1,18 @@
 # LingTu Web Dashboard
 
-Status: current Web dashboard contract as of 2026-07-18.
+Status: current Web dashboard contract as of 2026-07-25.
 
-LingTu Web Dashboard is the operator UI for the robot-side Gateway. It shows session state, localization, SLAM, live scene data, saved maps, point clouds, and safe command controls.
+LingTu Web Dashboard is the operator UI for the robot-side Gateway. Its default job is to supervise repeatable field-inspection missions, expose trustworthy evidence, and support safe takeover or recovery.
 
-The dashboard's primary contract is Gateway bootstrap plus runtime dataflow over ModulePorts. Operators do not need to inspect ROS 2 topics directly; ROS 2, GZ, and simulation topics are endpoint adapter or bridge details.
+The dashboard's contract is the Gateway API. Field status reaches Gateway through HostBus/native ABI; ModulePorts are only an in-Host detail. Operators do not inspect ROS 2 topics directly.
+
+## Inspection-First Product Contract
+
+The primary workflow is task → route → point → evidence → review or reinspection. The Web surface should answer what the robot is doing, whether it is safe, who owns motion, and what the operator must do next. Process names, transports, topics, and tuning belong in advanced diagnostics.
+
+The current verified inspection evidence is route, point, action, timestamp, RGB, pose, and detections. Thermal, gas, acoustic or partial-discharge sensing, trend analysis, automatic reports, and work-order integration are target capabilities; do not present them as delivered until Gateway/runtime contracts and field evidence exist.
+
+Operators may work in strong sunlight, low light, gloves, dust, rain, cold, GPS-denied spaces, weak connectivity, and outside direct sight of the robot. Motion controls therefore require explicit intent, visible control ownership, actionable blockers, and feedback that distinguishes command acceptance from physical outcome.
 
 ## Run Locally
 
@@ -52,26 +60,42 @@ Important current links include:
 | --- | --- |
 | `events` | SSE telemetry stream |
 | `cloud_ws`, `camera_ws` | point cloud and camera WebSocket streams |
-| `runtime_dataflow`, `runtime_dataflow_topic`, `runtime_dataflow_subscribe` | Module-first dataflow summary, one-stream inspection, and read-only Gateway SSE subscription plan |
-| `runtime_switch_plan` | Read-only dry-run sim/replay/real runtime endpoint switch preflight |
-| `runtime_switch` | Product mode switch request; defaults to plan-only and requires explicit restart permission |
+| `runtime_dataflow`, `runtime_dataflow_topic`, `runtime_dataflow_subscribe` | Read-only motion-path/topic observability and Gateway SSE subscription plan |
+| `runtime_switch_plan` | Read-only Product switch preview in the current `env`; returns the exact ProductControl command |
 | `visual_servo` | Hot target switch for find/follow/stop inside profiles that load `VisualServoModule` |
 | `field_check` | Backend product verdict for field/simulation/non-motion readiness |
-| `inspection_acceptance` | Read-only patrol acceptance summary over saved locations and plan previews |
+| `inspection_acceptance` | Read-only no-motion acceptance summary over saved locations and plan previews |
+| `inspection_routes`, `inspection_route_detail` | persisted inspection route list, create/update, detail, and delete |
+| `inspection_tasks`, `inspection_task_status`, `inspection_task_pause`, `inspection_task_resume`, `inspection_task_cancel` | one task-addressed inspection lifecycle: submit, read native facts, and request control for that exact task |
+| `inspection_status` | native route-store and evidence-worker readiness; not task lifecycle truth |
 | `session`, `session_start`, `session_end` | mapping, navigation, exploration lifecycle |
 | `navigation_status`, `navigation_plan`, `navigation_cancel` | planning and autonomy status |
 | `goal`, `stop` | navigation goal and stop command |
-| `maps`, `map_activate`, `map_save`, `map_points` | map list, active map, save, PCD points |
+| `maps`, `map_activate`, `map_save`, `map_points` | map list, active map, save, live accumulated cloud JSON points |
 | `slam_status`, `slam_switch`, `slam_relocalize`, `slam_auto_relocalize` | SLAM mode and relocalization |
 | `routecheck_latest` | latest no-motion route preflight evidence for readiness diagnostics |
 | `real_runtime_evidence_latest` | latest real S100P runtime evidence for explicit field-mode status |
 | `algorithm_benchmark_latest` | latest read-only DimOS/algorithm benchmark artifact gate |
 
-The Dataflow tab uses `runtime_dataflow` for the read-only product stream table, runtime stage evidence, `runtime_dataflow_topic` for one-stream evidence, `runtime_dataflow_subscribe` to discover the filtered Gateway SSE URL for a whitelisted stream, `runtime_switch_plan` for dry-run sim-to-real endpoint preflight, and the backend `field_check` algorithm verdict derived from `algorithm_benchmark_latest`. Its Product Check strip reads the backend `field_check` verdict in simulation mode by default, so PASS/FAIL stays aligned with Gateway acceptance rather than being recomputed in the browser. Field mode remains explicit when real S100P evidence is being reviewed. It must remain an observation surface: no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion command bypass.
+The Dataflow tab uses `runtime_dataflow` only as a read-only view of the declared motion path, Product topics, and currently visible Gateway evidence. It does not orchestrate processes or motion. `runtime_dataflow_topic` inspects one stream, `runtime_dataflow_subscribe` discovers its filtered Gateway SSE URL, and `runtime_switch_plan` previews a Product switch inside the current `env`. The Product Check strip uses the backend `field_check` verdict instead of recomputing it in the browser. There is no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion bypass.
 
-The Runtime tab is the operator-facing switch UI. It calls `runtime_switch` with `execute=false` for Preflight and `execute=true` only when the operator presses Execute Switch. Cold-restart modes require the explicit "Allow cold restart of robot-side services" toggle before Execute Switch is enabled. Navigation-like modes (`tracking`, `nav`, `inspection`) still depend on the backend plan to decide whether the current graph supports hot switch. The same tab exposes `visual_servo` find/follow/stop; `find` and `follow` remain motion-capable commands guarded by Gateway safety policy, while `stop` only releases visual-servo ownership.
+Saved-map previews use saved-map JSON points separately from raw saved-map PCD; `/api/v1/maps/{name}/pcd` is the raw PCD endpoint.
 
-The Inspection tab uses `inspection_acceptance` for the backend verdict. It displays the Gateway-built summary, blockers, and per-point preview status; the UI must not recompute PASS/FAIL locally or publish any movement command.
+The Runtime tab is a read-only Product switch preview. It calls
+`runtime_switch_plan`, displays the resolved RunPlan and blockers, and copies
+the exact `python -m lingtu.control switch ...` command for the operator.
+Gateway and the browser never execute Product switching or systemd actions.
+The same tab exposes `visual_servo` find/follow/stop; `find` and `follow`
+remain motion-capable commands guarded by Gateway safety policy, while `stop`
+only releases visual-servo ownership.
+
+The Inspection tab mounts `InspectionWorkbench`. It lists persisted routes and recently retained tasks, lets the operator explicitly select the task being inspected, loads route revisions, builds routes only from locations bound to the selected map revision, saves or deletes routes, submits a persisted revision as one `task_id`, and shows the bounded native event timeline for that exact task. SSE causes an immediate task refresh but does not itself become task authority. Route editing is no-motion; start and resume are motion-capable; pause and cancel are state-changing controls that reduce or stop motion.
+
+If manual takeover paused a task, the console shows a separate “Release manual control” action. That releases the safety-plane latch only; it never resumes the inspection task implicitly. The operator then submits the selected task's resume command and waits for a native event. A native command rejection is shown as a task conflict, not as a false claim that the endpoint is down.
+
+The dashboard can rehydrate an unresolved task only from Gateway's bounded, process-local projection. After a Gateway or endpoint restart it must show the continuity interruption and keep task controls disabled until native truth is available; there is not yet a durable task journal or event replay guarantee. Voice/semantic tour start submits a task, while pause, resume, and cancel require an explicitly selected task in the console rather than guessing a global "current tour".
+
+`inspection_acceptance` remains a read-only, no-motion diagnostic contract and the browser must not recompute its PASS/FAIL verdict. The operator workbench currently shows checksum-verified RGB, pose, and detection artifacts. It must label missing, stale, unsupported, or invalid evidence instead of implying that planned thermal, gas, acoustic, partial-discharge, reporting, or work-order capabilities are already available.
 
 ## Safety Classes
 
@@ -79,7 +103,7 @@ Read-only UI actions:
 
 - Open dashboard, status cards, topbar, Scene view, Map preview, SLAM status.
 - Open the Dataflow tab and inspect runtime stream summary/detail.
-- Open the Inspection tab and run the read-only patrol acceptance check.
+- Open the Inspection tab to review route definitions, current mission status, and verified evidence; run the separate read-only acceptance diagnostic.
 - Open the Runtime tab and run product switch Preflight.
 - SSE `/api/v1/events`, point cloud `/ws/cloud`, camera `/ws/camera`.
 - Gateway bootstrap, health, readiness, runtime dataflow, map list, map points, navigation status.
@@ -88,6 +112,8 @@ State-changing but no robot motion:
 
 - Start or end mapping/navigation/exploration session.
 - Save, activate, rename, or delete a map.
+- Create, update, or delete an inspection route.
+- Pause or cancel an inspection mission; these controls may reduce or stop existing motion but never initiate it.
 - Switch SLAM mode.
 - Manual or auto relocalization.
 - Reset accumulated map cloud.
@@ -98,10 +124,13 @@ Robot motion capable:
 
 - Send navigation goal from Scene view or slash command.
 - Start exploration after safety/session gates pass.
+- Start or resume a persisted inspection route revision.
 - Teleop or any command that enters autonomous motion.
 - Execute a product mode that starts an exploration/navigation behavior, or send Visual Servo `find`/`follow`.
 
-The UI now confirms map activation and saved-map load/relocalize. Goal sending is disabled when Gateway reports readiness blockers, localization loss, missing odometry, or an active command source.
+The UI confirms map activation and saved-map load/relocalize. Goal and inspection motion controls must remain disabled when Gateway reports readiness blockers, localization loss, missing odometry, unsupported evidence actions, or an incompatible control owner.
+
+Command acceptance is not physical outcome confirmation. A command toast reports submitted, rejected, or failed; task state must then be confirmed by the native inspection event stream. In particular, `CANCELLED` is valid only after the native endpoint records its stop evidence.
 
 State-changing communication is limited to Gateway's whitelisted commands, such as goal, stop, session, map, and SLAM operations. The dashboard must not provide arbitrary publish into ModulePorts or ROS topics.
 
@@ -144,7 +173,7 @@ npm run build
 ```
 
 `npm run smoke:gateway` is intentionally not part of build because it requires a live Gateway.
-`npm run smoke:dataflow-ui` is a dependency-free static contract check for the read-only Dataflow and Inspection tabs.
+`npm run smoke:dataflow-ui` is a dependency-free static contract check for the read-only Dataflow and inspection-acceptance surfaces.
 
 ## Source Map
 
@@ -156,8 +185,9 @@ npm run build
 | `src/components/SceneView.tsx` | 3D scene, goal placement, saved map drawer, map/SLAM actions |
 | `src/components/MapView.tsx` | saved map CRUD and point cloud preview |
 | `src/components/SlamPanel.tsx` | session lifecycle, SLAM state, relocalization controls |
-| `src/components/RuntimeDataflowView.tsx` | read-only Gateway/ModulePort runtime dataflow inspection |
-| `src/components/InspectionAcceptanceView.tsx` | read-only patrol acceptance result from Gateway |
+| `src/components/RuntimeDataflowView.tsx` | read-only Product motion/topic observability |
+| `src/components/InspectionWorkbench.tsx` | persisted inspection route editing, native mission control, status, and verified evidence review |
+| `src/components/InspectionAcceptanceView.tsx` | internal read-only, no-motion inspection acceptance diagnostic |
 | `scripts/gateway-smoke.mjs` | read-only Gateway contract smoke |
 
 ## Notes
@@ -165,4 +195,4 @@ npm run build
 - Keep command buttons bound to Gateway readiness, session gates, and control ownership.
 - Keep no-motion actions explicit and confirmed when they alter robot state.
 - Do not send a navigation goal until localization is tracking and `/ready` is 200.
-- Treat ROS 2/GZ/simulation topics as endpoint adapter details; the dashboard entry point remains Gateway plus runtime dataflow.
+- Treat ROS 2/GZ/simulation topics as adapter details; the dashboard entry point remains the Gateway API.

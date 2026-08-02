@@ -18,7 +18,7 @@ LingTu topics are runtime stream names, not ROS 2 topics.
 Do not write or ship Python SLAM. MuJoCo may simulate the robot, MID-360 raw
 frames, and IMU, but pose estimation, map building, and saved-map
 relocalization must come from the same native C++ SLAM/localization runtime used
-on the robot (`lingtu_slam_cyclone_runtime` / `lingtu-slam-dds.service`) or an
+on the robot (`slamd` / `lingtu-slam-dds.service`) or an
 explicit external native SLAM service. Python code may adapt streams, status,
 reports, and test evidence only; it must not become a SLAM backend.
 
@@ -39,7 +39,7 @@ Windows/WSL `CLOCK_REALTIME` steps. Real MID-360 input uses neither replay mode.
 | Field OctoPlanner3D global planner | direct C++ call inside `navd` | `PlanRequest` / `PlanResult` in memory | no |
 | Dev/compat OctoPlanner3D wrapper | subprocess stdin/stdout | JSON request/result | no |
 | Map artifact conversion | subprocess + files | `map.pcd` to `octomap.ot` | no |
-| Command output to Thunder brainstem | typed DDS then native `lingtu-driver` gRPC client | `TwistStamped` to Brainstem `WalkChecked(seq, Vector3)` | no |
+| Command output to Thunder brainstem | typed DDS then native `lingtu-driver` gRPC client | `FinalVelocityCommand` to Brainstem `WalkChecked(seq, Vector3)` | no |
 
 Default internal wiring is callback delivery:
 
@@ -77,22 +77,22 @@ LingTu `/nav/cmd_vel` becomes DDS `rt/nav/cmd_vel`.
 | traversability -> nav | `/nav/traversability` | `lingtu.dds.OccupancyGrid` | local terrain risk grid |
 | traversability -> nav | `/nav/terrain_map` | `lingtu.dds.PointCloud2` | planner terrain points `(x,y,z,height)` |
 | traversability -> diagnostics | `/nav/terrain_map_ext` | `lingtu.dds.PointCloud2` | diagnostics-only terrain overlay |
-| nav -> UI/recorders | `/nav/global_path` | `lingtu.dds.Path` | accepted OctoPlanner3D path |
+| nav -> UI/recorders | `/nav/global_path` | `lingtu.dds.Path` | accepted saved-map path or live exploration segment |
 | nav -> UI/recorders | `/nav/local_path` | `lingtu.dds.Path` | current local-plan telemetry, not an internal follower input |
 | nav -> UI/recorders | `/nav/way_point` | `lingtu.dds.PoseStamped` | current look-ahead target |
-| nav -> Thunder driver | `/nav/cmd_vel` | `lingtu.dds.TwistStamped` | final post-gate command; nav endpoint is the single writer |
+| nav -> Thunder driver | `/nav/cmd_vel` | `lingtu.dds.FinalVelocityCommand` | identity-bound final post-gate command; nav endpoint is the single writer |
 
 Natural-language instructions are not a robot DDS topic. Gateway and MCP feed
 `SemanticPlanner` in-process; only its resolved goal enters the typed C++ DDS
-command request. The legacy goal/cancel/teleop topics remain read-only
-compatibility inputs and are not written by the product client.
+command request. Field Products expose no secondary goal, cancel, or teleop
+command topic.
 
-The Thunder field service sets `LINGTU_NAV_COMMANDS_REQUIRED=1` and
-`LINGTU_TELEOP_CMD_DDS=1`. If the persistent native command client is missing
-or the endpoint does not acknowledge a request, Gateway rejects it. It never
-falls back to Python `goal_pose` or `cmd_vel` publication in the field profile.
-Local callback fallbacks exist only when a dev/sim/compat profile explicitly
-leaves those field requirements disabled.
+The Thunder field service sets `LINGTU_NAV_COMMANDS_REQUIRED=1` and carries
+`command_output_mode=endpoint_only` in the Product declaration/RunPlan contract.
+If the persistent native command client is missing or the endpoint does not acknowledge a request,
+Gateway rejects it. It never falls back to Python `goal_pose` or `cmd_vel`
+publication in a field Product. Local publication exists only in a local or
+simulation Host whose compiled mode is `local_driver`.
 
 ## Product Command Chains
 
@@ -205,19 +205,23 @@ rotation/back-up recovery.
 
 ### Other Goal Producers
 
-Inspection, patrol, object tracking, and TARE/frontier exploration do not own a
+Inspection, patrol, object tracking, and exploration do not own a
 second motion stack. They select lifecycle actions, the next goal, or an
 explicit path, then reuse the autonomous chain above:
 
 ```text
-inspection/patrol scheduler  -> /nav/inspection/command -> native inspection executor -> autonomous chain
+inspection/patrol scheduler  -> /nav/inspection/task/request -> native inspection executor -> autonomous chain
 TARE exploration lifecycle  -> /nav/exploration/command -> native ExploreControl -> /nav/exploration/ack
-TARE selected goal           -> NavigationCommandClient -> typed goal request -> autonomous chain
+saved-map exploration        -> selected target -> typed Goal -> GlobalPlanner -> local chain
+map-free exploration         -> selected target -> typed live segment -> rolling planner -> local chain
 semantic instruction         -> SemanticPlanner -> resolved goal -> typed request -> autonomous chain
 explicit tracking path       -> /nav/global_path -> NavLoop -> LocalPlanner -> PathFollower
 ```
 
-For `tare_explore`, the native exploration endpoint starts idle. A fresh
+For `explore --map MAP`, the native exploration endpoint uses route `Map`. For
+`explore` without a map, it uses route `Live` and does not call GlobalPlanner.
+The endpoint
+starts idle. A fresh
 map-frame START command and fresh odometry, TF, and identity-versioned rolling
 occupancy snapshot are required before it can choose a goal. Duplicate request
 IDs replay the cached ACK without repeating state changes. PAUSE and STOP cancel
@@ -236,7 +240,7 @@ lingtu_nav_control explore stop operator_stop --request-id field-stop
 ```
 
 Mapping is different: LiDAR/IMU -> SLAM -> `map.pcd` -> map artifacts. The map
-profile does not start the nav endpoint and does not publish motion commands.
+Product does not start the nav endpoint and does not publish motion commands.
 
 ### Stop, Loss, And Cache-Control Chains
 
@@ -296,79 +300,59 @@ the Thunder field command path when `lingtu-nav-dds.service` owns navigation.
 | 24 | LocalPlanner | PathFollower | control hint | `dict` | callback |
 | 25 | PathFollower | CmdVelMux | autonomous velocity | `Twist` | callback |
 | 26 | Teleop / VisualServo / Navigation recovery | CmdVelMux | override or recovery velocity | `Twist` | callback |
-| 27 | command arbiter | native `driver` | final velocity | DDS `TwistStamped` | DDS |
+| 27 | command arbiter | native `driver` | final velocity | DDS `FinalVelocityCommand` | DDS |
 | 28 | native `driver` | Brainstem | sequence-checked normalized walk command | gRPC `WalkChecked(seq, Vector3)` | gRPC |
 | 29 | SafetyRing / Geofence | Navigation and driver | stop command | `int` (`0`, `1`, `2`) | callback |
 
 ## Live Map Cloud Cleanup
 
-LingTu now uses column carving on the live map cloud path. The goal is the same
-operator-facing behavior as the DimOS/Unitree-style sparse voxel view without
-making Open3D or ROS part of the runtime contract.
+The field live-map path is native and scan-synchronous. It does not reconstruct
+ray origins from a later odometry sample and it does not send the high-rate map
+hot path through Gateway.
 
 ```text
-/slam/map_cloud
-  -> VoxelGridModule: CPU voxel hash, 5-15 cm class resolution, XY column replace
-  -> /maps/scene + /maps/voxel_cloud + voxel_map stats
+/slam/map_observation
+  -> mapd: reset_epoch + sequence admission
+  -> range/z filtering + voxel insertion + bounded column carving + decay
+  -> /maps/state + /maps/scene + non-control map layers
+  -> HostBus -> Gateway viewer
 
-/slam/map_cloud
-  -> GatewayModule: raw display fallback only when no clean map layer is fresh
-  -> voxel downsample + hit-count dynamic filter
-  -> /ws/cloud binary point cloud + small SSE metadata
-
-VoxelGridModule.scene
-  -> GatewayModule.map_scene
-  -> /ws/cloud binary point cloud + small SSE metadata
-
-VoxelGridModule.voxel_cloud
-  -> GatewayModule.voxel_cloud legacy compatibility input
-  -> /ws/cloud binary point cloud + small SSE metadata
+/slam/registered_cloud + /slam/odometry
+  -> standalone traversability rolling layer
+  -> /nav/traversability
+  -> navd planner safety
 ```
 
 Rules:
 
-- In `mapping` and `exploring`, a newly observed `(x, y)` voxel column replaces
-  old `z` voxels in that column before the new frame is inserted. This clears
-  stale people, old obstacle surfaces, and map smear when LiDAR revisits space.
-- In `navigating` and `idle`, Gateway does not accumulate; it keeps the latest
-  scan because saved-map visualization is the stable base layer.
-- `VoxelGridModule` enables `column_carving` by default. Stack config can set
-  `voxel_column_carving=false` or `voxel_grid.column_carving=false` for tests
-  that need pure accumulation.
-- Gateway does not own column carving. It prefers a fresh clean map layer for
-  `LINGTU_CLEAN_MAP_LAYER_PREFER_S` seconds and uses raw `map_cloud` only as a
-  compatibility fallback.
-- `VoxelGridModule` defaults to a 5 cm voxel edge. Gateway's browser-facing
-  accumulator defaults to 15 cm for memory/bandwidth safety; set
-  `LINGTU_MAP_VIEWER_VOXEL_SIZE=0.05` when the operator view should mirror a
-  5 cm preprocessed Unitree/DimOS-style stream.
-- This is a ROS-free native C++ implementation exposed through thin Module
-  ports. It is not Open3D `VoxelBlockGrid`; the contract is the behavior, not
-  that dependency.
-- Runtime local-planner ghost suppression and saved-map cleanup are separate
-  stages. Runtime suppression belongs in `lingtu_traversability_dds`:
-  `nav_kernel::TerrainAnalysisCore` builds the current terrain product and
-  `nav_kernel::DynamicClearCore` removes stale rolling residues using current
-  hits, short TTL evidence, and raycast free-space evidence while keeping current
-  obstacles in `rt/nav/traversability`. Save-time cleanup belongs in
-  `src/maps/prune/cpp/prune`: it is optional offline map-asset cleanup for
-  persistent `map.pcd`, not the realtime dynamic obstacle solution.
-- The C++ `lingtu-nav-dds` endpoint owns a second, shorter-horizon realtime
-  `MotionLayer` for planner safety. It consumes the current registered cloud
-  plus terrain products, ray-clears from the configured LiDAR origin
-  (`body pose + LINGTU_NAV_SENSOR_OFFSET_X/Y/Z_M`), exposes explicit sparse
-  cell states (`Unknown`, `Free`, `Occupied`, `Static`, `Cleared`), and keeps
-  moving-object classification as a separate current-frame track label. A
-  moving candidate must occupy space that was repeatedly observed free, move
-  consistently for several frames, and remain inside configured speed and
-  height limits. Current moving objects remain planner obstacles; only stale
-  residues are cleared. The exact planner-used state is published in
-  `/dev/shm/lingtu/nav_endpoint_status.json`.
+- `MapObservation` carries the accepted incremental scan, exact
+  `map <- sensor` pose, sensor origin, timestamp, `reset_epoch`, and sequence.
+  mapd rejects duplicate, stale, malformed, or oversized observations.
+- An epoch change atomically clears realtime map state so old obstacles cannot
+  survive a SLAM reset or map-frame discontinuity.
+- Column carving is restricted to a configured sensor-relative height band;
+  it must not clear a different floor sharing the same XY column.
+- Decay runs from an independent clock, so stale display cells can expire even
+  after input stops. Live voxel, accumulated-grid, snapshot, and serialized
+  scene sizes have configured hard limits and expose rejection counters.
+- `/maps/scene` is visualization/state data. `/nav/traversability` remains the
+  sole control-risk map and has one standalone native writer.
+- Gateway consumes the coherent native scene. Raw cloud accumulation and
+  Python `VoxelGridModule` remain development/simulation compatibility only.
+- The navd endpoint keeps its own short-horizon collision/motion state. It may
+  consume the current registered cloud and traversability product, but it must
+  not become a persistent map manager.
+- Save-time cleanup under `src/maps/prune/cpp` is a separate persistent-artifact
+  operation. It cannot substitute for realtime decay or obstacle clearing.
 - `src/maps` is the native map domain for reusable spatial products and saved
   map assets: source `map.pcd`, occupancy, OctoMap/voxel artifacts, ESDF,
   traversability artifacts, active-map control, health, and bundle queries.
   It must not own the 20 Hz endpoint-local collision cache. Conversely,
   `MotionLayer` must not become a saved-map asset manager.
+
+Column carving, decay, and bounded storage are implemented contracts, but the
+claim that moving people leave no unacceptable residual still requires the
+named MuJoCo/replay and MID-360 long-run acceptance gates.
 
 ## Gateway Scene Layer Contract
 
@@ -424,7 +408,7 @@ Current implementations:
 - `src/gateway/visualization/rerun_bridge.py` logs `world/point_cloud` as
   Rerun `Points3D` with per-point colors and radii.
 
-For the `thunder_field` product endpoint, the DDS navigation boundary is owned
+For the `nav` Product in `env=real`, the DDS navigation boundary is owned
 by the C++ `lingtu-nav-dds` service, not Python `nav.in` / `nav.out` adapters.
 It subscribes to `rt/nav/command/request`, `rt/slam/odometry`,
 `rt/slam/registered_cloud`, `rt/nav/traversability`,
@@ -432,10 +416,11 @@ It subscribes to `rt/nav/command/request`, `rt/slam/odometry`,
 `rt/nav/command/ack`, `rt/nav/global_path`, `rt/nav/local_path`, `rt/nav/way_point`, and
 `rt/nav/cmd_vel`.
 
-## Sunrise Native Navigation Services
+## Historical Sunrise Service Snapshot (2026-07-05)
 
-This is the current robot-side service map for the sunrise board. These are
-systemd process boundaries, not necessarily one algorithm per service.
+This dated field observation is retained as evidence, not as the current deployment
+contract. Current process ownership comes from Product + env -> RunPlan. These
+were systemd process boundaries, not necessarily one algorithm per service.
 
 | Service | Current state on 2026-07-05 | Responsibility | Inputs | Outputs | Required for `/nav/cmd_vel` |
 | --- | --- | --- | --- | --- | --- |
@@ -446,11 +431,15 @@ systemd process boundaries, not necessarily one algorithm per service.
 | `lingtu-nav-dds.service` | active | Native navigation endpoint: global planning, local planning, path following, DDS output | odometry, TF, goal, traversability, cloud, OctoMap | `/nav/global_path`, `/nav/local_path`, `/nav/way_point`, `/nav/cmd_vel` | yes |
 | `lingtu.service` | active | Python Gateway/API/MCP/task/status process | user/task commands, module state | Gateway `5050`, MCP, navigation command entry | yes for external command entry |
 | `lingtu-driver.service` | product default | Native hardware command sink and Brainstem lease owner | `/nav/cmd_vel` | Brainstem `WalkChecked`, driver control status | no for cmd_vel-only validation; yes for real motion validation |
-| `lingtu-thunder-dds-endpoint.service` | compatibility only | Python endpoint/sink retained for explicit diagnostics | `/nav/cmd_vel` | legacy Brainstem command path | no |
+| `lingtu-thunder-dds-endpoint.service` | compatibility-only historical observation; unit now removed | Historical Python endpoint/sink | `/nav/cmd_vel` | legacy Brainstem command path | no |
 | `robot-brainstem.service` | not found / inactive | Real robot low-level control bridge | hardware command | robot control | no for cmd_vel-only validation |
 | `can-setup.service` | failed | CAN interface setup | none | `can0..can3` available | no for cmd_vel-only validation |
 | `robot-camera.service` | not found / inactive | Camera source | Orbbec/camera hardware | camera streams | no for LiDAR-only navigation; needed for inspection |
-| `lingtu-thunder-lite.service` | not found / inactive | legacy/light Thunder path | mixed | mixed | no |
+
+The Python field unit, installer, and deployment wrapper in that historical
+observation have since been physically removed. Exact legacy unit names remain
+only as stop/conflict cleanup tombstones; local Python DDS diagnostics use
+`PYTHONPATH=src python -m runtime.endpoints.dds.endpoint_runner` directly.
 
 The field navigation process is:
 
@@ -649,7 +638,7 @@ The native chain enforces these invariants:
   detour is checked again along the planned curved path; this final safety gate
   may slow or stop it. No-path is always a zero command with recovery disabled.
 - The same assisted branch is available during latched operator takeover in
-  `tracking`, `nav`, `inspection`, and `tare_explore`. Non-zero teleop first
+  `tracking`, `nav`, `inspection`, and saved-map `explore`. Non-zero teleop first
   cancels/invalidates the old autonomous plan; releasing the deadman does not
   silently restore that plan. Explicit `resume_autonomy` plus a fresh goal/path
   is required.
@@ -690,7 +679,7 @@ DDS domain.
 
 | Direction | Topic | Type | Behavior |
 | --- | --- | --- | --- |
-| subscribe | `/nav/cmd_vel` | `lingtu.dds.TwistStamped` | clamp and integrate body-frame `vx,vy,wz` |
+| subscribe | `/nav/cmd_vel` | `lingtu.dds.FinalVelocityCommand` | validate identity/freshness, clamp, and integrate body-frame `vx,vy,wz` |
 | publish | `/slam/odometry` | `lingtu.dds.Odometry` | simulated `odom -> body` pose |
 | publish | `/tf` | `lingtu.dds.TFMessage` | identity `map -> odom` |
 | file | status JSON | `lingtu.motion_mock.status.v1` | pose, last command, counters |
@@ -1020,7 +1009,7 @@ PathFollower.cmd_vel
   -> compatibility driver sink
 ```
 
-The physical `thunder_field` profile does not use this Python command chain;
+The `nav` Product in `env=real` does not use this Python command chain;
 the C++ command chain is:
 
 ```text

@@ -28,9 +28,14 @@ class DdsRuntime;
 struct EndpointState;
 class NavInputStateProjector;
 class GoalPlanController;
+class GoalReplanRuntimeCoordinator;
+class ActivePathBlockagePolicy;
 class MotionStopCoordinator;
+class NavigationGoalStatusOutbox;
+class GoalTerminalStatusDelivery;
 class InspectionRuntimeController;
 class InspectionCommandCoordinator;
+class InspectionTaskEventOutbox;
 class TeleopAdmissionController;
 class TeleopTickController;
 class AutonomyTickController;
@@ -59,11 +64,16 @@ struct EndpointLoopContext {
   EndpointState &state;
   lingtu::nav::plan::NavLoop &nav;
   InspectionStatusFileWriter &inspection_status_writer;
+  InspectionTaskEventOutbox &inspection_task_event_outbox;
 
   // -- Controllers ----------------------------------------------------------
   NavInputStateProjector &input_projector;
   GoalPlanController &goal_plan;
+  GoalReplanRuntimeCoordinator &goal_replan_runtime;
+  ActivePathBlockagePolicy &active_path_blockage_policy;
   MotionStopCoordinator &motion_stop;
+  NavigationGoalStatusOutbox &goal_status_outbox;
+  GoalTerminalStatusDelivery &goal_terminal_delivery;
   InspectionRuntimeController &inspection_runtime;
   InspectionCommandCoordinator &inspection_command_coordinator;
   TeleopAdmissionController &teleop_admission;

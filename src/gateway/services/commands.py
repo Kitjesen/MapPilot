@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any, Callable
+
+from fastapi.responses import JSONResponse
 
 COMMAND_IDEMPOTENCY_RETENTION_S = 120.0
 COMMAND_JOURNAL_MAX_ENTRIES = 512
@@ -80,8 +85,35 @@ class ControlLease:
             }
 
 
+class IdempotencyConflict(RuntimeError):
+    """A request id was reused with a different command payload."""
+
+    def __init__(self, command: str, request_id: str, client_id: str) -> None:
+        self.command = command
+        self.request_id = request_id
+        self.client_id = client_id
+        super().__init__(
+            f"request_id {request_id!r} was already used for a different "
+            f"{command!r} payload by client {client_id!r}"
+        )
+
+
+_NO_PENDING_RESULT = object()
+
+
+class _PendingCommand:
+    """One in-flight command shared by concurrent exact retries."""
+
+    def __init__(self, request_fingerprint: str) -> None:
+        self.request_fingerprint = request_fingerprint
+        self.event = threading.Event()
+        self.result: Any = _NO_PENDING_RESULT
+        self.record: dict[str, Any] | None = None
+        self.error: BaseException | None = None
+
+
 class CommandJournal:
-    """Small in-memory idempotency journal for retry-safe control requests."""
+    """Concurrent idempotency boundary for retry-safe control requests."""
 
     def __init__(
         self,
@@ -90,60 +122,192 @@ class CommandJournal:
     ) -> None:
         self._retention_s = retention_s
         self._max_entries = max_entries
-        self._records: dict[tuple[str, str], dict[str, Any]] = {}
+        self._records: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._pending: dict[tuple[str, str, str], _PendingCommand] = {}
         self._lock = threading.Lock()
         self._accepted_commands = 0
         self._replayed_commands = 0
+        self._conflicting_commands = 0
 
-    def replay(self, command: str, request_id: str | None) -> dict[str, Any] | None:
-        request_id = _clean_request_id(request_id)
-        if request_id is None:
-            return None
-        with self._lock:
-            self._purge_locked(time.time())
-            record = self._records.get((command, request_id))
-            if record is None:
-                return None
-            self._replayed_commands += 1
-            return self._with_receipt(
-                command=command,
-                request_id=request_id,
-                client_id=record["client_id"],
-                response=record["response"],
-                accepted=True,
-                replay=True,
-                ts=record["ts"],
-            )
-
-    def accept(
+    def execute(
         self,
         command: str,
         request_id: str | None,
         client_id: str | None,
-        response: dict[str, Any],
-    ) -> dict[str, Any]:
+        request_fingerprint: str,
+        action: Callable[[], Mapping[str, Any] | JSONResponse],
+    ) -> dict[str, Any] | JSONResponse:
+        """Execute once, replay exact retries, and reject payload conflicts.
+
+        Commands without a request id or a distinct client identity deliberately
+        bypass deduplication.  Otherwise, the first caller owns execution while
+        concurrent exact retries wait without holding the journal lock.
+        """
+
         request_id = _clean_request_id(request_id)
         client_id = _clean_client_id(client_id)
-        now = time.time()
-        with self._lock:
-            self._accepted_commands += 1
-            if request_id is not None:
-                self._purge_locked(now)
-                self._records[(command, request_id)] = {
-                    "client_id": client_id,
-                    "response": dict(response),
-                    "ts": now,
-                }
-                self._trim_locked()
+        if request_id is None or client_id == "unknown":
+            response = action()
+            if isinstance(response, JSONResponse):
+                return response
+            if not isinstance(response, Mapping):
+                return self._invalid_action_receipt(
+                    command,
+                    request_id,
+                    client_id,
+                    response,
+                )
+            acceptance = self._acceptance_signal(response)
+            if acceptance is None:
+                return self._invalid_action_receipt(
+                    command,
+                    request_id,
+                    client_id,
+                    response,
+                    reason=(
+                        "command action mapping must include an explicit positive "
+                        "acceptance signal"
+                    ),
+                )
+            now = time.time()
+            with self._lock:
+                if acceptance:
+                    self._accepted_commands += 1
             return self._with_receipt(
                 command=command,
                 request_id=request_id,
                 client_id=client_id,
-                response=response,
-                accepted=True,
+                response=dict(response),
+                accepted=acceptance,
                 replay=False,
                 ts=now,
             )
+
+        identity = (client_id, command, request_id)
+        owner = False
+        with self._lock:
+            self._purge_locked(time.time())
+            record = self._records.get(identity)
+            if record is not None:
+                self._assert_same_payload_locked(
+                    identity,
+                    request_fingerprint,
+                    record["request_fingerprint"],
+                )
+                self._replayed_commands += 1
+                return self._replay_receipt(command, request_id, record)
+
+            pending = self._pending.get(identity)
+            if pending is None:
+                pending = _PendingCommand(request_fingerprint)
+                self._pending[identity] = pending
+                owner = True
+            else:
+                self._assert_same_payload_locked(
+                    identity,
+                    request_fingerprint,
+                    pending.request_fingerprint,
+                )
+
+        if not owner:
+            pending.event.wait()
+            if pending.error is not None:
+                self._raise_pending_error(pending.error)
+            if pending.result is not _NO_PENDING_RESULT:
+                return pending.result
+            with self._lock:
+                record = pending.record or self._records.get(identity)
+                if record is None:
+                    raise RuntimeError("completed idempotent command has no result")
+                self._replayed_commands += 1
+                return self._replay_receipt(command, request_id, record)
+
+        try:
+            response = action()
+        except BaseException as exc:
+            with self._lock:
+                self._pending.pop(identity, None)
+                pending.error = exc
+                pending.event.set()
+            raise
+
+        if isinstance(response, JSONResponse):
+            with self._lock:
+                self._pending.pop(identity, None)
+                pending.result = response
+                pending.event.set()
+            return response
+
+        if not isinstance(response, Mapping):
+            rejected = self._invalid_action_receipt(
+                command,
+                request_id,
+                client_id,
+                response,
+            )
+            with self._lock:
+                self._pending.pop(identity, None)
+                pending.result = rejected
+                pending.event.set()
+            return rejected
+
+        now = time.time()
+        acceptance = self._acceptance_signal(response)
+        if acceptance is None:
+            rejected = self._invalid_action_receipt(
+                command,
+                request_id,
+                client_id,
+                response,
+                reason=(
+                    "command action mapping must include an explicit positive "
+                    "acceptance signal"
+                ),
+            )
+            with self._lock:
+                self._pending.pop(identity, None)
+                pending.result = rejected
+                pending.event.set()
+            return rejected
+
+        if not acceptance:
+            rejected = self._with_receipt(
+                command=command,
+                request_id=request_id,
+                client_id=client_id,
+                response=dict(response),
+                accepted=False,
+                replay=False,
+                ts=now,
+            )
+            with self._lock:
+                self._pending.pop(identity, None)
+                pending.result = rejected
+                pending.event.set()
+            return rejected
+
+        record = {
+            "client_id": client_id,
+            "request_fingerprint": request_fingerprint,
+            "response": dict(response),
+            "ts": now,
+        }
+        with self._lock:
+            self._accepted_commands += 1
+            self._records[identity] = record
+            self._trim_locked()
+            self._pending.pop(identity, None)
+            pending.record = record
+            pending.event.set()
+        return self._with_receipt(
+            command=command,
+            request_id=request_id,
+            client_id=client_id,
+            response=response,
+            accepted=True,
+            replay=False,
+            ts=now,
+        )
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -152,11 +316,24 @@ class CommandJournal:
                 "idempotency_supported": True,
                 "request_id_field": "request_id",
                 "client_id_field": "client_id",
+                "idempotency_scope": "client_command_request_id",
+                "payload_conflict_policy": "reject",
+                "acceptance_signal_policy": "explicit_positive_required",
+                "acceptance_signal_fields": [
+                    "ok",
+                    "accepted",
+                    "success",
+                    "command.accepted",
+                ],
+                "anonymous_client_policy": "execute_every_time",
+                "client_identity_source": "caller_asserted",
                 "retention_s": self._retention_s,
                 "max_entries": self._max_entries,
                 "stored_requests": len(self._records),
+                "pending_requests": len(self._pending),
                 "accepted_commands": self._accepted_commands,
                 "replayed_commands": self._replayed_commands,
+                "conflicting_commands": self._conflicting_commands,
                 "rate_policy_hz": dict(COMMAND_RATE_POLICY_HZ),
                 "rate_policy_enforcement": "advisory",
             }
@@ -174,6 +351,84 @@ class CommandJournal:
         for key, _record in oldest[:overflow]:
             self._records.pop(key, None)
 
+    def _assert_same_payload_locked(
+        self,
+        identity: tuple[str, str, str],
+        request_fingerprint: str,
+        existing_fingerprint: str,
+    ) -> None:
+        if request_fingerprint == existing_fingerprint:
+            return
+        self._conflicting_commands += 1
+        client_id, command, request_id = identity
+        raise IdempotencyConflict(command, request_id, client_id)
+
+    @staticmethod
+    def _acceptance_signal(response: Mapping[str, Any]) -> bool | None:
+        signals = [response.get(field) for field in ("ok", "accepted", "success")]
+        command = response.get("command")
+        if isinstance(command, Mapping):
+            signals.append(command.get("accepted"))
+        if any(signal is False for signal in signals):
+            return False
+        if any(signal is True for signal in signals):
+            return True
+        return None
+
+    @classmethod
+    def _invalid_action_receipt(
+        cls,
+        command: str,
+        request_id: str | None,
+        client_id: str,
+        response: Any,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        return cls._with_receipt(
+            command=command,
+            request_id=request_id,
+            client_id=client_id,
+            response={
+                "ok": False,
+                "status": "rejected",
+                "error": "invalid_command_response",
+                "message": reason
+                or (
+                    "command action must return a mapping or JSONResponse; "
+                    f"received {type(response).__name__}"
+                ),
+            },
+            accepted=False,
+            replay=False,
+            ts=time.time(),
+        )
+
+    @classmethod
+    def _replay_receipt(
+        cls,
+        command: str,
+        request_id: str,
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        return cls._with_receipt(
+            command=command,
+            request_id=request_id,
+            client_id=record["client_id"],
+            response=record["response"],
+            accepted=True,
+            replay=True,
+            ts=record["ts"],
+        )
+
+    @staticmethod
+    def _raise_pending_error(error: BaseException) -> None:
+        try:
+            cloned = type(error)(*error.args)
+        except Exception:
+            cloned = RuntimeError(str(error))
+        raise cloned from error
+
     @staticmethod
     def _with_receipt(
         *,
@@ -187,10 +442,15 @@ class CommandJournal:
     ) -> dict[str, Any]:
         payload = dict(response)
         payload.setdefault("schema_version", 1)
-        payload.setdefault("ok", accepted)
+        if accepted:
+            payload.setdefault("ok", True)
+        else:
+            payload["ok"] = False
         payload["command"] = {
             "name": command,
+            "task_id": payload.get("task_id"),
             "request_id": request_id,
+            "native_request_id": payload.get("native_request_id"),
             "client_id": client_id,
             "accepted": accepted,
             "replay": replay,
@@ -213,6 +473,30 @@ def _clean_client_id(value: str | None) -> str:
     return cleaned or "unknown"
 
 
+def command_request_fingerprint(body: Any) -> str:
+    """Return a stable identity for one command payload.
+
+    A request id is only retry-safe inside the same client, command, and exact
+    payload.  Including the payload prevents a changed motion request from
+    receiving a stale receipt for an earlier command.
+    """
+
+    value = body
+    model_dump = getattr(body, "model_dump", None)
+    if callable(model_dump):
+        value = model_dump(mode="json")
+    elif hasattr(body, "dict") and callable(body.dict):
+        value = body.dict()
+    encoded = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def publish_command_ack(
     gw: Any,
     payload: dict[str, Any],
@@ -225,10 +509,17 @@ def publish_command_ack(
     command = payload.get("command")
     if not isinstance(command, dict):
         return
+    success = payload.get("success")
     data = {
         "schema_version": 1,
-        "ok": bool(payload.get("ok", False)),
+        "ok": payload.get("ok") is True,
+        "accepted": command.get("accepted") is True,
+        "replay": command.get("replay") is True,
         "status": payload.get("status"),
+        "stage": payload.get("stage"),
+        "success": success if isinstance(success, bool) else None,
+        "execution_confirmed": payload.get("execution_confirmed"),
+        "final_output_confirmed": payload.get("final_output_confirmed"),
         "error": payload.get("error"),
         "message": payload.get("message"),
         "command": command,
@@ -239,23 +530,98 @@ def publish_command_ack(
     gw.push_event({"type": "command_ack", "data": data})
 
 
+def idempotency_conflict_response(
+    gw: Any,
+    command: str,
+    conflict: IdempotencyConflict,
+) -> JSONResponse:
+    """Map a journal identity conflict to the Gateway error contract."""
+
+    content = {
+        "schema_version": 1,
+        "ok": False,
+        "error": "idempotency_conflict",
+        "message": "request_id was already used with a different payload",
+        "command": {
+            "name": command,
+            "request_id": conflict.request_id,
+            "client_id": conflict.client_id,
+            "accepted": False,
+            "replay": False,
+            "ts": time.time(),
+        },
+        "detail": {
+            "reason_code": "idempotency_conflict",
+            "reason": str(conflict),
+            "source": "command_journal",
+            "path": None,
+            "blockers": ["idempotency_conflict"],
+            "advisories": [],
+        },
+    }
+    publish_command_ack(gw, content, status_code=409)
+    return JSONResponse(status_code=409, content=content)
+
+
 def run_control_command(
     gw: Any,
     command: str,
     body: Any,
-    action: Callable[[], dict[str, Any]],
-) -> dict[str, Any]:
+    action: Callable[[], Mapping[str, Any] | JSONResponse],
+    *,
+    success_status_code: int = 200,
+) -> dict[str, Any] | JSONResponse:
     request_id = getattr(body, "request_id", None) if body is not None else None
     client_id = getattr(body, "client_id", None) if body is not None else None
-    replay = gw._command_journal.replay(command, request_id)
-    if replay is not None:
-        publish_command_ack(gw, replay, status_code=200)
-        return replay
-    response = gw._command_journal.accept(
-        command,
-        request_id,
-        client_id,
-        action(),
+    fingerprint = command_request_fingerprint(body)
+    try:
+        response = gw._command_journal.execute(
+            command,
+            request_id,
+            client_id,
+            fingerprint,
+            action,
+        )
+    except IdempotencyConflict as conflict:
+        return idempotency_conflict_response(gw, command, conflict)
+    if not isinstance(response, dict):
+        return response
+    # Record in audit journal for control command traceability
+    audit = getattr(gw, "_audit_journal", None)
+    command_receipt = response.get("command")
+    replay = (
+        command_receipt.get("replay") is True
+        if isinstance(command_receipt, dict)
+        else False
     )
-    publish_command_ack(gw, response, status_code=200)
+    accepted = (
+        command_receipt.get("accepted") is True
+        if isinstance(command_receipt, dict)
+        else False
+    )
+    if audit is not None and not replay:
+        audit.record(
+            command,
+            client_id=str(client_id or "unknown"),
+            ok=response.get("ok") is True,
+            error=response.get("error"),
+        )
+    if not accepted:
+        response["ok"] = False
+        response.setdefault("error", "command_rejected")
+        response.setdefault("message", "command action rejected the request")
+        response.setdefault(
+            "detail",
+            {
+                "reason_code": str(response["error"]),
+                "reason": str(response["message"]),
+                "source": "command_action",
+                "path": None,
+                "blockers": [str(response["error"])],
+                "advisories": [],
+            },
+        )
+        publish_command_ack(gw, response, status_code=409)
+        return JSONResponse(status_code=409, content=response)
+    publish_command_ack(gw, response, status_code=success_status_code)
     return response

@@ -76,7 +76,12 @@ def main() -> None:
     elif args.cmd == "nav-status":
         ns = robot.navigation_status()
         print(f"State: {ns.state}")
-        print(f"Dist to goal: {ns.distance_to_goal:.2f}m")
+        distance = (
+            f"{ns.distance_to_goal:.2f}m"
+            if ns.distance_to_goal is not None
+            else "unknown"
+        )
+        print(f"Dist to goal: {distance}")
         print(f"Goal: ({ns.goal.x:.2f}, {ns.goal.y:.2f})")
     elif args.cmd == "position":
         p = robot.position()

@@ -4,7 +4,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 AUDIT_SCRIPT = ROOT / "tools" / "validate" / "validate_pose_graph_opt_coverage.py"
 
@@ -66,6 +65,9 @@ def test_classifier_keeps_migration_contract_tools_in_audit_bucket() -> None:
     assert module.classify_path(
         "src/runtime/tests/test_pct_gpmp_migration_contract.py"
     ) == "coverage_audit"
+    assert module.classify_path(
+        "tools/validate/validate_portable_lean_package.py"
+    ) == "coverage_audit"
 
 
 def test_classifier_tracks_known_remaining_gtsam_surfaces() -> None:
@@ -80,7 +82,7 @@ def test_classifier_tracks_known_remaining_gtsam_surfaces() -> None:
     assert module.classify_path("scripts/build/build_ros_workspace.sh") == (
         "remaining_dependency_support"
     )
-    assert module.classify_path("scripts/deploy/setup_server_ros_pct.sh") == (
+    assert module.classify_path("sim/scripts/setup_linux_validation_host.sh") == (
         "remaining_dependency_support"
     )
 

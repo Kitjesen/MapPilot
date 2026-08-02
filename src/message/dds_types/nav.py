@@ -54,6 +54,46 @@ class MapObservation(IdlStruct, typename="lingtu::dds::MapObservation"):
 
 
 @dataclass
+class MapArtifactIdentity(IdlStruct, typename="lingtu::dds::MapArtifactIdentity"):
+    type: str
+    uri: str
+    sha256: str
+
+
+@dataclass
+class MapIdentity(IdlStruct, typename="lingtu::dds::MapIdentity"):
+    present: types.boolean
+    map_id: str
+    version_id: str
+    frame_id: str
+    map_dir: str
+    artifacts: types.sequence[MapArtifactIdentity]
+
+
+@dataclass
+class MapActivationRequest(IdlStruct, typename="lingtu::dds::MapActivationRequest"):
+    request_id: str
+    operation: types.int32
+    target: MapIdentity
+    previous: MapIdentity
+    caller: str
+    reason: str
+
+
+@dataclass
+class MapActivationAck(IdlStruct, typename="lingtu::dds::MapActivationAck"):
+    request_id: str
+    operation: types.int32
+    accepted: types.boolean
+    message: str
+    changed: types.boolean
+    target: MapIdentity
+    previous: MapIdentity
+    active: MapIdentity
+    producer_boot_id: str
+
+
+@dataclass
 class MapCloudLayer(IdlStruct, typename="lingtu::dds::MapCloudLayer"):
     header: Header
     layer: str
@@ -80,6 +120,7 @@ class MapGrid(IdlStruct, typename="lingtu::dds::MapGrid"):
 class MapRuntimeState(IdlStruct, typename="lingtu::dds::MapRuntimeState"):
     header: Header
     producer_boot_id: str
+    active_map: MapIdentity
     running: types.boolean
     live: types.boolean
     reset_epoch: types.uint64
@@ -138,7 +179,6 @@ class MapScene(IdlStruct, typename="lingtu::dds::MapScene"):
     occupancy: MapGrid
     elevation: MapGrid
     esdf: MapGrid
-    traversability: MapGrid
 
 
 @dataclass
@@ -177,10 +217,10 @@ class NavigationCommandRequest(
 ):
     header: Header
     client_id: str
+    task_id: str
     request_id: str
     kind: types.int32
     goal: Pose
-    velocity: Twist
     reason: str
 
 
@@ -190,6 +230,7 @@ class NavigationCommandAck(
     typename="lingtu::dds::NavigationCommandAck",
 ):
     header: Header
+    task_id: str
     request_id: str
     kind: types.int32
     accepted: types.boolean
@@ -260,6 +301,7 @@ class NavigationGoalStatus(
     header: Header
     boot_id: str
     event_sequence: types.uint64
+    task_id: str
     request_id: str
     state: types.int32
     goal_epoch: types.uint64
@@ -273,6 +315,7 @@ class NavigationState(IdlStruct, typename="lingtu::dds::NavigationState"):
     state_sequence: types.uint64
     control_mode: types.int32
     lifecycle_state: types.int32
+    active_task_id: str
     active_request_id: str
     goal_epoch: types.uint64
     map_id: str
@@ -294,6 +337,7 @@ class ExplorationCommandRequest(
 ):
     header: Header
     request_id: str
+    exploration_run_id: str
     kind: types.int32
     session_id: str
     has_directed_target: types.boolean
@@ -347,19 +391,47 @@ class ExplorationCommandAck(
 ):
     header: Header
     request_id: str
+    exploration_run_id: str
     kind: types.int32
     accepted: types.boolean
+    duplicate: types.boolean
     reason: str
     session_id: str
     intent_revision: types.uint64
 
 
 @dataclass
-class InspectionCommandRequest(
+class ExplorationRunEvent(IdlStruct, typename="lingtu::dds::ExplorationRunEvent"):
+    """Immutable ordered fact for one finite native exploration execution."""
+
+    timestamp_s: types.float64
+    frame_id: str
+    boot_id: str
+    event_sequence: types.uint64
+    kind: types.int32
+    exploration_run_id: str
+    start_request_id: str
+    command_request_id: str
+    product_session_id: str
+    state: types.int32
+    route: str
+    map_id: str
+    map_version: types.int64
+    artifact_hash: str
+    reason: str
+    motion_stop_confirmed: types.boolean
+    motion_stop_reason: str
+
+
+@dataclass
+class InspectionTaskRequest(
     IdlStruct,
-    typename="lingtu::dds::InspectionCommandRequest",
+    typename="lingtu::dds::InspectionTaskRequest",
 ):
+    """A task-addressed inspection lifecycle command from the product boundary."""
+
     header: Header
+    task_id: str
     request_id: str
     kind: types.int32
     route_id: str
@@ -368,11 +440,14 @@ class InspectionCommandRequest(
 
 
 @dataclass
-class InspectionCommandAck(
+class InspectionTaskAck(
     IdlStruct,
-    typename="lingtu::dds::InspectionCommandAck",
+    typename="lingtu::dds::InspectionTaskAck",
 ):
+    """Native admission result preserving both task and request identity."""
+
     header: Header
+    task_id: str
     request_id: str
     kind: types.int32
     accepted: types.boolean
@@ -431,6 +506,33 @@ class InspectionStatus(IdlStruct, typename="lingtu::dds::InspectionStatus"):
     deadline: types.float64
     reason: str
 
+
+@dataclass
+class InspectionTaskEvent(IdlStruct, typename="lingtu::dds::InspectionTaskEvent"):
+    """Immutable native fact for one inspection task lifecycle transition."""
+
+    header: Header
+    boot_id: str
+    event_sequence: types.uint64
+    kind: types.int32
+    task_id: str
+    request_id: str
+    command_request_id: str
+    state: types.int32
+    map_id: str
+    map_version: int
+    route_id: str
+    route_revision: types.uint64
+    point_index: types.uint32
+    point_count: types.uint32
+    loop_index: types.uint32
+    retry_count: types.uint32
+    point_id: str
+    action: str
+    action_request_id: str
+    evidence_id: str
+    reason: str
+
 DDS_ExplorationExecutionGrid = ExplorationExecutionGrid
 DDS_ExplorationSegmentRequest = ExplorationSegmentRequest
 DDS_ExplorationSegmentAck = ExplorationSegmentAck
@@ -442,6 +544,10 @@ DDS_MapMetaData = MapMetaData
 DDS_OccupancyGrid = OccupancyGrid
 DDS_MapObservation = MapObservation
 DDS_MapCloudLayer = MapCloudLayer
+DDS_MapArtifactIdentity = MapArtifactIdentity
+DDS_MapIdentity = MapIdentity
+DDS_MapActivationRequest = MapActivationRequest
+DDS_MapActivationAck = MapActivationAck
 DDS_MapGrid = MapGrid
 DDS_MapRuntimeState = MapRuntimeState
 DDS_MapScene = MapScene
@@ -456,8 +562,10 @@ DDS_NavigationGoalStatus = NavigationGoalStatus
 DDS_NavigationState = NavigationState
 DDS_ExplorationCommandRequest = ExplorationCommandRequest
 DDS_ExplorationCommandAck = ExplorationCommandAck
-DDS_InspectionCommandRequest = InspectionCommandRequest
-DDS_InspectionCommandAck = InspectionCommandAck
+DDS_ExplorationRunEvent = ExplorationRunEvent
+DDS_InspectionTaskRequest = InspectionTaskRequest
+DDS_InspectionTaskAck = InspectionTaskAck
 DDS_InspectionEvidenceRequest = InspectionEvidenceRequest
 DDS_InspectionEvidenceResult = InspectionEvidenceResult
 DDS_InspectionStatus = InspectionStatus
+DDS_InspectionTaskEvent = InspectionTaskEvent

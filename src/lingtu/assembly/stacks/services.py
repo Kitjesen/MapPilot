@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from runtime.blueprint import Blueprint
+from runtime.runtime_interface import TOPICS
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +31,49 @@ def services(
     building_added = False
 
     if native_commands:
-        try:
-            from nav.commands.module import Commands
+        from lingtu.host_bus import HostBus
+        from nav.commands.module import Commands
+
+        required_topics = {
+            str(topic)
+            for topic in config.get("_product_required_topics", ())
+        }
+        required_capabilities = {
+            str(capability)
+            for capability in config.get("_product_required_capabilities", ())
+        }
+        inspection_task_topics = {
+            TOPICS.inspection_task_request,
+            TOPICS.inspection_task_ack,
+            TOPICS.inspection_task_event,
+        }
+        has_inspection_task_contract = (
+            inspection_task_topics <= required_topics
+            and "inspection_evidence_capture_and_result_ack" in required_capabilities
+        )
+        bp.add(
+            HostBus,
+            alias="host.bus",
+            require_map_scene=(
+                TOPICS.maps_state in required_topics
+                or TOPICS.maps_scene in required_topics
+            ),
+            require_inspection_task_events=(
+                TOPICS.inspection_task_event in required_topics
+            ),
+            require_exploration_run_events=(
+                TOPICS.exploration_run_event in required_topics
+            ),
+        )
+        bp.add(
+            Commands,
+            alias="nav.commands",
+            require_inspection_task_commands=has_inspection_task_contract,
+        )
+        if has_inspection_task_contract:
             from nav.inspection.service import Inspection
 
-            bp.add(Commands, alias="nav.commands")
             bp.add(Inspection, alias="nav.inspection")
-        except ImportError as exc:
-            logger.warning("Native navigation command services not available: %s", exc)
 
     if enable_building:
         try:
@@ -60,6 +96,10 @@ def services(
             kwargs = {}
             if config.get("planning_frame_id") is not None:
                 kwargs["planning_frame_id"] = config.get("planning_frame_id")
+            if config.get("_run_plan_fingerprint") is not None:
+                kwargs["run_plan_fingerprint"] = config.get(
+                    "_run_plan_fingerprint"
+                )
             if native_commands:
                 kwargs["command_module"] = "nav.commands"
             if building_added:

@@ -1,4 +1,4 @@
-"""Runtime dataflow inspector for Module-first Gateway clients."""
+"""Read-only Product and Host observability; this code does not orchestrate motion."""
 
 from __future__ import annotations
 
@@ -84,7 +84,6 @@ _GATEWAY_TOPIC_CHANNELS: dict[str, list[dict[str, Any]]] = {
         {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "local_path"},
     ],
     TOPICS.cmd_vel: [
-        {"transport": "gateway_sse", "path": "/api/v1/events", "event_type": "command_ack"},
         {"transport": "gateway_rest", "path": "/api/v1/navigation/status", "field": "control"},
     ],
     TOPICS.goal_pose: [
@@ -192,6 +191,8 @@ _COMMAND_INTERFACES: tuple[dict[str, Any], ...] = (
         "publishes": [TOPICS.cmd_vel],
         "read_only": False,
         "guard": "motion_guard_and_lease",
+        "response_evidence": "source_request_accepted_only",
+        "final_output_confirmed": False,
     },
     {
         "name": "stop",
@@ -200,6 +201,8 @@ _COMMAND_INTERFACES: tuple[dict[str, Any], ...] = (
         "publishes": [TOPICS.stop, TOPICS.cmd_vel],
         "read_only": False,
         "guard": "always_available_safety_stop",
+        "response_evidence": "command_ack_not_driver_execution",
+        "final_output_confirmed": False,
     },
     {
         "name": "navigation_cancel",
@@ -942,6 +945,8 @@ def _topic_summaries(
     module_ports: Mapping[str, Any],
     runtime_contract: str | None,
     gw: Any,
+    *,
+    declared_topics: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     topics: list[str]
     if runtime_contract:
@@ -961,6 +966,8 @@ def _topic_summaries(
         if isinstance(topic, str) and topic.startswith("/")
     ]
     topics = list(dict.fromkeys([*topics, *_PRODUCT_OBSERVABILITY_TOPICS, *command_topics]))
+    if declared_topics is not None:
+        topics = [topic for topic in topics if topic in declared_topics]
 
     allowed_frames = _mapping(manifest.get("topic_allowed_frame_ids"))
     default_frames = _mapping(manifest.get("topic_default_frame_ids"))
@@ -993,11 +1000,23 @@ def _topic_summaries(
     return result
 
 
-def _transport_layers() -> dict[str, Any]:
+def _transport_layers(runtime_boundary: Mapping[str, Any]) -> dict[str, Any]:
+    real_env = str(runtime_boundary.get("env") or "") == "real"
     return {
+        "native_dds": {
+            "primary": real_env,
+            "scope": "product_cross_process",
+            "description": "Typed DDS between field roles: lidar, slam, traversability, nav, and driver.",
+        },
+        "direct_calls": {
+            "primary": real_env,
+            "scope": "nav_process",
+            "description": "Planning, following, and command safety use direct C++ calls inside the nav process.",
+        },
         "module_port_bus": {
-            "primary": True,
-            "description": "In-process Module In/Out ports; independent of ROS2 topics.",
+            "primary": not real_env,
+            "scope": "host_process_only",
+            "description": "In-process Host Module ports; never the field motion bus.",
         },
         "gateway_realtime": {
             "primary": False,
@@ -1015,6 +1034,84 @@ def _transport_layers() -> dict[str, Any]:
     }
 
 
+def _motion_path(runtime_boundary: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe the actual field command path without reconstructing an execution graph."""
+
+    if str(runtime_boundary.get("env") or "") != "real":
+        return {
+            "kind": "host_or_simulation",
+            "motion_owner": "configured_host_or_simulation_driver",
+            "stages": [],
+        }
+    return {
+        "kind": "native_field",
+        "startup": "ProductControl -> internal SystemdRunner -> systemd",
+        "motion_owner": "nav",
+        "final_velocity_writer": "nav",
+        "actuator_owner": "driver",
+        "control_paths": {
+            "autonomy_goal": [
+                "CommandIngress",
+                "GlobalPlanner",
+                "LocalPlanner",
+                "PathFollower",
+                "CommandSafety",
+            ],
+            "external_path": [
+                "PathIngress",
+                "LocalPlanner",
+                "PathFollower",
+                "CommandSafety",
+            ],
+            "teleop_avoid": [
+                "OperatorIntent",
+                "LocalPlanner",
+                "PathFollower",
+                "CommandSafety",
+            ],
+            "teleop": ["OperatorCommand", "CommandSafety"],
+        },
+        "stages": [
+            {
+                "name": "command",
+                "owner": "host",
+                "component": "nav.commands",
+                "transport": "native_client_to_typed_dds",
+                "topics": [
+                    TOPICS.nav_command_request,
+                    TOPICS.operator_motion_control,
+                    TOPICS.operator_motion_sample,
+                ],
+            },
+            {
+                "name": "localization",
+                "owner": "slam",
+                "transport": "typed_dds",
+                "topics": [TOPICS.odometry, TOPICS.registered_cloud],
+            },
+            {
+                "name": "risk",
+                "owner": "traversability",
+                "transport": "typed_dds",
+                "topics": [TOPICS.traversability],
+            },
+            {
+                "name": "motion",
+                "owner": "nav",
+                "transport": "direct_calls_then_typed_dds",
+                "internal": ["GlobalPlanner", "LocalPlanner", "PathFollower", "CommandSafety"],
+                "topics": [TOPICS.global_path, TOPICS.local_path, TOPICS.cmd_vel],
+            },
+            {
+                "name": "actuation",
+                "owner": "driver",
+                "transport": "typed_dds_to_brainstem",
+                "topics": [TOPICS.cmd_vel],
+            },
+        ],
+    }
+
+
 def _control_boundary() -> dict[str, Any]:
     return {
         "arbitrary_publish_supported": False,
@@ -1024,50 +1121,107 @@ def _control_boundary() -> dict[str, Any]:
 
 
 def build_runtime_dataflow_snapshot(gw: Any) -> dict[str, Any]:
-    """Return the live Module-first runtime dataflow view for Gateway clients."""
-    manifest = runtime_contract_manifest()
-    runtime_boundary = _runtime_boundary_status()
+    """Return the live Product runtime dataflow view for Gateway clients."""
+    runtime_boundary = _runtime_boundary_status(gw)
     module_ports = _module_port_snapshot(gw)
     runtime_contract = (
         runtime_boundary.get("runtime_contract")
         or runtime_boundary.get("data_source")
         or os.environ.get("LINGTU_RUNTIME_CONTRACT")
     )
+    links = {
+        "events": "/api/v1/events",
+        "cloud_ws": "/ws/cloud",
+        "scan_ws": "/ws/scan",
+        "state": "/api/v1/state",
+        "navigation_status": "/api/v1/navigation/status",
+        "localization_status": "/api/v1/localization/status",
+        "runtime_contract": "/api/v1/diagnostics/runtime-contract",
+        "runtime_dataflow": "/api/v1/runtime/dataflow",
+        "runtime_dataflow_topic": "/api/v1/runtime/dataflow/topic",
+        "runtime_dataflow_subscribe": "/api/v1/runtime/dataflow/subscribe",
+        "runtime_switch_plan": "/api/v1/runtime/switch-plan",
+        "field_check": "/api/v1/diagnostics/field-check",
+        "algorithm_benchmark_latest": "/api/v1/diagnostics/algorithm-benchmark/latest",
+        "inspection_acceptance": "/api/v1/inspection/acceptance",
+        "navigation_goal_candidate": "/api/v1/navigation/goal_candidate",
+    }
+    active_plan = getattr(gw, "_compiled_run_plan", None)
+    if active_plan is None:
+        return {
+            "schema_version": RUNTIME_DATAFLOW_SCHEMA_VERSION,
+            "ts": time.time(),
+            "authoritative": False,
+            "available": False,
+            "error": "run_plan_missing",
+            "run_plan": None,
+            "runtime_contract": runtime_contract,
+            "runtime_boundary": runtime_boundary,
+            "transport_layers": {},
+            "motion_path": {},
+            "endpoint_topic_required": False,
+            "ros2_topic_required": False,
+            "module_ports": module_ports,
+            "topics": [],
+            "stage_evidence": [],
+            "control_boundary": _control_boundary(),
+            "links": links,
+        }
+
+    plan_payload = active_plan.as_dict()
+    if not isinstance(plan_payload, Mapping):
+        raise TypeError("active RunPlan.as_dict() must return a mapping")
+    plan_payload = dict(plan_payload)
+    declared_topics = {
+        str(topic)
+        for topic in (
+            plan_payload.get("required_topics")
+            or getattr(active_plan, "required_topics", ())
+            or ()
+        )
+        if str(topic)
+    }
+    interface_catalog = runtime_contract_manifest()
+    topics = _topic_summaries(
+        interface_catalog,
+        module_ports,
+        runtime_contract,
+        gw,
+        declared_topics=declared_topics,
+    )
+    stage_evidence = _runtime_stage_evidence(
+        gw,
+        interface_catalog,
+        module_ports,
+        runtime_contract,
+        runtime_boundary,
+    )
+    stage_evidence = [
+        stage
+        for stage in stage_evidence
+        if any(
+            token in declared_topics
+            for token in (*stage.get("inputs", []), *stage.get("outputs", []))
+        )
+    ]
     return {
         "schema_version": RUNTIME_DATAFLOW_SCHEMA_VERSION,
         "ts": time.time(),
+        "authoritative": True,
+        "available": True,
+        "error": None,
+        "run_plan": plan_payload,
         "runtime_contract": runtime_contract,
         "runtime_boundary": runtime_boundary,
-        "transport_layers": _transport_layers(),
+        "transport_layers": _transport_layers(runtime_boundary),
+        "motion_path": _motion_path(runtime_boundary),
         "endpoint_topic_required": False,
         "ros2_topic_required": False,
         "module_ports": module_ports,
-        "topics": _topic_summaries(manifest, module_ports, runtime_contract, gw),
-        "stage_evidence": _runtime_stage_evidence(
-            gw,
-            manifest,
-            module_ports,
-            runtime_contract,
-            runtime_boundary,
-        ),
+        "topics": topics,
+        "stage_evidence": stage_evidence,
         "control_boundary": _control_boundary(),
-        "links": {
-            "events": "/api/v1/events",
-            "cloud_ws": "/ws/cloud",
-            "scan_ws": "/ws/scan",
-            "state": "/api/v1/state",
-            "navigation_status": "/api/v1/navigation/status",
-            "localization_status": "/api/v1/localization/status",
-            "runtime_contract": "/api/v1/diagnostics/runtime-contract",
-            "runtime_dataflow": "/api/v1/runtime/dataflow",
-            "runtime_dataflow_topic": "/api/v1/runtime/dataflow/topic",
-            "runtime_dataflow_subscribe": "/api/v1/runtime/dataflow/subscribe",
-            "runtime_switch_plan": "/api/v1/runtime/switch-plan",
-            "field_check": "/api/v1/diagnostics/field-check",
-            "algorithm_benchmark_latest": "/api/v1/diagnostics/algorithm-benchmark/latest",
-            "inspection_acceptance": "/api/v1/inspection/acceptance",
-            "navigation_goal_candidate": "/api/v1/navigation/goal_candidate",
-        },
+        "links": links,
     }
 
 
@@ -1087,7 +1241,7 @@ def _topic_selector_matches(selector: str, topic: str) -> bool:
 
 
 def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any]:
-    """Return one operator-focused topic view from the Module-first dataflow."""
+    """Return one operator-focused topic view from the Product runtime dataflow."""
     snapshot = build_runtime_dataflow_snapshot(gw)
     topic_summary: dict[str, Any] | None = None
     matches = [
@@ -1100,6 +1254,7 @@ def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any
         topic_summary = exact[0] if exact else matches[0]
 
     if topic_summary is None:
+        snapshot_error = str(snapshot.get("error") or "runtime_topic_not_found")
         return {
             "schema_version": RUNTIME_DATAFLOW_SCHEMA_VERSION,
             "ok": False,
@@ -1118,7 +1273,7 @@ def build_runtime_dataflow_topic_detail(gw: Any, selector: str) -> dict[str, Any
                 "endpoint_topic_required": False,
                 "ros2_topic_required": False,
             },
-            "error": "runtime_topic_not_found",
+            "error": snapshot_error,
             "available_topics": [
                 str(item.get("topic")) for item in snapshot.get("topics", []) if isinstance(item, Mapping)
             ],

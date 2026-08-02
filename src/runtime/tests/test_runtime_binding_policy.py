@@ -3,10 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from runtime.profiles.binding_policy import (
-    LEGACY_NAV_IN_ADAPTER_KEYS,
-    LEGACY_NAV_OUT_ADAPTER_KEYS,
+    IO_ADAPTER_ENABLE_KEYS,
+    IO_ADAPTER_KEYS,
+    MAP_OUT_ADAPTER_KEYS,
+    MAP_OUT_ENABLE_KEYS,
     NAV_IN_ADAPTER_KEYS,
+    NAV_IN_ENABLE_KEYS,
     NAV_OUT_ADAPTER_KEYS,
+    NAV_OUT_ENABLE_KEYS,
     autonomy_backend_selection,
     endpoint_contract_for_config,
     endpoint_transport_for_config,
@@ -19,10 +23,8 @@ from runtime.profiles.binding_policy import (
     nav_kernel_backend_required,
     resolved_autonomy_backend_selection,
     ros2_autonomy_backend_violations,
-    ros2_camera_bridge_violations,
     ros2_driver_runtime_violations,
     ros2_global_planner_backend_violations,
-    ros2_lidar_driver_violations,
     ros2_rerun_bridge_violations,
     ros2_runtime_binding_violations,
 )
@@ -45,10 +47,10 @@ def test_runtime_binding_policy_prefers_operator_transport_over_endpoint_default
 def test_runtime_binding_policy_does_not_infer_removed_lcm_adapter() -> None:
     config = {
         "_endpoint_transport": "zmq",
-        "_endpoint_contract": "thunder_field_zmq_v1",
+        "_endpoint_contract": "custom_zmq_v1",
     }
 
-    assert endpoint_contract_for_config(config) == "thunder_field_zmq_v1"
+    assert endpoint_contract_for_config(config) == "custom_zmq_v1"
     assert localization_adapter_for_config(config) == ""
 
 
@@ -58,11 +60,15 @@ def test_runtime_binding_policy_derives_dds_localization_from_endpoint_transport
     assert localization_adapter_for_config(config) == "dds_endpoint"
 
 
-def test_runtime_binding_policy_keeps_nav_adapter_keys_canonical() -> None:
+def test_runtime_binding_policy_keeps_io_keys_canonical() -> None:
+    assert NAV_IN_ENABLE_KEYS == ("enable_nav_in",)
+    assert NAV_OUT_ENABLE_KEYS == ("enable_nav_out",)
+    assert MAP_OUT_ENABLE_KEYS == ("enable_map_out",)
+    assert IO_ADAPTER_ENABLE_KEYS == ("enable_nav_in", "enable_nav_out", "enable_map_out")
     assert NAV_IN_ADAPTER_KEYS == ("nav_in_adapter",)
     assert NAV_OUT_ADAPTER_KEYS == ("nav_out_adapter",)
-    assert "endpoint_command_bridge" in LEGACY_NAV_IN_ADAPTER_KEYS
-    assert "endpoint_path_bridge" in LEGACY_NAV_OUT_ADAPTER_KEYS
+    assert MAP_OUT_ADAPTER_KEYS == ("map_out_adapter",)
+    assert IO_ADAPTER_KEYS == ("nav_out_adapter", "nav_in_adapter", "map_out_adapter")
 
 
 def test_autonomy_backend_selection_uses_ros_free_native_defaults() -> None:
@@ -170,18 +176,7 @@ def test_ros2_driver_runtime_violations_allow_product_and_portable_drivers() -> 
     assert ros2_driver_runtime_violations({"robot": "thunder"}) == []
     assert ros2_driver_runtime_violations({"robot": "stub"}) == []
     assert ros2_driver_runtime_violations({"robot": "sim_mujoco"}) == []
-    assert ros2_driver_runtime_violations({"robot": "sim_gazebo"}) == []
-
-
-def test_ros2_lidar_driver_violations_report_legacy_driver_start() -> None:
-    assert ros2_lidar_driver_violations({"lidar_start_driver": True, "start_lidar_driver": True}) == [
-        "lidar_start_driver=true starts the legacy local Livox ROS2 driver",
-        "start_lidar_driver=true starts the legacy local Livox ROS2 driver",
-    ]
-
-
-def test_ros2_lidar_driver_violations_allow_endpoint_subscription() -> None:
-    assert ros2_lidar_driver_violations({"enable_lidar": True}) == []
+    assert ros2_driver_runtime_violations({"robot": "sim_endpoint"}) == []
 
 
 def test_legacy_sensor_binding_violations_report_driver_sensor_paths() -> None:
@@ -190,15 +185,11 @@ def test_legacy_sensor_binding_violations_report_driver_sensor_paths() -> None:
             "use_driver_camera": True,
             "use_driver_lidar": True,
             "use_driver_imu": True,
-            "legacy_driver_sensor_fallback": True,
-            "enable_legacy_sim_lidar": True,
         }
     ) == [
         "use_driver_camera=true enables a legacy driver sensor path",
         "use_driver_lidar=true enables a legacy driver sensor path",
         "use_driver_imu=true enables a legacy driver sensor path",
-        "legacy_driver_sensor_fallback=true enables a legacy driver sensor path",
-        "enable_legacy_sim_lidar=true enables a legacy driver sensor path",
     ]
 
 
@@ -216,17 +207,6 @@ def test_legacy_sensor_binding_violations_allow_short_sensor_roles() -> None:
         )
         == []
     )
-
-
-def test_ros2_camera_bridge_violations_report_explicit_ros2_bridge() -> None:
-    assert ros2_camera_bridge_violations({"enable_ros2_camera_bridge": True}) == [
-        "enable_ros2_camera_bridge=true enables a ROS2 camera bridge",
-    ]
-
-
-def test_ros2_camera_bridge_violations_allow_disabled_or_native_camera() -> None:
-    assert ros2_camera_bridge_violations({"enable_camera": True}) == []
-    assert ros2_camera_bridge_violations({"use_driver_camera": True}) == []
 
 
 def test_ros2_rerun_bridge_violations_report_explicit_ros2_bridge() -> None:
@@ -335,7 +315,6 @@ def test_ros2_runtime_binding_violations_reports_explicit_ros2_adapters() -> Non
             "localization_adapter": "ros2_slam_bridge",
             "nav_out_adapter": "ros2_nav_output",
             "nav_in_adapter": "ros2_nav_input",
-            "enable_ros2_bridge": True,
             "enable_map_out": True,
             "map_out_adapter": "ros2_map_output",
             "terrain_backend": "native",
@@ -347,7 +326,6 @@ def test_ros2_runtime_binding_violations_reports_explicit_ros2_adapters() -> Non
         "terrain_backend=native requires ROS2 NativeModule",
         "local_planner_backend=cmu requires ROS2 NativeModule",
         "path_follower_backend=pure_pursuit requires ROS2 NativeModule",
-        "enable_ros2_bridge=true enables a ROS2 IO adapter",
         "map output adapter selects a ROS2 IO adapter",
         "localization_adapter=ros2_slam_bridge selects a ROS2 localization adapter",
         "nav_out_adapter=ros2_nav_output selects a ROS2 IO adapter",
@@ -374,20 +352,6 @@ def test_ros2_runtime_binding_violations_reports_ros2_driver_runtime() -> None:
     ) == ["robot=sim_ros2 selects a ROS2 driver runtime"]
 
 
-def test_ros2_runtime_binding_violations_reports_legacy_lidar_driver() -> None:
-    assert ros2_runtime_binding_violations(
-        {"slam_profile": "none", "lidar_start_driver": True},
-        enable_native=False,
-    ) == ["lidar_start_driver=true starts the legacy local Livox ROS2 driver"]
-
-
-def test_ros2_runtime_binding_violations_reports_ros2_camera_bridge() -> None:
-    assert ros2_runtime_binding_violations(
-        {"slam_profile": "none", "enable_ros2_camera_bridge": True},
-        enable_native=False,
-    ) == ["enable_ros2_camera_bridge=true enables a ROS2 camera bridge"]
-
-
 def test_ros2_runtime_binding_violations_reports_ros2_rerun_bridge() -> None:
     assert ros2_runtime_binding_violations(
         {"slam_profile": "none", "enable_ros2_rerun_bridge": True},
@@ -395,21 +359,15 @@ def test_ros2_runtime_binding_violations_reports_ros2_rerun_bridge() -> None:
     ) == ["enable_ros2_rerun_bridge=true enables a ROS2 Rerun bridge"]
 
 
-def test_ros2_runtime_binding_violations_reports_endpoint_enablement_without_adapter() -> None:
+def test_ros2_runtime_binding_violations_reports_map_output_enablement_without_adapter() -> None:
     assert ros2_runtime_binding_violations(
         {
             "slam_profile": "none",
-            "enable_endpoint_command_bridge": True,
-            "enable_endpoint_path_bridge": True,
-            "enable_endpoint_waypoint_bridge": True,
-            "enable_endpoint_grid_bridge": True,
+            "enable_map_out": True,
         },
         enable_native=False,
     ) == [
-        "enable_endpoint_grid_bridge=true without explicit non-ROS map output adapter has no safe default",
-        "enable_endpoint_command_bridge=true without explicit non-ROS navigation input adapter has no safe default",
-        "enable_endpoint_path_bridge=true without explicit non-ROS navigation output adapter has no safe default",
-        "enable_endpoint_waypoint_bridge=true without explicit non-ROS navigation output adapter has no safe default",
+        "enable_map_out=true without explicit non-ROS map output adapter has no safe default",
     ]
 
 
@@ -443,14 +401,14 @@ def test_ros2_runtime_binding_violations_reports_nav_io_enablement_without_adapt
     ]
 
 
-def test_ros2_runtime_binding_violations_rejects_removed_endpoint_nav_adapters() -> None:
+def test_ros2_runtime_binding_violations_rejects_unknown_canonical_nav_adapters() -> None:
     assert ros2_runtime_binding_violations(
         {
             "slam_profile": "bridge",
             "_endpoint_transport": "zmq",
-            "_endpoint_contract": "thunder_field_zmq_v1",
-            "endpoint_egress_adapter": "removed_endpoint",
-            "endpoint_ingress_adapter": "removed_endpoint",
+            "_endpoint_contract": "custom_zmq_v1",
+            "nav_out_adapter": "removed_endpoint",
+            "nav_in_adapter": "removed_endpoint",
             "enable_nav_in": True,
             "enable_nav_out": True,
         },

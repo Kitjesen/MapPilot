@@ -426,6 +426,62 @@ nb::dict gnssHealthDict(const GnssFusionHealth& health) {
   return out;
 }
 
+nb::dict fastLioLidarUpdateDict(
+    const FastLioLidarUpdateDiagnostics& diagnostics) {
+  nb::dict candidate;
+  candidate["translation_m"_s] = diagnostics.candidate_translation_m;
+  candidate["rotation_rad"_s] = diagnostics.candidate_rotation_rad;
+  candidate["velocity_mps"_s] = diagnostics.candidate_velocity_mps;
+  candidate["velocity_delta_mps"_s] =
+      diagnostics.candidate_velocity_delta_mps;
+
+  nb::dict thresholds;
+  thresholds["max_translation_m"_s] = diagnostics.max_update_translation_m;
+  thresholds["max_rotation_rad"_s] = diagnostics.max_update_rotation_rad;
+  thresholds["max_velocity_mps"_s] = diagnostics.max_update_velocity_mps;
+  thresholds["max_velocity_delta_mps"_s] =
+      diagnostics.max_update_velocity_delta_mps;
+
+  nb::dict information_ldlt;
+  information_ldlt["evaluated"_s] = diagnostics.information_ldlt_evaluated;
+  information_ldlt["decomposition_success"_s] =
+      diagnostics.information_ldlt_decomposition_success;
+  information_ldlt["positive"_s] = diagnostics.information_ldlt_positive;
+
+  nb::dict candidate_covariance;
+  candidate_covariance["evaluated"_s] =
+      diagnostics.candidate_covariance_evaluated;
+  candidate_covariance["finite"_s] =
+      diagnostics.candidate_covariance_finite;
+  candidate_covariance["positive_diagonal"_s] =
+      diagnostics.candidate_covariance_positive_diagonal;
+
+  nb::dict posterior_covariance;
+  posterior_covariance["evaluated"_s] =
+      diagnostics.posterior_covariance_evaluated;
+  posterior_covariance["finite"_s] =
+      diagnostics.posterior_covariance_finite;
+  posterior_covariance["positive_diagonal"_s] =
+      diagnostics.posterior_covariance_positive_diagonal;
+
+  nb::dict out;
+  out["attempted"_s] = diagnostics.attempted;
+  out["accepted"_s] = diagnostics.accepted;
+  out["attempt_sequence"_s] = diagnostics.attempt_sequence;
+  out["rejection_reason"_s] = diagnostics.rejection_reason;
+  out["previous_rejection_reason"_s] =
+      diagnostics.previous_rejection_reason;
+  out["consecutive_rejections"_s] = diagnostics.consecutive_rejections;
+  out["downsampled_points"_s] = diagnostics.downsampled_points;
+  out["effective_points"_s] = diagnostics.effective_points;
+  out["candidate"_s] = candidate;
+  out["thresholds"_s] = thresholds;
+  out["information_ldlt"_s] = information_ldlt;
+  out["candidate_covariance"_s] = candidate_covariance;
+  out["posterior_covariance"_s] = posterior_covariance;
+  return out;
+}
+
 std::string normalizedBackend(std::string backend) {
   std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
@@ -637,6 +693,8 @@ class SlamRunner {
     result["odom_prior_age_s"_s] = out.odom_prior_age_s;
     result["odom_prior_error_xy_m"_s] = out.odom_prior_error_xy_m;
     result["odom_prior_map_points"_s] = out.odom_prior_map_points;
+    result["fastlio_lidar_update"_s] =
+        fastLioLidarUpdateDict(out.fastlio_lidar_update);
     nb::dict map_optimization;
     map_optimization["status"_s] = out.map_optimization_status;
     map_optimization["backend"_s] = out.map_optimization_backend;
@@ -680,6 +738,17 @@ class SlamRunner {
     result["relocalization_refine_backend"_s] = out.relocalization_refine_backend;
     result["relocalization_refine_iterations"_s] = out.relocalization_refine_iterations;
     result["relocalization_refine_inliers"_s] = out.relocalization_refine_inliers;
+    result["relocalization_min_inliers"_s] = out.relocalization_min_inliers;
+    result["relocalization_min_evaluated_points"_s] =
+        out.relocalization_min_evaluated_points;
+    result["relocalization_refine_input_points"_s] =
+        out.relocalization_refine_input_points;
+    result["relocalization_refine_evaluated_points"_s] =
+        out.relocalization_refine_evaluated_points;
+    result["relocalization_refine_support_ratio"_s] =
+        out.relocalization_refine_support_ratio;
+    result["relocalization_refine_overlap_inlier_ratio"_s] =
+        out.relocalization_refine_overlap_inlier_ratio;
     result["relocalization_refine_converged"_s] = out.relocalization_refine_converged;
     result["relocalization_refine_pos_cov_trace"_s] = out.relocalization_refine_pos_cov_trace;
     return result;

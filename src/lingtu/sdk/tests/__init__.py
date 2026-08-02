@@ -305,17 +305,17 @@ class TestLingTuClient(unittest.TestCase):
     # ------------------------------------------------------------------
 
     @patch("urllib.request.urlopen")
-    def test_bag(self, mock_urlopen) -> None:
+    def test_recording(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {"ok": True})
-        r = self.robot.bag_start("test")
+        r = self.robot.recording_start("test")
         self.assertIsInstance(r, CommandResult)
-        r = self.robot.bag_stop()
+        r = self.robot.recording_stop()
         self.assertIsInstance(r, CommandResult)
 
     @patch("urllib.request.urlopen")
-    def test_bag_status(self, mock_urlopen) -> None:
+    def test_recording_status(self, mock_urlopen) -> None:
         self._mock_http(mock_urlopen, {"recording": True})
-        st = self.robot.bag_status()
+        st = self.robot.recording_status()
         self.assertTrue(st.get("recording"))
 
     # ------------------------------------------------------------------

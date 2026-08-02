@@ -6,7 +6,7 @@ import math
 import re
 from pathlib import Path
 
-from runtime.profiles.catalog.product_intents import THUNDER_OCTO_CONFIG
+from runtime.profiles.catalog.navigation_defaults import THUNDER_OCTOPLANNER_DEFAULTS
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RUNTIME_ENV = REPO_ROOT / "scripts" / "deploy" / "thunder" / "runtime-env.sh"
@@ -93,18 +93,20 @@ def test_native_octoplanner_defaults_match_thunder_product_intent() -> None:
     exports = _runtime_env_exports()
 
     for product_key, env_name in NATIVE_ENV_BY_PRODUCT_KEY.items():
-        assert product_key in THUNDER_OCTO_CONFIG
+        assert product_key in THUNDER_OCTOPLANNER_DEFAULTS
         assert env_name in defaults, f"native navd is missing product constraint {env_name}"
         assert env_name in exports, f"native navd constraint is not exported: {env_name}"
         _assert_equivalent(
             defaults[env_name],
-            THUNDER_OCTO_CONFIG[product_key],
+            THUNDER_OCTOPLANNER_DEFAULTS[product_key],
         )
 
 
 def test_every_native_octoplanner_product_setting_has_an_environment_mapping() -> None:
     product_keys = {
-        key for key in THUNDER_OCTO_CONFIG if key.startswith("octoplanner3d_")
+        key
+        for key in THUNDER_OCTOPLANNER_DEFAULTS
+        if key.startswith("octoplanner3d_")
     }
 
     assert NON_NATIVE_OCTO_PRODUCT_KEYS <= product_keys

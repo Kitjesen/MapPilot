@@ -160,12 +160,14 @@ class RollingOccupancyGrid final {
       float center_x_m,
       float center_y_m,
       float center_z_m,
-      std::int64_t stamp_ns);
+      std::int64_t stamp_ns,
+      bool commit_revision);
   RollingOccupancyCellChunk RollByLocked(
       std::int32_t shift_x,
       std::int32_t shift_y,
       std::int32_t shift_z,
-      std::int64_t stamp_ns);
+      std::int64_t stamp_ns,
+      bool commit_revision);
   RollingOccupancyCellChunk ChunkFromPhysicalIndices(
       const std::vector<std::size_t>& indices,
       std::int64_t stamp_ns,

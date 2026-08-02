@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E501, E402
 """Summarize LingTu server-side simulation closure reports."""
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from runtime.algorithm_gates import (
     G4_SERVER_FULL_SIM_REQUIRED_GATES,
     INSPECTION_MVP_REQUIRED_GATES,
 )
+from runtime.runtime_interface import TOPICS
 
 MID360_PATTERN_REL = "sim/assets/livox/mid360.npy"
 MID360_PATTERN_SHA256 = "448821576a658673e8f7929992c8c0d687eb052657d7b584d038729a83da1bfb"
@@ -43,7 +45,7 @@ GAZEBO_NAV_SOURCE_RELS = (
     "sim/scripts/gazebo_frontier_exploration_smoke.py",
     "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/scripts/global_planner.py",
 )
-LIVE_NAV_MAP_TOPIC = "/slam/map_cloud"
+LIVE_NAV_MAP_TOPIC = TOPICS.map_cloud
 DEFAULT_REQUIRED_MAX_REPORT_AGE_S = 24.0 * 60.0 * 60.0
 DEFAULT_FRESHNESS_REQUIRED_GATES = frozenset(G4_SERVER_FULL_SIM_REQUIRED_GATES)
 NAVIGATION_REPLAY_DEVIATION_REPORT_REL = "artifacts/server_sim_closure/navigation_replay_deviation/report.json"
@@ -66,13 +68,12 @@ LOCAL_NUMERIC_SIM_HOST_REQUIREMENTS = (
 PRODUCT_LOCAL_PLANNER_BACKEND = "nanobind"
 PRODUCT_PATH_FOLLOWER_BACKEND = "nav_kernel"
 PRODUCT_GLOBAL_PLANNER_BACKEND = "octoplanner3d"
-PCT_NATIVE_HOST_REQUIREMENTS = (
-    "Linux host or S100P/aarch64 runtime with PCT native extension modules matching the host architecture",
-    "Python ABI matching the built PCT modules; the current checked-good bundled host ABI is CPython 3.10",
-    "PCT shared libraries available next to the extension modules or through LINGTU_PCT_LIB_DIR",
+PCT_PLANNER_RUNTIME_HOST_REQUIREMENTS = (
+    "PCT planner runtime available (default: rust_process)",
+    "selected PCT planner runtime artifacts installed or built; explicit legacy parity runtimes may add inspector requirements",
 )
 ROS2_MUJOCO_PCT_HOST_REQUIREMENTS = (
-    *PCT_NATIVE_HOST_REQUIREMENTS,
+    *PCT_PLANNER_RUNTIME_HOST_REQUIREMENTS,
     "ROS 2 Humble environment sourced",
     "MuJoCo EGL/headless rendering available",
     f"official MID-360 scan pattern asset available ({MID360_PATTERN_REL})",
@@ -128,7 +129,10 @@ HARDWARE_SUBSCRIBER_KEYWORDS = (
     "nova",
     "dog",
 )
-SETUP_SERVER_ROS_PCT_COMMAND = "bash scripts/deploy/setup_server_ros_pct.sh"
+SETUP_LINUX_VALIDATION_HOST_COMMAND = "bash sim/scripts/setup_linux_validation_host.sh"
+SETUP_FASTLIO2_VALIDATION_HOST_COMMAND = (
+    "bash scripts/compat/ros2/setup_fastlio2_validation_host.sh"
+)
 SERVER_DIMOS_HOST_PREFLIGHT_COMMAND = (
     "PYTHONPATH=src:. python3 sim/scripts/server_sim_closure.py "
     "--preset dimos_benchmark --required-only --host-preflight "
@@ -152,8 +156,8 @@ HOST_CHECK_ACTIONS = {
     "local_numeric_nav": (
         "rerun local numeric navigation gates on a Linux Python host with NumPy and the local planner runtime available"
     ),
-    "pct_native": (
-        "build/source the PCT native runtime on Linux with CPython 3.10, then rerun the DimOS host preflight"
+    "pct_planner_runtime": (
+        "build or install the selected PCT planner runtime, then rerun the DimOS host preflight"
     ),
     "ros2_humble": ("install/source ROS 2 Humble on the isolated simulation host, then rerun host preflight"),
     "mujoco_headless": (
@@ -187,7 +191,7 @@ HOST_CHECK_ACTIONS = {
 }
 HOST_CHECK_PRIORITY = (
     "local_numeric_nav",
-    "pct_native",
+    "pct_planner_runtime",
     "ros2_humble",
     "mujoco_headless",
     "mid360_pattern",
@@ -203,14 +207,13 @@ HOST_CHECK_PRIORITY = (
 )
 HOST_CHECK_DIAGNOSTIC_COMMANDS = {
     "local_numeric_nav": ('python -c "import platform, numpy; print(platform.system(), numpy.__version__)"',),
-    "pct_native": (
+    "pct_planner_runtime": (
         PCT_RUNTIME_PREFLIGHT_COMMAND,
-        SETUP_SERVER_ROS_PCT_COMMAND,
         PCT_RUNTIME_STRICT_PREFLIGHT_COMMAND,
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
     "ros2_humble": (
-        SETUP_SERVER_ROS_PCT_COMMAND,
+        SETUP_FASTLIO2_VALIDATION_HOST_COMMAND,
         "source /opt/ros/humble/setup.bash",
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
@@ -226,7 +229,7 @@ HOST_CHECK_DIAGNOSTIC_COMMANDS = {
             "p=Path('sim/assets/livox/mid360.npy'); "
             "print(p.exists(), hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else '')\""
         ),
-        SETUP_SERVER_ROS_PCT_COMMAND,
+        SETUP_LINUX_VALIDATION_HOST_COMMAND,
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
     "mujoco_world_asset": (
@@ -236,7 +239,7 @@ HOST_CHECK_DIAGNOSTIC_COMMANDS = {
             "p=Path('sim/worlds/mujoco/industrial_park_scene.xml'); "
             'print(p.exists(), p.stat().st_size if p.exists() else 0)"'
         ),
-        SETUP_SERVER_ROS_PCT_COMMAND,
+        SETUP_LINUX_VALIDATION_HOST_COMMAND,
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
     "gazebo_runtime": (
@@ -270,6 +273,7 @@ HOST_CHECK_DIAGNOSTIC_COMMANDS = {
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
     "ros2_fastlio2": (
+        SETUP_FASTLIO2_VALIDATION_HOST_COMMAND,
         "source /opt/ros/humble/setup.bash && source install/setup.bash 2>/dev/null || true",
         "ros2 pkg prefix fastlio2",
         "ros2 pkg executables fastlio2",
@@ -281,7 +285,7 @@ HOST_CHECK_DIAGNOSTIC_COMMANDS = {
         "ros2 pkg prefix localizer",
         "ros2 pkg executables localizer",
         "ros2 run localizer localizer_node --ros-args --help",
-        SETUP_SERVER_ROS_PCT_COMMAND,
+        SETUP_FASTLIO2_VALIDATION_HOST_COMMAND,
         SAVED_MAP_RELOCALIZE_PREFLIGHT_COMMAND,
         SERVER_DIMOS_HOST_PREFLIGHT_COMMAND,
     ),
@@ -1006,16 +1010,36 @@ def _eval_large_terrain(report: dict[str, Any]) -> tuple[bool, list[str], dict[s
 
     cases = list(report.get("cases") or [])
     pct_plans = [
-        plan for case in cases for plan in case.get("planning", []) if str(plan.get("planner")).lower() == "pct"
+        plan
+        for case in cases
+        for plan in case.get("planning", [])
+        if str(plan.get("planner")).lower() == "pct"
     ]
-    native_pct = any(
-        bool(_first_present(plan.get("native_runtime_used"), plan.get("native_backend_used"))) for plan in pct_plans
+    pct_planner_runtime = (
+        dict(report.get("pct_planner_runtime"))
+        if isinstance(report.get("pct_planner_runtime"), dict)
+        else {}
     )
+    pct_planner_runtime_ok = (
+        report.get("pct_planner_runtime_ok") is True
+        and pct_planner_runtime.get("ok") is True
+        and bool(str(pct_planner_runtime.get("runtime") or ""))
+    )
+    runtime_plans = [
+        plan
+        for plan in pct_plans
+        if isinstance(plan.get("pct_planner_runtime"), dict)
+        and plan["pct_planner_runtime"].get("ok") is True
+        and bool(str(plan["pct_planner_runtime"].get("runtime") or ""))
+        and str(plan.get("selected_planner") or plan.get("planner") or "").lower() == "pct"
+    ]
     path_safe = all(bool((case.get("path_safety") or {}).get("ok", True)) for case in cases)
     if not pct_plans:
         blockers.append("no PCT planning case found")
-    if not native_pct:
-        blockers.append("no native PCT case found")
+    if not pct_planner_runtime_ok:
+        blockers.append("pct_planner_runtime_ok is not true")
+    if len(runtime_plans) != len(pct_plans):
+        blockers.append("not every PCT case reports a healthy planner runtime")
     if not path_safe:
         blockers.append("path safety failed")
     for blocker in report.get("environment_blockers") or []:
@@ -1028,8 +1052,8 @@ def _eval_large_terrain(report: dict[str, Any]) -> tuple[bool, list[str], dict[s
         {
             "case_count": len(cases),
             "execution_mode": str(report.get("execution_mode") or ""),
-            "native_pct": native_pct,
-            "native_runtime": report.get("native_runtime") or {},
+            "pct_planner_runtime": pct_planner_runtime,
+            "pct_planner_runtime_ok": pct_planner_runtime_ok,
             "environment": report.get("environment") or {},
             "environment_blockers": report.get("environment_blockers") or [],
             "errors": report.get("errors") or [],
@@ -1102,14 +1126,14 @@ def _require_pct_optimizer_contract(
 
     if enabled not in (True, False):
         blockers.append("pct_optimizer_enabled is not recorded")
-    if path_mode not in {"native_astar_raw_path", "optimized_trajectory"}:
+    if path_mode not in {"astar_raw_path", "optimized_trajectory"}:
         blockers.append("pct_planner_path_mode is not supported")
-    elif enabled is False and path_mode != "native_astar_raw_path":
-        blockers.append("pct optimizer disabled but path mode is not native_astar_raw_path")
+    elif enabled is False and path_mode != "astar_raw_path":
+        blockers.append("pct optimizer disabled but path mode is not astar_raw_path")
     elif enabled is True and path_mode == "optimized_trajectory" and accepted is False:
         blockers.append("optimized trajectory path mode is marked rejected")
-    elif enabled is True and path_mode == "native_astar_raw_path" and not rejection_recorded:
-        blockers.append("native raw path mode lacks recorded optimizer rejection")
+    elif enabled is True and path_mode == "astar_raw_path" and not rejection_recorded:
+        blockers.append("A* raw path mode lacks recorded optimizer rejection")
 
     evidence["optimizer_rejection_recorded"] = rejection_recorded
     return evidence
@@ -1135,14 +1159,17 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
         blockers.append("reached_goal is not true")
     if str(report.get("planner") or "").lower() != "pct":
         blockers.append("planner is not pct")
-    pct_native_runtime_used = _first_present(
-        report.get("pct_native_runtime_used"),
-        report.get("pct_native_backend_used"),
+    pct_planner_runtime = (
+        dict(report.get("pct_planner_runtime"))
+        if isinstance(report.get("pct_planner_runtime"), dict)
+        else {}
     )
-    if pct_native_runtime_used is not True:
-        blockers.append("pct_native_runtime_used is not true")
-    if report.get("pct_runtime_ok") is not True:
-        blockers.append("pct_runtime_ok is not true")
+    if report.get("pct_planner_runtime_ok") is not True:
+        blockers.append("pct_planner_runtime_ok is not true")
+    if pct_planner_runtime.get("ok") is not True:
+        blockers.append("pct_planner_runtime.ok is not true")
+    if not str(pct_planner_runtime.get("runtime") or ""):
+        blockers.append("pct_planner_runtime.runtime is missing")
     if _safe_int(report.get("pct_path_count")) < 2:
         blockers.append("pct_path_count < 2")
     if str(report.get("primary_planner") or "").lower() != "pct":
@@ -1151,8 +1178,8 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
         blockers.append("selected_planner is not pct")
     if report.get("fallback_used") is not False:
         blockers.append("fallback_used is not false")
-    if str(report.get("global_planner_source") or "") != "source_report/native_pct_tomogram":
-        blockers.append("global_planner_source is not source_report/native_pct_tomogram")
+    if str(report.get("global_planner_source") or "") != "source_report/pct_tomogram":
+        blockers.append("global_planner_source is not source_report/pct_tomogram")
     chain = report.get("planning_chain") or {}
     if chain.get("fallback_allowed") is not False:
         blockers.append("planning_chain.fallback_allowed is not false")
@@ -1169,12 +1196,20 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
         blockers.append("source_planning_contract.fallback_used is not false")
     if source_contract.get("path_safety_ok") is not True:
         blockers.append("source_planning_contract.path_safety_ok is not true")
-    source_native_runtime_used = _first_present(
-        source_contract.get("native_runtime_used"),
-        source_contract.get("native_backend_used"),
+    source_pct_planner_runtime = (
+        dict(source_contract.get("pct_planner_runtime"))
+        if isinstance(source_contract.get("pct_planner_runtime"), dict)
+        else {}
     )
-    if source_native_runtime_used is not True:
-        blockers.append("source_planning_contract.native_runtime_used is not true")
+    if source_pct_planner_runtime.get("ok") is not True:
+        blockers.append("source_planning_contract.pct_planner_runtime.ok is not true")
+    if not str(source_pct_planner_runtime.get("runtime") or ""):
+        blockers.append("source_planning_contract.pct_planner_runtime.runtime is missing")
+    elif (
+        str(pct_planner_runtime.get("runtime") or "")
+        and source_pct_planner_runtime.get("runtime") != pct_planner_runtime.get("runtime")
+    ):
+        blockers.append("source and motion PCT planner runtimes do not match")
     if source_contract.get("tomogram_exists") is not True:
         blockers.append("source_planning_contract.tomogram_exists is not true")
     if not str(source_contract.get("tomogram_sha256") or ""):
@@ -1200,8 +1235,8 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
                 "fallback_used": report.get("fallback_used"),
                 "global_planner_source": report.get("global_planner_source"),
                 "source_planning_contract": source_contract,
-                "pct_native_runtime_used": pct_native_runtime_used,
-                "pct_runtime_ok": report.get("pct_runtime_ok"),
+                "pct_planner_runtime": pct_planner_runtime,
+                "pct_planner_runtime_ok": report.get("pct_planner_runtime_ok"),
                 "pct_path_count": report.get("pct_path_count"),
                 "pct_optimizer": pct_optimizer,
                 "same_source_artifacts": same_source_artifacts,
@@ -1240,7 +1275,7 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
                 "fallback_used": report.get("fallback_used"),
                 "global_planner_source": report.get("global_planner_source"),
                 "source_planning_contract": source_contract,
-                "pct_native_runtime_used": pct_native_runtime_used,
+                "pct_planner_runtime": pct_planner_runtime,
                 "same_source_artifacts": same_source_artifacts,
                 "claim_boundary": claim_boundary,
                 "native_gate_skipped": report.get("native_gate_skipped"),
@@ -1332,7 +1367,7 @@ def _eval_native_pct_mujoco(report: dict[str, Any]) -> tuple[bool, list[str], di
             "fallback_used": report.get("fallback_used"),
             "global_planner_source": report.get("global_planner_source"),
             "source_planning_contract": source_contract,
-            "pct_native_runtime_used": pct_native_runtime_used,
+            "pct_planner_runtime": pct_planner_runtime,
             "pct_optimizer": pct_optimizer,
             "same_source_artifacts": same_source_artifacts,
             "final_distance_m": report.get("final_distance_m"),
@@ -1850,7 +1885,7 @@ def _eval_fastlio2_dynamic_inspection(
     )
 
     true_mapping_path = str(report.get("true_mapping_input_path") or "")
-    for token in ("/lidar/raw_frame", "/imu/raw", "fastlio2", "/slam/odometry", "/slam/map_cloud"):
+    for token in (TOPICS.raw_lidar_points, TOPICS.raw_imu, "fastlio2", TOPICS.odometry, TOPICS.map_cloud):
         if token not in true_mapping_path:
             blockers.append(f"true_mapping_input_path missing {token}")
 
@@ -2515,11 +2550,16 @@ def _eval_gateway_runtime_acceptance(
     blockers: list[str] = []
     checks = report.get("checks") if isinstance(report.get("checks"), dict) else {}
     gateway_contract = checks.get("gateway_contract") if isinstance(checks.get("gateway_contract"), dict) else {}
-    dataflow = checks.get("module_first_dataflow") if isinstance(checks.get("module_first_dataflow"), dict) else {}
+    observability = (
+        checks.get("gateway_observability")
+        if isinstance(checks.get("gateway_observability"), dict)
+        else {}
+    )
+    motion = checks.get("motion") if isinstance(checks.get("motion"), dict) else {}
     stage_evidence = checks.get("stage_evidence") if isinstance(checks.get("stage_evidence"), dict) else {}
 
-    if report.get("schema_version") != "lingtu.gateway_runtime_acceptance.v1":
-        blockers.append("schema_version is not lingtu.gateway_runtime_acceptance.v1")
+    if report.get("schema_version") != "lingtu.gateway_runtime_acceptance.v3":
+        blockers.append("schema_version is not lingtu.gateway_runtime_acceptance.v3")
     if report.get("ok") is not True:
         blockers.append("report.ok is not true")
     if report.get("mode") != "non_motion":
@@ -2540,25 +2580,23 @@ def _eval_gateway_runtime_acceptance(
     if missing_links:
         blockers.append("gateway contract missing links: " + ", ".join(missing_links))
 
-    if dataflow.get("ok") is not True:
-        blockers.append("module_first_dataflow.ok is not true")
-    if dataflow.get("ros2_topic_required") is True:
+    if observability.get("ok") is not True:
+        blockers.append("gateway_observability.ok is not true")
+    if observability.get("ros2_topic_required") is True:
         blockers.append("Gateway acceptance must not require ros2 topic")
-    if dataflow.get("module_port_bus_primary") is not True:
-        blockers.append("module_port_bus_primary is not true")
-    if dataflow.get("ros2_adapter_primary") is True:
-        blockers.append("ros2_adapter_primary is true")
-    if dataflow.get("arbitrary_publish_supported") is not False:
+    if observability.get("arbitrary_publish_supported") is not False:
         blockers.append("arbitrary_publish_supported is not false")
-    if _safe_int(dataflow.get("command_interface_count")) <= 0:
+    if _safe_int(observability.get("command_interface_count")) <= 0:
         blockers.append("command_interface_count is missing")
+    if motion.get("ok") is not True:
+        blockers.append("motion.ok is not true")
 
-    missing_command_interfaces = [str(item) for item in dataflow.get("missing_command_interfaces") or []]
-    unexpected_command_interfaces = [str(item) for item in dataflow.get("unexpected_command_interfaces") or []]
-    missing_topics = [str(item) for item in dataflow.get("missing_topics") or []]
-    non_observable_topics = [str(item) for item in dataflow.get("non_observable_topics") or []]
-    missing_stream_interfaces = [str(item) for item in dataflow.get("missing_stream_interfaces") or []]
-    missing_live_topics = [str(item) for item in dataflow.get("missing_live_topics") or []]
+    missing_command_interfaces = [str(item) for item in observability.get("missing_command_interfaces") or []]
+    unexpected_command_interfaces = [str(item) for item in observability.get("unexpected_command_interfaces") or []]
+    missing_topics = [str(item) for item in observability.get("missing_topics") or []]
+    non_observable_topics = [str(item) for item in observability.get("non_observable_topics") or []]
+    missing_stream_interfaces = [str(item) for item in observability.get("missing_stream_interfaces") or []]
+    missing_live_topics = [str(item) for item in observability.get("missing_live_topics") or []]
     if missing_command_interfaces:
         blockers.append("missing Gateway command interfaces: " + ", ".join(missing_command_interfaces))
     if unexpected_command_interfaces:
@@ -2590,19 +2628,19 @@ def _eval_gateway_runtime_acceptance(
             "runtime stages missing required inputs: " + ", ".join(sorted(str(key) for key in missing_tokens))
         )
 
-    observable_topics = [str(item) for item in dataflow.get("observable_topics") or []]
-    streamable_topics = [str(item) for item in dataflow.get("streamable_topics") or []]
+    observable_topics = [str(item) for item in observability.get("observable_topics") or []]
+    streamable_topics = [str(item) for item in observability.get("streamable_topics") or []]
     return (
         not blockers,
         blockers,
         {
             "mode": report.get("mode"),
-            "runtime_contract": report.get("runtime_contract") or dataflow.get("runtime_contract"),
+            "runtime_contract": report.get("runtime_contract") or observability.get("runtime_contract"),
             "ros2_topic_required": report.get("ros2_topic_required"),
-            "module_port_bus_primary": dataflow.get("module_port_bus_primary"),
-            "ros2_adapter_primary": dataflow.get("ros2_adapter_primary"),
-            "arbitrary_publish_supported": dataflow.get("arbitrary_publish_supported"),
-            "command_interface_count": dataflow.get("command_interface_count"),
+            "motion_kind": motion.get("kind"),
+            "motion_owner": motion.get("motion_owner"),
+            "arbitrary_publish_supported": observability.get("arbitrary_publish_supported"),
+            "command_interface_count": observability.get("command_interface_count"),
             "observable_topic_count": len(observable_topics),
             "streamable_topic_count": len(streamable_topics),
             "stage_count": stage_evidence.get("stage_count"),
@@ -2640,15 +2678,15 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
     samples = report.get("topic_samples") or {}
     point_counts = report.get("point_counts") or {}
     expected = {
-        "/slam/map_cloud": "odom",
-        "/slam/registered_cloud": "body",
+        TOPICS.map_cloud: "odom",
+        TOPICS.registered_cloud: "body",
     }
     for topic, frame in expected.items():
         if int(samples.get(topic) or 0) <= 0:
             blockers.append(f"{topic} samples missing")
         if frames.get(topic) != frame:
             blockers.append(f"{topic} frame is not {frame}")
-    for topic in ("/slam/map_cloud", "/slam/registered_cloud"):
+    for topic in (TOPICS.map_cloud, TOPICS.registered_cloud):
         if int(point_counts.get(topic) or 0) <= 0:
             blockers.append(f"{topic} points missing")
 
@@ -2675,7 +2713,7 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
     if odom_delta_m < 0.05:
         blockers.append("nav_loop.odom_delta_m < 0.05")
     nav_samples = nav_loop.get("samples") or nav_loop.get("topic_samples") or {}
-    for topic in ("/nav/global_path", "/nav/local_path", "/nav/cmd_vel", "/slam/odometry"):
+    for topic in (TOPICS.global_path, TOPICS.local_path, TOPICS.cmd_vel, TOPICS.odometry):
         if int(nav_samples.get(topic) or 0) <= 0:
             blockers.append(f"nav_loop {topic} samples missing")
     publisher_contract = nav_loop.get("publisher_contract") or {}
@@ -2730,7 +2768,7 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
         "/nav/global_path",
         "/nav/local_path",
         "/nav/cmd_vel",
-        "/slam/odometry",
+        TOPICS.odometry,
         "/nav/terrain_map",
         "/nav/terrain_map_ext",
     ):
@@ -2856,332 +2894,6 @@ def _eval_gazebo_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[
                 "runtime_available": tare.get("runtime_available"),
                 "gazebo_runtime_verified": tare.get("gazebo_runtime_verified"),
             },
-        },
-    )
-
-
-def _eval_cmu_unity_sim(report: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
-    blockers: list[str] = []
-    if report.get("schema_version") != "lingtu.cmu_unity_sim_gate.v1":
-        blockers.append("schema_version is not lingtu.cmu_unity_sim_gate.v1")
-    if report.get("ok") is not True:
-        blockers.append("report.ok is not true")
-    if report.get("simulation_only") is not True:
-        blockers.append("simulation_only is not true")
-    if not _bool_false(report, "real_robot_motion"):
-        blockers.append("real_robot_motion is not false")
-    if not _bool_false(report, "cmd_vel_sent_to_hardware"):
-        blockers.append("cmd_vel_sent_to_hardware is not false")
-    if report.get("runtime_executed") is not False:
-        blockers.append("runtime_executed is not false")
-
-    checks = list(report.get("checks") or [])
-    check_by_name = {str(item.get("name")): item for item in checks}
-    required_checks = (
-        "host_ros_humble_setup",
-        "host_ros2_cli",
-        "host_ros2_cli_functional",
-        "host_colcon_cli",
-        "host_colcon_cli_functional",
-        "cmu_workspace_exists",
-        "cmu_git_workspace",
-        "cmu_humble_branch",
-        "cmu_required_source_paths",
-        "cmu_unity_environment_assets",
-        "cmu_colcon_build_output",
-        "cmu_topic_contract",
-        "lingtu_tare_remap_contract",
-        "lingtu_tare_explore_profile",
-        "lingtu_cmu_tare_profile",
-        "lingtu_cmu_adapter_exists",
-        "lingtu_cmu_adapter_relay_contract",
-        "lingtu_cmu_adapter_safety_contract",
-    )
-    for name in required_checks:
-        if (check_by_name.get(name) or {}).get("ok") is not True:
-            blockers.append(f"{name} is not true")
-
-    cmu = report.get("cmu_workspace") or {}
-    topic_contract = cmu.get("topic_contract") or {}
-    for topic in (
-        "/registered_scan",
-        "/state_estimation",
-        "/terrain_map",
-        "/terrain_map_ext",
-        "/way_point",
-        "/cmd_vel",
-    ):
-        if topic_contract.get(topic) is not True:
-            blockers.append(f"cmu topic {topic} missing")
-
-    lingtu = report.get("lingtu_contract") or {}
-    remaps = lingtu.get("remaps") or {}
-    if remaps.get("/registered_scan") != "/slam/map_cloud":
-        blockers.append("LingTu /registered_scan remap is not /slam/map_cloud")
-    if remaps.get("/state_estimation") != "/slam/odometry":
-        blockers.append("LingTu /state_estimation remap is not /slam/odometry")
-    if remaps.get("/state_estimation_at_scan") != "/slam/odometry":
-        blockers.append("LingTu /state_estimation_at_scan remap is not /slam/odometry")
-    if remaps.get("/way_point") != "/exploration/way_point":
-        blockers.append("LingTu /way_point remap is not /exploration/way_point")
-
-    adapter_required_relays = lingtu.get("adapter_required_relays") or {}
-    for relay in (
-        "/state_estimation->/slam/odometry",
-        "/state_estimation_at_scan->/slam/state_at_scan",
-        "/registered_scan->/slam/map_cloud",
-        "/terrain_map->/nav/terrain_map",
-        "/terrain_map_ext->/nav/terrain_map_ext",
-        "/way_point->/exploration/way_point",
-        "/exploration/start->/start_exploration",
-        "/nav/cmd_vel->/cmd_vel",
-    ):
-        if relay not in adapter_required_relays:
-            blockers.append(f"LingTu adapter relay {relay} missing")
-
-    return (
-        not blockers,
-        blockers,
-        {
-            "workspace": cmu.get("path"),
-            "branch": cmu.get("branch"),
-            "head": cmu.get("head"),
-            "remote": cmu.get("remote"),
-            "checks": {str(item.get("name")): bool(item.get("ok")) for item in checks},
-            "blockers": report.get("blockers") or [],
-        },
-    )
-
-
-def _eval_cmu_unity_runtime(report: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
-    blockers: list[str] = []
-    if report.get("schema_version") != "lingtu.cmu_unity_runtime_gate.v1":
-        blockers.append("schema_version is not lingtu.cmu_unity_runtime_gate.v1")
-    if report.get("ok") is not True:
-        blockers.append("report.ok is not true")
-    if report.get("simulation_only") is not True:
-        blockers.append("simulation_only is not true")
-    if not _bool_false(report, "real_robot_motion"):
-        blockers.append("real_robot_motion is not false")
-    if not _bool_false(report, "cmd_vel_sent_to_hardware"):
-        blockers.append("cmd_vel_sent_to_hardware is not false")
-    if report.get("runtime_executed") is not True:
-        blockers.append("runtime_executed is not true")
-    runtime_evidence_blockers, shared_runtime_evidence = _shared_runtime_evidence(
-        report,
-        expected_contract="cmu_unity_external",
-        require_frame_links=True,
-        require_data_flow=True,
-    )
-    _extend_unique(blockers, runtime_evidence_blockers)
-    if str(report.get("ros_domain_id") or "") in {"", "0"}:
-        blockers.append("ROS_DOMAIN_ID is empty or default")
-    contract_blockers, runtime_contract = _runtime_contract_blockers(
-        report,
-        expected_name="cmu_unity_external",
-    )
-    _extend_unique(blockers, contract_blockers)
-
-    thresholds = report.get("thresholds") or {}
-    waypoints = report.get("waypoints") or {}
-    min_waypoint_samples = int(thresholds.get("min_waypoint_samples") or 1)
-    if int((waypoints.get("/way_point") or {}).get("samples") or 0) < min_waypoint_samples:
-        blockers.append("/way_point samples below threshold")
-    waypoint_unique_requirements = report.get("waypoint_unique_requirements") or {}
-    for topic, requirement in waypoint_unique_requirements.items():
-        if requirement.get("ok") is not True:
-            blockers.append(f"{topic} unique waypoint requirement failed")
-
-    cmd = report.get("cmd_vel") or {}
-    if int(cmd.get("nonzero_samples") or 0) < int(thresholds.get("min_cmd_vel_samples") or 3):
-        blockers.append("/nav/cmd_vel nonzero_samples below threshold")
-    if _safe_float(cmd.get("max_norm"), default=0.0) < _safe_float(thresholds.get("min_cmd_vel"), default=0.01):
-        blockers.append("/nav/cmd_vel max_norm below threshold")
-
-    odometry = report.get("odometry") or {}
-    odom_delta = max(
-        (_safe_float((item or {}).get("delta_m"), default=0.0) for item in odometry.values()),
-        default=0.0,
-    )
-    if odom_delta < _safe_float(thresholds.get("min_odom_delta_m"), default=0.10):
-        blockers.append("odom delta below threshold")
-
-    cloud = report.get("cloud_coverage") or {}
-    if _safe_float(cloud.get("best_area_delta_m2"), default=0.0) < _safe_float(
-        thresholds.get("min_map_area_delta_m2"),
-        default=0.5,
-    ):
-        blockers.append("map/exploration area delta below threshold")
-
-    hardware = report.get("hardware_safety") or {}
-    if hardware.get("blocked_hardware_nodes"):
-        blockers.append("hardware-looking command subscriber present")
-
-    tare_navigation = report.get("tare_navigation") or {}
-    if int(tare_navigation.get("success_count") or 0) < 1:
-        blockers.append("TARE navigation success_count below threshold")
-    if int(tare_navigation.get("failure_count") or 0) > 0:
-        blockers.append("TARE navigation failure_count is nonzero")
-
-    tare_strategy_quality = report.get("tare_strategy_quality")
-    if not isinstance(tare_strategy_quality, dict):
-        tare_strategy_quality = {}
-        blockers.append("tare_strategy_quality missing")
-    if tare_strategy_quality.get("checked") is not True:
-        blockers.append("tare_strategy_quality.checked is not true")
-    if tare_strategy_quality.get("ok") is not True:
-        blockers.append("tare_strategy_quality.ok is not true")
-    tare_strategy_thresholds = tare_strategy_quality.get("thresholds") or {}
-    min_tare_waypoints = int(tare_strategy_thresholds.get("min_tare_waypoints") or 1)
-    min_tare_paths = int(tare_strategy_thresholds.get("min_tare_paths") or 1)
-    min_tare_strategy_paths = int(tare_strategy_thresholds.get("min_tare_strategy_paths") or 0)
-    min_tare_successes = int(tare_strategy_thresholds.get("min_tare_navigation_successes") or 1)
-    if int(tare_strategy_quality.get("waypoint_count") or 0) < min_tare_waypoints:
-        blockers.append("tare_strategy_quality.waypoint_count below threshold")
-    if int(tare_strategy_quality.get("path_count") or 0) < min_tare_paths:
-        blockers.append("tare_strategy_quality.path_count below threshold")
-    if int(tare_strategy_quality.get("strategy_path_count") or 0) < min_tare_strategy_paths:
-        blockers.append("tare_strategy_quality.strategy_path_count below threshold")
-    if int(tare_strategy_quality.get("navigation_success_count") or 0) < min_tare_successes:
-        blockers.append("tare_strategy_quality.navigation_success_count below threshold")
-    if int(tare_strategy_quality.get("navigation_failure_count") or 0) > 0:
-        blockers.append("tare_strategy_quality.navigation_failure_count is nonzero")
-    for blocker in tare_strategy_quality.get("blockers") or []:
-        blockers.append(f"tare_strategy_quality: {blocker}")
-
-    frontier_stall = report.get("frontier_no_gain_stall")
-    if not isinstance(frontier_stall, dict):
-        frontier_stall = {}
-        blockers.append("frontier_no_gain_stall missing")
-    if frontier_stall.get("checked") is not True:
-        blockers.append("frontier_no_gain_stall.checked is not true")
-    if frontier_stall.get("ok") is not True:
-        blockers.append("frontier_no_gain_stall.ok is not true")
-    if frontier_stall.get("mode") != "late_activity_observation":
-        blockers.append("frontier_no_gain_stall.mode is not late_activity_observation")
-    if frontier_stall.get("stop_reason") != "late_activity_window_verified":
-        blockers.append("frontier_no_gain_stall.stop_reason is not late_activity_window_verified")
-    required_observation_s = _safe_float(
-        frontier_stall.get("required_observation_s"),
-        default=0.0,
-    )
-    observed_s = _safe_float(frontier_stall.get("observed_s"), default=0.0)
-    if required_observation_s <= 0.0:
-        blockers.append("frontier_no_gain_stall.required_observation_s <= 0")
-    if observed_s < required_observation_s:
-        blockers.append("frontier_no_gain_stall.observed_s below required")
-    late_activity_stall = frontier_stall.get("late_activity") or {}
-    for name in ("odometry_ok", "cmd_vel_ok", "paths_ok"):
-        if late_activity_stall.get(name) is not True:
-            blockers.append(f"frontier_no_gain_stall.late_activity.{name} is not true")
-    if not (
-        late_activity_stall.get("map_growth_ok") is True
-        or late_activity_stall.get("map_growth_accepted_flat_after_total_growth") is True
-    ):
-        blockers.append("frontier_no_gain_stall.late_activity.map_growth is not accepted")
-
-    return (
-        not blockers,
-        blockers,
-        {
-            "ros_domain_id": report.get("ros_domain_id"),
-            "waypoints": waypoints,
-            "waypoint_unique_requirements": waypoint_unique_requirements,
-            "cmd_vel": cmd,
-            "odometry_delta_m": odom_delta,
-            "motion_progress": report.get("motion_progress") or {},
-            "progress_requirements": report.get("progress_requirements") or {},
-            "cloud_coverage": cloud,
-            "hardware_safety": hardware,
-            "runtime_contract": runtime_contract,
-            "runtime_evidence": shared_runtime_evidence,
-            "tare_navigation": tare_navigation,
-            "tare_strategy_quality": tare_strategy_quality,
-            "frontier_no_gain_stall": frontier_stall,
-            "blockers": report.get("blockers") or [],
-        },
-    )
-
-
-def _eval_cmu_unity_pct_strict(report: dict[str, Any]) -> tuple[bool, list[str], dict[str, Any]]:
-    _, blockers, runtime_evidence = _eval_cmu_unity_runtime(report)
-    blockers = list(blockers)
-
-    if report.get("cmd_vel_exclusive_to_lingtu") is not True:
-        blockers.append("cmd_vel_exclusive_to_lingtu is not true")
-
-    planner = report.get("planner_diagnostics") or {}
-    if planner.get("available") is not True:
-        blockers.append("planner diagnostics unavailable")
-    if planner.get("primary_planner") != "pct":
-        blockers.append("primary_planner is not pct")
-    if planner.get("selected_planner") != "pct":
-        blockers.append("selected_planner is not pct")
-    if planner.get("fallback_used") is not False:
-        blockers.append("planner fallback was used")
-    if int(planner.get("rejected_plan_count") or 0) != 0:
-        blockers.append("planner rejected_plan_count is not 0")
-    if planner.get("reached_goal") is not True:
-        blockers.append("PCT did not report reached_goal")
-
-    navigation_failure = report.get("navigation_failure") or {}
-    if navigation_failure.get("failed") is True:
-        blockers.append("navigation mission failed")
-    if str(navigation_failure.get("state") or "").upper() in {"FAILED", "STUCK"}:
-        blockers.append("navigation state is failed/stuck")
-
-    direct_goal_fallback = report.get("direct_goal_fallback") or {}
-    if direct_goal_fallback.get("used") is True:
-        blockers.append("direct goal fallback was used")
-
-    path_requirements = report.get("path_requirements") or {}
-    paths = report.get("paths") or {}
-    for topic in ("/nav/global_path", "/nav/local_path"):
-        req = path_requirements.get(topic) or {}
-        item = paths.get(topic) or {}
-        observed_nonempty = int(req.get("observed_nonempty_samples") or item.get("nonempty_samples") or 0)
-        observed_poses = int(req.get("observed_max_poses") or item.get("max_poses") or 0)
-        if req.get("ok") is not True or observed_nonempty <= 0 or observed_poses < 2:
-            blockers.append(f"{topic} strict path requirement failed")
-
-    scan_requirements = report.get("scan_requirements") or {}
-    registered_scan = scan_requirements.get("/slam/registered_cloud") or {}
-    if registered_scan.get("ok") is not True or int(registered_scan.get("observed_samples") or 0) <= 0:
-        blockers.append("/slam/registered_cloud strict scan requirement failed")
-
-    map_requirements = report.get("map_requirements") or {}
-    map_cloud = map_requirements.get("/slam/map_cloud") or {}
-    if map_cloud.get("ok") is not True or _safe_float(map_cloud.get("observed_area_delta_m2"), default=0.0) <= 0.0:
-        blockers.append("/slam/map_cloud strict map-growth requirement failed")
-    terrain_map = map_requirements.get("/nav/terrain_map_ext") or {}
-    if terrain_map.get("ok") is not True or _safe_float(terrain_map.get("observed_area_delta_m2"), default=0.0) <= 0.0:
-        blockers.append("/nav/terrain_map_ext strict map-growth requirement failed")
-
-    hardware = report.get("hardware_safety") or {}
-    if hardware.get("unexpected_command_publishers"):
-        blockers.append("unexpected /cmd_vel publisher present")
-
-    return (
-        not blockers,
-        blockers,
-        {
-            **runtime_evidence,
-            "planner_diagnostics": {
-                "available": planner.get("available"),
-                "primary_planner": planner.get("primary_planner"),
-                "selected_planner": planner.get("selected_planner"),
-                "policy": planner.get("policy"),
-                "fallback_used": planner.get("fallback_used"),
-                "fallback_reason": planner.get("fallback_reason"),
-                "rejected_plan_count": planner.get("rejected_plan_count"),
-                "reached_goal": planner.get("reached_goal"),
-            },
-            "cmd_vel_exclusive_to_lingtu": report.get("cmd_vel_exclusive_to_lingtu"),
-            "path_requirements": path_requirements,
-            "scan_requirements": scan_requirements,
-            "map_requirements": map_requirements,
-            "navigation_failure": navigation_failure,
-            "direct_goal_fallback": direct_goal_fallback,
         },
     )
 
@@ -3365,7 +3077,7 @@ def _eval_multifloor_exploration(report: dict[str, Any]) -> tuple[bool, list[str
     cases = list(report.get("cases") or [])
     if len(cases) < len(required_routes):
         blockers.append("case_count is lower than required route count")
-    native_pct_runtime_blocked = int(report.get("native_pct_blocked_count") or 0) > 0
+    pct_planner_runtime_blocked = int(report.get("native_pct_blocked_count") or 0) > 0
     for case in cases:
         route = str(case.get("route") or "")
         if case.get("passed") is not True:
@@ -3375,14 +3087,13 @@ def _eval_multifloor_exploration(report: dict[str, Any]) -> tuple[bool, list[str
         native_gate = case.get("native_pct_gate") or {}
         if native_gate.get("ok") is not True:
             blockers.append(f"{route or 'unknown'} native_pct_gate failed")
-        runtime = native_gate.get("runtime") or native_gate.get("native_runtime") or {}
+        runtime = native_gate.get("pct_planner_runtime") or {}
         runtime_error = str(runtime.get("error") or native_gate.get("reason") or "").lower()
         if native_gate.get("status") == "blocked" and (
             runtime.get("ok") is False
-            or "no runnable pct native modules" in runtime_error
-            or "pct planner unavailable" in runtime_error
+            or "pct planner runtime unavailable" in runtime_error
         ):
-            native_pct_runtime_blocked = True
+            pct_planner_runtime_blocked = True
         if (case.get("command_flow") or {}).get("ok") is not True:
             blockers.append(f"{route or 'unknown'} command_flow failed")
         if (case.get("tracking_replay") or {}).get("ok") is not True:
@@ -3398,8 +3109,8 @@ def _eval_multifloor_exploration(report: dict[str, Any]) -> tuple[bool, list[str
             blockers.append("cross_floor floor-graph composition not verified")
         if int(gate.get("native_pct_feasible_segments") or 0) < 2:
             blockers.append("cross_floor does not have two feasible native PCT segments")
-    if native_pct_runtime_blocked and "PCT native runtime unavailable" not in blockers:
-        blockers.append("PCT native runtime unavailable")
+    if pct_planner_runtime_blocked and "PCT planner runtime unavailable" not in blockers:
+        blockers.append("PCT planner runtime unavailable")
 
     return (
         not blockers,
@@ -3413,7 +3124,7 @@ def _eval_multifloor_exploration(report: dict[str, Any]) -> tuple[bool, list[str
             "frontier_rounds": len(rounds),
             "native_pct_gate_passed_count": report.get("native_pct_gate_passed_count"),
             "native_pct_blocked_count": report.get("native_pct_blocked_count"),
-            "native_pct_runtime_blocked": native_pct_runtime_blocked,
+            "pct_planner_runtime_blocked": pct_planner_runtime_blocked,
             "validation_level": report.get("validation_level"),
             "algorithm_backends": _extract_algorithm_backends(report),
         },
@@ -3447,11 +3158,11 @@ GATES: tuple[GateSpec, ...] = (
         "--output-dir artifacts/server_sim_closure/multifloor_exploration "
         "--json-out artifacts/server_sim_closure/multifloor_exploration/report.json --strict",
         _eval_multifloor_exploration,
-        host_requirements=(*LOCAL_NON_MOTION_HOST_REQUIREMENTS, *PCT_NATIVE_HOST_REQUIREMENTS),
+        host_requirements=(*LOCAL_NON_MOTION_HOST_REQUIREMENTS, *PCT_PLANNER_RUNTIME_HOST_REQUIREMENTS),
     ),
     GateSpec(
         "large_terrain",
-        "PCT/native path generation over large static terrain assets",
+        "PCT planner path generation over large static terrain assets",
         (
             "artifacts/server_sim_closure/large_terrain/report.json",
             "artifacts/large_terrain_nav_validation*/report.json",
@@ -3462,11 +3173,11 @@ GATES: tuple[GateSpec, ...] = (
         "--planners pct,astar "
         "--json-out artifacts/server_sim_closure/large_terrain/report.json",
         _eval_large_terrain,
-        host_requirements=(*LOCAL_NON_MOTION_HOST_REQUIREMENTS, *PCT_NATIVE_HOST_REQUIREMENTS),
+        host_requirements=(*LOCAL_NON_MOTION_HOST_REQUIREMENTS, *PCT_PLANNER_RUNTIME_HOST_REQUIREMENTS),
     ),
     GateSpec(
         "native_pct_mujoco",
-        "Native PCT route through ROS2 localPlanner/pathFollower into MuJoCo kinematic motion",
+        "PCT planner route through native ROS2 localPlanner/pathFollower into MuJoCo kinematic motion",
         (
             "artifacts/server_sim_closure/native_pct_mujoco/report.json",
             "artifacts/server_sim_closure/native_pct_mujoco/report.*.server.json",
@@ -3700,7 +3411,6 @@ GATES: tuple[GateSpec, ...] = (
         "Gateway non-motion route preflight comparing baseline and candidate planning",
         (
             "artifacts/server_sim_closure/routecheck/summary.json",
-            "artifacts/super_lio_route_preflight_*/summary.json",
             "artifacts/routecheck*/summary.json",
         ),
         "PYTHONPATH=src:. python3 sim/scripts/routecheck_preflight_gate.py "
@@ -3764,73 +3474,6 @@ GATES: tuple[GateSpec, ...] = (
         "--launch-log artifacts/server_sim_closure/gazebo_runtime_explore/launch_grid_astar_odomfoot.log'",
         _eval_gazebo_runtime,
         host_requirements=ROS2_GAZEBO_NAV_HOST_REQUIREMENTS,
-    ),
-    GateSpec(
-        "cmu_unity_sim",
-        "Isolated CMU Humble Unity/TARE benchmark preflight with LingTu adapter/remap contract and no hardware output",
-        (
-            "artifacts/server_sim_closure/cmu_unity_sim/report.json",
-            "artifacts/cmu_unity_sim*/report.json",
-        ),
-        "PYTHONPATH=src:. python3 sim/scripts/cmu_unity_sim_gate.py "
-        "--json-out artifacts/server_sim_closure/cmu_unity_sim/report.json --strict",
-        _eval_cmu_unity_sim,
-        host_requirements=LOCAL_NUMERIC_SIM_HOST_REQUIREMENTS,
-    ),
-    GateSpec(
-        "cmu_unity_runtime",
-        "Runtime CMU Unity + LingTu adapter/TARE/nav closed loop with real waypoints, cmd_vel, odom, and map-area growth",
-        (
-            "artifacts/server_sim_closure/cmu_unity_runtime/report.json",
-            "artifacts/server_sim_closure/cmu_unity_pct_strict/report_unique_waypoints.json",
-            "artifacts/server_sim_closure/cmu_unity_pct_strict/report.json",
-            "artifacts/cmu_unity_runtime*/report.json",
-        ),
-        "bash -lc 'source /opt/ros/humble/setup.bash && "
-        "source install/setup.bash 2>/dev/null || true; "
-        "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
-        "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
-        "python3 sim/scripts/cmu_unity_runtime_gate.py "
-        "--json-out artifacts/server_sim_closure/cmu_unity_runtime/report.json --strict'",
-        _eval_cmu_unity_runtime,
-        host_requirements=ROS2_GAZEBO_HOST_REQUIREMENTS,
-    ),
-    GateSpec(
-        "cmu_unity_pct_strict",
-        "Runtime CMU Unity + TARE + LingTu PCT with same-source tomogram, no planner fallback, path topics, odom motion, and map growth",
-        (
-            "artifacts/server_sim_closure/cmu_unity_pct_strict/report_unique_waypoints.json",
-            "artifacts/server_sim_closure/cmu_unity_pct_strict/report.json",
-            "artifacts/server_sim_closure/cmu_unity_pct_strict_*/report.json",
-        ),
-        "bash -lc 'source /opt/ros/humble/setup.bash && "
-        "source install/setup.bash 2>/dev/null || true; "
-        "export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-75}; "
-        "export DISPLAY=${DISPLAY:-:1}; "
-        "export FASTDDS_BUILTIN_TRANSPORTS=${FASTDDS_BUILTIN_TRANSPORTS:-UDPv4}; "
-        "export LINGTU_CMU_RUN_DIR=${LINGTU_CMU_RUN_DIR:-artifacts/server_sim_closure/cmu_unity_pct_strict}; "
-        "export LINGTU_CMU_PLANNER=pct; "
-        "export LINGTU_CMU_START_CMU_TARE=1; "
-        "export LINGTU_CMU_TARE_SCENARIO=${LINGTU_CMU_TARE_SCENARIO:-indoor_large}; "
-        "export LINGTU_CMU_TARE_AUTOSTART=0; "
-        "export LINGTU_CMU_ENABLE_FRONTIER=0; "
-        "export LINGTU_CMU_EXTERNAL_STRATEGY_PATH_CONTROL=0; "
-        "export LINGTU_CMU_AUTO_SESSION=1; "
-        "export LINGTU_CMU_EXPLORATION_AUTO_START=0; "
-        "export LINGTU_CMU_ALLOW_DIRECT_GOAL_FALLBACK=0; "
-        "export LINGTU_CMU_AUTO_TOMOGRAM=${LINGTU_CMU_AUTO_TOMOGRAM:-1}; "
-        "export LINGTU_CMU_TOMOGRAM_TOPICS=${LINGTU_CMU_TOMOGRAM_TOPICS:-/slam/map_cloud,/nav/terrain_map_ext}; "
-        "export LINGTU_CMU_TOMOGRAM_MODE=${LINGTU_CMU_TOMOGRAM_MODE:-official}; "
-        "export LINGTU_CMU_TOMOGRAM_DURATION_SEC=${LINGTU_CMU_TOMOGRAM_DURATION_SEC:-20}; "
-        "export LINGTU_CMU_GATE_TIMEOUT_SEC=${LINGTU_CMU_GATE_TIMEOUT_SEC:-240}; "
-        "export LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS=${LINGTU_CMU_GATE_MIN_UNIQUE_WAYPOINTS:-3}; "
-        "export LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS=${LINGTU_CMU_GATE_REQUIRED_MAP_TOPICS:-/slam/map_cloud,/nav/terrain_map_ext}; "
-        "export LINGTU_CMU_GATE_REQUIRE_PCT=1; "
-        "PYTHONPATH=src:.:/opt/ros/humble/local/lib/python3.10/dist-packages:"
-        "/opt/ros/humble/lib/python3.10/site-packages:$PYTHONPATH "
-        "sim/scripts/launch_cmu_unity_lingtu_runtime.sh start --gate --rviz'",
-        _eval_cmu_unity_pct_strict,
-        host_requirements=ROS2_GAZEBO_HOST_REQUIREMENTS,
     ),
     GateSpec(
         "saved_map_relocalize",
@@ -4163,7 +3806,7 @@ _BLOCKER_CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "abi",
             "python_tag",
             "shared library",
-            "no runnable pct native modules",
+            "pct planner runtime unavailable",
             "runtime unavailable",
             "launch_script",
             "launch script",
@@ -4447,9 +4090,8 @@ def _inspect_pct_runtime_for_host(machine: str | None) -> dict[str, Any]:
         return dict(inspect_pct_runtime(ROOT, machine=machine))
     except Exception as exc:
         return {
+            "runtime": "rust_process",
             "ok": False,
-            "host_platform_supported": platform.system().lower() == "linux",
-            "python_abi_matches_known_good": _python_tag() == "py310",
             "error": f"{type(exc).__name__}: {exc}",
         }
 
@@ -4498,14 +4140,20 @@ def _parse_ros2_package_executables_result(
     return None
 
 
-def _ros2_package_executables(package: str, env: dict[str, str]) -> list[str] | None:
+def _ros2_package_executables(
+    package: str,
+    env: dict[str, str],
+    *,
+    os_name: str | None = None,
+) -> list[str] | None:
     query_env = os.environ.copy()
     query_env.update(env)
 
     ros_distro = str(query_env.get("ROS_DISTRO") or "humble")
     setup_bash = Path(f"/opt/ros/{ros_distro}/setup.bash")
     workspace_setup = ROOT / "install" / "setup.bash"
-    if os.name == "posix" and shutil.which("bash") and (setup_bash.exists() or workspace_setup.exists()):
+    current_os_name = os.name if os_name is None else os_name
+    if current_os_name == "posix" and shutil.which("bash") and (setup_bash.exists() or workspace_setup.exists()):
         source_commands: list[str] = ["set +u"]
         if setup_bash.exists():
             source_commands.append(f"source {shlex.quote(str(setup_bash))}")
@@ -4791,26 +4439,31 @@ def host_preflight(
                 },
             )
 
-        if "PCT native extension modules" in requirement_text:
-            platform_ok = resolved_platform.lower() == "linux"
-            python_ok = resolved_python_tag == "py310"
-            runtime_ok = bool(pct_report.get("ok"))
-            pct_ok = platform_ok and python_ok and runtime_ok
-            pct_blockers: list[str] = []
-            if not platform_ok:
-                pct_blockers.append(f"PCT native runtime unavailable on {resolved_platform}; Linux/S100P required")
-            if not python_ok:
-                pct_blockers.append(f"PCT native runtime requires CPython 3.10 ABI; current {resolved_python_tag}")
-            if not runtime_ok:
-                detail = str(pct_report.get("error") or "runtime inspection did not pass")
-                pct_blockers.append(f"PCT native runtime unavailable: {detail}")
+        if "PCT planner runtime available" in requirement_text:
+            selection = (
+                dict(pct_report.get("planner_runtime"))
+                if isinstance(pct_report.get("planner_runtime"), dict)
+                else {}
+            )
+            runtime_name = str(
+                pct_report.get("runtime")
+                or selection.get("resolved")
+                or selection.get("requested")
+                or ""
+            )
+            pct_planner_runtime = {
+                **pct_report,
+                "runtime": runtime_name,
+                "ok": pct_report.get("ok") is True,
+            }
+            runtime_ok = pct_planner_runtime["ok"] and bool(runtime_name)
             _add_check(
                 checks,
                 blockers,
-                "pct_native",
-                ok=pct_ok,
-                blocker="; ".join(pct_blockers),
-                evidence=pct_report,
+                "pct_planner_runtime",
+                ok=runtime_ok,
+                blocker="PCT planner runtime unavailable",
+                evidence=pct_planner_runtime,
             )
 
         if "ROS 2 Humble" in requirement_text:
@@ -5812,9 +5465,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help=("Build navigation_replay_deviation evidence directly from recorded topic JSONL before summarizing."),
     )
     parser.add_argument("--gazebo-runtime-report", type=Path, default=None)
-    parser.add_argument("--cmu-unity-sim-report", type=Path, default=None)
-    parser.add_argument("--cmu-unity-runtime-report", type=Path, default=None)
-    parser.add_argument("--cmu-unity-pct-strict-report", type=Path, default=None)
     parser.add_argument("--saved-map-relocalize-report", type=Path, default=None)
     parser.add_argument("--pct-saved-map-navigation-report", type=Path, default=None)
     parser.add_argument(
@@ -5912,9 +5562,6 @@ def main() -> int:
         "blocked_route_replan_preflight": args.blocked_route_replan_preflight_report,
         "navigation_replay_deviation": args.navigation_replay_deviation_report,
         "gazebo_runtime": args.gazebo_runtime_report,
-        "cmu_unity_sim": args.cmu_unity_sim_report,
-        "cmu_unity_runtime": args.cmu_unity_runtime_report,
-        "cmu_unity_pct_strict": args.cmu_unity_pct_strict_report,
         "saved_map_relocalize": args.saved_map_relocalize_report,
         "pct_saved_map_navigation": args.pct_saved_map_navigation_report,
     }

@@ -56,9 +56,9 @@ uv run --locked python lingtu.py stub
 
 After installation, the `lingtu` console command is equivalent to the locked
 Python invocation. Use the full `uv run --locked` form in reproducible scripts
-so dependency-lock drift fails early. The CLI profile catalog comes from
-`src/runtime/profiles/catalog/`; `cli/profiles_data.py` is a compatibility
-export, not a second source of product defaults.
+so dependency-lock drift fails early. CLI Host defaults and endpoint adapters
+come directly from `src/runtime/profiles/catalog/`; Field Product declarations
+come only from `config/runtime_graph/products/`.
 
 ### Field operations
 
@@ -83,14 +83,17 @@ questions and are independently visible in runtime status.
 
 | Term | Example | Meaning |
 | --- | --- | --- |
-| **Profile** | `stub`, `sim`, `map`, `nav`, `tare_explore` | Named product configuration and selected module/backend graph. |
-| **Endpoint** | `thunder_field`, `mujoco_live`, `replay` | Where data enters and which process boundary owns I/O. |
+| **Profile** | `stub`, `dev`, `sim`, `sim_nav` | Local/development Host configuration only. |
+| **env** | `real`, `sim` | Outer environment in which ProductControl resolves Products. |
+| **Product** | `map`, `nav`, `explore` | Env-independent operator mode. |
+| **RunPlan** | fingerprinted JSON artifact | Exact resolved Product+env Host/process contract. |
+| **Endpoint** | Gateway HTTP URL, DDS domain/contract, native service address | A real communication access point, not deployment identity. |
 | **Session mode** | `mapping`, `navigating`, `exploring` | Coarse Gateway resource session controlling shared behavior. |
 | **Product session** | `teleop`, `mapping`, `navigation`, `inspection`, `exploration` | Operator-facing activity. |
 | **SLAM mode** | `mapping`, `localization` | Whether the native SLAM path is building or aligning to a map. |
 | **Active map** | `<map-name>` | The map package/version selected by MapsService for a consumer. |
 
-The [product mode runtime contract](../architecture/PRODUCT_MODE_RUNTIME_CONTRACT.md)
+The [field Product guide](../architecture/FIELD_PRODUCTS.md)
 defines the valid chains and switching policy. A process/endpoint that reports
 healthy is still not necessarily ready to accept a navigation goal.
 
@@ -124,7 +127,7 @@ during a field run. Use this table before writing an integration.
 | --- | --- | --- |
 | Observation | `GET /health`, `GET /ready`, `GET /api/v1/health`, `GET /api/v1/session`, `GET /api/v1/navigation/status`, `GET /api/v1/path`, `GET /api/v1/readiness` | Read state only. Poll at a sensible rate and surface stale/unready state to users. |
 | No-motion planning | `POST /api/v1/navigation/plan`, `POST /api/v1/navigation/goal_candidate`, `POST /api/v1/maps/{name}/validate_plan` | Constructs or previews a plan without publishing a navigation goal. Inspect feasibility, frame, and path safety before presenting a motion action. |
-| Stateful but not a motion request by itself | Map save/activate/rollback/artifact routes, session routes, relocalization, runtime switch planning/execution, and configuration/backend routes | Can alter persistent data or runtime ownership. Require idle state, explicit operator intent, and a post-change readiness check. |
+| Stateful but not a motion request by itself | Map save/activate/rollback/artifact routes, session routes, relocalization, runtime switch-plan dry runs, and configuration/backend routes | Can alter persistent data or preview runtime ownership. Actual Product switching remains a `ProductControl`/`scripts/lingtu` operation. Require idle state, explicit operator intent, and a post-change readiness check. |
 | Can move hardware | `POST /api/v1/cmd_vel`, `POST /api/v1/goal`, `POST /api/v1/instruction`, `POST /api/v1/navigate/click`, `POST /api/v1/explore/start`, and visual-servo find/follow | May generate motion. Gate behind explicit operator authorization and continuously show stop/cancel state. |
 | Stop/cancel | `POST /api/v1/stop`, `POST /api/v1/navigation/cancel`, session end, exploration stop, and visual-servo stop | Changes control state. Use the local emergency procedure for hazards; do not infer that a stop proves the fault has cleared. |
 
@@ -199,7 +202,8 @@ failed precondition, not a reason to transform values in a client.
 
 | Surface | Source of truth | Use it for |
 | --- | --- | --- |
-| Product profiles and endpoint catalog | `src/runtime/profiles/catalog/` | Profile defaults, endpoint selection, and runtime identity. |
+| Local Profiles and adapters | `src/runtime/profiles/catalog/` | Development defaults and local ProfileAdapter selection. |
+| Field Products and environments | `config/runtime_graph/` | Product declarations and their resolution inside `env=real|sim`. |
 | Robot/device configuration | `config/` | Physical geometry, calibration, device registration, and runtime settings. |
 | Module/back-end registration | `src/runtime/registry.py` and stack factories | Pluggable implementations without direct cross-layer imports. |
 | Full product wiring | `src/lingtu/assembly/` | Explicit critical wires and graph assembly. |

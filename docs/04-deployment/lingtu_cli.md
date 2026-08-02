@@ -56,7 +56,7 @@ lingtu-livox-dds
 Do not source ROS 2 or a colcon overlay for normal field navigation. ROS 2 is
 only for explicit compatibility checks or legacy replay gates.
 
-`lingtu-driver` is the unique speed exit in the current product profile. It
+`lingtu-driver` is the unique speed exit in the current RunPlan. It
 reads `/opt/lingtu/config/brainstem.env`, requires a remote Brainstem endpoint,
 publishes `/dev/shm/lingtu/driver_status.json`, and fails closed if the lease,
 ACK, DDS freshness, or gRPC connection is not ready.
@@ -101,9 +101,16 @@ lingtu map list
 lingtu map restore lab_0423
 ```
 
-`map start` switches the native SLAM DDS service to mapping mode. `map save`
-uses the canonical SLAM map-save adapter and writes a map directory, not just
-one PCD file.
+`map start` is a thin CLI entry into `ProductControl`: it switches to the
+`map` Product inside the fixed runtime `env`, resolves and stages one
+fingerprinted `RunPlan`, commits that plan as current, and waits for readiness.
+It is not a Bash shortcut that directly mutates a SLAM DDS mode.
+
+`map save` submits a durable map-save operation through the Gateway map API.
+The CLI waits for the operation to reach a terminal state and reports the
+navigation-ready map result; callers should treat HTTP `202` as admission only,
+not as a completed save. The resulting map directory is a package, not just one
+PCD file.
 
 Expected map bundle:
 
@@ -119,27 +126,28 @@ Expected map bundle:
 | `octomap.ot` | OctoPlanner3D 3D map artifact |
 | `tomogram.pickle` | optional legacy/PCT artifact |
 
-Save result example:
+Save admission example:
 
 ```json
 {
-  "success": true,
-  "name": "lab_0423",
-  "map_optimization": {
-    "present": true,
-    "status": "optimized_loop_closed",
-    "refine_applied": true,
-    "loop_count": 1
-  },
-  "dynamic_filter": {
-    "success": true,
-    "orig_count": 170086,
-    "clean_count": 169512,
-    "dropped": 574,
-    "elapsed_s": 0.8
+  "ok": true,
+  "success": null,
+  "accepted": true,
+  "status": "running",
+  "reason_code": "map_save_in_progress",
+  "request_id": "01K1M9S4FX27T8XMY6QJNBAV3W",
+  "operation_id": "01K1MA6Q9J7R5C8D2N4P0V1X3Y",
+  "operation": {
+    "state": "RUNNING"
   }
 }
 ```
+
+`request_id` is the caller-provided idempotency key for retrying the admission
+request. `operation_id` is the server-issued handle used to poll, cancel, or
+retry the save operation; do not assume the two values are equal. The operation
+is terminal only when `operation.state` is `SUCCEEDED`, `FAILED`, or
+`CANCELLED`.
 
 `dynamic_filter` is optional cleanup evidence. The product readiness gate is
 the saved-map bundle plus `map_optimization.json`, `metadata.json`, and
@@ -149,19 +157,13 @@ the saved-map bundle plus `map_optimization.json`, `metadata.json`, and
 when save-time cleanup removed static structure. The replaced file is kept as
 `map.pcd.replaced-<timestamp>` and downstream artifacts are rebuilt.
 
-Manual artifact rebuilds:
-
-```bash
-export LINGTU_GATEWAY=http://ROBOT_IP_OR_HOSTNAME:5050
-
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"action":"build_tomogram","name":"lab_0423"}' \
-  "$LINGTU_GATEWAY/api/v1/maps"
-
-curl -X POST -H 'Content-Type: application/json' \
-  -d '{"action":"build_occupancy","name":"lab_0423"}' \
-  "$LINGTU_GATEWAY/api/v1/maps"
-```
+The field CLI does not expose an ad-hoc artifact rebuild command. A successful
+`map save` must produce its required artifacts as one operation; missing
+`octomap.ot` or `occupancy.npz` is a failed/incomplete map result, not a reason
+to bypass the operation through raw `curl`. Validate the completed package
+with `lingtu saved-map-artifact-gate <map-directory> --require-occupancy`.
+External map-management clients must use the authenticated API contract rather
+than copying robot-local paths or unauthenticated rebuild requests.
 
 ## Navigation
 
@@ -171,9 +173,15 @@ lingtu nav goal 3.5 2.1 0.0
 lingtu nav stop
 ```
 
-`nav start` switches native SLAM to localization mode, loads
-`<map>/map.pcd`, starts the Gateway navigation session, and optionally runs
-saved-map relocalization when `--initial-pose` or `--relocalize` is provided.
+`nav start <map>` delegates to `ProductControl`. ProductControl stages the
+selected saved-map package, resolves and executes the `nav` Product `RunPlan`
+inside its fixed `env`, owns readiness checks and rollback, and commits the
+current plan only after a successful switch. The CLI does not bypass
+ProductControl or select localization profiles directly.
+
+When `--initial-pose` or `--relocalize` is provided, the navigation startup
+also requests saved-map relocalization as part of the controlled product
+transaction.
 
 Before sending a field goal, check:
 
@@ -196,13 +204,26 @@ The optional goal yaw is in radians. If omitted, heading defaults to `0.0`.
 
 ```bash
 lingtu mode switch teleop
-lingtu mode switch teleop_avoid --map lab_0423
+lingtu mode switch teleop_avoid
 lingtu mode switch map
 lingtu mode switch tracking --map lab_0423
 lingtu mode switch nav --map lab_0423
 lingtu mode switch inspection --map lab_0423
-lingtu mode switch tare_explore
+lingtu explore start
+lingtu explore start --map lab_0423
+lingtu explore task start
 ```
+
+`explore start` activates the live-mapping variant; `explore start --map MAP`
+activates the saved-map-localization variant. Both commands leave the
+exploration task idle. Run `explore task start` only after Product readiness is
+green and the motion area is supervised.
+
+On the robot, `lingtu explore task start` and `lingtu explore status` read the
+active Product session from `/run/lingtu/session.env` and send
+`X-LingTu-Product-Session` only to the exact loopback exploration routes.
+Remote Gateway clients still require `LINGTU_API_KEY`; the Product-session
+header is not a general API credential.
 
 For an isolated native exploration lifecycle check, use the installed control
 binary. These commands wait for the typed endpoint ACK and return non-zero on
@@ -223,23 +244,25 @@ Use a non-production DDS domain for no-motion integration tests. Running
 `explore start` against the production domain can dispatch navigation goals
 when fresh map and localization inputs are present.
 
-`mode` is the low-level Gateway session (`mapping`, `navigating`, or
-`exploring`). `product_session` is the operator-facing mode:
-`teleop`, `teleop_avoid`, `mapping`, `tracking`, `navigation`, `inspection`,
-or `exploration`.
+The operator selects a Product such as `teleop`, `teleop_avoid`, `map`,
+`tracking`, `nav`, `inspection`, or `explore`. Gateway `mode` and
+`product_session` are derived observations of the active Product lifecycle;
+they are not independent field-mode selectors.
 
-Profile-level switching may still require restart depending on the endpoint.
+Product switching may restart processes when the resolved RunPlan changes.
 Visual-servo target/mode switching is the explicit hot-switch entry inside
-profiles that already load `VisualServoModule`.
+a Host whose RunPlan already loads `VisualServoModule`.
 
 ### Operator-assisted local avoidance
 
-`teleop_avoid` enables the native assisted LocalPlanner. The autonomous product
-modes `tracking`, `nav`, `inspection`, and `tare_explore` enable the same branch
-when a non-zero teleop command latches operator takeover. This is a hot control
+`teleop_avoid` enables the native assisted LocalPlanner. The autonomous Product
+modes `tracking`, `nav`, `inspection`, and the saved-map variant of `explore`
+enable the same branch when a non-zero teleop command latches operator
+takeover. This is a hot control
 handoff inside the existing C++ endpoint; it is not a product-mode restart.
 
-The systemd product-mode drop-in sets:
+ProductControl stages these values in the boot-scoped
+`/run/lingtu/session.env` consumed by the current RunPlan:
 
 ```bash
 LINGTU_TELEOP_LOCAL_PLANNER=1
@@ -262,59 +285,53 @@ return to autonomy.
 
 The Web dashboard exposes the same contract in the `Runtime` tab:
 
-- Product mode cards call `POST /api/v1/runtime/switch`.
-- `Preflight` sends `execute=false`; it is read-only and should be run before
-  any switch.
-- `Execute Switch` sends `execute=true`; cold-restart modes are disabled until
-  the operator explicitly enables service restart in the UI.
+- Product cards call read-only `POST /api/v1/runtime/switch-plan`.
+- The response includes the exact `python -m lingtu.control switch ...`
+  command for the resolved Product and map.
+- The dashboard copies that command for an authorized operator; Gateway and
+  Web never apply a Product switch or invoke systemd.
 - Visual Servo `Find`, `Follow`, and `Stop` call `POST /api/v1/visual_servo`.
-
-## Plan Preview
-
-```bash
-lingtu plan-preview --internal-only --strict
-lingtu plan-preview --start -9.974 -8.141 0 --goal 2.826 -6.741 0 --strict
-```
-
-This is the safest planner check. It does not publish a real goal, stop, or
-`cmd_vel`. It validates the active map package and OctoPlanner3D artifact gate,
-injects synthetic odometry into `NavigationModule`, calls `preview_plan()`,
-prints JSON evidence, and exits.
-
-Run this before a real navigation session when validating a saved map.
-PCT/tomogram fields are legacy diagnostics unless the selected profile
-explicitly uses PCT.
 
 ## Services
 
 ```bash
 lingtu svc status
-lingtu svc status-legacy
 lingtu svc restart slam
-lingtu svc restart localization
-lingtu svc restart lingtu
-lingtu svc restart all
+lingtu svc restart nav
+lingtu svc restart host
+lingtu svc reapply
 ```
 
-Useful native services:
+`svc restart` accepts exactly one RunPlan logical process:
 
-- `lingtu-livox-dds`
-- `lingtu-slam-dds`
-- `lingtu-nav-dds`
-- `lingtu-driver`
-- `lingtu`
+```text
+lidar | slam | maps | traversability | nav | driver | camera | explore | host
+```
+
+The corresponding real-env systemd targets are:
+
+- `lidar` -> `lingtu-livox-dds.service`
+- `slam` -> `lingtu-slam-dds.service`
+- `maps` -> `mapd.service`
+- `traversability` -> `lingtu-traversability-dds.service`
+- `nav` -> `lingtu-nav-dds.service`
+- `driver` -> `lingtu-driver.service`
+- `camera` -> `lingtu-camera-dds.service`
+- `explore` -> `lingtu-explore-dds.service`
+- `host` -> `lingtu.service`
 
 Useful native status files:
 
 - `/dev/shm/lingtu/nav_endpoint_status.json`
 - `/dev/shm/lingtu/driver_status.json`
 
-For localization-chain recovery, `lingtu svc restart localization` restarts
-`lingtu-livox-dds.service` and `lingtu-slam-dds.service`, waits for the native
-SLAM status, force-stops the legacy `robot-localizer.service` and
-`robot-fastlio2.service` units, and waits for Gateway readiness. Use
-`legacy_fastlio2` / `legacy_localizer` explicitly when the native SLAM DDS
-service is not installed.
+`svc status` is read-only and reports all nine logical process labels. A
+`svc restart <logical-process>` request sends that label unchanged to
+ProductControl, which resolves exactly one process from the committed RunPlan.
+It does not select a backend, accept a systemd unit name, or restart a backend
+chain. `svc reapply` reapplies the exact committed Product; `svc restart all`
+is the equivalent explicit `all` spelling. The shell does not choose systemd
+ordering or run its own readiness loop.
 
 ## Logs And Health
 
@@ -334,8 +351,8 @@ state, runtime contracts, active map, mission state, and safety state.
 | Symptom | Check |
 | --- | --- |
 | `ros2: command not found` | Normal for product runtime; only compatibility checks need ROS 2. |
-| `No active map` | Run `lingtu map list`, then `lingtu nav start <map>` or `map use <name>`. |
-| plan preview fails | Check `octomap.ot`, `metadata.json`, and the active map path. |
+| `No active map` | Run `lingtu map list`, then `lingtu nav start <map>`. |
+| `saved-map-artifact-gate` fails | Check `octomap.ot`, `occupancy.npz`, `metadata.json`, and the saved-map path. |
 | localization lost | Restart SLAM or relocalize before sending goals. |
 | map looks smeared | Inspect `map_optimization.json`, raw map, patch poses, and calibration. |
 | teleop does not move | Check mode, teleop lease, safety level, native `rt/nav/cmd_vel`, `nav_endpoint_status.json`, `driver_status.json`, and remote Brainstem readiness. |

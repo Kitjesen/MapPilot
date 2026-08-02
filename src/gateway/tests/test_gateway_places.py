@@ -87,7 +87,6 @@ def _gateway_with_maps(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
-    monkeypatch.delenv("LINGTU_ENDPOINT", raising=False)
     gateway = GatewayModule()
     gateway.setup()
     maps = FakePlaceMapsService()
@@ -195,7 +194,6 @@ def test_places_routes_return_503_without_maps_service(monkeypatch):
     from gateway.gateway_module import GatewayModule
 
     monkeypatch.delenv("LINGTU_GATEWAY_REQUIRE_API_KEY", raising=False)
-    monkeypatch.delenv("LINGTU_ENDPOINT", raising=False)
     gateway = GatewayModule()
     gateway.setup()
 

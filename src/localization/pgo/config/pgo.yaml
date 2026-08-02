@@ -19,10 +19,8 @@ min_loop_detect_duration: 5.0
 # Scan Context (Kim & Kim 2018) loop pre-filter — primary indoor anchor for
 # global drift correction when GNSS is unavailable. See pgos/scan_context.h.
 #
-# ⚠️ Pending replacement with MapClosures (MIT, ICRA 2024) — see the
-# DEPRECATED notice at the top of pgos/scan_context.h and the migration
-# RFC in docs/REVIEW_2026Q2.md. Until that lands, leave this enabled
-# for indoor / mixed deployments.
+# This local implementation remains enabled for indoor and mixed deployments.
+# Any replacement requires replay and field evidence; see pgos/scan_context.h.
 enable_scan_context: true
 sc_distance_threshold: 0.4    # cosine-based descriptor distance gate
 sc_max_range: 20.0            # m — points beyond this are clipped from descriptor

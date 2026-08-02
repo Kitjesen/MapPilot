@@ -14,7 +14,7 @@ from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import Detection3D as CoreDetection3D
 from runtime.msgs.semantic import SceneGraph
 from runtime.msgs.sensor import CameraIntrinsics, Image
-from runtime.registry import get, list_plugins, register
+from runtime.registry import list_plugins, register
 from runtime.runtime_interface import map_frame_id
 
 logger = logging.getLogger(__name__)
@@ -480,40 +480,6 @@ class PerceptionModule(Module, layer=3):
 
     # == Backend lifecycle (delegated to BackendManager) =======================
 
-    def _setup_backend(self, category: str, name: str) -> Any:
-        """Unified backend resolution through the runtime registry.
-
-        Kept as a public-looking helper for tests and future callers; all
-        real lifecycle work is done by BackendManager.
-        """
-        if category == "detector":
-            return self._backend_manager._load_detector(name)
-        if category == "encoder":
-            return self._backend_manager._load_encoder(name)
-        if category == "perception_tracker":
-            provider = get(category, name)
-            view = self._CandidateModuleView(self)
-            return provider.create(view)
-        raise KeyError(f"Unknown backend category {category!r}")
-
-    def _init_detector(self):
-        """Thin wrapper kept for backward compatibility with existing tests."""
-        detector, observer = self._backend_manager._init_detector()
-        self._sim_scene_observer = observer
-        return detector
-
-    def _init_detector_tracker(
-        self,
-        backend: str | None = None,
-        detector: Any | None = None,
-    ):
-        """Thin wrapper kept for backward compatibility with existing tests."""
-        return self._backend_manager._init_detector_tracker(backend, detector)
-
-    def _init_clip_encoder(self):
-        """Thin wrapper kept for backward compatibility with existing tests."""
-        return self._backend_manager._init_clip_encoder()
-
     def reconfigure_backend(
         self,
         category: str,
@@ -543,34 +509,6 @@ class PerceptionModule(Module, layer=3):
         except Exception as e:
             logger.warning("Detection failed: %s", e)
             return []
-
-    # == 3D Projection / conversion / scene graph (delegated to services) =====
-
-    def _project_to_3d(
-        self,
-        detections_2d: list,
-        depth: np.ndarray,
-        tf_camera_to_world: np.ndarray,
-    ) -> list:
-        """Backward-compatible wrapper around DetectionService.project_to_3d."""
-        return self._detection_service.project_to_3d(
-            detections_2d,
-            depth,
-            tf_camera_to_world,
-            self._latest_intrinsics,
-        )
-
-    def _convert_detections(self, detections_3d: list) -> list[CoreDetection3D]:
-        """Backward-compatible wrapper around DetectionService.convert_to_core_detections."""
-        return self._detection_service.convert_to_core_detections(detections_3d)
-
-    def _build_scene_graph(self) -> SceneGraph:
-        """Backward-compatible wrapper around SceneGraphService.build_scene_graph."""
-        return self._scene_graph_service.build_scene_graph(
-            self._latest_core_detections,
-            PERCEPTION_MAP_FRAME_ID,
-            tracker=self._tracker,
-        )
 
     # == Query API =============================================================
 

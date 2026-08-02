@@ -10,6 +10,9 @@ using lingtu::message::ExplorationCommandKind;
 using lingtu::nav::endpoint::ExplorationControlRequest;
 using lingtu::nav::endpoint::ExploreControl;
 
+constexpr const char *kRunA = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+constexpr const char *kRunB = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
+
 void require(bool condition, const std::string &message) {
   if (!condition) {
     throw std::runtime_error(message);
@@ -27,6 +30,9 @@ ExplorationControlRequest request(const std::string &request_id, ExplorationComm
   value.future_tolerance_s = 0.1;
   value.inputs_ready = true;
   value.snapshot_ready = true;
+  value.session_id = "session-a";
+  value.expected_session_id = "session-a";
+  value.exploration_run_id = kRunA;
   return value;
 }
 
@@ -51,6 +57,47 @@ void testStrictValidation() {
   require(control.Apply(invalid).reason == "unknown_exploration_command",
           "unknown command kind must be rejected");
   require(!control.active(), "invalid controls must not activate exploration");
+
+  invalid = request("missing-run", ExplorationCommandKind::kStart);
+  invalid.exploration_run_id.clear();
+  require(control.Apply(invalid).reason == "exploration_run_id_invalid",
+          "start must require a caller-supplied ULID");
+
+  invalid = request("lowercase-run", ExplorationCommandKind::kStart);
+  invalid.exploration_run_id = "01arz3ndektsv4rrffq69g5fav";
+  require(control.Apply(invalid).reason == "exploration_run_id_invalid",
+          "run identity must be a canonical uppercase ULID");
+}
+
+void testStartRequiresVerifiedProductSession() {
+  ExploreControl empty_control;
+  auto empty = request("empty-session", ExplorationCommandKind::kStart);
+  empty.session_id.clear();
+  empty.expected_session_id = "product-session";
+  const auto empty_result = empty_control.Apply(empty);
+  require(!empty_result.accepted, "start without a session must be rejected");
+  require(empty_result.reason == "exploration_session_id_empty", "empty session reason");
+  require(!empty_control.active(), "empty session must not activate exploration");
+
+  ExploreControl unverified_control;
+  auto unverified = request("unverified-session", ExplorationCommandKind::kStart);
+  unverified.session_id = "product-session";
+  unverified.expected_session_id.clear();
+  const auto unverified_result = unverified_control.Apply(unverified);
+  require(!unverified_result.accepted, "start without a verified session must be rejected");
+  require(unverified_result.reason == "exploration_session_unverified",
+          "unverified session reason");
+  require(!unverified_control.active(), "unverified session must not activate exploration");
+
+  ExploreControl mismatch_control;
+  auto mismatch = request("mismatched-session", ExplorationCommandKind::kStart);
+  mismatch.session_id = "request-session";
+  mismatch.expected_session_id = "product-session";
+  const auto mismatch_result = mismatch_control.Apply(mismatch);
+  require(!mismatch_result.accepted, "start for another Product session must be rejected");
+  require(mismatch_result.reason == "exploration_product_session_mismatch",
+          "Product session mismatch reason");
+  require(!mismatch_control.active(), "mismatched session must not activate exploration");
 }
 
 void testStartAndIdempotency() {
@@ -59,15 +106,44 @@ void testStartAndIdempotency() {
   start.session_id = "session-a";
   const auto accepted = control.Apply(start);
   require(accepted.accepted, "start must be accepted with fresh inputs");
-  require(accepted.reason == "exploration_started", "start reason");
+  require(accepted.reason == "exploration_start_admitted", "start admission reason");
+  require(accepted.exploration_run_id == kRunA, "start ACK must echo run identity");
   require(accepted.reset_planner, "start must reset planner state");
   require(accepted.clear_history, "start must clear prior history");
   require(control.running(), "start must enter running state");
   require(control.session_id() == "session-a", "requested session must be retained");
+  require(control.exploration_run_id() == kRunA, "active run identity must be retained");
 
   const auto duplicate = control.Apply(start);
   require(duplicate.accepted && duplicate.duplicate, "duplicate start must replay ACK");
   require(!duplicate.reset_planner, "duplicate start must not repeat actions");
+  require(duplicate.exploration_run_id == kRunA,
+          "duplicate start must replay the same run identity");
+
+  auto rebound_run_retry = start;
+  rebound_run_retry.exploration_run_id = kRunB;
+  const auto rebound_run_result = control.Apply(rebound_run_retry);
+  require(!rebound_run_result.accepted && rebound_run_result.duplicate,
+          "request id must not be rebound to another exploration run");
+  require(rebound_run_result.reason == "duplicate_request_id_run_mismatch",
+          "duplicate run mismatch reason");
+
+  auto empty_session_retry = start;
+  empty_session_retry.session_id.clear();
+  const auto empty_session_result = control.Apply(empty_session_retry);
+  require(!empty_session_result.accepted && empty_session_result.duplicate,
+          "duplicate start with an empty session must be rejected");
+  require(empty_session_result.reason == "exploration_session_id_empty",
+          "duplicate empty session reason");
+
+  auto rebound_retry = start;
+  rebound_retry.session_id = "session-b";
+  rebound_retry.expected_session_id = "session-b";
+  const auto rebound_result = control.Apply(rebound_retry);
+  require(!rebound_result.accepted && rebound_result.duplicate,
+          "request id must not be rebound to another Product session");
+  require(rebound_result.reason == "duplicate_request_id_session_mismatch",
+          "duplicate session mismatch reason");
 
   auto mismatch = start;
   mismatch.kind = static_cast<std::int32_t>(ExplorationCommandKind::kStop);
@@ -77,8 +153,61 @@ void testStartAndIdempotency() {
 
   auto conflicting = request("start-2", ExplorationCommandKind::kStart);
   conflicting.session_id = "session-b";
+  conflicting.expected_session_id = "session-b";
+  conflicting.exploration_run_id = kRunB;
   require(control.Apply(conflicting).reason == "exploration_session_conflict",
           "active session replacement must be rejected");
+
+  auto same_session_new_run = request("start-3", ExplorationCommandKind::kStart);
+  same_session_new_run.exploration_run_id = kRunB;
+  const auto run_conflict = control.Apply(same_session_new_run);
+  require(!run_conflict.accepted, "a new START must not alias the active execution");
+  require(run_conflict.reason == "exploration_start_conflict",
+          "same-session START conflict reason");
+}
+
+void testCompletionClosesExecutionWithoutAutoResume() {
+  ExploreControl control;
+  const auto start = request("complete-me", ExplorationCommandKind::kStart);
+  require(control.Apply(start).accepted, "completion setup start");
+
+  require(control.Complete(), "active execution must transition to completed");
+  require(!control.active() && !control.running(),
+          "completion must close the active execution and stop scheduling motion");
+
+  const auto replay = control.Apply(start);
+  require(replay.accepted && replay.duplicate,
+          "completed START replay must return the original acknowledgement");
+  require(!control.active(), "completed START replay must never reactivate motion");
+
+  auto next_request = request("next-start", ExplorationCommandKind::kStart);
+  next_request.exploration_run_id = kRunB;
+  const auto next = control.Apply(next_request);
+  require(next.accepted && !next.duplicate, "a new START request must open a later run");
+  require(control.running(), "new run must run only after its explicit START");
+
+  require(control.Complete(), "second run completion setup");
+  auto reused_run = request("third-start", ExplorationCommandKind::kStart);
+  reused_run.exploration_run_id = kRunB;
+  const auto reuse = control.Apply(reused_run);
+  require(!reuse.accepted && reuse.reason == "exploration_run_id_reuse",
+          "a new START must carry a never-before-admitted run identity");
+}
+
+void testLastStartReplaySurvivesAckCacheChurn() {
+  ExploreControl control(1U);
+  const auto start = request("stable-start", ExplorationCommandKind::kStart);
+  require(control.Apply(start).accepted, "cache replay setup start");
+  require(control.Apply(request("pause-cache", ExplorationCommandKind::kPause)).accepted,
+          "cache replay setup pause");
+  require(control.Apply(request("resume-cache", ExplorationCommandKind::kResume)).accepted,
+          "cache replay setup resume");
+  require(control.Complete(), "cache replay setup completion");
+
+  const auto replay = control.Apply(start);
+  require(replay.accepted && replay.duplicate,
+          "last START must remain idempotent after generic ACK cache churn");
+  require(!control.active(), "cache-churn replay must not reopen a completed run");
 }
 
 void testInputAndStopInProgressGates() {
@@ -87,6 +216,11 @@ void testInputAndStopInProgressGates() {
   start.inputs_ready = false;
   require(control.Apply(start).reason == "exploration_inputs_not_ready",
           "start requires fresh exploration inputs");
+  const auto duplicate_not_ready = control.Apply(start);
+  require(!duplicate_not_ready.accepted && duplicate_not_ready.duplicate,
+          "rejected start retry must replay its ACK");
+  require(duplicate_not_ready.reason == "exploration_inputs_not_ready",
+          "rejected start retry reason");
 
   start = request("stopping", ExplorationCommandKind::kStart);
   start.cancellation_pending = true;
@@ -99,10 +233,26 @@ void testPauseResumeAndStop() {
   auto start = request("start", ExplorationCommandKind::kStart);
   require(control.Apply(start).accepted, "start setup");
 
+  auto foreign_pause = request("pause-foreign", ExplorationCommandKind::kPause);
+  foreign_pause.session_id = "session-b";
+  const auto foreign_pause_result = control.Apply(foreign_pause);
+  require(!foreign_pause_result.accepted, "foreign session must not pause the active task");
+  require(foreign_pause_result.reason == "exploration_session_mismatch",
+          "foreign pause session mismatch reason");
+  require(control.running(), "foreign pause must not change the active task");
+
+  auto foreign_run_pause = request("pause-foreign-run", ExplorationCommandKind::kPause);
+  foreign_run_pause.exploration_run_id = kRunB;
+  const auto foreign_run_pause_result = control.Apply(foreign_run_pause);
+  require(!foreign_run_pause_result.accepted, "foreign run must not pause the active run");
+  require(foreign_run_pause_result.reason == "exploration_run_mismatch",
+          "foreign pause run mismatch reason");
+
   auto pause = request("pause", ExplorationCommandKind::kPause);
   pause.goal_pending = true;
   const auto paused = control.Apply(pause);
   require(paused.accepted && control.paused(), "pause must latch paused state");
+  require(paused.reason == "exploration_pause_admitted", "pause ACK is admission only");
   require(paused.clear_queue, "pause must clear queued goals");
   require(paused.request_cancel, "pause must cancel an active goal");
 
@@ -112,16 +262,53 @@ void testPauseResumeAndStop() {
           "resume requires fresh inputs");
   require(control.paused(), "failed resume must preserve paused state");
 
+  auto early_resume = request("resume-early", ExplorationCommandKind::kResume);
+  early_resume.cancellation_pending = true;
+  require(control.Apply(early_resume).reason == "exploration_pause_in_progress",
+          "resume must not race the post-stop pause terminal");
+  require(control.paused(), "early resume must preserve pausing state");
+
+  auto foreign_resume = request("resume-foreign", ExplorationCommandKind::kResume);
+  foreign_resume.session_id = "session-b";
+  const auto foreign_resume_result = control.Apply(foreign_resume);
+  require(!foreign_resume_result.accepted, "foreign session must not resume the active task");
+  require(foreign_resume_result.reason == "exploration_session_mismatch",
+          "foreign resume session mismatch reason");
+  require(control.paused(), "foreign resume must preserve paused state");
+
   resume = request("resume", ExplorationCommandKind::kResume);
-  require(control.Apply(resume).accepted, "resume must succeed with fresh inputs");
+  const auto resumed = control.Apply(resume);
+  require(resumed.accepted, "resume must succeed with fresh inputs");
+  require(resumed.reason == "exploration_resume_admitted", "resume ACK is admission only");
   require(control.running(), "resume must restore running state");
+
+  auto foreign_stop = request("stop-foreign", ExplorationCommandKind::kStop);
+  foreign_stop.session_id = "session-b";
+  foreign_stop.goal_pending = true;
+  const auto foreign_stop_result = control.Apply(foreign_stop);
+  require(!foreign_stop_result.accepted, "foreign session must not stop the active task");
+  require(foreign_stop_result.reason == "exploration_session_mismatch",
+          "foreign stop session mismatch reason");
+  require(!foreign_stop_result.request_cancel,
+          "foreign stop must not cancel the active session's goal");
+  require(control.running(), "foreign stop must preserve the active task");
+
+  auto foreign_run_stop = request("stop-foreign-run", ExplorationCommandKind::kStop);
+  foreign_run_stop.exploration_run_id = kRunB;
+  foreign_run_stop.goal_pending = true;
+  const auto foreign_run_stop_result = control.Apply(foreign_run_stop);
+  require(!foreign_run_stop_result.accepted, "foreign run must not stop the active run");
+  require(foreign_run_stop_result.reason == "exploration_run_mismatch",
+          "foreign stop run mismatch reason");
+  require(!foreign_run_stop_result.request_cancel,
+          "foreign run stop must not cancel active motion");
 
   auto stop = request("stop", ExplorationCommandKind::kStop);
   stop.goal_pending = true;
   stop.reason = "operator_stop";
   const auto stopped = control.Apply(stop);
   require(stopped.accepted, "stop must be accepted");
-  require(stopped.reason == "exploration_stop_in_progress", "stop progress reason");
+  require(stopped.reason == "exploration_stop_admitted", "stop ACK is admission only");
   require(stopped.request_cancel, "stop must cancel active goal");
   require(stopped.cancel_reason == "operator_stop", "stop reason must reach cancel");
   require(stopped.reset_planner && stopped.clear_history, "stop must clear session state");
@@ -177,6 +364,13 @@ void testDirectedTargetLifecycle() {
   require(control.Apply(wrong_session).reason == "directed_target_session_mismatch",
           "directed target must stay within its exploration session");
 
+  auto wrong_run = request("directed-wrong-run", ExplorationCommandKind::kSetDirectedTarget);
+  wrong_run.exploration_run_id = kRunB;
+  wrong_run.has_directed_target = true;
+  wrong_run.directed_target_ttl_s = 30.0;
+  require(control.Apply(wrong_run).reason == "directed_target_run_mismatch",
+          "directed target must stay within its exploration run");
+
   auto stale_snapshot = request("directed-no-snapshot", ExplorationCommandKind::kSetDirectedTarget);
   stale_snapshot.session_id = "session-a";
   stale_snapshot.has_directed_target = true;
@@ -196,7 +390,10 @@ void testDirectedTargetLifecycle() {
 
 int main() {
   testStrictValidation();
+  testStartRequiresVerifiedProductSession();
   testStartAndIdempotency();
+  testCompletionClosesExecutionWithoutAutoResume();
+  testLastStartReplaySurvivesAckCacheChurn();
   testInputAndStopInProgressGates();
   testPauseResumeAndStop();
   testDirectedTargetLifecycle();

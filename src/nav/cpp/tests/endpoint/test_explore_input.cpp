@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "explore/explore_input.hpp"
+#include "explore/route.hpp"
 
 namespace {
 
@@ -88,6 +89,27 @@ void testFreshness() {
   assert(!sourceStampFresh(101.0, 100.0, 0.5, 0.1));
 }
 
+void testRouteContract() {
+  using lingtu::nav::endpoint::allowsExplorationSegmentFallback;
+  using lingtu::nav::endpoint::parseRoute;
+  using lingtu::nav::endpoint::Route;
+  using lingtu::nav::endpoint::routeName;
+  using lingtu::nav::endpoint::usesLiveSegment;
+
+  assert(parseRoute("map") == Route::Map);
+  assert(parseRoute("live") == Route::Live);
+  assert(!parseRoute("auto").has_value());
+  assert(!parseRoute("").has_value());
+  assert(routeName(Route::Map) == "map");
+  assert(routeName(Route::Live) == "live");
+  assert(!usesLiveSegment(Route::Map));
+  assert(usesLiveSegment(Route::Live));
+  assert(!allowsExplorationSegmentFallback(Route::Map, false));
+  assert(!allowsExplorationSegmentFallback(Route::Map, true));
+  assert(!allowsExplorationSegmentFallback(Route::Live, false));
+  assert(allowsExplorationSegmentFallback(Route::Live, true));
+}
+
 void testMapFrameOdometry() {
   char map_frame[] = "map";
   const auto message = makeOdometry(map_frame, 100.0);
@@ -130,6 +152,7 @@ int main() {
   testStrictTrinaryAndIdentity();
   testRejectRotatedGrid();
   testFreshness();
+  testRouteContract();
   testMapFrameOdometry();
   testOdomFrameRequiresFreshTransform();
   std::cout << "test_explore_input passed\n";

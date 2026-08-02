@@ -18,6 +18,8 @@ struct BlockGridConfig {
   float max_log_odds{4.0F};
   float occupied_threshold{0.60F};
   float prune_abs_log_odds_below{0.05F};
+  std::uint64_t max_runtime_cells{2000000ULL};
+  std::uint64_t max_runtime_blocks{4096ULL};
   std::uint64_t max_persisted_cells{20000000ULL};
 };
 
@@ -27,6 +29,7 @@ struct BlockGridUpdateStats {
   std::size_t hit_updates{0};
   std::size_t cleared_cells{0};
   std::size_t pruned_cells{0};
+  std::size_t capacity_rejections{0};
   std::size_t total_cells{0};
 };
 
@@ -37,6 +40,7 @@ struct BlockGridRoi {
   float max_x_m{0.0F};
   float max_y_m{0.0F};
   float max_z_m{0.0F};
+  std::size_t max_cells{0U};
   bool enabled{false};
 };
 
@@ -73,6 +77,11 @@ class PersistentBlockGrid final {
                                   std::size_t ray_count, float max_range_m = 0.0F);
 
   std::size_t ClearColumn(float x_m, float y_m);
+  std::size_t ClearColumns(
+      const float *columns_xy,
+      std::size_t column_count,
+      float min_z_m,
+      float max_z_m);
   std::size_t Decay(float factor);
   bool Contains(float x_m, float y_m, float z_m) const;
   float OccupancyProbability(float x_m, float y_m, float z_m) const;
@@ -134,8 +143,8 @@ class PersistentBlockGrid final {
   Block &EnsureBlock(const BlockKey &key);
   const Cell *FindCell(const CellKey &key) const;
   Cell *EnsureCell(const CellKey &key);
-  void ApplyMiss(const CellKey &key);
-  void ApplyHit(const CellKey &key);
+  bool ApplyMiss(const CellKey &key);
+  bool ApplyHit(const CellKey &key);
   void PruneEmptyBlocks();
 
   BlockGridConfig config_;
@@ -143,6 +152,7 @@ class PersistentBlockGrid final {
   std::string frame_id_{"map"};
   std::int64_t stamp_ns_{0};
   std::uint64_t generation_{0};
+  std::size_t live_cell_count_{0U};
   BlockGridUpdateStats last_stats_;
 };
 

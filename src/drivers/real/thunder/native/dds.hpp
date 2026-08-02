@@ -50,12 +50,15 @@ class DdsReader {
   DdsReader& operator=(const DdsReader&) = delete;
 
   const std::string& hostBootId() const noexcept;
+  std::uint32_t matchedCommandWriters() const;
   ReadResult takeLatest();
   bool writeControlState(
       const ControlState& state,
       bool last_command_accepted,
+      const std::string& accepted_producer_boot_id,
+      std::uint64_t accepted_output_sequence,
       double stamp_s);
-  bool writeNavigationCancel(
+  bool writeNavigationStop(
       const std::string& reason,
       std::uint64_t sequence,
       double stamp_s);

@@ -83,6 +83,48 @@ MotionStopResult MotionStopCoordinator::cancel() const {
                                   "cancel_remains_stopped", true);
 }
 
+MotionStopTerminalBarrierResult
+MotionStopCoordinator::cancelPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const {
+  actions_.cancel_control();
+  actions_.clear_operator_resume_required();
+  actions_.cancel_inspection("navigation_cancelled");
+  if (!clearMotionOutputs("cancelled")) {
+    const MotionStopResult failure = failClosed({false, "zero_publish_failed"});
+    return {failure.accepted, failure.reason, false};
+  }
+  const MotionStopResult confirmation = confirmLastZero("cancelled", "cancel_remains_stopped");
+  if (!confirmation.accepted) {
+    const MotionStopResult failure = failClosed(confirmation);
+    return {failure.accepted, failure.reason, false};
+  }
+  commit_terminal();
+  return {true, confirmation.reason, true};
+}
+
+MotionStopResult MotionStopCoordinator::pauseTask(
+    MotionStopTerminalCommit commit_paused) const {
+  actions_.stop_control();
+  if (!actions_.suspend_motion_outputs("task_paused")) {
+    return failClosed({false, "zero_publish_failed_pause_remains_stopped"});
+  }
+  return confirmAndCommitTerminal(std::move(commit_paused), "pause_requested",
+                                  "pause_remains_stopped", true);
+}
+
+MotionStopResult
+MotionStopCoordinator::confirmGoalReplanStop(const std::string &reason) const {
+  actions_.stop_control();
+  if (!clearMotionOutputs(reason)) {
+    return failClosed({false, "zero_publish_failed_goal_replan_pending"});
+  }
+  const MotionStopResult confirmation =
+      confirmLastZero("replan_stop_confirmed", "goal_replan_pending");
+  if (!confirmation.accepted) {
+    return failClosed(confirmation);
+  }
+  return confirmation;
+}
+
 MotionStopResult
 MotionStopCoordinator::commitGoalTerminalAfterStop(const std::string &reason,
                                                    MotionStopTerminalCommit commit_terminal) const {
@@ -106,30 +148,89 @@ MotionStopResult MotionStopCoordinator::stop() const {
                                   true);
 }
 
+MotionStopResult MotionStopCoordinator::stopWithoutTerminalCommit() const {
+  const MotionStopTerminalBarrierResult stopped = runStopPipeline(std::nullopt);
+  return {stopped.accepted, stopped.reason};
+}
+
+MotionStopTerminalBarrierResult
+MotionStopCoordinator::stopPreservingGoalTerminal(MotionStopTerminalCommit commit_terminal) const {
+  return runStopPipeline(std::move(commit_terminal));
+}
+
+MotionStopTerminalBarrierResult MotionStopCoordinator::runStopPipeline(
+    std::optional<MotionStopTerminalCommit> commit_terminal) const {
+  actions_.stop_control();
+  actions_.clear_operator_resume_required();
+  actions_.cancel_inspection("navigation_stopped");
+  if (!clearMotionOutputs("stopped")) {
+    const MotionStopResult failure = failClosed({false, "zero_publish_failed"});
+    return {failure.accepted, failure.reason, false};
+  }
+  const MotionStopResult confirmation = confirmLastZero("stopped", "stop_remains_latched");
+  if (!confirmation.accepted) {
+    const MotionStopResult failure = failClosed(confirmation);
+    return {failure.accepted, failure.reason, false};
+  }
+  if (commit_terminal) {
+    (*commit_terminal)();
+  }
+  return {true, confirmation.reason, commit_terminal.has_value()};
+}
+
 MotionStopResult MotionStopCoordinator::estop(const std::string &reason) const {
-  actions_.latch_estop(reason);
+  const MotionStopTerminalBarrierResult estopped =
+      runEstopPipeline(reason, std::nullopt, true);
+  return {estopped.accepted, estopped.reason};
+}
+
+MotionStopResult
+MotionStopCoordinator::estopWithoutTerminalCommit(const std::string &reason) const {
+  const MotionStopTerminalBarrierResult estopped =
+      runEstopPipeline(reason, std::nullopt, false);
+  return {estopped.accepted, estopped.reason};
+}
+
+MotionStopTerminalBarrierResult
+MotionStopCoordinator::estopPreservingGoalTerminal(const std::string &estop_reason,
+                                                   MotionStopTerminalCommit commit_terminal) const {
+  return runEstopPipeline(estop_reason, std::move(commit_terminal), false);
+}
+
+MotionStopTerminalBarrierResult MotionStopCoordinator::runEstopPipeline(
+    const std::string &estop_reason,
+    std::optional<MotionStopTerminalCommit> commit_terminal,
+    bool defer_goal_terminal) const {
+  actions_.latch_estop(estop_reason);
+  const bool persisted = actions_.persist_estop_latch(estop_reason);
+  actions_.cancel_control();
   actions_.clear_operator_resume_required();
   actions_.cancel_inspection("estop_latched");
-  const bool persisted = actions_.persist_estop_latch(reason);
-  MotionStopTerminalCommit commit_estop = deferGoalAbort("estop_latched");
   if (!clearMotionOutputs("estop_latched")) {
     return {
         false,
         "zero_publish_failed_estop_remains_latched",
+        false,
     };
   }
-  const MotionStopResult confirmation = confirmAndCommitTerminal(
-      std::move(commit_estop), "estop_latched", "estop_remains_latched", false);
+  const MotionStopResult confirmation = confirmLastZero("estop_latched", "estop_remains_latched");
   if (!confirmation.accepted) {
-    return confirmation;
+    return {confirmation.accepted, confirmation.reason, false};
   }
   if (!persisted) {
     return {
         false,
         "estop_latch_persist_failed_estop_remains_latched",
+        false,
     };
   }
-  return confirmation;
+  if (defer_goal_terminal) {
+    commit_terminal = deferGoalAbort("estop_latched");
+  }
+  if (commit_terminal) {
+    (*commit_terminal)();
+  }
+  return {true, "estop_latched", commit_terminal.has_value()};
 }
 
 MotionStopResult MotionStopCoordinator::clearEstop(const std::string &precondition_error) const {
@@ -201,12 +302,27 @@ bool MotionStopCoordinator::keepZeroFresh() const {
 }
 
 FinalShutdownResult MotionStopCoordinator::finalShutdown() const {
+  return finalShutdownWithoutTerminalCommit();
+}
+
+FinalShutdownResult MotionStopCoordinator::finalShutdownWithoutTerminalCommit() const {
+  return runFinalShutdownPipeline(std::nullopt);
+}
+
+FinalShutdownResult MotionStopCoordinator::finalShutdownPreservingGoalTerminal(
+    MotionStopTerminalCommit commit_terminal) const {
+  return runFinalShutdownPipeline(std::move(commit_terminal));
+}
+
+FinalShutdownResult MotionStopCoordinator::runFinalShutdownPipeline(
+    std::optional<MotionStopTerminalCommit> commit_terminal) const {
   actions_.stop_control();
-  MotionStopTerminalCommit commit_shutdown = deferGoalAbort("navd_shutdown");
-  actions_.clear_global_path();
+  actions_.cancel_inspection("navd_shutdown");
+  if (!clearMotionOutputs("navd_shutdown")) {
+    return {false, std::nullopt};
+  }
   if (!publish_cmd_vel_) {
-    commit_shutdown();
-    return {true, std::nullopt};
+    return {false, std::nullopt};
   }
   const std::optional<std::uint64_t> output_sequence = actions_.publish_sequenced_zero();
   if (!output_sequence) {
@@ -214,7 +330,9 @@ FinalShutdownResult MotionStopCoordinator::finalShutdown() const {
   }
   const StopConfirmationState state = actions_.confirm_zero(*output_sequence);
   if (state == StopConfirmationState::Confirmed) {
-    commit_shutdown();
+    if (commit_terminal) {
+      (*commit_terminal)();
+    }
   }
   return {
       state == StopConfirmationState::Confirmed,

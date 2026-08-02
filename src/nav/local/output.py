@@ -90,6 +90,8 @@ class LocalPlannerOutputMixin:
     ) -> bool:
         if not self._allow_direct_track_fallback:
             return False
+        if recovery_state != 0:
+            return False
         if near_field_stop:
             if not self._ignore_near_field_stop:
                 return False

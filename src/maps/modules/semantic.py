@@ -59,7 +59,9 @@ class SemanticMapModule(Module, layer=2):
         self._max_pending_labels = max(1, int(max_pending_labels))
         self._native: NativeSemanticLayer | None = None
         self._taxonomy = load_semantic_taxonomy()
-        self._labels: OrderedDict[int, SemanticLabelsFrame] = OrderedDict()
+        self._labels: OrderedDict[tuple[int, int], SemanticLabelsFrame] = OrderedDict()
+        self._last_observation_epoch = 0
+        self._last_observation_sequence = 0
         self._last_publish_s = 0.0
         self._scene_sequence = 0
         self._stats: dict[str, Any] = {
@@ -93,8 +95,9 @@ class SemanticMapModule(Module, layer=2):
         super().stop()
 
     def _on_labels(self, frame: SemanticLabelsFrame) -> None:
-        self._labels[frame.sequence] = frame
-        self._labels.move_to_end(frame.sequence)
+        key = (int(frame.metadata.get("reset_epoch", 1) or 1), frame.sequence)
+        self._labels[key] = frame
+        self._labels.move_to_end(key)
         while len(self._labels) > self._max_pending_labels:
             self._labels.popitem(last=False)
 
@@ -140,7 +143,20 @@ class SemanticMapModule(Module, layer=2):
 
     def _on_observation(self, observation: MapObservationFrame) -> None:
         native = self._require_native()
-        labels = self._labels.pop(observation.sequence, None)
+        epoch = int(observation.reset_epoch)
+        sequence = int(observation.sequence)
+        if epoch < self._last_observation_epoch or (
+            epoch == self._last_observation_epoch
+            and sequence <= self._last_observation_sequence
+        ):
+            self._stats["stale"] += 1
+            return
+        if self._last_observation_epoch and epoch > self._last_observation_epoch:
+            native.reset()
+            self._labels.clear()
+        self._last_observation_epoch = epoch
+        self._last_observation_sequence = sequence
+        labels = self._labels.pop((epoch, sequence), None)
         label_values = None
         taxonomy = ""
         taxonomy_version = 0
@@ -186,6 +202,8 @@ class SemanticMapModule(Module, layer=2):
             self._publish_scene(observation.frame_id)
 
     def _label_rejection(self, observation: MapObservationFrame, labels: SemanticLabelsFrame) -> str:
+        if int(labels.metadata.get("reset_epoch", 1) or 1) != observation.reset_epoch:
+            return "reset_epoch_mismatch"
         if labels.sequence != observation.sequence:
             return "sequence_mismatch"
         if abs(labels.ts - observation.ts) > self._label_sync_tolerance_s:

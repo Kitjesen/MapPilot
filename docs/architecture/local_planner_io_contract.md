@@ -1,6 +1,6 @@
 # Local Planner I/O Contract
 
-Status: current for Python Module-owned local-planner I/O; physical `thunder_field` embeds local planning inside `lingtu-nav-dds`
+Status: current for Python Module-owned local-planner I/O; physical `env=real` embeds local planning inside `lingtu-nav-dds`
 Audience: navigation Module and compatibility-profile maintainers
 Replaced by: not replaced
 

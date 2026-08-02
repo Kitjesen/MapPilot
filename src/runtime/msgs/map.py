@@ -48,12 +48,11 @@ def _decode_json_message(data: bytes, name: str) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class MapControlRequest:
-    """Typed control-plane request for the native maps service.
+    """Validated in-process request for the Host maps adapter.
 
     The runtime previously moved map commands as unvalidated JSON strings.
-    Keeping the operation and its parameters in a message object makes local,
-    SHM, and DDS adapters share one contract while the native service retains
-    ownership of validation and persistent state.
+    This object now keeps local Module calls explicit. It is not the pending
+    typed DDS control/query contract for the field ``mapd`` process.
     """
 
     msg_name: ClassVar[str] = "map.MapControlRequest"
@@ -319,6 +318,7 @@ class MapObservationFrame:
 
     points: Any = field(default_factory=list)
     sequence: int = 0
+    reset_epoch: int = 1
     ts: float = field(default_factory=time.time)
     frame_id: str = field(default=MAP_FRAME_ID)
     sensor_frame_id: str = "body"
@@ -340,6 +340,9 @@ class MapObservationFrame:
         self.sequence = int(self.sequence)
         if self.sequence <= 0:
             raise ValueError("sequence must be a positive incremental scan sequence")
+        self.reset_epoch = int(self.reset_epoch)
+        if self.reset_epoch <= 0:
+            raise ValueError("reset_epoch must be a positive SLAM source epoch")
         self.ts = float(self.ts or time.time())
         if not np.isfinite(self.ts):
             raise ValueError("ts must be finite")
@@ -488,6 +491,7 @@ class MapObservationFrame:
             "schema_version": self.schema_version,
             "observation_kind": self.observation_kind,
             "sequence": int(self.sequence),
+            "reset_epoch": int(self.reset_epoch),
             "ts": float(self.ts),
             "frame_id": self.frame_id,
             "sensor_frame_id": self.sensor_frame_id,
@@ -509,6 +513,7 @@ class MapObservationFrame:
         return cls(
             points=data.get("points", []),
             sequence=int(data.get("sequence", 0) or 0),
+            reset_epoch=int(data.get("reset_epoch", 1) or 1),
             ts=float(data.get("ts", 0.0) or time.time()),
             frame_id=str(data.get("frame_id", MAP_FRAME_ID) or MAP_FRAME_ID),
             sensor_frame_id=str(data.get("sensor_frame_id", "") or ""),

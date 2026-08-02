@@ -172,7 +172,7 @@ def test_default_autonomy_fallback_chain_never_uses_native_module(
     )
     from nav.local import local_planner_runtime as local_planner_setup
     from nav.local import local_planner as local_planner
-    from nav.local.local_planner_backend import (
+    from nav.local.models import (
         LocalPlannerGridConfig,
         NanobindLocalPlannerBackend,
     )

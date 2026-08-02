@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Sequence
 
-from runtime.profiles.endpoints import RuntimeRunSpec
+from runtime.profiles.catalog.profile_adapters import RuntimeRunSpec
 from runtime.runtime_interface import (
     FRAME_LINKS,
     FRAMES,
@@ -32,11 +32,13 @@ def runtime_spec_summary(spec: RuntimeRunSpec) -> dict[str, object]:
     """Return the operator-facing runtime boundary for one resolved profile."""
 
     validation = validate_runtime_switch(spec)
-    product_semantic_overrides = [_product_semantic_override_summary(item) for item in spec.product_semantic_overrides]
+    profile_semantic_overrides = [
+        _profile_semantic_override_summary(item)
+        for item in spec.profile_semantic_overrides
+    ]
     return {
         "profile": spec.profile,
-        "endpoint": spec.endpoint or "in_process",
-        "robot_preset": spec.robot_preset,
+        "adapter": spec.adapter or "in_process",
         "data_source": spec.data_source,
         "runtime_contract": spec.runtime_contract,
         "module_transport": spec.module_transport,
@@ -72,7 +74,7 @@ def runtime_spec_summary(spec: RuntimeRunSpec) -> dict[str, object]:
         },
         "launcher": spec.launcher,
         "launcher_args": list(spec.launcher_args),
-        "product_semantic_overrides": product_semantic_overrides,
+        "profile_semantic_overrides": profile_semantic_overrides,
         "startup_gates": _startup_gates_for_spec(spec),
         "validation": {
             "ok": validation.ok,
@@ -108,26 +110,28 @@ def compare_runtime_switch(
 
 def validate_runtime_switch(spec: RuntimeRunSpec) -> RuntimeSwitchValidation:
     blockers: list[str] = []
-    warnings = list(_product_semantic_warnings(spec.product_semantic_overrides))
+    warnings = list(_profile_semantic_warnings(spec.profile_semantic_overrides))
     is_hardware_sink = spec.command_sink == "driver"
     expected_simulation_flag = "1" if spec.simulation_only else "0"
-    if spec.endpoint not in (None, "in_process"):
+    if spec.adapter not in (None, "in_process"):
         if not spec.runtime_contract:
-            blockers.append("runtime endpoint has no runtime contract")
+            blockers.append("Profile adapter has no runtime contract")
         elif spec.runtime_contract != spec.data_source:
             blockers.append("runtime contract does not match data source")
     if spec.simulation_only and is_hardware_sink:
-        blockers.append("simulation endpoint uses hardware command sink")
+        blockers.append("simulation runtime uses hardware command sink")
     if not spec.simulation_only and not is_hardware_sink:
-        blockers.append("real endpoint does not use hardware command sink")
+        blockers.append("real runtime does not use hardware command sink")
     if spec.simulation_only and spec.env.get("LINGTU_SIMULATION_ONLY") == "0":
-        blockers.append("simulation endpoint exports real-mode flag")
+        blockers.append("simulation runtime exports real-mode flag")
     if not spec.simulation_only and spec.env.get("LINGTU_SIMULATION_ONLY") == "1":
-        blockers.append("real endpoint exports simulation-mode flag")
+        blockers.append("real runtime exports simulation-mode flag")
     if spec.env.get("LINGTU_SIMULATION_ONLY") != expected_simulation_flag:
         blockers.append("env simulation flag does not match run spec")
-    if spec.endpoint and spec.env.get("LINGTU_ENDPOINT") != spec.endpoint:
-        blockers.append("env endpoint does not match run spec")
+    if spec.adapter and spec.env.get("LINGTU_PROFILE_ADAPTER") != spec.adapter:
+        blockers.append("env Profile adapter does not match run spec")
+    if not spec.adapter and "LINGTU_PROFILE_ADAPTER" in spec.env:
+        blockers.append("env Profile adapter exists without run spec adapter")
     if spec.env.get("LINGTU_DATA_SOURCE") != spec.data_source:
         blockers.append("env data source does not match run spec")
     if spec.env.get("LINGTU_MODULE_TRANSPORT") != spec.module_transport:
@@ -288,16 +292,16 @@ def _runtime_data_flow_summary(stage: Mapping[str, Any]) -> dict[str, object]:
     return item
 
 
-def _product_semantic_override_summary(item: Mapping[str, Any]) -> dict[str, object]:
+def _profile_semantic_override_summary(item: Mapping[str, Any]) -> dict[str, object]:
     return {
         "field": str(item.get("field", "")),
-        "override_scope": str(item.get("override_scope") or "compatibility_override"),
-        "product_value": _json_value(item.get("product_value")),
-        "endpoint_value": _json_value(item.get("endpoint_value")),
+        "override_scope": str(item.get("override_scope") or "profile_adapter_override"),
+        "profile_value": _json_value(item.get("profile_value")),
+        "adapter_value": _json_value(item.get("adapter_value")),
     }
 
 
-def _product_semantic_warnings(
+def _profile_semantic_warnings(
     overrides: Sequence[Mapping[str, Any]],
 ) -> tuple[str, ...]:
     warnings: list[str] = []
@@ -305,9 +309,9 @@ def _product_semantic_warnings(
         field = item.get("field")
         if not field:
             continue
-        product_value = _warning_value(item.get("product_value"))
-        endpoint_value = _warning_value(item.get("endpoint_value"))
-        warnings.append(f"runtime compatibility override: {field} {product_value} -> {endpoint_value}")
+        profile_value = _warning_value(item.get("profile_value"))
+        adapter_value = _warning_value(item.get("adapter_value"))
+        warnings.append(f"Profile adapter override: {field} {profile_value} -> {adapter_value}")
     return tuple(warnings)
 
 

@@ -26,12 +26,11 @@ layers:
 
   - id: L1_runtime_model
     title: Runtime Model
-    intent: Product profiles, robot presets, runtime endpoints, run specs, frame/topic contracts, and runtime policies.
+    intent: Local Profile and Host defaults, driver backends, run specs, frame/topic/communication contracts, and runtime policies.
     owns:
       - src/runtime/profiles/
       - src/runtime/runtime_interface.py
       - src/runtime/runtime_policy.py
-      - src/runtime/runtime_profiles.py
       - src/runtime/runtime_switch.py
       - src/diagnostics/
       - src/diagnostics/field/gates.py
@@ -49,21 +48,23 @@ layers:
 
   - id: L2_product_composition
     title: Product Composition
-    intent: LingTu product assembly only chooses which Modules run and how they are wired.
+    intent: Product declarations, immutable RunPlan compilation, and Host assembly choose what runs without owning process side effects.
     owns:
       - src/lingtu/assembly/
-      - src/drivers/real/thunder/blueprints.py
+      - src/lingtu/run_plan.py
+      - src/lingtu/run_plan_contract.py
+      - src/lingtu/runtime_parameters.py
+      - src/lingtu/runtime.py
 
   - id: L3_adapter_layer
     title: Adapter Layer
     intent: Native DDS, simulator, replay, runtime shims, and external protocol conversion.
     owns:
       - src/runtime/adapters/
-      - src/external_adapters/
       - src/nav/adapters/
       - src/localization/adapters/
       - src/maps/adapters/
-      - src/gateway/rerun_bridge_module.py
+      - src/lingtu/host_bus.py
 
   - id: L4_capability_modules
     title: Capability Modules
@@ -81,10 +82,8 @@ layers:
       - src/lingtu/__init__.py
       - src/lingtu/README.md
       - src/lingtu/robot.py
-      - src/lingtu/runtime.py
       - src/lingtu/tests/
       - src/nav/local/
-      - src/nav/exploration/
 
   - id: L5_algorithm_kernels
     title: Algorithm Kernels
@@ -98,19 +97,22 @@ layers:
       - src/nav/services/plan/
 
   - id: L6_cli_deploy
-    title: CLI And Deploy
-    intent: Command-line lifecycle, packaging, validation tools, deployment scripts, and runtime bootstrap.
+    title: Product Control And Deploy
+    intent: ProductControl side effects, internal systemd execution, command-line lifecycle, packaging, validation, and deployment.
     owns:
       - lingtu.py
       - cli/
       - scripts/
       - tools/
-      - requirements-lite.txt
       - pyproject.toml
-      - config/thunder_lite_package.yaml
+      - config/lite_package.yaml
       - src/lingtu/plugin_seed.py
-      - src/lingtu/launcher.py
       - src/lingtu/control.py
+      - src/lingtu/explain.py
+      - src/lingtu/product_lock.py
+      - src/lingtu/product_switch.py
+      - src/lingtu/systemd.py
+      - src/lingtu/map_runtime_transaction.py
       - src/lingtu/sdk/
 
 import_boundaries:
@@ -156,6 +158,8 @@ import_boundaries:
       - memory
   composition_exceptions:
     - lingtu/assembly/
+    - lingtu/runtime.py
+    - lingtu/host_bus.py
     - diagnostics/field/gateway_acceptance.py
     - runtime/msgs/scene.py
     - diagnostics/field/field_check.py

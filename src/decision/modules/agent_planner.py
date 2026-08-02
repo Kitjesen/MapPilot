@@ -27,7 +27,7 @@ from typing import Any
 from decision.backends import BackendManager
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, PoseStamped, Quaternion, Vector3
-from runtime.msgs.nav import Odometry
+from runtime.msgs.nav import NavigationGoalStatus, NavigationState, Odometry
 from runtime.msgs.numpy_compat import np
 from runtime.msgs.semantic import SceneGraph
 from runtime.registry import register
@@ -74,6 +74,8 @@ class AgentPlannerModule(Module, layer=4):
     agent_instruction: In[str]  # multi-turn agent loop (observe->think->act cycle)
     scene_graph: In[SceneGraph]
     odometry: In[Odometry]
+    navigation_state: In[NavigationState]
+    navigation_goal_status: In[NavigationGoalStatus]
     mission_status: In[dict]  # for nav_status context
 
     # -- Outputs --
@@ -112,6 +114,7 @@ class AgentPlannerModule(Module, layer=4):
 
         # Nav status (cached from mission_status for agent context)
         self._last_nav_state: str = ""
+        self._navigation_goal_status_by_request: dict[str, dict[str, Any]] = {}
 
         # Latest camera frame for VLM tools in the agent loop
         self._latest_rgb: np.ndarray | None = None
@@ -179,6 +182,8 @@ class AgentPlannerModule(Module, layer=4):
         self.agent_instruction.subscribe(self._on_agent_instruction)
         self.scene_graph.subscribe(self._on_scene_graph)
         self.odometry.subscribe(self._on_odom)
+        self.navigation_state.subscribe(self._on_navigation_state)
+        self.navigation_goal_status.subscribe(self._on_navigation_goal_status)
         self.mission_status.subscribe(self._on_mission_status)
 
     def _init_llm(self) -> None:
@@ -215,6 +220,17 @@ class AgentPlannerModule(Module, layer=4):
         state = status.get("state", "")
         if state not in ("RECOVERING", "STUCK", "FAILED"):
             self._last_nav_state = state
+
+    def _on_navigation_state(self, state: NavigationState) -> None:
+        state_name = state.to_dict()["lifecycle_state_name"]
+        if state_name not in ("RECOVERING", "FAILED"):
+            self._last_nav_state = state_name
+
+    def _on_navigation_goal_status(self, status: NavigationGoalStatus) -> None:
+        self._navigation_goal_status_by_request[status.request_id] = status.to_dict()
+        if len(self._navigation_goal_status_by_request) > 256:
+            oldest = next(iter(self._navigation_goal_status_by_request))
+            self._navigation_goal_status_by_request.pop(oldest, None)
 
     # ------------------------------------------------------------------
     # Chat helper
@@ -408,6 +424,18 @@ class AgentPlannerModule(Module, layer=4):
         if not result.get("found"):
             return f"No memory match for '{text}'"
         best = result["best"]
+        coordinates_are_safe = (
+            result.get("navigable") is True
+            and result.get("semantic_encoder_ready") is True
+            and result.get("degraded") is False
+        )
+        if not coordinates_are_safe:
+            labels = best.get("labels", "")
+            return (
+                f"Found a query-only memory match for '{text}'"
+                f" (score={best['score']:.2f}, labels={labels}); "
+                "coordinates are withheld because semantic memory is degraded"
+            )
         return (
             f"Found: ({best['x']:.1f}, {best['y']:.1f}, "
             f"{best.get('z', 0.0):.1f}) score={best['score']:.2f} "

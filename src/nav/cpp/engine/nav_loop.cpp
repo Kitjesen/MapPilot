@@ -92,6 +92,21 @@ void NavLoop::clearGlobalPath() {
   resetAutonomyProgress();
 }
 
+bool NavLoop::hasRetainedGlobalPath() const {
+  return !global_path_.empty();
+}
+
+void NavLoop::suspendAutonomy() {
+  follower_state_ = nav_kernel::PathFollowerState{};
+  recovery_follower_state_ = nav_kernel::PathFollowerState{};
+  recovery_active_ = false;
+  recovery_action_ = 0;
+  recovery_attempt_ = -1;
+  local_planner_.resetRecovery();
+  clearRecoveryObservationWait();
+  resetAutonomyProgress();
+}
+
 void NavLoop::stopLinearMotion() {
   follower_state_.vehicleSpeed = 0.0;
   recovery_follower_state_.vehicleSpeed = 0.0;

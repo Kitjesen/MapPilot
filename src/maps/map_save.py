@@ -84,7 +84,9 @@ def seed_default_map_save_adapter_plugins() -> None:
 
 
 def _result_dict(result: Any) -> dict[str, Any]:
-    return result if isinstance(result, dict) else {"success": True}
+    if not isinstance(result, dict) or not isinstance(result.get("success"), bool):
+        raise MapSaveError("map-save adapter returned an invalid acknowledgement")
+    return result
 
 
 def save_nav_map_with_adapter(

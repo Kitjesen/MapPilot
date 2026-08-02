@@ -15,8 +15,8 @@ NATIVE_EXECUTABLES=(
   build/native-runtime/lt_hba
   build/native-runtime/lt_loop_verify
   build/livox_sdk2_stream/livox_sdk2_stream
-  build/slam_core/lingtu_slam_cyclone_runtime
-  build/slam_core/lingtu_slam_control
+  build/slam_core/slamd
+  build/slam_core/slamctl
   build/dds_probe/lingtu_dds_probe
   build/driver/lingtu_driver
 )
@@ -33,12 +33,21 @@ NAV_LIBRARIES=(
   liblingtu_inspection_evidence_bridge.so
   inspection/liblingtu_inspection.so
 )
+RECORDING_EXECUTABLES=(
+  lingtu_recorder
+  lingtu_dds_recorder
+  lingtu_dds_player
+  lingtu_camera_recorder
+  lingtu_camera_player
+)
 
 # mapd is being integrated independently. A checkout that contains its build
 # entrypoint declares the component available, so the release must then carry
-# both runtime artifacts. Clean checkouts without that entrypoint remain valid.
+# the complete maps runtime bundle. Clean checkouts without that entrypoint
+# remain valid.
 MAPD_EXECUTABLES=(
   build/maps/mapd
+  build/maps/lingtu-mapctl
 )
 MAPD_LIBRARIES=(
   build/maps/liblingtu_maps.so
@@ -48,6 +57,7 @@ run_self_test() {
   local test_root
   local output_dir
   local nav_install
+  local recording_install
   local relative
   local tarball
   local manifest
@@ -58,7 +68,7 @@ run_self_test() {
   local mapd_tar_listing
   local preflight_output
   local fake_control
-  local transaction_manifest
+  local transaction_plan
   local success_root
   local failure_root
   local link_failure_root
@@ -68,6 +78,7 @@ run_self_test() {
   test_root="$(mktemp -d "${TMPDIR:-/tmp}/lingtu-native-release-test.XXXXXX")"
   output_dir="${test_root}/output"
   nav_install="${test_root}/nav-install"
+  recording_install="${test_root}/recording-install"
   cleanup_self_test() {
     if [[ -d "${test_root}" \
         && "$(basename "${test_root}")" == lingtu-native-release-test.* ]]; then
@@ -79,7 +90,8 @@ run_self_test() {
   mkdir -p \
     "${test_root}/source/config" \
     "${test_root}/source/src/localization/fastlio2/config" \
-    "${nav_install}"
+    "${nav_install}" \
+    "${recording_install}"
   printf '0.0.0\n' > "${test_root}/source/VERSION"
   printf 'native release self-test\n' > "${test_root}/source/config/self-test.txt"
   printf 'native: true\n' \
@@ -98,6 +110,9 @@ run_self_test() {
   for relative in "${NAV_LIBRARIES[@]}"; do
     mkdir -p "$(dirname "${nav_install}/${relative}")"
     install -m 0644 /dev/null "${nav_install}/${relative}"
+  done
+  for relative in "${RECORDING_EXECUTABLES[@]}"; do
+    install -m 0755 /dev/null "${recording_install}/${relative}"
   done
 
   key_file=""
@@ -119,6 +134,7 @@ PY
 
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
+    LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
     LINGTU_NATIVE_RELEASE_SIGNING_KEY="${key_file}" \
     SOURCE_DATE_EPOCH=1704067200 \
@@ -153,14 +169,30 @@ PY
     <<<"${tar_listing}"
   grep -Fq 'lingtu-0.0.0-aarch64-native-release/install_nav.sh' \
     <<<"${tar_listing}"
+  for relative in "${RECORDING_EXECUTABLES[@]}"; do
+    grep -Fq \
+      "lingtu-0.0.0-aarch64-native-release/build/native-recording/${relative}" \
+      <<<"${tar_listing}"
+  done
   if grep -Fq 'lingtu-0.0.0-aarch64-native-release/build/maps/mapd' \
       <<<"${tar_listing}"; then
     echo "mapd must not be inferred when its build entrypoint is absent" >&2
     return 1
   fi
+  if grep -Fq 'lingtu-0.0.0-aarch64-native-release/build/maps/lingtu-mapctl' \
+      <<<"${tar_listing}"; then
+    echo "lingtu-mapctl must not be inferred when its build entrypoint is absent" >&2
+    return 1
+  fi
   mkdir -p "${test_root}/extracted"
   tar -xzf "${tarball}" -C "${test_root}/extracted"
   extracted_package="${test_root}/extracted/lingtu-0.0.0-aarch64-native-release"
+  for relative in "${RECORDING_EXECUTABLES[@]}"; do
+    test -x "${extracted_package}/build/native-recording/${relative}"
+    grep -Fq \
+      "build/native-recording/${relative}" \
+      "${extracted_package}/config/native-release-sha256.txt"
+  done
   bash "${extracted_package}/install_nav.sh" \
     --dry-run \
     --package-dir "${extracted_package}" \
@@ -180,7 +212,7 @@ from pathlib import Path
 
 Path(os.environ["LINGTU_NATIVE_RELEASE_STOP_SENTINEL"]).write_text("called\n")
 PY
-  python3 - "${test_root}/active-manifest.json" <<'PY'
+  python3 - "${test_root}/active-run-plan.json" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -191,14 +223,14 @@ Path(sys.argv[1]).write_text(
 )
 PY
   python3 - \
-    "${test_root}/state/active-product.json" \
-    "${test_root}/active-manifest.json" <<'PY'
+    "${test_root}/state/current.json" \
+    "${test_root}/active-run-plan.json" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 Path(sys.argv[1]).write_text(
-    json.dumps({"manifest_path": sys.argv[2]}) + "\n",
+    json.dumps({"run_plan_path": sys.argv[2]}) + "\n",
     encoding="utf-8",
 )
 PY
@@ -228,9 +260,11 @@ PY
   install -m 0755 /dev/null "${test_root}/source/scripts/build/build_mapd.sh"
   git -C "${test_root}/source" add scripts/build/build_mapd.sh
   install -m 0755 /dev/null "${test_root}/source/build/maps/mapd"
+  install -m 0755 /dev/null "${test_root}/source/build/maps/lingtu-mapctl"
   install -m 0644 /dev/null "${test_root}/source/build/maps/liblingtu_maps.so"
   LINGTU_NATIVE_RELEASE_SOURCE_ROOT="${test_root}/source" \
     LINGTU_NATIVE_RELEASE_NAV_INSTALL_SOURCE="${nav_install}" \
+    LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE="${recording_install}" \
     LINGTU_NATIVE_RELEASE_ARCH=aarch64 \
     SOURCE_DATE_EPOCH=1704067200 \
     bash "${BASH_SOURCE[0]}" v0.0.1 "${test_root}/output-mapd"
@@ -238,12 +272,14 @@ PY
   mapd_tar_listing="$(tar -tzf "${mapd_tarball}")"
   grep -Fq 'lingtu-0.0.1-aarch64-native-release/build/maps/mapd' \
     <<<"${mapd_tar_listing}"
+  grep -Fq 'lingtu-0.0.1-aarch64-native-release/build/maps/lingtu-mapctl' \
+    <<<"${mapd_tar_listing}"
   grep -Fq \
     'lingtu-0.0.1-aarch64-native-release/build/maps/liblingtu_maps.so' \
     <<<"${mapd_tar_listing}"
 
   # Exercise the real installer transaction with a fake ProductControl. This
-  # proves persistent processes restart from the new tree before mode apply,
+  # proves persistent processes restart from the new tree before Product reapply,
   # and that a failed persistent restart restores the old link and Product.
   fake_control="${test_root}/fake-product-control"
   cat > "${fake_control}" <<'FAKE_CONTROL'
@@ -262,8 +298,8 @@ if [[ "$(basename "${repo}")" != "old-release" \
 fi
 FAKE_CONTROL
   chmod 0755 "${fake_control}"
-  transaction_manifest="${test_root}/persistent-product.json"
-  python3 - "${transaction_manifest}" <<'PY'
+  transaction_plan="${test_root}/persistent-run-plan.json"
+  python3 - "${transaction_plan}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -290,14 +326,14 @@ PY
   mkdir -p "${success_root}/old-release" "${success_root}/state"
   ln -s "${success_root}/old-release" "${success_root}/current"
   python3 - \
-    "${success_root}/state/active-product.json" \
-    "${transaction_manifest}" <<'PY'
+    "${success_root}/state/current.json" \
+    "${transaction_plan}" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 Path(sys.argv[1]).write_text(
-    json.dumps({"manifest_path": sys.argv[2]}) + "\n",
+    json.dumps({"run_plan_path": sys.argv[2]}) + "\n",
     encoding="utf-8",
 )
 PY
@@ -314,9 +350,9 @@ from pathlib import Path
 import sys
 
 assert Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() == [
-    "old-release|stop|",
+    "old-release|quiesce|",
     "v0.0.0|restart|driver",
-    "v0.0.0|apply|",
+    "v0.0.0|reapply|",
 ]
 PY
   test "$(readlink -f "${success_root}/current")" = \
@@ -326,14 +362,14 @@ PY
   mkdir -p "${failure_root}/old-release" "${failure_root}/state"
   ln -s "${failure_root}/old-release" "${failure_root}/current"
   python3 - \
-    "${failure_root}/state/active-product.json" \
-    "${transaction_manifest}" <<'PY'
+    "${failure_root}/state/current.json" \
+    "${transaction_plan}" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 Path(sys.argv[1]).write_text(
-    json.dumps({"manifest_path": sys.argv[2]}) + "\n",
+    json.dumps({"run_plan_path": sys.argv[2]}) + "\n",
     encoding="utf-8",
 )
 PY
@@ -354,11 +390,11 @@ from pathlib import Path
 import sys
 
 assert Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() == [
-    "old-release|stop|",
+    "old-release|quiesce|",
     "v0.0.0|restart|driver",
-    "v0.0.0|stop|",
+    "v0.0.0|quiesce|",
     "old-release|restart|driver",
-    "old-release|apply|",
+    "old-release|reapply|",
 ]
 PY
   test "$(readlink -f "${failure_root}/current")" = \
@@ -372,14 +408,14 @@ PY
     "${fake_ln_dir}"
   ln -s "${link_failure_root}/old-release" "${link_failure_root}/current"
   python3 - \
-    "${link_failure_root}/state/active-product.json" \
-    "${transaction_manifest}" <<'PY'
+    "${link_failure_root}/state/current.json" \
+    "${transaction_plan}" <<'PY'
 import json
 from pathlib import Path
 import sys
 
 Path(sys.argv[1]).write_text(
-    json.dumps({"manifest_path": sys.argv[2]}) + "\n",
+    json.dumps({"run_plan_path": sys.argv[2]}) + "\n",
     encoding="utf-8",
 )
 PY
@@ -423,9 +459,9 @@ from pathlib import Path
 import sys
 
 assert Path(sys.argv[1]).read_text(encoding="utf-8").splitlines() == [
-    "old-release|stop|",
+    "old-release|quiesce|",
     "v0.0.0|restart|driver",
-    "v0.0.0|stop|",
+    "v0.0.0|quiesce|",
 ]
 PY
   test "$(readlink -f "${link_failure_root}/current")" = \
@@ -527,12 +563,11 @@ git -C "${ROOT}" ls-files -z \
   --exclude='/src/localization/pgo/***' \
   --exclude='/src/localization/pointlio/***' \
   --exclude='/src/drivers/real/camera/deps/orbbec/OrbbecSDK_ROS2/***' \
+  --exclude='/scripts/compat/ros2/***' \
   --exclude='/scripts/build/build_ros_workspace.sh' \
   --exclude='/scripts/deploy/cut_release.sh' \
   --exclude='/scripts/deploy/s100p/***' \
   --exclude='/scripts/deploy/thunder/ros2-env.sh' \
-  --exclude='/scripts/hardware/record_bag.sh' \
-  --exclude='/scripts/ota/***' \
   "${ROOT}/" "${PACKAGE_ROOT}/"
 
 copy_executable() {
@@ -592,6 +627,19 @@ done
 for relative in "${NAV_LIBRARIES[@]}"; do
   if [[ ! -f "${NAV_INSTALL_DIR}/${relative}" ]]; then
     echo "Native navigation install is missing library: ${relative}" >&2
+    exit 1
+  fi
+done
+
+RECORDING_INSTALL_DIR="${PACKAGE_ROOT}/build/native-recording"
+if [[ -n "${LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE:-}" ]]; then
+  rsync -aL "${LINGTU_NATIVE_RELEASE_RECORDING_INSTALL_SOURCE}/" "${RECORDING_INSTALL_DIR}/"
+else
+  cmake --install "${ROOT}/build/native-recording" --prefix "${RECORDING_INSTALL_DIR}"
+fi
+for relative in "${RECORDING_EXECUTABLES[@]}"; do
+  if [[ ! -x "${RECORDING_INSTALL_DIR}/${relative}" ]]; then
+    echo "Native recording install is missing executable: ${relative}" >&2
     exit 1
   fi
 done

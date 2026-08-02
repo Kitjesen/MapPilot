@@ -7,6 +7,8 @@ import pytest
 
 from maps.modules import voxel_grid
 from maps.modules.voxel_grid import VoxelGridModule
+from runtime.msgs.geometry import Pose, Quaternion, Transform, Vector3
+from runtime.msgs.map import MapObservationFrame
 from runtime.msgs.sensor import PointCloud2
 
 
@@ -19,6 +21,7 @@ class _FakeNativeVoxelLayer:
         self.decayed = False
         self.reset_called = False
         self.updates: list[dict[str, object]] = []
+        self.point_batches: list[np.ndarray] = []
         self._count = 2
         _FakeNativeVoxelLayer.instances.append(self)
 
@@ -33,6 +36,7 @@ class _FakeNativeVoxelLayer:
         self.decayed = True
 
     def update(self, points, *, frame_id, stamp_ns, origin_xyz) -> None:
+        self.point_batches.append(np.asarray(points, dtype=np.float32).copy())
         self.updates.append(
             {
                 "shape": tuple(points.shape),
@@ -164,6 +168,52 @@ def test_voxel_grid_cpp_backend_uses_native_adapter(monkeypatch: pytest.MonkeyPa
     assert native.reset_called is True
     module.stop()
     assert native.closed is True
+
+
+def test_voxel_observation_uses_exact_scan_pose_and_rejects_old_sequences(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _FakeNativeVoxelLayer.instances.clear()
+    monkeypatch.setattr(voxel_grid, "NativeVoxelLayer", _FakeNativeVoxelLayer)
+    module = VoxelGridModule(
+        voxel_size=1.0,
+        publish_interval=1000.0,
+        decay_rate=0.0,
+    )
+    module.setup()
+    module._last_publish = 10_000_000_000.0
+    module._robot_xyz = [-100.0, -100.0, -100.0]
+    transform = Transform(
+        translation=Vector3(10.0, 20.0, 1.0),
+        rotation=Quaternion(),
+        frame_id="map",
+        child_frame_id="body",
+        ts=5.0,
+    )
+
+    def observation(epoch: int, sequence: int) -> MapObservationFrame:
+        return MapObservationFrame(
+            points=np.asarray([[1.0, 0.0, 0.0]], dtype=np.float32),
+            reset_epoch=epoch,
+            sequence=sequence,
+            ts=5.0,
+            frame_id="map",
+            sensor_frame_id="body",
+            sensor_origin=transform.translation,
+            map_sensor_pose=Pose(transform.translation, transform.rotation),
+            map_sensor_transform=transform,
+        )
+
+    module._on_observation(observation(5, 10))
+    module._on_observation(observation(5, 10))
+    module._on_observation(observation(4, 99))
+    module._on_observation(observation(6, 1))
+
+    native = _FakeNativeVoxelLayer.instances[0]
+    assert len(native.updates) == 2
+    assert native.updates[0]["origin_xyz"] == (10.0, 20.0, 1.0)
+    assert native.point_batches[0][0].tolist() == pytest.approx([11.0, 20.0, 1.0])
+    assert native.reset_called is True
 
 
 def test_voxel_grid_loads_and_checkpoints_native_state(

@@ -6,8 +6,13 @@ ExploreGoalLifecycleReaction
 reactToNavigationGoalLifecycle(const PendingExploreGoalLifecycle *pending,
                                const NavigationGoalLifecycleEvent &event) {
   ExploreGoalLifecycleReaction reaction;
-  if (pending == nullptr || pending->request_id.empty() || event.request_id.empty() ||
-      pending->request_id != event.request_id) {
+  if (pending == nullptr || pending->request_id.empty() || event.request_id.empty()) {
+    return reaction;
+  }
+  const bool matches_goal = pending->request_id == event.request_id;
+  const bool matches_cancel = !pending->cancel_request_id.empty() &&
+                              pending->cancel_request_id == event.request_id;
+  if (!matches_goal && !matches_cancel) {
     return reaction;
   }
 
@@ -16,6 +21,7 @@ reactToNavigationGoalLifecycle(const PendingExploreGoalLifecycle *pending,
   switch (event.state) {
     case lingtu::message::NavigationGoalState::Planning:
     case lingtu::message::NavigationGoalState::PathActive:
+    case lingtu::message::NavigationGoalState::Paused:
       return reaction;
     case lingtu::message::NavigationGoalState::Failed:
       reaction.clear_pending = true;

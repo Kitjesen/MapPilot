@@ -151,6 +151,7 @@ class TeleopModule(Module, layer=6):
                 )
             # Give GatewayModule a reference to us for teleop state queries
             gw._teleop_module = self
+            gw._camera_module = self
             logger.info("TeleopModule: wired into GatewayModule")
         else:
             logger.warning("TeleopModule: GatewayModule not found 鈥?teleop WebSocket will not be available")

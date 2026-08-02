@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 from importlib import import_module
 
-from runtime.plugin_resolution import optional_stack_module, stack_module
 from runtime.contracts import CAMERA_BACKEND_ORBBEC, CAMERA_BACKEND_SIM, CAMERA_ROLE
+from runtime.plugin_resolution import optional_stack_module
 from runtime.plugin_seed import seed_registered_plugins
 from runtime.registry import get
+
+logger = logging.getLogger(__name__)
 
 # Candidate modules whose @register decorators populate the camera registry.
 # Order: sim first because it is the most commonly needed fallback in tests
@@ -26,56 +29,32 @@ def _is_ros2_module(cls: type) -> bool:
     return ".adapters.ros2." in module or module == "gateway.visualization.rerun_bridge"
 
 
-def _reload_camera_candidates() -> None:
-    """Re-run @register decorators of camera candidate modules.
+def _load_camera_candidates() -> None:
+    """Load camera candidates or restore their registry decorators.
 
-    This is a resilience path for tests that call ``registry.clear()`` without
-    restoring camera registrations. In production the modules are imported
-    once at startup and stay registered; this helper only re-imports modules
-    that are already present in ``sys.modules``.
+    Product assembly can run without the CLI bootstrap that installs plugin
+    catalogs. Import candidates directly in that case; reload only modules
+    already present after a test-side registry reset.
     """
 
     for module_name in _CAMERA_CANDIDATE_MODULES:
-        mod = sys.modules.get(module_name)
-        if mod is not None:
-            try:
+        try:
+            mod = sys.modules.get(module_name)
+            if mod is None:
+                import_module(module_name)
+            else:
                 importlib.reload(mod)
-            except Exception:
-                # Best-effort: a broken candidate must not block other backends.
-                pass
+        except Exception:
+            # Best-effort: one unavailable backend must not block the others.
+            logger.debug("Camera plugin candidate is unavailable: %s", module_name, exc_info=True)
 
 
-def camera_module(*, enable_ros2: bool = False, backend: str = CAMERA_BACKEND_ORBBEC) -> type | None:
-    """Resolve the optional camera adapter.
-
-    Default stack resolution does not import ROS2 compatibility modules. Pass
-    ``enable_ros2=True`` only for explicit ROS2 runtime profiles.
-    """
-
-    if enable_ros2:
-        try:
-            seed_registered_plugins(groups=("camera_ros2",), reload_loaded=False)
-        except ValueError as exc:
-            if "camera_ros2" not in str(exc):
-                raise
-            return None
-        try:
-            return get("camera_bridge", "default")
-        except KeyError:
-            return None
+def camera_module(*, backend: str = CAMERA_BACKEND_ORBBEC) -> type | None:
+    """Resolve a camera backend through the canonical camera role."""
 
     registered = _camera_module(backend)
     if registered is not None:
         return registered
-
-    if backend == CAMERA_BACKEND_ORBBEC:
-        try:
-            registered = get("camera_bridge", "default")
-            if _is_ros2_module(registered):
-                return None
-            return registered
-        except KeyError:
-            pass
 
     group = "camera_sim" if backend == CAMERA_BACKEND_SIM else "camera"
     seed_registered_plugins(groups=(group,), reload_loaded=False)
@@ -83,25 +62,13 @@ def camera_module(*, enable_ros2: bool = False, backend: str = CAMERA_BACKEND_OR
     if registered is not None:
         return registered
 
-    # Last-resort: re-run @register decorators of already-imported camera
-    # candidate modules. This recovers from test-side registry clears.
-    _reload_camera_candidates()
+    # Last-resort: load candidates or re-run their @register decorators after
+    # a test-side registry clear.
+    _load_camera_candidates()
     registered = _camera_module(backend)
     if registered is not None:
         return registered
-
-    if backend == CAMERA_BACKEND_ORBBEC:
-        try:
-            registered = get("camera_bridge", "default")
-            if _is_ros2_module(registered):
-                return None
-            return registered
-        except KeyError:
-            pass
     return None
-
-
-camera_bridge_module = camera_module
 
 
 def _camera_module(backend: str) -> type | None:

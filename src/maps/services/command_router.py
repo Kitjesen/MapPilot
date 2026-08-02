@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from maps.services.storage import InvalidMapName
 
@@ -140,6 +141,7 @@ _ROUTES: dict[str, Handler] = {
     "restore_source": lambda service, cmd: service._map_restore_source_backup(_name(cmd)),
     "restore_source_backup": lambda service, cmd: service._map_restore_source_backup(_name(cmd)),
     "set_active": lambda service, cmd: service._map_set_active(str(cmd.get("name", ""))),
+    "clear_active": lambda service, _cmd: service._clear_active_map(),
     "build_occupancy": lambda service, cmd: service._build_occupancy_snapshot(str(cmd.get("name", ""))),
     "build_occupancy_snapshot": lambda service, cmd: service._build_occupancy_snapshot(str(cmd.get("name", ""))),
     "build_octomap": lambda service, cmd: service._build_octomap_artifact(str(cmd.get("name", ""))),

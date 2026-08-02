@@ -116,6 +116,20 @@ void TestWindowRollEmitsOutgoingAndPreservesOverlap() {
   assert(snapshot.CellCount() == 8U * 8U * 4U);
 }
 
+void TestAutoRollAndCellMutationCommitOneGeneration() {
+  RollingOccupancyGrid grid(TestConfig());
+  grid.Reset("map", 0.0F, 0.0F, 0.0F, 1);
+  const std::uint64_t before = grid.Generation();
+  const std::vector<float> points{5.2F, 0.1F, 0.1F};
+
+  const auto stats = grid.Update(Frame(points, 10, 3.2F, 0.1F, 0.1F));
+
+  assert(stats.rolled);
+  assert(stats.free_updates > 0U || stats.hit_updates > 0U);
+  assert(stats.generation == before + 1U);
+  assert(grid.Generation() == before + 1U);
+}
+
 void TestDecayAndOutOfOrderGate() {
   auto config = TestConfig();
   config.decay_after_ns = 100;
@@ -128,9 +142,15 @@ void TestDecayAndOutOfOrderGate() {
   assert(grid.Decay(200) > 0U);
   assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kUnknown);
 
+  // Decay uses the runtime clock and must not advance the sensor observation
+  // cursor. A newer observation remains valid even when its stamp is below the
+  // latest decay tick.
+  grid.Update(Frame(points, 100));
+  assert(grid.StateAt(2.2F, 0.1F, 0.1F) == OccupancyState::kOccupied);
+
   bool rejected = false;
   try {
-    grid.Update(Frame(points, 100));
+    grid.Update(Frame(points, 99));
   } catch (const std::invalid_argument&) {
     rejected = true;
   }
@@ -158,6 +178,7 @@ int main() {
   TestRayProducesFreeAndOccupiedEvidence();
   TestDenseFrameDoesNotOverweightDuplicateVoxels();
   TestWindowRollEmitsOutgoingAndPreservesOverlap();
+  TestAutoRollAndCellMutationCommitOneGeneration();
   TestDecayAndOutOfOrderGate();
   TestFrameMismatchFailsClosed();
   return 0;

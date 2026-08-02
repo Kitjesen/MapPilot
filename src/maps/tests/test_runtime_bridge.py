@@ -9,28 +9,6 @@ from maps.services.runtime_bridge import MapRuntimeBridge
     ("profile", "expected"),
     [
         (
-            "super_lio",
-            {
-                "map_save_supported": True,
-                "map_save_source": "live_map_cloud_snapshot",
-                "relocalization_supported": False,
-                "saved_map_relocalization_supported": False,
-                "restart_recovery_supported": True,
-                "recovery_method": "restart_super_lio",
-            },
-        ),
-        (
-            "super_lio_relocation",
-            {
-                "map_save_supported": False,
-                "map_save_source": "active_map",
-                "relocalization_supported": False,
-                "saved_map_relocalization_supported": False,
-                "restart_recovery_supported": True,
-                "recovery_method": "restart_super_lio_relocation",
-            },
-        ),
-        (
             "localizer",
             {
                 "map_save_supported": True,
@@ -61,10 +39,9 @@ def test_map_save_capability_contract(profile: str, expected: dict) -> None:
 @pytest.mark.parametrize(
     ("alias", "canonical"),
     [
-        ("super-lio", "super_lio"),
-        ("super_lio_reloc", "super_lio_relocation"),
-        ("relocation", "super_lio_relocation"),
+        (" NATIVE_DDS ", "native_dds"),
+        ("GENZ", "genz"),
     ],
 )
-def test_slam_profile_aliases_are_normalized(alias: str, canonical: str) -> None:
+def test_slam_profile_names_are_normalized(alias: str, canonical: str) -> None:
     assert MapRuntimeBridge.normalize_slam_profile(alias) == canonical

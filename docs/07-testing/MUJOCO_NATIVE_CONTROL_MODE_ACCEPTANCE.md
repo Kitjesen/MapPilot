@@ -41,7 +41,7 @@ python sim/scripts/mujoco/native_control_mode_acceptance.py `
 ```
 
 The mode contract is
-`config/runtime_graph/endpoints/mujoco_native_control_mode_acceptance.json`.
+`config/runtime_graph/acceptance/mujoco_native_control_mode_acceptance.json`.
 It declares the exact endpoint mode, command kind, required and forbidden
 processes, native inputs, quality thresholds, and executable harness adapter.
 

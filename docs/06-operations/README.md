@@ -35,9 +35,9 @@ is the authority for every subcommand and its arguments.
 
 | Class | What it may do | Examples |
 | --- | --- | --- |
-| **Observe** | Reads state only; does not intentionally publish motion or change a session. | `status`, `health`, `svc status`, `log`, `dataflow`, `doctor --non-motion`, and `soak`. |
-| **No physical motion, stateful** | Does not publish a goal or velocity command, but can change SLAM/session state or create artifacts. | `plan-preview`, `routecheck`, `system-acceptance`, map artifact checks, and relocalization. |
-| **State-changing recovery** | Restarts a service, changes a map/session/profile, or releases a lease. | `svc restart …`, map restore, session start/end, and backend switching. |
+| **Observe** | Reads state only; does not intentionally publish motion or change a session. | `status`, `health`, `svc status`, `log`, `dataflow`, `doctor --non-motion`, `soak`, and saved-map artifact checks. |
+| **No physical motion, stateful** | Does not publish a goal or velocity command, but can change Product/session state or create artifacts. | `system-acceptance` without `--allow-motion`, map checks, and relocalization. |
+| **State-changing recovery** | Restarts a service, changes a map/session, switches Product, or releases a lease. | `svc restart …`, map restore, session start/end, and backend switching. |
 | **Can move hardware** | Can submit a velocity/goal or activate autonomous behavior. | Teleop, `nav goal`, semantic instruction, visual-servo find/follow, and exploration start. |
 
 For an emergency, follow the site emergency procedure first. Software
@@ -72,7 +72,7 @@ exploration action:
 
 | Surface | What to look for | Do not proceed when… |
 | --- | --- | --- |
-| Service inventory | Required native services are active for the selected profile. | A required service is failed or an unexpected legacy/experimental owner is active. |
+| Service inventory | Required native services are active for the current RunPlan. | A required service is failed or an unexpected legacy/experimental owner is active. |
 | Sensor and dataflow | Current LiDAR/IMU, odometry, map cloud, and localization input are fresh. | A required stream is missing, stale, or has an unexplained duplicate producer. |
 | Localization | The reported state and map-frame transform are valid for the active map. | Localization is lost/degraded, the pose is implausible, or `map_odom_tf` is invalid. |
 | Map | The active package and selected planner artifacts are compatible with the current frame/source. | The map is stale, incomplete, or not the map used for localization. |
@@ -80,11 +80,11 @@ exploration action:
 
 ### 2. Run the smallest no-motion gate that answers the question
 
-Use a planner or field gate before an action that can move hardware:
+Use the appropriate artifact or field gate before an action that can move hardware:
 
 ```bash
-# Offline map/planner loading check: no Gateway, goal, or cmd_vel.
-bash scripts/lingtu plan-preview --internal-only --strict
+# Offline saved-map artifact check: no Gateway, goal, or cmd_vel.
+bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
 
 # Full native/Gateway acceptance for one map and target: no motion unless
 # --allow-motion is explicitly added.
@@ -150,20 +150,22 @@ bash scripts/lingtu log error
 bash scripts/lingtu log tail
 ```
 
-If the problem is isolated to a service, use the narrowest approved restart.
-For example, `svc restart lingtu` restarts the application/Gateway layer;
-`svc restart localization` restarts the native localization chain; and
-`svc restart lidar` is reserved for the native LiDAR input chain. Every one is
+If the problem is isolated to one process, use its RunPlan logical label.
+For example, `svc restart host` restarts only the application/Gateway process;
+`svc restart slam` restarts only the native SLAM process; and
+`svc restart lidar` restarts only the native LiDAR input process. Every one is
 **state-changing recovery**:
 
 ```bash
-bash scripts/lingtu svc restart <lingtu|localization|lidar>
+bash scripts/lingtu svc restart <lidar|slam|maps|traversability|nav|driver|camera|explore|host>
 ```
 
-Use `svc restart all` only when the full native chain needs a cold restart.
-It is not a routine way to resolve a navigation blocker. After any restart,
-repeat `svc status`, `doctor --non-motion`, and a short `soak`; then repeat the
-map or route gate that the interrupted operation required.
+The CLI passes that one logical label unchanged to ProductControl. It does not
+accept backend names or systemd unit names and does not expand a restart into a
+backend chain. Use `svc reapply` (equivalently, `svc restart all`) only when the
+exact committed Product must be reapplied. After any restart, repeat
+`svc status`, `doctor --non-motion`, and a short `soak`; then repeat the map or
+route gate that the interrupted operation required.
 
 ### LiDAR, IMU, odometry, or map-cloud data is missing
 
@@ -208,11 +210,11 @@ The recovery order is:
 1. Hold/cancel the current mission and confirm there is no active command
    source.
 2. Inspect the active map, frame, and localization status.
-3. Use the narrow localization restart only when the service path is the
-   problem:
+3. Restart the logical SLAM process only when that process or its dataflow is
+   the problem:
 
    ```bash
-   bash scripts/lingtu svc restart localization
+   bash scripts/lingtu svc restart slam
    ```
 
 4. If the service is healthy but the pose needs recovery, use the documented
@@ -230,9 +232,8 @@ Keep motion disabled. Start with the map and route evidence rather than
 modifying files in the map directory:
 
 ```bash
-bash scripts/lingtu saved-map-artifact-gate <map-directory>
+bash scripts/lingtu saved-map-artifact-gate <map-directory> --require-occupancy
 bash scripts/lingtu map check <map-name> --goal <x> <y> <yaw>
-bash scripts/lingtu plan-preview --internal-only --strict
 ```
 
 The map service owns map versions, activation, rollback, artifact building, and
@@ -266,29 +267,27 @@ distinguishes `stop`, `navigation/cancel`, and session operations.
 
 Treat this as a control-boundary incident, not a navigation-planning failure.
 Keep motion disabled, identify the active command source/lease, and preserve
-the status and logs. Do not clear a stop by changing profiles or restarting the
+the status and logs. Do not clear a stop by switching Products or restarting the
 entire stack unless the local procedure directs that recovery. A stop/cancel
 action changes control state but does not prove that the underlying sensor,
 localization, or physical hazard has cleared.
 
 ## Service ownership and restart scope
 
-The usual native field chain includes LiDAR DDS, SLAM DDS, a native navigation
-endpoint, and the LingTu application/Gateway. Optional exploration or camera
-services may be present. Inspect `svc status` on the actual robot instead of
-assuming every unit is installed.
+`svc status` reports the nine real-env RunPlan logical labels: `lidar`, `slam`,
+`maps`, `traversability`, `nav`, `driver`, `camera`, `explore`, and `host`.
+A Product may use only a subset, but the operator vocabulary remains the same.
 
 | Scope | Preferred action | Follow-up evidence |
 | --- | --- | --- |
-| Application/Gateway only | `svc restart lingtu` | Gateway readiness and application health. |
-| Localization service path | `svc restart localization` | SLAM status, fresh odometry/map cloud, Gateway readiness, then relocalization/route gate. |
-| Native LiDAR input path | `svc restart lidar` | Sensor dataflow, SLAM freshness, then localization/route gate. |
-| Entire native field chain | `svc restart all` | All of the above, in dependency order; use only when a narrow restart cannot recover the observed fault. |
+| Application/Gateway process | `svc restart host` | Gateway readiness and application health. |
+| Native SLAM process | `svc restart slam` | SLAM status and fresh odometry/map cloud, then the relocalization/route gate. |
+| Native LiDAR input process | `svc restart lidar` | Sensor dataflow, then downstream SLAM and localization freshness. |
+| Exact committed Product | `svc reapply` or `svc restart all` | All readiness gates declared by the committed RunPlan. |
 
-The operations CLI intentionally stops conflicting legacy/experimental
-localization owners during native localization recovery. That cleanup is part
-of a product-path recovery, not permission to mix two paths during normal
-operation.
+ProductControl resolves each logical label against the committed RunPlan and
+owns the restart/readiness transaction. The shell does not infer a backend
+chain or add extra unit restarts.
 
 ## Preserve useful evidence
 
@@ -304,11 +303,11 @@ bash scripts/lingtu evidence --duration 20 --json-out <report.json>
 ```
 
 `evidence` is a read-only runtime dataflow/frame collection command. Store the
-report together with the profile, map version/name, intended goal frame, time
+report together with the active Product and RunPlan fingerprint, map version/name, intended goal frame, time
 window, and whether any physical motion occurred. For a field validation
 campaign, record `PASS`, `FAIL`, or `BLOCKED` and the reason in the relevant
 [field-run record](../07-testing/field-runs/README.md). A log excerpt without
-the corresponding profile, map, and readiness result is usually not enough to
+the corresponding Product, RunPlan, map, and readiness result is usually not enough to
 reproduce a field issue.
 
 ## Escalate with a bounded handoff
@@ -323,7 +322,7 @@ Escalate rather than repeatedly restarting when any of these is true:
   service;
 - a no-motion gate fails and the reason is not clear from its saved evidence.
 
-Include the command output, timestamp, profile/product session, active map,
+Include the command output, timestamp, Product session, RunPlan fingerprint, active map,
 Gateway health, relevant dataflow, and the exact recovery action already taken.
 This lets the next maintainer reproduce the state without guessing or exposing
 the robot to another uncontrolled retry.

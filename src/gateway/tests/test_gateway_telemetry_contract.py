@@ -270,7 +270,11 @@ def test_navigation_dds_snapshot_reads_native_endpoint_status(monkeypatch, tmp_p
     assert snapshot.cmd_vel is not None
     assert snapshot.cmd_vel.linear["x"] == 0.3
     assert snapshot.cmd_vel.angular["z"] == -0.2
-    assert snapshot.cmd_vel.active_source == "native_nav_endpoint_preview"
+    assert snapshot.cmd_vel.active_source == "native_local_planner_preview"
+    assert snapshot.cmd_vel.evidence_stage == "local_planner_output"
+    assert snapshot.cmd_vel.final_output_confirmed is False
+    assert snapshot.cmd_vel.driver_acknowledged is False
+    assert snapshot.cmd_vel.output_sequence == 0
     assert snapshot.traversability_endpoint is not None
     assert snapshot.traversability_endpoint["counters"]["published"] == 2
     assert snapshot.source == "gateway_navigation_cache+native_status"
@@ -292,6 +296,11 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
                 "control_mode": "teleop",
                 "publish_cmd_vel": True,
                 "final_cmd_vel": {"vx": 0.25, "vy": -0.05, "wz": 0.3},
+                "final_output": {
+                    "published": True,
+                    "output_sequence": 41,
+                    "driver_acknowledged": False,
+                },
                 "teleop": {"fresh": True, "published": True},
                 "last_local": {"cmd_vel": {"vx": 0.0, "vy": 0.0, "wz": 0.0}},
             }
@@ -312,7 +321,32 @@ def test_navigation_dds_snapshot_prefers_native_final_teleop_command(
     assert snapshot.cmd_vel.linear["y"] == -0.05
     assert snapshot.cmd_vel.angular["z"] == 0.3
     assert snapshot.cmd_vel.active_source == "native_teleop"
+    assert snapshot.cmd_vel.evidence_stage == "final_output_published"
+    assert snapshot.cmd_vel.final_output_confirmed is True
+    assert snapshot.cmd_vel.driver_acknowledged is False
+    assert snapshot.cmd_vel.output_sequence == 41
     assert gateway._teleop_active is True
+
+
+def test_native_teleop_policy_output_is_preview_not_final():
+    from gateway.routes.status import _native_cmd_vel_payload
+    from gateway.schemas import DdsTwistSnapshot
+
+    payload = _native_cmd_vel_payload(
+        {
+            "stamp_s": 123.0,
+            "control_mode": "teleop_avoid",
+            "publish_cmd_vel": True,
+            "teleop": {"output": {"vx": 0.2, "vy": 0.0, "wz": -0.1}},
+        }
+    )
+
+    snapshot = DdsTwistSnapshot.model_validate(payload)
+    assert snapshot.active_source == "native_teleop_policy_preview"
+    assert snapshot.evidence_stage == "teleop_policy_output"
+    assert snapshot.final_output_confirmed is False
+    assert snapshot.driver_acknowledged is False
+    assert snapshot.output_sequence == 0
 
 
 def test_native_autonomy_takeover_is_reported_as_active_teleop(

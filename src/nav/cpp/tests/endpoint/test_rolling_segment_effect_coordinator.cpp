@@ -26,6 +26,8 @@ using lingtu::nav::endpoint::RollingSegmentEffectFailurePolicy;
 using lingtu::nav::endpoint::RollingSegmentExecutionGrid;
 using lingtu::nav::endpoint::RollingSegmentInstallPathEffect;
 using lingtu::nav::endpoint::RollingSegmentLifecycle;
+using lingtu::nav::endpoint::RollingSegmentMotionOutcome;
+using lingtu::nav::endpoint::RollingSegmentMotionOutcomeKind;
 using lingtu::nav::endpoint::RollingSegmentObserveExecutionGrid;
 using lingtu::nav::endpoint::RollingSegmentPublishPathEffect;
 using lingtu::nav::endpoint::RollingSegmentRuntimeContext;
@@ -266,8 +268,8 @@ void testFailClosedStatusAppliesRecursiveFeedbackBeforeAbort() {
       "ack:accepted:safe_observed_free_prefix",
       "status:1:safe_observed_free_prefix",
       "stop",
-      "status:4:segment_status_publish_failed",
       "clear:segment_status_publish_failed",
+      "status:4:segment_status_publish_failed",
   };
   if (log != expected) {
     std::cerr << "observed fail-closed log:\n";
@@ -277,6 +279,81 @@ void testFailClosedStatusAppliesRecursiveFeedbackBeforeAbort() {
   }
   require(log == expected,
           "fail-closed status failure must apply recursive stop/status/clear before aborting");
+}
+
+void testTerminalWaitsForSuccessfulMotionClearAndRetriesStop() {
+  RollingSegmentLifecycle lifecycle;
+  const auto admission = acceptedAdmission(lifecycle);
+  std::vector<std::string> log;
+  auto actions = loggingActions(log);
+  int clear_attempts = 0;
+  actions.clear_motion = [&](const std::string &reason) {
+    ++clear_attempts;
+    log.emplace_back(std::string{"clear:"} + (clear_attempts == 1 ? "false:" : "true:") + reason);
+    return clear_attempts > 1;
+  };
+  RollingSegmentEffectCoordinator coordinator(lifecycle, std::move(actions));
+  require(coordinator.apply(admission), "test fixture admission must succeed");
+  log.clear();
+
+  const auto terminal_intent = lifecycle.step(RollingSegmentMotionOutcome{
+      RollingSegmentMotionOutcomeKind::kReached,
+      "segment_reached_after_stop",
+  });
+  require(!coordinator.apply(terminal_intent),
+          "failed motion clear must keep the segment fail-closed");
+  require(log == std::vector<std::string>({"stop", "clear:false:segment_reached_after_stop"}),
+          "terminal status must not publish before motion clear succeeds");
+  require(lifecycle.snapshot().terminal_delivery_pending,
+          "failed motion clear must retain the pending terminal intent");
+
+  log.clear();
+  require(coordinator.apply(lifecycle.step(RollingSegmentBeginTick{10.1})),
+          "the next tick must retry and complete the safe-stop barrier");
+  require(log == std::vector<std::string>({"stop", "clear:true:segment_reached_after_stop",
+                                           "status:3:segment_reached_after_stop"}),
+          "safe-stop retry must stop, clear, then publish the terminal status");
+  require(!lifecycle.snapshot().terminal_delivery_pending,
+          "successful safe stop and status delivery must close the terminal intent");
+}
+
+void testTerminalTransportRetryDoesNotRepeatSuccessfulMotionClear() {
+  RollingSegmentLifecycle lifecycle;
+  const auto admission = acceptedAdmission(lifecycle);
+  std::vector<std::string> log;
+  auto actions = loggingActions(log);
+  bool fail_first_terminal = true;
+  actions.publish_status = [&](const RollingSegmentStatus &status) {
+    log.emplace_back(std::string{"status:"} + (fail_first_terminal ? "false:" : "true:") +
+                     status.reason);
+    if (status.state == ExplorationSegmentState::kReached && fail_first_terminal) {
+      fail_first_terminal = false;
+      return false;
+    }
+    return true;
+  };
+  RollingSegmentEffectCoordinator coordinator(lifecycle, std::move(actions));
+  require(coordinator.apply(admission), "test fixture admission must succeed");
+  log.clear();
+
+  require(coordinator.apply(lifecycle.step(RollingSegmentMotionOutcome{
+              RollingSegmentMotionOutcomeKind::kReached,
+              "segment_reached_transport_retry",
+          })),
+          "terminal DDS failure must not erase successful motion-stop evidence");
+  require(log == std::vector<std::string>({"stop", "clear:segment_reached_transport_retry",
+                                           "status:false:segment_reached_transport_retry"}),
+          "terminal delivery must begin only after the one successful clear");
+  require(lifecycle.snapshot().terminal_delivery_pending,
+          "failed terminal DDS delivery must remain pending");
+
+  log.clear();
+  require(coordinator.apply(lifecycle.step(RollingSegmentBeginTick{10.1})),
+          "terminal DDS retry must succeed without changing motion state again");
+  require(log == std::vector<std::string>({"status:true:segment_reached_transport_retry"}),
+          "terminal DDS retry must not repeat an already successful clear");
+  require(!lifecycle.snapshot().terminal_delivery_pending,
+          "successful terminal DDS retry must close delivery state");
 }
 
 void testConstructorValidation() {
@@ -299,6 +376,8 @@ int main() {
     testMotionReturnTracksOnlyMotionEffects();
     testIgnoredAckFailureDoesNotAbort();
     testFailClosedStatusAppliesRecursiveFeedbackBeforeAbort();
+    testTerminalWaitsForSuccessfulMotionClearAndRetriesStop();
+    testTerminalTransportRetryDoesNotRepeatSuccessfulMotionClear();
     testConstructorValidation();
   } catch (const std::exception &ex) {
     std::cerr << "FAIL: " << ex.what() << '\n';

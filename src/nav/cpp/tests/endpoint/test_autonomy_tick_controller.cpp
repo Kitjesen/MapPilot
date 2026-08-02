@@ -16,6 +16,10 @@ using lingtu::nav::endpoint::AutonomyTickOutcomeKind;
 using lingtu::nav::endpoint::AutonomyTickPlannerInputs;
 using lingtu::nav::endpoint::CommandSafetyConfig;
 using lingtu::nav::endpoint::CommandSafetyDecision;
+using lingtu::nav::endpoint::GoalPlanMapIdentityResult;
+using lingtu::nav::endpoint::GoalReplanIdentity;
+using lingtu::nav::endpoint::GoalReplanTrigger;
+using lingtu::nav::endpoint::GoalReplanTriggerKind;
 using lingtu::nav::endpoint::InputGateState;
 using lingtu::nav::endpoint::LocalDiagnostics;
 using lingtu::nav::endpoint::TimingDiagnostics;
@@ -37,11 +41,14 @@ struct Fixture {
   InputGateState gate;
   TraversabilityGrid traversability;
   LocalDiagnostics previous;
+  lingtu::nav::plan::MapIdentity active_identity{"field", 7, "sha256-a", "map"};
+  GoalPlanMapIdentityResult current_map{active_identity, {}};
   TimingDiagnostics timing;
   std::vector<float> obstacles{1.0F, 2.0F, 0.3F, 1.0F, 3.0F, 4.0F, 0.4F, 1.0F};
   lingtu::nav::plan::NavLoopOutput next_output;
   CommandSafetyDecision path_safety;
   CommandSafetyDecision rotation_safety;
+  int current_map_calls{0};
   int compute_calls{0};
   int tick_calls{0};
   int path_safety_calls{0};
@@ -68,6 +75,10 @@ struct Fixture {
     rotation_safety.cmd = {0.0, 0.0, 0.25};
     rotation_safety.reason = "rotation_safe";
     actions.steady_now_s = [] { return 42.0; };
+    actions.current_map_identity = [&] {
+      ++current_map_calls;
+      return current_map;
+    };
     actions.compute_planner_inputs = [&](TimingDiagnostics &observed_timing) {
       require(&observed_timing == &timing,
               "planner input callback must receive the endpoint timing object");
@@ -105,10 +116,22 @@ struct Fixture {
   }
 
   AutonomyTickInput input(bool path_active = true, bool motion_allowed = true, bool rolling = false,
-                          bool publish = true) {
+                          bool publish = true,
+                          std::optional<GoalReplanTrigger> precomputed_trigger = std::nullopt) {
     return {
-        safety,  map_body, gate,           path_active, motion_allowed,
-        rolling, publish,  traversability, previous,    timing,
+        safety,
+        map_body,
+        gate,
+        path_active,
+        active_identity,
+        motion_allowed,
+        rolling,
+        publish,
+        traversability,
+        previous,
+        timing,
+        GoalReplanIdentity{"task-a", "request-a", 11U, active_identity},
+        std::move(precomputed_trigger),
     };
   }
 };
@@ -122,6 +145,7 @@ void testIdleAndAuthorityDeniedDoNothing() {
 
   require(!idle.handled && !denied.handled,
           "inactive or authority-denied paths must stay untouched");
+  require(fixture.current_map_calls == 0, "inactive branches must not read active map identity");
   require(fixture.compute_calls == 0 && fixture.tick_calls == 0,
           "inactive branches must not compute planner inputs");
 }
@@ -153,6 +177,57 @@ void testBlockedInputGateFailsClosedWithoutPlanning() {
           "blocked input must never run the planner");
 }
 
+void testActiveMapIdentityGuardFailsClosedBeforePlanning() {
+  auto expect_blocked = [](Fixture &fixture, const char *expected_reason) {
+    fixture.next_output.cmd_vel = {0.3, 0.0, 0.0};
+    AutonomyTickController controller(fixture.actions);
+    const auto result = controller.tick(fixture.input());
+
+    require(result.handled, "map identity blocker must be handled");
+    require(result.clear_local_path && result.clear_local_planner_debug,
+            "map identity blocker must clear stale local products");
+    require(fixture.current_map_calls == 1,
+            "map identity blocker must read the current map directly");
+    require(fixture.compute_calls == 0 && fixture.tick_calls == 0 && fixture.path_safety_calls == 0,
+            "map identity blocker must not enter NavLoop or final safety");
+    require(result.publish.cmd_vel && near(result.publish.command.vx, 0.0) &&
+                near(result.publish.command.wz, 0.0),
+            "map identity blocker must publish only zero");
+    require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+                result.outcome.reason == expected_reason,
+            "map identity blocker must fail the active goal with a stable reason");
+    require(result.local.has_value() && result.local->reason == expected_reason &&
+                result.local->final_safety_reason == expected_reason &&
+                result.local->final_safety_stopped,
+            "map identity blocker diagnostics must retain stop evidence");
+  };
+
+  Fixture missing_active;
+  missing_active.active_identity = {};
+  expect_blocked(missing_active, "active_path_map_identity_missing");
+
+  Fixture unavailable_current;
+  unavailable_current.current_map.identity.reset();
+  unavailable_current.current_map.reason = "active_map_lookup_failed";
+  expect_blocked(unavailable_current, "active_map_unavailable_during_navigation");
+
+  Fixture changed_map_id;
+  changed_map_id.current_map.identity->map_id = "field-b";
+  expect_blocked(changed_map_id, "active_map_changed_during_navigation");
+
+  Fixture changed_version;
+  changed_version.current_map.identity->version = 8;
+  expect_blocked(changed_version, "active_map_changed_during_navigation");
+
+  Fixture changed_hash;
+  changed_hash.current_map.identity->artifact_sha256 = "sha256-b";
+  expect_blocked(changed_hash, "active_map_changed_during_navigation");
+
+  Fixture changed_frame;
+  changed_frame.current_map.identity->frame_id = "odom";
+  expect_blocked(changed_frame, "active_map_changed_during_navigation");
+}
+
 void testNormalTickProducesBorrowedInputIntentsAndDiagnostics() {
   Fixture fixture;
   fixture.next_output.active = true;
@@ -182,7 +257,8 @@ void testNormalTickProducesBorrowedInputIntentsAndDiagnostics() {
 
   require(result.handled && result.output.has_value() && result.local.has_value(),
           "normal autonomy tick must expose its output");
-  require(fixture.compute_calls == 1 && fixture.tick_calls == 1 && fixture.path_safety_calls == 1,
+  require(fixture.current_map_calls == 1 && fixture.compute_calls == 1 && fixture.tick_calls == 1 &&
+              fixture.path_safety_calls == 1,
           "normal tick must compute, plan, and apply final safety once");
   require(fixture.tick_obstacles == fixture.obstacles.data() && fixture.tick_obstacle_count == 2,
           "planner must borrow the XYZH cloud without copying it");
@@ -320,12 +396,84 @@ void testRecoveryOutcomesDistinguishRollingAndGenericGoals() {
   require(generic_result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
               generic_result.outcome.reason == "local_recovery_exhausted",
           "generic recovery exhaustion must fail the active goal");
+  require(generic_result.outcome.replan_trigger.has_value() &&
+              generic_result.outcome.replan_trigger->kind ==
+                  GoalReplanTriggerKind::kLocalRecoveryExhausted &&
+              generic_result.outcome.replan_trigger->reason == "local_recovery_exhausted" &&
+              lingtu::nav::endpoint::sameGoalReplanIdentity(
+                  generic_result.outcome.replan_trigger->goal,
+                  GoalReplanIdentity{"task-a", "request-a", 11U, generic.active_identity}) &&
+              generic_result.outcome.replan_trigger->temporary_overlay.empty(),
+          "generic recovery exhaustion must carry one typed, identity-bound replan trigger");
   require(generic_result.local.has_value() && generic_result.local->recovery_exhausted &&
               generic_result.local->recovery_reason == "recovery_exhausted",
           "recovery exhaustion evidence must survive the endpoint projection");
   require(rolling_result.outcome.kind == AutonomyTickOutcomeKind::kRollingRecoveryExhausted &&
-              rolling_result.outcome.reason == "planner_stuck",
+              rolling_result.outcome.reason == "planner_stuck" &&
+              !rolling_result.outcome.replan_trigger.has_value(),
           "rolling recovery exhaustion must remain a segment outcome");
+}
+
+void testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand() {
+  Fixture fixture;
+  fixture.next_output.cmd_vel = {0.8, 0.0, 0.4};
+
+  GoalReplanTrigger trigger;
+  trigger.kind = GoalReplanTriggerKind::kPersistentPathObstruction;
+  trigger.reason = "persistent_path_obstruction";
+  trigger.goal = GoalReplanIdentity{"task-a", "request-a", 11U, fixture.active_identity};
+  trigger.temporary_overlay.revision = 23U;
+  trigger.temporary_overlay.frame_epoch = 3U;
+  trigger.temporary_overlay.obstacle_generation = 41U;
+  trigger.temporary_overlay.traversability_generation = 43U;
+  trigger.temporary_overlay.blocked_regions = {
+      {{1.25, -0.5, 0.2}, 0.65, -0.4, 1.6},
+      {{2.75, 0.25, 0.3}, 0.55, -0.3, 1.7},
+  };
+  const GoalReplanTrigger expected = trigger;
+  AutonomyTickController controller(fixture.actions);
+
+  const auto result = controller.tick(fixture.input(true, true, false, true, trigger));
+
+  require(result.handled && result.clear_local_path && result.clear_local_planner_debug,
+          "persistent obstruction must synchronously take over the active tick");
+  require(fixture.current_map_calls == 1 && fixture.compute_calls == 0 && fixture.tick_calls == 0 &&
+              fixture.path_safety_calls == 0 && fixture.command_safety_calls == 0,
+          "persistent obstruction must bypass NavLoop and every final-safety evaluator");
+  require(fixture.stop_calls == 1 && !result.output.has_value() && result.publish.cmd_vel &&
+              near(result.publish.command.vx, 0.0) && near(result.publish.command.vy, 0.0) &&
+              near(result.publish.command.wz, 0.0) && result.delta.cmd_vel_count == 1U &&
+              result.delta.output_count == 0U,
+          "persistent obstruction must expose only one zero-command publish intent");
+  require(result.local.has_value() && result.local->near_field_stop &&
+              result.local->final_safety_stopped &&
+              result.local->final_safety_reason == "persistent_path_obstruction",
+          "persistent obstruction diagnostics must retain explicit stopped evidence");
+  require(result.outcome.kind == AutonomyTickOutcomeKind::kGoalFailed &&
+              result.outcome.replan_trigger.has_value(),
+          "persistent obstruction must surface one typed replan outcome");
+
+  const auto &actual = *result.outcome.replan_trigger;
+  require(actual.kind == expected.kind && actual.reason == expected.reason &&
+              lingtu::nav::endpoint::sameGoalReplanIdentity(actual.goal, expected.goal),
+          "precomputed replan trigger kind, reason, or goal identity changed in the tick");
+  require(actual.temporary_overlay.revision == expected.temporary_overlay.revision &&
+              actual.temporary_overlay.frame_epoch == expected.temporary_overlay.frame_epoch &&
+              actual.temporary_overlay.obstacle_generation ==
+                  expected.temporary_overlay.obstacle_generation &&
+              actual.temporary_overlay.traversability_generation ==
+                  expected.temporary_overlay.traversability_generation &&
+              actual.temporary_overlay.blocked_regions.size() ==
+                  expected.temporary_overlay.blocked_regions.size(),
+          "precomputed replan overlay identity changed in the tick");
+  for (std::size_t i = 0; i < actual.temporary_overlay.blocked_regions.size(); ++i) {
+    const auto &lhs = actual.temporary_overlay.blocked_regions[i];
+    const auto &rhs = expected.temporary_overlay.blocked_regions[i];
+    require(near(lhs.center.x, rhs.center.x) && near(lhs.center.y, rhs.center.y) &&
+                near(lhs.center.z, rhs.center.z) && near(lhs.radius_xy_m, rhs.radius_xy_m) &&
+                near(lhs.min_z, rhs.min_z) && near(lhs.max_z, rhs.max_z),
+            "precomputed blocked region changed in the tick");
+  }
 }
 
 void testReachedOutcomesDistinguishInspectionArrival() {
@@ -355,12 +503,14 @@ int main() {
   try {
     testIdleAndAuthorityDeniedDoNothing();
     testBlockedInputGateFailsClosedWithoutPlanning();
+    testActiveMapIdentityGuardFailsClosedBeforePlanning();
     testNormalTickProducesBorrowedInputIntentsAndDiagnostics();
     testZeroCommandSkipsFinalSafety();
     testGenericStopMayRetainSafeRotationOnly();
     testRecoveryCommandIsVetoedByFinalSafety();
     testRollingFinalSafetyHasHighestPriorityAndZerosRotation();
     testRecoveryOutcomesDistinguishRollingAndGenericGoals();
+    testPrecomputedPersistentReplanBypassesPlannerAndFinalSafetyWithZeroCommand();
     testReachedOutcomesDistinguishInspectionArrival();
   } catch (const std::exception &error) {
     std::fprintf(stderr, "test_autonomy_tick_controller: FAIL: %s\n", error.what());

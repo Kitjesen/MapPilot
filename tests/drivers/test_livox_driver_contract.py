@@ -12,14 +12,16 @@ def test_custom_sdk2_tcp_endpoint_is_removed() -> None:
     assert not (ROOT / "real" / "lidar" / "wire.py").exists()
 
 
-def test_lingtu_lidar_uses_official_livox_dds_message_contract() -> None:
+def test_lingtu_lidar_uses_native_typed_dds_contract() -> None:
     real_lidar = ROOT / "real" / "lidar"
-    dds = (real_lidar / "compat" / "dds.py").read_text(encoding="utf-8-sig")
+    dds = (real_lidar / "native" / "dds_module.cpp").read_text(encoding="utf-8-sig")
     source = (real_lidar / "native" / "sdk.py").read_text(encoding="utf-8-sig")
 
+    assert not (real_lidar / "compat").exists()
     assert not (real_lidar / "_dds.py").exists()
     assert not (real_lidar / "source.py").exists()
-    assert "livox_ros_driver2::msg::dds_::CustomMsg_" in dds
+    assert "lingtu_dds_LivoxFrame_desc" in dds
+    assert "livox_ros_driver2" not in dds
     assert "sdk2_tcp" not in source
     assert "Sdk2TcpSource" not in source
 

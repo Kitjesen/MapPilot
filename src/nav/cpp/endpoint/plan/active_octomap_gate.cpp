@@ -20,7 +20,6 @@ namespace {
 using lingtu::maps::ArtifactValidationOptions;
 using lingtu::maps::ArtifactValidationResult;
 using lingtu::maps::MapStore;
-using lingtu::maps::MapStoreConfig;
 using lingtu::maps::Sha256File;
 
 std::filesystem::path canonicalPath(const std::filesystem::path &path, std::string *error) {
@@ -33,33 +32,6 @@ std::filesystem::path canonicalPath(const std::filesystem::path &path, std::stri
     return {};
   }
   return canonical;
-}
-
-std::filesystem::path inferMapRoot(const std::filesystem::path &configured_path,
-                                   std::string *error) {
-  std::error_code ec;
-  auto current = std::filesystem::absolute(configured_path, ec).parent_path();
-  if (ec) {
-    if (error != nullptr) {
-      *error = "cannot make configured map path absolute: " + ec.message();
-    }
-    return {};
-  }
-  while (!current.empty()) {
-    if (std::filesystem::is_regular_file(current / "active_map.txt", ec) && !ec) {
-      return current;
-    }
-    ec.clear();
-    const auto parent = current.parent_path();
-    if (parent == current) {
-      break;
-    }
-    current = parent;
-  }
-  if (error != nullptr) {
-    *error = "cannot infer map root containing active_map.txt from " + configured_path.string();
-  }
-  return {};
 }
 
 std::string validationFailure(const ArtifactValidationResult &validation) {
@@ -198,28 +170,6 @@ ValidatedOctomap::ValidatedOctomap(std::filesystem::path load_path,
 ValidatedOctomap::~ValidatedOctomap() {
   std::error_code ec;
   std::filesystem::remove(load_path_, ec);
-}
-
-ActiveOctomapGate::ActiveOctomapGate(std::filesystem::path map_root, std::string expected_frame_id)
-    : map_root_(std::move(map_root)), expected_frame_id_(std::move(expected_frame_id)) {}
-
-ActiveOctomapGate::~ActiveOctomapGate() = default;
-
-MapStore *ActiveOctomapGate::resolveStore(const std::filesystem::path &configured_octomap_path,
-                                          std::string *error) const {
-  const auto root = map_root_.empty() ? inferMapRoot(configured_octomap_path, error)
-                                      : canonicalPath(map_root_, error);
-  if (root.empty()) {
-    return nullptr;
-  }
-  if (!map_store_ || resolved_map_root_ != root) {
-    MapStoreConfig config;
-    config.root_dir = root;
-    map_store_ = std::make_unique<MapStore>(std::move(config));
-    resolved_map_root_ = root;
-    cached_artifact_.reset();
-  }
-  return map_store_.get();
 }
 
 ActiveOctomapIdentityResult

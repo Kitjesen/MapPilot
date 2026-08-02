@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 GNSS_ROLE = "gnss"
 GNSS_ALIAS = GNSS_ROLE
-GNSS_COMPAT_ALIAS = "GnssModule"
 GNSS_CONFIG_ENABLE = "enable_gnss"
 GNSS_CONFIG_BACKEND = "gnss_backend"
 
@@ -50,9 +49,7 @@ GNSS_HEALTH_FIELDS = (
 class GnssContract:
     role: str = GNSS_ROLE
     alias: str = GNSS_ALIAS
-    compat_aliases: tuple[str, ...] = (GNSS_COMPAT_ALIAS,)
     config_keys: tuple[str, ...] = (GNSS_CONFIG_ENABLE, GNSS_CONFIG_BACKEND)
-    compat_config_keys: tuple[str, ...] = ()
     backends: tuple[str, ...] = GNSS_BACKENDS
     input_ports: tuple[str, ...] = GNSS_INPUT_PORTS
     output_ports: tuple[str, ...] = GNSS_OUTPUT_PORTS
@@ -64,9 +61,7 @@ class GnssContract:
         return {
             "role": self.role,
             "alias": self.alias,
-            "compat_aliases": list(self.compat_aliases),
             "config_keys": list(self.config_keys),
-            "compat_config_keys": list(self.compat_config_keys),
             "backends": list(self.backends),
             "input_ports": list(self.input_ports),
             "output_ports": list(self.output_ports),

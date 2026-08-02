@@ -59,8 +59,12 @@ int main() {
   check(outputs.map_loaded, "map_not_loaded");
   check(outputs.map_cloud_map.has_value(), "map_cloud_missing");
   check(outputs.observation_sequence == 1U, "observation_sequence_missing");
+  check(outputs.source_epoch > 0U, "source_epoch_missing");
   check(outputs.map_cloud_map->points[0].offset_time_ns == 100, "point_offset_missing");
   check(!outputs.map_frame_jump, "unexpected_map_frame_jump");
+  const auto source_epoch = outputs.source_epoch;
+  check(backend->reset().ok, "reset_failed");
+  check(backend->outputs().source_epoch > source_epoch, "source_epoch_not_advanced");
 
   auto pointlio = makePointLioBackend();
   check(pointlio != nullptr, "missing_pointlio_backend");
