@@ -1,0 +1,36 @@
+schema: lingtu.sim.robot-package.v1
+id: omni_cart
+version: 1.0.0
+kind: robot
+description: Standard omni-directional cart simulation package.
+compatibility:
+  runtime_abi: lingtu.sim.robot.v1
+  mujoco: 3.10.x
+physics:
+  mjcf: omni_cart.xml
+  attach_root: base_link
+  root_joint: floating_base_joint
+visual:
+  binding: RobotVisual:OmniCart
+frames:
+  - name: base_link
+    role: body
+  - name: front_camera
+    role: sensor_mount
+  - name: lidar_link
+    role: sensor_mount
+interfaces:
+  state:
+    - lingtu.sim.base-state.v1
+    - lingtu.sim.joint-state.v1
+  command:
+    - lingtu.sim.base-velocity.v1
+defaults:
+  controller: null
+  sensor_rig: omni_cart_navigation@1.0.0
+declared_capabilities:
+  locomotion:
+    - drive
+  sensor_mounts:
+    - front_camera
+    - lidar_link

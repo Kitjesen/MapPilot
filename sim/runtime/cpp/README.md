@@ -11,12 +11,21 @@ single-owner runtime object: every call must come from the same physics thread. 
 loading allocates the snapshot body registry once; `advance()` and `reset()`
 reuse that storage.
 
+`lingtu::sim::PhysicsSceneComposer` is the session-level composition seam. It
+consumes a typed `PhysicsScenePlan`, attaches every robot to one world
+`mjSpec` with an instance namespace, compiles one `mjModel`, and emits a
+generation-scoped `ModelDescriptor`. It does not read YAML or own package
+resolution. The Python catalog currently produces the JSON plan; its native
+typed loader is a later adapter seam.
+
 Snapshots use the canonical MuJoCo representation:
 
 - right-handed coordinates;
 - metres;
 - quaternion order `w, x, y, z`;
 - monotonically increasing `sequence` inside one `reset_generation`.
+- `model_generation` identifies the dense-index generation used by a
+  descriptor; consumers must refresh cached indices when it changes.
 
 An Unreal Adapter must copy a snapshot into its own double or ring buffer and
 perform coordinate conversion on the Game Thread. It must never expose
@@ -24,8 +33,11 @@ perform coordinate conversion on the Game Thread. It must never expose
 
 ## Build
 
-Use a pinned official MuJoCo SDK. The repository's Python lock currently uses
-MuJoCo 3.10.0, so the C++ build should use the matching SDK.
+Use a pinned official MuJoCo SDK with headers, an import/static library, and
+the matching runtime DLL. The repository's Python lock currently uses MuJoCo
+3.10.0, so the C++ build should use the matching SDK. The Python wheel is
+useful for inspecting models but normally contains `mujoco.dll` without the
+MSVC import library required by this CMake target.
 CTest validates both a minimal falling-body fixture and the repository's full
 ThunderV4 MJCF body-pose, fixed-step, pause, resume, and reset contract.
 

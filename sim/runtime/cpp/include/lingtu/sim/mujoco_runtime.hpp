@@ -21,6 +21,7 @@ struct SimulationSnapshot {
   std::uint64_t sequence{0};
   std::uint64_t physics_step{0};
   std::uint64_t sim_time_ns{0};
+  std::uint64_t model_generation{0};
   std::uint32_t reset_generation{0};
   std::vector<BodyPose> bodies;
 };

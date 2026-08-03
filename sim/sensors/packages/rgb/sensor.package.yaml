@@ -1,0 +1,13 @@
+schema: lingtu.sim.sensor-package.v1
+id: rgb_camera
+version: 1.0.0
+kind: sensor
+description: Forward RGB camera contract.
+sensor_type: rgb_camera
+outputs:
+  - rgb
+timing:
+  rate_hz: 30
+interface:
+  transport: camera_shm
+  message_type: lingtu.sim.rgb-image.v1

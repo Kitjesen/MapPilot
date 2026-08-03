@@ -1,0 +1,41 @@
+schema: lingtu.sim.controller-package.v1
+id: thunderv4_locomotion
+version: 1.0.0
+kind: controller
+description: TorchScript locomotion controller for Thunder V4.
+adapter:
+  plugin: quadruped_him
+  abi: lingtu.sim.controller-adapter.v1
+policy:
+  runtime: torchscript
+  artifact: ../../robots/thunderv4/policy/pose_flat_low_kpkd_microterrain_model29600_policy.pt
+  manifest: ../../robots/thunderv4/policy/policy_manifest.json
+timing:
+  inference_hz: 50
+  low_level_hz: 500
+robot_interface:
+  requires_state:
+    - joint_position
+    - joint_velocity
+    - base_angular_velocity
+    - projected_gravity
+  produces_command:
+    type: joint_torque
+actuators:
+  channels:
+    - FR_hip_joint
+    - FR_thigh_joint
+    - FR_calf_joint
+    - FL_hip_joint
+    - FL_thigh_joint
+    - FL_calf_joint
+    - RR_hip_joint
+    - RR_thigh_joint
+    - RR_calf_joint
+    - RL_hip_joint
+    - RL_thigh_joint
+    - RL_calf_joint
+    - FR_foot_joint
+    - FL_foot_joint
+    - RR_foot_joint
+    - RL_foot_joint

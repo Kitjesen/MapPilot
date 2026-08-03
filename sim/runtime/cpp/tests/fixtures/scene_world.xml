@@ -1,0 +1,6 @@
+<mujoco model="lingtu_scene_world">
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <geom name="floor" type="plane" size="2 2 0.1"/>
+  </worldbody>
+</mujoco>

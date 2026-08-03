@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lingtu.sim.world-package.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "id", "version", "kind", "physics", "visual", "entities"],
+  "properties": {
+    "schema": {"const": "lingtu.sim.world-package.v1"},
+    "id": {"type": "string", "minLength": 1},
+    "version": {"type": "string", "minLength": 1},
+    "kind": {"const": "world"},
+    "description": {"type": "string"},
+    "physics": {"type": "object", "additionalProperties": false, "required": ["mjcf"], "properties": {"mjcf": {"type": "string", "minLength": 1}}},
+    "visual": {"type": "object", "additionalProperties": false, "required": ["binding"], "properties": {"binding": {"type": "string", "minLength": 1}}},
+    "entities": {"type": "array", "items": {"type": "object"}}
+  }
+}

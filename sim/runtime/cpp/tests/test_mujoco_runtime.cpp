@@ -4,7 +4,9 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
+#include "lingtu/sim/physics_scene_composer.hpp"
 #include "lingtu/sim/mujoco_runtime.hpp"
 
 namespace {
@@ -20,6 +22,7 @@ void test_load_and_advance() {
 
   const auto &initial = runtime.snapshot();
   require(initial.sim_time_ns == 0, "initial simulation time must be zero");
+  require(initial.model_generation == 0, "initial model generation must be zero");
   require(initial.bodies.size() == 1, "world body must not be exposed");
   require(initial.bodies.front().name == "test_body", "body name must be stable");
   const double initial_z = initial.bodies.front().position_m[2];
@@ -114,6 +117,32 @@ void test_thunder_model_snapshot_contract() {
           "ThunderV4 reset must restore the clock origin");
 }
 
+void test_scene_composer_uses_one_model_for_multiple_instances() {
+  lingtu::sim::PhysicsScenePlan plan;
+  plan.session_digest = "test-session-digest";
+  plan.model_generation = 7;
+  plan.world_model_path = LINGTU_MUJOCO_SCENE_WORLD;
+  plan.robots = {
+      {"one", LINGTU_MUJOCO_SCENE_MODEL, "test_body", {{0.0, 0.0, 1.0}, {1.0, 0.0, 0.0, 0.0}}},
+      {"two", LINGTU_MUJOCO_SCENE_MODEL, "test_body", {{1.0, 0.0, 1.0}, {1.0, 0.0, 0.0, 0.0}}},
+  };
+
+  lingtu::sim::PhysicsSceneComposer composer(std::move(plan));
+  require(composer.model() != nullptr, "scene composer must produce a model");
+  require(composer.model()->nbody == 3, "two robot instances must share one MuJoCo model");
+
+  const auto &descriptor = composer.descriptor();
+  require(descriptor.session_digest == "test-session-digest", "descriptor must retain session digest");
+  require(descriptor.model_generation == 7, "descriptor must retain model generation");
+  require(descriptor.instances.size() == 2, "descriptor must expose both robot instances");
+  require(descriptor.instances[0].root_body_index != descriptor.instances[1].root_body_index,
+          "robot instance roots must have distinct dense indices");
+  require(mj_name2id(composer.model(), mjOBJ_BODY, "one__test_body") >= 0,
+          "first robot namespace must be present");
+  require(mj_name2id(composer.model(), mjOBJ_BODY, "two__test_body") >= 0,
+          "second robot namespace must be present");
+}
+
 }  // namespace
 
 int main() {
@@ -122,6 +151,7 @@ int main() {
     test_pause_preserves_the_published_state();
     test_reset_starts_a_new_generation();
     test_thunder_model_snapshot_contract();
+    test_scene_composer_uses_one_model_for_multiple_instances();
   } catch (const std::exception &error) {
     std::cerr << "FAIL: " << error.what() << '\n';
     return EXIT_FAILURE;

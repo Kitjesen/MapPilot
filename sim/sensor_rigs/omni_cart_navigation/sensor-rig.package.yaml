@@ -1,0 +1,18 @@
+schema: lingtu.sim.sensor-rig-package.v1
+id: omni_cart_navigation
+version: 1.0.0
+kind: sensor_rig
+description: Navigation sensor arrangement for OmniCart.
+sensors:
+  - id: imu
+    package: imu@1.0.0
+    parent_frame: base_link
+    frequency_hz: 500
+  - id: mid360
+    package: mid360@1.0.0
+    parent_frame: lidar_link
+    frequency_hz: 10
+  - id: front_rgb
+    package: rgb_camera@1.0.0
+    parent_frame: front_camera
+    frequency_hz: 30

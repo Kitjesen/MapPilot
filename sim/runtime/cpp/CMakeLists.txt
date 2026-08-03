@@ -52,6 +52,7 @@ endif()
 
 add_library(lingtu_mujoco_runtime STATIC
   src/mujoco_runtime.cpp
+  src/physics_scene_composer.cpp
 )
 
 set_target_properties(lingtu_mujoco_runtime PROPERTIES
@@ -59,8 +60,7 @@ set_target_properties(lingtu_mujoco_runtime PROPERTIES
 )
 
 target_include_directories(lingtu_mujoco_runtime
-  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
-  PRIVATE "${MUJOCO_INCLUDE_DIR}"
+  PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${MUJOCO_INCLUDE_DIR}"
 )
 
 target_compile_features(lingtu_mujoco_runtime PUBLIC cxx_std_17)
@@ -103,6 +103,8 @@ if(LINGTU_MUJOCO_RUNTIME_BUILD_TESTS)
   target_compile_definitions(test_lingtu_mujoco_runtime PRIVATE
     LINGTU_MUJOCO_TEST_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/free_body.xml"
     LINGTU_MUJOCO_THUNDER_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/../../robots/thunderv4/mjcf/thunderv4.xml"
+    LINGTU_MUJOCO_SCENE_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/free_body.xml"
+    LINGTU_MUJOCO_SCENE_WORLD="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/scene_world.xml"
   )
   lingtu_stage_mujoco_runtime(test_lingtu_mujoco_runtime)
 
