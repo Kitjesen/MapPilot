@@ -269,7 +269,7 @@ src/gateway/            REST, SSE, WebSocket, MCP, teleop, runtime status
 sim/                    MuJoCo worlds, scripts, validation gates
 web/                    React/Vite dashboard
 config/                 Robot, device, DDS, DUFOMap, semantic configuration
-calibration/            Camera, IMU, LiDAR-IMU, camera-LiDAR calibration
+tools/calibration/      Offline camera, IMU, LiDAR-IMU, camera-LiDAR calibration
 scripts/                Build, deploy, diagnostics, robot-side operations
 docs/                   Architecture, deployment, testing, plans, archives
 ```

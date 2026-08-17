@@ -162,7 +162,7 @@ known-first-party = [
 "sim/tests/*" = ["D"]
 "scripts/*" = ["D"]
 "third_party/*" = ["D", "B", "S"]
-"calibration/**" = ["W191", "E731", "F821"]
+"tools/calibration/**" = ["D", "W191", "E731", "F821"]
 "docs/**" = ["E702", "E701"]
 # E501 in test files with embedded shell scripts or \uXXXX docstrings
 "src/runtime/tests/test_deployment_service_contracts.py" = ["E501"]

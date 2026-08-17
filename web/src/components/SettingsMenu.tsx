@@ -376,20 +376,20 @@ function CalibSection({ locale, onBack }: { locale: Locale; onBack: () => void }
       <BackHeader locale={locale} onBack={onBack} />
       <div className={styles.list}>
         <ActionRow icon={<Camera size={14} />} title={text(locale, 'Camera Intrinsics', '相机内参')}
-          hint="calibration/camera/calibrate_intrinsic.py"
-          onClick={() => alert('python calibration/camera/calibrate_intrinsic.py')} />
+          hint="tools/calibration/camera/calibrate_intrinsic.py"
+          onClick={() => alert('python tools/calibration/camera/calibrate_intrinsic.py')} />
         <ActionRow icon={<Zap size={14} />} title="IMU Allan Variance"
-          hint="calibration/imu/allan_variance_ros2"
+          hint="scripts/hardware/run_allan_variance.sh"
           onClick={() => alert(text(locale, 'Collect 2-3 hours of static IMU data.', '采集 2-3 小时静置 IMU 数据'))} />
         <ActionRow icon={<Radar size={14} />} title={text(locale, 'LiDAR-IMU Extrinsics', 'LiDAR-IMU 外参')}
           hint={text(locale, 'LiDAR_IMU_Init motion sequence', 'LiDAR_IMU_Init 标定动作')}
-          onClick={() => alert('bash calibration/lidar_imu/calibrate.sh')} />
+          onClick={() => alert(text(locale, 'See tools/calibration/lidar_imu/README.md', '请查看 tools/calibration/lidar_imu/README.md'))} />
         <ActionRow icon={<Link2 size={14} />} title={text(locale, 'Camera-LiDAR Extrinsics', '相机-LiDAR 外参')}
           hint="direct_visual_lidar_calibration"
-          onClick={() => alert('bash calibration/camera_lidar/calibrate.sh')} />
+          onClick={() => alert(text(locale, 'See tools/calibration/camera_lidar/README.md', '请查看 tools/calibration/camera_lidar/README.md'))} />
         <ActionRow icon={<ListChecks size={14} />} title={text(locale, 'Apply & Verify', '应用并验证')}
           hint="apply_calibration.py + verify.py"
-          onClick={() => alert('python calibration/apply_calibration.py && python calibration/verify.py')} />
+          onClick={() => alert('python tools/calibration/apply_calibration.py && python tools/calibration/verify.py')} />
       </div>
     </>
   )

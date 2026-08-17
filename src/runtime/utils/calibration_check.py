@@ -242,7 +242,7 @@ def _check_camera_extrinsics(config, report: CalibrationReport, required: bool) 
         report.warnings.append(
             "Camera rotation is identity — camera Z-axis aligns with body Z (up), "
             "not forward. A forward-facing camera needs pitch or yaw rotation. "
-            "Run: python calibration/camera_lidar/calibrate.sh"
+            "See tools/calibration/camera_lidar/README.md for the offline workflow."
         )
     elif math.degrees(rot_mag) > 90:
         report.warnings.append(f"Camera rotation {math.degrees(rot_mag):.1f} deg is very large")
@@ -362,21 +362,25 @@ def _check_lidar_imu_consistency(config, report: CalibrationReport, required: bo
         report.warnings.append(f"High IMU noise: na={na}, ng={ng} — consider Allan variance calibration")
 
 
-def _extract_pointlio_time_offset() -> float | None:
+def _extract_pointlio_time_offset() -> tuple[float | None, str | None]:
     """Read time_diff_lidar_to_imu from pointlio.yaml.
 
     Supports both ROS2 parameter file layout (`/** -> ros__parameters -> common`)
-    and flat-key layout. Returns None if missing/unreadable.
+    and flat-key layout. Returns ``(value, diagnostic)``; a missing optional
+    value has no diagnostic, while an unreadable or malformed file does.
     """
     if not POINTLIO_CONFIG.exists():
-        return None
+        return None, None
     try:
         import yaml
 
         with open(POINTLIO_CONFIG, encoding="utf-8") as f:
             pl = yaml.safe_load(f) or {}
-    except Exception:
-        return None
+    except Exception as exc:
+        return None, f"Cannot read pointlio.yaml calibration data: {exc}"
+
+    if not isinstance(pl, dict):
+        return None, "pointlio.yaml must contain a YAML mapping"
 
     # Search common locations in priority order.
     for node in (
@@ -387,10 +391,10 @@ def _extract_pointlio_time_offset() -> float | None:
     ):
         if isinstance(node, dict) and "time_diff_lidar_to_imu" in node:
             try:
-                return float(node["time_diff_lidar_to_imu"])
+                return float(node["time_diff_lidar_to_imu"]), None
             except (TypeError, ValueError):
-                return None
-    return None
+                return None, "pointlio.yaml time_diff_lidar_to_imu must be numeric"
+    return None, None
 
 
 def _check_time_offset(report: CalibrationReport, required: bool) -> None:
@@ -407,7 +411,12 @@ def _check_time_offset(report: CalibrationReport, required: bool) -> None:
         except Exception:
             pass
 
-    pointlio_offset = _extract_pointlio_time_offset()
+    pointlio_offset, pointlio_diagnostic = _extract_pointlio_time_offset()
+    if pointlio_diagnostic:
+        if required:
+            report.errors.append(pointlio_diagnostic)
+        else:
+            report.warnings.append(pointlio_diagnostic)
 
     for name, val in (("lio.yaml", lio_offset), ("pointlio.yaml", pointlio_offset)):
         if val is None:
@@ -427,7 +436,7 @@ def _check_time_offset(report: CalibrationReport, required: bool) -> None:
             msg = (
                 f"time_diff_lidar_to_imu mismatch: lio.yaml={lio_offset:.6f}s "
                 f"vs pointlio.yaml={pointlio_offset:.6f}s. "
-                "Run: python calibration/apply_calibration.py to sync."
+                "Run: python tools/calibration/apply_calibration.py to sync."
             )
             if required:
                 report.errors.append(msg)

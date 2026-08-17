@@ -116,7 +116,6 @@ package:
     - sim/
     - web/
     - third_party/
-    - calibration/
     - launch/
   omit_paths:
     - "**/__pycache__/"

@@ -242,7 +242,7 @@ PACKAGE_MIGRATION_TARGETS: tuple[PackageMigrationTarget, ...] = (
         keep_running_strategy="Keep aiortc/go2rtc fallback labels until measured latency parity.",
     ),
     PackageMigrationTarget(
-        package="calibration",
+        package="tools/calibration",
         current_role="Camera, IMU, LiDAR, and extrinsic calibration tools",
         target_form="rust_tooling",
         phase=6,

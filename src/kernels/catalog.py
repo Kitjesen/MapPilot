@@ -153,7 +153,7 @@ KERNEL_TARGETS: tuple[KernelTarget, ...] = (
         "camera_lidar_calibration_optimizer",
         "calibration tooling",
         "Estimate camera-LiDAR extrinsics with ICP/GICP and CT interpolation factors",
-        ("calibration/camera_lidar/direct_visual_lidar_calibration",),
+        ("tools/calibration/camera_lidar/direct_visual_lidar_calibration",),
         "src/kernels/calibration/camera_lidar_optimizer",
         "process_abi",
         "rust_candidate",

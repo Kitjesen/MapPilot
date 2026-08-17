@@ -4,7 +4,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[3]
 CONTRACT_SCRIPT = (
     ROOT / "tools" / "validate" / "validate_camera_lidar_calibration_migration_contract.py"
@@ -64,7 +63,10 @@ def test_contract_declares_camera_lidar_outside_pose_graph_opt() -> None:
     assert "pure C++ Rust ABI header declares optimizer and correspondence entry points without GTSAM" in (
         contract["rust_kernel"]["covered_capabilities"]
     )
-    assert "dynamic point cloud integrator delegates CT-GICP correspondence rebuild and optimization loop to one Rust C ABI call" in (
+    assert (
+        "dynamic point cloud integrator delegates CT-GICP correspondence "
+        "rebuild and optimization loop to one Rust C ABI call"
+    ) in (
         contract["rust_kernel"]["covered_capabilities"]
     )
     assert "dynamic point cloud integrator no longer owns CT-GICP nearest-neighbor search in the Rust runtime path" in (
@@ -85,7 +87,10 @@ def test_contract_declares_camera_lidar_outside_pose_graph_opt() -> None:
     assert "Rust-required calibration CMake path skips GTSAM discovery/linkage" in (
         contract["rust_kernel"]["covered_capabilities"]
     )
-    assert "camera-LiDAR calibration Docker images use ROS base images, Rust/Cargo, and explicit Ceres/Iridescence builds without GTSAM" in (
+    assert (
+        "camera-LiDAR calibration Docker images use ROS base images, Rust/Cargo, "
+        "and explicit Ceres/Iridescence builds without GTSAM"
+    ) in (
         contract["rust_kernel"]["covered_capabilities"]
     )
     assert "legacy CT-ICP/CT-GICP GTSAM factor headers are removed from the repository" in (
@@ -112,7 +117,10 @@ def test_contract_declares_camera_lidar_outside_pose_graph_opt() -> None:
     assert "pure C++ Rust ABI header is GTSAM-free; legacy GTSAM helpers are removed" in (
         contract["rust_kernel"]["covered_capabilities"]
     )
-    assert "Windows-safe ctypes smoke gate loads the Rust camera-LiDAR optimizer library and exercises CT-GICP optimization" in (
+    assert (
+        "Windows-safe ctypes smoke gate loads the Rust camera-LiDAR optimizer "
+        "library and exercises CT-GICP optimization"
+    ) in (
         contract["rust_kernel"]["covered_capabilities"]
     )
     assert "full removal of legacy dynamic_point_cloud_integrator GTSAM graph/LM fallback source path" not in (
@@ -260,20 +268,20 @@ def test_contract_checks_current_gtsam_and_rust_kernel_sources() -> None:
 
     removed = {item["path"]: item for item in contract["removed_gtsam_build_files"]}
     assert removed[
-        "calibration/camera_lidar/direct_visual_lidar_calibration/cmake/FindGTSAM.cmake"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/cmake/FindGTSAM.cmake"
     ]["removed"] is True
     for path in (
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "integrated_ct_icp_factor.hpp",
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "integrated_ct_icp_factor_impl.hpp",
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "integrated_ct_gicp_factor.hpp",
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "integrated_ct_gicp_factor_impl.hpp",
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "rust_camera_lidar_optimizer_gtsam.hpp",
-        "calibration/camera_lidar/direct_visual_lidar_calibration/src/test/outliers.cpp",
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/test/outliers.cpp",
     ):
         assert removed[path]["removed"] is True
 
@@ -281,6 +289,7 @@ def test_contract_checks_current_gtsam_and_rust_kernel_sources() -> None:
 def test_pure_camera_lidar_rust_abi_header_stays_gtsam_free() -> None:
     header = (
         ROOT
+        / "tools"
         / "calibration"
         / "camera_lidar"
         / "direct_visual_lidar_calibration"
@@ -301,6 +310,7 @@ def test_pure_camera_lidar_rust_abi_header_stays_gtsam_free() -> None:
 def test_legacy_camera_lidar_gtsam_headers_and_support_are_removed() -> None:
     legacy_paths = [
         ROOT
+        / "tools"
         / "calibration"
         / "camera_lidar"
         / "direct_visual_lidar_calibration"
@@ -318,6 +328,7 @@ def test_legacy_camera_lidar_gtsam_headers_and_support_are_removed() -> None:
     ]
     legacy_paths.append(
         ROOT
+        / "tools"
         / "calibration"
         / "camera_lidar"
         / "direct_visual_lidar_calibration"
@@ -332,7 +343,7 @@ def test_legacy_camera_lidar_gtsam_headers_and_support_are_removed() -> None:
 
 def test_calibration_cmake_can_skip_gtsam_in_rust_required_mode() -> None:
     cmake = (
-        ROOT / "calibration" / "camera_lidar" / "direct_visual_lidar_calibration" / "CMakeLists.txt"
+        ROOT / "tools" / "calibration" / "camera_lidar" / "direct_visual_lidar_calibration" / "CMakeLists.txt"
     ).read_text(encoding="utf-8")
 
     assert "set(LINGTU_CAMERA_LIDAR_USE_RUST_OPTIMIZER_DEFAULT ON)" in cmake
@@ -349,7 +360,10 @@ def test_calibration_cmake_can_skip_gtsam_in_rust_required_mode() -> None:
         )
     ]
     assert "${GTSAM_INCLUDE_DIRS}" not in unconditional_includes
-    assert "target_compile_definitions(direct_visual_lidar_calibration PRIVATE LINGTU_CAMERA_LIDAR_GTSAM_FREE_BUILD)" in cmake
+    assert (
+        "target_compile_definitions(direct_visual_lidar_calibration PRIVATE "
+        "LINGTU_CAMERA_LIDAR_GTSAM_FREE_BUILD)"
+    ) in cmake
 
 
 def test_default_camera_lidar_shared_library_sources_are_gtsam_free() -> None:
@@ -362,7 +376,7 @@ def test_default_camera_lidar_shared_library_sources_are_gtsam_free() -> None:
     assert audit["source_count"] > 0
     assert audit["violations"] == []
     assert (
-        "calibration/camera_lidar/direct_visual_lidar_calibration/src/vlcal/preprocess/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/vlcal/preprocess/"
         "dynamic_point_cloud_integrator.cpp"
     ) in audit["sources"]
     assert not any("integrated_ct_" in source for source in audit["sources"])
@@ -370,7 +384,7 @@ def test_default_camera_lidar_shared_library_sources_are_gtsam_free() -> None:
 
 def test_default_camera_lidar_shared_library_source_audit_rejects_gtsam(tmp_path: Path) -> None:
     module = _load_module()
-    root = tmp_path / "calibration/camera_lidar/direct_visual_lidar_calibration"
+    root = tmp_path / "tools/calibration/camera_lidar/direct_visual_lidar_calibration"
     root.mkdir(parents=True)
     (root / "CMakeLists.txt").write_text(
         "add_library(direct_visual_lidar_calibration SHARED\n"
@@ -383,8 +397,10 @@ def test_default_camera_lidar_shared_library_source_audit_rejects_gtsam(tmp_path
         "add_library(lingtu_camera_lidar_optimizer STATIC IMPORTED)\n"
         "target_link_libraries(direct_visual_lidar_calibration lingtu_camera_lidar_optimizer)\n"
         "LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER\n"
-        "target_compile_definitions(direct_visual_lidar_calibration PRIVATE LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER)\n"
-        "target_compile_definitions(direct_visual_lidar_calibration PRIVATE LINGTU_CAMERA_LIDAR_GTSAM_FREE_BUILD)\n",
+        "target_compile_definitions(direct_visual_lidar_calibration PRIVATE "
+        "LINGTU_CAMERA_LIDAR_REQUIRE_RUST_OPTIMIZER)\n"
+        "target_compile_definitions(direct_visual_lidar_calibration PRIVATE "
+        "LINGTU_CAMERA_LIDAR_GTSAM_FREE_BUILD)\n",
         encoding="utf-8",
     )
     bad_source = root / "src/bad.cpp"
@@ -408,7 +424,7 @@ def test_default_camera_lidar_shared_library_source_audit_rejects_gtsam(tmp_path
 
 def test_contract_reports_missing_required_source_check(tmp_path: Path) -> None:
     module = _load_module()
-    cmake = tmp_path / "calibration/camera_lidar/direct_visual_lidar_calibration/CMakeLists.txt"
+    cmake = tmp_path / "tools/calibration/camera_lidar/direct_visual_lidar_calibration/CMakeLists.txt"
     cmake.parent.mkdir(parents=True)
     cmake.write_text("# no gtsam here\n", encoding="utf-8")
 

@@ -216,7 +216,9 @@ selector and does not participate in runtime identity.
 | `src/nav/services/plan/` | Planner service boundary, OctoPlanner3D backend, and explicit PCT legacy backend |
 | `src/localization/` | Fast-LIO2, Point-LIO, PGO, localizer, GNSS bridge, NTRIP client |
 | `src/explore/` | Canonical wavefront/TARE exploration algorithms and supervisor |
-| `calibration/` | camera, IMU, LiDAR-IMU, camera-LiDAR calibration tools |
+| `src/message/` | Typed CycloneDDS message contracts, IDL schemas, codec, and generated stubs |
+| `src/native/` | C++ native runtime: recording (MCAP), component manifest, boundary registry |
+| `tools/calibration/` | offline camera, IMU, LiDAR-IMU, and camera-LiDAR calibration tools |
 | `config/` | robot/device/DDS/DUFOMap/semantic configuration |
 | `launch/` | algorithm bridge launch files only |
 | `scripts/` | build, deploy, OTA, diagnostics, robot-side `lingtu` ops CLI |
@@ -569,17 +571,17 @@ LINGTU_DRIFT_WATCHDOG_COOLDOWN=300
 
 ## Calibration
 
-Calibration tools live under `calibration/`; results are applied to
+Offline calibration tools live under `tools/calibration/`; results are applied to
 `config/robot_config.yaml`.
 
 | Step | Tool | Output |
 | --- | --- | --- |
-| Camera intrinsics | `calibration/camera/calibrate_intrinsic.py` | camera matrix and distortion |
-| IMU noise | `calibration/imu/allan_variance_ros2/` | noise parameters |
-| LiDAR-IMU extrinsics | `calibration/lidar_imu/LiDAR_IMU_Init/` | `r_il`, `t_il` |
-| Camera-LiDAR extrinsics | `calibration/camera_lidar/direct_visual_lidar_calibration/` | camera pose |
-| Apply | `calibration/apply_calibration.py` | robot_config + SLAM configs |
-| Verify | `calibration/verify.py` | sanity checks |
+| Camera intrinsics | `tools/calibration/camera/calibrate_intrinsic.py` | camera matrix and distortion |
+| IMU noise | `tools/calibration/imu/allan_variance_ros2/` | noise parameters |
+| LiDAR-IMU extrinsics | `tools/calibration/lidar_imu/LiDAR_IMU_Init/` | `r_il`, `t_il` |
+| Camera-LiDAR extrinsics | `tools/calibration/camera_lidar/direct_visual_lidar_calibration/` | camera pose |
+| Apply | `tools/calibration/apply_calibration.py` | robot_config + SLAM configs |
+| Verify | `tools/calibration/verify.py` | sanity checks |
 
 `full_stack_blueprint()` runs `run_calibration_check()` at startup. FAIL-level
 issues block startup; WARN-level issues log and continue.

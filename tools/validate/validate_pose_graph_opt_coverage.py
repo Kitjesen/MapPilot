@@ -140,7 +140,7 @@ CAPABILITY_SURFACES: tuple[dict[str, object], ...] = (
     {
         "surface": "camera_lidar_calibration",
         "coverage": "covered_by_camera_lidar_optimizer",
-        "paths": ("calibration/camera_lidar/direct_visual_lidar_calibration",),
+        "paths": ("tools/calibration/camera_lidar/direct_visual_lidar_calibration",),
         "kernel": "src/kernels/calibration/camera_lidar_optimizer",
         "capabilities": (
             "CT-ICP/CT-GICP fixed-correspondence residual/Jacobian/Hessian kernels",
@@ -469,7 +469,7 @@ def classify_path(path: Path | str, root: Path = ROOT_DIR) -> str:
         or "/docs/" in rel
         or rel
         in {
-            "calibration/camera_lidar/README.md",
+            "tools/calibration/camera_lidar/README.md",
             "config/robot_config.yaml",
             "src/localization/README.md",
         }
@@ -480,7 +480,7 @@ def classify_path(path: Path | str, root: Path = ROOT_DIR) -> str:
         "src/nav/services/plan/global_planner/algorithm/pct/runtime",
     ):
         return "remaining_dependency"
-    if path_matches(rel, "calibration/camera_lidar/direct_visual_lidar_calibration"):
+    if path_matches(rel, "tools/calibration/camera_lidar/direct_visual_lidar_calibration"):
         return "covered_surface_forbidden"
     if rel in {
         ".github/workflows/slam-aarch64-build.yml",

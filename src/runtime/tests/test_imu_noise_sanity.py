@@ -1,4 +1,4 @@
-"""Tests for the ICM-40609-D IMU-noise sanity check in calibration/apply_calibration.py.
+"""Tests for the ICM-40609-D IMU-noise check in tools/calibration/apply_calibration.py.
 
 The sanity check is procedural protection: Allan Variance can produce values
 that pass YAML schema but are 1-2 orders of magnitude off if the recording
@@ -20,10 +20,10 @@ from pathlib import Path
 
 
 def _load_apply_calibration():
-    """apply_calibration.py lives in calibration/, not src/, so it cannot be
+    """apply_calibration.py lives in tools/calibration/, not src/, so it cannot be
     imported via the normal package path. Load it directly by file path."""
     repo_root = Path(__file__).resolve().parent.parent.parent.parent
-    path = repo_root / "calibration" / "apply_calibration.py"
+    path = repo_root / "tools" / "calibration" / "apply_calibration.py"
     spec = importlib.util.spec_from_file_location("apply_calibration", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

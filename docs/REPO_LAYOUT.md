@@ -39,7 +39,7 @@ where code belongs before adding a new file.
 | Path | Role |
 | --- | --- |
 | `config/` | Robot, device, topic, endpoint, package configuration. |
-| `calibration/` | Camera, IMU, LiDAR, camera-LiDAR calibration tools. |
+| `tools/calibration/` | Offline camera, IMU, LiDAR, and camera-LiDAR calibration tools. |
 | `sim/` | Simulation engines, worlds, robots, assets, public script gates, validation, and tests. `sim/scripts/mujoco/` is the only current MuJoCo command and test path. |
 | `scripts/` | Build, deploy, OTA, diagnostics, native/test wrappers plus ROS workspace compatibility tools and robot-side operations. |
 | `scripts/perception/` | ROS2 compatibility perception demos; product camera and detection paths remain under `src/` and Gateway. |

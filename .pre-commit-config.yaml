@@ -4,7 +4,11 @@ repos:
     hooks:
       - id: ruff
         args: [--fix, --show-fixes]
+        exclude: >-
+          ^tools/calibration/(camera_lidar/(direct_visual_lidar_calibration|livox_calib_standalone|livox_camera_calib|livox_camera_lidar_calibration|mlcc)|imu/allan_variance_ros2|lidar_imu/LiDAR_IMU_Init)/
       - id: ruff-format
+        exclude: >-
+          ^tools/calibration/(camera_lidar/(direct_visual_lidar_calibration|livox_calib_standalone|livox_camera_calib|livox_camera_lidar_calibration|mlcc)|imu/allan_variance_ros2|lidar_imu/LiDAR_IMU_Init)/
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -14,6 +18,6 @@ repos:
       - id: check-yaml
         # ROS/OpenCV calibration packages use `%YAML:1.0`, which PyYAML's
         # generic checker does not accept even though the tools consume it.
-        exclude: ^calibration/camera_lidar/(mlcc|livox_camera_calib|livox_calib_standalone)/
+        exclude: ^tools/calibration/camera_lidar/(mlcc|livox_camera_calib|livox_calib_standalone)/
       - id: check-added-large-files
         args: [--maxkb=10000]

@@ -14,7 +14,7 @@ from typing import Any
 
 SCHEMA = "lingtu.camera_lidar_calibration_migration_contract.v1"
 
-CALIB_ROOT = "calibration/camera_lidar/direct_visual_lidar_calibration"
+CALIB_ROOT = "tools/calibration/camera_lidar/direct_visual_lidar_calibration"
 CT_ICP_HEADER = f"{CALIB_ROOT}/include/vlcal/common/integrated_ct_icp_factor.hpp"
 CT_GICP_HEADER = f"{CALIB_ROOT}/include/vlcal/common/integrated_ct_gicp_factor.hpp"
 CT_ICP_IMPL = f"{CALIB_ROOT}/include/vlcal/common/integrated_ct_icp_factor_impl.hpp"

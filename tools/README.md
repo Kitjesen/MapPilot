@@ -12,6 +12,7 @@ under `scripts/`; runtime code belongs under `src/`.
 | Path | Purpose |
 | --- | --- |
 | `bench/` | Native kernel, PCT/GPMP, pose graph, and camera-LiDAR parity/benchmark scripts. |
+| `calibration/` | Offline sensor calibration, result application, and configuration verification tools. |
 | `perception/` | BPU model export and ONNX-to-HBM conversion. |
 | `reconstruction/` | Offline 3D reconstruction and recorded dataset replay helpers. |
 | `validate/` | Static contract validators for config, topics, architecture, packages, and migration gates. |
@@ -26,6 +27,10 @@ untracked.
 ```bash
 # robot_config.yaml structure validation
 python tools/validate/validate_config.py
+
+# Offline sensor calibration result application and verification
+python tools/calibration/apply_calibration.py --help
+python tools/calibration/verify.py
 
 # Topic contract validation
 python tools/validate/validate_topics.py

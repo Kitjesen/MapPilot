@@ -540,7 +540,7 @@ git -C "${ROOT}" ls-files -z \
   --exclude='/.ruff_cache/' \
   --exclude='/**/__pycache__/' \
   --exclude='*.pyc' \
-  --exclude='/calibration/' \
+  --exclude='/tools/calibration/' \
   --exclude='/docs/' \
   --exclude='/integrations/' \
   --exclude='/launch/' \

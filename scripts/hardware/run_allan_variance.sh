@@ -13,7 +13,7 @@
 # Phases (run individually or via `all`):
 #   record   ros2 bag record /livox/imu (default 3h, IEEE 952-1997 minimum)
 #   analyze  ros2 run allan_variance_ros2 + scripts/analysis.py → imu.yaml
-#   apply    calibration/apply_calibration.py → lio.yaml + pointlio.yaml
+#   apply    tools/calibration/apply_calibration.py → lio.yaml + pointlio.yaml
 #
 # Usage:
 #   bash scripts/hardware/run_allan_variance.sh all              # 3h end-to-end
@@ -54,8 +54,8 @@ OUT_BASE="${LINGTU_AV_OUT:-$HOME/data/imu_calib}"
 TS="${LINGTU_AV_TS:-$(date +%Y%m%d_%H%M%S)}"
 OUT_DIR="$OUT_BASE/$TS"
 TOPIC="${LINGTU_AV_TOPIC:-/livox/imu}"
-CONFIG_YAML="$REPO_ROOT/calibration/imu/config/livox_mid360_imu.yaml"
-ANALYSIS_PY="$REPO_ROOT/calibration/imu/allan_variance_ros2/src/allan_variance_ros2/scripts/analysis.py"
+CONFIG_YAML="$REPO_ROOT/tools/calibration/imu/config/livox_mid360_imu.yaml"
+ANALYSIS_PY="$REPO_ROOT/tools/calibration/imu/allan_variance_ros2/src/allan_variance_ros2/scripts/analysis.py"
 
 log()   { printf '\033[1;36m[av]\033[0m %s\n' "$*"; }
 warn()  { printf '\033[1;33m[av WARN]\033[0m %s\n' "$*" >&2; }
@@ -105,7 +105,7 @@ phase_apply() {
   local imu_yaml="${1:-$OUT_DIR/imu.yaml}"
   [[ -f "$imu_yaml" ]] || fatal "imu yaml not found: $imu_yaml"
   log "Applying $imu_yaml → lio.yaml + pointlio.yaml (apply_calibration.py runs sanity checks)"
-  python3 "$REPO_ROOT/calibration/apply_calibration.py" --imu "$imu_yaml"
+  python3 "$REPO_ROOT/tools/calibration/apply_calibration.py" --imu "$imu_yaml"
   log "Apply complete. Reminder: re-run python -m pytest src/runtime/tests/test_calibration_check.py"
 }
 

@@ -113,7 +113,7 @@ def test_migration_catalog_covers_top_level_product_areas():
     catalog_packages = {target.package for target in PACKAGE_MIGRATION_TARGETS}
 
     assert {
-        "calibration",
+        "tools/calibration",
         "cli",
         "config",
         "launch",

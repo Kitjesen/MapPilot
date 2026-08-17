@@ -74,7 +74,7 @@ session:
 Verification:
 
 ```bash
-python calibration/verify.py
+python tools/calibration/verify.py
 python lingtu.py doctor
 ```
 

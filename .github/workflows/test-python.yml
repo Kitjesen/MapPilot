@@ -3,7 +3,7 @@ name: Python Tests + Lint
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'cli/**', 'docs/**', 'calibration/**', 'pyproject.toml', '.github/workflows/test-python.yml']
+    paths: ['src/**', 'cli/**', 'docs/**', 'config/**', 'tools/**', 'scripts/hardware/**', 'AGENTS.md', 'README.md', '.pre-commit-config.yaml', 'pyproject.toml', '.github/workflows/test-python.yml']
   pull_request:
     branches: [main]
 
@@ -23,12 +23,12 @@ jobs:
             src
             cli
             docs
-            calibration
+            tools/calibration
             pyproject.toml
           sparse-checkout-cone-mode: false
       - uses: astral-sh/ruff-action@v3
         with:
-          args: check src/ cli/ docs/ calibration/
+          args: check src/ cli/ docs/ tools/calibration/
 
   test:
     name: Framework Tests
@@ -46,7 +46,7 @@ jobs:
             sim
             tests
             tools
-            calibration
+            scripts
             pyproject.toml
           sparse-checkout-cone-mode: false
       - uses: actions/setup-python@v5

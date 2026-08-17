@@ -8,7 +8,6 @@ import pytest
 
 from kernels.catalog import KERNEL_TARGETS, first_wave_targets, target_by_key
 
-
 ROOT = Path(__file__).resolve().parents[3]
 COVERAGE_AUDIT = ROOT / "tools" / "validate" / "validate_pose_graph_opt_coverage.py"
 
@@ -99,7 +98,7 @@ def test_remaining_gtsam_surfaces_have_explicit_migration_targets():
     assert calibration.status == "contract_first"
     assert calibration.first_wave is False
     assert calibration.current_paths == (
-        "calibration/camera_lidar/direct_visual_lidar_calibration",
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration",
     )
     assert "Offline calibration path" in calibration.notes
     assert "require Rust success" in calibration.notes
@@ -140,4 +139,4 @@ def test_coverage_remaining_surfaces_are_backed_by_kernel_catalog_targets():
         "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/src/trajectory_optimization/gpmp_optimizer"
         in catalog_paths
     )
-    assert "calibration/camera_lidar/direct_visual_lidar_calibration" in catalog_paths
+    assert "tools/calibration/camera_lidar/direct_visual_lidar_calibration" in catalog_paths

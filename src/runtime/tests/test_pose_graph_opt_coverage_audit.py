@@ -34,7 +34,7 @@ def test_classifier_rejects_gtsam_on_migrated_pgo_hba_surface() -> None:
     )
     assert (
         module.classify_path(
-            "calibration/camera_lidar/direct_visual_lidar_calibration/src/vlcal/"
+            "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/vlcal/"
             "preprocess/dynamic_point_cloud_integrator.cpp"
         )
         == "covered_surface_forbidden"
@@ -110,7 +110,7 @@ def test_scan_detects_unknown_and_migrated_surface_violations(tmp_path: Path) ->
     )
     camera_lidar_source = (
         tmp_path
-        / "calibration/camera_lidar/direct_visual_lidar_calibration/src/bad.cpp"
+        / "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/bad.cpp"
     )
     camera_lidar_source.parent.mkdir(parents=True)
     camera_lidar_source.write_text(
@@ -124,7 +124,7 @@ def test_scan_detects_unknown_and_migrated_surface_violations(tmp_path: Path) ->
     assert categories["src/localization/pgo/bad.cpp"] == "covered_surface_forbidden"
     assert categories["src/other/new_backend.cpp"] == "unknown"
     assert (
-        categories["calibration/camera_lidar/direct_visual_lidar_calibration/src/bad.cpp"]
+        categories["tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/bad.cpp"]
         == "covered_surface_forbidden"
     )
     assert {hit.category for hit in result.violations} == {
@@ -137,7 +137,7 @@ def test_scan_ignores_local_gtsam_ext_namespace(tmp_path: Path) -> None:
     module = _load_module()
     source = (
         tmp_path
-        / "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/"
+        / "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/"
         "common/frame.hpp"
     )
     source.parent.mkdir(parents=True)
@@ -249,7 +249,7 @@ def test_remaining_dependency_hits_must_map_to_capability_surface() -> None:
     ) == "pct_gpmp_global_planning"
     assert (
         module.remaining_dependency_surface_for(
-            "calibration/camera_lidar/direct_visual_lidar_calibration/CMakeLists.txt"
+            "tools/calibration/camera_lidar/direct_visual_lidar_calibration/CMakeLists.txt"
         )
         is None
     )
@@ -283,22 +283,22 @@ def test_remaining_dependency_subsurface_mapping_tracks_next_migration_packages(
         "src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/CMakeLists.txt"
     ) == "pct_build_packaging"
     assert module.remaining_dependency_subsurface_for(
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "integrated_ct_icp_factor_impl.hpp"
     ) is None
     assert module.remaining_dependency_subsurface_for(
-        "calibration/camera_lidar/direct_visual_lidar_calibration/src/vlcal/preprocess/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/vlcal/preprocess/"
         "dynamic_point_cloud_integrator.cpp"
     ) is None
     assert module.remaining_dependency_subsurface_for(
-        "calibration/camera_lidar/direct_visual_lidar_calibration/src/calibrate.cpp"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/calibrate.cpp"
     ) is None
     assert module.remaining_dependency_subsurface_for(
-        "calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/include/vlcal/common/"
         "frame.hpp"
     ) is None
     assert module.remaining_dependency_subsurface_for(
-        "calibration/camera_lidar/direct_visual_lidar_calibration/src/test/outliers.cpp"
+        "tools/calibration/camera_lidar/direct_visual_lidar_calibration/src/test/outliers.cpp"
     ) is None
 
 

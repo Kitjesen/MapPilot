@@ -14,7 +14,7 @@ as explicit legacy GTSAM comparison surface.
 | --- | --- | --- | --- |
 | SLAM PGO | `src/localization/pgo` | SE3 `Pose3`, prior factor, between factor, caller-shaped batch smoothing path | Covered by `src/kernels/slam/pose_graph_opt` through C ABI |
 | HBA | `src/localization/hba` | SE3 `Pose3`, prior factor, between factor, batch LM smoothing | Covered by `src/kernels/slam/pose_graph_opt` through C ABI |
-| Camera-LiDAR calibration | `calibration/camera_lidar/direct_visual_lidar_calibration` | CT-ICP/CT-GICP residuals, Hessian-style two-pose linearization, CT-GICP two-pose LM, dynamic integrator smoothing path | Covered by `src/kernels/calibration/camera_lidar_optimizer` through C ABI |
+| Camera-LiDAR calibration | `tools/calibration/camera_lidar/direct_visual_lidar_calibration` | CT-ICP/CT-GICP residuals, Hessian-style two-pose linearization, CT-GICP two-pose LM, dynamic integrator smoothing path | Covered by `src/kernels/calibration/camera_lidar_optimizer` through C ABI |
 
 The covered tangent order is `[rx, ry, rz, tx, ty, tz]`. Information matrices
 are full symmetric 6x6 matrices passed as packed upper triangles through the C

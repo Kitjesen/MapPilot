@@ -68,7 +68,6 @@ REQUIRED_PACKAGE_EXCLUDE_PATHS = (
     "sim/",
     "web/",
     "third_party/",
-    "calibration/",
     "launch/",
 )
 REQUIRED_PACKAGE_OMIT_PATHS = (
