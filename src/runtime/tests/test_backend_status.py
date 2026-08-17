@@ -189,7 +189,7 @@ def test_cli_backend_overrides_enter_resolved_blueprint_config():
         terrain_backend="simple",
     )
 
-    cfg = _resolve_config("nav", args, allow_wizard=False)
+    cfg = _resolve_config("sim_nav", args, allow_wizard=False)
 
     assert cfg["slam_profile"] == "bridge"
     assert cfg["exploration_backend"] == "none"
@@ -266,6 +266,6 @@ def test_cli_backend_overrides_fail_fast_for_unknown_backend(
     setattr(args, field, backend)
 
     with pytest.raises(SystemExit) as exc:
-        _resolve_config("nav", args, allow_wizard=False)
+        _resolve_config("sim_nav", args, allow_wizard=False)
     assert exc.value.code == 2
     assert match in capsys.readouterr().out
