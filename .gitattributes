@@ -22,7 +22,10 @@ scripts/build/locks/**/*.json text eol=lf
 scripts/build/provenance/slam/** text eol=lf
 scripts/build/tests/**/*.idl text eol=lf
 scripts/build/vcpkg/**/*.json text eol=lf
-src/localization/fastlio2/** text eol=lf
+# This vendored tree's reviewed development-source lock was established over
+# CRLF bytes. Force the same bytes on every host so provenance does not depend
+# on each clone's core.autocrlf setting.
+src/localization/fastlio2/** text eol=crlf
 
 # Large simulation source assets are versioned through Git LFS. Generated UE
 # directories remain ignored by sim/runtime/visual/RobotSimUE/.gitignore.
