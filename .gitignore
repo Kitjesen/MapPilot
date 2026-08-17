@@ -84,7 +84,8 @@ src/nav/services/plan/**/CMakeFiles/
 /qos_smoke.txt
 /qos_test_out.txt
 /.codex/visualizations/
-/.codex/
+/.codex/*
+!/.codex/config.toml
 /.codex_tmp/
 /.codex-*/
 /tmp/
@@ -92,11 +93,27 @@ src/nav/services/plan/**/CMakeFiles/
 
 # Third-party calibration sample datasets and rendered paper assets. Keep the
 # calibration source/build files, but do not vendor hundreds of MiB of media.
-/calibration/camera_lidar/mlcc/scene*/
-/calibration/camera_lidar/mlcc/figure/
-/calibration/camera_lidar/mlcc/paper/
-/calibration/camera_lidar/livox_camera_calib/pics/
-/calibration/camera_lidar/livox_camera_lidar_calibration/doc_resources/
+/tools/calibration/camera_lidar/mlcc/scene*/
+/tools/calibration/camera_lidar/mlcc/figure/
+/tools/calibration/camera_lidar/mlcc/paper/
+/tools/calibration/camera_lidar/livox_camera_calib/pics/
+/tools/calibration/camera_lidar/livox_camera_lidar_calibration/doc_resources/
+
+# Preserve versioned calibration fixtures/placeholders after moving the
+# offline toolbox under tools/. Generic log/ and output/ rules still ignore
+# new workstation results everywhere else.
+!/tools/calibration/camera/output/
+/tools/calibration/camera/output/*
+!/tools/calibration/camera/output/.gitkeep
+!/tools/calibration/imu/output/
+/tools/calibration/imu/output/*
+!/tools/calibration/imu/output/.gitkeep
+!/tools/calibration/lidar_imu/output/
+/tools/calibration/lidar_imu/output/*
+!/tools/calibration/lidar_imu/output/.gitkeep
+!/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/
+/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/*
+!/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/plot.py
 src/nav/services/plan/global_planner/algorithm/pct/vendor/pct_planner/planner/lib/3rdparty/
 
 # C++ build artifacts in global_planning
@@ -111,6 +128,7 @@ src/global_planning/**/*.a
 *.onnx
 *.engine
 *.bin
+!sim/worlds/factory_park_hf/generated/heightfield_f32.bin
 *.hbm
 mobileclip2_b.ts
 
@@ -135,7 +153,8 @@ docs/media/videos/*.gif
 .vscode/
 .idea/
 .cursor/
-.agents/
+.agents/*
+!.agents/ue-project-context.md
 *.swp
 *.swo
 *~
@@ -236,4 +255,13 @@ web/node_modules
 # AI tool caches and ephemeral development artifacts
 # ──────────────────────────────────────────────
 .codex-tmp/
+.codex-web-vite*.log
 CUsers*/
+.mypy_cache/
+.cursor/
+/.forest-conditioning-smoke/
+/.tmp-inspection-pytest/
+/.tripo/
+/sim/.promotion-locks/
+/nav_endpoint_config.obj
+/test_nav_endpoint_config.obj

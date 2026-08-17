@@ -1,3 +1,4 @@
+/.gitattributes text eol=lf
 scripts/*.sh text eol=lf
 scripts/**/*.sh text eol=lf
 src/native/recording/tests/*.sh text eol=lf
@@ -5,3 +6,25 @@ scripts/lingtu text eol=lf
 scripts/deploy/**/*.service text eol=lf
 docs/04-deployment/services/*.service text eol=lf
 docs/04-deployment/services/*.sh text eol=lf
+
+# Simulation package manifests and physics assets participate in SHA-256
+# provenance checks and must have identical bytes on Windows and Linux.
+sim/**/*.json text eol=lf
+sim/**/*.obj text eol=lf
+sim/**/*.py text eol=lf
+sim/**/*.xml text eol=lf
+sim/**/*.yaml text eol=lf
+sim/**/*.yml text eol=lf
+config/runtime_graph/acceptance/**/*.json text eol=lf
+
+# Large simulation source assets are versioned through Git LFS. Generated UE
+# directories remain ignored by sim/runtime/visual/RobotSimUE/.gitignore.
+sim/packages/**/*.STL filter=lfs diff=lfs merge=lfs -text
+sim/packages/**/*.stl filter=lfs diff=lfs merge=lfs -text
+sim/packages/**/*.fbx filter=lfs diff=lfs merge=lfs -text
+sim/packages/**/*.glb filter=lfs diff=lfs merge=lfs -text
+sim/worlds/**/*.fbx filter=lfs diff=lfs merge=lfs -text
+sim/worlds/**/*.glb filter=lfs diff=lfs merge=lfs -text
+sim/runtime/visual/RobotSimUE/Content/**/*.uasset filter=lfs diff=lfs merge=lfs -text
+sim/runtime/visual/RobotSimUE/Content/**/*.umap filter=lfs diff=lfs merge=lfs -text
+sim/worlds/factory_park_hf/generated/heightfield_f32.bin filter=lfs diff=lfs merge=lfs -text
