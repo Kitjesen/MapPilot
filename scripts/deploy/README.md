@@ -45,3 +45,30 @@ parallel boot path under `scripts/deploy/s100p/`.
 
 Do not copy scripts into `docs/04-deployment/`. Do not move service files as part
 of documentation-only hierarchy cleanup.
+
+## Windows x64 Prerequisite
+
+`windows/ensure_windows_vc_redist.ps1` is the deployment bootstrapper for the
+central Microsoft Visual C++ Redistributable x64 runtime. A packaged installer
+can check without mutation:
+
+```powershell
+powershell.exe -NoProfile -File scripts/deploy/windows/ensure_windows_vc_redist.ps1 `
+  -MinimumVersion 14.44.35207.0 `
+  -CheckOnly
+```
+
+When installation is required, pass the official, Microsoft-signed
+`vc_redist.x64.exe` included by the packaging layer:
+
+```powershell
+powershell.exe -NoProfile -File scripts/deploy/windows/ensure_windows_vc_redist.ps1 `
+  -MinimumVersion 14.44.35207.0 `
+  -InstallerPath .\vc_redist.x64.exe `
+  -Quiet `
+  -LogPath .\logs\vc-redist.log
+```
+
+This bootstrapper does not discover or copy application DLLs. CMake and vcpkg
+own application runtime staging; the bootstrapper only ensures the central
+Microsoft prerequisite and verifies the registered version after installation.
