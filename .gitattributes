@@ -16,6 +16,13 @@ sim/**/*.xml text eol=lf
 sim/**/*.yaml text eol=lf
 sim/**/*.yml text eol=lf
 config/runtime_graph/acceptance/**/*.json text eol=lf
+scripts/build/*.ps1 text eol=lf
+scripts/build/cmake/**/*.cmake text eol=lf
+scripts/build/locks/**/*.json text eol=lf
+scripts/build/provenance/slam/** text eol=lf
+scripts/build/tests/**/*.idl text eol=lf
+scripts/build/vcpkg/**/*.json text eol=lf
+src/localization/fastlio2/** text eol=lf
 
 # Large simulation source assets are versioned through Git LFS. Generated UE
 # directories remain ignored by sim/runtime/visual/RobotSimUE/.gitignore.
