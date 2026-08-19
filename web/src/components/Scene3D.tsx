@@ -30,6 +30,11 @@ import {
   createLocalPlannerDiagnosticLayer,
   disposeLocalPlannerDiagnosticLayer,
 } from './scene3d/layers/localPlannerLayer'
+import {
+  createLoopClosureLayer,
+  disposeLoopClosureLayer,
+  type LoopClosureLayerState,
+} from './scene3d/layers/loopClosureLayer'
 
 export interface Scene3DHandle {
   resetCamera(): void
@@ -45,6 +50,7 @@ interface Layers {
   costmap: boolean
   slope:   boolean
   localPlanner: boolean
+  loopClosures: boolean
 }
 
 interface Scene3DProps {
@@ -56,6 +62,7 @@ interface Scene3DProps {
   mapScene?:    MapSceneEvent | null
   costmap:      CostmapEvent | null
   slopeGrid:    SlopeGridEvent | null
+  loopClosureState: LoopClosureLayerState
   sceneGraph:   SceneGraphEvent | null
   robotX:       number
   robotY:       number
@@ -86,7 +93,7 @@ function removeFrom(scene: THREE.Scene, obj: THREE.Object3D | undefined | null) 
 }
 
 export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
-  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, costmap, slopeGrid, sceneGraph, robotX, robotY, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, layers, pointSize, onPendingGoal, onRelocalize, pendingGoal },
+  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, costmap, slopeGrid, loopClosureState, sceneGraph, robotX, robotY, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, layers, pointSize, onPendingGoal, onRelocalize, pendingGoal },
   ref,
 ) {
   const mountRef   = useRef<HTMLDivElement>(null)
@@ -115,6 +122,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const costmapMeshRef = useRef<GroupedMesh | null>(null)
   const slopeMeshRef   = useRef<GroupedMesh | null>(null)
   const localPlannerRef = useRef<THREE.Group | null>(null)
+  const loopClosureRef = useRef<THREE.Group | null>(null)
   const gridRef        = useRef<THREE.GridHelper | null>(null)
   const floorRef   = useRef<THREE.Mesh | null>(null)
   const liveCloudRef   = useRef<THREE.Points | null>(null)
@@ -423,6 +431,29 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       }
     }
   }, [localPlannerSnapshot, layers.localPlanner])
+
+  // Verified loop candidates are a read-only diagnostic projection. They never
+  // feed back into SLAM, map optimization, planning, or motion control.
+  useEffect(() => {
+    const scene = sceneRef.current
+    if (!scene) return
+
+    disposeLoopClosureLayer(scene, loopClosureRef.current)
+    loopClosureRef.current = null
+    if (!layers.loopClosures) return
+
+    const group = createLoopClosureLayer(loopClosureState)
+    if (!group) return
+    scene.add(group)
+    loopClosureRef.current = group
+
+    return () => {
+      if (loopClosureRef.current === group) {
+        disposeLoopClosureLayer(scene, group)
+        loopClosureRef.current = null
+      }
+    }
+  }, [layers.loopClosures, loopClosureState])
 
 
   // Saved map cloud. Live map_scene labels have an independent lifecycle and

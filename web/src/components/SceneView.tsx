@@ -36,6 +36,7 @@ import {
   LOCAL_PLANNER_DIAGNOSTICS_POLL_MS,
   shouldPollLocalPlannerDiagnostics,
 } from '../services/localPlannerDiagnostics'
+import { resolveLoopClosureLayer } from './scene3d/layers/loopClosureLayer.ts'
 
 interface SceneViewProps {
   sseState:  SSEState
@@ -56,6 +57,7 @@ interface Layers {
   costmap: boolean
   slope:   boolean
   localPlanner: boolean
+  loopClosures: boolean
 }
 
 const TRAIL_MAX = 300
@@ -332,6 +334,7 @@ function SceneViewComponent({
   const [layers, setLayers] = useState<Layers>({
     grid: true, cloud: true, trail: true, path: true, goal: true, robot: true, costmap: false, slope: false,
     localPlanner: sceneDebugTools,
+    loopClosures: true,
   })
   const [localPlannerSnapshot, setLocalPlannerSnapshot] = useState<NavigationDdsSnapshotResponse | null>(null)
   const [maps, setMaps] = useState<MapInfo[]>([])
@@ -506,6 +509,12 @@ function SceneViewComponent({
     && savedMapCloud?.mapName === activeMapName
     ? savedMapCloud
     : undefined
+  const loopClosureState = layers.loopClosures
+    ? resolveLoopClosureLayer(sseState.mapScene, {
+        nowS: Date.now() / 1000,
+        allowedFrameIds: [sseState.mapScene?.frame_id, savedMapForScene?.frameId],
+      })
+    : { status: 'unavailable' as const, message: '在线回环验证图层未启用' }
   const isMappingSession = productSession === 'mapping'
   const isNavigationSession = showSavedMapInScene && !isExplorationSession
   const goalBlockers = uniqueStrings([
@@ -1335,6 +1344,7 @@ function SceneViewComponent({
           <LayerBtn k="robot"   icon={<Bot size={11} />}        label="本机"  />
           <LayerBtn k="costmap" icon={<LayersIcon size={11} />} label="代价"  />
           <LayerBtn k="localPlanner" icon={<Radio size={11} />} label="局部规划" />
+          <LayerBtn k="loopClosures" icon={<Route size={11} />} label="回环验证" />
           {/* 坡度层暂时隐藏 — slope grid TF 对齐未彻底修复,看起来飘.
               保留 Scene3D / SSE 渲染代码,待 TF 修好后恢复按钮. */}
         </div>
@@ -1637,6 +1647,7 @@ function SceneViewComponent({
               mapScene={sseState.mapScene ?? null}
               costmap={sseState.costmap ?? null}
               slopeGrid={sseState.slopeGrid ?? null}
+              loopClosureState={loopClosureState}
               sceneGraph={sseState.sceneGraph ?? null}
               robotX={robotX}
               robotY={robotY}
@@ -1661,6 +1672,17 @@ function SceneViewComponent({
                 <span><i className={`${styles.legendMark} ${styles.legendTerrain}`} />Terrain 风险</span>
                 <span><i className={`${styles.legendLine} ${styles.legendCandidate}`} />候选轨迹</span>
                 <span><i className={`${styles.legendLine} ${styles.legendSelected}`} />选中轨迹</span>
+              </div>
+            )}
+            {layers.loopClosures && (
+              <div
+                className={styles.localPlannerLegend}
+                style={{ top: layers.localPlanner ? 76 : 14 }}
+                aria-label="在线回环验证图层图例"
+              >
+                <span><i className={`${styles.legendLine} ${styles.legendSelected}`} />已接受 {loopClosureState.status === 'ready' ? loopClosureState.accepted.length : 0}</span>
+                <span><i className={`${styles.legendLine} ${styles.legendTerrain}`} />已拒绝 {loopClosureState.status === 'ready' ? loopClosureState.rejected.length : 0}</span>
+                <span>{loopClosureState.message}</span>
               </div>
             )}
             {pendingGoal && (

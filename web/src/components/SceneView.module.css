@@ -1748,6 +1748,19 @@
   }
 }
 
+.loopClosureLegendItems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.loopClosureLegendItems span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
 .localPlannerLegend {
   position: absolute;
   top: 14px;
