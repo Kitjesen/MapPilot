@@ -18,7 +18,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from runtime.module import Module, rpc, skill
+from runtime.module import Module, rpc
 from runtime.msgs.geometry import Pose, Quaternion, Transform, Vector3
 from runtime.msgs.gnss import GnssOdom
 from runtime.msgs.map import MapCloudFrame, MapObservationFrame
@@ -242,7 +242,7 @@ class SlamModule(Module, layer=1):
             self._publish_contract_snapshot(reason=result.get("message", "initial_pose"))
             return dict(result)
 
-    @skill
+    @rpc
     def relocalize(
         self,
         x: float | None = None,

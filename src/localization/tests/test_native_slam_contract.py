@@ -57,6 +57,15 @@ def test_slam_module_exposes_pose_map_health_only() -> None:
     assert "lidar_raw_scan" in module.ports_in
 
 
+def test_slam_relocalize_is_internal_rpc_not_legacy_mcp_skill() -> None:
+    from localization.slam.module import SlamModule
+
+    module = SlamModule()
+
+    assert "relocalize" in module.rpcs
+    assert "relocalize" not in module.skills
+
+
 def test_slam_module_consumes_lidar_inputs() -> None:
     from localization.slam.module import SlamModule
 

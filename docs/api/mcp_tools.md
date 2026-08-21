@@ -335,21 +335,6 @@ _NtripClientModule — pull RTCM differential corrections from a NTRIP caster_
 **Return type:** `str`
 **Parameters:** None
 
-## src/localization/slam/module.py
-_Native SLAM Module contract._
-
-### `relocalize`
-**Module:** `SlamModule`
-**Description:** Relocalize against the loaded map, optionally with a pose guess.
-**Return type:** `dict[(str, Any)]`
-**Parameters:**
-| Parameter | Type |
-|-----------|------|
-| `x` | `float | None` |
-| `y` | `float | None` |
-| `z` | `float` |
-| `yaw` | `float` |
-
 ## src/maps/modules/voxel_grid.py
 _VoxelGridModule - native C++ 3D voxel layer from LiDAR point clouds._
 
