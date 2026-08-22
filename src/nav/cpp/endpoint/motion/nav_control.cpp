@@ -81,7 +81,7 @@ constexpr const char *kUsage =
     "teleop VX VY WZ [--duration-s S] [--rate-hz HZ] [--domain-id N] | "
     "operator-motion VX VY WZ [--duration-s S] [--rate-hz HZ] [--domain-id N] "
     "[--source-id ID] [--source-epoch N] [--lease-ttl-ms N] "
-    "[--freshness-budget-ms N] | "
+    "[--freshness-budget-ms N] [--ready-file PATH] | "
     "teleop-stream [--rate-hz HZ] [--input-timeout-ms N] [--domain-id N] "
     "[--ready-file PATH] | cloud X Y Z [HEIGHT] [--domain-id N] | "
     "trav COST [--domain-id N] | "
@@ -721,6 +721,12 @@ int runOperatorMotion(lingtu::nav::commands::Client &client, const CliConfig &cf
   std::uint64_t sequence = 1U;
   std::uint64_t sample_count = 0U;
   bool claimed = false;
+  const auto removeReadyFile = [&cfg]() {
+    if (!cfg.ready_file.empty()) {
+      std::error_code ec;
+      std::filesystem::remove(cfg.ready_file, ec);
+    }
+  };
   operator_motion_stop_requested = 0;
   const auto prior_sigint = std::signal(SIGINT, requestOperatorMotionStop);
   const auto prior_sigterm = std::signal(SIGTERM, requestOperatorMotionStop);
@@ -772,6 +778,7 @@ int runOperatorMotion(lingtu::nav::commands::Client &client, const CliConfig &cf
                                   cfg.timeout_ms);
     claimed = true;
     printOperatorMotionEvent("claim", cfg, source_epoch, sequence, sample_count);
+    writeReadyFile(cfg.ready_file);
 
     const auto start = SteadyClock::now();
     const auto deadline = cfg.duration_s > 0.0
@@ -799,6 +806,7 @@ int runOperatorMotion(lingtu::nav::commands::Client &client, const CliConfig &cf
                                                         : "operator_motion_complete",
                     false);
     restoreSignals();
+    removeReadyFile();
     std::printf("accepted operator-motion vx=%.3f vy=%.3f wz=%.3f samples=%llu\n", cfg.x, cfg.y,
                 cfg.yaw, static_cast<unsigned long long>(sample_count));
     return 0;
@@ -806,6 +814,7 @@ int runOperatorMotion(lingtu::nav::commands::Client &client, const CliConfig &cf
     const std::exception_ptr failure = std::current_exception();
     finishAuthority("operator_motion_error", true);
     restoreSignals();
+    removeReadyFile();
     std::rethrow_exception(failure);
   }
 }

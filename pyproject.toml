@@ -59,6 +59,7 @@ all = ["lingtu[gateway,vision,ml,llm,nlp,agent,perception,vector]"]
 
 [project.scripts]
 lingtu = "lingtu_cli:main"
+lingtu-drive = "lingtu.operator_drive:main"
 lingtu-sdk = "lingtu.sdk.cli:main"
 
 [tool.uv]
