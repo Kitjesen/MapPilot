@@ -32,6 +32,16 @@ struct Twist {
   double wz = 0;    // yaw rate (rad/s)
 };
 
+// One body-relative sample of an executable local trajectory.
+struct TrajectoryPoint {
+  Vec3 position{};
+  Vec3 velocity{};
+  Vec3 acceleration{};
+  double yaw{0.0};
+  double yawRate{0.0};
+  double timeFromStartS{0.0};
+};
+
 using Path = std::vector<Pose>;
 
 inline double normalizeAngle(double a) {

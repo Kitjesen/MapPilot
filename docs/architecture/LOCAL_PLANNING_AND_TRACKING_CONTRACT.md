@@ -1,13 +1,13 @@
 # Local Planning and Tracking Contract
 
 Status: current algorithm/control contract
-Audience: native endpoint, Python compatibility, and navigation test maintainers
+Audience: native endpoint and navigation test maintainers
 Replaced by: not replaced
 
 This document is the canonical human-readable contract for LingTu local path
 planning algorithms, scoring, path tracking, and their parameter surfaces. It
-complements `local_planner_io_contract.md`, which remains authoritative for
-the external local-planner message I/O boundary. If the two repeat algorithm,
+complements `local_planner_io_contract.md`, which summarizes the native planner
+I/O boundary. If the two repeat algorithm,
 tracking, or parameter details, this document wins for those details.
 
 ## 1. Functional boundary
@@ -18,8 +18,8 @@ The navigation control boundary is contract-first and uses
 | Producer port / role | Wire / payload | Transport / consumer |
 | --- | --- | --- |
 | navigation goal input | global-plan request and global path | direct C++ call to the global planner inside the native endpoint |
-| global path / local target | local-plan invocation and canonical local path | direct C++ call to `LocalPlanner` inside the endpoint |
-| canonical local path | tracking invocation and body-frame `vx/vy/wz` | direct C++ call to `PathFollower` inside the endpoint |
+| global path / local route segment | atomic local-plan invocation and body-frame path/trajectory | direct C++ call to `LocalPlanner` inside `Navigator` |
+| local path or timed trajectory | tracking invocation and body-frame `vx/vy/wz` | direct C++ call to `PathFollower` inside `Navigator` |
 | pre-safety velocity | final command after safety and control-authority arbitration | native typed DDS `rt/nav/cmd_vel` to ThunderV4 |
 
 `LocalPlanner` and `PathFollower` are different functions:
@@ -30,22 +30,98 @@ The navigation control boundary is contract-first and uses
   planner.
 
 The native endpoint control modes `autonomy`, `teleop`, and `teleop_avoid` are
-mutually exclusive. The native endpoint must not be run together with the
-Python `CmdVelMux` control lane.
+mutually exclusive. The Host must not add a competing command writer.
 
 The executable implementation paths are:
 
-- local planner: `src/nav/cpp/planning/local/local_planner.hpp`
-- scoring helpers: `src/nav/cpp/planning/local/local_planner_scoring.hpp`
-- path follower: `src/nav/cpp/control/path_follower_core.cpp`
-- native endpoint assembly: `src/nav/cpp/endpoint/nav_native_endpoint.cpp`
-- Python adapters: `src/nav/local/parameters.py` and
-  `src/nav/local/path_follower_backend.py`
+- route navigator: `src/nav/cpp/navigation/navigator.hpp/.cpp`, with private
+  route geometry in `route.cpp` and execution state in `state.cpp`
+- local planner: `src/nav/cpp/planning/local/planner.hpp/.cpp`
+- CMU backend: `src/nav/cpp/planning/local/cmu/backend.hpp/.cpp`
+- SCAN backend: `src/nav/cpp/planning/local/scan/`
+- candidate scoring: private implementation inside `planning/local/cmu/backend.cpp`
+- recovery candidate search: `src/nav/cpp/planning/local/recovery.hpp/.cpp`
+- recovery lifecycle and retry ownership: `src/nav/cpp/navigation/recovery.hpp/.cpp`
+- path follower: `src/nav/cpp/tracking/follower.hpp/.cpp`
+- native endpoint assembly: `src/nav/cpp/endpoint/main.cpp`
 
-## 2. LocalPlanner path-library model
+The source tree follows the data transformation, not an upstream project name:
+global and local path generation live under `planning/`, path tracking lives
+under `tracking/`, and `Navigator` owns route/intent execution plus the
+backend-neutral recovery lifecycle. CMU and SCAN are two independent adapters
+behind the single Local Planner seam; neither backend calls the other.
+
+### 1.1 Native Local Planner request
+
+The C++ public entry is `nav_kernel::local::Planner::plan(const LocalPlanInput&)`.
+One `LocalPlanInput` is one atomic planning frame:
+
+| Field | Current meaning |
+| --- | --- |
+| `vehicle` | body pose in the selected planning frame |
+| `route` | non-owning route segment from current body position through every global-route bend in the local horizon; includes generation and terminal flag |
+| `kinematics` | planning-frame linear velocity/acceleration and yaw rate used to initialize a continuous trajectory |
+| `identity` | frame, obstacle, and traversability generations for retained-state invalidation |
+| `obstacles` | non-owning `N x 4` view `[x, y, z, height]` in that same frame |
+| `collision` | optional complete local collision snapshot: occupied centers, resolution, AABB, map identity/source stamp, receiver freshness stamp, `complete`, and `live` |
+| `traversability` | optional non-owning 0-100 risk-grid view plus rows, columns, resolution, and origin |
+| `timestampS` | monotonic planning-cycle time; compared only with receiver-clock freshness, never directly with a DDS source/wall stamp |
+
+The constructor supplies robot/path-library parameters. Assisted teleoperation
+adds a `LocalMotionIntent`. Recovery is not a Planner entry point: Navigator
+always calls the selected backend's `plan()` first and passes the same complete
+frame to its own recovery controller only after no-path or execution-stall
+policy triggers. The planner exposes no pose, goal, or grid setters, and an
+omitted grid in one request cannot reuse a previous request's grid.
+
+`planIntent()` is implemented by both backends and is never a backend fallback.
+CMU returns a geometric path. SCAN plans from the same straight intent route,
+applies the requested speed and terminal direction limit, and returns a timed
+trajectory. The endpoint supplies the same collision snapshot, identity,
+measured body motion, and traversability fields used by autonomous planning.
+Neither backend loads or calls the other.
+
+`Navigator` still owns route progress. It projects the body onto the nearest
+forward 3-D route segment, retains every bend, and clips the final segment at
+the exact configured arc-length horizon before calling Local Planner. It does
+not drive back to a sparse segment's preceding waypoint and does not collapse
+the segment to one target. Two routes with the same endpoint therefore remain
+distinguishable. All pointers in the input are read-only and valid only for the
+synchronous call.
+
+SCAN scores and smooths against the complete route segment. CMU remains a 2-D
+path-bank backend, but no longer blindly collapses every slice to its terminal
+point: a straight slice keeps the terminal target, while a slice with a
+significant interior bend first uses the nearest salient bend as its guide.
+
+### 1.2 Continuous-trajectory contract
+
+The selected backend is explicit: `cmu` keeps fixed-library geometric planning;
+`scan` builds a bounded 3D query grid, replaces each colliding route segment
+with projected A* that expands only XY while interpolating Z from the segment
+endpoints, then applies XY-only rebound L-BFGS and produces a continuously
+collision-checked cubic B-spline with time, position, velocity, acceleration,
+yaw, and yaw rate. SCAN retains a safe prefix only while frame and route
+generations match. Map generations trigger fresh collision evaluation but do
+not create a second authoritative map; field `mapd` remains the owner.
+
+The field collision wire is `/maps/local_collision`. `complete=true` means all
+occupied voxels inside the published AABB are present; it does not claim that
+unknown cells are observed free. Incomplete, non-live, stale, malformed, or
+ROI-undercovering snapshots fail closed. Source stamp orders map samples;
+steady receiver stamp determines freshness inside `navd`.
+
+`LocalPlanResult` reports backend, status, reason, geometric path, executable
+trajectory, and bounded diagnostics. Recovery state is reported by
+`NavigatorOutput`, not selected by a Planner backend. `PathFollower` tracks the
+timed trajectory for SCAN and does not run another search. CMU continues through
+its existing geometric lookahead branch, so backend selection does not silently
+change CMU control behavior.
+
+## 2. CMU path-library model
 
 The planner loads three offline-generated assets from
-`src/nav/local/paths/`:
+`src/nav/cpp/planning/local/cmu/paths/`:
 
 | Asset | Runtime meaning |
 | --- | --- |
@@ -83,7 +159,7 @@ motion. It is an admission filter, distinct from
 `obstacle_height_thre=0.2 m`, which decides whether an admitted point counts as
 a collision hit.
 
-## 3. LocalPlanner gates and score
+## 3. CMU gates and score
 
 ### 3.1 Gate order
 
@@ -101,7 +177,8 @@ these gates before it contributes a score:
    `plan()` uses the rotation prefilter but does not enable this extra hard
    primitive-direction gate.
 4. **Traversability hard gate.** When traversability scoring is enabled, the
-   maximum risk sampled along the rotated/scaled canonical group path is
+   maximum raw cell risk intersecting the rectangular footprint swept along
+   the rotated/scaled canonical group path is
    compared with `traversability_hard_cost`; `risk >= hard_cost` is a hard
    rejection.
 5. **Positive-score gate.** A candidate whose direction/height score is zero
@@ -170,12 +247,30 @@ checking, and it does not by itself disable the separate traversability grid.
 Today, active terrain influence comes primarily from traversability hard/soft
 cost, not from `slope_weight`.
 
-The traversability factor uses the maximum risk sampled along the candidate
-group centerline. The hard comparison is inclusive (`>=`); the soft comparison
+The traversability factor uses the maximum raw cell risk intersecting the
+candidate's padded rectangular footprint sweep. The producer does not inflate
+cells by robot radius, so body clearance is applied exactly once here. The hard
+comparison is inclusive (`>=`); the soft comparison
 is strict (`>`). When a traversability grid is present, out-of-grid,
-non-finite, or invalid cells are fail-closed and contribute hard risk. Freshness
-and coverage must still be enforced at the endpoint input gate so the planner
-does not confuse stale silence with free space.
+non-finite, or invalid cells are fail-closed and contribute hard risk. The
+endpoint input gate enforces freshness, and each motion consumer independently
+verifies that the current padded footprint is fully covered before accepting a
+candidate, so stale silence or a first sample just inside the grid cannot look
+like free space.
+
+The grid is a single risk channel, so blocked terrain and unobserved cells both
+use hard cost. Motion consumers therefore gate the incrementally swept area:
+cells fully contained by the robot's initial padded footprint are not treated
+as newly entered space, while cells touching or extending beyond that initial
+footprint remain fail-closed. This prevents LiDAR self-occlusion under the body
+from deadlocking every translation or rotation without clearing future unknown
+space in the producer.
+
+Candidate paths are swept continuously at a step no larger than 5 cm or half a
+grid cell. If a sparse path segment crosses the active planning horizon, the
+in-horizon prefix is clipped to the horizon circle and checked before the
+remainder is discarded; an out-of-range endpoint must never hide hard terrain
+inside the commanded horizon.
 
 ### 3.3 Output path is not one of the 343 primitives
 
@@ -192,18 +287,18 @@ Therefore, it is incorrect to describe the result as "selecting and directly
 publishing one of 343 paths." The primitives determine group evidence; the
 published path is a rotated/scaled canonical `startPath` for the winning group.
 
-The C++ core emits this path in the body frame. `NavLoop` transforms it to the
-map frame for endpoint publication. The Python `LocalPlanner` Module publishes
-in its configured planning frame.
+The C++ core emits this path in the body frame. `Navigator` transforms it to the
+configured endpoint publication frame.
 
 ### 3.4 Local recovery contract
 
-Native autonomous recovery is part of local planning, not a separate product
-mode. `NavLoop` may enter recovery only from autonomy when the normal local
-planner cannot produce a safe path or odometry shows insufficient progress for
-the configured blocked interval. Plain `teleop` and `teleop_avoid` never trigger
-autonomous recovery; assisted teleop must stop or publish only a verified
-operator-intent path.
+Native autonomous recovery is an execution policy owned by `Navigator`, not a
+third Planner backend and not a separate Product mode. Every autonomy frame
+first calls exactly the configured Planner. `Navigator` may then enter recovery
+when that planner cannot produce a safe path or odometry shows insufficient
+progress for the configured blocked interval. Plain `teleop` and `teleop_avoid`
+never trigger autonomous recovery; assisted teleop must stop or publish only a
+verified operator-intent path.
 
 Recovery is candidate-based:
 
@@ -215,10 +310,10 @@ Recovery is candidate-based:
   centerline. Obstacle overlap, missing traversability coverage, out-of-grid
   cells, non-finite cells, and cells at or above hard cost all reject the
   candidate.
-- `NavLoop` tracks a verified recovery translation with a dedicated slow
+- `Navigator` tracks a verified recovery translation with a dedicated slow
   follower state. Recovery progress is measured from odometry pose/yaw change,
   not from command publication or elapsed time alone.
-- If no safe translation exists, the planner may produce a verified direct
+- If no safe translation exists, recovery search may produce a verified direct
   rotation command. Rotation must sample the swept padded footprint in both
   candidate directions before selecting a direction.
 - Failed translation or rotation directions are not retried blindly in the same
@@ -230,15 +325,13 @@ or direct rotation is only pre-safety intent; the endpoint safety evaluator and
 control-authority arbitration still have the highest authority over
 `rt/nav/cmd_vel`.
 
-The Python compatibility lane must not replace a recovery stop or direct
-rotation with a synthetic straight-line track. If the native core reports a
-non-zero recovery state, the Python direct-track fallback stays disabled and
-lets the safer stop/recovery status propagate.
-
 ## 4. PathFollower control contract
 
-The production C++ `PathFollower` is best described as a **lookahead-point
-holonomic geometric tracker**.
+The production C++ follower has one public entry point,
+`Follower::follow(FollowerInput)`. `FollowerInput` contains either a geometric
+path or a timed trajectory; the registered internal algorithm then runs the
+lookahead tracker used by CMU/recovery or the timed tracker used by SCAN.
+Planner and Follower remain separate modules in both cases.
 
 It is Pure-Pursuit-like only in the broad sense that it chooses a point ahead
 on the path. It is not the classic Pure Pursuit controller: it does not compute
@@ -294,7 +387,7 @@ limit is `45 deg/s` (`0.785 rad/s`). The tracker supports holonomic `vx/vy`,
 forward/reverse switching, hysteresis, end-of-path slowing, planner slow
 factors, and safety-stop levels.
 
-`max_accel` limits only the signed scalar `state.vehicle_speed` by
+In the geometric branch, `max_accel` limits only the signed scalar `state.vehicle_speed` by
 `max_accel * dt`. It is not a component-wise `vx/vy` acceleration limit, does
 not limit yaw acceleration, and is not a jerk limiter. A downstream driver or
 safety layer must enforce stricter chassis dynamics when required.
@@ -303,29 +396,27 @@ The follower's `stop_dis_thre` is `0.2 m` by default. It is not the same
 quantity as either the local planner's `near_field_stop_dis=0.5 m` or the
 native mission's `goal_reached_m=0.35 m`.
 
-## 5. Native endpoint versus Python Module
+### 4.3 Timed trajectory tracking
 
-These are alternative runtime lanes, not parameters that should be merged at
-runtime.
+The SCAN branch evaluates the planned sample at the current execution time and
+combines that sample's feed-forward body velocity with body-relative position
+feedback. A separate `trajectory_look_ahead_s` sample defines desired heading
+from `p(t + forward) - p(t)`; current planned yaw is the zero-motion fallback and
+current yaw rate remains feed-forward. When heading error exceeds the configured
+threshold, translation and trajectory time freeze while yaw alignment continues.
+Measured body twist seeds the first acceleration-limited command. The follower
+consumes trajectory samples only; obstacle search and spline generation stay
+inside Local Planner.
 
-### 5.1 Local planner
+## 5. Native runtime configuration
 
-| Contract | Native endpoint default | Python `LocalPlanner` with `nanobind` |
-| --- | --- | --- |
-| Parameter authority | endpoint CLI/environment | `config/robot_config.yaml` plus Module kwargs |
-| Core implementation | `LocalPlannerCore` | the same `LocalPlannerCore` through nanobind |
-| Planner `maxSpeed` / `autonomySpeed` | `1.0 / 0.4`, so normalized planning speed is `0.4` | current robot config `0.875 / 0.875`, so normalized planning speed is `1.0` |
-| Traversability enabled | `false` unless `--use-traversability-cost true` | `true` by default |
-| Traversability hard / soft / weight | `80 / 40 / 0.01` | `90 / 40 / 0.01` |
-| Height-derived cost | `useCost=false`, `slopeWeight=0` | current config `use_cost=false`, `slope_weight=0` |
-| Maximum admitted relative obstacle height | 1.20 m | native core default 1.20 m |
-| `terrain_map_ext` obstacle share | `0.0`; excluded unless configured above zero and fresh/non-empty | merged by the Module obstacle-cloud path |
-| Collision threshold | 2 hits | 2 hits |
+Endpoint CLI/environment values are the runtime parameter authority. The
+selected local backend and its parameters are resolved before motion starts;
+the Host does not apply a second set of planner or follower defaults.
 
 Because `path_range_by_speed` and `path_scale_by_speed` are enabled by default,
-the endpoint's normalized planning speed also affects its initial range/scale.
-Do not assume the endpoint and Python Module search identical horizons merely
-because they use the same path-library files.
+the endpoint's normalized planning speed also affects its initial range and
+scale.
 
 The endpoint obstacle merge budgets registered cloud, `terrain_map`, and
 `terrain_map_ext` separately. `terrain_map_ext` participates in active-share
@@ -340,37 +431,16 @@ relative to `base_link` and passes that resolved XYZ through the endpoint
 `--sensor-offset-{x,y,z}-m` arguments; a site-local XML coordinate must not be
 assumed to already be in the body frame.
 
-That LiDAR extrinsic must **not** also be copied into
-`LocalPlannerCore.sensorOffsetX/Y` when `NavLoop` already receives a body pose.
-The planner's vehicle pose is the body origin, so its planner offset remains
-zero; the LiDAR offset is used only to compute the ray-clearing sensor origin.
-Applying it twice shifts the local target bearing. In the 60 m MuJoCo case it
+That LiDAR extrinsic must **not** also shift Local Planner state when
+`Navigator` already supplies a body pose. `LocalPlanInput.vehicle` is the
+body origin and Local Planner intentionally has no sensor-offset parameter; the
+LiDAR offset is used only to compute the ray-clearing sensor origin. Applying it
+twice shifts the local target bearing. In the 60 m MuJoCo case it
 changed the initial bearing from `85.60 deg` to `99.02 deg`, crossed the
 forward/reverse direction gate, and made the planner select the reverse path
 family.
 
-The `cmu_py` backend is a debug fallback, not the production scoring oracle. It
-keeps the same 343/7/36 library shape but currently differs in details,
-including a 5 m near-goal preference threshold (native: 1 m), Python grid
-defaults, direction handling, recovery, and scale/range degradation. Product
-acceptance must use the native C++ core.
-
-### 5.2 Path follower
-
-| Parameter | Native endpoint | Generic Python Module | `thunder_nav` Python product override |
-| --- | ---: | ---: | ---: |
-| `max_speed` | 0.4 m/s | 0.4 m/s | 0.20 m/s |
-| `max_accel` | 1.0 m/s^2 | 1.0 m/s^2 | 10.0 m/s^2 |
-| Module `lookahead` input | direct core defaults | 1.5 m | 0.35 m |
-| resulting base / min / max lookahead | 0.30 / 0.20 / 2.00 m | 0.30 / 0.25 / 1.50 m | 0.20 / 0.20 / 0.35 m |
-| `stop_dis_thre` | 0.20 m | 0.20 m | 0.05 m |
-| yaw gain / max yaw rate | 7.5 / 45 deg/s | 7.5 / 45 deg/s unless overridden | inherited unless overridden |
-
-The Python Module's `lookahead` constructor argument is an adapter-level
-maximum, not a direct assignment to `baseLookAheadDis`. The adapter derives
-base/min/max values and always sets `lookAheadRatio=0.5`.
-
-### 5.3 Odometry motion sanity
+### 5.1 Odometry motion sanity
 
 The native endpoint treats reported DDS twist and pose-derived consistency as
 different evidence:
