@@ -22,7 +22,6 @@
   <img src="https://img.shields.io/badge/transport-CycloneDDS-18232B" alt="CycloneDDS">
   <img src="https://img.shields.io/badge/Python-%E2%89%A53.10-18232B" alt="Python 3.10 or newer">
   <img src="https://img.shields.io/badge/C%2B%2B-17-18232B" alt="C++17">
-  <img src="https://img.shields.io/badge/target-S100P%20%7C%20aarch64-FFB000" alt="S100P aarch64 target">
   <a href="#project-license"><img src="https://img.shields.io/badge/license-not%20declared-lightgrey" alt="Project license not declared"></a>
 </p>
 
