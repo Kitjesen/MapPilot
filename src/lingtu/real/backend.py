@@ -22,7 +22,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, TypeGuard
 
-from lingtu.assembly.parameters import resolve_parameters
 from lingtu.products import ProductLifecycle, ProductName
 from lingtu.run_plan import RUN_PLAN_SCHEMA, RunPlan
 from lingtu.switch_contracts import (
@@ -158,7 +157,6 @@ class SwitchBackend(Protocol):
         slam_mode: str,
         map_identity: MapIdentity | None = None,
         product_session_id: str | None = None,
-        parameter_overrides: Mapping[str, Any] | None = None,
     ) -> SessionStage | None: ...
 
     def rollback_session(self, staged: SessionStage) -> None: ...
@@ -459,7 +457,6 @@ class FieldBackend:
         slam_mode: str,
         map_identity: MapIdentity | None = None,
         product_session_id: str | None = None,
-        parameter_overrides: Mapping[str, Any] | None = None,
     ) -> SessionStage:
         """Atomically publish one boot-scoped Product session environment."""
 
@@ -477,7 +474,6 @@ class FieldBackend:
                 slam_mode=slam_mode,
                 map_identity=map_identity,
                 product_session_id=session_id,
-                parameter_overrides=parameter_overrides,
             )
             self._install_runtime_file(session_path, _environment_file(environment))
         except Exception as exc:
@@ -522,7 +518,6 @@ class FieldBackend:
         slam_mode: str,
         map_identity: MapIdentity | None,
         product_session_id: str,
-        parameter_overrides: Mapping[str, Any] | None,
     ) -> dict[str, str]:
         """Build the only per-session process environment."""
 
@@ -558,16 +553,6 @@ class FieldBackend:
         if slam_mode != "localization" and map_identity is not None:
             raise RuntimeError(f"{slam_mode} must not inherit a saved-map identity")
 
-        parameter_set = resolve_parameters(
-            parameter_profile=plan.parameter_profile,
-            env_overrides=plan.parameter_overrides,
-            session_overrides=parameter_overrides,
-            map_publish_hz=_environment_float(
-                self._environment,
-                "LINGTU_TRAVERSABILITY_PUBLISH_HZ",
-                default=10.0,
-            ),
-        )
         map_path = (
             _pointcloud_artifact_path(map_identity, self._maps_root())
             if map_identity is not None
@@ -591,7 +576,6 @@ class FieldBackend:
             "FAR_OCCUPANCY_PATH": "",
             "EXPLORE_OCCUPANCY_PATH": "",
             **native,
-            **parameter_set.environment(),
         }
         if map_identity is not None:
             planner = native["NAV_GLOBAL_PLANNER"]

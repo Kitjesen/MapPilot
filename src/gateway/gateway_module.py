@@ -315,6 +315,11 @@ class GatewayModule(Module, layer=6):
             )
             self._compiled_env = _compiled_setting(None, "LINGTU_ENV") or "real"
             self._host_config = {}
+        native_environment = (
+            getattr(run_plan, "native_process_environment", {})
+            if run_plan is not None
+            else {}
+        )
         if self._compiled_env not in {"real", "sim"}:
             raise ValueError(
                 f"Env must be 'real' or 'sim', received {self._compiled_env!r}"
@@ -336,14 +341,14 @@ class GatewayModule(Module, layer=6):
         init_teleop_state(
             self,
             max_speed=float(
-                self._host_config.get(
-                    "teleop_max_speed_mps",
+                native_environment.get(
+                    "LINGTU_TELEOP_MAX_SPEED_MPS",
                     _env_float("LINGTU_TELEOP_MAX_SPEED_MPS", 0.5),
                 )
             ),
             max_yaw=float(
-                self._host_config.get(
-                    "teleop_max_yaw_rate_rad_s",
+                native_environment.get(
+                    "LINGTU_TELEOP_MAX_YAW_RATE",
                     _env_float("LINGTU_TELEOP_MAX_YAW_RATE", 1.0),
                 )
             ),

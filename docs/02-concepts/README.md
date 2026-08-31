@@ -35,8 +35,8 @@ main way LingTu stays replaceable across a stub, simulation, and field robot.
 | Term | Answers | Does not answer |
 | --- | --- | --- |
 | **env** | Is this runtime `real` or `sim`? | Product behavior or a communication endpoint. |
-| **Product** | Which env-independent Host graph, logical native roles, topics, and capabilities form one mode? | Concrete deployment targets or runtime side effects. |
-| **RunPlan** | What exact Host config and processes result from resolving Product + env? | User intent or side effects. |
+| **Product** | Which env-independent Host capabilities, logical native roles, topics, and parameters form one mode? | Concrete deployment targets or runtime side effects. |
+| **RunPlan** | What exact Host config, processes, and final launch parameters result from resolving Product + env? | User intent or side effects. |
 | **ProductControl** | How is one Product safely applied, switched, stopped, or rolled back inside a fixed env? | Env switching or domain algorithms. |
 | **Host** | Which low-rate API, Agent, semantic, and adapter capabilities share one Python process? | Native sensor, SLAM, map, navigation, or driver ownership. |
 | **Blueprint** | Which Modules exist inside one Host and how their ports connect? | Product switching or native process ownership. |
@@ -48,6 +48,12 @@ main way LingTu stays replaceable across a stub, simulation, and field robot.
 The canonical architecture overview is [System design](../architecture/SYSTEM_DESIGN.md).
 The detailed vocabulary and cleanup rules are in the
 [Module/service boundary](../architecture/MODULE_SERVICE_BOUNDARY.md).
+
+Product YAML is the declaration source. `host.capabilities` selects the hidden
+Blueprint composition, while `critical_modules` separately states which
+Modules must be ready before the Product is ready. RunPlan v8 contains the
+final resolved `launch.parameters`; real and sim runners do not apply another
+profile or default layer after compilation.
 
 ## Module: the runtime unit
 

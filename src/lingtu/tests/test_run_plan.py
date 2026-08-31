@@ -21,6 +21,43 @@ def test_run_plan_round_trips_without_re_resolving_runtime_graph(tmp_path) -> No
     assert loaded.robot == "unitree/go2"
     assert "_robot_model" not in loaded.host_config
     assert set(plan.as_dict()) == {"identity", "launch", "host", "checks"}
+    assert plan.as_dict()["launch"]["parameters"] == plan.parameters
+    assert "parameter_profile" not in plan.as_dict()["launch"]
+    assert "parameter_overrides" not in plan.as_dict()["launch"]
+
+
+@pytest.mark.parametrize(
+    ("env", "robot", "env_config"),
+    (
+        ("real", "unitree/go2", None),
+        ("sim", "doso/thunder_v4", {"backend": "mujoco"}),
+    ),
+)
+def test_run_plan_records_final_parameter_overrides(
+    env: str,
+    robot: str,
+    env_config: dict[str, str] | None,
+) -> None:
+    plan = ProductControl(
+        robot=robot,
+        env=env,
+        env_config=env_config,
+        process_env={},
+    )._resolve(
+        "explore",
+        parameter_overrides={"segment.max_distance_m": 2.5},
+    )
+
+    assert plan.parameters["segment.max_distance_m"] == 2.5
+    assert plan.native_process_environment["LINGTU_NAV_SEGMENT_MAX_DISTANCE_M"] == "2.5"
+
+
+def test_run_plan_rejects_the_previous_schema() -> None:
+    payload = ProductControl(robot="unitree/go2", env="real", process_env={})._resolve("nav").as_dict()
+    payload["identity"]["schema"] = "lingtu.run_plan.v7"
+
+    with pytest.raises(ValueError, match="unsupported RunPlan schema"):
+        RunPlan.from_dict(payload)
 
 
 def test_run_plan_is_readable_by_managed_service_users(tmp_path) -> None:

@@ -250,7 +250,6 @@ def execute_switch(
             slam_mode=target_lifecycle.slam_mode,
             map_identity=map_identity,
             product_session_id=product_session_id,
-            parameter_overrides=request.parameter_overrides,
         )
         if staged_session is None:
             raise RuntimeError("Product session staging returned no rollback token")

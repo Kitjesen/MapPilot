@@ -1,4 +1,4 @@
-schema_version: lingtu.runtime_graph.product.v1
+schema_version: lingtu.runtime_graph.product.v2
 name: teleop
 contracts:
   - lingtu.product.teleop.v1
@@ -10,8 +10,14 @@ slam_mode: none
 requires_map: false
 switch_policy: cold_restart
 online_hot_switch_supported: false
+host:
+  capabilities: [gateway, operator_motion]
+  run_startup_checks: false
 native_nav:
   smoothing: true
+  path_follower_max_speed_mps: 0.5
+  teleop_max_speed_mps: 0.5
+  teleop_max_yaw_rate_rad_s: 1.0
 processes:
   - nav
   - driver

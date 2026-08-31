@@ -9,7 +9,13 @@ from typing import Any
 from runtime.contracts.product_runtime import resolve_product_spec_contracts
 from runtime.runtime_interface import TOPICS
 
-from .loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
+from .loader import (
+    PRODUCT_HOST_CAPABILITIES,
+    PRODUCT_HOST_FIELDS,
+    RuntimeGraph,
+    load_runtime_graph,
+    resolve_product_variant_spec,
+)
 from .processes import (
     _parse_conflict_targets,
     _parse_process_platform_variants,
@@ -18,7 +24,7 @@ from .processes import (
 )
 
 ENV_SCHEMA_VERSION = "lingtu.runtime_graph.env.v1"
-PRODUCT_SCHEMA_VERSION = "lingtu.runtime_graph.product.v1"
+PRODUCT_SCHEMA_VERSION = "lingtu.runtime_graph.product.v2"
 REQUIRED_ENVS = frozenset({"real", "sim"})
 SIM_BACKENDS = frozenset({"mujoco"})
 PRODUCT_MODE_REQUIRED_FIELDS = (
@@ -195,6 +201,16 @@ def _resolve_products_for_validation(
                     )
                 )
                 continue
+            variant_spec = variants[raw_variant]
+            if not isinstance(variant_spec, Mapping) or "host" not in variant_spec:
+                issues.append(
+                    _issue(
+                        "product_variant_host_missing",
+                        f"Product {name} variant {variant!r} must declare host",
+                        scope=_product_variant_scope(name, variant),
+                    )
+                )
+                continue
             try:
                 spec = resolve_product_variant_spec(
                     name,
@@ -259,6 +275,57 @@ def _validate_product(
                 scope=f"product:{name}",
             )
         )
+    host = product.get("host")
+    if not isinstance(host, Mapping):
+        issues.append(
+            _issue(
+                "product_host_missing",
+                f"Product {name} must declare host",
+                scope=f"product:{name}",
+            )
+        )
+    else:
+        unknown_host_fields = sorted(set(host) - PRODUCT_HOST_FIELDS)
+        if unknown_host_fields:
+            issues.append(
+                _issue(
+                    "product_host_fields_invalid",
+                    f"Product {name} has unknown host fields: "
+                    f"{', '.join(unknown_host_fields)}",
+                    scope=f"product:{name}",
+                )
+            )
+        capabilities = host.get("capabilities")
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) or not value.strip()
+            for value in capabilities or ()
+        ):
+            issues.append(
+                _issue(
+                    "product_host_capabilities_invalid",
+                    f"Product {name} host.capabilities must be a list of names",
+                    scope=f"product:{name}",
+                )
+            )
+        else:
+            unknown = sorted(set(capabilities) - PRODUCT_HOST_CAPABILITIES)
+            if unknown or len(set(capabilities)) != len(capabilities):
+                issues.append(
+                    _issue(
+                        "product_host_capabilities_invalid",
+                        f"Product {name} has unknown or duplicate Host capabilities: "
+                        f"{', '.join(unknown) if unknown else 'duplicates'}",
+                        scope=f"product:{name}",
+                    )
+                )
+        if not isinstance(host.get("run_startup_checks"), bool):
+            issues.append(
+                _issue(
+                    "product_host_startup_checks_invalid",
+                    f"Product {name} host.run_startup_checks must be boolean",
+                    scope=f"product:{name}",
+                )
+            )
     try:
         contract = resolve_product_spec_contracts(name, product)
     except ValueError as exc:

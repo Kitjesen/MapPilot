@@ -144,7 +144,7 @@ def test_runtime_graph_contracts_are_valid() -> None:
 
     assert set(graph.envs) == {"real", "sim"}
     assert {env["schema_version"] for env in graph.envs.values()} == {"lingtu.runtime_graph.env.v1"}
-    assert {product["schema_version"] for product in graph.products.values()} == {"lingtu.runtime_graph.product.v1"}
+    assert {product["schema_version"] for product in graph.products.values()} == {"lingtu.runtime_graph.product.v2"}
     assert "robot_config_ref" not in graph.envs["real"]
     assert set(graph.envs["sim"]["backends"]) == {"mujoco"}
     assert "inspection" in graph.envs["sim"]["supported_products"]
@@ -423,6 +423,22 @@ def test_runtime_graph_rejects_an_unknown_product_schema() -> None:
     )
 
     assert "product_schema_invalid" in {issue.code for issue in validate_runtime_graph(broken)}
+
+
+def test_product_variant_must_declare_its_complete_host() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    del products["explore"]["variants"]["map"]["host"]
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        envs=graph.envs,
+    )
+
+    assert "product_variant_host_missing" in {
+        issue.code for issue in validate_runtime_graph(broken)
+    }
 
 
 def test_final_velocity_topic_is_identity_bound_and_single_writer() -> None:

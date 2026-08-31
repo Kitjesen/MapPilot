@@ -91,8 +91,7 @@ def _recreate(
         host_config=host_config or base.host_config,
         lifecycle=base.lifecycle,
         native_process_environment=base.native_process_environment,
-        parameter_profile=base.parameter_profile,
-        parameter_overrides=base.parameter_overrides,
+        parameters=base.parameters,
         simulation=simulation,
     )
 

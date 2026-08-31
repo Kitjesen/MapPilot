@@ -114,6 +114,7 @@ class ProductControl:
         *,
         product_variant: str | None = None,
         local_planner: str | None = None,
+        parameter_overrides: Mapping[str, Any] | None = None,
     ) -> RunPlan:
         """Resolve one Product inside this control plane's fixed Env."""
 
@@ -136,6 +137,7 @@ class ProductControl:
             local_planner=selected_local_planner,
             env_config=self._env_config or None,
             product_variant=selected_variant,
+            parameter_overrides=parameter_overrides,
         )
         self._require_plan_robot(plan)
         return plan
@@ -200,6 +202,7 @@ class ProductControl:
             request.target_product,
             product_variant=request.product_variant,
             local_planner=request.local_planner,
+            parameter_overrides=request.parameter_overrides,
         )
         if plan.process_control == "subprocess":
             if self.env != "sim" or plan.env != "sim":

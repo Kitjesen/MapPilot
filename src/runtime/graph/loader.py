@@ -2,15 +2,36 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Any
 
 from runtime.yaml_helpers import load_yaml
 
-
 RUNTIME_GRAPH_DIR = Path(__file__).resolve().parents[3] / "config" / "runtime_graph"
+PRODUCT_HOST_CAPABILITIES = frozenset(
+    {
+        "gateway",
+        "operator_motion",
+        "navigation_skills",
+        "goal_commands",
+        "semantic",
+        "semantic_planning",
+        "inspection_evidence",
+        "exploration_adapter",
+    }
+)
+PRODUCT_HOST_FIELDS = frozenset(
+    {
+        "capabilities",
+        "run_startup_checks",
+        "encoder",
+        "llm",
+        "inspection_evidence_max_rgb_odom_skew_s",
+        "map_artifact_gate_required",
+    }
+)
 
 
 @dataclass(frozen=True)

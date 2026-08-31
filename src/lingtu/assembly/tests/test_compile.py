@@ -513,16 +513,19 @@ def test_run_plan_create_rejects_mismatched_variant_identity(
             host_config=host_config,
             lifecycle=lifecycle,
             native_process_environment=plan.native_process_environment,
-            parameter_profile=plan.parameter_profile,
-            parameter_overrides=plan.parameter_overrides,
+            parameters=plan.parameters,
         )
 
 
-def test_explore_compile_reads_parameter_profile_from_selected_variant() -> None:
+def test_explore_compile_reads_parameters_from_selected_variant() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
-    products["explore"]["variants"]["live"]["parameter_profile"] = "rolling-explore-live"
-    products["explore"]["variants"]["map"]["parameter_profile"] = "rolling-explore-map"
+    products["explore"]["variants"]["live"]["parameters"] = {
+        "segment.max_distance_m": 4.0,
+    }
+    products["explore"]["variants"]["map"]["parameters"] = {
+        "segment.max_distance_m": 3.0,
+    }
     variant_graph = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,
@@ -542,7 +545,7 @@ def test_explore_compile_reads_parameter_profile_from_selected_variant() -> None
         graph=variant_graph,
     )
 
-    assert plan.parameter_profile == "rolling-explore-map"
+    assert plan.parameters["segment.max_distance_m"] == 3.0
 
 
 @pytest.mark.parametrize("env", ("real", "sim"))
@@ -1841,12 +1844,12 @@ def test_compiled_lifecycle_omits_dead_hot_switch_candidates() -> None:
     assert "hot_switch_candidates" not in plan.lifecycle
 
 
-def test_product_and_env_parameter_declarations_are_preserved_not_resolved() -> None:
+def test_product_env_and_session_parameters_are_resolved_before_launch() -> None:
     graph = load_runtime_graph()
     products = deepcopy(graph.products)
     envs = deepcopy(graph.envs)
-    products["nav"]["parameter_profile"] = "field-nav-defaults"
-    envs["real"]["parameter_overrides"] = {"future_parameter": {"value": 7, "unit": "cells"}}
+    products["nav"]["parameters"] = {"segment.max_distance_m": 3.0}
+    envs["real"]["parameter_overrides"] = {"segment.max_distance_m": 4.0}
     parameter_graph = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,
@@ -1854,25 +1857,44 @@ def test_product_and_env_parameter_declarations_are_preserved_not_resolved() -> 
         envs=envs,
     )
 
-    product = _compile_real("nav", graph=parameter_graph)
+    product = compile_run_plan(
+        "nav",
+        "real",
+        graph=parameter_graph,
+        parameter_overrides={"segment.max_distance_m": 2.0},
+    )
     payload = product.as_dict()
 
-    assert product.parameter_profile == "field-nav-defaults"
-    assert product.parameter_overrides == {"future_parameter": {"value": 7, "unit": "cells"}}
-    assert payload["launch"]["parameter_profile"] == "field-nav-defaults"
-    assert payload["launch"]["parameter_overrides"] == product.parameter_overrides
+    assert product.parameters["segment.max_distance_m"] == 2.0
+    assert payload["launch"]["parameters"] == product.parameters
     assert set(payload["checks"]) == {
         "contracts",
         "critical_modules",
     }
-    assert "future_parameter" not in payload["checks"]
-    assert "future_parameter" not in payload["launch"]["native_process_environment"]
+    assert payload["launch"]["native_process_environment"][
+        "LINGTU_NAV_SEGMENT_MAX_DISTANCE_M"
+    ] == "2.0"
+
+
+def test_parameter_validation_uses_declared_traversability_publish_rate() -> None:
+    graph = load_runtime_graph()
+    envs = deepcopy(graph.envs)
+    envs["real"]["traversability_publish_hz"] = 5.0
+    parameter_graph = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=graph.products,
+        envs=envs,
+    )
+
+    with pytest.raises(ValueError, match="two configured map publication periods"):
+        _compile_real("nav", graph=parameter_graph)
 
 
 def test_sim_backend_inherits_env_parameter_overrides(tmp_path: Path) -> None:
     graph = _materialized_platform_graph(tmp_path)
     envs = deepcopy(graph.envs)
-    envs["sim"]["parameter_overrides"] = {"shared_sim_parameter": {"value": 11, "unit": "ticks"}}
+    envs["sim"]["parameter_overrides"] = {"segment.max_waypoints": 11}
     envs["sim"]["backends"]["mujoco"].pop("parameter_overrides", None)
     parameter_graph = RuntimeGraph(
         root=graph.root,
@@ -1893,14 +1915,16 @@ def test_sim_backend_inherits_env_parameter_overrides(tmp_path: Path) -> None:
         env_config={"backend": "mujoco"},
     )
 
-    assert plan.parameter_overrides == {"shared_sim_parameter": {"value": 11, "unit": "ticks"}}
+    assert plan.parameters["segment.max_waypoints"] == 11
 
 
 def test_sim_backend_parameter_overrides_replace_env_defaults(tmp_path: Path) -> None:
     graph = _materialized_platform_graph(tmp_path)
     envs = deepcopy(graph.envs)
-    envs["sim"]["parameter_overrides"] = {"shared_sim_parameter": {"value": 11, "unit": "ticks"}}
-    envs["sim"]["backends"]["mujoco"]["parameter_overrides"] = {"backend_parameter": {"value": 3, "unit": "frames"}}
+    envs["sim"]["parameter_overrides"] = {"segment.max_waypoints": 11}
+    envs["sim"]["backends"]["mujoco"]["parameter_overrides"] = {
+        "segment.max_waypoints": 3,
+    }
     parameter_graph = RuntimeGraph(
         root=graph.root,
         topics=graph.topics,
@@ -1920,7 +1944,7 @@ def test_sim_backend_parameter_overrides_replace_env_defaults(tmp_path: Path) ->
         env_config={"backend": "mujoco"},
     )
 
-    assert plan.parameter_overrides == {"backend_parameter": {"value": 3, "unit": "frames"}}
+    assert plan.parameters["segment.max_waypoints"] == 3
 
 
 def test_compiled_run_plan_returns_defensive_config_copies() -> None:

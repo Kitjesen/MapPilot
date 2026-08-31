@@ -14,13 +14,15 @@ import yaml
 from lingtu.assembly.native_nav import local_planner_name
 from lingtu.products import ProductName, product_name
 from runtime.config import RobotConfig, load_config
-from runtime.graph.loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
+from runtime.graph.loader import (
+    PRODUCT_HOST_CAPABILITIES,
+    PRODUCT_HOST_FIELDS,
+    RuntimeGraph,
+    load_runtime_graph,
+    resolve_product_variant_spec,
+)
 from runtime.runtime_interface import lidar_extrinsic
 
-from .host_defaults import (
-    FIELD_PRODUCT_HOST_DEFAULTS,
-    FIELD_PRODUCT_VARIANT_HOST_DEFAULTS,
-)
 from .runtime_paths import DEFAULT_GATEWAY_PORT, DEFAULT_PLANNING_FRAME_ID
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -87,11 +89,20 @@ _REAL_HOST_DEFAULTS: Mapping[str, Any] = MappingProxyType(
 
 _COMMON_HOST_DEFAULTS: Mapping[str, Any] = MappingProxyType(
     {
-        "enable_gateway": True,
         "gateway_port": DEFAULT_GATEWAY_PORT,
         "planning_frame_id": DEFAULT_PLANNING_FRAME_ID,
     }
 )
+
+_HOST_CAPABILITY_FLAGS = {
+    "gateway": "enable_gateway",
+    "operator_motion": "enable_teleop",
+    "navigation_skills": "enable_navigation",
+    "goal_commands": "enable_goals",
+    "semantic": "enable_semantic",
+    "semantic_planning": "enable_semantic_planning",
+    "inspection_evidence": "enable_inspection_evidence",
+}
 
 @dataclass(frozen=True)
 class EnvConfig:
@@ -310,13 +321,13 @@ def resolve_product_host_runtime(
             )
     _reject_reserved_overrides(overrides)
 
-    source_defaults = FIELD_PRODUCT_HOST_DEFAULTS[resolved_product_name]
-    if resolved_product_variant is not None:
-        source_defaults = FIELD_PRODUCT_VARIANT_HOST_DEFAULTS[
-            resolved_product_name
-        ][str(resolved_product_variant)]
     config = dict(_COMMON_HOST_DEFAULTS)
-    config.update(source_defaults)
+    config.update(
+        _product_host_config(
+            resolved_product_spec,
+            product=resolved_product_name,
+        )
+    )
 
     if resolved_env.name == "real":
         _apply_defaults(config, _REAL_HOST_DEFAULTS)
@@ -380,6 +391,48 @@ def resolve_product_host_runtime(
             else None
         ),
     )
+
+
+def _product_host_config(
+    product_spec: Mapping[str, Any],
+    *,
+    product: str,
+) -> dict[str, Any]:
+    host = product_spec.get("host")
+    if not isinstance(host, Mapping):
+        raise ValueError(f"Product {product!r} must declare host")
+    unknown_fields = sorted(set(host) - PRODUCT_HOST_FIELDS)
+    if unknown_fields:
+        raise ValueError(
+            f"Product {product!r} has unknown host fields: {', '.join(unknown_fields)}"
+        )
+    raw_capabilities = host.get("capabilities")
+    if not isinstance(raw_capabilities, (list, tuple)):
+        raise ValueError(f"Product {product!r} host.capabilities must be a list")
+    capabilities = tuple(str(value) for value in raw_capabilities)
+    unknown = sorted(set(capabilities) - PRODUCT_HOST_CAPABILITIES)
+    if unknown:
+        raise ValueError(
+            f"Product {product!r} has unknown Host capabilities: {', '.join(unknown)}"
+        )
+    if len(set(capabilities)) != len(capabilities):
+        raise ValueError(f"Product {product!r} host.capabilities must be unique")
+
+    config = {
+        flag: capability in capabilities
+        for capability, flag in _HOST_CAPABILITY_FLAGS.items()
+    }
+    config["exploration_backend"] = (
+        "tare" if "exploration_adapter" in capabilities else "none"
+    )
+    config.update(
+        {
+            str(key): value
+            for key, value in host.items()
+            if key != "capabilities"
+        }
+    )
+    return config
 
 
 def resolve_product_host_config(

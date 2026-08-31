@@ -1,4 +1,4 @@
-schema_version: lingtu.runtime_graph.product.v1
+schema_version: lingtu.runtime_graph.product.v2
 name: tracking
 contracts:
   - lingtu.product.tracking.v1
@@ -10,6 +10,10 @@ slam_mode: localization
 requires_map: true
 switch_policy: cold_restart
 online_hot_switch_supported: false
+host:
+  capabilities: [gateway, navigation_skills, goal_commands, semantic]
+  encoder: none
+  run_startup_checks: true
 native_nav:
   global_planner: octoplanner3d
   local_planner: cmu

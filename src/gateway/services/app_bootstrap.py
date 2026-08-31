@@ -602,7 +602,6 @@ def _active_env_backend(gw: Any, env: str) -> str | None:
 def _runtime_product_capabilities(gw: Any) -> dict[str, Any]:
     """Return Product availability from the resolved Env/RunPlan source."""
 
-    from lingtu.products import OPERATOR_PRODUCT_LIFECYCLES
     from runtime.graph.loader import load_runtime_graph, product_variant_names
 
     identity = runtime_identity(gw)
@@ -642,8 +641,9 @@ def _runtime_product_capabilities(gw: Any) -> dict[str, Any]:
         variant_limits = {}
 
     products: dict[str, dict[str, Any]] = {}
-    for product in sorted(OPERATOR_PRODUCT_LIFECYCLES):
-        product_spec = graph.products.get(product, {})
+    for product, product_spec in sorted(graph.products.items()):
+        if product_spec.get("operator_switchable") is not True:
+            continue
         declared_variants = list(product_variant_names(product_spec))
         allowed_variants = variant_limits.get(product)
         if isinstance(allowed_variants, (list, tuple)):

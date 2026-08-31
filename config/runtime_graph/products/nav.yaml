@@ -1,4 +1,4 @@
-schema_version: lingtu.runtime_graph.product.v1
+schema_version: lingtu.runtime_graph.product.v2
 name: nav
 contracts:
   - lingtu.product.nav.v1
@@ -11,13 +11,24 @@ slam_mode: localization
 requires_map: true
 switch_policy: cold_restart
 online_hot_switch_supported: false
+host:
+  capabilities: [gateway, operator_motion, navigation_skills, goal_commands]
+  run_startup_checks: true
 native_nav:
   global_planner: octoplanner3d
   local_planner: cmu
   local_planners: [cmu, scan]
   use_traversability_cost: false
   corridor_lookahead_m: 3.0
+  goal_reached_m: 0.35
+  waypoint_reached_m: 0.20
+  path_follower_goal_tolerance_m: 0.20
+  path_follower_lookahead_m: 0.35
+  path_follower_max_speed_mps: 0.5
+  path_follower_min_speed_mps: 0.08
   path_follower_max_accel_mps2: 0.3
+  teleop_max_speed_mps: 0.5
+  teleop_max_yaw_rate_rad_s: 1.0
   path_follower_max_yaw_rate_rad_s: 0.5
   path_follower_max_yaw_accel_rad_s2: 1.0
   path_follower_heading_align_enter_rad: 0.7853981633974483

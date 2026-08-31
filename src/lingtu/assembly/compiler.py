@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -12,6 +13,7 @@ from lingtu.assembly.binding_policy import (
     endpoint_transport_for_config,
 )
 from lingtu.assembly.native_nav import compile_native_nav_config, mapd_environment
+from lingtu.assembly.parameters import resolve_parameters
 from lingtu.assembly.products.configuration import (
     EnvSpec,
     resolve_product_host_runtime,
@@ -60,6 +62,7 @@ def compile_run_plan(
     local_planner: str | None = None,
     env_config: Mapping[str, Any] | None = None,
     overrides: Mapping[str, Any] | None = None,
+    parameter_overrides: Mapping[str, Any] | None = None,
     graph: RuntimeGraph | None = None,
 ) -> RunPlan:
     """Compile one Product without starting Modules or native processes."""
@@ -211,14 +214,22 @@ def compile_run_plan(
         roles=product_roles,
         process_control=process_control,
     )
-    parameter_profile = _optional_parameter_profile(
-        product_spec.get("parameter_profile"),
-        product=resolved_product,
-    )
-    parameter_overrides = _parameter_overrides(
-        env=env_name,
-        implementation=implementation,
-        env_spec=graph.envs.get(env_name),
+    product_parameters = product_spec.get("parameters", {})
+    if not isinstance(product_parameters, Mapping):
+        raise ValueError(f"Product {resolved_product!r} parameters must be a mapping")
+    parameters = resolve_parameters(
+        env_overrides=_env_parameters(
+            env=env_name,
+            implementation=implementation,
+            env_spec=graph.envs.get(env_name),
+        ),
+        product_parameters=product_parameters,
+        session_overrides=parameter_overrides,
+        map_publish_hz=_traversability_publish_hz(
+            env=env_name,
+            implementation=implementation,
+            env_spec=graph.envs.get(env_name),
+        ),
     )
     return RunPlan.create(
         product=resolved_product,
@@ -238,8 +249,7 @@ def compile_run_plan(
         route_contract=route_contract,
         host_config=resolved_config,
         lifecycle=lifecycle,
-        parameter_profile=parameter_profile,
-        parameter_overrides=parameter_overrides,
+        parameters=parameters.as_dict(),
         simulation=simulation,
     )
 
@@ -444,14 +454,6 @@ def _product_roles(
     return roles
 
 
-def _optional_parameter_profile(value: Any, *, product: str) -> str | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"Product {product!r} parameter_profile must be a string")
-    return value.strip()
-
-
 def _compile_lifecycle(product: str, spec: Mapping[str, Any]) -> dict[str, Any]:
     """Copy the Product lifecycle fields needed by the runtime."""
 
@@ -477,7 +479,7 @@ def _compile_lifecycle(product: str, spec: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _parameter_overrides(
+def _env_parameters(
     *,
     env: str,
     implementation: Mapping[str, Any],
@@ -493,6 +495,29 @@ def _parameter_overrides(
         return {}
     if not isinstance(value, Mapping):
         raise ValueError(f"Env {env!r} parameter_overrides must be a mapping")
+    return value
+
+
+def _traversability_publish_hz(
+    *,
+    env: str,
+    implementation: Mapping[str, Any],
+    env_spec: Any,
+) -> float:
+    if not isinstance(env_spec, Mapping):
+        raise ValueError(f"unknown Runtime Graph env: {env}")
+    raw = implementation.get(
+        "traversability_publish_hz",
+        env_spec.get("traversability_publish_hz"),
+    )
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Env {env!r} traversability_publish_hz must be positive"
+        ) from exc
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"Env {env!r} traversability_publish_hz must be positive")
     return value
 
 

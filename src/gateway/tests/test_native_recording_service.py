@@ -49,8 +49,7 @@ def _inspection_plan() -> RunPlan:
         host_config=base.host_config,
         lifecycle=lifecycle,
         native_process_environment=base.native_process_environment,
-        parameter_profile=base.parameter_profile,
-        parameter_overrides=base.parameter_overrides,
+        parameters=base.parameters,
         simulation=base.simulation,
         support_processes=base.support_processes,
     )

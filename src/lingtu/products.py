@@ -5,20 +5,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast, get_args
+from typing import Any, Literal, cast
 
 from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
 
-ProductName = Literal[
-    "teleop",
-    "teleop_avoid",
-    "map",
-    "explore",
-    "nav",
-    "tracking",
-    "inspection",
-]
-_PRODUCT_NAMES: frozenset[str] = frozenset(get_args(ProductName))
+_PRODUCT_DEFINITIONS = load_runtime_graph().products
+_PRODUCT_NAMES = frozenset(_PRODUCT_DEFINITIONS)
+ProductName = Literal.__getitem__(tuple(sorted(_PRODUCT_NAMES)))
 
 
 @dataclass(frozen=True)
@@ -88,7 +81,6 @@ def _lifecycle_from_product(name: str, product: Mapping[str, Any]) -> ProductLif
     )
 
 
-_PRODUCT_DEFINITIONS = load_runtime_graph().products
 OPERATOR_PRODUCT_LIFECYCLES: Mapping[str, ProductLifecycle] = MappingProxyType(
     {
         product_name(name): _lifecycle_from_product(name, product)

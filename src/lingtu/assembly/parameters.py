@@ -4,17 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Callable, Mapping
-
-from runtime.yaml_helpers import load_yaml
-
-PARAMETER_PROFILE_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "config"
-    / "runtime_graph"
-    / "parameter_profiles.yaml"
-)
 
 
 @dataclass(frozen=True)
@@ -56,6 +46,10 @@ class RuntimeParameterSet:
     """Validated native parameters."""
 
     values: Mapping[str, ResolvedParameter]
+
+    def as_dict(self) -> dict[str, int | float]:
+        """Return final values keyed by canonical parameter name."""
+        return {name: resolved.value for name, resolved in self.values.items()}
 
     def environment(self) -> dict[str, str]:
         return {
@@ -134,39 +128,14 @@ PARAMETER_SPECS: tuple[ParameterSpec, ...] = (
 _SPECS_BY_NAME = {spec.name: spec for spec in PARAMETER_SPECS}
 
 
-def load_parameter_profiles(path: str | Path | None = None) -> dict[str, dict[str, Any]]:
-    """Load named parameter profiles without treating the file as defaults."""
-
-    profile_path = Path(path) if path is not None else PARAMETER_PROFILE_PATH
-    payload = load_yaml(profile_path, default={})
-    if not isinstance(payload, Mapping):
-        raise ValueError(f"parameter profile catalog must be an object: {profile_path}")
-    profiles = payload.get("profiles", {})
-    if not isinstance(profiles, Mapping):
-        raise ValueError("parameter profile catalog profiles must be an object")
-    result: dict[str, dict[str, Any]] = {}
-    for raw_name, raw_values in profiles.items():
-        name = str(raw_name).strip()
-        if not name or not isinstance(raw_values, Mapping):
-            raise ValueError("parameter profile entries require a name and object value")
-        result[name] = dict(raw_values)
-    return result
-
-
 def resolve_parameters(
     *,
-    parameter_profile: str | None,
+    product_parameters: Mapping[str, Any] | None = None,
     env_overrides: Mapping[str, Any] | None = None,
     session_overrides: Mapping[str, Any] | None = None,
-    profiles: Mapping[str, Mapping[str, Any]] | None = None,
     map_publish_hz: float | None = None,
 ) -> RuntimeParameterSet:
     """Resolve defaults, Env, Product, then session overrides in that order."""
-
-    selected_profile = str(parameter_profile or "").strip() or None
-    profile_catalog = dict(profiles or load_parameter_profiles())
-    if selected_profile is not None and selected_profile not in profile_catalog:
-        raise ValueError(f"unknown runtime parameter profile: {selected_profile}")
 
     resolved = {
         spec.name: ResolvedParameter(
@@ -176,11 +145,7 @@ def resolve_parameters(
         for spec in PARAMETER_SPECS
     }
     _apply_parameter_layer(resolved, env_overrides)
-    if selected_profile is not None:
-        _apply_parameter_layer(
-            resolved,
-            profile_catalog[selected_profile],
-        )
+    _apply_parameter_layer(resolved, product_parameters)
     _apply_parameter_layer(resolved, session_overrides)
 
     stop = float(resolved["risk.stop_threshold"].value)
@@ -234,10 +199,8 @@ def _environment_value(value: int | float) -> str:
 
 
 __all__ = [
-    "PARAMETER_PROFILE_PATH",
     "PARAMETER_SPECS",
     "ResolvedParameter",
     "RuntimeParameterSet",
-    "load_parameter_profiles",
     "resolve_parameters",
 ]

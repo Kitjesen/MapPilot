@@ -359,8 +359,9 @@ identity/environment tests. Startup stages are 10 for sensor/driver; 20 for
 feeder, SLAM, traversability, and nav; 30 for mapd; and 50 for
 exploration/Host.
 
-RunPlan uses schema v4 and rejects v3 with an instruction to switch the Product
-again. It binds each selected artifact and dependency by its real path and
+RunPlan uses schema v8 and rejects older plans with an instruction to switch
+the Product again. It carries final launch parameters and binds each selected
+artifact and dependency by its real path and
 SHA-256 digest, then checks PE32+/x64 and the registered 64-bit VC++ runtime
 before startup. There is no separate per-process MSVC build record and no set
 of four extra JSON files. This is intentionally different from the CycloneDDS

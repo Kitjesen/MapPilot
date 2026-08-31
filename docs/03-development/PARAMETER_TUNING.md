@@ -9,7 +9,8 @@ or command mux.
 | Setting | Edit here | Compiled by |
 | --- | --- | --- |
 | Product control mode and planner backend | `config/runtime_graph/products/*.yaml` under `native_nav` | `src/lingtu/assembly/native_nav.py` |
-| Product path-following thresholds and speed defaults | `src/lingtu/assembly/products/host_defaults.py` | `src/lingtu/assembly/native_nav.py` |
+| Product path-following thresholds and speed defaults | `config/runtime_graph/products/*.yaml` under `native_nav` | `src/lingtu/assembly/native_nav.py` |
+| Rolling segment and risk parameters | `config/runtime_graph/products/*.yaml` under `parameters` | `src/lingtu/assembly/parameters.py` |
 | Robot dimensions, sensor offsets, and calibration | `config/robots/<vendor>/<model>/` and the selected RobotConfig | Product assembly |
 | Native endpoint parsing and hard defaults | `src/nav/cpp/endpoint/nav/runtime/config/config.hpp` and `parse.cpp` | `navd` |
 | Local-planner and tracker behavior | `src/nav/cpp/planning/local/` and `src/nav/cpp/tracking/` | native CMake targets |
@@ -37,11 +38,11 @@ algorithm ownership inside a running Host.
 
 The principal numeric Product inputs compiled for `navd` are:
 
-- `waypoint_threshold` and `final_waypoint_threshold`;
-- `path_follower_goal_tolerance`, `path_follower_lookahead`,
-  `path_follower_min_speed`, `path_follower_max_speed`, and
-  `path_follower_max_accel`;
-- `teleop_slow_distance_m` and `teleop_stop_distance_m`;
+- `waypoint_reached_m` and `goal_reached_m`;
+- `path_follower_goal_tolerance_m`, `path_follower_lookahead_m`,
+  `path_follower_min_speed_mps`, `path_follower_max_speed_mps`, and
+  `path_follower_max_accel_mps2`;
+- `teleop_max_speed_mps` and `teleop_max_yaw_rate_rad_s`;
 - `vehicle_length_m`, `vehicle_width_m`, and sensor offsets;
 - the `octoplanner3d_*` settings accepted by
   `src/lingtu/assembly/native_nav.py`.
@@ -84,7 +85,8 @@ Product.
 
 ## Runtime evidence
 
-The generated RunPlan records the exact `navd` environment. Native endpoint
+The generated RunPlan records both final `launch.parameters` and the exact
+`navd` environment. Native endpoint
 status reports the selected global/local planner, control mode, input blockers,
 path-follower limits, control authority, and terminal goal state. Gateway
 status presents that native state; it does not host another planner or expose

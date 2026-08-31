@@ -2,6 +2,7 @@ schema_version: lingtu.runtime_graph.env.v1
 name: sim
 summary: Simulation environment with an explicit backend implementation selected per run.
 simulation_only: true
+traversability_publish_hz: 10.0
 parameter_overrides:
   map_input.max_cells: 262144
   map_input.max_age_s: 0.50

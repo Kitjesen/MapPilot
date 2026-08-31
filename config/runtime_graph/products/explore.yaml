@@ -1,6 +1,5 @@
-schema_version: lingtu.runtime_graph.product.v1
+schema_version: lingtu.runtime_graph.product.v2
 name: explore
-parameter_profile: rolling_explore
 summary: Grow a map and navigate to exploration goals through the native runtime contract.
 operator_switchable: true
 session_mode: exploring
@@ -15,6 +14,9 @@ variants:
     requires_map: false
     switch_policy: cold_restart
     online_hot_switch_supported: false
+    host:
+      capabilities: [gateway, operator_motion, navigation_skills, goal_commands]
+      run_startup_checks: true
     native_nav:
       global_planner: octoplanner3d
       local_planner: cmu
@@ -25,11 +27,25 @@ variants:
     requires_map: true
     switch_policy: cold_restart
     online_hot_switch_supported: false
+    host:
+      capabilities:
+        - gateway
+        - operator_motion
+        - navigation_skills
+        - goal_commands
+        - exploration_adapter
+      map_artifact_gate_required: true
+      run_startup_checks: true
     native_nav:
       global_planner: octoplanner3d
       local_planner: cmu
       allow_teleop_takeover: true
       teleop_local_planner: true
+parameters:
+  segment.max_distance_m: 5.0
+  segment.max_waypoints: 32
+  risk.stop_threshold: 50.0
+  risk.resume_threshold: 40.0
 processes:
   - lidar
   - imu

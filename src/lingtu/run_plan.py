@@ -21,7 +21,7 @@ from runtime.graph import (
     ProcessSpec,
 )
 
-RUN_PLAN_SCHEMA = "lingtu.run_plan.v7"
+RUN_PLAN_SCHEMA = "lingtu.run_plan.v8"
 CURRENT_RUN_SCHEMA = "lingtu.current.v1"
 SIMULATION_SCHEMA = "lingtu.run_plan.simulation.v1"
 
@@ -34,8 +34,7 @@ _LAUNCH_FIELDS = frozenset(
         "stop_before_start",
         "native_process_environment",
         "session",
-        "parameter_profile",
-        "parameter_overrides",
+        "parameters",
         "simulation",
     }
 )
@@ -82,11 +81,10 @@ class RunPlan:
     contracts: tuple[str, ...]
     critical_modules: tuple[str, ...]
     route_contract: str | None
-    parameter_profile: str | None
     _native_process_environment: dict[str, str] = dataclass_field(repr=False)
     _host_config: dict[str, Any] = dataclass_field(repr=False)
     _lifecycle: dict[str, Any] = dataclass_field(repr=False)
-    _parameter_overrides: dict[str, Any] = dataclass_field(repr=False)
+    _parameters: dict[str, int | float] = dataclass_field(repr=False)
     support_processes: tuple[str, ...] = ()
     _simulation: dict[str, Any] = dataclass_field(default_factory=dict, repr=False)
 
@@ -110,8 +108,7 @@ class RunPlan:
         lifecycle: Mapping[str, Any],
         native_process_environment: Mapping[str, str] | None = None,
         native_nav: Mapping[str, Any] | None = None,
-        parameter_profile: str | None = None,
-        parameter_overrides: Mapping[str, Any] | None = None,
+        parameters: Mapping[str, Any] | None = None,
         simulation: Mapping[str, Any] | None = None,
         support_processes: tuple[str, ...] = (),
     ) -> RunPlan:
@@ -133,6 +130,14 @@ class RunPlan:
             host_config=normalized_host_config,
             lifecycle=normalized_lifecycle,
         )
+        normalized_parameters = _resolved_parameters(parameters)
+        normalized_native_environment = _normalize_native_environment(
+            native_process_environment,
+            native_nav=native_nav,
+        )
+        normalized_native_environment.update(
+            _parameter_environment(normalized_parameters)
+        )
         return cls(
             schema_version=RUN_PLAN_SCHEMA,
             product=normalized_product,
@@ -148,14 +153,10 @@ class RunPlan:
             contracts=resolved_contracts.contract_ids,
             critical_modules=_strings(critical_modules, field="critical_modules"),
             route_contract=_optional_text(route_contract),
-            parameter_profile=_optional_text(parameter_profile),
-            _native_process_environment=_normalize_native_environment(
-                native_process_environment,
-                native_nav=native_nav,
-            ),
+            _native_process_environment=normalized_native_environment,
             _host_config=normalized_host_config,
             _lifecycle=normalized_lifecycle,
-            _parameter_overrides=_json_object(parameter_overrides or {}, field="launch.parameter_overrides"),
+            _parameters=normalized_parameters,
             _simulation=_normalize_simulation(
                 simulation or {},
                 env=normalized_env,
@@ -200,8 +201,7 @@ class RunPlan:
             route_contract=_optional_text(host.get("route_contract")),
             host_config=_object(host.get("config"), field="host.config"),
             lifecycle=_object(launch.get("session"), field="launch.session"),
-            parameter_profile=_optional_text(launch.get("parameter_profile")),
-            parameter_overrides=_object(launch.get("parameter_overrides"), field="launch.parameter_overrides"),
+            parameters=_object(launch.get("parameters"), field="launch.parameters"),
             simulation=_object(launch.get("simulation"), field="launch.simulation"),
         )
 
@@ -258,9 +258,9 @@ class RunPlan:
         return deepcopy(self._simulation)
 
     @property
-    def parameter_overrides(self) -> dict[str, Any]:
-        """Return a copy of Product parameter overrides."""
-        return deepcopy(self._parameter_overrides)
+    def parameters(self) -> dict[str, int | float]:
+        """Return the final validated launch parameters."""
+        return dict(self._parameters)
 
     @property
     def managed_processes(self) -> tuple[ProcessSpec, ...]:
@@ -304,8 +304,7 @@ class RunPlan:
                 "stop_before_start": list(self.stop_before_start),
                 "native_process_environment": self.native_process_environment,
                 "session": self.lifecycle,
-                "parameter_profile": self.parameter_profile,
-                "parameter_overrides": self.parameter_overrides,
+                "parameters": self.parameters,
                 "simulation": self.simulation,
             },
             "host": {
@@ -338,7 +337,6 @@ class RunPlan:
             "host_modules": list(self.modules),
             "contracts": list(self.contracts),
             "route_contract": self.route_contract,
-            "parameter_profile": self.parameter_profile,
             "slam_mode": self._lifecycle.get("slam_mode"),
             "native_control_mode": self._lifecycle.get("native_control_mode"),
             "requires_map": bool(self._lifecycle.get("requires_map", False)),
@@ -713,6 +711,31 @@ def _environment_bool(value: str) -> bool:
     if value in {"0", "1"}:
         return value == "1"
     raise ValueError(f"RunPlan native boolean environment value must be 0 or 1: {value!r}")
+
+
+def _resolved_parameters(value: Mapping[str, Any] | None) -> dict[str, int | float]:
+    from lingtu.assembly.parameters import PARAMETER_SPECS, resolve_parameters
+
+    if value is None:
+        return resolve_parameters().as_dict()
+    expected = {spec.name for spec in PARAMETER_SPECS}
+    observed = set(value)
+    missing = sorted(expected - observed)
+    unknown = sorted(observed - expected)
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if unknown:
+            details.append("unknown: " + ", ".join(unknown))
+        raise ValueError("RunPlan launch.parameters are incomplete (" + "; ".join(details) + ")")
+    return resolve_parameters(session_overrides=value).as_dict()
+
+
+def _parameter_environment(value: Mapping[str, int | float]) -> dict[str, str]:
+    from lingtu.assembly.parameters import resolve_parameters
+
+    return resolve_parameters(session_overrides=value).environment()
 
 
 def _require_fields(

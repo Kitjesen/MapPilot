@@ -54,6 +54,11 @@ navigation, traversability, or driver services.
 | `assembly/` | Product compilation and Host Blueprint construction |
 | `sdk/` | Remote Gateway client |
 
+Product behavior is declared in `config/runtime_graph/products/*.yaml`.
+Assembly translates `host.capabilities` into Modules and writes final validated
+navigation values to RunPlan v8 `launch.parameters`. ProductControl applies
+`--set` during compilation; runners only execute the published RunPlan.
+
 ## Testing
 
 ```bash

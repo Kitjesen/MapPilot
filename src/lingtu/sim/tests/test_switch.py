@@ -2673,13 +2673,6 @@ def test_product_control_sim_saved_map_dry_run_defers_runtime_map_checks(
             ),
             "initial_pose",
         ),
-        (
-            SwitchRequest(
-                target_product="teleop_avoid",
-                parameter_overrides={"speed": 0.2},
-            ),
-            "parameter_overrides",
-        ),
     ),
 )
 def test_sim_switch_rejects_unowned_request_fields_before_runner_rpc(

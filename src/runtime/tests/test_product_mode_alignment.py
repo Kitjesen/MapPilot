@@ -1,35 +1,37 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import get_args
+
+import pytest
 
 from lingtu.assembly.compiler import compile_run_plan
 from lingtu.assembly.native_nav import compile_native_nav_config
 from lingtu.assembly.products import resolve_product_host_runtime
-from lingtu.assembly.products.host_defaults import FIELD_PRODUCT_NAMES
 from lingtu.products import (
     OPERATOR_PRODUCT_LIFECYCLES,
     ProductName,
     product_lifecycle,
 )
 from runtime.contracts.product_runtime import resolve_product_spec_contracts
-from runtime.graph.loader import load_runtime_graph, resolve_product_variant_spec
+from runtime.graph.loader import RuntimeGraph, load_runtime_graph, resolve_product_variant_spec
 from runtime.runtime_interface import TOPICS
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_product_name_type_covers_every_runtime_graph_product() -> None:
-    assert set(get_args(ProductName)) == {
-        "teleop",
-        "teleop_avoid",
-        "map",
-        "explore",
-        "nav",
-        "tracking",
-        "inspection",
+def test_operator_products_come_from_the_runtime_graph() -> None:
+    products = load_runtime_graph().products
+    expected = {
+        name
+        for name, product in products.items()
+        if product.get("operator_switchable") is True
     }
+
+    assert set(OPERATOR_PRODUCT_LIFECYCLES) == expected
+    assert set(get_args(ProductName)) == set(products)
 
 
 def test_explore_product_declares_live_and_map_variants() -> None:
@@ -61,7 +63,6 @@ def test_runtime_graph_is_the_operator_product_source_of_truth() -> None:
     products = load_runtime_graph().products
     switchable = {name for name, product in products.items() if product.get("operator_switchable") is True}
 
-    assert set(FIELD_PRODUCT_NAMES) == set(products)
     assert switchable == set(OPERATOR_PRODUCT_LIFECYCLES)
     assert switchable == set(products)
 
@@ -75,6 +76,46 @@ def test_runtime_graph_is_the_operator_product_source_of_truth() -> None:
         "navigating": "nav",
         "exploring": "explore",
     }
+
+
+def test_unknown_host_capability_is_rejected() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["teleop"]["host"]["capabilities"].append("future_magic")
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        envs=graph.envs,
+    )
+
+    with pytest.raises(ValueError, match="unknown Host capabilities"):
+        resolve_product_host_runtime(
+            "teleop",
+            "real",
+            robot="unitree/go2",
+            graph=broken,
+        )
+
+
+def test_host_flags_cannot_bypass_capability_declaration() -> None:
+    graph = load_runtime_graph()
+    products = deepcopy(graph.products)
+    products["teleop"]["host"]["enable_navigation"] = True
+    broken = RuntimeGraph(
+        root=graph.root,
+        topics=graph.topics,
+        products=products,
+        envs=graph.envs,
+    )
+
+    with pytest.raises(ValueError, match="unknown host fields"):
+        resolve_product_host_runtime(
+            "teleop",
+            "real",
+            robot="unitree/go2",
+            graph=broken,
+        )
 
 
 def test_explore_lifecycle_resolves_the_requested_internal_variant() -> None:

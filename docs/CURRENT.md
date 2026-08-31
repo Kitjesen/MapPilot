@@ -103,8 +103,9 @@ and 50: sensor/driver at 10; feeder, SLAM, traversability, and nav at 20; mapd
 at 30; exploration and Host at 50. This compile result is not Product execution
 evidence.
 
-RunPlan schema v4 is the only accepted current format; v3 is rejected with an
-instruction to switch again. The plan binds real artifact and dependency paths,
+RunPlan schema v8 is the only accepted current format; older plans are rejected
+and require another Product switch. It carries final launch parameters and
+binds real artifact and dependency paths,
 and startup checks PE32+/x64 plus the Registry64/System32
 VC++ runtime. The abandoned per-process MSVC scheme and its four redundant JSON
 files have been removed. The retained CycloneDDS SDK and SLAM-stage

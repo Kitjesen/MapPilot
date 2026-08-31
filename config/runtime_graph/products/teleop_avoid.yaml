@@ -1,4 +1,4 @@
-schema_version: lingtu.runtime_graph.product.v1
+schema_version: lingtu.runtime_graph.product.v2
 name: teleop_avoid
 contracts:
   - lingtu.product.teleop_avoid.v1
@@ -10,6 +10,9 @@ slam_mode: mapping
 requires_map: false
 switch_policy: cold_restart
 online_hot_switch_supported: false
+host:
+  capabilities: [gateway, operator_motion]
+  run_startup_checks: true
 native_nav:
   local_planner: cmu
   local_planners:
@@ -21,6 +24,9 @@ native_nav:
   # per-axis smoother would distort the path command after planning.
   smoothing: false
   path_follower_max_yaw_rate_rad_s: 1.0
+  path_follower_max_speed_mps: 0.5
+  teleop_max_speed_mps: 0.5
+  teleop_max_yaw_rate_rad_s: 1.0
   teleop_planner_horizon_m: 3.5
   teleop_planner_max_deviation_deg: 90.0
   recovery:

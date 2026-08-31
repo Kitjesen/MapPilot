@@ -1,6 +1,6 @@
 # LingTu Runtime Graph
 
-Status: current runtime graph contract as of 2026-08-24.
+Status: current runtime graph contract as of 2026-08-31.
 
 Runtime Graph is the readable contract layer for Product and Env resolution.
 It is not the runtime data plane.
@@ -33,6 +33,13 @@ products/<product>.yaml + envs/<real-or-sim>.yaml
 `scripts/lingtu` and Gateway both invoke this same ProductControl operation.
 Neither one recompiles the Product or owns process ordering.
 
+Each Product uses `lingtu.runtime_graph.product.v2`. Its `host.capabilities`
+list is the environment-independent Host declaration; Assembly translates
+those capability names into the existing Blueprint Module graph. Product
+navigation settings stay under `native_nav`, and rolling launch parameters
+stay under `parameters`. There is no Python Product-default table or named
+parameter profile beside the YAML.
+
 Products declare `processes` using stable logical roles such as `lidar`,
 `slam`, `nav`, and `host`. The ProductControl-managed `real` Env maps those roles to
 deployment `target` values. Topic names validate the selected Env
@@ -50,7 +57,10 @@ The `real` Env is fail closed: every selected process target must be
 installed, become active within its declared timeout, and pass its role-specific
 readiness check. The RunPlan also carries all mode-owned and
 conflicting targets, so switching Products removes stale process ownership
-before startup.
+before startup. Product compilation resolves code defaults, Env parameters,
+Product parameters, and the current `--set` values into `launch.parameters` in
+RunPlan v8. Runners execute that final result and do not resolve parameters a
+second time.
 
 ## Naming
 

@@ -3,6 +3,7 @@ name: real
 summary: Physical robot environment with native typed-DDS runtime processes.
 simulation_only: false
 local_planners: [cmu]
+traversability_publish_hz: 10.0
 parameter_overrides:
   map_input.max_cells: 262144
   # Traversability publishes at 10 Hz; 0.35 s covers more than three frames.

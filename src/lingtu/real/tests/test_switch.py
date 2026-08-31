@@ -917,6 +917,7 @@ def test_session_stage_and_rollback_install_then_remove_one_session(monkeypatch,
     assert 'OCTOPLANNER_MAP_PATH="/maps/plant-a/octomap.ot"' in session_environment
     assert 'FAR_OCCUPANCY_PATH=""' in session_environment
     assert 'EXPLORE_OCCUPANCY_PATH=""' in session_environment
+    assert 'LINGTU_NAV_SEGMENT_MAX_DISTANCE_M="5.0"' in session_environment
     assert "LINGTU_ACTIVE_" not in session_environment
     backend.rollback_session(staged)
     assert files == {}

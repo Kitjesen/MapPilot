@@ -8,6 +8,17 @@ from typing import Any, Mapping
 
 _SCHEMA_VERSION = "lingtu.native_nav_config.v1"
 _CONTROL_MODES = frozenset({"autonomy", "teleop", "teleop_avoid"})
+_LEGACY_NAV_PARAMETER_KEYS = frozenset(
+    {
+        "final_waypoint_threshold",
+        "waypoint_threshold",
+        "path_follower_goal_tolerance",
+        "path_follower_lookahead",
+        "path_follower_max_speed",
+        "path_follower_min_speed",
+        "path_follower_max_accel",
+    }
+)
 _GLOBAL_PLANNERS = frozenset({"octoplanner3d", "far"})
 _LOCAL_PLANNERS = frozenset({"cmu", "scan"})
 _RECOVERY_ACTIONS = frozenset({"translate", "rotate"})
@@ -249,9 +260,15 @@ class NativeNavConfig:
             "LINGTU_NAV_PATH_FOLLOWER_MAX_SPEED_MPS": _env_number(parameters["path_follower_max_speed_mps"]),
             "LINGTU_NAV_PATH_FOLLOWER_MIN_SPEED_MPS": _env_number(parameters["path_follower_min_speed_mps"]),
             "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_RATE_RAD_S": _env_number(parameters["path_follower_max_yaw_rate_rad_s"]),
-            "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_ACCEL_RAD_S2": _env_number(parameters["path_follower_max_yaw_accel_rad_s2"]),
-            "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD": _env_number(parameters["path_follower_heading_align_enter_rad"]),
-            "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": _env_number(parameters["path_follower_heading_align_exit_rad"]),
+            "LINGTU_NAV_PATH_FOLLOWER_MAX_YAW_ACCEL_RAD_S2": _env_number(
+                parameters["path_follower_max_yaw_accel_rad_s2"]
+            ),
+            "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_ENTER_RAD": _env_number(
+                parameters["path_follower_heading_align_enter_rad"]
+            ),
+            "LINGTU_NAV_PATH_FOLLOWER_HEADING_ALIGN_EXIT_RAD": _env_number(
+                parameters["path_follower_heading_align_exit_rad"]
+            ),
             "LINGTU_NAV_SCAN_TIME_FORWARD_S": _env_number(parameters["scan_time_forward_s"]),
             "LINGTU_NAV_SCAN_HEADING_ERROR_RAD": _env_number(parameters["scan_heading_error_rad"]),
             "LINGTU_NAV_SCAN_POSITION_GAIN": _env_number(parameters["scan_position_gain"]),
@@ -316,6 +333,13 @@ def compile_native_nav_config(
     if not product_name:
         raise ValueError("native navigation Product must not be empty")
     native_nav_config = _native_nav_mapping(config)
+    legacy_keys = sorted(
+        (set(config) | set(native_nav_config)) & _LEGACY_NAV_PARAMETER_KEYS
+    )
+    if legacy_keys:
+        raise ValueError(
+            "legacy navigation parameters are unsupported: " + ", ".join(legacy_keys)
+        )
     scan_follower = _scan_follower_config(native_nav_config)
     raw_control_mode = str(config.get("native_control_mode") or "").strip().lower()
     if not raw_control_mode:
@@ -375,7 +399,7 @@ def compile_native_nav_config(
     vehicle_height_m = _finite_number(config, "vehicle_height_m", 0.5)
     default_cylinder_radius_m = math.hypot(0.25 * vehicle_length_m, 0.5 * vehicle_width_m)
     path_follower_goal_tolerance_m = _finite_number(
-        config, "path_follower_goal_tolerance", 0.2
+        native_nav_config, "path_follower_goal_tolerance_m", 0.2
     )
     parameters = {
         "corridor_lookahead_m": _finite_number(native_nav_config, "corridor_lookahead_m", 3.0),
@@ -386,16 +410,22 @@ def compile_native_nav_config(
         "dynamic_confirm_frames": _positive_integer(
             native_nav_config, "dynamic_confirm_frames", 4
         ),
-        "goal_reached_m": _finite_number(config, "final_waypoint_threshold", 0.35),
+        "goal_reached_m": _finite_number(native_nav_config, "goal_reached_m", 0.35),
         "path_follower_goal_tolerance_m": path_follower_goal_tolerance_m,
-        "path_follower_lookahead_m": _finite_number(config, "path_follower_lookahead", 0.3),
+        "path_follower_lookahead_m": _finite_number(
+            native_nav_config, "path_follower_lookahead_m", 0.3
+        ),
         "path_follower_max_accel_mps2": _finite_number(
             native_nav_config,
             "path_follower_max_accel_mps2",
-            _finite_number(config, "path_follower_max_accel", 1.0),
+            1.0,
         ),
-        "path_follower_max_speed_mps": _finite_number(config, "path_follower_max_speed", 0.5),
-        "path_follower_min_speed_mps": _finite_number(config, "path_follower_min_speed", 0.0),
+        "path_follower_max_speed_mps": _finite_number(
+            native_nav_config, "path_follower_max_speed_mps", 0.5
+        ),
+        "path_follower_min_speed_mps": _finite_number(
+            native_nav_config, "path_follower_min_speed_mps", 0.0
+        ),
         "path_follower_max_yaw_rate_rad_s": _finite_number(
             native_nav_config, "path_follower_max_yaw_rate_rad_s", 0.8
         ),
@@ -417,11 +447,17 @@ def compile_native_nav_config(
         "scan_max_yaw_rate_rad_s": scan_follower["max_yaw_rate_rad_s"],
         # CMU and SCAN stop tracking the local path with one shared tolerance.
         "scan_finish_distance_m": path_follower_goal_tolerance_m,
-        "waypoint_reached_m": _finite_number(config, "waypoint_threshold", 0.6),
+        "waypoint_reached_m": _finite_number(
+            native_nav_config, "waypoint_reached_m", 0.6
+        ),
         "teleop_planner_horizon_m": _finite_number(native_nav_config, "teleop_planner_horizon_m", 3.5),
         "teleop_planner_max_deviation_deg": _finite_number(native_nav_config, "teleop_planner_max_deviation_deg", 55.0),
-        "teleop_max_speed_mps": _finite_number(config, "teleop_max_speed_mps", 0.5),
-        "teleop_max_yaw_rate_rad_s": _finite_number(config, "teleop_max_yaw_rate_rad_s", 1.0),
+        "teleop_max_speed_mps": _finite_number(
+            native_nav_config, "teleop_max_speed_mps", 0.5
+        ),
+        "teleop_max_yaw_rate_rad_s": _finite_number(
+            native_nav_config, "teleop_max_yaw_rate_rad_s", 1.0
+        ),
         "vehicle_length_m": vehicle_length_m,
         "vehicle_width_m": vehicle_width_m,
         "collision_hard_margin_m": _finite_number(

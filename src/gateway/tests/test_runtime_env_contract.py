@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 
 from gateway.auth import gateway_api_key_required
 from gateway.schemas import (
@@ -17,6 +18,11 @@ from gateway.services.runtime_dataflow import (
     build_runtime_dataflow_snapshot,
 )
 from gateway.services.runtime_status import _runtime_boundary_status
+
+
+def test_gateway_schema_rejects_unknown_runtime_graph_product() -> None:
+    with pytest.raises(ValidationError):
+        ReadinessProductContract(product="unknown_product")
 
 
 def test_runtime_status_reads_bound_gateway_identity(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -119,7 +125,7 @@ class _FakeRunPlan:
     def as_dict(self) -> dict[str, object]:
         return {
             "identity": {
-                "schema": "lingtu.run_plan.v1",
+                "schema": "lingtu.run_plan.v8",
                 "robot": self.robot,
                 "product": self.product,
                 "product_variant": self.product_variant,
@@ -131,8 +137,7 @@ class _FakeRunPlan:
                 "stop_before_start": [],
                 "native_process_environment": {},
                 "session": dict(self.lifecycle),
-                "parameter_profile": None,
-                "parameter_overrides": {},
+                "parameters": {},
             },
             "host": {
                 "config": dict(self.host_config),

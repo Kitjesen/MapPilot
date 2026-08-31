@@ -897,10 +897,6 @@ def _validate_sim_request(request: SwitchRequest) -> None:
         if not request.relocalize:
             raise RuntimeError("sim initial_pose requires relocalize=True")
         _sim_initial_pose(request.initial_pose)
-    if request.parameter_overrides:
-        raise RuntimeError("sim subprocess switch does not accept parameter_overrides")
-
-
 def _sim_initial_pose(
     value: tuple[float, float, float] | None,
 ) -> tuple[float, float, float] | None:
