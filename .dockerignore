@@ -30,7 +30,6 @@ client/
 .github/
 
 # 3rdparty test artifacts
-src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/docker/
 src/VLM/yolov5/utils/docker/
 
 # Python caches

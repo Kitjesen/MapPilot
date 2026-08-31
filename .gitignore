@@ -113,12 +113,6 @@ src/nav/services/plan/**/CMakeFiles/
 !/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/
 /tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/*
 !/tools/calibration/lidar_imu/LiDAR_IMU_Init/Log/plot.py
-# C++ build artifacts in global_planning
-src/global_planning/**/build/
-src/global_planning/**/CMakeFiles/
-src/global_planning/**/*.o
-src/global_planning/**/*.a
-
 # 鈹€鈹€ Model weights (large binaries 鈥?distribute via release-models.yml) 鈹€鈹€
 *.pt
 *.pth
@@ -145,9 +139,6 @@ assets/media/*.mp4
 maps/*.pcd
 docs/media/videos/*.mp4
 docs/media/videos/*.gif
-!src/global_planning/pct_planner/rsc/PCD/example.pcd
-!src/global_planning/pct_planner/rsc/tomogram/example.pickle
-
 # 鈹€鈹€ IDE / editor / tooling 鈹€鈹€
 .vscode/
 .idea/
@@ -203,12 +194,6 @@ third_party/install/
 third_party/deb-cache/
 third_party/sysroot/
 
-# OR-Tools binaries fetched by scripts/build/fetch_ortools.sh 鈥?~130 MB
-# per arch, not committed. The or-tools/ directory below ships the
-# .gitkeep placeholder only.
-src/exploration/tare_planner/or-tools/*
-!src/exploration/tare_planner/or-tools/.gitkeep
-
 # 鈹€鈹€ Generated test/paper output 鈹€鈹€
 paper_figures/
 pipeline_videos/
@@ -220,9 +205,6 @@ artifacts/
 src/semantic_perception/test_results/
 det_*.jpg
 det_*.png
-
-# 鈹€鈹€ Vendored libs (use system install) 鈹€鈹€
-src/global_planning/pct_planner/planner/lib/3rdparty/gtsam-4.1.1/
 
 # 鈹€鈹€ Sim output (videos, benchmarks 鈥?too large for git) 鈹€鈹€
 sim/output/
@@ -244,8 +226,6 @@ sim/robots/*/tmp*.xml
 
 # 鈹€鈹€ Misc generated 鈹€鈹€
 generate_paper_figures*.py
-src/global_planning/pct_planner/planner/lib/3rdparty/
-src/global_planning/pct_planner/rsc/tomogram/.pct_runnable_cache/
 .claude/worktrees/
 mobileclip_blt.ts
 src/mobileclip_blt.ts

@@ -11,7 +11,6 @@ used by replay and SLAM evaluation scripts.
 | `legkilo_outdoor/` | Outdoor LEG-KILO trajectory and ROS 2 metadata fixtures. | Keep locally when validating outdoor replay scenarios. |
 | `legkilo_full/` | Expanded LEG-KILO corridor fixtures and metadata. | Keep locally when running corridor replay or SLAM comparison gates. |
 | `legkilo_all/` | Aggregated LEG-KILO dataset material when present locally. | Optional local cache; do not commit large raw files. |
-| `legkilo-dataset/` | Compatibility path for older scripts. | Keep only if an older script still expects this path. |
 
 ## Contract
 
