@@ -1,0 +1,84 @@
+:root {
+  /* Application chrome. */
+  --lt-appbar-height: 3.5rem;
+  --lt-appbar-bg: var(--lt-color-glass-surface);
+  --lt-appbar-border: var(--lt-color-border);
+  --lt-appbar-blur: var(--lt-blur-hud);
+  --lt-nav-rail-width: 3.5rem;
+  --lt-workbench-appbar-height: 4rem;
+  --lt-workbench-sidebar-width: 15.25rem;
+
+  /* World HUD. */
+  --lt-hud-bg: var(--lt-color-hud-surface);
+  --lt-hud-bg-strong: var(--lt-color-hud-surface-strong);
+  --lt-hud-fg: var(--lt-color-hud-text);
+  --lt-hud-fg-soft: var(--lt-color-hud-text-soft);
+  --lt-hud-radius: var(--lt-radius-16);
+  --lt-hud-border: var(--lt-border-hairline) solid var(--lt-color-hud-border);
+  --lt-hud-shadow: var(--lt-shadow-overlay);
+  --lt-hud-blur: var(--lt-blur-hud);
+
+  /* Floating action dock. */
+  --lt-action-dock-height: 3.5rem;
+  --lt-action-dock-gap: var(--lt-space-1);
+  --lt-action-dock-padding: var(--lt-space-1);
+  --lt-action-dock-radius: var(--lt-radius-pill);
+  --lt-action-dock-bg: var(--lt-color-hud-surface-strong);
+
+  /* Context drawers appear only after selection. */
+  --lt-drawer-width: min(22rem, calc(100vw - var(--lt-space-8)));
+  --lt-drawer-bg: var(--lt-color-glass-surface);
+  --lt-drawer-fg: var(--lt-color-text);
+  --lt-drawer-border: var(--lt-border-hairline) solid var(--lt-color-border);
+  --lt-drawer-radius: var(--lt-radius-16);
+  --lt-drawer-shadow: var(--lt-shadow-float-md);
+  --lt-drawer-padding: var(--lt-space-6);
+
+  /* Asset trays and tiles. */
+  --lt-asset-tray-height: 7.5rem;
+  --lt-asset-tray-bg: var(--lt-color-glass-surface);
+  --lt-asset-tray-radius: var(--lt-radius-16);
+  --lt-asset-tile-size: 5.5rem;
+  --lt-asset-tile-bg: var(--lt-color-surface-subtle);
+  --lt-asset-tile-bg-hover: var(--lt-color-accent-soft);
+  --lt-asset-tile-radius: var(--lt-radius-12);
+
+  /* Qualification status strip. */
+  --lt-status-strip-height: 2.75rem;
+  --lt-status-strip-gap: var(--lt-space-4);
+  --lt-status-strip-bg: var(--lt-color-surface);
+  --lt-status-strip-border: var(--lt-border-hairline) solid var(--lt-color-border);
+  --lt-status-strip-radius: var(--lt-radius-pill);
+
+  /* Buttons. */
+  --lt-button-height: 2.75rem;
+  --lt-button-padding-x: var(--lt-space-5);
+  --lt-button-gap: var(--lt-space-2);
+  --lt-button-radius: var(--lt-radius-8);
+  --lt-button-bg: var(--lt-color-accent);
+  --lt-button-bg-hover: var(--lt-color-accent-hover);
+  --lt-button-fg: var(--lt-color-accent-foreground);
+  --lt-button-secondary-bg: var(--lt-color-surface);
+  --lt-button-secondary-fg: var(--lt-color-text);
+  --lt-button-secondary-border: var(--lt-border-hairline) solid var(--lt-color-border-strong);
+  --lt-button-ghost-bg-hover: var(--lt-color-surface-muted);
+
+  /* Inputs and prompt bars. */
+  --lt-input-height: 2.75rem;
+  --lt-prompt-height: 4.25rem;
+  --lt-input-bg: var(--lt-color-surface);
+  --lt-input-fg: var(--lt-color-text);
+  --lt-input-placeholder: var(--lt-color-text-muted);
+  --lt-input-border: var(--lt-border-hairline) solid var(--lt-color-border);
+  --lt-input-border-focus: var(--lt-border-hairline) solid var(--lt-color-accent);
+  --lt-input-radius: var(--lt-radius-12);
+  --lt-input-padding-x: var(--lt-space-4);
+
+  /* Notices. */
+  --lt-toast-bg: var(--lt-color-glass-surface);
+  --lt-toast-fg: var(--lt-color-text);
+  --lt-toast-border: var(--lt-border-hairline) solid var(--lt-color-border);
+  --lt-toast-radius: var(--lt-radius-12);
+  --lt-toast-shadow: var(--lt-shadow-float-sm);
+  --lt-toast-padding: var(--lt-space-4);
+}

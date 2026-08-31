@@ -1,0 +1,121 @@
+:root {
+  /* Default daylight application surfaces. */
+  --lt-color-canvas: var(--lt-color-mist-50);
+  --lt-color-surface: var(--lt-color-white);
+  --lt-color-surface-subtle: var(--lt-color-mist-25);
+  --lt-color-surface-muted: var(--lt-color-mist-100);
+  --lt-color-text: var(--lt-color-ink-950);
+  --lt-color-text-soft: var(--lt-color-ink-500);
+  --lt-color-text-muted: var(--lt-color-ink-300);
+  --lt-color-border: var(--lt-color-mist-200);
+  --lt-color-border-strong: var(--lt-color-mist-300);
+  --lt-color-accent: var(--lt-color-teal-700);
+  --lt-color-accent-hover: var(--lt-color-teal-800);
+  --lt-color-accent-soft: var(--lt-color-teal-50);
+  --lt-color-accent-foreground: var(--lt-color-white);
+
+  /* Operational truth states. These names are evidence semantics, not game scores. */
+  --lt-color-ready: var(--lt-color-green-600);
+  --lt-color-warning: var(--lt-color-amber-600);
+  --lt-color-failed: var(--lt-color-red-600);
+  --lt-color-info: var(--lt-color-blue-600);
+  --lt-color-pending: var(--lt-color-mist-500);
+  --lt-color-route: var(--lt-color-blue-500);
+  --lt-color-selection: var(--lt-color-teal-500);
+
+  /* World-overlay surfaces. */
+  --lt-color-hud-surface: var(--lt-alpha-ink-60);
+  --lt-color-hud-surface-strong: var(--lt-alpha-ink-72);
+  --lt-color-hud-text: var(--lt-color-white);
+  --lt-color-hud-text-soft: var(--lt-color-ink-100);
+  --lt-color-hud-border: var(--lt-alpha-white-18);
+  --lt-color-hud-scrim: var(--lt-alpha-ink-18);
+  --lt-color-glass-surface: var(--lt-alpha-white-88);
+  --lt-color-world-canvas: var(--lt-color-ink-900);
+  --lt-color-world-canvas-raised: var(--lt-color-ink-800);
+  --lt-color-world-grid: var(--lt-alpha-white-18);
+  --lt-color-world-route: var(--lt-color-blue-500);
+  --lt-color-world-plot: var(--lt-alpha-teal-12);
+
+  /* Existing engineering pages use this compatibility surface while they migrate. */
+  --lt-color-workbench-canvas: var(--lt-color-ink-950);
+  --lt-color-workbench-surface: var(--lt-color-ink-900);
+  --lt-color-workbench-surface-raised: var(--lt-color-ink-850);
+  --lt-color-workbench-surface-active: var(--lt-color-ink-800);
+  --lt-color-workbench-border: var(--lt-color-ink-700);
+  --lt-color-workbench-border-strong: var(--lt-color-ink-600);
+  --lt-color-workbench-text: var(--lt-color-ink-50);
+  --lt-color-workbench-text-soft: var(--lt-color-ink-200);
+  --lt-color-workbench-text-muted: var(--lt-color-ink-300);
+  --lt-color-workbench-accent: var(--lt-color-teal-500);
+  --lt-color-workbench-accent-strong: var(--lt-color-teal-400);
+  --lt-color-workbench-accent-ink: var(--lt-color-ink-1000);
+  --lt-color-workbench-danger: var(--lt-color-red-500);
+  --lt-color-workbench-warning: var(--lt-color-amber-500);
+  --lt-color-workbench-positive: var(--lt-color-teal-400);
+
+  /* Typography roles. */
+  --lt-font-ui: var(--lt-font-family-sans);
+  --lt-font-display: var(--lt-font-family-display);
+  --lt-font-data: var(--lt-font-family-mono);
+  --lt-text-caption: var(--lt-font-size-11);
+  --lt-text-label: var(--lt-font-size-12);
+  --lt-text-body: var(--lt-font-size-14);
+  --lt-text-title: var(--lt-font-size-18);
+  --lt-text-page-title: var(--lt-font-size-28);
+  --lt-text-hero: var(--lt-font-size-40);
+
+  /* Layout roles. */
+  --lt-space-control-gap: var(--lt-space-2);
+  --lt-space-component: var(--lt-space-4);
+  --lt-space-section: var(--lt-space-8);
+  --lt-space-page-x: clamp(var(--lt-space-4), 3vw, var(--lt-space-12));
+  --lt-space-page-y: clamp(var(--lt-space-4), 2vw, var(--lt-space-8));
+  --lt-min-target: 2.75rem;
+  --lt-focus-width: 2px;
+  --lt-focus-offset: 2px;
+  --lt-focus-color: var(--lt-color-teal-600);
+  --lt-shape-panel: var(--lt-radius-12);
+  --lt-shape-control: var(--lt-radius-8);
+
+  /* Semantic motion roles. */
+  --lt-motion-fast: var(--lt-duration-fast);
+  --lt-motion-normal: var(--lt-duration-normal);
+  --lt-motion-slow: var(--lt-duration-slow);
+  --lt-motion-distance: var(--lt-space-2);
+}
+
+[data-lt-theme="evidence-dark"] {
+  --lt-color-canvas: var(--lt-color-ink-950);
+  --lt-color-surface: var(--lt-color-ink-900);
+  --lt-color-surface-subtle: var(--lt-color-ink-925);
+  --lt-color-surface-muted: var(--lt-color-ink-850);
+  --lt-color-text: var(--lt-color-ink-50);
+  --lt-color-text-soft: var(--lt-color-ink-200);
+  --lt-color-text-muted: var(--lt-color-ink-300);
+  --lt-color-border: var(--lt-color-ink-700);
+  --lt-color-border-strong: var(--lt-color-ink-600);
+  --lt-color-accent: var(--lt-color-teal-400);
+  --lt-color-accent-hover: var(--lt-color-teal-300);
+  --lt-color-accent-soft: var(--lt-alpha-teal-12);
+  --lt-color-accent-foreground: var(--lt-color-ink-1000);
+  --lt-color-ready: var(--lt-color-green-500);
+  --lt-color-warning: var(--lt-color-amber-500);
+  --lt-color-failed: var(--lt-color-red-500);
+  --lt-color-info: var(--lt-color-blue-500);
+  --lt-focus-color: var(--lt-color-teal-400);
+  color-scheme: dark;
+}
+
+[data-lt-theme="lightfield"] {
+  color-scheme: light;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --lt-motion-fast: var(--lt-duration-instant);
+    --lt-motion-normal: var(--lt-duration-instant);
+    --lt-motion-slow: var(--lt-duration-instant);
+    --lt-motion-distance: var(--lt-space-0);
+  }
+}

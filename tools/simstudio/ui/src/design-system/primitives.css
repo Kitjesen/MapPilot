@@ -1,0 +1,121 @@
+:root {
+  /* Color primitives: neutral daylight surfaces. */
+  --lt-color-white: #ffffff;
+  --lt-color-mist-25: #fbfcfb;
+  --lt-color-mist-50: #f5f7f6;
+  --lt-color-mist-100: #edf1ef;
+  --lt-color-mist-200: #dde4e1;
+  --lt-color-mist-300: #c8d2ce;
+  --lt-color-mist-400: #a7b5b0;
+  --lt-color-mist-500: #7d8e88;
+
+  /* Color primitives: graphite world overlays and engineering views. */
+  --lt-color-ink-50: #e7edf0;
+  --lt-color-ink-100: #d4dde1;
+  --lt-color-ink-200: #bbc6cc;
+  --lt-color-ink-300: #8999a3;
+  --lt-color-ink-400: #667780;
+  --lt-color-ink-500: #4a5a62;
+  --lt-color-ink-600: #3a4952;
+  --lt-color-ink-700: #27333b;
+  --lt-color-ink-800: #19252a;
+  --lt-color-ink-850: #151d23;
+  --lt-color-ink-900: #10161b;
+  --lt-color-ink-925: #0e1317;
+  --lt-color-ink-950: #0b0f13;
+  --lt-color-ink-1000: #07100e;
+
+  /* Color primitives: restrained operational accents. */
+  --lt-color-teal-50: #edf9f6;
+  --lt-color-teal-100: #d4f1ea;
+  --lt-color-teal-300: #8ad8c8;
+  --lt-color-teal-400: #65c6b4;
+  --lt-color-teal-500: #45b49f;
+  --lt-color-teal-600: #278f7e;
+  --lt-color-teal-700: #1e6d61;
+  --lt-color-teal-800: #15574e;
+  --lt-color-green-500: #54ad72;
+  --lt-color-green-600: #32764b;
+  --lt-color-amber-500: #c99743;
+  --lt-color-amber-600: #835f1e;
+  --lt-color-red-500: #cd6c70;
+  --lt-color-red-600: #ac4d54;
+  --lt-color-blue-500: #4aa6c7;
+  --lt-color-blue-600: #2e6d84;
+
+  /* Transparent primitives. */
+  --lt-alpha-white-72: rgb(255 255 255 / 0.72);
+  --lt-alpha-white-88: rgb(255 255 255 / 0.88);
+  --lt-alpha-white-18: rgb(255 255 255 / 0.18);
+  --lt-alpha-ink-08: rgb(11 15 19 / 0.08);
+  --lt-alpha-ink-18: rgb(11 15 19 / 0.18);
+  --lt-alpha-ink-42: rgb(11 15 19 / 0.42);
+  --lt-alpha-ink-56: rgb(11 15 19 / 0.56);
+  --lt-alpha-ink-60: rgb(11 15 19 / 0.6);
+  --lt-alpha-ink-72: rgb(11 15 19 / 0.72);
+  --lt-alpha-teal-12: rgb(69 180 159 / 0.12);
+  --lt-alpha-teal-20: rgb(69 180 159 / 0.2);
+
+  /* Typography primitives. No web-font dependency is required. */
+  --lt-font-family-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --lt-font-family-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --lt-font-family-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --lt-font-size-10: 0.625rem;
+  --lt-font-size-11: 0.6875rem;
+  --lt-font-size-12: 0.75rem;
+  --lt-font-size-14: 0.875rem;
+  --lt-font-size-16: 1rem;
+  --lt-font-size-18: 1.125rem;
+  --lt-font-size-22: 1.375rem;
+  --lt-font-size-28: 1.75rem;
+  --lt-font-size-40: 2.5rem;
+  --lt-font-weight-regular: 400;
+  --lt-font-weight-medium: 500;
+  --lt-font-weight-semibold: 600;
+  --lt-leading-tight: 1.2;
+  --lt-leading-body: 1.5;
+  --lt-tracking-tight: -0.02em;
+  --lt-tracking-label: 0.04em;
+
+  /* Four-pixel spacing scale. */
+  --lt-space-0: 0;
+  --lt-space-1: 0.25rem;
+  --lt-space-2: 0.5rem;
+  --lt-space-3: 0.75rem;
+  --lt-space-4: 1rem;
+  --lt-space-5: 1.25rem;
+  --lt-space-6: 1.5rem;
+  --lt-space-8: 2rem;
+  --lt-space-10: 2.5rem;
+  --lt-space-12: 3rem;
+  --lt-space-16: 4rem;
+  --lt-space-20: 5rem;
+  --lt-space-24: 6rem;
+
+  /* Shape and elevation primitives. */
+  --lt-radius-4: 0.25rem;
+  --lt-radius-8: 0.5rem;
+  --lt-radius-12: 0.75rem;
+  --lt-radius-16: 1rem;
+  --lt-radius-pill: 999px;
+  --lt-border-hairline: 1px;
+  --lt-shadow-float-sm: 0 4px 18px rgb(11 15 19 / 0.1);
+  --lt-shadow-float-md: 0 12px 36px rgb(11 15 19 / 0.14);
+  --lt-shadow-overlay: 0 12px 42px rgb(0 0 0 / 0.24);
+  --lt-blur-hud: 18px;
+
+  /* Motion and stacking primitives. */
+  --lt-duration-instant: 1ms;
+  --lt-duration-fast: 120ms;
+  --lt-duration-normal: 180ms;
+  --lt-duration-slow: 260ms;
+  --lt-ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --lt-ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --lt-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --lt-z-world: 0;
+  --lt-z-hud: 20;
+  --lt-z-drawer: 40;
+  --lt-z-toast: 60;
+  --lt-z-dialog: 80;
+  --lt-z-emergency: 100;
+}
