@@ -3,6 +3,10 @@
 #include <algorithm>
 #include <limits>
 
+namespace {
+constexpr double kPi = 3.14159265358979323846;
+}
+
 LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_config(config), m_kf(kf)
 {
     m_ikdtree = std::make_shared<KD_TREE<PointType>>();
@@ -35,7 +39,7 @@ LidarProcessor::LidarProcessor(Config &config, std::shared_ptr<IESKF> kf) : m_co
     m_kf->setStopFunction([&](const V21D &delta) -> bool
                           { V3D rot_delta = delta.block<3, 1>(0, 0);
                             V3D t_delta = delta.block<3, 1>(3, 0);
-                            return (rot_delta.norm() * (180.0 / M_PI) < 0.01) && (t_delta.norm() * 100 < 0.015); });
+                            return (rot_delta.norm() * (180.0 / kPi) < 0.01) && (t_delta.norm() * 100 < 0.015); });
 }
 
 void LidarProcessor::trimCloudMap()

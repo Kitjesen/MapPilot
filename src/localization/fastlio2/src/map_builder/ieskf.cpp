@@ -346,7 +346,7 @@ bool IESKF::update()
             break;
     }
 
-    // Store degeneracy info for external access (ROS2 publisher)
+    // Store degeneracy diagnostics for runtime consumers.
     m_degeneracy = shared_data.degeneracy;
     m_degeneracy.iter_num = static_cast<int>(shared_data.iter_num);
     // Loop exited via m_stop_func only if iter_num < m_max_iter; equality means

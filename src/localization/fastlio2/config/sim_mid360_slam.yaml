@@ -1,0 +1,115 @@
+# Simulation MID-360 Fast-LIO2 profile.
+#
+# This is intentionally separate from robot-specific field MID-360 configs. Those carry
+# real-board IMU calibration such as acc_scale: 9.91. MuJoCo synthetic IMU
+# samples are generated against standard gravity and written to the native
+# Livox DDS publisher in g units, so this config converts them back with
+# 9.80665 m/s^2 per g.
+
+imu_topic: /imu/raw
+lidar_topic: /lidar/raw_frame
+body_frame: body
+world_frame: odom
+
+print_time_cost: false
+
+lidar_type: 1
+scan_line: 4
+timestamp_unit: 3
+
+acc_scale: 9.80665
+time_diff_lidar_to_imu: 0.0
+max_imu_gap_s: 0.25
+max_imu_buffer: 4000
+# Navigation is real-time: discard old scans under overload instead of
+# replaying a seconds-long LiDAR backlog into planning.
+max_lidar_buffer: 3
+
+# MuJoCo contact dynamics can make local odometry drift faster than the field
+# sensor. Continuous map alignment remains guarded by fitness, inliers, and
+# covariance; this wider simulation-only transform bound lets a validated map
+# registration recover instead of leaving navigation on a stale transform.
+track_against_map_max_translation_m: 3.0
+# A high overlap ratio from only a tiny map-edge patch is not sufficient to
+# establish map->odom. The acceptance map currently yields about 298 supported
+# scan points at the verified seed, so require at least 100 independent samples.
+relocalization_min_evaluated_points: 100
+
+# Simulation-only diagnostic path. Keep the default off so MuJoCo acceptance
+# exercises Fast-LIO-only motion estimation unless an operator explicitly uses
+# a pose-prior diagnostic config/run.
+odom_prior_enabled: false
+odom_prior_max_age_s: 0.20
+odom_prior_map_resolution: 0.20
+odom_prior_snap_translation_m: 0.25
+
+lidar_filter_num: 2
+lidar_min_range: 0.5
+lidar_max_range: 20.0
+scan_resolution: 0.25
+map_resolution: 0.2
+
+cube_len: 1000
+det_range: 30
+move_thresh: 1.5
+
+max_map_points: 1000000
+stationary_thresh: 0.08
+
+na: 0.01
+ng: 0.01
+nba: 0.0001
+nbg: 0.0001
+
+# Match the upstream initialization horizon: roughly one second of stationary
+# 200 Hz IMU data before the acceleration magnitude scale is locked.
+imu_init_num: 200
+near_search_num: 3
+ieskf_max_iter: 5
+# Per-scan pose/velocity step guards. IMPORTANT: max_update_velocity_mps rejects the
+# entire LiDAR update when |v| exceeds the cap (see ieskf.cpp). Lowering it below
+# IMU-predicted speed causes reject loops and runaway odometry. Keep absolute
+# velocity cap high; tune delta/translation and ZUPT instead for MuJoCo policy.
+max_update_translation_m: 0.35
+max_update_rotation_rad: 0.35
+max_update_velocity_mps: 3.0
+max_update_velocity_delta_mps: 0.35
+# A five-iteration IEKF solve frequently reaches a usable bounded correction
+# without satisfying the sub-millimetre stop threshold. Reject only the
+# non-converged updates that are also degenerate; rejecting every such update
+# turns normal policy motion into an IMU-only integration loop.
+reject_nonconverged_update: false
+# Partial degeneracy is already handled by the observable-subspace projection.
+# Keeping this true would discard that bounded correction whenever the strict
+# iteration stop threshold is not reached, which recreates the IMU-only loop.
+reject_degenerate_nonconverged_update: false
+
+gravity_align: true
+esti_il: false
+
+# The formal Thunder rig raycasts from lidar1_link_site while its synthetic IMU
+# is the base_link IMU.  This exact RobotPackage mount keeps Fast-LIO diagnostic
+# runs on the same sensor geometry as truth-localized Product simulation.
+r_il: [0.7071067812, 0.0, 0.7071067812, 0.0, -1.0, 0.0, 0.7071067812, 0.0, -0.7071067812]
+t_il: [0.402876074867229, 0.0, 0.0582019450665819]
+
+# The Fast-LIO estimator state follows the MID-360 IMU frame. Navigation,
+# collision checking, and the saved-map initial pose use the quadruped body
+# reference. This rigid transform maps IMU-frame points into navigation-body
+# coordinates and keeps the public odometry contract as odom -> body.
+navigation_body_from_imu_rotation: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+navigation_body_from_imu_translation: [0.0, 0.0, 0.0]
+
+lidar_cov_inv: 1000.0
+
+# ZUPT triggers when IMU variance and mean look static (see imu_processor.cpp).
+# box_explore turn phases keep gyro above imu_static_gyro_thresh, so ZUPT mainly
+# clamps residual velocity during vx=0 phase gaps and forward crawl segments.
+imu_static_acc_thresh: 0.22
+imu_static_gyro_thresh: 0.022
+zupt_min_static_frames: 6
+zupt_sigma_v: 0.015
+zupt_sigma_pos: 0.08
+
+vertical_velocity_constraint_enabled: true
+vertical_velocity_sigma_v: 0.05

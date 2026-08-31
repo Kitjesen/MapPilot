@@ -57,7 +57,6 @@ fi
 cmake -S "$ROOT/src/localization/slam/cpp" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
   -DLINGTU_SLAM_BUILD_TESTS="${LINGTU_SLAM_BUILD_TESTS:-ON}" \
-  -DLINGTU_SLAM_BUILD_PYTHON_BINDINGS="${LINGTU_SLAM_BUILD_PYTHON_BINDINGS:-ON}" \
   -DLINGTU_SLAM_BUILD_DDS_RUNTIME="$BUILD_DDS_RUNTIME" \
   -DLINGTU_SLAM_FASTLIO2_BACKEND="$FASTLIO2_BACKEND" \
   -DCPU_BBS3D_ROOT="$CPU_BBS3D_ROOT" \
@@ -69,8 +68,11 @@ cmake --build "$BUILD_DIR" --parallel "$JOBS"
 
 if [[ "${LINGTU_SLAM_BUILD_TESTS:-ON}" == "ON" && -x "$BUILD_DIR/test_slam_contract" ]]; then
   "$BUILD_DIR/test_slam_contract"
-  ctest --test-dir "$BUILD_DIR" --output-on-failure \
-    -R 'lingtu_slam_(icp_diagnostics|relocalization_gate|ieskf_initialization)'
+  (
+    cd "$BUILD_DIR"
+    ctest --output-on-failure \
+      -R 'messages_(icp_diagnostics|relocalization_gate|ieskf_initialization|ikd_tree_concurrency)'
+  )
 fi
 
 if cmake_bool_on "$BUILD_DDS_RUNTIME"; then
@@ -78,7 +80,7 @@ if cmake_bool_on "$BUILD_DDS_RUNTIME"; then
   CONTROL_BIN="$BUILD_DIR/slamctl"
   if [[ ! -x "$BIN" ]]; then
     echo "ERROR: build finished but native SLAM DDS runtime is missing: $BIN" >&2
-    echo "Rebuild with: LINGTU_SLAM_BUILD_DDS_RUNTIME=ON LINGTU_SLAM_BUILD_PYTHON_BINDINGS=OFF bash scripts/build/build_slam_core.sh" >&2
+    echo "Rebuild with: LINGTU_SLAM_BUILD_DDS_RUNTIME=ON bash scripts/build/build_slam_core.sh" >&2
     exit 1
   fi
   if [[ ! -x "$CONTROL_BIN" ]]; then

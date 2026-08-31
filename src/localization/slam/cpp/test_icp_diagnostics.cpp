@@ -17,7 +17,7 @@ void require(bool condition, const char *message)
 
 CloudType::Ptr makeCloud()
 {
-    auto cloud = std::make_shared<CloudType>();
+    CloudType::Ptr cloud(new CloudType);
     for (int x = 0; x < 8; ++x) {
         for (int y = 0; y < 7; ++y) {
             for (int z = 0; z < 5; ++z) {
@@ -38,7 +38,7 @@ CloudType::Ptr makeCloud()
 
 CloudType::Ptr makeSmallCloud(const CloudType::Ptr &source)
 {
-    auto cloud = std::make_shared<CloudType>();
+    CloudType::Ptr cloud(new CloudType);
     cloud->points.assign(source->points.begin(), source->points.begin() + 16);
     cloud->width = static_cast<std::uint32_t>(cloud->size());
     cloud->height = 1U;
@@ -48,7 +48,7 @@ CloudType::Ptr makeSmallCloud(const CloudType::Ptr &source)
 
 CloudType::Ptr transformedCloud(const CloudType::Ptr &source, const M4F &transform)
 {
-    auto cloud = std::make_shared<CloudType>();
+    CloudType::Ptr cloud(new CloudType);
     cloud->reserve(source->size());
     for (const PointType &point : source->points) {
         const Eigen::Vector4f transformed = transform * Eigen::Vector4f(
@@ -67,7 +67,7 @@ CloudType::Ptr transformedCloud(const CloudType::Ptr &source, const M4F &transfo
 
 CloudType::Ptr cloudWithOutsideMapPoints(const CloudType::Ptr &source)
 {
-    auto cloud = std::make_shared<CloudType>(*source);
+    CloudType::Ptr cloud(new CloudType(*source));
     for (int i = 0; i < 400; ++i) {
         PointType point;
         point.x = 10.0F + static_cast<float>(i % 20) * 0.05F;

@@ -11,6 +11,46 @@
 
 namespace lingtu::localization::opt {
 
+namespace detail {
+
+using Matrix4 = std::array<std::array<double, 4>, 4>;
+using Matrix4x6 = std::array<std::array<double, 6>, 4>;
+using Matrix6 = std::array<std::array<double, 6>, 6>;
+
+struct PlaneSample {
+  std::array<double, 3> source{};
+  std::array<double, 3> target{};
+  std::array<double, 3> normal{};
+};
+
+struct PlaneInformation {
+  bool valid = false;
+  Pose transform;
+  Matrix4 hessian{};
+  std::array<double, 4> gradient{};
+  std::vector<double> residuals;
+  std::size_t rank = 0;
+  double sigma = 0.0;
+};
+
+std::array<double, 4> point_to_plane_jacobian(const std::array<double, 3> &transformed_source,
+                                              const std::array<double, 3> &normal);
+
+PlaneInformation refine_plane_information(const std::vector<PlaneSample> &samples,
+                                          const Pose &initial, std::size_t iterations = 3);
+
+PlaneInformation measure_plane_information(const std::vector<PlaneSample> &samples,
+                                           const Pose &transform);
+
+Matrix4x6 gravity_left_to_body_right_jacobian(const Pose &gravity_from_to,
+                                              const Pose &gravity_body_to);
+
+std::array<double, 21> body_right_information_upper(const Matrix4 &gravity_hessian, double sigma,
+                                                    const Pose &gravity_from_to,
+                                                    const Pose &gravity_body_to);
+
+}  // namespace detail
+
 struct LoopConstraintOptions {
   std::size_t min_index_separation = 20;
   double min_path_separation_m = 8.0;
@@ -99,11 +139,13 @@ struct LoopCandidateDiagnostic {
 };
 
 struct LoopConstraintReport {
-  std::string schema_version = "lingtu.loop_constraints.shadow.v3";
-  std::string algorithm_version = "lingtu.loop_verify.2";
+  std::string schema_version = "lingtu.loop_constraints.v4";
+  std::string algorithm_version = "lingtu.loop_verify.3";
   std::string threshold_version = "lingtu.loop_thresholds.v3";
   std::string frame_convention = "patch=body_local,pose=T_map_body,constraint=T_from_to";
-  std::string information_convention = "shadow_only;information_diagonal=zero;not_graph_compatible";
+  std::string information_convention =
+      "body_right_tangent=[omega,upsilon];information_upper=row_major_6x6;"
+      "forward_signed_point_to_plane_only";
   std::string options_fingerprint;
   LoopConstraintOptions options;
   std::string poses_fingerprint;
@@ -126,6 +168,18 @@ struct LoopConstraintResult {
   std::vector<GeometricConstraint> constraints;
   LoopConstraintReport report;
 };
+
+struct SequentialConstraintResult {
+  bool ok = false;
+  std::string code;
+  std::string message;
+  GeometricConstraint constraint;
+  LoopCandidateDiagnostic diagnostic;
+};
+
+SequentialConstraintResult generate_sequential_constraint(
+    const Map &map, const std::vector<Keyframe> &keyframes, std::size_t from_index,
+    const LoopConstraintOptions &options = {});
 
 LoopConstraintResult generate_loop_constraints(const Map &map,
                                                const std::vector<Keyframe> &keyframes,

@@ -1,5 +1,7 @@
-"""Native SLAM module and backend contract."""
+"""Native SLAM C++ sources and runtime contracts.
 
-from .module import SlamModule
+SLAM execution is owned by the external ``slamd`` process. Python Host code
+consumes its outputs through ``localization.adapters``.
+"""
 
-__all__ = ["SlamModule"]
+__all__: list[str] = []

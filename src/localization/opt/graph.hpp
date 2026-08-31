@@ -33,18 +33,13 @@ struct GeometricConstraint {
   // SE(3) tangent information order is fixed by the pose-graph ABI:
   // [omega_x, omega_y, omega_z, upsilon_x, upsilon_y, upsilon_z].
   // A caller must provide every axis explicitly; zero defaults fail closed.
-  std::array<double, 6> information_diagonal{};
+  // Packed row-major upper triangle of the full 6x6 information matrix.
+  std::array<double, 21> information_upper{};
 };
 
 struct OptimizeOptions {
   std::string strategy = "pgo";
   std::size_t max_iterations = 30;
-  double prior_weight = 1000000.0;
-  double chain_rot_weight = 10000.0;
-  double chain_trans_weight = 10000.0;
-  double skip_rot_weight = 1000.0;
-  double skip_trans_weight = 1000.0;
-  std::size_t skip_stride = 0;
   std::vector<GeometricConstraint> geometric_constraints;
 };
 

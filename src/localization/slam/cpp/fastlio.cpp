@@ -53,13 +53,6 @@ struct RuntimeConfig {
   double odom_prior_map_resolution = 0.20;
   double odom_prior_snap_translation_m = 0.25;
   std::size_t max_odom_prior_buffer = 4000;
-  // The current save-time closure heuristic has no independent geometric
-  // verification. Keep it opt-in until native place recognition and ICP/GICP
-  // constraints are wired into the pose graph.
-  bool map_optimization_enabled = false;
-  double map_optimization_resolution = 0.20;
-  double loop_closure_max_error_m = 1.25;
-  double loop_closure_min_path_m = 4.0;
   std::size_t max_patch_snapshots = 3000;
   double patch_min_interval_s = 1.0;
   double patch_min_translation_m = 0.20;
@@ -94,51 +87,10 @@ struct VoxelKeyHash {
 
 struct PatchSnapshot {
   std::string name;
+  std::uint64_t sequence = 0;
   double stamp_s = 0.0;
   Pose3d pose;
   Cloud cloud;
-};
-
-struct LoopClosureCandidate {
-  bool found = false;
-  std::size_t start_index = 0;
-  std::size_t end_index = 0;
-  double error_m = -1.0;
-  double path_m = 0.0;
-};
-
-struct MapOptimizationReport {
-  std::string status = "not_run";
-  std::string backend = "native_patch_pose_graph";
-  std::string refine_backend = "native_voxel_refine";
-  bool enabled = true;
-  bool loop_closure_enabled = true;
-  bool loop_closure_applied = false;
-  bool refine_enabled = true;
-  bool refine_applied = false;
-  int patch_count = 0;
-  int pose_count = 0;
-  int optimized_pose_count = 0;
-  int loop_count = 0;
-  int raw_map_points = 0;
-  int optimized_map_points = 0;
-  double loop_closure_error_m = -1.0;
-  std::string raw_map_path;
-  std::string optimized_map_path;
-  std::string metadata_path;
-};
-
-struct OptimizedMapResult {
-  Cloud cloud;
-  MapOptimizationReport report;
-};
-
-struct VoxelAccum {
-  double x = 0.0;
-  double y = 0.0;
-  double z = 0.0;
-  double intensity = 0.0;
-  int hits = 0;
 };
 
 bool finite(double value) {
@@ -243,10 +195,6 @@ Status loadYamlConfig(
       config,
       "max_odom_prior_buffer",
       runtime_config.max_odom_prior_buffer);
-  readIfPresent(config, "map_optimization_enabled", runtime_config.map_optimization_enabled);
-  readIfPresent(config, "map_optimization_resolution", runtime_config.map_optimization_resolution);
-  readIfPresent(config, "loop_closure_max_error_m", runtime_config.loop_closure_max_error_m);
-  readIfPresent(config, "loop_closure_min_path_m", runtime_config.loop_closure_min_path_m);
   readIfPresent(config, "max_patch_snapshots", runtime_config.max_patch_snapshots);
   readIfPresent(config, "patch_min_interval_s", runtime_config.patch_min_interval_s);
   readIfPresent(config, "patch_min_translation_m", runtime_config.patch_min_translation_m);
@@ -329,7 +277,7 @@ bool validPoint(const PointXYZIT& point) {
 }
 
 CloudType::Ptr toPclCloud(const LidarFrame& frame, const Config& config) {
-  auto cloud = std::make_shared<CloudType>();
+  CloudType::Ptr cloud(new CloudType);
   const int filter_num = std::max(1, config.lidar_filter_num);
   cloud->reserve(frame.points.size() / static_cast<std::size_t>(filter_num) + 1);
   const double min2 = config.lidar_min_range * config.lidar_min_range;
@@ -618,7 +566,8 @@ Status writePatchIndex(
 
 Status writePatchBundle(
     const std::filesystem::path& map_dir,
-    const std::vector<PatchSnapshot>& patches) {
+    const std::vector<PatchSnapshot>& patches,
+    std::uint64_t dropped_count) {
   if (patches.empty()) {
     return Status::Ok("no_patches");
   }
@@ -632,7 +581,25 @@ Status writePatchBundle(
       return patch_status;
     }
   }
-  return writePatchIndex(map_dir, patches);
+  const Status index_status = writePatchIndex(map_dir, patches);
+  if (!index_status.ok) {
+    return index_status;
+  }
+  std::ofstream manifest(map_dir / "patch_bundle.manifest");
+  if (!manifest) {
+    return Status::Error("open_patch_bundle_manifest_failed");
+  }
+  manifest << "LINGTU_PATCH_BUNDLE_V1\n"
+           << "complete " << (dropped_count == 0 ? 1 : 0) << '\n'
+           << "dropped_count " << dropped_count << '\n'
+           << "first_sequence " << patches.front().sequence << '\n'
+           << "last_sequence " << patches.back().sequence << '\n'
+           << "patch_count " << patches.size() << '\n';
+  manifest.flush();
+  if (!manifest) {
+    return Status::Error("write_patch_bundle_manifest_failed");
+  }
+  return Status::Ok("patch_bundle_written");
 }
 
 double planarDistance(const Pose3d& a, const Pose3d& b) {
@@ -701,258 +668,27 @@ double yawFromPose(const Pose3d& pose) {
   return ypr[0];
 }
 
+Pose3d planarSeedWithOdomHeightAndTilt(
+    const Pose3d& seed,
+    const Pose3d& odom_body) {
+  const Eigen::Matrix3d odom_rotation = rotationFromPose(odom_body);
+  const double odom_pitch = std::asin(std::clamp(-odom_rotation(2, 0), -1.0, 1.0));
+  const double odom_roll = std::atan2(odom_rotation(2, 1), odom_rotation(2, 2));
+  const Eigen::Quaterniond rotation =
+      Eigen::AngleAxisd(yawFromPose(seed), Eigen::Vector3d::UnitZ()) *
+      Eigen::AngleAxisd(odom_pitch, Eigen::Vector3d::UnitY()) *
+      Eigen::AngleAxisd(odom_roll, Eigen::Vector3d::UnitX());
+  Pose3d out = seed;
+  out.z = odom_body.z;
+  out.qx = rotation.x();
+  out.qy = rotation.y();
+  out.qz = rotation.z();
+  out.qw = rotation.w();
+  return out;
+}
+
 double yawDistance(const Pose3d& a, const Pose3d& b) {
   return std::abs(wrapAngle(yawFromPose(a) - yawFromPose(b)));
-}
-
-Pose3d poseWithYaw(const Pose3d& pose, double yaw) {
-  Pose3d out = pose;
-  const double half = yaw * 0.5;
-  out.qx = 0.0;
-  out.qy = 0.0;
-  out.qz = std::sin(half);
-  out.qw = std::cos(half);
-  return out;
-}
-
-std::vector<double> cumulativePlanarDistance(const std::vector<PatchSnapshot>& patches) {
-  std::vector<double> distance(patches.size(), 0.0);
-  for (std::size_t i = 1; i < patches.size(); ++i) {
-    distance[i] = distance[i - 1] + planarDistance(patches[i - 1].pose, patches[i].pose);
-  }
-  return distance;
-}
-
-LoopClosureCandidate detectLoopClosure(
-    const std::vector<PatchSnapshot>& patches,
-    double max_error_m,
-    double min_path_m) {
-  LoopClosureCandidate best;
-  if (patches.size() < 8) {
-    return best;
-  }
-  const std::vector<double> distance = cumulativePlanarDistance(patches);
-  const std::size_t end = patches.size() - 1;
-  for (std::size_t i = 0; i + 5 < end; ++i) {
-    const double path_m = distance[end] - distance[i];
-    if (path_m < min_path_m) {
-      continue;
-    }
-    const double error_m = planarDistance(patches[i].pose, patches[end].pose);
-    if (error_m > max_error_m) {
-      continue;
-    }
-    if (!best.found || error_m < best.error_m) {
-      best.found = true;
-      best.start_index = i;
-      best.end_index = end;
-      best.error_m = error_m;
-      best.path_m = path_m;
-    }
-  }
-  return best;
-}
-
-std::vector<Pose3d> correctedPatchPoses(
-    const std::vector<PatchSnapshot>& patches,
-    const LoopClosureCandidate& loop) {
-  std::vector<Pose3d> poses;
-  poses.reserve(patches.size());
-  for (const auto& patch : patches) {
-    poses.push_back(patch.pose);
-  }
-  if (!loop.found || loop.end_index >= patches.size() ||
-      loop.start_index >= patches.size() || loop.start_index >= loop.end_index) {
-    return poses;
-  }
-  const std::vector<double> distance = cumulativePlanarDistance(patches);
-  const double span = std::max(1e-6, distance[loop.end_index] - distance[loop.start_index]);
-  const Pose3d& start = patches[loop.start_index].pose;
-  const Pose3d& end = patches[loop.end_index].pose;
-  const double dx = start.x - end.x;
-  const double dy = start.y - end.y;
-  const double dz = start.z - end.z;
-  const double dyaw = wrapAngle(yawFromPose(start) - yawFromPose(end));
-  for (std::size_t i = loop.start_index; i <= loop.end_index; ++i) {
-    const double alpha = std::max(
-        0.0,
-        std::min(1.0, (distance[i] - distance[loop.start_index]) / span));
-    poses[i].x += alpha * dx;
-    poses[i].y += alpha * dy;
-    poses[i].z += alpha * dz;
-    poses[i] = poseWithYaw(poses[i], yawFromPose(poses[i]) + alpha * dyaw);
-  }
-  return poses;
-}
-
-PointXYZIT transformPointWithBodyPose(const PointXYZIT& point, const Pose3d& pose) {
-  const Eigen::Matrix3d r_wb = rotationFromPose(pose);
-  const Eigen::Vector3d t_wb(pose.x, pose.y, pose.z);
-  const Eigen::Vector3d p_body(point.x, point.y, point.z);
-  const Eigen::Vector3d p_map = r_wb * p_body + t_wb;
-  PointXYZIT out = point;
-  out.x = static_cast<float>(p_map.x());
-  out.y = static_cast<float>(p_map.y());
-  out.z = static_cast<float>(p_map.z());
-  out.offset_time_ns = 0;
-  return out;
-}
-
-CloudType cloudToPclCloud(const Cloud& cloud) {
-  CloudType out;
-  out.reserve(cloud.points.size());
-  for (const auto& point : cloud.points) {
-    if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
-      continue;
-    }
-    PointType pcl_point;
-    pcl_point.x = point.x;
-    pcl_point.y = point.y;
-    pcl_point.z = point.z;
-    pcl_point.intensity = point.intensity;
-    out.push_back(pcl_point);
-  }
-  out.width = static_cast<std::uint32_t>(out.points.size());
-  out.height = 1;
-  out.is_dense = false;
-  return out;
-}
-
-Cloud refinePatchMap(
-    const std::vector<PatchSnapshot>& patches,
-    const std::vector<Pose3d>& poses,
-    double resolution,
-    const std::string& frame_id,
-    double stamp_s) {
-  Cloud out;
-  out.stamp_s = stamp_s;
-  out.frame_id = frame_id;
-  if (patches.empty() || patches.size() != poses.size()) {
-    return out;
-  }
-  const double res = std::max(0.05, resolution);
-  std::unordered_map<VoxelKey, VoxelAccum, VoxelKeyHash> voxels;
-  for (std::size_t i = 0; i < patches.size(); ++i) {
-    for (const auto& point : patches[i].cloud.points) {
-      const PointXYZIT map_point = transformPointWithBodyPose(point, poses[i]);
-      if (!std::isfinite(map_point.x) ||
-          !std::isfinite(map_point.y) ||
-          !std::isfinite(map_point.z)) {
-        continue;
-      }
-      const VoxelKey key{
-          static_cast<std::int64_t>(std::floor(static_cast<double>(map_point.x) / res)),
-          static_cast<std::int64_t>(std::floor(static_cast<double>(map_point.y) / res)),
-          static_cast<std::int64_t>(std::floor(static_cast<double>(map_point.z) / res))};
-      auto& accum = voxels[key];
-      accum.x += map_point.x;
-      accum.y += map_point.y;
-      accum.z += map_point.z;
-      accum.intensity += map_point.intensity;
-      ++accum.hits;
-    }
-  }
-  const int min_hits = patches.size() >= 4 ? 2 : 1;
-  out.points.reserve(voxels.size());
-  for (const auto& item : voxels) {
-    const auto& accum = item.second;
-    if (accum.hits < min_hits) {
-      continue;
-    }
-    PointXYZIT point;
-    point.x = static_cast<float>(accum.x / static_cast<double>(accum.hits));
-    point.y = static_cast<float>(accum.y / static_cast<double>(accum.hits));
-    point.z = static_cast<float>(accum.z / static_cast<double>(accum.hits));
-    point.intensity = static_cast<float>(accum.intensity / static_cast<double>(accum.hits));
-    out.points.push_back(point);
-  }
-  return out;
-}
-
-OptimizedMapResult optimizePatchMapForSave(
-    const std::filesystem::path& pcd,
-    const std::filesystem::path& raw_pcd,
-    const std::vector<PatchSnapshot>& patches,
-    const RuntimeConfig& runtime_config,
-    const Config& builder_config,
-    const std::string& frame_id,
-    double stamp_s,
-    int raw_map_points) {
-  OptimizedMapResult result;
-  result.report.enabled = runtime_config.map_optimization_enabled;
-  result.report.raw_map_path = raw_pcd.string();
-  result.report.optimized_map_path = pcd.string();
-  result.report.metadata_path = (pcd.parent_path() / "map_optimization.json").string();
-  result.report.patch_count = static_cast<int>(patches.size());
-  result.report.pose_count = static_cast<int>(patches.size());
-  result.report.raw_map_points = raw_map_points;
-  if (!runtime_config.map_optimization_enabled) {
-    result.report.status = "disabled";
-    return result;
-  }
-  if (patches.empty()) {
-    result.report.status = "no_patches";
-    return result;
-  }
-
-  const LoopClosureCandidate loop = detectLoopClosure(
-      patches,
-      runtime_config.loop_closure_max_error_m,
-      runtime_config.loop_closure_min_path_m);
-  result.report.loop_closure_error_m = loop.error_m;
-  result.report.loop_closure_applied = loop.found;
-  result.report.loop_count = loop.found ? 1 : 0;
-  result.report.optimized_pose_count = loop.found ? static_cast<int>(patches.size()) : 0;
-
-  const std::vector<Pose3d> poses = correctedPatchPoses(patches, loop);
-  const double resolution = runtime_config.map_optimization_resolution > 0.0
-      ? runtime_config.map_optimization_resolution
-      : builder_config.map_resolution;
-  result.cloud = refinePatchMap(patches, poses, resolution, frame_id, stamp_s);
-  result.report.optimized_map_points = static_cast<int>(result.cloud.points.size());
-  result.report.refine_applied = !result.cloud.points.empty();
-  if (result.cloud.points.empty()) {
-    result.report.status = "raw_fallback_empty_optimized_map";
-  } else if (loop.found) {
-    result.report.status = "optimized_loop_closed";
-  } else {
-    result.report.status = "optimized_refined_no_loop";
-  }
-  return result;
-}
-
-Status writeMapOptimizationMetadata(
-    const std::filesystem::path& map_dir,
-    const MapOptimizationReport& report) {
-  const auto path = map_dir / "map_optimization.json";
-  std::ofstream out(path);
-  if (!out) {
-    return Status::Error("open_map_optimization_metadata_failed");
-  }
-  out << std::setprecision(12);
-  out << "{\n";
-  out << "  \"schema_version\": \"lingtu.slam.map_optimization.v1\",\n";
-  out << "  \"status\": \"" << jsonEscape(report.status) << "\",\n";
-  out << "  \"enabled\": " << (report.enabled ? "true" : "false") << ",\n";
-  out << "  \"backend\": \"" << jsonEscape(report.backend) << "\",\n";
-  out << "  \"refine_backend\": \"" << jsonEscape(report.refine_backend) << "\",\n";
-  out << "  \"raw_map_path\": \"" << jsonEscape(report.raw_map_path) << "\",\n";
-  out << "  \"optimized_map_path\": \"" << jsonEscape(report.optimized_map_path) << "\",\n";
-  out << "  \"loop_closure_enabled\": " << (report.loop_closure_enabled ? "true" : "false") << ",\n";
-  out << "  \"loop_closure_applied\": " << (report.loop_closure_applied ? "true" : "false") << ",\n";
-  out << "  \"loop_count\": " << report.loop_count << ",\n";
-  out << "  \"loop_closure_error_m\": " << report.loop_closure_error_m << ",\n";
-  out << "  \"refine_enabled\": " << (report.refine_enabled ? "true" : "false") << ",\n";
-  out << "  \"refine_applied\": " << (report.refine_applied ? "true" : "false") << ",\n";
-  out << "  \"hba_refine_enabled\": " << (report.refine_enabled ? "true" : "false") << ",\n";
-  out << "  \"hba_refine_applied\": " << (report.refine_applied ? "true" : "false") << ",\n";
-  out << "  \"patch_count\": " << report.patch_count << ",\n";
-  out << "  \"pose_count\": " << report.pose_count << ",\n";
-  out << "  \"optimized_pose_count\": " << report.optimized_pose_count << ",\n";
-  out << "  \"raw_map_points\": " << report.raw_map_points << ",\n";
-  out << "  \"optimized_map_points\": " << report.optimized_map_points << "\n";
-  out << "}\n";
-  return Status::Ok("map_optimization_metadata_written");
 }
 
 struct AsyncRelocalizationComputeState {
@@ -1197,6 +933,11 @@ class FastLioBackend final : public ISlamBackend {
           "map_not_loaded", "map_not_loaded", false, reason_before_relocalization);
     }
     std::optional<Pose3d> effective_guess = guess;
+    if (runtime_config_.odom_prior_bypass_fastlio &&
+        guess.has_value() && odometry_odom_body_.has_value()) {
+      effective_guess = planarSeedWithOdomHeightAndTilt(
+          *guess, *odometry_odom_body_);
+    }
     if (!effective_guess.has_value() && has_map_odom_pose_ && odometry_odom_body_.has_value()) {
       effective_guess = composePoses(map_odom_pose_, *odometry_odom_body_);
     }
@@ -1477,21 +1218,20 @@ class FastLioBackend final : public ISlamBackend {
     if (ec) {
       return Status::Error("create_map_dir_failed: " + ec.message());
     }
-    const auto raw_pcd = pcd.parent_path() / "map.raw.pcd";
     CloudType saved_cloud;
     const bool save_odom_prior_map =
         runtime_config_.odom_prior_enabled && !odom_prior_map_.empty();
     if (save_odom_prior_map) {
       saved_cloud = odomPriorMapPclCloud();
-      if (pcl::io::savePCDFileBinary(raw_pcd.string(), saved_cloud) != 0) {
+      if (pcl::io::savePCDFileBinary(pcd.string(), saved_cloud) != 0) {
         return Status::Error("map_pcd_write_failed");
       }
     } else {
-      builder_->saveMap(raw_pcd.string());
-      if (!std::filesystem::exists(raw_pcd)) {
+      builder_->saveMap(pcd.string());
+      if (!std::filesystem::exists(pcd)) {
         return Status::Error("map_pcd_write_failed");
       }
-      if (pcl::io::loadPCDFile<PointType>(raw_pcd.string(), saved_cloud) < 0) {
+      if (pcl::io::loadPCDFile<PointType>(pcd.string(), saved_cloud) < 0) {
         saved_cloud.clear();
       }
     }
@@ -1505,49 +1245,17 @@ class FastLioBackend final : public ISlamBackend {
     }
     const std::vector<PatchSnapshot> patches(
         patch_history_.begin(), patch_history_.end());
-    const Status patch_status = writePatchBundle(pcd.parent_path(), patches);
+    const Status patch_status =
+        writePatchBundle(pcd.parent_path(), patches, patch_history_dropped_count_);
     if (!patch_status.ok) {
       return patch_status;
     }
-    OptimizedMapResult optimized = optimizePatchMapForSave(
-        pcd,
-        raw_pcd,
-        patches,
-        runtime_config_,
-        builder_config_,
-        config_.map_frame,
-        last_stamp_s_,
-        static_cast<int>(saved_cloud.size()));
-    last_map_optimization_ = optimized.report;
-    if (!optimized.cloud.points.empty()) {
-      const Status optimized_write_status = writeContractPcdBinary(pcd, optimized.cloud);
-      if (!optimized_write_status.ok) {
-        return optimized_write_status;
-      }
-      saved_cloud = cloudToPclCloud(optimized.cloud);
-      saved_map_cloud_map_ = optimized.cloud;
-    } else {
-      std::filesystem::copy_file(
-          raw_pcd,
-          pcd,
-          std::filesystem::copy_options::overwrite_existing,
-          ec);
-      if (ec) {
-        return Status::Error("copy_raw_map_failed: " + ec.message());
-      }
-      saved_map_cloud_map_ = save_odom_prior_map
-          ? std::optional<Cloud>{odomPriorMapContractCloud(last_stamp_s_)}
-          : toContractCloud(std::make_shared<CloudType>(saved_cloud), last_stamp_s_, config_.map_frame);
-    }
-    if (saved_map_cloud_map_.has_value()) {
-      last_map_optimization_.optimized_map_points =
-          static_cast<int>(saved_map_cloud_map_->points.size());
-    }
-    const Status metadata_status =
-        writeMapOptimizationMetadata(pcd.parent_path(), last_map_optimization_);
-    if (!metadata_status.ok) {
-      return metadata_status;
-    }
+    saved_map_cloud_map_ = save_odom_prior_map
+        ? std::optional<Cloud>{odomPriorMapContractCloud(last_stamp_s_)}
+        : toContractCloud(
+              CloudType::Ptr(new CloudType(saved_cloud)),
+              last_stamp_s_,
+              config_.map_frame);
     if (!saved_cloud.empty()) {
       updateMapBounds(saved_cloud);
     }
@@ -1672,23 +1380,6 @@ class FastLioBackend final : public ISlamBackend {
     out.odom_prior_age_s = odom_prior_age_s_;
     out.odom_prior_error_xy_m = odom_prior_error_xy_m_;
     out.odom_prior_map_points = static_cast<int>(odom_prior_map_.size());
-    out.map_optimization_status = last_map_optimization_.status;
-    out.map_optimization_backend = last_map_optimization_.backend;
-    out.map_optimization_refine_backend = last_map_optimization_.refine_backend;
-    out.map_optimization_enabled = last_map_optimization_.enabled;
-    out.map_optimization_loop_closure_enabled = last_map_optimization_.loop_closure_enabled;
-    out.map_optimization_loop_closure_applied = last_map_optimization_.loop_closure_applied;
-    out.map_optimization_refine_enabled = last_map_optimization_.refine_enabled;
-    out.map_optimization_refine_applied = last_map_optimization_.refine_applied;
-    out.map_optimization_hba_refine_enabled = last_map_optimization_.refine_enabled;
-    out.map_optimization_hba_refine_applied = last_map_optimization_.refine_applied;
-    out.map_optimization_patch_count = last_map_optimization_.patch_count;
-    out.map_optimization_pose_count = last_map_optimization_.pose_count;
-    out.map_optimization_optimized_pose_count = last_map_optimization_.optimized_pose_count;
-    out.map_optimization_loop_count = last_map_optimization_.loop_count;
-    out.map_optimization_raw_map_points = last_map_optimization_.raw_map_points;
-    out.map_optimization_optimized_map_points = last_map_optimization_.optimized_map_points;
-    out.map_optimization_loop_error_m = last_map_optimization_.loop_closure_error_m;
     if (kf_) {
       const auto& state = kf_->x();
       const auto& degeneracy = kf_->degeneracy();
@@ -1773,7 +1464,6 @@ class FastLioBackend final : public ISlamBackend {
     map_odom_pose_ = Pose3d{};
     map_body_pose_at_relocalization_.reset();
     saved_map_points_ = 0;
-    last_map_optimization_ = MapOptimizationReport{};
     confidence_ = 0.0;
     localization_quality_ = 0.0;
     relocalization_quality_ = -1.0;
@@ -1921,6 +1611,10 @@ class FastLioBackend final : public ISlamBackend {
     map_frame_jump_ = path_invalidating_jump;
     if (path_invalidating_jump) {
       ++map_frame_jump_sequence_;
+      // Map observations accumulated before this alignment were transformed
+      // through the old map<-odom relation. Advance the published epoch so
+      // mapd drops those mixed-frame layers before accepting the next scan.
+      ++source_epoch_;
     }
     confidence_ = result.quality >= 0.0
         ? std::max(0.0, std::min(1.0, 1.0 - result.quality))
@@ -2073,6 +1767,7 @@ class FastLioBackend final : public ISlamBackend {
     saved_map_cloud_map_.reset();
     pose_history_.clear();
     patch_history_.clear();
+    patch_history_dropped_count_ = 0;
     latest_odom_prior_.reset();
     odom_prior_buffer_.clear();
     odom_prior_active_ = false;
@@ -2109,6 +1804,7 @@ class FastLioBackend final : public ISlamBackend {
     pose_history_.clear();
     pose_history_.push_back(OdomSample{last_stamp_s_, pose});
     patch_history_.clear();
+    patch_history_dropped_count_ = 0;
     latest_odom_prior_.reset();
     odom_prior_buffer_.clear();
     odom_prior_active_ = false;
@@ -2335,7 +2031,8 @@ class FastLioBackend final : public ISlamBackend {
     }
 
     PatchSnapshot patch;
-    patch.name = patchName(patch_sequence_++);
+    patch.sequence = patch_sequence_++;
+    patch.name = patchName(patch.sequence);
     patch.stamp_s = stamp;
     patch.pose = pose;
     patch.cloud = *registered_cloud_body_;
@@ -2344,6 +2041,7 @@ class FastLioBackend final : public ISlamBackend {
         std::max<std::size_t>(1, runtime_config_.max_patch_snapshots);
     while (patch_history_.size() > max_snapshots) {
       patch_history_.pop_front();
+      ++patch_history_dropped_count_;
     }
     last_patch_stamp_s_ = stamp;
     last_patch_pose_ = pose;
@@ -2411,7 +2109,7 @@ class FastLioBackend final : public ISlamBackend {
   }
 
   Cloud odomPriorMapContractCloud(double stamp_s) const {
-    auto cloud = std::make_shared<CloudType>(odomPriorMapPclCloud());
+    CloudType::Ptr cloud(new CloudType(odomPriorMapPclCloud()));
     return toContractCloud(cloud, stamp_s, config_.map_frame);
   }
 
@@ -2507,7 +2205,6 @@ class FastLioBackend final : public ISlamBackend {
   std::optional<Cloud> map_cloud_map_;
   std::optional<Cloud> saved_map_cloud_map_;
   int saved_map_points_ = 0;
-  MapOptimizationReport last_map_optimization_;
   std::optional<OdomSample> latest_odom_prior_;
   std::deque<OdomSample> odom_prior_buffer_;
   bool odom_prior_active_ = false;
@@ -2517,6 +2214,7 @@ class FastLioBackend final : public ISlamBackend {
   GnssFusionHealth gnss_health_;
   std::vector<OdomSample> pose_history_;
   std::deque<PatchSnapshot> patch_history_;
+  std::uint64_t patch_history_dropped_count_ = 0;
   std::uint64_t patch_sequence_ = 0;
   double last_patch_stamp_s_ = 0.0;
   Pose3d last_patch_pose_;

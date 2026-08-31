@@ -46,7 +46,7 @@ int main() {
     SyncPackage next;
     next.cloud_start_time = package_start_s;
     next.cloud_end_time = package_start_s + 0.1;
-    next.cloud = std::make_shared<CloudType>();
+    next.cloud.reset(new CloudType);
     PointType first;
     first.curvature = 0.0F;
     PointType last;
@@ -99,7 +99,7 @@ int main() {
     SyncPackage next;
     next.cloud_start_time = biased_package_start_s;
     next.cloud_end_time = biased_package_start_s + 0.1;
-    next.cloud = std::make_shared<CloudType>();
+    next.cloud.reset(new CloudType);
     PointType first;
     first.curvature = 0.0F;
     PointType last;
@@ -148,7 +148,7 @@ int main() {
     SyncPackage next;
     next.cloud_start_time = thermal_package_start_s;
     next.cloud_end_time = thermal_package_start_s + thermal_frame_duration_s;
-    next.cloud = std::make_shared<CloudType>();
+    next.cloud.reset(new CloudType);
     PointType first;
     first.curvature = 0.0F;
     PointType last;
@@ -208,7 +208,7 @@ int main() {
     SyncPackage next;
     next.cloud_start_time = start_s;
     next.cloud_end_time = start_s + 0.1;
-    next.cloud = std::make_shared<CloudType>();
+    next.cloud.reset(new CloudType);
     PointType first;
     first.curvature = 0.0F;
     PointType last;
@@ -266,7 +266,7 @@ int main() {
     next.cloud_start_time = rotating_package_start_s;
     next.cloud_end_time =
         rotating_package_start_s + rotating_frame_duration_s;
-    next.cloud = std::make_shared<CloudType>();
+    next.cloud.reset(new CloudType);
     PointType first;
     first.curvature = 0.0F;
     PointType last;

@@ -14,46 +14,18 @@ from runtime.registry import register
 
 @dataclass(frozen=True)
 class SlamRuntimeProfile:
+    """Selectable native SLAM runtime identity."""
+
     name: str
-    mode: str
     description: str
 
 
-@register("slam", "fastlio2", description="Fast-LIO2 mapping runtime profile")
-class FastLio2Profile(SlamRuntimeProfile):
+@register("slam", "native_dds", description="Native C++ SLAM DDS runtime")
+class NativeDdsProfile(SlamRuntimeProfile):
+    """Native C++ SLAM process reached through typed DDS adapters."""
+
     def __init__(self) -> None:
         super().__init__(
-            name="fastlio2",
-            mode="mapping",
-            description="Fast-LIO2 mapping runtime profile",
-        )
-
-
-@register("slam", "pointlio", description="Point-LIO mapping runtime profile")
-class PointLioProfile(SlamRuntimeProfile):
-    def __init__(self) -> None:
-        super().__init__(
-            name="pointlio",
-            mode="mapping",
-            description="Point-LIO mapping runtime profile",
-        )
-
-
-@register("slam", "localizer", description="Saved-map localization runtime profile")
-class LocalizerProfile(SlamRuntimeProfile):
-    def __init__(self) -> None:
-        super().__init__(
-            name="localizer",
-            mode="localization",
-            description="Saved-map localization runtime profile",
-        )
-
-
-@register("slam", "genz", description="GenZ-ICP localization runtime profile")
-class GenZProfile(SlamRuntimeProfile):
-    def __init__(self) -> None:
-        super().__init__(
-            name="genz",
-            mode="localization",
-            description="GenZ-ICP localization runtime profile",
+            name="native_dds",
+            description="Native C++ SLAM DDS runtime",
         )

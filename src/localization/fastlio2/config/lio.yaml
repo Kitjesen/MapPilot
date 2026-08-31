@@ -42,7 +42,7 @@ ieskf_max_iter: 5
 
 # LiDAR↔IMU time offset (seconds). Positive value = IMU lags LiDAR by this much.
 # Applied IMU-side: t_imu_aligned = t_imu_raw - time_diff_lidar_to_imu, matching
-# upstream FAST-LIO / Point-LIO. Output odometry stamps therefore stay on the
+# the upstream FAST-LIO convention. Output odometry stamps therefore stay on the
 # LiDAR wall clock. Calibrated by LI-Init; written by `apply_calibration.py`.
 # Plausible range: [-0.1, 0.1].
 time_diff_lidar_to_imu: 0.0

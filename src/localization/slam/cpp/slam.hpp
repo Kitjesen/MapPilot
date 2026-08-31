@@ -223,24 +223,6 @@ struct SlamOutputs {
   double odom_prior_error_xy_m = -1.0;
   int odom_prior_map_points = 0;
 
-  std::string map_optimization_status = "not_run";
-  std::string map_optimization_backend;
-  std::string map_optimization_refine_backend;
-  bool map_optimization_enabled = false;
-  bool map_optimization_loop_closure_enabled = false;
-  bool map_optimization_loop_closure_applied = false;
-  bool map_optimization_refine_enabled = false;
-  bool map_optimization_refine_applied = false;
-  bool map_optimization_hba_refine_enabled = false;
-  bool map_optimization_hba_refine_applied = false;
-  int map_optimization_patch_count = 0;
-  int map_optimization_pose_count = 0;
-  int map_optimization_optimized_pose_count = 0;
-  int map_optimization_loop_count = 0;
-  int map_optimization_raw_map_points = 0;
-  int map_optimization_optimized_map_points = 0;
-  double map_optimization_loop_error_m = -1.0;
-
   double fastlio_velocity_x = 0.0;
   double fastlio_velocity_y = 0.0;
   double fastlio_velocity_z = 0.0;
@@ -295,6 +277,5 @@ std::string toString(SlamMode mode);
 std::uint64_t newSourceEpoch() noexcept;
 std::unique_ptr<ISlamBackend> makeContractBackend(std::string backend_name);
 std::unique_ptr<ISlamBackend> makeFastLioBackend();
-std::unique_ptr<ISlamBackend> makePointLioBackend();
 
 }  // namespace lingtu::slam

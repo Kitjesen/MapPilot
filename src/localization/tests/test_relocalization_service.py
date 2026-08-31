@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import ast
+import platform
 import subprocess
 from pathlib import Path
 
+import localization.slam_control as slam_control
 from localization.adapters.relocalization import NativeSlamRelocalizationService
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -34,7 +36,7 @@ def test_gateway_relocalization_routes_do_not_spawn_processes() -> None:
         filename="operations.py",
     )
 
-    for function_name in ("slam_auto_relocalize", "slam_relocalize"):
+    for function_name in ("localization_relocalize", "localization_map_tracking"):
         matches = _function_defs(tree, function_name)
         assert len(matches) == 1
         assert not _contains_subprocess_call(matches[0])
@@ -59,9 +61,25 @@ def _capture_native_call(monkeypatch, result: str):
     return calls
 
 
+def test_slam_control_discovery_selects_native_windows_binary(monkeypatch, tmp_path) -> None:
+    module_path = tmp_path / "src" / "localization" / "slam_control.py"
+    module_path.parent.mkdir(parents=True)
+    linux_binary = tmp_path / "build" / "slam_core" / "slamctl"
+    windows_binary = tmp_path / "build" / "slam-core-windows-x64" / "stage" / "bin" / "slamctl.exe"
+    linux_binary.parent.mkdir(parents=True)
+    windows_binary.parent.mkdir(parents=True)
+    linux_binary.write_bytes(b"ELF")
+    windows_binary.write_bytes(b"MZ")
+    monkeypatch.delenv("LINGTU_SLAM_CONTROL", raising=False)
+    monkeypatch.setattr(slam_control, "__file__", str(module_path))
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
+    monkeypatch.setattr(slam_control.shutil, "which", lambda _name: None)
+
+    assert Path(slam_control.slam_control_binary()) == windows_binary
+
+
 def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path) -> None:
     binary = str(tmp_path / "slamctl")
-    pcd_path = tmp_path / "map with spaces" / "map.pcd"
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
     calls = _capture_native_call(
@@ -69,7 +87,7 @@ def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path)
         '{"success":true,"message":"relocalized","relocalization_quality":0.123}\n',
     )
 
-    result = NativeSlamRelocalizationService().relocalize_saved_map(pcd_path, 1.0, 2.0, 0.3, timeout_s=12.0)
+    result = NativeSlamRelocalizationService().relocalize_saved_map("factory", 1.0, 2.0, 0.3, timeout_s=12.0)
 
     assert result.success is True
     assert result.quality == 0.123
@@ -77,7 +95,6 @@ def test_native_seeded_relocalization_uses_control_binary(monkeypatch, tmp_path)
     assert args == [
         binary,
         "relocalize",
-        str(pcd_path),
         "--x",
         "1",
         "--y",
@@ -145,9 +162,8 @@ def test_native_global_status_uses_typed_control_binary(monkeypatch, tmp_path) -
     assert kwargs["timeout"] == 9.0
 
 
-def test_native_track_against_map_uses_typed_control_binary(monkeypatch, tmp_path) -> None:
+def test_native_track_against_map_uses_current_tracking_state(monkeypatch, tmp_path) -> None:
     binary = str(tmp_path / "slamctl")
-    pcd_path = tmp_path / "map" / "map.pcd"
     monkeypatch.setenv("LINGTU_SLAM_CONTROL", binary)
     monkeypatch.setenv("LINGTU_DDS_DOMAIN_ID", "7")
     calls = _capture_native_call(
@@ -155,7 +171,7 @@ def test_native_track_against_map_uses_typed_control_binary(monkeypatch, tmp_pat
         '{"success":true,"message":"track_against_map_started","track_against_map_enabled":true}\n',
     )
 
-    result = NativeSlamRelocalizationService().track_against_map(pcd_path, 1.0, 2.0, 0.3, timeout_s=6.0)
+    result = NativeSlamRelocalizationService().track_against_map(timeout_s=6.0)
 
     assert result.success is True
     assert result.message == "track_against_map_started"
@@ -163,13 +179,6 @@ def test_native_track_against_map_uses_typed_control_binary(monkeypatch, tmp_pat
     assert args == [
         binary,
         "track-against-map",
-        str(pcd_path),
-        "--x",
-        "1",
-        "--y",
-        "2",
-        "--yaw",
-        "0.3",
         "--domain-id",
         "7",
         "--timeout-s",

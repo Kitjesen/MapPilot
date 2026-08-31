@@ -1,15 +1,15 @@
 """Public localization command contract.
 
-Localization owns saved-map alignment and map-to-odometry updates.  Callers
-provide a map artifact and pose seed; they do not know whether the command is
-served by an in-process module or the native DDS endpoint.
+Localization owns saved-map alignment and map-to-odometry updates. Callers
+provide the Product-selected map ID and pose seed; they do not know whether the
+command is served by an in-process module or the native DDS endpoint.
 """
 
 from __future__ import annotations
 
-import os
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,7 @@ class RelocalizationService(Protocol):
 
     def relocalize_saved_map(
         self,
-        pcd_path: str | os.PathLike[str],
+        map_id: str,
         x: float,
         y: float,
         yaw: float,
@@ -56,24 +56,8 @@ class RelocalizationService(Protocol):
     ) -> RelocalizationResult:
         ...
 
-    def relocalize_saved_map_with_env(
-        self,
-        pcd_path: str | os.PathLike[str],
-        x: float,
-        y: float,
-        yaw: float,
-        *,
-        timeout_s: float = 20.0,
-        base_env: Mapping[str, str] | None = None,
-    ) -> RelocalizationResult:
-        ...
-
     def track_against_map(
         self,
-        pcd_path: str | os.PathLike[str],
-        x: float,
-        y: float,
-        yaw: float,
         *,
         timeout_s: float = 10.0,
     ) -> RelocalizationResult:
@@ -129,7 +113,7 @@ class Localization:
 
     def relocalize_saved_map(
         self,
-        pcd_path: str | os.PathLike[str],
+        map_id: str,
         x: float,
         y: float,
         yaw: float,
@@ -139,50 +123,22 @@ class Localization:
         if self._backend is None:
             return self._unavailable("relocalize_saved_map")
         return self._backend.relocalize_saved_map(
-            pcd_path,
+            map_id,
             x,
             y,
             yaw,
             timeout_s=timeout_s,
         )
 
-    def relocalize_saved_map_with_env(
-        self,
-        pcd_path: str | os.PathLike[str],
-        x: float,
-        y: float,
-        yaw: float,
-        *,
-        timeout_s: float = 20.0,
-        base_env: Mapping[str, str] | None = None,
-    ) -> RelocalizationResult:
+    def start_map_tracking(self, *, timeout_s: float = 10.0) -> RelocalizationResult:
+        """Start low-rate correction against the Product-selected map."""
         if self._backend is None:
-            return self._unavailable("relocalize_saved_map")
-        return self._backend.relocalize_saved_map_with_env(
-            pcd_path,
-            x,
-            y,
-            yaw,
-            timeout_s=timeout_s,
-            base_env=base_env,
-        )
-
-    def track_against_map(
-        self,
-        pcd_path: str | os.PathLike[str],
-        x: float,
-        y: float,
-        yaw: float,
-        *,
-        timeout_s: float = 10.0,
-    ) -> RelocalizationResult:
-        if self._backend is None:
-            return self._unavailable("track_against_map")
+            return self._unavailable("start_map_tracking")
         track = getattr(self._backend, "track_against_map", None)
         if not callable(track):
             return RelocalizationResult(
                 success=False,
                 message="saved-map tracking is not supported by the active backend",
-                details={"code": "unsupported", "command": "track_against_map"},
+                details={"code": "unsupported", "command": "start_map_tracking"},
             )
-        return track(pcd_path, x, y, yaw, timeout_s=timeout_s)
+        return track(timeout_s=timeout_s)

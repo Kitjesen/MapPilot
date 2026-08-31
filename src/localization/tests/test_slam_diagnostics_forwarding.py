@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from localization.adapters.status import CppSlamStatusAdapterModule
+from runtime.contracts.messages import validate_message
 
 
 def _payload() -> dict:
@@ -75,7 +76,8 @@ def test_cpp_slam_adapter_forwards_fastlio_degeneracy_metrics() -> None:
     adapter._publish_status_snapshot(_payload())
 
     status = statuses[-1]
-    assert "degeneracy" not in status
+    assert status["degeneracy"] == "SEVERE"
+    assert validate_message("localization_status", status) == []
     assert status["degeneracy_detected"] is True
     assert status["degenerate_dof_count"] == 2
     assert status["condition_number"] == 42000.0
@@ -99,6 +101,7 @@ def test_cpp_slam_adapter_does_not_invent_metrics_when_block_is_missing() -> Non
 
     status = statuses[-1]
     assert status["fastlio_degeneracy"] is None
+    assert status["degeneracy"] == "UNKNOWN"
     assert "degeneracy_detected" not in status
     assert "condition_number" not in status
 
@@ -119,10 +122,11 @@ def test_fastlio_degeneracy_reaches_gateway_sse_and_rest_without_semantic_policy
     from gateway.gateway_module import GatewayModule
     from gateway.schemas import LocalizationStatusResponse
     from gateway.services.runtime_status import build_localization_status
+    from gateway.services.sse import subscribe
 
     adapter = CppSlamStatusAdapterModule()
     gateway = GatewayModule()
-    events = gateway._sse_subscribe()
+    events = subscribe(gateway)
     adapter.localization_status.subscribe(gateway._on_localization_status)
 
     adapter._publish_status_snapshot(_payload())
@@ -132,11 +136,11 @@ def test_fastlio_degeneracy_reaches_gateway_sse_and_rest_without_semantic_policy
     assert event["data"]["degeneracy_detected"] is True
     assert event["data"]["min_eigenvalue"] == 0.25
     assert event["data"]["max_eigenvalue"] == 10500.0
-    assert "degeneracy" not in event["data"]
+    assert event["data"]["degeneracy"] == "SEVERE"
 
     payload = build_localization_status(gateway)
     model = LocalizationStatusResponse.model_validate(payload)
     assert model.degeneracy_detected is True
     assert model.min_eigenvalue == 0.25
     assert model.max_eigenvalue == 10500.0
-    assert model.degeneracy is None
+    assert model.degeneracy == "SEVERE"

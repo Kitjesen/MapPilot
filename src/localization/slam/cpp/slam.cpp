@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 #include <utility>
 
 namespace lingtu::slam {
@@ -481,10 +482,13 @@ std::string toString(SlamState state) {
 }
 
 SlamMode modeFromString(const std::string& value) {
-  if (value == "localization" || value == "localizer" || value == "nav") {
+  if (value == "mapping") {
+    return SlamMode::Mapping;
+  }
+  if (value == "localization") {
     return SlamMode::Localization;
   }
-  return SlamMode::Mapping;
+  throw std::invalid_argument("unsupported SLAM mode: " + value);
 }
 
 std::string toString(SlamMode mode) {

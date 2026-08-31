@@ -16,7 +16,7 @@ from sim.evaluation.slam.inspection_readiness import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-CLI_PATH = ROOT / "scripts" / "datasets" / "inspection_localization_readiness.py"
+CLI_PATH = ROOT / "tools" / "datasets" / "inspection_localization_readiness.py"
 CLI_SPEC = importlib.util.spec_from_file_location(
     "inspection_localization_readiness_cli",
     CLI_PATH,

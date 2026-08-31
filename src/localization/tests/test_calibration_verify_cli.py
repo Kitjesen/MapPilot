@@ -15,27 +15,22 @@ def _write_yaml(path: Path, payload: dict) -> None:
     path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
 
 
-def test_pointlio_noise_is_read_from_ros_mapping(
+def test_fastlio2_noise_is_the_only_slam_noise_source(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    pointlio_config = tmp_path / "pointlio.yaml"
+    fastlio_config = tmp_path / "mid360_fastlio2.yaml"
     _write_yaml(
-        pointlio_config,
+        fastlio_config,
         {
-            "/**": {
-                "ros__parameters": {
-                    "mapping": {
-                        "imu_meas_acc_cov": 0.123,
-                        "imu_meas_omg_cov": 0.456,
-                    }
-                }
-            }
+            "na": 0.001,
+            "ng": 0.0001,
+            "nba": 0.00005,
+            "nbg": 0.000001,
         },
     )
-    monkeypatch.setattr(verify, "FASTLIO2_CONFIG", tmp_path / "missing-fastlio.yaml")
-    monkeypatch.setattr(verify, "POINTLIO_CONFIG", pointlio_config)
+    monkeypatch.setattr(verify, "FASTLIO2_CONFIG", fastlio_config)
     result = verify.CheckResult()
 
     with caplog.at_level(logging.INFO, logger=verify.__name__):
@@ -43,7 +38,7 @@ def test_pointlio_noise_is_read_from_ros_mapping(
 
     assert result.failed == 0
     assert result.passed == 1
-    assert "Point-LIO: acc_cov=0.123, omg_cov=0.456" in caplog.text
+    assert "Fast-LIO2: na=0.001, ng=0.0001" in caplog.text
 
 
 def test_cli_reports_invalid_utf8_without_traceback(tmp_path: Path) -> None:

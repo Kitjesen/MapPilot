@@ -1,8 +1,8 @@
 #include "localization/opt/graph.hpp"
 #include "localization/opt/cloud.hpp"
+#include "localization/opt/constraints.hpp"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -12,6 +12,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
+#include <unordered_set>
 
 namespace lingtu::localization::opt {
 namespace {
@@ -56,29 +57,6 @@ Pose normalized(Pose pose) {
   return pose;
 }
 
-Pose inverse(const Pose& pose) {
-  Pose out;
-  out.qw = pose.qw;
-  out.qx = -pose.qx;
-  out.qy = -pose.qy;
-  out.qz = -pose.qz;
-  const std::array<double, 3> t{-pose.x, -pose.y, -pose.z};
-  const std::array<double, 3> rotated = {
-      (1.0 - 2.0 * (out.qy * out.qy + out.qz * out.qz)) * t[0] +
-          2.0 * (out.qx * out.qy - out.qz * out.qw) * t[1] +
-          2.0 * (out.qx * out.qz + out.qy * out.qw) * t[2],
-      2.0 * (out.qx * out.qy + out.qz * out.qw) * t[0] +
-          (1.0 - 2.0 * (out.qx * out.qx + out.qz * out.qz)) * t[1] +
-          2.0 * (out.qy * out.qz - out.qx * out.qw) * t[2],
-      2.0 * (out.qx * out.qz - out.qy * out.qw) * t[0] +
-          2.0 * (out.qy * out.qz + out.qx * out.qw) * t[1] +
-          (1.0 - 2.0 * (out.qx * out.qx + out.qy * out.qy)) * t[2]};
-  out.x = rotated[0];
-  out.y = rotated[1];
-  out.z = rotated[2];
-  return normalized(out);
-}
-
 std::array<double, 3> rotate_point(const Pose& pose, double x, double y, double z) {
   return {
       (1.0 - 2.0 * (pose.qy * pose.qy + pose.qz * pose.qz)) * x +
@@ -90,23 +68,6 @@ std::array<double, 3> rotate_point(const Pose& pose, double x, double y, double 
       2.0 * (pose.qx * pose.qz - pose.qy * pose.qw) * x +
           2.0 * (pose.qy * pose.qz + pose.qx * pose.qw) * y +
           (1.0 - 2.0 * (pose.qx * pose.qx + pose.qy * pose.qy)) * z};
-}
-
-Pose compose(const Pose& a, const Pose& b) {
-  Pose out;
-  out.qw = a.qw * b.qw - a.qx * b.qx - a.qy * b.qy - a.qz * b.qz;
-  out.qx = a.qw * b.qx + a.qx * b.qw + a.qy * b.qz - a.qz * b.qy;
-  out.qy = a.qw * b.qy - a.qx * b.qz + a.qy * b.qw + a.qz * b.qx;
-  out.qz = a.qw * b.qz + a.qx * b.qy - a.qy * b.qx + a.qz * b.qw;
-  const auto t = rotate_point(a, b.x, b.y, b.z);
-  out.x = a.x + t[0];
-  out.y = a.y + t[1];
-  out.z = a.z + t[2];
-  return normalized(out);
-}
-
-Pose between(const Pose& from, const Pose& to) {
-  return compose(inverse(from), to);
 }
 
 lt_pose_graph_opt_pose3 to_kernel_pose(const Pose& pose) {
@@ -131,51 +92,6 @@ Pose from_kernel_pose(const lt_pose_graph_opt_pose3& pose) {
       pose.q_wxyz[2],
       pose.q_wxyz[3],
   });
-}
-
-void fill_diag(double (&upper)[21], double rot_weight, double trans_weight) {
-  const std::array<double, 6> diagonal{
-      rot_weight,
-      rot_weight,
-      rot_weight,
-      trans_weight,
-      trans_weight,
-      trans_weight,
-  };
-  std::fill(std::begin(upper), std::end(upper), 0.0);
-  std::size_t idx = 0;
-  for (int row = 0; row < 6; ++row) {
-    for (int col = row; col < 6; ++col) {
-      if (row == col) {
-        upper[idx] = diagonal[static_cast<std::size_t>(row)];
-      }
-      ++idx;
-    }
-  }
-}
-
-bool valid_information_diagonal(const std::array<double, 6>& diagonal) {
-  bool has_information = false;
-  for (double value : diagonal) {
-    if (!std::isfinite(value) || value < 0.0 || value > 1.0e12) {
-      return false;
-    }
-    has_information = has_information || value > 0.0;
-  }
-  return has_information;
-}
-
-void fill_diag(double (&upper)[21], const std::array<double, 6>& diagonal) {
-  std::fill(std::begin(upper), std::end(upper), 0.0);
-  std::size_t idx = 0;
-  for (int row = 0; row < 6; ++row) {
-    for (int col = row; col < 6; ++col) {
-      if (row == col) {
-        upper[idx] = diagonal[static_cast<std::size_t>(row)];
-      }
-      ++idx;
-    }
-  }
 }
 
 bool parse_double(const std::string& token, double& value) {
@@ -204,14 +120,16 @@ bool parse_pose_tokens(
     }
     return false;
   };
-  if (tokens.size() != 7 && tokens.size() != 8) {
+  if (tokens.size() != 8) {
     return fail("invalid_pose_row");
   }
-  std::size_t offset = 0;
-  if (tokens.size() == 8) {
-    out.patch_name = tokens[0];
-    offset = 1;
+  out.patch_name = tokens[0];
+  const std::filesystem::path patch_name(out.patch_name);
+  if (patch_name.filename() != patch_name || patch_name.extension() != ".pcd" ||
+      out.patch_name == "." || out.patch_name == "..") {
+    return fail("invalid_patch_name");
   }
+  constexpr std::size_t offset = 1;
   double values[7]{};
   for (std::size_t i = 0; i < 7; ++i) {
     if (!parse_double(tokens[offset + i], values[i])) {
@@ -221,21 +139,11 @@ bool parse_pose_tokens(
   out.pose.x = values[0];
   out.pose.y = values[1];
   out.pose.z = values[2];
-  if (tokens.size() == 8) {
-    // Canonical LingTu saved-map format:
-    // patch_name x y z qw qx qy qz
-    out.pose.qw = values[3];
-    out.pose.qx = values[4];
-    out.pose.qy = values[5];
-    out.pose.qz = values[6];
-  } else {
-    // Legacy unnamed/TUM format: x y z qx qy qz qw. Quaternion order
-    // cannot be inferred from component magnitudes (for example yaw=180).
-    out.pose.qx = values[3];
-    out.pose.qy = values[4];
-    out.pose.qz = values[5];
-    out.pose.qw = values[6];
-  }
+  // Canonical LingTu saved-map format: patch_name x y z qw qx qy qz.
+  out.pose.qw = values[3];
+  out.pose.qx = values[4];
+  out.pose.qy = values[5];
+  out.pose.qz = values[6];
   const double quaternion_norm = std::sqrt(
       sqr(out.pose.qw) + sqr(out.pose.qx) +
       sqr(out.pose.qy) + sqr(out.pose.qz));
@@ -475,25 +383,6 @@ void write_pcd(const std::filesystem::path& path, const std::vector<Point>& poin
   }
 }
 
-std::filesystem::path backup_path(const std::filesystem::path& path, const std::string& suffix) {
-  std::filesystem::path candidate = path;
-  candidate += suffix;
-  if (!std::filesystem::exists(candidate)) {
-    return candidate;
-  }
-  for (int i = 1; i < 1000; ++i) {
-    std::filesystem::path numbered = path;
-    numbered += suffix + "." + std::to_string(i);
-    if (!std::filesystem::exists(numbered)) {
-      return numbered;
-    }
-  }
-  const auto now = std::chrono::system_clock::now().time_since_epoch().count();
-  std::filesystem::path fallback = path;
-  fallback += suffix + "." + std::to_string(now);
-  return fallback;
-}
-
 std::vector<Point> transform_points(const std::vector<Point>& points, const Pose& pose) {
   std::vector<Point> out;
   out.reserve(points.size());
@@ -546,12 +435,10 @@ void write_report(
     const std::filesystem::path& path,
     const OptimizeOptions& options,
     const Result& result,
-    const lt_pose_graph_opt_report& report,
-    const std::filesystem::path& map_backup,
-    const std::filesystem::path& poses_backup) {
+    const lt_pose_graph_opt_report& report) {
   std::ofstream out(path);
   if (!out.is_open()) {
-    return;
+    throw std::runtime_error("failed to write optimization report");
   }
   out << std::setprecision(17);
   out << "{\n";
@@ -569,10 +456,79 @@ void write_report(
   out << "  \"rejected_steps\": " << report.rejected_steps << ",\n";
   out << "  \"converged\": " << (report.converged ? "true" : "false") << ",\n";
   out << "  \"initial_cost\": " << report.initial_cost << ",\n";
-  out << "  \"final_cost\": " << report.final_cost << ",\n";
-  out << "  \"map_backup\": \"" << json_escape(map_backup.string()) << "\",\n";
-  out << "  \"poses_backup\": \"" << json_escape(poses_backup.string()) << "\"\n";
+  out << "  \"final_cost\": " << report.final_cost << "\n";
   out << "}\n";
+  out.flush();
+  if (!out) {
+    throw std::runtime_error("failed to write optimization report");
+  }
+}
+
+struct PatchBundleManifest {
+  bool complete = false;
+  std::uint64_t dropped_count = 0;
+  std::uint64_t first_sequence = 0;
+  std::uint64_t last_sequence = 0;
+  std::size_t patch_count = 0;
+};
+
+bool parse_uint64(const std::string& token, std::uint64_t& value) {
+  if (token.empty() || token.front() == '-') {
+    return false;
+  }
+  char* end = nullptr;
+  const unsigned long long parsed = std::strtoull(token.c_str(), &end, 10);
+  if (end == token.c_str() || end == nullptr || *end != '\0') {
+    return false;
+  }
+  value = static_cast<std::uint64_t>(parsed);
+  return true;
+}
+
+bool read_patch_bundle_manifest(
+    const std::filesystem::path& path,
+    PatchBundleManifest& manifest,
+    std::string& reason) {
+  std::ifstream in(path);
+  if (!in.is_open()) {
+    reason = "patch_bundle_manifest_missing";
+    return false;
+  }
+  std::string line;
+  if (!std::getline(in, line) || line != "LINGTU_PATCH_BUNDLE_V1") {
+    reason = "patch_bundle_manifest_malformed";
+    return false;
+  }
+  const std::array<const char*, 5> keys = {
+      "complete", "dropped_count", "first_sequence", "last_sequence", "patch_count"};
+  std::array<std::uint64_t, 5> values{};
+  for (std::size_t i = 0; i < keys.size(); ++i) {
+    if (!std::getline(in, line)) {
+      reason = "patch_bundle_manifest_malformed";
+      return false;
+    }
+    const auto tokens = split_ws(line);
+    if (tokens.size() != 2 || tokens[0] != keys[i] || !parse_uint64(tokens[1], values[i])) {
+      reason = "patch_bundle_manifest_malformed";
+      return false;
+    }
+  }
+  while (std::getline(in, line)) {
+    if (!split_ws(line).empty()) {
+      reason = "patch_bundle_manifest_malformed";
+      return false;
+    }
+  }
+  if (values[0] > 1 || values[4] > std::numeric_limits<std::size_t>::max()) {
+    reason = "patch_bundle_manifest_malformed";
+    return false;
+  }
+  manifest.complete = values[0] == 1;
+  manifest.dropped_count = values[1];
+  manifest.first_sequence = values[2];
+  manifest.last_sequence = values[3];
+  manifest.patch_count = static_cast<std::size_t>(values[4]);
+  return true;
 }
 
 Result fail_from_exception(const Result& base, const std::exception& exc, std::string code) {
@@ -629,32 +585,15 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
     return result;
   }
 
+  std::filesystem::path staging;
   try {
-    std::filesystem::create_directories(map.output_dir);
     std::vector<Keyframe> keyframes = read_poses(map.poses_txt);
     const auto patches = list_patches(map.patches_dir);
-    if (patches.size() < keyframes.size()) {
-      result.ok = false;
-      result.code = "patch_pose_mismatch";
-      result.message = "patch count is smaller than poses.txt pose count";
-      result.pose_count = keyframes.size();
-      return result;
-    }
-    for (std::size_t i = 0; i < keyframes.size(); ++i) {
-      if (keyframes[i].patch_name.empty()) {
-        keyframes[i].patch_name = patches[i].filename().string();
-      }
-    }
 
     if (options.geometric_constraints.empty()) {
-      // Chain and skip factors below are derived from the same initial poses
-      // they are meant to optimize.  Such a graph starts at zero residual and
-      // contains no independent information.  Rebuilding from it can only
-      // discard an upstream SLAM correction, so preserve the source artifacts.
       result.ok = true;
       result.code = "skipped_no_independent_constraints";
-      result.message = options.strategy +
-          " skipped: graph contains only constraints derived from the input odometry poses";
+      result.message = options.strategy + " skipped: no independent factors were provided";
       result.patch_count = patches.size();
       result.pose_count = keyframes.size();
       result.factor_count = 0;
@@ -667,48 +606,99 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       return result;
     }
 
+    PatchBundleManifest manifest;
+    std::string manifest_reason;
+    if (!read_patch_bundle_manifest(
+            map.patch_bundle_manifest, manifest, manifest_reason)) {
+      result.ok = false;
+      result.code = manifest_reason;
+      result.message = "PGO requires a valid patch_bundle.manifest";
+      return result;
+    }
+    if (!manifest.complete || manifest.dropped_count != 0) {
+      result.ok = false;
+      result.code = "patch_bundle_incomplete";
+      result.message = "PGO refuses a patch bundle whose in-memory history was truncated";
+      return result;
+    }
+    if (manifest.patch_count != patches.size() || manifest.patch_count != keyframes.size() ||
+        manifest.patch_count == 0 || manifest.first_sequence != 0 ||
+        manifest.last_sequence != manifest.patch_count - 1) {
+      result.ok = false;
+      result.code = "patch_bundle_manifest_mismatch";
+      result.message = "patch bundle manifest does not match its poses and patches";
+      return result;
+    }
+
+    std::unordered_set<std::string> pose_patch_names;
+    pose_patch_names.reserve(keyframes.size());
+    for (const Keyframe& keyframe : keyframes) {
+      if (!pose_patch_names.insert(keyframe.patch_name).second) {
+        result.ok = false;
+        result.code = "duplicate_patch_name";
+        result.message = "poses.txt contains a duplicate patch name";
+        return result;
+      }
+    }
+    std::unordered_set<std::string> disk_patch_names;
+    disk_patch_names.reserve(patches.size());
+    for (const auto& patch : patches) {
+      disk_patch_names.insert(patch.filename().string());
+    }
+    if (disk_patch_names != pose_patch_names) {
+      result.ok = false;
+      result.code = "patch_pose_mismatch";
+      result.message = "patch files and poses.txt patch names are not identical";
+      return result;
+    }
+
+    std::error_code path_error;
+    const auto source = std::filesystem::weakly_canonical(map.map_dir, path_error);
+    if (path_error) {
+      throw std::runtime_error("failed to normalize source map directory");
+    }
+    const auto output = std::filesystem::weakly_canonical(map.output_dir, path_error);
+    if (path_error) {
+      throw std::runtime_error("failed to normalize output directory");
+    }
+    auto output_it = output.begin();
+    bool output_within_source = true;
+    for (auto source_it = source.begin(); source_it != source.end(); ++source_it, ++output_it) {
+      if (output_it == output.end() || *output_it != *source_it) {
+        output_within_source = false;
+        break;
+      }
+    }
+    if (output_within_source) {
+      result.ok = false;
+      result.code = "output_inside_input";
+      result.message = "optimization output must be outside the source map directory";
+      return result;
+    }
+    if (std::filesystem::exists(map.output_dir)) {
+      result.ok = false;
+      result.code = "output_exists";
+      result.message = "optimization output directory already exists";
+      return result;
+    }
+
     std::vector<lt_pose_graph_opt_pose3> poses;
     poses.reserve(keyframes.size());
     for (const Keyframe& keyframe : keyframes) {
       poses.push_back(to_kernel_pose(keyframe.pose));
     }
 
-    std::vector<lt_pose_graph_opt_prior3> priors;
-    lt_pose_graph_opt_prior3 prior{};
-    prior.index = 0;
-    prior.pose = poses.front();
-    fill_diag(prior.information_upper, options.prior_weight, options.prior_weight);
-    priors.push_back(prior);
-
     std::vector<lt_pose_graph_opt_between3> betweens;
-    for (std::size_t i = 1; i < keyframes.size(); ++i) {
-      lt_pose_graph_opt_between3 edge{};
-      edge.from_index = static_cast<uint32_t>(i - 1);
-      edge.to_index = static_cast<uint32_t>(i);
-      edge.pose_from_to = to_kernel_pose(between(keyframes[i - 1].pose, keyframes[i].pose));
-      fill_diag(edge.information_upper, options.chain_rot_weight, options.chain_trans_weight);
-      betweens.push_back(edge);
-    }
-    if (options.skip_stride > 1) {
-      for (std::size_t i = 0; i + options.skip_stride < keyframes.size(); ++i) {
-        lt_pose_graph_opt_between3 edge{};
-        edge.from_index = static_cast<uint32_t>(i);
-        edge.to_index = static_cast<uint32_t>(i + options.skip_stride);
-        edge.pose_from_to = to_kernel_pose(
-            between(keyframes[i].pose, keyframes[i + options.skip_stride].pose));
-        fill_diag(edge.information_upper, options.skip_rot_weight, options.skip_trans_weight);
-        betweens.push_back(edge);
-      }
-    }
+    betweens.reserve(options.geometric_constraints.size());
     for (const GeometricConstraint& constraint : options.geometric_constraints) {
       if (constraint.from_index >= keyframes.size() ||
           constraint.to_index >= keyframes.size() ||
           constraint.from_index == constraint.to_index ||
-          !valid_information_diagonal(constraint.information_diagonal)) {
+          !valid_information_upper(constraint.information_upper)) {
         result.ok = false;
         result.code = "geometric_constraint_invalid";
         result.message =
-            "independent geometric constraint has invalid indices or information diagonal";
+            "independent geometric constraint has invalid indices or information matrix";
         result.pose_count = keyframes.size();
         return result;
       }
@@ -716,7 +706,8 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       edge.from_index = static_cast<uint32_t>(constraint.from_index);
       edge.to_index = static_cast<uint32_t>(constraint.to_index);
       edge.pose_from_to = to_kernel_pose(constraint.pose_from_to);
-      fill_diag(edge.information_upper, constraint.information_diagonal);
+      std::copy(constraint.information_upper.begin(), constraint.information_upper.end(),
+                std::begin(edge.information_upper));
       betweens.push_back(edge);
     }
 
@@ -744,8 +735,8 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
         handle,
         poses.data(),
         static_cast<uint64_t>(poses.size()),
-        priors.data(),
-        static_cast<uint64_t>(priors.size()),
+        nullptr,
+        0,
         betweens.empty() ? nullptr : betweens.data(),
         static_cast<uint64_t>(betweens.size()),
         &report);
@@ -755,7 +746,7 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       result.code = "optimizer_failed";
       result.message = "pose graph optimizer failed: " + std::to_string(status);
       result.pose_count = keyframes.size();
-      result.factor_count = priors.size() + betweens.size();
+      result.factor_count = betweens.size();
       return result;
     }
 
@@ -789,32 +780,57 @@ Result optimize_map(const Map& map, const OptimizeOptions& options) {
       append_points(map_points, transform_points(read_pcd(patch_path), keyframe.pose));
     }
 
-    const std::filesystem::path out_map = map.output_dir / "map.pcd";
-    const std::filesystem::path out_poses = map.output_dir / "poses.txt";
-    std::filesystem::path map_backup;
-    std::filesystem::path poses_backup;
-    if (std::filesystem::equivalent(map.output_dir, map.map_dir)) {
-      map_backup = backup_path(map.map_pcd, ".preopt");
-      poses_backup = backup_path(map.poses_txt, ".preopt");
-      std::filesystem::rename(map.map_pcd, map_backup);
-      std::filesystem::rename(map.poses_txt, poses_backup);
+    staging = map.output_dir;
+    staging += ".tmp";
+    if (std::filesystem::exists(staging)) {
+      result.ok = false;
+      result.code = "output_staging_exists";
+      result.message = "optimization staging directory already exists";
+      return result;
     }
+    if (!report.converged || !is_finite(report.initial_cost) ||
+        !is_finite(report.final_cost) || report.final_cost > report.initial_cost) {
+      result.ok = false;
+      result.code = "optimizer_quality_failed";
+      result.message = "pose graph optimizer did not converge to a finite non-increasing cost";
+      result.pose_count = keyframes.size();
+      result.factor_count = betweens.size();
+      result.iterations = report.iterations;
+      return result;
+    }
+    std::filesystem::create_directories(staging / "patches");
+    const std::filesystem::path out_map = staging / "map.pcd";
+    const std::filesystem::path out_poses = staging / "poses.txt";
     write_pcd(out_map, map_points);
     write_poses(out_poses, keyframes);
-    write_poses(map.output_dir / "poses_optimized.txt", keyframes);
+    for (const auto& patch : patches) {
+      std::filesystem::copy_file(
+          patch, staging / "patches" / patch.filename(),
+          std::filesystem::copy_options::none);
+    }
+    std::filesystem::copy_file(
+        map.patch_bundle_manifest,
+        staging / "patch_bundle.manifest",
+        std::filesystem::copy_options::none);
 
     result.ok = true;
     result.code = "optimized";
     result.message = options.strategy + " optimization completed";
     result.patch_count = keyframes.size();
     result.pose_count = keyframes.size();
-    result.factor_count = priors.size() + betweens.size();
+    result.factor_count = betweens.size();
     result.iterations = report.iterations;
     result.changed = true;
     result.report_path = map.output_dir / "map_optimization.json";
-    write_report(result.report_path, options, result, report, map_backup, poses_backup);
+    write_report(staging / "map_optimization.json", options, result, report);
+    std::filesystem::rename(staging, map.output_dir);
+    staging.clear();
     return result;
   } catch (const std::exception& exc) {
+    if (!staging.empty()) {
+      std::error_code cleanup_error;
+      std::filesystem::remove_all(staging, cleanup_error);
+    }
     return fail_from_exception(result, exc, "optimizer_io_failed");
   }
 }

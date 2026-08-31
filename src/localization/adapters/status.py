@@ -14,16 +14,27 @@ from pathlib import Path
 from typing import Any
 
 from runtime.backend_status import BackendStatus
+from runtime.contracts.localization import degeneracy_level
 from runtime.module import Module
 from runtime.msgs.geometry import Pose, Quaternion, Transform, Vector3
 from runtime.msgs.gnss import GnssOdom
-from runtime.msgs.map import MapObservationFrame
+from runtime.msgs.map import MapCloudFrame, MapObservationFrame
 from runtime.msgs.nav import Odometry
 from runtime.msgs.sensor import Imu, PointCloud2
 from runtime.registry import register
-from runtime.runtime_interface import TOPICS, body_frame_id, topic_default_frame_id
+from runtime.runtime_interface import (
+    TOPICS,
+    body_frame_id,
+    map_frame_id,
+    odom_frame_id,
+    topic_default_frame_id,
+)
 from runtime.stream import In, Out
-from runtime.tf import FrameTree
+from runtime.tf import (
+    FrameTree,
+    map_from_odom_transform_from_mapping,
+    map_from_odom_transform_to_dict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +63,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
     imu: Out[Imu]
     registered_cloud: Out[PointCloud2]
     map_observation: Out[MapObservationFrame]
-    map_cloud: Out[PointCloud2]
+    map_cloud_frame: Out[MapCloudFrame]
     saved_map: Out[PointCloud2]
     odometry: Out[Odometry]
     localization_quality: Out[float]
@@ -68,7 +79,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
 
     def __init__(
         self,
-        backend_profile: str = "bridge",
+        backend_profile: str = "native_dds",
         status_snapshot_path: str | None = None,
         cloud_snapshot_dir: str | None = None,
         status_snapshot_interval_s: float | None = None,
@@ -78,9 +89,17 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         **kw: Any,
     ) -> None:
         super().__init__(**kw)
-        self._backend_profile = str(backend_profile or "bridge")
+        self._backend_profile = str(backend_profile or "native_dds")
+        session_root = str(os.environ.get("LINGTU_SESSION_ROOT") or "").strip()
+        session_status = (
+            str(Path(session_root) / "slam.status.json")
+            if session_root
+            else DEFAULT_STATUS_SNAPSHOT_PATH
+        )
         self._status_snapshot_path = str(
-            status_snapshot_path or os.environ.get("LINGTU_SLAM_STATUS_JSON") or DEFAULT_STATUS_SNAPSHOT_PATH
+            status_snapshot_path
+            or os.environ.get("LINGTU_SLAM_STATUS_JSON")
+            or session_status
         )
         self._cloud_snapshot_dir = str(
             cloud_snapshot_dir or os.environ.get("LINGTU_SLAM_CLOUD_SNAPSHOT_DIR") or DEFAULT_CLOUD_SNAPSHOT_DIR
@@ -243,7 +262,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
     def _publish_status_snapshot(self, payload: Mapping[str, Any]) -> None:
         reported_state = str(payload.get("state") or "UNKNOWN").upper()
         stamp_s = _float(payload.get("stamp_s"), time.time())
-        source_data_age_s = self._update_source_progress(payload)
+        source_data_age_s, source_boundary_reason = self._update_source_progress(payload)
         quality = _float(payload.get("localization_quality", payload.get("confidence")), 0.0)
         fastlio_velocity = payload.get("fastlio_velocity")
         fastlio_speed_mps: float | None = None
@@ -306,6 +325,9 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             "fastlio_velocity": reported_fastlio_velocity,
             "fastlio_speed_mps": None if source_stalled else fastlio_speed_mps,
             "fastlio_degeneracy": fastlio_degeneracy,
+            "degeneracy": degeneracy_level(
+                {"fastlio_degeneracy": fastlio_degeneracy}
+            ),
             "fastlio_lidar_update": reported_fastlio_lidar_update,
             "max_reasonable_speed_mps": self._max_reasonable_speed_mps,
             "status_target_hz": _float(payload.get("status_target_hz"), 0.0),
@@ -409,8 +431,35 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             self._last_observation_sequence = 0
         if source_epoch is not None:
             self._last_observation_source_epoch = source_epoch
+        invalidation: dict[str, Any] | None = None
+        if source_boundary_reason is not None:
+            invalidation = self._invalidate_map_odom_tf(
+                reason=source_boundary_reason,
+                stamp_s=stamp_s,
+                runtime_id=runtime_id,
+                source_epoch=source_epoch,
+                reset=True,
+            )
+
+        map_from_odom_transform = None
         if isinstance(payload.get("map_odom_tf"), Mapping):
-            status["map_odom_tf"] = dict(payload["map_odom_tf"])
+            map_from_odom_transform = map_from_odom_transform_from_mapping(payload["map_odom_tf"])
+            if map_from_odom_transform is not None:
+                status["map_odom_tf"] = map_from_odom_transform_to_dict(map_from_odom_transform)
+        if map_from_odom_transform is None and self._last_map_odom_tf is not None:
+            invalidation = self._invalidate_map_odom_tf(
+                reason=(
+                    "map_odom_tf_invalid"
+                    if "map_odom_tf" in payload
+                    else "map_odom_tf_missing"
+                ),
+                stamp_s=stamp_s,
+                runtime_id=runtime_id,
+                source_epoch=source_epoch,
+                reset=False,
+            )
+        if map_from_odom_transform is None and invalidation is not None:
+            status["map_odom_tf"] = dict(invalidation)
         if isinstance(payload.get("gnss_fusion_health"), Mapping):
             status["gnss_fusion_health"] = dict(payload["gnss_fusion_health"])
         if status["map_frame_jump"]:
@@ -427,10 +476,11 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self.localization_status.publish(status)
         self.localization_quality.publish(quality)
         self.alive.publish(alive)
-        if isinstance(status.get("map_odom_tf"), dict):
-            tf = dict(status["map_odom_tf"])
-            self._update_map_odom_tf(tf)
-            self.map_odom_tf.publish(tf)
+        if map_from_odom_transform is not None:
+            canonical_tf = dict(status["map_odom_tf"])
+            self._frame_tree.set_transform(map_from_odom_transform, authority="cpp_slam_status")
+            self._last_map_odom_tf = canonical_tf
+            self.map_odom_tf.publish(canonical_tf)
         if isinstance(status.get("gnss_fusion_health"), dict):
             self.gnss_fusion_health.publish(dict(status["gnss_fusion_health"]))
         if isinstance(status.get("map_frame_jump_event"), dict):
@@ -447,7 +497,10 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         self._status_snapshot_stale = False
         self._stale_status_published = False
 
-    def _update_source_progress(self, payload: Mapping[str, Any]) -> float:
+    def _update_source_progress(
+        self,
+        payload: Mapping[str, Any],
+    ) -> tuple[float, str | None]:
         runtime_id = str(payload.get("runtime_instance_id") or "").strip()
         source_epoch_present = payload.get("source_epoch") is not None
         source_epoch = _int(payload.get("source_epoch")) if source_epoch_present else None
@@ -468,12 +521,26 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             and self._source_progress_epoch is not None
             and source_epoch != self._source_progress_epoch
         )
+        source_timestamp_rollback = (
+            observation_stamp_s > 0.0
+            and self._last_source_observation_stamp_s > 0.0
+            and observation_stamp_s + 1e-6 < self._last_source_observation_stamp_s
+        )
         source_rollback = (
             sequence < self._last_source_observation_sequence
-            or observation_stamp_s + 1e-6 < self._last_source_observation_stamp_s
+            or source_timestamp_rollback
         )
         explicit_source_reset = _source_reset_reason(payload) and source_rollback
-        source_boundary_changed = runtime_changed or source_epoch_changed or explicit_source_reset
+        source_boundary_reason = None
+        if runtime_changed:
+            source_boundary_reason = "runtime_instance_changed"
+        elif source_epoch_changed:
+            source_boundary_reason = "source_epoch_changed"
+        elif source_timestamp_rollback:
+            source_boundary_reason = "source_timestamp_rollback"
+        elif explicit_source_reset:
+            source_boundary_reason = "source_reset"
+        source_boundary_changed = source_boundary_reason is not None
         has_source_marker = sequence > 0 or observation_stamp_s > 0.0
         marker_changed = (
             sequence != self._last_source_observation_sequence
@@ -493,7 +560,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
             self._last_source_observation_stamp_s = observation_stamp_s
             self._last_source_progress_monotonic = now
             self._source_data_stale = False
-            return 0.0
+            return 0.0, source_boundary_reason
 
         if source_boundary_changed:
             self._last_source_observation_sequence = sequence
@@ -501,7 +568,46 @@ class CppSlamStatusAdapterModule(Module, layer=1):
 
         age_s = max(0.0, now - self._last_source_progress_monotonic)
         self._source_data_stale = age_s > self._status_snapshot_stale_after_s
-        return age_s
+        return age_s, source_boundary_reason
+
+    def _invalidate_map_odom_tf(
+        self,
+        *,
+        reason: str,
+        stamp_s: float,
+        runtime_id: str,
+        source_epoch: int | None,
+        reset: bool,
+    ) -> dict[str, Any]:
+        """Clear cached ``T_map_from_odom`` and notify downstream consumers."""
+
+        self._frame_tree.remove_transform(
+            map_frame_id(),
+            odom_frame_id(),
+            dynamic_only=True,
+        )
+        self._last_map_odom_tf = None
+        invalidation = {
+            "valid": False,
+            "frame_id": map_frame_id(),
+            "child_frame_id": odom_frame_id(),
+            "reason": reason,
+            "reset": reset,
+            "ts": stamp_s,
+            "runtime_instance_id": runtime_id,
+            "source_epoch": source_epoch,
+        }
+        self.map_odom_tf.publish(dict(invalidation))
+        self.map_frame_jump_event.publish(
+            {
+                "type": "map_frame_jump",
+                "source": "cpp_slam_status",
+                "ts": stamp_s,
+                "reason": reason,
+                "reset": reset,
+            }
+        )
+        return invalidation
 
     def _map_frame_jump_event(self, status: Mapping[str, Any], stamp_s: float) -> dict[str, Any] | None:
         tf = status.get("map_odom_tf")
@@ -551,12 +657,12 @@ class CppSlamStatusAdapterModule(Module, layer=1):
     def _poll_cloud_snapshots(self) -> None:
         for attr_name, filename, topic in (
             ("registered_cloud", "registered_cloud.bin", TOPICS.registered_cloud),
-            ("map_cloud", "map_cloud.bin", TOPICS.map_cloud),
+            ("map_cloud_frame", "map_cloud.bin", TOPICS.map_cloud),
             ("saved_map", "saved_map_cloud.bin", TOPICS.saved_map_cloud),
         ):
             if self._status_snapshot_diverged and attr_name in {
                 "registered_cloud",
-                "map_cloud",
+                "map_cloud_frame",
             }:
                 continue
             self._poll_one_cloud_snapshot(attr_name, filename, topic)
@@ -581,7 +687,17 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         except Exception:
             self._record_decode_error(f"cloud_snapshot:{filename}")
             return
-        getattr(self, attr_name).publish(cloud)
+        if attr_name == "map_cloud_frame":
+            self.map_cloud_frame.publish(
+                MapCloudFrame.from_pointcloud2(
+                    cloud,
+                    mode="FULL",
+                    source="cpp_slam_status:map_cloud",
+                    sequence=self._last_observation_sequence,
+                )
+            )
+        else:
+            getattr(self, attr_name).publish(cloud)
         if attr_name == "registered_cloud":
             self._latest_registered_cloud = cloud
             self._publish_map_observation_if_ready()
@@ -609,58 +725,58 @@ class CppSlamStatusAdapterModule(Module, layer=1):
         if not isinstance(scan_state, Mapping) or not isinstance(map_odom_raw, Mapping):
             return
         scan_stamp = _float(scan_state.get("stamp_s"), 0.0)
-        if scan_stamp <= 0.0 or abs(float(cloud.ts) - scan_stamp) > 1e-4:
+        if scan_stamp <= 0.0 or not math.isfinite(scan_stamp):
+            self._record_decode_error("map_observation")
+            return
+        cloud_stamp = float(cloud.ts)
+        if not math.isfinite(cloud_stamp):
+            self._record_decode_error("map_observation")
+            return
+        if abs(cloud_stamp - scan_stamp) > 1e-4:
             return
         scan_pose = scan_state.get("pose")
-        if not isinstance(scan_pose, Mapping) or map_odom_raw.get("valid") is not True:
+        if not isinstance(scan_pose, Mapping):
+            self._record_decode_error("map_observation")
             return
         odom_frame = str(scan_state.get("frame_id") or "")
         sensor_frame = str(scan_state.get("child_frame_id") or "")
-        if not odom_frame or not sensor_frame or str(cloud.frame_id) != sensor_frame:
+        if not odom_frame or not sensor_frame:
+            self._record_decode_error("map_observation")
             return
-        map_frame = str(map_odom_raw.get("frame_id") or "")
-        if not map_frame or str(map_odom_raw.get("child_frame_id") or "") != odom_frame:
+        if str(cloud.frame_id) != sensor_frame:
             return
-        map_odom = Transform(
-            translation=Vector3(
-                _float(map_odom_raw.get("tx"), 0.0),
-                _float(map_odom_raw.get("ty"), 0.0),
-                _float(map_odom_raw.get("tz"), 0.0),
-            ),
-            rotation=Quaternion(
-                _float(map_odom_raw.get("qx"), 0.0),
-                _float(map_odom_raw.get("qy"), 0.0),
-                _float(map_odom_raw.get("qz"), 0.0),
-                _float(map_odom_raw.get("qw"), 1.0),
-            ),
-            frame_id=map_frame,
-            child_frame_id=odom_frame,
-            ts=scan_stamp,
-        )
-        odom_sensor = Transform(
-            translation=Vector3(
-                _float(scan_pose.get("x"), 0.0),
-                _float(scan_pose.get("y"), 0.0),
-                _float(scan_pose.get("z"), 0.0),
-            ),
-            rotation=Quaternion(
-                _float(scan_pose.get("qx"), 0.0),
-                _float(scan_pose.get("qy"), 0.0),
-                _float(scan_pose.get("qz"), 0.0),
-                _float(scan_pose.get("qw"), 1.0),
-            ),
-            frame_id=odom_frame,
-            child_frame_id=sensor_frame,
-            ts=scan_stamp,
-        )
+        map_odom = map_from_odom_transform_from_mapping(map_odom_raw)
+        if map_odom is None or map_odom.child_frame_id != odom_frame:
+            self._record_decode_error("map_observation")
+            return
+        if (
+            abs(map_odom.ts - scan_stamp) > 1e-4
+            or abs(map_odom.ts - cloud_stamp) > 1e-4
+        ):
+            self._record_decode_error("map_observation")
+            return
+        pose_fields = ("x", "y", "z", "qx", "qy", "qz", "qw")
+        if not set(pose_fields) <= scan_pose.keys():
+            self._record_decode_error("map_observation")
+            return
         try:
+            pose_values = tuple(float(scan_pose[field]) for field in pose_fields)
+            if not all(math.isfinite(value) for value in pose_values):
+                raise ValueError("scan pose contains non-finite values")
+            odom_sensor = Transform(
+                translation=Vector3(*pose_values[:3]),
+                rotation=Quaternion(*pose_values[3:]).normalize(),
+                frame_id=odom_frame,
+                child_frame_id=sensor_frame,
+                ts=scan_stamp,
+            )
             map_sensor = map_odom + odom_sensor
             observation = MapObservationFrame(
                 points=cloud.points,
                 sequence=sequence,
                 reset_epoch=source_epoch,
                 ts=scan_stamp,
-                frame_id=map_frame,
+                frame_id=map_odom.frame_id,
                 sensor_frame_id=sensor_frame,
                 sensor_origin=map_sensor.translation,
                 map_sensor_pose=Pose(map_sensor.translation, map_sensor.rotation),
@@ -673,7 +789,7 @@ class CppSlamStatusAdapterModule(Module, layer=1):
                 },
                 source="cpp_slam_status:registered_cloud_body",
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, ZeroDivisionError):
             self._record_decode_error("map_observation")
             return
         self.map_observation.publish(observation)
@@ -720,27 +836,6 @@ class CppSlamStatusAdapterModule(Module, layer=1):
     def _record_decode_error(self, topic: str) -> None:
         self._decode_errors[topic] += 1
         logger.debug("C++ SLAM status decode failed for %s", topic, exc_info=True)
-
-    def _update_map_odom_tf(self, tf: Mapping[str, Any]) -> None:
-        if not tf or not tf.get("valid", False):
-            return
-        self._frame_tree.set_transform(
-            Transform(
-                translation=Vector3(float(tf["tx"]), float(tf["ty"]), float(tf["tz"])),
-                rotation=Quaternion(
-                    float(tf["qx"]),
-                    float(tf["qy"]),
-                    float(tf["qz"]),
-                    float(tf["qw"]),
-                ),
-                frame_id=topic_default_frame_id(TOPICS.map_cloud),
-                child_frame_id=topic_default_frame_id(TOPICS.odometry),
-                ts=float(tf.get("ts") or time.time()),
-            ),
-            authority="cpp_slam_status",
-        )
-        self._last_map_odom_tf = dict(tf)
-
 
 def _source_reset_reason(payload: Mapping[str, Any]) -> bool:
     reason = str(payload.get("reason") or "").strip().lower()

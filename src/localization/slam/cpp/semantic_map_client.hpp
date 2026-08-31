@@ -24,8 +24,8 @@ struct SemanticMapSnapshot {
 
 class SemanticMapClient final {
  public:
-  SemanticMapClient();
-  ~SemanticMapClient();
+  SemanticMapClient() = default;
+  ~SemanticMapClient() = default;
 
   SemanticMapClient(const SemanticMapClient &) = delete;
   SemanticMapClient &operator=(const SemanticMapClient &) = delete;
@@ -33,9 +33,6 @@ class SemanticMapClient final {
   bool available() const;
   bool load(const std::string &path, SemanticMapSnapshot *snapshot, std::string *error) const;
 
- private:
-  struct Impl;
-  Impl *impl_{nullptr};
 };
 
 }  // namespace lingtu::slam

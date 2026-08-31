@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "scripts" / "datasets" / "normalized_lidar_imu_to_ltu1.py"
+SCRIPT = ROOT / "tools" / "datasets" / "normalized_lidar_imu_to_ltu1.py"
 SPEC = importlib.util.spec_from_file_location("normalized_lidar_imu_to_ltu1", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 CONVERTER = importlib.util.module_from_spec(SPEC)

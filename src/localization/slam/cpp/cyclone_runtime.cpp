@@ -1,11 +1,12 @@
 #include "slam.hpp"
 #include "map_tracking_health.hpp"
-#include "message/cpp/dds_topics.hpp"
-#include "message/cpp/dds_qos_profiles.hpp"
-#include "message/cpp/snapshot_file.hpp"
+#include "imu_frame_contract.hpp"
+#include "message/cpp/topics.hpp"
+#include "message/cpp/qos.hpp"
+#include "native/snapshot_file.hpp"
 
 #include "dds/dds.h"
-#include "lingtu_slam.h"
+#include "messages.h"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +16,7 @@
 #include <cctype>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -47,9 +49,7 @@ using lingtu::slam::SlamMode;
 using lingtu::slam::SlamOutputs;
 using lingtu::slam::Status;
 using lingtu::slam::Transform3d;
-using lingtu::slam::makeContractBackend;
 using lingtu::slam::makeFastLioBackend;
-using lingtu::slam::makePointLioBackend;
 using lingtu::slam::modeFromString;
 using lingtu::slam::toString;
 
@@ -76,6 +76,35 @@ const std::string& runtimeInstanceId() {
   return value;
 }
 
+std::string productSessionId() {
+  const char* value = std::getenv("LINGTU_PRODUCT_SESSION_ID");
+  return value == nullptr ? std::string{} : std::string(value);
+}
+
+std::string envOrEmpty(const char* name) {
+  const char* value = std::getenv(name);
+  return value == nullptr ? std::string{} : std::string(value);
+}
+
+double finiteEnvDouble(const char* name, double fallback = 0.0) {
+  const std::string value = envOrEmpty(name);
+  if (value.empty())
+    return fallback;
+  std::size_t consumed = 0U;
+  const double parsed = std::stod(value, &consumed);
+  if (consumed != value.size() || !std::isfinite(parsed))
+    throw std::invalid_argument(std::string(name) + " must be finite");
+  return parsed;
+}
+
+std::int64_t snapshotTimestampNs(double stamp_s) {
+  if (!std::isfinite(stamp_s) || stamp_s <= 0.0 ||
+      stamp_s > static_cast<double>(std::numeric_limits<std::int64_t>::max()) * 1e-9) {
+    return 0;
+  }
+  return static_cast<std::int64_t>(stamp_s * 1e9);
+}
+
 double stampSeconds(const lingtu_dds_Time& stamp) {
   return static_cast<double>(stamp.sec) + static_cast<double>(stamp.nanosec) * 1e-9;
 }
@@ -90,25 +119,11 @@ void fillHeader(lingtu_dds_Header& header, double stamp_s, const char* frame_id)
   header.frame_id = const_cast<char*>(frame_id);
 }
 
-std::string normalizedBackend(std::string backend) {
-  std::transform(backend.begin(), backend.end(), backend.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
-  if (backend.empty() || backend == "fastlio" || backend == "fastlio2" || backend == "localizer") {
-    return "fastlio2";
-  }
-  return backend;
-}
-
 std::unique_ptr<ISlamBackend> createBackend(const std::string& backend) {
-  const std::string normalized = normalizedBackend(backend);
-  if (normalized == "fastlio2") {
+  if (backend == "fastlio2") {
     return makeFastLioBackend();
   }
-  if (normalized == "pointlio") {
-    return makePointLioBackend();
-  }
-  return makeContractBackend(normalized);
+  throw std::invalid_argument("unsupported SLAM backend: " + backend);
 }
 
 LidarFrame toLidarFrame(const lingtu_dds_LivoxFrame& msg) {
@@ -292,6 +307,16 @@ void fieldsFill(std::array<lingtu_dds_PointField, 4>& fields) {
 
 std::string jsonEscape(const std::string& value);
 
+std::string simulationIdentityJson() {
+  if (envOrEmpty("LINGTU_ENV") != "sim") {
+    return {};
+  }
+  const std::string session_id = productSessionId();
+  return "\"native_product\":{\"product\":\"" +
+      jsonEscape(envOrEmpty("LINGTU_PRODUCT")) +
+      "\",\"product_session_id\":\"" + jsonEscape(session_id) + "\"},";
+}
+
 struct CloudMessage {
   lingtu_dds_PointCloud2 msg{};
   std::array<lingtu_dds_PointField, 4> fields{};
@@ -353,7 +378,9 @@ struct MapObservationMessage {
   }
 };
 
-std::optional<MapObservationMessage> toDdsMapObservation(const SlamOutputs& out) {
+std::optional<MapObservationMessage> toDdsMapObservation(
+    const SlamOutputs& out,
+    const Pose3d& body_sensor) {
   if (out.source_epoch == 0U || out.observation_sequence == 0U ||
       !out.registered_cloud_body.has_value() ||
       !out.state_estimation_at_scan.has_value() ||
@@ -363,8 +390,9 @@ std::optional<MapObservationMessage> toDdsMapObservation(const SlamOutputs& out)
 
   MapObservationMessage message;
   const Cloud& scan = *out.registered_cloud_body;
-  const Pose3d map_sensor =
+  const Pose3d map_body =
       composePoses(out.map_odom_tf->pose, *out.state_estimation_at_scan);
+  const Pose3d map_sensor = composePoses(map_body, body_sensor);
   message.map_frame =
       out.map_odom_tf->frame_id.empty() ? "map" : out.map_odom_tf->frame_id;
   message.sensor_frame = scan.frame_id.empty() ? "body" : scan.frame_id;
@@ -375,13 +403,16 @@ std::optional<MapObservationMessage> toDdsMapObservation(const SlamOutputs& out)
   fillHeader(message.msg.header, scan.stamp_s, message.map_frame.c_str());
   message.msg.observation_sequence = out.observation_sequence;
   message.msg.reset_epoch = out.source_epoch;
-  message.msg.map_sensor.translation.x = map_sensor.x;
-  message.msg.map_sensor.translation.y = map_sensor.y;
-  message.msg.map_sensor.translation.z = map_sensor.z;
-  message.msg.map_sensor.rotation.x = map_sensor.qx;
-  message.msg.map_sensor.rotation.y = map_sensor.qy;
-  message.msg.map_sensor.rotation.z = map_sensor.qz;
-  message.msg.map_sensor.rotation.w = map_sensor.qw;
+  // registered_cloud_body is expressed in body, so map_sensor remains the
+  // map<-body transform. The ray origin is the physical LiDAR origin composed
+  // through the same scan-time body pose.
+  message.msg.map_sensor.translation.x = map_body.x;
+  message.msg.map_sensor.translation.y = map_body.y;
+  message.msg.map_sensor.translation.z = map_body.z;
+  message.msg.map_sensor.rotation.x = map_body.qx;
+  message.msg.map_sensor.rotation.y = map_body.qy;
+  message.msg.map_sensor.rotation.z = map_body.qz;
+  message.msg.map_sensor.rotation.w = map_body.qw;
   message.msg.sensor_origin.x = map_sensor.x;
   message.msg.sensor_origin.y = map_sensor.y;
   message.msg.sensor_origin.z = map_sensor.z;
@@ -390,8 +421,6 @@ std::optional<MapObservationMessage> toDdsMapObservation(const SlamOutputs& out)
   message.bindStorage();
   return message;
 }
-
-std::string mapOptimizationJson(const SlamOutputs& out);
 
 struct RuntimeMapTrackingStatus {
   bool enabled = false;
@@ -404,6 +433,40 @@ struct RuntimeMapTrackingStatus {
   double last_success_age_s = -1.0;
   bool async_in_flight = false;
 };
+
+struct ImuFrameInputStatus {
+  std::uint64_t accepted_frames = 0;
+  std::uint64_t rejected_missing = 0;
+  std::uint64_t rejected_mismatch = 0;
+  std::string last_rejection_reason;
+
+  void accept() noexcept {
+    ++accepted_frames;
+  }
+
+  void reject(lingtu::slam::ImuFrameValidation validation) {
+    last_rejection_reason = lingtu::slam::imuFrameRejectionReason(validation);
+    if (validation == lingtu::slam::ImuFrameValidation::kMissing) {
+      ++rejected_missing;
+    } else if (validation == lingtu::slam::ImuFrameValidation::kMismatch) {
+      ++rejected_mismatch;
+    }
+  }
+
+  std::uint64_t rejectedFrames() const noexcept {
+    return rejected_missing + rejected_mismatch;
+  }
+};
+
+std::string imuFrameInputJson(const ImuFrameInputStatus& status) {
+  return std::string("{\"expected_frame_id\":\"") +
+      std::string(lingtu::slam::kImuFrameId) +
+      "\",\"accepted_frames\":" + std::to_string(status.accepted_frames) +
+      ",\"rejected_missing\":" + std::to_string(status.rejected_missing) +
+      ",\"rejected_mismatch\":" + std::to_string(status.rejected_mismatch) +
+      ",\"last_rejection_reason\":\"" +
+      jsonEscape(status.last_rejection_reason) + "\"}";
+}
 
 MapTrackingHealthProjection projectedHealth(
     const SlamOutputs& out,
@@ -423,7 +486,8 @@ MapTrackingHealthProjection projectedHealth(
 
 std::string healthJson(
     const SlamOutputs& out,
-    const RuntimeMapTrackingStatus& tracking) {
+    const RuntimeMapTrackingStatus& tracking,
+    const ImuFrameInputStatus& imu_frame_input) {
   const MapTrackingHealthProjection health = projectedHealth(out, tracking);
   const std::string tf_json = out.map_odom_tf.has_value()
       ? std::string("{\"valid\":true,\"frame_id\":\"") + jsonEscape(out.map_odom_tf->frame_id) +
@@ -481,7 +545,7 @@ std::string healthJson(
       ",\"odom_prior_age_s\":" + std::to_string(out.odom_prior_age_s) +
       ",\"odom_prior_error_xy_m\":" + std::to_string(out.odom_prior_error_xy_m) +
       ",\"odom_prior_map_points\":" + std::to_string(out.odom_prior_map_points) +
-      ",\"map_optimization\":" + mapOptimizationJson(out) + "}";
+      ",\"imu_input\":" + imuFrameInputJson(imu_frame_input) + "}";
 }
 
 std::string poseJson(const Pose3d& pose) {
@@ -537,36 +601,6 @@ std::string gnssFusionHealthJson(const lingtu::slam::GnssFusionHealth& health) {
       ",\"last_gnss_age_s\":" + std::to_string(health.last_gnss_age_s) +
       ",\"last_residual_m\":" + std::to_string(health.last_residual_m) +
       ",\"relock_count\":" + std::to_string(health.relock_count) + "}";
-}
-
-std::string mapOptimizationJson(const SlamOutputs& out) {
-  return std::string("{\"status\":\"") + jsonEscape(out.map_optimization_status) +
-      "\",\"backend\":\"" + jsonEscape(out.map_optimization_backend) +
-      "\",\"refine_backend\":\"" + jsonEscape(out.map_optimization_refine_backend) +
-      "\",\"enabled\":" + (out.map_optimization_enabled ? "true" : "false") +
-      ",\"loop_closure_enabled\":" +
-      (out.map_optimization_loop_closure_enabled ? "true" : "false") +
-      ",\"loop_closure_applied\":" +
-      (out.map_optimization_loop_closure_applied ? "true" : "false") +
-      ",\"refine_enabled\":" +
-      (out.map_optimization_refine_enabled ? "true" : "false") +
-      ",\"refine_applied\":" +
-      (out.map_optimization_refine_applied ? "true" : "false") +
-      ",\"hba_refine_enabled\":" +
-      (out.map_optimization_hba_refine_enabled ? "true" : "false") +
-      ",\"hba_refine_applied\":" +
-      (out.map_optimization_hba_refine_applied ? "true" : "false") +
-      ",\"patch_count\":" + std::to_string(out.map_optimization_patch_count) +
-      ",\"pose_count\":" + std::to_string(out.map_optimization_pose_count) +
-      ",\"optimized_pose_count\":" +
-      std::to_string(out.map_optimization_optimized_pose_count) +
-      ",\"loop_count\":" + std::to_string(out.map_optimization_loop_count) +
-      ",\"raw_map_points\":" +
-      std::to_string(out.map_optimization_raw_map_points) +
-      ",\"optimized_map_points\":" +
-      std::to_string(out.map_optimization_optimized_map_points) +
-      ",\"loop_closure_error_m\":" +
-      std::to_string(out.map_optimization_loop_error_m) + "}";
 }
 
 std::string finiteJsonNumber(double value) {
@@ -633,7 +667,8 @@ std::string statusSnapshotJson(
     const std::string& backend,
     const std::string& mode,
     const RuntimeRates& rates,
-    const RuntimeMapTrackingStatus& tracking) {
+    const RuntimeMapTrackingStatus& tracking,
+    const ImuFrameInputStatus& imu_frame_input) {
   const MapTrackingHealthProjection health = projectedHealth(out, tracking);
   const double localization_quality = health.degraded ||
           health.state == lingtu::slam::SlamState::Localizing
@@ -687,6 +722,7 @@ std::string statusSnapshotJson(
       "\"schema_version\":\"lingtu.slam.status_snapshot.v1\"," +
       "\"runtime_instance_id\":\"" + jsonEscape(runtimeInstanceId()) + "\"," +
       "\"source\":\"cpp_cyclone_slam\"," +
+      simulationIdentityJson() +
       "\"backend\":\"" + jsonEscape(backend) + "\"," +
       "\"mode\":\"" + jsonEscape(mode) + "\"," +
       "\"state\":\"" + toString(health.state) + "\"," +
@@ -718,6 +754,7 @@ std::string statusSnapshotJson(
       "\"fastlio_lidar_update\":" +
       fastLioLidarUpdateJson(out.fastlio_lidar_update) + "," +
       "\"status_target_hz\":" + std::to_string(rates.status_target_hz) + "," +
+      "\"imu_input\":" + imuFrameInputJson(imu_frame_input) + "," +
       "\"imu_input_hz\":" + std::to_string(rates.imu_input_hz) + "," +
       "\"lidar_input_hz\":" + std::to_string(rates.lidar_input_hz) + "," +
       "\"slam_tick_hz\":" + std::to_string(rates.slam_tick_hz) + "," +
@@ -793,7 +830,6 @@ std::string statusSnapshotJson(
       "\"relocalization_refine_pos_cov_trace\":" +
       std::to_string(out.relocalization_refine_pos_cov_trace) + "," +
       "\"scene_mode\":\"" + jsonEscape(out.scene_mode) + "\"," +
-      "\"map_optimization\":" + mapOptimizationJson(out) + "," +
       "\"gnss_fusion_health\":" + gnssFusionHealthJson(out.gnss_fusion_health) + "," +
       "\"map_odom_tf\":" + tf_json + "," +
       "\"state_estimation_at_scan\":" + state_estimation_at_scan_json + "," +
@@ -821,7 +857,7 @@ void writeTextAtomic(const std::string& path, const std::string& text) {
     out << text << "\n";
   }
   std::error_code ec;
-  if (!lingtu::message::replaceSnapshotFile(tmp, path, &ec)) {
+  if (!lingtu::native::replaceSnapshotFile(tmp, path, &ec)) {
     std::fprintf(
         stderr,
         "status_json replace failed: %s -> %s: %s\n",
@@ -855,7 +891,7 @@ void writeBytesAtomic(const std::string& path, const std::string& bytes, const c
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
   }
   std::error_code ec;
-  if (!lingtu::message::replaceSnapshotFile(tmp, path, &ec)) {
+  if (!lingtu::native::replaceSnapshotFile(tmp, path, &ec)) {
     std::fprintf(
         stderr,
         "%s replace failed: %s -> %s: %s\n",
@@ -1060,73 +1096,6 @@ void saveTrackSeed(
           "\"pose\":" + poseJson(*pose) + "}");
 }
 
-struct MapCommand {
-  std::string request_id;
-  std::string action;
-  std::string path;
-  std::optional<double> x;
-  std::optional<double> y;
-  std::optional<double> z;
-  std::optional<double> yaw;
-  std::optional<double> qx;
-  std::optional<double> qy;
-  std::optional<double> qz;
-  std::optional<double> qw;
-};
-
-MapCommand parseMapCommand(const lingtu_dds_Text& msg) {
-  const std::string payload = msg.data ? msg.data : "";
-  MapCommand command;
-  command.request_id = jsonStringValue(payload, "request_id").value_or("");
-  command.action = jsonStringValue(payload, "action").value_or(payload);
-  command.path = jsonStringValue(payload, "path").value_or("");
-  command.x = jsonDoubleValue(payload, "x");
-  command.y = jsonDoubleValue(payload, "y");
-  command.z = jsonDoubleValue(payload, "z");
-  command.yaw = jsonDoubleValue(payload, "yaw");
-  command.qx = jsonDoubleValue(payload, "qx");
-  command.qy = jsonDoubleValue(payload, "qy");
-  command.qz = jsonDoubleValue(payload, "qz");
-  command.qw = jsonDoubleValue(payload, "qw");
-  if (command.action == "save" || command.action == "save-map") {
-    command.action = "save_map";
-  } else if (command.action == "load" || command.action == "load-map") {
-    command.action = "load_map";
-  } else if (
-      command.action == "relocalize_saved_map" ||
-      command.action == "relocalize-saved-map") {
-    command.action = "relocalize";
-  } else if (command.action == "global-relocalize") {
-    command.action = "global_relocalize";
-  }
-  return command;
-}
-
-std::optional<Pose3d> poseFromCommand(const MapCommand& command) {
-  const bool has_position =
-      command.x.has_value() || command.y.has_value() || command.z.has_value();
-  const bool has_orientation =
-      command.yaw.has_value() || command.qx.has_value() || command.qy.has_value() ||
-      command.qz.has_value() || command.qw.has_value();
-  if (!has_position && !has_orientation) {
-    return std::nullopt;
-  }
-  Pose3d pose;
-  pose.x = command.x.value_or(0.0);
-  pose.y = command.y.value_or(0.0);
-  pose.z = command.z.value_or(0.0);
-  if (command.yaw.has_value()) {
-    const double half = *command.yaw * 0.5;
-    pose.qz = std::sin(half);
-    pose.qw = std::cos(half);
-  }
-  pose.qx = command.qx.value_or(pose.qx);
-  pose.qy = command.qy.value_or(pose.qy);
-  pose.qz = command.qz.value_or(pose.qz);
-  pose.qw = command.qw.value_or(pose.qw);
-  return pose;
-}
-
 Pose3d poseFromDds(const lingtu_dds_Pose& pose) {
   Pose3d out;
   out.x = pose.position.x;
@@ -1167,70 +1136,69 @@ bool isTrackAgainstMapInputWait(const std::string& message) {
       message == "odometry_unavailable";
 }
 
-std::string mapEventJson(
-    const MapCommand& command,
+struct SlamMapSnapshotAckMessage {
+  lingtu_dds_SlamMapSnapshotAck msg{};
+  std::string request_id;
+  std::string map_id;
+  std::string message;
+  std::string output_path;
+  std::string runtime_instance_id;
+  std::string product_session_id;
+  std::string frame_id;
+  std::string state;
+  std::string health_message;
+
+  void bindStorage() {
+    msg.request_id = const_cast<char*>(request_id.c_str());
+    msg.map_id = const_cast<char*>(map_id.c_str());
+    msg.message = const_cast<char*>(message.c_str());
+    msg.output_path = const_cast<char*>(output_path.c_str());
+    msg.runtime_instance_id = const_cast<char*>(runtime_instance_id.c_str());
+    msg.product_session_id = const_cast<char*>(product_session_id.c_str());
+    msg.frame_id = const_cast<char*>(frame_id.c_str());
+    msg.state = const_cast<char*>(state.c_str());
+    msg.health_message = const_cast<char*>(health_message.c_str());
+  }
+};
+
+SlamMapSnapshotAckMessage snapshotAck(
+    const lingtu_dds_SlamMapSnapshotRequest& request,
     bool success,
     const std::string& message,
-    const std::string& path,
-    const SlamOutputs* out = nullptr) {
-  std::string extras;
-  if (out != nullptr) {
-    extras += std::string(",\"relocalization_supported\":") +
-        (out->relocalization_supported ? "true" : "false");
-    extras += std::string(",\"saved_map_relocalization_supported\":") +
-        (out->saved_map_relocalization_supported ? "true" : "false");
-    extras += ",\"relocalization_state\":\"" +
-        jsonEscape(out->relocalization_state) + "\"";
-    extras += ",\"last_relocalization_message\":\"" +
-        jsonEscape(out->last_relocalization_message) + "\"";
-    extras += ",\"relocalization_quality\":" +
-        std::to_string(out->relocalization_quality);
-    extras += ",\"relocalization_map_body\":";
-    extras += out->relocalization_map_body.has_value()
-        ? poseJson(*out->relocalization_map_body)
-        : "null";
-    extras += ",\"relocalization_refine_backend\":\"" +
-        jsonEscape(out->relocalization_refine_backend) + "\"";
-    extras += ",\"relocalization_refine_iterations\":" +
-        std::to_string(out->relocalization_refine_iterations);
-    extras += ",\"relocalization_refine_inliers\":" +
-        std::to_string(out->relocalization_refine_inliers);
-    extras += ",\"relocalization_refine_input_points\":" +
-        std::to_string(out->relocalization_refine_input_points);
-    extras += ",\"relocalization_refine_evaluated_points\":" +
-        std::to_string(out->relocalization_refine_evaluated_points);
-    extras += ",\"relocalization_min_inliers\":" +
-        std::to_string(out->relocalization_min_inliers);
-    extras += ",\"relocalization_min_evaluated_points\":" +
-        std::to_string(out->relocalization_min_evaluated_points);
-    extras += ",\"relocalization_refine_support_ratio\":" +
-        std::to_string(out->relocalization_refine_support_ratio);
-    extras += ",\"relocalization_refine_overlap_inlier_ratio\":" +
-        std::to_string(out->relocalization_refine_overlap_inlier_ratio);
-    extras += std::string(",\"relocalization_refine_converged\":") +
-        (out->relocalization_refine_converged ? "true" : "false");
-    extras += ",\"relocalization_refine_pos_cov_trace\":" +
-        std::to_string(out->relocalization_refine_pos_cov_trace);
-    if (out->map_odom_tf.has_value()) {
-      const auto& tf = *out->map_odom_tf;
-      extras += ",\"map_odom_tf\":{\"valid\":true,\"frame_id\":\"" +
-          jsonEscape(tf.frame_id) + "\",\"child_frame_id\":\"" +
-          jsonEscape(tf.child_frame_id) + "\",\"tx\":" +
-          std::to_string(tf.pose.x) + ",\"ty\":" + std::to_string(tf.pose.y) +
-          ",\"tz\":" + std::to_string(tf.pose.z) + ",\"qx\":" +
-          std::to_string(tf.pose.qx) + ",\"qy\":" +
-          std::to_string(tf.pose.qy) + ",\"qz\":" +
-          std::to_string(tf.pose.qz) + ",\"qw\":" +
-          std::to_string(tf.pose.qw) + "}";
-    }
-  }
-  return std::string("{\"schema_version\":\"lingtu.slam.map_event.v1\",") +
-      "\"request_id\":\"" + jsonEscape(command.request_id) + "\"," +
-      "\"action\":\"" + jsonEscape(command.action) + "\"," +
-      "\"success\":" + (success ? "true" : "false") + "," +
-      "\"path\":\"" + jsonEscape(path) + "\"," +
-      "\"message\":\"" + jsonEscape(message) + "\"," +
-      "\"source\":\"cpp_cyclone_slam\"" + extras + "}";
+    const SlamOutputs& out) {
+  SlamMapSnapshotAckMessage ack;
+  ack.request_id = request.request_id ? request.request_id : "";
+  ack.map_id = request.map_id ? request.map_id : "";
+  ack.message = message;
+  ack.output_path = request.output_path ? request.output_path : "";
+  ack.runtime_instance_id = runtimeInstanceId();
+  ack.product_session_id = productSessionId();
+  ack.state = toString(out.state);
+
+  const Cloud* saved_cloud = out.saved_map_cloud_map.has_value()
+      ? &*out.saved_map_cloud_map
+      : (out.map_cloud_map.has_value() ? &*out.map_cloud_map : nullptr);
+  ack.msg.point_count = saved_cloud == nullptr
+      ? static_cast<std::uint64_t>(std::max(0, out.saved_map_points))
+      : static_cast<std::uint64_t>(saved_cloud->points.size());
+  ack.frame_id = saved_cloud == nullptr || saved_cloud->frame_id.empty()
+      ? "map"
+      : saved_cloud->frame_id;
+  const double captured_stamp_s = saved_cloud == nullptr ? out.stamp_s : saved_cloud->stamp_s;
+  ack.msg.reset_epoch = out.source_epoch;
+  ack.msg.observation_sequence = out.observation_sequence;
+  ack.msg.captured_at_ns = static_cast<std::uint64_t>(
+      std::max<std::int64_t>(0, snapshotTimestampNs(captured_stamp_s)));
+  ack.msg.healthy = out.alive && out.source_epoch > 0U &&
+      out.observation_sequence > 0U && ack.msg.point_count > 0U &&
+      (out.state == lingtu::slam::SlamState::Mapping ||
+       out.state == lingtu::slam::SlamState::Tracking);
+  ack.health_message = ack.msg.healthy
+      ? "SLAM snapshot accepted"
+      : (out.reason.empty() ? "SLAM snapshot identity or health is incomplete" : out.reason);
+  ack.msg.success = success;
+  ack.bindStorage();
+  return ack;
 }
 
 struct RelocalizationResponseMessage {
@@ -1326,6 +1294,39 @@ struct CliConfig {
 
 CliConfig parseArgs(int argc, char** argv) {
   CliConfig cfg;
+  const std::string env_mode = envOrEmpty("LINGTU_SLAM_MODE");
+  if (!env_mode.empty()) {
+    cfg.mode = env_mode;
+  }
+  cfg.map_path = envOrEmpty("LINGTU_SLAM_MAP");
+  cfg.config_path = envOrEmpty("LINGTU_SLAM_CONFIG");
+  const std::string initial_yaw = envOrEmpty("LINGTU_SLAM_TRACK_INITIAL_YAW");
+  if (!initial_yaw.empty()) {
+    const auto env_coordinate = [](const char* name) {
+      const std::string value = envOrEmpty(name);
+      return value.empty() ? 0.0 : std::stod(value);
+    };
+    Pose3d pose;
+    pose.x = env_coordinate("LINGTU_SLAM_TRACK_INITIAL_X");
+    pose.y = env_coordinate("LINGTU_SLAM_TRACK_INITIAL_Y");
+    pose.z = env_coordinate("LINGTU_SLAM_TRACK_INITIAL_Z");
+    const double yaw = std::stod(initial_yaw);
+    if (!std::isfinite(pose.x) || !std::isfinite(pose.y) ||
+        !std::isfinite(pose.z) || !std::isfinite(yaw)) {
+      throw std::runtime_error("LINGTU_SLAM_TRACK_INITIAL_* must be finite");
+    }
+    const double half = yaw * 0.5;
+    pose.qz = std::sin(half);
+    pose.qw = std::cos(half);
+    cfg.track_against_map_initial_pose = pose;
+  }
+  if (envOrEmpty("LINGTU_ENV") == "sim") {
+    const std::string session_root = envOrEmpty("LINGTU_SESSION_ROOT");
+    if (!session_root.empty()) {
+      cfg.status_json_path =
+          (std::filesystem::path(session_root) / "slam.status.json").string();
+    }
+  }
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     auto next = [&]() -> std::string {
@@ -1539,24 +1540,21 @@ class DdsRuntime {
         &lingtu_dds_Odometry_desc,
         "odom_prior",
         QosProfile::SensorStream);
-    map_command_reader_ = reader<lingtu_dds_Text>(
-        lingtu::message::kSlamMapCommand.dds_topic.data(),
-        &lingtu_dds_Text_desc,
-        "map_command");
+    map_snapshot_request_reader_ = reader<lingtu_dds_SlamMapSnapshotRequest>(
+        lingtu::message::kSlamMapSnapshotRequest.dds_topic.data(),
+        &lingtu_dds_SlamMapSnapshotRequest_desc,
+        "map_snapshot_request",
+        QosProfile::CommandRequest);
     relocalization_request_reader_ = reader<lingtu_dds_RelocalizationRequest>(
         lingtu::message::kSlamRelocalizationRequest.dds_topic.data(),
         &lingtu_dds_RelocalizationRequest_desc,
-        "relocalization_request");
+        "relocalization_request",
+        QosProfile::CommandRequest);
     tf_writer_ = writer<lingtu_dds_TFMessage>(
         lingtu::message::kTf.dds_topic.data(),
         &lingtu_dds_TFMessage_desc,
         "tf",
         QosProfile::TfDynamic);
-    tf_static_writer_ = writer<lingtu_dds_TFMessage>(
-        lingtu::message::kTfStatic.dds_topic.data(),
-        &lingtu_dds_TFMessage_desc,
-        "tf_static",
-        QosProfile::TfStatic);
     odom_writer_ = writer<lingtu_dds_Odometry>(
         lingtu::message::kSlamOdometry.dds_topic.data(), &lingtu_dds_Odometry_desc, "odom",
         QosProfile::HighFreqState);
@@ -1579,23 +1577,28 @@ class DdsRuntime {
     saved_map_writer_ = writer<lingtu_dds_PointCloud2>(
         lingtu::message::kSlamSavedMapCloud.dds_topic.data(),
         &lingtu_dds_PointCloud2_desc,
-        "saved_map_cloud");
-    map_event_writer_ = writer<lingtu_dds_Text>(
-        lingtu::message::kSlamMapEvent.dds_topic.data(),
-        &lingtu_dds_Text_desc,
-        "map_event");
+        "saved_map_cloud",
+        QosProfile::LidarPointcloud);
+    map_snapshot_ack_writer_ = writer<lingtu_dds_SlamMapSnapshotAck>(
+        lingtu::message::kSlamMapSnapshotAck.dds_topic.data(),
+        &lingtu_dds_SlamMapSnapshotAck_desc,
+        "map_snapshot_ack",
+        QosProfile::CommandAck);
     relocalization_response_writer_ = writer<lingtu_dds_RelocalizationResponse>(
         lingtu::message::kSlamRelocalizationResponse.dds_topic.data(),
         &lingtu_dds_RelocalizationResponse_desc,
-        "relocalization_response");
+        "relocalization_response",
+        QosProfile::CommandAck);
     quality_writer_ = writer<lingtu_dds_Float32>(
         lingtu::message::kSlamLocalizationQuality.dds_topic.data(),
         &lingtu_dds_Float32_desc,
-        "quality");
+        "quality",
+        QosProfile::HighFreqState);
     health_writer_ = writer<lingtu_dds_Text>(
         lingtu::message::kSlamLocalizationHealth.dds_topic.data(),
         &lingtu_dds_Text_desc,
-        "health");
+        "health",
+        QosProfile::LocalizationHealth);
   }
 
   ~DdsRuntime() {
@@ -1635,9 +1638,11 @@ class DdsRuntime {
   }
 
   template <typename Handler>
-  void drainMapCommands(Handler&& handler) {
-    drainReader<lingtu_dds_Text>(
-        map_command_reader_, lingtu_dds_Text_desc, std::forward<Handler>(handler));
+  void drainMapSnapshotRequests(Handler&& handler) {
+    drainReader<lingtu_dds_SlamMapSnapshotRequest>(
+        map_snapshot_request_reader_,
+        lingtu_dds_SlamMapSnapshotRequest_desc,
+        std::forward<Handler>(handler));
   }
 
   template <typename Handler>
@@ -1675,10 +1680,9 @@ class DdsRuntime {
     logDdsError(dds_write(saved_map_writer_, &msg), "dds_write(saved_map_cloud)");
   }
 
-  void writeMapEvent(const std::string& event) {
-    lingtu_dds_Text msg{};
-    msg.data = const_cast<char*>(event.c_str());
-    logDdsError(dds_write(map_event_writer_, &msg), "dds_write(map_event)");
+  void writeMapSnapshotAck(SlamMapSnapshotAckMessage& ack) {
+    ack.bindStorage();
+    logDdsError(dds_write(map_snapshot_ack_writer_, &ack.msg), "dds_write(map_snapshot_ack)");
   }
 
   void writeRelocalizationResponse(const lingtu_dds_RelocalizationResponse& response) {
@@ -1701,10 +1705,6 @@ class DdsRuntime {
 
   void writeTf(const lingtu_dds_TFMessage& msg) {
     logDdsError(dds_write(tf_writer_, &msg), "dds_write(tf)");
-  }
-
-  void writeStaticTf(const lingtu_dds_TFMessage& msg) {
-    logDdsError(dds_write(tf_static_writer_, &msg), "dds_write(tf_static)");
   }
 
  private:
@@ -1746,17 +1746,16 @@ class DdsRuntime {
   dds_entity_t lidar_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t imu_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t odom_prior_reader_ = DDS_RETCODE_ERROR;
-  dds_entity_t map_command_reader_ = DDS_RETCODE_ERROR;
+  dds_entity_t map_snapshot_request_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t relocalization_request_reader_ = DDS_RETCODE_ERROR;
   dds_entity_t tf_writer_ = DDS_RETCODE_ERROR;
-  dds_entity_t tf_static_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t odom_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t state_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t registered_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t map_observation_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t map_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t saved_map_writer_ = DDS_RETCODE_ERROR;
-  dds_entity_t map_event_writer_ = DDS_RETCODE_ERROR;
+  dds_entity_t map_snapshot_ack_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t relocalization_response_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t quality_writer_ = DDS_RETCODE_ERROR;
   dds_entity_t health_writer_ = DDS_RETCODE_ERROR;
@@ -1771,9 +1770,27 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, stopSignal);
 
     const CliConfig cli = parseArgs(argc, argv);
+    const Pose3d body_sensor{
+        finiteEnvDouble("LINGTU_NAV_SENSOR_OFFSET_X_M"),
+        finiteEnvDouble("LINGTU_NAV_SENSOR_OFFSET_Y_M"),
+        finiteEnvDouble("LINGTU_NAV_SENSOR_OFFSET_Z_M"),
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+    };
+    const bool product_managed = !productSessionId().empty();
+    if (envOrEmpty("LINGTU_ENV") == "sim") {
+      if (envOrEmpty("LINGTU_PRODUCT").empty()) {
+        throw std::runtime_error("LINGTU_PRODUCT is required in simulation");
+      }
+      if (productSessionId().empty()) {
+        throw std::runtime_error("LINGTU_PRODUCT_SESSION_ID is required in simulation");
+      }
+    }
     auto backend = createBackend(cli.backend);
     SlamConfig config;
-    config.backend = normalizedBackend(cli.backend);
+    config.backend = cli.backend;
     config.config_path = cli.config_path;
     Status status = backend->configure(config);
     if (!status.ok) {
@@ -1809,17 +1826,22 @@ int main(int argc, char** argv) {
         ? 1.0 / cli.lidar_scan_snapshot_hz
         : 0.0;
     RateCounter imu_input_rate;
+    ImuFrameInputStatus imu_frame_input;
     RateCounter lidar_input_rate;
     RateCounter slam_tick_rate;
     RateCounter processed_scan_rate;
-    std::optional<Pose3d> startup_track_seed =
-        loadTrackSeed(cli.track_against_map_seed_file, cli.map_path);
+    // A pose supplied for this launch is stronger evidence than a pose saved
+    // by an earlier run of the same map. Fall back to the persisted seed only
+    // when the current launch has no explicit estimate.
+    std::optional<Pose3d> startup_track_seed = cli.track_against_map_initial_pose;
     if (!startup_track_seed.has_value()) {
-      startup_track_seed = cli.track_against_map_initial_pose;
+      startup_track_seed = loadTrackSeed(cli.track_against_map_seed_file, cli.map_path);
     }
     bool track_against_map_enabled =
         runtime_mode == SlamMode::Localization &&
-        !cli.map_path.empty();
+        !cli.map_path.empty() &&
+        (!product_managed || envOrEmpty("LINGTU_ENV") == "sim");
+    const bool repeat_track_against_map = cli.track_against_map_period_s > 0.0;
     std::optional<Pose3d> track_against_map_seed = startup_track_seed;
     int track_against_map_failures = 0;
     std::uint64_t track_against_map_attempts = 0;
@@ -1830,16 +1852,20 @@ int main(int argc, char** argv) {
     double last_track_against_map_s = 0.0;
     double last_track_against_map_scan_s = -1.0;
     const double track_against_map_period_s =
-        std::max(1.0, cli.track_against_map_period_s);
+        repeat_track_against_map ? std::max(1.0, cli.track_against_map_period_s) : 1.0;
     constexpr int kTrackAgainstMapDegradedFailureCount = 3;
     auto note_track_failure = [&](const std::string& message) {
       ++track_against_map_failures;
       ++track_against_map_rejections;
       std::fprintf(stderr, "track_against_map: %s\n", message.c_str());
       if (track_against_map_failures == kTrackAgainstMapDegradedFailureCount) {
+        // A stale saved pose must not block global localization forever. Input
+        // waits are counted separately, so reaching this branch means the
+        // seeded geometric registration was actually rejected three times.
+        track_against_map_seed.reset();
         std::fprintf(
             stderr,
-            "track_against_map degraded after repeated failures; retaining the seed and retrying\n");
+            "track_against_map degraded after repeated seeded failures; falling back to global localization\n");
       } else if (
           track_against_map_failures > kTrackAgainstMapDegradedFailureCount &&
           track_against_map_failures % 10 == 0) {
@@ -1854,7 +1880,7 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "track_against_map waiting: %s\n", message.c_str());
     };
     auto restart_track_against_map = [&]() {
-      track_against_map_enabled = true;
+      track_against_map_enabled = repeat_track_against_map;
       track_against_map_failures = 0;
       ++track_against_map_successes;
       last_track_against_map_success_s = nowSeconds();
@@ -1865,6 +1891,22 @@ int main(int argc, char** argv) {
     auto next_tick = std::chrono::steady_clock::now();
     while (g_running) {
       dds.drainImu([&](const lingtu_dds_Imu& msg) {
+        const auto frame_validation =
+            lingtu::slam::validateImuFrame(msg.header.frame_id);
+        if (frame_validation != lingtu::slam::ImuFrameValidation::kAccepted) {
+          imu_frame_input.reject(frame_validation);
+          const std::uint64_t rejected = imu_frame_input.rejectedFrames();
+          if (rejected == 1 || rejected % 100 == 0) {
+            std::fprintf(
+                stderr,
+                "feedImu rejected: %s frame_id=%s rejected=%llu\n",
+                imu_frame_input.last_rejection_reason.c_str(),
+                msg.header.frame_id ? msg.header.frame_id : "",
+                static_cast<unsigned long long>(rejected));
+          }
+          return;
+        }
+        imu_frame_input.accept();
         imu_input_rate.mark(nowSeconds());
         const Status s = backend->feedImu(toImuSample(msg));
         if (!s.ok) {
@@ -1901,78 +1943,54 @@ int main(int argc, char** argv) {
           std::fprintf(stderr, "feedOdomPrior: %s\n", s.message.c_str());
         }
       });
-      dds.drainMapCommands([&](const lingtu_dds_Text& msg) {
-        const MapCommand command = parseMapCommand(msg);
-        if (command.action != "save_map" && command.action != "load_map" &&
-            command.action != "relocalize" && command.action != "global_relocalize") {
-          dds.writeMapEvent(mapEventJson(
-              command,
-              false,
-              "unsupported_map_command",
-              command.path));
-          return;
-        }
-        if ((command.action == "save_map" || command.action == "load_map") &&
-            command.path.empty()) {
-          dds.writeMapEvent(mapEventJson(command, false, "missing_path", command.path));
-          return;
-        }
-        if ((command.action == "relocalize" || command.action == "global_relocalize") &&
-            runtime_mode != SlamMode::Localization) {
+      dds.drainMapSnapshotRequests([&](const lingtu_dds_SlamMapSnapshotRequest& request) {
+        const std::string output_path = request.output_path ? request.output_path : "";
+        const std::string requested_session =
+            request.product_session_id ? request.product_session_id : "";
+        const std::string runtime_product = envOrEmpty("LINGTU_PRODUCT");
+        const std::string runtime_session = productSessionId();
+        auto reject = [&](const std::string& message) {
           const SlamOutputs out = backend->outputs();
-          dds.writeMapEvent(mapEventJson(
-              command,
-              false,
-              "localization_mode_required",
-              command.path,
-              &out));
+          auto ack = snapshotAck(request, false, message, out);
+          dds.writeMapSnapshotAck(ack);
+        };
+        if (output_path.empty()) {
+          reject("missing_output_path");
           return;
         }
-
-        Status command_status;
-        if (command.action == "save_map") {
-          command_status = backend->saveMap(command.path);
-        } else if (command.action == "load_map") {
-          command_status = backend->loadMap(command.path);
-        } else {
-          if (!command.path.empty()) {
-            const Status load_status = backend->loadMap(command.path);
-            if (!load_status.ok) {
-              const SlamOutputs out = backend->outputs();
-              dds.writeMapEvent(mapEventJson(
-                  command,
-                  false,
-                  load_status.message,
-                  command.path,
-                  &out));
-              return;
-            }
-          }
-          command_status = backend->relocalize(
-              command.action == "global_relocalize" ? std::optional<Pose3d>{}
-                                                     : poseFromCommand(command));
+        if (runtime_product != "map") {
+          reject("map_product_required");
+          return;
         }
-        if (command_status.ok &&
-            (command.action == "relocalize" || command.action == "global_relocalize")) {
-          restart_track_against_map();
+        if (runtime_session.empty()) {
+          reject("product_session_required");
+          return;
         }
-
+        if (requested_session.empty()) {
+          reject("missing_product_session_id");
+          return;
+        }
+        if (requested_session != runtime_session) {
+          reject("product_session_mismatch");
+          return;
+        }
+        if (!request.save_patches) {
+          reject("save_without_patches_unsupported");
+          return;
+        }
+        const Status command_status = backend->saveMap(output_path);
         const SlamOutputs out = backend->outputs();
-        if (command_status.ok &&
-            (command.action == "relocalize" || command.action == "global_relocalize")) {
-          saveTrackSeed(cli.track_against_map_seed_file, cli.map_path, out.relocalization_map_body);
-        }
         if (command_status.ok && out.saved_map_cloud_map.has_value()) {
           auto saved_msg = toDdsCloud(*out.saved_map_cloud_map);
           saved_msg.bindStorage();
           dds.writeSavedMap(saved_msg.msg);
         }
-        dds.writeMapEvent(mapEventJson(
-            command,
+        auto ack = snapshotAck(
+            request,
             command_status.ok,
             command_status.message,
-            command.path,
-            &out));
+            out);
+        dds.writeMapSnapshotAck(ack);
       });
       dds.drainRelocalizationRequests([&](const lingtu_dds_RelocalizationRequest& request) {
         const std::string action =
@@ -2001,6 +2019,19 @@ int main(int argc, char** argv) {
                 "localization_mode_required",
                 out,
                 false);
+            dds.writeRelocalizationResponse(response.msg);
+            return;
+          }
+          if (product_managed && !map_path.empty()) {
+            const SlamOutputs out = backend->outputs();
+            auto response = relocalizationResponse(
+                request,
+                false,
+                "product_control_map_switch_required",
+                out,
+                true,
+                track_against_map_enabled,
+                track_against_map_failures);
             dds.writeRelocalizationResponse(response.msg);
             return;
           }
@@ -2052,6 +2083,16 @@ int main(int argc, char** argv) {
         }
 
         const std::string map_path = request.map_path ? request.map_path : "";
+        if (action == "load_map" && product_managed) {
+          const SlamOutputs out = backend->outputs();
+          auto response = relocalizationResponse(
+              request,
+              false,
+              "product_control_map_switch_required",
+              out);
+          dds.writeRelocalizationResponse(response.msg);
+          return;
+        }
         if (action == "load_map" && map_path.empty()) {
           const SlamOutputs out = backend->outputs();
           auto response = relocalizationResponse(request, false, "missing_map_path", out);
@@ -2084,6 +2125,16 @@ int main(int argc, char** argv) {
           command_status = backend->loadMap(map_path);
         } else {
           if (!map_path.empty()) {
+            if (product_managed) {
+              const SlamOutputs out = backend->outputs();
+              auto response = relocalizationResponse(
+                  request,
+                  false,
+                  "product_control_map_switch_required",
+                  out);
+              dds.writeRelocalizationResponse(response.msg);
+              return;
+            }
             const Status load_status = backend->loadMap(map_path);
             if (!load_status.ok) {
               const SlamOutputs out = backend->outputs();
@@ -2138,6 +2189,9 @@ int main(int argc, char** argv) {
             track_against_map_failures = 0;
             ++track_against_map_successes;
             last_track_against_map_success_s = t;
+            if (!repeat_track_against_map) {
+              track_against_map_enabled = false;
+            }
           } else if (isTrackAgainstMapInputWait(completed->message)) {
             note_track_wait(completed->message);
           } else {
@@ -2151,7 +2205,8 @@ int main(int argc, char** argv) {
                 out.relocalization_map_body);
           }
         }
-        if (t - last_track_against_map_s >= track_against_map_period_s) {
+        if (track_against_map_enabled &&
+            t - last_track_against_map_s >= track_against_map_period_s) {
           last_track_against_map_s = t;
           if (backend->relocalizeAsyncInFlight()) {
             note_track_wait("async_relocalization_in_progress");
@@ -2193,9 +2248,7 @@ int main(int argc, char** argv) {
               ? std::max(0.0, tracking_status_t - last_track_against_map_success_s)
               : -1.0,
           backend->relocalizeAsyncInFlight()};
-      const bool map_tf_publish_allowed =
-          runtime_mode != SlamMode::Localization || track_against_map_enabled;
-      if (map_tf_publish_allowed && out.map_odom_tf.has_value()) {
+      if (out.map_odom_tf.has_value()) {
         const auto msg = toDdsTfMessage(*out.map_odom_tf, out.stamp_s);
         dds.writeTf(msg.msg);
       }
@@ -2239,7 +2292,7 @@ int main(int argc, char** argv) {
            out.observation_sequence > last_map_observation_sequence);
       if (out.source_epoch > 0U && out.observation_sequence > 0U &&
           observation_is_new) {
-        if (auto observation = toDdsMapObservation(out); observation.has_value()) {
+        if (auto observation = toDdsMapObservation(out, body_sensor); observation.has_value()) {
           dds.writeMapObservation(*observation);
           last_map_observation_epoch = out.source_epoch;
           last_map_observation_sequence = out.observation_sequence;
@@ -2271,7 +2324,7 @@ int main(int argc, char** argv) {
         }
       }
       dds.writeQuality(static_cast<float>(out.localization_quality));
-      dds.writeHealth(healthJson(out, tracking_status));
+      dds.writeHealth(healthJson(out, tracking_status, imu_frame_input));
       if (!cli.status_json_path.empty() && status_json_period_s > 0.0) {
         const double t = nowSeconds();
         if (t - last_status_json_s >= status_json_period_s) {
@@ -2288,9 +2341,10 @@ int main(int argc, char** argv) {
               statusSnapshotJson(
                   out,
                   config.backend,
-                  cli.mode,
+                  toString(runtime_mode),
                   rates,
-                  tracking_status));
+                  tracking_status,
+                  imu_frame_input));
         }
       }
       if (cli.log_status_s > 0.0) {

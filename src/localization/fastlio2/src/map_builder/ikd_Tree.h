@@ -1,10 +1,12 @@
 #pragma once
 #include <stdio.h>
 #include <queue>
-#include <pthread.h>
+#include <atomic>
+#include <condition_variable>
 #include <chrono>
-#include <time.h>
-#include <unistd.h>
+#include <cstdint>
+#include <mutex>
+#include <thread>
 #include <math.h>
 #include <algorithm>
 #include <memory.h>
@@ -27,6 +29,9 @@ struct BoxPointType
     float vertex_min[3];
     float vertex_max[3];
 };
+
+template <typename PointType>
+struct KD_TREE_TEST_ACCESS;
 
 enum operation_set
 {
@@ -55,6 +60,19 @@ class KD_TREE
 public:
     using PointVector = std::vector<PointType, Eigen::aligned_allocator<PointType>>;
     using Ptr = std::shared_ptr<KD_TREE<PointType>>;
+
+#ifdef LINGTU_IKD_TREE_TESTING
+    struct RebuildDiagnostics
+    {
+        std::uint64_t queued = 0;
+        std::uint64_t started = 0;
+        std::uint64_t completed = 0;
+        std::uint64_t canceled = 0;
+        std::uint64_t flattened = 0;
+        bool active = false;
+        bool accepting = true;
+    };
+#endif
     
     struct KD_TREE_NODE
     {
@@ -70,7 +88,7 @@ public:
         bool need_push_down_to_left = false;
         bool need_push_down_to_right = false;
         bool working_flag = false;
-        pthread_mutex_t push_down_mutex_lock;
+        std::mutex push_down_mutex_lock;
         float node_range_x[2], node_range_y[2], node_range_z[2];
         float radius_sq;
         KD_TREE_NODE *left_son_ptr = nullptr;
@@ -255,25 +273,131 @@ public:
     };
 
 private:
+#ifdef LINGTU_IKD_TREE_TESTING
+    template <typename>
+    friend struct KD_TREE_TEST_ACCESS;
+#endif
+
+    class WorkingFlagGuard
+    {
+    public:
+        explicit WorkingFlagGuard(KD_TREE_NODE **slot) noexcept : slot_(slot)
+        {
+            if (slot_ != nullptr && *slot_ != nullptr)
+                (*slot_)->working_flag = true;
+        }
+
+        ~WorkingFlagGuard()
+        {
+            if (slot_ != nullptr && *slot_ != nullptr)
+                (*slot_)->working_flag = false;
+        }
+
+        WorkingFlagGuard(const WorkingFlagGuard &) = delete;
+        WorkingFlagGuard &operator=(const WorkingFlagGuard &) = delete;
+
+    private:
+        KD_TREE_NODE **slot_;
+    };
+
     // Multi-thread Tree Rebuild
-    bool termination_flag = false;
-    bool rebuild_flag = false;
-    pthread_t rebuild_thread;
-    pthread_mutex_t termination_flag_mutex_lock, rebuild_ptr_mutex_lock, working_flag_mutex, search_flag_mutex;
-    pthread_mutex_t rebuild_logger_mutex_lock, points_deleted_rebuild_mutex_lock;
+    std::atomic<bool> termination_flag{false};
+    std::atomic<bool> rebuild_flag{false};
+    std::thread rebuild_thread;
+    std::mutex rebuild_ptr_mutex_lock, working_flag_mutex, search_flag_mutex;
+    std::condition_variable rebuild_requested;
+    std::mutex mutation_mutex;
+    std::condition_variable search_state_changed;
+    std::mutex rebuild_logger_mutex_lock, points_deleted_rebuild_mutex_lock;
+#ifdef LINGTU_IKD_TREE_TESTING
+    mutable std::mutex rebuild_diagnostics_mutex;
+    std::condition_variable rebuild_diagnostics_changed;
+    RebuildDiagnostics rebuild_diagnostics_state;
+    std::mutex rebuild_diagnostic_gate_mutex;
+    std::condition_variable rebuild_diagnostic_gate_changed;
+    bool rebuild_diagnostic_gate_paused = false;
+    std::mutex rebuild_start_gate_mutex;
+    std::condition_variable rebuild_start_gate_changed;
+    bool rebuild_start_gate_paused = false;
+    std::mutex rebuild_flatten_gate_mutex;
+    std::condition_variable rebuild_flatten_gate_changed;
+    bool rebuild_flatten_gate_paused = false;
+    std::mutex test_search_gate_mutex;
+    std::condition_variable test_search_gate_changed;
+    bool test_search_gate_paused = false;
+    std::atomic<int> test_searches_in_flight{0};
+    std::atomic<int> test_max_searches_in_flight{0};
+#endif
+    bool accepting_rebuilds = true;
     // queue<Operation_Logger_Type> Rebuild_Logger;
     MANUAL_Q Rebuild_Logger;
     PointVector Rebuild_PCL_Storage;
     KD_TREE_NODE **Rebuild_Ptr = nullptr;
+    std::atomic<KD_TREE_NODE *> Rebuild_Target{nullptr};
     int search_mutex_counter = 0;
-    static void *multi_thread_ptr(void *arg);
+    int search_writers_pending = 0;
     void multi_thread_rebuild();
     void start_thread();
     void stop_thread();
+    void quiesce_rebuild_slot(bool shutdown);
+#ifdef LINGTU_IKD_TREE_TESTING
+    RebuildDiagnostics rebuild_diagnostics() const;
+    bool wait_for_rebuild_started(std::uint64_t count, std::chrono::milliseconds timeout);
+    bool wait_for_rebuild_completed(std::uint64_t count, std::chrono::milliseconds timeout);
+    bool wait_for_rebuild_queued(std::chrono::milliseconds timeout);
+    bool wait_for_rebuild_active(std::chrono::milliseconds timeout);
+    bool wait_for_rebuild_flattened(std::uint64_t count, std::chrono::milliseconds timeout);
+    void set_rebuild_start_gate_paused(bool paused);
+    void set_rebuild_diagnostic_gate_paused(bool paused);
+    void set_rebuild_flatten_gate_paused(bool paused);
+#endif
+    void enter_search();
+    void leave_search();
+    class SearchGuard
+    {
+    public:
+        explicit SearchGuard(KD_TREE &tree) : tree_(tree) { tree_.enter_search(); }
+        ~SearchGuard() { tree_.leave_search(); }
+        SearchGuard(const SearchGuard &) = delete;
+        SearchGuard &operator=(const SearchGuard &) = delete;
+
+    private:
+        KD_TREE &tree_;
+    };
+    class ExclusiveSearchGuard
+    {
+    public:
+        explicit ExclusiveSearchGuard(KD_TREE &tree) : tree_(tree)
+        {
+            std::unique_lock<std::mutex> lock(tree_.search_flag_mutex);
+            ++tree_.search_writers_pending;
+            tree_.search_state_changed.wait(lock, [&] {
+                return tree_.search_mutex_counter == 0;
+            });
+            --tree_.search_writers_pending;
+            tree_.search_mutex_counter = -1;
+        }
+        ~ExclusiveSearchGuard()
+        {
+            {
+                std::lock_guard<std::mutex> lock(tree_.search_flag_mutex);
+                tree_.search_mutex_counter = 0;
+            }
+            tree_.search_state_changed.notify_all();
+        }
+        ExclusiveSearchGuard(const ExclusiveSearchGuard &) = delete;
+        ExclusiveSearchGuard &operator=(const ExclusiveSearchGuard &) = delete;
+
+    private:
+        KD_TREE &tree_;
+    };
+    KD_TREE_NODE *rebuild_target() const noexcept
+    {
+        return Rebuild_Target.load(std::memory_order_acquire);
+    }
+    void cancel_rebuild_if_target(KD_TREE_NODE *node);
     void run_operation(KD_TREE_NODE **root, Operation_Logger_Type operation);
     // KD Tree Functions and augmented variables
-    int Treesize_tmp = 0, Validnum_tmp = 0;
-    float alpha_bal_tmp = 0.5, alpha_del_tmp = 0.0;
     float delete_criterion_param = 0.5f;
     float balance_criterion_param = 0.7f;
     float downsample_size = 0.2f;
@@ -307,8 +431,16 @@ private:
     static bool point_cmp_z(PointType a, PointType b);
 
 public:
+    // Public query and mutation calls are serialized by the owning map
+    // pipeline. The tree synchronizes only its internal rebuild worker and
+    // parallel read-only queries; arbitrary external read/write concurrency
+    // is outside this class contract.
     KD_TREE(float delete_param = 0.5, float balance_param = 0.6, float box_length = 0.2);
     ~KD_TREE();
+    KD_TREE(const KD_TREE &) = delete;
+    KD_TREE &operator=(const KD_TREE &) = delete;
+    KD_TREE(KD_TREE &&) = delete;
+    KD_TREE &operator=(KD_TREE &&) = delete;
     void Set_delete_criterion_param(float delete_param)
     {
         delete_criterion_param = delete_param;

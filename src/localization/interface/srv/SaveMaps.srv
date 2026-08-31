@@ -1,5 +1,0 @@
-string file_path
-bool save_patches
----
-bool success
-string message

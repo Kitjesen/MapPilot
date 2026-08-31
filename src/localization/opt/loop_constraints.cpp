@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "localization/opt/cloud.hpp"
+#include "localization/opt/constraints.hpp"
 #include "localization/opt/pose_math.hpp"
 
 namespace lingtu::localization::opt {
@@ -84,6 +85,7 @@ struct Candidate {
 };
 
 struct Correspondence {
+  std::array<double, 3> source{};
   std::array<double, 3> source_transformed{};
   std::array<double, 3> target{};
   std::size_t target_index = 0;
@@ -111,6 +113,9 @@ struct RegistrationResult {
   std::array<double, 4> point_to_plane_eigenvalues{};
   std::array<double, 4> point_to_plane_weak_mode{};
   double point_to_plane_condition = -1.0;
+  detail::Matrix4 information_hessian{};
+  double information_sigma = 0.0;
+  bool information_valid = false;
 };
 
 struct VerifiedCandidate {
@@ -703,6 +708,7 @@ std::vector<Correspondence> find_correspondences(const std::vector<Point> &sourc
     }
     if (best != nullptr) {
       correspondences.push_back(Correspondence{
+          {point.x, point.y, point.z},
           {transformed.x, transformed.y, transformed.z},
           {best->x, best->y, best->z},
           best_index,
@@ -976,6 +982,41 @@ RegistrationResult register_4dof(const PreparedCloud &prepared_source,
     return result;
   }
 
+  // Refine the accepted point-to-point estimate with the same signed
+  // point-to-plane objective that will provide the factor information. The
+  // target associations are held fixed during this small local solve.
+  std::vector<detail::PlaneSample> refinement_samples;
+  refinement_samples.reserve(all_correspondences.size());
+  std::vector<unsigned char> refinement_target_used(target.size(), 0);
+  for (const Correspondence &correspondence : all_correspondences) {
+    if (correspondence.target_index >= prepared_target.normals.size() ||
+        refinement_target_used[correspondence.target_index] != 0 ||
+        !prepared_target.normals[correspondence.target_index].valid) {
+      continue;
+    }
+    refinement_target_used[correspondence.target_index] = 1;
+    refinement_samples.push_back(detail::PlaneSample{
+        correspondence.source,
+        correspondence.target,
+        prepared_target.normals[correspondence.target_index].unit,
+    });
+  }
+  if (!refinement_samples.empty()) {
+    const detail::PlaneInformation refinement =
+        detail::refine_plane_information(refinement_samples, current, 3);
+    if (refinement.valid) {
+      current = refinement.transform;
+      all_correspondences = find_correspondences(source, target, target_index, current,
+                                                 options.max_correspondence_distance_m);
+      trim_correspondences(all_correspondences, options);
+      result.inliers = all_correspondences.size();
+      if (all_correspondences.size() < options.min_inliers) {
+        result.reason = "insufficient_refined_inliers";
+        return result;
+      }
+    }
+  }
+
   double squared_error = 0.0;
   std::vector<double> residuals;
   residuals.reserve(all_correspondences.size());
@@ -1096,6 +1137,23 @@ RegistrationResult register_4dof(const PreparedCloud &prepared_source,
     result.point_to_plane_condition = plane_minimum > 1.0e-12
                                           ? plane_maximum / plane_minimum
                                           : std::numeric_limits<double>::infinity();
+
+    std::vector<detail::PlaneSample> information_samples;
+    information_samples.reserve(planar_correspondences.size());
+    for (const Correspondence *correspondence : planar_correspondences) {
+      information_samples.push_back(detail::PlaneSample{
+          correspondence->source,
+          correspondence->target,
+          prepared_target.normals[correspondence->target_index].unit,
+      });
+    }
+    const detail::PlaneInformation information =
+        detail::measure_plane_information(information_samples, current);
+    if (information.valid) {
+      result.information_hessian = information.hessian;
+      result.information_sigma = information.sigma;
+      result.information_valid = true;
+    }
   } else {
     result.point_to_plane_condition = std::numeric_limits<double>::infinity();
   }
@@ -1106,7 +1164,8 @@ RegistrationResult register_4dof(const PreparedCloud &prepared_source,
 }
 
 bool registration_passes(const RegistrationResult &registration,
-                         const LoopConstraintOptions &options, std::string *reason) {
+                         const LoopConstraintOptions &options, std::string *reason,
+                         bool require_information = true) {
   auto reject = [&](const std::string &value) {
     if (reason != nullptr) {
       *reason = value;
@@ -1143,6 +1202,9 @@ bool registration_passes(const RegistrationResult &registration,
   if (!std::isfinite(registration.hessian_condition) ||
       registration.hessian_condition > options.max_hessian_condition) {
     return reject("degeneracy_gate");
+  }
+  if (require_information && !registration.information_valid) {
+    return reject("information_noise_or_rank_gate");
   }
   return true;
 }
@@ -1309,7 +1371,7 @@ verify_candidate(const Candidate &candidate, const std::vector<Keyframe> &keyfra
       continue;
     }
     std::string rejection_reason;
-    if (!registration_passes(registration, options, &rejection_reason)) {
+    if (!registration_passes(registration, options, &rejection_reason, false)) {
       if (!has_reverse_rejected || registration_is_better(registration, reverse_rejected)) {
         reverse_rejected = registration;
         reverse_rejected_reason = rejection_reason;
@@ -1343,12 +1405,13 @@ verify_candidate(const Candidate &candidate, const std::vector<Keyframe> &keyfra
   // ICP solves T_Gfrom_Gto in gravity-aligned frames. Convert that result to
   // the graph's body-frame T_from_to measurement before publishing it.
   constraint.pose_from_to = body_measurement;
-  // This milestone is deliberately shadow-only. The 4DoF observability
-  // diagnostic is expressed in a gravity-frame left tangent, while the graph
-  // residual uses a body-frame right tangent. Keep the graph information zero
-  // so Graph::optimize rejects accidental consumption until a full 6x6
-  // adjoint/Jacobian conversion and non-diagonal ABI are implemented.
-  constraint.information_diagonal = {};
+  constraint.information_upper =
+      detail::body_right_information_upper(best.information_hessian, best.information_sigma,
+                                           best.transform, gravity_body_pose(map_body_to));
+  if (!valid_information_upper(constraint.information_upper)) {
+    diagnostic.reason = "invalid_graph_information";
+    return std::nullopt;
+  }
   VerifiedCandidate verified;
   verified.constraint = constraint;
   // Express every loop correction in the shared map frame so neighboring
@@ -1637,6 +1700,284 @@ void write_loop_options_json(std::ostream &output, const LoopConstraintOptions &
 
 }  // namespace
 
+namespace detail {
+namespace {
+
+std::array<std::array<double, 3>, 3> rotation_matrix(const Pose &pose_input) {
+  const Pose pose = normalize_pose(pose_input);
+  return {{
+      {{1.0 - 2.0 * (pose.qy * pose.qy + pose.qz * pose.qz),
+        2.0 * (pose.qx * pose.qy - pose.qz * pose.qw),
+        2.0 * (pose.qx * pose.qz + pose.qy * pose.qw)}},
+      {{2.0 * (pose.qx * pose.qy + pose.qz * pose.qw),
+        1.0 - 2.0 * (pose.qx * pose.qx + pose.qz * pose.qz),
+        2.0 * (pose.qy * pose.qz - pose.qx * pose.qw)}},
+      {{2.0 * (pose.qx * pose.qz - pose.qy * pose.qw),
+        2.0 * (pose.qy * pose.qz + pose.qx * pose.qw),
+        1.0 - 2.0 * (pose.qx * pose.qx + pose.qy * pose.qy)}},
+  }};
+}
+
+double median(std::vector<double> values) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  std::sort(values.begin(), values.end());
+  const std::size_t middle = values.size() / 2;
+  return values.size() % 2 != 0 ? values[middle] : 0.5 * (values[middle - 1] + values[middle]);
+}
+
+void evaluate_plane_objective(const std::vector<PlaneSample> &samples, const Pose &transform,
+                              Matrix4 *hessian, std::array<double, 4> *gradient,
+                              std::vector<double> *residuals) {
+  *hessian = {};
+  *gradient = {};
+  residuals->clear();
+  residuals->reserve(samples.size());
+  for (const PlaneSample &sample : samples) {
+    const auto rotated =
+        rotate_vector(transform, sample.source[0], sample.source[1], sample.source[2]);
+    const std::array<double, 3> transformed{rotated[0] + transform.x, rotated[1] + transform.y,
+                                            rotated[2] + transform.z};
+    const double residual = sample.normal[0] * (transformed[0] - sample.target[0]) +
+                            sample.normal[1] * (transformed[1] - sample.target[1]) +
+                            sample.normal[2] * (transformed[2] - sample.target[2]);
+    const auto jacobian = point_to_plane_jacobian(transformed, sample.normal);
+    residuals->push_back(residual);
+    for (std::size_t row = 0; row < 4; ++row) {
+      (*gradient)[row] += jacobian[row] * residual;
+      for (std::size_t col = row; col < 4; ++col) {
+        (*hessian)[row][col] += jacobian[row] * jacobian[col];
+        (*hessian)[col][row] = (*hessian)[row][col];
+      }
+    }
+  }
+}
+
+std::size_t matrix_rank(const SymmetricEigenResult<4> &eigen) {
+  const double scale = std::max(1.0, eigen.values.back());
+  const double tolerance = scale * 1.0e-10;
+  return static_cast<std::size_t>(
+      std::count_if(eigen.values.begin(), eigen.values.end(),
+                    [&](double value) { return std::isfinite(value) && value > tolerance; }));
+}
+
+}  // namespace
+
+std::array<double, 4> point_to_plane_jacobian(const std::array<double, 3> &transformed_source,
+                                              const std::array<double, 3> &normal) {
+  return {
+      -normal[0] * transformed_source[1] + normal[1] * transformed_source[0],
+      normal[0],
+      normal[1],
+      normal[2],
+  };
+}
+
+PlaneInformation refine_plane_information(const std::vector<PlaneSample> &samples,
+                                          const Pose &initial, std::size_t iterations) {
+  PlaneInformation result;
+  result.transform = initial;
+  const std::size_t solve_iterations = std::clamp<std::size_t>(iterations, 2, 5);
+  for (std::size_t iteration = 0; iteration < solve_iterations; ++iteration) {
+    evaluate_plane_objective(samples, result.transform, &result.hessian, &result.gradient,
+                             &result.residuals);
+    const auto eigen = symmetric_eigen_decomposition<4>(result.hessian);
+    result.rank = matrix_rank(eigen);
+    if (result.rank == 0) {
+      return result;
+    }
+    const double tolerance = std::max(1.0, eigen.values.back()) * 1.0e-10;
+    std::array<double, 4> delta{};
+    for (std::size_t mode = 0; mode < 4; ++mode) {
+      if (!std::isfinite(eigen.values[mode]) || eigen.values[mode] <= tolerance) {
+        continue;
+      }
+      double projected_gradient = 0.0;
+      for (std::size_t axis = 0; axis < 4; ++axis) {
+        projected_gradient += eigen.vectors[axis][mode] * result.gradient[axis];
+      }
+      const double step = -projected_gradient / eigen.values[mode];
+      for (std::size_t axis = 0; axis < 4; ++axis) {
+        delta[axis] += eigen.vectors[axis][mode] * step;
+      }
+    }
+    Pose increment;
+    increment = pose_with_rpy(increment, 0.0, 0.0, delta[0]);
+    increment.x = delta[1];
+    increment.y = delta[2];
+    increment.z = delta[3];
+    result.transform = compose_pose(increment, result.transform);
+    if (std::hypot(delta[1], delta[2]) < 1.0e-7 && std::abs(delta[3]) < 1.0e-7 &&
+        std::abs(delta[0]) < 1.0e-8) {
+      break;
+    }
+  }
+
+  return measure_plane_information(samples, result.transform);
+}
+
+PlaneInformation measure_plane_information(const std::vector<PlaneSample> &samples,
+                                           const Pose &transform) {
+  PlaneInformation result;
+  result.transform = transform;
+  evaluate_plane_objective(samples, transform, &result.hessian, &result.gradient,
+                           &result.residuals);
+  const auto eigen = symmetric_eigen_decomposition<4>(result.hessian);
+  result.rank = matrix_rank(eigen);
+  if (result.rank == 0 || samples.size() <= result.rank) {
+    return result;
+  }
+  double sum_squared = 0.0;
+  for (double residual : result.residuals) {
+    if (!std::isfinite(residual)) {
+      return result;
+    }
+    sum_squared += residual * residual;
+  }
+  const double sigma_dof =
+      std::sqrt(sum_squared / static_cast<double>(samples.size() - result.rank));
+  const double residual_median = median(result.residuals);
+  std::vector<double> deviations;
+  deviations.reserve(result.residuals.size());
+  for (double residual : result.residuals) {
+    deviations.push_back(std::abs(residual - residual_median));
+  }
+  const double sigma_mad = 1.4826 * median(std::move(deviations));
+  result.sigma = std::max(sigma_dof, sigma_mad);
+  result.valid = std::isfinite(result.sigma) && result.sigma > 0.0;
+  return result;
+}
+
+Matrix4x6 gravity_left_to_body_right_jacobian(const Pose &gravity_from_to,
+                                              const Pose &gravity_body_to) {
+  const Pose tangent_transform = compose_pose(gravity_from_to, gravity_body_to);
+  const auto rotation = rotation_matrix(tangent_transform);
+  Matrix6 adjoint{};
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t col = 0; col < 3; ++col) {
+      adjoint[row][col] = rotation[row][col];
+      adjoint[row + 3][col + 3] = rotation[row][col];
+    }
+  }
+  const std::array<std::array<double, 3>, 3> skew{{
+      {{0.0, -tangent_transform.z, tangent_transform.y}},
+      {{tangent_transform.z, 0.0, -tangent_transform.x}},
+      {{-tangent_transform.y, tangent_transform.x, 0.0}},
+  }};
+  for (std::size_t row = 0; row < 3; ++row) {
+    for (std::size_t col = 0; col < 3; ++col) {
+      for (std::size_t k = 0; k < 3; ++k) {
+        adjoint[row + 3][col] += skew[row][k] * rotation[k][col];
+      }
+    }
+  }
+  Matrix4x6 out{};
+  const std::array<std::size_t, 4> selected_rows{2, 3, 4, 5};
+  for (std::size_t row = 0; row < 4; ++row) {
+    out[row] = adjoint[selected_rows[row]];
+  }
+  return out;
+}
+
+std::array<double, 21> body_right_information_upper(const Matrix4 &gravity_hessian, double sigma,
+                                                    const Pose &gravity_from_to,
+                                                    const Pose &gravity_body_to) {
+  std::array<double, 21> packed{};
+  if (!std::isfinite(sigma) || sigma <= 0.0) {
+    return packed;
+  }
+  const Matrix4x6 conversion =
+      gravity_left_to_body_right_jacobian(gravity_from_to, gravity_body_to);
+  Matrix6 information{};
+  const double inverse_variance = 1.0 / (sigma * sigma);
+  for (std::size_t row = 0; row < 6; ++row) {
+    for (std::size_t col = row; col < 6; ++col) {
+      double value = 0.0;
+      for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t j = 0; j < 4; ++j) {
+          value += conversion[i][row] * gravity_hessian[i][j] * conversion[j][col];
+        }
+      }
+      information[row][col] = information[col][row] = value * inverse_variance;
+    }
+  }
+  std::size_t index = 0;
+  for (std::size_t row = 0; row < 6; ++row) {
+    for (std::size_t col = row; col < 6; ++col) {
+      packed[index++] = information[row][col];
+    }
+  }
+  return packed;
+}
+
+}  // namespace detail
+
+SequentialConstraintResult generate_sequential_constraint(
+    const Map &map, const std::vector<Keyframe> &keyframes, std::size_t from_index,
+    const LoopConstraintOptions &options) {
+  SequentialConstraintResult result;
+  if (const auto option_error = validate_loop_options(options)) {
+    result.code = "invalid_loop_options";
+    result.message = *option_error;
+    return result;
+  }
+  if (const auto keyframe_error = validate_keyframes(keyframes)) {
+    result.code = "invalid_loop_keyframes";
+    result.message = *keyframe_error;
+    return result;
+  }
+  if (from_index + 1 >= keyframes.size()) {
+    result.code = "sequential_index_out_of_range";
+    result.message = "a sequential edge requires adjacent from/to keyframes";
+    return result;
+  }
+
+  try {
+    const auto sorted_patches = sorted_point_cloud_files(map.patches_dir);
+    if (sorted_patches.size() != keyframes.size()) {
+      result.code = "patch_pose_mismatch";
+      result.message = "patch count must exactly match keyframe count";
+      return result;
+    }
+    const auto from_path = patch_path(map, sorted_patches, keyframes[from_index], from_index);
+    const auto to_path = patch_path(map, sorted_patches, keyframes[from_index + 1], from_index + 1);
+    if (from_path.empty() || to_path.empty()) {
+      result.code = "sequential_patch_missing";
+      result.message = "an adjacent keyframe does not resolve to its named patch";
+      return result;
+    }
+    const auto target = gravity_aligned_cloud(
+        voxel_downsample(read_point_cloud(from_path), options.voxel_size_m,
+                         options.max_points_per_submap),
+        keyframes[from_index].pose);
+    const auto source = gravity_aligned_cloud(
+        voxel_downsample(read_point_cloud(to_path), options.voxel_size_m,
+                         options.max_points_per_submap),
+        keyframes[from_index + 1].pose);
+    Candidate candidate;
+    candidate.from_index = from_index;
+    candidate.to_index = from_index + 1;
+    const auto verified = verify_candidate(candidate, keyframes, target, source, options,
+                                           result.diagnostic);
+    if (!verified.has_value()) {
+      result.code = "sequential_registration_rejected";
+      result.message = result.diagnostic.reason.empty() ? "adjacent registration was rejected"
+                                                        : result.diagnostic.reason;
+      return result;
+    }
+    result.ok = true;
+    result.code = "sequential_constraint_ready";
+    result.message = "adjacent patches produced a measured graph constraint";
+    result.constraint = verified->constraint;
+    return result;
+  } catch (const std::exception &exception) {
+    result.code = "sequential_registration_failed";
+    result.message = exception.what();
+    return result;
+  }
+}
+
 LoopConstraintResult generate_loop_constraints(const Map &map,
                                                const std::vector<Keyframe> &keyframes,
                                                const LoopConstraintOptions &options) {
@@ -1760,7 +2101,7 @@ LoopConstraintResult generate_loop_constraints(const Map &map,
         patches_after != result.report.patches_fingerprint) {
       result.ok = false;
       result.code = "map_changed_during_verification";
-      result.message = "poses.txt or a referenced patch changed during shadow verification";
+      result.message = "poses.txt or a referenced patch changed during loop verification";
       result.constraints.clear();
       result.report.accepted_constraint_count = 0;
       result.report.rejected_count = result.report.candidate_count;
@@ -1780,10 +2121,10 @@ LoopConstraintResult generate_loop_constraints(const Map &map,
                                        ? result.report.candidate_count - non_rejected
                                        : 0;
     result.ok = true;
-    result.code = result.constraints.empty() ? "shadow_no_verified_loops" : "shadow_verified_loops";
+    result.code = result.constraints.empty() ? "no_verified_loops" : "verified_loops";
     result.message = result.constraints.empty()
-                         ? "shadow loop verification completed without an accepted loop"
-                         : "shadow loop verification produced accepted independent constraints";
+                         ? "loop verification completed without an accepted loop"
+                         : "loop verification produced graph-ready independent constraints";
   } catch (const std::exception &exception) {
     result.ok = false;
     result.code = "loop_verification_failed";
@@ -1829,7 +2170,7 @@ bool write_loop_constraints_report(const std::filesystem::path &path,
            << "\",\n"
            << "  \"threshold_version\":\"" << json_escape(result.report.threshold_version)
            << "\",\n"
-           << "  \"mode\":\"shadow\",\n"
+           << "  \"mode\":\"constraint_producer\",\n"
            << "  \"ok\":" << (result.ok ? "true" : "false") << ",\n"
            << "  \"code\":\"" << json_escape(result.code) << "\",\n"
            << "  \"message\":\"" << json_escape(result.message) << "\",\n"
@@ -1864,12 +2205,12 @@ bool write_loop_constraints_report(const std::filesystem::path &path,
       output << "{\"from_index\":" << constraint.from_index
              << ",\"to_index\":" << constraint.to_index << ",\"pose_from_to\":";
       write_pose_json(output, constraint.pose_from_to);
-      output << ",\"information_diagonal\":[";
-      for (std::size_t axis = 0; axis < constraint.information_diagonal.size(); ++axis) {
+      output << ",\"information_upper\":[";
+      for (std::size_t axis = 0; axis < constraint.information_upper.size(); ++axis) {
         if (axis > 0) {
           output << ",";
         }
-        write_json_number(output, constraint.information_diagonal[axis]);
+        write_json_number(output, constraint.information_upper[axis]);
       }
       output << "]}";
     }

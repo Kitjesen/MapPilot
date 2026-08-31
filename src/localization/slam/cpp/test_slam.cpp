@@ -10,7 +10,7 @@ using namespace lingtu::slam;
 namespace {
 
 std::filesystem::path tempMapDir() {
-  auto dir = std::filesystem::temp_directory_path() / "lingtu_slam_contract_test";
+  auto dir = std::filesystem::temp_directory_path() / "messages_contract_test";
   std::filesystem::remove_all(dir);
   std::filesystem::create_directories(dir);
   return dir;
@@ -29,6 +29,20 @@ void check(bool ok, const char* message) {
 }  // namespace
 
 int main() {
+  check(modeFromString("mapping") == SlamMode::Mapping, "mapping_mode_parse_failed");
+  check(
+      modeFromString("localization") == SlamMode::Localization,
+      "localization_mode_parse_failed");
+  for (const char* rejected : {"localizer", "nav", "localizaton", ""}) {
+    bool rejected_mode = false;
+    try {
+      static_cast<void>(modeFromString(rejected));
+    } catch (const std::invalid_argument&) {
+      rejected_mode = true;
+    }
+    check(rejected_mode, "unsupported_mode_was_accepted");
+  }
+
   auto backend = makeContractBackend("fastlio2");
   check(backend != nullptr, "missing_backend");
   check(backend->configure(SlamConfig{}).ok, "configure_failed");
@@ -66,18 +80,6 @@ int main() {
   check(backend->reset().ok, "reset_failed");
   check(backend->outputs().source_epoch > source_epoch, "source_epoch_not_advanced");
 
-  auto pointlio = makePointLioBackend();
-  check(pointlio != nullptr, "missing_pointlio_backend");
-  check(pointlio->configure(SlamConfig{}).ok, "pointlio_configure_failed");
-  check(pointlio->feedLidar(frame).ok, "pointlio_feed_lidar_failed");
-  check(pointlio->tick().ok, "pointlio_tick_failed");
-  const auto pointlio_outputs = pointlio->outputs();
-  check(pointlio_outputs.state == SlamState::Degraded, "pointlio_state_wrong");
-  check(pointlio_outputs.lidar_buffer == 1, "pointlio_lidar_buffer_wrong");
-  check(
-      pointlio_outputs.reason == "pointlio_algorithm_pending_ros_node_extraction",
-      "pointlio_reason_wrong");
-
-  std::cout << "lingtu_slam_contract ok\n";
+  std::cout << "messages_contract ok\n";
   return 0;
 }

@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import os
 import subprocess
-from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
+from localization.service import RelocalizationResult
 from localization.slam_control import (
     last_json_object as _last_json_line,
 )
 from localization.slam_control import (
     slam_control_binary as _control_binary,
 )
-from localization.service import RelocalizationResult
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -28,11 +27,8 @@ def _run_control(
     argv: list[str],
     *,
     timeout_s: float,
-    base_env: Mapping[str, str] | None = None,
 ) -> RelocalizationResult:
     env = os.environ.copy()
-    if base_env:
-        env.update({str(k): str(v) for k, v in base_env.items()})
     try:
         completed = subprocess.run(
             argv,
@@ -139,31 +135,12 @@ class NativeSlamRelocalizationService:
 
     def relocalize_saved_map(
         self,
-        pcd_path: str | os.PathLike[str],
+        map_id: str,
         x: float,
         y: float,
         yaw: float,
         *,
         timeout_s: float = 30.0,
-    ) -> RelocalizationResult:
-        return self.relocalize_saved_map_with_env(
-            pcd_path,
-            x,
-            y,
-            yaw,
-            timeout_s=timeout_s,
-            base_env=None,
-        )
-
-    def relocalize_saved_map_with_env(
-        self,
-        pcd_path: str | os.PathLike[str],
-        x: float,
-        y: float,
-        yaw: float,
-        *,
-        timeout_s: float = 20.0,
-        base_env: Mapping[str, str] | None = None,
     ) -> RelocalizationResult:
         try:
             binary = _control_binary()
@@ -177,7 +154,6 @@ class NativeSlamRelocalizationService:
         argv = [
             binary,
             "relocalize",
-            str(Path(pcd_path)),
             "--x",
             f"{float(x):g}",
             "--y",
@@ -189,14 +165,12 @@ class NativeSlamRelocalizationService:
             "--timeout-s",
             f"{float(timeout_s):g}",
         ]
-        return _run_control(argv, timeout_s=timeout_s, base_env=base_env)
+        # ProductControl already loaded map_id into slamd; the native command
+        # intentionally has no second map-selection argument.
+        return _run_control(argv, timeout_s=timeout_s)
 
     def track_against_map(
         self,
-        pcd_path: str | os.PathLike[str],
-        x: float,
-        y: float,
-        yaw: float,
         *,
         timeout_s: float = 10.0,
     ) -> RelocalizationResult:
@@ -213,13 +187,6 @@ class NativeSlamRelocalizationService:
             [
                 binary,
                 "track-against-map",
-                str(Path(pcd_path)),
-                "--x",
-                f"{float(x):g}",
-                "--y",
-                f"{float(y):g}",
-                "--yaw",
-                f"{float(yaw):g}",
                 "--domain-id",
                 domain_id,
                 "--timeout-s",

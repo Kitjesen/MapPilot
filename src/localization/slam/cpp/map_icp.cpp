@@ -41,7 +41,7 @@ bool MapIcp::loadSemanticMap(const std::string &semantic_map_path) {
     last_error_ = error.empty() ? "semantic_map_load_failed" : error;
     return false;
   }
-  auto cloud = std::make_shared<CloudType>();
+  CloudType::Ptr cloud(new CloudType);
   cloud->reserve(snapshot.points.size());
   for (const auto &source : snapshot.points) {
     if (!std::isfinite(source.x) || !std::isfinite(source.y) || !std::isfinite(source.z)) {

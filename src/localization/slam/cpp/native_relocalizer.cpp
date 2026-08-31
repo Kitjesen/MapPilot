@@ -48,7 +48,7 @@ Pose3d matrixToPose(const Eigen::Matrix4f& matrix) {
 }
 
 LocalizerCloud::Ptr toLocalizerCloud(const Cloud& cloud) {
-  auto out = std::make_shared<LocalizerCloud>();
+  LocalizerCloud::Ptr out(new LocalizerCloud);
   out->reserve(cloud.points.size());
   for (const auto& src : cloud.points) {
     if (!std::isfinite(src.x) || !std::isfinite(src.y) || !std::isfinite(src.z)) {
@@ -121,7 +121,7 @@ bool NativeRelocalizer::loadMap(const std::string& pcd_path, std::string* messag
   std::lock_guard<std::mutex> lock(impl_->bbs3d_mutex);
   impl_->bbs3d_map_loaded = false;
   if (impl_->map_loaded && impl_->bbs3d.available()) {
-    auto cloud = std::make_shared<LocalizerCloud>();
+    LocalizerCloud::Ptr cloud(new LocalizerCloud);
     if (pcl::io::loadPCDFile<pcl::PointXYZI>(pcd_path, *cloud) >= 0) {
       impl_->bbs3d_map_loaded = impl_->bbs3d.set_map(cloud);
     }

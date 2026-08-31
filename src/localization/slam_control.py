@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import shutil
 from pathlib import Path
 from typing import Any
@@ -16,15 +17,22 @@ def slam_control_binary() -> str:
         return explicit
 
     repo_root = Path(__file__).resolve().parents[2]
-    candidates = (
-        repo_root / "build" / "slam_core" / "slamctl",
-        Path("/opt/lingtu/current/build/slam_core/slamctl"),
-    )
+    windows = platform.system() == "Windows"
+    if windows:
+        candidates = (
+            repo_root / "build" / "slam-core-windows-x64" / "stage" / "bin" / "slamctl.exe",
+            repo_root / "build" / "slam-core-windows-x64" / "Release" / "slamctl.exe",
+        )
+    else:
+        candidates = (
+            repo_root / "build" / "slam_core" / "slamctl",
+            Path("/opt/lingtu/current/build/slam_core/slamctl"),
+        )
     for candidate in candidates:
         if candidate.exists():
             return str(candidate)
 
-    resolved = shutil.which("slamctl")
+    resolved = shutil.which("slamctl.exe" if windows else "slamctl")
     if resolved:
         return resolved
     raise FileNotFoundError(

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-CLI_PATH = ROOT / "scripts" / "datasets" / "capture_slam_status_jsonl.py"
+CLI_PATH = ROOT / "tools" / "datasets" / "capture_slam_status_jsonl.py"
 CLI_SPEC = importlib.util.spec_from_file_location("capture_slam_status_jsonl", CLI_PATH)
 assert CLI_SPEC is not None and CLI_SPEC.loader is not None
 CLI = importlib.util.module_from_spec(CLI_SPEC)

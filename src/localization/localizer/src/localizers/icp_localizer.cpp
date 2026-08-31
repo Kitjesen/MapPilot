@@ -17,7 +17,7 @@ constexpr std::size_t kMinGicpPoints = 20U;
 
 CloudType::Ptr finiteCloud(const CloudType::Ptr &cloud)
 {
-    auto finite = std::make_shared<CloudType>();
+    CloudType::Ptr finite(new CloudType);
     if (!cloud) {
         return finite;
     }
@@ -307,8 +307,8 @@ bool ICPLocalizer::setMap(const CloudType::Ptr &cloud)
     if (finite->size() < kMinGicpPoints) {
         return false;
     }
-    auto refine_target = std::make_shared<CloudType>();
-    auto rough_target = std::make_shared<CloudType>();
+    CloudType::Ptr refine_target(new CloudType);
+    CloudType::Ptr rough_target(new CloudType);
     if (m_config.refine_map_resolution > 0)
     {
         m_voxel_filter.setLeafSize(m_config.refine_map_resolution, m_config.refine_map_resolution, m_config.refine_map_resolution);
@@ -370,8 +370,8 @@ bool ICPLocalizer::setMap(const CloudType::Ptr &cloud)
 void ICPLocalizer::setInput(const CloudType::Ptr &cloud)
 {
     const CloudType::Ptr finite = finiteCloud(cloud);
-    auto refine_input = std::make_shared<CloudType>();
-    auto rough_input = std::make_shared<CloudType>();
+    CloudType::Ptr refine_input(new CloudType);
+    CloudType::Ptr rough_input(new CloudType);
     if (m_config.refine_scan_resolution > 0)
     {
         m_voxel_filter.setLeafSize(m_config.refine_scan_resolution, m_config.refine_scan_resolution, m_config.refine_scan_resolution);

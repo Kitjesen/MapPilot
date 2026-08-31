@@ -10,7 +10,7 @@ from sim.evaluation.slam.public_datasets import (
 )
 
 ROOT = Path(__file__).resolve().parents[3]
-DATASET_CLI_PATH = ROOT / "scripts" / "datasets" / "public_slam_dataset.py"
+DATASET_CLI_PATH = ROOT / "tools" / "datasets" / "public_slam_dataset.py"
 SLAM_EVALUATION_README_PATH = ROOT / "sim" / "evaluation" / "slam" / "README.md"
 DATASET_CLI_SPEC = importlib.util.spec_from_file_location(
     "public_slam_dataset",

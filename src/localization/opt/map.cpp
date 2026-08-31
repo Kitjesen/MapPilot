@@ -39,6 +39,7 @@ Map files(
   artifacts.map_pcd = map_dir / "map.pcd";
   artifacts.poses_txt = map_dir / "poses.txt";
   artifacts.patches_dir = map_dir / "patches";
+  artifacts.patch_bundle_manifest = map_dir / "patch_bundle.manifest";
   artifacts.output_dir = output_dir.empty() ? map_dir : output_dir;
   return artifacts;
 }

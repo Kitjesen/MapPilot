@@ -11,6 +11,7 @@ struct Map {
   std::filesystem::path map_pcd;
   std::filesystem::path poses_txt;
   std::filesystem::path patches_dir;
+  std::filesystem::path patch_bundle_manifest;
   std::filesystem::path output_dir;
 };
 

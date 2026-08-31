@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/eclipse-cyclonedds/cyclonedds.git",
+  "tag": "11.0.1",
+  "commit": "e54e991f75a3e67f8e628da3171122e36ea5b872",
+  "tree": "56508d35826c362782fc8a388cad351a3d491f51",
+  "architecture": "x64",
+  "configuration": "Release",
+  "toolset": "v143",
+  "msvc_runtime": "MultiThreadedDLL",
+  "build_shared_libs": true,
+  "enable_security": false,
+  "build_idlc": true,
+  "install_system_runtime_libs_skip": true,
+  "spdx": {
+    "package_name": "Eclipse Cyclone DDS",
+    "package_version": "11.0.1",
+    "license_concluded": "EPL-2.0 OR BSD-3-Clause"
+  }
+}

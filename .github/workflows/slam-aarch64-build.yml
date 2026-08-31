@@ -6,7 +6,7 @@ on:
     paths:
       - 'src/localization/slam/**'
       - 'src/localization/fastlio2/src/**'
-      - 'src/localization/localizer/src/localizers/**'
+      - 'src/localization/localizer/**'
       - 'src/maps/include/**'
       - 'src/message/**'
       - 'third_party/3d_bbs/**'
@@ -18,7 +18,7 @@ on:
     paths:
       - 'src/localization/slam/**'
       - 'src/localization/fastlio2/src/**'
-      - 'src/localization/localizer/src/localizers/**'
+      - 'src/localization/localizer/**'
       - 'src/maps/include/**'
       - 'src/message/**'
       - 'third_party/3d_bbs/**'
@@ -40,7 +40,6 @@ jobs:
       CMAKE_BUILD_TYPE: Release
       LINGTU_BUILD_JOBS: '4'
       LINGTU_SLAM_BUILD_TESTS: 'ON'
-      LINGTU_SLAM_BUILD_PYTHON_BINDINGS: 'OFF'
       LINGTU_SLAM_BUILD_DDS_RUNTIME: 'ON'
       LINGTU_SLAM_FASTLIO2: 'ON'
 
@@ -93,8 +92,8 @@ jobs:
         with:
           name: lingtu-slam-aarch64-native-build
           path: |
-            build/slam_core/lingtu_slam_cyclone_runtime
-            build/slam_core/lingtu_slam_control
+            build/slam_core/slamd
+            build/slam_core/slamctl
             build/slam_core/test_slam_contract
           retention-days: 7
           if-no-files-found: error
