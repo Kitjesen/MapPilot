@@ -91,17 +91,9 @@ interface PreviewGoal {
   z: number
 }
 
-interface MapValidatePlanResponse extends Record<string, unknown> {
-  ok?: boolean
-  success?: boolean
+interface MapValidatePlanResponse extends PlanPreviewResponse {
   map_id?: string
   active?: string
-  preview?: PlanPreviewResponse | null
-  executable_preview?: PlanPreviewResponse | Record<string, unknown> | null
-  map_plan_ok?: boolean
-  executable_feasible?: boolean
-  live_path_safety?: Record<string, unknown> | null
-  no_motion_gate?: Record<string, unknown> | null
   motion_published?: boolean
   elapsed_client_ms?: number
 }
@@ -376,10 +368,6 @@ function booleanValue(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null
 }
 
-function stringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
@@ -491,7 +479,7 @@ function runtimeFromResponses(
     || stringValue(mapActive.map_id)
   const mapReady = booleanValue(session?.map_has_octomap) === true && booleanValue(session?.map_has_pcd) === true
     ? true
-    : booleanValue(mapActive.navigation_ready)
+    : booleanValue(mapActive.activation_ready)
 
   return {
     activeMap,
@@ -647,43 +635,15 @@ export function PlannerTuning({ showToast }: PlannerTuningProps) {
   const riskItems = useMemo(() => buildRiskItems(values), [values])
 
   const previewSummary = useMemo(() => {
-    const plan = preview?.preview ?? null
-    const gate = isRecord(preview?.no_motion_gate) ? preview.no_motion_gate : {}
-    const rejectedPlan = Array.isArray(plan?.rejected_plans) && isRecord(plan.rejected_plans[0])
-      ? plan.rejected_plans[0]
-      : {}
-    const rejectedDiagnostics = isRecord(rejectedPlan.planner_diagnostics)
-      ? rejectedPlan.planner_diagnostics
-      : {}
-    const planDiagnostics = isRecord(plan?.planner_diagnostics)
-      ? plan.planner_diagnostics
-      : {}
-    const diagnostics = Object.keys(rejectedDiagnostics).length > 0
-      ? rejectedDiagnostics
-      : planDiagnostics
-    const diagnosticConstraints = isRecord(diagnostics.constraints)
-      ? diagnostics.constraints
-      : {}
-    const pathCount = Array.isArray(plan?.path) ? plan.path.length : plan?.count ?? 0
-    const reasons = plan?.reasons?.length
-      ? plan.reasons
-      : stringList(gate.blockers)
+    const pathCount = Array.isArray(preview?.path) ? preview.path.length : preview?.count ?? 0
     return {
-      plan,
-      gate,
+      plan: preview,
       pathCount,
-      reasons,
-      selectedPlanner: plan?.selected_planner || plan?.planner || stringValue(gate.selected_planner) || 'unknown',
-      feasible: preview?.map_plan_ok ?? plan?.feasible ?? false,
-      targetReached: booleanValue(gate.target_reached),
-      executable: preview?.executable_feasible ?? false,
+      reasons: preview?.reasons ?? [],
+      selectedPlanner: preview?.planner || 'unknown',
+      feasible: preview?.feasible ?? false,
       motionPublished: preview?.motion_published === true,
-      fallbackReason: plan?.fallback_reason || stringValue(gate.fallback_reason),
-      error: plan?.error ?? '',
-      rejectedReason: stringValue(rejectedPlan.reason),
-      diagnosticPlanner: stringValue(diagnostics.planner),
-      diagnosticMapFormat: stringValue(diagnostics.map_format),
-      diagnosticConstraints,
+      error: preview?.error ?? '',
     }
   }, [preview])
 
@@ -730,14 +690,12 @@ export function PlannerTuning({ showToast }: PlannerTuningProps) {
     setPreviewError('')
     const started = performance.now()
     try {
-      const plannerConstraints: Record<string, unknown> = { ...values }
       const response = await validateMapPlan(
         mapName,
         goal.x,
         goal.y,
         goal.z,
-        plannerConstraints,
-      ) as MapValidatePlanResponse
+      ) as unknown as MapValidatePlanResponse
       setPreview({
         ...response,
         elapsed_client_ms: Math.round(performance.now() - started),
@@ -888,31 +846,16 @@ export function PlannerTuning({ showToast }: PlannerTuningProps) {
               <div className={styles.resultRows}>
                 <span>planner</span><strong>{previewSummary.selectedPlanner}</strong>
                 <span>path</span><strong>{previewSummary.pathCount} 点</strong>
-                <span>target</span><strong>{previewSummary.targetReached === false ? '否' : '是'}</strong>
-                <span>executable</span><strong>{previewSummary.executable ? '是' : '否'}</strong>
                 <span>motion</span><strong>{previewSummary.motionPublished ? '已发布' : '未发布'}</strong>
                 <span>start</span><strong>{formatPoint(previewSummary.plan?.start)}</strong>
                 <span>goal</span><strong>{formatPoint(previewSummary.plan?.goal)}</strong>
-                <span>adjusted</span><strong>{formatPoint(previewSummary.plan?.adjusted_goal)}</strong>
               </div>
-              {(previewSummary.reasons.length > 0 || previewSummary.fallbackReason || previewSummary.error || previewError) && (
+              {(previewSummary.reasons.length > 0 || previewSummary.error || previewError) && (
                 <div className={styles.resultReason}>
                   {previewSummary.reasons.length > 0 && <span>{previewSummary.reasons.join(', ')}</span>}
-                  {previewSummary.fallbackReason && <span>{previewSummary.fallbackReason}</span>}
-                  {previewSummary.rejectedReason && <span>rejected: {previewSummary.rejectedReason}</span>}
                   {previewSummary.error && <span>{previewSummary.error}</span>}
                   {previewError && <span>{previewError}</span>}
                 </div>
-              )}
-              {(previewSummary.diagnosticPlanner || Object.keys(previewSummary.diagnosticConstraints).length > 0) && (
-                <details className={styles.previewDetails}>
-                  <summary>planner diagnostics</summary>
-                  <div className={styles.resultRows}>
-                    <span>backend</span><strong>{previewSummary.diagnosticPlanner || 'unknown'}</strong>
-                    <span>map</span><strong>{previewSummary.diagnosticMapFormat || 'unknown'}</strong>
-                  </div>
-                  <pre>{JSON.stringify(previewSummary.diagnosticConstraints, null, 2)}</pre>
-                </details>
               )}
             </div>
           )}

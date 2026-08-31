@@ -7,10 +7,10 @@ import { ChatPanel } from './components/ChatPanel'
 import { LocalizationCard } from './components/LocalizationCard'
 import { StatusBar } from './components/StatusBar'
 import { MapView } from './components/MapView'
-import { SlamPanel } from './components/SlamPanel'
+import { SlamStatusPanel } from './components/SlamStatusPanel'
 import { SceneView } from './components/SceneView'
 import { PlannerTuning } from './components/PlannerTuning'
-import { ProductModePanel } from './components/ProductModePanel'
+import { RobotStatusPanel } from './components/RobotStatusPanel'
 import { RuntimeDataflowView } from './components/RuntimeDataflowView'
 import { InspectionWorkbench } from './components/InspectionWorkbench'
 import { CurrentTaskCard } from './components/CurrentTaskCard'
@@ -52,7 +52,10 @@ function motionBlockedMessage(reason: string, locale: Locale): string {
 }
 
 function Dashboard() {
-  const sseState = useSSE('/api/v1/events')
+  const [elevationSubscription, setElevationSubscription] = useState(false)
+  const sseState = useSSE(
+    elevationSubscription ? '/api/v1/events?include_elevation=1' : '/api/v1/events',
+  )
   const authoritativeMission = sseState.navigationStatus?.mission.raw
   const activeTaskId = authoritativeMission?.active_task_id
   const activeRequestId = authoritativeMission?.active_request_id
@@ -215,8 +218,14 @@ function Dashboard() {
               <section className="console-localization" aria-label="localization">
                 <LocalizationCard sseState={sseState} />
               </section>
-              <section className="console-mode" aria-label="product mode">
-                <ProductModePanel sseState={sseState} showToast={showToast} locale={locale} />
+              <section className="console-mode" aria-label="robot status">
+                <RobotStatusPanel
+                  sseState={sseState}
+                  showToast={showToast}
+                  locale={locale}
+                  motionStartAllowed={motionStartGate.allowed}
+                  motionStartBlockedReason={motionStartBlockedReason}
+                />
               </section>
               <section className="console-chat" aria-label="assistant">
                 <ChatPanel
@@ -235,6 +244,7 @@ function Dashboard() {
             locale={locale}
             motionStartAllowed={motionStartGate.allowed}
             motionStartBlockedReason={motionStartBlockedReason}
+            onElevationSubscriptionChange={setElevationSubscription}
           />
         )}
         {activeTab === 'map' && (
@@ -245,7 +255,7 @@ function Dashboard() {
             motionStartBlockedReason={motionStartBlockedReason}
           />
         )}
-        {activeTab === 'slam' && <SlamPanel sseState={sseState} showToast={showToast} locale={locale} />}
+        {activeTab === 'slam' && <SlamStatusPanel sseState={sseState} showToast={showToast} locale={locale} />}
         {activeTab === 'dataflow' && <RuntimeDataflowView sseState={sseState} />}
         {activeTab === 'inspection' && (
           <InspectionWorkbench sseState={sseState} showToast={showToast} locale={locale} />

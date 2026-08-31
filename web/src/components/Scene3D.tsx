@@ -2,20 +2,21 @@
  * Scene3D — Three.js 3D map visualization
  *
  * Coordinate mapping:
- *   World (LingTu): X right, Y forward, Z up
+ *   World (LingTu): X forward, Y left, Z up
  *   Three.js:       X right, Y up,      Z toward camera
  *   → Three.js pos = (worldX, worldZ_height, -worldY)
  */
 import { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { PathPoint, CostmapEvent, SlopeGridEvent, SceneGraphEvent, MapSceneEvent, NavigationDdsSnapshotResponse } from '../types'
+import type { PathPoint, SceneGraphEvent, NavigationDdsSnapshotResponse } from '../types'
 import type { BinaryCloud } from '../hooks/useBinaryCloud'
 import {
   cloudFrameSharesSavedMapFrame,
   cloudFramesShareCoordinateEpoch,
 } from '../workers/cloudDecoderCore.ts'
-import { createCostmapLayer } from './scene3d/layers/costmapLayer'
+import { createNativeTraversabilityLayer, type NativeTraversabilityLayerState } from './scene3d/layers/traversabilityLayer.ts'
+import { createElevationLayer, type ElevationLayerState } from './scene3d/layers/elevationLayer.ts'
 import { disposeLiveCloudLayer, upsertLiveCloudLayer } from './scene3d/layers/liveCloudLayer'
 import {
   createSavedMapLayer,
@@ -23,18 +24,13 @@ import {
   SAVED_MAP_Z_FLOOR,
   updateSavedMapPointSize,
 } from './scene3d/layers/savedMapLayer'
-import { createSlopeLayer } from './scene3d/layers/slopeLayer'
 import { disposeGroupedMesh, type GroupedMesh } from './scene3d/layers/layerUtils'
+import { lingtuToThree, threeToLingtu } from '../services/coordinateFrame.ts'
 import { createThunderV4Model } from './scene3d/robot/thunderV4Model'
 import {
   createLocalPlannerDiagnosticLayer,
   disposeLocalPlannerDiagnosticLayer,
 } from './scene3d/layers/localPlannerLayer'
-import {
-  createLoopClosureLayer,
-  disposeLoopClosureLayer,
-  type LoopClosureLayerState,
-} from './scene3d/layers/loopClosureLayer'
 
 export interface Scene3DHandle {
   resetCamera(): void
@@ -47,10 +43,9 @@ interface Layers {
   path:    boolean
   goal:    boolean
   robot:   boolean
-  costmap: boolean
-  slope:   boolean
+  elevation: boolean
+  nativeTraversability: boolean
   localPlanner: boolean
-  loopClosures: boolean
 }
 
 interface Scene3DProps {
@@ -59,10 +54,8 @@ interface Scene3DProps {
   savedMapFlat?: number[]
   savedMapFrameId?: string | null
   savedMapEpoch?: number | null
-  mapScene?:    MapSceneEvent | null
-  costmap:      CostmapEvent | null
-  slopeGrid:    SlopeGridEvent | null
-  loopClosureState: LoopClosureLayerState
+  elevationState: ElevationLayerState
+  nativeTraversabilityState: NativeTraversabilityLayerState
   sceneGraph:   SceneGraphEvent | null
   robotX:       number
   robotY:       number
@@ -83,6 +76,22 @@ const LIVE_SCAN_COLOR = 0x68f7e1
 // The worker owns binary decode, filtering, color mapping, and coordinate
 // conversion. Scene3D consumes those typed arrays as a true 3D Points layer.
 
+interface GridTransform {
+  rows: number
+  cols: number
+  resolution: number
+  origin: [number, number] | [number, number, number]
+  yaw?: number
+}
+
+function gridTransformKey(grid: GridTransform): string {
+  return `${grid.rows}:${grid.cols}:${grid.resolution}:${grid.origin[0]}:${grid.origin[1]}:${grid.yaw ?? 0}`
+}
+
+function elevationTransformKey(layer: GridTransform, minZ: number, maxZ: number): string {
+  return `${gridTransformKey(layer)}:${minZ}:${maxZ}`
+}
+
 function removeFrom(scene: THREE.Scene, obj: THREE.Object3D | undefined | null) {
   if (!obj) return
   scene.remove(obj)
@@ -93,7 +102,7 @@ function removeFrom(scene: THREE.Scene, obj: THREE.Object3D | undefined | null) 
 }
 
 export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
-  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, costmap, slopeGrid, loopClosureState, sceneGraph, robotX, robotY, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, layers, pointSize, onPendingGoal, onRelocalize, pendingGoal },
+  { cloud, scanCloud, savedMapFlat, savedMapFrameId, savedMapEpoch, elevationState, nativeTraversabilityState, sceneGraph, robotX, robotY, robotValid, yaw, trail, path, localPath, localPlannerSnapshot, layers, pointSize, onPendingGoal, onRelocalize, pendingGoal },
   ref,
 ) {
   const mountRef   = useRef<HTMLDivElement>(null)
@@ -119,10 +128,9 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const robotRef   = useRef<THREE.Group | null>(null)
   const goalRef        = useRef<THREE.Mesh | null>(null)
   const pendingGoalRef = useRef<THREE.Mesh | null>(null)
-  const costmapMeshRef = useRef<GroupedMesh | null>(null)
-  const slopeMeshRef   = useRef<GroupedMesh | null>(null)
+  const elevationMeshRef = useRef<GroupedMesh | null>(null)
+  const nativeTraversabilityMeshRef = useRef<GroupedMesh | null>(null)
   const localPlannerRef = useRef<THREE.Group | null>(null)
-  const loopClosureRef = useRef<THREE.Group | null>(null)
   const gridRef        = useRef<THREE.GridHelper | null>(null)
   const floorRef   = useRef<THREE.Mesh | null>(null)
   const liveCloudRef   = useRef<THREE.Points | null>(null)
@@ -137,9 +145,10 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   useImperativeHandle(ref, () => ({
     resetCamera() {
       const { x, y } = robotPosRef.current
-      cameraRef.current?.position.set(x, 20, -y + 18)
+      const [, , tz] = lingtuToThree([x, y, 0])
+      cameraRef.current?.position.set(x, 20, tz + 18)
       if (controlsRef.current) {
-        controlsRef.current.target.set(x, 0, -y)
+        controlsRef.current.target.set(x, 0, tz)
         controlsRef.current.update()
       }
     },
@@ -271,7 +280,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (trailLineRef.current) { removeFrom(scene, trailLineRef.current); trailLineRef.current = null }
     if (!layers.trail || trail.length < 2) return
 
-    const pts = trail.map(([x, y]) => new THREE.Vector3(x, 0.25, -y))
+    const pts = trail.map(([x, y]) => new THREE.Vector3(...lingtuToThree([x, y, 0.25])))
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints(pts),
       new THREE.LineBasicMaterial({ color: 0xff9f43, transparent: true, opacity: 0.95 }),
@@ -288,7 +297,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (pathLineRef.current) { removeFrom(scene, pathLineRef.current); pathLineRef.current = null }
     if (!layers.path || path.length < 2) return
 
-    const rawPts = path.map(p => new THREE.Vector3(p.x, 0.18, -p.y))
+    const rawPts = path.map(p => new THREE.Vector3(...lingtuToThree([p.x, p.y, 0.18])))
     const curve = new THREE.CatmullRomCurve3(rawPts, false, 'catmullrom', 0.5)
     const tubularSegments = Math.max(rawPts.length * 6, 60)
     const geo = new THREE.TubeGeometry(curve, tubularSegments, 0.04, 6, false)
@@ -308,7 +317,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (localPathRef.current) { removeFrom(scene, localPathRef.current); localPathRef.current = null }
     if (!layers.path || localPath.length < 2) return
 
-    const rawPts = localPath.map(p => new THREE.Vector3(p.x, 0.28, -p.y))
+    const rawPts = localPath.map(p => new THREE.Vector3(...lingtuToThree([p.x, p.y, 0.28])))
     const curve = new THREE.CatmullRomCurve3(rawPts, false, 'catmullrom', 0.5)
     const tubularSegments = Math.max(rawPts.length * 4, 40)
     const geo = new THREE.TubeGeometry(curve, tubularSegments, 0.06, 6, false)
@@ -332,7 +341,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     robotRef.current.visible = layers.robot && robotValid
     if (layers.robot && robotValid) {
-      robotRef.current.position.set(robotX, 0, -robotY)
+      robotRef.current.position.set(...lingtuToThree([robotX, robotY, 0]))
       robotRef.current.rotation.y = yaw
     }
   }, [robotX, robotY, robotValid, yaw, layers.robot])
@@ -349,7 +358,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       new THREE.SphereGeometry(0.3, 8, 8),
       new THREE.MeshBasicMaterial({ color: 0xfbbf24, wireframe: true }),
     )
-    mesh.position.set(last.x, 0.3, -last.y)
+    mesh.position.set(...lingtuToThree([last.x, last.y, 0.3]))
     scene.add(mesh)
     goalRef.current = mesh
   }, [path, layers.goal])
@@ -366,48 +375,55 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       new THREE.MeshBasicMaterial({ color: 0x06b6d4 }),
     )
     ring.rotation.x = Math.PI / 2
-    ring.position.set(pendingGoal.x, 0.05, -pendingGoal.y)
+    ring.position.set(...lingtuToThree([pendingGoal.x, pendingGoal.y, 0.05]))
     scene.add(ring)
     pendingGoalRef.current = ring
   }, [pendingGoal])
 
-  // Costmap overlay
+  // Elevation is the map_scene minimum-observed-Z raster rendered as actual
+  // displaced geometry. Invalid/stale identity states never reach the scene.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
 
-    disposeGroupedMesh(scene, costmapMeshRef.current)
-    costmapMeshRef.current = null
+    if (layers.elevation && elevationState.status === 'ready') {
+      const { layer } = elevationState
+      const transform = elevationTransformKey(layer, elevationState.minZ, elevationState.maxZ)
+      if (elevationMeshRef.current?.userData.gridB64 === layer.grid_b64
+        && elevationMeshRef.current.userData.transform === transform) return
+    }
+    disposeGroupedMesh(scene, elevationMeshRef.current)
+    elevationMeshRef.current = null
+    if (!layers.elevation || elevationState.status !== 'ready') return
 
-    if (!costmap || !layers.costmap) return
-
-    const mesh = createCostmapLayer(costmap)
+    const mesh = createElevationLayer(elevationState)
     if (!mesh) return
+    const { layer } = elevationState
+    mesh.userData.gridB64 = layer.grid_b64
+    mesh.userData.transform = elevationTransformKey(layer, elevationState.minZ, elevationState.maxZ)
     scene.add(mesh._group ?? mesh)
-    costmapMeshRef.current = mesh
-  }, [costmap, layers.costmap])
+    elevationMeshRef.current = mesh
+  }, [elevationState, layers.elevation])
 
-
-  // ── Costmap visibility toggle ──────────────────────────────────
-  useEffect(() => {
-    if (costmapMeshRef.current) costmapMeshRef.current.visible = layers.costmap
-  }, [layers.costmap])
-
-  // Slope grid overlay
+  // Native control-risk grid from the field navigation endpoint.
   useEffect(() => {
     const scene = sceneRef.current
     if (!scene) return
-
-    disposeGroupedMesh(scene, slopeMeshRef.current)
-    slopeMeshRef.current = null
-
-    if (!slopeGrid || !layers.slope) return
-
-    const mesh = createSlopeLayer(slopeGrid)
+    if (layers.nativeTraversability && nativeTraversabilityState.status === 'ready') {
+      const { event } = nativeTraversabilityState
+      const transform = `${event.grid_b64}:${event.reset_epoch}:${event.sequence}`
+      if (nativeTraversabilityMeshRef.current?.userData.transform === transform) return
+    }
+    disposeGroupedMesh(scene, nativeTraversabilityMeshRef.current)
+    nativeTraversabilityMeshRef.current = null
+    if (!layers.nativeTraversability || nativeTraversabilityState.status !== 'ready') return
+    const mesh = createNativeTraversabilityLayer(nativeTraversabilityState)
     if (!mesh) return
+    const { event } = nativeTraversabilityState
+    mesh.userData.transform = `${event.grid_b64}:${event.reset_epoch}:${event.sequence}`
     scene.add(mesh._group ?? mesh)
-    slopeMeshRef.current = mesh
-  }, [slopeGrid, layers.slope])
+    nativeTraversabilityMeshRef.current = mesh
+  }, [nativeTraversabilityState, layers.nativeTraversability])
 
   // Native endpoint diagnostics are read-only and have no path back into
   // planning or control. Rebuild only at the explicitly enabled low poll rate.
@@ -431,30 +447,6 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       }
     }
   }, [localPlannerSnapshot, layers.localPlanner])
-
-  // Verified loop candidates are a read-only diagnostic projection. They never
-  // feed back into SLAM, map optimization, planning, or motion control.
-  useEffect(() => {
-    const scene = sceneRef.current
-    if (!scene) return
-
-    disposeLoopClosureLayer(scene, loopClosureRef.current)
-    loopClosureRef.current = null
-    if (!layers.loopClosures) return
-
-    const group = createLoopClosureLayer(loopClosureState)
-    if (!group) return
-    scene.add(group)
-    loopClosureRef.current = group
-
-    return () => {
-      if (loopClosureRef.current === group) {
-        disposeLoopClosureLayer(scene, group)
-        loopClosureRef.current = null
-      }
-    }
-  }, [layers.loopClosures, loopClosureState])
-
 
   // Saved map cloud. Live map_scene labels have an independent lifecycle and
   // point ordering, so they cannot safely recolor or rebind this static PCD.
@@ -504,7 +496,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!sceneGraph?.objects?.length) return
     const group = new THREE.Group()
     for (const obj of sceneGraph.objects) {
-      const tx = obj.x, tz = -obj.y, ty = 0.5
+      const [tx, ty, tz] = lingtuToThree([obj.x, obj.y, obj.z ?? 0.5])
       // Sphere marker
       const sphereGeo = new THREE.SphereGeometry(0.2, 8, 8)
       const conf = Math.max(0, Math.min(1, obj.confidence ?? 0.5))
@@ -568,8 +560,7 @@ export const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const hits = raycaster.current.intersectObject(floor)
     if (hits.length > 0) {
       const p = hits[0].point
-      const wx = p.x
-      const wy = -p.z  // convert Three.js back to world coords
+      const [wx, wy] = threeToLingtu([p.x, p.y, p.z])
       // Shift+click → relocalize (set initial pose); plain click → goal
       const shiftDown = (down.shift || e.shiftKey)
       if (shiftDown && onRelocalize) {

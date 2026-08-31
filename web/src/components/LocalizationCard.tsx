@@ -90,8 +90,9 @@ function labelFor(t: TabKey): string {
 
 function modeLabel(mode: string): string {
   if (mode === 'native_dds' || mode === 'cpp_slam_status') return '原生定位'
-  if (mode === 'fastlio2') return '建图'
-  if (mode === 'localizer') return '地图定位'
+  if (mode === 'fastlio2') return 'Fast-LIO2'
+  if (mode === 'mapping') return '建图'
+  if (mode === 'localization') return '地图定位'
   if (mode.includes('ros2')) return '兼容桥'
   return mode
 }

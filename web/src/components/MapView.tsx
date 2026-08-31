@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Map, FolderOpen, Trash2, Star, RefreshCw, Save, Pencil, Navigation } from 'lucide-react'
 import type { MapInfo, ToastKind } from '../types'
 import * as api from '../services/api'
-import { mapIsNavigationReady, navigationRuntimeReady } from '../services/mapReadiness'
+import { mapIsActivationReady, navigationRuntimeReady } from '../services/mapReadiness'
 import { PointCloudViewer, type PointCloudPick } from './PointCloudViewer'
 import { PromptModal, ConfirmModal } from './Modal'
 import { text, type Locale } from '../i18n'
@@ -15,8 +15,8 @@ interface MapViewProps {
   motionStartBlockedReason: string
 }
 // ── Map type classification ────────────────────────────────────
-// 可导航地图 — has PCD + OctoMap artifact (OctoPlanner3D ready)
-// 三维点云  — has PCD, no OctoMap artifact (raw LiDAR map)
+// 地图可激活 — required saved-map artifacts are present
+// 地图产物未就绪 — has PCD, missing an activation artifact
 // 空地图    — no PCD
 
 interface Group { label: string; hint: string; maps: MapInfo[] }
@@ -24,14 +24,14 @@ interface Group { label: string; hint: string; maps: MapInfo[] }
 function groupMaps(maps: MapInfo[]): Group[] {
   return [
     {
-      label: '可导航地图',
-      hint: '含 OctoMap，可用于 OctoPlanner3D 规划',
-      maps: maps.filter(mapIsNavigationReady),
+      label: '地图可激活',
+      hint: '点云、规划产物和元数据齐全；运行时就绪需另行检查',
+      maps: maps.filter(mapIsActivationReady),
     },
     {
-      label: '三维点云',
-      hint: '原始 LiDAR 点云，需构建 OctoMap 后才能导航',
-      maps: maps.filter(m => m.has_pcd && !mapIsNavigationReady(m)),
+      label: '地图产物未就绪',
+      hint: '已有 LiDAR 点云，但仍缺少激活所需产物',
+      maps: maps.filter(m => m.has_pcd && !mapIsActivationReady(m)),
     },
     {
       label: '空地图',
@@ -89,15 +89,6 @@ function formatSaveMapLocation(r: api.SaveMapResult, name: string): string {
 
 function formatSaveMapDetail(r: api.SaveMapResult): string {
   const parts: string[] = []
-  const opt = r.map_optimization
-  if (opt && typeof opt === 'object') {
-    const strategy = String(opt.strategy ?? 'map').toUpperCase()
-    const status = String(opt.status ?? '')
-    if (status === 'ok') parts.push(`${strategy} 已优化`)
-    else if (status === 'unavailable') parts.push(`${strategy} 未安装`)
-    else if (status === 'skipped') parts.push(`${strategy} 已跳过`)
-    else if (status === 'failed') parts.push(`${strategy} 失败`)
-  }
   const df = r.dynamic_filter
   if (df && df.success && typeof df.dropped === 'number' && typeof df.orig_count === 'number' && df.orig_count > 0) {
     const pct = (100 * df.dropped / df.orig_count).toFixed(1)
@@ -115,11 +106,10 @@ interface CardProps {
   selected: boolean
   onPreview:  (name: string) => void
   onNavigate: (name: string) => void
-  onActivate: (name: string) => void
   onRename:   (name: string) => void
   onDelete:   (name: string) => void
 }
-function MapCard({ m, selected, onPreview, onNavigate, onActivate, onRename, onDelete }: CardProps) {
+function MapCard({ m, selected, onPreview, onNavigate, onRename, onDelete }: CardProps) {
   return (
     <div className={[
       m.is_active ? styles.cardActive : styles.card,
@@ -139,7 +129,7 @@ function MapCard({ m, selected, onPreview, onNavigate, onActivate, onRename, onD
         </span>
       </div>
       <div className={styles.cardActions}>
-        {mapIsNavigationReady(m) && (
+        {mapIsActivationReady(m) && (
           <button
             className={styles.btnTinyAccent}
             onClick={() => onNavigate(m.name)}
@@ -158,11 +148,6 @@ function MapCard({ m, selected, onPreview, onNavigate, onActivate, onRename, onD
         <button className={styles.btnTiny} onClick={() => onRename(m.name)} title="重命名">
           <Pencil size={11} />
         </button>
-        {!m.is_active && (
-          <button className={styles.btnTinyAccent} onClick={() => onActivate(m.name)} title="激活地图（需确认）">
-            <Star size={11} /> 激活
-          </button>
-        )}
         <button className={styles.btnTinyDanger} onClick={() => onDelete(m.name)} title="删除">
           <Trash2 size={11} />
         </button>
@@ -187,7 +172,6 @@ export function MapView({
 
   // Modal state
   const [saveOpen,   setSaveOpen  ] = useState(false)
-  const [activateFrom, setActivateFrom] = useState<string | null>(null)
   const [navigateFrom, setNavigateFrom] = useState<string | null>(null)
   const [navigationPendingMap, setNavigationPendingMap] = useState<string | null>(null)
   const [renameFrom, setRenameFrom] = useState<string | null>(null)
@@ -241,24 +225,10 @@ export function MapView({
 
   useEffect(() => { setPickedPoint(null) }, [selectedMap])
 
-  const handleActivate = (name: string) => setActivateFrom(name)
   const handleNavigate = (name: string) => setNavigateFrom(name)
   const handleDelete = (name: string) => setDeleteFrom(name)
   const handleRename = (name: string) => setRenameFrom(name)
   const handleSave = () => setSaveOpen(true)
-
-  const confirmActivate = async () => {
-    const name = activateFrom
-    setActivateFrom(null)
-    if (!name) return
-    try {
-      await api.activateMap(name)
-      showToast(`已激活: ${name}`, 'success')
-      loadMaps()
-    } catch {
-      showToast(`激活失败: ${name}`, 'error')
-    }
-  }
 
   const ensureNavigationSession = async (mapName: string) => {
     const [session, navigation] = await Promise.all([
@@ -279,21 +249,7 @@ export function MapView({
     if (!name || navigationPendingMap) return
     setNavigationPendingMap(name)
     try {
-      const [currentSession, currentNavigation] = await Promise.all([
-        api.fetchSession(),
-        api.fetchNavigationStatus(),
-      ])
-      if (!navigationRuntimeReady(currentSession, currentNavigation, name)) {
-        const handoff = await api.copyProductSwitchCommand('nav', {
-          currentProduct: currentSession.product,
-          mapName: name,
-        })
-        showToast(
-          `ProductControl 命令已复制：${handoff.command}`,
-          'info',
-        )
-        return
-      }
+      await ensureNavigationSession(name)
       setSelectedMap(name)
       showToast(`导航已就绪：${name}`, 'success')
       await loadMaps()
@@ -330,7 +286,8 @@ export function MapView({
       detail: '正在写入点云、清理动态点并生成导航地图。完成后会显示保存位置。',
     })
     try {
-      const r = await api.saveMap(name)
+      const admission = await api.saveMap(name)
+      const r = await api.waitForMapSaveOperation(admission)
       const summary = formatSaveMapSummary(r)
       setSaveStatus({
         name,
@@ -498,7 +455,7 @@ export function MapView({
                 {g.maps.map(m => (
                   <MapCard
                     key={m.name} m={m} selected={selectedMap === m.name}
-                    onPreview={togglePreview} onNavigate={handleNavigate} onActivate={handleActivate}
+                    onPreview={togglePreview} onNavigate={handleNavigate}
                     onRename={handleRename}   onDelete={handleDelete}
                   />
                 ))}
@@ -540,15 +497,6 @@ export function MapView({
         confirmLabel="切换并重定位"
         onConfirm={confirmNavigate}
         onCancel={() => setNavigateFrom(null)}
-      />
-
-      <ConfirmModal
-        open={activateFrom != null}
-        title="激活地图"
-        message={`将 "${activateFrom ?? ''}" 设为当前活动地图？此操作不会移动机器人，但会切换后续定位/导航使用的地图。`}
-        confirmLabel="激活"
-        onConfirm={confirmActivate}
-        onCancel={() => setActivateFrom(null)}
       />
 
       <ConfirmModal

@@ -18,16 +18,6 @@ const SAVED_MAP_PRODUCTS = new Set<ProductName>([
   'inspection',
 ])
 
-const PRODUCT_SESSIONS: Record<ProductName, string> = {
-  teleop: 'teleop',
-  teleop_avoid: 'teleop_avoid',
-  map: 'mapping',
-  explore: 'exploration',
-  tracking: 'tracking',
-  nav: 'navigation',
-  inspection: 'inspection',
-}
-
 export interface ProductWaitOptions {
   fetchSession: () => Promise<SessionEvent['data']>
   fetchNavigation?: () => Promise<NavigationStatusResponse>
@@ -36,10 +26,12 @@ export interface ProductWaitOptions {
   sleep?: (delayMs: number) => Promise<void>
 }
 
-export function mapIsNavigationReady(
-  map: Pick<MapInfo, 'has_pcd' | 'navigation_ready'>,
+export function mapIsActivationReady(
+  map: Pick<MapInfo, 'has_pcd' | 'has_octomap' | 'activation_ready'>,
 ): boolean {
-  return map.has_pcd === true && map.navigation_ready === true
+  return map.has_pcd === true
+    && map.has_octomap === true
+    && map.activation_ready === true
 }
 
 export function navigationSessionReady(
@@ -48,13 +40,12 @@ export function navigationSessionReady(
 ): boolean {
   const activeMap = session.active_map ?? ''
   return session.mode === 'navigating'
-    && session.pending === false
     && session.product !== null
     && session.product !== undefined
     && NAVIGATION_PRODUCTS.has(session.product)
     && activeMap === mapName
     && session.map_has_pcd === true
-    && (session.map_has_octomap === true || session.map_has_tomogram === true)
+    && session.map_has_octomap === true
     && session.localizer_ready === true
     && session.pose_fresh !== false
 }
@@ -80,18 +71,12 @@ export function resolveNavigationTargetMapName(
   return active || null
 }
 
-export function productSessionReady(
+export function productReady(
   session: SessionEvent['data'],
   targetProduct: ProductName,
   mapName?: string | null,
 ): boolean {
-  if (session.pending || session.error) return false
   if (session.product !== targetProduct) return false
-
-  const productSession = String(session.product_session ?? '')
-  if (productSession && productSession !== 'idle' && productSession !== PRODUCT_SESSIONS[targetProduct]) {
-    return false
-  }
 
   if (targetProduct === 'map') return session.mode === 'mapping'
   if (targetProduct === 'explore') {
@@ -100,7 +85,7 @@ export function productSessionReady(
     if (!expectedMap) return !session.active_map
     return session.active_map === expectedMap
       && session.map_has_pcd === true
-      && (session.map_has_octomap === true || session.map_has_tomogram === true)
+      && session.map_has_octomap === true
       && session.localizer_ready === true
       && session.pose_fresh !== false
   }
@@ -116,8 +101,6 @@ export function productTransitionDetail(
   targetProduct: ProductName,
   mapName?: string | null,
 ): string {
-  if (session.pending) return '产品模式正在切换'
-  if (session.error) return `产品模式切换失败：${session.error}`
   if (session.product !== targetProduct) {
     return `等待 Product ${targetProduct}，当前为 ${session.product || 'unknown'}`
   }
@@ -160,15 +143,7 @@ export async function waitForProductReady(
       continue
     }
 
-    if (
-      session.product === targetProduct
-      && !session.pending
-      && session.error
-    ) {
-      throw new Error(`产品模式切换失败：${session.error}`)
-    }
-
-    if (productSessionReady(session, targetProduct, mapName)) {
+    if (productReady(session, targetProduct, mapName)) {
       if (SAVED_MAP_PRODUCTS.has(targetProduct) && options.fetchNavigation) {
         try {
           const navigation = await options.fetchNavigation()

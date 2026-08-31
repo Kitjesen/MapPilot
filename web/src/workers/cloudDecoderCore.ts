@@ -1,3 +1,5 @@
+import { lingtuToThree } from '../services/coordinateFrame.ts'
+
 const MAGIC = 0x44_4c_43_50 // "PCLD" as a little-endian uint32
 const FLAG_HAS_COLOR = 0x01
 const KNOWN_FLAGS = FLAG_HAS_COLOR
@@ -371,9 +373,10 @@ export function decodePointCloudFrame(buf: ArrayBuffer): DecodedCloudFrame {
     if (wz < Z_FLOOR || wz > Z_CEIL) continue
 
     const off = written * 3
-    positions[off] = wx
-    positions[off + 1] = wz
-    positions[off + 2] = -wy
+    const [tx, ty, tz] = lingtuToThree([wx, wy, wz])
+    positions[off] = tx
+    positions[off + 1] = ty
+    positions[off + 2] = tz
     if (rgb) {
       colors[off] = rgb[i * 3] / 255
       colors[off + 1] = rgb[i * 3 + 1] / 255

@@ -24,8 +24,6 @@ const requiredLinks = [
   'events',
   'health',
   'session',
-  'session_start',
-  'session_end',
   'navigation_status',
   'navigation_plan',
   'navigation_cancel',
@@ -36,15 +34,12 @@ const requiredLinks = [
   'map_save',
   'map_points',
   'slam_status',
-  'slam_switch',
   'slam_relocalize',
   'routecheck_latest',
   'real_runtime_evidence_latest',
-  'algorithm_benchmark_latest',
   'runtime_dataflow',
   'runtime_dataflow_topic',
   'runtime_dataflow_subscribe',
-  'runtime_switch_plan',
   'field_check',
   'inspection_acceptance',
 ]
@@ -172,27 +167,9 @@ try {
   ensure(realEvidence.status === 200, failures, `GET ${evidencePath} expected 200, got ${realEvidence.status}`)
   ensure(typeof realEvidence.body?.ok === 'boolean', failures, 'real_runtime_evidence_latest missing boolean ok')
 
-  const algorithmPath = links.algorithm_benchmark_latest || '/api/v1/diagnostics/algorithm-benchmark/latest'
-  const algorithm = await request(algorithmPath)
-  ensure(algorithm.status === 200, failures, `GET ${algorithmPath} expected 200, got ${algorithm.status}`)
-  ensure(
-    algorithm.body?.schema_version === 'lingtu.algorithm_benchmark_latest.v1',
-    failures,
-    'algorithm_benchmark_latest missing canonical schema version',
-  )
-  ensure(typeof algorithm.body?.ok === 'boolean', failures, 'algorithm_benchmark_latest missing boolean ok')
-  ensure(algorithm.body?.read_only === true, failures, 'algorithm_benchmark_latest should be read-only')
-  ensure(algorithm.body?.ros2_topic_required === false, failures, 'algorithm_benchmark_latest should not require ROS2 topics')
-  ensure(
-    Array.isArray(algorithm.body?.publishes) && algorithm.body.publishes.length === 0,
-    failures,
-    'algorithm_benchmark_latest must not publish',
-  )
-
   const dataflowPath = links.runtime_dataflow || '/api/v1/runtime/dataflow'
   const dataflow = await request(dataflowPath)
   ensure(dataflow.status === 200, failures, `GET ${dataflowPath} expected 200, got ${dataflow.status}`)
-  ensure(dataflow.body?.ros2_topic_required === false, failures, 'runtime_dataflow should not require ROS2 topics')
   ensure(
     dataflow.body?.transport_layers?.module_port_bus?.primary === true,
     failures,
@@ -247,7 +224,6 @@ try {
     const detailPath = `${detailBase}${sep}${new URLSearchParams({ topic })}`
     const detail = await request(detailPath)
     ensure(detail.status === 200, failures, `GET ${detailPath} expected 200, got ${detail.status}`)
-    ensure(detail.body?.inspection?.ros2_topic_required === false, failures, 'runtime_dataflow_topic should not require ROS2 topics')
     ensure(detail.body?.inspection?.arbitrary_publish_supported === false, failures, 'runtime_dataflow_topic should not support arbitrary publish')
   }
   for (const topic of realtimeRuntimeTopics) {
@@ -267,7 +243,6 @@ try {
     )
     ensure(subscription.body?.ok === true, failures, `runtime_dataflow_subscribe should be ok for ${topic}`)
     ensure(subscription.body?.read_only === true, failures, `runtime_dataflow_subscribe should be read-only for ${topic}`)
-    ensure(subscription.body?.ros2_topic_required === false, failures, `runtime_dataflow_subscribe should not require ROS2 topics for ${topic}`)
     ensure(
       subscription.body?.arbitrary_publish_supported === false,
       failures,
@@ -305,59 +280,7 @@ try {
       `filtered SSE first event should be runtime_dataflow_subscription for ${topic}`,
     )
     ensure(sseEvent.body?.data?.ok === true, failures, `filtered SSE subscription event should be ok for ${topic}`)
-    ensure(
-      sseEvent.body?.data?.ros2_topic_required === false,
-      failures,
-      `filtered SSE subscription event should not require ROS2 topics for ${topic}`,
-    )
   }
-
-  const switchPlanPath = links.runtime_switch_plan || '/api/v1/runtime/switch-plan'
-  const switchPlan = await request(switchPlanPath, {
-    method: 'POST',
-    body: {
-      current_product: null,
-      target_product: 'explore',
-    },
-  })
-  ensure(switchPlan.status === 200, failures, `POST ${switchPlanPath} expected 200, got ${switchPlan.status}`)
-  ensure(
-    switchPlan.body?.schema_version === 'lingtu.runtime_switch_plan.v1',
-    failures,
-    'runtime_switch_plan missing canonical schema version',
-  )
-  ensure(typeof switchPlan.body?.ok === 'boolean', failures, 'runtime_switch_plan missing boolean ok')
-  ensure(switchPlan.body?.read_only === true, failures, 'runtime_switch_plan should be read-only')
-  ensure(switchPlan.body?.motion === false, failures, 'runtime_switch_plan must not imply motion')
-  ensure(Array.isArray(switchPlan.body?.publishes) && switchPlan.body.publishes.length === 0, failures, 'runtime_switch_plan must not publish')
-  ensure(
-    switchPlan.body?.from?.env === 'real' || switchPlan.body?.from?.env === 'sim',
-    failures,
-    'runtime_switch_plan must expose the fixed Env',
-  )
-  ensure(
-    switchPlan.body?.to?.env === switchPlan.body?.from?.env,
-    failures,
-    'runtime_switch_plan must not switch Env',
-  )
-  ensure(
-    switchPlan.body?.to?.product === 'explore',
-    failures,
-    'runtime_switch_plan target Product mismatch',
-  )
-  ensure(
-    switchPlan.body?.run_plan?.identity?.env === switchPlan.body?.to?.env
-      && switchPlan.body?.run_plan?.identity?.product === 'explore',
-    failures,
-    'runtime_switch_plan must expose the resolved target RunPlan',
-  )
-  ensure(
-    !('endpoint' in (switchPlan.body?.inputs || {}))
-      && !('current_endpoint' in (switchPlan.body?.inputs || {}))
-      && !('target_endpoint' in (switchPlan.body?.inputs || {})),
-    failures,
-    'runtime_switch_plan inputs must not contain deployment endpoint selectors',
-  )
 
   const fieldCheckPath = links.field_check || '/api/v1/diagnostics/field-check'
   const fieldCheck = await request(fieldCheckPath, {
@@ -372,48 +295,8 @@ try {
   )
   ensure(typeof fieldCheck.body?.ok === 'boolean', failures, 'field_check missing boolean ok')
   ensure(typeof fieldCheck.body?.runtime === 'object', failures, 'field_check missing runtime verdicts')
-  ensure(typeof fieldCheck.body?.algorithm === 'object', failures, 'field_check missing algorithm verdict')
-  const strictBenchmark = fieldCheck.body?.algorithm?.strict_benchmark || {}
-  ensure(
-    strictBenchmark.read_only === true,
-    failures,
-    'field_check algorithm benchmark should be read-only',
-  )
-  ensure(
-    strictBenchmark.ros2_topic_required === false,
-    failures,
-    'field_check algorithm benchmark should not require ROS2 topics',
-  )
-  ensure(
-    Array.isArray(strictBenchmark.publishes) && strictBenchmark.publishes.length === 0,
-    failures,
-    'field_check algorithm benchmark must not publish',
-  )
-  ensure(
-    strictBenchmark.summary_path === algorithm.body?.summary_path,
-    failures,
-    'field_check algorithm summary_path should match latest benchmark',
-  )
-  ensure(
-    strictBenchmark.source === algorithm.body?.source,
-    failures,
-    'field_check algorithm source should match latest benchmark',
-  )
-  if (typeof algorithm.body?.report_age_s === 'number') {
-    ensure(
-      typeof strictBenchmark.report_age_s === 'number'
-        && Math.abs(strictBenchmark.report_age_s - algorithm.body.report_age_s) < 5,
-      failures,
-      'field_check algorithm report_age_s should stay close to latest benchmark',
-    )
-  }
-  if (fieldCheck.body?.ok === true) {
-    ensure(
-      strictBenchmark.status === 'PASS',
-      failures,
-      'field_check PASS requires algorithm strict benchmark PASS',
-    )
-  }
+  ensure(typeof fieldCheck.body?.navigation === 'object', failures, 'field_check missing navigation verdicts')
+  ensure(typeof fieldCheck.body?.evidence === 'object', failures, 'field_check missing evidence summary')
 
   const acceptancePath = links.inspection_acceptance || '/api/v1/inspection/acceptance'
   const acceptance = await request(acceptancePath, {
@@ -429,9 +312,14 @@ try {
   ensure(typeof acceptance.body?.summary === 'string', failures, 'inspection_acceptance missing summary')
   ensure(Array.isArray(acceptance.body?.targets), failures, 'inspection_acceptance missing targets array')
   ensure(
-    acceptance.body?.targets?.every(target => target?.command_published === false),
+    acceptance.body?.targets?.every(target => (
+      typeof target?.status === 'string'
+      && typeof target?.preview_feasible === 'boolean'
+      && (target?.preview_count == null || typeof target.preview_count === 'number')
+      && Array.isArray(target?.reasons)
+    )),
     failures,
-    'inspection_acceptance must not publish motion commands',
+    'inspection_acceptance targets must expose preview status, feasibility, count, and reasons',
   )
 
   const ready = await request('/ready', { json: false })
@@ -452,7 +340,7 @@ try {
     active_map: session.active_map ?? null,
     localization_state: localization.state ?? null,
     localization_backend: session.localization_backend ?? session.slam_profile ?? null,
-    navigation_ready: navigation.can_accept_goal ?? navigation.readiness?.can_accept_goal ?? null,
+    can_accept_goal: navigation.can_accept_goal ?? navigation.readiness?.can_accept_goal ?? null,
     routecheck_ok: typeof routecheck.body?.ok === 'boolean' ? routecheck.body.ok : null,
     routecheck_count: typeof routecheck.body?.count === 'number' ? routecheck.body.count : null,
     real_runtime_evidence_ok: typeof realEvidence.body?.ok === 'boolean' ? realEvidence.body.ok : null,

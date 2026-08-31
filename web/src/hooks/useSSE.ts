@@ -5,14 +5,17 @@ import type {
   AppBootstrapResponse,
   AppCapabilitiesResponse,
   LocationsResponse,
+  MapSceneEvent,
   MissionStatusEvent,
   OdometryEvent,
   SafetyStateEvent,
   SceneGraphEvent,
+  NativeTraversabilityEvent,
   SSEState,
   SSEEvent,
   StateResponse,
 } from '../types'
+import { mergeMapSceneElevation } from '../services/mapSceneState.ts'
 
 // Re-export types for backward compatibility
 export type {
@@ -39,9 +42,8 @@ export type {
   RobotStatusEvent,
   GlobalPathEvent,
   MapCloudEvent,
-  MapLifecycleEvent,
-  CostmapEvent,
-  SlopeGridEvent,
+  MapSceneEvent,
+  NativeTraversabilityEvent,
   AgentMessageEvent,
   PathPoint,
   SSEEvent,
@@ -59,8 +61,6 @@ const INITIAL_STATE: SSEState = {
   localPath: null,
   mapCloud: null,
   mapScene: null,
-  savedMap: null,
-  mapEvent: null,
   session: null,
   navigationStatus: null,
   inspectionTaskEvent: null,
@@ -69,9 +69,9 @@ const INITIAL_STATE: SSEState = {
   locations: null,
   stateSnapshot: null,
   traffic: null,
-  costmap: null,
-  slopeGrid: null,
+  nativeTraversability: null,
   agentMessage: null,
+  visualServoStatus: null,
   gnssFusion: null,
   slamDiag: null,
   slamDrift: null,
@@ -146,20 +146,25 @@ function trafficEndpointFrom(
 }
 
 function snapshotOdometry(snapshot: StateResponse): OdometryEvent | null {
-  const raw = snapshot.odometry
+  const raw = isRecord(snapshot.localization) ? snapshot.localization.odometry : null
   if (!isRecord(raw)) return null
   if (typeof raw.x !== 'number' || typeof raw.y !== 'number') return null
   return {
     type: 'odometry',
     x: raw.x,
     y: raw.y,
+    z: finiteNumber(raw.z),
     yaw: finiteNumber(raw.yaw),
     vx: finiteNumber(raw.vx),
+    wz: finiteNumber(raw.wz),
+    frame_id: optionalString(raw.frame_id),
+    child_frame_id: optionalString(raw.child_frame_id),
+    ts: finiteNumber(raw.ts),
   }
 }
 
 function snapshotMission(snapshot: StateResponse): MissionStatusEvent | null {
-  const raw = snapshot.mission
+  const raw = snapshot.navigation?.mission?.raw
   if (!isRecord(raw)) return null
   return {
     type: 'mission_status',
@@ -170,7 +175,7 @@ function snapshotMission(snapshot: StateResponse): MissionStatusEvent | null {
 }
 
 function snapshotSafety(snapshot: StateResponse): SafetyStateEvent | null {
-  const raw = snapshot.safety
+  const raw = snapshot.navigation?.diagnostics?.safety
   if (!isRecord(raw)) return null
   const level = raw.level
   return {
@@ -183,6 +188,8 @@ function snapshotSafety(snapshot: StateResponse): SafetyStateEvent | null {
 function snapshotSceneGraph(scene: Awaited<ReturnType<typeof api.fetchSceneGraph>>): SceneGraphEvent {
   return {
     type: 'scene_graph',
+    frame_id: scene.frame_id ?? null,
+    stamp_s: scene.ts ?? null,
     objects: scene.objects
       .filter(obj => typeof obj.x === 'number' && typeof obj.y === 'number')
       .map(obj => ({
@@ -190,6 +197,7 @@ function snapshotSceneGraph(scene: Awaited<ReturnType<typeof api.fetchSceneGraph
         label: obj.label,
         x: obj.x as number,
         y: obj.y as number,
+        z: typeof obj.z === 'number' ? obj.z : undefined,
         confidence: typeof obj.confidence === 'number' ? obj.confidence : 0.5,
       })),
   }
@@ -274,10 +282,16 @@ export function useSSE(url: string = '/api/v1/events') {
           safetyState: safety ?? prev.safetyState,
           session: (statePayload?.session as SSEState['session'] | undefined) ?? prev.session,
           navigationStatus: statePayload?.navigation ?? prev.navigationStatus,
+          visualServoStatus: statePayload?.visual_servo ?? prev.visualServoStatus,
           lease: statePayload?.lease ?? prev.lease,
           stateSnapshot: statePayload ?? prev.stateSnapshot,
           globalPath: pathPayload
-            ? { type: 'global_path', points: pathPayload.path }
+            ? {
+                type: 'global_path',
+                points: pathPayload.path,
+                frame_id: pathPayload.frame_id ?? null,
+                stamp_s: pathPayload.ts ?? null,
+              }
             : prev.globalPath,
           sceneGraph: scenePayload ? snapshotSceneGraph(scenePayload) : prev.sceneGraph,
           locations: locationsPayload ?? prev.locations,
@@ -422,15 +436,15 @@ export function useSSE(url: string = '/api/v1/events') {
                   queueRefresh('event_stream_initial_snapshot_auxiliary', 'auxiliary')
                 }
                 const d = evt.data || {}
-                if (Object.prototype.hasOwnProperty.call(d, 'odometry')) {
-                  next.odometry = d.odometry
-                    ? { type: 'odometry', ...d.odometry as object } as never
-                    : null
-                }
-                if (d.mission)  next.missionStatus = { type: 'mission_status', ...d.mission as object } as never
-                if (d.safety)   next.safetyState = { type: 'safety_state', ...d.safety as object } as never
+                const snapshot = d as unknown as StateResponse
+                next.odometry = snapshotOdometry(snapshot)
+                const mission = snapshotMission(snapshot)
+                const safety = snapshotSafety(snapshot)
+                if (mission) next.missionStatus = mission
+                if (safety) next.safetyState = safety
                 if (d.session)  next.session = d.session as never
                 if (d.navigation) next.navigationStatus = d.navigation as never
+                if (d.visual_servo) next.visualServoStatus = d.visual_servo as never
                 if (d.lease) next.lease = d.lease as never
                 Object.assign(next, observeAuthoritativeTruth(prev, { ok: true }))
                 break
@@ -512,30 +526,26 @@ export function useSSE(url: string = '/api/v1/events') {
               case 'map_cloud':
                 next.mapCloud = event as never
                 break
-              case 'map_scene':
-                next.mapScene = event as never
+              case 'map_scene': {
+                const mapScene = event as MapSceneEvent
+                if (Array.isArray(mapScene.layers)) {
+                  next.mapScene = mergeMapSceneElevation(prev.mapScene, mapScene)
+                } else {
+                  next.mapScene = mapScene
+                }
                 break
-              case 'saved_map':
-                next.savedMap = event as never
-                break
-              case 'map_event':
-                next.mapEvent = (evt.data ?? evt) as never
-                break
+              }
               case 'session':
                 next.session = (evt.data ?? evt) as never
                 break
-              case 'costmap':
-                next.costmap = event as never
+              case 'native_traversability':
+                next.nativeTraversability = event as NativeTraversabilityEvent
                 break
-              case 'slope_grid': {
-                const slope = event as { grid_b64?: unknown }
-                next.slopeGrid = typeof slope.grid_b64 === 'string' && slope.grid_b64.length > 0
-                  ? event as never
-                  : null
-                break
-              }
               case 'agent_message':
                 next.agentMessage = event as never
+                break
+              case 'visual_servo_status':
+                next.visualServoStatus = (evt.data ?? evt) as never
                 break
               case 'ping':
                 next.lastHeartbeat = Date.now()

@@ -152,7 +152,7 @@ function sectionTitle(s: Section, locale: Locale): string {
 function HomeSection({ locale, onPick }: { locale: Locale; onPick: (s: Section) => void }) {
   const groups: { key: Section; icon: React.ReactNode; title: string; hint: string }[] = [
     { key: 'appearance', icon: <Palette size={15} />, title: text(locale, 'Appearance', '外观'), hint: text(locale, 'Theme / language / layout', '主题 / 语言 / 布局') },
-    { key: 'operations', icon: <Play size={15} />, title: text(locale, 'Operations', '快捷操作'), hint: text(locale, 'Mode, localization, maps, target tracking', '模式、定位、地图、目标跟随') },
+    { key: 'operations', icon: <Play size={15} />, title: text(locale, 'Operations', '快捷操作'), hint: text(locale, 'Product, localization, maps, target tracking', '产品、定位、地图、目标跟随') },
     { key: 'system', icon: <Cpu size={15} />, title: text(locale, 'System', '系统'), hint: text(locale, 'OTA / health / logs / restart', 'OTA / 健康 / 日志 / 重启') },
     { key: 'modules', icon: <Package size={15} />, title: text(locale, 'Modules', '模块配置'), hint: text(locale, 'LLM / SLAM / exploration / voice', 'LLM / 定位建图 / 探索 / 语音') },
     { key: 'calib', icon: <Wrench size={15} />, title: text(locale, 'Sensor Calibration', '传感器标定'), hint: text(locale, 'Camera / IMU / LiDAR', '相机 / IMU / LiDAR') },
@@ -282,8 +282,8 @@ function OperationsSection({
         {text(locale, 'Task-oriented shortcuts. Each item opens the workspace where parameters and confirmation live.', '按现场任务组织入口。点击后进入对应工作区，参数和确认动作在工作区内完成。')}
       </div>
       <div className={styles.list}>
-        <ActionRow icon={<Compass size={14} />} title={text(locale, 'Switch Work Mode', '切换工作模式')}
-          hint={text(locale, 'Mapping, navigation, inspection, exploration', '建图、导航、巡检、探索')}
+        <ActionRow icon={<Compass size={14} />} title={text(locale, 'Switch Product', '切换产品')}
+          hint={text(locale, 'Teleoperation, mapping, navigation, inspection, exploration', '遥控、建图、导航、巡检、探索')}
           value={text(locale, 'Console', '控制台')}
           onClick={() => jump('console')} />
         <ActionRow icon={<RefreshCw size={14} />} title={text(locale, 'Recover Localization', '恢复定位')}
@@ -332,12 +332,10 @@ function SystemSection({ locale, onBack, onOpenModal }: {
           onClick={() => {
             resetAllLayouts()
           }} />
-        <ActionRow icon={<Power size={14} />} title={text(locale, 'Restart LingTu', '重启 LingTu')} dangerous
-          hint={text(locale, 'Reapply the active Product through ProductControl', '通过 ProductControl 重新应用当前产品')}
+        <ActionRow icon={<Power size={14} />} title={text(locale, 'Product Control', '产品控制')}
+          hint={text(locale, 'Switch in the runtime panel; inspect with lingtu status', '在运行时面板切换；使用 lingtu status 查看状态')}
           onClick={() => {
-            if (confirm(text(locale, 'Restart LingTu? Current tasks will be interrupted.', '确认重启 LingTu？所有当前任务将被中断。'))) {
-              alert(text(locale, 'Use SSH: python -m lingtu.control reapply --env real', '请通过 SSH 执行：python -m lingtu.control reapply --env real'))
-            }
+            alert(text(locale, 'Use the runtime Product switch panel, or run: scripts/lingtu status', '请使用运行时产品切换面板，或执行：scripts/lingtu status'))
           }} />
       </div>
     </>
@@ -356,7 +354,7 @@ function ModulesSection({ locale, onBack }: { locale: Locale; onBack: () => void
           value="Kimi (K2.5)" onClick={() => alert(text(locale, 'LLM switch API is not wired yet.', 'LLM 切换 API 待接入'))} />
         <ActionRow icon={<MapIcon size={14} />} title={text(locale, 'Localization & Mapping', '定位建图')}
           hint={text(locale, 'Mapping / navigation / stop', '建图 / 导航 / 停止')}
-          value={text(locale, 'Navigation', '导航')} onClick={() => alert(text(locale, 'Use the SLAM workspace for mode switching.', '请在定位工作区切换模式'))} />
+          value={text(locale, 'Navigation', '导航')} onClick={() => alert(text(locale, 'Use the runtime Product switch panel.', '请使用运行时产品切换面板。'))} />
         <ActionRow icon={<Compass size={14} />} title={text(locale, 'Exploration Backend', '探索后端')}
           hint="TARE / Wavefront / 关闭"
           value="TARE" onClick={() => alert(text(locale, 'Exploration backend changes require restarting the profile.', '探索后端切换需要重启 profile'))} />
@@ -379,7 +377,7 @@ function CalibSection({ locale, onBack }: { locale: Locale; onBack: () => void }
           hint="tools/calibration/camera/calibrate_intrinsic.py"
           onClick={() => alert('python tools/calibration/camera/calibrate_intrinsic.py')} />
         <ActionRow icon={<Zap size={14} />} title="IMU Allan Variance"
-          hint="scripts/hardware/run_allan_variance.sh"
+          hint="tools/calibration/imu/run_allan_variance.sh"
           onClick={() => alert(text(locale, 'Collect 2-3 hours of static IMU data.', '采集 2-3 小时静置 IMU 数据'))} />
         <ActionRow icon={<Radar size={14} />} title={text(locale, 'LiDAR-IMU Extrinsics', 'LiDAR-IMU 外参')}
           hint={text(locale, 'LiDAR_IMU_Init motion sequence', 'LiDAR_IMU_Init 标定动作')}
@@ -551,8 +549,8 @@ function OtaModal({ locale, onClose }: { locale: Locale; onClose: () => void }) 
         <strong>{text(locale, 'Backend contract', '后端对接')}</strong>:
         {text(locale, 'Production OTA polls the release server, deploys into', '生产路径会轮询服务器，检测到新版本后推送到')}
         {' '}<code>/opt/lingtu/nav</code>{' '}
-        {text(locale, 'and then reapplies the active Product with', '然后使用以下命令重新应用当前产品：')}{' '}
-        <code>python -m lingtu.control reapply --env real</code>.
+        {text(locale, 'Then switch the Product from the runtime panel; inspect it with', '然后在运行时面板切换产品，并使用以下命令查看状态：')}{' '}
+        <code>scripts/lingtu status</code>.
       </div>
     </ModalShell>
   )

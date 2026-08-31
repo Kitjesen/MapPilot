@@ -1,0 +1,127 @@
+.panel {
+  background: rgba(8, 10, 16, 0.88);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg), var(--inner-hi);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.badge {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.body {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+
+.status {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.ok {
+  color: var(--accent);
+}
+
+.warn {
+  color: #fbbf24;
+}
+
+.error {
+  color: #fb7185;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(54px, 1fr));
+  gap: 8px;
+}
+
+.controlBtn,
+.actionBtn,
+.dangerBtn {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.055);
+  color: var(--text);
+  min-height: 42px;
+  cursor: pointer;
+}
+
+.controlBtn:hover,
+.actionBtn:hover {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.controlBtn:disabled,
+.actionBtn:disabled,
+.dangerBtn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+.actionBtn,
+.dangerBtn {
+  flex: 1;
+  min-height: 36px;
+  font-size: 12px;
+}
+
+.dangerBtn {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.36);
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.ack {
+  min-height: 58px;
+  padding: 9px 10px;
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: break-word;
+}
+
+.ack strong {
+  display: block;
+  color: var(--text);
+  margin-bottom: 4px;
+}

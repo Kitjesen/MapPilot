@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Radio, RotateCcw } from 'lucide-react'
 import type {
-  ProductName,
   ProductFieldCheckResponse,
   RuntimeDataflowResponse,
   RuntimeDataflowStageEvidence,
   RuntimeDataflowSubscribeResponse,
   RuntimeDataflowTopicDetailResponse,
   RuntimeDataflowTopicSummary,
-  RuntimeSwitchPlanResponse,
   SSEState,
 } from '../types'
 import * as api from '../services/api'
@@ -91,32 +89,9 @@ function isRealRuntimeBoundary(dataflow: RuntimeDataflowResponse): boolean {
   return boundary.env === 'real'
 }
 
-const FIELD_PRODUCTS = new Set<ProductName>([
-  'teleop',
-  'teleop_avoid',
-  'map',
-  'explore',
-  'nav',
-  'tracking',
-  'inspection',
-])
-
-function runtimeProduct(
-  dataflow: RuntimeDataflowResponse,
-  sessionProduct?: ProductName | null,
-): ProductName | null {
-  if (sessionProduct && FIELD_PRODUCTS.has(sessionProduct)) return sessionProduct
-  const boundary = asRecord(dataflow.runtime_boundary)
-  const candidate = boundary.product
-  return typeof candidate === 'string' && FIELD_PRODUCTS.has(candidate as ProductName)
-    ? candidate as ProductName
-    : null
-}
-
 export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
   const [dataflow, setDataflow] = useState<RuntimeDataflowResponse | null>(null)
   const [fieldCheck, setFieldCheck] = useState<ProductFieldCheckResponse | null>(null)
-  const [switchPlan, setSwitchPlan] = useState<RuntimeSwitchPlanResponse | null>(null)
   const [subscriptionPlan, setSubscriptionPlan] = useState<RuntimeDataflowSubscribeResponse | null>(null)
   const [streamEvent, setStreamEvent] = useState<Record<string, unknown> | null>(null)
   const [detail, setDetail] = useState<RuntimeDataflowTopicDetailResponse | null>(null)
@@ -126,7 +101,6 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
   const [error, setError] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [fieldError, setFieldError] = useState<string | null>(null)
-  const [switchPlanError, setSwitchPlanError] = useState<string | null>(null)
   const [streamError, setStreamError] = useState<string | null>(null)
 
   const loadSummary = useCallback(async () => {
@@ -135,15 +109,8 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
       const next = await api.fetchRuntimeDataflow()
       const realRuntime = isRealRuntimeBoundary(next)
       const fieldCheckMode = realRuntime ? 'field' : 'simulation'
-      const currentProduct = runtimeProduct(next, sseState.session?.product)
-      const [fieldCheckResult, switchPlanResult] = await Promise.allSettled([
+      const [fieldCheckResult] = await Promise.allSettled([
         api.runProductFieldCheck({ mode: fieldCheckMode }),
-        currentProduct
-          ? api.runRuntimeSwitchPlan({
-              current_product: currentProduct,
-              target_product: currentProduct,
-            })
-          : Promise.reject(new Error('runtime_product_unknown')),
       ])
       setDataflow(next)
       setError(null)
@@ -156,20 +123,12 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
             : String(fieldCheckResult.reason)
           : null,
       )
-      setSwitchPlan(switchPlanResult.status === 'fulfilled' ? switchPlanResult.value : null)
-      setSwitchPlanError(
-        switchPlanResult.status === 'rejected'
-          ? switchPlanResult.reason instanceof Error
-            ? switchPlanResult.reason.message
-            : String(switchPlanResult.reason)
-          : null,
-      )
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
-  }, [sseState.session?.product])
+  }, [])
 
   const loadDetail = useCallback(async (topic: string | null) => {
     if (!topic) {
@@ -279,19 +238,10 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
   const policy = commandPolicyText(dataflow)
   const arbitraryPublish = asBool(dataflow?.control_boundary?.arbitrary_publish_supported)
   const modulePortPrimary = asBool(dataflow?.transport_layers?.module_port_bus?.primary)
-  const ros2Primary = asBool(dataflow?.transport_layers?.ros2_adapter?.primary)
-  const noRos2Required = dataflow?.ros2_topic_required === false
   const fieldRuntime = asRecord(fieldCheck?.runtime)
   const fieldNavigation = asRecord(fieldCheck?.navigation)
   const fieldEvidence = asRecord(fieldCheck?.evidence)
-  const fieldAlgorithm = asRecord(fieldCheck?.algorithm)
-  const fieldFrontier = asRecord(fieldCheck?.frontier_preview)
-  const strictBenchmark = asRecord(fieldAlgorithm.strict_benchmark)
   const fieldReady = fieldCheck?.ok === true
-  const switchPlanReady = switchPlan?.ok === true
-  const switchFrom = asRecord(switchPlan?.from)
-  const switchTo = asRecord(switchPlan?.to)
-  const switchBoundary = `${stringValue(switchFrom.product)} -> ${stringValue(switchTo.product)}`
   const topBlocker = fieldError ?? fieldCheck?.blockers?.[0] ?? (
     fieldReady ? 'Gateway product evidence is passing' : 'Product check unavailable'
   )
@@ -328,13 +278,12 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
         </div>
         <div className={styles.fieldReadyChecks}>
           <span>Gateway {stringValue(fieldRuntime.gateway)}</span>
-          <span>ModulePorts {stringValue(fieldRuntime.dataflow)}</span>
-          <span>Route Preview {stringValue(fieldNavigation.route_preview)}</span>
-          <span>Real S100P Evidence {stringValue(fieldEvidence.real_s100p)}</span>
-          <span>Algorithm Benchmark {stringValue(strictBenchmark.status)}</span>
-          <span>Command Boundary {stringValue(fieldRuntime.command_boundary)}</span>
-          <span>Frontier Preview {stringValue(fieldFrontier.status)}</span>
-          <span>Runtime Switch {switchPlanReady ? 'PASS' : 'CHECK'}</span>
+          <span>Readiness {stringValue(fieldRuntime.readiness)}</span>
+          <span>Localization {stringValue(fieldRuntime.localization)}</span>
+          <span>Observability {stringValue(fieldRuntime.gateway_observability)}</span>
+          <span>Goal {stringValue(fieldNavigation.can_send_goal)}</span>
+          <span>Driver Command {stringValue(fieldNavigation.driver_command)}</span>
+          <span>Field Evidence {stringValue(fieldEvidence.field_runtime)}</span>
         </div>
         <div className={styles.fieldReadyBlocker} title={topBlocker}>
           {topBlocker}
@@ -348,30 +297,9 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
           value={modulePortPrimary ? 'PRIMARY' : 'UNKNOWN'}
           tone={modulePortPrimary ? 'ok' : 'warn'}
         />
-        <Metric
-          label="ROS2 Required"
-          value={noRos2Required ? 'FALSE' : 'CHECK'}
-          tone={noRos2Required ? 'ok' : 'warn'}
-        />
-        <Metric
-          label="ROS2 Adapter"
-          value={ros2Primary ? 'PRIMARY' : 'ADAPTER'}
-          tone={ros2Primary ? 'warn' : 'dim'}
-        />
         <Metric label="Live Streams" value={`${liveCount}/${topics.length}`} tone={liveCount > 0 ? 'ok' : 'warn'} />
         <Metric label="Observable" value={`${observableCount}/${topics.length}`} />
         <Metric label="Stage Evidence" value={`${stageEvidence.length}`} tone={stageEvidence.length > 0 ? 'ok' : 'warn'} />
-        <Metric
-          label="Algorithm Claim"
-          value={stringValue(strictBenchmark.status)}
-          tone={strictBenchmark.status === 'PASS' ? 'ok' : 'warn'}
-        />
-        <Metric
-          label="Runtime Switch"
-          value={switchPlanError ? 'ERROR' : switchPlanReady ? 'PASS' : 'CHECK'}
-          tone={switchPlanReady ? 'ok' : 'warn'}
-        />
-        <Metric label="Switch Boundary" value={switchBoundary} />
         <Metric label="Command Policy" value={policy} />
         <Metric
           label="Arbitrary Publish"
@@ -381,14 +309,13 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
       </section>
 
       {error && <div className={styles.error}>Runtime dataflow unavailable: {error}</div>}
-      {switchPlanError && <div className={styles.error}>Runtime switch-plan unavailable: {switchPlanError}</div>}
 
       <div className={styles.content}>
         <section className={styles.tablePanel} aria-label="runtime stream table">
           <div className={styles.panelTitleRow}>
             <div>
               <div className={styles.sectionTitle}>Product Streams</div>
-              <div className={styles.caption}>Read-only Gateway inspection, not a ROS2 topic browser; switch-plan is dry-run preflight</div>
+              <div className={styles.caption}>Read-only Gateway inspection</div>
             </div>
             <span className={styles.pollPill}>{loading ? 'LOADING' : '5s POLL'}</span>
           </div>
@@ -493,11 +420,6 @@ export function RuntimeDataflowView({ sseState }: RuntimeDataflowViewProps) {
                 label="Payload"
                 value={selectedInspection.payload_available ? 'AVAILABLE' : 'METADATA'}
                 tone={selectedInspection.payload_available ? 'ok' : 'dim'}
-              />
-              <Metric
-                label="ROS2 Required"
-                value={selectedInspection.ros2_topic_required === false ? 'FALSE' : 'CHECK'}
-                tone={selectedInspection.ros2_topic_required === false ? 'ok' : 'warn'}
               />
             </div>
           </section>

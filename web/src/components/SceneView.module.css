@@ -1748,30 +1748,23 @@
   }
 }
 
-.loopClosureLegendItems {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 10px;
-}
-
-.loopClosureLegendItems span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  white-space: nowrap;
-}
-
-.localPlannerLegend {
+.sceneLegendStack {
   position: absolute;
   top: 14px;
   left: 14px;
   z-index: 2;
   display: flex;
-  flex-wrap: wrap;
-  gap: 5px 12px;
-  max-width: min(440px, calc(100% - 28px));
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: min(470px, calc(100% - 28px));
+  pointer-events: none;
+}
+
+.sceneLayerLegend,
+.localPlannerLegend {
   padding: 7px 10px;
-  background: rgba(10, 11, 20, 0.78);
+  background: rgba(10, 11, 20, 0.8);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   border: 1px solid var(--border);
@@ -1782,11 +1775,106 @@
   pointer-events: none;
 }
 
+.sceneLayerLegend {
+  display: grid;
+  grid-template-columns: auto minmax(110px, 1fr);
+  align-items: center;
+  gap: 5px 10px;
+  min-width: 220px;
+  max-width: 100%;
+  box-shadow: var(--shadow-sm);
+}
+
+.sceneLayerLegend strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.sceneLayerLegend small {
+  grid-column: 1 / -1;
+  color: var(--t-caption-color);
+  line-height: 1.35;
+}
+
+.sceneLayerLegendStale {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.sceneLayerLegendStale small { color: #fbbf24; }
+
+.sceneLayerLegendError {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.sceneLayerLegendError small { color: #fca5a5; }
+
+.elevationRamp {
+  width: 142px;
+  height: 7px;
+  border-radius: var(--r-full);
+  background: linear-gradient(90deg, #2455a4 0%, #2ab8ae 48%, #e6c54a 100%);
+}
+
+.legendRange {
+  grid-column: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--t-caption-color);
+  font-size: 10px;
+}
+
+.legendRange b { font-weight: 500; }
+
+.costLegendItems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.costLegendItems span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.costLegendItems i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.costSoft { background: linear-gradient(135deg, #2ec4b6, #e74848); }
+.costLethal { background: #4c0004; }
+
+.localPlannerLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  max-width: min(440px, calc(100% - 28px));
+}
+
+.sceneLegendStack .localPlannerLegend {
+  position: static;
+}
+
 .localPlannerLegend span {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   white-space: nowrap;
+}
+
+.localPlannerLegend strong,
+.localPlannerLegend small {
+  flex-basis: 100%;
+}
+
+.localPlannerLegend small {
+  color: var(--warning, #fbbf24);
 }
 
 .legendMark,

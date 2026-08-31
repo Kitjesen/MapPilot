@@ -29,7 +29,6 @@ const sseSource = readFileSync(
 
 test('inspection tab uses the product workbench as the run entry', () => {
   assert.match(appSource, /InspectionWorkbench/)
-  assert.doesNotMatch(appSource, /<InspectionAcceptanceView/)
   assert.match(topbarSource, /key: 'inspection', en: 'Inspect'/)
 })
 
@@ -63,7 +62,7 @@ test('inspection API surface exposes one task-addressed lifecycle', () => {
   assert.doesNotMatch(apiSource, /cancelInspectionRun/)
 })
 
-test('workbench builds routes from saved locations and avoids acceptance runner', () => {
+test('workbench builds routes from saved locations and uses task lifecycle', () => {
   assert.match(workbenchSource, /api\.fetchLocations/)
   assert.match(workbenchSource, /routePointFromLocation/)
   assert.match(workbenchSource, /movePoint/)
@@ -79,7 +78,6 @@ test('workbench builds routes from saved locations and avoids acceptance runner'
   assert.doesNotMatch(workbenchSource, /api\.pauseInspectionRun/)
   assert.doesNotMatch(workbenchSource, /api\.resumeInspectionRun/)
   assert.doesNotMatch(workbenchSource, /api\.cancelInspectionRun/)
-  assert.doesNotMatch(workbenchSource, /runInspectionAcceptance/)
 })
 
 test('workbench loads route detail and starts the persisted revision', () => {
@@ -157,7 +155,7 @@ test('workbench presents execution, inspection result, and acceptance as separat
 
 test('workbench only admits locations bound to the selected map revision', () => {
   assert.match(workbenchSource, /location\.map_id === mapId/)
-  assert.match(workbenchSource, /location\.map_version === mapVersion/)
+  assert.match(workbenchSource, /location\.map_content_epoch === mapVersion/)
   assert.match(workbenchSource, /binding_status/)
   assert.match(workbenchSource, /disabled=\{!bound/)
 })
@@ -167,6 +165,7 @@ test('workbench capability-gates route APIs instead of surfacing backend 404s', 
   assert.match(workbenchSource, /inspectionAvailability/)
   assert.match(workbenchSource, /links\?\.inspection_routes/)
   assert.match(workbenchSource, /inspectionAvailability === 'unavailable'/)
+  assert.match(workbenchSource, /err\.statusCode === 404 \|\| err\.statusCode === 503/)
 })
 
 test('workbench gates evidence actions on worker readiness and supported actions', () => {
@@ -216,9 +215,9 @@ test('public evidence worker status type does not expose robot filesystem paths'
   assert.doesNotMatch(workerType, /\bpath\??:/)
 })
 
-test('product mode is a single console card without a duplicate topbar page', () => {
+test('robot status is a single console card without a duplicate topbar page', () => {
   assert.doesNotMatch(topbarSource, /key: 'mode', en: 'Mode'/)
   assert.doesNotMatch(appSource, /activeTab === 'mode'/)
-  assert.match(appSource, /activeTab === 'console'[\s\S]*?<ProductModePanel/)
+  assert.match(appSource, /activeTab === 'console'[\s\S]*?<RobotStatusPanel/)
   assert.doesNotMatch(appSource, /variant="page"/)
 })

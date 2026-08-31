@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { ScanLine, RotateCcw } from 'lucide-react'
 import styles from './PointCloudViewer.module.css'
+import { lingtuToThree } from '../services/coordinateFrame.ts'
 
 // ── PCD Parser ────────────────────────────────────────────────
 function parsePcd(buffer: ArrayBuffer): Float32Array | null {
@@ -72,7 +73,8 @@ const VS = `
   uniform float u_rangeZ;
   varying float v_t;
   void main() {
-    gl_Position = u_mvp * vec4(a_pos.x, a_pos.z, a_pos.y, 1.0);
+    // LingTu X-forward/Y-left/Z-up -> Three X/Y-up/Z (x,z,-y).
+    gl_Position = u_mvp * vec4(a_pos.x, a_pos.z, -a_pos.y, 1.0);
     gl_PointSize = 1.8;
     v_t = clamp((a_pos.z - u_minZ) / max(u_rangeZ, 0.01), 0.0, 1.0);
   }
@@ -144,7 +146,7 @@ function mvpFor(s: GLS) {
 }
 
 function projectPcdPoint(m: Float32Array, p: PointCloudPick, width: number, height: number) {
-  const x = p.x, y = p.z, z = p.y
+  const [x, y, z] = lingtuToThree([p.x, p.y, p.z])
   const cx = m[0]*x + m[4]*y + m[8] *z + m[12]
   const cy = m[1]*x + m[5]*y + m[9] *z + m[13]
   const cz = m[2]*x + m[6]*y + m[10]*z + m[14]
@@ -258,7 +260,7 @@ export function PointCloudViewer({
         gl, prog, vbuf, nPts: pts.length/3,
         pts,
         minZ: z0, rangeZ: z1-z0,
-        center: [(x0+x1)/2, (z0+z1)/2, (y0+y1)/2],
+        center: [(x0+x1)/2, (z0+z1)/2, -(y0+y1)/2],
         radius, theta: 0.4, phi: 1.05, dist: radius*2.8, scheme,
       }
       draw()

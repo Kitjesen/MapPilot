@@ -61,31 +61,27 @@ Important current links include:
 | `events` | SSE telemetry stream |
 | `cloud_ws`, `camera_ws` | point cloud and camera WebSocket streams |
 | `runtime_dataflow`, `runtime_dataflow_topic`, `runtime_dataflow_subscribe` | Read-only motion-path/topic observability and Gateway SSE subscription plan |
-| `runtime_switch_plan` | Read-only Product switch preview in the current `env`; returns the exact ProductControl command |
 | `visual_servo` | Hot target switch for find/follow/stop inside profiles that load `VisualServoModule` |
 | `field_check` | Backend product verdict for field/simulation/non-motion readiness |
 | `inspection_acceptance` | Read-only no-motion acceptance summary over saved locations and plan previews |
 | `inspection_routes`, `inspection_route_detail` | persisted inspection route list, create/update, detail, and delete |
 | `inspection_tasks`, `inspection_task_status`, `inspection_task_pause`, `inspection_task_resume`, `inspection_task_cancel` | one task-addressed inspection lifecycle: submit, read native facts, and request control for that exact task |
 | `inspection_status` | native route-store and evidence-worker readiness; not task lifecycle truth |
-| `session`, `session_start`, `session_end` | mapping, navigation, exploration lifecycle |
+| `session` | read-only Product and localization status |
 | `navigation_status`, `navigation_plan`, `navigation_cancel` | planning and autonomy status |
 | `goal`, `stop` | navigation goal and stop command |
-| `maps`, `map_activate`, `map_save`, `map_points` | map list, active map, save, live accumulated cloud JSON points |
-| `slam_status`, `slam_switch`, `slam_relocalize`, `slam_auto_relocalize` | SLAM mode and relocalization |
+| `maps`, `map_save`, `map_points` | map list, current Product map, save, live accumulated cloud JSON points |
+| `slam_status`, `localization_relocalize`, `localization_map_tracking` | Native SLAM status, relocalization, and map tracking |
 | `routecheck_latest` | latest no-motion route preflight evidence for readiness diagnostics |
 | `real_runtime_evidence_latest` | latest real S100P runtime evidence for explicit field-mode status |
-| `algorithm_benchmark_latest` | latest read-only DimOS/algorithm benchmark artifact gate |
 
-The Dataflow tab uses `runtime_dataflow` only as a read-only view of the declared motion path, Product topics, and currently visible Gateway evidence. It does not orchestrate processes or motion. `runtime_dataflow_topic` inspects one stream, `runtime_dataflow_subscribe` discovers its filtered Gateway SSE URL, and `runtime_switch_plan` previews a Product switch inside the current `env`. The Product Check strip uses the backend `field_check` verdict instead of recomputing it in the browser. There is no arbitrary ModulePort publish, no arbitrary ROS topic publish, and no motion bypass.
+The Dataflow tab uses `runtime_dataflow` only as a read-only view of the declared motion path, Product topics, and currently visible Gateway evidence. It does not orchestrate processes or motion. `runtime_dataflow_topic` inspects one stream, and `runtime_dataflow_subscribe` discovers its filtered Gateway SSE URL. The Product Check strip uses the backend `field_check` verdict instead of recomputing it in the browser. There is no arbitrary ModulePort publish, no arbitrary runtime topic publish, and no motion bypass.
 
 Saved-map previews use saved-map JSON points separately from raw saved-map PCD; `/api/v1/maps/{name}/pcd` is the raw PCD endpoint.
 
-The Runtime tab is a read-only Product switch preview. It calls
-`runtime_switch_plan`, displays the resolved RunPlan and blockers, and copies
-the exact `python -m lingtu.control switch ...` command for the operator.
-Gateway and the browser never execute Product switching or systemd actions.
-The same tab exposes `visual_servo` find/follow/stop; `find` and `follow`
+The console shows the current task, map, localization backend, and readiness.
+It does not expose Product lifecycle or copy shell commands. The same console
+exposes `visual_servo` find/follow/stop; `find` and `follow`
 remain motion-capable commands guarded by Gateway safety policy, while `stop`
 only releases visual-servo ownership.
 
@@ -110,7 +106,7 @@ Read-only UI actions:
 
 State-changing but no robot motion:
 
-- Start or end mapping/navigation/exploration session.
+- Copy ProductControl switch or stop commands for mapping, navigation, or exploration.
 - Save, activate, rename, or delete a map.
 - Create, update, or delete an inspection route.
 - Pause or cancel an inspection mission; these controls may reduce or stop existing motion but never initiate it.
@@ -132,7 +128,7 @@ The UI confirms map activation and saved-map load/relocalize. Goal and inspectio
 
 Command acceptance is not physical outcome confirmation. A command toast reports submitted, rejected, or failed; task state must then be confirmed by the native inspection event stream. In particular, `CANCELLED` is valid only after the native endpoint records its stop evidence.
 
-State-changing communication is limited to Gateway's whitelisted commands, such as goal, stop, session, map, and SLAM operations. The dashboard must not provide arbitrary publish into ModulePorts or ROS topics.
+State-changing communication is limited to Gateway's whitelisted commands, such as goal, stop, map, and SLAM operations. Product lifecycle changes are copied as ProductControl commands for the operator; the dashboard must not provide arbitrary publish into ModulePorts or runtime topics.
 
 ## Sunrise No-Motion Smoke
 
@@ -184,10 +180,10 @@ npm run build
 | `src/services/api.ts` | centralized REST client and command receipt formatting |
 | `src/components/SceneView.tsx` | 3D scene, goal placement, saved map drawer, map/SLAM actions |
 | `src/components/MapView.tsx` | saved map CRUD and point cloud preview |
-| `src/components/SlamPanel.tsx` | session lifecycle, SLAM state, relocalization controls |
+| `src/components/RobotStatusPanel.tsx` | current Product, environment, readiness, localization, and map status |
+| `src/components/SlamStatusPanel.tsx` | read-only native SLAM metrics and relocalization action |
 | `src/components/RuntimeDataflowView.tsx` | read-only Product motion/topic observability |
 | `src/components/InspectionWorkbench.tsx` | persisted inspection route editing, native mission control, status, and verified evidence review |
-| `src/components/InspectionAcceptanceView.tsx` | internal read-only, no-motion inspection acceptance diagnostic |
 | `scripts/gateway-smoke.mjs` | read-only Gateway contract smoke |
 
 ## Notes

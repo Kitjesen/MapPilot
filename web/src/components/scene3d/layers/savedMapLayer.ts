@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { MapSceneEvent, MapSceneLayer } from '../../../types'
 import { DEFAULT_POINT_SIZE, pointSizeToWorld } from './liveCloudLayer.ts'
+import { lingtuToThree } from '../../../services/coordinateFrame.ts'
 
 export const SAVED_MAP_Z_FLOOR = -50
 export const SAVED_MAP_Z_CEIL = 50
@@ -85,7 +86,7 @@ export function createSavedMapLayer(
     const wy = savedMapFlat[i + 1]
     const wz = savedMapFlat[i + 2]
     if (wz < zFloor || wz > zCeil) continue
-    positions.push(wx, wz, -wy)
+    positions.push(...lingtuToThree([wx, wy, wz]))
     heights.push(wz)
     zMin = Math.min(zMin, wz)
     zMax = Math.max(zMax, wz)

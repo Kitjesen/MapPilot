@@ -2,19 +2,19 @@
 // All fetch() calls in one place.
 
 import type {
-  AlgorithmBenchmarkLatestResponse,
   AppBootstrapResponse,
   AppCapabilitiesResponse,
   AppTrafficResponse,
   AuthCheckResponse,
   AuthLoginResponse,
   RecordingOperationResponse,
+  RecordingStartConfig,
+  RecordingDetailResponse,
+  RecordingListResponse,
   RecordingStatusResponse,
   ClientLinks,
   CommandReceipt,
   ControlCommandResponse,
-  DevicesResponse,
-  EnvName,
   DirectedExplorationResponse,
   DirectedExplorationTargetRequest,
   DynamicFilterResult,
@@ -25,8 +25,6 @@ import type {
   GoalSource,
   GoalTargetType,
   HealthResponse,
-  InspectionAcceptanceRequest,
-  InspectionAcceptanceResponse,
   InspectionCommandResponse,
   InspectionEvidenceDetailResponse,
   InspectionEvidenceListResponse,
@@ -41,6 +39,7 @@ import type {
   InspectionTaskStatusResponse,
   LeaseAction,
   LeaseResponse,
+  LocalizationOperationResponse,
   LocationOperationResponse,
   LocationUpsertRequest,
   LocationsResponse,
@@ -56,7 +55,6 @@ import type {
   PlanPreviewResponse,
   ProductFieldCheckRequest,
   ProductFieldCheckResponse,
-  ProductName,
   ReadinessResponse,
   RealRuntimeEvidenceLatestResponse,
   RoutecheckLatestResponse,
@@ -64,13 +62,8 @@ import type {
   RuntimeDataflowSubscribeRequest,
   RuntimeDataflowSubscribeResponse,
   RuntimeDataflowTopicDetailResponse,
-  RuntimeSwitchPlanRequest,
-  RuntimeSwitchPlanResponse,
   SceneGraphResponse,
   SessionEvent,
-  SessionTransitionResponse,
-  SlamOperationResponse,
-  SlamProfile,
   SlamStatusResponse,
   StateResponse,
   VisualServoMode,
@@ -87,8 +80,7 @@ export interface SavedMapPointCloud {
   frameId: string
   epoch: number | null
   mapName: string
-  versionId: string | null
-  mapPcdSha256: string | null
+  contentEpoch: number | null
   timestamp: number
 }
 
@@ -334,25 +326,6 @@ async function readMapLifecycle(res: Response): Promise<MapLifecycleResponse> {
   return data as MapLifecycleResponse
 }
 
-async function readSlamOperation(res: Response): Promise<SlamOperationResponse> {
-  const text = await res.text()
-  let data: Record<string, unknown> = {}
-  try {
-    data = text ? JSON.parse(text) as Record<string, unknown> : {}
-  } catch {
-    data = {}
-  }
-  if (!res.ok || data.ok === false || data.success === false) {
-    const message = typeof data.message === 'string'
-      ? data.message
-      : typeof data.error === 'string'
-        ? data.error
-        : `HTTP ${res.status}`
-    throw new Error(message)
-  }
-  return data as SlamOperationResponse
-}
-
 // --- App bootstrap / read APIs ---
 
 export async function fetchAppBootstrap(): Promise<AppBootstrapResponse> {
@@ -395,12 +368,6 @@ export async function fetchRealRuntimeEvidenceLatest(): Promise<RealRuntimeEvide
   )
 }
 
-export async function fetchAlgorithmBenchmarkLatest(): Promise<AlgorithmBenchmarkLatestResponse> {
-  return fetchJson<AlgorithmBenchmarkLatestResponse>(
-    apiPath('algorithm_benchmark_latest', '/api/v1/diagnostics/algorithm-benchmark/latest'),
-  )
-}
-
 export async function fetchRuntimeDataflow(): Promise<RuntimeDataflowResponse> {
   return fetchJson<RuntimeDataflowResponse>(
     apiPath('runtime_dataflow', '/api/v1/runtime/dataflow'),
@@ -429,16 +396,6 @@ export async function subscribeRuntimeDataflow(
   )
 }
 
-export async function runRuntimeSwitchPlan(
-  request: RuntimeSwitchPlanRequest,
-): Promise<RuntimeSwitchPlanResponse> {
-  return postJson<RuntimeSwitchPlanResponse>(
-    apiPath('runtime_switch_plan', '/api/v1/runtime/switch-plan'),
-    request,
-  )
-}
-
-
 export async function runProductFieldCheck(
   request: ProductFieldCheckRequest = {},
 ): Promise<ProductFieldCheckResponse> {
@@ -449,10 +406,6 @@ export async function runProductFieldCheck(
       ...request,
     },
   )
-}
-
-export async function fetchDevices(): Promise<DevicesResponse> {
-  return fetchJson<DevicesResponse>(apiPath('devices', '/api/v1/devices'))
 }
 
 export async function fetchSceneGraph(): Promise<SceneGraphResponse> {
@@ -492,19 +445,6 @@ export async function fetchNavigationDdsSnapshot(): Promise<NavigationDdsSnapsho
 
 export async function fetchLocations(): Promise<LocationsResponse> {
   return fetchJson<LocationsResponse>(apiPath('locations', '/api/v1/locations'))
-}
-
-export async function runInspectionAcceptance(
-  request: InspectionAcceptanceRequest = {},
-): Promise<InspectionAcceptanceResponse> {
-  return postJson<InspectionAcceptanceResponse>(
-    apiPath('inspection_acceptance', '/api/v1/inspection/acceptance'),
-    {
-      mode: 'simulation',
-      client_id: WEB_CLIENT_ID,
-      ...request,
-    },
-  )
 }
 
 export async function fetchInspectionRoutes(mapId?: string | null): Promise<InspectionRouteListResponse> {
@@ -783,7 +723,6 @@ export async function constructGoalCandidate(
     apiPath('navigation_goal_candidate', '/api/v1/navigation/goal_candidate'),
     {
       preview: true,
-      client_id: WEB_CLIENT_ID,
       ...request,
     },
   )
@@ -798,7 +737,6 @@ export async function previewNavigationPlan(
     x,
     y,
     z,
-    client_id: WEB_CLIENT_ID,
   }
   return postJson<PlanPreviewResponse>(apiPath('navigation_plan', '/api/v1/navigation/plan'), body)
 }
@@ -894,10 +832,12 @@ export async function sendMode(mode: 'manual' | 'autonomous' | 'estop'): Promise
 export async function sendVisualServo(
   mode: VisualServoMode,
   target?: string | null,
+  targetId?: string | null,
 ): Promise<ControlCommandResponse> {
   const body: VisualServoRequest = {
     mode,
     target: mode === 'stop' ? null : target,
+    target_id: mode === 'follow' ? targetId : null,
   }
   return postJson<ControlCommandResponse>(
     apiPath('visual_servo', '/api/v1/visual_servo'),
@@ -914,15 +854,6 @@ export async function updateLease(action: LeaseAction, ttl = 30): Promise<LeaseR
 
 // --- SLAM ---
 
-export async function switchSlamMode(profile: SlamProfile): Promise<SlamOperationResponse> {
-  const res = await fetch(apiPath('slam_switch', '/api/v1/slam/switch'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ profile }),
-  })
-  return readSlamOperation(res)
-}
-
 export async function fetchSlamStatus(): Promise<SlamStatusResponse> {
   return fetchJson<SlamStatusResponse>(apiPath('slam_status', '/api/v1/slam/status'))
 }
@@ -936,15 +867,6 @@ export async function fetchMapList(): Promise<MapListResponse> {
 export async function fetchMaps(): Promise<MapInfo[]> {
   const data = await fetchMapList()
   return data.maps
-}
-
-export async function activateMap(name: string): Promise<MapLifecycleResponse> {
-  const res = await fetch(apiPath('map_activate', '/api/v1/map/activate'), {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  })
-  return readMapLifecycle(res)
 }
 
 export async function deleteMap(name: string): Promise<MapLifecycleResponse> {
@@ -964,8 +886,12 @@ export async function renameMap(oldName: string, newName: string): Promise<MapLi
 }
 
 export interface SaveMapResult extends MapLifecycleResponse {
-  success: boolean
+  success: boolean | null
   name: string
+  accepted?: boolean | null
+  operation_id?: string | null
+  operation?: MapSaveOperationStatus | null
+  status?: string | null
   path?: string | null
   size?: string | null
   slam_profile?: string | null
@@ -977,19 +903,149 @@ export interface SaveMapResult extends MapLifecycleResponse {
   recovery_method?: string | null
   warnings?: unknown[] | null
   dynamic_filter?: DynamicFilterResult | null
-  map_optimization?: Record<string, unknown> | null
-  map_optimization_ok?: boolean | null
 }
 
-export async function saveMap(name: string, optimization?: 'pgo' | 'hba' | 'none'): Promise<SaveMapResult> {
-  // Save can take up to ~2 min on a busy robot because map optimization + DUFOMap
-  // run synchronously. Default fetch has no timeout which is what we want.
+async function readLocalizationOperation(res: Response): Promise<LocalizationOperationResponse> {
+  const text = await res.text()
+  let data: Record<string, unknown> = {}
+  try {
+    data = text ? JSON.parse(text) as Record<string, unknown> : {}
+  } catch {
+    data = {}
+  }
+  if (!res.ok || data.ok === false || data.success === false) {
+    const message = typeof data.message === 'string'
+      ? data.message
+      : typeof data.error === 'string'
+        ? data.error
+        : `HTTP ${res.status}`
+    throw new Error(message)
+  }
+  return data as unknown as LocalizationOperationResponse
+}
+
+export interface MapSaveOperationStatus {
+  operation_id?: string | null
+  map_id?: string | null
+  name?: string | null
+  state?: string | null
+  phase?: string | null
+  progress?: number | null
+  reason_code?: string | null
+  message?: string | null
+}
+
+export interface WaitForMapSaveOptions {
+  timeoutMs?: number
+  pollIntervalMs?: number
+  signal?: AbortSignal
+}
+
+function mapSaveOperationPath(operationId: string): string {
+  const encoded = encodeURIComponent(operationId)
+  const template = apiPath(
+    'map_operation_status',
+    '/api/v1/maps/operations/{operation_id}',
+  ).replace(/%7Boperation_id%7D/gi, '{operation_id}')
+  return template.includes('{operation_id}')
+    ? template.replace('{operation_id}', encoded)
+    : `/api/v1/maps/operations/${encoded}`
+}
+
+function mapSaveOperation(response: SaveMapResult): MapSaveOperationStatus {
+  return isRecord(response.operation)
+    ? response.operation as MapSaveOperationStatus
+    : response
+}
+
+function mapSaveOperationId(response: SaveMapResult): string {
+  const operation = mapSaveOperation(response)
+  const value = response.operation_id ?? operation.operation_id
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function mapSaveState(response: SaveMapResult): string {
+  const operation = mapSaveOperation(response)
+  const value = operation.state ?? response.status
+  return typeof value === 'string' ? value.trim().toUpperCase() : ''
+}
+
+function mapSaveFailure(response: SaveMapResult, state: string): Error {
+  const operation = mapSaveOperation(response)
+  const message = operation.message ?? response.message
+  const reason = operation.reason_code ?? response.reason_code
+  return new Error(
+    typeof message === 'string' && message.trim()
+      ? message
+      : `Map save ${state.toLowerCase()}${reason ? `: ${String(reason)}` : ''}`,
+  )
+}
+
+function waitDelay(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new DOMException('Map save wait aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(resolve, delayMs)
+    signal?.addEventListener('abort', () => {
+      globalThis.clearTimeout(timer)
+      reject(new DOMException('Map save wait aborted', 'AbortError'))
+    }, { once: true })
+  })
+}
+
+export async function saveMap(name: string): Promise<SaveMapResult> {
   const res = await fetch(apiPath('map_save', '/api/v1/map/save'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, optimization }),
+    body: JSON.stringify({ name }),
   })
   return readMapLifecycle(res) as Promise<SaveMapResult>
+}
+
+export async function fetchMapSaveOperation(operationId: string): Promise<SaveMapResult> {
+  return fetchJson<SaveMapResult>(mapSaveOperationPath(operationId))
+}
+
+export async function waitForMapSaveOperation(
+  admission: SaveMapResult,
+  options: WaitForMapSaveOptions = {},
+): Promise<SaveMapResult> {
+  if (admission.success === true) return admission
+  const operationId = mapSaveOperationId(admission)
+  if (!operationId) {
+    throw new Error('Map save was accepted without an operation_id')
+  }
+  const timeoutMs = Math.max(1, options.timeoutMs ?? 180_000)
+  const pollIntervalMs = Math.max(0, options.pollIntervalMs ?? 750)
+  const deadline = Date.now() + timeoutMs
+  let last = admission
+
+  while (Date.now() <= deadline) {
+    if (options.signal?.aborted) {
+      throw new DOMException('Map save wait aborted', 'AbortError')
+    }
+    last = await fetchMapSaveOperation(operationId)
+    const state = mapSaveState(last)
+    if (state === 'SUCCEEDED') {
+      return {
+        ...admission,
+        ...last,
+        success: true,
+        accepted: true,
+        operation_id: operationId,
+        name: last.name || admission.name,
+      }
+    }
+    if (state === 'FAILED' || state === 'CANCELLED' || state === 'CANCELED') {
+      throw mapSaveFailure(last, state)
+    }
+    if (state && state !== 'WAITING_SNAPSHOT' && state !== 'QUEUED' && state !== 'RUNNING') {
+      throw new Error(`Map save returned unknown operation state: ${state}`)
+    }
+    if (Date.now() >= deadline) break
+    await waitDelay(Math.min(pollIntervalMs, Math.max(0, deadline - Date.now())), options.signal)
+  }
+  const state = mapSaveState(last) || 'UNKNOWN'
+  throw new Error(`Map save operation ${operationId} timed out in state ${state}`)
 }
 
 export async function importPcdMap(
@@ -1041,22 +1097,16 @@ export async function validateMapPlan(
   x: number,
   y: number,
   z = 0,
-  plannerConstraints: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
   return postJson<Record<string, unknown>>(
     mapNamedPath('map_validate_plan', '/api/v1/maps/{name}/validate_plan', name),
-    { x, y, z, client_id: WEB_CLIENT_ID, planner_constraints: plannerConstraints },
+    { x, y, z, client_id: WEB_CLIENT_ID },
   )
 }
 
-// --- Session state machine ---
+// --- Session status ---
 
 export type SessionState = SessionEvent['data']
-export type SessionMode = 'mapping' | 'navigating' | 'exploring'
-export interface StartSessionOptions {
-  mapName?: string
-  slamProfile?: Exclude<SlamProfile, 'stop'>
-}
 
 function normalizeInspectionRoute(route: InspectionRoute): InspectionRoute {
   return {
@@ -1086,112 +1136,8 @@ export async function resumeNavigation(): Promise<ControlCommandResponse> {
   )
 }
 
-export interface ProductSessionSwitchOptions {
-  currentProduct?: ProductName | null
-  mapName?: string | null
-  relocalize?: boolean
-  initialPose?: [number, number, number] | null
-}
-
-export interface ProductControlHandoff {
-  plan: RuntimeSwitchPlanResponse
-  command: string
-}
-
-const SAVED_MAP_SWITCH_PRODUCTS = new Set<ProductName>(['nav', 'tracking', 'inspection'])
-
-async function copyOperatorCommand(command: string): Promise<void> {
-  if (typeof navigator === 'undefined' || !navigator.clipboard?.writeText) {
-    throw new Error('Clipboard access is unavailable; use the ProductControl command shown in the preflight result')
-  }
-  await navigator.clipboard.writeText(command)
-}
-
-export async function prepareProductSwitch(
-  targetProduct: ProductName,
-  options: ProductSessionSwitchOptions = {},
-): Promise<ProductControlHandoff> {
-  const mapName = options.mapName?.trim() || null
-  const requiresSavedMap = SAVED_MAP_SWITCH_PRODUCTS.has(targetProduct)
-  if (requiresSavedMap && !mapName) {
-    throw new Error(`${targetProduct} Product switch requires a saved map`)
-  }
-  const usesSavedMap = requiresSavedMap || (targetProduct === 'explore' && mapName !== null)
-  const relocalize = usesSavedMap && options.relocalize !== false
-  const plan = await runRuntimeSwitchPlan({
-    current_product: options.currentProduct ?? null,
-    target_product: targetProduct,
-    map_name: usesSavedMap ? mapName : null,
-    relocalize,
-    initial_pose: usesSavedMap ? options.initialPose : null,
-  })
-  if (!plan.ok || !plan.read_only || !plan.dry_run || plan.motion) {
-    const blocker = plan.blockers?.filter(Boolean).join('; ')
-    throw new Error(blocker || plan.error || 'Product switch preflight was rejected')
-  }
-  const command = plan.operator_command?.trim()
-  if (!command) {
-    throw new Error('Gateway did not return a ProductControl command')
-  }
-  return { plan, command }
-}
-
-export async function copyProductSwitchCommand(
-  targetProduct: ProductName,
-  options: ProductSessionSwitchOptions = {},
-): Promise<ProductControlHandoff> {
-  const handoff = await prepareProductSwitch(targetProduct, options)
-  await copyOperatorCommand(handoff.command)
-  return handoff
-}
-
-export function productControlStopCommand(env: EnvName): string {
-  return `python -m lingtu.control stop-session --env ${env}`
-}
-
-export async function copyProductControlStopCommand(env: EnvName): Promise<string> {
-  const command = productControlStopCommand(env)
-  await copyOperatorCommand(command)
-  return command
-}
-
-export function productControlRestartCommand(env: EnvName, process: 'slam'): string {
-  return `python -m lingtu.control restart --process ${process} --env ${env}`
-}
-
-export async function copyProductControlRestartCommand(
-  env: EnvName,
-  process: 'slam',
-): Promise<string> {
-  const command = productControlRestartCommand(env, process)
-  await copyOperatorCommand(command)
-  return command
-}
-
 export async function fetchSession(): Promise<SessionState> {
   return fetchJson<SessionState>(apiPath('session', '/api/v1/session'))
-}
-
-export async function startSession(mode: SessionMode, mapNameOrOptions?: string | StartSessionOptions): Promise<SessionState> {
-  const options: StartSessionOptions = typeof mapNameOrOptions === 'string'
-    ? { mapName: mapNameOrOptions }
-    : (mapNameOrOptions ?? {})
-  const body: Record<string, string> = {
-    mode,
-    map_name: options.mapName ?? '',
-  }
-  if (options.slamProfile) {
-    body.slam_profile = options.slamProfile
-  }
-  const data = await postJson<SessionTransitionResponse>(apiPath('session_start', '/api/v1/session/start'), body)
-  if (!data.success) throw new Error(data.message || 'Session start failed')
-  return data.session as SessionState
-}
-
-export async function endSession(): Promise<SessionState> {
-  const data = await postJson<SessionTransitionResponse>(apiPath('session_end', '/api/v1/session/end'))
-  if (!data.success) throw new Error(data.message || 'Session end failed')
-  return data.session as SessionState
 }
 
 export async function resetMapCloud(): Promise<MapLifecycleResponse> {
@@ -1222,13 +1168,19 @@ export async function fetchSavedMapPointCloud(name: string): Promise<SavedMapPoi
   if (mapName !== name) {
     throw new Error(`Saved map response name mismatch: expected ${name}, got ${mapName}`)
   }
+  let contentEpoch: number | null = null
+  if (data.content_epoch != null) {
+    contentEpoch = Number(data.content_epoch)
+    if (!Number.isSafeInteger(contentEpoch) || contentEpoch < 1) {
+      throw new Error('Saved map response is missing a valid content_epoch')
+    }
+  }
   return {
     points: flattenPointArray(data.points),
     frameId,
     epoch,
     mapName,
-    versionId: String(data.version_id || '').trim() || null,
-    mapPcdSha256: String(data.map_pcd_sha256 || '').trim() || null,
+    contentEpoch,
     timestamp: Number(data.ts) || 0,
   }
 }
@@ -1242,21 +1194,26 @@ export async function relocalize(
   x: number,
   y: number,
   yaw: number,
-): Promise<SlamOperationResponse> {
-  const res = await fetch(apiPath('slam_relocalize', '/api/v1/slam/relocalize'), {
+): Promise<LocalizationOperationResponse> {
+  const res = await fetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ map_name: mapName, x, y, yaw }),
+    body: JSON.stringify({
+      map_name: mapName,
+      mode: 'seeded',
+      initial_pose: { x, y, yaw },
+    }),
   })
-  return readSlamOperation(res)
+  return readLocalizationOperation(res)
 }
 
-// Global (no-guess) relocalize via 3D-BBS. Fires the worker in localizer;
-// the 2-4 s scan runs async, so the response is immediate. Fitness appears
-// on /localization_quality after the worker finishes.
-export async function autoRelocalize(): Promise<SlamOperationResponse> {
-  const res = await fetch(apiPath('slam_auto_relocalize', '/api/v1/slam/auto_relocalize'), { method: 'POST' })
-  return readSlamOperation(res)
+export async function globalRelocalize(mapName: string): Promise<LocalizationOperationResponse> {
+  const res = await fetch(apiPath('localization_relocalize', '/api/v1/localization/relocalizations'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ map_name: mapName, mode: 'global' }),
+  })
+  return readLocalizationOperation(res)
 }
 
 // --- Diagnostics / bag recording ---
@@ -1265,13 +1222,42 @@ export async function fetchRecordingStatus(): Promise<RecordingStatusResponse> {
   return fetchJson<RecordingStatusResponse>(apiPath('recording_status', '/api/v1/recordings/status'))
 }
 
+export async function fetchRecordingList(limit = 100): Promise<RecordingListResponse> {
+  const bounded = Math.max(1, Math.min(256, Math.trunc(limit)))
+  return fetchJson<RecordingListResponse>(`/api/v1/recordings?limit=${bounded}`)
+}
+
+export async function fetchRecordingDetail(sessionId: string): Promise<RecordingDetailResponse> {
+  return fetchJson<RecordingDetailResponse>(
+    `/api/v1/recordings/${encodeURIComponent(sessionId)}`,
+  )
+}
+
+export function recordingArtifactUrl(sessionId: string, artifactPath: string): string {
+  const encodedPath = artifactPath.split('/').map(part => encodeURIComponent(part)).join('/')
+  return `/api/v1/recordings/${encodeURIComponent(sessionId)}/files/${encodedPath}`
+}
+
+export async function deleteRecording(sessionId: string): Promise<{ ok: boolean; session_id: string }> {
+  return readJsonResponse<{ ok: boolean; session_id: string }>(await fetch(
+    `/api/v1/recordings/${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE' },
+  ))
+}
+
 export async function startRecording(
-  duration = 600,
-  prefix = 'web',
+  config: RecordingStartConfig = {},
 ): Promise<RecordingOperationResponse> {
   return postJson<RecordingOperationResponse>(
     apiPath('recording_start', '/api/v1/recordings/start'),
-    { duration, prefix },
+    {
+      duration: config.duration ?? 600,
+      prefix: config.prefix ?? 'web',
+      capture_profile: config.capture_profile ?? 'sensors',
+      ...(config.task_id !== undefined ? { task_id: config.task_id } : {}),
+      camera: config.camera ?? false,
+      minimum_free_gib: config.minimum_free_gib ?? 5,
+    },
   )
 }
 

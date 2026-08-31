@@ -122,14 +122,14 @@ function locationIsBoundToRoute(
 ): boolean {
   return location.metadata?.binding_status === 'bound'
     && location.map_id === mapId
-    && location.map_version === mapVersion
+    && location.map_content_epoch === mapVersion
     && (location.frame_id ?? 'map') === 'map'
 }
 
 function locationBindingLabel(location: LocationEntry): string {
   const status = statusText(location.metadata?.binding_status, 'unbound')
   if (status !== 'bound') return status
-  return `${location.map_id ?? '--'} · v${location.map_version ?? '--'}`
+  return `${location.map_id ?? '--'} · v${location.map_content_epoch ?? '--'}`
 }
 
 function nextRevision(route?: InspectionRoute | null): number {
@@ -379,7 +379,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
     setRouteId(route.id)
     setRouteName(route.name || route.id)
     setMapId(route.map_id || mapId)
-    setMapVersion(Number(route.map_version ?? 1))
+    setMapVersion(Number(route.map_content_epoch ?? 1))
     setSavedRevision(Number.isInteger(currentRevision) && currentRevision > 0 ? currentRevision : 0)
     setRevision(nextRevision(route))
     setLoopCount(Number(route.loop_count ?? 1))
@@ -466,7 +466,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
       }
       setError(null)
     } catch (err) {
-      if (api.isGatewayApiError(err) && err.statusCode === 404) {
+      if (api.isGatewayApiError(err) && (err.statusCode === 404 || err.statusCode === 503)) {
         setInspectionAvailability('unavailable')
         setError(null)
         return
@@ -631,7 +631,7 @@ export function InspectionWorkbench({ sseState, showToast, locale }: InspectionW
         id: routeId.trim(),
         name: routeName.trim() || routeId.trim(),
         map_id: mapId.trim(),
-        map_version: Math.max(0, Math.trunc(mapVersion)),
+        map_content_epoch: Math.max(0, Math.trunc(mapVersion)),
         revision: Math.max(1, Math.trunc(revision)),
         loop_count: Math.max(1, Math.trunc(loopCount)),
         failure_policy: failurePolicy,

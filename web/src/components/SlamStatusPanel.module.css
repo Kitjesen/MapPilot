@@ -1,0 +1,106 @@
+.panel {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+}
+
+.header,
+.cards div,
+.action {
+  display: flex;
+  align-items: center;
+}
+
+.header {
+  justify-content: space-between;
+}
+
+.header h1 {
+  margin: 3px 0 0;
+  font-size: var(--fs-xl);
+}
+
+.header button,
+.action {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  background: var(--glass);
+}
+
+.header button {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+}
+
+.eyebrow {
+  color: var(--text-dim);
+  font-size: var(--fs-xs);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cards div {
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--glass);
+}
+
+.cards span {
+  flex: 1 1 auto;
+  color: var(--text-dim);
+  font-size: var(--fs-sm);
+}
+
+.cards strong {
+  flex-basis: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.action {
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  cursor: pointer;
+}
+
+.action:disabled,
+.header button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.hint {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 900px) {
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .cards { grid-template-columns: 1fr; }
+}

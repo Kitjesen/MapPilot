@@ -67,17 +67,11 @@ const HELP_TEXT =
   '可用指令：\n' +
   SLASH_COMMANDS.map(c => `${c.usage.padEnd(16)} — ${c.description}`).join('\n')
 
-function formatPlanSafetySummary(preview: PlanPreviewResponse | null | undefined): string {
+function formatPlanSummary(preview: PlanPreviewResponse | null | undefined): string {
   if (!preview) return ''
-  const safety = preview.path_safety ?? {}
-  const planner = preview.selected_planner ?? preview.planner
-  const safetyOk = safety.ok === true ? 'ok' : safety.ok === false ? 'blocked' : ''
   return [
-    planner ? `planner=${planner}` : null,
-    preview.plan_safety_policy ? `policy=${preview.plan_safety_policy}` : null,
-    safetyOk ? `safety=${safetyOk}` : null,
-    preview.fallback_reason ? `fallback=${preview.fallback_reason}` : null,
-    preview.rejected_plans?.length ? `rejected=${preview.rejected_plans.length}` : null,
+    preview.planner ? `planner=${preview.planner}` : null,
+    `points=${preview.count}`,
   ].filter((v): v is string => Boolean(v)).join(' | ')
 }
 
@@ -86,7 +80,7 @@ function formatPlanPreviewFailure(
   reasons: string[] = [],
   error?: string | null,
 ): string {
-  const safety = formatPlanSafetySummary(preview)
+  const safety = formatPlanSummary(preview)
   const reason = reasons.slice(0, 3).join(' / ') || error || preview?.error || '目标预检未通过'
   return safety ? `${reason} (${safety})` : reason
 }
